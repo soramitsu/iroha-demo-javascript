@@ -1,30 +1,58 @@
 <template>
-    <div id="app">
-        <router-view>
-        </router-view>
-    </div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-accent">Iroha</span> Demo
+      </div>
+      <nav>
+        <RouterLink
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          class="nav-link"
+          :class="{ active: route.path.startsWith(item.to) }"
+        >
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </nav>
+      <div class="session-meta">
+        <p class="meta-label">Torii</p>
+        <p class="meta-value">{{ session.connection.toriiUrl || 'Not configured' }}</p>
+        <p class="meta-label">Account</p>
+        <p class="meta-value">{{ session.user.accountId || 'None' }}</p>
+      </div>
+    </aside>
+    <section class="workspace">
+      <header class="workspace-header">
+        <div>
+          <p class="section-label">{{ route.meta.subtitle }}</p>
+          <h1>{{ route.meta.title }}</h1>
+        </div>
+        <div class="chip" v-if="session.connection.chainId">
+          Chain: {{ session.connection.chainId }}
+        </div>
+      </header>
+      <main>
+        <RouterView />
+      </main>
+    </section>
+  </div>
 </template>
 
-<script>
-import CreateUser from './components/CreateUser'
-import User from './components/User'
+<script setup lang="ts">
+import { useRoute } from 'vue-router'
+import { computed } from 'vue'
+import { useSessionStore } from './stores/session'
 
-export default {
-  name: 'app',
-  components: {
-    CreateUser,
-    User
-  }
-}
+const navItems = [
+  { to: '/setup', label: 'Setup' },
+  { to: '/wallet', label: 'Wallet' },
+  { to: '/send', label: 'Send' },
+  { to: '/receive', label: 'Receive' },
+  { to: '/explore', label: 'Explore' }
+]
+
+const route = useRoute()
+const session = useSessionStore()
+
 </script>
-
-<style>
-#app {
-  font-family: 'Avenir', Helvetica, Arial, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  text-align: center;
-  color: #2c3e50;
-  height: 100%;
-}
-</style>
