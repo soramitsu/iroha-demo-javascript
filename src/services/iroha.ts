@@ -4,6 +4,7 @@ import type {
   AccountTransactionsResponse,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
+  UaidOverview,
   IrohaBridge,
   ToriiHealth
 } from '@/types/iroha'
@@ -56,3 +57,8 @@ export const getExplorerAccountQr = (input: {
   toriiUrl: string
   accountId: string
 }): Promise<ExplorerAccountQrResponse> => bridge().getExplorerAccountQr(input)
+
+export const fetchUaidOverview = (input: {
+  toriiUrl: string
+  uaid: string
+}): Promise<UaidOverview> => bridge().fetchUaidOverview(input)

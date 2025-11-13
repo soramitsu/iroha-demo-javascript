@@ -91,7 +91,7 @@
         </label>
         <label>
           Account Metadata (JSON)
-          <textarea v-model="metadataInput" rows="4" placeholder="{\n  \"nickname\": \"Alice\"\n}"></textarea>
+          <textarea v-model="metadataInput" rows="4" :placeholder="metadataPlaceholder"></textarea>
         </label>
       </div>
       <div class="actions">
@@ -124,6 +124,7 @@ const session = useSessionStore()
 const connectionForm = reactive({ ...session.connection })
 const userForm = reactive({ ...session.user })
 const authorityForm = reactive({ ...session.authority })
+const metadataPlaceholder = '{\n  "nickname": "Alice"\n}'
 const metadataInput = ref(JSON.stringify({ nickname: session.user.displayName || '' }, null, 2))
 
 const pingState = ref<PingState>('idle')

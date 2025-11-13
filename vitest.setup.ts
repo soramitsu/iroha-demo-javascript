@@ -24,12 +24,10 @@ const createMemoryStorage = (): Storage => {
   } as Storage
 }
 
-if (typeof globalThis.localStorage === 'undefined') {
-  const storage = createMemoryStorage()
-  globalThis.localStorage = storage
-  if (typeof globalThis.window !== 'undefined') {
-    ;(globalThis.window as unknown as Window).localStorage = storage
-  }
+const storage = createMemoryStorage()
+globalThis.localStorage = storage
+if (typeof globalThis.window !== 'undefined') {
+  ;(globalThis.window as unknown as Window).localStorage = storage
 }
 
 afterEach(() => {

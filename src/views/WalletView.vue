@@ -119,7 +119,10 @@ const primaryAsset = computed(() => {
   return assets.value.find((asset) => asset.asset_id.startsWith(target)) ?? null
 })
 
-const primaryAssetLabel = computed(() => primaryAsset.value?.asset_id ?? session.connection.assetDefinitionId || '—')
+const primaryAssetLabel = computed(() => {
+  const fallback = session.connection.assetDefinitionId || '—'
+  return primaryAsset.value?.asset_id ?? fallback
+})
 const primaryAssetQuantity = computed(() => primaryAsset.value?.quantity ?? '0')
 
 const transactions = computed(() =>

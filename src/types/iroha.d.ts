@@ -33,6 +33,31 @@ export interface ExplorerAccountQrResponse {
   payload: string
 }
 
+export interface UaidBindingsResponse {
+  uaid: string
+  dataspaces: Array<{
+    id: number
+    alias?: string
+    accounts?: string[]
+  }>
+}
+
+export interface UaidManifestsResponse {
+  uaid: string
+  manifests: Array<{
+    dataspace_id: number
+    dataspace_alias?: string
+    manifest_hash?: string
+    status?: string
+    lifecycle?: Record<string, unknown>
+  }>
+}
+
+export interface UaidOverview {
+  bindings: UaidBindingsResponse
+  manifests: UaidManifestsResponse
+}
+
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string }
@@ -77,6 +102,10 @@ export interface IrohaBridge {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
+  fetchUaidOverview(input: {
+    toriiUrl: string
+    uaid: string
+  }): Promise<UaidOverview>
 }
 
 declare global {

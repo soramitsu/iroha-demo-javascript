@@ -44,6 +44,9 @@ type AssetsResponse = Awaited<ReturnType<ToriiClient['listAccountAssets']>>
 
 type TransactionsResponse = Awaited<ReturnType<ToriiClient['listAccountTransactions']>>
 
+type UaidBindingsResponse = Awaited<ReturnType<ToriiClient['getUaidBindings']>>
+type UaidManifestsResponse = Awaited<ReturnType<ToriiClient['getUaidManifests']>>
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<unknown | null>
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string }
@@ -78,6 +81,10 @@ type IrohaBridge = {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
+  fetchUaidOverview(input: {
+    toriiUrl: string
+    uaid: string
+  }): Promise<{ bindings: UaidBindingsResponse; manifests: UaidManifestsResponse }>
 }
 
 const clientCache = new Map<string, ToriiClient>()
@@ -215,6 +222,14 @@ const api: IrohaBridge = {
   getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl)
     return client.getExplorerAccountQr(normalizeAccountId(accountId, 'accountId'))
+  },
+  async fetchUaidOverview({ toriiUrl, uaid }) {
+    const client = getClient(toriiUrl)
+    const [bindings, manifests] = await Promise.all([
+      client.getUaidBindings(uaid),
+      client.getUaidManifests(uaid)
+    ])
+    return { bindings, manifests }
   }
 }
 

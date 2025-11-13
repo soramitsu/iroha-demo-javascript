@@ -49,11 +49,12 @@ Use `npm run test:watch` while developing renderer logic or stores.
 
 ## Usage notes
 
-1. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (e.g. `ed0120…@wonderland`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
-2. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
-3. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.
-4. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
-5. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
+1. **UAID setup** — new first-run wizard that walks users through Nexus UAID registration. Paste the issued `uaid:<hex>` value, optionally verify it against Torii (bindings + manifests), and save it locally so the rest of the app can derive dataspace context.
+2. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (e.g. `ed0120…@wonderland`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
+3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
+4. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.
+5. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
+6. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
 
 ## Folder structure
 

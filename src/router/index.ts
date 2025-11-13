@@ -4,12 +4,21 @@ import WalletView from '@/views/WalletView.vue'
 import SendView from '@/views/SendView.vue'
 import ReceiveView from '@/views/ReceiveView.vue'
 import ExploreView from '@/views/ExploreView.vue'
+import UaidSetupView from '@/views/UaidSetupView.vue'
 import { useSessionStore } from '@/stores/session'
 
 const routes = [
   {
     path: '/',
-    redirect: '/setup'
+    redirect: '/uaid'
+  },
+  {
+    path: '/uaid',
+    component: UaidSetupView,
+    meta: {
+      title: 'UAID Setup',
+      subtitle: 'Register with Nexus'
+    }
   },
   {
     path: '/setup',
@@ -60,7 +69,10 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const session = useSessionStore()
-  if (!session.hasAccount && to.path !== '/setup') {
+  if (!session.hasUaid && to.path !== '/uaid') {
+    return '/uaid'
+  }
+  if (session.hasUaid && to.path === '/uaid') {
     return '/setup'
   }
   return true
