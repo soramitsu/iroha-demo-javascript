@@ -17,7 +17,7 @@ const routes = [
     component: UaidSetupView,
     meta: {
       title: 'UAID Setup',
-      subtitle: 'Register with Nexus'
+      subtitle: 'Register with SORA Nexus'
     }
   },
   {

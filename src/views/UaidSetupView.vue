@@ -2,10 +2,10 @@
   <div class="card-grid uaid-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Step 1 · Register UAID on Nexus</h2>
+        <h2>Step 1 · Register UAID on SORA Nexus</h2>
       </header>
       <ol class="uaid-instructions">
-        <li>Open the Nexus onboarding portal and complete the UAID registration flow.</li>
+        <li>Open the SORA Nexus onboarding portal and complete the UAID registration flow.</li>
         <li>Copy the issued UAID (format: <code>uaid:abcdef...</code>).</li>
         <li>Paste the UAID below and optionally validate it against your Torii endpoint.</li>
       </ol>
@@ -13,7 +13,7 @@
         UAID Literal
         <input v-model.trim="uaidInput" placeholder="uaid:0f4d…" />
       </label>
-      <p class="helper">Need help? See <code>docs/space-directory.md</code> in the Nexus repo.</p>
+      <p class="helper">Need help? See <code>docs/space-directory.md</code> in the SORA Nexus repo.</p>
       <div class="actions">
         <button @click="handleSave" :disabled="!canSave">Save & Continue</button>
         <button class="secondary" @click="handleVerify" :disabled="!session.connection.toriiUrl || verifying || !uaidInput">

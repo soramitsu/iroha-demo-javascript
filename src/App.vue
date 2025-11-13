@@ -34,13 +34,19 @@
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-          class="nav-link"
-          :class="{ active: route.path.startsWith(item.to) }"
-        >
-          <img :src="item.icon" class="nav-icon" :alt="item.label" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </nav>
+            class="nav-link"
+            :class="{ active: route.path.startsWith(item.to), locked: item.requiresUaid && !session.hasUaid }"
+            :title="item.requiresUaid && !session.hasUaid ? 'Complete UAID setup first' : undefined"
+            :aria-disabled="item.requiresUaid && !session.hasUaid"
+            :tabindex="item.requiresUaid && !session.hasUaid ? -1 : 0"
+          >
+            <img :src="item.icon" class="nav-icon" :alt="item.label" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </nav>
+        <p v-if="!session.hasUaid" class="nav-lock-hint">
+          Complete UAID onboarding to unlock Setup, Wallet, Send, Receive, and Explorer.
+        </p>
         <div class="session-meta" v-if="session.connection.chainId">
           <p class="meta-label">Chain</p>
           <p class="meta-value">{{ session.connection.chainId }}</p>
@@ -74,12 +80,12 @@ import UserIcon from '@/assets/user.svg'
 import SakuraScene from '@/components/SakuraScene.vue'
 
 const navItems = [
-  { to: '/uaid', label: 'UAID Setup', icon: UserIcon },
-  { to: '/setup', label: 'Setup', icon: UserIcon },
-  { to: '/wallet', label: 'Wallet', icon: WalletIcon },
-  { to: '/send', label: 'Send', icon: SendIcon },
-  { to: '/receive', label: 'Receive', icon: ReceiveIcon },
-  { to: '/explore', label: 'Explore', icon: WalletIcon }
+  { to: '/uaid', label: 'UAID Setup', icon: UserIcon, requiresUaid: false },
+  { to: '/setup', label: 'Setup', icon: UserIcon, requiresUaid: true },
+  { to: '/wallet', label: 'Wallet', icon: WalletIcon, requiresUaid: true },
+  { to: '/send', label: 'Send', icon: SendIcon, requiresUaid: true },
+  { to: '/receive', label: 'Receive', icon: ReceiveIcon, requiresUaid: true },
+  { to: '/explore', label: 'Explore', icon: WalletIcon, requiresUaid: true }
 ]
 
 const route = useRoute()

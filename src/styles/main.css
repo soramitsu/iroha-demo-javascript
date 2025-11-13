@@ -21,7 +21,7 @@ body::before {
   content: '';
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: -2;
   pointer-events: none;
   transform: translate3d(
     calc(var(--parallax-x) * 12px),
@@ -88,6 +88,8 @@ body::before {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 2;
 }
 
 .app-header {
@@ -176,6 +178,9 @@ body::before {
   flex: 1;
   min-height: 0;
   background: transparent;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 .sidebar {
@@ -183,6 +188,9 @@ body::before {
   background: rgba(10, 12, 20, 0.55);
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   padding: 32px 20px;
+  position: relative;
+  z-index: 3;
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -211,6 +219,8 @@ nav {
   -webkit-app-region: no-drag;
   background: rgba(255, 255, 255, 0.04);
   backdrop-filter: blur(18px);
+  cursor: pointer;
+  pointer-events: auto;
 }
 
 .nav-link:hover {
@@ -225,6 +235,12 @@ nav {
   box-shadow: 0 15px 30px rgba(0, 0, 0, 0.35);
 }
 
+.nav-link.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .nav-icon {
   width: 20px;
   height: 20px;
@@ -234,6 +250,17 @@ nav {
   margin-top: auto;
   font-size: 0.85rem;
   color: var(--iroha-muted);
+}
+
+.nav-lock-hint {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 2px solid var(--iroha-accent);
+  border-radius: 0 12px 12px 0;
+  line-height: 1.4;
 }
 
 .sidebar .meta-label {
@@ -559,6 +586,12 @@ button:not(.secondary):hover {
   color: #b1051b;
   border-color: rgba(255, 76, 76, 0.35);
   box-shadow: 0 15px 30px rgba(255, 90, 90, 0.2);
+}
+
+:root[data-theme='light'] .nav-lock-hint {
+  color: rgba(17, 24, 39, 0.85);
+  background: rgba(17, 24, 39, 0.08);
+  border-left-color: rgba(255, 75, 75, 0.65);
 }
 
 :root[data-theme='light'] .workspace-header h1 {
