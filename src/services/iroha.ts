@@ -1,7 +1,9 @@
 import type {
   AccountAddressView,
   AccountAssetsResponse,
+  AccountOnboardingResponse,
   AccountTransactionsResponse,
+  ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
   UaidOverview,
@@ -62,3 +64,17 @@ export const fetchUaidOverview = (input: {
   toriiUrl: string
   uaid: string
 }): Promise<UaidOverview> => bridge().fetchUaidOverview(input)
+
+export const onboardAccount = (input: {
+  toriiUrl: string
+  alias: string
+  accountId: string
+  identity?: Record<string, unknown>
+  uaid?: string
+}): Promise<AccountOnboardingResponse> => bridge().onboardAccount(input)
+
+export const createConnectPreview = (input: {
+  toriiUrl: string
+  chainId: string
+  node?: string | null
+}): Promise<ConnectPreview> => bridge().createConnectPreview(input)

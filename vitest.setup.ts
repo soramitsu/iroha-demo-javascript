@@ -1,4 +1,5 @@
 import { afterEach, vi } from 'vitest'
+import { webcrypto } from 'node:crypto'
 
 const createMemoryStorage = (): Storage => {
   const store = new Map<string, string>()
@@ -34,3 +35,7 @@ afterEach(() => {
   vi.restoreAllMocks()
   globalThis.localStorage?.clear()
 })
+
+if (typeof globalThis.crypto === 'undefined') {
+  globalThis.crypto = webcrypto as unknown as Crypto
+}

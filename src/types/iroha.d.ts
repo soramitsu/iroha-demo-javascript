@@ -58,6 +58,24 @@ export interface UaidOverview {
   manifests: UaidManifestsResponse
 }
 
+export interface AccountOnboardingResponse {
+  account_id: string
+  uaid: string
+  tx_hash_hex: string
+  status: string
+}
+
+export interface ConnectPreview {
+  sidHex: string
+  sidBase64Url: string
+  walletUri: string | null
+  appUri: string | null
+  tokenApp: string | null
+  tokenWallet: string | null
+  appPublicKeyHex: string
+  appPrivateKeyHex: string
+}
+
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string }
@@ -106,6 +124,18 @@ export interface IrohaBridge {
     toriiUrl: string
     uaid: string
   }): Promise<UaidOverview>
+  onboardAccount(input: {
+    toriiUrl: string
+    alias: string
+    accountId: string
+    identity?: Record<string, unknown>
+    uaid?: string
+  }): Promise<AccountOnboardingResponse>
+  createConnectPreview(input: {
+    toriiUrl: string
+    chainId: string
+    node?: string | null
+  }): Promise<ConnectPreview>
 }
 
 declare global {

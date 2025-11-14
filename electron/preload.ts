@@ -7,7 +7,8 @@ import {
   generateKeyPair,
   publicKeyFromPrivate,
   submitSignedTransaction,
-  normalizeAccountId
+  normalizeAccountId,
+  bootstrapConnectPreviewSession
 } from '@iroha/iroha-js'
 
 type HexString = string
@@ -47,6 +48,24 @@ type TransactionsResponse = Awaited<ReturnType<ToriiClient['listAccountTransacti
 type UaidBindingsResponse = Awaited<ReturnType<ToriiClient['getUaidBindings']>>
 type UaidManifestsResponse = Awaited<ReturnType<ToriiClient['getUaidManifests']>>
 
+type AccountOnboardingResponse = {
+  account_id: string
+  uaid: string
+  tx_hash_hex: string
+  status: string
+}
+
+type ConnectPreviewResponse = {
+  sidHex: string
+  sidBase64Url: string
+  walletUri: string | null
+  appUri: string | null
+  tokenApp: string | null
+  tokenWallet: string | null
+  appPublicKeyHex: string
+  appPrivateKeyHex: string
+}
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<unknown | null>
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string }
@@ -85,6 +104,18 @@ type IrohaBridge = {
     toriiUrl: string
     uaid: string
   }): Promise<{ bindings: UaidBindingsResponse; manifests: UaidManifestsResponse }>
+  onboardAccount(input: {
+    toriiUrl: string
+    alias: string
+    accountId: string
+    identity?: Record<string, unknown>
+    uaid?: string
+  }): Promise<AccountOnboardingResponse>
+  createConnectPreview(input: {
+    toriiUrl: string
+    chainId: string
+    node?: string | null
+  }): Promise<ConnectPreviewResponse>
 }
 
 const clientCache = new Map<string, ToriiClient>()
@@ -230,6 +261,48 @@ const api: IrohaBridge = {
       client.getUaidManifests(uaid)
     ])
     return { bindings, manifests }
+  },
+  async onboardAccount({ toriiUrl, alias, accountId, identity, uaid }) {
+    const baseUrl = normalizeBaseUrl(toriiUrl)
+    const response = await fetch(`${baseUrl}/v1/accounts/onboard`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        alias,
+        account_id: accountId,
+        identity: identity ?? undefined,
+        uaid
+      })
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(
+        text || `Onboarding failed with status ${response.status} (${response.statusText})`
+      )
+    }
+    return (await response.json()) as AccountOnboardingResponse
+  },
+  async createConnectPreview({ toriiUrl, chainId, node }) {
+    const client = getClient(toriiUrl)
+    const baseUrl = new URL(normalizeBaseUrl(toriiUrl))
+    const nodeHint = node ?? baseUrl.host
+    const { preview, session, tokens } = await bootstrapConnectPreviewSession(client, {
+      chainId,
+      node: nodeHint
+    })
+    return {
+      sidHex: preview.sidHex,
+      sidBase64Url: preview.sidBase64Url,
+      walletUri: session?.wallet_uri ?? preview.walletUri ?? null,
+      appUri: session?.app_uri ?? preview.appUri ?? null,
+      tokenApp: tokens?.app ?? null,
+      tokenWallet: tokens?.wallet ?? null,
+      appPublicKeyHex: toHex(Buffer.from(preview.appKeyPair.publicKey)),
+      appPrivateKeyHex: toHex(Buffer.from(preview.appKeyPair.privateKey))
+    }
   }
 }
 
