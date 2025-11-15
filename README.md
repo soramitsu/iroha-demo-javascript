@@ -49,7 +49,7 @@ Use `npm run test:watch` while developing renderer logic or stores.
 
 ## Usage notes
 
-1. **UAID setup** — new first-run wizard that walks users through SORA Nexus UAID registration. Paste the issued `uaid:<hex>` value, optionally verify it against Torii (bindings + manifests), and save it locally so the rest of the app can derive dataspace context.
+1. **Account setup** — first-run wizard for provisioning a SORA Nexus account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
 2. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (e.g. `ed0120…@wonderland`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
 4. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.

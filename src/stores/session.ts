@@ -18,7 +18,6 @@ export type UserProfile = {
   ih58: string
   compressed: string
   compressedWarning: string
-  uaid: string
 }
 
 export type AuthorityProfile = {
@@ -49,8 +48,7 @@ const defaultState = (): SessionState => ({
     privateKeyHex: '',
     ih58: '',
     compressed: '',
-    compressedWarning: '',
-    uaid: ''
+    compressedWarning: ''
   },
   authority: {
     accountId: '',
@@ -61,8 +59,7 @@ const defaultState = (): SessionState => ({
 export const useSessionStore = defineStore('session', {
   state: defaultState,
   getters: {
-    hasAccount: (state) => Boolean(state.user.accountId && state.user.privateKeyHex),
-    hasUaid: (state) => Boolean(state.user.uaid)
+    hasAccount: (state) => Boolean(state.user.accountId && state.user.privateKeyHex)
   },
   actions: {
     hydrate() {

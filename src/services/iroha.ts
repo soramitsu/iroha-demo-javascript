@@ -6,7 +6,6 @@ import type {
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
-  UaidOverview,
   IrohaBridge,
   ToriiHealth
 } from '@/types/iroha'
@@ -60,17 +59,11 @@ export const getExplorerAccountQr = (input: {
   accountId: string
 }): Promise<ExplorerAccountQrResponse> => bridge().getExplorerAccountQr(input)
 
-export const fetchUaidOverview = (input: {
-  toriiUrl: string
-  uaid: string
-}): Promise<UaidOverview> => bridge().fetchUaidOverview(input)
-
 export const onboardAccount = (input: {
   toriiUrl: string
   alias: string
   accountId: string
   identity?: Record<string, unknown>
-  uaid?: string
 }): Promise<AccountOnboardingResponse> => bridge().onboardAccount(input)
 
 export const createConnectPreview = (input: {

@@ -1,10 +1,10 @@
 <template>
-  <div class="card-grid uaid-grid">
+  <div class="card-grid account-grid">
     <section class="card">
       <header class="card-header">
         <div>
-          <h2>SORA Nexus Keygen</h2>
-          <p class="helper">Generate a UAID, keypair, and backups straight from this wallet.</p>
+          <h2>SORA Nexus Account</h2>
+          <p class="helper">Generate your account keys, store a recovery phrase, and register via Torii.</p>
         </div>
       </header>
 
@@ -56,7 +56,7 @@
           {{ generating ? 'Generating…' : 'Generate recovery phrase' }}
         </button>
         <button class="secondary" @click="registerGeneratedIdentity" :disabled="!canRegisterGenerated">
-          {{ onboardingBusy ? 'Registering…' : 'Register identity' }}
+          {{ onboardingBusy ? 'Registering…' : 'Register account' }}
         </button>
       </div>
       <p v-if="generateError" class="helper error">{{ generateError }}</p>
@@ -84,36 +84,11 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Manual UAID Entry</h2>
-      </header>
-      <ol class="uaid-instructions">
-        <li>Paste an existing UAID (format <code>uaid:abcdef...</code>).</li>
-        <li>Optionally validate it against your Torii endpoint.</li>
-      </ol>
-      <label>
-        UAID Literal
-        <input v-model.trim="uaidInput" placeholder="uaid:0f4d…" />
-      </label>
-      <div class="actions">
-        <button @click="handleSave" :disabled="!canSaveManual">Save & Continue</button>
-        <button
-          class="secondary"
-          @click="handleVerify"
-          :disabled="!session.connection.toriiUrl || verifying || !uaidInput"
-        >
-          {{ verifying ? 'Checking…' : 'Verify with Torii' }}
-        </button>
-      </div>
-      <p v-if="error" class="helper error">{{ error }}</p>
-    </section>
-
-    <section class="card">
-      <header class="card-header">
         <h2>IrohaConnect Pairing</h2>
       </header>
       <p class="helper">
-        Already have keys on IrohaConnect? Generate a pairing session and approve it on your phone to
-        keep signing on mobile while this desktop wallet observes balances.
+        Already using IrohaConnect on your phone? Generate a pairing session to approve desktop
+        access without exporting keys. Signing stays on the phone; this app watches balances.
       </p>
       <div v-if="connectPreview" class="connect-preview">
         <img
@@ -126,9 +101,9 @@
           <span class="kv-label">Session ID</span>
           <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
         </div>
-        <div class="kv monospace">
+        <div class="kv monospace" v-if="connectPreview.tokenWallet">
           <span class="kv-label">Wallet Token</span>
-          <span class="kv-value">{{ connectPreview.tokenWallet ?? 'Provided on scan' }}</span>
+          <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
         </div>
       </div>
       <div class="actions">
@@ -138,25 +113,6 @@
         <button class="secondary" @click="resetConnect" :disabled="!connectPreview">Reset</button>
       </div>
       <p v-if="connectError" class="helper error">{{ connectError }}</p>
-      <p class="helper small">
-        The UAID stays on your phone. The desktop wallet will sync permissions once the Connect flow
-        exposes signing APIs in upcoming releases.
-      </p>
-    </section>
-
-    <section class="card" v-if="overview">
-      <header class="card-header">
-        <h2>Dataspace Bindings</h2>
-      </header>
-      <div v-if="overview.bindings.dataspaces.length" class="kv-list">
-        <div class="kv" v-for="space in overview.bindings.dataspaces" :key="space.id">
-          <span class="kv-label">Dataspace</span>
-          <span class="kv-value">{{ space.alias || space.id }}</span>
-          <span class="kv-label">Accounts</span>
-          <span class="kv-value">{{ (space.accounts || []).join(', ') || '—' }}</span>
-        </div>
-      </div>
-      <p v-else class="helper">No dataspaces bound yet. Publish a manifest before transacting.</p>
     </section>
   </div>
 </template>
@@ -166,13 +122,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { useSessionStore } from '@/stores/session'
-import {
-  createConnectPreview,
-  deriveAccountAddress,
-  derivePublicKey,
-  fetchUaidOverview,
-  onboardAccount
-} from '@/services/iroha'
+import { createConnectPreview, deriveAccountAddress, derivePublicKey, onboardAccount } from '@/services/iroha'
 import { generateMnemonicWords, mnemonicToPrivateKeyHex, normalizeMnemonicPhrase } from '@/utils/mnemonic'
 
 const session = useSessionStore()
@@ -211,9 +161,7 @@ const domainInput = ref(session.user.domain || 'wonderland')
 const identityInput = ref('')
 const wordCount = ref<12 | 24>(24)
 const mnemonicWords = ref<string[]>([])
-const generatedKeys = ref<{ privateKeyHex: string; publicKeyHex: string; accountId: string } | null>(
-  null
-)
+const generatedKeys = ref<{ privateKeyHex: string; publicKeyHex: string; accountId: string } | null>(null)
 const backupConfirmed = ref(false)
 const generating = ref(false)
 const generateError = ref('')
@@ -310,12 +258,11 @@ const registerGeneratedIdentity = async () => {
       displayName: aliasInput.value.trim(),
       domain: domainInput.value.trim() || 'wonderland',
       accountId: response.account_id,
-      uaid: response.uaid,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       privateKeyHex: generatedKeys.value.privateKeyHex
     })
     session.persistState()
-    onboardingStatus.value = `UAID ${response.uaid} queued (tx ${response.tx_hash_hex.slice(0, 12)}…)`
+    onboardingStatus.value = `Account ${response.account_id} queued (tx ${response.tx_hash_hex.slice(0, 12)}…)`
     router.push('/setup')
   } catch (err) {
     onboardingError.value = err instanceof Error ? err.message : String(err)
@@ -348,68 +295,6 @@ const downloadBackup = (target: 'manual' | 'icloud' | 'google') => {
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(link.href)
-}
-
-const uaidInput = ref(session.user.uaid)
-const verifying = ref(false)
-const overview = ref<Awaited<ReturnType<typeof fetchUaidOverview>> | null>(null)
-const error = ref('')
-
-watch(
-  () => session.user.uaid,
-  (value) => {
-    if (!uaidInput.value && value) {
-      uaidInput.value = value
-    }
-  }
-)
-
-const canSaveManual = computed(() => Boolean(uaidInput.value?.trim()))
-
-const normalizeUaid = (value: string) => {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  if (trimmed.toLowerCase().startsWith('uaid:')) {
-    return trimmed.toLowerCase()
-  }
-  if (trimmed.length === 64) {
-    return `uaid:${trimmed.toLowerCase()}`
-  }
-  return trimmed
-}
-
-const handleVerify = async () => {
-  if (!session.connection.toriiUrl || !uaidInput.value) {
-    error.value = 'Configure Torii first, then try again.'
-    return
-  }
-  verifying.value = true
-  error.value = ''
-  try {
-    overview.value = await fetchUaidOverview({
-      toriiUrl: session.connection.toriiUrl,
-      uaid: uaidInput.value
-    })
-    const canonical = overview.value.bindings.uaid
-    session.updateUser({ uaid: canonical })
-    session.persistState()
-  } catch (err) {
-    overview.value = null
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    verifying.value = false
-  }
-}
-
-const handleSave = () => {
-  const normalized = normalizeUaid(uaidInput.value ?? '')
-  if (!normalized) {
-    error.value = 'Enter a valid UAID.'
-    return
-  }
-  session.updateUser({ uaid: normalized })
-  session.persistState()
-  router.push('/setup')
 }
 
 const connectPreview = ref<Awaited<ReturnType<typeof createConnectPreview>> | null>(null)
@@ -448,14 +333,8 @@ const resetConnect = () => {
 </script>
 
 <style scoped>
-.uaid-grid {
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
-
-.uaid-instructions {
-  margin-top: 0;
-  padding-left: 20px;
-  color: var(--iroha-muted);
+.account-grid {
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
 }
 
 .keygen-form label textarea {
@@ -524,16 +403,5 @@ const resetConnect = () => {
 .monospace {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
-}
-
-.helper.small {
-  font-size: 0.8rem;
-  color: var(--iroha-muted);
-}
-
-.kv-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 </style>

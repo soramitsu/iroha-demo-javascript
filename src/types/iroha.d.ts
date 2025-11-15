@@ -33,34 +33,8 @@ export interface ExplorerAccountQrResponse {
   payload: string
 }
 
-export interface UaidBindingsResponse {
-  uaid: string
-  dataspaces: Array<{
-    id: number
-    alias?: string
-    accounts?: string[]
-  }>
-}
-
-export interface UaidManifestsResponse {
-  uaid: string
-  manifests: Array<{
-    dataspace_id: number
-    dataspace_alias?: string
-    manifest_hash?: string
-    status?: string
-    lifecycle?: Record<string, unknown>
-  }>
-}
-
-export interface UaidOverview {
-  bindings: UaidBindingsResponse
-  manifests: UaidManifestsResponse
-}
-
 export interface AccountOnboardingResponse {
   account_id: string
-  uaid: string
   tx_hash_hex: string
   status: string
 }
@@ -120,16 +94,11 @@ export interface IrohaBridge {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
-  fetchUaidOverview(input: {
-    toriiUrl: string
-    uaid: string
-  }): Promise<UaidOverview>
   onboardAccount(input: {
     toriiUrl: string
     alias: string
     accountId: string
     identity?: Record<string, unknown>
-    uaid?: string
   }): Promise<AccountOnboardingResponse>
   createConnectPreview(input: {
     toriiUrl: string

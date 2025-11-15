@@ -45,12 +45,8 @@ type AssetsResponse = Awaited<ReturnType<ToriiClient['listAccountAssets']>>
 
 type TransactionsResponse = Awaited<ReturnType<ToriiClient['listAccountTransactions']>>
 
-type UaidBindingsResponse = Awaited<ReturnType<ToriiClient['getUaidBindings']>>
-type UaidManifestsResponse = Awaited<ReturnType<ToriiClient['getUaidManifests']>>
-
 type AccountOnboardingResponse = {
   account_id: string
-  uaid: string
   tx_hash_hex: string
   status: string
 }
@@ -100,16 +96,11 @@ type IrohaBridge = {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
-  fetchUaidOverview(input: {
-    toriiUrl: string
-    uaid: string
-  }): Promise<{ bindings: UaidBindingsResponse; manifests: UaidManifestsResponse }>
   onboardAccount(input: {
     toriiUrl: string
     alias: string
     accountId: string
     identity?: Record<string, unknown>
-    uaid?: string
   }): Promise<AccountOnboardingResponse>
   createConnectPreview(input: {
     toriiUrl: string
@@ -254,15 +245,7 @@ const api: IrohaBridge = {
     const client = getClient(toriiUrl)
     return client.getExplorerAccountQr(normalizeAccountId(accountId, 'accountId'))
   },
-  async fetchUaidOverview({ toriiUrl, uaid }) {
-    const client = getClient(toriiUrl)
-    const [bindings, manifests] = await Promise.all([
-      client.getUaidBindings(uaid),
-      client.getUaidManifests(uaid)
-    ])
-    return { bindings, manifests }
-  },
-  async onboardAccount({ toriiUrl, alias, accountId, identity, uaid }) {
+  async onboardAccount({ toriiUrl, alias, accountId, identity }) {
     const baseUrl = normalizeBaseUrl(toriiUrl)
     const response = await fetch(`${baseUrl}/v1/accounts/onboard`, {
       method: 'POST',
@@ -273,8 +256,7 @@ const api: IrohaBridge = {
       body: JSON.stringify({
         alias,
         account_id: accountId,
-        identity: identity ?? undefined,
-        uaid
+        identity: identity ?? undefined
       })
     })
     if (!response.ok) {

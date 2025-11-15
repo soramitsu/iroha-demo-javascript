@@ -18,10 +18,6 @@
           <p class="meta-label">Account</p>
           <p class="meta-value">{{ session.user.accountId || 'None' }}</p>
         </div>
-        <div>
-          <p class="meta-label">UAID</p>
-          <p class="meta-value">{{ session.user.uaid || 'Not set' }}</p>
-        </div>
       </div>
       <button class="theme-toggle" @click="theme.toggle()">
         <span>{{ theme.current === 'dark' ? 'Light Mode' : 'Dark Mode' }}</span>
@@ -35,17 +31,17 @@
             :key="item.to"
             :to="item.to"
             class="nav-link"
-            :class="{ active: route.path.startsWith(item.to), locked: item.requiresUaid && !session.hasUaid }"
-            :title="item.requiresUaid && !session.hasUaid ? 'Complete UAID setup first' : undefined"
-            :aria-disabled="item.requiresUaid && !session.hasUaid"
-            :tabindex="item.requiresUaid && !session.hasUaid ? -1 : 0"
+            :class="{ active: route.path.startsWith(item.to), locked: item.requiresAccount && !session.hasAccount }"
+            :title="item.requiresAccount && !session.hasAccount ? 'Complete account setup first' : undefined"
+            :aria-disabled="item.requiresAccount && !session.hasAccount"
+            :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
           >
             <img :src="item.icon" class="nav-icon" :alt="item.label" />
             <span>{{ item.label }}</span>
           </RouterLink>
         </nav>
-        <p v-if="!session.hasUaid" class="nav-lock-hint">
-          Complete UAID onboarding to unlock Setup, Wallet, Send, Receive, and Explorer.
+        <p v-if="!session.hasAccount" class="nav-lock-hint">
+          Complete account onboarding to unlock Setup, Wallet, Send, Receive, and Explorer.
         </p>
         <div class="session-meta" v-if="session.connection.chainId">
           <p class="meta-label">Chain</p>
@@ -80,12 +76,12 @@ import UserIcon from '@/assets/user.svg'
 import SakuraScene from '@/components/SakuraScene.vue'
 
 const navItems = [
-  { to: '/uaid', label: 'UAID Setup', icon: UserIcon, requiresUaid: false },
-  { to: '/setup', label: 'Setup', icon: UserIcon, requiresUaid: true },
-  { to: '/wallet', label: 'Wallet', icon: WalletIcon, requiresUaid: true },
-  { to: '/send', label: 'Send', icon: SendIcon, requiresUaid: true },
-  { to: '/receive', label: 'Receive', icon: ReceiveIcon, requiresUaid: true },
-  { to: '/explore', label: 'Explore', icon: WalletIcon, requiresUaid: true }
+  { to: '/account', label: 'Account Setup', icon: UserIcon, requiresAccount: false },
+  { to: '/setup', label: 'Session', icon: UserIcon, requiresAccount: true },
+  { to: '/wallet', label: 'Wallet', icon: WalletIcon, requiresAccount: true },
+  { to: '/send', label: 'Send', icon: SendIcon, requiresAccount: true },
+  { to: '/receive', label: 'Receive', icon: ReceiveIcon, requiresAccount: true },
+  { to: '/explore', label: 'Explore', icon: WalletIcon, requiresAccount: true }
 ]
 
 const route = useRoute()

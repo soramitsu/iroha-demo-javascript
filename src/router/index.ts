@@ -4,20 +4,20 @@ import WalletView from '@/views/WalletView.vue'
 import SendView from '@/views/SendView.vue'
 import ReceiveView from '@/views/ReceiveView.vue'
 import ExploreView from '@/views/ExploreView.vue'
-import UaidSetupView from '@/views/UaidSetupView.vue'
+import AccountSetupView from '@/views/AccountSetupView.vue'
 import { useSessionStore } from '@/stores/session'
 
 const routes = [
   {
     path: '/',
-    redirect: '/uaid'
+    redirect: '/account'
   },
   {
-    path: '/uaid',
-    component: UaidSetupView,
+    path: '/account',
+    component: AccountSetupView,
     meta: {
-      title: 'UAID Setup',
-      subtitle: 'Register with SORA Nexus'
+      title: 'Account Setup',
+      subtitle: 'Provision your SORA Nexus account'
     }
   },
   {
@@ -69,10 +69,10 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const session = useSessionStore()
-  if (!session.hasUaid && to.path !== '/uaid') {
-    return '/uaid'
+  if (!session.hasAccount && to.path !== '/account') {
+    return '/account'
   }
-  if (session.hasUaid && to.path === '/uaid') {
+  if (session.hasAccount && to.path === '/account') {
     return '/setup'
   }
   return true
