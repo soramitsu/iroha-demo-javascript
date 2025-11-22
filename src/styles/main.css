@@ -169,6 +169,14 @@ body::before {
   background-color: #05060b;
   --glass-border: rgba(255, 255, 255, 0.22);
   --glass-highlight: rgba(255, 255, 255, 0.48);
+  --menu-glass: rgba(14, 16, 26, 0.64);
+  --menu-glass-strong: rgba(18, 21, 32, 0.8);
+  --menu-highlight: rgba(255, 255, 255, 0.08);
+  --menu-accent-glow: rgba(255, 76, 102, 0.16);
+  --glass-rim: rgba(255, 255, 255, 0.18);
+  --glass-veil: rgba(255, 255, 255, 0.1);
+  --gi-ambient: rgba(0, 0, 0, 0.42);
+  --gi-accent: rgba(255, 76, 102, 0.2);
   --iroha-accent: #ff4b4b;
   --iroha-accent-dark: #d3262e;
   --iroha-muted: rgba(227, 230, 239, 0.72);
@@ -197,6 +205,14 @@ body::before {
   background-color: #f3f5fd;
   --glass-border: rgba(0, 0, 0, 0.08);
   --glass-highlight: rgba(255, 255, 255, 0.82);
+  --menu-glass: rgba(255, 255, 255, 0.7);
+  --menu-glass-strong: rgba(255, 255, 255, 0.82);
+  --menu-highlight: rgba(255, 255, 255, 0.5);
+  --menu-accent-glow: rgba(255, 76, 102, 0.14);
+  --glass-rim: rgba(255, 255, 255, 0.92);
+  --glass-veil: rgba(255, 255, 255, 0.58);
+  --gi-ambient: rgba(22, 30, 51, 0.18);
+  --gi-accent: rgba(255, 76, 102, 0.12);
   --iroha-accent: #ff4b4b;
   --iroha-accent-dark: #c41b27;
   --iroha-muted: rgba(55, 65, 81, 0.75);
@@ -218,6 +234,27 @@ body::before {
     radial-gradient(circle at 80% 15%, rgba(255, 190, 190, 0.5), transparent 50%);
   filter: blur(100px);
   opacity: 0.6;
+}
+
+/* HDR-capable / wide-gamut displays (MacBook Pro panels included) */
+@media (color-gamut: p3) {
+  :root[data-theme='light'] {
+    --iroha-accent: color(display-p3 1 0.32 0.36);
+    --iroha-accent-dark: color(display-p3 0.78 0.16 0.24);
+    --menu-highlight: color(display-p3 1 1 1 / 0.7);
+    --glass-highlight: color(display-p3 1 1 1 / 0.75);
+    --gi-ambient: color(display-p3 0.12 0.15 0.26 / 0.26);
+    --gi-accent: color(display-p3 1 0.32 0.36 / 0.2);
+  }
+
+  :root[data-theme='dark'] {
+    --iroha-accent: color(display-p3 1 0.3 0.34);
+    --iroha-accent-dark: color(display-p3 0.72 0.14 0.22);
+    --menu-highlight: color(display-p3 1 1 1 / 0.2);
+    --glass-highlight: color(display-p3 1 1 1 / 0.6);
+    --gi-ambient: color(display-p3 0 0 0 / 0.52);
+    --gi-accent: color(display-p3 1 0.28 0.32 / 0.24);
+  }
 }
 
 #app {
@@ -251,9 +288,12 @@ body::before {
 }
 
 .app-header {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent),
-    var(--surface-strong);
-  border-bottom: 1px solid var(--glass-border);
+  background:
+    linear-gradient(115deg, var(--menu-highlight), transparent 60%),
+    linear-gradient(160deg, var(--menu-accent-glow), transparent 55%),
+    var(--menu-glass-strong);
+  border: 1px solid var(--glass-border);
+  border-bottom-color: var(--panel-border);
   padding: 26px 40px;
   display: flex;
   justify-content: space-between;
@@ -261,8 +301,9 @@ body::before {
   gap: 28px;
   -webkit-app-region: drag;
   user-select: none;
-  backdrop-filter: blur(30px) saturate(180%);
-  box-shadow: var(--shadow-strong);
+  backdrop-filter: blur(32px) saturate(185%);
+  -webkit-backdrop-filter: blur(32px) saturate(185%);
+  box-shadow: 0 24px 55px var(--gi-ambient), 0 12px 35px var(--gi-accent), var(--shadow-strong);
   position: relative;
   z-index: 2;
 }
@@ -327,15 +368,19 @@ body::before {
 }
 
 .status-chip {
-  background: var(--surface);
-  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(125deg, var(--glass-veil), transparent 50%),
+    var(--menu-glass);
+  border: 1px solid var(--glass-border);
   border-radius: 16px;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  box-shadow: var(--shadow-soft);
-  backdrop-filter: blur(24px) saturate(140%);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 14px 32px var(--gi-ambient),
+    0 10px 24px var(--gi-accent);
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
   min-width: 0;
 }
 
@@ -417,7 +462,11 @@ body::before {
 
 .sidebar {
   width: 260px;
-  background: var(--surface);
+  background:
+    radial-gradient(140% 90% at 0% 0%, var(--menu-highlight), transparent 46%),
+    linear-gradient(160deg, var(--menu-accent-glow), transparent 60%),
+    var(--menu-glass);
+  border: 1px solid var(--glass-border);
   border-right: 1px solid var(--panel-border);
   padding: 30px 20px 28px;
   position: relative;
@@ -427,8 +476,9 @@ body::before {
   flex-direction: column;
   gap: 24px;
   -webkit-app-region: no-drag;
-  backdrop-filter: blur(26px) saturate(160%);
-  box-shadow: inset -1px 0 0 var(--panel-border), var(--shadow-soft);
+  backdrop-filter: blur(32px) saturate(185%);
+  -webkit-backdrop-filter: blur(32px) saturate(185%);
+  box-shadow: inset -1px 0 0 var(--panel-border), 0 22px 50px rgba(0, 0, 0, 0.28);
 }
 
 .sidebar-top {
@@ -475,27 +525,38 @@ nav {
   font-weight: 600;
   transition: transform 0.15s ease, box-shadow 0.2s ease, border-color 0.2s ease,
     background 0.2s ease;
-  border: 1px solid var(--panel-border);
+  border: 1px solid var(--glass-border);
   display: grid;
   grid-template-columns: auto auto 1fr auto;
   align-items: center;
   gap: 12px;
   -webkit-app-region: no-drag;
-  background: linear-gradient(120deg, rgba(255, 255, 255, 0.05), transparent),
-    var(--surface);
-  backdrop-filter: blur(18px);
+  background:
+    linear-gradient(135deg, var(--menu-highlight), transparent 60%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.06), transparent 70%),
+    var(--menu-glass-strong);
+  backdrop-filter: blur(22px) saturate(175%);
+  -webkit-backdrop-filter: blur(22px) saturate(175%);
   cursor: pointer;
   pointer-events: auto;
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 14px 34px rgba(0, 0, 0, 0.2);
 }
 
 .nav-link:hover {
   border-color: var(--iroha-accent);
   box-shadow: 0 14px 32px rgba(255, 76, 102, 0.25);
+  background:
+    linear-gradient(130deg, var(--menu-highlight), transparent 50%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.12), transparent 65%),
+    var(--menu-glass-strong);
   transform: translateY(-1px);
 }
 
 .nav-link.active {
-  background: linear-gradient(120deg, rgba(255, 76, 102, 0.14), rgba(255, 255, 255, 0.07));
+  background:
+    linear-gradient(125deg, var(--menu-accent-glow), transparent 55%),
+    linear-gradient(135deg, var(--menu-highlight), transparent 45%),
+    var(--menu-glass-strong);
   color: inherit;
   border-color: var(--iroha-accent);
   box-shadow: 0 16px 34px rgba(255, 76, 102, 0.3);
@@ -616,6 +677,14 @@ nav {
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--panel-border);
+  background:
+    linear-gradient(135deg, var(--menu-highlight), transparent 50%),
+    linear-gradient(140deg, var(--menu-accent-glow), transparent 55%),
+    var(--menu-glass);
+  border-radius: 0 0 18px 18px;
+  backdrop-filter: blur(20px) saturate(165%);
+  -webkit-backdrop-filter: blur(20px) saturate(165%);
+  box-shadow: 0 18px 42px var(--gi-ambient);
 }
 
 .workspace-header h1 {
@@ -667,6 +736,30 @@ main {
   margin: 0 auto;
 }
 
+.workspace-body {
+  position: relative;
+  isolation: isolate;
+}
+
+.workspace-body::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(65% 55% at 18% 22%, var(--menu-accent-glow), transparent 60%),
+    radial-gradient(60% 50% at 78% 18%, var(--menu-highlight), transparent 65%),
+    radial-gradient(75% 50% at 50% 78%, rgba(255, 255, 255, 0.08), transparent 70%);
+  filter: blur(42px);
+  opacity: 0.9;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.workspace-body > * {
+  position: relative;
+  z-index: 1;
+}
+
 .card-grid {
   display: grid;
   gap: 24px;
@@ -674,13 +767,41 @@ main {
 }
 
 .card {
-  background: var(--surface);
-  border: 1px solid var(--panel-border);
+  position: relative;
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 65%),
+    linear-gradient(120deg, var(--menu-highlight), transparent 45%),
+    var(--menu-glass-strong);
+  border: 1px solid var(--glass-border);
   border-radius: 26px;
   padding: 26px;
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-soft), 0 22px 60px var(--gi-ambient), 0 18px 44px var(--gi-accent);
   -webkit-app-region: no-drag;
-  backdrop-filter: blur(35px) saturate(180%);
+  backdrop-filter: blur(32px) saturate(185%);
+  -webkit-backdrop-filter: blur(32px) saturate(185%);
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  inset: -30% auto auto -10%;
+  width: 70%;
+  height: 70%;
+  background: radial-gradient(circle at 20% 20%, var(--glass-highlight), transparent 55%);
+  opacity: 0.35;
+  filter: blur(22px);
+  pointer-events: none;
+}
+
+.card::after {
+  content: '';
+  position: absolute;
+  inset: 1px 1px auto 1px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--glass-highlight), transparent);
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .card-header {
@@ -711,15 +832,19 @@ label {
 input,
 textarea,
 select {
-  background: var(--surface-soft);
-  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 60%),
+    var(--surface-soft);
+  border: 1px solid var(--glass-border);
   border-radius: 14px;
   padding: 12px 14px;
   color: inherit;
   font: inherit;
   transition: border-color 0.2s, box-shadow 0.2s;
   -webkit-app-region: no-drag;
-  backdrop-filter: blur(18px);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 12px 26px rgba(0, 0, 0, 0.14);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
 }
 
 input:focus,
@@ -868,8 +993,12 @@ button:not(.secondary):hover {
   gap: 4px;
   padding: 12px 14px;
   border-radius: 12px;
-  border: 1px solid var(--panel-border);
-  background: var(--surface-soft);
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(130deg, var(--glass-veil), transparent 65%),
+    var(--surface-soft);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
 
 .kv-label {
