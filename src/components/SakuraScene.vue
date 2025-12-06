@@ -119,18 +119,19 @@ const updatePetal = (petal: Petal, width: number, height: number, parallaxX: num
 
 const render = () => {
   const el = canvas.value
-  if (!ctx || !el) return
-  ctx.clearRect(0, 0, el.width, el.height)
+  const context = ctx
+  if (!context || !el) return
+  context.clearRect(0, 0, el.width, el.height)
   const parallaxX = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--parallax-x')) || 0
   const parallaxY = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--parallax-y')) || 0
   petals.forEach((petal) => {
     updatePetal(petal, el.width, el.height, parallaxX)
     const offsetX = parallaxX * 20 * (petal.stuck ? 0.2 : 1)
     const offsetY = parallaxY * 15 * (petal.stuck ? 0.3 : 1)
-    ctx.save()
-    ctx.translate(offsetX, offsetY)
+    context.save()
+    context.translate(offsetX, offsetY)
     drawPetal(petal)
-    ctx.restore()
+    context.restore()
   })
   frameId = requestAnimationFrame(render)
 }

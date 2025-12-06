@@ -28,10 +28,13 @@
           </div>
           <div class="status-chip" :class="{ 'chip-ready': session.hasAccount }">
             <span class="chip-label">Account</span>
-            <span class="chip-value">{{ session.user.accountId || 'Not created yet' }}</span>
-            <span class="chip-sub">{{ session.hasAccount ? 'Ready to transact' : 'Finish onboarding' }}</span>
+            <span class="chip-value">{{ activeAccountId || 'Not created yet' }}</span>
+            <span class="chip-sub">
+              {{ session.hasAccount ? `Active · ${session.accounts.length} saved` : 'Finish onboarding' }}
+            </span>
           </div>
         </div>
+        <AccountSwitcher />
         <button class="theme-toggle" @click="theme.toggle()">
           <span class="theme-dot" :class="theme.current"></span>
           <span>{{ theme.current === 'dark' ? 'Switch to light' : 'Switch to dark' }}</span>
@@ -71,6 +74,10 @@
         <p v-if="!session.hasAccount" class="nav-lock-hint">
           Complete account onboarding to unlock Setup, Wallet, Send, Receive, and Explorer.
         </p>
+        <div class="session-meta" v-if="activeAccountId">
+          <p class="meta-label">Active account</p>
+          <p class="meta-value">{{ activeAccountId }}</p>
+        </div>
         <div class="session-meta" v-if="session.connection.chainId">
           <p class="meta-label">Chain</p>
           <p class="meta-value">{{ session.connection.chainId }}</p>
@@ -101,6 +108,7 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
+import { computed } from 'vue'
 import { useSessionStore } from './stores/session'
 import { useThemeStore } from './stores/theme'
 import { onMounted, onBeforeUnmount } from 'vue'
@@ -110,6 +118,7 @@ import SendIcon from '@/assets/send.svg'
 import ReceiveIcon from '@/assets/receive.svg'
 import UserIcon from '@/assets/user.svg'
 import SakuraScene from '@/components/SakuraScene.vue'
+import AccountSwitcher from '@/components/AccountSwitcher.vue'
 
 const navItems = [
   {
@@ -153,12 +162,20 @@ const navItems = [
     step: '05'
   },
   {
+    to: '/offline',
+    label: 'Offline',
+    description: 'Offline wallets, invoices, and QR exchanges',
+    icon: SendIcon,
+    requiresAccount: true,
+    step: '06'
+  },
+  {
     to: '/explore',
     label: 'Explore',
     description: 'Network metrics and asset explorer',
     icon: WalletIcon,
     requiresAccount: true,
-    step: '06'
+    step: '07'
   }
 ]
 
@@ -166,6 +183,7 @@ const route = useRoute()
 const session = useSessionStore()
 const theme = useThemeStore()
 const logo = IrohaLogo
+const activeAccountId = computed(() => session.activeAccount?.accountId ?? '')
 const updateParallax = (event: PointerEvent) => {
   const x = ((event.clientX / window.innerWidth) - 0.5).toFixed(3)
   const y = ((event.clientY / window.innerHeight) - 0.5).toFixed(3)

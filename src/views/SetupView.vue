@@ -122,10 +122,22 @@ type PingState = 'idle' | 'ok' | 'error'
 const session = useSessionStore()
 
 const connectionForm = reactive({ ...session.connection })
-const userForm = reactive({ ...session.user })
+const emptyAccount = () => ({
+  displayName: '',
+  domain: 'wonderland',
+  accountId: '',
+  publicKeyHex: '',
+  privateKeyHex: '',
+  ih58: '',
+  compressed: '',
+  compressedWarning: ''
+})
+const userForm = reactive({ ...emptyAccount(), ...(session.activeAccount ?? {}) })
 const authorityForm = reactive({ ...session.authority })
 const metadataPlaceholder = '{\n  "nickname": "Alice"\n}'
-const metadataInput = ref(JSON.stringify({ nickname: session.user.displayName || '' }, null, 2))
+const metadataInput = ref(
+  JSON.stringify({ nickname: session.activeAccount?.displayName || '' }, null, 2)
+)
 
 const pingState = ref<PingState>('idle')
 const pingMessage = ref('')
@@ -141,9 +153,20 @@ watch(
 )
 
 watch(
-  () => session.user,
-  (value) => Object.assign(userForm, value),
+  () => session.activeAccount,
+  (value) => Object.assign(userForm, { ...emptyAccount(), ...(value ?? {}) }),
   { deep: true }
+)
+
+watch(
+  () => session.activeAccountId,
+  () => {
+    metadataInput.value = JSON.stringify(
+      { nickname: session.activeAccount?.displayName || '' },
+      null,
+      2
+    )
+  }
 )
 
 watch(
@@ -198,14 +221,17 @@ const metadataSchema = z
 
 const saveConnection = () => {
   session.updateConnection({ ...connectionForm })
+  session.persistState()
 }
 
 const saveUser = () => {
-  session.updateUser({ ...userForm })
+  session.updateActiveAccount({ ...userForm })
+  session.persistState()
 }
 
 const saveAuthority = () => {
   session.updateAuthority({ ...authorityForm })
+  session.persistState()
 }
 
 const handlePing = async () => {
@@ -274,6 +300,8 @@ const handleRegister = async () => {
       authorityAccountId: authorityForm.accountId,
       authorityPrivateKeyHex: authorityForm.privateKeyHex
     })
+    session.updateActiveAccount({ ...userForm })
+    session.persistState()
     registerMessage.value = `Submitted transaction ${result.hash}`
   } catch (error) {
     registerMessage.value = error instanceof Error ? error.message : String(error)

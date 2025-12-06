@@ -70,12 +70,26 @@ import { computed, onMounted, ref } from 'vue'
 import { fetchAccountAssets, fetchAccountTransactions } from '@/services/iroha'
 import { useSessionStore } from '@/stores/session'
 import type { AccountAssetsResponse, AccountTransactionsResponse } from '@/types/iroha'
-import { extractTransferInsight } from '@/utils/transactions'
+import { extractTransferInsight, type AccountTransactionLike } from '@/utils/transactions'
 
 const session = useSessionStore()
+const activeAccount = computed(() => session.activeAccount)
+
+type AccountTx = AccountTransactionsResponse['items'][number] &
+  AccountTransactionLike & {
+    entrypoint_hash?: string
+    timestamp_ms?: number
+    result_ok?: boolean
+  }
+
+type TransactionView = AccountTx & {
+  direction: string
+  amount: string | null
+  counterparty: string | null
+}
 
 const assets = ref<AccountAssetsResponse['items']>([])
-const transactionsRaw = ref<AccountTransactionsResponse['items']>([])
+const transactionsRaw = ref<AccountTx[]>([])
 const loading = ref(false)
 
 const formatDate = (timestamp?: number) => {
@@ -87,7 +101,7 @@ const formatDate = (timestamp?: number) => {
 }
 
 const refresh = async () => {
-  if (!session.hasAccount || !session.connection.toriiUrl) {
+  if (!session.hasAccount || !session.connection.toriiUrl || !activeAccount.value) {
     return
   }
   loading.value = true
@@ -95,17 +109,17 @@ const refresh = async () => {
     const [{ items: assetItems }, { items: txItems }] = await Promise.all([
       fetchAccountAssets({
         toriiUrl: session.connection.toriiUrl,
-        accountId: session.user.accountId,
+        accountId: activeAccount.value.accountId,
         limit: 50
       }),
       fetchAccountTransactions({
         toriiUrl: session.connection.toriiUrl,
-        accountId: session.user.accountId,
+        accountId: activeAccount.value.accountId,
         limit: 25
       })
     ])
     assets.value = assetItems
-    transactionsRaw.value = txItems
+    transactionsRaw.value = txItems as AccountTx[]
   } finally {
     loading.value = false
   }
@@ -125,9 +139,9 @@ const primaryAssetLabel = computed(() => {
 })
 const primaryAssetQuantity = computed(() => primaryAsset.value?.quantity ?? '0')
 
-const transactions = computed(() =>
+const transactions = computed<TransactionView[]>(() =>
   transactionsRaw.value.map((tx) => {
-    const insight = extractTransferInsight(tx, session.user.accountId)
+    const insight = extractTransferInsight(tx, activeAccount.value?.accountId ?? '')
     return {
       ...tx,
       direction: insight?.direction ?? '—',

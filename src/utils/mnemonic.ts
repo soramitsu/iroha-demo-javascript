@@ -21,7 +21,12 @@ export const generateMnemonicWords = (
   randomBytes?: (bytes: number) => Uint8Array
 ) => {
   const strength = WORD_COUNT_TO_STRENGTH[wordCount]
-  const words = generateMnemonic(wordlist, strength, randomBytes)
+  const generator = generateMnemonic as unknown as (
+    wl: string[],
+    strength?: number,
+    rng?: (bytes: number) => Uint8Array
+  ) => string
+  const words = generator(wordlist, strength, randomBytes)
   return words.trim().split(/\s+/)
 }
 

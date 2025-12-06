@@ -5,6 +5,7 @@ import SendView from '@/views/SendView.vue'
 import ReceiveView from '@/views/ReceiveView.vue'
 import ExploreView from '@/views/ExploreView.vue'
 import AccountSetupView from '@/views/AccountSetupView.vue'
+import OfflineView from '@/views/OfflineView.vue'
 import { useSessionStore } from '@/stores/session'
 
 const routes = [
@@ -59,6 +60,14 @@ const routes = [
       title: 'Explorer',
       subtitle: 'Network & asset insights'
     }
+  },
+  {
+    path: '/offline',
+    component: OfflineView,
+    meta: {
+      title: 'Offline',
+      subtitle: 'Offline wallets, invoices, and payments'
+    }
   }
 ]
 
@@ -71,9 +80,6 @@ router.beforeEach((to) => {
   const session = useSessionStore()
   if (!session.hasAccount && to.path !== '/account') {
     return '/account'
-  }
-  if (session.hasAccount && to.path === '/account') {
-    return '/setup'
   }
   return true
 })

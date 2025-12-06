@@ -7,8 +7,12 @@
       </header>
       <div v-if="metrics" class="grid-2">
         <div class="kv">
-          <span class="kv-label">Blocks Pending</span>
-          <span class="kv-value">{{ metrics.pendingBlocks ?? '—' }}</span>
+          <span class="kv-label">Block Height</span>
+          <span class="kv-value">{{ metrics.blockHeight ?? '—' }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Finalized Height</span>
+          <span class="kv-value">{{ metrics.finalizedBlockHeight ?? '—' }}</span>
         </div>
         <div class="kv">
           <span class="kv-label">Tx Accepted</span>
@@ -17,6 +21,26 @@
         <div class="kv">
           <span class="kv-label">Tx Rejected</span>
           <span class="kv-value">{{ metrics.transactionsRejected ?? '—' }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Peers</span>
+          <span class="kv-value">{{ metrics.peers ?? '—' }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Assets</span>
+          <span class="kv-value">{{ metrics.assets ?? '—' }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Avg Commit Time</span>
+          <span class="kv-value">{{ formatMs(metrics.averageCommitTimeMs) }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Avg Block Time</span>
+          <span class="kv-value">{{ formatMs(metrics.averageBlockTimeMs) }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Last Block At</span>
+          <span class="kv-value">{{ formatDate(metrics.blockCreatedAt) || '—' }}</span>
         </div>
       </div>
       <p v-else class="helper">Metrics unavailable. Check Torii status.</p>
@@ -36,14 +60,29 @@
 import { computed, onMounted, ref } from 'vue'
 import { getExplorerAccountQr, getExplorerMetrics } from '@/services/iroha'
 import { useSessionStore } from '@/stores/session'
+import type { ExplorerAccountQrResponse, ExplorerMetricsResponse } from '@/types/iroha'
 
 const session = useSessionStore()
-const metrics = ref<any | null>(null)
-const accountQr = ref<any | null>(null)
+const activeAccount = computed(() => session.activeAccount)
+const metrics = ref<ExplorerMetricsResponse | null>(null)
+const accountQr = ref<ExplorerAccountQrResponse | null>(null)
 const loading = ref(false)
 
+const formatDate = (value?: string | null) => {
+  if (!value) return ''
+  return new Intl.DateTimeFormat('en', { dateStyle: 'short', timeStyle: 'short' }).format(
+    new Date(value)
+  )
+}
+
+const formatMs = (value?: number | null) => {
+  if (!value || value <= 0) return '—'
+  if (value < 1000) return `${value} ms`
+  return `${(value / 1000).toFixed(2)} s`
+}
+
 const refresh = async () => {
-  if (!session.connection.toriiUrl || !session.hasAccount) {
+  if (!session.connection.toriiUrl || !session.hasAccount || !activeAccount.value) {
     return
   }
   loading.value = true
@@ -52,7 +91,7 @@ const refresh = async () => {
       getExplorerMetrics(session.connection.toriiUrl),
       getExplorerAccountQr({
         toriiUrl: session.connection.toriiUrl,
-        accountId: session.user.accountId
+        accountId: activeAccount.value.accountId
       })
     ])
     metrics.value = metricsPayload

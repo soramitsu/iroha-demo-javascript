@@ -3,6 +3,7 @@ import type {
   AccountAssetsResponse,
   AccountOnboardingResponse,
   AccountTransactionsResponse,
+  OfflineAllowanceResponse,
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
@@ -58,6 +59,15 @@ export const getExplorerAccountQr = (input: {
   toriiUrl: string
   accountId: string
 }): Promise<ExplorerAccountQrResponse> => bridge().getExplorerAccountQr(input)
+
+export const listOfflineAllowances = (input: {
+  toriiUrl: string
+  controllerId: string
+  addressFormat?: 'ih58' | 'canonical' | 'compressed'
+  limit?: number
+  offset?: number
+  filter?: string | Record<string, unknown>
+}): Promise<OfflineAllowanceResponse> => bridge().listOfflineAllowances(input)
 
 export const onboardAccount = (input: {
   toriiUrl: string

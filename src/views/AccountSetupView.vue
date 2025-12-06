@@ -7,6 +7,17 @@
           <p class="helper">Generate your account keys, store a recovery phrase, and register via Torii.</p>
         </div>
       </header>
+      <div class="registration-steps">
+        <div
+          v-for="item in registrationChecklist"
+          :key="item.label"
+          class="reg-step"
+          :class="{ done: item.done }"
+        >
+          <span class="reg-dot"></span>
+          <span>{{ item.label }}</span>
+        </div>
+      </div>
 
       <div class="form-grid">
         <label>
@@ -114,6 +125,41 @@
       </div>
       <p v-if="connectError" class="helper error">{{ connectError }}</p>
     </section>
+
+    <section class="card">
+      <header class="card-header">
+        <div>
+          <h2>Saved Accounts</h2>
+          <p class="helper">Switch between registered profiles or begin a fresh registration.</p>
+        </div>
+      </header>
+      <div v-if="session.accounts.length" class="account-roster">
+        <article v-for="account in session.accounts" :key="account.accountId" class="account-row">
+          <div>
+            <p class="account-name">{{ account.displayName || account.accountId }}</p>
+            <p class="helper monospace">{{ account.accountId }}</p>
+          </div>
+          <div class="account-actions">
+            <span class="pill" :class="{ positive: account.accountId === session.activeAccountId }">
+              {{ account.accountId === session.activeAccountId ? 'Active' : 'Available' }}
+            </span>
+            <button
+              class="secondary"
+              @click="setActiveAccount(account.accountId)"
+              :disabled="account.accountId === session.activeAccountId"
+            >
+              {{ account.accountId === session.activeAccountId ? 'Selected' : 'Switch to this account' }}
+            </button>
+          </div>
+        </article>
+      </div>
+      <p v-else class="helper">No saved accounts yet. Complete the registration form to add one.</p>
+      <div class="actions">
+        <button class="secondary" @click="startNewRegistration">
+          {{ hasSavedAccounts ? 'Register another account' : 'Begin registration' }}
+        </button>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -156,18 +202,71 @@ const saveConnection = () => {
   connectionMessage.value = 'Connection saved.'
 }
 
-const aliasInput = ref(session.user.displayName || '')
-const domainInput = ref(session.user.domain || 'wonderland')
+const aliasInput = ref(session.activeAccount?.displayName || '')
+const domainInput = ref(session.activeAccount?.domain || 'wonderland')
 const identityInput = ref('')
 const wordCount = ref<12 | 24>(24)
 const mnemonicWords = ref<string[]>([])
-const generatedKeys = ref<{ privateKeyHex: string; publicKeyHex: string; accountId: string } | null>(null)
+const generatedKeys = ref<{
+  privateKeyHex: string
+  publicKeyHex: string
+  accountId: string
+  ih58: string
+  compressed: string
+  compressedWarning: string
+} | null>(null)
 const backupConfirmed = ref(false)
 const generating = ref(false)
 const generateError = ref('')
 const onboardingError = ref('')
 const onboardingStatus = ref('')
 const onboardingBusy = ref(false)
+const hasSavedAccounts = computed(() => session.accounts.length > 0)
+const registrationChecklist = computed(() => [
+  {
+    label: 'Torii configured',
+    done: Boolean(connectionForm.toriiUrl && connectionForm.chainId)
+  },
+  {
+    label: 'Recovery phrase saved',
+    done: mnemonicWords.value.length > 0 && backupConfirmed.value
+  },
+  {
+    label: 'Account registered',
+    done: Boolean(onboardingStatus.value || session.hasAccount)
+  }
+])
+
+const startNewRegistration = () => {
+  aliasInput.value = ''
+  domainInput.value = 'wonderland'
+  identityInput.value = ''
+  mnemonicWords.value = []
+  generatedKeys.value = null
+  backupConfirmed.value = false
+  onboardingStatus.value = ''
+  onboardingError.value = ''
+}
+
+const setActiveAccount = (accountId: string) => {
+  session.setActiveAccount(accountId)
+  session.persistState()
+  const active = session.activeAccount
+  if (active) {
+    aliasInput.value = active.displayName
+    domainInput.value = active.domain
+  }
+}
+
+watch(
+  () => session.activeAccount,
+  (account) => {
+    if (!account) return
+    aliasInput.value = account.displayName
+    domainInput.value = account.domain
+  },
+  { deep: true }
+)
 
 const generateRecovery = async () => {
   generateError.value = ''
@@ -187,7 +286,10 @@ const generateRecovery = async () => {
     generatedKeys.value = {
       privateKeyHex,
       publicKeyHex,
-      accountId: summary.accountId
+      accountId: summary.accountId,
+      ih58: summary.ih58,
+      compressed: summary.compressed,
+      compressedWarning: summary.compressedWarning
     }
     backupConfirmed.value = false
   } catch (err) {
@@ -254,12 +356,15 @@ const registerGeneratedIdentity = async () => {
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId
     })
-    session.updateUser({
+    session.addAccount({
       displayName: aliasInput.value.trim(),
       domain: domainInput.value.trim() || 'wonderland',
       accountId: response.account_id,
       publicKeyHex: generatedKeys.value.publicKeyHex,
-      privateKeyHex: generatedKeys.value.privateKeyHex
+      privateKeyHex: generatedKeys.value.privateKeyHex,
+      ih58: generatedKeys.value.ih58,
+      compressed: generatedKeys.value.compressed,
+      compressedWarning: generatedKeys.value.compressedWarning
     })
     session.persistState()
     onboardingStatus.value = `Account ${response.account_id} queued (tx ${response.tx_hash_hex.slice(0, 12)}…)`
@@ -403,5 +508,69 @@ const resetConnect = () => {
 .monospace {
   font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
+}
+
+.registration-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.reg-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.reg-step.done {
+  border-color: rgba(255, 118, 118, 0.8);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.reg-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-border);
+}
+
+.reg-step.done .reg-dot {
+  background: var(--iroha-accent);
+  box-shadow: 0 0 0 3px rgba(255, 76, 102, 0.25);
+}
+
+.account-roster {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.account-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.account-name {
+  margin: 0 0 4px;
+  font-weight: 700;
+}
+
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

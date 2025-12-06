@@ -10,14 +10,14 @@
     <div v-if="showQr" class="qr-panel">
       <div v-if="qrMarkup" class="qr" v-html="qrMarkup"></div>
       <p v-else class="helper">{{ qrMessage }}</p>
-      <label v-if="session.user.accountId">
+      <label v-if="activeAccountId">
         Amount
         <input type="number" min="0" step="0.01" v-model="amount" @input="handleAmountChange" />
       </label>
     </div>
     <div class="kv" style="margin-top: 16px;">
       <span class="kv-label">IH58</span>
-      <span class="kv-value">{{ session.user.ih58 || 'Configure account first' }}</span>
+      <span class="kv-value">{{ activeIh58 || 'Configure account first' }}</span>
     </div>
     <p class="helper">
       {{
@@ -30,12 +30,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import QRCode from 'qrcode'
 import { useSessionStore } from '@/stores/session'
 import ReceiveIcon from '@/assets/receive.svg'
 
 const session = useSessionStore()
+const activeAccount = computed(() => session.activeAccount)
+const activeAccountId = computed(() => activeAccount.value?.accountId ?? '')
+const activeIh58 = computed(() => activeAccount.value?.ih58 ?? '')
 const qrMarkup = ref('')
 const qrMessage = ref('Tap the button to generate a QR.')
 const amount = ref('0')
@@ -43,14 +46,14 @@ const showQr = ref(false)
 const receiveIcon = ReceiveIcon
 
 const generateQr = async () => {
-  if (!session.user.accountId) {
+  if (!activeAccountId.value) {
     qrMarkup.value = ''
     qrMessage.value = 'Configure an account before generating QR codes.'
     return
   }
   qrMessage.value = 'Generating QR...'
   const payload = {
-    accountId: session.user.accountId,
+    accountId: activeAccountId.value,
     assetDefinitionId: session.connection.assetDefinitionId,
     amount: amount.value
   }
@@ -87,7 +90,7 @@ const handleAmountChange = () => {
 }
 
 watch(
-  () => [session.user.accountId, session.connection.assetDefinitionId],
+  () => [activeAccountId.value, session.connection.assetDefinitionId],
   () => {
     if (showQr.value) {
       generateQr()

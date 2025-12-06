@@ -45,6 +45,8 @@ type AssetsResponse = Awaited<ReturnType<ToriiClient['listAccountAssets']>>
 
 type TransactionsResponse = Awaited<ReturnType<ToriiClient['listAccountTransactions']>>
 
+type OfflineAllowanceResponse = Awaited<ReturnType<ToriiClient['listOfflineAllowances']>>
+
 type AccountOnboardingResponse = {
   account_id: string
   tx_hash_hex: string
@@ -96,6 +98,14 @@ type IrohaBridge = {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
+  listOfflineAllowances(input: {
+    toriiUrl: string
+    controllerId: string
+    addressFormat?: 'ih58' | 'canonical' | 'compressed'
+    limit?: number
+    offset?: number
+    filter?: string | Record<string, unknown>
+  }): Promise<OfflineAllowanceResponse>
   onboardAccount(input: {
     toriiUrl: string
     alias: string
@@ -244,6 +254,16 @@ const api: IrohaBridge = {
   getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl)
     return client.getExplorerAccountQr(normalizeAccountId(accountId, 'accountId'))
+  },
+  listOfflineAllowances({ toriiUrl, controllerId, addressFormat = 'ih58', limit, offset, filter }) {
+    const client = getClient(toriiUrl)
+    return client.listOfflineAllowances({
+      controllerId: normalizeAccountId(controllerId, 'controllerId'),
+      addressFormat,
+      limit,
+      offset,
+      filter
+    })
   },
   async onboardAccount({ toriiUrl, alias, accountId, identity }) {
     const baseUrl = normalizeBaseUrl(toriiUrl)

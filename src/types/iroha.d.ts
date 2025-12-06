@@ -15,22 +15,76 @@ export interface AccountAssetsResponse {
 }
 
 export interface AccountTransactionsResponse {
-  items: Array<Record<string, unknown>>
+  items: Array<AccountTransactionItem>
   total: number
   cursor?: string | null
 }
 
-export interface ExplorerMetricsResponse {
-  transactionsAccepted?: number
-  transactionsRejected?: number
-  pendingBlocks?: number
-  latestBlock?: Record<string, unknown>
+export interface AccountTransactionItem {
+  entrypoint_hash: string
+  result_ok: boolean
+  authority?: string
+  timestamp_ms?: number
   [key: string]: unknown
 }
 
+export type ToriiAddressFormat = 'ih58' | 'canonical' | 'compressed'
+
+export interface OfflineAllowanceItem {
+  certificate_id_hex: string
+  controller_id: string
+  controller_display: string
+  asset_id: string
+  registered_at_ms: number
+  expires_at_ms: number
+  policy_expires_at_ms: number
+  refresh_at_ms: number | null
+  verdict_id_hex: string | null
+  attestation_nonce_hex: string | null
+  remaining_amount: string
+  deadline_kind?: string | null
+  deadline_state?: string | null
+  deadline_ms?: number | null
+  deadline_ms_remaining?: number | null
+  record: Record<string, unknown>
+  integrity_metadata: {
+    policy: string
+    provisioned?: {
+      inspector_public_key: string
+      manifest_schema: string
+      manifest_version: number | null
+      max_manifest_age_ms: number | null
+      manifest_digest_hex: string | null
+    }
+  } | null
+}
+
+export interface OfflineAllowanceResponse {
+  items: OfflineAllowanceItem[]
+  total: number
+}
+
+export interface ExplorerMetricsResponse {
+  peers: number
+  domains: number
+  accounts: number
+  assets: number
+  transactionsAccepted: number
+  transactionsRejected: number
+  blockHeight: number
+  blockCreatedAt: string | null
+  finalizedBlockHeight: number
+  averageCommitTimeMs: number | null
+  averageBlockTimeMs: number | null
+}
+
 export interface ExplorerAccountQrResponse {
-  account_id: string
-  payload: string
+  canonicalId: string
+  literal: string
+  addressFormat: 'ih58' | 'compressed'
+  networkPrefix: number
+  errorCorrection: string
+  modules: number
 }
 
 export interface AccountOnboardingResponse {
@@ -94,6 +148,14 @@ export interface IrohaBridge {
     toriiUrl: string
     accountId: string
   }): Promise<ExplorerAccountQrResponse>
+  listOfflineAllowances(input: {
+    toriiUrl: string
+    controllerId: string
+    addressFormat?: ToriiAddressFormat
+    limit?: number
+    offset?: number
+    filter?: string | Record<string, unknown>
+  }): Promise<OfflineAllowanceResponse>
   onboardAccount(input: {
     toriiUrl: string
     alias: string
