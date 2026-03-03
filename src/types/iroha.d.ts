@@ -104,6 +104,93 @@ export interface ConnectPreview {
   appPrivateKeyHex: string;
 }
 
+export interface NexusLaneGovernanceSnapshot {
+  lane_id: number;
+  alias: string;
+  dataspace_id: number;
+  validator_ids: string[];
+  [key: string]: unknown;
+}
+
+export interface NexusDataspaceCommitmentSnapshot {
+  lane_id: number;
+  dataspace_id: number;
+  [key: string]: unknown;
+}
+
+export interface NexusSumeragiStatus {
+  lane_governance?: NexusLaneGovernanceSnapshot[];
+  dataspace_commitments?: NexusDataspaceCommitmentSnapshot[];
+  [key: string]: unknown;
+}
+
+export interface NexusStakingPolicy {
+  unbondingDelayMs: number;
+}
+
+export interface PublicLaneValidatorStatusView {
+  type: string;
+  activates_at_epoch: number | null;
+  reason: string | null;
+  releases_at_ms: number | null;
+  slash_id: string | null;
+}
+
+export interface PublicLaneValidatorRecordView {
+  lane_id: number;
+  validator: string;
+  stake_account: string;
+  total_stake: string;
+  self_stake: string;
+  status: PublicLaneValidatorStatusView;
+  activation_epoch: number | null;
+  activation_height: number | null;
+  last_reward_epoch: number | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PublicLaneValidatorsResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLaneValidatorRecordView[];
+}
+
+export interface PublicLaneUnbondingView {
+  request_id: string;
+  amount: string;
+  release_at_ms: number;
+}
+
+export interface PublicLaneStakeShareView {
+  lane_id: number;
+  validator: string;
+  staker: string;
+  bonded: string;
+  metadata: Record<string, unknown>;
+  pending_unbonds: PublicLaneUnbondingView[];
+}
+
+export interface PublicLaneStakeResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLaneStakeShareView[];
+}
+
+export interface PublicLanePendingRewardView {
+  lane_id: number;
+  account: string;
+  asset: string;
+  last_claimed_epoch: number;
+  pending_through_epoch: number;
+  amount: string;
+}
+
+export interface PublicLaneRewardsResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLanePendingRewardView[];
+}
+
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
@@ -181,6 +268,62 @@ export interface IrohaBridge {
     chainId: string;
     node?: string | null;
   }): Promise<ConnectPreview>;
+  getSumeragiStatus(config: { toriiUrl: string }): Promise<NexusSumeragiStatus>;
+  getNexusPublicLaneValidators(input: {
+    toriiUrl: string;
+    laneId: number;
+    addressFormat?: ToriiAddressFormat;
+  }): Promise<PublicLaneValidatorsResponseView>;
+  getNexusPublicLaneStake(input: {
+    toriiUrl: string;
+    laneId: number;
+    addressFormat?: ToriiAddressFormat;
+    validator?: string;
+  }): Promise<PublicLaneStakeResponseView>;
+  getNexusPublicLaneRewards(input: {
+    toriiUrl: string;
+    laneId: number;
+    account: string;
+    addressFormat?: ToriiAddressFormat;
+    assetId?: string;
+    uptoEpoch?: number;
+  }): Promise<PublicLaneRewardsResponseView>;
+  getNexusStakingPolicy(config: {
+    toriiUrl: string;
+  }): Promise<NexusStakingPolicy>;
+  bondPublicLaneStake(input: {
+    toriiUrl: string;
+    chainId: string;
+    stakeAccountId: string;
+    validator: string;
+    amount: string;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
+  schedulePublicLaneUnbond(input: {
+    toriiUrl: string;
+    chainId: string;
+    stakeAccountId: string;
+    validator: string;
+    amount: string;
+    requestId: string;
+    releaseAtMs: number;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
+  finalizePublicLaneUnbond(input: {
+    toriiUrl: string;
+    chainId: string;
+    stakeAccountId: string;
+    validator: string;
+    requestId: string;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
+  claimPublicLaneRewards(input: {
+    toriiUrl: string;
+    chainId: string;
+    stakeAccountId: string;
+    validator: string;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
 }
 
 declare global {

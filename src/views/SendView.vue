@@ -26,7 +26,10 @@
     <div class="form-grid">
       <label>
         Destination Account ID
-        <input v-model="form.destination" placeholder="ed0120...@wonderland" />
+        <input
+          v-model="form.destination"
+          placeholder="34m... or 0x...@wonderland"
+        />
       </label>
       <label>
         Amount

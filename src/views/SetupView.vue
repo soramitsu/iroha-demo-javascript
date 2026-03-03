@@ -240,7 +240,7 @@
           Authority Account ID
           <input
             v-model="authorityForm.accountId"
-            placeholder="ed0120..@wonderland"
+            placeholder="34m... or 0x...@wonderland"
           />
         </label>
         <label>

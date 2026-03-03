@@ -475,10 +475,10 @@ const registerGeneratedIdentity = async () => {
     session.addAccount({
       displayName: aliasInput.value.trim(),
       domain: domainInput.value.trim() || "wonderland",
-      accountId: response.account_id,
+      accountId: generatedKeys.value.accountId,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       privateKeyHex: generatedKeys.value.privateKeyHex,
-      ih58: generatedKeys.value.ih58,
+      ih58: generatedKeys.value.ih58 || response.account_id,
       compressed: generatedKeys.value.compressed,
       compressedWarning: generatedKeys.value.compressedWarning,
     });

@@ -2,6 +2,7 @@ import { contextBridge } from "electron";
 import {
   AccountAddress,
   ToriiClient,
+  buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
   generateKeyPair,
@@ -11,12 +12,20 @@ import {
   normalizeAssetId,
   bootstrapConnectPreviewSession,
   type ToriiAddressFormat,
+  type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
   normalizeBaseUrl,
   normalizeExplorerAccountQrPayload,
+  normalizePublicLaneRewardsPayload,
+  normalizePublicLaneStakePayload,
+  normalizePublicLaneValidatorsPayload,
+  readNexusUnbondingDelayMs,
   sanitizeFetchInit,
   type ExplorerAccountQrResponse,
+  type PublicLaneRewardsResponseView,
+  type PublicLaneStakeResponseView,
+  type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
 
 type HexString = string;
@@ -75,6 +84,63 @@ type ConnectPreviewResponse = {
   tokenWallet: string | null;
   appPublicKeyHex: string;
   appPrivateKeyHex: string;
+};
+
+type NexusStakingPolicyResponse = {
+  unbondingDelayMs: number;
+};
+
+type NexusPublicLaneBaseInput = {
+  toriiUrl: string;
+  laneId: number;
+  addressFormat?: ToriiAddressFormat;
+};
+
+type NexusPublicLaneStakeInput = NexusPublicLaneBaseInput & {
+  validator?: string;
+};
+
+type NexusPublicLaneRewardsInput = NexusPublicLaneBaseInput & {
+  account: string;
+  assetId?: string;
+  uptoEpoch?: number;
+};
+
+type BondPublicLaneStakeInput = {
+  toriiUrl: string;
+  chainId: string;
+  stakeAccountId: string;
+  validator: string;
+  amount: string;
+  privateKeyHex: HexString;
+};
+
+type SchedulePublicLaneUnbondInput = {
+  toriiUrl: string;
+  chainId: string;
+  stakeAccountId: string;
+  validator: string;
+  amount: string;
+  requestId: string;
+  releaseAtMs: number;
+  privateKeyHex: HexString;
+};
+
+type FinalizePublicLaneUnbondInput = {
+  toriiUrl: string;
+  chainId: string;
+  stakeAccountId: string;
+  validator: string;
+  requestId: string;
+  privateKeyHex: HexString;
+};
+
+type ClaimPublicLaneRewardsInput = {
+  toriiUrl: string;
+  chainId: string;
+  stakeAccountId: string;
+  validator: string;
+  privateKeyHex: HexString;
 };
 
 type IrohaBridge = {
@@ -144,6 +210,31 @@ type IrohaBridge = {
     chainId: string;
     node?: string | null;
   }): Promise<ConnectPreviewResponse>;
+  getSumeragiStatus(config: ToriiConfig): Promise<ToriiSumeragiStatus>;
+  getNexusPublicLaneValidators(
+    input: NexusPublicLaneBaseInput,
+  ): Promise<PublicLaneValidatorsResponseView>;
+  getNexusPublicLaneStake(
+    input: NexusPublicLaneStakeInput,
+  ): Promise<PublicLaneStakeResponseView>;
+  getNexusPublicLaneRewards(
+    input: NexusPublicLaneRewardsInput,
+  ): Promise<PublicLaneRewardsResponseView>;
+  getNexusStakingPolicy(
+    config: ToriiConfig,
+  ): Promise<NexusStakingPolicyResponse>;
+  bondPublicLaneStake(
+    input: BondPublicLaneStakeInput,
+  ): Promise<{ hash: string }>;
+  schedulePublicLaneUnbond(
+    input: SchedulePublicLaneUnbondInput,
+  ): Promise<{ hash: string }>;
+  finalizePublicLaneUnbond(
+    input: FinalizePublicLaneUnbondInput,
+  ): Promise<{ hash: string }>;
+  claimPublicLaneRewards(
+    input: ClaimPublicLaneRewardsInput,
+  ): Promise<{ hash: string }>;
 };
 
 const clientCache = new Map<string, ToriiClient>();
@@ -179,6 +270,126 @@ const hexToBuffer = (hex: string, label: string) => {
   return Buffer.from(normalized, "hex");
 };
 
+const normalizeLaneId = (laneId: number) => {
+  if (!Number.isInteger(laneId) || laneId < 0) {
+    throw new Error("laneId must be a non-negative integer.");
+  }
+  return laneId;
+};
+
+const normalizePositiveEpoch = (value: number, label: string) => {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative integer.`);
+  }
+  return value;
+};
+
+const normalizeAmount = (value: string, label: string) => {
+  const amount = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(amount)) {
+    throw new Error(`${label} must be a numeric string.`);
+  }
+  if (/^0+(\.0+)?$/.test(amount)) {
+    throw new Error(`${label} must be greater than zero.`);
+  }
+  return amount;
+};
+
+const normalizeRequestId = (value: string) => {
+  const requestId = value.trim();
+  if (!requestId) {
+    throw new Error("requestId must be a non-empty string.");
+  }
+  return requestId;
+};
+
+const normalizeReleaseAtMs = (value: number) => {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error("releaseAtMs must be a non-negative integer.");
+  }
+  return value;
+};
+
+const ensureObjectResponse = (
+  payload: unknown,
+  label: string,
+): Record<string, unknown> => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error(`${label} response must be a JSON object.`);
+  }
+  return payload as Record<string, unknown>;
+};
+
+const fetchJson = async (
+  endpoint: string,
+  label: string,
+): Promise<Record<string, unknown>> => {
+  const response = await fetch(endpoint, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail ||
+        `${label} request failed with status ${response.status} (${response.statusText})`,
+    );
+  }
+  const payload = (await response.json()) as unknown;
+  return ensureObjectResponse(payload, label);
+};
+
+const buildNexusEndpoint = (
+  toriiUrlRaw: string,
+  path: string,
+  query?: Record<string, string | number | undefined>,
+) => {
+  const baseUrl = normalizeBaseUrl(toriiUrlRaw);
+  const params = new URLSearchParams();
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === null) continue;
+      const encoded = String(value).trim();
+      if (!encoded) continue;
+      params.set(key, encoded);
+    }
+  }
+  return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
+};
+
+const submitInstructionTransaction = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  authorityAccountId: string;
+  privateKeyHex: string;
+  instruction: Record<string, unknown>;
+}) => {
+  const chainId = input.chainId.trim();
+  if (!chainId) {
+    throw new Error("chainId is required.");
+  }
+  const authority = normalizeAccountId(
+    input.authorityAccountId,
+    "stakeAccountId",
+  );
+  const tx = buildTransaction({
+    chainId,
+    authority,
+    instructions: [input.instruction],
+    privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
+  });
+  const submission = await submitSignedTransaction(
+    getClient(input.toriiUrl),
+    tx.signedTransaction,
+    {
+      waitForCommit: true,
+    },
+  );
+  return { hash: submission.hash };
+};
+
 const accountSummaryFromPublicKey = (
   domain: string,
   publicKeyHex: string,
@@ -194,8 +405,8 @@ const accountSummaryFromPublicKey = (
       .toUpperCase();
     const formats = address.displayFormats(networkPrefix);
     return {
-      accountId: `${canonicalAddressHex}@${domain}`,
-      publicKeyHex: canonicalAddressHex,
+      accountId: `0x${canonicalAddressHex}@${domain}`,
+      publicKeyHex: rawPublicKeyHex,
       ih58: formats.ih58,
       compressed: formats.compressed,
       compressedWarning: formats.compressedWarning,
@@ -208,7 +419,7 @@ const accountSummaryFromPublicKey = (
 
   return {
     accountId: `ed0120${rawPublicKeyHex}@${domain}`,
-    publicKeyHex: `ed0120${rawPublicKeyHex}`,
+    publicKeyHex: rawPublicKeyHex,
     ih58: "",
     compressed: "",
     compressedWarning: "Address formatting unavailable in this runtime.",
@@ -412,10 +623,33 @@ const api: IrohaBridge = {
       }),
     });
     if (!response.ok) {
-      const text = await response.text().catch(() => "");
+      const contentType = response.headers.get("content-type") ?? "";
+      let detail = "";
+      if (contentType.includes("application/json")) {
+        const payload = (await response.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null;
+        if (payload && typeof payload === "object") {
+          detail = String(
+            payload.detail ?? payload.message ?? payload.error ?? "",
+          ).trim();
+        }
+      } else {
+        const text = await response.text().catch(() => "");
+        // Filter binary-like responses to avoid leaking unreadable bytes to the UI.
+        const hasControlChars = Array.from(text).some((character) => {
+          const code = character.charCodeAt(0);
+          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
+        });
+        if (!hasControlChars) {
+          detail = text.trim();
+        }
+      }
       throw new Error(
-        text ||
-          `Onboarding failed with status ${response.status} (${response.statusText})`,
+        detail
+          ? `Onboarding failed with status ${response.status} (${response.statusText}): ${detail}`
+          : `Onboarding failed with status ${response.status} (${response.statusText})`,
       );
     }
     return (await response.json()) as AccountOnboardingResponse;
@@ -441,6 +675,178 @@ const api: IrohaBridge = {
       appPublicKeyHex: toHex(Buffer.from(preview.appKeyPair.publicKey)),
       appPrivateKeyHex: toHex(Buffer.from(preview.appKeyPair.privateKey)),
     };
+  },
+  getSumeragiStatus(config) {
+    const client = getClient(config.toriiUrl);
+    return client.getSumeragiStatusTyped();
+  },
+  async getNexusPublicLaneValidators({ toriiUrl, laneId, addressFormat }) {
+    const endpoint = buildNexusEndpoint(
+      toriiUrl,
+      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/validators`,
+      {
+        address_format: addressFormat,
+      },
+    );
+    const payload = await fetchJson(endpoint, "Public lane validators");
+    return normalizePublicLaneValidatorsPayload(payload);
+  },
+  async getNexusPublicLaneStake({
+    toriiUrl,
+    laneId,
+    addressFormat,
+    validator,
+  }) {
+    const endpoint = buildNexusEndpoint(
+      toriiUrl,
+      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/stake`,
+      {
+        address_format: addressFormat,
+        validator: validator
+          ? normalizeAccountId(validator, "validator")
+          : undefined,
+      },
+    );
+    const payload = await fetchJson(endpoint, "Public lane stake");
+    return normalizePublicLaneStakePayload(payload);
+  },
+  async getNexusPublicLaneRewards({
+    toriiUrl,
+    laneId,
+    addressFormat,
+    account,
+    assetId,
+    uptoEpoch,
+  }) {
+    const endpoint = buildNexusEndpoint(
+      toriiUrl,
+      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/rewards/pending`,
+      {
+        address_format: addressFormat,
+        account: normalizeAccountId(account, "account"),
+        asset_id: assetId,
+        upto_epoch:
+          uptoEpoch === undefined
+            ? undefined
+            : normalizePositiveEpoch(uptoEpoch, "uptoEpoch"),
+      },
+    );
+    const payload = await fetchJson(endpoint, "Public lane rewards");
+    return normalizePublicLaneRewardsPayload(payload);
+  },
+  async getNexusStakingPolicy(config) {
+    const client = getClient(config.toriiUrl);
+    const payload = await client.getConfiguration();
+    const configuration = ensureObjectResponse(payload, "Configuration");
+    return {
+      unbondingDelayMs: readNexusUnbondingDelayMs(configuration),
+    };
+  },
+  bondPublicLaneStake({
+    toriiUrl,
+    chainId,
+    stakeAccountId,
+    validator,
+    amount,
+    privateKeyHex,
+  }) {
+    const normalizedStakeAccount = normalizeAccountId(
+      stakeAccountId,
+      "stakeAccountId",
+    );
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedStakeAccount,
+      privateKeyHex,
+      instruction: {
+        BondPublicLaneStake: {
+          stake_account: normalizedStakeAccount,
+          validator: normalizeAccountId(validator, "validator"),
+          amount: normalizeAmount(amount, "amount"),
+        },
+      },
+    });
+  },
+  schedulePublicLaneUnbond({
+    toriiUrl,
+    chainId,
+    stakeAccountId,
+    validator,
+    amount,
+    requestId,
+    releaseAtMs,
+    privateKeyHex,
+  }) {
+    const normalizedStakeAccount = normalizeAccountId(
+      stakeAccountId,
+      "stakeAccountId",
+    );
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedStakeAccount,
+      privateKeyHex,
+      instruction: {
+        SchedulePublicLaneUnbond: {
+          stake_account: normalizedStakeAccount,
+          validator: normalizeAccountId(validator, "validator"),
+          amount: normalizeAmount(amount, "amount"),
+          request_id: normalizeRequestId(requestId),
+          release_at_ms: normalizeReleaseAtMs(releaseAtMs),
+        },
+      },
+    });
+  },
+  finalizePublicLaneUnbond({
+    toriiUrl,
+    chainId,
+    stakeAccountId,
+    validator,
+    requestId,
+    privateKeyHex,
+  }) {
+    const normalizedStakeAccount = normalizeAccountId(
+      stakeAccountId,
+      "stakeAccountId",
+    );
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedStakeAccount,
+      privateKeyHex,
+      instruction: {
+        FinalizePublicLaneUnbond: {
+          stake_account: normalizedStakeAccount,
+          validator: normalizeAccountId(validator, "validator"),
+          request_id: normalizeRequestId(requestId),
+        },
+      },
+    });
+  },
+  claimPublicLaneRewards({
+    toriiUrl,
+    chainId,
+    stakeAccountId,
+    validator,
+    privateKeyHex,
+  }) {
+    const normalizedStakeAccount = normalizeAccountId(
+      stakeAccountId,
+      "stakeAccountId",
+    );
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedStakeAccount,
+      privateKeyHex,
+      instruction: {
+        ClaimPublicLaneRewards: {
+          stake_account: normalizedStakeAccount,
+          validator: normalizeAccountId(validator, "validator"),
+        },
+      },
+    });
   },
 };
 

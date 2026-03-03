@@ -1,8 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  bondPublicLaneStake,
+  claimPublicLaneRewards,
   fetchAccountAssets,
   fetchAccountTransactions,
+  finalizePublicLaneUnbond,
   getExplorerAccountQr,
+  getNexusPublicLaneRewards,
+  getNexusPublicLaneStake,
+  getNexusPublicLaneValidators,
+  getNexusStakingPolicy,
+  getSumeragiStatus,
+  schedulePublicLaneUnbond,
 } from "@/services/iroha";
 
 describe("iroha services bridge", () => {
@@ -70,5 +79,115 @@ describe("iroha services bridge", () => {
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
     expect(result.addressFormat).toBe("ih58");
+  });
+
+  it("forwards staking bridge methods", async () => {
+    const getSumeragiStatusMock = vi
+      .fn()
+      .mockResolvedValue({ lane_governance: [] });
+    const getNexusPublicLaneValidatorsMock = vi
+      .fn()
+      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
+    const getNexusPublicLaneStakeMock = vi
+      .fn()
+      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
+    const getNexusPublicLaneRewardsMock = vi
+      .fn()
+      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
+    const getNexusStakingPolicyMock = vi
+      .fn()
+      .mockResolvedValue({ unbondingDelayMs: 60_000 });
+    const bondPublicLaneStakeMock = vi.fn().mockResolvedValue({ hash: "0x1" });
+    const schedulePublicLaneUnbondMock = vi
+      .fn()
+      .mockResolvedValue({ hash: "0x2" });
+    const finalizePublicLaneUnbondMock = vi
+      .fn()
+      .mockResolvedValue({ hash: "0x3" });
+    const claimPublicLaneRewardsMock = vi
+      .fn()
+      .mockResolvedValue({ hash: "0x4" });
+
+    (window as any).iroha = {
+      getSumeragiStatus: getSumeragiStatusMock,
+      getNexusPublicLaneValidators: getNexusPublicLaneValidatorsMock,
+      getNexusPublicLaneStake: getNexusPublicLaneStakeMock,
+      getNexusPublicLaneRewards: getNexusPublicLaneRewardsMock,
+      getNexusStakingPolicy: getNexusStakingPolicyMock,
+      bondPublicLaneStake: bondPublicLaneStakeMock,
+      schedulePublicLaneUnbond: schedulePublicLaneUnbondMock,
+      finalizePublicLaneUnbond: finalizePublicLaneUnbondMock,
+      claimPublicLaneRewards: claimPublicLaneRewardsMock,
+    };
+
+    const validatorsInput = {
+      toriiUrl: "http://localhost:8080",
+      laneId: 1,
+    };
+    const stakeInput = {
+      toriiUrl: "http://localhost:8080",
+      laneId: 1,
+      validator: "validator@wonderland",
+    };
+    const rewardsInput = {
+      toriiUrl: "http://localhost:8080",
+      laneId: 1,
+      account: "alice@wonderland",
+    };
+    const bondInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      stakeAccountId: "alice@wonderland",
+      validator: "validator@wonderland",
+      amount: "10",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const unbondInput = {
+      ...bondInput,
+      amount: "5",
+      requestId: "request-1",
+      releaseAtMs: 12345,
+    };
+    const finalizeInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      stakeAccountId: "alice@wonderland",
+      validator: "validator@wonderland",
+      requestId: "request-1",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const claimInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      stakeAccountId: "alice@wonderland",
+      validator: "validator@wonderland",
+      privateKeyHex: "aa".repeat(32),
+    };
+
+    await getSumeragiStatus("http://localhost:8080");
+    await getNexusPublicLaneValidators(validatorsInput);
+    await getNexusPublicLaneStake(stakeInput);
+    await getNexusPublicLaneRewards(rewardsInput);
+    await getNexusStakingPolicy("http://localhost:8080");
+    await bondPublicLaneStake(bondInput);
+    await schedulePublicLaneUnbond(unbondInput);
+    await finalizePublicLaneUnbond(finalizeInput);
+    await claimPublicLaneRewards(claimInput);
+
+    expect(getSumeragiStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
+    expect(getNexusPublicLaneValidatorsMock).toHaveBeenCalledWith(
+      validatorsInput,
+    );
+    expect(getNexusPublicLaneStakeMock).toHaveBeenCalledWith(stakeInput);
+    expect(getNexusPublicLaneRewardsMock).toHaveBeenCalledWith(rewardsInput);
+    expect(getNexusStakingPolicyMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
+    expect(bondPublicLaneStakeMock).toHaveBeenCalledWith(bondInput);
+    expect(schedulePublicLaneUnbondMock).toHaveBeenCalledWith(unbondInput);
+    expect(finalizePublicLaneUnbondMock).toHaveBeenCalledWith(finalizeInput);
+    expect(claimPublicLaneRewardsMock).toHaveBeenCalledWith(claimInput);
   });
 });

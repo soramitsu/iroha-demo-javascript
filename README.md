@@ -7,6 +7,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 - 🔑 Modern onboarding workflow to configure Torii, generate/restore keys, and compute canonical account IDs (IH58/compressed formats included).
 - 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
 - 📊 Wallet dashboard with live balances + decoded transaction directions.
+- 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
 - 📱 Receive tab with IH58 display + QR payloads, and Send tab with an optional camera scanner powered by ZXing.
 - 📡 Explorer tab surfacing `/v1/explorer` metrics and share-ready QR payloads.
 
@@ -114,7 +115,7 @@ Optional env vars:
 
 The preflight checks `GET /v1/health` first, then falls back to `GET /health` for localnet deployments.
 
-Read-only mode validates Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Subscriptions/Send/Receive/Offline/Explore (including Receive QR rendering).
+Read-only mode validates Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Subscriptions/Send/Receive/Offline/Explore (including Receive QR rendering).
 
 Stateful mode writes test onboarding records to the configured live Torii endpoint:
 
@@ -155,11 +156,12 @@ Useful overrides:
 ## Usage notes
 
 1. **Account setup** — first-run wizard for provisioning a SORA Nexus account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
-2. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (e.g. `ed0120…@wonderland`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
+2. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (for example `0x…@wonderland`, with IH58 shown after onboarding). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
-4. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.
-5. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
-6. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
+4. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
+5. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.
+6. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
+7. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
 
 ## Folder structure
 
@@ -185,6 +187,8 @@ All network calls go straight to Torii using the `ToriiClient` inside `@iroha/ir
 - `registerAccount` → `buildRegisterAccountAndTransferTransaction` + `/v1/pipeline/transactions`
 - `transferAsset` → `buildTransferAssetTransaction`
 - `fetchAccountAssets`, `fetchAccountTransactions`, `getExplorerMetrics`, `getExplorerAccountQr`
+- `getSumeragiStatus`, `getNexusPublicLaneValidators`, `getNexusPublicLaneStake`, `getNexusPublicLaneRewards`, `getNexusStakingPolicy`
+- `bondPublicLaneStake`, `schedulePublicLaneUnbond`, `finalizePublicLaneUnbond`, `claimPublicLaneRewards`
 
 A failing Torii call never crashes the renderer; errors bubble up as toast/status messages so users can retry after fixing connectivity or credentials.
 

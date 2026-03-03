@@ -330,6 +330,30 @@ async function runStatefulFlow(page) {
       `Stateful onboarding flow did not reach #/setup. UI errors: ${onboardingError || "none reported"}`,
     );
   }
+
+  const persistedAccountId = await page.evaluate(() => {
+    const raw = localStorage.getItem("iroha-demo:session");
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const activeAccountId = parsed?.activeAccountId ?? null;
+    if (!activeAccountId) {
+      return null;
+    }
+    const active = Array.isArray(parsed?.accounts)
+      ? parsed.accounts.find((entry) => entry?.accountId === activeAccountId)
+      : null;
+    return active?.accountId ?? activeAccountId;
+  });
+  if (
+    typeof persistedAccountId !== "string" ||
+    !persistedAccountId.includes("@")
+  ) {
+    throw new Error(
+      `Stateful onboarding persisted an ambiguous account id literal: ${String(persistedAccountId)}`,
+    );
+  }
 }
 
 async function runNavigationSmokeFlow(page) {
@@ -343,6 +367,11 @@ async function runNavigationSmokeFlow(page) {
       hash: "#/wallet",
       heading: "Wallet Overview",
       sectionText: "Balances",
+    },
+    {
+      hash: "#/staking",
+      heading: "NPOS Staking",
+      sectionText: "Nominate Validators",
     },
     {
       hash: "#/subscriptions",
@@ -393,6 +422,32 @@ async function runNavigationSmokeFlow(page) {
       state: "visible",
       timeout: 45_000,
     });
+
+    if (check.hash === "#/staking") {
+      const claimRewardsButton = page.getByRole("button", {
+        name: "Claim Rewards",
+        exact: true,
+      });
+      await claimRewardsButton.waitFor({
+        state: "visible",
+        timeout: 45_000,
+      });
+      const noRewardsMessage = page.getByText(
+        "No pending rewards for this lane/account.",
+        {
+          exact: true,
+        },
+      );
+      const noRewardsVisible = await noRewardsMessage
+        .waitFor({ state: "visible", timeout: 8_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (noRewardsVisible && !(await claimRewardsButton.isDisabled())) {
+        throw new Error(
+          "Expected Claim Rewards button to be disabled when no pending rewards are shown.",
+        );
+      }
+    }
   }
 
   // Ensure receive page still renders a QR payload in the hydrated account flow.
