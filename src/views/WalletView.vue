@@ -3,8 +3,8 @@
     <section class="card">
       <header class="card-header">
         <h2>Balances</h2>
-        <button class="secondary" @click="refresh" :disabled="loading">
-          {{ loading ? 'Refreshing…' : 'Refresh' }}
+        <button class="secondary" :disabled="loading" @click="refresh">
+          {{ loading ? "Refreshing…" : "Refresh" }}
         </button>
       </header>
       <div class="grid-2">
@@ -17,7 +17,7 @@
           <span class="kv-value">{{ primaryAssetQuantity }}</span>
         </div>
       </div>
-      <table class="table" v-if="assets.length">
+      <table v-if="assets.length" class="table">
         <thead>
           <tr>
             <th>Asset ID</th>
@@ -38,7 +38,7 @@
       <header class="card-header">
         <h2>Latest Transactions</h2>
       </header>
-      <table class="table" v-if="transactions.length">
+      <table v-if="transactions.length" class="table">
         <thead>
           <tr>
             <th>Time</th>
@@ -52,10 +52,10 @@
           <tr v-for="tx in transactions" :key="tx.entrypoint_hash">
             <td>{{ formatDate(tx.timestamp_ms) }}</td>
             <td>{{ tx.direction }}</td>
-            <td>{{ tx.amount ?? '—' }}</td>
-            <td>{{ tx.counterparty ?? '—' }}</td>
+            <td>{{ tx.amount ?? "—" }}</td>
+            <td>{{ tx.counterparty ?? "—" }}</td>
             <td :class="tx.result_ok ? 'status-pill ok' : 'status-pill error'">
-              {{ tx.result_ok ? 'Committed' : 'Rejected' }}
+              {{ tx.result_ok ? "Committed" : "Rejected" }}
             </td>
           </tr>
         </tbody>
@@ -66,90 +66,107 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { fetchAccountAssets, fetchAccountTransactions } from '@/services/iroha'
-import { useSessionStore } from '@/stores/session'
-import type { AccountAssetsResponse, AccountTransactionsResponse } from '@/types/iroha'
-import { extractTransferInsight, type AccountTransactionLike } from '@/utils/transactions'
+import { computed, onMounted, ref } from "vue";
+import { fetchAccountAssets, fetchAccountTransactions } from "@/services/iroha";
+import { useSessionStore } from "@/stores/session";
+import type {
+  AccountAssetsResponse,
+  AccountTransactionsResponse,
+} from "@/types/iroha";
+import {
+  extractTransferInsight,
+  type AccountTransactionLike,
+} from "@/utils/transactions";
 
-const session = useSessionStore()
-const activeAccount = computed(() => session.activeAccount)
+const session = useSessionStore();
+const activeAccount = computed(() => session.activeAccount);
 
-type AccountTx = AccountTransactionsResponse['items'][number] &
+type AccountTx = AccountTransactionsResponse["items"][number] &
   AccountTransactionLike & {
-    entrypoint_hash?: string
-    timestamp_ms?: number
-    result_ok?: boolean
-  }
+    entrypoint_hash?: string;
+    timestamp_ms?: number;
+    result_ok?: boolean;
+  };
 
 type TransactionView = AccountTx & {
-  direction: string
-  amount: string | null
-  counterparty: string | null
-}
+  direction: string;
+  amount: string | null;
+  counterparty: string | null;
+};
 
-const assets = ref<AccountAssetsResponse['items']>([])
-const transactionsRaw = ref<AccountTx[]>([])
-const loading = ref(false)
+const assets = ref<AccountAssetsResponse["items"]>([]);
+const transactionsRaw = ref<AccountTx[]>([]);
+const loading = ref(false);
 
 const formatDate = (timestamp?: number) => {
-  if (!timestamp) return '—'
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'short',
-    timeStyle: 'medium'
-  }).format(new Date(timestamp))
-}
+  if (!timestamp) return "—";
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "short",
+    timeStyle: "medium",
+  }).format(new Date(timestamp));
+};
 
 const refresh = async () => {
-  if (!session.hasAccount || !session.connection.toriiUrl || !activeAccount.value) {
-    return
+  if (
+    !session.hasAccount ||
+    !session.connection.toriiUrl ||
+    !activeAccount.value
+  ) {
+    return;
   }
-  loading.value = true
+  loading.value = true;
   try {
     const [{ items: assetItems }, { items: txItems }] = await Promise.all([
       fetchAccountAssets({
         toriiUrl: session.connection.toriiUrl,
         accountId: activeAccount.value.accountId,
-        limit: 50
+        limit: 50,
       }),
       fetchAccountTransactions({
         toriiUrl: session.connection.toriiUrl,
         accountId: activeAccount.value.accountId,
-        limit: 25
-      })
-    ])
-    assets.value = assetItems
-    transactionsRaw.value = txItems as AccountTx[]
+        limit: 25,
+      }),
+    ]);
+    assets.value = assetItems;
+    transactionsRaw.value = txItems as AccountTx[];
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 const primaryAsset = computed(() => {
-  const target = session.connection.assetDefinitionId
+  const target = session.connection.assetDefinitionId;
   if (!target) {
-    return null
+    return null;
   }
-  return assets.value.find((asset) => asset.asset_id.startsWith(target)) ?? null
-})
+  return (
+    assets.value.find((asset) => asset.asset_id.startsWith(target)) ?? null
+  );
+});
 
 const primaryAssetLabel = computed(() => {
-  const fallback = session.connection.assetDefinitionId || '—'
-  return primaryAsset.value?.asset_id ?? fallback
-})
-const primaryAssetQuantity = computed(() => primaryAsset.value?.quantity ?? '0')
+  const fallback = session.connection.assetDefinitionId || "—";
+  return primaryAsset.value?.asset_id ?? fallback;
+});
+const primaryAssetQuantity = computed(
+  () => primaryAsset.value?.quantity ?? "0",
+);
 
 const transactions = computed<TransactionView[]>(() =>
   transactionsRaw.value.map((tx) => {
-    const insight = extractTransferInsight(tx, activeAccount.value?.accountId ?? '')
+    const insight = extractTransferInsight(
+      tx,
+      activeAccount.value?.accountId ?? "",
+    );
     return {
       ...tx,
-      direction: insight?.direction ?? '—',
+      direction: insight?.direction ?? "—",
       amount: insight?.amount ?? null,
-      counterparty: insight?.counterparty ?? null
-    }
-  })
-)
+      counterparty: insight?.counterparty ?? null,
+    };
+  }),
+);
 
-onMounted(refresh)
+onMounted(refresh);
 </script>

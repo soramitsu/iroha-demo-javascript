@@ -1,87 +1,96 @@
-import { createRouter, createWebHashHistory } from 'vue-router'
-import SetupView from '@/views/SetupView.vue'
-import WalletView from '@/views/WalletView.vue'
-import SendView from '@/views/SendView.vue'
-import ReceiveView from '@/views/ReceiveView.vue'
-import ExploreView from '@/views/ExploreView.vue'
-import AccountSetupView from '@/views/AccountSetupView.vue'
-import OfflineView from '@/views/OfflineView.vue'
-import { useSessionStore } from '@/stores/session'
+import { createRouter, createWebHashHistory } from "vue-router";
+import SetupView from "@/views/SetupView.vue";
+import WalletView from "@/views/WalletView.vue";
+import SendView from "@/views/SendView.vue";
+import ReceiveView from "@/views/ReceiveView.vue";
+import ExploreView from "@/views/ExploreView.vue";
+import AccountSetupView from "@/views/AccountSetupView.vue";
+import OfflineView from "@/views/OfflineView.vue";
+import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
+import { useSessionStore } from "@/stores/session";
 
 const routes = [
   {
-    path: '/',
-    redirect: '/account'
+    path: "/",
+    redirect: "/account",
   },
   {
-    path: '/account',
+    path: "/account",
     component: AccountSetupView,
     meta: {
-      title: 'Account Setup',
-      subtitle: 'Provision your SORA Nexus account'
-    }
+      title: "Account Setup",
+      subtitle: "Provision your SORA Nexus account",
+    },
   },
   {
-    path: '/setup',
+    path: "/setup",
     component: SetupView,
     meta: {
-      title: 'Session Setup',
-      subtitle: 'Configure Torii & keys'
-    }
+      title: "Session Setup",
+      subtitle: "Configure Torii & keys",
+    },
   },
   {
-    path: '/wallet',
+    path: "/wallet",
     component: WalletView,
     meta: {
-      title: 'Wallet Overview',
-      subtitle: 'Balances & activity'
-    }
+      title: "Wallet Overview",
+      subtitle: "Balances & activity",
+    },
   },
   {
-    path: '/send',
+    path: "/subscriptions",
+    component: SubscriptionHubView,
+    meta: {
+      title: "Subscription Hub",
+      subtitle: "Auto-deduct and manage services",
+    },
+  },
+  {
+    path: "/send",
     component: SendView,
     meta: {
-      title: 'Send Points',
-      subtitle: 'Transfer assets via Torii'
-    }
+      title: "Send Points",
+      subtitle: "Transfer assets via Torii",
+    },
   },
   {
-    path: '/receive',
+    path: "/receive",
     component: ReceiveView,
     meta: {
-      title: 'Receive Points',
-      subtitle: 'Share QR or IH58'
-    }
+      title: "Receive Points",
+      subtitle: "Share QR or IH58",
+    },
   },
   {
-    path: '/explore',
+    path: "/explore",
     component: ExploreView,
     meta: {
-      title: 'Explorer',
-      subtitle: 'Network & asset insights'
-    }
+      title: "Explorer",
+      subtitle: "Network & asset insights",
+    },
   },
   {
-    path: '/offline',
+    path: "/offline",
     component: OfflineView,
     meta: {
-      title: 'Offline',
-      subtitle: 'Offline wallets, invoices, and payments'
-    }
-  }
-]
+      title: "Offline",
+      subtitle: "Offline wallets, invoices, and payments",
+    },
+  },
+];
 
 const router = createRouter({
   history: createWebHashHistory(),
-  routes
-})
+  routes,
+});
 
 router.beforeEach((to) => {
-  const session = useSessionStore()
-  if (!session.hasAccount && to.path !== '/account') {
-    return '/account'
+  const session = useSessionStore();
+  if (!session.hasAccount && to.path !== "/account") {
+    return "/account";
   }
-  return true
-})
+  return true;
+});
 
-export default router
+export default router;

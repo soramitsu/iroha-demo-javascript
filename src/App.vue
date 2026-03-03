@@ -18,26 +18,28 @@
         <div class="status-chips">
           <div class="status-chip">
             <span class="chip-label">Torii</span>
-            <span class="chip-value">{{ session.connection.toriiUrl ? 'Configured' : 'Not configured' }}</span>
-            <span class="chip-sub">{{ session.connection.toriiUrl || 'Add a Torii URL to begin' }}</span>
+            <span class="chip-value">{{
+              session.connection.toriiUrl ? "Configured" : "Not configured"
+            }}</span>
+            <span class="chip-sub">{{
+              session.connection.toriiUrl || "Add a Torii URL to begin"
+            }}</span>
           </div>
           <div class="status-chip">
             <span class="chip-label">Chain</span>
-            <span class="chip-value">{{ session.connection.chainId || 'Unknown' }}</span>
-            <span class="chip-sub">{{ session.connection.assetDefinitionId || 'Asset not set' }}</span>
-          </div>
-          <div class="status-chip" :class="{ 'chip-ready': session.hasAccount }">
-            <span class="chip-label">Account</span>
-            <span class="chip-value">{{ activeAccountId || 'Not created yet' }}</span>
-            <span class="chip-sub">
-              {{ session.hasAccount ? `Active · ${session.accounts.length} saved` : 'Finish onboarding' }}
-            </span>
+            <span class="chip-value">{{
+              session.connection.chainId || "Unknown"
+            }}</span>
+            <span class="chip-sub">{{
+              session.connection.assetDefinitionId || "Asset not set"
+            }}</span>
           </div>
         </div>
-        <AccountSwitcher />
         <button class="theme-toggle" @click="theme.toggle()">
           <span class="theme-dot" :class="theme.current"></span>
-          <span>{{ theme.current === 'dark' ? 'Switch to light' : 'Switch to dark' }}</span>
+          <span>{{
+            theme.current === "dark" ? "Switch to light" : "Switch to dark"
+          }}</span>
         </button>
       </div>
     </header>
@@ -46,7 +48,7 @@
         <div class="sidebar-top">
           <p class="nav-title">Navigate</p>
           <span class="nav-pill" :class="{ positive: session.hasAccount }">
-            {{ session.hasAccount ? 'Account ready' : 'Complete onboarding' }}
+            {{ session.hasAccount ? "Account ready" : "Complete onboarding" }}
           </span>
         </div>
         <nav>
@@ -55,8 +57,15 @@
             :key="item.to"
             :to="item.to"
             class="nav-link"
-            :class="{ active: route.path.startsWith(item.to), locked: item.requiresAccount && !session.hasAccount }"
-            :title="item.requiresAccount && !session.hasAccount ? 'Complete account setup first' : item.description"
+            :class="{
+              active: route.path.startsWith(item.to),
+              locked: item.requiresAccount && !session.hasAccount,
+            }"
+            :title="
+              item.requiresAccount && !session.hasAccount
+                ? 'Complete account setup first'
+                : item.description
+            "
             :aria-disabled="item.requiresAccount && !session.hasAccount"
             :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
           >
@@ -72,15 +81,40 @@
           </RouterLink>
         </nav>
         <p v-if="!session.hasAccount" class="nav-lock-hint">
-          Complete account onboarding to unlock Setup, Wallet, Send, Receive, and Explorer.
+          Complete account onboarding to unlock Setup, Wallet, Send, Receive,
+          and Explorer.
         </p>
-        <div class="session-meta" v-if="activeAccountId">
-          <p class="meta-label">Active account</p>
-          <p class="meta-value">{{ activeAccountId }}</p>
-        </div>
-        <div class="session-meta" v-if="session.connection.chainId">
-          <p class="meta-label">Chain</p>
-          <p class="meta-value">{{ session.connection.chainId }}</p>
+        <div class="sidebar-meta">
+          <AccountSwitcher />
+          <div v-if="session.hasAccount" class="session-meta">
+            <p class="meta-label">Active account</p>
+            <p class="meta-value">
+              {{
+                session.activeAccount?.displayName ||
+                session.activeAccount?.accountId ||
+                "Not created yet"
+              }}
+            </p>
+            <p class="helper meta-sub">
+              {{
+                session.accounts.length
+                  ? `${session.accounts.length} saved`
+                  : "No accounts saved yet"
+              }}
+            </p>
+          </div>
+          <div
+            v-if="session.connection.chainId || session.connection.toriiUrl"
+            class="session-meta"
+          >
+            <p class="meta-label">Connection</p>
+            <p class="meta-value">
+              {{ session.connection.chainId || "Chain unknown" }}
+            </p>
+            <p class="helper meta-sub">
+              {{ session.connection.toriiUrl || "Add a Torii URL to begin" }}
+            </p>
+          </div>
         </div>
       </aside>
       <section class="workspace">
@@ -90,11 +124,18 @@
             <h1>{{ route.meta.title }}</h1>
           </div>
           <div class="workspace-meta">
-            <span class="pill" :class="{ positive: !!session.connection.toriiUrl }">
-              {{ session.connection.toriiUrl ? 'Torii ready' : 'Add Torii endpoint' }}
+            <span
+              class="pill"
+              :class="{ positive: !!session.connection.toriiUrl }"
+            >
+              {{
+                session.connection.toriiUrl
+                  ? "Torii ready"
+                  : "Add Torii endpoint"
+              }}
             </span>
             <span class="pill" :class="{ positive: session.hasAccount }">
-              {{ session.hasAccount ? 'Account saved' : 'Onboarding required' }}
+              {{ session.hasAccount ? "Account saved" : "Onboarding required" }}
             </span>
           </div>
         </header>
@@ -107,95 +148,101 @@
 </template>
 
 <script setup lang="ts">
-import { useRoute } from 'vue-router'
-import { computed } from 'vue'
-import { useSessionStore } from './stores/session'
-import { useThemeStore } from './stores/theme'
-import { onMounted, onBeforeUnmount } from 'vue'
-import IrohaLogo from '@/assets/iroha_logo.svg'
-import WalletIcon from '@/assets/wallet.svg'
-import SendIcon from '@/assets/send.svg'
-import ReceiveIcon from '@/assets/receive.svg'
-import UserIcon from '@/assets/user.svg'
-import SakuraScene from '@/components/SakuraScene.vue'
-import AccountSwitcher from '@/components/AccountSwitcher.vue'
+import { useRoute } from "vue-router";
+import { useSessionStore } from "./stores/session";
+import { useThemeStore } from "./stores/theme";
+import { onMounted, onBeforeUnmount } from "vue";
+import IrohaLogo from "@/assets/iroha_logo.svg";
+import WalletIcon from "@/assets/wallet.svg";
+import SendIcon from "@/assets/send.svg";
+import ReceiveIcon from "@/assets/receive.svg";
+import UserIcon from "@/assets/user.svg";
+import SakuraScene from "@/components/SakuraScene.vue";
+import AccountSwitcher from "@/components/AccountSwitcher.vue";
 
 const navItems = [
   {
-    to: '/account',
-    label: 'Account Setup',
-    description: 'Generate keys, recovery phrase, Connect pairing',
+    to: "/account",
+    label: "Account Setup",
+    description: "Generate keys, recovery phrase, Connect pairing",
     icon: UserIcon,
     requiresAccount: false,
-    step: '01'
+    step: "01",
   },
   {
-    to: '/setup',
-    label: 'Session',
-    description: 'Configure Torii, chain, and authority keys',
+    to: "/setup",
+    label: "Session",
+    description: "Configure Torii, chain, and authority keys",
     icon: UserIcon,
     requiresAccount: true,
-    step: '02'
+    step: "02",
   },
   {
-    to: '/wallet',
-    label: 'Wallet',
-    description: 'Balances, assets, and latest transactions',
+    to: "/wallet",
+    label: "Wallet",
+    description: "Balances, assets, and latest transactions",
     icon: WalletIcon,
     requiresAccount: true,
-    step: '03'
+    step: "03",
   },
   {
-    to: '/send',
-    label: 'Send',
-    description: 'Transfer assets with camera or QR upload',
+    to: "/subscriptions",
+    label: "Subscriptions",
+    description: "Auto-deduct and manage recurring services",
+    icon: WalletIcon,
+    requiresAccount: true,
+    step: "04",
+  },
+  {
+    to: "/send",
+    label: "Send",
+    description: "Transfer assets with camera or QR upload",
     icon: SendIcon,
     requiresAccount: true,
-    step: '04'
+    step: "05",
   },
   {
-    to: '/receive',
-    label: 'Receive',
-    description: 'Share QR codes or IH58 to request funds',
+    to: "/receive",
+    label: "Receive",
+    description: "Share QR codes or IH58 to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
-    step: '05'
+    step: "06",
   },
   {
-    to: '/offline',
-    label: 'Offline',
-    description: 'Offline wallets, invoices, and QR exchanges',
+    to: "/offline",
+    label: "Offline",
+    description: "Offline wallets, invoices, and QR exchanges",
     icon: SendIcon,
     requiresAccount: true,
-    step: '06'
+    step: "07",
   },
   {
-    to: '/explore',
-    label: 'Explore',
-    description: 'Network metrics and asset explorer',
+    to: "/explore",
+    label: "Explore",
+    description: "Network metrics and asset explorer",
     icon: WalletIcon,
     requiresAccount: true,
-    step: '07'
-  }
-]
+    step: "08",
+  },
+];
 
-const route = useRoute()
-const session = useSessionStore()
-const theme = useThemeStore()
-const logo = IrohaLogo
-const activeAccountId = computed(() => session.activeAccount?.accountId ?? '')
+const route = useRoute();
+const session = useSessionStore();
+const theme = useThemeStore();
+const logo = IrohaLogo;
 const updateParallax = (event: PointerEvent) => {
-  const x = ((event.clientX / window.innerWidth) - 0.5).toFixed(3)
-  const y = ((event.clientY / window.innerHeight) - 0.5).toFixed(3)
-  document.documentElement.style.setProperty('--parallax-x', x)
-  document.documentElement.style.setProperty('--parallax-y', y)
-}
+  const x = (event.clientX / window.innerWidth - 0.5).toFixed(3);
+  const y = (event.clientY / window.innerHeight - 0.5).toFixed(3);
+  document.documentElement.style.setProperty("--parallax-x", x);
+  document.documentElement.style.setProperty("--parallax-y", y);
+};
 
 onMounted(() => {
-  window.addEventListener('pointermove', updateParallax, { passive: true })
-})
+  window.addEventListener("pointermove", updateParallax, { passive: true });
+});
 
 onBeforeUnmount(() => {
-  window.removeEventListener('pointermove', updateParallax)
-})
+  window.removeEventListener("pointermove", updateParallax);
+});
 </script>

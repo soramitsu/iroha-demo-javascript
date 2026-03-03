@@ -1,50 +1,51 @@
-import { resolve } from 'node:path'
-import { defineConfig } from 'electron-vite'
-import vue from '@vitejs/plugin-vue'
+import { resolve } from "node:path";
+import { defineConfig } from "electron-vite";
+import vue from "@vitejs/plugin-vue";
 
-const projectRoot = process.cwd()
-const resolveFromRoot = (...segments: string[]) => resolve(projectRoot, ...segments)
+const projectRoot = process.cwd();
+const resolveFromRoot = (...segments: string[]) =>
+  resolve(projectRoot, ...segments);
 
 export default defineConfig({
   main: {
     build: {
-      outDir: 'dist/main',
+      outDir: "dist/main",
       lib: {
-        entry: resolveFromRoot('electron/main.ts'),
-        formats: ['cjs']
+        entry: resolveFromRoot("electron/main.ts"),
+        formats: ["cjs"],
       },
       rollupOptions: {
-        external: ['electron'],
+        external: ["electron"],
         output: {
-          entryFileNames: 'index.cjs'
-        }
-      }
-    }
+          entryFileNames: "index.cjs",
+        },
+      },
+    },
   },
   preload: {
     build: {
-      outDir: 'dist/preload',
+      outDir: "dist/preload",
       rollupOptions: {
-        input: resolveFromRoot('electron/preload.ts')
-      }
-    }
+        input: resolveFromRoot("electron/preload.ts"),
+      },
+    },
   },
   renderer: {
-    root: resolveFromRoot('src'),
+    root: resolveFromRoot("src"),
     build: {
-      outDir: resolveFromRoot('dist/renderer'),
+      outDir: resolveFromRoot("dist/renderer"),
       rollupOptions: {
-        input: resolveFromRoot('src/index.html')
-      }
+        input: resolveFromRoot("src/index.html"),
+      },
     },
     resolve: {
       alias: {
-        '@': resolveFromRoot('src')
-      }
+        "@": resolveFromRoot("src"),
+      },
     },
     plugins: [vue()],
     server: {
-      port: 5173
-    }
-  }
-})
+      port: 5173,
+    },
+  },
+});

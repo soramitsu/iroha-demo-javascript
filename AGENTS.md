@@ -1,6 +1,6 @@
 # AGENT NOTES — iroha-demo-javascript
 
-Last updated: 2025-11-12
+Last updated: 2026-02-20
 
 ## Purpose
 Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Iroha SORA Nexus). The UI shows account onboarding, wallet balances, transfer/receive QR flows, and explorer metrics. Styling uses a glassmorphic theme with animated sakura particles. All code lives under plain Vite/Electron (no Nuxt). Pinia stores persist session and theme state in localStorage.
@@ -14,7 +14,10 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Iroha SORA 
 ## Tooling & Commands
 - **Dev**: `npm run dev` (electron-vite). Ensure `ELECTRON_RENDERER_URL` is set automatically by electron-vite.
 - **Tests**: `npm test` (Vitest + jsdom). Current suites cover session, theme, and transaction helper logic.
-- **Lint/Typecheck**: `npm run lint`, `npm run typecheck` (ESLint & vue-tsc) if needed.
+- **Lint/Typecheck**: `npm run lint`, `npm run typecheck` (renderer + Electron), plus `npm run typecheck:renderer` / `npm run typecheck:electron`.
+- **Verification bundles**: `npm run verify` (lint + typecheck + unit tests), `npm run verify:localnet` / `npm run verify:localnet:stateful` to include live Electron E2E against generated localnet. Use `npm run verify:localnet:all` to run read-only + stateful localnet E2E after one base verify pass.
+- **Live E2E**: `E2E_TORII_URL=<url> E2E_CHAIN_ID=<chain> npm run e2e:live` (strict live Torii reachability preflight, supports `/v1/health` and `/health`, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Subscriptions/Send/Receive/Offline). Optional write flow: `npm run e2e:live:stateful` (requires UAID onboarding enabled on the target Torii).
+- **Localnet E2E**: `npm run e2e:localnet` (auto-generates localnet and runs live E2E), `npm run e2e:localnet:stateful` for onboarding flow.
 
 ## File Map (high level)
 - `electron/main.ts` / `preload.ts`: window bootstrap + Torii bridge.
