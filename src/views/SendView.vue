@@ -5,7 +5,7 @@
       <div class="actions-row">
         <button class="icon-cta" @click="toggleScanner">
           <img :src="sendIcon" alt="" />
-          <span>{{ scanner.scanning ? 'Stop Scanner' : 'Scan QR Code' }}</span>
+          <span>{{ scanner.scanning ? "Stop Scanner" : "Scan QR Code" }}</span>
         </button>
         <button class="icon-cta secondary" @click="scanner.openFilePicker">
           <img :src="sendIcon" alt="" />
@@ -30,7 +30,7 @@
       </label>
       <label>
         Amount
-        <input type="number" min="0" step="0.01" v-model="form.quantity" />
+        <input v-model="form.quantity" type="number" min="0" step="0.01" />
       </label>
       <label>
         Memo (optional)
@@ -38,68 +38,69 @@
       </label>
     </div>
     <div class="actions">
-      <button @click="handleSend" :disabled="sending || !isValid">
-        {{ sending ? 'Submitting…' : 'Send' }}
+      <button :disabled="sending || !isValid" @click="handleSend">
+        {{ sending ? "Submitting…" : "Send" }}
       </button>
     </div>
-    <p v-if="scanMessage || scanner.message" class="helper">{{ scanMessage || scanner.message }}</p>
+    <p v-if="scanMessage || scanner.message" class="helper">
+      {{ scanMessage || scanner.message }}
+    </p>
     <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref, computed } from 'vue'
-import { transferAsset } from '@/services/iroha'
-import { useSessionStore } from '@/stores/session'
-import { useQrScanner } from '@/composables/useQrScanner'
-import SendIcon from '@/assets/send.svg'
+import { nextTick, reactive, ref, computed } from "vue";
+import { transferAsset } from "@/services/iroha";
+import { useSessionStore } from "@/stores/session";
+import { useQrScanner } from "@/composables/useQrScanner";
+import SendIcon from "@/assets/send.svg";
 
-const session = useSessionStore()
-const activeAccount = computed(() => session.activeAccount)
+const session = useSessionStore();
+const activeAccount = computed(() => session.activeAccount);
 const form = reactive({
-  destination: '',
-  quantity: '0',
-  memo: ''
-})
-const sending = ref(false)
-const statusMessage = ref('')
-const scanMessage = ref('')
+  destination: "",
+  quantity: "0",
+  memo: "",
+});
+const sending = ref(false);
+const statusMessage = ref("");
+const scanMessage = ref("");
 const scanner = useQrScanner((payload) => {
   try {
-    const parsed = JSON.parse(payload)
+    const parsed = JSON.parse(payload);
     if (parsed.accountId) {
-      form.destination = parsed.accountId
+      form.destination = parsed.accountId;
     }
     if (parsed.amount) {
-      form.quantity = String(parsed.amount)
+      form.quantity = String(parsed.amount);
     }
-    scanMessage.value = 'QR decoded successfully.'
+    scanMessage.value = "QR decoded successfully.";
   } catch (err) {
-    scanMessage.value = 'QR payload is invalid.'
-    console.warn('Invalid QR payload', err)
+    scanMessage.value = "QR payload is invalid.";
+    console.warn("Invalid QR payload", err);
   }
-})
-const sendIcon = SendIcon
+});
+const sendIcon = SendIcon;
 
-const isValid = computed(
-  () =>
-    Boolean(
-      session.hasAccount &&
-        activeAccount.value &&
-        session.connection.assetDefinitionId &&
-        Number(form.quantity) > 0 &&
-        form.destination
-    )
-)
+const isValid = computed(() =>
+  Boolean(
+    session.hasAccount &&
+      activeAccount.value &&
+      session.connection.assetDefinitionId &&
+      Number(form.quantity) > 0 &&
+      form.destination,
+  ),
+);
 
 const handleSend = async () => {
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
-    statusMessage.value = 'Configure Torii + account first.'
-    return
+    statusMessage.value = "Configure Torii + account first.";
+    return;
   }
-  const account = activeAccount.value
-  sending.value = true
-  statusMessage.value = ''
+  const account = activeAccount.value;
+  sending.value = true;
+  statusMessage.value = "";
   try {
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
@@ -109,22 +110,23 @@ const handleSend = async () => {
       destinationAccountId: form.destination,
       quantity: form.quantity,
       privateKeyHex: account.privateKeyHex,
-      metadata: form.memo ? { memo: form.memo } : undefined
-    })
-    statusMessage.value = `Transaction submitted: ${result.hash}`
+      metadata: form.memo ? { memo: form.memo } : undefined,
+    });
+    statusMessage.value = `Transaction submitted: ${result.hash}`;
   } catch (error) {
-    statusMessage.value = error instanceof Error ? error.message : String(error)
+    statusMessage.value =
+      error instanceof Error ? error.message : String(error);
   } finally {
-    sending.value = false
+    sending.value = false;
   }
-}
+};
 
 const toggleScanner = async () => {
-  scanMessage.value = ''
-  await nextTick()
-  scanner.message.value = ''
-  scanner.start()
-}
+  scanMessage.value = "";
+  await nextTick();
+  scanner.message.value = "";
+  scanner.start();
+};
 </script>
 
 <style scoped>

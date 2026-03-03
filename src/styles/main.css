@@ -405,6 +405,29 @@ body::before {
   line-height: 1.3;
 }
 
+.pill.inline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-soft);
+  color: inherit;
+  font-size: 0.8rem;
+}
+
+.pill.mini {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-soft);
+  color: inherit;
+  margin-left: 6px;
+}
+
 .chip-ready {
   border-color: var(--iroha-accent);
   box-shadow: 0 15px 35px rgba(255, 76, 76, 0.35);
@@ -632,8 +655,21 @@ nav {
   font-weight: 700;
 }
 
-.session-meta {
+.meta-sub {
+  margin: 4px 0 0;
+  color: var(--iroha-muted);
+  font-size: 0.82rem;
+}
+
+.sidebar-meta {
   margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.session-meta {
+  margin: 0;
   font-size: 0.85rem;
   color: var(--iroha-muted);
   padding: 12px 14px;
@@ -724,6 +760,24 @@ nav {
   color: var(--iroha-accent);
   border-color: var(--iroha-accent);
   background: rgba(255, 76, 102, 0.14);
+}
+
+.pill.warning {
+  color: #d97706;
+  border-color: rgba(217, 119, 6, 0.5);
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.pill.muted {
+  color: var(--iroha-muted);
+  border-color: var(--panel-border);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.pill.error {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.12);
 }
 
 .workspace-body,
@@ -881,6 +935,13 @@ button.secondary {
   border: 1px solid var(--panel-border);
 }
 
+button.ghost {
+  background: transparent;
+  color: var(--iroha-muted);
+  border: 1px dashed var(--panel-border);
+  box-shadow: none;
+}
+
 button:hover {
   transform: translateY(-1px);
   box-shadow: 0 8px 20px rgba(219, 7, 34, 0.25);
@@ -985,6 +1046,63 @@ button:not(.secondary):hover {
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.subscription-stack {
+  display: grid;
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.subscription-card {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 70%),
+    var(--menu-glass);
+  padding: 18px 22px;
+  box-shadow: var(--shadow-soft);
+}
+
+.subscription-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.subscription-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.subscription-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--iroha-muted);
+}
+
+.subscription-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.subscription-actions button {
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+}
+
+.subscription-note {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--iroha-muted);
 }
 
 .kv {
