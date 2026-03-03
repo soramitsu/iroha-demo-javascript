@@ -4,6 +4,114 @@ export type ExplorerAccountQrResponse = Awaited<
   ReturnType<ToriiClient["getExplorerAccountQr"]>
 >;
 
+export interface PublicLaneValidatorStatusView {
+  type: string;
+  activates_at_epoch: number | null;
+  reason: string | null;
+  releases_at_ms: number | null;
+  slash_id: string | null;
+}
+
+export interface PublicLaneValidatorRecordView {
+  lane_id: number;
+  validator: string;
+  stake_account: string;
+  total_stake: string;
+  self_stake: string;
+  status: PublicLaneValidatorStatusView;
+  activation_epoch: number | null;
+  activation_height: number | null;
+  last_reward_epoch: number | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PublicLaneValidatorsResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLaneValidatorRecordView[];
+}
+
+export interface PublicLaneUnbondingView {
+  request_id: string;
+  amount: string;
+  release_at_ms: number;
+}
+
+export interface PublicLaneStakeShareView {
+  lane_id: number;
+  validator: string;
+  staker: string;
+  bonded: string;
+  metadata: Record<string, unknown>;
+  pending_unbonds: PublicLaneUnbondingView[];
+}
+
+export interface PublicLaneStakeResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLaneStakeShareView[];
+}
+
+export interface PublicLanePendingRewardView {
+  lane_id: number;
+  account: string;
+  asset: string;
+  last_claimed_epoch: number;
+  pending_through_epoch: number;
+  amount: string;
+}
+
+export interface PublicLaneRewardsResponseView {
+  lane_id: number;
+  total: number;
+  items: PublicLanePendingRewardView[];
+}
+
+const toRecord = (value: unknown, label: string): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+};
+
+const toPositiveInteger = (value: unknown, label: string) => {
+  const numberValue =
+    typeof value === "string" && value.trim().length
+      ? Number(value)
+      : Number(value);
+  if (!Number.isFinite(numberValue) || numberValue < 0) {
+    throw new Error(`${label} must be a non-negative integer.`);
+  }
+  return Math.floor(numberValue);
+};
+
+const toNullableInteger = (value: unknown) => {
+  if (value === null || value === undefined || value === "") return null;
+  return toPositiveInteger(value, "numeric field");
+};
+
+const toStringValue = (value: unknown, label: string) => {
+  const out = String(value ?? "").trim();
+  if (!out) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return out;
+};
+
+const toMetadataRecord = (value: unknown) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+};
+
+const toArray = (value: unknown, label: string): unknown[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value;
+};
+
 export const normalizeBaseUrl = (url: string) => {
   const trimmed = url.trim().replace(/\/$/, "");
   if (!trimmed.startsWith("http")) {
@@ -44,6 +152,202 @@ export const normalizeExplorerAccountQrPayload = (
     qrVersion,
     svg,
   };
+};
+
+export const normalizePublicLaneValidatorsPayload = (
+  payload: Record<string, unknown>,
+): PublicLaneValidatorsResponseView => {
+  const laneId = toPositiveInteger(
+    payload.lane_id ?? payload.laneId,
+    "validators.lane_id",
+  );
+  const total = toPositiveInteger(payload.total ?? 0, "validators.total");
+  const rawItems = toArray(payload.items ?? [], "validators.items");
+
+  const items: PublicLaneValidatorRecordView[] = rawItems.map(
+    (raw, index): PublicLaneValidatorRecordView => {
+      const item = toRecord(raw, `validators.items[${index}]`);
+      const statusRecord = toRecord(
+        item.status ?? {},
+        `validators.items[${index}].status`,
+      );
+      return {
+        lane_id: toPositiveInteger(
+          item.lane_id ?? item.laneId ?? laneId,
+          `validators.items[${index}].lane_id`,
+        ),
+        validator: toStringValue(
+          item.validator,
+          `validators.items[${index}].validator`,
+        ),
+        stake_account: toStringValue(
+          item.stake_account ?? item.stakeAccount,
+          `validators.items[${index}].stake_account`,
+        ),
+        total_stake: toStringValue(
+          item.total_stake ?? item.totalStake,
+          `validators.items[${index}].total_stake`,
+        ),
+        self_stake: toStringValue(
+          item.self_stake ?? item.selfStake,
+          `validators.items[${index}].self_stake`,
+        ),
+        status: {
+          type: toStringValue(
+            statusRecord.type,
+            `validators.items[${index}].status.type`,
+          ),
+          activates_at_epoch: toNullableInteger(
+            statusRecord.activates_at_epoch ?? statusRecord.activatesAtEpoch,
+          ),
+          reason:
+            statusRecord.reason === null || statusRecord.reason === undefined
+              ? null
+              : String(statusRecord.reason),
+          releases_at_ms: toNullableInteger(
+            statusRecord.releases_at_ms ?? statusRecord.releasesAtMs,
+          ),
+          slash_id:
+            statusRecord.slash_id === null ||
+            statusRecord.slash_id === undefined
+              ? null
+              : String(statusRecord.slash_id),
+        },
+        activation_epoch: toNullableInteger(
+          item.activation_epoch ?? item.activationEpoch,
+        ),
+        activation_height: toNullableInteger(
+          item.activation_height ?? item.activationHeight,
+        ),
+        last_reward_epoch: toNullableInteger(
+          item.last_reward_epoch ?? item.lastRewardEpoch,
+        ),
+        metadata: toMetadataRecord(item.metadata),
+      };
+    },
+  );
+
+  return {
+    lane_id: laneId,
+    total,
+    items,
+  };
+};
+
+export const normalizePublicLaneStakePayload = (
+  payload: Record<string, unknown>,
+): PublicLaneStakeResponseView => {
+  const laneId = toPositiveInteger(
+    payload.lane_id ?? payload.laneId,
+    "stake.lane_id",
+  );
+  const total = toPositiveInteger(payload.total ?? 0, "stake.total");
+  const rawItems = toArray(payload.items ?? [], "stake.items");
+
+  const items: PublicLaneStakeShareView[] = rawItems.map((raw, index) => {
+    const item = toRecord(raw, `stake.items[${index}]`);
+    const rawUnbonds = toArray(
+      item.pending_unbonds ?? item.pendingUnbonds ?? [],
+      `stake.items[${index}].pending_unbonds`,
+    );
+    const pending_unbonds: PublicLaneUnbondingView[] = rawUnbonds.map(
+      (unbondRaw, unbondIndex) => {
+        const unbond = toRecord(
+          unbondRaw,
+          `stake.items[${index}].pending_unbonds[${unbondIndex}]`,
+        );
+        return {
+          request_id: toStringValue(
+            unbond.request_id ?? unbond.requestId,
+            `stake.items[${index}].pending_unbonds[${unbondIndex}].request_id`,
+          ),
+          amount: toStringValue(
+            unbond.amount,
+            `stake.items[${index}].pending_unbonds[${unbondIndex}].amount`,
+          ),
+          release_at_ms: toPositiveInteger(
+            unbond.release_at_ms ?? unbond.releaseAtMs,
+            `stake.items[${index}].pending_unbonds[${unbondIndex}].release_at_ms`,
+          ),
+        };
+      },
+    );
+
+    return {
+      lane_id: toPositiveInteger(
+        item.lane_id ?? item.laneId ?? laneId,
+        `stake.items[${index}].lane_id`,
+      ),
+      validator: toStringValue(
+        item.validator,
+        `stake.items[${index}].validator`,
+      ),
+      staker: toStringValue(item.staker, `stake.items[${index}].staker`),
+      bonded: toStringValue(item.bonded, `stake.items[${index}].bonded`),
+      metadata: toMetadataRecord(item.metadata),
+      pending_unbonds,
+    };
+  });
+
+  return {
+    lane_id: laneId,
+    total,
+    items,
+  };
+};
+
+export const normalizePublicLaneRewardsPayload = (
+  payload: Record<string, unknown>,
+): PublicLaneRewardsResponseView => {
+  const laneId = toPositiveInteger(
+    payload.lane_id ?? payload.laneId,
+    "rewards.lane_id",
+  );
+  const total = toPositiveInteger(payload.total ?? 0, "rewards.total");
+  const rawItems = toArray(payload.items ?? [], "rewards.items");
+
+  const items: PublicLanePendingRewardView[] = rawItems.map((raw, index) => {
+    const item = toRecord(raw, `rewards.items[${index}]`);
+    return {
+      lane_id: toPositiveInteger(
+        item.lane_id ?? item.laneId ?? laneId,
+        `rewards.items[${index}].lane_id`,
+      ),
+      account: toStringValue(item.account, `rewards.items[${index}].account`),
+      asset: toStringValue(item.asset, `rewards.items[${index}].asset`),
+      last_claimed_epoch: toPositiveInteger(
+        item.last_claimed_epoch ?? item.lastClaimedEpoch,
+        `rewards.items[${index}].last_claimed_epoch`,
+      ),
+      pending_through_epoch: toPositiveInteger(
+        item.pending_through_epoch ?? item.pendingThroughEpoch,
+        `rewards.items[${index}].pending_through_epoch`,
+      ),
+      amount: toStringValue(item.amount, `rewards.items[${index}].amount`),
+    };
+  });
+
+  return {
+    lane_id: laneId,
+    total,
+    items,
+  };
+};
+
+export const readNexusUnbondingDelayMs = (
+  payload: Record<string, unknown>,
+): number => {
+  const root = toRecord(payload, "configuration");
+  const nexus = toRecord(root.nexus ?? {}, "configuration.nexus");
+  const staking = toRecord(nexus.staking ?? {}, "configuration.nexus.staking");
+  const raw =
+    staking.unbonding_delay_ms ??
+    staking.unbondingDelayMs ??
+    staking.unbonding_delay;
+  return toPositiveInteger(
+    raw,
+    "configuration.nexus.staking.unbonding_delay_ms",
+  );
 };
 
 export const sanitizeFetchHeaders = (

@@ -3,11 +3,16 @@ import type {
   AccountAssetsResponse,
   AccountOnboardingResponse,
   AccountTransactionsResponse,
-  OfflineAllowanceResponse,
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
   IrohaBridge,
+  NexusStakingPolicy,
+  NexusSumeragiStatus,
+  OfflineAllowanceResponse,
+  PublicLaneRewardsResponseView,
+  PublicLaneStakeResponseView,
+  PublicLaneValidatorsResponseView,
   ToriiHealth,
 } from "@/types/iroha";
 
@@ -76,3 +81,42 @@ export const createConnectPreview = (input: {
   chainId: string;
   node?: string | null;
 }): Promise<ConnectPreview> => bridge().createConnectPreview(input);
+
+export const getSumeragiStatus = (
+  toriiUrl: string,
+): Promise<NexusSumeragiStatus> => bridge().getSumeragiStatus({ toriiUrl });
+
+export const getNexusPublicLaneValidators = (
+  input: Parameters<IrohaBridge["getNexusPublicLaneValidators"]>[0],
+): Promise<PublicLaneValidatorsResponseView> =>
+  bridge().getNexusPublicLaneValidators(input);
+
+export const getNexusPublicLaneStake = (
+  input: Parameters<IrohaBridge["getNexusPublicLaneStake"]>[0],
+): Promise<PublicLaneStakeResponseView> =>
+  bridge().getNexusPublicLaneStake(input);
+
+export const getNexusPublicLaneRewards = (
+  input: Parameters<IrohaBridge["getNexusPublicLaneRewards"]>[0],
+): Promise<PublicLaneRewardsResponseView> =>
+  bridge().getNexusPublicLaneRewards(input);
+
+export const getNexusStakingPolicy = (
+  toriiUrl: string,
+): Promise<NexusStakingPolicy> => bridge().getNexusStakingPolicy({ toriiUrl });
+
+export const bondPublicLaneStake = (
+  input: Parameters<IrohaBridge["bondPublicLaneStake"]>[0],
+) => bridge().bondPublicLaneStake(input);
+
+export const schedulePublicLaneUnbond = (
+  input: Parameters<IrohaBridge["schedulePublicLaneUnbond"]>[0],
+) => bridge().schedulePublicLaneUnbond(input);
+
+export const finalizePublicLaneUnbond = (
+  input: Parameters<IrohaBridge["finalizePublicLaneUnbond"]>[0],
+) => bridge().finalizePublicLaneUnbond(input);
+
+export const claimPublicLaneRewards = (
+  input: Parameters<IrohaBridge["claimPublicLaneRewards"]>[0],
+) => bridge().claimPublicLaneRewards(input);

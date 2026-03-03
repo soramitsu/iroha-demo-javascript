@@ -81,8 +81,8 @@
           </RouterLink>
         </nav>
         <p v-if="!session.hasAccount" class="nav-lock-hint">
-          Complete account onboarding to unlock Setup, Wallet, Send, Receive,
-          and Explorer.
+          Complete account onboarding to unlock Setup, Wallet, Staking, Send,
+          Receive, Offline, and Explorer.
         </p>
         <div class="sidebar-meta">
           <AccountSwitcher />
@@ -186,12 +186,20 @@ const navItems = [
     step: "03",
   },
   {
+    to: "/staking",
+    label: "Staking",
+    description: "Nominate validators and stake XOR for NPOS",
+    icon: WalletIcon,
+    requiresAccount: true,
+    step: "04",
+  },
+  {
     to: "/subscriptions",
     label: "Subscriptions",
     description: "Auto-deduct and manage recurring services",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "04",
+    step: "05",
   },
   {
     to: "/send",
@@ -199,7 +207,7 @@ const navItems = [
     description: "Transfer assets with camera or QR upload",
     icon: SendIcon,
     requiresAccount: true,
-    step: "05",
+    step: "06",
   },
   {
     to: "/receive",
@@ -207,7 +215,7 @@ const navItems = [
     description: "Share QR codes or IH58 to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
-    step: "06",
+    step: "07",
   },
   {
     to: "/offline",
@@ -215,7 +223,7 @@ const navItems = [
     description: "Offline wallets, invoices, and QR exchanges",
     icon: SendIcon,
     requiresAccount: true,
-    step: "07",
+    step: "08",
   },
   {
     to: "/explore",
@@ -223,7 +231,7 @@ const navItems = [
     description: "Network metrics and asset explorer",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "08",
+    step: "09",
   },
 ];
 

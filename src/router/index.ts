@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import SetupView from "@/views/SetupView.vue";
 import WalletView from "@/views/WalletView.vue";
+import StakingView from "@/views/StakingView.vue";
 import SendView from "@/views/SendView.vue";
 import ReceiveView from "@/views/ReceiveView.vue";
 import ExploreView from "@/views/ExploreView.vue";
@@ -36,6 +37,14 @@ const routes = [
     meta: {
       title: "Wallet Overview",
       subtitle: "Balances & activity",
+    },
+  },
+  {
+    path: "/staking",
+    component: StakingView,
+    meta: {
+      title: "NPOS Staking",
+      subtitle: "Nominate validators and stake XOR",
     },
   },
   {

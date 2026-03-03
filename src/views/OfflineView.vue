@@ -273,7 +273,7 @@
           Destination Account
           <input
             v-model="onlineForm.receiver"
-            placeholder="ed0120...@wonderland"
+            placeholder="34m... or 0x...@wonderland"
           />
         </label>
         <label>
