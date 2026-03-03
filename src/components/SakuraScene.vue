@@ -18,6 +18,7 @@ interface Petal {
   rotation: number;
   rotationSpeed: number;
   sway: number;
+  flutterPhase: number;
   stuck: boolean;
   stickSide: "left" | "right" | null;
 }
@@ -26,11 +27,10 @@ let ctx: CanvasRenderingContext2D | null = null;
 let petals: Petal[] = [];
 let frameId = 0;
 const MAX_PETALS = 55;
-
 const petalColor = () =>
   theme.current === "dark"
-    ? ["rgba(255, 204, 218, 0.9)", "rgba(255, 162, 196, 0.7)"]
-    : ["rgba(255, 186, 205, 0.95)", "rgba(255, 223, 235, 0.8)"];
+    ? "rgba(252, 181, 212, 0.9)"
+    : "rgba(247, 166, 198, 0.92)";
 
 const createPetal = (width: number, height: number): Petal => ({
   x: Math.random() * width,
@@ -41,6 +41,7 @@ const createPetal = (width: number, height: number): Petal => ({
   rotation: Math.random() * Math.PI * 2,
   rotationSpeed: -0.01 + Math.random() * 0.02,
   sway: 0.5 + Math.random() * 0.8,
+  flutterPhase: Math.random() * Math.PI * 2,
   stuck: false,
   stickSide: null,
 });
@@ -59,43 +60,68 @@ const resizeCanvas = () => {
 
 const drawPetal = (petal: Petal) => {
   if (!ctx) return;
-  const [outer, inner] = petalColor();
+  const color = petalColor();
   ctx.save();
   ctx.translate(petal.x, petal.y);
   ctx.rotate(petal.rotation);
-  const gradient = ctx.createLinearGradient(0, -petal.size, 0, petal.size);
-  gradient.addColorStop(0, outer);
-  gradient.addColorStop(1, inner);
-  ctx.fillStyle = gradient;
+  const flutter =
+    Math.sin(petal.rotation * 2.6 + petal.flutterPhase) *
+    (0.05 + petal.sway * 0.03);
+  ctx.scale(1 + flutter, 1 - flutter * 0.42);
+  const width = petal.size * 0.78;
+  const height = petal.size * 1.12;
+  ctx.fillStyle = color;
   ctx.beginPath();
-  const width = petal.size * 0.6;
-  const height = petal.size * 1.2;
-  ctx.moveTo(0, -height);
+  // A sakura-like single petal: top notch + wider shoulders + tapered tip.
+  ctx.moveTo(0, -height * 0.76);
   ctx.bezierCurveTo(
-    width,
-    -height,
-    width * 1.4,
-    -height * 0.2,
-    width * 0.5,
-    height * 0.2,
+    width * 0.22,
+    -height * 1.02,
+    width * 0.56,
+    -height * 0.92,
+    width * 0.68,
+    -height * 0.54,
   );
   ctx.bezierCurveTo(
-    width * 0.3,
-    height * 0.5,
-    width * 0.1,
-    height * 0.9,
+    width * 0.9,
+    -height * 0.02,
+    width * 0.62,
+    height * 0.46,
+    width * 0.22,
+    height * 0.95,
+  );
+  ctx.bezierCurveTo(
+    width * 0.08,
+    height * 1.11,
+    width * 0.03,
+    height * 1.2,
     0,
-    height,
+    height * 1.23,
   );
   ctx.bezierCurveTo(
-    -width * 0.1,
-    height * 0.9,
+    -width * 0.06,
+    height * 1.16,
+    -width * 0.16,
+    height * 1.05,
     -width * 0.3,
-    height * 0.5,
-    -width * 0.5,
-    height * 0.2,
+    height * 0.9,
   );
-  ctx.bezierCurveTo(-width * 1.4, -height * 0.2, -width, -height, 0, -height);
+  ctx.bezierCurveTo(
+    -width * 0.74,
+    height * 0.34,
+    -width * 0.95,
+    -height * 0.06,
+    -width * 0.66,
+    -height * 0.58,
+  );
+  ctx.bezierCurveTo(
+    -width * 0.56,
+    -height * 0.92,
+    -width * 0.2,
+    -height * 1.02,
+    0,
+    -height * 0.76,
+  );
   ctx.fill();
   ctx.restore();
 };
