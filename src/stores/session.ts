@@ -1,4 +1,5 @@
 import { defineStore } from "pinia";
+import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
 
@@ -52,12 +53,7 @@ const defaultUser = (): UserProfile => ({
 
 const defaultState = (): SessionState => ({
   hydrated: false,
-  connection: {
-    toriiUrl: "",
-    chainId: "",
-    assetDefinitionId: "",
-    networkPrefix: 42,
-  },
+  connection: { ...TAIRA_CHAIN_PRESET.connection },
   authority: {
     accountId: "",
     privateKeyHex: "",
@@ -75,32 +71,14 @@ const normalizeUser = (user: Partial<UserProfile>): UserProfile => ({
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
 ): ConnectionConfig => {
-  const base = defaultState().connection;
-  const networkPrefix =
-    partial && Number.isFinite((partial as ConnectionConfig).networkPrefix)
-      ? Number((partial as ConnectionConfig).networkPrefix)
-      : base.networkPrefix;
-
+  const assetDefinitionId = String(
+    partial?.assetDefinitionId ??
+      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+  ).trim();
   return {
-    ...base,
-    ...(partial ?? {}),
-    networkPrefix,
-  };
-};
-
-const normalizeChain = (chain: Partial<SavedChain>): SavedChain => {
-  const id =
-    chain.id ||
-    String(chain.label || chain.chainId || "custom")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/(^-|-$)+/g, "") ||
-    "custom";
-
-  return {
-    id,
-    label: chain.label || chain.chainId || "Custom chain",
-    ...normalizeConnection(chain),
+    ...TAIRA_CHAIN_PRESET.connection,
+    assetDefinitionId:
+      assetDefinitionId || TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
   };
 };
 
@@ -161,11 +139,7 @@ export const useSessionStore = defineStore("session", {
             accounts: normalizedAccounts.accounts,
             activeAccountId: normalizedAccounts.activeAccountId,
             hydrated: true,
-            customChains: Array.isArray(parsed.customChains)
-              ? parsed.customChains.map((item: SavedChain) =>
-                  normalizeChain(item),
-                )
-              : [],
+            customChains: [],
           });
           if (!this.activeAccountId && this.accounts[0]) {
             this.activeAccountId = this.accounts[0].accountId;
@@ -230,19 +204,11 @@ export const useSessionStore = defineStore("session", {
       this.accounts.splice(index, 1, { ...this.accounts[index], ...partial });
     },
     addCustomChain(chain: Partial<SavedChain> & Partial<ConnectionConfig>) {
-      if (!chain.chainId || !chain.label) {
-        throw new Error("Custom chain requires a label and chainId");
-      }
-      const normalized = normalizeChain(chain);
-      const existingIndex = this.customChains.findIndex(
-        (item) => item.id === normalized.id,
-      );
-      if (existingIndex >= 0) {
-        this.customChains.splice(existingIndex, 1, normalized);
-      } else {
-        this.customChains.push(normalized);
-      }
-      this.connection = normalizeConnection(normalized);
+      // Custom chains are intentionally disabled in TAIRA-only builds.
+      this.connection = normalizeConnection({
+        assetDefinitionId:
+          chain.assetDefinitionId ?? this.connection.assetDefinitionId,
+      });
     },
     removeCustomChain(id: string) {
       this.customChains = this.customChains.filter((chain) => chain.id !== id);

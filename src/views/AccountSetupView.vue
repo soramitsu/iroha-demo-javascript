@@ -3,7 +3,7 @@
     <section class="card">
       <header class="card-header">
         <div>
-          <h2>SORA Nexus Account</h2>
+          <h2>TAIRA Testnet Account</h2>
           <p class="helper">
             Generate your account keys, store a recovery phrase, and register
             via Torii.
@@ -11,44 +11,10 @@
         </div>
       </header>
       <div class="chain-quickpick">
-        <p class="helper">TAIRA testnet is preselected for onboarding.</p>
-        <p v-if="chainPresetLabel" class="helper small">
-          Selected: {{ chainPresetLabel }}
+        <p class="helper">
+          TAIRA testnet connection is fixed for onboarding in this build.
         </p>
-        <div class="preset-row">
-          <button
-            v-for="preset in chainPresets"
-            :key="preset.id"
-            class="preset-chip"
-            :class="{ active: selectedChainPresetId === preset.id }"
-            type="button"
-            @click="applyPreset(preset)"
-          >
-            <span class="chip-title">{{ preset.label }}</span>
-            <span class="chip-sub">{{ preset.description }}</span>
-          </button>
-        </div>
       </div>
-      <div class="form-grid">
-        <label>
-          Torii URL
-          <input v-model.trim="connectionForm.toriiUrl" readonly />
-        </label>
-        <label>
-          Chain ID
-          <input v-model.trim="connectionForm.chainId" readonly />
-        </label>
-      </div>
-      <div class="actions">
-        <button
-          class="secondary"
-          :disabled="!connectionForm.toriiUrl"
-          @click="saveConnection"
-        >
-          Save connection
-        </button>
-      </div>
-      <p v-if="connectionMessage" class="helper">{{ connectionMessage }}</p>
 
       <div class="form-grid keygen-form">
         <label>
@@ -250,20 +216,10 @@ import {
   mnemonicToPrivateKeyHex,
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
-import { CHAIN_PRESETS, TAIRA_CHAIN_PRESET } from "@/constants/chains";
-import type { ChainPreset } from "@/constants/chains";
+import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const session = useSessionStore();
 const router = useRouter();
-const chainPresets: ChainPreset[] = CHAIN_PRESETS;
-const selectedChainPresetId = ref<string | null>(null);
-const chainPresetLabel = computed(() => {
-  if (!selectedChainPresetId.value) return "";
-  return (
-    chainPresets.find((preset) => preset.id === selectedChainPresetId.value)
-      ?.label || ""
-  );
-});
 
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
@@ -291,31 +247,9 @@ watch(
       connectionForm.toriiUrl = value.toriiUrl;
       connectionForm.chainId = value.chainId;
     }
-    selectedChainPresetId.value = TAIRA_CHAIN_PRESET.id;
   },
   { deep: true, immediate: true },
 );
-
-const connectionMessage = ref("");
-const applyPreset = (preset: ChainPreset) => {
-  selectedChainPresetId.value = preset.id;
-  connectionForm.chainId = preset.connection.chainId;
-  connectionForm.toriiUrl = preset.connection.toriiUrl;
-  session.updateConnection({ ...preset.connection });
-  session.persistState();
-};
-const saveConnection = () => {
-  session.updateConnection({
-    ...TAIRA_CHAIN_PRESET.connection,
-    assetDefinitionId:
-      session.connection.assetDefinitionId ||
-      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
-  });
-  session.persistState();
-  connectionForm.toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
-  connectionForm.chainId = TAIRA_CHAIN_PRESET.connection.chainId;
-  connectionMessage.value = "Connection saved.";
-};
 
 const aliasInput = ref(session.activeAccount?.displayName || "");
 const domainInput = ref(session.activeAccount?.domain || "wonderland");
@@ -339,7 +273,7 @@ const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const registrationChecklist = computed(() => [
   {
-    label: "Torii configured",
+    label: "TAIRA connection ready",
     done: Boolean(connectionForm.toriiUrl && connectionForm.chainId),
   },
   {
@@ -457,7 +391,8 @@ const registerGeneratedIdentity = async () => {
     return;
   }
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    onboardingError.value = "Set your Torii URL and chain ID first.";
+    onboardingError.value =
+      "TAIRA connection is unavailable. Reload and try again.";
     return;
   }
   onboardingBusy.value = true;
@@ -531,7 +466,8 @@ const connectError = ref("");
 const startConnectPairing = async () => {
   connectError.value = "";
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    connectError.value = "Set your Torii URL and chain ID first.";
+    connectError.value =
+      "TAIRA connection is unavailable. Reload and try again.";
     return;
   }
   connectLoading.value = true;
@@ -701,42 +637,5 @@ const resetConnect = () => {
   display: grid;
   gap: 8px;
   margin-bottom: 8px;
-}
-
-.preset-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.preset-chip {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
-  display: grid;
-  gap: 2px;
-  min-width: 140px;
-  cursor: pointer;
-  color: inherit;
-  text-align: left;
-}
-
-.preset-chip.active {
-  border-color: var(--iroha-accent);
-  box-shadow: 0 8px 24px rgba(255, 76, 102, 0.22);
-}
-
-.chip-title {
-  font-weight: 700;
-}
-
-.chip-sub {
-  font-size: 0.82rem;
-  color: var(--iroha-muted);
-}
-
-.helper.small {
-  margin: 0;
 }
 </style>

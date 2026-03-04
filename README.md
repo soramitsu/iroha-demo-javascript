@@ -5,6 +5,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 ## Features
 
 - 🔑 Modern onboarding workflow to configure Torii, generate/restore keys, and compute canonical account IDs (IH58/compressed formats included).
+- 🌐 Network profile locked to TAIRA testnet (`https://taira.sora.org`) with explorer quick-link (`https://taira-explorer.sora.org`).
 - 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
 - 📊 Wallet dashboard with live balances + decoded transaction directions.
 - 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
@@ -14,7 +15,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 ## Prerequisites
 
 - Node.js 20+
-- A Torii endpoint you can talk to (local or remote)
+- TAIRA Torii endpoint access (`https://taira.sora.org`)
 - Rust toolchain for compiling the `iroha_js_host` native module
 
 ## Install & Run
@@ -155,8 +156,8 @@ Useful overrides:
 
 ## Usage notes
 
-1. **Account setup** — first-run wizard for provisioning a SORA Nexus account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
-2. **Setup tab** — configure Torii URL, chain ID, and your asset definition. Generate or import a key pair to derive the canonical `accountId` (for example `0x…@wonderland`, with IH58 shown after onboarding). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
+1. **Account setup** — first-run wizard for provisioning a TAIRA testnet account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
+2. **Setup tab** — TAIRA Torii URL + chain ID are locked; set your asset definition and key material. Generate or import a key pair to derive the canonical `accountId` (for example `0x…@wonderland`, with IH58 shown after onboarding). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
 4. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
 5. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.

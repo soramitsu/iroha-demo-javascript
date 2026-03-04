@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useSessionStore, SESSION_STORAGE_KEY } from "@/stores/session";
+import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const snapshot = () =>
   JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
@@ -14,6 +15,12 @@ describe("session store", () => {
   it("initialises with defaults", () => {
     const store = useSessionStore();
     expect(store.connection.networkPrefix).toBe(42);
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
     expect(store.accounts.length).toBe(0);
     expect(store.activeAccount).toBeNull();
     expect(store.hasAccount).toBe(false);
@@ -48,7 +55,12 @@ describe("session store", () => {
     store.persistState();
 
     const persisted = snapshot();
-    expect(persisted.connection.toriiUrl).toBe("http://torii");
+    expect(persisted.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(persisted.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
     expect(persisted.accounts[0].accountId).toBe("ed0120@wonderland");
     expect(persisted.activeAccountId).toBe("ed0999@wonderland");
     expect(store.hasAccount).toBe(true);
@@ -96,11 +108,19 @@ describe("session store", () => {
     const store = useSessionStore();
     store.hydrate();
 
-    expect(store.connection.toriiUrl).toBe("https://torii");
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(store.connection.assetDefinitionId).toBe("rose#wonderland");
     expect(store.activeAccount?.displayName).toBe("Alice");
     expect(store.hasAccount).toBe(true);
-    expect(store.customChains).toHaveLength(1);
-    expect(store.customChains[0].id).toBe("nexus");
+    expect(store.customChains).toHaveLength(0);
   });
 
   it("migrates legacy single-user snapshots", () => {
@@ -131,7 +151,12 @@ describe("session store", () => {
 
     expect(store.activeAccount?.accountId).toBe("legacy@wonderland");
     expect(store.accounts).toHaveLength(1);
-    expect(store.connection.chainId).toBe("legacy");
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
   });
 
   it("updates the active account in place", () => {
@@ -153,7 +178,7 @@ describe("session store", () => {
     expect(store.activeAccount?.ih58).toBe("IH58-updated");
   });
 
-  it("adds, uses, and removes custom chains", () => {
+  it("ignores custom chain network overrides in TAIRA-only mode", () => {
     const store = useSessionStore();
     store.addCustomChain({
       label: "Local devnet",
@@ -162,13 +187,21 @@ describe("session store", () => {
       assetDefinitionId: "asset#local",
       networkPrefix: 99,
     });
-    expect(store.customChains).toHaveLength(1);
-    expect(store.connection.chainId).toBe("testus");
-    expect(store.customChains[0].id).toBe("local-devnet");
+    expect(store.customChains).toHaveLength(0);
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(store.connection.assetDefinitionId).toBe("asset#local");
 
     store.persistState();
     const persisted = snapshot();
-    expect(persisted.customChains[0].chainId).toBe("testus");
+    expect(persisted.customChains).toHaveLength(0);
 
     store.removeCustomChain("local-devnet");
     expect(store.customChains).toHaveLength(0);

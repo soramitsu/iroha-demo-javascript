@@ -40,7 +40,11 @@
         <input v-model="form.memo" placeholder="Thanks for lunch" />
       </label>
       <label class="shield-option">
-        <input v-model="form.shielded" type="checkbox" />
+        <input
+          v-model="form.shielded"
+          type="checkbox"
+          :disabled="!shieldSupported"
+        />
         <span>Shield transfer</span>
       </label>
     </div>
@@ -52,13 +56,20 @@
     <p v-if="scanMessage || scanner.message" class="helper">
       {{ scanMessage || scanner.message }}
     </p>
+    <p v-if="shieldCapabilityMessage" class="helper">
+      {{ shieldCapabilityMessage }}
+    </p>
+    <p v-if="form.shielded" class="helper">
+      Shield mode currently supports self-shielding only. Destination must be
+      your own account, and amount must be a whole number in base units.
+    </p>
     <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref, computed } from "vue";
-import { transferAsset } from "@/services/iroha";
+import { nextTick, reactive, ref, computed, watch } from "vue";
+import { getConfidentialAssetPolicy, transferAsset } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
 import SendIcon from "@/assets/send.svg";
@@ -74,6 +85,8 @@ const form = reactive({
 const sending = ref(false);
 const statusMessage = ref("");
 const scanMessage = ref("");
+const shieldSupported = ref(true);
+const shieldCapabilityMessage = ref("");
 const scanner = useQrScanner((payload) => {
   try {
     const parsed = JSON.parse(payload);
@@ -91,6 +104,22 @@ const scanner = useQrScanner((payload) => {
 });
 const sendIcon = SendIcon;
 
+const normalizeShieldMode = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+
+const supportsShieldMode = (mode: string) => {
+  const normalized = normalizeShieldMode(mode);
+  return (
+    normalized === "shieldedonly" ||
+    normalized === "convertible" ||
+    normalized === "hybrid" ||
+    normalized === "zknative"
+  );
+};
+
 const isValid = computed(() =>
   Boolean(
     session.hasAccount &&
@@ -101,12 +130,64 @@ const isValid = computed(() =>
   ),
 );
 
+const refreshShieldCapability = async () => {
+  shieldCapabilityMessage.value = "";
+  shieldSupported.value = true;
+  if (!session.connection.toriiUrl || !session.connection.assetDefinitionId) {
+    return;
+  }
+  try {
+    const policy = await getConfidentialAssetPolicy({
+      toriiUrl: session.connection.toriiUrl,
+      assetDefinitionId: session.connection.assetDefinitionId,
+    });
+    const effectiveMode = policy.effective_mode || policy.current_mode;
+    if (!supportsShieldMode(effectiveMode)) {
+      shieldSupported.value = false;
+      form.shielded = false;
+      shieldCapabilityMessage.value = `Shield mode unavailable: effective policy mode is ${effectiveMode}.`;
+    }
+  } catch (error) {
+    shieldSupported.value = true;
+    shieldCapabilityMessage.value =
+      error instanceof Error
+        ? `Shield policy check failed: ${error.message}. Submission may still fail if shield mode is unsupported.`
+        : "Shield policy check failed. Submission may still fail if shield mode is unsupported.";
+  }
+};
+
+watch(
+  () => [session.connection.toriiUrl, session.connection.assetDefinitionId],
+  () => {
+    void refreshShieldCapability();
+  },
+  { immediate: true },
+);
+
 const handleSend = async () => {
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
     statusMessage.value = "Configure Torii + account first.";
     return;
   }
   const account = activeAccount.value;
+  if (form.shielded && !shieldSupported.value) {
+    statusMessage.value =
+      shieldCapabilityMessage.value || "Shield mode is unavailable.";
+    return;
+  }
+  if (form.shielded) {
+    const amount = String(form.quantity).trim();
+    if (form.destination.trim() !== account.accountId) {
+      statusMessage.value =
+        "Shield mode requires destination to be your active account.";
+      return;
+    }
+    if (!/^\d+$/.test(amount) || /^0+$/.test(amount)) {
+      statusMessage.value =
+        "Shield amount must be a whole number greater than zero.";
+      return;
+    }
+  }
   sending.value = true;
   statusMessage.value = "";
   try {
@@ -116,7 +197,7 @@ const handleSend = async () => {
       assetDefinitionId: session.connection.assetDefinitionId,
       accountId: account.accountId,
       destinationAccountId: form.destination,
-      quantity: form.quantity,
+      quantity: String(form.quantity),
       privateKeyHex: account.privateKeyHex,
       metadata: form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
