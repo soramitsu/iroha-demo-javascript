@@ -67,6 +67,26 @@ export interface PublicLaneRewardsResponseView {
   items: PublicLanePendingRewardView[];
 }
 
+export interface ConfidentialPolicyTransitionView {
+  transition_id: string;
+  previous_mode: string;
+  new_mode: string;
+  effective_height: number;
+  conversion_window: number | null;
+  window_open_height: number | null;
+}
+
+export interface ConfidentialAssetPolicyView {
+  asset_id: string;
+  block_height: number;
+  current_mode: string;
+  effective_mode: string;
+  vk_set_hash: string | null;
+  poseidon_params_id: number | null;
+  pedersen_params_id: number | null;
+  pending_transition: ConfidentialPolicyTransitionView | null;
+}
+
 const toRecord = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -331,6 +351,102 @@ export const normalizePublicLaneRewardsPayload = (
     lane_id: laneId,
     total,
     items,
+  };
+};
+
+const normalizeConfidentialMode = (value: unknown): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+
+export const confidentialModeSupportsShield = (
+  mode: string | null | undefined,
+): boolean => {
+  const normalized = normalizeConfidentialMode(mode);
+  return (
+    normalized === "shieldedonly" ||
+    normalized === "convertible" ||
+    normalized === "hybrid" ||
+    normalized === "zknative"
+  );
+};
+
+export const normalizeConfidentialAssetPolicyPayload = (
+  payload: Record<string, unknown>,
+): ConfidentialAssetPolicyView => {
+  const asset_id = toStringValue(
+    payload.asset_id ?? payload.assetId,
+    "confidential.asset_id",
+  );
+  const block_height = toPositiveInteger(
+    payload.block_height ?? payload.blockHeight ?? 0,
+    "confidential.block_height",
+  );
+  const current_mode = toStringValue(
+    payload.current_mode ?? payload.currentMode,
+    "confidential.current_mode",
+  );
+  const effective_mode = toStringValue(
+    payload.effective_mode ?? payload.effectiveMode ?? current_mode,
+    "confidential.effective_mode",
+  );
+
+  const pendingTransitionRaw =
+    payload.pending_transition ?? payload.pendingTransition;
+  let pending_transition: ConfidentialPolicyTransitionView | null = null;
+  if (pendingTransitionRaw !== null && pendingTransitionRaw !== undefined) {
+    const pending = toRecord(
+      pendingTransitionRaw,
+      "confidential.pending_transition",
+    );
+    pending_transition = {
+      transition_id: toStringValue(
+        pending.transition_id ?? pending.transitionId,
+        "confidential.pending_transition.transition_id",
+      ),
+      previous_mode: toStringValue(
+        pending.previous_mode ?? pending.previousMode,
+        "confidential.pending_transition.previous_mode",
+      ),
+      new_mode: toStringValue(
+        pending.new_mode ?? pending.newMode,
+        "confidential.pending_transition.new_mode",
+      ),
+      effective_height: toPositiveInteger(
+        pending.effective_height ?? pending.effectiveHeight,
+        "confidential.pending_transition.effective_height",
+      ),
+      conversion_window: toNullableInteger(
+        pending.conversion_window ?? pending.conversionWindow,
+      ),
+      window_open_height: toNullableInteger(
+        pending.window_open_height ?? pending.windowOpenHeight,
+      ),
+    };
+  }
+
+  const vkSetHashRaw = payload.vk_set_hash ?? payload.vkSetHash;
+  const vk_set_hash =
+    vkSetHashRaw === undefined ||
+    vkSetHashRaw === null ||
+    String(vkSetHashRaw).trim().length === 0
+      ? null
+      : String(vkSetHashRaw);
+
+  return {
+    asset_id,
+    block_height,
+    current_mode,
+    effective_mode,
+    vk_set_hash,
+    poseidon_params_id: toNullableInteger(
+      payload.poseidon_params_id ?? payload.poseidonParamsId,
+    ),
+    pedersen_params_id: toNullableInteger(
+      payload.pedersen_params_id ?? payload.pedersenParamsId,
+    ),
+    pending_transition,
   };
 };
 

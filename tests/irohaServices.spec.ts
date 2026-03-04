@@ -5,6 +5,7 @@ import {
   fetchAccountAssets,
   fetchAccountTransactions,
   finalizePublicLaneUnbond,
+  getConfidentialAssetPolicy,
   getExplorerAccountQr,
   getNexusPublicLaneRewards,
   getNexusPublicLaneStake,
@@ -12,6 +13,7 @@ import {
   getNexusStakingPolicy,
   getSumeragiStatus,
   schedulePublicLaneUnbond,
+  transferAsset,
 } from "@/services/iroha";
 
 describe("iroha services bridge", () => {
@@ -79,6 +81,53 @@ describe("iroha services bridge", () => {
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
     expect(result.addressFormat).toBe("ih58");
+  });
+
+  it("forwards transfer payloads including shield flags", async () => {
+    const transferAssetMock = vi.fn().mockResolvedValue({ hash: "0xabc" });
+    (window as any).iroha = {
+      transferAsset: transferAssetMock,
+    };
+    const input = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      assetDefinitionId: "rose#wonderland",
+      accountId: "alice@wonderland",
+      destinationAccountId: "bob@wonderland",
+      quantity: "12.5",
+      privateKeyHex: "aa".repeat(32),
+      shielded: true,
+    };
+
+    const result = await transferAsset(input);
+
+    expect(transferAssetMock).toHaveBeenCalledWith(input);
+    expect(result.hash).toBe("0xabc");
+  });
+
+  it("forwards confidential policy lookups", async () => {
+    const getConfidentialAssetPolicyMock = vi.fn().mockResolvedValue({
+      asset_id: "rose#wonderland",
+      block_height: 12,
+      current_mode: "TransparentOnly",
+      effective_mode: "TransparentOnly",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    (window as any).iroha = {
+      getConfidentialAssetPolicy: getConfidentialAssetPolicyMock,
+    };
+
+    const input = {
+      toriiUrl: "http://localhost:8080",
+      assetDefinitionId: "rose#wonderland",
+    };
+    const result = await getConfidentialAssetPolicy(input);
+
+    expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith(input);
+    expect(result.asset_id).toBe("rose#wonderland");
   });
 
   it("forwards staking bridge methods", async () => {

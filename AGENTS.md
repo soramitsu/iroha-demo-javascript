@@ -1,12 +1,13 @@
 # AGENT NOTES — iroha-demo-javascript
 
-Last updated: 2026-03-03
+Last updated: 2026-03-04
 
 ## Purpose
 Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Iroha SORA Nexus). The UI shows account onboarding, wallet balances, NPOS staking for XOR, transfer/receive QR flows, and explorer metrics. Styling uses a glassmorphic theme with animated sakura particles. All code lives under plain Vite/Electron (no Nuxt). Pinia stores persist session and theme state in localStorage.
 
 ## Key Concepts & Flows
 - **Account onboarding (`/account`)**: Users generate recovery phrases, derive their SORA Nexus accountId, register via `/v1/accounts/onboard`, and optionally bootstrap an IrohaConnect pairing session.
+- **Network profile lock**: Setup/onboarding now lock connection selection to TAIRA testnet only (`https://taira.sora.org`, chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`), and the public explorer link is `https://taira-explorer.sora.org`.
 - **Torii Bridge (Electron preload)**: `window.iroha` exposes helpers wrapped around `@iroha/iroha-js` (register account, transfer asset, explorer metrics, Connect preview, NPOS staking tx builders) plus Nexus public-lane fetch endpoints. Remember to build native bindings after installing deps (`npm install` runs scripts/postinstall).
 - **Wallet / Send / Receive**: Vue views in `src/views`. Receive uses QR generation; Send leverages ZXing for camera + file upload to populate transfer params.
 - **Staking (`/staking`)**: Dataspace-first validator nomination flow for public-lane NPOS. Lane is auto-resolved from `getSumeragiStatus` (with dataspace commitment fallback), validator list is loaded from `/v1/nexus/public_lanes/{lane_id}/validators`, stake balance is surfaced in-view, and stake/reward actions submit staking instructions via `buildTransaction`.
@@ -32,6 +33,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Iroha SORA 
 ## Gotchas
 - Always keep UI layers above the sakura canvas (set container `z-index` if adding new wrappers). Canvas must stay `pointer-events: none`.
 - Account guard will redirect to `/account` if `session.hasAccount` is false. When testing other routes, seed `session.accounts[]` with an active account containing `accountId` and `privateKeyHex`.
+- Setup and account onboarding views force TAIRA testnet connection values; Torii URL / chain ID are read-only in the UI.
 - Onboarding/persistence now keeps explicit account literals (`0x...@domain`) as `accountId`; `ih58` is backfilled from Torii onboarding responses when local address-format derivation is unavailable.
 - The send view requires navigator media permissions. In headless test contexts, avoid invoking scanner logic.
 - If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`.

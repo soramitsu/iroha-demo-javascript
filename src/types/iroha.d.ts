@@ -104,6 +104,26 @@ export interface ConnectPreview {
   appPrivateKeyHex: string;
 }
 
+export interface ConfidentialPolicyTransitionView {
+  transition_id: string;
+  previous_mode: string;
+  new_mode: string;
+  effective_height: number;
+  conversion_window: number | null;
+  window_open_height: number | null;
+}
+
+export interface ConfidentialAssetPolicyView {
+  asset_id: string;
+  block_height: number;
+  current_mode: string;
+  effective_mode: string;
+  vk_set_hash: string | null;
+  poseidon_params_id: number | null;
+  pedersen_params_id: number | null;
+  pending_transition: ConfidentialPolicyTransitionView | null;
+}
+
 export interface NexusLaneGovernanceSnapshot {
   lane_id: number;
   alias: string;
@@ -217,7 +237,12 @@ export interface IrohaBridge {
     quantity: string;
     privateKeyHex: string;
     metadata?: Record<string, unknown>;
+    shielded?: boolean;
   }): Promise<{ hash: string }>;
+  getConfidentialAssetPolicy(input: {
+    toriiUrl: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetPolicyView>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;

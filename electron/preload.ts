@@ -15,13 +15,16 @@ import {
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
+  confidentialModeSupportsShield,
   normalizeBaseUrl,
+  normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
   readNexusUnbondingDelayMs,
   sanitizeFetchInit,
+  type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
   type PublicLaneRewardsResponseView,
   type PublicLaneStakeResponseView,
@@ -53,6 +56,7 @@ type TransferAssetInput = {
   quantity: string;
   privateKeyHex: HexString;
   metadata?: Record<string, unknown>;
+  shielded?: boolean;
 };
 
 type ExplorerMetricsResponse = Awaited<
@@ -160,6 +164,10 @@ type IrohaBridge = {
   derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
+  getConfidentialAssetPolicy(input: {
+    toriiUrl: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetPolicyView>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
@@ -359,6 +367,22 @@ const buildNexusEndpoint = (
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
 };
 
+const fetchConfidentialAssetPolicy = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+): Promise<ConfidentialAssetPolicyView> => {
+  const normalizedAssetDefinitionId = assetDefinitionId.trim();
+  if (!normalizedAssetDefinitionId) {
+    throw new Error("assetDefinitionId is required.");
+  }
+  const endpoint = buildNexusEndpoint(
+    toriiUrlRaw,
+    `/v1/confidential/assets/${encodeURIComponent(normalizedAssetDefinitionId)}/transitions`,
+  );
+  const payload = await fetchJson(endpoint, "Confidential asset policy");
+  return normalizeConfidentialAssetPolicyPayload(payload);
+};
+
 const submitInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
@@ -474,6 +498,22 @@ const api: IrohaBridge = {
     return { hash: submission.hash };
   },
   async transferAsset(input) {
+    if (input.shielded) {
+      const policy = await fetchConfidentialAssetPolicy(
+        input.toriiUrl,
+        input.assetDefinitionId,
+      );
+      const effectiveMode = policy.effective_mode || policy.current_mode;
+      if (!confidentialModeSupportsShield(effectiveMode)) {
+        throw new Error(
+          `Shielded transfer is unavailable for ${policy.asset_id}; effective mode is ${effectiveMode}.`,
+        );
+      }
+      throw new Error(
+        "Shielded transfer is not available in this wallet build yet; ZK proof generation is not wired in the Electron bridge.",
+      );
+    }
+
     const client = getClient(input.toriiUrl);
     const sourceAssetId = normalizeAssetId(
       `${input.assetDefinitionId}##${normalizeAccountId(
@@ -502,6 +542,9 @@ const api: IrohaBridge = {
       },
     );
     return { hash: submission.hash };
+  },
+  getConfidentialAssetPolicy({ toriiUrl, assetDefinitionId }) {
+    return fetchConfidentialAssetPolicy(toriiUrl, assetDefinitionId);
   },
   fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
     const client = getClient(toriiUrl);

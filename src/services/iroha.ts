@@ -3,6 +3,7 @@ import type {
   AccountAssetsResponse,
   AccountOnboardingResponse,
   AccountTransactionsResponse,
+  ConfidentialAssetPolicyView,
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
@@ -46,6 +47,11 @@ export const registerAccount = (
 export const transferAsset = (
   input: Parameters<IrohaBridge["transferAsset"]>[0],
 ) => bridge().transferAsset(input);
+
+export const getConfidentialAssetPolicy = (
+  input: Parameters<IrohaBridge["getConfidentialAssetPolicy"]>[0],
+): Promise<ConfidentialAssetPolicyView> =>
+  bridge().getConfidentialAssetPolicy(input);
 
 export const fetchAccountAssets = (
   input: Parameters<IrohaBridge["fetchAccountAssets"]>[0],

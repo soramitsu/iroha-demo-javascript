@@ -11,7 +11,7 @@
         </div>
       </header>
       <div class="chain-quickpick">
-        <p class="helper">Select a preset chain or stay custom.</p>
+        <p class="helper">TAIRA testnet is preselected for onboarding.</p>
         <p v-if="chainPresetLabel" class="helper small">
           Selected: {{ chainPresetLabel }}
         </p>
@@ -28,24 +28,15 @@
             <span class="chip-sub">{{ preset.description }}</span>
           </button>
         </div>
-        <p class="helper">
-          Need another chain? Add it in Setup → Torii Connection.
-        </p>
       </div>
       <div class="form-grid">
         <label>
           Torii URL
-          <input
-            v-model.trim="connectionForm.toriiUrl"
-            placeholder="http://127.0.0.1:8080"
-          />
+          <input v-model.trim="connectionForm.toriiUrl" readonly />
         </label>
         <label>
           Chain ID
-          <input
-            v-model.trim="connectionForm.chainId"
-            placeholder="nexus-chain"
-          />
+          <input v-model.trim="connectionForm.chainId" readonly />
         </label>
       </div>
       <div class="actions">
@@ -259,7 +250,7 @@ import {
   mnemonicToPrivateKeyHex,
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
-import { CHAIN_PRESETS } from "@/constants/chains";
+import { CHAIN_PRESETS, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import type { ChainPreset } from "@/constants/chains";
 
 const session = useSessionStore();
@@ -282,15 +273,25 @@ const connectionForm = reactive({
 watch(
   () => session.connection,
   (value) => {
-    connectionForm.toriiUrl = value.toriiUrl;
-    connectionForm.chainId = value.chainId;
-    const matched = chainPresets.find(
-      (preset) =>
-        preset.connection.chainId === value.chainId ||
-        preset.connection.toriiUrl === value.toriiUrl ||
-        preset.connection.assetDefinitionId === value.assetDefinitionId,
-    );
-    selectedChainPresetId.value = matched?.id ?? null;
+    const isTaira =
+      value.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl &&
+      value.chainId === TAIRA_CHAIN_PRESET.connection.chainId &&
+      value.networkPrefix === TAIRA_CHAIN_PRESET.connection.networkPrefix;
+    if (!isTaira) {
+      session.updateConnection({
+        ...TAIRA_CHAIN_PRESET.connection,
+        assetDefinitionId:
+          value.assetDefinitionId ||
+          TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+      });
+      session.persistState();
+      connectionForm.toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
+      connectionForm.chainId = TAIRA_CHAIN_PRESET.connection.chainId;
+    } else {
+      connectionForm.toriiUrl = value.toriiUrl;
+      connectionForm.chainId = value.chainId;
+    }
+    selectedChainPresetId.value = TAIRA_CHAIN_PRESET.id;
   },
   { deep: true, immediate: true },
 );
@@ -304,15 +305,15 @@ const applyPreset = (preset: ChainPreset) => {
   session.persistState();
 };
 const saveConnection = () => {
-  if (!connectionForm.toriiUrl) {
-    connectionMessage.value = "Torii URL is required.";
-    return;
-  }
   session.updateConnection({
-    toriiUrl: connectionForm.toriiUrl,
-    chainId: connectionForm.chainId,
+    ...TAIRA_CHAIN_PRESET.connection,
+    assetDefinitionId:
+      session.connection.assetDefinitionId ||
+      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
   });
   session.persistState();
+  connectionForm.toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
+  connectionForm.chainId = TAIRA_CHAIN_PRESET.connection.chainId;
   connectionMessage.value = "Connection saved.";
 };
 

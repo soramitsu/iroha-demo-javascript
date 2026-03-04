@@ -68,9 +68,19 @@
             Rendered straight from Torii so wallets can scan the exact payload.
           </p>
         </div>
-        <button class="secondary" :disabled="!accountQr" @click="copyQr">
-          Copy JSON
-        </button>
+        <div class="explorer-actions">
+          <a
+            class="secondary explorer-link"
+            :href="TAIRA_EXPLORER_URL"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open Taira Explorer
+          </a>
+          <button class="secondary" :disabled="!accountQr" @click="copyQr">
+            Copy JSON
+          </button>
+        </div>
       </header>
       <div v-if="accountQr" class="qr-layout">
         <div class="qr-preview">
@@ -110,6 +120,7 @@
 import { computed, onMounted, ref } from "vue";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
+import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import type {
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
@@ -174,6 +185,16 @@ onMounted(refresh);
 </script>
 
 <style scoped>
+.explorer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.explorer-link {
+  text-decoration: none;
+}
+
 .qr-layout {
   display: grid;
   grid-template-columns: minmax(200px, 240px) 1fr;

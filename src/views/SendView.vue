@@ -39,6 +39,10 @@
         Memo (optional)
         <input v-model="form.memo" placeholder="Thanks for lunch" />
       </label>
+      <label class="shield-option">
+        <input v-model="form.shielded" type="checkbox" />
+        <span>Shield transfer</span>
+      </label>
     </div>
     <div class="actions">
       <button :disabled="sending || !isValid" @click="handleSend">
@@ -65,6 +69,7 @@ const form = reactive({
   destination: "",
   quantity: "0",
   memo: "",
+  shielded: false,
 });
 const sending = ref(false);
 const statusMessage = ref("");
@@ -114,6 +119,7 @@ const handleSend = async () => {
       quantity: form.quantity,
       privateKeyHex: account.privateKeyHex,
       metadata: form.memo ? { memo: form.memo } : undefined,
+      shielded: form.shielded,
     });
     statusMessage.value = `Transaction submitted: ${result.hash}`;
   } catch (error) {
@@ -143,5 +149,21 @@ const toggleScanner = async () => {
 video {
   width: 100%;
   background: black;
+}
+
+.shield-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.shield-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: none;
 }
 </style>

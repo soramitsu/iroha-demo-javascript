@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  confidentialModeSupportsShield,
   normalizeBaseUrl,
+  normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
@@ -183,6 +185,39 @@ describe("preload utils", () => {
     expect(stake.items[0].pending_unbonds[0].release_at_ms).toBe(170000);
     expect(rewards.items[0].asset).toBe("xor#wonderland");
     expect(rewards.items[0].pending_through_epoch).toBe(5);
+  });
+
+  it("normalizes confidential asset policy payloads", () => {
+    const normalized = normalizeConfidentialAssetPolicyPayload({
+      asset_id: "rose#wonderland",
+      block_height: 41,
+      current_mode: "TransparentOnly",
+      effective_mode: "Convertible",
+      vk_set_hash: "AA".repeat(32),
+      poseidon_params_id: 7,
+      pedersen_params_id: 9,
+      pending_transition: {
+        transition_id: "BB".repeat(32),
+        previous_mode: "TransparentOnly",
+        new_mode: "ShieldedOnly",
+        effective_height: 55,
+        conversion_window: 10,
+        window_open_height: 45,
+      },
+    });
+
+    expect(normalized.asset_id).toBe("rose#wonderland");
+    expect(normalized.effective_mode).toBe("Convertible");
+    expect(normalized.pending_transition?.effective_height).toBe(55);
+    expect(normalized.pending_transition?.conversion_window).toBe(10);
+  });
+
+  it("detects which confidential modes support shielding", () => {
+    expect(confidentialModeSupportsShield("ShieldedOnly")).toBe(true);
+    expect(confidentialModeSupportsShield("convertible")).toBe(true);
+    expect(confidentialModeSupportsShield("zk_native")).toBe(true);
+    expect(confidentialModeSupportsShield("TransparentOnly")).toBe(false);
+    expect(confidentialModeSupportsShield(undefined)).toBe(false);
   });
 
   it("extracts nexus unbonding delay from configuration payloads", () => {

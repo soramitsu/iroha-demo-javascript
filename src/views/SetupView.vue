@@ -12,7 +12,7 @@
       </header>
       <div class="chain-picker">
         <p class="helper">
-          Quickly select a chain profile.
+          Only TAIRA testnet is available in this build.
           <span v-if="selectedChainName" class="pill inline-pill"
             >Selected: {{ selectedChainName }}</span
           >
@@ -29,117 +29,16 @@
             <span class="chip-title">{{ preset.label }}</span>
             <span class="chip-sub">{{ preset.description }}</span>
           </button>
-          <button
-            class="preset-chip outline"
-            type="button"
-            @click="showCustomChain = !showCustomChain"
-          >
-            <span class="chip-title">Custom chain</span>
-            <span class="chip-sub">Add or pick your own</span>
-          </button>
-        </div>
-        <div v-if="showCustomChain" class="custom-chain-panel">
-          <div class="form-grid">
-            <label>
-              Label
-              <input
-                v-model.trim="customChainForm.label"
-                placeholder="Local devnet"
-              />
-            </label>
-            <label>
-              Chain ID
-              <input
-                v-model.trim="customChainForm.chainId"
-                placeholder="testus"
-              />
-            </label>
-            <label>
-              Torii URL
-              <input
-                v-model.trim="customChainForm.toriiUrl"
-                placeholder="http://127.0.0.1:8080"
-              />
-            </label>
-            <label>
-              Asset Definition ID
-              <input
-                v-model.trim="customChainForm.assetDefinitionId"
-                placeholder="rose#wonderland"
-              />
-            </label>
-            <label>
-              Network Prefix
-              <input
-                v-model.number="customChainForm.networkPrefix"
-                type="number"
-                min="0"
-                max="255"
-              />
-            </label>
-          </div>
-          <div class="actions">
-            <button @click="saveCustomChain">Save & apply</button>
-            <button
-              class="secondary"
-              type="button"
-              @click="showCustomChain = false"
-            >
-              Close
-            </button>
-          </div>
-          <p v-if="customChainMessage" class="helper">
-            {{ customChainMessage }}
-          </p>
-        </div>
-        <div v-if="session.customChains.length" class="custom-chain-list">
-          <p class="helper">Saved custom chains</p>
-          <div class="chain-list-grid">
-            <article
-              v-for="chain in session.customChains"
-              :key="chain.id"
-              class="chain-card"
-            >
-              <div>
-                <p class="chain-label">
-                  {{ chain.label }}
-                  <span v-if="selectedPresetId === chain.id" class="pill mini"
-                    >Active</span
-                  >
-                </p>
-                <p class="helper monospace">{{ chain.chainId }}</p>
-              </div>
-              <div class="chain-actions">
-                <button
-                  class="secondary"
-                  type="button"
-                  @click="applyCustomChain(chain)"
-                >
-                  Use
-                </button>
-                <button
-                  class="ghost"
-                  type="button"
-                  @click="removeCustomChain(chain.id)"
-                >
-                  Remove
-                </button>
-              </div>
-            </article>
-          </div>
         </div>
       </div>
       <div class="form-grid">
         <label>
           Torii URL
-          <input
-            v-model="connectionForm.toriiUrl"
-            placeholder="http://127.0.0.1:8080"
-          />
+          <input v-model="connectionForm.toriiUrl" readonly />
         </label>
         <label>
           Chain ID
-          <input v-model="connectionForm.chainId" placeholder="dev-chain" />
+          <input v-model="connectionForm.chainId" readonly />
         </label>
         <label>
           Asset Definition ID
@@ -155,6 +54,7 @@
             type="number"
             min="0"
             max="255"
+            readonly
           />
         </label>
       </div>
@@ -271,7 +171,6 @@
 import { computed, reactive, ref, watch } from "vue";
 import { z } from "zod";
 import { useSessionStore } from "@/stores/session";
-import type { SavedChain } from "@/stores/session";
 import {
   deriveAccountAddress,
   derivePublicKey,
@@ -279,7 +178,7 @@ import {
   pingTorii,
   registerAccount,
 } from "@/services/iroha";
-import { CHAIN_PRESETS } from "@/constants/chains";
+import { CHAIN_PRESETS, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import type { ChainPreset } from "@/constants/chains";
 
 type PingState = "idle" | "ok" | "error";
@@ -290,25 +189,11 @@ const connectionForm = reactive({ ...session.connection });
 const chainPresets: ChainPreset[] = CHAIN_PRESETS;
 const selectedPresetId = ref<string | null>(null);
 const selectedChainName = computed(() => {
-  if (!selectedPresetId.value) return connectionForm.chainId || "";
-  const preset = chainPresets.find(
-    (item) => item.id === selectedPresetId.value,
+  if (!selectedPresetId.value) return "";
+  return (
+    chainPresets.find((item) => item.id === selectedPresetId.value)?.label || ""
   );
-  if (preset) return preset.label;
-  const custom = session.customChains.find(
-    (item) => item.id === selectedPresetId.value,
-  );
-  return custom?.label || connectionForm.chainId;
 });
-const showCustomChain = ref(false);
-const customChainForm = reactive({
-  label: "",
-  chainId: "",
-  toriiUrl: "",
-  assetDefinitionId: "",
-  networkPrefix: connectionForm.networkPrefix,
-});
-const customChainMessage = ref("");
 const emptyAccount = () => ({
   displayName: "",
   domain: "wonderland",
@@ -343,20 +228,19 @@ const registerMessage = ref("");
 watch(
   () => session.connection,
   (value) => {
-    Object.assign(connectionForm, value);
-    const matchedPreset = chainPresets.find(
-      (preset) =>
-        preset.connection.chainId === value.chainId ||
-        preset.connection.toriiUrl === value.toriiUrl ||
-        preset.connection.assetDefinitionId === value.assetDefinitionId,
-    );
-    const matchedCustom = session.customChains.find(
-      (chain) =>
-        chain.chainId === value.chainId ||
-        chain.toriiUrl === value.toriiUrl ||
-        chain.assetDefinitionId === value.assetDefinitionId,
-    );
-    selectedPresetId.value = matchedPreset?.id ?? matchedCustom?.id ?? null;
+    const isTaira =
+      value.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl &&
+      value.chainId === TAIRA_CHAIN_PRESET.connection.chainId &&
+      value.networkPrefix === TAIRA_CHAIN_PRESET.connection.networkPrefix;
+    const nextConnection = isTaira
+      ? { ...value }
+      : { ...TAIRA_CHAIN_PRESET.connection };
+    Object.assign(connectionForm, nextConnection);
+    selectedPresetId.value = TAIRA_CHAIN_PRESET.id;
+    if (!isTaira) {
+      session.updateConnection({ ...TAIRA_CHAIN_PRESET.connection });
+      session.persistState();
+    }
   },
   { deep: true, immediate: true },
 );
@@ -418,50 +302,6 @@ const applyPreset = (preset: ChainPreset) => {
   Object.assign(connectionForm, { ...preset.connection });
   session.updateConnection({ ...preset.connection });
   session.persistState();
-  showCustomChain.value = false;
-};
-
-const applyCustomChain = (chain: SavedChain) => {
-  selectedPresetId.value = chain.id;
-  Object.assign(connectionForm, {
-    toriiUrl: chain.toriiUrl,
-    chainId: chain.chainId,
-    assetDefinitionId: chain.assetDefinitionId,
-    networkPrefix: chain.networkPrefix,
-  });
-  session.updateConnection({ ...chain });
-  session.persistState();
-};
-
-const saveCustomChain = () => {
-  customChainMessage.value = "";
-  try {
-    session.addCustomChain({ ...customChainForm });
-    session.persistState();
-    const applied = session.customChains.find(
-      (item) => item.chainId === customChainForm.chainId,
-    );
-    Object.assign(connectionForm, {
-      toriiUrl: customChainForm.toriiUrl,
-      chainId: customChainForm.chainId,
-      assetDefinitionId: customChainForm.assetDefinitionId,
-      networkPrefix: customChainForm.networkPrefix,
-    });
-    selectedPresetId.value = applied?.id ?? customChainForm.label;
-    customChainMessage.value = "Saved and applied custom chain.";
-    showCustomChain.value = false;
-  } catch (error) {
-    customChainMessage.value =
-      error instanceof Error ? error.message : String(error);
-  }
-};
-
-const removeCustomChain = (id: string) => {
-  session.removeCustomChain(id);
-  if (selectedPresetId.value === id) {
-    selectedPresetId.value = null;
-  }
-  session.persistState();
 };
 
 const canRegister = computed(() =>
@@ -477,7 +317,16 @@ const canRegister = computed(() =>
 const metadataSchema = z.record(z.any()).catch(() => ({}));
 
 const saveConnection = () => {
-  session.updateConnection({ ...connectionForm });
+  const nextConnection = {
+    toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+    networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    assetDefinitionId:
+      connectionForm.assetDefinitionId ||
+      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+  };
+  Object.assign(connectionForm, nextConnection);
+  session.updateConnection(nextConnection);
   session.persistState();
 };
 
@@ -618,10 +467,6 @@ const handleRegister = async () => {
   box-shadow: 0 8px 24px rgba(255, 76, 102, 0.24);
 }
 
-.preset-chip.outline {
-  border-style: dashed;
-}
-
 .chip-title {
   font-weight: 700;
 }
@@ -629,44 +474,5 @@ const handleRegister = async () => {
 .chip-sub {
   font-size: 0.82rem;
   color: var(--iroha-muted);
-}
-
-.custom-chain-panel {
-  padding: 12px;
-  border: 1px dashed var(--panel-border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.custom-chain-list {
-  display: grid;
-  gap: 8px;
-}
-
-.chain-list-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
-}
-
-.chain-card {
-  padding: 10px;
-  border-radius: 12px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.chain-label {
-  margin: 0 0 2px;
-  font-weight: 700;
-}
-
-.chain-actions {
-  display: flex;
-  gap: 8px;
 }
 </style>
