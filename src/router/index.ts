@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import SetupView from "@/views/SetupView.vue";
 import WalletView from "@/views/WalletView.vue";
 import StakingView from "@/views/StakingView.vue";
+import ParliamentView from "@/views/ParliamentView.vue";
 import SendView from "@/views/SendView.vue";
 import ReceiveView from "@/views/ReceiveView.vue";
 import ExploreView from "@/views/ExploreView.vue";
@@ -20,7 +21,7 @@ const routes = [
     component: AccountSetupView,
     meta: {
       title: "Account Setup",
-      subtitle: "Provision your SORA Nexus account",
+      subtitle: "Provision your TAIRA testnet account",
     },
   },
   {
@@ -28,7 +29,7 @@ const routes = [
     component: SetupView,
     meta: {
       title: "Session Setup",
-      subtitle: "Configure Torii & keys",
+      subtitle: "TAIRA connection & keys",
     },
   },
   {
@@ -45,6 +46,14 @@ const routes = [
     meta: {
       title: "NPOS Staking",
       subtitle: "Nominate validators and stake XOR",
+    },
+  },
+  {
+    path: "/parliament",
+    component: ParliamentView,
+    meta: {
+      title: "SORA Parliament",
+      subtitle: "Citizenship bond and governance voting",
     },
   },
   {

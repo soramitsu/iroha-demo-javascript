@@ -18,7 +18,7 @@
 
       <div class="form-grid keygen-form">
         <label>
-          Display Name
+          Display Name (local only, not on-chain)
           <input v-model.trim="aliasInput" placeholder="Alice" />
         </label>
         <label>

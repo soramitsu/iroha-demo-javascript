@@ -2,9 +2,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bondPublicLaneStake,
   claimPublicLaneRewards,
+  enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
+  finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
+  getGovernanceCouncilCurrent,
+  getGovernanceLocks,
+  getGovernanceProposal,
+  getGovernanceReferendum,
+  getGovernanceTally,
   getConfidentialAssetPolicy,
   getExplorerAccountQr,
   getNexusPublicLaneRewards,
@@ -12,7 +19,10 @@ import {
   getNexusPublicLaneValidators,
   getNexusStakingPolicy,
   getSumeragiStatus,
+  listAccountPermissions,
+  registerCitizen,
   schedulePublicLaneUnbond,
+  submitGovernancePlainBallot,
   transferAsset,
 } from "@/services/iroha";
 
@@ -238,5 +248,124 @@ describe("iroha services bridge", () => {
     expect(schedulePublicLaneUnbondMock).toHaveBeenCalledWith(unbondInput);
     expect(finalizePublicLaneUnbondMock).toHaveBeenCalledWith(finalizeInput);
     expect(claimPublicLaneRewardsMock).toHaveBeenCalledWith(claimInput);
+  });
+
+  it("forwards parliament governance bridge methods", async () => {
+    const listAccountPermissionsMock = vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0 });
+    const registerCitizenMock = vi.fn().mockResolvedValue({ hash: "0x10" });
+    const getGovernanceProposalMock = vi
+      .fn()
+      .mockResolvedValue({ found: false, proposal: null });
+    const getGovernanceReferendumMock = vi
+      .fn()
+      .mockResolvedValue({ found: false, referendum: null });
+    const getGovernanceTallyMock = vi
+      .fn()
+      .mockResolvedValue({ found: false, referendum_id: "r1", tally: null });
+    const getGovernanceLocksMock = vi
+      .fn()
+      .mockResolvedValue({ found: false, referendum_id: "r1", locks: {} });
+    const getGovernanceCouncilCurrentMock = vi.fn().mockResolvedValue({
+      epoch: 1,
+      members: [],
+      alternates: [],
+      candidate_count: 0,
+      verified: 0,
+      derived_by: "Fallback",
+    });
+    const submitGovernancePlainBallotMock = vi
+      .fn()
+      .mockResolvedValue({ hash: "0x11" });
+    const finalizeGovernanceReferendumMock = vi.fn().mockResolvedValue({
+      ok: true,
+      proposal_id: "0x".padEnd(66, "1"),
+      tx_instructions: [],
+    });
+    const enactGovernanceProposalMock = vi.fn().mockResolvedValue({
+      ok: true,
+      proposal_id: "0x".padEnd(66, "2"),
+      tx_instructions: [],
+    });
+
+    (window as any).iroha = {
+      listAccountPermissions: listAccountPermissionsMock,
+      registerCitizen: registerCitizenMock,
+      getGovernanceProposal: getGovernanceProposalMock,
+      getGovernanceReferendum: getGovernanceReferendumMock,
+      getGovernanceTally: getGovernanceTallyMock,
+      getGovernanceLocks: getGovernanceLocksMock,
+      getGovernanceCouncilCurrent: getGovernanceCouncilCurrentMock,
+      submitGovernancePlainBallot: submitGovernancePlainBallotMock,
+      finalizeGovernanceReferendum: finalizeGovernanceReferendumMock,
+      enactGovernanceProposal: enactGovernanceProposalMock,
+    };
+
+    const permissionsInput = {
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+      limit: 100,
+    };
+    const registerInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      amount: "10000",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const referendumInput = {
+      toriiUrl: "http://localhost:8080",
+      referendumId: "ref-1",
+    };
+    const proposalInput = {
+      toriiUrl: "http://localhost:8080",
+      proposalId: "0x".padEnd(66, "f"),
+    };
+    const ballotInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      referendumId: "ref-1",
+      amount: "10",
+      durationBlocks: 120,
+      direction: "Aye" as const,
+      privateKeyHex: "bb".repeat(32),
+    };
+    const finalizeInput = {
+      toriiUrl: "http://localhost:8080",
+      referendumId: "ref-1",
+      proposalId: "0x".padEnd(66, "e"),
+    };
+    const enactInput = {
+      toriiUrl: "http://localhost:8080",
+      proposalId: "0x".padEnd(66, "d"),
+    };
+
+    await listAccountPermissions(permissionsInput);
+    await registerCitizen(registerInput);
+    await getGovernanceProposal(proposalInput);
+    await getGovernanceReferendum(referendumInput);
+    await getGovernanceTally(referendumInput);
+    await getGovernanceLocks(referendumInput);
+    await getGovernanceCouncilCurrent("http://localhost:8080");
+    await submitGovernancePlainBallot(ballotInput);
+    await finalizeGovernanceReferendum(finalizeInput);
+    await enactGovernanceProposal(enactInput);
+
+    expect(listAccountPermissionsMock).toHaveBeenCalledWith(permissionsInput);
+    expect(registerCitizenMock).toHaveBeenCalledWith(registerInput);
+    expect(getGovernanceProposalMock).toHaveBeenCalledWith(proposalInput);
+    expect(getGovernanceReferendumMock).toHaveBeenCalledWith(referendumInput);
+    expect(getGovernanceTallyMock).toHaveBeenCalledWith(referendumInput);
+    expect(getGovernanceLocksMock).toHaveBeenCalledWith(referendumInput);
+    expect(getGovernanceCouncilCurrentMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
+    expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith(ballotInput);
+    expect(finalizeGovernanceReferendumMock).toHaveBeenCalledWith(
+      finalizeInput,
+    );
+    expect(enactGovernanceProposalMock).toHaveBeenCalledWith(enactInput);
   });
 });

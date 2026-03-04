@@ -29,11 +29,17 @@
         <input
           v-model="form.destination"
           placeholder="34m... or 0x...@wonderland"
+          :disabled="destinationLocked"
         />
       </label>
       <label>
         Amount
-        <input v-model="form.quantity" type="number" min="0" step="0.01" />
+        <input
+          v-model="form.quantity"
+          type="number"
+          min="0"
+          :step="form.shielded ? '1' : '0.01'"
+        />
       </label>
       <label>
         Memo (optional)
@@ -50,7 +56,7 @@
     </div>
     <div class="actions">
       <button :disabled="sending || !isValid" @click="handleSend">
-        {{ sending ? "Submitting…" : "Send" }}
+        {{ sending ? "Submitting…" : submitActionLabel }}
       </button>
     </div>
     <p v-if="scanMessage || scanner.message" class="helper">
@@ -58,6 +64,12 @@
     </p>
     <p v-if="shieldCapabilityMessage" class="helper">
       {{ shieldCapabilityMessage }}
+    </p>
+    <p
+      v-if="shieldSupported && shieldPolicyMode && !shieldCapabilityMessage"
+      class="helper"
+    >
+      Shield policy mode: {{ shieldPolicyMode }}.
     </p>
     <p v-if="form.shielded" class="helper">
       Shield mode currently supports self-shielding only. Destination must be
@@ -68,10 +80,13 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref, computed, watch } from "vue";
-import { getConfidentialAssetPolicy, transferAsset } from "@/services/iroha";
+import { nextTick, reactive, ref, computed, toRef } from "vue";
+import { transferAsset } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
+import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
+import { useShieldCapability } from "@/composables/useShieldCapability";
+import { isPositiveWholeAmount } from "@/utils/confidential";
 import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
@@ -85,13 +100,19 @@ const form = reactive({
 const sending = ref(false);
 const statusMessage = ref("");
 const scanMessage = ref("");
-const shieldSupported = ref(true);
-const shieldCapabilityMessage = ref("");
+const { shieldSupported, shieldCapabilityMessage, shieldPolicyMode } =
+  useShieldCapability({
+    toriiUrl: toRef(session.connection, "toriiUrl"),
+    assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
+    shielded: toRef(form, "shielded"),
+  });
 const scanner = useQrScanner((payload) => {
   try {
     const parsed = JSON.parse(payload);
     if (parsed.accountId) {
-      form.destination = parsed.accountId;
+      if (!form.shielded) {
+        form.destination = parsed.accountId;
+      }
     }
     if (parsed.amount) {
       form.quantity = String(parsed.amount);
@@ -104,64 +125,39 @@ const scanner = useQrScanner((payload) => {
 });
 const sendIcon = SendIcon;
 
-const normalizeShieldMode = (value: string) =>
-  value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
+const { destinationLocked } = useShieldedDestinationLock({
+  shielded: toRef(form, "shielded"),
+  destination: toRef(form, "destination"),
+  accountId: computed(() => activeAccount.value?.accountId),
+});
+const submitActionLabel = computed(() => (form.shielded ? "Shield" : "Send"));
 
-const supportsShieldMode = (mode: string) => {
-  const normalized = normalizeShieldMode(mode);
-  return (
-    normalized === "shieldedonly" ||
-    normalized === "convertible" ||
-    normalized === "hybrid" ||
-    normalized === "zknative"
+const normalizedQuantity = computed(() => String(form.quantity).trim());
+const destinationValue = computed(() => form.destination.trim());
+const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
+const isShieldAmountValid = computed(() =>
+  isPositiveWholeAmount(normalizedQuantity.value),
+);
+const isDestinationValid = computed(() => {
+  if (!form.shielded) {
+    return Boolean(destinationValue.value);
+  }
+  return Boolean(
+    activeAccount.value &&
+      destinationValue.value === activeAccount.value.accountId,
   );
-};
+});
 
 const isValid = computed(() =>
   Boolean(
     session.hasAccount &&
       activeAccount.value &&
       session.connection.assetDefinitionId &&
-      Number(form.quantity) > 0 &&
-      form.destination,
+      (form.shielded
+        ? isShieldAmountValid.value
+        : isTransparentAmountValid.value) &&
+      isDestinationValid.value,
   ),
-);
-
-const refreshShieldCapability = async () => {
-  shieldCapabilityMessage.value = "";
-  shieldSupported.value = true;
-  if (!session.connection.toriiUrl || !session.connection.assetDefinitionId) {
-    return;
-  }
-  try {
-    const policy = await getConfidentialAssetPolicy({
-      toriiUrl: session.connection.toriiUrl,
-      assetDefinitionId: session.connection.assetDefinitionId,
-    });
-    const effectiveMode = policy.effective_mode || policy.current_mode;
-    if (!supportsShieldMode(effectiveMode)) {
-      shieldSupported.value = false;
-      form.shielded = false;
-      shieldCapabilityMessage.value = `Shield mode unavailable: effective policy mode is ${effectiveMode}.`;
-    }
-  } catch (error) {
-    shieldSupported.value = true;
-    shieldCapabilityMessage.value =
-      error instanceof Error
-        ? `Shield policy check failed: ${error.message}. Submission may still fail if shield mode is unsupported.`
-        : "Shield policy check failed. Submission may still fail if shield mode is unsupported.";
-  }
-};
-
-watch(
-  () => [session.connection.toriiUrl, session.connection.assetDefinitionId],
-  () => {
-    void refreshShieldCapability();
-  },
-  { immediate: true },
 );
 
 const handleSend = async () => {
@@ -176,18 +172,19 @@ const handleSend = async () => {
     return;
   }
   if (form.shielded) {
-    const amount = String(form.quantity).trim();
-    if (form.destination.trim() !== account.accountId) {
+    const amount = normalizedQuantity.value;
+    if (destinationValue.value !== account.accountId) {
       statusMessage.value =
         "Shield mode requires destination to be your active account.";
       return;
     }
-    if (!/^\d+$/.test(amount) || /^0+$/.test(amount)) {
+    if (!isPositiveWholeAmount(amount)) {
       statusMessage.value =
         "Shield amount must be a whole number greater than zero.";
       return;
     }
   }
+  const submitMode = form.shielded ? "shield" : "transfer";
   sending.value = true;
   statusMessage.value = "";
   try {
@@ -196,13 +193,16 @@ const handleSend = async () => {
       chainId: session.connection.chainId,
       assetDefinitionId: session.connection.assetDefinitionId,
       accountId: account.accountId,
-      destinationAccountId: form.destination,
-      quantity: String(form.quantity),
+      destinationAccountId: destinationValue.value,
+      quantity: normalizedQuantity.value,
       privateKeyHex: account.privateKeyHex,
       metadata: form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
     });
-    statusMessage.value = `Transaction submitted: ${result.hash}`;
+    statusMessage.value =
+      submitMode === "shield"
+        ? `Shield transaction submitted: ${result.hash}`
+        : `Transaction submitted: ${result.hash}`;
   } catch (error) {
     statusMessage.value =
       error instanceof Error ? error.message : String(error);

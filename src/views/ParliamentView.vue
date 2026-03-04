@@ -1,0 +1,1078 @@
+<template>
+  <div class="card-grid">
+    <section class="card">
+      <header class="card-header">
+        <h2>Citizenship Bond</h2>
+        <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
+          {{ loadingBootstrap ? "Refreshing…" : "Refresh" }}
+        </button>
+      </header>
+      <p class="helper">
+        Bond <strong>{{ CITIZEN_BOND_XOR }} XOR</strong> to register as a
+        citizen, then use plain ballots to vote in governance referenda.
+      </p>
+      <div class="grid-2" style="margin-top: 12px">
+        <div class="kv">
+          <span class="kv-label">Account</span>
+          <span class="kv-value mono">{{
+            activeAccount?.accountId || "—"
+          }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Chain</span>
+          <span class="kv-value">{{ session.connection.chainId || "—" }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">XOR Balance</span>
+          <span class="kv-value">{{ xorBalance }} XOR</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Required Bond</span>
+          <span class="kv-value">{{ CITIZEN_BOND_XOR }} XOR</span>
+        </div>
+      </div>
+
+      <div class="permission-stack">
+        <span
+          class="pill mini"
+          :class="hasBallotPermission ? 'positive' : 'muted'"
+        >
+          Ballot: {{ hasBallotPermission ? "enabled" : "missing" }}
+        </span>
+        <span
+          class="pill mini"
+          :class="hasParliamentPermission ? 'positive' : 'muted'"
+        >
+          Parliament: {{ hasParliamentPermission ? "enabled" : "missing" }}
+        </span>
+        <span
+          class="pill mini"
+          :class="hasEnactPermission ? 'positive' : 'muted'"
+        >
+          Enact: {{ hasEnactPermission ? "enabled" : "missing" }}
+        </span>
+      </div>
+
+      <p v-if="permissionNames.length" class="helper tight">
+        Granted permissions: {{ permissionNames.join(", ") }}
+      </p>
+
+      <div class="actions">
+        <button :disabled="!canBondCitizen" @click="handleBondCitizen">
+          {{
+            actionBusy === "bond"
+              ? "Submitting…"
+              : `Bond ${CITIZEN_BOND_XOR} XOR`
+          }}
+        </button>
+      </div>
+      <p v-if="alreadyCitizen" class="message success">
+        Citizenship voting permission detected. Bonding is no longer required.
+      </p>
+      <p v-if="!alreadyCitizen && !hasXorForBond" class="message warning">
+        Available XOR balance is below the required citizen bond amount.
+      </p>
+      <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
+      <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
+      <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
+    </section>
+
+    <section class="card">
+      <header class="card-header">
+        <h2>Referendum Lookup</h2>
+        <button
+          class="secondary"
+          :disabled="!canLookupGovernance"
+          @click="lookupGovernance"
+        >
+          {{ lookupLoading ? "Loading…" : "Load" }}
+        </button>
+      </header>
+      <div class="form-grid">
+        <label>
+          Referendum ID
+          <input v-model.trim="referendumId" type="text" placeholder="ref-1" />
+        </label>
+        <label>
+          Proposal ID (0x...)
+          <input
+            v-model.trim="proposalId"
+            type="text"
+            placeholder="0x0123..."
+          />
+        </label>
+      </div>
+      <p v-if="proposalIdFormatError" class="message warning">
+        Proposal ID must be 32-byte hex (with or without 0x prefix).
+      </p>
+      <div
+        v-if="recentReferenda.length || recentProposals.length"
+        class="history-stack"
+      >
+        <div v-if="recentReferenda.length">
+          <p class="helper tight">Recent referenda</p>
+          <div class="history-chips">
+            <button
+              v-for="recentReferendumId in recentReferenda"
+              :key="`referendum-${recentReferendumId}`"
+              class="ghost history-chip"
+              type="button"
+              :title="recentReferendumId"
+              @click="applyRecentReferendum(recentReferendumId)"
+            >
+              {{ recentReferendumId }}
+            </button>
+          </div>
+        </div>
+        <div v-if="recentProposals.length">
+          <p class="helper tight">Recent proposals</p>
+          <div class="history-chips">
+            <button
+              v-for="recentProposalId in recentProposals"
+              :key="`proposal-${recentProposalId}`"
+              class="ghost history-chip mono"
+              type="button"
+              :title="recentProposalId"
+              @click="applyRecentProposal(recentProposalId)"
+            >
+              {{ shortenIdentifier(recentProposalId) }}
+            </button>
+          </div>
+        </div>
+        <div class="history-actions">
+          <button
+            class="secondary history-clear"
+            type="button"
+            @click="clearHistory"
+          >
+            Clear history
+          </button>
+        </div>
+      </div>
+
+      <div v-if="tally?.tally" class="grid-2" style="margin-top: 12px">
+        <div class="kv">
+          <span class="kv-label">Aye</span>
+          <span class="kv-value">{{ tally.tally.approve }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Nay</span>
+          <span class="kv-value">{{ tally.tally.reject }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Abstain</span>
+          <span class="kv-value">{{ tally.tally.abstain }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Lock Records</span>
+          <span class="kv-value">{{ lockCount }}</span>
+        </div>
+      </div>
+
+      <p v-if="referendum" class="helper">
+        Referendum found: {{ referendum.found ? "yes" : "no" }}.
+      </p>
+      <p v-if="proposal" class="helper">
+        Proposal found: {{ proposal.found ? "yes" : "no" }}.
+      </p>
+
+      <pre v-if="referendum?.referendum" class="payload mono">{{
+        JSON.stringify(referendum.referendum, null, 2)
+      }}</pre>
+      <pre v-if="proposal?.proposal" class="payload mono">{{
+        JSON.stringify(proposal.proposal, null, 2)
+      }}</pre>
+    </section>
+
+    <section class="card">
+      <header class="card-header">
+        <h2>Cast Plain Ballot</h2>
+      </header>
+      <p class="helper">
+        Submit a signed <code>CastPlainBallot</code> instruction directly to
+        Torii.
+      </p>
+      <div class="form-grid">
+        <label>
+          Amount (XOR)
+          <input v-model.trim="ballotAmount" type="text" placeholder="10000" />
+        </label>
+        <label>
+          Lock duration (blocks)
+          <input
+            v-model.number="durationBlocks"
+            type="number"
+            min="1"
+            step="1"
+          />
+        </label>
+        <label>
+          Direction
+          <select v-model="direction">
+            <option value="Aye">Aye</option>
+            <option value="Nay">Nay</option>
+            <option value="Abstain">Abstain</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button :disabled="!canSubmitBallot" @click="handleBallot">
+          {{ actionBusy === "ballot" ? "Submitting…" : "Submit ballot" }}
+        </button>
+      </div>
+      <p class="helper tight">
+        Requires <code>CanSubmitGovernanceBallot</code> permission on the active
+        account.
+      </p>
+      <p v-if="missingBallotPermission" class="message warning">
+        Ballot permission is missing on this account. Submit the citizenship
+        bond and refresh before voting.
+      </p>
+      <p v-if="!hasValidBallotAmount" class="message warning">
+        Ballot amount must be a whole number greater than zero.
+      </p>
+      <p v-else-if="!hasXorForBallot" class="message warning">
+        Ballot amount exceeds the available XOR balance.
+      </p>
+      <p v-if="!hasValidDurationBlocks" class="message warning">
+        Lock duration must be a positive integer number of blocks.
+      </p>
+    </section>
+
+    <section class="card">
+      <header class="card-header">
+        <h2>Council & Draft Ops</h2>
+      </header>
+      <div class="grid-2">
+        <div class="kv">
+          <span class="kv-label">Current Epoch</span>
+          <span class="kv-value">{{ council?.epoch ?? "—" }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Members</span>
+          <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Alternates</span>
+          <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">Derived By</span>
+          <span class="kv-value">{{ council?.derived_by ?? "—" }}</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button
+          class="secondary"
+          :disabled="!canFinalizeDraft"
+          @click="handleFinalize"
+        >
+          {{ actionBusy === "finalize" ? "Preparing…" : "Finalize draft" }}
+        </button>
+        <button
+          class="secondary"
+          :disabled="!canEnactDraft"
+          @click="handleEnact"
+        >
+          {{ actionBusy === "enact" ? "Preparing…" : "Enact draft" }}
+        </button>
+      </div>
+      <p v-if="missingParliamentPermission" class="message warning">
+        Finalize requires <code>CanManageParliament</code> permission.
+      </p>
+      <p v-if="missingEnactPermission" class="message warning">
+        Enact requires <code>CanEnactGovernance</code> permission.
+      </p>
+
+      <p v-if="finalizeDraft" class="helper">
+        Finalize draft: {{ summarizeDraft(finalizeDraft) }}
+      </p>
+      <p v-if="enactDraft" class="helper">
+        Enact draft: {{ summarizeDraft(enactDraft) }}
+      </p>
+
+      <ul v-if="council?.members.length" class="member-list mono">
+        <li v-for="member in council.members" :key="member.account_id">
+          {{ member.account_id }}
+        </li>
+      </ul>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from "vue";
+import {
+  enactGovernanceProposal,
+  fetchAccountAssets,
+  finalizeGovernanceReferendum,
+  getGovernanceCouncilCurrent,
+  getGovernanceLocks,
+  getGovernanceProposal,
+  getGovernanceReferendum,
+  getGovernanceTally,
+  listAccountPermissions,
+  registerCitizen,
+  submitGovernancePlainBallot,
+} from "@/services/iroha";
+import { useSessionStore } from "@/stores/session";
+import type {
+  AccountPermissionItem,
+  GovernanceBallotDirection,
+  GovernanceDraftResponse,
+  GovernanceLocksResult,
+  GovernanceProposalResult,
+  GovernanceReferendumResult,
+  GovernanceTallyResult,
+  GovernanceCouncilCurrentResponse,
+} from "@/types/iroha";
+import { compareDecimalStrings } from "@/utils/staking";
+import {
+  CITIZEN_BOND_XOR,
+  hasGovernancePermission,
+  canonicalizeProposalId,
+  extractProposalIdFromReferendum,
+  isValidProposalId,
+  isPositiveInteger,
+  isPositiveWholeNumberString,
+  listGovernancePermissions,
+  parseParliamentHistory,
+  pushRecentValue,
+  resolveXorBalance,
+  sanitizeReferendumId,
+} from "@/utils/parliament";
+
+const session = useSessionStore();
+const activeAccount = computed(() => session.activeAccount);
+
+const loadingBootstrap = ref(false);
+const permissionsLoaded = ref(false);
+const lookupLoading = ref(false);
+const actionBusy = ref<"bond" | "ballot" | "finalize" | "enact" | null>(null);
+
+const statusMessage = ref("");
+const actionMessage = ref("");
+const errorMessage = ref("");
+
+const xorBalance = ref("0");
+const permissions = ref<AccountPermissionItem[]>([]);
+const council = ref<GovernanceCouncilCurrentResponse | null>(null);
+
+const referendumId = ref("");
+const proposalId = ref("");
+const ballotAmount = ref(CITIZEN_BOND_XOR);
+const durationBlocks = ref(7_200);
+const direction = ref<GovernanceBallotDirection>("Aye");
+const recentReferenda = ref<string[]>([]);
+const recentProposals = ref<string[]>([]);
+
+const referendum = ref<GovernanceReferendumResult | null>(null);
+const proposal = ref<GovernanceProposalResult | null>(null);
+const tally = ref<GovernanceTallyResult | null>(null);
+const locks = ref<GovernanceLocksResult | null>(null);
+const finalizeDraft = ref<GovernanceDraftResponse | null>(null);
+const enactDraft = ref<GovernanceDraftResponse | null>(null);
+const loadedReferendumInput = ref<string | null>(null);
+const loadedProposalInput = ref<string | null>(null);
+const lookupGeneration = ref(0);
+
+const canSubmit = computed(() =>
+  Boolean(
+    session.connection.toriiUrl &&
+      session.connection.chainId &&
+      activeAccount.value?.accountId &&
+      activeAccount.value?.privateKeyHex,
+  ),
+);
+
+const isActionBusy = computed(() => actionBusy.value !== null);
+const permissionNames = computed(() =>
+  listGovernancePermissions(permissions.value),
+);
+const hasBallotPermission = computed(() =>
+  hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
+);
+const hasParliamentPermission = computed(() =>
+  hasGovernancePermission(permissions.value, "CanManageParliament"),
+);
+const hasEnactPermission = computed(() =>
+  hasGovernancePermission(permissions.value, "CanEnactGovernance"),
+);
+const lockCount = computed(() => Object.keys(locks.value?.locks ?? {}).length);
+const trimmedReferendumId = computed(() => referendumId.value.trim());
+const proposalLiteral = computed(() => proposalId.value.trim());
+const canonicalProposalId = computed(() =>
+  proposalLiteral.value ? canonicalizeProposalId(proposalLiteral.value) : null,
+);
+const proposalIdFormatError = computed(
+  () => Boolean(proposalLiteral.value) && !canonicalProposalId.value,
+);
+const ballotAmountLiteral = computed(() => ballotAmount.value.trim());
+const hasValidBallotAmount = computed(() =>
+  isPositiveWholeNumberString(ballotAmountLiteral.value),
+);
+const hasXorForBallot = computed(() => {
+  if (!hasValidBallotAmount.value) {
+    return false;
+  }
+  try {
+    return (
+      compareDecimalStrings(xorBalance.value, ballotAmountLiteral.value) >= 0
+    );
+  } catch (_error) {
+    return false;
+  }
+});
+const hasValidDurationBlocks = computed(() =>
+  isPositiveInteger(durationBlocks.value),
+);
+const missingBallotPermission = computed(
+  () => permissionsLoaded.value && !hasBallotPermission.value,
+);
+const alreadyCitizen = computed(
+  () => permissionsLoaded.value && hasBallotPermission.value,
+);
+const missingParliamentPermission = computed(
+  () => permissionsLoaded.value && !hasParliamentPermission.value,
+);
+const missingEnactPermission = computed(
+  () => permissionsLoaded.value && !hasEnactPermission.value,
+);
+const canBondCitizen = computed(
+  () =>
+    canSubmit.value &&
+    hasXorForBond.value &&
+    !alreadyCitizen.value &&
+    !isActionBusy.value,
+);
+const canSubmitBallot = computed(
+  () =>
+    canSubmit.value &&
+    Boolean(trimmedReferendumId.value) &&
+    hasValidBallotAmount.value &&
+    hasXorForBallot.value &&
+    hasValidDurationBlocks.value &&
+    !missingBallotPermission.value &&
+    !isActionBusy.value,
+);
+const canFinalizeDraft = computed(
+  () =>
+    Boolean(session.connection.toriiUrl) &&
+    Boolean(trimmedReferendumId.value) &&
+    Boolean(canonicalProposalId.value) &&
+    !missingParliamentPermission.value &&
+    !isActionBusy.value,
+);
+const canEnactDraft = computed(
+  () =>
+    Boolean(session.connection.toriiUrl) &&
+    Boolean(canonicalProposalId.value) &&
+    !missingEnactPermission.value &&
+    !isActionBusy.value,
+);
+const canLookupGovernance = computed(
+  () =>
+    Boolean(session.connection.toriiUrl) &&
+    (Boolean(trimmedReferendumId.value) || Boolean(proposalLiteral.value)) &&
+    (Boolean(trimmedReferendumId.value) || !proposalIdFormatError.value) &&
+    !lookupLoading.value,
+);
+
+const hasXorForBond = computed(() => {
+  try {
+    return compareDecimalStrings(xorBalance.value, CITIZEN_BOND_XOR) >= 0;
+  } catch (_error) {
+    return false;
+  }
+});
+const historyStorageKey = computed(() =>
+  activeAccount.value?.accountId
+    ? `iroha-demo:parliament-history:${activeAccount.value.accountId}`
+    : null,
+);
+
+const resetGovernanceLookup = () => {
+  referendum.value = null;
+  proposal.value = null;
+  tally.value = null;
+  locks.value = null;
+  finalizeDraft.value = null;
+  enactDraft.value = null;
+  loadedReferendumInput.value = null;
+  loadedProposalInput.value = null;
+  lookupLoading.value = false;
+  lookupGeneration.value += 1;
+};
+
+const loadHistory = () => {
+  if (!historyStorageKey.value) {
+    recentReferenda.value = [];
+    recentProposals.value = [];
+    return;
+  }
+  const raw = localStorage.getItem(historyStorageKey.value);
+  if (!raw) {
+    recentReferenda.value = [];
+    recentProposals.value = [];
+    return;
+  }
+  try {
+    const parsed = parseParliamentHistory(JSON.parse(raw));
+    recentReferenda.value = parsed.referenda;
+    recentProposals.value = parsed.proposals;
+  } catch (_error) {
+    recentReferenda.value = [];
+    recentProposals.value = [];
+    localStorage.removeItem(historyStorageKey.value);
+  }
+};
+
+const saveHistory = () => {
+  if (!historyStorageKey.value) {
+    return;
+  }
+  localStorage.setItem(
+    historyStorageKey.value,
+    JSON.stringify({
+      referenda: recentReferenda.value,
+      proposals: recentProposals.value,
+    }),
+  );
+};
+
+const rememberHistory = (input: {
+  referendumId?: string | null;
+  proposalId?: string | null;
+}) => {
+  if (input.referendumId) {
+    recentReferenda.value = pushRecentValue(
+      recentReferenda.value,
+      sanitizeReferendumId(input.referendumId),
+    );
+  }
+  if (input.proposalId) {
+    const normalizedProposalId = canonicalizeProposalId(input.proposalId);
+    if (normalizedProposalId) {
+      recentProposals.value = pushRecentValue(
+        recentProposals.value,
+        normalizedProposalId,
+      );
+    }
+  }
+  saveHistory();
+};
+
+const clearHistory = () => {
+  recentReferenda.value = [];
+  recentProposals.value = [];
+  if (historyStorageKey.value) {
+    localStorage.removeItem(historyStorageKey.value);
+  }
+};
+
+const applyRecentReferendum = async (value: string) => {
+  referendumId.value = value;
+  if (canLookupGovernance.value) {
+    await lookupGovernance();
+  }
+};
+
+const applyRecentProposal = async (value: string) => {
+  proposalId.value = value;
+  if (canLookupGovernance.value) {
+    await lookupGovernance();
+  }
+};
+
+const shortenIdentifier = (value: string) => {
+  if (value.length <= 22) {
+    return value;
+  }
+  return `${value.slice(0, 10)}…${value.slice(-10)}`;
+};
+
+const refresh = async () => {
+  if (!session.connection.toriiUrl || !activeAccount.value?.accountId) {
+    statusMessage.value =
+      "Configure Torii and complete account onboarding first.";
+    permissionsLoaded.value = false;
+    permissions.value = [];
+    council.value = null;
+    xorBalance.value = "0";
+    resetGovernanceLookup();
+    return;
+  }
+
+  loadingBootstrap.value = true;
+  statusMessage.value = "";
+  errorMessage.value = "";
+
+  try {
+    const [assetsPayload, permissionsPayload, councilPayload] =
+      await Promise.all([
+        fetchAccountAssets({
+          toriiUrl: session.connection.toriiUrl,
+          accountId: activeAccount.value.accountId,
+          limit: 200,
+        }),
+        listAccountPermissions({
+          toriiUrl: session.connection.toriiUrl,
+          accountId: activeAccount.value.accountId,
+          limit: 200,
+        }),
+        getGovernanceCouncilCurrent(session.connection.toriiUrl),
+      ]);
+
+    xorBalance.value = resolveXorBalance(assetsPayload.items);
+    permissionsLoaded.value = true;
+    permissions.value = permissionsPayload.items;
+    council.value = councilPayload;
+    statusMessage.value = `Loaded ${permissionsPayload.total} permission token(s).`;
+  } catch (error) {
+    permissionsLoaded.value = false;
+    permissions.value = [];
+    council.value = null;
+    xorBalance.value = "0";
+    resetGovernanceLookup();
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    loadingBootstrap.value = false;
+  }
+};
+
+const lookupGovernance = async () => {
+  if (!session.connection.toriiUrl) {
+    errorMessage.value = "Torii connection is required.";
+    return;
+  }
+  if (!trimmedReferendumId.value && !proposalLiteral.value) {
+    errorMessage.value = "Provide a referendum id or proposal id first.";
+    return;
+  }
+  if (!trimmedReferendumId.value && proposalIdFormatError.value) {
+    errorMessage.value =
+      "Proposal ID must be 32-byte hex (with or without 0x prefix).";
+    return;
+  }
+
+  const requestGeneration = lookupGeneration.value + 1;
+  lookupGeneration.value = requestGeneration;
+  lookupLoading.value = true;
+  statusMessage.value = "";
+  errorMessage.value = "";
+
+  try {
+    const referendumLiteral = trimmedReferendumId.value;
+    const proposalLiteralInput = proposalLiteral.value;
+    const proposalInputWasInvalid = proposalIdFormatError.value;
+    const proposalLiteralNormalized = proposalInputWasInvalid
+      ? null
+      : canonicalProposalId.value;
+    let inferredProposalId: string | null = null;
+    let nextReferendum: GovernanceReferendumResult | null = null;
+    let nextTally: GovernanceTallyResult | null = null;
+    let nextLocks: GovernanceLocksResult | null = null;
+    let nextProposal: GovernanceProposalResult | null = null;
+    let nextProposalField = proposalLiteralInput;
+
+    if (referendumLiteral) {
+      const [referendumPayload, tallyPayload, lockPayload] = await Promise.all([
+        getGovernanceReferendum({
+          toriiUrl: session.connection.toriiUrl,
+          referendumId: referendumLiteral,
+        }),
+        getGovernanceTally({
+          toriiUrl: session.connection.toriiUrl,
+          referendumId: referendumLiteral,
+        }),
+        getGovernanceLocks({
+          toriiUrl: session.connection.toriiUrl,
+          referendumId: referendumLiteral,
+        }),
+      ]);
+      nextReferendum = referendumPayload;
+      nextTally = tallyPayload;
+      nextLocks = lockPayload;
+      inferredProposalId = extractProposalIdFromReferendum(
+        referendumPayload.referendum,
+      );
+    }
+
+    const lookupProposalId = proposalLiteralNormalized ?? inferredProposalId;
+    if (lookupProposalId) {
+      nextProposal = await getGovernanceProposal({
+        toriiUrl: session.connection.toriiUrl,
+        proposalId: lookupProposalId,
+      });
+      if (!proposalLiteralNormalized) {
+        nextProposalField = lookupProposalId;
+      }
+    }
+
+    // Ignore stale async results if user changed lookup ids while request was in flight.
+    if (
+      requestGeneration !== lookupGeneration.value ||
+      trimmedReferendumId.value !== referendumLiteral ||
+      proposalLiteral.value !== proposalLiteralInput
+    ) {
+      return;
+    }
+
+    const finalReferendumInput = referendumLiteral || null;
+    const finalProposalInput =
+      (canonicalizeProposalId(nextProposalField) ?? nextProposalField) || null;
+    loadedReferendumInput.value = finalReferendumInput;
+    loadedProposalInput.value = finalProposalInput;
+
+    referendum.value = nextReferendum;
+    tally.value = nextTally;
+    locks.value = nextLocks;
+    proposal.value = nextProposal;
+    if (nextProposalField !== proposalLiteralInput) {
+      proposalId.value = nextProposalField;
+    }
+
+    rememberHistory({
+      referendumId: referendumLiteral || null,
+      proposalId: lookupProposalId,
+    });
+    statusMessage.value =
+      referendumLiteral && proposalInputWasInvalid
+        ? "Governance records refreshed. Invalid proposal ID was ignored."
+        : "Governance records refreshed.";
+  } catch (error) {
+    if (requestGeneration !== lookupGeneration.value) {
+      return;
+    }
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    if (requestGeneration === lookupGeneration.value) {
+      lookupLoading.value = false;
+    }
+  }
+};
+
+const runAction = async (
+  mode: "bond" | "ballot" | "finalize" | "enact",
+  run: () => Promise<string>,
+) => {
+  actionBusy.value = mode;
+  errorMessage.value = "";
+  actionMessage.value = "";
+  try {
+    actionMessage.value = await run();
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    actionBusy.value = null;
+  }
+};
+
+const handleBondCitizen = () =>
+  runAction("bond", async () => {
+    if (!canSubmit.value || !activeAccount.value) {
+      throw new Error("Connection, chain, and active account are required.");
+    }
+    if (alreadyCitizen.value) {
+      throw new Error(
+        "This account already has governance ballot permission and does not need another citizenship bond.",
+      );
+    }
+    if (!hasXorForBond.value) {
+      throw new Error(
+        `A minimum of ${CITIZEN_BOND_XOR} XOR is required to register citizenship.`,
+      );
+    }
+    const result = await registerCitizen({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      accountId: activeAccount.value.accountId,
+      amount: CITIZEN_BOND_XOR,
+      privateKeyHex: activeAccount.value.privateKeyHex,
+    });
+    await refresh();
+    return `Citizenship bond submitted: ${result.hash}`;
+  });
+
+const handleBallot = () =>
+  runAction("ballot", async () => {
+    if (!canSubmit.value || !activeAccount.value) {
+      throw new Error("Connection, chain, and active account are required.");
+    }
+    if (missingBallotPermission.value) {
+      throw new Error(
+        "CanSubmitGovernanceBallot permission is missing on the active account.",
+      );
+    }
+    const referendumLiteral = trimmedReferendumId.value;
+    if (!referendumLiteral) {
+      throw new Error("referendumId is required before submitting a ballot.");
+    }
+    if (!hasValidBallotAmount.value) {
+      throw new Error(
+        "Ballot amount must be a whole number greater than zero.",
+      );
+    }
+    if (!hasXorForBallot.value) {
+      throw new Error("Ballot amount exceeds the available XOR balance.");
+    }
+    if (!hasValidDurationBlocks.value) {
+      throw new Error(
+        "Lock duration must be a positive integer number of blocks.",
+      );
+    }
+    const result = await submitGovernancePlainBallot({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      accountId: activeAccount.value.accountId,
+      referendumId: referendumLiteral,
+      amount: ballotAmountLiteral.value,
+      durationBlocks: durationBlocks.value,
+      direction: direction.value,
+      privateKeyHex: activeAccount.value.privateKeyHex,
+    });
+    rememberHistory({ referendumId: referendumLiteral });
+    await lookupGovernance();
+    return `Ballot submitted: ${result.hash}`;
+  });
+
+const handleFinalize = () =>
+  runAction("finalize", async () => {
+    if (!session.connection.toriiUrl) {
+      throw new Error("Torii connection is required.");
+    }
+    if (missingParliamentPermission.value) {
+      throw new Error(
+        "CanManageParliament permission is required for finalize.",
+      );
+    }
+    const referendumLiteral = trimmedReferendumId.value;
+    const proposalLiteral = proposalId.value.trim();
+    const proposalLiteralNormalized = canonicalProposalId.value;
+    if (!referendumLiteral || !proposalLiteral) {
+      throw new Error("referendumId and proposalId are required for finalize.");
+    }
+    if (!proposalLiteralNormalized) {
+      throw new Error(
+        "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+      );
+    }
+    finalizeDraft.value = await finalizeGovernanceReferendum({
+      toriiUrl: session.connection.toriiUrl,
+      referendumId: referendumLiteral,
+      proposalId: proposalLiteralNormalized,
+    });
+    proposalId.value = proposalLiteralNormalized;
+    rememberHistory({
+      referendumId: referendumLiteral,
+      proposalId: proposalLiteralNormalized,
+    });
+    return `Finalize draft prepared with ${finalizeDraft.value.tx_instructions.length} instruction(s).`;
+  });
+
+const handleEnact = () =>
+  runAction("enact", async () => {
+    if (!session.connection.toriiUrl) {
+      throw new Error("Torii connection is required.");
+    }
+    if (missingEnactPermission.value) {
+      throw new Error("CanEnactGovernance permission is required for enact.");
+    }
+    const proposalLiteral = proposalId.value.trim();
+    const proposalLiteralNormalized = canonicalProposalId.value;
+    if (!proposalLiteral) {
+      throw new Error("proposalId is required for enact.");
+    }
+    if (!proposalLiteralNormalized) {
+      throw new Error(
+        "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+      );
+    }
+    enactDraft.value = await enactGovernanceProposal({
+      toriiUrl: session.connection.toriiUrl,
+      proposalId: proposalLiteralNormalized,
+    });
+    proposalId.value = proposalLiteralNormalized;
+    rememberHistory({ proposalId: proposalLiteralNormalized });
+    return `Enact draft prepared with ${enactDraft.value.tx_instructions.length} instruction(s).`;
+  });
+
+const summarizeDraft = (draft: GovernanceDraftResponse) => {
+  const accepted =
+    draft.accepted === undefined ? "n/a" : String(draft.accepted);
+  const reason = draft.reason ? ` reason: ${draft.reason}` : "";
+  return `accepted=${accepted}, instructions=${draft.tx_instructions.length}.${reason}`;
+};
+
+watch(
+  () => activeAccount.value?.accountId,
+  (nextAccountId, previousAccountId) => {
+    loadHistory();
+    if (
+      previousAccountId !== undefined &&
+      nextAccountId !== previousAccountId
+    ) {
+      resetGovernanceLookup();
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [trimmedReferendumId.value, proposalLiteral.value],
+  ([nextReferendumId, nextProposalId]) => {
+    const nextReferendumLiteral = nextReferendumId || null;
+    const nextCanonicalProposalId = nextProposalId
+      ? canonicalizeProposalId(nextProposalId)
+      : null;
+    const nextProposalLiteral =
+      (nextCanonicalProposalId ?? nextProposalId) || null;
+    if (
+      loadedReferendumInput.value === null &&
+      loadedProposalInput.value === null
+    ) {
+      return;
+    }
+    if (
+      nextReferendumLiteral !== loadedReferendumInput.value ||
+      nextProposalLiteral !== loadedProposalInput.value
+    ) {
+      referendum.value = null;
+      proposal.value = null;
+      tally.value = null;
+      locks.value = null;
+      finalizeDraft.value = null;
+      enactDraft.value = null;
+    }
+  },
+);
+
+watch(
+  proposalId,
+  (next) => {
+    if (!next.trim()) return;
+    if (isValidProposalId(next)) {
+      const normalized = canonicalizeProposalId(next);
+      if (normalized && normalized !== next) {
+        proposalId.value = normalized;
+      }
+    }
+  },
+  { flush: "post" },
+);
+
+watch(
+  () => [
+    session.connection.toriiUrl,
+    session.connection.chainId,
+    activeAccount.value?.accountId,
+  ],
+  () => {
+    refresh();
+  },
+  { immediate: true },
+);
+</script>
+
+<style scoped>
+.helper {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: var(--iroha-muted);
+}
+
+.helper.tight {
+  margin-top: 6px;
+}
+
+.permission-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.history-stack {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+
+.history-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-chip {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+}
+
+.history-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.history-clear {
+  padding: 6px 10px;
+  border-radius: 10px;
+  font-size: 0.75rem;
+}
+
+.message {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+}
+
+.message.success {
+  border: 1px solid rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+  color: #15803d;
+}
+
+.message.warning {
+  border: 1px solid rgba(217, 119, 6, 0.4);
+  background: rgba(217, 119, 6, 0.1);
+  color: #b45309;
+}
+
+.message.error {
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.mono {
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 0.8rem;
+}
+
+.payload {
+  margin-top: 12px;
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--panel-border);
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.member-list {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  font-size: 0.78rem;
+  display: grid;
+  gap: 4px;
+  max-height: 160px;
+  overflow: auto;
+}
+</style>

@@ -3,38 +3,44 @@
 Last updated: 2026-03-04
 
 ## Purpose
-Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Iroha SORA Nexus). The UI shows account onboarding, wallet balances, NPOS staking for XOR, transfer/receive QR flows, and explorer metrics. Styling uses a glassmorphic theme with animated sakura particles. All code lives under plain Vite/Electron (no Nuxt). Pinia stores persist session and theme state in localStorage.
+Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testnet). The UI shows account onboarding, wallet balances, NPOS staking for XOR, SORA Parliament governance flows, transfer/receive QR flows, and explorer metrics. Styling uses a glassmorphic theme with animated sakura particles. All code lives under plain Vite/Electron (no Nuxt). Pinia stores persist session and theme state in localStorage.
 
 ## Key Concepts & Flows
-- **Account onboarding (`/account`)**: Users generate recovery phrases, derive their SORA Nexus accountId, register via `/v1/accounts/onboard`, and optionally bootstrap an IrohaConnect pairing session.
+- **Account onboarding (`/account`)**: Users generate recovery phrases, derive their accountId, register via `/v1/accounts/onboard`, and optionally bootstrap an IrohaConnect pairing session.
 - **Network profile lock**: Setup/onboarding now lock connection selection to TAIRA testnet only (`https://taira.sora.org`, chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`), and the public explorer link is `https://taira-explorer.sora.org`.
 - **Torii Bridge (Electron preload)**: `window.iroha` exposes helpers wrapped around `@iroha/iroha-js` (register account, transfer asset, explorer metrics, Connect preview, NPOS staking tx builders) plus Nexus public-lane fetch endpoints. Remember to build native bindings after installing deps (`npm install` runs scripts/postinstall).
-- **Wallet / Send / Receive**: Vue views in `src/views`. Receive uses QR generation; Send leverages ZXing for camera + file upload to populate transfer params.
+- **Wallet / Send / Receive**: Vue views in `src/views`. Receive uses QR generation; Send leverages ZXing for camera + file upload to populate transfer params, and includes a shield toggle that performs self-shielding only (`public -> shielded`) when policy mode supports it.
+- **Offline move-to-online**: `/offline` includes an on-chain move action that now mirrors Send shield behavior (policy preflight + self-shielding constraints).
 - **Staking (`/staking`)**: Dataspace-first validator nomination flow for public-lane NPOS. Lane is auto-resolved from `getSumeragiStatus` (with dataspace commitment fallback), validator list is loaded from `/v1/nexus/public_lanes/{lane_id}/validators`, stake balance is surfaced in-view, and stake/reward actions submit staking instructions via `buildTransaction`.
+- **Parliament (`/parliament`)**: Governance helper screen for citizenship + voting. It fetches account permissions and governance payloads, supports a fixed `10,000 XOR` `RegisterCitizen` bond, can submit `CastPlainBallot`, and prepares finalize/enact governance drafts. Referendum/proposal history is persisted per active account in localStorage and chip clicks trigger instant lookup. Referendum lookup still runs when proposal input is invalid (proposal fetch is skipped), ballots enforce positive whole-number amounts that are <= available XOR balance, and in-flight lookup responses are invalidated on refresh failures and active-account switches.
 - **Theme & Flair**: `useThemeStore` toggles light/dark by applying `data-theme` on `<html>`. Animated sakura petals (`SakuraScene.vue`) sit behind everything (canvas z-index 0) and read CSS `--parallax-x/y` to drift + “stick” to side walls. Ensure new overlays respect pointer-events so they don’t block the sidebar.
 
 ## Tooling & Commands
 - **Dev**: `npm run dev` (electron-vite). Ensure `ELECTRON_RENDERER_URL` is set automatically by electron-vite.
 - **Tests**: `npm test` (Vitest + jsdom). Current suites cover session, theme, and transaction helper logic.
 - **Lint/Typecheck**: `npm run lint`, `npm run typecheck` (renderer + Electron), plus `npm run typecheck:renderer` / `npm run typecheck:electron`.
-- **Verification bundles**: `npm run verify` (lint + typecheck + unit tests), `npm run verify:localnet` / `npm run verify:localnet:stateful` to include live Electron E2E against generated localnet. Use `npm run verify:localnet:all` to run read-only + stateful localnet E2E after one base verify pass.
-- **Live E2E**: `E2E_TORII_URL=<url> E2E_CHAIN_ID=<chain> npm run e2e:live` (strict live Torii reachability preflight, supports `/v1/health` and `/health`, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Staking/Subscriptions/Send/Receive/Offline). Optional write flow: `npm run e2e:live:stateful` (requires UAID onboarding enabled on the target Torii).
-- **Localnet E2E**: `npm run e2e:localnet` (auto-generates localnet and runs live E2E), `npm run e2e:localnet:stateful` for onboarding flow.
+- **Live verification bundles**: `npm run verify:live` (base verify + strict live TAIRA E2E including stateful onboarding + shield submit checks).
+- **Verification bundles**: `npm run verify` (lint + typecheck + unit tests).
+- **Live E2E**: `npm run e2e:live` (defaults to TAIRA Torii + chain ID, strict reachability preflight, supports `/v1/health` and `/health`, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline). Stateful write flow: `npm run e2e:live:stateful` (requires UAID onboarding enabled on TAIRA, treats onboarding `HTTP 409` as reusable-account success, and hard-fails on onboarding `HTTP 403`).
 
 ## File Map (high level)
 - `electron/main.ts` / `preload.ts`: window bootstrap + Torii bridge.
 - `src/main.ts`: app entry, mounts Pinia + router + theme hydration.
 - `src/stores`: `session.ts`, `theme.ts` (persisting account/session/theme state).
 - `src/router/index.ts`: guards (`/account` required first).
-- `src/views`: Account/Setup/Wallet/Staking/Send/Receive/Explore screens.
+- `src/views`: Account/Setup/Wallet/Staking/Parliament/Send/Receive/Explore/Offline screens.
 - `src/components/SakuraScene.vue`: canvas particle layer.
 - `src/styles/main.css`: dual-theme glassmorphism + layout styling.
 
 ## Gotchas
 - Always keep UI layers above the sakura canvas (set container `z-index` if adding new wrappers). Canvas must stay `pointer-events: none`.
 - Account guard will redirect to `/account` if `session.hasAccount` is false. When testing other routes, seed `session.accounts[]` with an active account containing `accountId` and `privateKeyHex`.
-- Setup and account onboarding views force TAIRA testnet connection values; Torii URL / chain ID are read-only in the UI.
+- Setup forces TAIRA testnet connection values (Torii URL / chain ID read-only), and account onboarding no longer exposes editable connection inputs.
 - Onboarding/persistence now keeps explicit account literals (`0x...@domain`) as `accountId`; `ih58` is backfilled from Torii onboarding responses when local address-format derivation is unavailable.
+- Live stateful E2E reuses one deterministic onboarding account (`E2E_STATEFUL_PRIVATE_KEY_HEX`) so repeated runs do not keep creating TAIRA onboarding records.
+- Shield mode in Send is limited to destination=active-account and whole-number base-unit amounts; unsupported confidential modes auto-disable the toggle after policy preflight.
+- Offline "Move funds to online wallet" uses the same shield constraints as Send, including destination lock and whole-number amount validation.
+- Parliament proposal IDs are expected to be 32-byte hex values (with or without `0x` prefix); referendum IDs are free-form strings from governance storage.
 - The send view requires navigator media permissions. In headless test contexts, avoid invoking scanner logic.
 - If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`.
 

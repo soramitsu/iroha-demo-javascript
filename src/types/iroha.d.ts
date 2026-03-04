@@ -26,6 +26,16 @@ export interface AccountTransactionItem {
   [key: string]: unknown;
 }
 
+export interface AccountPermissionItem {
+  name: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface AccountPermissionsResponse {
+  items: AccountPermissionItem[];
+  total: number;
+}
+
 export type ToriiAddressFormat = "ih58" | "canonical" | "compressed";
 
 export interface OfflineAllowanceItem {
@@ -211,6 +221,71 @@ export interface PublicLaneRewardsResponseView {
   items: PublicLanePendingRewardView[];
 }
 
+export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
+
+export interface GovernanceProposalResult {
+  found: boolean;
+  proposal: Record<string, unknown> | null;
+}
+
+export interface GovernanceReferendumResult {
+  found: boolean;
+  referendum: Record<string, unknown> | null;
+}
+
+export interface GovernanceTallyView {
+  referendum_id: string;
+  approve: number;
+  reject: number;
+  abstain: number;
+}
+
+export interface GovernanceTallyResult {
+  found: boolean;
+  referendum_id: string;
+  tally: GovernanceTallyView | null;
+}
+
+export interface GovernanceLockRecord {
+  owner: string;
+  amount: number;
+  expiry_height: number;
+  direction: number;
+  duration_blocks: number;
+}
+
+export interface GovernanceLocksResult {
+  found: boolean;
+  referendum_id: string;
+  locks: Record<string, GovernanceLockRecord>;
+}
+
+export interface GovernanceCouncilMember {
+  account_id: string;
+}
+
+export interface GovernanceCouncilCurrentResponse {
+  epoch: number;
+  members: GovernanceCouncilMember[];
+  alternates: GovernanceCouncilMember[];
+  candidate_count: number;
+  verified: number;
+  derived_by: string;
+}
+
+export interface GovernanceDraftInstruction {
+  wire_id: string;
+  payload_hex?: string | null;
+}
+
+export interface GovernanceDraftResponse {
+  ok: boolean;
+  proposal_id: string | null;
+  tx_instructions: GovernanceDraftInstruction[];
+  accepted?: boolean;
+  reason?: string | null;
+}
+
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
@@ -255,6 +330,57 @@ export interface IrohaBridge {
     limit?: number;
     offset?: number;
   }): Promise<AccountTransactionsResponse>;
+  listAccountPermissions(input: {
+    toriiUrl: string;
+    accountId: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<AccountPermissionsResponse>;
+  registerCitizen(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    amount: string;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
+  getGovernanceProposal(input: {
+    toriiUrl: string;
+    proposalId: string;
+  }): Promise<GovernanceProposalResult>;
+  getGovernanceReferendum(input: {
+    toriiUrl: string;
+    referendumId: string;
+  }): Promise<GovernanceReferendumResult>;
+  getGovernanceTally(input: {
+    toriiUrl: string;
+    referendumId: string;
+  }): Promise<GovernanceTallyResult>;
+  getGovernanceLocks(input: {
+    toriiUrl: string;
+    referendumId: string;
+  }): Promise<GovernanceLocksResult>;
+  getGovernanceCouncilCurrent(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceCouncilCurrentResponse>;
+  submitGovernancePlainBallot(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    referendumId: string;
+    amount: string;
+    durationBlocks: number;
+    direction: GovernanceBallotDirection;
+    privateKeyHex: string;
+  }): Promise<{ hash: string }>;
+  finalizeGovernanceReferendum(input: {
+    toriiUrl: string;
+    referendumId: string;
+    proposalId: string;
+  }): Promise<GovernanceDraftResponse>;
+  enactGovernanceProposal(input: {
+    toriiUrl: string;
+    proposalId: string;
+  }): Promise<GovernanceDraftResponse>;
   getExplorerMetrics(config: {
     toriiUrl: string;
   }): Promise<ExplorerMetricsResponse | null>;

@@ -9,7 +9,9 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 - 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
 - 📊 Wallet dashboard with live balances + decoded transaction directions.
 - 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
+- 🏛️ Parliament tab with a fixed `10,000 XOR` citizenship bond flow, governance referendum/proposal lookup, and plain ballot submission helpers.
 - 📱 Receive tab with IH58 display + QR payloads, and Send tab with an optional camera scanner powered by ZXing.
+- 🛡️ Send tab and Offline "Move funds to online wallet" both support a shield toggle; current wallet flow performs self-shielding (public -> shielded) with policy preflight checks.
 - 📡 Explorer tab surfacing `/v1/explorer` metrics and share-ready QR payloads.
 
 ## Prerequisites
@@ -74,85 +76,52 @@ For local development checks without E2E:
 npm run verify
 ```
 
-For full validation including generated localnet Electron E2E:
+For verification plus live TAIRA E2E (read-only + stateful onboarding):
 
 ```bash
-npm run verify:localnet
-```
-
-Stateful onboarding variant:
-
-```bash
-npm run verify:localnet:stateful
-```
-
-Run both read-only and stateful localnet E2E after a single lint/typecheck/test pass:
-
-```bash
-npm run verify:localnet:all
+npm run verify:live
 ```
 
 ### Live Electron E2E
 
-Run the live Torii Electron E2E harness:
+Run the live Torii Electron E2E harness (defaults to TAIRA):
 
 ```bash
-E2E_TORII_URL=https://your-torii.example:8080 \
-E2E_CHAIN_ID=00000000-0000-0000-0000-000000000753 \
 npm run e2e:live
 ```
 
-Required env vars:
-
-- `E2E_TORII_URL`
-- `E2E_CHAIN_ID`
-
 Optional env vars:
 
+- `E2E_TORII_URL` (default: `https://taira.sora.org`)
+- `E2E_CHAIN_ID` (default: `809574f5-fee7-5e69-bfcf-52451e42d50f`)
 - `E2E_ASSET_DEFINITION_ID` (default: `rose#wonderland`)
 - `E2E_NETWORK_PREFIX` (default: `42`)
 - `E2E_ACCOUNT_ID` (optional seed account for read-only Explore QR assertions)
 - `E2E_STATEFUL=1` (enables onboarding write flow)
+- `E2E_STATEFUL_ALIAS` (default: `E2E Stateful Shared`)
+- `E2E_STATEFUL_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable stateful onboarding account reuse)
+- `E2E_STATEFUL_OFFLINE_BALANCE` (default: `100`; seeded offline balance for offline shield submission checks)
 
-The preflight checks `GET /v1/health` first, then falls back to `GET /health` for localnet deployments.
+In this TAIRA-only wallet build, live E2E only supports TAIRA Torii + chain ID values.
 
-Read-only mode validates Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Subscriptions/Send/Receive/Offline/Explore (including Receive QR rendering).
+The preflight checks `GET /v1/health` first, then falls back to `GET /health`.
 
-Stateful mode writes test onboarding records to the configured live Torii endpoint:
+Read-only mode validates Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore (including Receive QR rendering).
+
+Stateful mode reuses a deterministic onboarding account to avoid writing a new TAIRA account record on every run:
 
 ```bash
-E2E_TORII_URL=https://your-torii.example:8080 \
-E2E_CHAIN_ID=00000000-0000-0000-0000-000000000753 \
 npm run e2e:live:stateful
 ```
 
 Stateful mode requires a Torii endpoint with UAID onboarding enabled.
+If onboarding is disabled, the harness fails with an explicit `HTTP 403`
+message indicating UAID onboarding must be enabled on the target Torii.
+If the deterministic account already exists, `HTTP 409` is treated as expected and the flow continues.
+
+Stateful mode also submits shield actions from both Send and Offline views, then asserts that post-submit status messages are produced (success or backend rejection) to verify bridge submission paths.
 
 If a test fails, screenshots are written under `output/playwright/`.
-
-### One-command localnet E2E
-
-To run against a generated localnet (with UAID onboarding enabled) in one command:
-
-```bash
-npm run e2e:localnet
-```
-
-Stateful onboarding variant:
-
-```bash
-npm run e2e:localnet:stateful
-```
-
-Useful overrides:
-
-- `E2E_IROHA_DIR` (default: `../iroha`)
-- `E2E_IROHA_TARGET_DIR` (default: `../iroha/target_codex_iroha_demo` when present, otherwise `../iroha/target`)
-- `E2E_IROHA_PROFILE` (`debug` or `release`, default: `debug`)
-- `E2E_LOCALNET_OUT_DIR` (default: `/tmp/iroha-localnet-e2e`)
-- `E2E_LOCALNET_API_PORT` (default: `39080`)
-- `E2E_LOCALNET_P2P_PORT` (default: `39337`)
-- `E2E_KEEP_LOCALNET=1` (skip auto-stop for debugging)
 
 ## Usage notes
 
@@ -160,9 +129,11 @@ Useful overrides:
 2. **Setup tab** — TAIRA Torii URL + chain ID are locked; set your asset definition and key material. Generate or import a key pair to derive the canonical `accountId` (for example `0x…@wonderland`, with IH58 shown after onboarding). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
 4. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
-5. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount.
-6. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
-7. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
+5. **Parliament tab** — bond a fixed `10,000 XOR` amount via `RegisterCitizen`, inspect referendum/proposal/tally/locks payloads, submit plain ballots, and prepare finalize/enact draft calls for governance operations. Recent referendum/proposal chips are persisted per account and trigger lookup when clicked. If referendum ID is set, lookup continues even when proposal ID input is invalid (proposal lookup is skipped). Ballot submit requires a positive whole-number amount that does not exceed the current XOR balance.
+6. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount. Shield mode is available from the send form and currently supports self-shielding only (destination is locked to the active account and amount must be whole-number base units).
+7. **Receive tab** — share IH58 plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
+8. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
+9. **Offline tab** — "Move funds to online wallet" mirrors shield behavior from Send: shield mode locks destination to the active account and requires whole-number base units.
 
 ## Folder structure
 
@@ -186,8 +157,10 @@ All network calls go straight to Torii using the `ToriiClient` inside `@iroha/ir
 
 - `ping` → `/v1/health`
 - `registerAccount` → `buildRegisterAccountAndTransferTransaction` + `/v1/pipeline/transactions`
-- `transferAsset` → `buildTransferAssetTransaction`
+- `transferAsset` → `buildTransferAssetTransaction` (transparent) or `buildShieldTransaction` (when shield mode is enabled with supported policy mode)
 - `fetchAccountAssets`, `fetchAccountTransactions`, `getExplorerMetrics`, `getExplorerAccountQr`
+- `listAccountPermissions`, `registerCitizen`, `getGovernanceProposal`, `getGovernanceReferendum`, `getGovernanceTally`, `getGovernanceLocks`, `getGovernanceCouncilCurrent`
+- `submitGovernancePlainBallot`, `finalizeGovernanceReferendum`, `enactGovernanceProposal`
 - `getSumeragiStatus`, `getNexusPublicLaneValidators`, `getNexusPublicLaneStake`, `getNexusPublicLaneRewards`, `getNexusStakingPolicy`
 - `bondPublicLaneStake`, `schedulePublicLaneUnbond`, `finalizePublicLaneUnbond`, `claimPublicLaneRewards`
 

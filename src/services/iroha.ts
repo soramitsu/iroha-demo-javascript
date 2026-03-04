@@ -2,11 +2,18 @@ import type {
   AccountAddressView,
   AccountAssetsResponse,
   AccountOnboardingResponse,
+  AccountPermissionsResponse,
   AccountTransactionsResponse,
   ConfidentialAssetPolicyView,
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
+  GovernanceCouncilCurrentResponse,
+  GovernanceDraftResponse,
+  GovernanceLocksResult,
+  GovernanceProposalResult,
+  GovernanceReferendumResult,
+  GovernanceTallyResult,
   IrohaBridge,
   NexusStakingPolicy,
   NexusSumeragiStatus,
@@ -61,6 +68,50 @@ export const fetchAccountTransactions = (
   input: Parameters<IrohaBridge["fetchAccountTransactions"]>[0],
 ): Promise<AccountTransactionsResponse> =>
   bridge().fetchAccountTransactions(input);
+
+export const listAccountPermissions = (
+  input: Parameters<IrohaBridge["listAccountPermissions"]>[0],
+): Promise<AccountPermissionsResponse> =>
+  bridge().listAccountPermissions(input);
+
+export const registerCitizen = (
+  input: Parameters<IrohaBridge["registerCitizen"]>[0],
+) => bridge().registerCitizen(input);
+
+export const getGovernanceProposal = (
+  input: Parameters<IrohaBridge["getGovernanceProposal"]>[0],
+): Promise<GovernanceProposalResult> => bridge().getGovernanceProposal(input);
+
+export const getGovernanceReferendum = (
+  input: Parameters<IrohaBridge["getGovernanceReferendum"]>[0],
+): Promise<GovernanceReferendumResult> =>
+  bridge().getGovernanceReferendum(input);
+
+export const getGovernanceTally = (
+  input: Parameters<IrohaBridge["getGovernanceTally"]>[0],
+): Promise<GovernanceTallyResult> => bridge().getGovernanceTally(input);
+
+export const getGovernanceLocks = (
+  input: Parameters<IrohaBridge["getGovernanceLocks"]>[0],
+): Promise<GovernanceLocksResult> => bridge().getGovernanceLocks(input);
+
+export const getGovernanceCouncilCurrent = (
+  toriiUrl: string,
+): Promise<GovernanceCouncilCurrentResponse> =>
+  bridge().getGovernanceCouncilCurrent({ toriiUrl });
+
+export const submitGovernancePlainBallot = (
+  input: Parameters<IrohaBridge["submitGovernancePlainBallot"]>[0],
+) => bridge().submitGovernancePlainBallot(input);
+
+export const finalizeGovernanceReferendum = (
+  input: Parameters<IrohaBridge["finalizeGovernanceReferendum"]>[0],
+): Promise<GovernanceDraftResponse> =>
+  bridge().finalizeGovernanceReferendum(input);
+
+export const enactGovernanceProposal = (
+  input: Parameters<IrohaBridge["enactGovernanceProposal"]>[0],
+): Promise<GovernanceDraftResponse> => bridge().enactGovernanceProposal(input);
 
 export const getExplorerMetrics = (
   toriiUrl: string,

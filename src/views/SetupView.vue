@@ -11,24 +11,12 @@
         </span>
       </header>
       <div class="chain-picker">
-        <p class="helper">
-          Only TAIRA testnet is available in this build.
-          <span v-if="selectedChainName" class="pill inline-pill"
-            >Selected: {{ selectedChainName }}</span
-          >
-        </p>
+        <p class="helper">TAIRA testnet connection is fixed in this build.</p>
         <div class="preset-row">
-          <button
-            v-for="preset in chainPresets"
-            :key="preset.id"
-            class="preset-chip"
-            :class="{ active: selectedPresetId === preset.id }"
-            type="button"
-            @click="applyPreset(preset)"
-          >
-            <span class="chip-title">{{ preset.label }}</span>
-            <span class="chip-sub">{{ preset.description }}</span>
-          </button>
+          <div class="preset-chip active fixed" role="status">
+            <span class="chip-title">{{ TAIRA_CHAIN_PRESET.label }}</span>
+            <span class="chip-sub">{{ TAIRA_CHAIN_PRESET.description }}</span>
+          </div>
         </div>
       </div>
       <div class="form-grid">
@@ -73,7 +61,7 @@
       </header>
       <div class="form-grid">
         <label>
-          Display Name
+          Display Name (local only, not on-chain)
           <input v-model="userForm.displayName" placeholder="Alice" />
         </label>
         <label>
@@ -178,22 +166,13 @@ import {
   pingTorii,
   registerAccount,
 } from "@/services/iroha";
-import { CHAIN_PRESETS, TAIRA_CHAIN_PRESET } from "@/constants/chains";
-import type { ChainPreset } from "@/constants/chains";
+import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 type PingState = "idle" | "ok" | "error";
 
 const session = useSessionStore();
 
 const connectionForm = reactive({ ...session.connection });
-const chainPresets: ChainPreset[] = CHAIN_PRESETS;
-const selectedPresetId = ref<string | null>(null);
-const selectedChainName = computed(() => {
-  if (!selectedPresetId.value) return "";
-  return (
-    chainPresets.find((item) => item.id === selectedPresetId.value)?.label || ""
-  );
-});
 const emptyAccount = () => ({
   displayName: "",
   domain: "wonderland",
@@ -236,7 +215,6 @@ watch(
       ? { ...value }
       : { ...TAIRA_CHAIN_PRESET.connection };
     Object.assign(connectionForm, nextConnection);
-    selectedPresetId.value = TAIRA_CHAIN_PRESET.id;
     if (!isTaira) {
       session.updateConnection({ ...TAIRA_CHAIN_PRESET.connection });
       session.persistState();
@@ -296,13 +274,6 @@ const pingIndicator = computed(() => {
       return { label: "Idle", class: "status-pill" };
   }
 });
-
-const applyPreset = (preset: ChainPreset) => {
-  selectedPresetId.value = preset.id;
-  Object.assign(connectionForm, { ...preset.connection });
-  session.updateConnection({ ...preset.connection });
-  session.persistState();
-};
 
 const canRegister = computed(() =>
   Boolean(
@@ -465,6 +436,10 @@ const handleRegister = async () => {
 .preset-chip.active {
   border-color: var(--iroha-accent);
   box-shadow: 0 8px 24px rgba(255, 76, 102, 0.24);
+}
+
+.preset-chip.fixed {
+  cursor: default;
 }
 
 .chip-title {

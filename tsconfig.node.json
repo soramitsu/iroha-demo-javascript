@@ -1,6 +1,6 @@
 {
   "extends": "@vue/tsconfig/tsconfig.json",
-  "include": ["electron/**/*.ts"],
+  "include": ["electron/**/*.ts", "src/utils/confidential.ts"],
   "compilerOptions": {
     "composite": true,
     "moduleResolution": "bundler"

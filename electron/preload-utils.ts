@@ -1,4 +1,10 @@
 import type { ToriiClient } from "@iroha/iroha-js";
+import {
+  confidentialModeSupportsShield,
+  isPositiveWholeAmount,
+} from "../src/utils/confidential";
+
+export { confidentialModeSupportsShield, isPositiveWholeAmount };
 
 export type ExplorerAccountQrResponse = Awaited<
   ReturnType<ToriiClient["getExplorerAccountQr"]>
@@ -138,6 +144,24 @@ export const normalizeBaseUrl = (url: string) => {
     throw new Error("Torii URL must include http or https scheme");
   }
   return trimmed;
+};
+
+export const formatOnboardingError = (input: {
+  status: number;
+  statusText: string;
+  detail?: string;
+}) => {
+  const detail = String(input.detail ?? "").trim();
+  if (input.status === 403) {
+    const guidance =
+      "UAID onboarding is disabled on this Torii endpoint. Enable UAID onboarding on the target Torii.";
+    return detail
+      ? `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance} Detail: ${detail}`
+      : `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance}`;
+  }
+  return detail
+    ? `Onboarding failed with status ${input.status} (${input.statusText}): ${detail}`
+    : `Onboarding failed with status ${input.status} (${input.statusText})`;
 };
 
 export const normalizeExplorerAccountQrPayload = (
@@ -352,24 +376,6 @@ export const normalizePublicLaneRewardsPayload = (
     total,
     items,
   };
-};
-
-const normalizeConfidentialMode = (value: unknown): string =>
-  String(value ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z]/g, "");
-
-export const confidentialModeSupportsShield = (
-  mode: string | null | undefined,
-): boolean => {
-  const normalized = normalizeConfidentialMode(mode);
-  return (
-    normalized === "shieldedonly" ||
-    normalized === "convertible" ||
-    normalized === "hybrid" ||
-    normalized === "zknative"
-  );
 };
 
 export const normalizeConfidentialAssetPolicyPayload = (

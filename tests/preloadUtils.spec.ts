@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   confidentialModeSupportsShield,
+  formatOnboardingError,
+  isPositiveWholeAmount,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
@@ -23,6 +25,36 @@ describe("preload utils", () => {
     expect(() => normalizeBaseUrl("127.0.0.1:8080")).toThrow(
       "Torii URL must include http or https scheme",
     );
+  });
+
+  it("formats onboarding 403 errors with explicit UAID guidance", () => {
+    expect(
+      formatOnboardingError({
+        status: 403,
+        statusText: "Forbidden",
+        detail: "torii.onboarding.enabled is false",
+      }),
+    ).toBe(
+      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. Enable UAID onboarding on the target Torii. Detail: torii.onboarding.enabled is false",
+    );
+  });
+
+  it("formats non-403 onboarding errors using response details when present", () => {
+    expect(
+      formatOnboardingError({
+        status: 500,
+        statusText: "Internal Server Error",
+        detail: "unexpected backend failure",
+      }),
+    ).toBe(
+      "Onboarding failed with status 500 (Internal Server Error): unexpected backend failure",
+    );
+    expect(
+      formatOnboardingError({
+        status: 429,
+        statusText: "Too Many Requests",
+      }),
+    ).toBe("Onboarding failed with status 429 (Too Many Requests)");
   });
 
   it("normalizes fetch headers from multiple input formats", () => {
@@ -218,6 +250,17 @@ describe("preload utils", () => {
     expect(confidentialModeSupportsShield("zk_native")).toBe(true);
     expect(confidentialModeSupportsShield("TransparentOnly")).toBe(false);
     expect(confidentialModeSupportsShield(undefined)).toBe(false);
+  });
+
+  it("accepts only positive whole-number shielding amounts", () => {
+    expect(isPositiveWholeAmount("1")).toBe(true);
+    expect(isPositiveWholeAmount("25")).toBe(true);
+    expect(isPositiveWholeAmount(" 7 ")).toBe(true);
+
+    expect(isPositiveWholeAmount("0")).toBe(false);
+    expect(isPositiveWholeAmount("10.5")).toBe(false);
+    expect(isPositiveWholeAmount("-4")).toBe(false);
+    expect(isPositiveWholeAmount("abc")).toBe(false);
   });
 
   it("extracts nexus unbonding delay from configuration payloads", () => {

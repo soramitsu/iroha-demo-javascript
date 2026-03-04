@@ -5,18 +5,50 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
+import {
+  isOnboardingConflictError,
+  isOnboardingDisabledError,
+  isSupportedAccountIdLiteral,
+  parseNetworkPrefix,
+} from "./electron-live-utils.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..", "..");
 const mainEntry = join(projectRoot, "dist", "main", "index.cjs");
 const screenshotDir = join(projectRoot, "output", "playwright");
+const tairaToriiUrl = "https://taira.sora.org";
+const tairaChainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const tairaToriiHosts = new Set(["taira.sora.org", "www.taira.sora.org"]);
 
-const toriiUrl = mustEnv("E2E_TORII_URL");
-const chainId = mustEnv("E2E_CHAIN_ID");
+const toriiUrl = readEnv("E2E_TORII_URL", tairaToriiUrl);
+const chainId = readEnv("E2E_CHAIN_ID", tairaChainId);
 const assetDefinitionId =
   process.env.E2E_ASSET_DEFINITION_ID || "rose#wonderland";
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
 const stateful = process.env.E2E_STATEFUL === "1";
+const statefulAlias = readEnv("E2E_STATEFUL_ALIAS", "E2E Stateful Shared");
+const statefulPrivateKeyHex = readEnv(
+  "E2E_STATEFUL_PRIVATE_KEY_HEX",
+  "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
+).toLowerCase();
+const statefulOfflineSeedBalance = readEnv(
+  "E2E_STATEFUL_OFFLINE_BALANCE",
+  "100",
+);
+
+if (!/^[0-9a-f]{64}$/i.test(statefulPrivateKeyHex)) {
+  throw new Error(
+    "E2E_STATEFUL_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
+  );
+}
+if (
+  !Number.isFinite(Number(statefulOfflineSeedBalance)) ||
+  Number(statefulOfflineSeedBalance) <= 0
+) {
+  throw new Error(
+    "E2E_STATEFUL_OFFLINE_BALANCE must be a positive numeric string.",
+  );
+}
 
 const defaultAccountId =
   process.env.E2E_ACCOUNT_ID ||
@@ -32,6 +64,7 @@ async function main() {
     );
   }
 
+  assertTairaTarget(toriiUrl, chainId);
   await preflightToriiHealth(toriiUrl);
   const seededAccountId = await resolveSeedAccountId(toriiUrl);
   mkdirSync(screenshotDir, { recursive: true });
@@ -78,21 +111,27 @@ async function main() {
   }
 }
 
-function mustEnv(name) {
+function readEnv(name, fallback) {
   const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value;
+  return value || fallback;
 }
 
-function parseNetworkPrefix(rawValue) {
-  if (!rawValue) return 42;
-  const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) {
-    throw new Error("E2E_NETWORK_PREFIX must be an integer from 0 to 255.");
+function normalizeHost(url) {
+  const parsed = new URL(url);
+  return parsed.host.toLowerCase();
+}
+
+function assertTairaTarget(baseUrl, chain) {
+  const host = normalizeHost(baseUrl);
+  if (!tairaToriiHosts.has(host) || chain !== tairaChainId) {
+    throw new Error(
+      [
+        "This wallet build is TAIRA-only.",
+        `Use Torii URL ${tairaToriiUrl} and chain ID ${tairaChainId}.`,
+        `Received Torii URL ${baseUrl} and chain ID ${chain}.`,
+      ].join(" "),
+    );
   }
-  return parsed;
 }
 
 async function preflightToriiHealth(baseUrl) {
@@ -280,7 +319,13 @@ async function runReadOnlyFlow(page, seededAccountId) {
 
 async function resolveSeedAccountId(baseUrl) {
   if (process.env.E2E_ACCOUNT_ID?.trim()) {
-    return process.env.E2E_ACCOUNT_ID.trim();
+    const fromEnv = process.env.E2E_ACCOUNT_ID.trim();
+    if (isSupportedAccountIdLiteral(fromEnv)) {
+      return fromEnv;
+    }
+    throw new Error(
+      `E2E_ACCOUNT_ID has unsupported format: ${fromEnv}. Provide IH58/sora/0x/uaid/opaque or <alias|public_key>@domain.`,
+    );
   }
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
   const accountsUrl = new URL("v1/accounts?limit=1", normalizedBase).toString();
@@ -292,7 +337,7 @@ async function resolveSeedAccountId(baseUrl) {
     if (!response.ok) return defaultAccountId;
     const payload = await response.json().catch(() => null);
     const firstId = payload?.items?.[0]?.id;
-    if (typeof firstId === "string" && firstId.length > 0) {
+    if (isSupportedAccountIdLiteral(firstId)) {
       return firstId;
     }
   } catch (_error) {
@@ -304,54 +349,323 @@ async function resolveSeedAccountId(baseUrl) {
 async function runStatefulFlow(page) {
   await page.evaluate(() => {
     localStorage.removeItem("iroha-demo:session");
+    localStorage.removeItem("iroha-demo:offline");
   });
   await page.reload();
 
   await waitForAccountView(page);
   await configureConnection(page);
-  await fill(page, "Display Name", `E2E Stateful ${Date.now()}`);
+  const statefulBootstrap = await page.evaluate(
+    async ({
+      torii,
+      chain,
+      assetId,
+      prefix,
+      alias,
+      privateKeyHex,
+      offlineBalance,
+    }) => {
+      const { publicKeyHex } = window.iroha.derivePublicKey(privateKeyHex);
+      const summary = window.iroha.deriveAccountAddress({
+        domain: "wonderland",
+        publicKeyHex,
+        networkPrefix: prefix,
+      });
+      const accountProfile = {
+        displayName: alias,
+        domain: "wonderland",
+        accountId: summary.accountId,
+        publicKeyHex,
+        privateKeyHex,
+        ih58: summary.ih58 ?? "",
+        compressed: summary.compressed ?? "",
+        compressedWarning: summary.compressedWarning ?? "",
+      };
 
-  await clickButton(page, "Generate recovery phrase");
-  await waitVisible(page, ".mnemonic-grid");
+      let onboarding = { status: "ok", detail: "" };
+      try {
+        await window.iroha.onboardAccount({
+          toriiUrl: torii,
+          alias,
+          accountId: summary.accountId,
+          identity: {
+            source: "electron-live-stateful",
+            managed_by: "e2e-harness",
+          },
+        });
+      } catch (error) {
+        onboarding = {
+          status: "error",
+          detail: String(error ?? ""),
+        };
+      }
 
-  await page.getByLabel("I stored my recovery phrase safely.").check();
+      localStorage.setItem(
+        "iroha-demo:session",
+        JSON.stringify({
+          hydrated: true,
+          connection: {
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: assetId,
+            networkPrefix: prefix,
+          },
+          authority: {
+            accountId: "",
+            privateKeyHex: "",
+          },
+          accounts: [accountProfile],
+          activeAccountId: accountProfile.accountId,
+          customChains: [],
+        }),
+      );
 
-  await clickButton(page, "Register account");
+      localStorage.setItem(
+        "iroha-demo:offline",
+        JSON.stringify({
+          hydrated: true,
+          wallet: {
+            balance: offlineBalance,
+            nextCounter: 0,
+            replayLog: [],
+            history: [],
+            syncedAtMs: null,
+            nextPolicyExpiryMs: null,
+            nextRefreshMs: null,
+          },
+          hardware: {
+            supported: false,
+            registered: false,
+            credentialId: null,
+            registeredAtMs: null,
+          },
+        }),
+      );
 
-  try {
-    await page.waitForURL(/#\/setup/, { timeout: 90_000 });
-  } catch (error) {
-    const onboardingError = await page
-      .locator(".helper.error")
-      .allTextContents()
-      .then((lines) => lines.join(" | "))
-      .catch(() => "");
-    throw new Error(
-      `Stateful onboarding flow did not reach #/setup. UI errors: ${onboardingError || "none reported"}`,
-    );
+      return {
+        accountId: accountProfile.accountId,
+        onboarding,
+      };
+    },
+    {
+      torii: toriiUrl,
+      chain: chainId,
+      assetId: assetDefinitionId,
+      prefix: networkPrefix,
+      alias: statefulAlias,
+      privateKeyHex: statefulPrivateKeyHex,
+      offlineBalance: statefulOfflineSeedBalance,
+    },
+  );
+
+  const onboardingStatus = statefulBootstrap?.onboarding?.status ?? "";
+  const onboardingDetail = String(statefulBootstrap?.onboarding?.detail ?? "");
+  if (onboardingStatus === "error") {
+    if (isOnboardingDisabledError(onboardingDetail)) {
+      throw new Error(
+        `Stateful onboarding is disabled on ${toriiUrl} (HTTP 403). Enable UAID onboarding on the target Torii and rerun e2e:live:stateful.`,
+      );
+    }
+    if (!isOnboardingConflictError(onboardingDetail)) {
+      throw new Error(
+        `Stateful onboarding probe failed: ${onboardingDetail || "unknown error"}`,
+      );
+    }
   }
 
-  const persistedAccountId = await page.evaluate(() => {
-    const raw = localStorage.getItem("iroha-demo:session");
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    const activeAccountId = parsed?.activeAccountId ?? null;
-    if (!activeAccountId) {
-      return null;
-    }
-    const active = Array.isArray(parsed?.accounts)
-      ? parsed.accounts.find((entry) => entry?.accountId === activeAccountId)
-      : null;
-    return active?.accountId ?? activeAccountId;
-  });
+  const persistedAccountId = statefulBootstrap?.accountId ?? null;
   if (
     typeof persistedAccountId !== "string" ||
     !persistedAccountId.includes("@")
   ) {
     throw new Error(
       `Stateful onboarding persisted an ambiguous account id literal: ${String(persistedAccountId)}`,
+    );
+  }
+
+  await page.reload();
+
+  await page.evaluate(() => {
+    window.location.hash = "#/send";
+  });
+  await page.waitForFunction(() => window.location.hash === "#/send", {
+    timeout: 45_000,
+  });
+  await page
+    .getByRole("heading", { name: "Send Points", exact: true, level: 1 })
+    .waitFor({ state: "visible", timeout: 45_000 });
+
+  const sendCard = page
+    .locator("section.card")
+    .filter({ hasText: "Transfer Asset" })
+    .first();
+  const sendShieldToggle = sendCard.getByLabel("Shield transfer", {
+    exact: true,
+  });
+  await sendShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
+  if (!(await sendShieldToggle.isEnabled())) {
+    throw new Error(
+      "Expected send shield toggle to be enabled in stateful flow.",
+    );
+  }
+  await sendShieldToggle.check();
+  const sendDestination = sendCard.getByPlaceholder(
+    "34m... or 0x...@wonderland",
+  );
+  if (!(await sendDestination.isDisabled())) {
+    throw new Error(
+      "Expected send destination to lock when shield transfer is enabled in stateful flow.",
+    );
+  }
+  if ((await sendDestination.inputValue()).trim() !== persistedAccountId) {
+    throw new Error(
+      `Expected send shield destination to auto-lock to active account ${persistedAccountId}.`,
+    );
+  }
+  const sendAmountInput = sendCard.locator('input[type="number"]').first();
+  await sendAmountInput.fill("1");
+  const sendSubmitButton = sendCard.getByRole("button", {
+    name: "Shield",
+    exact: true,
+  });
+  if (await sendSubmitButton.isDisabled()) {
+    throw new Error("Expected send shield submit button to be enabled.");
+  }
+  const sendStatusBefore = await sendCard
+    .locator("p.helper")
+    .last()
+    .textContent()
+    .then((value) => String(value ?? "").trim());
+  await sendSubmitButton.click();
+  const sendStatusAfter = await page
+    .waitForFunction(
+      ({ baseline }) => {
+        const cards = [...document.querySelectorAll("section.card")];
+        const card = cards.find((node) =>
+          node.querySelector("h2")?.textContent?.includes("Transfer Asset"),
+        );
+        if (!card) return null;
+        const helpers = [...card.querySelectorAll("p.helper")]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        if (!helpers.length) return null;
+        const last = helpers[helpers.length - 1];
+        return last && last !== baseline ? last : null;
+      },
+      { baseline: sendStatusBefore },
+      { timeout: 90_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  const sendStatus = String(sendStatusAfter ?? "").trim();
+  if (!sendStatus) {
+    throw new Error("Send shield submission did not produce a status message.");
+  }
+  if (
+    [
+      "Configure Torii + account first.",
+      "Shield mode is unavailable.",
+      "Shield mode requires destination to be your active account.",
+      "Shield amount must be a whole number greater than zero.",
+    ].includes(sendStatus)
+  ) {
+    throw new Error(
+      `Send shield submission did not reach bridge submission path: ${sendStatus}`,
+    );
+  }
+
+  await page.evaluate(() => {
+    window.location.hash = "#/offline";
+  });
+  await page.waitForFunction(() => window.location.hash === "#/offline", {
+    timeout: 45_000,
+  });
+  await page
+    .getByRole("heading", { name: "Offline", exact: true, level: 1 })
+    .waitFor({ state: "visible", timeout: 45_000 });
+
+  const moveCard = page
+    .locator("section.card")
+    .filter({ hasText: "Move funds to online wallet" })
+    .first();
+  const moveShieldToggle = moveCard.getByLabel("Shield transfer", {
+    exact: true,
+  });
+  await moveShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
+  if (!(await moveShieldToggle.isEnabled())) {
+    throw new Error(
+      'Expected offline "Shield transfer" toggle to be enabled in stateful flow.',
+    );
+  }
+  await moveShieldToggle.check();
+  const moveDestination = moveCard.getByPlaceholder(
+    "34m... or 0x...@wonderland",
+  );
+  if (!(await moveDestination.isDisabled())) {
+    throw new Error(
+      'Expected offline destination to lock when "Shield transfer" is enabled in stateful flow.',
+    );
+  }
+  if ((await moveDestination.inputValue()).trim() !== persistedAccountId) {
+    throw new Error(
+      `Expected offline shield destination to auto-lock to active account ${persistedAccountId}.`,
+    );
+  }
+  const moveAmountInput = moveCard.locator('input[type="text"]').first();
+  await moveAmountInput.fill("1");
+  const moveSubmitButton = moveCard.getByRole("button", {
+    name: "Shield to online wallet",
+    exact: true,
+  });
+  if (await moveSubmitButton.isDisabled()) {
+    throw new Error(
+      'Expected offline "Shield to online wallet" submit button to be enabled.',
+    );
+  }
+  const moveStatusBefore = await moveCard
+    .locator("p.helper")
+    .last()
+    .textContent()
+    .then((value) => String(value ?? "").trim());
+  await moveSubmitButton.click();
+  const moveStatusAfter = await page
+    .waitForFunction(
+      ({ baseline }) => {
+        const cards = [...document.querySelectorAll("section.card")];
+        const card = cards.find((node) =>
+          node
+            .querySelector("h2")
+            ?.textContent?.includes("Move funds to online wallet"),
+        );
+        if (!card) return null;
+        const helpers = [...card.querySelectorAll("p.helper")]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        if (!helpers.length) return null;
+        const last = helpers[helpers.length - 1];
+        return last && last !== baseline ? last : null;
+      },
+      { baseline: moveStatusBefore },
+      { timeout: 90_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  const moveStatus = String(moveStatusAfter ?? "").trim();
+  if (!moveStatus) {
+    throw new Error(
+      'Offline "Shield to online wallet" submission did not produce a status message.',
+    );
+  }
+  if (
+    [
+      "Configure Torii and account first.",
+      "Shield mode is unavailable.",
+      "Shield mode requires destination to be your active account.",
+      "Shield amount must be a whole number greater than zero.",
+      "Enter an amount to move online.",
+      "Insufficient offline balance for this withdrawal.",
+    ].includes(moveStatus)
+  ) {
+    throw new Error(
+      `Offline shield submission did not reach bridge submission path: ${moveStatus}`,
     );
   }
 }
@@ -372,6 +686,11 @@ async function runNavigationSmokeFlow(page) {
       hash: "#/staking",
       heading: "NPOS Staking",
       sectionText: "Nominate Validators",
+    },
+    {
+      hash: "#/parliament",
+      heading: "SORA Parliament",
+      sectionText: "Citizenship Bond",
     },
     {
       hash: "#/subscriptions",
@@ -448,6 +767,186 @@ async function runNavigationSmokeFlow(page) {
         );
       }
     }
+
+    if (check.hash === "#/parliament") {
+      await page
+        .getByRole("button", { name: "Bond 10000 XOR", exact: true })
+        .waitFor({
+          state: "visible",
+          timeout: 45_000,
+        });
+      await page
+        .getByRole("button", { name: "Submit ballot", exact: true })
+        .waitFor({
+          state: "visible",
+          timeout: 45_000,
+        });
+    }
+
+    if (check.hash === "#/send") {
+      const shieldToggle = page.getByLabel("Shield transfer", { exact: true });
+      await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
+      if (!(await shieldToggle.isEnabled())) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      const destinationInput = page.getByPlaceholder(
+        "34m... or 0x...@wonderland",
+      );
+      const amountInput = page.locator('input[type="number"]').first();
+      const transparentDestination = "restore-send@wonderland";
+      await destinationInput.fill(transparentDestination);
+
+      const transparentStep = await amountInput.getAttribute("step");
+      if (transparentStep !== "0.01") {
+        throw new Error(
+          `Expected send amount step to be 0.01 before shielding, got ${String(transparentStep)}.`,
+        );
+      }
+
+      await shieldToggle.check();
+
+      if (!(await destinationInput.isDisabled())) {
+        throw new Error(
+          "Expected send destination to lock when shield transfer is enabled.",
+        );
+      }
+      const shieldStep = await amountInput.getAttribute("step");
+      if (shieldStep !== "1") {
+        throw new Error(
+          `Expected send amount step to be 1 in shield mode, got ${String(shieldStep)}.`,
+        );
+      }
+      const shieldSubmitButton = page.getByRole("button", {
+        name: "Shield",
+        exact: true,
+      });
+      await amountInput.fill("10.5");
+      if (!(await shieldSubmitButton.isDisabled())) {
+        throw new Error(
+          "Expected send shield action to be disabled for decimal amounts.",
+        );
+      }
+      await amountInput.fill("10");
+      if (await shieldSubmitButton.isDisabled()) {
+        throw new Error(
+          "Expected send shield action to become enabled for whole-number amounts.",
+        );
+      }
+
+      await page
+        .getByRole("button", { name: "Shield", exact: true })
+        .waitFor({ state: "visible", timeout: 30_000 });
+      if (await shieldToggle.isChecked()) {
+        let attemptedManualUncheck = false;
+        if (await shieldToggle.isEnabled()) {
+          attemptedManualUncheck = true;
+          await shieldToggle.uncheck({ timeout: 3_000 }).catch(() => undefined);
+        }
+        if (await shieldToggle.isChecked()) {
+          await page.waitForTimeout(1_000);
+        }
+        if (await shieldToggle.isChecked()) {
+          throw new Error(
+            attemptedManualUncheck
+              ? "Send shield toggle stayed checked after uncheck attempt."
+              : "Send shield toggle stayed checked after becoming disabled.",
+          );
+        }
+      }
+      if ((await destinationInput.inputValue()) !== transparentDestination) {
+        throw new Error(
+          "Expected send destination to restore the previous transparent value after disabling shield transfer.",
+        );
+      }
+      const restoredStep = await amountInput.getAttribute("step");
+      if (restoredStep !== "0.01") {
+        throw new Error(
+          `Expected send amount step to return to 0.01 after disabling shield mode, got ${String(restoredStep)}.`,
+        );
+      }
+      await page
+        .getByRole("button", { name: "Send", exact: true })
+        .waitFor({ state: "visible", timeout: 30_000 });
+    }
+
+    if (check.hash === "#/offline") {
+      const moveCard = page
+        .locator("section.card")
+        .filter({ hasText: "Move funds to online wallet" })
+        .first();
+      const shieldToggle = moveCard.getByLabel("Shield transfer", {
+        exact: true,
+      });
+      await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
+      if (!(await shieldToggle.isEnabled())) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      const destinationInput = moveCard.getByPlaceholder(
+        "34m... or 0x...@wonderland",
+      );
+      const transparentDestination = "restore-offline@wonderland";
+      await destinationInput.fill(transparentDestination);
+      await shieldToggle.check();
+
+      if (!(await destinationInput.isDisabled())) {
+        throw new Error(
+          'Expected offline "Move funds to online wallet" destination to lock when shield transfer is enabled.',
+        );
+      }
+
+      await moveCard
+        .getByRole("button", { name: "Shield to online wallet", exact: true })
+        .waitFor({ state: "visible", timeout: 30_000 });
+      const moveAmountInput = moveCard.locator('input[type="text"]').first();
+      const moveSubmitButton = moveCard.getByRole("button", {
+        name: "Shield to online wallet",
+        exact: true,
+      });
+      await moveAmountInput.fill("10.5");
+      if (!(await moveSubmitButton.isDisabled())) {
+        throw new Error(
+          'Expected offline "Shield to online wallet" action to be disabled for decimal amounts.',
+        );
+      }
+      await moveAmountInput.fill("10");
+      if (await moveSubmitButton.isDisabled()) {
+        throw new Error(
+          'Expected offline "Shield to online wallet" action to become enabled for whole-number amounts.',
+        );
+      }
+
+      if (await shieldToggle.isChecked()) {
+        let attemptedManualUncheck = false;
+        if (await shieldToggle.isEnabled()) {
+          attemptedManualUncheck = true;
+          await shieldToggle.uncheck({ timeout: 3_000 }).catch(() => undefined);
+        }
+        if (await shieldToggle.isChecked()) {
+          await page.waitForTimeout(1_000);
+        }
+        if (await shieldToggle.isChecked()) {
+          throw new Error(
+            attemptedManualUncheck
+              ? 'Offline "Shield transfer" toggle stayed checked after uncheck attempt.'
+              : 'Offline "Shield transfer" toggle stayed checked after becoming disabled.',
+          );
+        }
+      }
+      if ((await destinationInput.inputValue()) !== transparentDestination) {
+        throw new Error(
+          'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling shield transfer.',
+        );
+      }
+      await moveCard
+        .getByRole("button", { name: "Send to online wallet", exact: true })
+        .waitFor({ state: "visible", timeout: 30_000 });
+    }
   }
 
   // Ensure receive page still renders a QR payload in the hydrated account flow.
@@ -465,19 +964,23 @@ async function runNavigationSmokeFlow(page) {
 }
 
 async function waitForAccountView(page) {
-  await waitVisibleText(page, "SORA Nexus Account");
-  await waitVisibleText(page, "Torii URL");
+  await waitVisibleText(page, "TAIRA Testnet Account");
+  await waitVisibleText(
+    page,
+    "TAIRA testnet connection is fixed for onboarding in this build.",
+  );
 }
 
 async function configureConnection(page) {
-  await fill(page, "Torii URL", toriiUrl);
-  await fill(page, "Chain ID", chainId);
-  await clickButton(page, "Save connection");
-  await waitVisibleText(page, "Connection saved.");
+  // Connection fields are not editable in TAIRA-only builds.
+  await waitVisibleText(
+    page,
+    "TAIRA testnet connection is fixed for onboarding in this build.",
+  );
 }
 
 async function fill(page, label, value) {
-  await page.getByLabel(label, { exact: true }).fill(value);
+  await page.getByLabel(label, { exact: false }).first().fill(value);
 }
 
 async function clickButton(page, name) {

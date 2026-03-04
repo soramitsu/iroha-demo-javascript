@@ -18,6 +18,8 @@ import {
 } from "@iroha/iroha-js";
 import {
   confidentialModeSupportsShield,
+  formatOnboardingError,
+  isPositiveWholeAmount,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
@@ -73,6 +75,34 @@ type TransactionsResponse = Awaited<
 
 type OfflineAllowanceResponse = Awaited<
   ReturnType<ToriiClient["listOfflineAllowances"]>
+>;
+
+type AccountPermissionsResponse = Awaited<
+  ReturnType<ToriiClient["listAccountPermissions"]>
+>;
+
+type GovernanceProposalResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceProposalTyped"]>
+>;
+
+type GovernanceReferendumResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceReferendumTyped"]>
+>;
+
+type GovernanceTallyResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceTallyTyped"]>
+>;
+
+type GovernanceLocksResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceLocksTyped"]>
+>;
+
+type GovernanceCouncilResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceCouncilCurrent"]>
+>;
+
+type GovernanceDraftResponse = Awaited<
+  ReturnType<ToriiClient["governanceFinalizeReferendumTyped"]>
 >;
 
 type AccountOnboardingResponse = {
@@ -149,6 +179,53 @@ type ClaimPublicLaneRewardsInput = {
   privateKeyHex: HexString;
 };
 
+type AccountPermissionsInput = {
+  toriiUrl: string;
+  accountId: string;
+  limit?: number;
+  offset?: number;
+};
+
+type RegisterCitizenInput = {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  amount: string;
+  privateKeyHex: HexString;
+};
+
+type GovernanceLookupInput = {
+  toriiUrl: string;
+  proposalId: string;
+};
+
+type GovernanceReferendumLookupInput = {
+  toriiUrl: string;
+  referendumId: string;
+};
+
+type GovernancePlainBallotInput = {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  referendumId: string;
+  amount: string;
+  durationBlocks: number;
+  direction: "Aye" | "Nay" | "Abstain";
+  privateKeyHex: HexString;
+};
+
+type GovernanceFinalizeInput = {
+  toriiUrl: string;
+  referendumId: string;
+  proposalId: string;
+};
+
+type GovernanceEnactInput = {
+  toriiUrl: string;
+  proposalId: string;
+};
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
@@ -182,6 +259,34 @@ type IrohaBridge = {
     limit?: number;
     offset?: number;
   }): Promise<TransactionsResponse>;
+  listAccountPermissions(
+    input: AccountPermissionsInput,
+  ): Promise<AccountPermissionsResponse>;
+  registerCitizen(input: RegisterCitizenInput): Promise<{ hash: string }>;
+  getGovernanceProposal(
+    input: GovernanceLookupInput,
+  ): Promise<GovernanceProposalResponse>;
+  getGovernanceReferendum(
+    input: GovernanceReferendumLookupInput,
+  ): Promise<GovernanceReferendumResponse>;
+  getGovernanceTally(
+    input: GovernanceReferendumLookupInput,
+  ): Promise<GovernanceTallyResponse>;
+  getGovernanceLocks(
+    input: GovernanceReferendumLookupInput,
+  ): Promise<GovernanceLocksResponse>;
+  getGovernanceCouncilCurrent(
+    config: ToriiConfig,
+  ): Promise<GovernanceCouncilResponse>;
+  submitGovernancePlainBallot(
+    input: GovernancePlainBallotInput,
+  ): Promise<{ hash: string }>;
+  finalizeGovernanceReferendum(
+    input: GovernanceFinalizeInput,
+  ): Promise<GovernanceDraftResponse>;
+  enactGovernanceProposal(
+    input: GovernanceEnactInput,
+  ): Promise<GovernanceDraftResponse>;
   getExplorerMetrics(
     config: ToriiConfig,
   ): Promise<ExplorerMetricsResponse | null>;
@@ -305,6 +410,39 @@ const normalizeAmount = (value: string, label: string) => {
   return amount;
 };
 
+const normalizeIntegerAmount = (value: string, label: string) => {
+  const amount = value.trim();
+  if (!/^\d+$/.test(amount)) {
+    throw new Error(`${label} must be a whole-number string.`);
+  }
+  if (/^0+$/.test(amount)) {
+    throw new Error(`${label} must be greater than zero.`);
+  }
+  return amount;
+};
+
+const normalizeDurationBlocks = (value: number) => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("durationBlocks must be a positive integer.");
+  }
+  return value;
+};
+
+const normalizeBallotDirectionCode = (
+  direction: GovernancePlainBallotInput["direction"],
+) => {
+  switch (direction) {
+    case "Aye":
+      return 0;
+    case "Nay":
+      return 1;
+    case "Abstain":
+      return 2;
+    default:
+      throw new Error("direction must be one of Aye, Nay, or Abstain.");
+  }
+};
+
 const normalizeRequestId = (value: string) => {
   const requestId = value.trim();
   if (!requestId) {
@@ -398,7 +536,7 @@ const submitInstructionTransaction = async (input: {
   }
   const authority = normalizeAccountId(
     input.authorityAccountId,
-    "stakeAccountId",
+    "authorityAccountId",
   );
   const tx = buildTransaction({
     chainId,
@@ -523,7 +661,7 @@ const api: IrohaBridge = {
         );
       }
       const normalizedAmount = String(input.quantity).trim();
-      if (!/^\d+$/.test(normalizedAmount) || /^0+$/.test(normalizedAmount)) {
+      if (!isPositiveWholeAmount(normalizedAmount)) {
         throw new Error(
           "Shielded amount must be a whole number greater than zero (base units).",
         );
@@ -610,6 +748,95 @@ const api: IrohaBridge = {
         offset,
       },
     );
+  },
+  listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
+    const client = getClient(toriiUrl);
+    return client.listAccountPermissions(
+      normalizeAccountId(accountId, "accountId"),
+      {
+        limit,
+        offset,
+      },
+    );
+  },
+  registerCitizen({ toriiUrl, chainId, accountId, amount, privateKeyHex }) {
+    const normalizedAccount = normalizeAccountId(accountId, "accountId");
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedAccount,
+      privateKeyHex,
+      instruction: {
+        RegisterCitizen: {
+          owner: normalizedAccount,
+          amount: normalizeIntegerAmount(amount, "amount"),
+        },
+      },
+    });
+  },
+  getGovernanceProposal({ toriiUrl, proposalId }) {
+    const client = getClient(toriiUrl);
+    return client.getGovernanceProposalTyped(proposalId);
+  },
+  getGovernanceReferendum({ toriiUrl, referendumId }) {
+    const client = getClient(toriiUrl);
+    return client.getGovernanceReferendumTyped(referendumId);
+  },
+  getGovernanceTally({ toriiUrl, referendumId }) {
+    const client = getClient(toriiUrl);
+    return client.getGovernanceTallyTyped(referendumId);
+  },
+  getGovernanceLocks({ toriiUrl, referendumId }) {
+    const client = getClient(toriiUrl);
+    return client.getGovernanceLocksTyped(referendumId);
+  },
+  getGovernanceCouncilCurrent(config) {
+    const client = getClient(config.toriiUrl);
+    return client.getGovernanceCouncilCurrent();
+  },
+  submitGovernancePlainBallot({
+    toriiUrl,
+    chainId,
+    accountId,
+    referendumId,
+    amount,
+    durationBlocks,
+    direction,
+    privateKeyHex,
+  }) {
+    const normalizedAccount = normalizeAccountId(accountId, "accountId");
+    const normalizedReferendumId = referendumId.trim();
+    if (!normalizedReferendumId) {
+      throw new Error("referendumId is required.");
+    }
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedAccount,
+      privateKeyHex,
+      instruction: {
+        CastPlainBallot: {
+          referendum_id: normalizedReferendumId,
+          owner: normalizedAccount,
+          amount: normalizeIntegerAmount(amount, "amount"),
+          duration_blocks: normalizeDurationBlocks(durationBlocks),
+          direction: normalizeBallotDirectionCode(direction),
+        },
+      },
+    });
+  },
+  finalizeGovernanceReferendum({ toriiUrl, referendumId, proposalId }) {
+    const client = getClient(toriiUrl);
+    return client.governanceFinalizeReferendumTyped({
+      referendumId,
+      proposalId,
+    });
+  },
+  enactGovernanceProposal({ toriiUrl, proposalId }) {
+    const client = getClient(toriiUrl);
+    return client.governanceEnactProposalTyped({
+      proposalId,
+    });
   },
   getExplorerMetrics(config) {
     const client = getClient(config.toriiUrl);
@@ -735,9 +962,11 @@ const api: IrohaBridge = {
         }
       }
       throw new Error(
-        detail
-          ? `Onboarding failed with status ${response.status} (${response.statusText}): ${detail}`
-          : `Onboarding failed with status ${response.status} (${response.statusText})`,
+        formatOnboardingError({
+          status: response.status,
+          statusText: response.statusText,
+          detail,
+        }),
       );
     }
     return (await response.json()) as AccountOnboardingResponse;

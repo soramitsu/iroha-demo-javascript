@@ -18,18 +18,12 @@
         <div class="status-chips">
           <div class="status-chip">
             <span class="chip-label">Torii</span>
-            <span class="chip-value">{{
-              session.connection.toriiUrl ? "Configured" : "Not configured"
-            }}</span>
-            <span class="chip-sub">{{
-              session.connection.toriiUrl || "Add a Torii URL to begin"
-            }}</span>
+            <span class="chip-value">TAIRA locked</span>
+            <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
           </div>
           <div class="status-chip">
             <span class="chip-label">Chain</span>
-            <span class="chip-value">{{
-              session.connection.chainId || "Unknown"
-            }}</span>
+            <span class="chip-value">{{ session.connection.chainId }}</span>
             <span class="chip-sub">{{
               session.connection.assetDefinitionId || "Asset not set"
             }}</span>
@@ -81,8 +75,8 @@
           </RouterLink>
         </nav>
         <p v-if="!session.hasAccount" class="nav-lock-hint">
-          Complete account onboarding to unlock Setup, Wallet, Staking, Send,
-          Receive, Offline, and Explorer.
+          Complete account onboarding to unlock Setup, Wallet, Staking,
+          Parliament, Send, Receive, Offline, and Explorer.
         </p>
         <div class="sidebar-meta">
           <AccountSwitcher />
@@ -103,17 +97,10 @@
               }}
             </p>
           </div>
-          <div
-            v-if="session.connection.chainId || session.connection.toriiUrl"
-            class="session-meta"
-          >
+          <div class="session-meta">
             <p class="meta-label">Connection</p>
-            <p class="meta-value">
-              {{ session.connection.chainId || "Chain unknown" }}
-            </p>
-            <p class="helper meta-sub">
-              {{ session.connection.toriiUrl || "Add a Torii URL to begin" }}
-            </p>
+            <p class="meta-value">{{ session.connection.chainId }}</p>
+            <p class="helper meta-sub">{{ session.connection.toriiUrl }}</p>
           </div>
         </div>
       </aside>
@@ -130,8 +117,8 @@
             >
               {{
                 session.connection.toriiUrl
-                  ? "Torii ready"
-                  : "Add Torii endpoint"
+                  ? "TAIRA Torii ready"
+                  : "Torii unavailable"
               }}
             </span>
             <span class="pill" :class="{ positive: session.hasAccount }">
@@ -172,7 +159,7 @@ const navItems = [
   {
     to: "/setup",
     label: "Session",
-    description: "Configure Torii, chain, and authority keys",
+    description: "TAIRA connection, asset, and authority keys",
     icon: UserIcon,
     requiresAccount: true,
     step: "02",
@@ -194,12 +181,20 @@ const navItems = [
     step: "04",
   },
   {
+    to: "/parliament",
+    label: "Parliament",
+    description: "Bond citizenship and vote in governance referenda",
+    icon: WalletIcon,
+    requiresAccount: true,
+    step: "05",
+  },
+  {
     to: "/subscriptions",
     label: "Subscriptions",
     description: "Auto-deduct and manage recurring services",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "05",
+    step: "06",
   },
   {
     to: "/send",
@@ -207,7 +202,7 @@ const navItems = [
     description: "Transfer assets with camera or QR upload",
     icon: SendIcon,
     requiresAccount: true,
-    step: "06",
+    step: "07",
   },
   {
     to: "/receive",
@@ -215,7 +210,7 @@ const navItems = [
     description: "Share QR codes or IH58 to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
-    step: "07",
+    step: "08",
   },
   {
     to: "/offline",
@@ -223,7 +218,7 @@ const navItems = [
     description: "Offline wallets, invoices, and QR exchanges",
     icon: SendIcon,
     requiresAccount: true,
-    step: "08",
+    step: "09",
   },
   {
     to: "/explore",
@@ -231,7 +226,7 @@ const navItems = [
     description: "Network metrics and asset explorer",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "09",
+    step: "10",
   },
 ];
 

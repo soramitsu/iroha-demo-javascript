@@ -274,18 +274,49 @@
           <input
             v-model="onlineForm.receiver"
             placeholder="34m... or 0x...@wonderland"
+            :disabled="onlineDestinationLocked"
           />
         </label>
         <label>
           Memo (optional)
           <input v-model="onlineForm.memo" placeholder="Back to hot wallet" />
         </label>
+        <label class="shield-option">
+          <input
+            v-model="onlineForm.shielded"
+            type="checkbox"
+            :disabled="!onlineShieldSupported"
+          />
+          <span>Shield transfer</span>
+        </label>
       </div>
       <div class="actions">
-        <button :disabled="movingOnline" @click="moveToOnline">
-          {{ movingOnline ? "Transferring…" : "Send to online wallet" }}
+        <button
+          :disabled="movingOnline || !canSubmitOnlineMove"
+          @click="moveToOnline"
+        >
+          {{
+            movingOnline
+              ? "Transferring…"
+              : onlineForm.shielded
+                ? "Shield to online wallet"
+                : "Send to online wallet"
+          }}
         </button>
       </div>
+      <p v-if="onlineShieldCapabilityMessage" class="helper">
+        {{ onlineShieldCapabilityMessage }}
+      </p>
+      <p
+        v-else-if="onlineShieldSupported && onlineShieldPolicyMode"
+        class="helper"
+      >
+        Shield policy mode: {{ onlineShieldPolicyMode }}.
+      </p>
+      <p v-if="onlineForm.shielded" class="helper">
+        Shield mode currently supports self-shielding only. Destination must be
+        your own account, and amount must be a whole number in base units.
+      </p>
       <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
     </section>
 
@@ -327,7 +358,16 @@
 
 <script setup lang="ts">
 import QRCode from "qrcode";
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onMounted,
+  reactive,
+  ref,
+  toRef,
+  toRaw,
+  watch,
+} from "vue";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 import { fetchOfflineAllowances } from "@/services/offline";
@@ -340,6 +380,9 @@ import {
 } from "@/utils/offline";
 import { transferAsset } from "@/services/iroha";
 import { useQrScanner } from "@/composables/useQrScanner";
+import { useShieldCapability } from "@/composables/useShieldCapability";
+import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
+import { isPositiveWholeAmount } from "@/utils/confidential";
 import type { OfflineAllowanceItem } from "@/types/iroha";
 
 const session = useSessionStore();
@@ -394,6 +437,16 @@ const onlineForm = reactive({
   amount: "",
   receiver: "",
   memo: "",
+  shielded: false,
+});
+const {
+  shieldSupported: onlineShieldSupported,
+  shieldCapabilityMessage: onlineShieldCapabilityMessage,
+  shieldPolicyMode: onlineShieldPolicyMode,
+} = useShieldCapability({
+  toriiUrl: toRef(session.connection, "toriiUrl"),
+  assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
+  shielded: toRef(onlineForm, "shielded"),
 });
 
 const invoiceScanner = useQrScanner((payload) => {
@@ -406,6 +459,44 @@ const paymentScanner = useQrScanner((payload) => {
 });
 
 const reversedHistory = computed(() => [...offline.wallet.history].reverse());
+const { destinationLocked: onlineDestinationLocked } =
+  useShieldedDestinationLock({
+    shielded: toRef(onlineForm, "shielded"),
+    destination: toRef(onlineForm, "receiver"),
+    accountId: computed(() => activeAccount.value?.accountId),
+  });
+const normalizedMoveAmount = computed(
+  () => onlineForm.amount.trim() || offline.wallet.balance,
+);
+const normalizedMoveReceiver = computed(
+  () => onlineForm.receiver.trim() || activeAccount.value?.accountId || "",
+);
+const isOnlineTransparentAmountValid = computed(
+  () => Number(normalizedMoveAmount.value) > 0,
+);
+const isOnlineShieldAmountValid = computed(() =>
+  isPositiveWholeAmount(normalizedMoveAmount.value),
+);
+const isOnlineReceiverValid = computed(() => {
+  if (!onlineForm.shielded) {
+    return Boolean(normalizedMoveReceiver.value);
+  }
+  return Boolean(
+    activeAccount.value &&
+      normalizedMoveReceiver.value === activeAccount.value.accountId,
+  );
+});
+const canSubmitOnlineMove = computed(() =>
+  Boolean(
+    session.connection.toriiUrl &&
+      session.connection.assetDefinitionId &&
+      activeAccount.value &&
+      (onlineForm.shielded
+        ? isOnlineShieldAmountValid.value
+        : isOnlineTransparentAmountValid.value) &&
+      isOnlineReceiverValid.value,
+  ),
+);
 
 const formatDate = (value?: number | null) => {
   if (!value || value <= 0) return "";
@@ -632,13 +723,30 @@ const moveToOnline = async () => {
     moveMessage.value = "Configure Torii and account first.";
     return;
   }
-  const amount = onlineForm.amount.trim() || offline.wallet.balance;
-  const receiver = onlineForm.receiver.trim() || activeAccount.value.accountId;
-  if (!amount || Number(amount) <= 0) {
-    moveMessage.value = "Enter an amount to move online.";
+  if (onlineForm.shielded && !onlineShieldSupported.value) {
+    moveMessage.value =
+      onlineShieldCapabilityMessage.value || "Shield mode is unavailable.";
     return;
   }
-  const snapshot = structuredClone(offline.wallet);
+  const amount = normalizedMoveAmount.value;
+  const receiver = normalizedMoveReceiver.value;
+  if (!amount || Number(amount) <= 0) {
+    moveMessage.value = onlineForm.shielded
+      ? "Shield amount must be a whole number greater than zero."
+      : "Enter an amount to move online.";
+    return;
+  }
+  if (onlineForm.shielded && receiver !== activeAccount.value.accountId) {
+    moveMessage.value =
+      "Shield mode requires destination to be your active account.";
+    return;
+  }
+  if (onlineForm.shielded && !isPositiveWholeAmount(amount)) {
+    moveMessage.value =
+      "Shield amount must be a whole number greater than zero.";
+    return;
+  }
+  const snapshot = structuredClone(toRaw(offline.wallet));
   movingOnline.value = true;
   try {
     offline.withdrawToOnline({
@@ -656,8 +764,11 @@ const moveToOnline = async () => {
       quantity: amount,
       privateKeyHex: activeAccount.value.privateKeyHex,
       metadata: onlineForm.memo ? { memo: onlineForm.memo } : undefined,
+      shielded: onlineForm.shielded,
     });
-    moveMessage.value = "Transfer submitted and offline balance updated.";
+    moveMessage.value = onlineForm.shielded
+      ? "Shield transfer submitted and offline balance updated."
+      : "Transfer submitted and offline balance updated.";
   } catch (error) {
     offline.$patch({ wallet: snapshot });
     offline.persist();
@@ -733,5 +844,21 @@ onMounted(() => {
 video {
   width: 100%;
   background: black;
+}
+
+.shield-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.shield-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: none;
 }
 </style>

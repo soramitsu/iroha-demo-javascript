@@ -509,7 +509,7 @@ const refresh = async () => {
 
     if (!options.length) {
       statusMessage.value =
-        "No Nexus dataspace governance found on this Torii endpoint.";
+        "No dataspace governance found on this Torii endpoint.";
       resetLaneState();
       return;
     }

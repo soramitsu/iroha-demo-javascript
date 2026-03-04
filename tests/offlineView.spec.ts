@@ -1,0 +1,239 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { flushPromises, mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
+import OfflineView from "@/views/OfflineView.vue";
+import { useSessionStore } from "@/stores/session";
+import { useOfflineStore } from "@/stores/offline";
+
+const transferAssetMock = vi.fn();
+const getConfidentialAssetPolicyMock = vi.fn();
+
+vi.mock("@/services/iroha", () => ({
+  getConfidentialAssetPolicy: (input: unknown) =>
+    getConfidentialAssetPolicyMock(input),
+  transferAsset: (input: unknown) => transferAssetMock(input),
+}));
+
+vi.mock("@/services/offline", () => ({
+  fetchOfflineAllowances: vi.fn(),
+}));
+
+vi.mock("@/composables/useQrScanner", async () => {
+  const { ref } = await vi.importActual<typeof import("vue")>("vue");
+  return {
+    useQrScanner: () => ({
+      scanning: ref(false),
+      message: ref(""),
+      videoRef: ref<HTMLVideoElement | null>(null),
+      fileInputRef: ref<HTMLInputElement | null>(null),
+      start: vi.fn(),
+      openFilePicker: vi.fn(),
+      decodeFile: vi.fn(),
+    }),
+  };
+});
+
+describe("OfflineView move-to-online shield mode", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    transferAssetMock.mockReset();
+    getConfidentialAssetPolicyMock.mockReset();
+    getConfidentialAssetPolicyMock.mockResolvedValue({
+      asset_id: "rose#wonderland",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    setActivePinia(createPinia());
+  });
+
+  const mountView = () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const session = useSessionStore();
+    const offline = useOfflineStore();
+    session.$patch({
+      connection: {
+        toriiUrl: "http://localhost:8080",
+        chainId: "chain",
+        assetDefinitionId: "rose#wonderland",
+        networkPrefix: 42,
+      },
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "wonderland",
+          accountId: "alice@wonderland",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "cd".repeat(32),
+          ih58: "ih58alice",
+          compressed: "",
+          compressedWarning: "",
+        },
+      ],
+      activeAccountId: "alice@wonderland",
+    });
+    offline.$patch({
+      wallet: {
+        balance: "25",
+        nextCounter: 0,
+        replayLog: [],
+        history: [],
+        syncedAtMs: null,
+        nextPolicyExpiryMs: null,
+        nextRefreshMs: null,
+      },
+    });
+    return mount(OfflineView, {
+      global: {
+        plugins: [pinia],
+      },
+    });
+  };
+
+  const getMoveSection = (wrapper: ReturnType<typeof mount>) => {
+    const section = wrapper
+      .findAll("section.card")
+      .find((node) => node.text().includes("Move funds to online wallet"));
+    if (!section) {
+      throw new Error("Move-to-online section not found");
+    }
+    return section;
+  };
+
+  it("forwards shielded move payloads and locks destination to active account", async () => {
+    transferAssetMock.mockResolvedValue({ hash: "0xabc" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const receiverInput = moveSection.get(
+      'input[placeholder="34m... or 0x...@wonderland"]',
+    );
+    const amountInput = moveSection.findAll('input[type="text"]')[0];
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    const submitButton = moveSection.get(".actions button");
+
+    await receiverInput.setValue("bob@wonderland");
+    await amountInput.setValue("10");
+    await shieldCheckbox.setValue(true);
+
+    expect((receiverInput.element as HTMLInputElement).value).toBe(
+      "alice@wonderland",
+    );
+    expect((receiverInput.element as HTMLInputElement).disabled).toBe(true);
+    expect(submitButton.text()).toBe("Shield to online wallet");
+
+    await submitButton.trigger("click");
+    await flushPromises();
+
+    expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      assetDefinitionId: "rose#wonderland",
+    });
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAccountId: "alice@wonderland",
+        quantity: "10",
+        shielded: true,
+      }),
+    );
+    expect(moveSection.text()).toContain(
+      "Shield transfer submitted and offline balance updated.",
+    );
+  });
+
+  it("disables shield option when policy mode is unsupported", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValue({
+      asset_id: "rose#wonderland",
+      block_height: 1,
+      current_mode: "TransparentOnly",
+      effective_mode: "TransparentOnly",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
+    expect(moveSection.text()).toContain(
+      "Shield mode unavailable: effective policy mode is TransparentOnly.",
+    );
+  });
+
+  it("keeps offline shield enabled and shows warning when policy check fails", async () => {
+    getConfidentialAssetPolicyMock.mockRejectedValue(
+      new Error("service unavailable"),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(false);
+    expect(moveSection.text()).toContain(
+      "Shield policy check failed: service unavailable. Submission may still fail if shield mode is unsupported.",
+    );
+  });
+
+  it("disables online move submit for non-integer shield amount", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const amountInput = moveSection.findAll('input[type="text"]')[0];
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    const submitButton = moveSection.get(".actions button");
+
+    await shieldCheckbox.setValue(true);
+    await amountInput.setValue("10.5");
+
+    expect(submitButton.attributes("disabled")).toBeDefined();
+  });
+
+  it("restores previous transparent receiver after turning shield mode off", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const receiverInput = moveSection.get(
+      'input[placeholder="34m... or 0x...@wonderland"]',
+    );
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+
+    await receiverInput.setValue("treasury@wonderland");
+    await shieldCheckbox.setValue(true);
+    await shieldCheckbox.setValue(false);
+
+    expect((receiverInput.element as HTMLInputElement).value).toBe(
+      "treasury@wonderland",
+    );
+    expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("restores empty receiver after turning shield mode off", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const receiverInput = moveSection.get(
+      'input[placeholder="34m... or 0x...@wonderland"]',
+    );
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+
+    await receiverInput.setValue("");
+    await shieldCheckbox.setValue(true);
+    await shieldCheckbox.setValue(false);
+
+    expect((receiverInput.element as HTMLInputElement).value).toBe("");
+    expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
+  });
+});
