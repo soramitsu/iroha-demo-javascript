@@ -376,6 +376,7 @@ const enactDraft = ref<GovernanceDraftResponse | null>(null);
 const loadedReferendumInput = ref<string | null>(null);
 const loadedProposalInput = ref<string | null>(null);
 const lookupGeneration = ref(0);
+const refreshGeneration = ref(0);
 
 const canSubmit = computed(() =>
   Boolean(
@@ -593,7 +594,11 @@ const shortenIdentifier = (value: string) => {
 };
 
 const refresh = async () => {
-  if (!session.connection.toriiUrl || !activeAccount.value?.accountId) {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = activeAccount.value?.accountId;
+  if (!toriiUrl || !accountId) {
+    refreshGeneration.value += 1;
+    loadingBootstrap.value = false;
     statusMessage.value =
       "Configure Torii and complete account onboarding first.";
     permissionsLoaded.value = false;
@@ -604,6 +609,8 @@ const refresh = async () => {
     return;
   }
 
+  const requestGeneration = refreshGeneration.value + 1;
+  refreshGeneration.value = requestGeneration;
   loadingBootstrap.value = true;
   statusMessage.value = "";
   errorMessage.value = "";
@@ -612,17 +619,25 @@ const refresh = async () => {
     const [assetsPayload, permissionsPayload, councilPayload] =
       await Promise.all([
         fetchAccountAssets({
-          toriiUrl: session.connection.toriiUrl,
-          accountId: activeAccount.value.accountId,
+          toriiUrl,
+          accountId,
           limit: 200,
         }),
         listAccountPermissions({
-          toriiUrl: session.connection.toriiUrl,
-          accountId: activeAccount.value.accountId,
+          toriiUrl,
+          accountId,
           limit: 200,
         }),
-        getGovernanceCouncilCurrent(session.connection.toriiUrl),
+        getGovernanceCouncilCurrent(toriiUrl),
       ]);
+
+    if (
+      requestGeneration !== refreshGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      activeAccount.value?.accountId !== accountId
+    ) {
+      return;
+    }
 
     xorBalance.value = resolveXorBalance(assetsPayload.items);
     permissionsLoaded.value = true;
@@ -630,6 +645,9 @@ const refresh = async () => {
     council.value = councilPayload;
     statusMessage.value = `Loaded ${permissionsPayload.total} permission token(s).`;
   } catch (error) {
+    if (requestGeneration !== refreshGeneration.value) {
+      return;
+    }
     permissionsLoaded.value = false;
     permissions.value = [];
     council.value = null;
@@ -637,7 +655,9 @@ const refresh = async () => {
     resetGovernanceLookup();
     errorMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
-    loadingBootstrap.value = false;
+    if (requestGeneration === refreshGeneration.value) {
+      loadingBootstrap.value = false;
+    }
   }
 };
 

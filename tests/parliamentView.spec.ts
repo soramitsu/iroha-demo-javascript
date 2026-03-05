@@ -644,6 +644,66 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).toContain("bob@wonderland");
   });
 
+  it("ignores stale refresh payload after active account switch", async () => {
+    let resolveAssets: (value: unknown) => void = () => {};
+    const assetsDeferred = new Promise((resolve) => {
+      resolveAssets = resolve;
+    });
+    fetchAccountAssetsMock.mockReturnValueOnce(assetsDeferred);
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#wonderland##bob@wonderland",
+          quantity: "15000",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...(session.accounts ?? []),
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ef".repeat(32),
+          privateKeyHex: "12".repeat(32),
+          ih58: "ih58bob",
+          compressed: "",
+          compressedWarning: "",
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    await flushPromises();
+
+    resolveAssets({
+      items: [
+        {
+          asset_id: "xor#wonderland##alice@wonderland",
+          quantity: "1",
+        },
+      ],
+      total: 1,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    const xorBalanceRow = wrapper
+      .findAll(".kv")
+      .find((node) => node.text().includes("XOR Balance"));
+    expect(xorBalanceRow?.text()).toContain("15000 XOR");
+    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).not.toContain(
+      "Available XOR balance is below the required citizen bond amount.",
+    );
+  });
+
   it("disables ballot submission without governance ballot permission", async () => {
     const wrapper = mountView();
     await flushPromises();
