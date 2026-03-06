@@ -90,6 +90,35 @@ describe("useShieldCapability", () => {
     expect(shielded.value).toBe(false);
   });
 
+  it("supports custom translation callback for policy warnings", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValue({
+      asset_id: "rose#wonderland",
+      block_height: 1,
+      current_mode: "TransparentOnly",
+      effective_mode: "TransparentOnly",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    const toriiUrl = ref("http://localhost:8080");
+    const assetDefinitionId = ref("rose#wonderland");
+    const shielded = ref(true);
+
+    const capability = useShieldCapability({
+      toriiUrl,
+      assetDefinitionId,
+      shielded,
+      translate: (key, params) =>
+        `JP:${key.replace("{mode}", String(params?.mode ?? ""))}`,
+    });
+    await flushReactiveEffects();
+
+    expect(capability.shieldCapabilityMessage.value).toBe(
+      "JP:Shield mode unavailable: effective policy mode is TransparentOnly.",
+    );
+  });
+
   it("keeps shielding available and reports errors when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(new Error("timeout"));
     const toriiUrl = ref("http://localhost:8080");

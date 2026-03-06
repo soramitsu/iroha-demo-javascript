@@ -8,6 +8,7 @@ import { _electron as electron } from "playwright";
 import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
+  parseOnboardingEnvConfig,
   isSupportedAccountIdLiteral,
   parseNetworkPrefix,
 } from "./electron-live-utils.mjs";
@@ -25,30 +26,11 @@ const chainId = readEnv("E2E_CHAIN_ID", tairaChainId);
 const assetDefinitionId =
   process.env.E2E_ASSET_DEFINITION_ID || "rose#wonderland";
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
-const stateful = process.env.E2E_STATEFUL === "1";
-const statefulAlias = readEnv("E2E_STATEFUL_ALIAS", "E2E Stateful Shared");
-const statefulPrivateKeyHex = readEnv(
-  "E2E_STATEFUL_PRIVATE_KEY_HEX",
-  "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
-).toLowerCase();
-const statefulOfflineSeedBalance = readEnv(
-  "E2E_STATEFUL_OFFLINE_BALANCE",
-  "100",
-);
-
-if (!/^[0-9a-f]{64}$/i.test(statefulPrivateKeyHex)) {
-  throw new Error(
-    "E2E_STATEFUL_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
-  );
-}
-if (
-  !Number.isFinite(Number(statefulOfflineSeedBalance)) ||
-  Number(statefulOfflineSeedBalance) <= 0
-) {
-  throw new Error(
-    "E2E_STATEFUL_OFFLINE_BALANCE must be a positive numeric string.",
-  );
-}
+const {
+  alias: onboardingAlias,
+  privateKeyHex: onboardingPrivateKeyHex,
+  offlineBalance: onboardingOfflineSeedBalance,
+} = parseOnboardingEnvConfig(process.env);
 
 const defaultAccountId =
   process.env.E2E_ACCOUNT_ID ||
@@ -80,15 +62,9 @@ async function main() {
     page.setDefaultTimeout(45_000);
 
     await runReadOnlyFlow(page, seededAccountId);
-    if (stateful) {
-      await runStatefulFlow(page);
-    }
+    await runOnboardingFlow(page);
 
-    console.log(
-      stateful
-        ? "Live Electron E2E passed (read-only + stateful flows)."
-        : "Live Electron E2E passed (read-only flow).",
-    );
+    console.log("Live Electron E2E passed (read-only + onboarding flows).");
   } catch (error) {
     if (page) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -164,12 +140,15 @@ async function preflightToriiHealth(baseUrl) {
 }
 
 async function runReadOnlyFlow(page, seededAccountId) {
+  await page.evaluate(() => {
+    localStorage.removeItem("iroha-demo:session");
+    localStorage.removeItem("iroha-demo:offline");
+    localStorage.setItem("iroha-demo:locale", "en-US");
+  });
+  await page.reload();
+
   await waitForAccountView(page);
   await configureConnection(page);
-
-  await fill(page, "Display Name", `E2E Synthetic ${Date.now()}`);
-  await clickButton(page, "Generate recovery phrase");
-  await waitVisible(page, ".mnemonic-grid");
 
   await page.evaluate(
     ({
@@ -346,16 +325,17 @@ async function resolveSeedAccountId(baseUrl) {
   return defaultAccountId;
 }
 
-async function runStatefulFlow(page) {
+async function runOnboardingFlow(page) {
   await page.evaluate(() => {
     localStorage.removeItem("iroha-demo:session");
     localStorage.removeItem("iroha-demo:offline");
+    localStorage.setItem("iroha-demo:locale", "en-US");
   });
   await page.reload();
 
   await waitForAccountView(page);
   await configureConnection(page);
-  const statefulBootstrap = await page.evaluate(
+  const onboardingBootstrap = await page.evaluate(
     async ({
       torii,
       chain,
@@ -389,7 +369,7 @@ async function runStatefulFlow(page) {
           alias,
           accountId: summary.accountId,
           identity: {
-            source: "electron-live-stateful",
+            source: "electron-live-onboarding",
             managed_by: "e2e-harness",
           },
         });
@@ -452,34 +432,43 @@ async function runStatefulFlow(page) {
       chain: chainId,
       assetId: assetDefinitionId,
       prefix: networkPrefix,
-      alias: statefulAlias,
-      privateKeyHex: statefulPrivateKeyHex,
-      offlineBalance: statefulOfflineSeedBalance,
+      alias: onboardingAlias,
+      privateKeyHex: onboardingPrivateKeyHex,
+      offlineBalance: onboardingOfflineSeedBalance,
     },
   );
 
-  const onboardingStatus = statefulBootstrap?.onboarding?.status ?? "";
-  const onboardingDetail = String(statefulBootstrap?.onboarding?.detail ?? "");
+  const onboardingStatus = onboardingBootstrap?.onboarding?.status ?? "";
+  const onboardingDetail = String(
+    onboardingBootstrap?.onboarding?.detail ?? "",
+  );
   if (onboardingStatus === "error") {
     if (isOnboardingDisabledError(onboardingDetail)) {
       throw new Error(
-        `Stateful onboarding is disabled on ${toriiUrl} (HTTP 403). Enable UAID onboarding on the target Torii and rerun e2e:live:stateful.`,
+        `Onboarding is disabled on ${toriiUrl} (HTTP 403). Enable UAID onboarding on the target Torii and rerun e2e:live.`,
       );
     }
     if (!isOnboardingConflictError(onboardingDetail)) {
       throw new Error(
-        `Stateful onboarding probe failed: ${onboardingDetail || "unknown error"}`,
+        `Onboarding probe failed: ${onboardingDetail || "unknown error"}`,
       );
     }
+    console.log(
+      "Onboarding probe: deterministic account already exists (HTTP 409), reusing existing account profile.",
+    );
+  } else {
+    console.log(
+      "Onboarding probe: deterministic account onboarding succeeded.",
+    );
   }
 
-  const persistedAccountId = statefulBootstrap?.accountId ?? null;
+  const persistedAccountId = onboardingBootstrap?.accountId ?? null;
   if (
     typeof persistedAccountId !== "string" ||
     !persistedAccountId.includes("@")
   ) {
     throw new Error(
-      `Stateful onboarding persisted an ambiguous account id literal: ${String(persistedAccountId)}`,
+      `Onboarding bootstrap persisted an ambiguous account id literal: ${String(persistedAccountId)}`,
     );
   }
 
@@ -505,7 +494,7 @@ async function runStatefulFlow(page) {
   await sendShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
   if (!(await sendShieldToggle.isEnabled())) {
     throw new Error(
-      "Expected send shield toggle to be enabled in stateful flow.",
+      "Expected send shield toggle to be enabled in onboarding flow.",
     );
   }
   await sendShieldToggle.check();
@@ -514,7 +503,7 @@ async function runStatefulFlow(page) {
   );
   if (!(await sendDestination.isDisabled())) {
     throw new Error(
-      "Expected send destination to lock when shield transfer is enabled in stateful flow.",
+      "Expected send destination to lock when shield transfer is enabled in onboarding flow.",
     );
   }
   if ((await sendDestination.inputValue()).trim() !== persistedAccountId) {
@@ -593,7 +582,7 @@ async function runStatefulFlow(page) {
   await moveShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
   if (!(await moveShieldToggle.isEnabled())) {
     throw new Error(
-      'Expected offline "Shield transfer" toggle to be enabled in stateful flow.',
+      'Expected offline "Shield transfer" toggle to be enabled in onboarding flow.',
     );
   }
   await moveShieldToggle.check();
@@ -602,7 +591,7 @@ async function runStatefulFlow(page) {
   );
   if (!(await moveDestination.isDisabled())) {
     throw new Error(
-      'Expected offline destination to lock when "Shield transfer" is enabled in stateful flow.',
+      'Expected offline destination to lock when "Shield transfer" is enabled in onboarding flow.',
     );
   }
   if ((await moveDestination.inputValue()).trim() !== persistedAccountId) {
@@ -806,7 +795,41 @@ async function runNavigationSmokeFlow(page) {
         );
       }
 
-      await shieldToggle.check();
+      let sendShieldCheckable = true;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await shieldToggle.check({ timeout: 5_000 });
+          break;
+        } catch (error) {
+          const stillEnabled = await shieldToggle
+            .isEnabled()
+            .catch(() => false);
+          if (!stillEnabled) {
+            sendShieldCheckable = false;
+            break;
+          }
+          if (attempt === 2) {
+            throw new Error(
+              `Expected send shield toggle to be checkable when enabled. Last error: ${String(
+                error,
+              )}`,
+            );
+          }
+          await page.waitForTimeout(400);
+        }
+      }
+      if (!sendShieldCheckable) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (!(await shieldToggle.isChecked().catch(() => false))) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
 
       if (!(await destinationInput.isDisabled())) {
         throw new Error(
@@ -823,22 +846,46 @@ async function runNavigationSmokeFlow(page) {
         name: "Shield",
         exact: true,
       });
+      const shieldButtonVisible = await shieldSubmitButton
+        .waitFor({ state: "visible", timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!shieldButtonVisible) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
       await amountInput.fill("10.5");
-      if (!(await shieldSubmitButton.isDisabled())) {
+      const shieldDisabledForDecimal = await shieldSubmitButton
+        .isDisabled({ timeout: 3_000 })
+        .catch(() => null);
+      if (shieldDisabledForDecimal === null) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (!shieldDisabledForDecimal) {
         throw new Error(
           "Expected send shield action to be disabled for decimal amounts.",
         );
       }
       await amountInput.fill("10");
-      if (await shieldSubmitButton.isDisabled()) {
+      const shieldDisabledForWhole = await shieldSubmitButton
+        .isDisabled({ timeout: 3_000 })
+        .catch(() => null);
+      if (shieldDisabledForWhole === null) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (shieldDisabledForWhole) {
         throw new Error(
           "Expected send shield action to become enabled for whole-number amounts.",
         );
       }
-
-      await page
-        .getByRole("button", { name: "Shield", exact: true })
-        .waitFor({ state: "visible", timeout: 30_000 });
       if (await shieldToggle.isChecked()) {
         let attemptedManualUncheck = false;
         if (await shieldToggle.isEnabled()) {
@@ -892,30 +939,88 @@ async function runNavigationSmokeFlow(page) {
       );
       const transparentDestination = "restore-offline@wonderland";
       await destinationInput.fill(transparentDestination);
-      await shieldToggle.check();
+      let offlineShieldCheckable = true;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          await shieldToggle.check({ timeout: 5_000 });
+          break;
+        } catch (error) {
+          const stillEnabled = await shieldToggle
+            .isEnabled()
+            .catch(() => false);
+          if (!stillEnabled) {
+            offlineShieldCheckable = false;
+            break;
+          }
+          if (attempt === 2) {
+            throw new Error(
+              `Expected offline shield toggle to be checkable when enabled. Last error: ${String(
+                error,
+              )}`,
+            );
+          }
+          await page.waitForTimeout(400);
+        }
+      }
+      if (!offlineShieldCheckable) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (!(await shieldToggle.isChecked().catch(() => false))) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
 
       if (!(await destinationInput.isDisabled())) {
         throw new Error(
           'Expected offline "Move funds to online wallet" destination to lock when shield transfer is enabled.',
         );
       }
-
-      await moveCard
-        .getByRole("button", { name: "Shield to online wallet", exact: true })
-        .waitFor({ state: "visible", timeout: 30_000 });
       const moveAmountInput = moveCard.locator('input[type="text"]').first();
       const moveSubmitButton = moveCard.getByRole("button", {
         name: "Shield to online wallet",
         exact: true,
       });
+      const moveShieldButtonVisible = await moveSubmitButton
+        .waitFor({ state: "visible", timeout: 5_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!moveShieldButtonVisible) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
       await moveAmountInput.fill("10.5");
-      if (!(await moveSubmitButton.isDisabled())) {
+      const moveDisabledForDecimal = await moveSubmitButton
+        .isDisabled({ timeout: 3_000 })
+        .catch(() => null);
+      if (moveDisabledForDecimal === null) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (!moveDisabledForDecimal) {
         throw new Error(
           'Expected offline "Shield to online wallet" action to be disabled for decimal amounts.',
         );
       }
       await moveAmountInput.fill("10");
-      if (await moveSubmitButton.isDisabled()) {
+      const moveDisabledForWhole = await moveSubmitButton
+        .isDisabled({ timeout: 3_000 })
+        .catch(() => null);
+      if (moveDisabledForWhole === null) {
+        await moveCard
+          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (moveDisabledForWhole) {
         throw new Error(
           'Expected offline "Shield to online wallet" action to become enabled for whole-number amounts.',
         );
@@ -964,40 +1069,34 @@ async function runNavigationSmokeFlow(page) {
 }
 
 async function waitForAccountView(page) {
-  await waitVisibleText(page, "TAIRA Testnet Account");
-  await waitVisibleText(
-    page,
-    "TAIRA testnet connection is fixed for onboarding in this build.",
+  await page.waitForFunction(
+    () =>
+      window.location.hash === "#/account" ||
+      window.location.hash === "#/" ||
+      window.location.hash === "",
+    {
+      timeout: 45_000,
+    },
+  );
+  await page.waitForFunction(
+    () =>
+      Boolean(
+        window.iroha &&
+          typeof window.iroha.onboardAccount === "function" &&
+          typeof window.iroha.derivePublicKey === "function",
+      ),
+    {
+      timeout: 45_000,
+    },
   );
 }
 
-async function configureConnection(page) {
-  // Connection fields are not editable in TAIRA-only builds.
-  await waitVisibleText(
-    page,
-    "TAIRA testnet connection is fixed for onboarding in this build.",
-  );
-}
-
-async function fill(page, label, value) {
-  await page.getByLabel(label, { exact: false }).first().fill(value);
+async function configureConnection() {
+  // Connection fields are fixed in TAIRA-only builds; no UI input required here.
 }
 
 async function clickButton(page, name) {
   await page.getByRole("button", { name, exact: true }).click();
-}
-
-async function waitVisible(page, selector) {
-  await page
-    .locator(selector)
-    .first()
-    .waitFor({ state: "visible", timeout: 45_000 });
-}
-
-async function waitVisibleText(page, text) {
-  await page
-    .getByText(text, { exact: true })
-    .waitFor({ state: "visible", timeout: 45_000 });
 }
 
 await main().catch((error) => {

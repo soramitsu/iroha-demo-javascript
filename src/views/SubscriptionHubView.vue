@@ -2,47 +2,50 @@
   <div class="card-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Subscription Hub</h2>
-        <span class="pill positive">Auto-deduct on</span>
+        <h2>{{ t("Subscription Hub") }}</h2>
+        <span class="pill positive">{{ t("Auto-deduct on") }}</span>
       </header>
       <div class="grid-2">
         <div class="kv">
-          <span class="kv-label">Active</span>
+          <span class="kv-label">{{ t("Active") }}</span>
           <span class="kv-value">{{ activeCount }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Paused</span>
+          <span class="kv-label">{{ t("Paused") }}</span>
           <span class="kv-value">{{ pausedCount }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Canceled</span>
+          <span class="kv-label">{{ t("Canceled") }}</span>
           <span class="kv-value">{{ canceledCount }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Next auto-deduct</span>
+          <span class="kv-label">{{ t("Next auto-deduct") }}</span>
           <span class="kv-value">{{ nextDueLabel }}</span>
         </div>
       </div>
       <p class="helper">
-        Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate
-        each billing cycle.
+        {{
+          t(
+            "Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate each billing cycle.",
+          )
+        }}
       </p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Add subscription</h2>
+        <h2>{{ t("Add subscription") }}</h2>
       </header>
       <form class="form-grid" @submit.prevent="addSubscription">
         <label>
-          Service name
+          {{ t("Service name") }}
           <input
             v-model.trim="form.merchant"
-            placeholder="Service or merchant"
+            :placeholder="t('Service or merchant')"
           />
         </label>
         <label>
-          Amount ({{ unitLabel }})
+          {{ t("Amount ({unit})", { unit: unitLabel }) }}
           <input
             v-model.trim="form.amount"
             type="number"
@@ -52,7 +55,7 @@
           />
         </label>
         <label>
-          Max for usage-based ({{ unitLabel }})
+          {{ t("Max for usage-based ({unit})", { unit: unitLabel }) }}
           <input
             v-model.trim="form.maxAmount"
             type="number"
@@ -62,31 +65,36 @@
           />
         </label>
         <label>
-          Cadence
+          {{ t("Cadence") }}
           <select v-model="form.cadence">
-            <option value="monthly">Monthly</option>
-            <option value="quarterly">Quarterly</option>
-            <option value="yearly">Yearly</option>
+            <option value="monthly">{{ t("Monthly") }}</option>
+            <option value="quarterly">{{ t("Quarterly") }}</option>
+            <option value="yearly">{{ t("Yearly") }}</option>
           </select>
         </label>
         <label>
-          Note
-          <input v-model.trim="form.note" placeholder="Optional note" />
+          {{ t("Note") }}
+          <input v-model.trim="form.note" :placeholder="t('Optional note')" />
         </label>
-        <button type="submit">Add subscription</button>
+        <button type="submit">{{ t("Add subscription") }}</button>
       </form>
       <p v-if="formError" class="helper">{{ formError }}</p>
       <p v-else class="helper">
-        Leave amount blank and set a max for usage-based billing. Auto-deduct
-        runs automatically.
+        {{
+          t(
+            "Leave amount blank and set a max for usage-based billing. Auto-deduct runs automatically.",
+          )
+        }}
       </p>
     </section>
   </div>
 
   <section class="card">
     <header class="card-header">
-      <h2>All subscriptions</h2>
-      <span class="pill">{{ sortedRecords.length }} total</span>
+      <h2>{{ t("All subscriptions") }}</h2>
+      <span class="pill">{{
+        t("{count} total", { count: sortedRecords.length })
+      }}</span>
     </header>
     <div v-if="sortedRecords.length" class="subscription-stack">
       <article
@@ -104,6 +112,8 @@
                   record.amount,
                   record.maxAmount,
                   unitLabel,
+                  t,
+                  formatSubscriptionAmount,
                 )
               }}
               ·
@@ -115,15 +125,26 @@
           }}</span>
         </div>
         <div class="subscription-meta">
-          <span>Next: {{ formatDate(record.nextChargeAt) }}</span>
+          <span>{{
+            t("Next: {date}", { date: formatDate(record.nextChargeAt) })
+          }}</span>
           <span v-if="record.lastChargeAt">
-            Last:
+            {{ t("Last:") }}
             {{
-              formatAmount("fixed", record.lastChargeAmount, null, unitLabel)
+              formatAmount(
+                "fixed",
+                record.lastChargeAmount,
+                null,
+                unitLabel,
+                t,
+                formatSubscriptionAmount,
+              )
             }}
-            on {{ formatDate(record.lastChargeAt) }}
+            {{ t("on {date}", { date: formatDate(record.lastChargeAt) }) }}
           </span>
-          <span v-if="record.cancelAtPeriodEnd">Canceling at period end</span>
+          <span v-if="record.cancelAtPeriodEnd">{{
+            t("Canceling at period end")
+          }}</span>
         </div>
         <p v-if="record.note" class="subscription-note">{{ record.note }}</p>
         <div class="subscription-actions">
@@ -142,17 +163,18 @@
             {{ cancelLabel(record) }}
           </button>
           <button class="ghost" @click="removeSubscription(record)">
-            Remove
+            {{ t("Remove") }}
           </button>
         </div>
       </article>
     </div>
-    <p v-else class="helper">No subscriptions yet.</p>
+    <p v-else class="helper">{{ t("No subscriptions yet.") }}</p>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSubscriptionStore } from "@/stores/subscriptions";
 import { useSessionStore } from "@/stores/session";
 import {
@@ -163,6 +185,7 @@ import {
 
 const subscriptions = useSubscriptionStore();
 const session = useSessionStore();
+const { localeStore, t, n } = useAppI18n();
 
 const form = reactive({
   merchant: "",
@@ -202,34 +225,40 @@ const canceledCount = computed(
 );
 
 const formatDate = (iso: string | null) => {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(
-    new Date(iso),
-  );
+  if (!iso) return t("—");
+  return new Intl.DateTimeFormat(localeStore.current, {
+    dateStyle: "medium",
+  }).format(new Date(iso));
 };
+
+const formatSubscriptionAmount = (value: number) =>
+  n(value, { maximumFractionDigits: 2 });
 
 const nextDueLabel = computed(() => {
   const next = sortedRecords.value.find((record) => record.status === "active");
-  if (!next) return "None scheduled";
-  return `${next.merchant} on ${formatDate(next.nextChargeAt)}`;
+  if (!next) return t("None scheduled");
+  return t("{merchant} on {date}", {
+    merchant: next.merchant,
+    date: formatDate(next.nextChargeAt),
+  });
 });
 
 const cadenceLabel = (cadence: SubscriptionCadence) => {
   switch (cadence) {
     case "quarterly":
-      return "Quarterly";
+      return t("Quarterly");
     case "yearly":
-      return "Yearly";
+      return t("Yearly");
     default:
-      return "Monthly";
+      return t("Monthly");
   }
 };
 
 const statusLabel = (record: SubscriptionRecord) => {
-  if (record.status === "canceled") return "Canceled";
-  if (record.cancelAtPeriodEnd) return "Canceling";
-  if (record.status === "paused") return "Paused";
-  return "Active";
+  if (record.status === "canceled") return t("Canceled");
+  if (record.cancelAtPeriodEnd) return t("Canceling");
+  if (record.status === "paused") return t("Paused");
+  return t("Active");
 };
 
 const statusTone = (record: SubscriptionRecord) => {
@@ -240,9 +269,9 @@ const statusTone = (record: SubscriptionRecord) => {
 };
 
 const pauseLabel = (record: SubscriptionRecord) =>
-  record.status === "paused" ? "Resume" : "Pause";
+  record.status === "paused" ? t("Resume") : t("Pause");
 const cancelLabel = (record: SubscriptionRecord) =>
-  record.cancelAtPeriodEnd ? "Keep subscription" : "Cancel at period end";
+  record.cancelAtPeriodEnd ? t("Keep subscription") : t("Cancel at period end");
 
 const parseNumber = (value: string): number | null => {
   const trimmed = value.trim();
@@ -263,13 +292,13 @@ const addSubscription = () => {
   formError.value = "";
   const merchant = form.merchant.trim();
   if (!merchant) {
-    formError.value = "Enter a service name.";
+    formError.value = t("Enter a service name.");
     return;
   }
   const amount = parseNumber(form.amount);
   const maxAmount = parseNumber(form.maxAmount);
   if (amount == null && maxAmount == null) {
-    formError.value = "Enter an amount or max limit.";
+    formError.value = t("Enter an amount or max limit.");
     return;
   }
   subscriptions.addSubscription({
@@ -291,7 +320,7 @@ const toggleCancel = (record: SubscriptionRecord) => {
 };
 
 const removeSubscription = (record: SubscriptionRecord) => {
-  if (window.confirm(`Remove ${record.merchant}?`)) {
+  if (window.confirm(t("Remove {merchant}?", { merchant: record.merchant }))) {
     subscriptions.removeSubscription(record.id);
   }
 };

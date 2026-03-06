@@ -487,7 +487,7 @@ export const sanitizeFetchHeaders = (
         (entry): entry is [unknown, unknown] =>
           Array.isArray(entry) && entry.length >= 2,
       )
-      .map(([key, value]) => [String(key), String(value)]);
+      .map<[string, string]>(([key, value]) => [String(key), String(value)]);
   }
 
   if (typeof headers === "object") {

@@ -2,32 +2,38 @@
   <div class="card-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Citizenship Bond</h2>
+        <h2>{{ t("Citizenship Bond") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
-          {{ loadingBootstrap ? "Refreshing…" : "Refresh" }}
+          {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
       <p class="helper">
-        Bond <strong>{{ CITIZEN_BOND_XOR }} XOR</strong> to register as a
-        citizen, then use plain ballots to vote in governance referenda.
+        {{
+          t(
+            "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.",
+            { amount: CITIZEN_BOND_XOR },
+          )
+        }}
       </p>
       <div class="grid-2" style="margin-top: 12px">
         <div class="kv">
-          <span class="kv-label">Account</span>
+          <span class="kv-label">{{ t("Account") }}</span>
           <span class="kv-value mono">{{
-            activeAccount?.accountId || "—"
+            activeAccount?.accountId || t("—")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Chain</span>
-          <span class="kv-value">{{ session.connection.chainId || "—" }}</span>
+          <span class="kv-label">{{ t("Chain") }}</span>
+          <span class="kv-value">{{
+            session.connection.chainId || t("—")
+          }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">XOR Balance</span>
+          <span class="kv-label">{{ t("XOR Balance") }}</span>
           <span class="kv-value">{{ xorBalance }} XOR</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Required Bond</span>
+          <span class="kv-label">{{ t("Required Bond") }}</span>
           <span class="kv-value">{{ CITIZEN_BOND_XOR }} XOR</span>
         </div>
       </div>
@@ -37,40 +43,62 @@
           class="pill mini"
           :class="hasBallotPermission ? 'positive' : 'muted'"
         >
-          Ballot: {{ hasBallotPermission ? "enabled" : "missing" }}
+          {{
+            t("Ballot: {state}", {
+              state: hasBallotPermission ? t("enabled") : t("missing"),
+            })
+          }}
         </span>
         <span
           class="pill mini"
           :class="hasParliamentPermission ? 'positive' : 'muted'"
         >
-          Parliament: {{ hasParliamentPermission ? "enabled" : "missing" }}
+          {{
+            t("Parliament: {state}", {
+              state: hasParliamentPermission ? t("enabled") : t("missing"),
+            })
+          }}
         </span>
         <span
           class="pill mini"
           :class="hasEnactPermission ? 'positive' : 'muted'"
         >
-          Enact: {{ hasEnactPermission ? "enabled" : "missing" }}
+          {{
+            t("Enact: {state}", {
+              state: hasEnactPermission ? t("enabled") : t("missing"),
+            })
+          }}
         </span>
       </div>
 
       <p v-if="permissionNames.length" class="helper tight">
-        Granted permissions: {{ permissionNames.join(", ") }}
+        {{
+          t("Granted permissions: {permissions}", {
+            permissions: permissionNames.join(", "),
+          })
+        }}
       </p>
 
       <div class="actions">
         <button :disabled="!canBondCitizen" @click="handleBondCitizen">
           {{
             actionBusy === "bond"
-              ? "Submitting…"
-              : `Bond ${CITIZEN_BOND_XOR} XOR`
+              ? t("Submitting…")
+              : t("Bond {amount} XOR", { amount: CITIZEN_BOND_XOR })
           }}
         </button>
       </div>
       <p v-if="alreadyCitizen" class="message success">
-        Citizenship voting permission detected. Bonding is no longer required.
+        {{
+          t(
+            "Citizenship voting permission detected. Bonding is no longer required.",
+          )
+        }}
       </p>
       <p v-if="!alreadyCitizen && !hasXorForBond" class="message warning">
-        Available XOR balance is below the required citizen bond amount.
+        {{
+          t("Available XOR balance is below the required citizen bond amount.")
+        }}
       </p>
       <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
@@ -79,22 +107,22 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Referendum Lookup</h2>
+        <h2>{{ t("Referendum Lookup") }}</h2>
         <button
           class="secondary"
           :disabled="!canLookupGovernance"
           @click="lookupGovernance"
         >
-          {{ lookupLoading ? "Loading…" : "Load" }}
+          {{ lookupLoading ? t("Loading…") : t("Load") }}
         </button>
       </header>
       <div class="form-grid">
         <label>
-          Referendum ID
+          {{ t("Referendum ID") }}
           <input v-model.trim="referendumId" type="text" placeholder="ref-1" />
         </label>
         <label>
-          Proposal ID (0x...)
+          {{ t("Proposal ID (0x...)") }}
           <input
             v-model.trim="proposalId"
             type="text"
@@ -103,14 +131,14 @@
         </label>
       </div>
       <p v-if="proposalIdFormatError" class="message warning">
-        Proposal ID must be 32-byte hex (with or without 0x prefix).
+        {{ t("Proposal ID must be 32-byte hex (with or without 0x prefix).") }}
       </p>
       <div
         v-if="recentReferenda.length || recentProposals.length"
         class="history-stack"
       >
         <div v-if="recentReferenda.length">
-          <p class="helper tight">Recent referenda</p>
+          <p class="helper tight">{{ t("Recent referenda") }}</p>
           <div class="history-chips">
             <button
               v-for="recentReferendumId in recentReferenda"
@@ -125,7 +153,7 @@
           </div>
         </div>
         <div v-if="recentProposals.length">
-          <p class="helper tight">Recent proposals</p>
+          <p class="helper tight">{{ t("Recent proposals") }}</p>
           <div class="history-chips">
             <button
               v-for="recentProposalId in recentProposals"
@@ -145,35 +173,43 @@
             type="button"
             @click="clearHistory"
           >
-            Clear history
+            {{ t("Clear history") }}
           </button>
         </div>
       </div>
 
       <div v-if="tally?.tally" class="grid-2" style="margin-top: 12px">
         <div class="kv">
-          <span class="kv-label">Aye</span>
+          <span class="kv-label">{{ t("Aye") }}</span>
           <span class="kv-value">{{ tally.tally.approve }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Nay</span>
+          <span class="kv-label">{{ t("Nay") }}</span>
           <span class="kv-value">{{ tally.tally.reject }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Abstain</span>
+          <span class="kv-label">{{ t("Abstain") }}</span>
           <span class="kv-value">{{ tally.tally.abstain }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Lock Records</span>
+          <span class="kv-label">{{ t("Lock Records") }}</span>
           <span class="kv-value">{{ lockCount }}</span>
         </div>
       </div>
 
       <p v-if="referendum" class="helper">
-        Referendum found: {{ referendum.found ? "yes" : "no" }}.
+        {{
+          t("Referendum found: {value}.", {
+            value: referendum.found ? t("yes") : t("no"),
+          })
+        }}
       </p>
       <p v-if="proposal" class="helper">
-        Proposal found: {{ proposal.found ? "yes" : "no" }}.
+        {{
+          t("Proposal found: {value}.", {
+            value: proposal.found ? t("yes") : t("no"),
+          })
+        }}
       </p>
 
       <pre v-if="referendum?.referendum" class="payload mono">{{
@@ -186,19 +222,20 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Cast Plain Ballot</h2>
+        <h2>{{ t("Cast Plain Ballot") }}</h2>
       </header>
       <p class="helper">
-        Submit a signed <code>CastPlainBallot</code> instruction directly to
-        Torii.
+        {{
+          t("Submit a signed CastPlainBallot instruction directly to Torii.")
+        }}
       </p>
       <div class="form-grid">
         <label>
-          Amount (XOR)
+          {{ t("Amount (XOR)") }}
           <input v-model.trim="ballotAmount" type="text" placeholder="10000" />
         </label>
         <label>
-          Lock duration (blocks)
+          {{ t("Lock duration (blocks)") }}
           <input
             v-model.number="durationBlocks"
             type="number"
@@ -207,58 +244,64 @@
           />
         </label>
         <label>
-          Direction
+          {{ t("Direction") }}
           <select v-model="direction">
-            <option value="Aye">Aye</option>
-            <option value="Nay">Nay</option>
-            <option value="Abstain">Abstain</option>
+            <option value="Aye">{{ t("Aye") }}</option>
+            <option value="Nay">{{ t("Nay") }}</option>
+            <option value="Abstain">{{ t("Abstain") }}</option>
           </select>
         </label>
       </div>
       <div class="actions">
         <button :disabled="!canSubmitBallot" @click="handleBallot">
-          {{ actionBusy === "ballot" ? "Submitting…" : "Submit ballot" }}
+          {{ actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot") }}
         </button>
       </div>
       <p class="helper tight">
-        Requires <code>CanSubmitGovernanceBallot</code> permission on the active
-        account.
+        {{
+          t(
+            "Requires CanSubmitGovernanceBallot permission on the active account.",
+          )
+        }}
       </p>
       <p v-if="missingBallotPermission" class="message warning">
-        Ballot permission is missing on this account. Submit the citizenship
-        bond and refresh before voting.
+        {{
+          t(
+            "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
+          )
+        }}
       </p>
       <p v-if="!hasValidBallotAmount" class="message warning">
-        Ballot amount must be a whole number greater than zero.
+        {{ t("Ballot amount must be a whole number greater than zero.") }}
       </p>
       <p v-else-if="!hasXorForBallot" class="message warning">
-        Ballot amount exceeds the available XOR balance.
+        {{ t("Ballot amount exceeds the available XOR balance.") }}
       </p>
       <p v-if="!hasValidDurationBlocks" class="message warning">
-        Lock duration must be a positive integer number of blocks.
+        {{ t("Lock duration must be a positive integer number of blocks.") }}
       </p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Council & Draft Ops</h2>
+        <h2>{{ t("Council & Draft Ops") }}</h2>
       </header>
       <div class="grid-2">
         <div class="kv">
-          <span class="kv-label">Current Epoch</span>
-          <span class="kv-value">{{ council?.epoch ?? "—" }}</span>
+          <span class="kv-label">{{ t("Current Epoch") }}</span>
+          <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Members</span>
+          <span class="kv-label">{{ t("Members") }}</span>
           <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Alternates</span>
+          <span class="kv-label">{{ t("Alternates") }}</span>
           <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Derived By</span>
-          <span class="kv-value">{{ council?.derived_by ?? "—" }}</span>
+          <span class="kv-label">{{ t("Derived By") }}</span>
+          <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
         </div>
       </div>
 
@@ -268,28 +311,36 @@
           :disabled="!canFinalizeDraft"
           @click="handleFinalize"
         >
-          {{ actionBusy === "finalize" ? "Preparing…" : "Finalize draft" }}
+          {{
+            actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
+          }}
         </button>
         <button
           class="secondary"
           :disabled="!canEnactDraft"
           @click="handleEnact"
         >
-          {{ actionBusy === "enact" ? "Preparing…" : "Enact draft" }}
+          {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
         </button>
       </div>
       <p v-if="missingParliamentPermission" class="message warning">
-        Finalize requires <code>CanManageParliament</code> permission.
+        {{ t("Finalize requires CanManageParliament permission.") }}
       </p>
       <p v-if="missingEnactPermission" class="message warning">
-        Enact requires <code>CanEnactGovernance</code> permission.
+        {{ t("Enact requires CanEnactGovernance permission.") }}
       </p>
 
       <p v-if="finalizeDraft" class="helper">
-        Finalize draft: {{ summarizeDraft(finalizeDraft) }}
+        {{
+          t("Finalize draft: {summary}", {
+            summary: summarizeDraft(finalizeDraft),
+          })
+        }}
       </p>
       <p v-if="enactDraft" class="helper">
-        Enact draft: {{ summarizeDraft(enactDraft) }}
+        {{
+          t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
+        }}
       </p>
 
       <ul v-if="council?.members.length" class="member-list mono">
@@ -303,6 +354,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import {
   enactGovernanceProposal,
   fetchAccountAssets,
@@ -345,6 +397,7 @@ import {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const { t } = useAppI18n();
 
 const loadingBootstrap = ref(false);
 const permissionsLoaded = ref(false);
@@ -599,8 +652,10 @@ const refresh = async () => {
   if (!toriiUrl || !accountId) {
     refreshGeneration.value += 1;
     loadingBootstrap.value = false;
-    statusMessage.value =
-      "Configure Torii and complete account onboarding first.";
+    errorMessage.value = "";
+    statusMessage.value = t(
+      "Configure Torii and complete account onboarding first.",
+    );
     permissionsLoaded.value = false;
     permissions.value = [];
     council.value = null;
@@ -643,7 +698,9 @@ const refresh = async () => {
     permissionsLoaded.value = true;
     permissions.value = permissionsPayload.items;
     council.value = councilPayload;
-    statusMessage.value = `Loaded ${permissionsPayload.total} permission token(s).`;
+    statusMessage.value = t("Loaded {count} permission token(s).", {
+      count: permissionsPayload.total,
+    });
   } catch (error) {
     if (requestGeneration !== refreshGeneration.value) {
       return;
@@ -663,16 +720,17 @@ const refresh = async () => {
 
 const lookupGovernance = async () => {
   if (!session.connection.toriiUrl) {
-    errorMessage.value = "Torii connection is required.";
+    errorMessage.value = t("Torii connection is required.");
     return;
   }
   if (!trimmedReferendumId.value && !proposalLiteral.value) {
-    errorMessage.value = "Provide a referendum id or proposal id first.";
+    errorMessage.value = t("Provide a referendum id or proposal id first.");
     return;
   }
   if (!trimmedReferendumId.value && proposalIdFormatError.value) {
-    errorMessage.value =
-      "Proposal ID must be 32-byte hex (with or without 0x prefix).";
+    errorMessage.value = t(
+      "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+    );
     return;
   }
 
@@ -759,8 +817,8 @@ const lookupGovernance = async () => {
     });
     statusMessage.value =
       referendumLiteral && proposalInputWasInvalid
-        ? "Governance records refreshed. Invalid proposal ID was ignored."
-        : "Governance records refreshed.";
+        ? t("Governance records refreshed. Invalid proposal ID was ignored.")
+        : t("Governance records refreshed.");
   } catch (error) {
     if (requestGeneration !== lookupGeneration.value) {
       return;
@@ -792,16 +850,20 @@ const runAction = async (
 const handleBondCitizen = () =>
   runAction("bond", async () => {
     if (!canSubmit.value || !activeAccount.value) {
-      throw new Error("Connection, chain, and active account are required.");
+      throw new Error(t("Connection, chain, and active account are required."));
     }
     if (alreadyCitizen.value) {
       throw new Error(
-        "This account already has governance ballot permission and does not need another citizenship bond.",
+        t(
+          "This account already has governance ballot permission and does not need another citizenship bond.",
+        ),
       );
     }
     if (!hasXorForBond.value) {
       throw new Error(
-        `A minimum of ${CITIZEN_BOND_XOR} XOR is required to register citizenship.`,
+        t("A minimum of {amount} XOR is required to register citizenship.", {
+          amount: CITIZEN_BOND_XOR,
+        }),
       );
     }
     const result = await registerCitizen({
@@ -812,34 +874,38 @@ const handleBondCitizen = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     await refresh();
-    return `Citizenship bond submitted: ${result.hash}`;
+    return t("Citizenship bond submitted: {hash}", { hash: result.hash });
   });
 
 const handleBallot = () =>
   runAction("ballot", async () => {
     if (!canSubmit.value || !activeAccount.value) {
-      throw new Error("Connection, chain, and active account are required.");
+      throw new Error(t("Connection, chain, and active account are required."));
     }
     if (missingBallotPermission.value) {
       throw new Error(
-        "CanSubmitGovernanceBallot permission is missing on the active account.",
+        t(
+          "CanSubmitGovernanceBallot permission is missing on the active account.",
+        ),
       );
     }
     const referendumLiteral = trimmedReferendumId.value;
     if (!referendumLiteral) {
-      throw new Error("referendumId is required before submitting a ballot.");
+      throw new Error(
+        t("referendumId is required before submitting a ballot."),
+      );
     }
     if (!hasValidBallotAmount.value) {
       throw new Error(
-        "Ballot amount must be a whole number greater than zero.",
+        t("Ballot amount must be a whole number greater than zero."),
       );
     }
     if (!hasXorForBallot.value) {
-      throw new Error("Ballot amount exceeds the available XOR balance.");
+      throw new Error(t("Ballot amount exceeds the available XOR balance."));
     }
     if (!hasValidDurationBlocks.value) {
       throw new Error(
-        "Lock duration must be a positive integer number of blocks.",
+        t("Lock duration must be a positive integer number of blocks."),
       );
     }
     const result = await submitGovernancePlainBallot({
@@ -854,28 +920,30 @@ const handleBallot = () =>
     });
     rememberHistory({ referendumId: referendumLiteral });
     await lookupGovernance();
-    return `Ballot submitted: ${result.hash}`;
+    return t("Ballot submitted: {hash}", { hash: result.hash });
   });
 
 const handleFinalize = () =>
   runAction("finalize", async () => {
     if (!session.connection.toriiUrl) {
-      throw new Error("Torii connection is required.");
+      throw new Error(t("Torii connection is required."));
     }
     if (missingParliamentPermission.value) {
       throw new Error(
-        "CanManageParliament permission is required for finalize.",
+        t("CanManageParliament permission is required for finalize."),
       );
     }
     const referendumLiteral = trimmedReferendumId.value;
     const proposalLiteral = proposalId.value.trim();
     const proposalLiteralNormalized = canonicalProposalId.value;
     if (!referendumLiteral || !proposalLiteral) {
-      throw new Error("referendumId and proposalId are required for finalize.");
+      throw new Error(
+        t("referendumId and proposalId are required for finalize."),
+      );
     }
     if (!proposalLiteralNormalized) {
       throw new Error(
-        "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+        t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
       );
     }
     finalizeDraft.value = await finalizeGovernanceReferendum({
@@ -888,25 +956,29 @@ const handleFinalize = () =>
       referendumId: referendumLiteral,
       proposalId: proposalLiteralNormalized,
     });
-    return `Finalize draft prepared with ${finalizeDraft.value.tx_instructions.length} instruction(s).`;
+    return t("Finalize draft prepared with {count} instruction(s).", {
+      count: finalizeDraft.value.tx_instructions.length,
+    });
   });
 
 const handleEnact = () =>
   runAction("enact", async () => {
     if (!session.connection.toriiUrl) {
-      throw new Error("Torii connection is required.");
+      throw new Error(t("Torii connection is required."));
     }
     if (missingEnactPermission.value) {
-      throw new Error("CanEnactGovernance permission is required for enact.");
+      throw new Error(
+        t("CanEnactGovernance permission is required for enact."),
+      );
     }
     const proposalLiteral = proposalId.value.trim();
     const proposalLiteralNormalized = canonicalProposalId.value;
     if (!proposalLiteral) {
-      throw new Error("proposalId is required for enact.");
+      throw new Error(t("proposalId is required for enact."));
     }
     if (!proposalLiteralNormalized) {
       throw new Error(
-        "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+        t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
       );
     }
     enactDraft.value = await enactGovernanceProposal({
@@ -915,14 +987,22 @@ const handleEnact = () =>
     });
     proposalId.value = proposalLiteralNormalized;
     rememberHistory({ proposalId: proposalLiteralNormalized });
-    return `Enact draft prepared with ${enactDraft.value.tx_instructions.length} instruction(s).`;
+    return t("Enact draft prepared with {count} instruction(s).", {
+      count: enactDraft.value.tx_instructions.length,
+    });
   });
 
 const summarizeDraft = (draft: GovernanceDraftResponse) => {
   const accepted =
-    draft.accepted === undefined ? "n/a" : String(draft.accepted);
-  const reason = draft.reason ? ` reason: ${draft.reason}` : "";
-  return `accepted=${accepted}, instructions=${draft.tx_instructions.length}.${reason}`;
+    draft.accepted === undefined ? t("n/a") : String(draft.accepted);
+  const reason = draft.reason
+    ? ` ${t("reason: {reason}", { reason: draft.reason })}`
+    : "";
+  return t("accepted={accepted}, instructions={count}.{reason}", {
+    accepted,
+    count: draft.tx_instructions.length,
+    reason,
+  });
 };
 
 watch(
@@ -964,6 +1044,7 @@ watch(
       locks.value = null;
       finalizeDraft.value = null;
       enactDraft.value = null;
+      statusMessage.value = "";
     }
   },
 );
@@ -1088,7 +1169,7 @@ watch(
 
 .member-list {
   margin: 14px 0 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   font-size: 0.78rem;
   display: grid;
   gap: 4px;

@@ -22,3 +22,53 @@ export function isOnboardingDisabledError(detail) {
 export function isOnboardingConflictError(detail) {
   return /\bstatus(?:\s|[^a-z0-9_])+409\b/i.test(String(detail ?? ""));
 }
+
+const defaultOnboardingAlias = "E2E Onboarding Shared";
+const defaultOnboardingPrivateKeyHex =
+  "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";
+const defaultOnboardingOfflineBalance = "100";
+const deprecatedOnboardingEnvVarNames = [
+  "E2E_STATEFUL_ALIAS",
+  "E2E_STATEFUL_PRIVATE_KEY_HEX",
+  "E2E_STATEFUL_OFFLINE_BALANCE",
+];
+
+export function parseOnboardingEnvConfig(env = process.env) {
+  const deprecated = deprecatedOnboardingEnvVarNames.filter((name) =>
+    String(env?.[name] ?? "").trim(),
+  );
+  if (deprecated.length) {
+    throw new Error(
+      `Deprecated onboarding env vars are no longer supported: ${deprecated.join(
+        ", ",
+      )}. Use E2E_ONBOARDING_ALIAS, E2E_ONBOARDING_PRIVATE_KEY_HEX, and E2E_ONBOARDING_OFFLINE_BALANCE.`,
+    );
+  }
+
+  const alias =
+    String(env?.E2E_ONBOARDING_ALIAS ?? "").trim() || defaultOnboardingAlias;
+  const privateKeyHex = (
+    String(env?.E2E_ONBOARDING_PRIVATE_KEY_HEX ?? "").trim() ||
+    defaultOnboardingPrivateKeyHex
+  ).toLowerCase();
+  const offlineBalance =
+    String(env?.E2E_ONBOARDING_OFFLINE_BALANCE ?? "").trim() ||
+    defaultOnboardingOfflineBalance;
+
+  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+    throw new Error(
+      "E2E_ONBOARDING_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
+    );
+  }
+  if (!Number.isFinite(Number(offlineBalance)) || Number(offlineBalance) <= 0) {
+    throw new Error(
+      "E2E_ONBOARDING_OFFLINE_BALANCE must be a positive numeric string.",
+    );
+  }
+
+  return {
+    alias,
+    privateKeyHex,
+    offlineBalance,
+  };
+}

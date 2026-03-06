@@ -13,6 +13,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 - 📱 Receive tab with IH58 display + QR payloads, and Send tab with an optional camera scanner powered by ZXing.
 - 🛡️ Send tab and Offline "Move funds to online wallet" both support a shield toggle; current wallet flow performs self-shielding (public -> shielded) with policy preflight checks.
 - 📡 Explorer tab surfacing `/v1/explorer` metrics and share-ready QR payloads.
+- 🌍 Locale selector with 31 supported UI locales (`en-US`, `ar-SA`, `az-AZ`, `ca-ES`, `cs-CZ`, `de-DE`, `es-ES`, `fa-IR`, `fi-FI`, `fr-FR`, `he-IL`, `hi-IN`, `hu-HU`, `id-ID`, `it-IT`, `ja-JP`, `ko-KR`, `ms-MY`, `nb-NO`, `nl-NL`, `pl-PL`, `pt-PT`, `ru-RU`, `sr-RS`, `sl-SI`, `tr-TR`, `uk-UA`, `ur-PK`, `vi-VN`, `zh-CN`, `zh-TW`) with automatic RTL layout for Arabic/Hebrew/Persian/Urdu.
 
 ## Prerequisites
 
@@ -76,7 +77,7 @@ For local development checks without E2E:
 npm run verify
 ```
 
-For verification plus live TAIRA E2E (read-only + stateful onboarding):
+For verification plus live TAIRA E2E (read-only + onboarding pass):
 
 ```bash
 npm run verify:live
@@ -97,29 +98,25 @@ Optional env vars:
 - `E2E_ASSET_DEFINITION_ID` (default: `rose#wonderland`)
 - `E2E_NETWORK_PREFIX` (default: `42`)
 - `E2E_ACCOUNT_ID` (optional seed account for read-only Explore QR assertions)
-- `E2E_STATEFUL=1` (enables onboarding write flow)
-- `E2E_STATEFUL_ALIAS` (default: `E2E Stateful Shared`)
-- `E2E_STATEFUL_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable stateful onboarding account reuse)
-- `E2E_STATEFUL_OFFLINE_BALANCE` (default: `100`; seeded offline balance for offline shield submission checks)
+- `E2E_ONBOARDING_ALIAS` (default: `E2E Onboarding Shared`)
+- `E2E_ONBOARDING_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable onboarding account reuse)
+- `E2E_ONBOARDING_OFFLINE_BALANCE` (default: `100`; seeded offline balance for onboarding shield submission checks)
+
+Deprecated `E2E_STATEFUL_*` onboarding env vars are no longer supported and now fail fast.
 
 In this TAIRA-only wallet build, live E2E only supports TAIRA Torii + chain ID values.
 
 The preflight checks `GET /v1/health` first, then falls back to `GET /health`.
 
-Read-only mode validates Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore (including Receive QR rendering).
+Live E2E always validates read-only navigation first (Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore), then runs onboarding/shield-submit checks.
 
-Stateful mode reuses a deterministic onboarding account to avoid writing a new TAIRA account record on every run:
+The onboarding pass reuses a deterministic account to avoid writing a new TAIRA account record on every run.
 
-```bash
-npm run e2e:live:stateful
-```
-
-Stateful mode requires a Torii endpoint with UAID onboarding enabled.
-If onboarding is disabled, the harness fails with an explicit `HTTP 403`
-message indicating UAID onboarding must be enabled on the target Torii.
+This onboarding pass requires UAID onboarding enabled on the target Torii.
+If onboarding is disabled, the harness fails with an explicit `HTTP 403`.
 If the deterministic account already exists, `HTTP 409` is treated as expected and the flow continues.
 
-Stateful mode also submits shield actions from both Send and Offline views, then asserts that post-submit status messages are produced (success or backend rejection) to verify bridge submission paths.
+The onboarding pass submits shield actions from both Send and Offline views, then asserts that post-submit status messages are produced (success or backend rejection) to verify bridge submission paths.
 
 If a test fails, screenshots are written under `output/playwright/`.
 

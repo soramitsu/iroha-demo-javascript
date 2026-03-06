@@ -17,9 +17,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm test",
-    "verify:live": "npm run verify && npm run e2e:live:stateful",
+    "verify:live": "npm run verify && npm run e2e:live",
     "e2e:live": "npm run build && node scripts/e2e/electron-live.mjs",
-    "e2e:live:stateful": "E2E_STATEFUL=1 npm run e2e:live",
     "postinstall": "node scripts/postinstall.mjs"
   },
   "dependencies": {

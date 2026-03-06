@@ -2,70 +2,76 @@
   <div class="card-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Explorer Metrics</h2>
+        <h2>{{ t("Explorer Metrics") }}</h2>
         <button class="secondary" :disabled="loading" @click="refresh">
-          Refresh
+          {{ t("Refresh") }}
         </button>
       </header>
       <div v-if="metrics" class="grid-2">
         <div class="kv">
-          <span class="kv-label">Block Height</span>
-          <span class="kv-value">{{ metrics.blockHeight ?? "—" }}</span>
+          <span class="kv-label">{{ t("Block Height") }}</span>
+          <span class="kv-value">{{ metrics.blockHeight ?? t("—") }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Finalized Height</span>
+          <span class="kv-label">{{ t("Finalized Height") }}</span>
           <span class="kv-value">{{
-            metrics.finalizedBlockHeight ?? "—"
+            metrics.finalizedBlockHeight ?? t("—")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Tx Accepted</span>
+          <span class="kv-label">{{ t("Tx Accepted") }}</span>
           <span class="kv-value">{{
-            metrics.transactionsAccepted ?? "—"
+            metrics.transactionsAccepted ?? t("—")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Tx Rejected</span>
+          <span class="kv-label">{{ t("Tx Rejected") }}</span>
           <span class="kv-value">{{
-            metrics.transactionsRejected ?? "—"
+            metrics.transactionsRejected ?? t("—")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Peers</span>
-          <span class="kv-value">{{ metrics.peers ?? "—" }}</span>
+          <span class="kv-label">{{ t("Peers") }}</span>
+          <span class="kv-value">{{ metrics.peers ?? t("—") }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Assets</span>
-          <span class="kv-value">{{ metrics.assets ?? "—" }}</span>
+          <span class="kv-label">{{ t("Assets") }}</span>
+          <span class="kv-value">{{ metrics.assets ?? t("—") }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Avg Commit Time</span>
+          <span class="kv-label">{{ t("Avg Commit Time") }}</span>
           <span class="kv-value">{{
             formatMs(metrics.averageCommitTimeMs)
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Avg Block Time</span>
+          <span class="kv-label">{{ t("Avg Block Time") }}</span>
           <span class="kv-value">{{
             formatMs(metrics.averageBlockTimeMs)
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Last Block At</span>
+          <span class="kv-label">{{ t("Last Block At") }}</span>
           <span class="kv-value">{{
-            formatDate(metrics.blockCreatedAt) || "—"
+            formatDate(metrics.blockCreatedAt) || t("—")
           }}</span>
         </div>
       </div>
-      <p v-else class="helper">Metrics unavailable. Check Torii status.</p>
+      <p v-else class="helper">
+        {{ t("Metrics unavailable. Check Torii status.") }}
+      </p>
     </section>
 
     <section class="card">
       <header class="card-header">
         <div>
-          <h2>Shareable Explorer QR</h2>
+          <h2>{{ t("Shareable Explorer QR") }}</h2>
           <p class="helper">
-            Rendered straight from Torii so wallets can scan the exact payload.
+            {{
+              t(
+                "Rendered straight from Torii so wallets can scan the exact payload.",
+              )
+            }}
           </p>
         </div>
         <div class="explorer-actions">
@@ -75,10 +81,10 @@
             target="_blank"
             rel="noopener noreferrer"
           >
-            Open Taira Explorer
+            {{ t("Open Taira Explorer") }}
           </a>
           <button class="secondary" :disabled="!accountQr" @click="copyQr">
-            Copy JSON
+            {{ t("Copy JSON") }}
           </button>
         </div>
       </header>
@@ -88,21 +94,21 @@
             v-if="accountQr.svg"
             class="qr-image"
             :src="`data:image/svg+xml;utf8,${encodeURIComponent(accountQr.svg)}`"
-            alt="Explorer account QR"
+            :alt="t('Explorer account QR')"
           />
           <div class="qr-meta">
             <div class="kv">
-              <span class="kv-label">Format</span>
+              <span class="kv-label">{{ t("Format") }}</span>
               <span class="kv-value">{{
                 accountQr.addressFormat.toUpperCase()
               }}</span>
             </div>
             <div class="kv">
-              <span class="kv-label">Network Prefix</span>
+              <span class="kv-label">{{ t("Network Prefix") }}</span>
               <span class="kv-value">{{ accountQr.networkPrefix }}</span>
             </div>
             <div class="kv">
-              <span class="kv-label">QR Version</span>
+              <span class="kv-label">{{ t("QR Version") }}</span>
               <span class="kv-value">v{{ accountQr.qrVersion }}</span>
             </div>
           </div>
@@ -110,7 +116,7 @@
         <pre class="qr-payload">{{ formattedQr }}</pre>
       </div>
       <p v-else class="helper">
-        No QR payload yet. Connect to Torii and pick an account.
+        {{ t("No QR payload yet. Connect to Torii and pick an account.") }}
       </p>
     </section>
   </div>
@@ -118,6 +124,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
@@ -128,22 +135,23 @@ import type {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
 const accountQr = ref<ExplorerAccountQrResponse | null>(null);
 const loading = ref(false);
 
 const formatDate = (value?: string | null) => {
   if (!value) return "";
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat(localeStore.current, {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
 };
 
 const formatMs = (value?: number | null) => {
-  if (!value || value <= 0) return "—";
-  if (value < 1000) return `${value} ms`;
-  return `${(value / 1000).toFixed(2)} s`;
+  if (!value || value <= 0) return t("—");
+  if (value < 1000) return t("{value} ms", { value });
+  return t("{value} s", { value: (value / 1000).toFixed(2) });
 };
 
 const refresh = async () => {
@@ -173,7 +181,7 @@ const refresh = async () => {
 const formattedQr = computed(() =>
   accountQr.value
     ? JSON.stringify(accountQr.value, null, 2)
-    : "No QR payload yet. Connect to Torii and choose an account.",
+    : t("No QR payload yet. Connect to Torii and choose an account."),
 );
 
 const copyQr = async () => {

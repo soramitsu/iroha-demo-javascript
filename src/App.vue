@@ -6,33 +6,47 @@
     <header class="app-header">
       <div class="logo-wrapper">
         <span class="logo-badge">
-          <img :src="logo" alt="Iroha logo" class="logo" />
+          <img :src="logo" :alt="t('Iroha logo')" class="logo" />
         </span>
         <div>
-          <p class="app-eyebrow">Iroha Points</p>
-          <p class="app-title">Torii control deck</p>
-          <p class="app-subtitle">Modern Torii-connected wallet</p>
+          <p class="app-eyebrow">{{ t("Iroha Points") }}</p>
+          <p class="app-title">{{ t("Torii control deck") }}</p>
+          <p class="app-subtitle">{{ t("Modern Torii-connected wallet") }}</p>
         </div>
       </div>
       <div class="header-actions">
         <div class="status-chips">
           <div class="status-chip">
-            <span class="chip-label">Torii</span>
-            <span class="chip-value">TAIRA locked</span>
+            <span class="chip-label">{{ t("Torii") }}</span>
+            <span class="chip-value">{{ t("TAIRA locked") }}</span>
             <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
           </div>
           <div class="status-chip">
-            <span class="chip-label">Chain</span>
+            <span class="chip-label">{{ t("Chain") }}</span>
             <span class="chip-value">{{ session.connection.chainId }}</span>
             <span class="chip-sub">{{
-              session.connection.assetDefinitionId || "Asset not set"
+              session.connection.assetDefinitionId || t("Asset not set")
             }}</span>
           </div>
         </div>
+        <label class="locale-switcher">
+          <span>{{ t("Language") }}</span>
+          <select v-model="activeLocale">
+            <option
+              v-for="option in localeOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
         <button class="theme-toggle" @click="theme.toggle()">
           <span class="theme-dot" :class="theme.current"></span>
           <span>{{
-            theme.current === "dark" ? "Switch to light" : "Switch to dark"
+            theme.current === "dark"
+              ? t("Switch to light")
+              : t("Switch to dark")
           }}</span>
         </button>
       </div>
@@ -40,9 +54,11 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="sidebar-top">
-          <p class="nav-title">Navigate</p>
+          <p class="nav-title">{{ t("Navigate") }}</p>
           <span class="nav-pill" :class="{ positive: session.hasAccount }">
-            {{ session.hasAccount ? "Account ready" : "Complete onboarding" }}
+            {{
+              session.hasAccount ? t("Account ready") : t("Complete onboarding")
+            }}
           </span>
         </div>
         <nav>
@@ -57,48 +73,51 @@
             }"
             :title="
               item.requiresAccount && !session.hasAccount
-                ? 'Complete account setup first'
-                : item.description
+                ? t('Complete account setup first')
+                : t(item.descriptionKey)
             "
             :aria-disabled="item.requiresAccount && !session.hasAccount"
             :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
           >
             <span class="nav-step" aria-hidden="true">{{ item.step }}</span>
             <span class="nav-icon-shell">
-              <img :src="item.icon" class="nav-icon" :alt="item.label" />
+              <img :src="item.icon" class="nav-icon" :alt="t(item.labelKey)" />
             </span>
             <span class="nav-copy">
-              <span class="nav-label">{{ item.label }}</span>
-              <span class="nav-description">{{ item.description }}</span>
+              <span class="nav-label">{{ t(item.labelKey) }}</span>
+              <span class="nav-description">{{ t(item.descriptionKey) }}</span>
             </span>
             <span class="nav-caret" aria-hidden="true">↗</span>
           </RouterLink>
         </nav>
         <p v-if="!session.hasAccount" class="nav-lock-hint">
-          Complete account onboarding to unlock Setup, Wallet, Staking,
-          Parliament, Send, Receive, Offline, and Explorer.
+          {{
+            t(
+              "Complete account onboarding to unlock Setup, Wallet, Staking, Parliament, Send, Receive, Offline, and Explorer.",
+            )
+          }}
         </p>
         <div class="sidebar-meta">
           <AccountSwitcher />
           <div v-if="session.hasAccount" class="session-meta">
-            <p class="meta-label">Active account</p>
+            <p class="meta-label">{{ t("Active account") }}</p>
             <p class="meta-value">
               {{
                 session.activeAccount?.displayName ||
                 session.activeAccount?.accountId ||
-                "Not created yet"
+                t("Not created yet")
               }}
             </p>
             <p class="helper meta-sub">
               {{
                 session.accounts.length
-                  ? `${session.accounts.length} saved`
-                  : "No accounts saved yet"
+                  ? t("{count} saved", { count: session.accounts.length })
+                  : t("No accounts saved yet")
               }}
             </p>
           </div>
           <div class="session-meta">
-            <p class="meta-label">Connection</p>
+            <p class="meta-label">{{ t("Connection") }}</p>
             <p class="meta-value">{{ session.connection.chainId }}</p>
             <p class="helper meta-sub">{{ session.connection.toriiUrl }}</p>
           </div>
@@ -107,8 +126,8 @@
       <section class="workspace">
         <header class="workspace-header">
           <div>
-            <p class="section-label">{{ route.meta.subtitle }}</p>
-            <h1>{{ route.meta.title }}</h1>
+            <p class="section-label">{{ routeSubtitle }}</p>
+            <h1>{{ routeTitle }}</h1>
           </div>
           <div class="workspace-meta">
             <span
@@ -117,12 +136,16 @@
             >
               {{
                 session.connection.toriiUrl
-                  ? "TAIRA Torii ready"
-                  : "Torii unavailable"
+                  ? t("TAIRA Torii ready")
+                  : t("Torii unavailable")
               }}
             </span>
             <span class="pill" :class="{ positive: session.hasAccount }">
-              {{ session.hasAccount ? "Account saved" : "Onboarding required" }}
+              {{
+                session.hasAccount
+                  ? t("Account saved")
+                  : t("Onboarding required")
+              }}
             </span>
           </div>
         </header>
@@ -135,10 +158,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute } from "vue-router";
 import { useSessionStore } from "./stores/session";
 import { useThemeStore } from "./stores/theme";
-import { onMounted, onBeforeUnmount } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
+import type { SupportedLocale } from "@/i18n/messages";
 import IrohaLogo from "@/assets/iroha_logo.svg";
 import WalletIcon from "@/assets/wallet.svg";
 import SendIcon from "@/assets/send.svg";
@@ -150,80 +175,80 @@ import AccountSwitcher from "@/components/AccountSwitcher.vue";
 const navItems = [
   {
     to: "/account",
-    label: "Account Setup",
-    description: "Generate keys, recovery phrase, Connect pairing",
+    labelKey: "Account Setup",
+    descriptionKey: "Generate keys, recovery phrase, Connect pairing",
     icon: UserIcon,
     requiresAccount: false,
     step: "01",
   },
   {
     to: "/setup",
-    label: "Session",
-    description: "TAIRA connection, asset, and authority keys",
+    labelKey: "Session",
+    descriptionKey: "TAIRA connection, asset, and authority keys",
     icon: UserIcon,
     requiresAccount: true,
     step: "02",
   },
   {
     to: "/wallet",
-    label: "Wallet",
-    description: "Balances, assets, and latest transactions",
+    labelKey: "Wallet",
+    descriptionKey: "Balances, assets, and latest transactions",
     icon: WalletIcon,
     requiresAccount: true,
     step: "03",
   },
   {
     to: "/staking",
-    label: "Staking",
-    description: "Nominate validators and stake XOR for NPOS",
+    labelKey: "Staking",
+    descriptionKey: "Nominate validators and stake XOR for NPOS",
     icon: WalletIcon,
     requiresAccount: true,
     step: "04",
   },
   {
     to: "/parliament",
-    label: "Parliament",
-    description: "Bond citizenship and vote in governance referenda",
+    labelKey: "Parliament",
+    descriptionKey: "Bond citizenship and vote in governance referenda",
     icon: WalletIcon,
     requiresAccount: true,
     step: "05",
   },
   {
     to: "/subscriptions",
-    label: "Subscriptions",
-    description: "Auto-deduct and manage recurring services",
+    labelKey: "Subscriptions",
+    descriptionKey: "Auto-deduct and manage recurring services",
     icon: WalletIcon,
     requiresAccount: true,
     step: "06",
   },
   {
     to: "/send",
-    label: "Send",
-    description: "Transfer assets with camera or QR upload",
+    labelKey: "Send",
+    descriptionKey: "Transfer assets with camera or QR upload",
     icon: SendIcon,
     requiresAccount: true,
     step: "07",
   },
   {
     to: "/receive",
-    label: "Receive",
-    description: "Share QR codes or IH58 to request funds",
+    labelKey: "Receive",
+    descriptionKey: "Share QR codes or IH58 to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
     step: "08",
   },
   {
     to: "/offline",
-    label: "Offline",
-    description: "Offline wallets, invoices, and QR exchanges",
+    labelKey: "Offline",
+    descriptionKey: "Offline wallets, invoices, and QR exchanges",
     icon: SendIcon,
     requiresAccount: true,
     step: "09",
   },
   {
     to: "/explore",
-    label: "Explore",
-    description: "Network metrics and asset explorer",
+    labelKey: "Explore",
+    descriptionKey: "Network metrics and asset explorer",
     icon: WalletIcon,
     requiresAccount: true,
     step: "10",
@@ -233,7 +258,21 @@ const navItems = [
 const route = useRoute();
 const session = useSessionStore();
 const theme = useThemeStore();
+const { localeStore, localeOptions, t } = useAppI18n();
 const logo = IrohaLogo;
+
+const activeLocale = computed({
+  get: () => localeStore.current,
+  set: (value: SupportedLocale) => localeStore.setLocale(value),
+});
+
+const routeTitle = computed(() =>
+  t((route.meta.titleKey as string) || "Wallet Overview"),
+);
+const routeSubtitle = computed(() =>
+  t((route.meta.subtitleKey as string) || "Balances & activity"),
+);
+
 const updateParallax = (event: PointerEvent) => {
   const x = (event.clientX / window.innerWidth - 0.5).toFixed(3);
   const y = (event.clientY / window.innerHeight - 0.5).toFixed(3);

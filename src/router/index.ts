@@ -20,80 +20,80 @@ const routes = [
     path: "/account",
     component: AccountSetupView,
     meta: {
-      title: "Account Setup",
-      subtitle: "Provision your TAIRA testnet account",
+      titleKey: "Account Setup",
+      subtitleKey: "Provision your TAIRA testnet account",
     },
   },
   {
     path: "/setup",
     component: SetupView,
     meta: {
-      title: "Session Setup",
-      subtitle: "TAIRA connection & keys",
+      titleKey: "Session Setup",
+      subtitleKey: "TAIRA connection & keys",
     },
   },
   {
     path: "/wallet",
     component: WalletView,
     meta: {
-      title: "Wallet Overview",
-      subtitle: "Balances & activity",
+      titleKey: "Wallet Overview",
+      subtitleKey: "Balances & activity",
     },
   },
   {
     path: "/staking",
     component: StakingView,
     meta: {
-      title: "NPOS Staking",
-      subtitle: "Nominate validators and stake XOR",
+      titleKey: "NPOS Staking",
+      subtitleKey: "Nominate validators and stake XOR",
     },
   },
   {
     path: "/parliament",
     component: ParliamentView,
     meta: {
-      title: "SORA Parliament",
-      subtitle: "Citizenship bond and governance voting",
+      titleKey: "SORA Parliament",
+      subtitleKey: "Citizenship bond and governance voting",
     },
   },
   {
     path: "/subscriptions",
     component: SubscriptionHubView,
     meta: {
-      title: "Subscription Hub",
-      subtitle: "Auto-deduct and manage services",
+      titleKey: "Subscription Hub",
+      subtitleKey: "Auto-deduct and manage services",
     },
   },
   {
     path: "/send",
     component: SendView,
     meta: {
-      title: "Send Points",
-      subtitle: "Transfer assets via Torii",
+      titleKey: "Send Points",
+      subtitleKey: "Transfer assets via Torii",
     },
   },
   {
     path: "/receive",
     component: ReceiveView,
     meta: {
-      title: "Receive Points",
-      subtitle: "Share QR or IH58",
+      titleKey: "Receive Points",
+      subtitleKey: "Share QR or IH58",
     },
   },
   {
     path: "/explore",
     component: ExploreView,
     meta: {
-      title: "Explorer",
-      subtitle: "Network & asset insights",
+      titleKey: "Explorer",
+      subtitleKey: "Network & asset insights",
     },
   },
   {
     path: "/offline",
     component: OfflineView,
     meta: {
-      title: "Offline",
-      subtitle: "Offline wallets, invoices, and payments",
+      titleKey: "Offline",
+      subtitleKey: "Offline wallets, invoices, and payments",
     },
   },
 ];

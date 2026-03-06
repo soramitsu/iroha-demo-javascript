@@ -5,8 +5,17 @@ import {
 import { onBeforeUnmount, ref } from "vue";
 
 type Decoder = (payload: string) => void;
+type Translate = (key: string) => string;
 
-export const useQrScanner = (onDecoded: Decoder) => {
+type UseQrScannerOptions = {
+  translate?: Translate;
+};
+
+export const useQrScanner = (
+  onDecoded: Decoder,
+  options: UseQrScannerOptions = {},
+) => {
+  const t: Translate = options.translate ?? ((key) => key);
   const reader = new BrowserMultiFormatReader();
   const scanning = ref(false);
   const message = ref("");
@@ -16,7 +25,7 @@ export const useQrScanner = (onDecoded: Decoder) => {
 
   const ensureCameraPermission = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error("Camera access is not supported on this device.");
+      throw new Error(t("Camera access is not supported on this device."));
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment" },
@@ -41,7 +50,7 @@ export const useQrScanner = (onDecoded: Decoder) => {
     }
     const videoEl = videoRef.value;
     if (!videoEl) {
-      message.value = "Camera preview is not ready.";
+      message.value = t("Camera preview is not ready.");
       return;
     }
     scanning.value = true;
@@ -55,10 +64,10 @@ export const useQrScanner = (onDecoded: Decoder) => {
         (result, error) => {
           if (result) {
             onDecoded(result.getText());
-            message.value = "QR decoded successfully.";
+            message.value = t("QR decoded successfully.");
             shouldStop = true;
           } else if (error && error.name !== "NotFoundException") {
-            message.value = error.message ?? "Camera error.";
+            message.value = error.message ?? t("Camera error.");
             shouldStop = true;
           }
         },
@@ -70,7 +79,7 @@ export const useQrScanner = (onDecoded: Decoder) => {
     } catch (error) {
       scanning.value = false;
       message.value =
-        error instanceof Error ? error.message : "Unable to start scanner.";
+        error instanceof Error ? error.message : t("Unable to start scanner.");
     }
   };
 
@@ -81,20 +90,20 @@ export const useQrScanner = (onDecoded: Decoder) => {
     const file = target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    message.value = "Processing image...";
+    message.value = t("Processing image...");
     try {
       const result = await reader.decodeFromImageUrl(url);
       if (result) {
         onDecoded(result.getText());
-        message.value = "QR decoded successfully.";
+        message.value = t("QR decoded successfully.");
       } else {
-        message.value = "Unable to read QR from image.";
+        message.value = t("Unable to read QR from image.");
       }
     } catch (error) {
       message.value =
         error instanceof Error
           ? error.message
-          : "Unable to decode the selected image.";
+          : t("Unable to decode the selected image.");
     } finally {
       URL.revokeObjectURL(url);
       target.value = "";

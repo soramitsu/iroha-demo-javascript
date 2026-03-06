@@ -2,28 +2,32 @@
   <div class="card-grid offline-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Offline wallet & hardware</h2>
+        <h2>{{ t("Offline wallet & hardware") }}</h2>
         <span class="status-pill" :class="{ ok: hardwareStatus.ok }">
           {{ hardwareStatus.label }}
         </span>
       </header>
       <p class="helper">
-        Register a hardware-backed offline wallet (e.g., macOS Secure Enclave)
-        to keep your offline keys safer. Registration stays on-device; no data
-        is sent to Torii.
+        {{
+          t(
+            "Register a hardware-backed offline wallet (e.g., macOS Secure Enclave) to keep your offline keys safer. Registration stays on-device; no data is sent to Torii.",
+          )
+        }}
       </p>
       <div class="form-grid">
         <div>
-          <p class="meta-label">Status</p>
+          <p class="meta-label">{{ t("Status") }}</p>
           <p class="meta-value">{{ hardwareStatus.detail }}</p>
         </div>
         <div>
-          <p class="meta-label">Registered</p>
+          <p class="meta-label">{{ t("Registered") }}</p>
           <p class="meta-value">
             {{
               offline.hasHardwareWallet
-                ? `Yes · ${formatDate(offline.hardware.registeredAtMs)}`
-                : "Not registered"
+                ? t("Yes · {date}", {
+                    date: formatDate(offline.hardware.registeredAtMs),
+                  })
+                : t("Not registered")
             }}
           </p>
         </div>
@@ -33,14 +37,18 @@
           :disabled="hardwareBusy || !hardwareStatus.ok"
           @click="registerHardware"
         >
-          {{ hardwareBusy ? "Registering…" : "Register secure offline wallet" }}
+          {{
+            hardwareBusy
+              ? t("Registering…")
+              : t("Register secure offline wallet")
+          }}
         </button>
         <button
           class="secondary"
           :disabled="hardwareBusy"
           @click="checkHardware"
         >
-          Recheck
+          {{ t("Recheck") }}
         </button>
       </div>
       <p v-if="hardwareMessage" class="helper">{{ hardwareMessage }}</p>
@@ -48,31 +56,31 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Offline balance</h2>
+        <h2>{{ t("Offline balance") }}</h2>
         <span
           class="pill"
           :class="{ positive: Number(offline.wallet.balance) > 0 }"
         >
-          {{ offline.wallet.balance }} units
+          {{ t("{balance} units", { balance: offline.wallet.balance }) }}
         </span>
       </header>
       <div class="form-grid">
         <div>
-          <p class="meta-label">Last sync</p>
+          <p class="meta-label">{{ t("Last sync") }}</p>
           <p class="meta-value">
-            {{ formatDate(offline.wallet.syncedAtMs) || "Never" }}
+            {{ formatDate(offline.wallet.syncedAtMs) || t("Never") }}
           </p>
         </div>
         <div>
-          <p class="meta-label">Next policy expiry</p>
+          <p class="meta-label">{{ t("Next policy expiry") }}</p>
           <p class="meta-value">
-            {{ formatDate(offline.wallet.nextPolicyExpiryMs) || "—" }}
+            {{ formatDate(offline.wallet.nextPolicyExpiryMs) || t("—") }}
           </p>
         </div>
         <div>
-          <p class="meta-label">Policy refresh</p>
+          <p class="meta-label">{{ t("Policy refresh") }}</p>
           <p class="meta-value">
-            {{ formatDate(offline.wallet.nextRefreshMs) || "—" }}
+            {{ formatDate(offline.wallet.nextRefreshMs) || t("—") }}
           </p>
         </div>
       </div>
@@ -81,7 +89,7 @@
           :disabled="syncingAllowances || !canSync"
           @click="syncAllowances"
         >
-          {{ syncingAllowances ? "Syncing…" : "Sync offline allowance" }}
+          {{ syncingAllowances ? t("Syncing…") : t("Sync offline allowance") }}
         </button>
       </div>
       <p v-if="syncMessage" class="helper">{{ syncMessage }}</p>
@@ -89,56 +97,61 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Offline allowances</h2>
-        <span class="pill">{{ allowances.length }} entries</span>
+        <h2>{{ t("Offline allowances") }}</h2>
+        <span class="pill">{{
+          t("{count} entries", { count: allowances.length })
+        }}</span>
       </header>
       <p class="helper">
-        Allowances come from Torii offline policies. Sync to refresh remaining
-        amounts and expiry.
+        {{
+          t(
+            "Allowances come from Torii offline policies. Sync to refresh remaining amounts and expiry.",
+          )
+        }}
       </p>
       <table v-if="allowances.length" class="table">
         <thead>
           <tr>
-            <th>Asset</th>
-            <th>Remaining</th>
-            <th>Policy expires</th>
-            <th>Refresh at</th>
+            <th>{{ t("Asset") }}</th>
+            <th>{{ t("Remaining") }}</th>
+            <th>{{ t("Policy expires") }}</th>
+            <th>{{ t("Refresh at") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="item in allowances" :key="item.certificate_id_hex">
             <td>{{ item.asset_id }}</td>
             <td>{{ item.remaining_amount }}</td>
-            <td>{{ formatDate(item.policy_expires_at_ms) || "—" }}</td>
-            <td>{{ formatDate(item.refresh_at_ms) || "—" }}</td>
+            <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
+            <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="helper">No allowances synced yet.</p>
+      <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Request offline payment</h2>
+        <h2>{{ t("Request offline payment") }}</h2>
         <button
           class="secondary icon-cta"
           :disabled="!canGenerateInvoice"
           @click="generateInvoice"
         >
-          <span>Generate invoice</span>
+          <span>{{ t("Generate invoice") }}</span>
         </button>
       </header>
       <div class="form-grid">
         <label>
-          Amount
+          {{ t("Amount") }}
           <input v-model="invoiceForm.amount" type="text" placeholder="10.00" />
         </label>
         <label>
-          Memo (optional)
-          <input v-model="invoiceForm.memo" placeholder="Coffee refill" />
+          {{ t("Memo (optional)") }}
+          <input v-model="invoiceForm.memo" :placeholder="t('Coffee refill')" />
         </label>
         <label>
-          Validity (minutes)
+          {{ t("Validity (minutes)") }}
           <input
             v-model.number="invoiceForm.validityMinutes"
             type="number"
@@ -157,18 +170,18 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Send offline payment</h2>
+        <h2>{{ t("Send offline payment") }}</h2>
         <div class="actions-row">
           <button class="icon-cta secondary" @click="toggleInvoiceScanner">
             <span>{{
-              invoiceScanner.scanning ? "Stop scan" : "Scan invoice"
+              invoiceScanner.scanning ? t("Stop scan") : t("Scan invoice")
             }}</span>
           </button>
           <button
             class="icon-cta secondary"
             @click="invoiceScanner.openFilePicker"
           >
-            <span>Upload invoice QR</span>
+            <span>{{ t("Upload invoice QR") }}</span>
           </button>
           <input
             ref="invoiceScanner.fileInputRef"
@@ -183,7 +196,7 @@
         <video ref="invoiceScanner.videoRef" autoplay muted playsinline></video>
       </div>
       <label>
-        Invoice payload
+        {{ t("Invoice payload") }}
         <textarea
           v-model="invoiceInput"
           rows="3"
@@ -191,15 +204,15 @@
         ></textarea>
       </label>
       <label>
-        Memo (optional)
-        <input v-model="paymentMemo" placeholder="Thanks!" />
+        {{ t("Memo (optional)") }}
+        <input v-model="paymentMemo" :placeholder="t('Thanks!')" />
       </label>
       <div class="actions">
         <button
           :disabled="!invoiceInput || sendingPayment"
           @click="createPayment"
         >
-          {{ sendingPayment ? "Building…" : "Create payment" }}
+          {{ sendingPayment ? t("Building…") : t("Create payment") }}
         </button>
       </div>
       <p v-if="paymentMessage || invoiceScanner.message" class="helper">
@@ -214,18 +227,18 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Accept offline payment</h2>
+        <h2>{{ t("Accept offline payment") }}</h2>
         <div class="actions-row">
           <button class="icon-cta secondary" @click="togglePaymentScanner">
             <span>{{
-              paymentScanner.scanning ? "Stop scan" : "Scan payment"
+              paymentScanner.scanning ? t("Stop scan") : t("Scan payment")
             }}</span>
           </button>
           <button
             class="icon-cta secondary"
             @click="paymentScanner.openFilePicker"
           >
-            <span>Upload payment QR</span>
+            <span>{{ t("Upload payment QR") }}</span>
           </button>
           <input
             ref="paymentScanner.fileInputRef"
@@ -240,7 +253,7 @@
         <video ref="paymentScanner.videoRef" autoplay muted playsinline></video>
       </div>
       <label>
-        Payment payload
+        {{ t("Payment payload") }}
         <textarea
           v-model="paymentInput"
           rows="3"
@@ -252,7 +265,7 @@
           :disabled="!paymentInput || acceptingPayment"
           @click="acceptPayment"
         >
-          {{ acceptingPayment ? "Recording…" : "Accept payment" }}
+          {{ acceptingPayment ? t("Recording…") : t("Accept payment") }}
         </button>
       </div>
       <p v-if="acceptMessage || paymentScanner.message" class="helper">
@@ -262,24 +275,27 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Move funds to online wallet</h2>
+        <h2>{{ t("Move funds to online wallet") }}</h2>
       </header>
       <div class="form-grid">
         <label>
-          Amount (blank = all)
+          {{ t("Amount (blank = all)") }}
           <input v-model="onlineForm.amount" type="text" />
         </label>
         <label>
-          Destination Account
+          {{ t("Destination Account") }}
           <input
             v-model="onlineForm.receiver"
-            placeholder="34m... or 0x...@wonderland"
+            :placeholder="t('34m... or 0x...@wonderland')"
             :disabled="onlineDestinationLocked"
           />
         </label>
         <label>
-          Memo (optional)
-          <input v-model="onlineForm.memo" placeholder="Back to hot wallet" />
+          {{ t("Memo (optional)") }}
+          <input
+            v-model="onlineForm.memo"
+            :placeholder="t('Back to hot wallet')"
+          />
         </label>
         <label class="shield-option">
           <input
@@ -287,7 +303,7 @@
             type="checkbox"
             :disabled="!onlineShieldSupported"
           />
-          <span>Shield transfer</span>
+          <span>{{ t("Shield transfer") }}</span>
         </label>
       </div>
       <div class="actions">
@@ -297,10 +313,10 @@
         >
           {{
             movingOnline
-              ? "Transferring…"
+              ? t("Transferring…")
               : onlineForm.shielded
-                ? "Shield to online wallet"
-                : "Send to online wallet"
+                ? t("Shield to online wallet")
+                : t("Send to online wallet")
           }}
         </button>
       </div>
@@ -311,27 +327,30 @@
         v-else-if="onlineShieldSupported && onlineShieldPolicyMode"
         class="helper"
       >
-        Shield policy mode: {{ onlineShieldPolicyMode }}.
+        {{ t("Shield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
       </p>
       <p v-if="onlineForm.shielded" class="helper">
-        Shield mode currently supports self-shielding only. Destination must be
-        your own account, and amount must be a whole number in base units.
+        {{
+          t(
+            "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.",
+          )
+        }}
       </p>
       <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Offline history</h2>
+        <h2>{{ t("Offline history") }}</h2>
       </header>
       <table v-if="offline.wallet.history.length" class="table">
         <thead>
           <tr>
-            <th>Direction</th>
-            <th>Amount</th>
-            <th>Peer</th>
-            <th>Counter</th>
-            <th>Time</th>
+            <th>{{ t("Direction") }}</th>
+            <th>{{ t("Amount") }}</th>
+            <th>{{ t("Peer") }}</th>
+            <th>{{ t("Counter") }}</th>
+            <th>{{ t("Time") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -347,11 +366,11 @@
             <td>{{ record.amount }}</td>
             <td>{{ record.peer }}</td>
             <td>{{ record.counterLabel }}</td>
-            <td>{{ formatDate(record.timestampMs) || "—" }}</td>
+            <td>{{ formatDate(record.timestampMs) || t("—") }}</td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="helper">No offline transfers yet.</p>
+      <p v-else class="helper">{{ t("No offline transfers yet.") }}</p>
     </section>
   </div>
 </template>
@@ -368,6 +387,7 @@ import {
   toRaw,
   watch,
 } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 import { fetchOfflineAllowances } from "@/services/offline";
@@ -388,6 +408,7 @@ import type { OfflineAllowanceItem } from "@/types/iroha";
 const session = useSessionStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
+const { localeStore, t } = useAppI18n();
 const canSync = computed(() =>
   Boolean(session.connection.toriiUrl && activeAccount.value),
 );
@@ -402,8 +423,8 @@ const canGenerateInvoice = computed(() =>
 const hardwareBusy = ref(false);
 const hardwareStatus = ref({
   ok: false,
-  label: "Not checked",
-  detail: "Pending detection",
+  label: t("Not checked"),
+  detail: t("Pending detection"),
 });
 const hardwareMessage = ref("");
 
@@ -447,16 +468,23 @@ const {
   toriiUrl: toRef(session.connection, "toriiUrl"),
   assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
   shielded: toRef(onlineForm, "shielded"),
+  translate: t,
 });
 
-const invoiceScanner = useQrScanner((payload) => {
-  invoiceInput.value = payload;
-  paymentMessage.value = "Invoice scanned.";
-});
-const paymentScanner = useQrScanner((payload) => {
-  paymentInput.value = payload;
-  acceptMessage.value = "Payment scanned.";
-});
+const invoiceScanner = useQrScanner(
+  (payload) => {
+    invoiceInput.value = payload;
+    paymentMessage.value = t("Invoice scanned.");
+  },
+  { translate: t },
+);
+const paymentScanner = useQrScanner(
+  (payload) => {
+    paymentInput.value = payload;
+    acceptMessage.value = t("Payment scanned.");
+  },
+  { translate: t },
+);
 
 const reversedHistory = computed(() => [...offline.wallet.history].reverse());
 const { destinationLocked: onlineDestinationLocked } =
@@ -500,7 +528,7 @@ const canSubmitOnlineMove = computed(() =>
 
 const formatDate = (value?: number | null) => {
   if (!value || value <= 0) return "";
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat(localeStore.current, {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
@@ -517,24 +545,24 @@ const checkHardware = async () => {
     hardwareStatus.value = supported
       ? {
           ok: true,
-          label: "Secure hardware available",
-          detail: "Platform authenticator ready",
+          label: t("Secure hardware available"),
+          detail: t("Platform authenticator ready"),
         }
       : {
           ok: false,
-          label: "No platform authenticator",
-          detail: "Fallback to software keys",
+          label: t("No platform authenticator"),
+          detail: t("Fallback to software keys"),
         };
   } catch (error) {
     hardwareStatus.value = {
       ok: false,
-      label: "Unknown",
-      detail: "Hardware check failed",
+      label: t("Unknown"),
+      detail: t("Hardware check failed"),
     };
     hardwareMessage.value =
       error instanceof Error
         ? error.message
-        : "Unable to detect secure hardware.";
+        : t("Unable to detect secure hardware.");
   } finally {
     hardwareBusy.value = false;
   }
@@ -543,11 +571,13 @@ const checkHardware = async () => {
 const registerHardware = async () => {
   hardwareMessage.value = "";
   if (!hardwareStatus.value.ok) {
-    hardwareMessage.value = "Secure hardware is not available on this device.";
+    hardwareMessage.value = t(
+      "Secure hardware is not available on this device.",
+    );
     return;
   }
   if (!window.PublicKeyCredential || !navigator.credentials) {
-    hardwareMessage.value = "WebAuthn is not supported in this environment.";
+    hardwareMessage.value = t("WebAuthn is not supported in this environment.");
     return;
   }
   hardwareBusy.value = true;
@@ -556,11 +586,11 @@ const registerHardware = async () => {
     crypto.getRandomValues(random);
     const credential = (await navigator.credentials.create({
       publicKey: {
-        rp: { name: "Iroha Offline Wallet" },
+        rp: { name: t("Iroha Offline Wallet") },
         user: {
           id: random,
           name: activeAccount.value?.accountId ?? "offline-wallet",
-          displayName: activeAccount.value?.displayName ?? "Offline wallet",
+          displayName: activeAccount.value?.displayName ?? t("Offline wallet"),
         },
         challenge: random,
         pubKeyCredParams: [{ type: "public-key", alg: -7 }],
@@ -574,13 +604,13 @@ const registerHardware = async () => {
     offline.registerHardware(credential?.id ?? null);
     hardwareStatus.value = {
       ok: true,
-      label: "Registered",
-      detail: "Hardware wallet registered",
+      label: t("Registered"),
+      detail: t("Hardware wallet registered"),
     };
-    hardwareMessage.value = "Offline wallet registered on this device.";
+    hardwareMessage.value = t("Offline wallet registered on this device.");
   } catch (error) {
     hardwareMessage.value =
-      error instanceof Error ? error.message : "Failed to register wallet.";
+      error instanceof Error ? error.message : t("Failed to register wallet.");
   } finally {
     hardwareBusy.value = false;
   }
@@ -588,7 +618,7 @@ const registerHardware = async () => {
 
 const syncAllowances = async () => {
   if (!session.connection.toriiUrl || !activeAccount.value) {
-    syncMessage.value = "Configure Torii and account first.";
+    syncMessage.value = t("Configure Torii and account first.");
     return;
   }
   syncingAllowances.value = true;
@@ -605,10 +635,12 @@ const syncAllowances = async () => {
       nextRefreshMs: snapshot.nextRefreshMs,
     });
     allowances.value = snapshot.allowances;
-    syncMessage.value = `Offline balance updated: ${snapshot.total}`;
+    syncMessage.value = t("Offline balance updated: {total}", {
+      total: snapshot.total,
+    });
   } catch (error) {
     syncMessage.value =
-      error instanceof Error ? error.message : "Failed to sync allowances.";
+      error instanceof Error ? error.message : t("Failed to sync allowances.");
   } finally {
     syncingAllowances.value = false;
   }
@@ -619,11 +651,11 @@ const generateInvoice = async () => {
   invoicePayload.value = "";
   invoiceQr.value = "";
   if (!activeAccount.value || !session.connection.assetDefinitionId) {
-    invoiceMessage.value = "Configure account and asset first.";
+    invoiceMessage.value = t("Configure account and asset first.");
     return;
   }
   if (!invoiceForm.amount) {
-    invoiceMessage.value = "Enter an amount to request.";
+    invoiceMessage.value = t("Enter an amount to request.");
     return;
   }
   try {
@@ -640,11 +672,12 @@ const generateInvoice = async () => {
       width: 240,
       color: { dark: "#ffffff", light: "#00000000" },
     });
-    invoiceMessage.value =
-      "Invoice ready. Share the QR or copy the JSON payload.";
+    invoiceMessage.value = t(
+      "Invoice ready. Share the QR or copy the JSON payload.",
+    );
   } catch (error) {
     invoiceMessage.value =
-      error instanceof Error ? error.message : "Failed to generate invoice.";
+      error instanceof Error ? error.message : t("Failed to generate invoice.");
   }
 };
 
@@ -653,11 +686,11 @@ const createPayment = async () => {
   paymentPayload.value = "";
   paymentQr.value = "";
   if (!activeAccount.value) {
-    paymentMessage.value = "Configure an account first.";
+    paymentMessage.value = t("Configure an account first.");
     return;
   }
   if (!invoiceInput.value.trim()) {
-    paymentMessage.value = "Provide an invoice payload.";
+    paymentMessage.value = t("Provide an invoice payload.");
     return;
   }
   sendingPayment.value = true;
@@ -665,7 +698,7 @@ const createPayment = async () => {
     const invoice = parseInvoice(invoiceInput.value.trim());
     if (Date.now() > invoice.expires_at_ms) {
       throw new Error(
-        "Invoice expired. Ask the receiver to generate a new invoice.",
+        t("Invoice expired. Ask the receiver to generate a new invoice."),
       );
     }
     const payload = createPaymentPayload({
@@ -682,10 +715,10 @@ const createPayment = async () => {
       width: 240,
       color: { dark: "#ffffff", light: "#00000000" },
     });
-    paymentMessage.value = "Payment payload created and recorded locally.";
+    paymentMessage.value = t("Payment payload created and recorded locally.");
   } catch (error) {
     paymentMessage.value =
-      error instanceof Error ? error.message : "Unable to create payment.";
+      error instanceof Error ? error.message : t("Unable to create payment.");
   } finally {
     sendingPayment.value = false;
   }
@@ -694,24 +727,24 @@ const createPayment = async () => {
 const acceptPayment = async () => {
   acceptMessage.value = "";
   if (!activeAccount.value) {
-    acceptMessage.value = "Configure an account first.";
+    acceptMessage.value = t("Configure an account first.");
     return;
   }
   if (!paymentInput.value.trim()) {
-    acceptMessage.value = "Provide a payment payload.";
+    acceptMessage.value = t("Provide a payment payload.");
     return;
   }
   acceptingPayment.value = true;
   try {
     const payload = parsePaymentPayload(paymentInput.value.trim());
     if (payload.to !== activeAccount.value.accountId) {
-      throw new Error("Payment is addressed to a different account.");
+      throw new Error(t("Payment is addressed to a different account."));
     }
     offline.recordIncomingPayment(payload);
-    acceptMessage.value = "Payment recorded to offline wallet.";
+    acceptMessage.value = t("Payment recorded to offline wallet.");
   } catch (error) {
     acceptMessage.value =
-      error instanceof Error ? error.message : "Failed to record payment.";
+      error instanceof Error ? error.message : t("Failed to record payment.");
   } finally {
     acceptingPayment.value = false;
   }
@@ -720,30 +753,32 @@ const acceptPayment = async () => {
 const moveToOnline = async () => {
   moveMessage.value = "";
   if (!session.connection.toriiUrl || !activeAccount.value) {
-    moveMessage.value = "Configure Torii and account first.";
+    moveMessage.value = t("Configure Torii and account first.");
     return;
   }
   if (onlineForm.shielded && !onlineShieldSupported.value) {
     moveMessage.value =
-      onlineShieldCapabilityMessage.value || "Shield mode is unavailable.";
+      onlineShieldCapabilityMessage.value || t("Shield mode is unavailable.");
     return;
   }
   const amount = normalizedMoveAmount.value;
   const receiver = normalizedMoveReceiver.value;
   if (!amount || Number(amount) <= 0) {
     moveMessage.value = onlineForm.shielded
-      ? "Shield amount must be a whole number greater than zero."
-      : "Enter an amount to move online.";
+      ? t("Shield amount must be a whole number greater than zero.")
+      : t("Enter an amount to move online.");
     return;
   }
   if (onlineForm.shielded && receiver !== activeAccount.value.accountId) {
-    moveMessage.value =
-      "Shield mode requires destination to be your active account.";
+    moveMessage.value = t(
+      "Shield mode requires destination to be your active account.",
+    );
     return;
   }
   if (onlineForm.shielded && !isPositiveWholeAmount(amount)) {
-    moveMessage.value =
-      "Shield amount must be a whole number greater than zero.";
+    moveMessage.value = t(
+      "Shield amount must be a whole number greater than zero.",
+    );
     return;
   }
   const snapshot = structuredClone(toRaw(offline.wallet));
@@ -767,13 +802,15 @@ const moveToOnline = async () => {
       shielded: onlineForm.shielded,
     });
     moveMessage.value = onlineForm.shielded
-      ? "Shield transfer submitted and offline balance updated."
-      : "Transfer submitted and offline balance updated.";
+      ? t("Shield transfer submitted and offline balance updated.")
+      : t("Transfer submitted and offline balance updated.");
   } catch (error) {
     offline.$patch({ wallet: snapshot });
     offline.persist();
     moveMessage.value =
-      error instanceof Error ? error.message : "Failed to move funds online.";
+      error instanceof Error
+        ? error.message
+        : t("Failed to move funds online.");
   } finally {
     movingOnline.value = false;
   }

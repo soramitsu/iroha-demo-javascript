@@ -1,10 +1,10 @@
 <template>
   <section class="card receive">
     <header class="card-header">
-      <h2>Share Payment QR</h2>
+      <h2>{{ t("Share Payment QR") }}</h2>
       <button class="icon-cta" @click="toggleQr">
         <img :src="receiveIcon" alt="" />
-        <span>{{ showQr ? "Hide QR Code" : "Show QR Code" }}</span>
+        <span>{{ showQr ? t("Hide QR Code") : t("Show QR Code") }}</span>
       </button>
     </header>
     <div v-if="showQr" class="qr-panel">
@@ -12,7 +12,7 @@
       <div v-if="qrMarkup" class="qr" v-html="qrMarkup"></div>
       <p v-else class="helper">{{ qrMessage }}</p>
       <label v-if="activeAccountId">
-        Amount
+        {{ t("Amount") }}
         <input
           v-model="amount"
           type="number"
@@ -23,16 +23,18 @@
       </label>
     </div>
     <div class="kv" style="margin-top: 16px">
-      <span class="kv-label">IH58</span>
+      <span class="kv-label">{{ t("IH58") }}</span>
       <span class="kv-value">{{
-        activeIh58 || "Configure account first"
+        activeIh58 || t("Configure account first")
       }}</span>
     </div>
     <p class="helper">
       {{
         showQr
-          ? "QR encodes account + amount + asset definition for compatible wallets."
-          : "Use the button above to render a QR that wallets can scan."
+          ? t(
+              "QR encodes account + amount + asset definition for compatible wallets.",
+            )
+          : t("Use the button above to render a QR that wallets can scan.")
       }}
     </p>
   </section>
@@ -41,15 +43,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import QRCode from "qrcode";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import ReceiveIcon from "@/assets/receive.svg";
 
 const session = useSessionStore();
+const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
 const activeIh58 = computed(() => activeAccount.value?.ih58 ?? "");
 const qrMarkup = ref("");
-const qrMessage = ref("Tap the button to generate a QR.");
+const qrMessage = ref(t("Tap the button to generate a QR."));
 const amount = ref("0");
 const showQr = ref(false);
 const receiveIcon = ReceiveIcon;
@@ -57,10 +61,10 @@ const receiveIcon = ReceiveIcon;
 const generateQr = async () => {
   if (!activeAccountId.value) {
     qrMarkup.value = "";
-    qrMessage.value = "Configure an account before generating QR codes.";
+    qrMessage.value = t("Configure an account before generating QR codes.");
     return;
   }
-  qrMessage.value = "Generating QR...";
+  qrMessage.value = t("Generating QR...");
   const payload = {
     accountId: activeAccountId.value,
     assetDefinitionId: session.connection.assetDefinitionId,
@@ -75,9 +79,9 @@ const generateQr = async () => {
         light: "#00000000",
       },
     });
-    qrMessage.value = "QR ready.";
+    qrMessage.value = t("QR ready.");
   } catch (error) {
-    qrMessage.value = "Failed to render QR.";
+    qrMessage.value = t("Failed to render QR.");
     console.warn("Failed to render QR", error);
   }
 };
@@ -88,7 +92,7 @@ const toggleQr = () => {
     generateQr();
   } else {
     qrMarkup.value = "";
-    qrMessage.value = "Tap the button to generate a QR.";
+    qrMessage.value = t("Tap the button to generate a QR.");
   }
 };
 

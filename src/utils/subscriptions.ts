@@ -17,6 +17,19 @@ export type SubscriptionRecord = {
   note: string | null;
 };
 
+type LocalizeFn = (
+  key: string,
+  params?: Record<string, string | number>,
+) => string;
+type FormatNumberFn = (value: number) => string;
+
+export const SUBSCRIPTION_I18N_KEYS = {
+  upTo: "Up to {unit} {amount}",
+  usageBased: "Usage based",
+  unitDash: "{unit} --",
+  unitAmount: "{unit} {amount}",
+} as const;
+
 const CADENCE_MONTHS: Record<SubscriptionCadence, number> = {
   monthly: 1,
   quarterly: 3,
@@ -26,6 +39,17 @@ const CADENCE_MONTHS: Record<SubscriptionCadence, number> = {
 const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
+const defaultFormatNumber: FormatNumberFn = (value) => formatter.format(value);
+
+const defaultLocalize: LocalizeFn = (key, params) => {
+  if (!params) {
+    return key;
+  }
+  return key.replace(/\{([\w]+)\}/g, (_match, token) => {
+    const value = params[token];
+    return value === undefined ? `{${token}}` : String(value);
+  });
+};
 
 export const advanceNextDate = (
   iso: string,
@@ -52,17 +76,25 @@ export const formatAmount = (
   amount: number | null,
   maxAmount: number | null,
   unit: string,
+  localize: LocalizeFn = defaultLocalize,
+  formatNumber: FormatNumberFn = defaultFormatNumber,
 ): string => {
   if (amountType === "variable") {
     if (maxAmount != null) {
-      return `Up to ${unit} ${formatter.format(maxAmount)}`;
+      return localize(SUBSCRIPTION_I18N_KEYS.upTo, {
+        unit,
+        amount: formatNumber(maxAmount),
+      });
     }
-    return "Usage based";
+    return localize(SUBSCRIPTION_I18N_KEYS.usageBased);
   }
   if (amount == null) {
-    return `${unit} --`;
+    return localize(SUBSCRIPTION_I18N_KEYS.unitDash, { unit });
   }
-  return `${unit} ${formatter.format(amount)}`;
+  return localize(SUBSCRIPTION_I18N_KEYS.unitAmount, {
+    unit,
+    amount: formatNumber(amount),
+  });
 };
 
 export const applyAutoDeductions = (

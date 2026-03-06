@@ -3,37 +3,42 @@
     <section class="card">
       <header class="card-header">
         <div>
-          <h2>TAIRA Testnet Account</h2>
+          <h2>{{ t("TAIRA Testnet Account") }}</h2>
           <p class="helper">
-            Generate your account keys, store a recovery phrase, and register
-            via Torii.
+            {{
+              t(
+                "Generate your account keys, store a recovery phrase, and register via Torii.",
+              )
+            }}
           </p>
         </div>
       </header>
       <div class="chain-quickpick">
         <p class="helper">
-          TAIRA testnet connection is fixed for onboarding in this build.
+          {{
+            t("TAIRA testnet connection is fixed for onboarding in this build.")
+          }}
         </p>
       </div>
 
       <div class="form-grid keygen-form">
         <label>
-          Display Name (local only, not on-chain)
-          <input v-model.trim="aliasInput" placeholder="Alice" />
+          {{ t("Display Name (local only, not on-chain)") }}
+          <input v-model.trim="aliasInput" :placeholder="t('Alice')" />
         </label>
         <label>
-          Domain
-          <input v-model.trim="domainInput" placeholder="wonderland" />
+          {{ t("Domain") }}
+          <input v-model.trim="domainInput" :placeholder="t('wonderland')" />
         </label>
         <label>
-          Recovery Phrase Length
+          {{ t("Recovery Phrase Length") }}
           <select v-model.number="wordCount">
-            <option :value="12">12 words</option>
-            <option :value="24">24 words</option>
+            <option :value="12">{{ t("12 words") }}</option>
+            <option :value="24">{{ t("24 words") }}</option>
           </select>
         </label>
         <label>
-          Identity Metadata (JSON, optional)
+          {{ t("Identity Metadata (JSON, optional)") }}
           <textarea
             v-model.trim="identityInput"
             rows="3"
@@ -44,14 +49,14 @@
 
       <div class="actions">
         <button :disabled="generating" @click="generateRecovery">
-          {{ generating ? "Generating…" : "Generate recovery phrase" }}
+          {{ generating ? t("Generating…") : t("Generate recovery phrase") }}
         </button>
         <button
           class="secondary"
           :disabled="!canRegisterGenerated"
           @click="registerGeneratedIdentity"
         >
-          {{ onboardingBusy ? "Registering…" : "Register account" }}
+          {{ onboardingBusy ? t("Registering…") : t("Register account") }}
         </button>
       </div>
       <p v-if="generateError" class="helper error">{{ generateError }}</p>
@@ -62,7 +67,7 @@
 
       <div v-if="mnemonicWords.length" class="backup-panel">
         <p class="helper">
-          Write these words down in order. They restore your wallet.
+          {{ t("Write these words down in order. They restore your wallet.") }}
         </p>
         <div class="mnemonic-grid">
           <span v-for="(word, index) in mnemonicWords" :key="word + index">
@@ -71,57 +76,59 @@
         </div>
         <div class="backup-actions">
           <button class="secondary" @click="downloadBackup('manual')">
-            Download backup
+            {{ t("Download backup") }}
           </button>
           <button class="secondary" @click="downloadBackup('icloud')">
-            Store for iCloud Drive
+            {{ t("Store for iCloud Drive") }}
           </button>
           <button class="secondary" @click="downloadBackup('google')">
-            Store for Google Drive
+            {{ t("Store for Google Drive") }}
           </button>
         </div>
         <label class="backup-confirm">
           <input v-model="backupConfirmed" type="checkbox" />
-          <span>I stored my recovery phrase safely.</span>
+          <span>{{ t("I stored my recovery phrase safely.") }}</span>
         </label>
       </div>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>IrohaConnect Pairing</h2>
+        <h2>{{ t("IrohaConnect Pairing") }}</h2>
       </header>
       <p class="helper">
-        Already using IrohaConnect on your phone? Generate a pairing session to
-        approve desktop access without exporting keys. Signing stays on the
-        phone; this app watches balances.
+        {{
+          t(
+            "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
+          )
+        }}
       </p>
       <div v-if="connectPreview" class="connect-preview">
         <img
           v-if="connectQr"
           :src="connectQr"
-          alt="IrohaConnect pairing QR"
+          :alt="t('IrohaConnect pairing QR')"
           class="connect-qr"
         />
         <div class="kv monospace">
-          <span class="kv-label">Session ID</span>
+          <span class="kv-label">{{ t("Session ID") }}</span>
           <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
         </div>
         <div v-if="connectPreview.tokenWallet" class="kv monospace">
-          <span class="kv-label">Wallet Token</span>
+          <span class="kv-label">{{ t("Wallet Token") }}</span>
           <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
         </div>
       </div>
       <div class="actions">
         <button :disabled="connectLoading" @click="startConnectPairing">
-          {{ connectLoading ? "Preparing…" : "Generate pairing QR" }}
+          {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
         </button>
         <button
           class="secondary"
           :disabled="!connectPreview"
           @click="resetConnect"
         >
-          Reset
+          {{ t("Reset") }}
         </button>
       </div>
       <p v-if="connectError" class="helper error">{{ connectError }}</p>
@@ -130,9 +137,13 @@
     <section class="card">
       <header class="card-header">
         <div>
-          <h2>Saved Accounts</h2>
+          <h2>{{ t("Saved Accounts") }}</h2>
           <p class="helper">
-            Switch between registered profiles or begin a fresh registration.
+            {{
+              t(
+                "Switch between registered profiles or begin a fresh registration.",
+              )
+            }}
           </p>
         </div>
       </header>
@@ -168,8 +179,8 @@
             >
               {{
                 account.accountId === session.activeAccountId
-                  ? "Active"
-                  : "Available"
+                  ? t("Active")
+                  : t("Available")
               }}
             </span>
             <button
@@ -179,20 +190,24 @@
             >
               {{
                 account.accountId === session.activeAccountId
-                  ? "Selected"
-                  : "Switch to this account"
+                  ? t("Selected")
+                  : t("Switch to this account")
               }}
             </button>
           </div>
         </article>
       </div>
       <p v-else class="helper">
-        No saved accounts yet. Complete the registration form to add one.
+        {{
+          t("No saved accounts yet. Complete the registration form to add one.")
+        }}
       </p>
       <div class="actions">
         <button class="secondary" @click="startNewRegistration">
           {{
-            hasSavedAccounts ? "Register another account" : "Begin registration"
+            hasSavedAccounts
+              ? t("Register another account")
+              : t("Begin registration")
           }}
         </button>
       </div>
@@ -204,6 +219,7 @@
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import QRCode from "qrcode";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import {
   createConnectPreview,
@@ -220,6 +236,7 @@ import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const session = useSessionStore();
 const router = useRouter();
+const { t } = useAppI18n();
 
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
@@ -273,15 +290,15 @@ const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const registrationChecklist = computed(() => [
   {
-    label: "TAIRA connection ready",
+    label: t("TAIRA connection ready"),
     done: Boolean(connectionForm.toriiUrl && connectionForm.chainId),
   },
   {
-    label: "Recovery phrase saved",
+    label: t("Recovery phrase saved"),
     done: mnemonicWords.value.length > 0 && backupConfirmed.value,
   },
   {
-    label: "Account registered",
+    label: t("Account registered"),
     done: Boolean(onboardingStatus.value || session.hasAccount),
   },
 ]);
@@ -359,12 +376,12 @@ const parseIdentity = () => {
     if (parsed && typeof parsed === "object") {
       return parsed;
     }
-    throw new Error("Identity metadata must be a JSON object.");
+    throw new Error(t("Identity metadata must be a JSON object."));
   } catch (error) {
     throw new Error(
       error instanceof Error
         ? error.message
-        : "Invalid identity metadata JSON payload.",
+        : t("Invalid identity metadata JSON payload."),
     );
   }
 };
@@ -383,16 +400,17 @@ const registerGeneratedIdentity = async () => {
   onboardingError.value = "";
   onboardingStatus.value = "";
   if (!generatedKeys.value) {
-    onboardingError.value = "Generate a keypair first.";
+    onboardingError.value = t("Generate a keypair first.");
     return;
   }
   if (!backupConfirmed.value) {
-    onboardingError.value = "Confirm that you stored the recovery phrase.";
+    onboardingError.value = t("Confirm that you stored the recovery phrase.");
     return;
   }
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    onboardingError.value =
-      "TAIRA connection is unavailable. Reload and try again.";
+    onboardingError.value = t(
+      "TAIRA connection is unavailable. Reload and try again.",
+    );
     return;
   }
   onboardingBusy.value = true;
@@ -400,7 +418,7 @@ const registerGeneratedIdentity = async () => {
     const identity = parseIdentity();
     const response = await onboardAccount({
       toriiUrl: connectionForm.toriiUrl,
-      alias: aliasInput.value.trim() || "Unnamed",
+      alias: aliasInput.value.trim() || t("Unnamed"),
       accountId: generatedKeys.value.accountId,
       identity,
     });
@@ -419,7 +437,10 @@ const registerGeneratedIdentity = async () => {
       compressedWarning: generatedKeys.value.compressedWarning,
     });
     session.persistState();
-    onboardingStatus.value = `Account ${response.account_id} queued (tx ${response.tx_hash_hex.slice(0, 12)}…)`;
+    onboardingStatus.value = t("Account {accountId} queued (tx {txHash}…)", {
+      accountId: response.account_id,
+      txHash: response.tx_hash_hex.slice(0, 12),
+    });
     router.push("/setup");
   } catch (err) {
     onboardingError.value = err instanceof Error ? err.message : String(err);
@@ -466,8 +487,9 @@ const connectError = ref("");
 const startConnectPairing = async () => {
   connectError.value = "";
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    connectError.value =
-      "TAIRA connection is unavailable. Reload and try again.";
+    connectError.value = t(
+      "TAIRA connection is unavailable. Reload and try again.",
+    );
     return;
   }
   connectLoading.value = true;

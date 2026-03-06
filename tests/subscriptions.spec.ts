@@ -18,6 +18,38 @@ describe("subscription utilities", () => {
     expect(formatAmount("variable", null, 9000, "IRH")).toBe("Up to IRH 9,000");
   });
 
+  it("supports localized amount formatting via formatter callback", () => {
+    const localize = (key: string, params?: Record<string, string | number>) =>
+      key.replace(/\{([\w]+)\}/g, (_m, token: string) =>
+        params?.[token] === undefined ? `{${token}}` : String(params[token]),
+      );
+    const formatNumber = (value: number) =>
+      new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(
+        value,
+      );
+
+    expect(
+      formatAmount(
+        "fixed",
+        1500,
+        null,
+        "IRH",
+        (_key, params) => localize("固定 {unit} {amount}", params),
+        formatNumber,
+      ),
+    ).toBe("固定 IRH 1.500");
+    expect(
+      formatAmount(
+        "variable",
+        null,
+        9000,
+        "IRH",
+        (_key, params) => localize("最大 {unit} {amount}", params),
+        formatNumber,
+      ),
+    ).toBe("最大 IRH 9.000");
+  });
+
   it("auto-deducts and advances next charge", () => {
     const record: SubscriptionRecord = {
       id: "sub-1",

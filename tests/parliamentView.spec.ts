@@ -435,6 +435,26 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).not.toContain("Referendum found: yes.");
   });
 
+  it("clears governance refresh status when lookup ids are edited", async () => {
+    getGovernanceReferendumMock.mockResolvedValueOnce({
+      found: true,
+      referendum: {
+        referendum_id: "ref-1",
+      },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await findButtonByText(wrapper, "Load").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Governance records refreshed.");
+
+    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
+    await flushPromises();
+    expect(wrapper.text()).not.toContain("Governance records refreshed.");
+  });
+
   it("clears stale lookup state and balance when refresh fails", async () => {
     const inferredProposalId = `0x${"9".repeat(64)}`;
     getGovernanceReferendumMock.mockResolvedValueOnce({
@@ -702,6 +722,76 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).not.toContain(
       "Available XOR balance is below the required citizen bond amount.",
     );
+  });
+
+  it("ignores stale refresh error after active account switch", async () => {
+    let rejectAssets: (reason: unknown) => void = () => {};
+    const assetsDeferred = new Promise((_, reject) => {
+      rejectAssets = reject;
+    });
+    fetchAccountAssetsMock.mockReturnValueOnce(assetsDeferred);
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#wonderland##bob@wonderland",
+          quantity: "15000",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...(session.accounts ?? []),
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ef".repeat(32),
+          privateKeyHex: "12".repeat(32),
+          ih58: "ih58bob",
+          compressed: "",
+          compressedWarning: "",
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    await flushPromises();
+
+    rejectAssets(new Error("assets down"));
+    await flushPromises();
+    await flushPromises();
+
+    const xorBalanceRow = wrapper
+      .findAll(".kv")
+      .find((node) => node.text().includes("XOR Balance"));
+    expect(xorBalanceRow?.text()).toContain("15000 XOR");
+    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).not.toContain("assets down");
+  });
+
+  it("clears stale refresh error when account context is missing", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
+    await findButtonByText(wrapper, "Refresh").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("assets down");
+
+    const session = useSessionStore();
+    session.$patch({
+      activeAccountId: null,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Configure Torii and complete account onboarding first.",
+    );
+    expect(wrapper.text()).not.toContain("assets down");
   });
 
   it("disables ballot submission without governance ballot permission", async () => {

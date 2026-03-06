@@ -1,3 +1,4 @@
+/* eslint-disable vue/one-component-per-file */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { defineComponent, ref } from "vue";
 import { mount } from "@vue/test-utils";
@@ -65,5 +66,26 @@ describe("useQrScanner hook", () => {
 
     await scanner.start();
     expect(onDecoded).toHaveBeenCalledWith("cam-payload");
+  });
+
+  it("uses optional translator for scanner status text", async () => {
+    const scannerRef = ref<ReturnType<typeof useQrScanner> | null>(null);
+    const translate = (key: string) => `JP:${key}`;
+
+    mount(
+      defineComponent({
+        setup() {
+          const scanner = useQrScanner(vi.fn(), { translate });
+          scannerRef.value = scanner;
+          return () => null;
+        },
+      }),
+    );
+
+    const scanner = scannerRef.value;
+    if (!scanner) throw new Error("scanner not initialised");
+
+    await scanner.start();
+    expect(scanner.message).toBe("JP:Camera preview is not ready.");
   });
 });

@@ -2,26 +2,26 @@
   <div class="card-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Balances</h2>
+        <h2>{{ t("Balances") }}</h2>
         <button class="secondary" :disabled="loading" @click="refresh">
-          {{ loading ? "Refreshing…" : "Refresh" }}
+          {{ loading ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
       <div class="grid-2">
         <div class="kv">
-          <span class="kv-label">Primary Asset</span>
+          <span class="kv-label">{{ t("Primary Asset") }}</span>
           <span class="kv-value">{{ primaryAssetLabel }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Quantity</span>
+          <span class="kv-label">{{ t("Quantity") }}</span>
           <span class="kv-value">{{ primaryAssetQuantity }}</span>
         </div>
       </div>
       <table v-if="assets.length" class="table">
         <thead>
           <tr>
-            <th>Asset ID</th>
-            <th>Quantity</th>
+            <th>{{ t("Asset ID") }}</th>
+            <th>{{ t("Quantity") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -31,42 +31,45 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="helper">No assets found for this account.</p>
+      <p v-else class="helper">
+        {{ t("No assets found for this account.") }}
+      </p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Latest Transactions</h2>
+        <h2>{{ t("Latest Transactions") }}</h2>
       </header>
       <table v-if="transactions.length" class="table">
         <thead>
           <tr>
-            <th>Time</th>
-            <th>Direction</th>
-            <th>Amount</th>
-            <th>Counterparty</th>
-            <th>Status</th>
+            <th>{{ t("Time") }}</th>
+            <th>{{ t("Direction") }}</th>
+            <th>{{ t("Amount") }}</th>
+            <th>{{ t("Counterparty") }}</th>
+            <th>{{ t("Status") }}</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="tx in transactions" :key="tx.entrypoint_hash">
             <td>{{ formatDate(tx.timestamp_ms) }}</td>
             <td>{{ tx.direction }}</td>
-            <td>{{ tx.amount ?? "—" }}</td>
-            <td>{{ tx.counterparty ?? "—" }}</td>
+            <td>{{ tx.amount ?? t("—") }}</td>
+            <td>{{ tx.counterparty ?? t("—") }}</td>
             <td :class="tx.result_ok ? 'status-pill ok' : 'status-pill error'">
-              {{ tx.result_ok ? "Committed" : "Rejected" }}
+              {{ tx.result_ok ? t("Committed") : t("Rejected") }}
             </td>
           </tr>
         </tbody>
       </table>
-      <p v-else class="helper">No transfers recorded yet.</p>
+      <p v-else class="helper">{{ t("No transfers recorded yet.") }}</p>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { fetchAccountAssets, fetchAccountTransactions } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import type {
@@ -80,6 +83,7 @@ import {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const { localeStore, t } = useAppI18n();
 
 type AccountTx = AccountTransactionsResponse["items"][number] &
   AccountTransactionLike & {
@@ -99,8 +103,8 @@ const transactionsRaw = ref<AccountTx[]>([]);
 const loading = ref(false);
 
 const formatDate = (timestamp?: number) => {
-  if (!timestamp) return "—";
-  return new Intl.DateTimeFormat("en", {
+  if (!timestamp) return t("—");
+  return new Intl.DateTimeFormat(localeStore.current, {
     dateStyle: "short",
     timeStyle: "medium",
   }).format(new Date(timestamp));
@@ -146,7 +150,7 @@ const primaryAsset = computed(() => {
 });
 
 const primaryAssetLabel = computed(() => {
-  const fallback = session.connection.assetDefinitionId || "—";
+  const fallback = session.connection.assetDefinitionId || t("—");
   return primaryAsset.value?.asset_id ?? fallback;
 });
 const primaryAssetQuantity = computed(
@@ -161,7 +165,7 @@ const transactions = computed<TransactionView[]>(() =>
     );
     return {
       ...tx,
-      direction: insight?.direction ?? "—",
+      direction: insight?.direction ?? t("—"),
       amount: insight?.amount ?? null,
       counterparty: insight?.counterparty ?? null,
     };

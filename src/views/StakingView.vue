@@ -2,18 +2,21 @@
   <div class="card-grid">
     <section class="card">
       <header class="card-header">
-        <h2>Nominate Validators</h2>
+        <h2>{{ t("Nominate Validators") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
-          {{ loadingBootstrap ? "Refreshing…" : "Refresh" }}
+          {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
       <p class="helper">
-        Stake XOR by dataspace. Lane selection is automatic from live
-        governance, then validators are loaded for that lane.
+        {{
+          t(
+            "Stake XOR by dataspace. Lane selection is automatic from live governance, then validators are loaded for that lane.",
+          )
+        }}
       </p>
       <div class="form-grid">
         <label>
-          Dataspace
+          {{ t("Dataspace") }}
           <select
             v-model.number="selectedDataspaceId"
             :disabled="loadingBootstrap || !dataspaceOptions.length"
@@ -31,7 +34,7 @@
         </label>
 
         <label>
-          Validator
+          {{ t("Validator") }}
           <select
             v-model="selectedValidator"
             :disabled="loadingLaneData || !validators.length"
@@ -49,29 +52,29 @@
 
       <div class="grid-2" style="margin-top: 12px">
         <div class="kv">
-          <span class="kv-label">Lane</span>
+          <span class="kv-label">{{ t("Lane") }}</span>
           <span class="kv-value">{{
-            laneContext ? `#${laneContext.laneId}` : "—"
+            laneContext ? `#${laneContext.laneId}` : t("—")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Alias</span>
-          <span class="kv-value">{{ laneContext?.alias || "—" }}</span>
+          <span class="kv-label">{{ t("Alias") }}</span>
+          <span class="kv-value">{{ laneContext?.alias || t("—") }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Signer</span>
+          <span class="kv-label">{{ t("Signer") }}</span>
           <span class="kv-value mono">{{
-            stakerAccountId || "Not configured"
+            stakerAccountId || t("Not configured")
           }}</span>
         </div>
         <div class="kv">
-          <span class="kv-label">Unbond Delay</span>
+          <span class="kv-label">{{ t("Unbond Delay") }}</span>
           <span class="kv-value">
-            {{ policy ? formatDuration(policy.unbondingDelayMs) : "—" }}
+            {{ policy ? formatDuration(policy.unbondingDelayMs) : t("—") }}
           </span>
         </div>
         <div class="kv">
-          <span class="kv-label">Stake Token Balance</span>
+          <span class="kv-label">{{ t("Stake Token Balance") }}</span>
           <span class="kv-value"
             >{{ stakeTokenBalance }} {{ stakeTokenSymbol }}</span
           >
@@ -79,9 +82,16 @@
       </div>
 
       <p v-if="selectedValidatorRecord" class="helper">
-        Validator total stake {{ selectedValidatorRecord.total_stake }} XOR,
-        self stake {{ selectedValidatorRecord.self_stake }} XOR, status
-        {{ selectedValidatorRecord.status.type }}.
+        {{
+          t(
+            "Validator total stake {total} XOR, self stake {self} XOR, status {status}.",
+            {
+              total: selectedValidatorRecord.total_stake,
+              self: selectedValidatorRecord.self_stake,
+              status: selectedValidatorRecord.status.type,
+            },
+          )
+        }}
       </p>
       <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
       <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
@@ -89,15 +99,24 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Bond / Unbond</h2>
+        <h2>{{ t("Bond / Unbond") }}</h2>
       </header>
       <div class="form-grid">
         <label>
-          Bond amount (XOR)
-          <input v-model.trim="bondAmount" type="text" placeholder="100" />
+          {{ t("Bond amount (XOR)") }}
+          <input
+            v-model.trim="bondAmount"
+            type="text"
+            :placeholder="t('100')"
+          />
         </label>
         <p class="helper tight">
-          Available: {{ stakeTokenBalance }} {{ stakeTokenSymbol }}
+          {{
+            t("Available: {balance} {symbol}", {
+              balance: stakeTokenBalance,
+              symbol: stakeTokenSymbol,
+            })
+          }}
         </p>
         <div class="actions-inline">
           <button
@@ -106,7 +125,7 @@
             :disabled="!hasBondableBalance"
             @click="bondAmount = stakeTokenBalance"
           >
-            Max
+            {{ t("Max") }}
           </button>
         </div>
         <div class="actions">
@@ -114,13 +133,17 @@
             :disabled="!canSubmit || !hasBondableBalance || isActionBusy"
             @click="handleBond"
           >
-            {{ actionBusy === "bond" ? "Submitting…" : "Bond XOR" }}
+            {{ actionBusy === "bond" ? t("Submitting…") : t("Bond XOR") }}
           </button>
         </div>
 
         <label>
-          Unbond amount (XOR)
-          <input v-model.trim="unbondAmount" type="text" placeholder="50" />
+          {{ t("Unbond amount (XOR)") }}
+          <input
+            v-model.trim="unbondAmount"
+            type="text"
+            :placeholder="t('50')"
+          />
         </label>
         <div class="actions-inline">
           <button
@@ -129,19 +152,24 @@
             :disabled="!hasBondedStake"
             @click="unbondAmount = selectedStakeShare?.bonded || ''"
           >
-            Max
+            {{ t("Max") }}
           </button>
         </div>
         <p v-if="policy" class="helper tight">
-          Release is set from on-chain policy:
-          {{ formatDateTime(releasePreviewMs) }}.
+          {{
+            t("Release is set from on-chain policy: {datetime}.", {
+              datetime: formatDateTime(releasePreviewMs),
+            })
+          }}
         </p>
         <div class="actions">
           <button
             :disabled="!canSubmit || !policy || !hasBondedStake || isActionBusy"
             @click="handleScheduleUnbond"
           >
-            {{ actionBusy === "unbond" ? "Submitting…" : "Schedule Unbond" }}
+            {{
+              actionBusy === "unbond" ? t("Submitting…") : t("Schedule Unbond")
+            }}
           </button>
         </div>
       </div>
@@ -150,22 +178,22 @@
 
     <section class="card">
       <header class="card-header">
-        <h2>Your Position</h2>
+        <h2>{{ t("Your Position") }}</h2>
       </header>
       <div class="grid-2">
         <div class="kv">
-          <span class="kv-label">Bonded</span>
+          <span class="kv-label">{{ t("Bonded") }}</span>
           <span class="kv-value"
-            >{{ selectedStakeShare?.bonded || "0" }} XOR</span
+            >{{ selectedStakeShare?.bonded || t("0") }} XOR</span
           >
         </div>
         <div class="kv">
-          <span class="kv-label">Pending Unbonds</span>
+          <span class="kv-label">{{ t("Pending Unbonds") }}</span>
           <span class="kv-value">{{ pendingUnbonds.length }}</span>
         </div>
       </div>
       <label v-if="pendingUnbonds.length" style="margin-top: 12px">
-        Finalize request
+        {{ t("Finalize request") }}
         <select v-model="selectedFinalizeRequestId">
           <option
             v-for="request in pendingUnbonds"
@@ -187,24 +215,26 @@
           "
           @click="handleFinalizeUnbond"
         >
-          {{ actionBusy === "finalize" ? "Submitting…" : "Finalize Unbond" }}
+          {{
+            actionBusy === "finalize" ? t("Submitting…") : t("Finalize Unbond")
+          }}
         </button>
       </div>
       <p v-if="!pendingUnbonds.length" class="helper">
-        No pending unbond requests for the selected validator.
+        {{ t("No pending unbond requests for the selected validator.") }}
       </p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Pending Rewards</h2>
+        <h2>{{ t("Pending Rewards") }}</h2>
       </header>
       <table v-if="rewardsForAccount.length" class="table">
         <thead>
           <tr>
-            <th>Asset</th>
-            <th>Amount</th>
-            <th>Through Epoch</th>
+            <th>{{ t("Asset") }}</th>
+            <th>{{ t("Amount") }}</th>
+            <th>{{ t("Through Epoch") }}</th>
           </tr>
         </thead>
         <tbody>
@@ -218,13 +248,15 @@
           </tr>
         </tbody>
       </table>
-      <p v-else class="helper">No pending rewards for this lane/account.</p>
+      <p v-else class="helper">
+        {{ t("No pending rewards for this lane/account.") }}
+      </p>
       <div class="actions">
         <button
           :disabled="!canSubmit || !hasClaimableRewards || isActionBusy"
           @click="handleClaimRewards"
         >
-          {{ actionBusy === "claim" ? "Submitting…" : "Claim Rewards" }}
+          {{ actionBusy === "claim" ? t("Submitting…") : t("Claim Rewards") }}
         </button>
       </div>
     </section>
@@ -233,6 +265,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { useAppI18n } from "@/composables/useAppI18n";
 import {
   bondPublicLaneStake,
   claimPublicLaneRewards,
@@ -266,6 +299,7 @@ import {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const { localeStore, t } = useAppI18n();
 
 const loadingBootstrap = ref(false);
 const loadingLaneData = ref(false);
@@ -364,33 +398,33 @@ const releasePreviewMs = computed(() => {
 });
 
 const formatDateTime = (value: number) =>
-  new Intl.DateTimeFormat("en", {
+  new Intl.DateTimeFormat(localeStore.current, {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
 
 const formatDuration = (milliseconds: number) => {
-  if (milliseconds < 1000) return `${milliseconds} ms`;
+  if (milliseconds < 1000) return t("{value} ms", { value: milliseconds });
   const seconds = Math.floor(milliseconds / 1000);
-  if (seconds < 60) return `${seconds} sec`;
+  if (seconds < 60) return t("{value} sec", { value: seconds });
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   if (minutes < 60) {
     return remainingSeconds
-      ? `${minutes} min ${remainingSeconds} sec`
-      : `${minutes} min`;
+      ? t("{min} min {sec} sec", { min: minutes, sec: remainingSeconds })
+      : t("{value} min", { value: minutes });
   }
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return remainingMinutes
-    ? `${hours} hr ${remainingMinutes} min`
-    : `${hours} hr`;
+    ? t("{hr} hr {min} min", { hr: hours, min: remainingMinutes })
+    : t("{value} hr", { value: hours });
 };
 
 const toPositiveAmount = (value: string, label: string) => {
   const normalized = value.trim();
   if (!/^\d+(\.\d+)?$/.test(normalized) || /^0+(\.0+)?$/.test(normalized)) {
-    throw new Error(`${label} must be greater than zero.`);
+    throw new Error(t("{label} must be greater than zero.", { label }));
   }
   return normalized;
 };
@@ -402,7 +436,11 @@ const enforceAmountWithinLimit = (
 ) => {
   if (compareDecimalStrings(amount, maxAmount) > 0) {
     throw new Error(
-      `Amount exceeds available ${maxAmountLabel} (${maxAmount} ${stakeTokenSymbol.value}).`,
+      t("Amount exceeds available {label} ({amount} {symbol}).", {
+        label: maxAmountLabel,
+        amount: maxAmount,
+        symbol: stakeTokenSymbol.value,
+      }),
     );
   }
 };
@@ -465,8 +503,9 @@ const loadLaneData = async () => {
 
 const refresh = async () => {
   if (!session.connection.toriiUrl || !activeAccount.value?.accountId) {
-    statusMessage.value =
-      "Configure Torii and complete account onboarding first.";
+    statusMessage.value = t(
+      "Configure Torii and complete account onboarding first.",
+    );
     resetLaneState();
     return;
   }
@@ -508,13 +547,16 @@ const refresh = async () => {
     policy.value = stakingPolicy;
 
     if (!options.length) {
-      statusMessage.value =
-        "No dataspace governance found on this Torii endpoint.";
+      statusMessage.value = t(
+        "No dataspace governance found on this Torii endpoint.",
+      );
       resetLaneState();
       return;
     }
 
-    statusMessage.value = `Loaded ${options.length} dataspace option(s).`;
+    statusMessage.value = t("Loaded {count} dataspace option(s).", {
+      count: options.length,
+    });
     await loadLaneData();
   } catch (error) {
     statusMessage.value = "";
@@ -553,16 +595,22 @@ const handleBond = () =>
   runAction("bond", async () => {
     if (!canSubmit.value || !activeAccount.value) {
       throw new Error(
-        "Connection, account, dataspace, and validator are required.",
+        t("Connection, account, dataspace, and validator are required."),
       );
     }
     if (!hasBondableBalance.value) {
       throw new Error(
-        `No ${stakeTokenSymbol.value} balance available to bond.`,
+        t("No {symbol} balance available to bond.", {
+          symbol: stakeTokenSymbol.value,
+        }),
       );
     }
-    const amount = toPositiveAmount(bondAmount.value, "Bond amount");
-    enforceAmountWithinLimit(amount, stakeTokenBalance.value, "stake balance");
+    const amount = toPositiveAmount(bondAmount.value, t("Bond amount"));
+    enforceAmountWithinLimit(
+      amount,
+      stakeTokenBalance.value,
+      t("stake balance"),
+    );
     const result = await bondPublicLaneStake({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
@@ -572,24 +620,24 @@ const handleBond = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     bondAmount.value = "";
-    return `Bond submitted: ${result.hash}`;
+    return t("Bond submitted: {hash}", { hash: result.hash });
   });
 
 const handleScheduleUnbond = () =>
   runAction("unbond", async () => {
     if (!canSubmit.value || !activeAccount.value || !policy.value) {
       throw new Error(
-        "Connection, account, validator, and staking policy are required.",
+        t("Connection, account, validator, and staking policy are required."),
       );
     }
     if (!selectedStakeShare.value || !hasBondedStake.value) {
-      throw new Error("No bonded stake available to unbond.");
+      throw new Error(t("No bonded stake available to unbond."));
     }
-    const amount = toPositiveAmount(unbondAmount.value, "Unbond amount");
+    const amount = toPositiveAmount(unbondAmount.value, t("Unbond amount"));
     enforceAmountWithinLimit(
       amount,
       selectedStakeShare.value.bonded,
-      "bonded stake",
+      t("bonded stake"),
     );
     const requestId = createUnbondRequestId();
     const releaseAtMs = computeUnbondReleaseAtMs(policy.value.unbondingDelayMs);
@@ -604,7 +652,11 @@ const handleScheduleUnbond = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     unbondAmount.value = "";
-    return `Unbond scheduled (${requestId}) for ${formatDateTime(releaseAtMs)}. Tx: ${result.hash}`;
+    return t("Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}", {
+      requestId,
+      datetime: formatDateTime(releaseAtMs),
+      hash: result.hash,
+    });
   });
 
 const handleFinalizeUnbond = () =>
@@ -614,7 +666,7 @@ const handleFinalizeUnbond = () =>
       !activeAccount.value ||
       !selectedFinalizeRequestId.value
     ) {
-      throw new Error("Select a pending unbond request first.");
+      throw new Error(t("Select a pending unbond request first."));
     }
     const result = await finalizePublicLaneUnbond({
       toriiUrl: session.connection.toriiUrl,
@@ -624,16 +676,16 @@ const handleFinalizeUnbond = () =>
       requestId: selectedFinalizeRequestId.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
-    return `Finalize submitted: ${result.hash}`;
+    return t("Finalize submitted: {hash}", { hash: result.hash });
   });
 
 const handleClaimRewards = () =>
   runAction("claim", async () => {
     if (!canSubmit.value || !activeAccount.value) {
-      throw new Error("Connection, account, and validator are required.");
+      throw new Error(t("Connection, account, and validator are required."));
     }
     if (!hasClaimableRewards.value) {
-      throw new Error("No pending rewards available to claim.");
+      throw new Error(t("No pending rewards available to claim."));
     }
     const result = await claimPublicLaneRewards({
       toriiUrl: session.connection.toriiUrl,
@@ -642,7 +694,7 @@ const handleClaimRewards = () =>
       validator: selectedValidator.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
-    return `Reward claim submitted: ${result.hash}`;
+    return t("Reward claim submitted: {hash}", { hash: result.hash });
   });
 
 watch(

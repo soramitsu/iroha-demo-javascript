@@ -5,38 +5,42 @@
   >
     <section class="card">
       <header class="card-header">
-        <h2>Torii Connection</h2>
+        <h2>{{ t("Torii Connection") }}</h2>
         <span class="status-pill" :class="pingIndicator.class">
           {{ pingIndicator.label }}
         </span>
       </header>
       <div class="chain-picker">
-        <p class="helper">TAIRA testnet connection is fixed in this build.</p>
+        <p class="helper">
+          {{ t("TAIRA testnet connection is fixed in this build.") }}
+        </p>
         <div class="preset-row">
           <div class="preset-chip active fixed" role="status">
-            <span class="chip-title">{{ TAIRA_CHAIN_PRESET.label }}</span>
-            <span class="chip-sub">{{ TAIRA_CHAIN_PRESET.description }}</span>
+            <span class="chip-title">{{ t("TAIRA Testnet") }}</span>
+            <span class="chip-sub">{{
+              t("Public TAIRA testnet profile.")
+            }}</span>
           </div>
         </div>
       </div>
       <div class="form-grid">
         <label>
-          Torii URL
+          {{ t("Torii URL") }}
           <input v-model="connectionForm.toriiUrl" readonly />
         </label>
         <label>
-          Chain ID
+          {{ t("Chain ID") }}
           <input v-model="connectionForm.chainId" readonly />
         </label>
         <label>
-          Asset Definition ID
+          {{ t("Asset Definition ID") }}
           <input
             v-model="connectionForm.assetDefinitionId"
-            placeholder="rose#wonderland"
+            :placeholder="t('rose#wonderland')"
           />
         </label>
         <label>
-          Network Prefix
+          {{ t("Network Prefix") }}
           <input
             v-model.number="connectionForm.networkPrefix"
             type="number"
@@ -48,95 +52,102 @@
       </div>
       <div class="actions">
         <button :disabled="pingLoading" @click="handlePing">
-          Check health
+          {{ t("Check health") }}
         </button>
-        <button class="secondary" @click="saveConnection">Save</button>
+        <button class="secondary" @click="saveConnection">
+          {{ t("Save") }}
+        </button>
       </div>
       <p v-if="pingMessage" class="helper">{{ pingMessage }}</p>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Key Material</h2>
+        <h2>{{ t("Key Material") }}</h2>
       </header>
       <div class="form-grid">
         <label>
-          Display Name (local only, not on-chain)
-          <input v-model="userForm.displayName" placeholder="Alice" />
+          {{ t("Display Name (local only, not on-chain)") }}
+          <input v-model="userForm.displayName" :placeholder="t('Alice')" />
         </label>
         <label>
-          Domain
-          <input v-model="userForm.domain" placeholder="wonderland" />
+          {{ t("Domain") }}
+          <input v-model="userForm.domain" :placeholder="t('wonderland')" />
         </label>
         <label>
-          Private Key (hex)
+          {{ t("Private Key (hex)") }}
           <textarea
             v-model="userForm.privateKeyHex"
             rows="2"
-            placeholder="64 hex chars"
+            :placeholder="t('64 hex chars')"
           ></textarea>
         </label>
         <label>
-          Public Key
+          {{ t("Public Key") }}
           <textarea
             v-model="userForm.publicKeyHex"
             rows="2"
-            placeholder="auto-derived"
+            :placeholder="t('auto-derived')"
             readonly
           ></textarea>
         </label>
         <label>
-          Account ID
+          {{ t("Account ID") }}
           <input v-model="userForm.accountId" readonly />
         </label>
         <div class="grid-2">
           <div class="kv">
-            <span class="kv-label">IH58</span>
-            <span class="kv-value">{{ userForm.ih58 || "—" }}</span>
+            <span class="kv-label">{{ t("IH58") }}</span>
+            <span class="kv-value">{{ userForm.ih58 || t("—") }}</span>
           </div>
           <div class="kv">
-            <span class="kv-label">Compressed</span>
-            <span class="kv-value">{{ userForm.compressed || "—" }}</span>
+            <span class="kv-label">{{ t("Compressed") }}</span>
+            <span class="kv-value">{{ userForm.compressed || t("—") }}</span>
           </div>
         </div>
       </div>
       <div class="actions">
         <button :disabled="generating" @click="handleGenerate">
-          Generate pair
+          {{ t("Generate pair") }}
         </button>
         <button
           class="secondary"
           :disabled="!userForm.privateKeyHex"
           @click="handleDerivePublic"
         >
-          Derive from private key
+          {{ t("Derive from private key") }}
         </button>
-        <button class="secondary" @click="saveUser">Save identity</button>
+        <button class="secondary" @click="saveUser">
+          {{ t("Save identity") }}
+        </button>
       </div>
     </section>
 
     <section class="card">
       <header class="card-header">
-        <h2>Register Account</h2>
+        <h2>{{ t("Register Account") }}</h2>
         <p class="helper">
-          Requires authority credentials — Torii receives a direct Norito
-          transaction.
+          {{
+            t(
+              "Requires authority credentials — Torii receives a direct Norito transaction.",
+            )
+          }}
         </p>
       </header>
       <div class="form-grid">
         <label>
-          Authority Account ID
+          {{ t("Authority Account ID") }}
           <input
             v-model="authorityForm.accountId"
-            placeholder="34m... or 0x...@wonderland"
+            :placeholder="t('34m... or 0x...@wonderland')"
           />
         </label>
         <label>
-          Authority Private Key (hex)
+          {{ t("Authority Private Key (hex)") }}
           <textarea v-model="authorityForm.privateKeyHex" rows="2"></textarea>
         </label>
         <label>
-          Account Metadata (JSON)
+          {{ t("Account Metadata (JSON)") }}
           <textarea
             v-model="metadataInput"
             rows="4"
@@ -146,9 +157,11 @@
       </div>
       <div class="actions">
         <button :disabled="registering || !canRegister" @click="handleRegister">
-          {{ registering ? "Submitting…" : "Register account" }}
+          {{ registering ? t("Submitting…") : t("Register account") }}
         </button>
-        <button class="secondary" @click="saveAuthority">Save authority</button>
+        <button class="secondary" @click="saveAuthority">
+          {{ t("Save authority") }}
+        </button>
       </div>
       <p v-if="registerMessage" class="helper">{{ registerMessage }}</p>
     </section>
@@ -158,6 +171,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { z } from "zod";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import {
   deriveAccountAddress,
@@ -171,6 +185,7 @@ import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 type PingState = "idle" | "ok" | "error";
 
 const session = useSessionStore();
+const { t } = useAppI18n();
 
 const connectionForm = reactive({ ...session.connection });
 const emptyAccount = () => ({
@@ -267,11 +282,11 @@ watch(
 const pingIndicator = computed(() => {
   switch (pingState.value) {
     case "ok":
-      return { label: "Healthy", class: "status-pill ok" };
+      return { label: t("Healthy"), class: "status-pill ok" };
     case "error":
-      return { label: "Offline", class: "status-pill error" };
+      return { label: t("Offline"), class: "status-pill error" };
     default:
-      return { label: "Idle", class: "status-pill" };
+      return { label: t("Idle"), class: "status-pill" };
   }
 });
 
@@ -318,8 +333,8 @@ const handlePing = async () => {
     const result = await pingTorii(connectionForm.toriiUrl);
     pingState.value = result ? "ok" : "error";
     pingMessage.value = result
-      ? "Torii responded successfully."
-      : "No response from Torii.";
+      ? t("Torii responded successfully.")
+      : t("No response from Torii.");
   } catch (error) {
     pingState.value = "error";
     pingMessage.value = error instanceof Error ? error.message : String(error);
@@ -384,7 +399,9 @@ const handleRegister = async () => {
     });
     session.updateActiveAccount({ ...userForm });
     session.persistState();
-    registerMessage.value = `Submitted transaction ${result.hash}`;
+    registerMessage.value = t("Submitted transaction {hash}", {
+      hash: result.hash,
+    });
   } catch (error) {
     registerMessage.value =
       error instanceof Error ? error.message : String(error);
@@ -426,7 +443,7 @@ const handleRegister = async () => {
   background: rgba(255, 255, 255, 0.04);
   padding: 10px 12px;
   min-width: 140px;
-  text-align: left;
+  text-align: start;
   display: grid;
   gap: 2px;
   cursor: pointer;

@@ -2,15 +2,17 @@
   <div class="account-switcher">
     <div class="switcher-head">
       <div>
-        <p class="eyebrow">Active account</p>
+        <p class="eyebrow">{{ t("Active account") }}</p>
         <p class="switcher-title">{{ activeLabel }}</p>
       </div>
       <button class="secondary" @click="goToRegistration">
-        {{ hasAccounts ? "Register another" : "Start registration" }}
+        {{ hasAccounts ? t("Register another") : t("Start registration") }}
       </button>
     </div>
     <div v-if="hasAccounts" class="switcher-body">
-      <label class="sr-only" for="account-selector">Select account</label>
+      <label class="sr-only" for="account-selector">{{
+        t("Select account")
+      }}</label>
       <select id="account-selector" v-model="selectedAccountId">
         <option
           v-for="account in session.accounts"
@@ -21,11 +23,11 @@
         </option>
       </select>
       <p class="helper">
-        Switch between saved accounts without re-entering keys.
+        {{ t("Switch between saved accounts without re-entering keys.") }}
       </p>
     </div>
     <p v-else class="helper">
-      No saved accounts yet. Start the registration flow to add one.
+      {{ t("No saved accounts yet. Start the registration flow to add one.") }}
     </p>
   </div>
 </template>
@@ -33,10 +35,12 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
+import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 
 const session = useSessionStore();
 const router = useRouter();
+const { t } = useAppI18n();
 
 const selectedAccountId = ref(session.activeAccountId ?? "");
 const hasAccounts = computed(() => session.accounts.length > 0);
@@ -44,7 +48,7 @@ const activeLabel = computed(
   () =>
     session.activeAccount?.displayName ||
     session.activeAccount?.accountId ||
-    "Not selected",
+    t("Not selected"),
 );
 
 watch(

@@ -3,6 +3,7 @@ import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
   isSupportedAccountIdLiteral,
+  parseOnboardingEnvConfig,
   parseNetworkPrefix,
 } from "../scripts/e2e/electron-live-utils.mjs";
 
@@ -71,5 +72,81 @@ describe("electron live e2e utils", () => {
     expect(isOnboardingConflictError("status 403")).toBe(false);
     expect(isOnboardingConflictError("")).toBe(false);
     expect(isOnboardingConflictError(null)).toBe(false);
+  });
+
+  it("parses onboarding env defaults when vars are absent", () => {
+    expect(parseOnboardingEnvConfig({})).toEqual({
+      alias: "E2E Onboarding Shared",
+      privateKeyHex:
+        "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
+      offlineBalance: "100",
+    });
+  });
+
+  it("parses explicit onboarding env vars", () => {
+    expect(
+      parseOnboardingEnvConfig({
+        E2E_ONBOARDING_ALIAS: "  QA Shared Alias  ",
+        E2E_ONBOARDING_PRIVATE_KEY_HEX:
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        E2E_ONBOARDING_OFFLINE_BALANCE: "2500",
+      }),
+    ).toEqual({
+      alias: "QA Shared Alias",
+      privateKeyHex:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      offlineBalance: "2500",
+    });
+  });
+
+  it("rejects deprecated onboarding env var names", () => {
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_STATEFUL_PRIVATE_KEY_HEX:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      }),
+    ).toThrow("Deprecated onboarding env vars are no longer supported");
+  });
+
+  it("reports all deprecated onboarding env var names that are set", () => {
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_STATEFUL_ALIAS: "legacy-alias",
+        E2E_STATEFUL_OFFLINE_BALANCE: "50",
+      }),
+    ).toThrow("E2E_STATEFUL_ALIAS, E2E_STATEFUL_OFFLINE_BALANCE");
+  });
+
+  it("ignores whitespace-only deprecated env var values", () => {
+    expect(
+      parseOnboardingEnvConfig({
+        E2E_STATEFUL_ALIAS: "   ",
+      }),
+    ).toEqual({
+      alias: "E2E Onboarding Shared",
+      privateKeyHex:
+        "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
+      offlineBalance: "100",
+    });
+  });
+
+  it("rejects invalid onboarding private key values", () => {
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_ONBOARDING_PRIVATE_KEY_HEX: "abc",
+      }),
+    ).toThrow(
+      "E2E_ONBOARDING_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
+    );
+  });
+
+  it("rejects invalid onboarding offline balance values", () => {
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_ONBOARDING_OFFLINE_BALANCE: "0",
+      }),
+    ).toThrow(
+      "E2E_ONBOARDING_OFFLINE_BALANCE must be a positive numeric string.",
+    );
   });
 });
