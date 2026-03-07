@@ -117,6 +117,29 @@ describe("electron live e2e utils", () => {
     ).toThrow("E2E_STATEFUL_ALIAS, E2E_STATEFUL_OFFLINE_BALANCE");
   });
 
+  it("reports deprecated onboarding vars in stable declaration order", () => {
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_STATEFUL_OFFLINE_BALANCE: "50",
+        E2E_STATEFUL_PRIVATE_KEY_HEX:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        E2E_STATEFUL_ALIAS: "legacy-alias",
+      }),
+    ).toThrow(
+      "E2E_STATEFUL_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX, E2E_STATEFUL_OFFLINE_BALANCE",
+    );
+    expect(() =>
+      parseOnboardingEnvConfig({
+        E2E_STATEFUL_OFFLINE_BALANCE: "50",
+        E2E_STATEFUL_PRIVATE_KEY_HEX:
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        E2E_STATEFUL_ALIAS: "legacy-alias",
+      }),
+    ).toThrow(
+      "E2E_STATEFUL_ALIAS -> E2E_ONBOARDING_ALIAS, E2E_STATEFUL_PRIVATE_KEY_HEX -> E2E_ONBOARDING_PRIVATE_KEY_HEX, E2E_STATEFUL_OFFLINE_BALANCE -> E2E_ONBOARDING_OFFLINE_BALANCE",
+    );
+  });
+
   it("ignores whitespace-only deprecated env var values", () => {
     expect(
       parseOnboardingEnvConfig({

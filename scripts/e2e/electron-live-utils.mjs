@@ -27,21 +27,27 @@ const defaultOnboardingAlias = "E2E Onboarding Shared";
 const defaultOnboardingPrivateKeyHex =
   "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";
 const defaultOnboardingOfflineBalance = "100";
-const deprecatedOnboardingEnvVarNames = [
-  "E2E_STATEFUL_ALIAS",
-  "E2E_STATEFUL_PRIVATE_KEY_HEX",
-  "E2E_STATEFUL_OFFLINE_BALANCE",
-];
+const deprecatedOnboardingEnvVarMap = {
+  E2E_STATEFUL_ALIAS: "E2E_ONBOARDING_ALIAS",
+  E2E_STATEFUL_PRIVATE_KEY_HEX: "E2E_ONBOARDING_PRIVATE_KEY_HEX",
+  E2E_STATEFUL_OFFLINE_BALANCE: "E2E_ONBOARDING_OFFLINE_BALANCE",
+};
+const deprecatedOnboardingEnvVarNames = Object.keys(
+  deprecatedOnboardingEnvVarMap,
+);
 
 export function parseOnboardingEnvConfig(env = process.env) {
   const deprecated = deprecatedOnboardingEnvVarNames.filter((name) =>
     String(env?.[name] ?? "").trim(),
   );
   if (deprecated.length) {
+    const renameGuide = deprecated
+      .map((name) => `${name} -> ${deprecatedOnboardingEnvVarMap[name]}`)
+      .join(", ");
     throw new Error(
       `Deprecated onboarding env vars are no longer supported: ${deprecated.join(
         ", ",
-      )}. Use E2E_ONBOARDING_ALIAS, E2E_ONBOARDING_PRIVATE_KEY_HEX, and E2E_ONBOARDING_OFFLINE_BALANCE.`,
+      )}. Rename to: ${renameGuide}.`,
     );
   }
 

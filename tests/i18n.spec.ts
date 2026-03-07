@@ -91,6 +91,9 @@ describe("i18n messages", () => {
     expect(translate("ja-JP", "Iroha Points")).toBe("Irohaポイント");
     expect(translate("ru-RU", "Iroha Points")).toBe("Ироха Очки");
     expect(translate("zh-CN", "Amount (XOR)")).toBe("金额（XOR）");
+    expect(translate("ar-SA", "SORA Parliament")).toBe("برلمان SORA");
+    expect(translate("fa-IR", "SORA Parliament")).toBe("پارلمان SORA");
+    expect(translate("ur-PK", "SORA Parliament")).toBe("سورا پارلیمنٹ");
     expect(
       translate(
         "ko-KR",
@@ -275,6 +278,15 @@ describe("locale store", () => {
 
     expect(store.current).toBe("he-IL");
     expect(document.documentElement.getAttribute("lang")).toBe("he-IL");
+    expect(document.documentElement.getAttribute("dir")).toBe("rtl");
+  });
+
+  it("applies rtl direction for urdu locale", () => {
+    const store = useLocaleStore();
+    store.setLocale("ur-PK");
+
+    expect(store.current).toBe("ur-PK");
+    expect(document.documentElement.getAttribute("lang")).toBe("ur-PK");
     expect(document.documentElement.getAttribute("dir")).toBe("rtl");
   });
 

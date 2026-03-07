@@ -532,6 +532,201 @@ const KO_MANUAL_TRANSLATIONS: TranslationTable = {
   "{unit} {amount}": "{unit} {amount}",
 };
 
+const AR_MANUAL_TRANSLATIONS: TranslationTable = {
+  Aye: "نعم",
+  Nay: "لا",
+  Abstain: "امتناع",
+  "SORA Parliament": "برلمان SORA",
+  "Citizenship bond and governance voting": "سند المواطنة والتصويت على الحوكمة",
+  "Bond citizenship and vote in governance referenda":
+    "أودع سند المواطنة وصوّت في استفتاءات الحوكمة",
+  "A minimum of {amount} XOR is required to register citizenship.":
+    "يتطلب تسجيل المواطنة حدًا أدنى قدره {amount} XOR.",
+  "Available XOR balance is below the required citizen bond amount.":
+    "رصيد XOR المتاح أقل من قيمة سند المواطنة المطلوبة.",
+  "Citizenship Bond": "سند المواطنة",
+  "Citizenship bond submitted: {hash}": "تم إرسال سند المواطنة: {hash}",
+  "Citizenship voting permission detected. Bonding is no longer required.":
+    "تم اكتشاف صلاحية تصويت المواطنة. لم يعد الإيداع مطلوبًا.",
+  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
+    "صلاحية الاقتراع غير متاحة لهذا الحساب. أرسل سند المواطنة ثم حدّث قبل التصويت.",
+  "Bond {amount} XOR": "أودع {amount} XOR",
+  "Bond XOR": "أودع XOR",
+  "Bond amount": "قيمة الإيداع",
+  "Bond amount (XOR)": "قيمة الإيداع (XOR)",
+  "Bond submitted: {hash}": "تم إرسال الإيداع: {hash}",
+  "Ballot submitted: {hash}": "تم إرسال الاقتراع: {hash}",
+  "Amount (XOR)": "الكمية (XOR)",
+  "XOR Balance": "رصيد XOR",
+  "Bond / Unbond": "إيداع / فك الإيداع",
+  "Pending Unbonds": "عمليات فك الإيداع المعلقة",
+  "No bonded stake available to unbond.":
+    "لا توجد حصة مودعة متاحة لفك الإيداع.",
+  "Unbond amount": "كمية فك الإيداع",
+  "Unbond amount (XOR)": "كمية فك الإيداع (XOR)",
+  "Unbond Delay": "مهلة فك الإيداع",
+  "Schedule Unbond": "جدولة فك الإيداع",
+  "Finalize Unbond": "تأكيد فك الإيداع",
+  "No {symbol} balance available to bond.": "لا يتوفر رصيد {symbol} للإيداع.",
+  "Nominate validators and stake XOR": "رشّح المدققين وقم بعمل Stake لـ XOR",
+  "Nominate validators and stake XOR for NPOS":
+    "رشّح المدققين وقم بعمل Stake لـ XOR لنظام NPOS",
+  "referendumId and proposalId are required for finalize.":
+    "يلزم referendumId و proposalId لإتمام finalize.",
+  "referendumId is required before submitting a ballot.":
+    "يلزم referendumId قبل إرسال الاقتراع.",
+  "proposalId is required for enact.": "يلزم proposalId لعملية enact.",
+  "TAIRA Testnet": "شبكة TAIRA التجريبية",
+  "Public TAIRA testnet profile.": "ملف شبكة TAIRA التجريبية العامة.",
+  "Store for iCloud Drive": "حفظ في iCloud Drive",
+  "Store for Google Drive": "حفظ في Google Drive",
+  "Generate pair": "إنشاء زوج مفاتيح",
+  "Save identity": "حفظ الهوية",
+  "Check health": "فحص الاتصال",
+  "Save authority": "حفظ بيانات الصلاحية",
+  "TAIRA testnet connection is fixed in this build.":
+    "اتصال شبكة TAIRA التجريبية ثابت في هذا الإصدار.",
+  "TAIRA testnet connection is fixed for onboarding in this build.":
+    "اتصال شبكة TAIRA التجريبية للانضمام ثابت في هذا الإصدار.",
+  wonderland: "wonderland",
+  "rose#wonderland": "rose#wonderland",
+  "Up to {unit} {amount}": "حتى {unit} {amount}",
+  "Usage based": "حسب الاستخدام",
+  "{unit} --": "{unit} --",
+  "{unit} {amount}": "{unit} {amount}",
+};
+
+const FA_MANUAL_TRANSLATIONS: TranslationTable = {
+  Aye: "موافق",
+  Nay: "مخالف",
+  Abstain: "ممتنع",
+  "SORA Parliament": "پارلمان SORA",
+  "Citizenship bond and governance voting": "باند شهروندی و رای‌گیری حاکمیتی",
+  "Bond citizenship and vote in governance referenda":
+    "برای شهروندی باند کنید و در همه‌پرسی‌های حاکمیتی رای دهید",
+  "A minimum of {amount} XOR is required to register citizenship.":
+    "برای ثبت شهروندی حداقل {amount} XOR لازم است.",
+  "Available XOR balance is below the required citizen bond amount.":
+    "موجودی XOR کمتر از مقدار باند شهروندی موردنیاز است.",
+  "Citizenship Bond": "باند شهروندی",
+  "Citizenship bond submitted: {hash}": "باند شهروندی ارسال شد: {hash}",
+  "Citizenship voting permission detected. Bonding is no longer required.":
+    "مجوز رای شهروندی شناسایی شد. دیگر نیازی به باند نیست.",
+  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
+    "این حساب مجوز رای ندارد. پیش از رای دادن باند شهروندی را ارسال کرده و تازه‌سازی کنید.",
+  "Bond {amount} XOR": "باند {amount} XOR",
+  "Bond XOR": "باند XOR",
+  "Bond amount": "مقدار باند",
+  "Bond amount (XOR)": "مقدار باند (XOR)",
+  "Bond submitted: {hash}": "باند ارسال شد: {hash}",
+  "Ballot submitted: {hash}": "رای ارسال شد: {hash}",
+  "Amount (XOR)": "مقدار (XOR)",
+  "XOR Balance": "موجودی XOR",
+  "Bond / Unbond": "باند / آن‌باند",
+  "Pending Unbonds": "آن‌باندهای در انتظار",
+  "No bonded stake available to unbond.":
+    "هیچ استیک باندشده‌ای برای آن‌باند وجود ندارد.",
+  "Unbond amount": "مقدار آن‌باند",
+  "Unbond amount (XOR)": "مقدار آن‌باند (XOR)",
+  "Unbond Delay": "تاخیر آن‌باند",
+  "Schedule Unbond": "زمان‌بندی آن‌باند",
+  "Finalize Unbond": "نهایی‌سازی آن‌باند",
+  "No {symbol} balance available to bond.":
+    "موجودی {symbol} برای باند در دسترس نیست.",
+  "Nominate validators and stake XOR":
+    "اعتبارسنج‌ها را نامزد کرده و XOR استیک کنید",
+  "Nominate validators and stake XOR for NPOS":
+    "اعتبارسنج‌ها را نامزد کرده و XOR را برای NPOS استیک کنید",
+  "referendumId and proposalId are required for finalize.":
+    "برای finalize به referendumId و proposalId نیاز است.",
+  "referendumId is required before submitting a ballot.":
+    "پیش از ارسال رای referendumId لازم است.",
+  "proposalId is required for enact.": "برای enact به proposalId نیاز است.",
+  "TAIRA Testnet": "تست‌نت TAIRA",
+  "Public TAIRA testnet profile.": "پروفایل عمومی تست‌نت TAIRA.",
+  "Store for iCloud Drive": "ذخیره در iCloud Drive",
+  "Store for Google Drive": "ذخیره در Google Drive",
+  "Generate pair": "ایجاد جفت‌کلید",
+  "Save identity": "ذخیره هویت",
+  "Check health": "بررسی اتصال",
+  "Save authority": "ذخیره مجوز",
+  "TAIRA testnet connection is fixed in this build.":
+    "اتصال تست‌نت TAIRA در این نسخه ثابت است.",
+  "TAIRA testnet connection is fixed for onboarding in this build.":
+    "اتصال تست‌نت TAIRA برای آنبوردینگ در این نسخه ثابت است.",
+  wonderland: "wonderland",
+  "rose#wonderland": "rose#wonderland",
+  "Up to {unit} {amount}": "تا {unit} {amount}",
+  "Usage based": "مبتنی بر مصرف",
+  "{unit} --": "{unit} --",
+  "{unit} {amount}": "{unit} {amount}",
+};
+
+const UR_MANUAL_TRANSLATIONS: TranslationTable = {
+  Aye: "ہاں",
+  Nay: "نہیں",
+  Abstain: "غیر حاضر",
+  "SORA Parliament": "سورا پارلیمنٹ",
+  "Citizenship bond and governance voting": "شہریت بانڈ اور گورننس ووٹنگ",
+  "Bond citizenship and vote in governance referenda":
+    "شہریت کے لیے بانڈ کریں اور گورننس ریفرنڈم میں ووٹ دیں",
+  "A minimum of {amount} XOR is required to register citizenship.":
+    "شہریت رجسٹر کرنے کے لیے کم از کم {amount} XOR درکار ہے۔",
+  "Available XOR balance is below the required citizen bond amount.":
+    "دستیاب XOR بیلنس مطلوبہ شہریت بانڈ سے کم ہے۔",
+  "Citizenship Bond": "شہریت بانڈ",
+  "Citizenship bond submitted: {hash}": "شہریت بانڈ جمع ہو گیا: {hash}",
+  "Citizenship voting permission detected. Bonding is no longer required.":
+    "شہری ووٹنگ کی اجازت موجود ہے۔ مزید بانڈنگ درکار نہیں۔",
+  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
+    "اس اکاؤنٹ میں بیلٹ کی اجازت موجود نہیں۔ ووٹنگ سے پہلے شہریت بانڈ جمع کریں اور ریفریش کریں۔",
+  "Bond {amount} XOR": "{amount} XOR بانڈ کریں",
+  "Bond XOR": "XOR بانڈ کریں",
+  "Bond amount": "بانڈ مقدار",
+  "Bond amount (XOR)": "بانڈ مقدار (XOR)",
+  "Bond submitted: {hash}": "بانڈ جمع ہو گیا: {hash}",
+  "Ballot submitted: {hash}": "بیلٹ جمع ہو گیا: {hash}",
+  "Amount (XOR)": "مقدار (XOR)",
+  "XOR Balance": "XOR بیلنس",
+  "Bond / Unbond": "بانڈ / ان بانڈ",
+  "Pending Unbonds": "زیر التوا ان بانڈز",
+  "No bonded stake available to unbond.":
+    "ان بانڈ کے لیے کوئی بانڈ شدہ اسٹیک دستیاب نہیں۔",
+  "Unbond amount": "ان بانڈ مقدار",
+  "Unbond amount (XOR)": "ان بانڈ مقدار (XOR)",
+  "Unbond Delay": "ان بانڈ تاخیر",
+  "Schedule Unbond": "ان بانڈ شیڈول کریں",
+  "Finalize Unbond": "ان بانڈ مکمل کریں",
+  "No {symbol} balance available to bond.":
+    "بانڈ کرنے کے لیے {symbol} بیلنس دستیاب نہیں۔",
+  "Nominate validators and stake XOR": "ویلیڈیٹر نامزد کریں اور XOR اسٹیک کریں",
+  "Nominate validators and stake XOR for NPOS":
+    "NPOS کے لیے ویلیڈیٹر نامزد کریں اور XOR اسٹیک کریں",
+  "referendumId and proposalId are required for finalize.":
+    "finalize کے لیے referendumId اور proposalId درکار ہیں۔",
+  "referendumId is required before submitting a ballot.":
+    "بیلٹ جمع کرنے سے پہلے referendumId درکار ہے۔",
+  "proposalId is required for enact.": "enact کے لیے proposalId درکار ہے۔",
+  "TAIRA Testnet": "TAIRA ٹیسٹ نیٹ",
+  "Public TAIRA testnet profile.": "عوامی TAIRA ٹیسٹ نیٹ پروفائل۔",
+  "Store for iCloud Drive": "iCloud Drive میں محفوظ کریں",
+  "Store for Google Drive": "Google Drive میں محفوظ کریں",
+  "Generate pair": "جوڑا بنائیں",
+  "Save identity": "شناخت محفوظ کریں",
+  "Check health": "کنکشن چیک کریں",
+  "Save authority": "اتھارٹی محفوظ کریں",
+  "TAIRA testnet connection is fixed in this build.":
+    "اس بلڈ میں TAIRA ٹیسٹ نیٹ کنکشن مقرر ہے۔",
+  "TAIRA testnet connection is fixed for onboarding in this build.":
+    "اس بلڈ میں آن بورڈنگ کے لیے TAIRA ٹیسٹ نیٹ کنکشن مقرر ہے۔",
+  wonderland: "wonderland",
+  "rose#wonderland": "rose#wonderland",
+  "Up to {unit} {amount}": "{unit} {amount} تک",
+  "Usage based": "استعمال کے مطابق",
+  "{unit} --": "{unit} --",
+  "{unit} {amount}": "{unit} {amount}",
+};
+
 const RU_TRANSLATIONS: TranslationTable = {
   ...RU_AUTO_TRANSLATIONS,
   ...RU_MANUAL_TRANSLATIONS,
@@ -552,13 +747,19 @@ const KO_TRANSLATIONS: TranslationTable = {
   ...KO_MANUAL_TRANSLATIONS,
 };
 
-const AR_TRANSLATIONS: TranslationTable = AR_AUTO_TRANSLATIONS;
+const AR_TRANSLATIONS: TranslationTable = {
+  ...AR_AUTO_TRANSLATIONS,
+  ...AR_MANUAL_TRANSLATIONS,
+};
 const AZ_TRANSLATIONS: TranslationTable = AZ_AUTO_TRANSLATIONS;
 const CA_TRANSLATIONS: TranslationTable = CA_AUTO_TRANSLATIONS;
 const CS_TRANSLATIONS: TranslationTable = CS_AUTO_TRANSLATIONS;
 const DE_TRANSLATIONS: TranslationTable = DE_AUTO_TRANSLATIONS;
 const ES_TRANSLATIONS: TranslationTable = ES_AUTO_TRANSLATIONS;
-const FA_TRANSLATIONS: TranslationTable = FA_AUTO_TRANSLATIONS;
+const FA_TRANSLATIONS: TranslationTable = {
+  ...FA_AUTO_TRANSLATIONS,
+  ...FA_MANUAL_TRANSLATIONS,
+};
 const FI_TRANSLATIONS: TranslationTable = FI_AUTO_TRANSLATIONS;
 const FR_TRANSLATIONS: TranslationTable = FR_AUTO_TRANSLATIONS;
 const HE_TRANSLATIONS: TranslationTable = HE_AUTO_TRANSLATIONS;
@@ -574,7 +775,10 @@ const PT_TRANSLATIONS: TranslationTable = PT_AUTO_TRANSLATIONS;
 const SL_TRANSLATIONS: TranslationTable = SL_AUTO_TRANSLATIONS;
 const SR_TRANSLATIONS: TranslationTable = SR_AUTO_TRANSLATIONS;
 const TR_TRANSLATIONS: TranslationTable = TR_AUTO_TRANSLATIONS;
-const UR_TRANSLATIONS: TranslationTable = UR_AUTO_TRANSLATIONS;
+const UR_TRANSLATIONS: TranslationTable = {
+  ...UR_AUTO_TRANSLATIONS,
+  ...UR_MANUAL_TRANSLATIONS,
+};
 const VI_TRANSLATIONS: TranslationTable = VI_AUTO_TRANSLATIONS;
 const ZH_TW_TRANSLATIONS: TranslationTable = ZH_TW_AUTO_TRANSLATIONS;
 

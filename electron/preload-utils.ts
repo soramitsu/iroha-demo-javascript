@@ -154,7 +154,7 @@ export const formatOnboardingError = (input: {
   const detail = String(input.detail ?? "").trim();
   if (input.status === 403) {
     const guidance =
-      "UAID onboarding is disabled on this Torii endpoint. Enable UAID onboarding on the target Torii.";
+      "UAID onboarding is disabled on this Torii endpoint. This TAIRA wallet build requires UAID onboarding enabled on the target Torii.";
     return detail
       ? `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance} Detail: ${detail}`
       : `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance}`;

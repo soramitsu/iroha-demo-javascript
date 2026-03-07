@@ -103,6 +103,11 @@ Optional env vars:
 - `E2E_ONBOARDING_OFFLINE_BALANCE` (default: `100`; seeded offline balance for onboarding shield submission checks)
 
 Deprecated `E2E_STATEFUL_*` onboarding env vars are no longer supported and now fail fast.
+Rename legacy vars as follows:
+
+- `E2E_STATEFUL_ALIAS` -> `E2E_ONBOARDING_ALIAS`
+- `E2E_STATEFUL_PRIVATE_KEY_HEX` -> `E2E_ONBOARDING_PRIVATE_KEY_HEX`
+- `E2E_STATEFUL_OFFLINE_BALANCE` -> `E2E_ONBOARDING_OFFLINE_BALANCE`
 
 In this TAIRA-only wallet build, live E2E only supports TAIRA Torii + chain ID values.
 

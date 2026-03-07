@@ -445,7 +445,7 @@ async function runOnboardingFlow(page) {
   if (onboardingStatus === "error") {
     if (isOnboardingDisabledError(onboardingDetail)) {
       throw new Error(
-        `Onboarding is disabled on ${toriiUrl} (HTTP 403). Enable UAID onboarding on the target Torii and rerun e2e:live.`,
+        `Onboarding is disabled on ${toriiUrl} (HTTP 403). This TAIRA wallet build requires UAID onboarding enabled on the target Torii. Enable it and rerun e2e:live.`,
       );
     }
     if (!isOnboardingConflictError(onboardingDetail)) {
