@@ -232,7 +232,7 @@ const navItems = [
   {
     to: "/receive",
     labelKey: "Receive",
-    descriptionKey: "Share QR codes or IH58 to request funds",
+    descriptionKey: "Share QR codes or account IDs to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
     step: "08",

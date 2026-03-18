@@ -13,7 +13,6 @@ import {
   normalizeAccountId,
   normalizeAssetId,
   bootstrapConnectPreviewSession,
-  type ToriiAddressFormat,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
@@ -46,6 +45,7 @@ type RegisterAccountInput = {
   toriiUrl: string;
   chainId: string;
   accountId: string;
+  domainId: string;
   metadata?: Record<string, unknown>;
   authorityAccountId: string;
   authorityPrivateKeyHex: HexString;
@@ -129,7 +129,6 @@ type NexusStakingPolicyResponse = {
 type NexusPublicLaneBaseInput = {
   toriiUrl: string;
   laneId: number;
-  addressFormat?: ToriiAddressFormat;
 };
 
 type NexusPublicLaneStakeInput = NexusPublicLaneBaseInput & {
@@ -236,9 +235,7 @@ type IrohaBridge = {
   }): {
     accountId: string;
     publicKeyHex: string;
-    ih58: string;
-    compressed: string;
-    compressedWarning: string;
+    accountIdWarning: string;
   };
   derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
@@ -293,12 +290,10 @@ type IrohaBridge = {
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
-    addressFormat?: ToriiAddressFormat;
   }): Promise<ExplorerAccountQrResponse>;
   listOfflineAllowances(input: {
     toriiUrl: string;
     controllerId: string;
-    addressFormat?: ToriiAddressFormat;
     limit?: number;
     offset?: number;
     filter?: string | Record<string, unknown>;
@@ -561,32 +556,14 @@ const accountSummaryFromPublicKey = (
 ) => {
   const publicKey = hexToBuffer(publicKeyHex, "publicKeyHex");
   const rawPublicKeyHex = toHex(publicKey).toUpperCase();
-  try {
-    const address = AccountAddress.fromAccount({ domain, publicKey });
-    const canonicalAddressHex = address
-      .canonicalHex()
-      .replace(/^0x/i, "")
-      .toUpperCase();
-    const formats = address.displayFormats(networkPrefix);
-    return {
-      accountId: `0x${canonicalAddressHex}@${domain}`,
-      publicKeyHex: rawPublicKeyHex,
-      ih58: formats.ih58,
-      compressed: formats.compressed,
-      compressedWarning: formats.compressedWarning,
-    };
-  } catch (error) {
-    if (!String(error).includes("Digest method not supported")) {
-      throw error;
-    }
-  }
+  const address = AccountAddress.fromAccount({ domain, publicKey });
+  const formats = address.displayFormats(networkPrefix);
+  const canonicalAccountId = normalizeAccountId(address.toI105(), "accountId");
 
   return {
-    accountId: `ed0120${rawPublicKeyHex}@${domain}`,
+    accountId: canonicalAccountId,
     publicKeyHex: rawPublicKeyHex,
-    ih58: "",
-    compressed: "",
-    compressedWarning: "Address formatting unavailable in this runtime.",
+    accountIdWarning: formats.i105Warning,
   };
 };
 
@@ -613,6 +590,10 @@ const api: IrohaBridge = {
   },
   async registerAccount(input) {
     const client = getClient(input.toriiUrl);
+    const domainId = input.domainId.trim();
+    if (!domainId) {
+      throw new Error("domainId is required.");
+    }
     const tx = buildRegisterAccountAndTransferTransaction({
       chainId: input.chainId,
       authority: normalizeAccountId(
@@ -621,6 +602,7 @@ const api: IrohaBridge = {
       ),
       account: {
         accountId: normalizeAccountId(input.accountId, "accountId"),
+        domainId,
         metadata: input.metadata ?? {},
       },
       privateKey: hexToBuffer(
@@ -704,10 +686,63 @@ const api: IrohaBridge = {
     }
 
     const client = getClient(input.toriiUrl);
-    const sourceAssetId = normalizeAssetId(
-      `${input.assetDefinitionId}##${accountId}`,
-      "sourceAssetId",
-    );
+    const configuredAssetId = String(input.assetDefinitionId ?? "").trim();
+    if (!configuredAssetId) {
+      throw new Error("assetDefinitionId is required.");
+    }
+
+    let sourceAssetId: string | null = null;
+    try {
+      sourceAssetId = normalizeAssetId(configuredAssetId, "sourceAssetId");
+    } catch {
+      sourceAssetId = null;
+    }
+
+    if (!sourceAssetId) {
+      const assets = await client.listAccountAssets(accountId, {
+        limit: 200,
+      });
+      const items = Array.isArray(assets?.items) ? assets.items : [];
+      const exactMatch = items.find(
+        (asset) => String(asset.asset_id ?? "").trim() === configuredAssetId,
+      );
+      const legacyMatch = items.find((asset) =>
+        String(asset.asset_id ?? "").startsWith(`${configuredAssetId}##`),
+      );
+      const containsMatches = items.filter((asset) =>
+        String(asset.asset_id ?? "")
+          .toLowerCase()
+          .includes(configuredAssetId.toLowerCase()),
+      );
+      const positiveBalanceMatches = items.filter((asset) => {
+        const quantity = Number(String(asset.quantity ?? ""));
+        return Number.isFinite(quantity) && quantity > 0;
+      });
+
+      const selectedAssetId = String(
+        exactMatch?.asset_id ??
+          legacyMatch?.asset_id ??
+          (containsMatches.length === 1 ? containsMatches[0]?.asset_id : "") ??
+          (positiveBalanceMatches.length === 1
+            ? positiveBalanceMatches[0]?.asset_id
+            : ""),
+      ).trim();
+
+      if (!selectedAssetId) {
+        const available = items
+          .map((asset) => String(asset.asset_id ?? "").trim())
+          .filter(Boolean)
+          .slice(0, 5);
+        const availableHint = available.length
+          ? ` Available asset IDs: ${available.join(", ")}.`
+          : "";
+        throw new Error(
+          `Unable to resolve source asset ID from configured value "${configuredAssetId}". Set Asset Definition ID to a canonical encoded asset ID (norito:<hex>) for this account.${availableHint}`,
+        );
+      }
+      sourceAssetId = normalizeAssetId(selectedAssetId, "sourceAssetId");
+    }
+
     const tx = buildTransferAssetTransaction({
       chainId: input.chainId,
       authority: accountId,
@@ -842,17 +877,11 @@ const api: IrohaBridge = {
     const client = getClient(config.toriiUrl);
     return client.getExplorerMetrics().catch(() => null);
   },
-  async getExplorerAccountQr({ toriiUrl, accountId, addressFormat }) {
+  async getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl);
     const fetchFallback = async () => {
       const baseUrl = normalizeBaseUrl(toriiUrl);
-      const params = new URLSearchParams();
-      if (addressFormat) {
-        params.set("address_format", addressFormat);
-      }
-      const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(accountId)}/qr${
-        params.size ? `?${params.toString()}` : ""
-      }`;
+      const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(accountId)}/qr`;
       const response = await fetch(endpoint, {
         method: "GET",
         headers: {
@@ -873,9 +902,6 @@ const api: IrohaBridge = {
     try {
       return await client.getExplorerAccountQr(
         normalizeAccountId(accountId, "accountId"),
-        {
-          addressFormat,
-        },
       );
     } catch (error) {
       if (!String(error).includes("Digest method not supported")) {
@@ -887,7 +913,6 @@ const api: IrohaBridge = {
   listOfflineAllowances({
     toriiUrl,
     controllerId,
-    addressFormat = "ih58",
     limit,
     offset,
     filter,
@@ -906,7 +931,6 @@ const api: IrohaBridge = {
     const client = getClient(toriiUrl);
     return client.listOfflineAllowances({
       controllerId: normalizeAccountId(controllerId, "controllerId"),
-      addressFormat,
       limit,
       offset,
       filter,
@@ -997,28 +1021,19 @@ const api: IrohaBridge = {
     const client = getClient(config.toriiUrl);
     return client.getSumeragiStatusTyped();
   },
-  async getNexusPublicLaneValidators({ toriiUrl, laneId, addressFormat }) {
+  async getNexusPublicLaneValidators({ toriiUrl, laneId }) {
     const endpoint = buildNexusEndpoint(
       toriiUrl,
       `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/validators`,
-      {
-        address_format: addressFormat,
-      },
     );
     const payload = await fetchJson(endpoint, "Public lane validators");
     return normalizePublicLaneValidatorsPayload(payload);
   },
-  async getNexusPublicLaneStake({
-    toriiUrl,
-    laneId,
-    addressFormat,
-    validator,
-  }) {
+  async getNexusPublicLaneStake({ toriiUrl, laneId, validator }) {
     const endpoint = buildNexusEndpoint(
       toriiUrl,
       `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/stake`,
       {
-        address_format: addressFormat,
         validator: validator
           ? normalizeAccountId(validator, "validator")
           : undefined,
@@ -1030,7 +1045,6 @@ const api: IrohaBridge = {
   async getNexusPublicLaneRewards({
     toriiUrl,
     laneId,
-    addressFormat,
     account,
     assetId,
     uptoEpoch,
@@ -1039,7 +1053,6 @@ const api: IrohaBridge = {
       toriiUrl,
       `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/rewards/pending`,
       {
-        address_format: addressFormat,
         account: normalizeAccountId(account, "account"),
         asset_id: assetId,
         upto_epoch:

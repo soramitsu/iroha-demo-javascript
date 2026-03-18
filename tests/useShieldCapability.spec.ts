@@ -28,7 +28,7 @@ describe("useShieldCapability", () => {
   beforeEach(() => {
     getConfidentialAssetPolicyMock.mockReset();
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
@@ -41,7 +41,7 @@ describe("useShieldCapability", () => {
 
   it("uses policy mode to keep shielding enabled when supported", async () => {
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -53,7 +53,7 @@ describe("useShieldCapability", () => {
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      assetDefinitionId: "rose#wonderland",
+      assetDefinitionId: "norito:abcdef0123456789",
     });
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldCapabilityMessage.value).toBe("");
@@ -63,7 +63,7 @@ describe("useShieldCapability", () => {
 
   it("disables shielding and unchecks toggle when policy mode is unsupported", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
@@ -73,7 +73,7 @@ describe("useShieldCapability", () => {
       pending_transition: null,
     });
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -92,7 +92,7 @@ describe("useShieldCapability", () => {
 
   it("supports custom translation callback for policy warnings", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
@@ -102,7 +102,7 @@ describe("useShieldCapability", () => {
       pending_transition: null,
     });
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -122,7 +122,7 @@ describe("useShieldCapability", () => {
   it("keeps shielding available and reports errors when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(new Error("timeout"));
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -142,7 +142,7 @@ describe("useShieldCapability", () => {
 
   it("does not fetch policy when torii url or asset definition is missing", async () => {
     const toriiUrl = ref("");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(false);
 
     const capability = useShieldCapability({
@@ -187,7 +187,7 @@ describe("useShieldCapability", () => {
       .mockImplementationOnce(() => second.promise);
 
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -201,7 +201,7 @@ describe("useShieldCapability", () => {
     await flushReactiveEffects();
 
     second.resolve({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 2,
       current_mode: "Convertible",
       effective_mode: "Convertible",
@@ -213,7 +213,7 @@ describe("useShieldCapability", () => {
     await flushReactiveEffects();
 
     first.resolve({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
@@ -256,7 +256,7 @@ describe("useShieldCapability", () => {
       .mockImplementationOnce(() => second.promise);
 
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("rose#wonderland");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({

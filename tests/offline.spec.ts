@@ -24,7 +24,7 @@ describe("offline utilities", () => {
   it("creates and parses invoices and payments", () => {
     const invoice = createInvoice({
       receiver: "alice@wonderland",
-      assetId: "rose#wonderland",
+      assetId: "norito:abcdef0123456789",
       amount: "5.5",
       validityMs: 60_000,
       memo: "snacks",
@@ -46,7 +46,7 @@ describe("offline utilities", () => {
   it("updates balances for outgoing and incoming payments", () => {
     const invoice = createInvoice({
       receiver: "alice@wonderland",
-      assetId: "rose#wonderland",
+      assetId: "norito:abcdef0123456789",
       amount: "2",
       validityMs: 60_000,
     });

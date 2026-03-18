@@ -169,9 +169,6 @@ export const normalizeExplorerAccountQrPayload = (
 ): ExplorerAccountQrResponse => {
   const canonicalId = String(payload.canonicalId ?? payload.canonical_id ?? "");
   const literal = String(payload.literal ?? "");
-  const addressFormat = String(
-    payload.addressFormat ?? payload.address_format ?? "ih58",
-  ) as ExplorerAccountQrResponse["addressFormat"];
   const networkPrefix = Number(
     payload.networkPrefix ?? payload.network_prefix ?? 0,
   );
@@ -189,7 +186,6 @@ export const normalizeExplorerAccountQrPayload = (
   return {
     canonicalId,
     literal,
-    addressFormat,
     networkPrefix,
     errorCorrection,
     modules,

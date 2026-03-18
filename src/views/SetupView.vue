@@ -36,7 +36,7 @@
           {{ t("Asset Definition ID") }}
           <input
             v-model="connectionForm.assetDefinitionId"
-            :placeholder="t('rose#wonderland')"
+            :placeholder="t('norito:<asset-id-hex>')"
           />
         </label>
         <label>
@@ -95,16 +95,6 @@
           {{ t("Account ID") }}
           <input v-model="userForm.accountId" readonly />
         </label>
-        <div class="grid-2">
-          <div class="kv">
-            <span class="kv-label">{{ t("IH58") }}</span>
-            <span class="kv-value">{{ userForm.ih58 || t("—") }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Compressed") }}</span>
-            <span class="kv-value">{{ userForm.compressed || t("—") }}</span>
-          </div>
-        </div>
       </div>
       <div class="actions">
         <button :disabled="generating" @click="handleGenerate">
@@ -139,7 +129,7 @@
           {{ t("Authority Account ID") }}
           <input
             v-model="authorityForm.accountId"
-            :placeholder="t('34m... or 0x...@wonderland')"
+            :placeholder="t('n42u... (I105 account ID)')"
           />
         </label>
         <label>
@@ -194,9 +184,6 @@ const emptyAccount = () => ({
   accountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
-  ih58: "",
-  compressed: "",
-  compressedWarning: "",
 });
 const userForm = reactive({
   ...emptyAccount(),
@@ -393,6 +380,7 @@ const handleRegister = async () => {
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId,
       accountId: userForm.accountId,
+      domainId: userForm.domain,
       metadata,
       authorityAccountId: authorityForm.accountId,
       authorityPrivateKeyHex: authorityForm.privateKeyHex,

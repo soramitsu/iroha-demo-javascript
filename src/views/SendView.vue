@@ -30,7 +30,7 @@
         {{ t("Destination Account ID") }}
         <input
           v-model="form.destination"
-          :placeholder="t('34m... or 0x...@wonderland')"
+          :placeholder="t('n42u... (I105 account ID)')"
           :disabled="destinationLocked"
         />
       </label>

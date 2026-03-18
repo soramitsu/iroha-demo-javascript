@@ -7,7 +7,7 @@ describe("extractTransferInsight", () => {
       {
         Transfer: {
           Asset: {
-            source: "rose#wonderland##alice@wonderland",
+            source: "norito:abcdef0123456789##alice@wonderland",
             object: "15",
             destination: "bob@wonderland",
           },
@@ -40,5 +40,30 @@ describe("extractTransferInsight", () => {
       "alice@wonderland",
     );
     expect(insight).toBeNull();
+  });
+
+  it("uses authority fallback for encoded asset ids without source account suffix", () => {
+    const insight = extractTransferInsight(
+      {
+        authority: "n42uSender",
+        instructions: [
+          {
+            Transfer: {
+              Asset: {
+                source: "norito:abc123",
+                object: "5",
+                destination: "n42uReceiver",
+              },
+            },
+          },
+        ],
+      },
+      "n42uSender",
+    );
+    expect(insight).toEqual({
+      direction: "Sent",
+      amount: "5",
+      counterparty: "n42uReceiver",
+    });
   });
 });

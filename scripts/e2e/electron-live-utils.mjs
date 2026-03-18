@@ -1,3 +1,5 @@
+import { normalizeAccountId } from "@iroha/iroha-js";
+
 export function parseNetworkPrefix(rawValue) {
   if (!rawValue) return 42;
   const parsed = Number(rawValue);
@@ -10,9 +12,12 @@ export function parseNetworkPrefix(rawValue) {
 export function isSupportedAccountIdLiteral(value) {
   const accountId = String(value ?? "").trim();
   if (!accountId) return false;
-  if (/^(ih58|sora|uaid|opaque):/i.test(accountId)) return true;
-  if (/^0x[0-9a-f]+@[^@\s]+$/i.test(accountId)) return true;
-  return /^[^@\s]+@[^@\s]+$/.test(accountId);
+  try {
+    normalizeAccountId(accountId, "accountId");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function isOnboardingDisabledError(detail) {

@@ -140,12 +140,22 @@ const refresh = async () => {
 };
 
 const primaryAsset = computed(() => {
-  const target = session.connection.assetDefinitionId;
-  if (!target) {
+  const items = assets.value;
+  if (!items.length) {
     return null;
   }
+  const target = session.connection.assetDefinitionId.trim();
+  if (!target) {
+    return items[0] ?? null;
+  }
+  const normalizedTarget = target.toLowerCase();
   return (
-    assets.value.find((asset) => asset.asset_id.startsWith(target)) ?? null
+    items.find((asset) => asset.asset_id === target) ??
+    items.find((asset) => asset.asset_id.startsWith(target)) ??
+    items.find((asset) =>
+      asset.asset_id.toLowerCase().includes(normalizedTarget),
+    ) ??
+    (items.length === 1 ? items[0] : null)
   );
 });
 

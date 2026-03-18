@@ -296,6 +296,7 @@ import {
   resolveLaneForDataspace,
   type DataspaceOption,
 } from "@/utils/staking";
+import { deriveAssetSymbol } from "@/utils/assetId";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
@@ -524,19 +525,44 @@ const refresh = async () => {
         limit: 200,
       }),
     ]);
-    const preferredStakeAsset = accountAssets.items.find((asset) =>
-      asset.asset_id.toLowerCase().startsWith("xor#"),
-    );
-    const fallbackStakeAsset = session.connection.assetDefinitionId
-      ? accountAssets.items.find((asset) =>
-          asset.asset_id.startsWith(session.connection.assetDefinitionId),
-        )
-      : null;
-    const detectedStakeAsset =
-      preferredStakeAsset ?? fallbackStakeAsset ?? null;
+    const normalizedTargetAsset = session.connection.assetDefinitionId
+      .trim()
+      .toLowerCase();
+    const scoredAssets = accountAssets.items
+      .map((asset) => {
+        const assetId = String(asset.asset_id ?? "");
+        const normalizedAssetId = assetId.toLowerCase();
+        const quantity = Number(String(asset.quantity ?? ""));
+        const quantityScore =
+          Number.isFinite(quantity) && quantity > 0
+            ? Math.min(quantity, 1_000_000)
+            : 0;
+
+        let score = 0;
+        if (normalizedTargetAsset) {
+          if (normalizedAssetId === normalizedTargetAsset) score += 1_000_000;
+          if (normalizedAssetId.startsWith(normalizedTargetAsset)) {
+            score += 100_000;
+          }
+          if (normalizedAssetId.includes(normalizedTargetAsset)) {
+            score += 50_000;
+          }
+        }
+        if (normalizedAssetId.startsWith("xor#")) score += 25_000;
+        else if (normalizedAssetId.includes("xor")) score += 15_000;
+        if (normalizedAssetId.startsWith("norito:")) score += 5_000;
+
+        return {
+          asset,
+          score: score + quantityScore,
+        };
+      })
+      .sort((left, right) => right.score - left.score);
+    const detectedStakeAsset = scoredAssets[0]?.asset ?? null;
     stakeTokenBalance.value = detectedStakeAsset?.quantity ?? "0";
-    stakeTokenSymbol.value =
-      detectedStakeAsset?.asset_id.split("#")[0]?.toUpperCase() || "XOR";
+    stakeTokenSymbol.value = detectedStakeAsset
+      ? deriveAssetSymbol(detectedStakeAsset.asset_id, "ASSET")
+      : "XOR";
 
     const options = collectDataspaceOptions(status);
     dataspaceOptions.value = options;

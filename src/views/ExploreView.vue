@@ -98,12 +98,6 @@
           />
           <div class="qr-meta">
             <div class="kv">
-              <span class="kv-label">{{ t("Format") }}</span>
-              <span class="kv-value">{{
-                accountQr.addressFormat.toUpperCase()
-              }}</span>
-            </div>
-            <div class="kv">
               <span class="kv-label">{{ t("Network Prefix") }}</span>
               <span class="kv-value">{{ accountQr.networkPrefix }}</span>
             </div>

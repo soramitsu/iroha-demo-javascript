@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
+import { AccountAddress, normalizeAssetId } from "@iroha/iroha-js";
 import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
@@ -23,18 +24,23 @@ const tairaToriiHosts = new Set(["taira.sora.org", "www.taira.sora.org"]);
 
 const toriiUrl = readEnv("E2E_TORII_URL", tairaToriiUrl);
 const chainId = readEnv("E2E_CHAIN_ID", tairaChainId);
-const assetDefinitionId =
-  process.env.E2E_ASSET_DEFINITION_ID || "rose#wonderland";
+const assetDefinitionId = String(
+  process.env.E2E_ASSET_DEFINITION_ID ?? "",
+).trim();
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
 const {
   alias: onboardingAlias,
   privateKeyHex: onboardingPrivateKeyHex,
   offlineBalance: onboardingOfflineSeedBalance,
 } = parseOnboardingEnvConfig(process.env);
+const deterministicSeedPublicKeyHex =
+  "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
+const defaultAccountIdFallback = AccountAddress.fromAccount({
+  domain: "wonderland",
+  publicKey: Buffer.from(deterministicSeedPublicKeyHex, "hex"),
+}).toI105();
 
-const defaultAccountId =
-  process.env.E2E_ACCOUNT_ID ||
-  "ed0120CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03@wonderland";
+const defaultAccountId = process.env.E2E_ACCOUNT_ID || defaultAccountIdFallback;
 const syntheticPublicKeyHex =
   `ed0120${randomBytes(32).toString("hex")}`.toUpperCase();
 const syntheticPrivateKeyHex = randomBytes(32).toString("hex");
@@ -43,6 +49,20 @@ async function main() {
   if (!existsSync(mainEntry)) {
     throw new Error(
       `Built Electron entrypoint not found: ${mainEntry}. Run "npm run build" first.`,
+    );
+  }
+
+  if (!assetDefinitionId) {
+    throw new Error(
+      "E2E_ASSET_DEFINITION_ID is required. Provide a canonical encoded asset ID (norito:<hex>).",
+    );
+  }
+  try {
+    normalizeAssetId(assetDefinitionId, "E2E_ASSET_DEFINITION_ID");
+  } catch (error) {
+    throw new Error(
+      `E2E_ASSET_DEFINITION_ID has unsupported format: ${assetDefinitionId}. Provide a canonical encoded asset ID (norito:<hex>).`,
+      { cause: error },
     );
   }
 
@@ -181,9 +201,6 @@ async function runReadOnlyFlow(page, seededAccountId) {
               accountId,
               publicKeyHex,
               privateKeyHex,
-              ih58: "",
-              compressed: "",
-              compressedWarning: "",
             },
           ],
           activeAccountId: accountId,
@@ -303,7 +320,7 @@ async function resolveSeedAccountId(baseUrl) {
       return fromEnv;
     }
     throw new Error(
-      `E2E_ACCOUNT_ID has unsupported format: ${fromEnv}. Provide IH58/sora/0x/uaid/opaque or <alias|public_key>@domain.`,
+      `E2E_ACCOUNT_ID has unsupported format: ${fromEnv}. Provide a canonical I105 account literal accepted by normalizeAccountId().`,
     );
   }
   const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
@@ -357,9 +374,6 @@ async function runOnboardingFlow(page) {
         accountId: summary.accountId,
         publicKeyHex,
         privateKeyHex,
-        ih58: summary.ih58 ?? "",
-        compressed: summary.compressed ?? "",
-        compressedWarning: summary.compressedWarning ?? "",
       };
 
       let onboarding = { status: "ok", detail: "" };
@@ -465,7 +479,7 @@ async function runOnboardingFlow(page) {
   const persistedAccountId = onboardingBootstrap?.accountId ?? null;
   if (
     typeof persistedAccountId !== "string" ||
-    !persistedAccountId.includes("@")
+    !isSupportedAccountIdLiteral(persistedAccountId)
   ) {
     throw new Error(
       `Onboarding bootstrap persisted an ambiguous account id literal: ${String(persistedAccountId)}`,
@@ -499,7 +513,7 @@ async function runOnboardingFlow(page) {
   }
   await sendShieldToggle.check();
   const sendDestination = sendCard.getByPlaceholder(
-    "34m... or 0x...@wonderland",
+    "n42u... (I105 account ID)",
   );
   if (!(await sendDestination.isDisabled())) {
     throw new Error(
@@ -587,7 +601,7 @@ async function runOnboardingFlow(page) {
   }
   await moveShieldToggle.check();
   const moveDestination = moveCard.getByPlaceholder(
-    "34m... or 0x...@wonderland",
+    "n42u... (I105 account ID)",
   );
   if (!(await moveDestination.isDisabled())) {
     throw new Error(
@@ -782,10 +796,10 @@ async function runNavigationSmokeFlow(page) {
         continue;
       }
       const destinationInput = page.getByPlaceholder(
-        "34m... or 0x...@wonderland",
+        "n42u... (I105 account ID)",
       );
       const amountInput = page.locator('input[type="number"]').first();
-      const transparentDestination = "restore-send@wonderland";
+      const transparentDestination = "n42uRestoreSendAccount";
       await destinationInput.fill(transparentDestination);
 
       const transparentStep = await amountInput.getAttribute("step");
@@ -935,9 +949,9 @@ async function runNavigationSmokeFlow(page) {
         continue;
       }
       const destinationInput = moveCard.getByPlaceholder(
-        "34m... or 0x...@wonderland",
+        "n42u... (I105 account ID)",
       );
-      const transparentDestination = "restore-offline@wonderland";
+      const transparentDestination = "n42uRestoreOfflineAccount";
       await destinationInput.fill(transparentDestination);
       let offlineShieldCheckable = true;
       for (let attempt = 0; attempt < 3; attempt += 1) {

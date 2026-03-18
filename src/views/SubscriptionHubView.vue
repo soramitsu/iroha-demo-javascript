@@ -182,6 +182,7 @@ import {
   type SubscriptionCadence,
   type SubscriptionRecord,
 } from "@/utils/subscriptions";
+import { deriveAssetSymbol } from "@/utils/assetId";
 
 const subscriptions = useSubscriptionStore();
 const session = useSessionStore();
@@ -199,8 +200,7 @@ const formError = ref("");
 const unitLabel = computed(() => {
   const asset = session.connection.assetDefinitionId || "";
   if (!asset) return "units";
-  const [symbol] = asset.split("#");
-  return symbol || asset;
+  return deriveAssetSymbol(asset, "units");
 });
 
 const sortedRecords = computed(() =>

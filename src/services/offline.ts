@@ -13,12 +13,10 @@ export type OfflineAllowanceSnapshot = {
 export const fetchOfflineAllowances = async (params: {
   toriiUrl: string;
   controllerId: string;
-  addressFormat?: "ih58" | "canonical" | "compressed";
 }): Promise<OfflineAllowanceSnapshot> => {
   const response = await listOfflineAllowances({
     toriiUrl: params.toriiUrl,
     controllerId: params.controllerId,
-    addressFormat: params.addressFormat ?? "ih58",
     limit: 200,
   });
   const total = sumAllowances(response.items);

@@ -536,6 +536,47 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   Aye: "نعم",
   Nay: "لا",
   Abstain: "امتناع",
+  "Iroha Points": "نقاط إيروها",
+  "Torii control deck": "لوحة تحكم Torii",
+  "Modern Torii-connected wallet": "محفظة حديثة متصلة بـ Torii",
+  Language: "اللغة",
+  Navigate: "التنقل",
+  "Account Setup": "إعداد الحساب",
+  Session: "الجلسة",
+  Wallet: "المحفظة",
+  Staking: "الإيداع",
+  Parliament: "البرلمان",
+  Subscriptions: "الاشتراكات",
+  Send: "إرسال",
+  Receive: "استلام",
+  Offline: "دون اتصال",
+  Explore: "الاستكشاف",
+  "Account ready": "الحساب جاهز",
+  "Complete onboarding": "أكمل الإعداد",
+  "Account saved": "تم حفظ الحساب",
+  "Onboarding required": "الإعداد مطلوب",
+  "TAIRA Torii ready": "Torii TAIRA جاهز",
+  "Torii unavailable": "Torii غير متاح",
+  "Generate keys, recovery phrase, Connect pairing":
+    "أنشئ المفاتيح وعبارة الاسترداد واقتران Connect",
+  "TAIRA connection, asset, and authority keys":
+    "اتصال TAIRA والأصل ومفاتيح الصلاحية",
+  "Balances, assets, and latest transactions": "الأرصدة والأصول وآخر المعاملات",
+  "Auto-deduct and manage recurring services":
+    "خصم تلقائي وإدارة الخدمات المتكررة",
+  "Transfer assets with camera or QR upload":
+    "انقل الأصول بالكاميرا أو عبر رفع QR",
+  "Share QR codes or IH58 to request funds":
+    "شارك رموز QR أو IH58 لطلب الأموال",
+  "Offline wallets, invoices, and QR exchanges":
+    "محافظ دون اتصال وفواتير وتبادل QR",
+  "Network metrics and asset explorer": "مقاييس الشبكة ومستكشف الأصول",
+  "Wallet Overview": "نظرة عامة على المحفظة",
+  "Balances & activity": "الأرصدة والنشاط",
+  "Subscription Hub": "مركز الاشتراكات",
+  "Send Points": "إرسال النقاط",
+  "Receive Points": "استلام النقاط",
+  "Network & asset insights": "رؤى الشبكة والأصول",
   "SORA Parliament": "برلمان SORA",
   "Citizenship bond and governance voting": "سند المواطنة والتصويت على الحوكمة",
   "Bond citizenship and vote in governance referenda":
@@ -600,6 +641,48 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   Aye: "موافق",
   Nay: "مخالف",
   Abstain: "ممتنع",
+  "Iroha Points": "امتیازهای Iroha",
+  "Torii control deck": "داشبورد کنترل Torii",
+  "Modern Torii-connected wallet": "کیف پول مدرن متصل به Torii",
+  Language: "زبان",
+  Navigate: "پیمایش",
+  "Account Setup": "راه‌اندازی حساب",
+  Session: "نشست",
+  Wallet: "کیف پول",
+  Staking: "استیکینگ",
+  Parliament: "پارلمان",
+  Subscriptions: "اشتراک‌ها",
+  Send: "ارسال",
+  Receive: "دریافت",
+  Offline: "آفلاین",
+  Explore: "کاوش",
+  "Account ready": "حساب آماده است",
+  "Complete onboarding": "آنبوردینگ را کامل کنید",
+  "Account saved": "حساب ذخیره شد",
+  "Onboarding required": "آنبوردینگ لازم است",
+  "TAIRA Torii ready": "Torii TAIRA آماده است",
+  "Torii unavailable": "Torii در دسترس نیست",
+  "Generate keys, recovery phrase, Connect pairing":
+    "کلیدها، عبارت بازیابی و جفت‌سازی Connect را ایجاد کنید",
+  "TAIRA connection, asset, and authority keys":
+    "اتصال TAIRA، دارایی و کلیدهای مجوز",
+  "Balances, assets, and latest transactions":
+    "موجودی‌ها، دارایی‌ها و آخرین تراکنش‌ها",
+  "Auto-deduct and manage recurring services":
+    "برداشت خودکار و مدیریت خدمات تکرارشونده",
+  "Transfer assets with camera or QR upload":
+    "دارایی‌ها را با دوربین یا آپلود QR منتقل کنید",
+  "Share QR codes or IH58 to request funds":
+    "برای درخواست وجه، کد QR یا IH58 را به‌اشتراک بگذارید",
+  "Offline wallets, invoices, and QR exchanges":
+    "کیف پول آفلاین، فاکتور و تبادل QR",
+  "Network metrics and asset explorer": "شاخص‌های شبکه و کاوشگر دارایی",
+  "Wallet Overview": "نمای کلی کیف پول",
+  "Balances & activity": "موجودی و فعالیت",
+  "Subscription Hub": "مرکز اشتراک",
+  "Send Points": "ارسال امتیاز",
+  "Receive Points": "دریافت امتیاز",
+  "Network & asset insights": "بینش شبکه و دارایی",
   "SORA Parliament": "پارلمان SORA",
   "Citizenship bond and governance voting": "باند شهروندی و رای‌گیری حاکمیتی",
   "Bond citizenship and vote in governance referenda":
@@ -662,10 +745,156 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "{unit} {amount}": "{unit} {amount}",
 };
 
+const HE_MANUAL_TRANSLATIONS: TranslationTable = {
+  Aye: "בעד",
+  Nay: "נגד",
+  Abstain: "נמנע",
+  "Iroha Points": "נקודות Iroha",
+  "Torii control deck": "לוח בקרה של Torii",
+  "Modern Torii-connected wallet": "ארנק מודרני המחובר ל-Torii",
+  Language: "שפה",
+  Navigate: "ניווט",
+  "Account Setup": "הגדרת חשבון",
+  Session: "סשן",
+  Wallet: "ארנק",
+  Staking: "סטייקינג",
+  Parliament: "פרלמנט",
+  Subscriptions: "מנויים",
+  Send: "שליחה",
+  Receive: "קבלה",
+  Offline: "אופליין",
+  Explore: "חקירה",
+  "Account ready": "החשבון מוכן",
+  "Complete onboarding": "השלימו את תהליך ההצטרפות",
+  "Account saved": "החשבון נשמר",
+  "Onboarding required": "נדרש תהליך הצטרפות",
+  "TAIRA Torii ready": "Torii של TAIRA מוכן",
+  "Torii unavailable": "Torii לא זמין",
+  "Generate keys, recovery phrase, Connect pairing":
+    "יצירת מפתחות, משפט שחזור וצימוד Connect",
+  "TAIRA connection, asset, and authority keys":
+    "חיבור TAIRA, נכס ומפתחות הרשאה",
+  "Balances, assets, and latest transactions": "יתרות, נכסים ועסקאות אחרונות",
+  "Auto-deduct and manage recurring services":
+    "חיוב אוטומטי וניהול שירותים חוזרים",
+  "Transfer assets with camera or QR upload":
+    "העברת נכסים עם מצלמה או העלאת QR",
+  "Share QR codes or IH58 to request funds":
+    "שתפו קודי QR או IH58 כדי לבקש כספים",
+  "Offline wallets, invoices, and QR exchanges":
+    "ארנקים אופליין, חשבוניות והחלפות QR",
+  "Network metrics and asset explorer": "מדדי רשת וסייר נכסים",
+  "Wallet Overview": "סקירת ארנק",
+  "Balances & activity": "יתרות ופעילות",
+  "Subscription Hub": "מרכז מנויים",
+  "Send Points": "שליחת נקודות",
+  "Receive Points": "קבלת נקודות",
+  "Network & asset insights": "תובנות רשת ונכסים",
+  "SORA Parliament": "פרלמנט SORA",
+  "Citizenship bond and governance voting": "בונד אזרחות והצבעה בממשל",
+  "Bond citizenship and vote in governance referenda":
+    "בצעו בונד אזרחות והצביעו במשאלי ממשל",
+  "A minimum of {amount} XOR is required to register citizenship.":
+    "נדרש מינימום של {amount} XOR לרישום אזרחות.",
+  "Available XOR balance is below the required citizen bond amount.":
+    "יתרת XOR הזמינה נמוכה מסכום בונד האזרחות הנדרש.",
+  "Citizenship Bond": "בונד אזרחות",
+  "Citizenship bond submitted: {hash}": "בונד האזרחות נשלח: {hash}",
+  "Citizenship voting permission detected. Bonding is no longer required.":
+    "זוהתה הרשאת הצבעת אזרחות. אין צורך נוסף בבונד.",
+  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
+    "בחשבון זה חסרה הרשאת הצבעה. שלחו בונד אזרחות ורעננו לפני ההצבעה.",
+  "Bond {amount} XOR": "בצעו בונד של {amount} XOR",
+  "Bond XOR": "בצעו בונד XOR",
+  "Bond amount": "סכום בונד",
+  "Bond amount (XOR)": "סכום בונד (XOR)",
+  "Bond submitted: {hash}": "הבונד נשלח: {hash}",
+  "Ballot submitted: {hash}": "ההצבעה נשלחה: {hash}",
+  "Amount (XOR)": "כמות (XOR)",
+  "XOR Balance": "יתרת XOR",
+  "Bond / Unbond": "בונד / שחרור בונד",
+  "Pending Unbonds": "שחרורי בונד בהמתנה",
+  "No bonded stake available to unbond.": "אין סטייק בבונד שניתן לשחרר.",
+  "Unbond amount": "סכום שחרור בונד",
+  "Unbond amount (XOR)": "סכום שחרור בונד (XOR)",
+  "Unbond Delay": "השהיית שחרור בונד",
+  "Schedule Unbond": "תזמון שחרור בונד",
+  "Finalize Unbond": "השלמת שחרור בונד",
+  "No {symbol} balance available to bond.": "אין יתרת {symbol} זמינה לבונד.",
+  "Nominate validators and stake XOR": "מנו מאמתים ובצעו סטייק ל-XOR",
+  "Nominate validators and stake XOR for NPOS":
+    "מנו מאמתים ובצעו סטייק ל-XOR עבור NPOS",
+  "referendumId and proposalId are required for finalize.":
+    "ל-finalize נדרשים referendumId ו-proposalId.",
+  "referendumId is required before submitting a ballot.":
+    "נדרש referendumId לפני שליחת הצבעה.",
+  "proposalId is required for enact.": "נדרש proposalId עבור enact.",
+  "TAIRA Testnet": "רשת בדיקות TAIRA",
+  "Public TAIRA testnet profile.": "פרופיל ציבורי של רשת הבדיקות TAIRA.",
+  "Store for iCloud Drive": "שמירה ב-iCloud Drive",
+  "Store for Google Drive": "שמירה ב-Google Drive",
+  "Generate pair": "יצירת זוג מפתחות",
+  "Save identity": "שמירת זהות",
+  "Check health": "בדיקת חיבור",
+  "Save authority": "שמירת הרשאה",
+  "TAIRA testnet connection is fixed in this build.":
+    "חיבור רשת הבדיקות TAIRA קבוע בגרסה זו.",
+  "TAIRA testnet connection is fixed for onboarding in this build.":
+    "חיבור רשת הבדיקות TAIRA לתהליך האונבורדינג קבוע בגרסה זו.",
+  wonderland: "wonderland",
+  "rose#wonderland": "rose#wonderland",
+  "Up to {unit} {amount}": "עד {unit} {amount}",
+  "Usage based": "מבוסס שימוש",
+  "{unit} --": "{unit} --",
+  "{unit} {amount}": "{unit} {amount}",
+};
+
 const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   Aye: "ہاں",
   Nay: "نہیں",
   Abstain: "غیر حاضر",
+  "Iroha Points": "Iroha پوائنٹس",
+  "Torii control deck": "Torii کنٹرول ڈیک",
+  "Modern Torii-connected wallet": "جدید Torii سے منسلک والیٹ",
+  Language: "زبان",
+  Navigate: "نیویگیٹ کریں",
+  "Account Setup": "اکاؤنٹ سیٹ اپ",
+  Session: "سیشن",
+  Wallet: "والیٹ",
+  Staking: "اسٹیکنگ",
+  Parliament: "پارلیمنٹ",
+  Subscriptions: "سبسکرپشنز",
+  Send: "بھیجیں",
+  Receive: "وصول کریں",
+  Offline: "آف لائن",
+  Explore: "ایکسپلور کریں",
+  "Account ready": "اکاؤنٹ تیار ہے",
+  "Complete onboarding": "آن بورڈنگ مکمل کریں",
+  "Account saved": "اکاؤنٹ محفوظ ہے",
+  "Onboarding required": "آن بورڈنگ درکار ہے",
+  "TAIRA Torii ready": "TAIRA Torii تیار ہے",
+  "Torii unavailable": "Torii دستیاب نہیں",
+  "Generate keys, recovery phrase, Connect pairing":
+    "کلیدیں، ریکوری فریز اور Connect پیئرنگ بنائیں",
+  "TAIRA connection, asset, and authority keys":
+    "TAIRA کنکشن، اثاثہ اور اتھارٹی کلیدیں",
+  "Balances, assets, and latest transactions":
+    "بیلنس، اثاثے اور تازہ ترین ٹرانزیکشنز",
+  "Auto-deduct and manage recurring services":
+    "خودکار کٹوتی اور باربار سروسز کا انتظام",
+  "Transfer assets with camera or QR upload":
+    "کیمرے یا QR اپ لوڈ سے اثاثے منتقل کریں",
+  "Share QR codes or IH58 to request funds":
+    "فنڈز کی درخواست کے لیے QR کوڈز یا IH58 شیئر کریں",
+  "Offline wallets, invoices, and QR exchanges":
+    "آف لائن والیٹس، انوائسز اور QR تبادلے",
+  "Network metrics and asset explorer": "نیٹ ورک میٹرکس اور اثاثہ ایکسپلورر",
+  "Wallet Overview": "والیٹ کا جائزہ",
+  "Balances & activity": "بیلنس اور سرگرمی",
+  "Subscription Hub": "سبسکرپشن ہب",
+  "Send Points": "پوائنٹس بھیجیں",
+  "Receive Points": "پوائنٹس وصول کریں",
+  "Network & asset insights": "نیٹ ورک اور اثاثہ بصیرت",
   "SORA Parliament": "سورا پارلیمنٹ",
   "Citizenship bond and governance voting": "شہریت بانڈ اور گورننس ووٹنگ",
   "Bond citizenship and vote in governance referenda":
@@ -762,7 +991,10 @@ const FA_TRANSLATIONS: TranslationTable = {
 };
 const FI_TRANSLATIONS: TranslationTable = FI_AUTO_TRANSLATIONS;
 const FR_TRANSLATIONS: TranslationTable = FR_AUTO_TRANSLATIONS;
-const HE_TRANSLATIONS: TranslationTable = HE_AUTO_TRANSLATIONS;
+const HE_TRANSLATIONS: TranslationTable = {
+  ...HE_AUTO_TRANSLATIONS,
+  ...HE_MANUAL_TRANSLATIONS,
+};
 const HI_TRANSLATIONS: TranslationTable = HI_AUTO_TRANSLATIONS;
 const HU_TRANSLATIONS: TranslationTable = HU_AUTO_TRANSLATIONS;
 const ID_TRANSLATIONS: TranslationTable = ID_AUTO_TRANSLATIONS;
@@ -781,9 +1013,23 @@ const UR_TRANSLATIONS: TranslationTable = {
 };
 const VI_TRANSLATIONS: TranslationTable = VI_AUTO_TRANSLATIONS;
 const ZH_TW_TRANSLATIONS: TranslationTable = ZH_TW_AUTO_TRANSLATIONS;
+const EN_TRANSLATIONS: TranslationTable = {
+  IH58: "I105",
+  I105: "I105",
+  "Share QR or IH58": "Share QR or Account ID",
+  "Share QR or Account ID": "Share QR or Account ID",
+  "Share QR codes or IH58 to request funds":
+    "Share QR codes or account IDs to request funds",
+  "Share QR codes or account IDs to request funds":
+    "Share QR codes or account IDs to request funds",
+  "34m... or 0x...@wonderland": "n42u... (I105 account ID)",
+  "n42u... (I105 account ID)": "n42u... (I105 account ID)",
+  "rose#wonderland": "norito:<asset-id-hex>",
+  "norito:<asset-id-hex>": "norito:<asset-id-hex>",
+};
 
 const TABLES: Record<SupportedLocale, TranslationTable> = {
-  "en-US": {},
+  "en-US": EN_TRANSLATIONS,
   "ar-SA": AR_TRANSLATIONS,
   "az-AZ": AZ_TRANSLATIONS,
   "ca-ES": CA_TRANSLATIONS,
@@ -817,6 +1063,31 @@ const TABLES: Record<SupportedLocale, TranslationTable> = {
 };
 
 export const DEFAULT_LOCALE: SupportedLocale = "en-US";
+
+const LEGACY_TERM_REPLACEMENTS: Array<[from: string, to: string]> = [
+  ["IH58", "I105"],
+  ["ih58", "I105"],
+  ["ИХ58", "I105"],
+  ["आईएच58", "I105"],
+];
+
+const TRANSLATION_KEY_ALIASES: Record<string, string> = {
+  I105: "IH58",
+  "Share QR or Account ID": "Share QR or IH58",
+  "Share QR codes or account IDs to request funds":
+    "Share QR codes or IH58 to request funds",
+  "n42u... (I105 account ID)": "34m... or 0x...@wonderland",
+  "norito:<asset-id-hex>": "rose#wonderland",
+};
+
+const LITERAL_KEY_OVERRIDES: Record<string, string> = {
+  IH58: "I105",
+  I105: "I105",
+  "34m... or 0x...@wonderland": "n42u... (I105 account ID)",
+  "n42u... (I105 account ID)": "n42u... (I105 account ID)",
+  "rose#wonderland": "norito:<asset-id-hex>",
+  "norito:<asset-id-hex>": "norito:<asset-id-hex>",
+};
 
 export const isSupportedLocale = (value: string): value is SupportedLocale =>
   SUPPORTED_LOCALES.includes(value as SupportedLocale);
@@ -886,11 +1157,20 @@ export const translate = (
   key: string,
   params?: Params,
 ): string => {
-  const template = TABLES[locale]?.[key] ?? key;
+  const normalizedKey = TRANSLATION_KEY_ALIASES[key] ?? key;
+  const template =
+    LITERAL_KEY_OVERRIDES[key] ??
+    LITERAL_KEY_OVERRIDES[normalizedKey] ??
+    TABLES[locale]?.[normalizedKey] ??
+    key;
+  const normalizedTemplate = LEGACY_TERM_REPLACEMENTS.reduce(
+    (current, [from, to]) => current.split(from).join(to),
+    template,
+  );
   if (!params) {
-    return template;
+    return normalizedTemplate;
   }
-  return template.replace(/\{([\w]+)\}/g, (_match, token) => {
+  return normalizedTemplate.replace(/\{([\w]+)\}/g, (_match, token) => {
     const value = params[token];
     return value === undefined ? `{${token}}` : String(value);
   });
@@ -909,5 +1189,11 @@ export const hasLocaleTranslation = (
   if (locale === "en-US") {
     return true;
   }
-  return key in TABLES[locale];
+  if (key in LITERAL_KEY_OVERRIDES) {
+    return true;
+  }
+  const normalizedKey = TRANSLATION_KEY_ALIASES[key] ?? key;
+  return (
+    normalizedKey in TABLES[locale] || normalizedKey in LITERAL_KEY_OVERRIDES
+  );
 };

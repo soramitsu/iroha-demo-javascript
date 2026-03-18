@@ -9,6 +9,7 @@ const snapshot = () =>
 describe("session store", () => {
   beforeEach(() => {
     localStorage.clear();
+    delete (window as any).iroha;
     setActivePinia(createPinia());
   });
 
@@ -36,9 +37,6 @@ describe("session store", () => {
       accountId: "ed0120@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "aa",
-      ih58: "IH58",
-      compressed: "cmp",
-      compressedWarning: "",
     });
     store.addAccount({
       displayName: "Bob",
@@ -46,9 +44,6 @@ describe("session store", () => {
       accountId: "ed0999@wonderland",
       publicKeyHex: "pub2",
       privateKeyHex: "bb",
-      ih58: "IH58-2",
-      compressed: "cmp2",
-      compressedWarning: "",
     });
     store.setActiveAccount("ed0999@wonderland");
     store.updateAuthority({ accountId: "authority@wonderland" });
@@ -72,7 +67,7 @@ describe("session store", () => {
       connection: {
         toriiUrl: "https://torii",
         chainId: "chain",
-        assetDefinitionId: "rose#wonderland",
+        assetDefinitionId: "norito:abcdef0123456789",
         networkPrefix: 10,
       },
       accounts: [
@@ -117,7 +112,7 @@ describe("session store", () => {
     expect(store.connection.networkPrefix).toBe(
       TAIRA_CHAIN_PRESET.connection.networkPrefix,
     );
-    expect(store.connection.assetDefinitionId).toBe("rose#wonderland");
+    expect(store.connection.assetDefinitionId).toBe("norito:abcdef0123456789");
     expect(store.activeAccount?.displayName).toBe("Alice");
     expect(store.hasAccount).toBe(true);
     expect(store.customChains).toHaveLength(0);
@@ -159,6 +154,81 @@ describe("session store", () => {
     );
   });
 
+  it("upgrades legacy account ids from stored canonical literals", () => {
+    const canonical = "n42u1234567890abcdef1234567890";
+    const payload = {
+      connection: {
+        toriiUrl: "https://legacy-torii",
+        chainId: "legacy",
+      },
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "wonderland",
+          accountId: "alice@wonderland",
+          publicKeyHex: "pub",
+          privateKeyHex: "priv",
+          ih58: canonical,
+          compressed: "",
+          compressedWarning: "",
+        },
+      ],
+      activeAccountId: "alice@wonderland",
+      authority: {
+        accountId: "alice@wonderland",
+        privateKeyHex: "beef",
+      },
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.accounts).toHaveLength(1);
+    expect(store.accounts[0]?.accountId).toBe(canonical);
+    expect(store.activeAccountId).toBe(canonical);
+    expect(store.authority.accountId).toBe(canonical);
+  });
+
+  it("derives canonical account ids from stored key material when bridge is available", () => {
+    const canonical = "n42uDerivedFromPublicKey1234567890";
+    (window as any).iroha = {
+      deriveAccountAddress: () => ({
+        accountId: canonical,
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
+      }),
+    };
+
+    const payload = {
+      connection: {
+        toriiUrl: "https://legacy-torii",
+        chainId: "legacy",
+        networkPrefix: 42,
+      },
+      accounts: [
+        {
+          displayName: "Legacy",
+          domain: "wonderland",
+          accountId: "legacy@wonderland",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "priv",
+          ih58: "",
+          compressed: "",
+          compressedWarning: "",
+        },
+      ],
+      activeAccountId: "legacy@wonderland",
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.accounts[0]?.accountId).toBe(canonical);
+    expect(store.activeAccountId).toBe(canonical);
+  });
+
   it("updates the active account in place", () => {
     const store = useSessionStore();
     store.addAccount({
@@ -167,15 +237,12 @@ describe("session store", () => {
       accountId: "first@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "priv",
-      ih58: "",
-      compressed: "",
-      compressedWarning: "",
     });
 
-    store.updateActiveAccount({ displayName: "Renamed", ih58: "IH58-updated" });
+    store.updateActiveAccount({ displayName: "Renamed" });
 
     expect(store.activeAccount?.displayName).toBe("Renamed");
-    expect(store.activeAccount?.ih58).toBe("IH58-updated");
+    expect(store.activeAccount?.accountId).toBe("first@wonderland");
   });
 
   it("ignores custom chain network overrides in TAIRA-only mode", () => {

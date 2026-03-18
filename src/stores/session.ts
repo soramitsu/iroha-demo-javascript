@@ -16,9 +16,6 @@ export type UserProfile = {
   accountId: string;
   publicKeyHex: string;
   privateKeyHex: string;
-  ih58: string;
-  compressed: string;
-  compressedWarning: string;
 };
 
 export type AuthorityProfile = {
@@ -46,9 +43,6 @@ const defaultUser = (): UserProfile => ({
   accountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
-  ih58: "",
-  compressed: "",
-  compressedWarning: "",
 });
 
 const defaultState = (): SessionState => ({
@@ -63,10 +57,89 @@ const defaultState = (): SessionState => ({
   customChains: [],
 });
 
-const normalizeUser = (user: Partial<UserProfile>): UserProfile => ({
-  ...defaultUser(),
-  ...user,
-});
+const trimString = (value: unknown): string => String(value ?? "").trim();
+
+const readLegacyProfileField = (
+  profile: Record<string, unknown>,
+  key: string,
+): string => trimString(profile[key]);
+
+const isLegacyAccountLiteral = (value: string): boolean =>
+  trimString(value).includes("@");
+
+const isCanonicalAccountCandidate = (value: string): boolean => {
+  const literal = trimString(value);
+  return literal.length >= 16 && !isLegacyAccountLiteral(literal);
+};
+
+const deriveCanonicalAccountIdFromProfile = (
+  user: Partial<UserProfile> & Record<string, unknown>,
+  networkPrefix: number,
+): string | null => {
+  if (typeof window === "undefined" || !window.iroha) {
+    return null;
+  }
+  const domain = trimString(user.domain);
+  const publicKeyHex = trimString(user.publicKeyHex);
+  if (!domain || !publicKeyHex) {
+    return null;
+  }
+  try {
+    const derived = window.iroha.deriveAccountAddress({
+      domain,
+      publicKeyHex,
+      networkPrefix,
+    });
+    const canonicalAccountId = trimString(derived.accountId);
+    if (!canonicalAccountId || isLegacyAccountLiteral(canonicalAccountId)) {
+      return null;
+    }
+    return canonicalAccountId;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const resolveAccountIdLiteral = (
+  user: Partial<UserProfile> & Record<string, unknown>,
+  networkPrefix: number,
+): string => {
+  const accountId = trimString(user.accountId);
+  if (!isLegacyAccountLiteral(accountId)) {
+    return accountId;
+  }
+  const derivedCanonicalAccountId = deriveCanonicalAccountIdFromProfile(
+    user,
+    networkPrefix,
+  );
+  if (derivedCanonicalAccountId) {
+    return derivedCanonicalAccountId;
+  }
+  const migratedCandidate = [
+    readLegacyProfileField(user, "i105"),
+    readLegacyProfileField(user, "ih58"),
+    readLegacyProfileField(user, "compressed"),
+  ].find(isCanonicalAccountCandidate);
+  return migratedCandidate ?? accountId;
+};
+
+const normalizeUser = (
+  user: Partial<UserProfile> & Record<string, unknown>,
+  options?: { networkPrefix?: number },
+): UserProfile => {
+  const normalized = { ...defaultUser(), ...user };
+  const resolvedAccountId = resolveAccountIdLiteral(
+    normalized,
+    options?.networkPrefix ?? 42,
+  );
+  return {
+    displayName: trimString(normalized.displayName),
+    domain: trimString(normalized.domain) || "wonderland",
+    accountId: resolvedAccountId,
+    publicKeyHex: trimString(normalized.publicKeyHex),
+    privateKeyHex: trimString(normalized.privateKeyHex),
+  };
+};
 
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
@@ -84,26 +157,74 @@ const normalizeConnection = (
 
 const normalizeAccounts = (
   payload: Partial<SessionState> & { user?: UserProfile },
-): Pick<SessionState, "accounts" | "activeAccountId"> => {
-  if (Array.isArray(payload.accounts) && payload.accounts.length) {
-    const accounts = payload.accounts.map((account) => normalizeUser(account));
-    const activeAccountId =
-      payload.activeAccountId &&
-      accounts.some((acct) => acct.accountId === payload.activeAccountId)
-        ? payload.activeAccountId
-        : (accounts[0]?.accountId ?? null);
-    return { accounts, activeAccountId };
-  }
+): Pick<SessionState, "accounts" | "activeAccountId"> & {
+  accountIdMap: Map<string, string>;
+} => {
+  const accountIdMap = new Map<string, string>();
+  const connectionNetworkPrefix = normalizeConnection(
+    payload.connection,
+  ).networkPrefix;
 
-  if (payload.user?.accountId) {
-    const legacyAccount = normalizeUser(payload.user);
+  const normalizeCollection = (
+    entries: Array<Partial<UserProfile> & Record<string, unknown>>,
+    activeAccountId: string | null,
+  ) => {
+    const dedupeIndexByKey = new Map<string, number>();
+    const orderedAccounts: UserProfile[] = [];
+    entries.forEach((account, index) => {
+      const originalAccountId = trimString(account.accountId);
+      const normalized = normalizeUser(account, {
+        networkPrefix: connectionNetworkPrefix,
+      });
+      if (originalAccountId && originalAccountId !== normalized.accountId) {
+        accountIdMap.set(originalAccountId, normalized.accountId);
+      }
+      const dedupeKey = normalized.accountId || `__empty-${index}`;
+      const existingIndex = dedupeIndexByKey.get(dedupeKey);
+      if (existingIndex !== undefined) {
+        orderedAccounts[existingIndex] = {
+          ...orderedAccounts[existingIndex],
+          ...normalized,
+        };
+        return;
+      }
+      dedupeIndexByKey.set(dedupeKey, orderedAccounts.length);
+      orderedAccounts.push(normalized);
+    });
+
+    const rawActiveAccountId = trimString(activeAccountId);
+    const mappedActiveAccountId = rawActiveAccountId
+      ? (accountIdMap.get(rawActiveAccountId) ?? rawActiveAccountId)
+      : "";
+    const resolvedActiveAccountId =
+      mappedActiveAccountId &&
+      orderedAccounts.some(
+        (account) => account.accountId === mappedActiveAccountId,
+      )
+        ? mappedActiveAccountId
+        : (orderedAccounts[0]?.accountId ?? null);
+
     return {
-      accounts: [legacyAccount],
-      activeAccountId: legacyAccount.accountId,
+      accounts: orderedAccounts,
+      activeAccountId: resolvedActiveAccountId,
+    };
+  };
+
+  if (Array.isArray(payload.accounts) && payload.accounts.length) {
+    return {
+      ...normalizeCollection(payload.accounts, payload.activeAccountId ?? null),
+      accountIdMap,
     };
   }
 
-  return { accounts: [], activeAccountId: null };
+  if (payload.user?.accountId) {
+    return {
+      ...normalizeCollection([payload.user], payload.user.accountId),
+      accountIdMap,
+    };
+  }
+
+  return { accounts: [], activeAccountId: null, accountIdMap };
 };
 
 export const useSessionStore = defineStore("session", {
@@ -132,10 +253,19 @@ export const useSessionStore = defineStore("session", {
           const parsed = JSON.parse(raw);
           const normalizedAccounts = normalizeAccounts(parsed);
           const base = defaultState();
+          const authority = { ...base.authority, ...(parsed.authority ?? {}) };
+          const rawAuthorityAccountId = trimString(authority.accountId);
+          const migratedAuthorityAccountId = rawAuthorityAccountId
+            ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
+              rawAuthorityAccountId)
+            : "";
           this.$patch({
             ...base,
             connection: normalizeConnection(parsed.connection),
-            authority: { ...base.authority, ...(parsed.authority ?? {}) },
+            authority: {
+              ...authority,
+              accountId: migratedAuthorityAccountId,
+            },
             accounts: normalizedAccounts.accounts,
             activeAccountId: normalizedAccounts.activeAccountId,
             hydrated: true,
@@ -168,7 +298,9 @@ export const useSessionStore = defineStore("session", {
       this.authority = { ...this.authority, ...partial };
     },
     addAccount(account: UserProfile) {
-      const normalized = normalizeUser(account);
+      const normalized = normalizeUser(account, {
+        networkPrefix: this.connection.networkPrefix,
+      });
       const existingIndex = this.accounts.findIndex(
         (item) => item.accountId === normalized.accountId,
       );
@@ -190,9 +322,15 @@ export const useSessionStore = defineStore("session", {
         this.activeAccountId = accountId;
       }
     },
-    updateActiveAccount(partial: Partial<UserProfile>) {
+    updateActiveAccount(
+      partial: Partial<UserProfile> & Record<string, unknown>,
+    ) {
       if (!this.activeAccountId && partial.accountId) {
-        this.addAccount(normalizeUser(partial));
+        this.addAccount(
+          normalizeUser(partial, {
+            networkPrefix: this.connection.networkPrefix,
+          }),
+        );
         return;
       }
       const index = this.accounts.findIndex(
@@ -201,7 +339,14 @@ export const useSessionStore = defineStore("session", {
       if (index === -1) {
         return;
       }
-      this.accounts.splice(index, 1, { ...this.accounts[index], ...partial });
+      const normalized = normalizeUser(
+        { ...this.accounts[index], ...partial },
+        {
+          networkPrefix: this.connection.networkPrefix,
+        },
+      );
+      this.accounts.splice(index, 1, normalized);
+      this.activeAccountId = normalized.accountId;
     },
     addCustomChain(chain: Partial<SavedChain> & Partial<ConnectionConfig>) {
       // Custom chains are intentionally disabled in TAIRA-only builds.

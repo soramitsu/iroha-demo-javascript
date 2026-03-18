@@ -1,3 +1,5 @@
+import { splitAssetReference } from "@/utils/assetId";
+
 export type TransferDirection = "Sent" | "Received" | "Other";
 
 export type TransferInsight = {
@@ -18,17 +20,15 @@ export type TransferInstruction = {
 
 export type AccountTransactionLike = {
   instructions?: Array<TransferInstruction | null | undefined>;
+  authority?: string;
 };
 
 const splitAssetSource = (source: string | undefined) => {
-  if (!source) {
-    return { definition: "", accountId: "" };
-  }
-  if (source.includes("##")) {
-    const [definition, accountId] = source.split("##");
-    return { definition, accountId: accountId ?? "" };
-  }
-  return { definition: source, accountId: "" };
+  const parsed = splitAssetReference(source);
+  return {
+    definition: parsed.definitionId,
+    accountId: parsed.accountId,
+  };
 };
 
 export const extractTransferInsight = (
@@ -47,8 +47,9 @@ export const extractTransferInsight = (
       asset.source,
     );
     const destination = asset.destination ?? "";
+    const authority = tx.authority ?? "";
     const amount = asset.object ?? null;
-    const isOutbound = sourceAccount === accountId;
+    const isOutbound = sourceAccount === accountId || authority === accountId;
     const isInbound = destination === accountId;
     const direction: TransferDirection = isOutbound
       ? "Sent"

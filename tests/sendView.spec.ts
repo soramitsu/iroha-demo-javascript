@@ -40,7 +40,7 @@ describe("SendView", () => {
     getConfidentialAssetPolicyMock.mockReset();
     qrDecodeHandler = null;
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
@@ -60,7 +60,7 @@ describe("SendView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "rose#wonderland",
+        assetDefinitionId: "norito:abcdef0123456789",
         networkPrefix: 42,
       },
       accounts: [
@@ -70,9 +70,6 @@ describe("SendView", () => {
           accountId: "alice@wonderland",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
-          ih58: "ih58alice",
-          compressed: "",
-          compressedWarning: "",
         },
       ],
       activeAccountId: "alice@wonderland",
@@ -91,7 +88,7 @@ describe("SendView", () => {
     expect(wrapper.text()).toContain("Shield policy mode: Convertible.");
 
     await wrapper
-      .get('input[placeholder="34m... or 0x...@wonderland"]')
+      .get('input[placeholder="n42u... (I105 account ID)"]')
       .setValue("alice@wonderland");
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
@@ -102,7 +99,7 @@ describe("SendView", () => {
     expect(transferAssetMock).toHaveBeenCalledTimes(1);
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      assetDefinitionId: "rose#wonderland",
+      assetDefinitionId: "norito:abcdef0123456789",
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -120,7 +117,7 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get('input[placeholder="34m... or 0x...@wonderland"]')
+      .get('input[placeholder="n42u... (I105 account ID)"]')
       .setValue("bob@wonderland");
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
@@ -136,7 +133,7 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get('input[placeholder="34m... or 0x...@wonderland"]')
+      .get('input[placeholder="n42u... (I105 account ID)"]')
       .setValue(" bob@wonderland ");
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
@@ -155,12 +152,12 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get('input[placeholder="34m... or 0x...@wonderland"]')
+      .get('input[placeholder="n42u... (I105 account ID)"]')
       .setValue("bob@wonderland");
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
     const destinationInput = wrapper.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       "alice@wonderland",
@@ -198,7 +195,7 @@ describe("SendView", () => {
     await flushPromises();
 
     const destinationInput = wrapper.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
@@ -222,7 +219,7 @@ describe("SendView", () => {
     await flushPromises();
 
     const destinationInput = wrapper.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
@@ -254,13 +251,13 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get('input[placeholder="34m... or 0x...@wonderland"]')
+      .get('input[placeholder="n42u... (I105 account ID)"]')
       .setValue("bob@wonderland");
     await wrapper.get('input[type="checkbox"]').setValue(true);
     await wrapper.get('input[type="checkbox"]').setValue(false);
 
     const destinationInput = wrapper.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       "bob@wonderland",
@@ -273,7 +270,7 @@ describe("SendView", () => {
     await flushPromises();
 
     const destinationInput = wrapper.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     await destinationInput.setValue("");
     await wrapper.get('input[type="checkbox"]').setValue(true);
@@ -285,7 +282,7 @@ describe("SendView", () => {
 
   it("disables shield mode when policy does not support shielding", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",

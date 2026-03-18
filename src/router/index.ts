@@ -77,7 +77,7 @@ const routes = [
     component: ReceiveView,
     meta: {
       titleKey: "Receive Points",
-      subtitleKey: "Share QR or IH58",
+      subtitleKey: "Share QR or Account ID",
     },
   },
   {

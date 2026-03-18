@@ -122,9 +122,8 @@ describe("preload utils", () => {
 
   it("maps explorer QR snake_case payloads to renderer contract fields", () => {
     const normalized = normalizeExplorerAccountQrPayload({
-      canonical_id: "ed0120ABC@wonderland",
-      literal: "ih58-literal",
-      address_format: "ih58",
+      canonical_id: "n42uSampleCanonical",
+      literal: "n42uSampleLiteral",
       network_prefix: 42,
       error_correction: "M",
       modules: 33,
@@ -133,9 +132,8 @@ describe("preload utils", () => {
     });
 
     expect(normalized).toEqual({
-      canonicalId: "ed0120ABC@wonderland",
-      literal: "ih58-literal",
-      addressFormat: "ih58",
+      canonicalId: "n42uSampleCanonical",
+      literal: "n42uSampleLiteral",
       networkPrefix: 42,
       errorCorrection: "M",
       modules: 33,
@@ -145,7 +143,7 @@ describe("preload utils", () => {
 
     expect(() =>
       normalizeExplorerAccountQrPayload({
-        canonical_id: "ed0120ABC@wonderland",
+        canonical_id: "n42uSampleCanonical",
         svg: "<svg/>",
       }),
     ).toThrow("Explorer QR response was missing required fields.");
@@ -229,7 +227,7 @@ describe("preload utils", () => {
 
   it("normalizes confidential asset policy payloads", () => {
     const normalized = normalizeConfidentialAssetPolicyPayload({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 41,
       current_mode: "TransparentOnly",
       effective_mode: "Convertible",
@@ -246,7 +244,7 @@ describe("preload utils", () => {
       },
     });
 
-    expect(normalized.asset_id).toBe("rose#wonderland");
+    expect(normalized.asset_id).toBe("norito:abcdef0123456789");
     expect(normalized.effective_mode).toBe("Convertible");
     expect(normalized.pending_transition?.effective_height).toBe(55);
     expect(normalized.pending_transition?.conversion_window).toBe(10);

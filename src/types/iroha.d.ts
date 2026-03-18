@@ -3,9 +3,7 @@ export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 export interface AccountAddressView {
   accountId: string;
   publicKeyHex: string;
-  ih58: string;
-  compressed: string;
-  compressedWarning: string;
+  accountIdWarning: string;
 }
 
 export interface AccountAssetsResponse {
@@ -35,8 +33,6 @@ export interface AccountPermissionsResponse {
   items: AccountPermissionItem[];
   total: number;
 }
-
-export type ToriiAddressFormat = "ih58" | "canonical" | "compressed";
 
 export interface OfflineAllowanceItem {
   certificate_id_hex: string;
@@ -89,7 +85,6 @@ export interface ExplorerMetricsResponse {
 export interface ExplorerAccountQrResponse {
   canonicalId: string;
   literal: string;
-  addressFormat: "ih58" | "compressed";
   networkPrefix: number;
   errorCorrection: string;
   modules: number;
@@ -299,6 +294,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     accountId: string;
+    domainId: string;
     metadata?: Record<string, unknown>;
     authorityAccountId: string;
     authorityPrivateKeyHex: string;
@@ -387,12 +383,10 @@ export interface IrohaBridge {
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
-    addressFormat?: ToriiAddressFormat;
   }): Promise<ExplorerAccountQrResponse>;
   listOfflineAllowances(input: {
     toriiUrl: string;
     controllerId: string;
-    addressFormat?: ToriiAddressFormat;
     limit?: number;
     offset?: number;
     filter?: string | Record<string, unknown>;
@@ -423,19 +417,16 @@ export interface IrohaBridge {
   getNexusPublicLaneValidators(input: {
     toriiUrl: string;
     laneId: number;
-    addressFormat?: ToriiAddressFormat;
   }): Promise<PublicLaneValidatorsResponseView>;
   getNexusPublicLaneStake(input: {
     toriiUrl: string;
     laneId: number;
-    addressFormat?: ToriiAddressFormat;
     validator?: string;
   }): Promise<PublicLaneStakeResponseView>;
   getNexusPublicLaneRewards(input: {
     toriiUrl: string;
     laneId: number;
     account: string;
-    addressFormat?: ToriiAddressFormat;
     assetId?: string;
     uptoEpoch?: number;
   }): Promise<PublicLaneRewardsResponseView>;

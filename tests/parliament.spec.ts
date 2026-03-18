@@ -14,11 +14,27 @@ import {
 } from "@/utils/parliament";
 
 describe("parliament utilities", () => {
-  it("prefers XOR balances and falls back to zero", () => {
+  it("prefers configured asset IDs, then XOR balances, and falls back safely", () => {
+    expect(
+      resolveXorBalance(
+        [
+          {
+            asset_id: "norito:abcdef0123456789",
+            quantity: "7",
+          },
+          {
+            asset_id: "norito:9876543210fedcba",
+            quantity: "42",
+          },
+        ],
+        "norito:9876543210fedcba",
+      ),
+    ).toBe("42");
+
     expect(
       resolveXorBalance([
         {
-          asset_id: "rose#wonderland##alice@wonderland",
+          asset_id: "norito:abcdef0123456789##alice@wonderland",
           quantity: "150",
         },
         {
@@ -27,6 +43,24 @@ describe("parliament utilities", () => {
         },
       ]),
     ).toBe("42");
+
+    expect(
+      resolveXorBalance([
+        {
+          asset_id: "norito:abcdef0123456789xorfeed",
+          quantity: "21",
+        },
+      ]),
+    ).toBe("21");
+
+    expect(
+      resolveXorBalance([
+        {
+          asset_id: "norito:abcdef0123456789",
+          quantity: "7",
+        },
+      ]),
+    ).toBe("7");
 
     expect(resolveXorBalance([])).toBe("0");
   });

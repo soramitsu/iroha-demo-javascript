@@ -286,7 +286,7 @@
           {{ t("Destination Account") }}
           <input
             v-model="onlineForm.receiver"
-            :placeholder="t('34m... or 0x...@wonderland')"
+            :placeholder="t('n42u... (I105 account ID)')"
             :disabled="onlineDestinationLocked"
           />
         </label>

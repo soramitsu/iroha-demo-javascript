@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { AccountAddress } from "@iroha/iroha-js";
 import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
@@ -6,6 +7,14 @@ import {
   parseOnboardingEnvConfig,
   parseNetworkPrefix,
 } from "../scripts/e2e/electron-live-utils.mjs";
+
+const sampleI105AccountId = AccountAddress.fromAccount({
+  domain: "wonderland",
+  publicKey: Buffer.from(
+    "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03",
+    "hex",
+  ),
+}).toI105();
 
 describe("electron live e2e utils", () => {
   it("parses valid network prefixes with TAIRA default fallback", () => {
@@ -30,17 +39,8 @@ describe("electron live e2e utils", () => {
     );
   });
 
-  it("accepts account id formats supported by explorer qr flow", () => {
-    expect(isSupportedAccountIdLiteral("ih58:xyz")).toBe(true);
-    expect(isSupportedAccountIdLiteral("sora:xyz")).toBe(true);
-    expect(isSupportedAccountIdLiteral("uaid:abc")).toBe(true);
-    expect(isSupportedAccountIdLiteral("opaque:abc")).toBe(true);
-    expect(isSupportedAccountIdLiteral("0xabc@wonderland")).toBe(true);
-    expect(
-      isSupportedAccountIdLiteral(
-        "ed0120CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03@wonderland",
-      ),
-    ).toBe(true);
+  it("accepts canonical I105 account ids", () => {
+    expect(isSupportedAccountIdLiteral(sampleI105AccountId)).toBe(true);
   });
 
   it("rejects unsupported or malformed account id literals", () => {
@@ -48,10 +48,17 @@ describe("electron live e2e utils", () => {
     expect(isSupportedAccountIdLiteral("   ")).toBe(false);
     expect(isSupportedAccountIdLiteral(null)).toBe(false);
     expect(isSupportedAccountIdLiteral(undefined)).toBe(false);
-    expect(isSupportedAccountIdLiteral("0xabc")).toBe(false);
+    expect(isSupportedAccountIdLiteral("i105:xyz")).toBe(false);
+    expect(isSupportedAccountIdLiteral("sora:xyz")).toBe(false);
+    expect(isSupportedAccountIdLiteral("uaid:abc")).toBe(false);
+    expect(isSupportedAccountIdLiteral("opaque:abc")).toBe(false);
+    expect(isSupportedAccountIdLiteral("0xabc@wonderland")).toBe(false);
     expect(isSupportedAccountIdLiteral("alice")).toBe(false);
-    expect(isSupportedAccountIdLiteral("alice@")).toBe(false);
-    expect(isSupportedAccountIdLiteral("@wonderland")).toBe(false);
+    expect(
+      isSupportedAccountIdLiteral(
+        "ed0120CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03@wonderland",
+      ),
+    ).toBe(false);
   });
 
   it("detects onboarding-disabled responses from status text", () => {

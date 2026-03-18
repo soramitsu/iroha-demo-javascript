@@ -694,7 +694,10 @@ const refresh = async () => {
       return;
     }
 
-    xorBalance.value = resolveXorBalance(assetsPayload.items);
+    xorBalance.value = resolveXorBalance(
+      assetsPayload.items,
+      session.connection.assetDefinitionId,
+    );
     permissionsLoaded.value = true;
     permissions.value = permissionsPayload.items;
     council.value = councilPayload;

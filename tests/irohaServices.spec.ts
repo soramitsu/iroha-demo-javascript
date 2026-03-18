@@ -66,9 +66,8 @@ describe("iroha services bridge", () => {
 
   it("returns explorer QR snapshots with svg markup", async () => {
     const snapshot = {
-      canonicalId: "alice@wonderland",
-      literal: "snx1alice",
-      addressFormat: "ih58" as const,
+      canonicalId: "n42uAliceCanonical",
+      literal: "n42uAliceLiteral",
       networkPrefix: 42,
       errorCorrection: "Q",
       modules: 21,
@@ -82,15 +81,13 @@ describe("iroha services bridge", () => {
 
     const input = {
       toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-      addressFormat: "compressed" as const,
+      accountId: "n42uAliceCanonical",
     };
     const result = await getExplorerAccountQr(input);
 
     expect(getExplorerAccountQrMock).toHaveBeenCalledWith(input);
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
-    expect(result.addressFormat).toBe("ih58");
   });
 
   it("forwards transfer payloads including shield flags", async () => {
@@ -101,7 +98,7 @@ describe("iroha services bridge", () => {
     const input = {
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
-      assetDefinitionId: "rose#wonderland",
+      assetDefinitionId: "norito:abcdef0123456789",
       accountId: "alice@wonderland",
       destinationAccountId: "bob@wonderland",
       quantity: "12.5",
@@ -117,7 +114,7 @@ describe("iroha services bridge", () => {
 
   it("forwards confidential policy lookups", async () => {
     const getConfidentialAssetPolicyMock = vi.fn().mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 12,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
@@ -132,12 +129,12 @@ describe("iroha services bridge", () => {
 
     const input = {
       toriiUrl: "http://localhost:8080",
-      assetDefinitionId: "rose#wonderland",
+      assetDefinitionId: "norito:abcdef0123456789",
     };
     const result = await getConfidentialAssetPolicy(input);
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith(input);
-    expect(result.asset_id).toBe("rose#wonderland");
+    expect(result.asset_id).toBe("norito:abcdef0123456789");
   });
 
   it("forwards staking bridge methods", async () => {

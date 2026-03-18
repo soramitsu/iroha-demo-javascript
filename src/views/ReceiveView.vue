@@ -23,9 +23,9 @@
       </label>
     </div>
     <div class="kv" style="margin-top: 16px">
-      <span class="kv-label">{{ t("IH58") }}</span>
+      <span class="kv-label">{{ t("Account ID") }}</span>
       <span class="kv-value">{{
-        activeIh58 || t("Configure account first")
+        activeAccountId || t("Configure account first")
       }}</span>
     </div>
     <p class="helper">
@@ -51,7 +51,6 @@ const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
-const activeIh58 = computed(() => activeAccount.value?.ih58 ?? "");
 const qrMarkup = ref("");
 const qrMessage = ref(t("Tap the button to generate a QR."));
 const amount = ref("0");

@@ -277,9 +277,6 @@ const generatedKeys = ref<{
   privateKeyHex: string;
   publicKeyHex: string;
   accountId: string;
-  ih58: string;
-  compressed: string;
-  compressedWarning: string;
 } | null>(null);
 const backupConfirmed = ref(false);
 const generating = ref(false);
@@ -353,9 +350,6 @@ const generateRecovery = async () => {
       privateKeyHex,
       publicKeyHex,
       accountId: summary.accountId,
-      ih58: summary.ih58,
-      compressed: summary.compressed,
-      compressedWarning: summary.compressedWarning,
     };
     backupConfirmed.value = false;
   } catch (err) {
@@ -432,9 +426,6 @@ const registerGeneratedIdentity = async () => {
       accountId: generatedKeys.value.accountId,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       privateKeyHex: generatedKeys.value.privateKeyHex,
-      ih58: generatedKeys.value.ih58 || response.account_id,
-      compressed: generatedKeys.value.compressed,
-      compressedWarning: generatedKeys.value.compressedWarning,
     });
     session.persistState();
     onboardingStatus.value = t("Account {accountId} queued (tx {txHash}…)", {

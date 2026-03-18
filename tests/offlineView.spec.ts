@@ -39,7 +39,7 @@ describe("OfflineView move-to-online shield mode", () => {
     transferAssetMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
@@ -60,7 +60,7 @@ describe("OfflineView move-to-online shield mode", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "rose#wonderland",
+        assetDefinitionId: "norito:abcdef0123456789",
         networkPrefix: 42,
       },
       accounts: [
@@ -70,9 +70,6 @@ describe("OfflineView move-to-online shield mode", () => {
           accountId: "alice@wonderland",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
-          ih58: "ih58alice",
-          compressed: "",
-          compressedWarning: "",
         },
       ],
       activeAccountId: "alice@wonderland",
@@ -112,7 +109,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     const moveSection = getMoveSection(wrapper);
     const receiverInput = moveSection.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     const amountInput = moveSection.findAll('input[type="text"]')[0];
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
@@ -133,7 +130,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      assetDefinitionId: "rose#wonderland",
+      assetDefinitionId: "norito:abcdef0123456789",
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -149,7 +146,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
   it("disables shield option when policy mode is unsupported", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "rose#wonderland",
+      asset_id: "norito:abcdef0123456789",
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
@@ -205,7 +202,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     const moveSection = getMoveSection(wrapper);
     const receiverInput = moveSection.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 
@@ -225,7 +222,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     const moveSection = getMoveSection(wrapper);
     const receiverInput = moveSection.get(
-      'input[placeholder="34m... or 0x...@wonderland"]',
+      'input[placeholder="n42u... (I105 account ID)"]',
     );
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 

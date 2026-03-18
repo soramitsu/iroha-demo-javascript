@@ -93,7 +93,18 @@ describe("i18n messages", () => {
     expect(translate("zh-CN", "Amount (XOR)")).toBe("金额（XOR）");
     expect(translate("ar-SA", "SORA Parliament")).toBe("برلمان SORA");
     expect(translate("fa-IR", "SORA Parliament")).toBe("پارلمان SORA");
+    expect(translate("he-IL", "SORA Parliament")).toBe("פרלמנט SORA");
     expect(translate("ur-PK", "SORA Parliament")).toBe("سورا پارلیمنٹ");
+    expect(translate("ar-SA", "Torii control deck")).toBe("لوحة تحكم Torii");
+    expect(translate("ur-PK", "Torii control deck")).toBe("Torii کنٹرول ڈیک");
+    expect(translate("ja-JP", "Share QR or Account ID")).toContain("I105");
+    expect(translate("hi-IN", "I105")).toBe("I105");
+    expect(translate("fr-FR", "n42u... (I105 account ID)")).toBe(
+      "n42u... (I105 account ID)",
+    );
+    expect(translate("de-DE", "norito:<asset-id-hex>")).toBe(
+      "norito:<asset-id-hex>",
+    );
     expect(
       translate(
         "ko-KR",

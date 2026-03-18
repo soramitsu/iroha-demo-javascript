@@ -14,7 +14,7 @@ export const TAIRA_CHAIN_PRESET: ChainPreset = {
   connection: {
     toriiUrl: "https://taira.sora.org",
     chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-    assetDefinitionId: "rose#wonderland",
+    assetDefinitionId: "",
     networkPrefix: 42,
   },
 };
