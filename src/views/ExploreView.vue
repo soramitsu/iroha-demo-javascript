@@ -1,13 +1,13 @@
 <template>
-  <div class="card-grid">
-    <section class="card">
+  <div class="explore-layout">
+    <section class="card explore-metrics-card">
       <header class="card-header">
         <h2>{{ t("Explorer Metrics") }}</h2>
         <button class="secondary" :disabled="loading" @click="refresh">
           {{ t("Refresh") }}
         </button>
       </header>
-      <div v-if="metrics" class="grid-2">
+      <div v-if="metrics" class="grid-2 explore-metrics-grid">
         <div class="kv">
           <span class="kv-label">{{ t("Block Height") }}</span>
           <span class="kv-value">{{ metrics.blockHeight ?? t("—") }}</span>
@@ -57,12 +57,12 @@
           }}</span>
         </div>
       </div>
-      <p v-else class="helper">
+      <p v-else class="helper explore-empty">
         {{ t("Metrics unavailable. Check Torii status.") }}
       </p>
     </section>
 
-    <section class="card">
+    <section class="card explore-qr-card">
       <header class="card-header">
         <div>
           <h2>{{ t("Shareable Explorer QR") }}</h2>
@@ -98,6 +98,10 @@
           />
           <div class="qr-meta">
             <div class="kv">
+              <span class="kv-label">{{ t("Account ID") }}</span>
+              <span class="kv-value">{{ accountQr.canonicalId }}</span>
+            </div>
+            <div class="kv">
               <span class="kv-label">{{ t("Network Prefix") }}</span>
               <span class="kv-value">{{ accountQr.networkPrefix }}</span>
             </div>
@@ -109,7 +113,7 @@
         </div>
         <pre class="qr-payload">{{ formattedQr }}</pre>
       </div>
-      <p v-else class="helper">
+      <p v-else class="helper explore-empty">
         {{ t("No QR payload yet. Connect to Torii and pick an account.") }}
       </p>
     </section>
@@ -117,7 +121,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
@@ -133,6 +137,7 @@ const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
 const accountQr = ref<ExplorerAccountQrResponse | null>(null);
 const loading = ref(false);
+const requestGeneration = ref(0);
 
 const formatDate = (value?: string | null) => {
   if (!value) return "";
@@ -148,27 +153,44 @@ const formatMs = (value?: number | null) => {
   return t("{value} s", { value: (value / 1000).toFixed(2) });
 };
 
+const resetExplorerState = () => {
+  metrics.value = null;
+  accountQr.value = null;
+};
+
 const refresh = async () => {
-  if (
-    !session.connection.toriiUrl ||
-    !session.hasAccount ||
-    !activeAccount.value
-  ) {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = activeAccount.value?.accountId;
+  if (!toriiUrl || !session.hasAccount || !accountId) {
+    requestGeneration.value += 1;
+    loading.value = false;
+    resetExplorerState();
     return;
   }
+  const currentGeneration = requestGeneration.value + 1;
+  requestGeneration.value = currentGeneration;
   loading.value = true;
   try {
     const [metricsPayload, qrPayload] = await Promise.all([
-      getExplorerMetrics(session.connection.toriiUrl),
+      getExplorerMetrics(toriiUrl),
       getExplorerAccountQr({
-        toriiUrl: session.connection.toriiUrl,
-        accountId: activeAccount.value.accountId,
+        toriiUrl,
+        accountId,
       }),
     ]);
+    if (
+      currentGeneration !== requestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      activeAccount.value?.accountId !== accountId
+    ) {
+      return;
+    }
     metrics.value = metricsPayload;
     accountQr.value = qrPayload;
   } finally {
-    loading.value = false;
+    if (currentGeneration === requestGeneration.value) {
+      loading.value = false;
+    }
   }
 };
 
@@ -183,14 +205,37 @@ const copyQr = async () => {
   await navigator.clipboard.writeText(JSON.stringify(accountQr.value));
 };
 
-onMounted(refresh);
+watch(
+  () => [session.connection.toriiUrl, activeAccount.value?.accountId],
+  () => {
+    refresh();
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
+.explore-layout {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.explore-metrics-card,
+.explore-qr-card {
+  min-height: 100%;
+}
+
+.explore-metrics-grid {
+  align-items: stretch;
+}
+
 .explorer-actions {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 
 .explorer-link {
@@ -199,41 +244,61 @@ onMounted(refresh);
 
 .qr-layout {
   display: grid;
-  grid-template-columns: minmax(200px, 240px) 1fr;
-  gap: 16px;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
 .qr-preview {
-  background: rgba(255, 255, 255, 0.04);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 72%),
+    rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: 18px;
+  padding: 16px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .qr-image {
   width: 100%;
-  max-width: 220px;
+  max-width: 240px;
   aspect-ratio: 1 / 1;
-  border-radius: 10px;
-  padding: 8px;
+  border-radius: 16px;
+  padding: 12px;
   background: rgba(0, 0, 0, 0.2);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+  justify-self: center;
 }
 
 .qr-meta {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .qr-payload {
   background: rgba(0, 0, 0, 0.3);
-  border-radius: 12px;
+  border-radius: 18px;
   padding: 16px;
-  max-height: 240px;
+  max-height: 360px;
   overflow: auto;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.explore-empty {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+@media (max-width: 1080px) {
+  .explore-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 720px) {

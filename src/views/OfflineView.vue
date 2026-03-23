@@ -1,6 +1,6 @@
 <template>
-  <div class="card-grid offline-grid">
-    <section class="card">
+  <div class="offline-shell">
+    <section class="card offline-hardware-card">
       <header class="card-header">
         <h2>{{ t("Offline wallet & hardware") }}</h2>
         <span class="status-pill" :class="{ ok: hardwareStatus.ok }">
@@ -54,7 +54,7 @@
       <p v-if="hardwareMessage" class="helper">{{ hardwareMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card offline-balance-card">
       <header class="card-header">
         <h2>{{ t("Offline balance") }}</h2>
         <span
@@ -95,7 +95,7 @@
       <p v-if="syncMessage" class="helper">{{ syncMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card offline-allowances-card">
       <header class="card-header">
         <h2>{{ t("Offline allowances") }}</h2>
         <span class="pill">{{
@@ -109,28 +109,30 @@
           )
         }}
       </p>
-      <table v-if="allowances.length" class="table">
-        <thead>
-          <tr>
-            <th>{{ t("Asset") }}</th>
-            <th>{{ t("Remaining") }}</th>
-            <th>{{ t("Policy expires") }}</th>
-            <th>{{ t("Refresh at") }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in allowances" :key="item.certificate_id_hex">
-            <td>{{ item.asset_id }}</td>
-            <td>{{ item.remaining_amount }}</td>
-            <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
-            <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div v-if="allowances.length" class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ t("Asset") }}</th>
+              <th>{{ t("Remaining") }}</th>
+              <th>{{ t("Policy expires") }}</th>
+              <th>{{ t("Refresh at") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in allowances" :key="item.certificate_id_hex">
+              <td>{{ item.asset_id }}</td>
+              <td>{{ item.remaining_amount }}</td>
+              <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
+              <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
     </section>
 
-    <section class="card">
+    <section class="card offline-request-card">
       <header class="card-header">
         <h2>{{ t("Request offline payment") }}</h2>
         <button
@@ -168,7 +170,7 @@
       <p v-if="invoiceMessage" class="helper">{{ invoiceMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card offline-send-card">
       <header class="card-header">
         <h2>{{ t("Send offline payment") }}</h2>
         <div class="actions-row">
@@ -225,7 +227,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card offline-accept-card">
       <header class="card-header">
         <h2>{{ t("Accept offline payment") }}</h2>
         <div class="actions-row">
@@ -273,7 +275,7 @@
       </p>
     </section>
 
-    <section class="card">
+    <section class="card offline-move-card">
       <header class="card-header">
         <h2>{{ t("Move funds to online wallet") }}</h2>
       </header>
@@ -339,37 +341,39 @@
       <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card offline-history-card">
       <header class="card-header">
         <h2>{{ t("Offline history") }}</h2>
       </header>
-      <table v-if="offline.wallet.history.length" class="table">
-        <thead>
-          <tr>
-            <th>{{ t("Direction") }}</th>
-            <th>{{ t("Amount") }}</th>
-            <th>{{ t("Peer") }}</th>
-            <th>{{ t("Counter") }}</th>
-            <th>{{ t("Time") }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="record in reversedHistory" :key="record.txId">
-            <td>
-              <span
-                class="pill"
-                :class="{ positive: record.direction === 'incoming' }"
-              >
-                {{ record.direction }}
-              </span>
-            </td>
-            <td>{{ record.amount }}</td>
-            <td>{{ record.peer }}</td>
-            <td>{{ record.counterLabel }}</td>
-            <td>{{ formatDate(record.timestampMs) || t("—") }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div v-if="offline.wallet.history.length" class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ t("Direction") }}</th>
+              <th>{{ t("Amount") }}</th>
+              <th>{{ t("Peer") }}</th>
+              <th>{{ t("Counter") }}</th>
+              <th>{{ t("Time") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="record in reversedHistory" :key="record.txId">
+              <td>
+                <span
+                  class="pill"
+                  :class="{ positive: record.direction === 'incoming' }"
+                >
+                  {{ record.direction }}
+                </span>
+              </td>
+              <td>{{ record.amount }}</td>
+              <td>{{ record.peer }}</td>
+              <td>{{ record.counterLabel }}</td>
+              <td>{{ formatDate(record.timestampMs) || t("—") }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-else class="helper">{{ t("No offline transfers yet.") }}</p>
     </section>
   </div>
@@ -408,9 +412,16 @@ import type { OfflineAllowanceItem } from "@/types/iroha";
 const session = useSessionStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
+const activeOfflineAssetId = computed(() =>
+  session.connection.assetDefinitionId.trim(),
+);
 const { localeStore, t } = useAppI18n();
 const canSync = computed(() =>
-  Boolean(session.connection.toriiUrl && activeAccount.value),
+  Boolean(
+    session.connection.toriiUrl &&
+      activeAccount.value &&
+      activeOfflineAssetId.value,
+  ),
 );
 const canGenerateInvoice = computed(() =>
   Boolean(
@@ -617,7 +628,11 @@ const registerHardware = async () => {
 };
 
 const syncAllowances = async () => {
-  if (!session.connection.toriiUrl || !activeAccount.value) {
+  if (
+    !session.connection.toriiUrl ||
+    !activeAccount.value ||
+    !activeOfflineAssetId.value
+  ) {
     syncMessage.value = t("Configure Torii and account first.");
     return;
   }
@@ -627,6 +642,7 @@ const syncAllowances = async () => {
     const snapshot = await fetchOfflineAllowances({
       toriiUrl: session.connection.toriiUrl,
       controllerId: activeAccount.value.accountId,
+      assetDefinitionId: activeOfflineAssetId.value,
     });
     offline.updateAllowanceSnapshot({
       total: snapshot.total,
@@ -685,7 +701,7 @@ const createPayment = async () => {
   paymentMessage.value = "";
   paymentPayload.value = "";
   paymentQr.value = "";
-  if (!activeAccount.value) {
+  if (!activeAccount.value || !activeOfflineAssetId.value) {
     paymentMessage.value = t("Configure an account first.");
     return;
   }
@@ -696,6 +712,11 @@ const createPayment = async () => {
   sendingPayment.value = true;
   try {
     const invoice = parseInvoice(invoiceInput.value.trim());
+    if (invoice.asset !== activeOfflineAssetId.value) {
+      throw new Error(
+        t("Invoice asset does not match the active offline asset."),
+      );
+    }
     if (Date.now() > invoice.expires_at_ms) {
       throw new Error(
         t("Invoice expired. Ask the receiver to generate a new invoice."),
@@ -726,7 +747,7 @@ const createPayment = async () => {
 
 const acceptPayment = async () => {
   acceptMessage.value = "";
-  if (!activeAccount.value) {
+  if (!activeAccount.value || !activeOfflineAssetId.value) {
     acceptMessage.value = t("Configure an account first.");
     return;
   }
@@ -737,6 +758,11 @@ const acceptPayment = async () => {
   acceptingPayment.value = true;
   try {
     const payload = parsePaymentPayload(paymentInput.value.trim());
+    if (payload.asset !== activeOfflineAssetId.value) {
+      throw new Error(
+        t("Payment asset does not match the active offline asset."),
+      );
+    }
     if (payload.to !== activeAccount.value.accountId) {
       throw new Error(t("Payment is addressed to a different account."));
     }

@@ -8,12 +8,7 @@ const mockControls = { stop: vi.fn() };
 const decodeFromImageUrl = vi.fn(async () => ({
   getText: () => "img-payload",
 }));
-const decodeFromVideoDevice = vi.fn(
-  async (_device: unknown, _video: unknown, cb: any) => {
-    cb({ getText: () => "cam-payload" }, undefined);
-    return mockControls;
-  },
-);
+const decodeFromVideoDevice = vi.fn();
 
 vi.mock("@zxing/browser", () => {
   class MockReader {
@@ -27,6 +22,12 @@ describe("useQrScanner hook", () => {
   beforeEach(() => {
     decodeFromImageUrl.mockClear();
     decodeFromVideoDevice.mockClear();
+    decodeFromVideoDevice.mockImplementation(
+      async (_device: unknown, _video: unknown, cb: any) => {
+        cb({ getText: () => "cam-payload" }, undefined);
+        return mockControls;
+      },
+    );
     mockControls.stop.mockClear();
     global.URL.createObjectURL = vi.fn(() => "blob:qr");
     global.URL.revokeObjectURL = vi.fn();
@@ -66,6 +67,45 @@ describe("useQrScanner hook", () => {
 
     await scanner.start();
     expect(onDecoded).toHaveBeenCalledWith("cam-payload");
+  });
+
+  it("stops the camera after an async decode callback fires", async () => {
+    vi.useFakeTimers();
+    decodeFromVideoDevice.mockImplementationOnce(
+      async (_device: unknown, _video: unknown, cb: any) => {
+        setTimeout(() => {
+          cb({ getText: () => "late-payload" }, undefined);
+        }, 0);
+        return mockControls;
+      },
+    );
+
+    const onDecoded = vi.fn();
+    const scannerRef = ref<ReturnType<typeof useQrScanner> | null>(null);
+
+    mount(
+      defineComponent({
+        setup() {
+          const scanner = useQrScanner(onDecoded);
+          scanner.videoRef.value = document.createElement("video");
+          scannerRef.value = scanner;
+          return () => null;
+        },
+      }),
+    );
+
+    const scanner = scannerRef.value;
+    if (!scanner) throw new Error("scanner not initialised");
+
+    try {
+      await scanner.start();
+      await vi.runAllTimersAsync();
+
+      expect(onDecoded).toHaveBeenCalledWith("late-payload");
+      expect(mockControls.stop).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("uses optional translator for scanner status text", async () => {

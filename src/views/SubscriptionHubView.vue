@@ -1,43 +1,70 @@
 <template>
-  <div class="card-grid">
-    <section class="card">
+  <div class="subscriptions-shell">
+    <section class="card subscriptions-summary-card">
       <header class="card-header">
-        <h2>{{ t("Subscription Hub") }}</h2>
+        <div>
+          <h2>{{ t("Subscription Hub") }}</h2>
+          <p class="helper">
+            {{
+              t(
+                "Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate each billing cycle.",
+              )
+            }}
+          </p>
+        </div>
         <span class="pill positive">{{ t("Auto-deduct on") }}</span>
       </header>
-      <div class="grid-2">
-        <div class="kv">
-          <span class="kv-label">{{ t("Active") }}</span>
-          <span class="kv-value">{{ activeCount }}</span>
+      <div class="subscriptions-overview">
+        <div class="grid-2 subscriptions-summary-grid">
+          <div class="kv">
+            <span class="kv-label">{{ t("Active") }}</span>
+            <span class="kv-value">{{ activeCount }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Paused") }}</span>
+            <span class="kv-value">{{ pausedCount }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Canceled") }}</span>
+            <span class="kv-value">{{ canceledCount }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Next auto-deduct") }}</span>
+            <span class="kv-value">{{ nextDueLabel }}</span>
+          </div>
         </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Paused") }}</span>
-          <span class="kv-value">{{ pausedCount }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Canceled") }}</span>
-          <span class="kv-value">{{ canceledCount }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Next auto-deduct") }}</span>
-          <span class="kv-value">{{ nextDueLabel }}</span>
+        <div class="subscriptions-next-panel">
+          <p class="meta-label">{{ t("Next auto-deduct") }}</p>
+          <p class="subscriptions-next-label">{{ nextDueLabel }}</p>
+          <p class="helper">
+            {{
+              t(
+                "Leave amount blank and set a max for usage-based billing. Auto-deduct runs automatically.",
+              )
+            }}
+          </p>
         </div>
       </div>
-      <p class="helper">
-        {{
-          t(
-            "Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate each billing cycle.",
-          )
-        }}
-      </p>
     </section>
 
-    <section class="card">
+    <section class="card subscriptions-form-card">
       <header class="card-header">
-        <h2>{{ t("Add subscription") }}</h2>
+        <div>
+          <h2>{{ t("Add subscription") }}</h2>
+          <p class="helper">
+            {{
+              t(
+                "Leave amount blank and set a max for usage-based billing. Auto-deduct runs automatically.",
+              )
+            }}
+          </p>
+        </div>
       </header>
-      <form class="form-grid" @submit.prevent="addSubscription">
-        <label>
+      <form
+        class="form-grid subscription-form-grid"
+        @submit.prevent="addSubscription"
+      >
+        <label class="subscription-span-2">
           {{ t("Service name") }}
           <input
             v-model.trim="form.merchant"
@@ -72,104 +99,114 @@
             <option value="yearly">{{ t("Yearly") }}</option>
           </select>
         </label>
-        <label>
+        <label class="subscription-span-2">
           {{ t("Note") }}
           <input v-model.trim="form.note" :placeholder="t('Optional note')" />
         </label>
-        <button type="submit">{{ t("Add subscription") }}</button>
+        <button type="submit" class="subscription-submit">
+          {{ t("Add subscription") }}
+        </button>
       </form>
-      <p v-if="formError" class="helper">{{ formError }}</p>
-      <p v-else class="helper">
-        {{
-          t(
-            "Leave amount blank and set a max for usage-based billing. Auto-deduct runs automatically.",
-          )
-        }}
+      <p v-if="formError" class="message error">{{ formError }}</p>
+    </section>
+
+    <section class="card subscriptions-list-card">
+      <header class="card-header">
+        <div>
+          <h2>{{ t("All subscriptions") }}</h2>
+          <p class="helper">
+            {{
+              t(
+                "Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate each billing cycle.",
+              )
+            }}
+          </p>
+        </div>
+        <span class="pill">{{
+          t("{count} total", { count: sortedRecords.length })
+        }}</span>
+      </header>
+      <div v-if="sortedRecords.length" class="subscription-stack">
+        <article
+          v-for="record in sortedRecords"
+          :key="record.id"
+          class="subscription-card"
+        >
+          <div class="subscription-card-main">
+            <div class="subscription-header">
+              <div class="subscription-headline">
+                <h3>{{ record.merchant }}</h3>
+                <p class="helper">
+                  {{
+                    formatAmount(
+                      record.amountType,
+                      record.amount,
+                      record.maxAmount,
+                      unitLabel,
+                      t,
+                      formatSubscriptionAmount,
+                    )
+                  }}
+                  ·
+                  {{ cadenceLabel(record.cadence) }}
+                </p>
+              </div>
+              <span class="pill" :class="statusTone(record)">{{
+                statusLabel(record)
+              }}</span>
+            </div>
+            <div class="subscription-meta">
+              <span>{{
+                t("Next: {date}", { date: formatDate(record.nextChargeAt) })
+              }}</span>
+              <span v-if="record.lastChargeAt">
+                {{ t("Last:") }}
+                {{
+                  formatAmount(
+                    "fixed",
+                    record.lastChargeAmount,
+                    null,
+                    unitLabel,
+                    t,
+                    formatSubscriptionAmount,
+                  )
+                }}
+                {{ t("on {date}", { date: formatDate(record.lastChargeAt) }) }}
+              </span>
+              <span v-if="record.cancelAtPeriodEnd">{{
+                t("Canceling at period end")
+              }}</span>
+            </div>
+            <p v-if="record.note" class="subscription-note">
+              {{ record.note }}
+            </p>
+          </div>
+          <div class="subscription-actions">
+            <button
+              class="secondary"
+              :disabled="record.status === 'canceled'"
+              @click="togglePause(record)"
+            >
+              {{ pauseLabel(record) }}
+            </button>
+            <button
+              class="secondary"
+              :disabled="record.status === 'canceled'"
+              @click="toggleCancel(record)"
+            >
+              {{ cancelLabel(record) }}
+            </button>
+            <button class="ghost" @click="removeSubscription(record)">
+              {{ t("Remove") }}
+            </button>
+          </div>
+        </article>
+      </div>
+      <p v-else class="helper subscription-empty">
+        {{ t("No subscriptions yet.") }}
       </p>
     </section>
   </div>
-
-  <section class="card">
-    <header class="card-header">
-      <h2>{{ t("All subscriptions") }}</h2>
-      <span class="pill">{{
-        t("{count} total", { count: sortedRecords.length })
-      }}</span>
-    </header>
-    <div v-if="sortedRecords.length" class="subscription-stack">
-      <article
-        v-for="record in sortedRecords"
-        :key="record.id"
-        class="subscription-card"
-      >
-        <div class="subscription-header">
-          <div>
-            <h3>{{ record.merchant }}</h3>
-            <p class="helper">
-              {{
-                formatAmount(
-                  record.amountType,
-                  record.amount,
-                  record.maxAmount,
-                  unitLabel,
-                  t,
-                  formatSubscriptionAmount,
-                )
-              }}
-              ·
-              {{ cadenceLabel(record.cadence) }}
-            </p>
-          </div>
-          <span class="pill" :class="statusTone(record)">{{
-            statusLabel(record)
-          }}</span>
-        </div>
-        <div class="subscription-meta">
-          <span>{{
-            t("Next: {date}", { date: formatDate(record.nextChargeAt) })
-          }}</span>
-          <span v-if="record.lastChargeAt">
-            {{ t("Last:") }}
-            {{
-              formatAmount(
-                "fixed",
-                record.lastChargeAmount,
-                null,
-                unitLabel,
-                t,
-                formatSubscriptionAmount,
-              )
-            }}
-            {{ t("on {date}", { date: formatDate(record.lastChargeAt) }) }}
-          </span>
-          <span v-if="record.cancelAtPeriodEnd">{{
-            t("Canceling at period end")
-          }}</span>
-        </div>
-        <p v-if="record.note" class="subscription-note">{{ record.note }}</p>
-        <div class="subscription-actions">
-          <button
-            class="secondary"
-            :disabled="record.status === 'canceled'"
-            @click="togglePause(record)"
-          >
-            {{ pauseLabel(record) }}
-          </button>
-          <button
-            class="secondary"
-            :disabled="record.status === 'canceled'"
-            @click="toggleCancel(record)"
-          >
-            {{ cancelLabel(record) }}
-          </button>
-          <button class="ghost" @click="removeSubscription(record)">
-            {{ t("Remove") }}
-          </button>
-        </div>
-      </article>
-    </div>
-    <p v-else class="helper">{{ t("No subscriptions yet.") }}</p>
-  </section>
 </template>
 
 <script setup lang="ts">

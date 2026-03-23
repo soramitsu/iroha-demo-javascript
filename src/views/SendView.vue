@@ -1,8 +1,17 @@
 <template>
-  <section class="card">
-    <header class="card-header">
-      <h2>{{ t("Transfer Asset") }}</h2>
-      <div class="actions-row">
+  <section class="card send-shell">
+    <header class="card-header send-header">
+      <div>
+        <h2>{{ t("Transfer Asset") }}</h2>
+        <p class="helper send-account-copy">
+          {{
+            activeAccount?.displayName ||
+            activeAccount?.accountId ||
+            t("Configure account first")
+          }}
+        </p>
+      </div>
+      <div class="actions-row send-tools">
         <button class="icon-cta" @click="toggleScanner">
           <img :src="sendIcon" alt="" />
           <span>{{
@@ -22,65 +31,101 @@
         />
       </div>
     </header>
-    <div v-if="scanner.scanning" class="scanner">
-      <video ref="scanner.videoRef" autoplay muted playsinline></video>
+    <div class="send-layout">
+      <div class="send-context">
+        <div class="send-kpis">
+          <div class="kv">
+            <span class="kv-label">{{ t("Active account") }}</span>
+            <span class="kv-value">{{
+              activeAccount?.accountId || t("Configure account first")
+            }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Asset Definition ID") }}</span>
+            <span class="kv-value">{{
+              session.connection.assetDefinitionId || t("—")
+            }}</span>
+          </div>
+        </div>
+        <div
+          class="scanner-frame"
+          :class="{ active: scanner.scanning, idle: !scanner.scanning }"
+        >
+          <div v-if="scanner.scanning" class="scanner">
+            <video ref="scanner.videoRef" autoplay muted playsinline></video>
+          </div>
+          <div v-else class="scanner-idle">
+            <span class="scanner-title">{{ t("Scan QR Code") }}</span>
+            <span class="scanner-sub">{{ t("Upload QR Image") }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="send-form-pane">
+        <div class="form-grid send-form">
+          <label>
+            {{ t("Destination Account ID") }}
+            <input
+              v-model="form.destination"
+              :placeholder="t('n42u... (I105 account ID)')"
+              :disabled="destinationLocked"
+            />
+          </label>
+          <label>
+            {{ t("Amount") }}
+            <input
+              v-model="form.quantity"
+              type="number"
+              min="0"
+              :step="form.shielded ? '1' : '0.01'"
+            />
+          </label>
+          <label>
+            {{ t("Memo (optional)") }}
+            <input v-model="form.memo" :placeholder="t('Thanks for lunch')" />
+          </label>
+          <label class="shield-option">
+            <input
+              v-model="form.shielded"
+              type="checkbox"
+              :disabled="!shieldSupported"
+            />
+            <span>{{ t("Shield transfer") }}</span>
+          </label>
+        </div>
+        <div class="actions">
+          <button :disabled="sending || !isValid" @click="handleSend">
+            {{ sending ? t("Submitting…") : submitActionLabel }}
+          </button>
+        </div>
+        <div class="send-feedback">
+          <p v-if="scanMessage || scanner.message" class="helper send-note">
+            {{ scanMessage || scanner.message }}
+          </p>
+          <p v-if="shieldCapabilityMessage" class="helper send-note">
+            {{ shieldCapabilityMessage }}
+          </p>
+          <p
+            v-if="
+              shieldSupported && shieldPolicyMode && !shieldCapabilityMessage
+            "
+            class="helper send-note"
+          >
+            {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
+          </p>
+          <p v-if="form.shielded" class="helper send-note">
+            {{
+              t(
+                "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.",
+              )
+            }}
+          </p>
+          <p v-if="statusMessage" class="helper send-note">
+            {{ statusMessage }}
+          </p>
+        </div>
+      </div>
     </div>
-    <div class="form-grid">
-      <label>
-        {{ t("Destination Account ID") }}
-        <input
-          v-model="form.destination"
-          :placeholder="t('n42u... (I105 account ID)')"
-          :disabled="destinationLocked"
-        />
-      </label>
-      <label>
-        {{ t("Amount") }}
-        <input
-          v-model="form.quantity"
-          type="number"
-          min="0"
-          :step="form.shielded ? '1' : '0.01'"
-        />
-      </label>
-      <label>
-        {{ t("Memo (optional)") }}
-        <input v-model="form.memo" :placeholder="t('Thanks for lunch')" />
-      </label>
-      <label class="shield-option">
-        <input
-          v-model="form.shielded"
-          type="checkbox"
-          :disabled="!shieldSupported"
-        />
-        <span>{{ t("Shield transfer") }}</span>
-      </label>
-    </div>
-    <div class="actions">
-      <button :disabled="sending || !isValid" @click="handleSend">
-        {{ sending ? t("Submitting…") : submitActionLabel }}
-      </button>
-    </div>
-    <p v-if="scanMessage || scanner.message" class="helper">
-      {{ scanMessage || scanner.message }}
-    </p>
-    <p v-if="shieldCapabilityMessage" class="helper">
-      {{ shieldCapabilityMessage }}
-    </p>
-    <p
-      v-if="shieldSupported && shieldPolicyMode && !shieldCapabilityMessage"
-      class="helper"
-    >
-      {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
-    </p>
-    <p v-if="form.shielded" class="helper">
-      {{
-        t(
-          "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.",
-        )
-      }}
-    </p>
-    <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
   </section>
 </template>
 
@@ -235,16 +280,92 @@ const toggleScanner = async () => {
 </script>
 
 <style scoped>
-.scanner {
-  border-radius: 16px;
-  overflow: hidden;
+.send-header {
+  align-items: flex-start;
+}
+
+.send-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.send-account-copy {
+  margin-top: 4px;
+  word-break: break-all;
+  unicode-bidi: plaintext;
+}
+
+.send-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.92fr) minmax(360px, 1.08fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.send-context,
+.send-form-pane {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
+.send-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scanner-frame {
+  min-height: 248px;
+  border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  margin-bottom: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 68%),
+    rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.scanner-frame.active {
+  border-color: rgba(255, 76, 102, 0.42);
+  box-shadow: 0 18px 36px rgba(255, 76, 102, 0.14);
+}
+
+.scanner {
+  width: 100%;
+  height: 100%;
+  min-height: 248px;
+}
+
+.scanner-idle {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--iroha-muted);
+}
+
+.scanner-title {
+  font-weight: 700;
+  color: inherit;
+}
+
+.scanner-sub {
+  font-size: 0.84rem;
 }
 
 video {
   width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
   background: black;
+}
+
+.send-form {
+  gap: 14px;
 }
 
 .shield-option {
@@ -252,6 +373,10 @@ video {
   flex-direction: row;
   align-items: center;
   gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .shield-option input[type="checkbox"] {
@@ -261,5 +386,73 @@ video {
   padding: 0;
   border-radius: 6px;
   box-shadow: none;
+}
+
+.send-feedback {
+  display: grid;
+  gap: 10px;
+}
+
+.send-note {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+@media (max-width: 1080px) {
+  .send-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .send-form-pane {
+    order: -1;
+  }
+
+  .send-tools {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .send-header {
+    gap: 14px;
+  }
+
+  .send-tools {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .send-tools .icon-cta {
+    width: 100%;
+    justify-content: center;
+    min-height: 56px;
+    padding-inline: 12px;
+    text-align: center;
+  }
+
+  .send-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .send-context {
+    gap: 12px;
+  }
+
+  .scanner-frame.idle {
+    display: none;
+  }
+
+  .scanner-frame,
+  .scanner {
+    min-height: 220px;
+  }
+
+  .send-note {
+    padding: 10px 12px;
+  }
 }
 </style>

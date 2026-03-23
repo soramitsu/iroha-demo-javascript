@@ -1,0 +1,128 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: Torii
+          - generic [ref=e16]: TAIRA固定
+          - generic [ref=e17]: https://taira.sora.org
+        - generic [ref=e18]:
+          - generic [ref=e19]: チェーン
+          - generic [ref=e20]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - generic [ref=e21]: xor#wonderland
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: 言語
+          - combobox "言語" [ref=e25]:
+            - option "English"
+            - option "العربية"
+            - option "Azərbaycanca"
+            - option "Català"
+            - option "Čeština"
+            - option "Deutsch"
+            - option "Español"
+            - option "فارسی"
+            - option "Suomi"
+            - option "Français"
+            - option "עברית"
+            - option "हिन्दी"
+            - option "Magyar"
+            - option "Bahasa Indonesia"
+            - option "Italiano"
+            - option "日本語" [selected]
+            - option "한국어"
+            - option "Bahasa Melayu"
+            - option "Norsk bokmål"
+            - option "Nederlands"
+            - option "Polski"
+            - option "Português"
+            - option "Русский"
+            - option "Српски"
+            - option "Slovenščina"
+            - option "Türkçe"
+            - option "Українська"
+            - option "اردو"
+            - option "Tiếng Việt"
+            - option "简体中文"
+            - option "繁體中文"
+        - button "ライトモードへ切替" [ref=e26] [cursor=pointer]:
+          - generic: ライトモードへ切替
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: ナビゲート
+        - generic [ref=e31]: アカウント準備完了
+      - group [ref=e32]:
+        - generic "ナビゲート アカウント設定" [ref=e33] [cursor=pointer]:
+          - generic [ref=e34]:
+            - generic [ref=e35]: ナビゲート
+            - generic [ref=e36]: アカウント設定
+          - generic [ref=e37]: ↗
+        - option "Makoto" [selected]
+    - generic [ref=e38]:
+      - generic [ref=e39]:
+        - generic [ref=e40]:
+          - paragraph [ref=e41]: TAIRAテストネットアカウントを準備
+          - heading "アカウント設定" [level=1] [ref=e42]
+        - generic [ref=e43]:
+          - generic [ref=e44]: TAIRA Torii準備完了
+          - generic [ref=e45]: アカウント保存済み
+          - generic [ref=e46]: Makoto
+      - main [ref=e47]:
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - generic [ref=e51]:
+              - heading "TAIRAテストネットアカウント" [level=2] [ref=e52]
+              - paragraph [ref=e53]: アカウント キーを生成し、回復フレーズを保存し、Torii 経由で登録します。
+            - paragraph [ref=e55]: このビルドではオンボーディング用の TAIRA テストネット接続に固定されています。
+            - generic [ref=e56]:
+              - generic [ref=e57]:
+                - text: 表示名 (ローカルのみ、オンチェーンではない)
+                - textbox "表示名 (ローカルのみ、オンチェーンではない)" [ref=e58]:
+                  - /placeholder: アリス
+                  - text: Makoto
+              - generic [ref=e59]:
+                - text: ドメイン
+                - textbox "ドメイン" [ref=e60]:
+                  - /placeholder: wonderland
+                  - text: wonderland
+              - generic [ref=e61]:
+                - text: リカバリー・フレーズの長さ
+                - combobox "リカバリー・フレーズの長さ" [ref=e62]:
+                  - option "12単語"
+                  - option "24単語" [selected]
+              - generic [ref=e63]:
+                - text: ID メタデータ (JSON、オプション)
+                - textbox "ID メタデータ (JSON、オプション)" [ref=e64]:
+                  - /placeholder: "{\"country\":\"JP\",\"kyc_id\":\"...\"}"
+            - generic [ref=e65]:
+              - button "リカバリフレーズの生成" [ref=e66] [cursor=pointer]
+              - button "アカウントを登録する" [disabled] [ref=e67]
+          - generic [ref=e68]:
+            - heading "いろはコネクトペアリング" [level=2] [ref=e70]
+            - paragraph [ref=e71]: すでに携帯電話で IrohaConnect を使用していますか?ペアリング セッションを生成して、キーをエクスポートせずにデスクトップ アクセスを承認します。署名は電話で行われます。このアプリは残高を監視します。
+            - generic [ref=e72]:
+              - button "ペアリングQRの生成" [ref=e73] [cursor=pointer]
+              - button "リセット" [disabled] [ref=e74]
+          - generic [ref=e75]:
+            - generic [ref=e77]:
+              - heading "保存されたアカウント" [level=2] [ref=e78]
+              - paragraph [ref=e79]: 登録済みのプロファイルを切り替えるか、新たに登録を開始します。
+            - generic [ref=e80]:
+              - generic [ref=e83]: 平接続準備完了
+              - generic [ref=e86]: 復元フレーズを保存しました
+              - generic [ref=e89]: アカウントが登録されました
+            - article [ref=e91]:
+              - generic [ref=e92]:
+                - paragraph [ref=e93]: Makoto
+                - paragraph [ref=e94]: n42demoaccount00000000000001
+              - generic [ref=e95]:
+                - generic [ref=e96]: アクティブ
+                - button "選択済み" [disabled] [ref=e97]
+            - button "別のアカウントを登録する" [ref=e99] [cursor=pointer]

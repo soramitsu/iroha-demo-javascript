@@ -105,6 +105,9 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const session = useSessionStore();
+  if (!session.hydrated) {
+    session.hydrate();
+  }
   if (!session.hasAccount && to.path !== "/account") {
     return "/account";
   }

@@ -46,11 +46,17 @@ export type OfflineStateSnapshot = {
 };
 
 type ParsedDecimal = { value: bigint; scale: number };
+const DECIMAL_AMOUNT_PATTERN = /^-?\d+(?:\.\d+)?$/;
+const POSITIVE_OFFLINE_AMOUNT_ERROR =
+  "Offline amount must be a positive decimal value.";
 
 const parseDecimal = (input: string): ParsedDecimal => {
   const trimmed = input.trim();
   if (!trimmed) {
     return { value: 0n, scale: 0 };
+  }
+  if (!DECIMAL_AMOUNT_PATTERN.test(trimmed)) {
+    throw new Error("Invalid decimal amount.");
   }
   const negative = trimmed.startsWith("-");
   const unsigned = negative ? trimmed.slice(1) : trimmed;
@@ -64,6 +70,20 @@ const parseDecimal = (input: string): ParsedDecimal => {
 };
 
 const pow10 = (exp: number) => 10n ** BigInt(exp);
+
+const requirePositiveAmount = (
+  input: string | number | null | undefined,
+): string => {
+  const normalized = String(input ?? "").trim();
+  try {
+    if (compareAmounts(normalized, "0") <= 0) {
+      throw new Error(POSITIVE_OFFLINE_AMOUNT_ERROR);
+    }
+  } catch (_error) {
+    throw new Error(POSITIVE_OFFLINE_AMOUNT_ERROR);
+  }
+  return normalized;
+};
 
 const formatDecimal = (value: bigint, scale: number): string => {
   const negative = value < 0;
@@ -133,11 +153,12 @@ export const createInvoice = (params: {
   const now = Date.now();
   const expiresAt = now + Math.max(params.validityMs, 0);
   const memo = params.memo?.trim() || undefined;
+  const amount = requirePositiveAmount(params.amount);
   return {
     invoice_id: crypto.randomUUID(),
     receiver: params.receiver,
     asset: params.assetId,
-    amount: params.amount,
+    amount,
     created_at_ms: now,
     expires_at_ms: expiresAt,
     memo,
@@ -157,11 +178,12 @@ export const parseInvoice = (payload: string): OfflineInvoice => {
   ) {
     throw new Error("Invalid offline invoice payload");
   }
+  const amount = requirePositiveAmount(parsed.amount);
   return {
     invoice_id: String(parsed.invoice_id),
     receiver: String(parsed.receiver),
     asset: String(parsed.asset),
-    amount: String(parsed.amount),
+    amount,
     created_at_ms: Number(parsed.created_at_ms ?? Date.now()),
     expires_at_ms: Number(parsed.expires_at_ms ?? Date.now()),
     memo: parsed.memo ? String(parsed.memo) : undefined,
@@ -177,18 +199,14 @@ export const createPaymentPayload = (params: {
 }): OfflinePaymentPayload => {
   const { invoice, senderAccount, counter } = params;
   const memo = params.memo?.trim() || undefined;
-  const txId = computeTxId(
-    senderAccount,
-    invoice.invoice_id,
-    invoice.amount,
-    counter,
-  );
+  const amount = requirePositiveAmount(invoice.amount);
+  const txId = computeTxId(senderAccount, invoice.invoice_id, amount, counter);
   return {
     tx_id: txId,
     from: senderAccount,
     to: invoice.receiver,
     asset: invoice.asset,
-    amount: invoice.amount,
+    amount,
     invoice_id: invoice.invoice_id,
     counter,
     timestamp_ms: Date.now(),
@@ -208,12 +226,13 @@ export const parsePaymentPayload = (payload: string): OfflinePaymentPayload => {
   ) {
     throw new Error("Invalid offline payment payload");
   }
+  const amount = requirePositiveAmount(parsed.amount);
   return {
     tx_id: String(parsed.tx_id),
     from: String(parsed.from),
     to: String(parsed.to),
     asset: String(parsed.asset),
-    amount: String(parsed.amount),
+    amount,
     invoice_id: String(parsed.invoice_id),
     counter: Number(parsed.counter ?? 0),
     timestamp_ms: Number(parsed.timestamp_ms ?? Date.now()),
@@ -232,20 +251,21 @@ export const applyOutgoingPayment = (
   state: OfflineStateSnapshot,
   payload: OfflinePaymentPayload,
 ): OfflineStateSnapshot => {
+  const amount = requirePositiveAmount(payload.amount);
   if (payload.counter !== state.nextCounter) {
     throw new Error(
       "Offline counter is out of sync. Sync allowances or reset the offline wallet.",
     );
   }
-  if (compareAmounts(state.balance, payload.amount) < 0) {
+  if (compareAmounts(state.balance, amount) < 0) {
     throw new Error("Insufficient offline balance for this payment.");
   }
-  const updatedBalance = subtractAmounts(state.balance, payload.amount);
+  const updatedBalance = subtractAmounts(state.balance, amount);
   const record: OfflineTransferRecord = {
     txId: payload.tx_id,
     direction: "outgoing",
     counterLabel: `#${payload.counter}`,
-    amount: payload.amount,
+    amount,
     peer: payload.to,
     timestampMs: payload.timestamp_ms,
     memo: payload.memo,
@@ -262,15 +282,16 @@ export const applyIncomingPayment = (
   state: OfflineStateSnapshot,
   payload: OfflinePaymentPayload,
 ): OfflineStateSnapshot => {
+  const amount = requirePositiveAmount(payload.amount);
   if (state.replayLog.includes(payload.tx_id)) {
     throw new Error("This payment has already been recorded.");
   }
-  const updatedBalance = addAmounts(state.balance, payload.amount);
+  const updatedBalance = addAmounts(state.balance, amount);
   const record: OfflineTransferRecord = {
     txId: payload.tx_id,
     direction: "incoming",
     counterLabel: `#${payload.counter}`,
-    amount: payload.amount,
+    amount,
     peer: payload.from,
     timestampMs: payload.timestamp_ms,
     memo: payload.memo,
@@ -292,25 +313,26 @@ export const applyWithdrawToOnline = (
     memo?: string | null;
   },
 ): { state: OfflineStateSnapshot; txId: string } => {
-  if (compareAmounts(state.balance, params.amount) < 0) {
+  const amount = requirePositiveAmount(params.amount);
+  if (compareAmounts(state.balance, amount) < 0) {
     throw new Error("Insufficient offline balance for this withdrawal.");
   }
   const txId = computeTxId(
     params.accountId,
     "online-deposit",
-    params.amount,
+    amount,
     state.nextCounter,
   );
   const record: OfflineTransferRecord = {
     txId,
     direction: "outgoing",
     counterLabel: `#${state.nextCounter}`,
-    amount: params.amount,
+    amount,
     peer: params.receiver,
     timestampMs: Date.now(),
     memo: params.memo ?? undefined,
   };
-  const updatedBalance = subtractAmounts(state.balance, params.amount);
+  const updatedBalance = subtractAmounts(state.balance, amount);
   return {
     state: {
       ...state,

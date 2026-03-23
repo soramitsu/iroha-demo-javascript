@@ -102,6 +102,16 @@ describe("OfflineView move-to-online shield mode", () => {
     return section;
   };
 
+  const getSection = (wrapper: ReturnType<typeof mount>, title: string) => {
+    const section = wrapper
+      .findAll("section.card")
+      .find((node) => node.text().includes(title));
+    if (!section) {
+      throw new Error(`Section not found: ${title}`);
+    }
+    return section;
+  };
+
   it("forwards shielded move payloads and locks destination to active account", async () => {
     transferAssetMock.mockResolvedValue({ hash: "0xabc" });
     const wrapper = mountView();
@@ -232,5 +242,57 @@ describe("OfflineView move-to-online shield mode", () => {
 
     expect((receiverInput.element as HTMLInputElement).value).toBe("");
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("rejects offline invoices for a different asset", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const paymentSection = getSection(wrapper, "Send offline payment");
+    await paymentSection.get("textarea").setValue(
+      JSON.stringify({
+        invoice_id: "inv-1",
+        receiver: "merchant@wonderland",
+        asset: "xor#wonderland",
+        amount: "5",
+        created_at_ms: Date.now(),
+        expires_at_ms: Date.now() + 60_000,
+      }),
+    );
+
+    await paymentSection.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(paymentSection.text()).toContain(
+      "Invoice asset does not match the active offline asset.",
+    );
+    expect(transferAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects offline payments for a different asset", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const acceptSection = getSection(wrapper, "Accept offline payment");
+    await acceptSection.get("textarea").setValue(
+      JSON.stringify({
+        tx_id: "tx-1",
+        from: "merchant@wonderland",
+        to: "alice@wonderland",
+        asset: "xor#wonderland",
+        amount: "5",
+        invoice_id: "inv-1",
+        counter: 0,
+        timestamp_ms: Date.now(),
+        channel: "qr",
+      }),
+    );
+
+    await acceptSection.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(acceptSection.text()).toContain(
+      "Payment asset does not match the active offline asset.",
+    );
   });
 });

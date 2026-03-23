@@ -75,18 +75,20 @@ const goToRegistration = () => {
 <style scoped>
 .account-switcher {
   display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 14px;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
   border: 1px solid var(--panel-border);
-  background: var(--surface-soft);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 70%),
+    var(--surface-soft);
   width: 100%;
 }
 
 .switcher-head {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
 }
 
@@ -100,7 +102,14 @@ const goToRegistration = () => {
 
 .switcher-title {
   font-weight: 700;
-  margin: 2px 0 0;
+  margin: 4px 0 0;
+  word-break: break-all;
+  unicode-bidi: plaintext;
+}
+
+.switcher-body {
+  display: grid;
+  gap: 10px;
 }
 
 .switcher-body select {
@@ -111,5 +120,22 @@ const goToRegistration = () => {
   margin: 0;
   font-size: 0.85rem;
   color: var(--iroha-muted);
+  line-height: 1.45;
+}
+
+@media (max-width: 1180px) {
+  .switcher-head {
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 960px) {
+  .account-switcher {
+    padding: 12px 14px;
+  }
+
+  .switcher-head .secondary {
+    width: 100%;
+  }
 }
 </style>

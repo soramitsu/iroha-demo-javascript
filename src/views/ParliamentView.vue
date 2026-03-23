@@ -1,6 +1,6 @@
 <template>
-  <div class="card-grid">
-    <section class="card">
+  <div class="parliament-shell">
+    <section class="card parliament-status-card">
       <header class="card-header">
         <h2>{{ t("Citizenship Bond") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
@@ -15,7 +15,7 @@
           )
         }}
       </p>
-      <div class="grid-2" style="margin-top: 12px">
+      <div class="grid-2 parliament-summary">
         <div class="kv">
           <span class="kv-label">{{ t("Account") }}</span>
           <span class="kv-value mono">{{
@@ -105,7 +105,7 @@
       <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card parliament-lookup-card">
       <header class="card-header">
         <h2>{{ t("Referendum Lookup") }}</h2>
         <button
@@ -178,7 +178,7 @@
         </div>
       </div>
 
-      <div v-if="tally?.tally" class="grid-2" style="margin-top: 12px">
+      <div v-if="tally?.tally" class="grid-2 parliament-tally">
         <div class="kv">
           <span class="kv-label">{{ t("Aye") }}</span>
           <span class="kv-value">{{ tally.tally.approve }}</span>
@@ -212,15 +212,20 @@
         }}
       </p>
 
-      <pre v-if="referendum?.referendum" class="payload mono">{{
-        JSON.stringify(referendum.referendum, null, 2)
-      }}</pre>
-      <pre v-if="proposal?.proposal" class="payload mono">{{
-        JSON.stringify(proposal.proposal, null, 2)
-      }}</pre>
+      <div
+        v-if="referendum?.referendum || proposal?.proposal"
+        class="payload-stack"
+      >
+        <pre v-if="referendum?.referendum" class="payload mono">{{
+          JSON.stringify(referendum.referendum, null, 2)
+        }}</pre>
+        <pre v-if="proposal?.proposal" class="payload mono">{{
+          JSON.stringify(proposal.proposal, null, 2)
+        }}</pre>
+      </div>
     </section>
 
-    <section class="card">
+    <section class="card parliament-ballot-card">
       <header class="card-header">
         <h2>{{ t("Cast Plain Ballot") }}</h2>
       </header>
@@ -282,7 +287,7 @@
       </p>
     </section>
 
-    <section class="card">
+    <section class="card parliament-council-card">
       <header class="card-header">
         <h2>{{ t("Council & Draft Ops") }}</h2>
       </header>
@@ -826,6 +831,14 @@ const lookupGovernance = async () => {
     if (requestGeneration !== lookupGeneration.value) {
       return;
     }
+    referendum.value = null;
+    proposal.value = null;
+    tally.value = null;
+    locks.value = null;
+    finalizeDraft.value = null;
+    enactDraft.value = null;
+    loadedReferendumInput.value = null;
+    loadedProposalInput.value = null;
     errorMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
     if (requestGeneration === lookupGeneration.value) {

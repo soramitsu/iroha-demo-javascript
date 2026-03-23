@@ -57,18 +57,26 @@ export const useQrScanner = (
     message.value = "";
     try {
       let shouldStop = false;
+      let scannerControls: IScannerControls | null = null;
+      const requestStop = () => {
+        shouldStop = true;
+        if (scannerControls) {
+          controls = scannerControls;
+          stop();
+        }
+      };
       await ensureCameraPermission();
-      const scannerControls = await reader.decodeFromVideoDevice(
+      scannerControls = await reader.decodeFromVideoDevice(
         undefined,
         videoEl,
         (result, error) => {
           if (result) {
             onDecoded(result.getText());
             message.value = t("QR decoded successfully.");
-            shouldStop = true;
+            requestStop();
           } else if (error && error.name !== "NotFoundException") {
             message.value = error.message ?? t("Camera error.");
-            shouldStop = true;
+            requestStop();
           }
         },
       );

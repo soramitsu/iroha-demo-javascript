@@ -1,6 +1,6 @@
 <template>
-  <div class="card-grid">
-    <section class="card">
+  <div class="staking-shell">
+    <section class="card staking-context-card">
       <header class="card-header">
         <h2>{{ t("Nominate Validators") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
@@ -14,7 +14,7 @@
           )
         }}
       </p>
-      <div class="form-grid">
+      <div class="form-grid staking-controls">
         <label>
           {{ t("Dataspace") }}
           <select
@@ -50,7 +50,7 @@
         </label>
       </div>
 
-      <div class="grid-2" style="margin-top: 12px">
+      <div class="grid-2 staking-metrics">
         <div class="kv">
           <span class="kv-label">{{ t("Lane") }}</span>
           <span class="kv-value">{{
@@ -97,11 +97,11 @@
       <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card staking-actions-card">
       <header class="card-header">
         <h2>{{ t("Bond / Unbond") }}</h2>
       </header>
-      <div class="form-grid">
+      <div class="form-grid staking-action-grid">
         <label>
           {{ t("Bond amount (XOR)") }}
           <input
@@ -176,11 +176,11 @@
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card staking-position-card">
       <header class="card-header">
         <h2>{{ t("Your Position") }}</h2>
       </header>
-      <div class="grid-2">
+      <div class="grid-2 staking-position-grid">
         <div class="kv">
           <span class="kv-label">{{ t("Bonded") }}</span>
           <span class="kv-value"
@@ -225,29 +225,31 @@
       </p>
     </section>
 
-    <section class="card">
+    <section class="card staking-rewards-card">
       <header class="card-header">
         <h2>{{ t("Pending Rewards") }}</h2>
       </header>
-      <table v-if="rewardsForAccount.length" class="table">
-        <thead>
-          <tr>
-            <th>{{ t("Asset") }}</th>
-            <th>{{ t("Amount") }}</th>
-            <th>{{ t("Through Epoch") }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="reward in rewardsForAccount"
-            :key="`${reward.asset}:${reward.pending_through_epoch}`"
-          >
-            <td>{{ reward.asset }}</td>
-            <td>{{ reward.amount }}</td>
-            <td>{{ reward.pending_through_epoch }}</td>
-          </tr>
-        </tbody>
-      </table>
+      <div v-if="rewardsForAccount.length" class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ t("Asset") }}</th>
+              <th>{{ t("Amount") }}</th>
+              <th>{{ t("Through Epoch") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="reward in rewardsForAccount"
+              :key="`${reward.asset}:${reward.pending_through_epoch}`"
+            >
+              <td>{{ reward.asset }}</td>
+              <td>{{ reward.amount }}</td>
+              <td>{{ reward.pending_through_epoch }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
       <p v-else class="helper">
         {{ t("No pending rewards for this lane/account.") }}
       </p>
@@ -305,6 +307,9 @@ const { localeStore, t } = useAppI18n();
 const loadingBootstrap = ref(false);
 const loadingLaneData = ref(false);
 const actionBusy = ref<"bond" | "unbond" | "finalize" | "claim" | null>(null);
+const refreshGeneration = ref(0);
+const laneRequestGeneration = ref(0);
+const suppressValidatorReload = ref(false);
 
 const statusMessage = ref("");
 const actionMessage = ref("");
@@ -454,77 +459,133 @@ const resetLaneState = () => {
   selectedFinalizeRequestId.value = "";
 };
 
+const resetBootstrapState = () => {
+  dataspaceOptions.value = [];
+  selectedDataspaceId.value = null;
+  policy.value = null;
+  stakeTokenBalance.value = "0";
+  stakeTokenSymbol.value = "XOR";
+  suppressValidatorReload.value = false;
+  loadingLaneData.value = false;
+  resetLaneState();
+};
+
 const loadLaneData = async () => {
-  if (
-    !session.connection.toriiUrl ||
-    !stakerAccountId.value ||
-    laneId.value === null
-  ) {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = stakerAccountId.value;
+  const currentLaneId = laneId.value;
+  if (!toriiUrl || !accountId || currentLaneId === null) {
+    laneRequestGeneration.value += 1;
     resetLaneState();
     return;
   }
 
+  const requestGeneration = laneRequestGeneration.value + 1;
+  laneRequestGeneration.value = requestGeneration;
   loadingLaneData.value = true;
   errorMessage.value = "";
 
   try {
     const [validatorsPayload, rewardsPayload] = await Promise.all([
       getNexusPublicLaneValidators({
-        toriiUrl: session.connection.toriiUrl,
-        laneId: laneId.value,
+        toriiUrl,
+        laneId: currentLaneId,
       }),
       getNexusPublicLaneRewards({
-        toriiUrl: session.connection.toriiUrl,
-        laneId: laneId.value,
-        account: stakerAccountId.value,
+        toriiUrl,
+        laneId: currentLaneId,
+        account: accountId,
       }),
     ]);
+    if (
+      requestGeneration !== laneRequestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      stakerAccountId.value !== accountId ||
+      laneId.value !== currentLaneId
+    ) {
+      return;
+    }
 
     const nextValidator = pickDefaultValidator(
       validatorsPayload.items,
       selectedValidator.value,
     );
     const stakePayload = await getNexusPublicLaneStake({
-      toriiUrl: session.connection.toriiUrl,
-      laneId: laneId.value,
+      toriiUrl,
+      laneId: currentLaneId,
       validator: nextValidator || undefined,
     });
+    if (
+      requestGeneration !== laneRequestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      stakerAccountId.value !== accountId ||
+      laneId.value !== currentLaneId
+    ) {
+      return;
+    }
 
     validators.value = validatorsPayload.items;
+    suppressValidatorReload.value = nextValidator !== selectedValidator.value;
     selectedValidator.value = nextValidator;
     stakeResponse.value = stakePayload;
     rewardsResponse.value = rewardsPayload;
   } catch (error) {
+    if (
+      requestGeneration !== laneRequestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      stakerAccountId.value !== accountId ||
+      laneId.value !== currentLaneId
+    ) {
+      return;
+    }
     resetLaneState();
     errorMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
-    loadingLaneData.value = false;
+    if (requestGeneration === laneRequestGeneration.value) {
+      loadingLaneData.value = false;
+    }
   }
 };
 
 const refresh = async () => {
-  if (!session.connection.toriiUrl || !activeAccount.value?.accountId) {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = activeAccount.value?.accountId;
+  if (!toriiUrl || !accountId) {
+    refreshGeneration.value += 1;
+    laneRequestGeneration.value += 1;
+    errorMessage.value = "";
+    actionMessage.value = "";
     statusMessage.value = t(
       "Configure Torii and complete account onboarding first.",
     );
-    resetLaneState();
+    resetBootstrapState();
     return;
   }
 
+  const requestGeneration = refreshGeneration.value + 1;
+  refreshGeneration.value = requestGeneration;
+  laneRequestGeneration.value += 1;
   loadingBootstrap.value = true;
   errorMessage.value = "";
   actionMessage.value = "";
 
   try {
     const [status, stakingPolicy, accountAssets] = await Promise.all([
-      getSumeragiStatus(session.connection.toriiUrl),
-      getNexusStakingPolicy(session.connection.toriiUrl),
+      getSumeragiStatus(toriiUrl),
+      getNexusStakingPolicy(toriiUrl),
       fetchAccountAssets({
-        toriiUrl: session.connection.toriiUrl,
-        accountId: activeAccount.value.accountId,
+        toriiUrl,
+        accountId,
         limit: 200,
       }),
     ]);
+    if (
+      requestGeneration !== refreshGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      activeAccount.value?.accountId !== accountId
+    ) {
+      return;
+    }
     const normalizedTargetAsset = session.connection.assetDefinitionId
       .trim()
       .toLowerCase();
@@ -585,11 +646,20 @@ const refresh = async () => {
     });
     await loadLaneData();
   } catch (error) {
+    if (
+      requestGeneration !== refreshGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      activeAccount.value?.accountId !== accountId
+    ) {
+      return;
+    }
     statusMessage.value = "";
-    resetLaneState();
+    resetBootstrapState();
     errorMessage.value = error instanceof Error ? error.message : String(error);
   } finally {
-    loadingBootstrap.value = false;
+    if (requestGeneration === refreshGeneration.value) {
+      loadingBootstrap.value = false;
+    }
   }
 };
 
@@ -726,29 +796,59 @@ const handleClaimRewards = () =>
 watch(
   selectedValidator,
   async (next, previous) => {
+    if (suppressValidatorReload.value) {
+      suppressValidatorReload.value = false;
+      return;
+    }
+    const toriiUrl = session.connection.toriiUrl;
+    const accountId = stakerAccountId.value;
+    const currentLaneId = laneId.value;
     if (
-      loadingLaneData.value ||
       !next ||
       next === previous ||
-      !session.connection.toriiUrl ||
-      laneId.value === null
+      !toriiUrl ||
+      !accountId ||
+      currentLaneId === null
     ) {
       return;
     }
+    const requestGeneration = laneRequestGeneration.value + 1;
+    laneRequestGeneration.value = requestGeneration;
     loadingLaneData.value = true;
     errorMessage.value = "";
     try {
-      stakeResponse.value = await getNexusPublicLaneStake({
-        toriiUrl: session.connection.toriiUrl,
-        laneId: laneId.value,
+      const nextStakeResponse = await getNexusPublicLaneStake({
+        toriiUrl,
+        laneId: currentLaneId,
         validator: next,
       });
+      if (
+        requestGeneration !== laneRequestGeneration.value ||
+        session.connection.toriiUrl !== toriiUrl ||
+        stakerAccountId.value !== accountId ||
+        laneId.value !== currentLaneId ||
+        selectedValidator.value !== next
+      ) {
+        return;
+      }
+      stakeResponse.value = nextStakeResponse;
     } catch (error) {
+      if (
+        requestGeneration !== laneRequestGeneration.value ||
+        session.connection.toriiUrl !== toriiUrl ||
+        stakerAccountId.value !== accountId ||
+        laneId.value !== currentLaneId ||
+        selectedValidator.value !== next
+      ) {
+        return;
+      }
       stakeResponse.value = null;
       errorMessage.value =
         error instanceof Error ? error.message : String(error);
     } finally {
-      loadingLaneData.value = false;
+      if (requestGeneration === laneRequestGeneration.value) {
+        loadingLaneData.value = false;
+      }
     }
   },
   { flush: "post" },

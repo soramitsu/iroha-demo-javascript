@@ -1,0 +1,182 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: Torii
+          - generic [ref=e16]: TAIRA固定
+          - generic [ref=e17]: https://taira.sora.org
+        - generic [ref=e18]:
+          - generic [ref=e19]: チェーン
+          - generic [ref=e20]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - generic [ref=e21]: xor#wonderland
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: 言語
+          - combobox "言語" [ref=e25]:
+            - option "English"
+            - option "العربية"
+            - option "Azərbaycanca"
+            - option "Català"
+            - option "Čeština"
+            - option "Deutsch"
+            - option "Español"
+            - option "فارسی"
+            - option "Suomi"
+            - option "Français"
+            - option "עברית"
+            - option "हिन्दी"
+            - option "Magyar"
+            - option "Bahasa Indonesia"
+            - option "Italiano"
+            - option "日本語" [selected]
+            - option "한국어"
+            - option "Bahasa Melayu"
+            - option "Norsk bokmål"
+            - option "Nederlands"
+            - option "Polski"
+            - option "Português"
+            - option "Русский"
+            - option "Српски"
+            - option "Slovenščina"
+            - option "Türkçe"
+            - option "Українська"
+            - option "اردو"
+            - option "Tiếng Việt"
+            - option "简体中文"
+            - option "繁體中文"
+        - button "ライトモードへ切替" [ref=e26] [cursor=pointer]:
+          - generic: ライトモードへ切替
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: ナビゲート
+        - generic [ref=e31]: アカウント準備完了
+      - group [ref=e202]:
+        - generic "ナビゲート ウォレット概要" [active] [ref=e203] [cursor=pointer]:
+          - generic [ref=e204]:
+            - generic [ref=e205]: ナビゲート
+            - generic [ref=e206]: ウォレット概要
+          - generic [ref=e207]: ↗
+        - navigation [ref=e208]:
+          - link "アカウント設定 アカウント設定 鍵・リカバリーフレーズ生成、Connect連携" [ref=e209] [cursor=pointer]:
+            - /url: "#/account"
+            - generic [ref=e210]: "01"
+            - img "アカウント設定" [ref=e212]
+            - generic [ref=e213]:
+              - generic [ref=e214]: アカウント設定
+              - generic [ref=e215]: 鍵・リカバリーフレーズ生成、Connect連携
+          - link "セッション セッション TAIRA接続、アセット、権限鍵" [ref=e216] [cursor=pointer]:
+            - /url: "#/setup"
+            - generic [ref=e217]: "02"
+            - img "セッション" [ref=e219]
+            - generic [ref=e220]:
+              - generic [ref=e221]: セッション
+              - generic [ref=e222]: TAIRA接続、アセット、権限鍵
+          - link "ウォレット ウォレット 残高、アセット、最新トランザクション" [ref=e223] [cursor=pointer]:
+            - /url: "#/wallet"
+            - generic [ref=e224]: "03"
+            - img "ウォレット" [ref=e226]
+            - generic [ref=e227]:
+              - generic [ref=e228]: ウォレット
+              - generic [ref=e229]: 残高、アセット、最新トランザクション
+          - link "ステーキング ステーキング バリデータを指名してXORをNPOSステーク" [ref=e230] [cursor=pointer]:
+            - /url: "#/staking"
+            - generic [ref=e231]: "04"
+            - img "ステーキング" [ref=e233]
+            - generic [ref=e234]:
+              - generic [ref=e235]: ステーキング
+              - generic [ref=e236]: バリデータを指名してXORをNPOSステーク
+          - link "議会 議会 市民権をボンドしガバナンス投票" [ref=e237] [cursor=pointer]:
+            - /url: "#/parliament"
+            - generic [ref=e238]: "05"
+            - img "議会" [ref=e240]
+            - generic [ref=e241]:
+              - generic [ref=e242]: 議会
+              - generic [ref=e243]: 市民権をボンドしガバナンス投票
+          - link "サブスクリプション サブスクリプション 自動引き落としと定期サービス管理" [ref=e244] [cursor=pointer]:
+            - /url: "#/subscriptions"
+            - generic [ref=e245]: "06"
+            - img "サブスクリプション" [ref=e247]
+            - generic [ref=e248]:
+              - generic [ref=e249]: サブスクリプション
+              - generic [ref=e250]: 自動引き落としと定期サービス管理
+          - link "送信 送信 カメラまたはQRアップロードで送金" [ref=e251] [cursor=pointer]:
+            - /url: "#/send"
+            - generic [ref=e252]: "07"
+            - img "送信" [ref=e254]
+            - generic [ref=e255]:
+              - generic [ref=e256]: 送信
+              - generic [ref=e257]: カメラまたはQRアップロードで送金
+          - link "受信 受信 QRコードまたはI105で受取依頼" [ref=e258] [cursor=pointer]:
+            - /url: "#/receive"
+            - generic [ref=e259]: "08"
+            - img "受信" [ref=e261]
+            - generic [ref=e262]:
+              - generic [ref=e263]: 受信
+              - generic [ref=e264]: QRコードまたはI105で受取依頼
+          - link "オフライン オフライン オフラインウォレット、請求、QR交換" [ref=e265] [cursor=pointer]:
+            - /url: "#/offline"
+            - generic [ref=e266]: "09"
+            - img "オフライン" [ref=e268]
+            - generic [ref=e269]:
+              - generic [ref=e270]: オフライン
+              - generic [ref=e271]: オフラインウォレット、請求、QR交換
+          - link "探索 探索 ネットワーク指標とアセット探索" [ref=e272] [cursor=pointer]:
+            - /url: "#/explore"
+            - generic [ref=e273]: "10"
+            - img "探索" [ref=e275]
+            - generic [ref=e276]:
+              - generic [ref=e277]: 探索
+              - generic [ref=e278]: ネットワーク指標とアセット探索
+        - generic [ref=e280]:
+          - generic [ref=e281]:
+            - generic [ref=e282]:
+              - paragraph [ref=e283]: アクティブアカウント
+              - paragraph [ref=e284]: Makoto
+            - button "別のアカウントを登録" [ref=e285] [cursor=pointer]
+          - generic [ref=e286]:
+            - generic [ref=e287]: アカウントの選択
+            - combobox "アカウントの選択" [ref=e288]:
+              - option "Makoto" [selected]
+            - paragraph [ref=e289]: キーを再入力することなく、保存されているアカウントを切り替えることができます。
+    - generic [ref=e114]:
+      - generic [ref=e115]:
+        - generic [ref=e116]:
+          - paragraph [ref=e117]: 残高とアクティビティ
+          - heading "ウォレット概要" [level=1] [ref=e176]
+        - generic [ref=e119]:
+          - generic [ref=e120]: TAIRA Torii準備完了
+          - generic [ref=e121]: アカウント保存済み
+          - generic [ref=e122]: Makoto
+      - main [ref=e123]:
+        - generic [ref=e177]:
+          - generic [ref=e178]:
+            - generic [ref=e179]:
+              - generic [ref=e180]:
+                - heading "残高" [level=2] [ref=e181]
+                - paragraph [ref=e182]: Makoto
+              - button "リフレッシュ" [ref=e183] [cursor=pointer]
+            - generic [ref=e184]:
+              - generic [ref=e185]:
+                - generic [ref=e186]: 主要資産
+                - generic [ref=e187]: xor#wonderland
+              - generic [ref=e188]:
+                - generic [ref=e189]: 量
+                - generic [ref=e190]: "0"
+              - generic [ref=e191]:
+                - generic [ref=e192]: 資産
+                - generic [ref=e193]: "0"
+              - generic [ref=e194]:
+                - generic [ref=e195]: アカウントID
+                - generic [ref=e196]: n42demoaccount00000000000001
+            - paragraph [ref=e197]: このアカウントにはアセットが見つかりません。
+          - generic [ref=e198]:
+            - heading "最新の取引" [level=2] [ref=e200]
+            - paragraph [ref=e201]: まだ転送は記録されていません。

@@ -452,6 +452,30 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).not.toContain("Governance records refreshed.");
   });
 
+  it("clears stale lookup payloads when reloading the same ids fails", async () => {
+    getGovernanceReferendumMock.mockResolvedValueOnce({
+      found: true,
+      referendum: {
+        referendum_id: "ref-1",
+      },
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await findButtonByText(wrapper, "Load").trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain("Referendum found: yes.");
+
+    getGovernanceReferendumMock.mockRejectedValueOnce(new Error("lookup down"));
+    await findButtonByText(wrapper, "Load").trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("lookup down");
+    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+  });
+
   it("clears stale lookup state and balance when refresh fails", async () => {
     const inferredProposalId = `0x${"9".repeat(64)}`;
     getGovernanceReferendumMock.mockResolvedValueOnce({

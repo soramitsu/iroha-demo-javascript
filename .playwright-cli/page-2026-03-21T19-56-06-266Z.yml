@@ -1,0 +1,300 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: Torii
+          - generic [ref=e16]: TAIRA固定
+          - generic [ref=e17]: https://taira.sora.org
+        - generic [ref=e18]:
+          - generic [ref=e19]: チェーン
+          - generic [ref=e20]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - generic [ref=e21]: xor#wonderland
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: 言語
+          - combobox "言語" [ref=e25]:
+            - option "English"
+            - option "العربية"
+            - option "Azərbaycanca"
+            - option "Català"
+            - option "Čeština"
+            - option "Deutsch"
+            - option "Español"
+            - option "فارسی"
+            - option "Suomi"
+            - option "Français"
+            - option "עברית"
+            - option "हिन्दी"
+            - option "Magyar"
+            - option "Bahasa Indonesia"
+            - option "Italiano"
+            - option "日本語" [selected]
+            - option "한국어"
+            - option "Bahasa Melayu"
+            - option "Norsk bokmål"
+            - option "Nederlands"
+            - option "Polski"
+            - option "Português"
+            - option "Русский"
+            - option "Српски"
+            - option "Slovenščina"
+            - option "Türkçe"
+            - option "Українська"
+            - option "اردو"
+            - option "Tiếng Việt"
+            - option "简体中文"
+            - option "繁體中文"
+        - button "ライトモードへ切替" [ref=e26] [cursor=pointer]:
+          - generic: ライトモードへ切替
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: ナビゲート
+        - generic [ref=e31]: アカウント準備完了
+      - navigation [ref=e32]:
+        - link "アカウント設定 アカウント設定 鍵・リカバリーフレーズ生成、Connect連携" [ref=e33] [cursor=pointer]:
+          - /url: "#/account"
+          - generic [ref=e34]: "01"
+          - img "アカウント設定" [ref=e36]
+          - generic [ref=e37]:
+            - generic [ref=e38]: アカウント設定
+            - generic [ref=e39]: 鍵・リカバリーフレーズ生成、Connect連携
+          - generic [ref=e40]: ↗
+        - link "セッション セッション TAIRA接続、アセット、権限鍵" [ref=e41] [cursor=pointer]:
+          - /url: "#/setup"
+          - generic [ref=e42]: "02"
+          - img "セッション" [ref=e44]
+          - generic [ref=e45]:
+            - generic [ref=e46]: セッション
+            - generic [ref=e47]: TAIRA接続、アセット、権限鍵
+          - generic [ref=e48]: ↗
+        - link "ウォレット ウォレット 残高、アセット、最新トランザクション" [ref=e49] [cursor=pointer]:
+          - /url: "#/wallet"
+          - generic [ref=e50]: "03"
+          - img "ウォレット" [ref=e52]
+          - generic [ref=e53]:
+            - generic [ref=e54]: ウォレット
+            - generic [ref=e55]: 残高、アセット、最新トランザクション
+          - generic [ref=e56]: ↗
+        - link "ステーキング ステーキング バリデータを指名してXORをNPOSステーク" [ref=e57] [cursor=pointer]:
+          - /url: "#/staking"
+          - generic [ref=e58]: "04"
+          - img "ステーキング" [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e62]: ステーキング
+            - generic [ref=e63]: バリデータを指名してXORをNPOSステーク
+          - generic [ref=e64]: ↗
+        - link "議会 議会 市民権をボンドしガバナンス投票" [ref=e65] [cursor=pointer]:
+          - /url: "#/parliament"
+          - generic [ref=e66]: "05"
+          - img "議会" [ref=e68]
+          - generic [ref=e69]:
+            - generic [ref=e70]: 議会
+            - generic [ref=e71]: 市民権をボンドしガバナンス投票
+          - generic [ref=e72]: ↗
+        - link "サブスクリプション サブスクリプション 自動引き落としと定期サービス管理" [ref=e73] [cursor=pointer]:
+          - /url: "#/subscriptions"
+          - generic [ref=e74]: "06"
+          - img "サブスクリプション" [ref=e76]
+          - generic [ref=e77]:
+            - generic [ref=e78]: サブスクリプション
+            - generic [ref=e79]: 自動引き落としと定期サービス管理
+          - generic [ref=e80]: ↗
+        - link "送信 送信 カメラまたはQRアップロードで送金" [ref=e81] [cursor=pointer]:
+          - /url: "#/send"
+          - generic [ref=e82]: "07"
+          - img "送信" [ref=e84]
+          - generic [ref=e85]:
+            - generic [ref=e86]: 送信
+            - generic [ref=e87]: カメラまたはQRアップロードで送金
+          - generic [ref=e88]: ↗
+        - link "受信 受信 QRコードまたはI105で受取依頼" [ref=e89] [cursor=pointer]:
+          - /url: "#/receive"
+          - generic [ref=e90]: "08"
+          - img "受信" [ref=e92]
+          - generic [ref=e93]:
+            - generic [ref=e94]: 受信
+            - generic [ref=e95]: QRコードまたはI105で受取依頼
+          - generic [ref=e96]: ↗
+        - link "オフライン オフライン オフラインウォレット、請求、QR交換" [ref=e97] [cursor=pointer]:
+          - /url: "#/offline"
+          - generic [ref=e98]: "09"
+          - img "オフライン" [ref=e100]
+          - generic [ref=e101]:
+            - generic [ref=e102]: オフライン
+            - generic [ref=e103]: オフラインウォレット、請求、QR交換
+          - generic [ref=e104]: ↗
+        - link "探索 探索 ネットワーク指標とアセット探索" [ref=e105] [cursor=pointer]:
+          - /url: "#/explore"
+          - generic [ref=e106]: "10"
+          - img "探索" [ref=e108]
+          - generic [ref=e109]:
+            - generic [ref=e110]: 探索
+            - generic [ref=e111]: ネットワーク指標とアセット探索
+          - generic [ref=e112]: ↗
+      - generic [ref=e113]:
+        - generic [ref=e114]:
+          - generic [ref=e115]:
+            - generic [ref=e116]:
+              - paragraph [ref=e117]: アクティブアカウント
+              - paragraph [ref=e118]: Makoto
+            - button "別のアカウントを登録" [ref=e119] [cursor=pointer]
+          - generic [ref=e120]:
+            - generic [ref=e121]: アカウントの選択
+            - combobox "アカウントの選択" [ref=e122]:
+              - option "Makoto" [selected]
+            - paragraph [ref=e123]: キーを再入力することなく、保存されているアカウントを切り替えることができます。
+        - generic [ref=e124]:
+          - paragraph [ref=e125]: 接続
+          - paragraph [ref=e126]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - paragraph [ref=e127]: https://taira.sora.org
+    - generic [ref=e128]:
+      - generic [ref=e129]:
+        - generic [ref=e130]:
+          - paragraph [ref=e131]: オフラインウォレット、請求、支払い
+          - heading "オフライン" [level=1] [ref=e382]
+        - generic [ref=e133]:
+          - generic [ref=e134]: TAIRA Torii準備完了
+          - generic [ref=e135]: アカウント保存済み
+          - generic [ref=e136]: Makoto
+      - main [ref=e137]:
+        - generic [ref=e383]:
+          - generic [ref=e384]:
+            - generic [ref=e385]:
+              - heading "オフラインウォレットとハードウェア" [level=2] [ref=e386]
+              - generic [ref=e387]: 未チェック
+            - paragraph [ref=e388]: オフライン キーをより安全に保つために、ハードウェアでバックアップされたオフライン ウォレット (macOS Secure Enclave など) を登録します。登録はデバイス上に残ります。データは鳥居に送信されません。
+            - generic [ref=e389]:
+              - generic [ref=e390]:
+                - paragraph [ref=e391]: 状態
+                - paragraph [ref=e392]: 検出保留中
+              - generic [ref=e393]:
+                - paragraph [ref=e394]: 登録済み
+                - paragraph [ref=e395]: はい · 2024/03/21 9:46
+            - generic [ref=e396]:
+              - button "登録中…" [disabled] [ref=e397]
+              - button "再確認" [disabled] [ref=e398]
+          - generic [ref=e399]:
+            - generic [ref=e400]:
+              - heading "オフライン残高" [level=2] [ref=e401]
+              - generic [ref=e402]: 128.5 単位
+            - generic [ref=e403]:
+              - generic [ref=e404]:
+                - paragraph [ref=e405]: 最終同期
+                - paragraph [ref=e406]: 2024/03/22 9:46
+              - generic [ref=e407]:
+                - paragraph [ref=e408]: 次の保険の有効期限
+                - paragraph [ref=e409]: 2024/03/23 9:46
+              - generic [ref=e410]:
+                - paragraph [ref=e411]: ポリシーの更新
+                - paragraph [ref=e412]: 2024/03/22 21:46
+            - button "オフライン同期許可" [ref=e414] [cursor=pointer]
+          - generic [ref=e415]:
+            - generic [ref=e416]:
+              - heading "オフライン手当" [level=2] [ref=e417]
+              - generic [ref=e418]: 0 エントリ
+            - paragraph [ref=e419]: 手当は鳥居のオフラインポリシーから得られます。同期して残量と有効期限を更新します。
+            - paragraph [ref=e420]: まだ同期された手当はありません。
+          - generic [ref=e421]:
+            - generic [ref=e422]:
+              - heading "オフライン支払いをリクエストする" [level=2] [ref=e423]
+              - button "請求書の生成" [disabled] [ref=e424]:
+                - generic [ref=e425]: 請求書の生成
+            - generic [ref=e426]:
+              - generic [ref=e427]:
+                - text: 額
+                - textbox "額" [ref=e428]:
+                  - /placeholder: "10.00"
+              - generic [ref=e429]:
+                - text: メモ（任意）
+                - textbox "メモ（任意）" [ref=e430]:
+                  - /placeholder: コーヒーリフィル
+              - generic [ref=e431]:
+                - text: 有効期限（分）
+                - spinbutton "有効期限（分）" [ref=e432]: "10"
+          - generic [ref=e433]:
+            - generic [ref=e434]:
+              - heading "オフライン決済を送信する" [level=2] [ref=e435]
+              - generic [ref=e436]:
+                - button "スキャンを停止する" [ref=e437] [cursor=pointer]:
+                  - generic [ref=e438]: スキャンを停止する
+                - button "請求書の QR をアップロードする" [ref=e439] [cursor=pointer]:
+                  - generic [ref=e440]: 請求書の QR をアップロードする
+                - button "Choose File" [ref=e441]
+            - generic [ref=e444]:
+              - text: 請求書のペイロード
+              - textbox "請求書のペイロード" [ref=e445]:
+                - /placeholder: "{\"invoice_id\":\"...\"}"
+            - generic [ref=e446]:
+              - text: メモ（任意）
+              - textbox "メモ（任意）" [ref=e447]:
+                - /placeholder: ありがとう！
+            - button "支払いの作成" [disabled] [ref=e449]
+            - paragraph
+          - generic [ref=e450]:
+            - generic [ref=e451]:
+              - heading "オフライン支払いを受け入れる" [level=2] [ref=e452]
+              - generic [ref=e453]:
+                - button "スキャンを停止する" [ref=e454] [cursor=pointer]:
+                  - generic [ref=e455]: スキャンを停止する
+                - button "支払いQRをアップロードする" [ref=e456] [cursor=pointer]:
+                  - generic [ref=e457]: 支払いQRをアップロードする
+                - button "Choose File" [ref=e458]
+            - generic [ref=e461]:
+              - text: 支払いペイロード
+              - textbox "支払いペイロード" [ref=e462]:
+                - /placeholder: "{\"tx_id\":\"...\"}"
+            - button "支払いを受け入れる" [disabled] [ref=e464]
+            - paragraph
+          - generic [ref=e465]:
+            - heading "資金をオンラインウォレットに移動する" [level=2] [ref=e467]
+            - generic [ref=e468]:
+              - generic [ref=e469]:
+                - text: 金額（空白＝全て）
+                - textbox "金額（空白＝全て）" [ref=e470]
+              - generic [ref=e471]:
+                - text: 宛先アカウント
+                - textbox "宛先アカウント" [ref=e472]:
+                  - /placeholder: n42u... (I105 account ID)
+                  - text: n42demoaccount00000000000001
+              - generic [ref=e473]:
+                - text: メモ（任意）
+                - textbox "メモ（任意）" [ref=e474]:
+                  - /placeholder: ホットウォレットに戻る
+              - generic [ref=e475]:
+                - checkbox "シールド転写" [ref=e476]
+                - generic [ref=e477]: シールド転写
+            - button "オンラインウォレットに送信する" [ref=e479] [cursor=pointer]
+            - paragraph [ref=e480]: "シールドポリシー確認に失敗しました: Iroha bridge is unavailable. Ensure preload script loaded correctly.。シールドモード未対応の場合、送信は失敗する可能性があります。"
+          - generic [ref=e481]:
+            - heading "オフライン履歴" [level=2] [ref=e483]
+            - table [ref=e485]:
+              - rowgroup [ref=e486]:
+                - row "方向 額 ピア カウンタ 時間" [ref=e487]:
+                  - columnheader "方向" [ref=e488]
+                  - columnheader "額" [ref=e489]
+                  - columnheader "ピア" [ref=e490]
+                  - columnheader "カウンタ" [ref=e491]
+                  - columnheader "時間" [ref=e492]
+              - rowgroup [ref=e493]:
+                - 'row "outgoing 12.5 treasury@wonderland #2 2024/03/22 9:46" [ref=e494]':
+                  - cell "outgoing" [ref=e495]:
+                    - generic [ref=e496]: outgoing
+                  - cell "12.5" [ref=e497]
+                  - cell "treasury@wonderland" [ref=e498]
+                  - cell "#2" [ref=e499]
+                  - cell "2024/03/22 9:46" [ref=e500]
+                - 'row "incoming 24 merchant@wonderland #1 2024/03/21 9:46" [ref=e501]':
+                  - cell "incoming" [ref=e502]:
+                    - generic [ref=e503]: incoming
+                  - cell "24" [ref=e504]
+                  - cell "merchant@wonderland" [ref=e505]
+                  - cell "#1" [ref=e506]
+                  - cell "2024/03/21 9:46" [ref=e507]

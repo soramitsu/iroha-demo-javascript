@@ -86,4 +86,71 @@ describe("offline utilities", () => {
     expect(total).toBe("4");
     expect(addAmounts(total, "0.5")).toBe("4.5");
   });
+
+  it("rejects malformed decimal amount strings", () => {
+    expect(() => addAmounts("1.2.3", "1")).toThrow("Invalid decimal amount.");
+    expect(() =>
+      parseInvoice(
+        JSON.stringify({
+          invoice_id: "inv-1",
+          receiver: "alice@wonderland",
+          asset: "norito:abcdef0123456789",
+          amount: "1.2.3",
+        }),
+      ),
+    ).toThrow("Offline amount must be a positive decimal value.");
+  });
+
+  it("rejects non-positive offline transfer amounts", () => {
+    expect(() =>
+      createInvoice({
+        receiver: "alice@wonderland",
+        assetId: "norito:abcdef0123456789",
+        amount: "-5",
+        validityMs: 60_000,
+      }),
+    ).toThrow("Offline amount must be a positive decimal value.");
+
+    expect(() =>
+      parsePaymentPayload(
+        JSON.stringify({
+          tx_id: "abc",
+          from: "bob@wonderland",
+          to: "alice@wonderland",
+          asset: "norito:abcdef0123456789",
+          amount: "0",
+          invoice_id: "inv-2",
+          counter: 0,
+        }),
+      ),
+    ).toThrow("Offline amount must be a positive decimal value.");
+
+    expect(() =>
+      applyOutgoingPayment(
+        { ...emptyOfflineState(), balance: "5" },
+        {
+          tx_id: "abc",
+          from: "bob@wonderland",
+          to: "alice@wonderland",
+          asset: "norito:abcdef0123456789",
+          amount: "-2",
+          invoice_id: "inv-3",
+          counter: 0,
+          timestamp_ms: Date.now(),
+          channel: "qr",
+        },
+      ),
+    ).toThrow("Offline amount must be a positive decimal value.");
+
+    expect(() =>
+      applyWithdrawToOnline(
+        { ...emptyOfflineState(), balance: "5" },
+        {
+          accountId: "alice@wonderland",
+          receiver: "hot@wonderland",
+          amount: "0",
+        },
+      ),
+    ).toThrow("Offline amount must be a positive decimal value.");
+  });
 });

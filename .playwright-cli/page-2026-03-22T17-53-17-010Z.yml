@@ -1,0 +1,75 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Iroha Wallet
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - group
+      - group [ref=e13]:
+        - generic "言語 ja-JP · ライトモードへ切替" [ref=e14] [cursor=pointer]:
+          - generic [ref=e16]:
+            - generic [ref=e17]: 言語
+            - generic [ref=e18]: ja-JP · ライトモードへ切替
+          - generic [ref=e19]: ↗
+  - generic [ref=e20]:
+    - complementary [ref=e21]:
+      - generic [ref=e22]:
+        - paragraph [ref=e23]: ナビゲート
+        - generic [ref=e24]: オンボーディングを完了
+      - group
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - paragraph [ref=e28]: TAIRAテストネットアカウントを準備
+          - heading "アカウント設定" [level=1] [ref=e29]
+        - generic [ref=e30]:
+          - generic [ref=e31]: TAIRA Torii準備完了
+          - generic [ref=e32]: オンボーディングが必要
+      - main [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e37]:
+              - heading "TAIRAテストネットアカウント" [level=2] [ref=e38]
+              - paragraph [ref=e39]: アカウント キーを生成し、回復フレーズを保存し、Torii 経由で登録します。
+            - paragraph [ref=e41]: このビルドではオンボーディング用の TAIRA テストネット接続に固定されています。
+            - generic [ref=e42]:
+              - generic [ref=e43]:
+                - text: 表示名 (ローカルのみ、オンチェーンではない)
+                - textbox "表示名 (ローカルのみ、オンチェーンではない)" [ref=e44]:
+                  - /placeholder: アリス
+              - generic [ref=e45]:
+                - text: ドメイン
+                - textbox "ドメイン" [ref=e46]:
+                  - /placeholder: wonderland
+                  - text: wonderland
+              - generic [ref=e47]:
+                - text: リカバリー・フレーズの長さ
+                - combobox "リカバリー・フレーズの長さ" [ref=e48]:
+                  - option "12単語"
+                  - option "24単語" [selected]
+              - generic [ref=e49]:
+                - text: ID メタデータ (JSON、オプション)
+                - textbox "ID メタデータ (JSON、オプション)" [ref=e50]:
+                  - /placeholder: "{\"country\":\"JP\",\"kyc_id\":\"...\"}"
+            - generic [ref=e51]:
+              - button "リカバリフレーズの生成" [ref=e52] [cursor=pointer]
+              - button "アカウントを登録する" [disabled] [ref=e53]
+          - generic [ref=e54]:
+            - heading "いろはコネクトペアリング" [level=2] [ref=e56]
+            - paragraph [ref=e57]: すでに携帯電話で IrohaConnect を使用していますか?ペアリング セッションを生成して、キーをエクスポートせずにデスクトップ アクセスを承認します。署名は電話で行われます。このアプリは残高を監視します。
+            - generic [ref=e58]:
+              - button "ペアリングQRの生成" [ref=e59] [cursor=pointer]
+              - button "リセット" [disabled] [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e63]:
+              - heading "保存されたアカウント" [level=2] [ref=e64]
+              - paragraph [ref=e65]: 登録済みのプロファイルを切り替えるか、新たに登録を開始します。
+            - generic [ref=e66]:
+              - generic [ref=e69]: 平接続準備完了
+              - generic [ref=e72]: 復元フレーズを保存しました
+              - generic [ref=e75]: アカウントが登録されました
+            - paragraph [ref=e76]: 保存されたアカウントはまだありません。登録フォームに記入して追加します。
+            - button "登録を開始する" [ref=e78] [cursor=pointer]

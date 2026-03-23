@@ -12,7 +12,6 @@ import "./styles/main.css";
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
-app.use(router);
 
 const session = useSessionStore();
 const theme = useThemeStore();
@@ -24,6 +23,8 @@ theme.hydrate();
 offline.hydrate();
 subscriptions.hydrate();
 locale.hydrate();
+
+app.use(router);
 
 watch(
   () => session.$state,

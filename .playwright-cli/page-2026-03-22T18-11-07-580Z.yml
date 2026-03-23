@@ -1,0 +1,83 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Iroha Wallet
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - group
+      - group [ref=e13]:
+        - generic "言語 ja-JP · ライトモードへ切替" [ref=e14] [cursor=pointer]:
+          - generic [ref=e16]:
+            - generic [ref=e17]: 言語
+            - generic [ref=e18]: ja-JP · ライトモードへ切替
+          - generic [ref=e19]: ↗
+  - generic [ref=e20]:
+    - complementary [ref=e21]:
+      - generic [ref=e22]:
+        - paragraph [ref=e23]: ナビゲート
+        - generic [ref=e24]: オンボーディングを完了
+      - group
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - paragraph [ref=e28]: TAIRAテストネットアカウントを準備
+          - heading "アカウント設定" [level=1] [ref=e29]
+        - generic [ref=e30]:
+          - generic [ref=e31]: TAIRA Torii準備完了
+          - generic [ref=e32]: オンボーディングが必要
+      - main [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]:
+            - generic [ref=e36]:
+              - paragraph [ref=e37]: オンボーディングを完了
+              - heading "TAIRAテストネットアカウント" [level=2] [ref=e38]
+              - paragraph [ref=e39]: アカウント キーを生成し、回復フレーズを保存し、Torii 経由で登録します。
+            - generic [ref=e40]:
+              - generic [ref=e41]: TAIRA固定
+              - generic [ref=e42]: オンボーディングを完了
+          - generic [ref=e43]:
+            - complementary [ref=e44]:
+              - generic [ref=e46]:
+                - article [ref=e47]:
+                  - generic [ref=e48]: "01"
+                  - paragraph [ref=e49]: リカバリフレーズの生成
+                - article [ref=e50]:
+                  - generic [ref=e51]: "02"
+                  - paragraph [ref=e52]: 復元フレーズを保存しました
+                - article [ref=e53]:
+                  - generic [ref=e54]: "03"
+                  - paragraph [ref=e55]: アカウントを登録する
+              - generic [ref=e56]:
+                - generic [ref=e57]:
+                  - paragraph [ref=e58]: 接続
+                  - paragraph [ref=e59]: https://taira.sora.org
+                  - paragraph [ref=e60]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+                - generic [ref=e61]:
+                  - paragraph [ref=e62]: 表示名 (ローカルのみ、オンチェーンではない)
+                  - paragraph [ref=e63]: 未作成
+                - generic [ref=e64]:
+                  - paragraph [ref=e65]: アカウントID
+                  - paragraph [ref=e66]: 未作成
+            - generic [ref=e68]:
+              - generic [ref=e70]:
+                - heading "リカバリフレーズの生成" [level=2] [ref=e71]
+                - paragraph [ref=e72]: このビルドではオンボーディング用の TAIRA テストネット接続に固定されています。
+              - generic [ref=e73]:
+                - generic [ref=e74]:
+                  - text: 表示名 (ローカルのみ、オンチェーンではない)
+                  - textbox "表示名 (ローカルのみ、オンチェーンではない)" [ref=e75]:
+                    - /placeholder: アリス
+                - generic [ref=e76]:
+                  - text: ドメイン
+                  - textbox "ドメイン" [ref=e77]:
+                    - /placeholder: wonderland
+                    - text: wonderland
+                - generic [ref=e78]:
+                  - text: リカバリー・フレーズの長さ
+                  - combobox "リカバリー・フレーズの長さ" [ref=e79]:
+                    - option "12単語"
+                    - option "24単語" [selected]
+              - button "リカバリフレーズの生成" [ref=e81] [cursor=pointer]

@@ -1,0 +1,53 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+    - group [ref=e11]:
+      - generic "Torii https://taira.sora.org ja-JP" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: Torii
+          - generic [ref=e15]: https://taira.sora.org
+        - generic [ref=e16]: ja-JP
+        - generic [ref=e17]: ↗
+  - generic [ref=e18]:
+    - complementary [ref=e19]:
+      - generic [ref=e20]:
+        - paragraph [ref=e21]: ナビゲート
+        - generic [ref=e22]: アカウント準備完了
+      - group [ref=e23]:
+        - generic "ナビゲート ポイント受信" [ref=e153] [cursor=pointer]:
+          - generic [ref=e25]:
+            - generic [ref=e26]: ナビゲート
+            - generic [ref=e27]: ポイント受信
+          - generic [ref=e28]: ↗
+        - option "Alice" [selected]
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: QRまたはI105を共有
+          - heading "ポイント受信" [level=1] [ref=e154]
+        - generic [ref=e34]:
+          - generic [ref=e35]: TAIRA Torii準備完了
+          - generic [ref=e36]: アカウント保存済み
+          - generic [ref=e37]: Alice
+      - main [ref=e38]:
+        - generic [ref=e155]:
+          - generic [ref=e156]:
+            - generic [ref=e157]:
+              - heading "シェア決済QR" [level=2] [ref=e158]
+              - paragraph [ref=e159]: alice@wonderland
+            - button "QRコードを表示" [ref=e160] [cursor=pointer]:
+              - generic [ref=e161]: QRコードを表示
+          - generic [ref=e162]:
+            - generic [ref=e163]:
+              - generic [ref=e164]:
+                - generic [ref=e165]: アカウントID
+                - generic [ref=e166]: alice@wonderland
+              - generic [ref=e167]:
+                - text: 額
+                - spinbutton "額" [ref=e168]: "0"
+              - paragraph [ref=e169]: 上のボタンを使用して、ウォレットがスキャンできる QR をレンダリングします。
+            - paragraph [ref=e171]: ボタンをタップして QR を生成します。

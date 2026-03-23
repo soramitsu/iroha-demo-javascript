@@ -1,0 +1,263 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: Torii
+          - generic [ref=e16]: TAIRA固定
+          - generic [ref=e17]: https://taira.sora.org
+        - generic [ref=e18]:
+          - generic [ref=e19]: チェーン
+          - generic [ref=e20]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - generic [ref=e21]: xor#wonderland
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: 言語
+          - combobox "言語" [ref=e25]:
+            - option "English"
+            - option "العربية"
+            - option "Azərbaycanca"
+            - option "Català"
+            - option "Čeština"
+            - option "Deutsch"
+            - option "Español"
+            - option "فارسی"
+            - option "Suomi"
+            - option "Français"
+            - option "עברית"
+            - option "हिन्दी"
+            - option "Magyar"
+            - option "Bahasa Indonesia"
+            - option "Italiano"
+            - option "日本語" [selected]
+            - option "한국어"
+            - option "Bahasa Melayu"
+            - option "Norsk bokmål"
+            - option "Nederlands"
+            - option "Polski"
+            - option "Português"
+            - option "Русский"
+            - option "Српски"
+            - option "Slovenščina"
+            - option "Türkçe"
+            - option "Українська"
+            - option "اردو"
+            - option "Tiếng Việt"
+            - option "简体中文"
+            - option "繁體中文"
+        - button "ライトモードへ切替" [ref=e26] [cursor=pointer]:
+          - generic: ライトモードへ切替
+  - generic [ref=e27]:
+    - complementary [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: ナビゲート
+        - generic [ref=e31]: アカウント準備完了
+      - navigation [ref=e32]:
+        - link "アカウント設定 アカウント設定 鍵・リカバリーフレーズ生成、Connect連携" [ref=e33] [cursor=pointer]:
+          - /url: "#/account"
+          - generic [ref=e34]: "01"
+          - img "アカウント設定" [ref=e36]
+          - generic [ref=e37]:
+            - generic [ref=e38]: アカウント設定
+            - generic [ref=e39]: 鍵・リカバリーフレーズ生成、Connect連携
+          - generic [ref=e40]: ↗
+        - link "セッション セッション TAIRA接続、アセット、権限鍵" [ref=e41] [cursor=pointer]:
+          - /url: "#/setup"
+          - generic [ref=e42]: "02"
+          - img "セッション" [ref=e44]
+          - generic [ref=e45]:
+            - generic [ref=e46]: セッション
+            - generic [ref=e47]: TAIRA接続、アセット、権限鍵
+          - generic [ref=e48]: ↗
+        - link "ウォレット ウォレット 残高、アセット、最新トランザクション" [ref=e49] [cursor=pointer]:
+          - /url: "#/wallet"
+          - generic [ref=e50]: "03"
+          - img "ウォレット" [ref=e52]
+          - generic [ref=e53]:
+            - generic [ref=e54]: ウォレット
+            - generic [ref=e55]: 残高、アセット、最新トランザクション
+          - generic [ref=e56]: ↗
+        - link "ステーキング ステーキング バリデータを指名してXORをNPOSステーク" [ref=e57] [cursor=pointer]:
+          - /url: "#/staking"
+          - generic [ref=e58]: "04"
+          - img "ステーキング" [ref=e60]
+          - generic [ref=e61]:
+            - generic [ref=e62]: ステーキング
+            - generic [ref=e63]: バリデータを指名してXORをNPOSステーク
+          - generic [ref=e64]: ↗
+        - link "議会 議会 市民権をボンドしガバナンス投票" [ref=e65] [cursor=pointer]:
+          - /url: "#/parliament"
+          - generic [ref=e66]: "05"
+          - img "議会" [ref=e68]
+          - generic [ref=e69]:
+            - generic [ref=e70]: 議会
+            - generic [ref=e71]: 市民権をボンドしガバナンス投票
+          - generic [ref=e72]: ↗
+        - link "サブスクリプション サブスクリプション 自動引き落としと定期サービス管理" [ref=e73] [cursor=pointer]:
+          - /url: "#/subscriptions"
+          - generic [ref=e74]: "06"
+          - img "サブスクリプション" [ref=e76]
+          - generic [ref=e77]:
+            - generic [ref=e78]: サブスクリプション
+            - generic [ref=e79]: 自動引き落としと定期サービス管理
+          - generic [ref=e80]: ↗
+        - link "送信 送信 カメラまたはQRアップロードで送金" [ref=e81] [cursor=pointer]:
+          - /url: "#/send"
+          - generic [ref=e82]: "07"
+          - img "送信" [ref=e84]
+          - generic [ref=e85]:
+            - generic [ref=e86]: 送信
+            - generic [ref=e87]: カメラまたはQRアップロードで送金
+          - generic [ref=e88]: ↗
+        - link "受信 受信 QRコードまたはI105で受取依頼" [ref=e89] [cursor=pointer]:
+          - /url: "#/receive"
+          - generic [ref=e90]: "08"
+          - img "受信" [ref=e92]
+          - generic [ref=e93]:
+            - generic [ref=e94]: 受信
+            - generic [ref=e95]: QRコードまたはI105で受取依頼
+          - generic [ref=e96]: ↗
+        - link "オフライン オフライン オフラインウォレット、請求、QR交換" [ref=e97] [cursor=pointer]:
+          - /url: "#/offline"
+          - generic [ref=e98]: "09"
+          - img "オフライン" [ref=e100]
+          - generic [ref=e101]:
+            - generic [ref=e102]: オフライン
+            - generic [ref=e103]: オフラインウォレット、請求、QR交換
+          - generic [ref=e104]: ↗
+        - link "探索 探索 ネットワーク指標とアセット探索" [ref=e105] [cursor=pointer]:
+          - /url: "#/explore"
+          - generic [ref=e106]: "10"
+          - img "探索" [ref=e108]
+          - generic [ref=e109]:
+            - generic [ref=e110]: 探索
+            - generic [ref=e111]: ネットワーク指標とアセット探索
+          - generic [ref=e112]: ↗
+      - generic [ref=e113]:
+        - generic [ref=e114]:
+          - generic [ref=e115]:
+            - generic [ref=e116]:
+              - paragraph [ref=e117]: アクティブアカウント
+              - paragraph [ref=e118]: Makoto
+            - button "別のアカウントを登録" [ref=e119] [cursor=pointer]
+          - generic [ref=e120]:
+            - generic [ref=e121]: アカウントの選択
+            - combobox "アカウントの選択" [ref=e122]:
+              - option "Makoto" [selected]
+            - paragraph [ref=e123]: キーを再入力することなく、保存されているアカウントを切り替えることができます。
+        - generic [ref=e124]:
+          - paragraph [ref=e125]: 接続
+          - paragraph [ref=e126]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - paragraph [ref=e127]: https://taira.sora.org
+    - generic [ref=e128]:
+      - generic [ref=e129]:
+        - generic [ref=e130]:
+          - paragraph [ref=e131]: 自動引き落としとサービス管理
+          - heading "サブスクリプションハブ" [level=1] [ref=e190]
+        - generic [ref=e133]:
+          - generic [ref=e134]: TAIRA Torii準備完了
+          - generic [ref=e135]: アカウント保存済み
+          - generic [ref=e136]: Makoto
+      - main [ref=e137]:
+        - generic [ref=e191]:
+          - generic [ref=e192]:
+            - generic [ref=e193]:
+              - generic [ref=e194]:
+                - heading "サブスクリプションハブ" [level=2] [ref=e195]
+                - paragraph [ref=e196]: 自動引き落としは期日に実行されます。使用量ベースのサブスクリプションでは、請求サイクルごとに変動する可能性があります。
+              - generic [ref=e197]: 自動控除オン
+            - generic [ref=e198]:
+              - generic [ref=e199]:
+                - generic [ref=e200]:
+                  - generic [ref=e201]: アクティブ
+                  - generic [ref=e202]: "2"
+                - generic [ref=e203]:
+                  - generic [ref=e204]: 一時停止中
+                  - generic [ref=e205]: "1"
+                - generic [ref=e206]:
+                  - generic [ref=e207]: キャンセル
+                  - generic [ref=e208]: "0"
+                - generic [ref=e209]:
+                  - generic [ref=e210]: 次回の自動引き落とし
+                  - generic [ref=e211]: Netflix オン 2026/04/21
+              - generic [ref=e212]:
+                - paragraph [ref=e213]: 次回の自動引き落とし
+                - paragraph [ref=e214]: Netflix オン 2026/04/21
+                - paragraph [ref=e215]: 金額を空白のままにして、従量制請求の上限を設定します。自動控除は自動的に実行されます。
+          - generic [ref=e216]:
+            - generic [ref=e218]:
+              - heading "サブスクリプションの追加" [level=2] [ref=e219]
+              - paragraph [ref=e220]: 金額を空白のままにして、従量制請求の上限を設定します。自動控除は自動的に実行されます。
+            - generic [ref=e221]:
+              - generic [ref=e222]:
+                - text: サービス名
+                - textbox "サービス名" [ref=e223]:
+                  - /placeholder: サービスまたは販売者
+              - generic [ref=e224]:
+                - text: 金額 (XOR)
+                - spinbutton "金額 (XOR)" [ref=e225]
+              - generic [ref=e226]:
+                - text: 使用量ベースの最大値 (XOR)
+                - spinbutton "使用量ベースの最大値 (XOR)" [ref=e227]
+              - generic [ref=e228]:
+                - text: ケイデンス
+                - combobox "ケイデンス" [ref=e229]:
+                  - option "毎月" [selected]
+                  - option "四半期ごと"
+                  - option "毎年"
+              - generic [ref=e230]:
+                - text: 注記
+                - textbox "注記" [ref=e231]:
+                  - /placeholder: オプションのメモ
+              - button "サブスクリプションの追加" [ref=e232] [cursor=pointer]
+          - generic [ref=e233]:
+            - generic [ref=e234]:
+              - generic [ref=e235]:
+                - heading "すべてのサブスクリプション" [level=2] [ref=e236]
+                - paragraph [ref=e237]: 自動引き落としは期日に実行されます。使用量ベースのサブスクリプションでは、請求サイクルごとに変動する可能性があります。
+              - generic [ref=e238]: 3 合計
+            - generic [ref=e239]:
+              - article [ref=e240]:
+                - generic [ref=e241]:
+                  - generic [ref=e242]:
+                    - generic [ref=e243]:
+                      - heading "Netflix" [level=3] [ref=e244]
+                      - paragraph [ref=e245]: XOR 1,500 · 毎月
+                    - generic [ref=e246]: アクティブ
+                  - generic [ref=e248]: "次へ: 2026/04/21"
+                  - paragraph [ref=e249]: Streaming
+                - generic [ref=e250]:
+                  - button "一時停止" [ref=e251] [cursor=pointer]
+                  - button "期間終了時にキャンセルする" [ref=e252] [cursor=pointer]
+                  - button "取り除く" [ref=e253] [cursor=pointer]
+              - article [ref=e254]:
+                - generic [ref=e255]:
+                  - generic [ref=e256]:
+                    - generic [ref=e257]:
+                      - heading "AWS" [level=3] [ref=e258]
+                      - paragraph [ref=e259]: XOR 9,000 まで · 毎月
+                    - generic [ref=e260]: アクティブ
+                  - generic [ref=e262]: "次へ: 2026/04/21"
+                  - paragraph [ref=e263]: Usage based
+                - generic [ref=e264]:
+                  - button "一時停止" [ref=e265] [cursor=pointer]
+                  - button "期間終了時にキャンセルする" [ref=e266] [cursor=pointer]
+                  - button "取り除く" [ref=e267] [cursor=pointer]
+              - article [ref=e268]:
+                - generic [ref=e269]:
+                  - generic [ref=e270]:
+                    - generic [ref=e271]:
+                      - heading "Duolingo" [level=3] [ref=e272]
+                      - paragraph [ref=e273]: XOR 1,200 · 毎年
+                    - generic [ref=e274]: 一時停止中
+                  - generic [ref=e276]: "次へ: 2027/03/21"
+                - generic [ref=e277]:
+                  - button "再開する" [ref=e278] [cursor=pointer]
+                  - button "期間終了時にキャンセルする" [ref=e279] [cursor=pointer]
+                  - button "取り除く" [ref=e280] [cursor=pointer]

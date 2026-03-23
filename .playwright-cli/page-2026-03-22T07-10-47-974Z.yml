@@ -1,0 +1,53 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+    - group [ref=e11]:
+      - generic "Torii https://taira.sora.org ja-JP" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: Torii
+          - generic [ref=e15]: https://taira.sora.org
+        - generic [ref=e16]: ja-JP
+        - generic [ref=e17]: ↗
+  - generic [ref=e18]:
+    - complementary [ref=e19]:
+      - generic [ref=e20]:
+        - paragraph [ref=e21]: ナビゲート
+        - generic [ref=e22]: アカウント準備完了
+      - group [ref=e23]:
+        - generic "ナビゲート ポイント受信" [ref=e77] [cursor=pointer]:
+          - generic [ref=e25]:
+            - generic [ref=e26]: ナビゲート
+            - generic [ref=e27]: ポイント受信
+          - generic [ref=e28]: ↗
+        - option "Alice" [selected]
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: QRまたはI105を共有
+          - heading "ポイント受信" [level=1] [ref=e78]
+        - generic [ref=e34]:
+          - generic [ref=e35]: TAIRA Torii準備完了
+          - generic [ref=e36]: アカウント保存済み
+          - generic [ref=e37]: Alice
+      - main [ref=e38]:
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - heading "シェア決済QR" [level=2] [ref=e82]
+              - paragraph [ref=e83]: alice@wonderland
+            - button "QRコードを表示" [ref=e84] [cursor=pointer]:
+              - generic [ref=e85]: QRコードを表示
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]:
+                - generic [ref=e89]: アカウントID
+                - generic [ref=e90]: alice@wonderland
+              - generic [ref=e91]:
+                - text: 額
+                - spinbutton "額" [ref=e92]: "0"
+              - paragraph [ref=e93]: 上のボタンを使用して、ウォレットがスキャンできる QR をレンダリングします。
+            - paragraph [ref=e95]: ボタンをタップして QR を生成します。

@@ -1,9 +1,6 @@
 <template>
-  <div
-    class="card-grid"
-    style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr))"
-  >
-    <section class="card">
+  <div class="setup-shell">
+    <section class="card setup-connection-card">
       <header class="card-header">
         <h2>{{ t("Torii Connection") }}</h2>
         <span class="status-pill" :class="pingIndicator.class">
@@ -61,7 +58,7 @@
       <p v-if="pingMessage" class="helper">{{ pingMessage }}</p>
     </section>
 
-    <section class="card">
+    <section class="card setup-identity-card">
       <header class="card-header">
         <h2>{{ t("Key Material") }}</h2>
       </header>
@@ -113,7 +110,7 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card setup-register-card">
       <header class="card-header">
         <h2>{{ t("Register Account") }}</h2>
         <p class="helper">

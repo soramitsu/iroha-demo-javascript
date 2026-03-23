@@ -1,0 +1,215 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+        - paragraph [ref=e11]: モダンなTorii接続ウォレット
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: Torii
+          - generic [ref=e16]: TAIRA固定
+          - generic [ref=e17]: https://taira.sora.org
+        - generic [ref=e18]:
+          - generic [ref=e19]: チェーン
+          - generic [ref=e20]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - generic [ref=e21]: アセット未設定
+      - generic [ref=e22]:
+        - generic [ref=e23]: 言語
+        - combobox "言語" [ref=e24]:
+          - option "English"
+          - option "العربية"
+          - option "Azərbaycanca"
+          - option "Català"
+          - option "Čeština"
+          - option "Deutsch"
+          - option "Español"
+          - option "فارسی"
+          - option "Suomi"
+          - option "Français"
+          - option "עברית"
+          - option "हिन्दी"
+          - option "Magyar"
+          - option "Bahasa Indonesia"
+          - option "Italiano"
+          - option "日本語" [selected]
+          - option "한국어"
+          - option "Bahasa Melayu"
+          - option "Norsk bokmål"
+          - option "Nederlands"
+          - option "Polski"
+          - option "Português"
+          - option "Русский"
+          - option "Српски"
+          - option "Slovenščina"
+          - option "Türkçe"
+          - option "Українська"
+          - option "اردو"
+          - option "Tiếng Việt"
+          - option "简体中文"
+          - option "繁體中文"
+      - button "ライトモードへ切替" [ref=e25] [cursor=pointer]:
+        - generic: ライトモードへ切替
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]:
+        - paragraph [ref=e29]: ナビゲート
+        - generic [ref=e30]: オンボーディングを完了
+      - navigation [ref=e31]:
+        - link "アカウント設定 アカウント設定 鍵・リカバリーフレーズ生成、Connect連携" [ref=e32] [cursor=pointer]:
+          - /url: "#/account"
+          - generic [ref=e33]: "01"
+          - img "アカウント設定" [ref=e35]
+          - generic [ref=e36]:
+            - generic [ref=e37]: アカウント設定
+            - generic [ref=e38]: 鍵・リカバリーフレーズ生成、Connect連携
+          - generic [ref=e39]: ↗
+        - link "セッション セッション TAIRA接続、アセット、権限鍵" [disabled]:
+          - /url: "#/setup"
+          - generic: "02"
+          - generic:
+            - img "セッション"
+          - generic:
+            - generic: セッション
+            - generic: TAIRA接続、アセット、権限鍵
+          - generic: ↗
+        - link "ウォレット ウォレット 残高、アセット、最新トランザクション" [disabled]:
+          - /url: "#/wallet"
+          - generic: "03"
+          - generic:
+            - img "ウォレット"
+          - generic:
+            - generic: ウォレット
+            - generic: 残高、アセット、最新トランザクション
+          - generic: ↗
+        - link "ステーキング ステーキング バリデータを指名してXORをNPOSステーク" [disabled]:
+          - /url: "#/staking"
+          - generic: "04"
+          - generic:
+            - img "ステーキング"
+          - generic:
+            - generic: ステーキング
+            - generic: バリデータを指名してXORをNPOSステーク
+          - generic: ↗
+        - link "議会 議会 市民権をボンドしガバナンス投票" [disabled]:
+          - /url: "#/parliament"
+          - generic: "05"
+          - generic:
+            - img "議会"
+          - generic:
+            - generic: 議会
+            - generic: 市民権をボンドしガバナンス投票
+          - generic: ↗
+        - link "サブスクリプション サブスクリプション 自動引き落としと定期サービス管理" [disabled]:
+          - /url: "#/subscriptions"
+          - generic: "06"
+          - generic:
+            - img "サブスクリプション"
+          - generic:
+            - generic: サブスクリプション
+            - generic: 自動引き落としと定期サービス管理
+          - generic: ↗
+        - link "送信 送信 カメラまたはQRアップロードで送金" [disabled]:
+          - /url: "#/send"
+          - generic: "07"
+          - generic:
+            - img "送信"
+          - generic:
+            - generic: 送信
+            - generic: カメラまたはQRアップロードで送金
+          - generic: ↗
+        - link "受信 受信 QRコードまたはI105で受取依頼" [disabled]:
+          - /url: "#/receive"
+          - generic: "08"
+          - generic:
+            - img "受信"
+          - generic:
+            - generic: 受信
+            - generic: QRコードまたはI105で受取依頼
+          - generic: ↗
+        - link "オフライン オフライン オフラインウォレット、請求、QR交換" [disabled]:
+          - /url: "#/offline"
+          - generic: "09"
+          - generic:
+            - img "オフライン"
+          - generic:
+            - generic: オフライン
+            - generic: オフラインウォレット、請求、QR交換
+          - generic: ↗
+        - link "探索 探索 ネットワーク指標とアセット探索" [disabled]:
+          - /url: "#/explore"
+          - generic: "10"
+          - generic:
+            - img "探索"
+          - generic:
+            - generic: 探索
+            - generic: ネットワーク指標とアセット探索
+          - generic: ↗
+      - paragraph [ref=e40]: アカウントのオンボーディングを完了すると、Setup、Wallet、Staking、Parliament、Send、Receive、Offline、Explorerが利用できます。
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]:
+            - generic [ref=e44]:
+              - paragraph [ref=e45]: アクティブアカウント
+              - paragraph [ref=e46]: 未選択
+            - button "登録を開始" [ref=e47] [cursor=pointer]
+          - paragraph [ref=e48]: 保存されたアカウントはまだありません。登録フローを開始して追加します。
+        - generic [ref=e49]:
+          - paragraph [ref=e50]: 接続
+          - paragraph [ref=e51]: 809574f5-fee7-5e69-bfcf-52451e42d50f
+          - paragraph [ref=e52]: https://taira.sora.org
+    - generic [ref=e53]:
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - paragraph [ref=e56]: TAIRAテストネットアカウントを準備
+          - heading "アカウント設定" [level=1] [ref=e57]
+        - generic [ref=e58]:
+          - generic [ref=e59]: TAIRA Torii準備完了
+          - generic [ref=e60]: オンボーディングが必要
+      - main [ref=e61]:
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - generic [ref=e65]:
+              - heading "TAIRAテストネットアカウント" [level=2] [ref=e66]
+              - paragraph [ref=e67]: アカウント キーを生成し、回復フレーズを保存し、Torii 経由で登録します。
+            - paragraph [ref=e69]: このビルドではオンボーディング用の TAIRA テストネット接続に固定されています。
+            - generic [ref=e70]:
+              - generic [ref=e71]:
+                - text: 表示名 (ローカルのみ、オンチェーンではない)
+                - textbox "表示名 (ローカルのみ、オンチェーンではない)" [ref=e72]:
+                  - /placeholder: アリス
+              - generic [ref=e73]:
+                - text: ドメイン
+                - textbox "ドメイン" [ref=e74]:
+                  - /placeholder: wonderland
+                  - text: wonderland
+              - generic [ref=e75]:
+                - text: リカバリー・フレーズの長さ
+                - combobox "リカバリー・フレーズの長さ" [ref=e76]:
+                  - option "12単語"
+                  - option "24単語" [selected]
+              - generic [ref=e77]:
+                - text: ID メタデータ (JSON、オプション)
+                - textbox "ID メタデータ (JSON、オプション)" [ref=e78]:
+                  - /placeholder: "{\"country\":\"JP\",\"kyc_id\":\"...\"}"
+            - generic [ref=e79]:
+              - button "リカバリフレーズの生成" [ref=e80] [cursor=pointer]
+              - button "アカウントを登録する" [disabled] [ref=e81] [cursor=pointer]
+          - generic [ref=e82]:
+            - heading "いろはコネクトペアリング" [level=2] [ref=e84]
+            - paragraph [ref=e85]: すでに携帯電話で IrohaConnect を使用していますか?ペアリング セッションを生成して、キーをエクスポートせずにデスクトップ アクセスを承認します。署名は電話で行われます。このアプリは残高を監視します。
+            - generic [ref=e86]:
+              - button "ペアリングQRの生成" [ref=e87] [cursor=pointer]
+              - button "リセット" [disabled] [ref=e88] [cursor=pointer]
+          - generic [ref=e89]:
+            - generic [ref=e91]:
+              - heading "保存されたアカウント" [level=2] [ref=e92]
+              - paragraph [ref=e93]: 登録済みのプロファイルを切り替えるか、新たに登録を開始します。
+            - generic [ref=e94]:
+              - generic [ref=e97]: 平接続準備完了
+              - generic [ref=e100]: 復元フレーズを保存しました
+              - generic [ref=e103]: アカウントが登録されました
+            - paragraph [ref=e104]: 保存されたアカウントはまだありません。登録フォームに記入して追加します。
+            - button "登録を開始する" [ref=e106] [cursor=pointer]

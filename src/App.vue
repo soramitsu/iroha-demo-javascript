@@ -10,45 +10,82 @@
         </span>
         <div>
           <p class="app-eyebrow">{{ t("Iroha Points") }}</p>
-          <p class="app-title">{{ t("Torii control deck") }}</p>
+          <p class="app-title">{{ t("Iroha Wallet") }}</p>
           <p class="app-subtitle">{{ t("Modern Torii-connected wallet") }}</p>
         </div>
       </div>
-      <div class="header-actions">
-        <div class="status-chips">
-          <div class="status-chip">
-            <span class="chip-label">{{ t("Torii") }}</span>
-            <span class="chip-value">{{ t("TAIRA locked") }}</span>
-            <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
-          </div>
-          <div class="status-chip">
-            <span class="chip-label">{{ t("Chain") }}</span>
-            <span class="chip-value">{{ session.connection.chainId }}</span>
-            <span class="chip-sub">{{
+      <div class="header-rail">
+        <details class="status-panel">
+          <summary class="mobile-status-toggle">
+            <span class="mobile-status-toggle-copy">
+              <span class="mobile-status-toggle-label">{{ t("Torii") }}</span>
+              <span class="mobile-status-toggle-current">{{
+                session.connection.toriiUrl
+              }}</span>
+            </span>
+            <span class="mobile-status-toggle-meta">{{
               session.connection.assetDefinitionId || t("Asset not set")
             }}</span>
-          </div>
-        </div>
-        <label class="locale-switcher">
-          <span>{{ t("Language") }}</span>
-          <select v-model="activeLocale">
-            <option
-              v-for="option in localeOptions"
-              :key="option.value"
-              :value="option.value"
+            <span class="mobile-status-toggle-caret" aria-hidden="true"
+              >↗</span
             >
-              {{ option.label }}
-            </option>
-          </select>
-        </label>
-        <button class="theme-toggle" @click="theme.toggle()">
-          <span class="theme-dot" :class="theme.current"></span>
-          <span>{{
-            theme.current === "dark"
-              ? t("Switch to light")
-              : t("Switch to dark")
-          }}</span>
-        </button>
+          </summary>
+          <div class="status-chips">
+            <div class="status-chip">
+              <span class="chip-label">{{ t("Torii") }}</span>
+              <span class="chip-value">{{ t("TAIRA locked") }}</span>
+              <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
+            </div>
+            <div class="status-chip">
+              <span class="chip-label">{{ t("Chain") }}</span>
+              <span class="chip-value mono chain-value">{{
+                session.connection.chainId
+              }}</span>
+              <span class="chip-sub">{{
+                session.connection.assetDefinitionId || t("Asset not set")
+              }}</span>
+            </div>
+          </div>
+        </details>
+        <details class="settings-panel">
+          <summary class="settings-toggle">
+            <span class="theme-dot" :class="theme.current"></span>
+            <span class="settings-toggle-copy">
+              <span class="settings-toggle-label">{{ t("Language") }}</span>
+              <span class="settings-toggle-current">
+                {{ activeLocale }} ·
+                {{
+                  theme.current === "dark"
+                    ? t("Switch to light")
+                    : t("Switch to dark")
+                }}
+              </span>
+            </span>
+            <span class="settings-toggle-caret" aria-hidden="true">↗</span>
+          </summary>
+          <div class="header-controls">
+            <label class="locale-switcher">
+              <span>{{ t("Language") }}</span>
+              <select v-model="activeLocale">
+                <option
+                  v-for="option in localeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <button class="theme-toggle" @click="theme.toggle()">
+              <span class="theme-dot" :class="theme.current"></span>
+              <span>{{
+                theme.current === "dark"
+                  ? t("Switch to light")
+                  : t("Switch to dark")
+              }}</span>
+            </button>
+          </div>
+        </details>
       </div>
     </header>
     <div class="app-shell">
@@ -61,71 +98,62 @@
             }}
           </span>
         </div>
-        <nav>
-          <RouterLink
-            v-for="item in navItems"
-            :key="item.to"
-            :to="item.to"
-            class="nav-link"
-            :class="{
-              active: route.path.startsWith(item.to),
-              locked: item.requiresAccount && !session.hasAccount,
-            }"
-            :title="
-              item.requiresAccount && !session.hasAccount
-                ? t('Complete account setup first')
-                : t(item.descriptionKey)
-            "
-            :aria-disabled="item.requiresAccount && !session.hasAccount"
-            :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
-          >
-            <span class="nav-step" aria-hidden="true">{{ item.step }}</span>
-            <span class="nav-icon-shell">
-              <img :src="item.icon" class="nav-icon" :alt="t(item.labelKey)" />
+        <details class="sidebar-panel">
+          <summary class="mobile-nav-toggle">
+            <span class="mobile-nav-toggle-copy">
+              <span class="mobile-nav-toggle-label">{{ t("Navigate") }}</span>
+              <span class="mobile-nav-toggle-current">{{ routeTitle }}</span>
             </span>
-            <span class="nav-copy">
-              <span class="nav-label">{{ t(item.labelKey) }}</span>
-              <span class="nav-description">{{ t(item.descriptionKey) }}</span>
-            </span>
-            <span class="nav-caret" aria-hidden="true">↗</span>
-          </RouterLink>
-        </nav>
-        <p v-if="!session.hasAccount" class="nav-lock-hint">
-          {{
-            t(
-              "Complete account onboarding to unlock Setup, Wallet, Staking, Parliament, Send, Receive, Offline, and Explorer.",
-            )
-          }}
-        </p>
-        <div class="sidebar-meta">
-          <AccountSwitcher />
-          <div v-if="session.hasAccount" class="session-meta">
-            <p class="meta-label">{{ t("Active account") }}</p>
-            <p class="meta-value">
-              {{
-                session.activeAccount?.displayName ||
-                session.activeAccount?.accountId ||
-                t("Not created yet")
-              }}
-            </p>
-            <p class="helper meta-sub">
-              {{
-                session.accounts.length
-                  ? t("{count} saved", { count: session.accounts.length })
-                  : t("No accounts saved yet")
-              }}
-            </p>
+            <span class="mobile-nav-toggle-caret" aria-hidden="true">↗</span>
+          </summary>
+          <nav>
+            <RouterLink
+              v-for="item in sidebarNavItems"
+              :key="item.to"
+              :to="item.to"
+              class="nav-link"
+              :class="{
+                active: route.path.startsWith(item.to),
+                locked: item.requiresAccount && !session.hasAccount,
+              }"
+              :title="
+                item.requiresAccount && !session.hasAccount
+                  ? t('Complete account setup first')
+                  : t(item.descriptionKey)
+              "
+              :aria-disabled="item.requiresAccount && !session.hasAccount"
+              :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
+            >
+              <span class="nav-step" aria-hidden="true">{{ item.step }}</span>
+              <span class="nav-icon-shell">
+                <img
+                  :src="item.icon"
+                  class="nav-icon"
+                  :alt="t(item.labelKey)"
+                />
+              </span>
+              <span class="nav-copy">
+                <span class="nav-label">{{ t(item.labelKey) }}</span>
+                <span class="nav-description">{{
+                  t(item.descriptionKey)
+                }}</span>
+              </span>
+              <span class="nav-caret" aria-hidden="true">↗</span>
+            </RouterLink>
+          </nav>
+          <div v-if="session.hasAccount" class="sidebar-meta">
+            <AccountSwitcher v-if="session.accounts.length" />
+            <div class="session-meta">
+              <p class="meta-label">{{ t("Connection") }}</p>
+              <p class="meta-value">{{ session.connection.chainId }}</p>
+              <p class="helper meta-sub">{{ session.connection.toriiUrl }}</p>
+            </div>
           </div>
-          <div class="session-meta">
-            <p class="meta-label">{{ t("Connection") }}</p>
-            <p class="meta-value">{{ session.connection.chainId }}</p>
-            <p class="helper meta-sub">{{ session.connection.toriiUrl }}</p>
-          </div>
-        </div>
+        </details>
       </aside>
       <section class="workspace">
         <header class="workspace-header">
-          <div>
+          <div class="workspace-heading">
             <p class="section-label">{{ routeSubtitle }}</p>
             <h1>{{ routeTitle }}</h1>
           </div>
@@ -145,6 +173,18 @@
                 session.hasAccount
                   ? t("Account saved")
                   : t("Onboarding required")
+              }}
+            </span>
+            <span
+              v-if="
+                session.activeAccount?.displayName ||
+                session.activeAccount?.accountId
+              "
+              class="pill workspace-account"
+            >
+              {{
+                session.activeAccount?.displayName ||
+                session.activeAccount?.accountId
               }}
             </span>
           </div>
@@ -179,15 +219,6 @@ const navItems = [
     descriptionKey: "Generate keys, recovery phrase, Connect pairing",
     icon: UserIcon,
     requiresAccount: false,
-    step: "01",
-  },
-  {
-    to: "/setup",
-    labelKey: "Session",
-    descriptionKey: "TAIRA connection, asset, and authority keys",
-    icon: UserIcon,
-    requiresAccount: true,
-    step: "02",
   },
   {
     to: "/wallet",
@@ -195,31 +226,6 @@ const navItems = [
     descriptionKey: "Balances, assets, and latest transactions",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "03",
-  },
-  {
-    to: "/staking",
-    labelKey: "Staking",
-    descriptionKey: "Nominate validators and stake XOR for NPOS",
-    icon: WalletIcon,
-    requiresAccount: true,
-    step: "04",
-  },
-  {
-    to: "/parliament",
-    labelKey: "Parliament",
-    descriptionKey: "Bond citizenship and vote in governance referenda",
-    icon: WalletIcon,
-    requiresAccount: true,
-    step: "05",
-  },
-  {
-    to: "/subscriptions",
-    labelKey: "Subscriptions",
-    descriptionKey: "Auto-deduct and manage recurring services",
-    icon: WalletIcon,
-    requiresAccount: true,
-    step: "06",
   },
   {
     to: "/send",
@@ -227,7 +233,6 @@ const navItems = [
     descriptionKey: "Transfer assets with camera or QR upload",
     icon: SendIcon,
     requiresAccount: true,
-    step: "07",
   },
   {
     to: "/receive",
@@ -235,7 +240,27 @@ const navItems = [
     descriptionKey: "Share QR codes or account IDs to request funds",
     icon: ReceiveIcon,
     requiresAccount: true,
-    step: "08",
+  },
+  {
+    to: "/subscriptions",
+    labelKey: "Subscriptions",
+    descriptionKey: "Auto-deduct and manage recurring services",
+    icon: WalletIcon,
+    requiresAccount: true,
+  },
+  {
+    to: "/staking",
+    labelKey: "Staking",
+    descriptionKey: "Nominate validators and stake XOR for NPOS",
+    icon: WalletIcon,
+    requiresAccount: true,
+  },
+  {
+    to: "/parliament",
+    labelKey: "Parliament",
+    descriptionKey: "Bond citizenship and vote in governance referenda",
+    icon: WalletIcon,
+    requiresAccount: true,
   },
   {
     to: "/offline",
@@ -243,7 +268,6 @@ const navItems = [
     descriptionKey: "Offline wallets, invoices, and QR exchanges",
     icon: SendIcon,
     requiresAccount: true,
-    step: "09",
   },
   {
     to: "/explore",
@@ -251,7 +275,13 @@ const navItems = [
     descriptionKey: "Network metrics and asset explorer",
     icon: WalletIcon,
     requiresAccount: true,
-    step: "10",
+  },
+  {
+    to: "/setup",
+    labelKey: "Session",
+    descriptionKey: "TAIRA connection, asset, and authority keys",
+    icon: UserIcon,
+    requiresAccount: true,
   },
 ];
 
@@ -272,6 +302,21 @@ const routeTitle = computed(() =>
 const routeSubtitle = computed(() =>
   t((route.meta.subtitleKey as string) || "Balances & activity"),
 );
+const onboardingNavItem =
+  navItems.find((item) => !item.requiresAccount) ?? null;
+const signedInNavItems = navItems.filter((item) => item.requiresAccount);
+const sidebarNavItems = computed(() => {
+  const orderedItems =
+    session.hasAccount && onboardingNavItem
+      ? [...signedInNavItems, onboardingNavItem]
+      : onboardingNavItem
+        ? [onboardingNavItem]
+        : [];
+  return orderedItems.map((item, index) => ({
+    ...item,
+    step: String(index + 1).padStart(2, "0"),
+  }));
+});
 
 const updateParallax = (event: PointerEvent) => {
   const x = (event.clientX / window.innerWidth - 0.5).toFixed(3);

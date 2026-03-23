@@ -1,0 +1,73 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]:
+      - img "Irohaロゴ" [ref=e7]
+      - generic [ref=e8]:
+        - paragraph [ref=e9]: Irohaポイント
+        - paragraph [ref=e10]: Toriiコントロールデッキ
+    - group [ref=e11]:
+      - generic "Torii https://taira.sora.org ja-JP" [ref=e12] [cursor=pointer]:
+        - generic [ref=e13]:
+          - generic [ref=e14]: Torii
+          - generic [ref=e15]: https://taira.sora.org
+        - generic [ref=e16]: ja-JP
+        - generic [ref=e17]: ↗
+  - generic [ref=e18]:
+    - complementary [ref=e19]:
+      - generic [ref=e20]:
+        - paragraph [ref=e21]: ナビゲート
+        - generic [ref=e22]: アカウント準備完了
+      - group [ref=e23]:
+        - generic "ナビゲート ポイント送信" [ref=e113] [cursor=pointer]:
+          - generic [ref=e25]:
+            - generic [ref=e26]: ナビゲート
+            - generic [ref=e27]: ポイント送信
+          - generic [ref=e28]: ↗
+        - option "Alice" [selected]
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - paragraph [ref=e32]: Torii経由でアセット送信
+          - heading "ポイント送信" [level=1] [ref=e114]
+        - generic [ref=e34]:
+          - generic [ref=e35]: TAIRA Torii準備完了
+          - generic [ref=e36]: アカウント保存済み
+          - generic [ref=e37]: Alice
+      - main [ref=e38]:
+        - generic [ref=e115]:
+          - generic [ref=e116]:
+            - generic [ref=e117]:
+              - heading "資産の譲渡" [level=2] [ref=e118]
+              - paragraph [ref=e119]: Alice
+            - generic [ref=e120]:
+              - button "スキャナーの停止" [ref=e121] [cursor=pointer]:
+                - generic [ref=e122]: スキャナーの停止
+              - button "QR画像をアップロードする" [ref=e123] [cursor=pointer]:
+                - generic [ref=e124]: QR画像をアップロードする
+              - button "Choose File" [ref=e125]
+          - generic [ref=e126]:
+            - generic [ref=e128]:
+              - generic [ref=e129]:
+                - generic [ref=e130]: アクティブアカウント
+                - generic [ref=e131]: alice@wonderland
+              - generic [ref=e132]:
+                - generic [ref=e133]: 資産定義ID
+                - generic [ref=e134]: —
+            - generic [ref=e138]:
+              - generic [ref=e139]:
+                - generic [ref=e140]:
+                  - text: 宛先アカウントID
+                  - textbox "宛先アカウントID" [ref=e141]:
+                    - /placeholder: n42u... (I105 account ID)
+                - generic [ref=e142]:
+                  - text: 額
+                  - spinbutton "額" [ref=e143]: "0"
+                - generic [ref=e144]:
+                  - text: メモ（任意）
+                  - textbox "メモ（任意）" [ref=e145]:
+                    - /placeholder: ランチをありがとう
+                - generic [ref=e146]:
+                  - checkbox "シールド転写" [ref=e147]
+                  - generic [ref=e148]: シールド転写
+              - button "送信" [disabled] [ref=e150]
+              - paragraph [ref=e152]

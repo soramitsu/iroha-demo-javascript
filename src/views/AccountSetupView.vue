@@ -1,6 +1,227 @@
 <template>
-  <div class="card-grid account-grid">
-    <section class="card">
+  <div v-if="isFirstLaunch" class="account-wizard">
+    <section class="account-wizard-intro">
+      <div class="account-wizard-copy">
+        <p class="section-label">{{ t("Complete onboarding") }}</p>
+        <h2>{{ t("TAIRA Testnet Account") }}</h2>
+        <p class="helper">
+          {{
+            t(
+              "Generate your account keys, store a recovery phrase, and register via Torii.",
+            )
+          }}
+        </p>
+      </div>
+      <div class="account-wizard-chips">
+        <span class="pill positive">{{ t("TAIRA locked") }}</span>
+        <span class="pill">{{ t("Complete onboarding") }}</span>
+      </div>
+    </section>
+
+    <div class="account-wizard-shell">
+      <aside class="account-wizard-rail">
+        <section class="account-wizard-panel">
+          <div class="account-step-list">
+            <article
+              v-for="item in onboardingSteps"
+              :key="item.step"
+              class="account-step"
+              :class="{ current: item.current, done: item.done }"
+            >
+              <span class="account-step-number">{{ item.step }}</span>
+              <p class="account-step-label">{{ item.label }}</p>
+            </article>
+          </div>
+        </section>
+        <section class="account-wizard-panel account-wizard-summary">
+          <div class="wizard-summary-row">
+            <p class="meta-label">{{ t("Connection") }}</p>
+            <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
+            <p class="helper meta-sub mono">{{ connectionForm.chainId }}</p>
+          </div>
+          <div class="wizard-summary-row">
+            <p class="meta-label">
+              {{ t("Display Name (local only, not on-chain)") }}
+            </p>
+            <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
+          </div>
+          <div class="wizard-summary-row">
+            <p class="meta-label">{{ t("Account ID") }}</p>
+            <p class="meta-value mono">
+              {{ generatedAccountId || t("Not created yet") }}
+            </p>
+          </div>
+        </section>
+      </aside>
+
+      <div class="account-wizard-flow">
+        <section
+          class="card wizard-stage"
+          :class="{
+            current: onboardingStage === 'identity',
+            complete: Boolean(generatedKeys),
+          }"
+        >
+          <header class="card-header">
+            <div>
+              <h2>{{ t("Generate recovery phrase") }}</h2>
+              <p class="helper">
+                {{
+                  t(
+                    "TAIRA testnet connection is fixed for onboarding in this build.",
+                  )
+                }}
+              </p>
+            </div>
+          </header>
+          <div class="form-grid wizard-form-grid">
+            <label>
+              {{ t("Display Name (local only, not on-chain)") }}
+              <input v-model.trim="aliasInput" :placeholder="t('Alice')" />
+            </label>
+            <label>
+              {{ t("Domain") }}
+              <input
+                v-model.trim="domainInput"
+                :placeholder="t('wonderland')"
+              />
+            </label>
+            <label class="wizard-field-compact">
+              {{ t("Recovery Phrase Length") }}
+              <select v-model.number="wordCount">
+                <option :value="12">{{ t("12 words") }}</option>
+                <option :value="24">{{ t("24 words") }}</option>
+              </select>
+            </label>
+          </div>
+          <div class="actions">
+            <button :disabled="generating" @click="generateRecovery">
+              {{
+                generating ? t("Generating…") : t("Generate recovery phrase")
+              }}
+            </button>
+            <button
+              v-if="generatedKeys || mnemonicWords.length"
+              class="secondary"
+              @click="startNewRegistration"
+            >
+              {{ t("Reset") }}
+            </button>
+          </div>
+          <p v-if="generateError" class="helper error">{{ generateError }}</p>
+        </section>
+
+        <section
+          v-if="mnemonicWords.length"
+          class="card wizard-stage"
+          :class="{
+            current: onboardingStage === 'backup',
+            complete: backupConfirmed,
+          }"
+        >
+          <header class="card-header">
+            <div>
+              <h2>{{ t("Download backup") }}</h2>
+              <p class="helper">
+                {{
+                  t(
+                    "Write these words down in order. They restore your wallet.",
+                  )
+                }}
+              </p>
+            </div>
+          </header>
+          <div class="mnemonic-grid">
+            <span v-for="(word, index) in mnemonicWords" :key="word + index">
+              <strong>{{ index + 1 }}.</strong> {{ word }}
+            </span>
+          </div>
+          <div class="backup-actions">
+            <button class="secondary" @click="downloadBackup('manual')">
+              {{ t("Download backup") }}
+            </button>
+            <button class="secondary" @click="downloadBackup('icloud')">
+              {{ t("Store for iCloud Drive") }}
+            </button>
+            <button class="secondary" @click="downloadBackup('google')">
+              {{ t("Store for Google Drive") }}
+            </button>
+          </div>
+          <label class="backup-confirm">
+            <input v-model="backupConfirmed" type="checkbox" />
+            <span>{{ t("I stored my recovery phrase safely.") }}</span>
+          </label>
+        </section>
+
+        <section
+          v-if="generatedKeys && backupConfirmed"
+          class="card wizard-stage"
+          :class="{ current: onboardingStage === 'register' }"
+        >
+          <header class="card-header">
+            <div>
+              <h2>{{ t("Register account") }}</h2>
+              <p class="helper">
+                {{
+                  t(
+                    "Generate your account keys, store a recovery phrase, and register via Torii.",
+                  )
+                }}
+              </p>
+            </div>
+          </header>
+          <div class="wizard-review-grid">
+            <div class="wizard-review-item">
+              <p class="meta-label">{{ t("Account ID") }}</p>
+              <p class="meta-value mono">{{ generatedAccountId }}</p>
+            </div>
+            <div class="wizard-review-item">
+              <p class="meta-label">
+                {{ t("Display Name (local only, not on-chain)") }}
+              </p>
+              <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
+            </div>
+            <div class="wizard-review-item">
+              <p class="meta-label">{{ t("Domain") }}</p>
+              <p class="meta-value">{{ normalizedDomain }}</p>
+            </div>
+            <div class="wizard-review-item">
+              <p class="meta-label">{{ t("Connection") }}</p>
+              <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
+            </div>
+          </div>
+          <label>
+            {{ t("Identity Metadata (JSON, optional)") }}
+            <textarea
+              v-model.trim="identityInput"
+              rows="3"
+              placeholder='{"country":"JP","kyc_id":"..."}'
+            ></textarea>
+          </label>
+          <div class="actions">
+            <button
+              :disabled="!canRegisterGenerated"
+              @click="registerGeneratedIdentity"
+            >
+              {{ onboardingBusy ? t("Registering…") : t("Register account") }}
+            </button>
+            <button class="secondary" @click="startNewRegistration">
+              {{ t("Reset") }}
+            </button>
+          </div>
+          <p v-if="onboardingError" class="helper error">
+            {{ onboardingError }}
+          </p>
+          <p v-if="onboardingStatus" class="helper success">
+            {{ onboardingStatus }}
+          </p>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div v-else class="card-grid account-grid">
+    <section class="card account-primary">
       <header class="card-header">
         <div>
           <h2>{{ t("TAIRA Testnet Account") }}</h2>
@@ -21,7 +242,7 @@
         </p>
       </div>
 
-      <div class="form-grid keygen-form">
+      <div class="form-grid wizard-form-grid">
         <label>
           {{ t("Display Name (local only, not on-chain)") }}
           <input v-model.trim="aliasInput" :placeholder="t('Alice')" />
@@ -30,14 +251,14 @@
           {{ t("Domain") }}
           <input v-model.trim="domainInput" :placeholder="t('wonderland')" />
         </label>
-        <label>
+        <label class="wizard-field-compact">
           {{ t("Recovery Phrase Length") }}
           <select v-model.number="wordCount">
             <option :value="12">{{ t("12 words") }}</option>
             <option :value="24">{{ t("24 words") }}</option>
           </select>
         </label>
-        <label>
+        <label class="wizard-field-wide">
           {{ t("Identity Metadata (JSON, optional)") }}
           <textarea
             v-model.trim="identityInput"
@@ -45,6 +266,17 @@
             placeholder='{"country":"JP","kyc_id":"..."}'
           ></textarea>
         </label>
+      </div>
+
+      <div v-if="generatedKeys" class="wizard-review-grid account-review-grid">
+        <div class="wizard-review-item">
+          <p class="meta-label">{{ t("Account ID") }}</p>
+          <p class="meta-value mono">{{ generatedAccountId }}</p>
+        </div>
+        <div class="wizard-review-item">
+          <p class="meta-label">{{ t("Domain") }}</p>
+          <p class="meta-value">{{ normalizedDomain }}</p>
+        </div>
       </div>
 
       <div class="actions">
@@ -57,6 +289,13 @@
           @click="registerGeneratedIdentity"
         >
           {{ onboardingBusy ? t("Registering…") : t("Register account") }}
+        </button>
+        <button
+          v-if="generatedKeys || mnemonicWords.length"
+          class="secondary"
+          @click="startNewRegistration"
+        >
+          {{ t("Reset") }}
         </button>
       </div>
       <p v-if="generateError" class="helper error">{{ generateError }}</p>
@@ -92,49 +331,7 @@
       </div>
     </section>
 
-    <section class="card">
-      <header class="card-header">
-        <h2>{{ t("IrohaConnect Pairing") }}</h2>
-      </header>
-      <p class="helper">
-        {{
-          t(
-            "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
-          )
-        }}
-      </p>
-      <div v-if="connectPreview" class="connect-preview">
-        <img
-          v-if="connectQr"
-          :src="connectQr"
-          :alt="t('IrohaConnect pairing QR')"
-          class="connect-qr"
-        />
-        <div class="kv monospace">
-          <span class="kv-label">{{ t("Session ID") }}</span>
-          <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
-        </div>
-        <div v-if="connectPreview.tokenWallet" class="kv monospace">
-          <span class="kv-label">{{ t("Wallet Token") }}</span>
-          <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
-        </div>
-      </div>
-      <div class="actions">
-        <button :disabled="connectLoading" @click="startConnectPairing">
-          {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="!connectPreview"
-          @click="resetConnect"
-        >
-          {{ t("Reset") }}
-        </button>
-      </div>
-      <p v-if="connectError" class="helper error">{{ connectError }}</p>
-    </section>
-
-    <section class="card">
+    <section class="card account-saved">
       <header class="card-header">
         <div>
           <h2>{{ t("Saved Accounts") }}</h2>
@@ -197,20 +394,62 @@
           </div>
         </article>
       </div>
-      <p v-else class="helper">
-        {{
-          t("No saved accounts yet. Complete the registration form to add one.")
-        }}
-      </p>
+      <div v-else class="account-roster-empty">
+        <p class="helper">
+          {{
+            t(
+              "No saved accounts yet. Complete the registration form to add one.",
+            )
+          }}
+        </p>
+      </div>
       <div class="actions">
         <button class="secondary" @click="startNewRegistration">
-          {{
-            hasSavedAccounts
-              ? t("Register another account")
-              : t("Begin registration")
-          }}
+          {{ t("Register another account") }}
         </button>
       </div>
+    </section>
+
+    <section class="card account-connect">
+      <header class="card-header">
+        <h2>{{ t("IrohaConnect Pairing") }}</h2>
+      </header>
+      <p class="helper">
+        {{
+          t(
+            "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
+          )
+        }}
+      </p>
+      <div v-if="connectPreview" class="connect-preview">
+        <img
+          v-if="connectQr"
+          :src="connectQr"
+          :alt="t('IrohaConnect pairing QR')"
+          class="connect-qr"
+        />
+        <div class="kv monospace">
+          <span class="kv-label">{{ t("Session ID") }}</span>
+          <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
+        </div>
+        <div v-if="connectPreview.tokenWallet" class="kv monospace">
+          <span class="kv-label">{{ t("Wallet Token") }}</span>
+          <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button :disabled="connectLoading" @click="startConnectPairing">
+          {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
+        </button>
+        <button
+          class="secondary"
+          :disabled="!connectPreview"
+          @click="resetConnect"
+        >
+          {{ t("Reset") }}
+        </button>
+      </div>
+      <p v-if="connectError" class="helper error">{{ connectError }}</p>
     </section>
   </div>
 </template>
@@ -276,7 +515,6 @@ const mnemonicWords = ref<string[]>([]);
 const generatedKeys = ref<{
   privateKeyHex: string;
   publicKeyHex: string;
-  accountId: string;
 } | null>(null);
 const backupConfirmed = ref(false);
 const generating = ref(false);
@@ -285,6 +523,54 @@ const onboardingError = ref("");
 const onboardingStatus = ref("");
 const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
+const isFirstLaunch = computed(() => !hasSavedAccounts.value);
+const normalizedDomain = computed(
+  () => domainInput.value.trim() || "wonderland",
+);
+const generatedAccountId = computed(() => {
+  if (!generatedKeys.value) {
+    return "";
+  }
+  try {
+    const summary = deriveAccountAddress({
+      domain: normalizedDomain.value,
+      publicKeyHex: generatedKeys.value.publicKeyHex,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    return summary.accountId;
+  } catch (_error) {
+    return "";
+  }
+});
+const onboardingStage = computed<"identity" | "backup" | "register">(() => {
+  if (!generatedKeys.value) {
+    return "identity";
+  }
+  if (!backupConfirmed.value) {
+    return "backup";
+  }
+  return "register";
+});
+const onboardingSteps = computed(() => [
+  {
+    step: "01",
+    label: t("Generate recovery phrase"),
+    done: Boolean(generatedKeys.value),
+    current: onboardingStage.value === "identity",
+  },
+  {
+    step: "02",
+    label: t("Recovery phrase saved"),
+    done: backupConfirmed.value,
+    current: onboardingStage.value === "backup",
+  },
+  {
+    step: "03",
+    label: t("Register account"),
+    done: Boolean(onboardingStatus.value || session.hasAccount),
+    current: onboardingStage.value === "register",
+  },
+]);
 const registrationChecklist = computed(() => [
   {
     label: t("TAIRA connection ready"),
@@ -307,6 +593,7 @@ const startNewRegistration = () => {
   mnemonicWords.value = [];
   generatedKeys.value = null;
   backupConfirmed.value = false;
+  generateError.value = "";
   onboardingStatus.value = "";
   onboardingError.value = "";
 };
@@ -340,16 +627,9 @@ const generateRecovery = async () => {
     const mnemonic = normalizeMnemonicPhrase(words.join(" "));
     const privateKeyHex = mnemonicToPrivateKeyHex(mnemonic);
     const { publicKeyHex } = await derivePublicKey(privateKeyHex);
-    const domain = domainInput.value.trim() || "wonderland";
-    const summary = deriveAccountAddress({
-      domain,
-      publicKeyHex,
-      networkPrefix: session.connection.networkPrefix,
-    });
     generatedKeys.value = {
       privateKeyHex,
       publicKeyHex,
-      accountId: summary.accountId,
     };
     backupConfirmed.value = false;
   } catch (err) {
@@ -383,6 +663,7 @@ const parseIdentity = () => {
 const canRegisterGenerated = computed(() => {
   return Boolean(
     generatedKeys.value &&
+      generatedAccountId.value &&
       backupConfirmed.value &&
       connectionForm.toriiUrl &&
       connectionForm.chainId &&
@@ -394,6 +675,10 @@ const registerGeneratedIdentity = async () => {
   onboardingError.value = "";
   onboardingStatus.value = "";
   if (!generatedKeys.value) {
+    onboardingError.value = t("Generate a keypair first.");
+    return;
+  }
+  if (!generatedAccountId.value) {
     onboardingError.value = t("Generate a keypair first.");
     return;
   }
@@ -413,7 +698,7 @@ const registerGeneratedIdentity = async () => {
     const response = await onboardAccount({
       toriiUrl: connectionForm.toriiUrl,
       alias: aliasInput.value.trim() || t("Unnamed"),
-      accountId: generatedKeys.value.accountId,
+      accountId: generatedAccountId.value,
       identity,
     });
     session.updateConnection({
@@ -422,8 +707,8 @@ const registerGeneratedIdentity = async () => {
     });
     session.addAccount({
       displayName: aliasInput.value.trim(),
-      domain: domainInput.value.trim() || "wonderland",
-      accountId: generatedKeys.value.accountId,
+      domain: normalizedDomain.value,
+      accountId: generatedAccountId.value,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       privateKeyHex: generatedKeys.value.privateKeyHex,
     });
@@ -432,7 +717,7 @@ const registerGeneratedIdentity = async () => {
       accountId: response.account_id,
       txHash: response.tx_hash_hex.slice(0, 12),
     });
-    router.push("/setup");
+    router.push("/wallet");
   } catch (err) {
     onboardingError.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -474,6 +759,7 @@ const connectPreview = ref<Awaited<
 const connectQr = ref("");
 const connectLoading = ref(false);
 const connectError = ref("");
+const connectGeneration = ref(0);
 
 const startConnectPairing = async () => {
   connectError.value = "";
@@ -483,26 +769,39 @@ const startConnectPairing = async () => {
     );
     return;
   }
+  const currentGeneration = connectGeneration.value + 1;
+  connectGeneration.value = currentGeneration;
   connectLoading.value = true;
   try {
     const preview = await createConnectPreview({
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId,
     });
-    connectPreview.value = preview;
-    connectQr.value = preview.walletUri
+    const nextConnectQr = preview.walletUri
       ? await QRCode.toDataURL(preview.walletUri)
       : "";
+    if (currentGeneration !== connectGeneration.value) {
+      return;
+    }
+    connectPreview.value = preview;
+    connectQr.value = nextConnectQr;
   } catch (err) {
+    if (currentGeneration !== connectGeneration.value) {
+      return;
+    }
     connectError.value = err instanceof Error ? err.message : String(err);
     connectPreview.value = null;
     connectQr.value = "";
   } finally {
-    connectLoading.value = false;
+    if (currentGeneration === connectGeneration.value) {
+      connectLoading.value = false;
+    }
   }
 };
 
 const resetConnect = () => {
+  connectGeneration.value += 1;
+  connectLoading.value = false;
   connectPreview.value = null;
   connectQr.value = "";
   connectError.value = "";
@@ -511,7 +810,26 @@ const resetConnect = () => {
 
 <style scoped>
 .account-grid {
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  grid-template-columns: minmax(420px, 1.08fr) minmax(320px, 0.92fr);
+  align-items: start;
+}
+
+.account-saved {
+  grid-column: 1 / -1;
+}
+
+.account-primary,
+.account-connect,
+.account-saved {
+  min-height: 100%;
+}
+
+.keygen-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.keygen-form label:last-child {
+  grid-column: 1 / -1;
 }
 
 .keygen-form label textarea {
@@ -520,24 +838,27 @@ const resetConnect = () => {
 
 .backup-panel {
   margin-top: 16px;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, 0.08), transparent 70%),
+    rgba(255, 255, 255, 0.03);
 }
 
 .mnemonic-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 10px;
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   margin-bottom: 12px;
 }
 
 .mnemonic-grid span {
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .backup-actions {
@@ -564,17 +885,20 @@ const resetConnect = () => {
 
 .connect-preview {
   margin-bottom: 16px;
-  text-align: center;
+  display: grid;
+  gap: 14px;
+  justify-items: center;
 }
 
 .connect-qr {
-  width: 180px;
-  height: 180px;
+  width: min(220px, 100%);
+  aspect-ratio: 1 / 1;
   object-fit: contain;
-  margin-bottom: 12px;
-  border-radius: 12px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.05);
-  padding: 8px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
 }
 
 .monospace {
@@ -583,10 +907,9 @@ const resetConnect = () => {
 }
 
 .registration-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
   margin-bottom: 12px;
 }
 
@@ -594,8 +917,9 @@ const resetConnect = () => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: 14px;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.03);
   color: rgba(255, 255, 255, 0.82);
@@ -619,18 +943,17 @@ const resetConnect = () => {
 }
 
 .account-roster {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 12px;
 }
 
 .account-row {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 12px;
-  border-radius: 12px;
+  padding: 14px 16px;
+  border-radius: 16px;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.03);
 }
@@ -644,11 +967,41 @@ const resetConnect = () => {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .chain-quickpick {
   display: grid;
   gap: 8px;
   margin-bottom: 8px;
+}
+
+@media (max-width: 1080px) {
+  .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .keygen-form {
+    grid-template-columns: 1fr;
+  }
+
+  .keygen-form label:last-child {
+    grid-column: auto;
+  }
+
+  .registration-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .account-row {
+    grid-template-columns: 1fr;
+  }
+
+  .account-actions {
+    justify-content: flex-start;
+  }
 }
 </style>

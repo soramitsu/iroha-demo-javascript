@@ -1013,6 +1013,12 @@ const UR_TRANSLATIONS: TranslationTable = {
 };
 const VI_TRANSLATIONS: TranslationTable = VI_AUTO_TRANSLATIONS;
 const ZH_TW_TRANSLATIONS: TranslationTable = ZH_TW_AUTO_TRANSLATIONS;
+const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
+  "Invoice asset does not match the active offline asset.":
+    "Invoice asset does not match the active offline asset.",
+  "Payment asset does not match the active offline asset.":
+    "Payment asset does not match the active offline asset.",
+};
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
   I105: "I105",
@@ -1081,6 +1087,7 @@ const TRANSLATION_KEY_ALIASES: Record<string, string> = {
 };
 
 const LITERAL_KEY_OVERRIDES: Record<string, string> = {
+  "Iroha Wallet": "Iroha Wallet",
   IH58: "I105",
   I105: "I105",
   "34m... or 0x...@wonderland": "n42u... (I105 account ID)",
@@ -1162,6 +1169,7 @@ export const translate = (
     LITERAL_KEY_OVERRIDES[key] ??
     LITERAL_KEY_OVERRIDES[normalizedKey] ??
     TABLES[locale]?.[normalizedKey] ??
+    SHARED_ENGLISH_FALLBACK_TRANSLATIONS[normalizedKey] ??
     key;
   const normalizedTemplate = LEGACY_TERM_REPLACEMENTS.reduce(
     (current, [from, to]) => current.split(from).join(to),
@@ -1194,6 +1202,8 @@ export const hasLocaleTranslation = (
   }
   const normalizedKey = TRANSLATION_KEY_ALIASES[key] ?? key;
   return (
-    normalizedKey in TABLES[locale] || normalizedKey in LITERAL_KEY_OVERRIDES
+    normalizedKey in TABLES[locale] ||
+    normalizedKey in SHARED_ENGLISH_FALLBACK_TRANSLATIONS ||
+    normalizedKey in LITERAL_KEY_OVERRIDES
   );
 };
