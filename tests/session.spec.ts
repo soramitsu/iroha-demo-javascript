@@ -37,6 +37,7 @@ describe("session store", () => {
       accountId: "ed0120@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "aa",
+      localOnly: false,
     });
     store.addAccount({
       displayName: "Bob",
@@ -44,6 +45,7 @@ describe("session store", () => {
       accountId: "ed0999@wonderland",
       publicKeyHex: "pub2",
       privateKeyHex: "bb",
+      localOnly: false,
     });
     store.setActiveAccount("ed0999@wonderland");
     store.updateAuthority({ accountId: "authority@wonderland" });
@@ -237,6 +239,7 @@ describe("session store", () => {
       accountId: "first@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "priv",
+      localOnly: false,
     });
 
     store.updateActiveAccount({ displayName: "Renamed" });

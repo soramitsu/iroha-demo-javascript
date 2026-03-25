@@ -2,19 +2,19 @@
   <div v-if="isFirstLaunch" class="account-wizard">
     <section class="account-wizard-intro">
       <div class="account-wizard-copy">
-        <p class="section-label">{{ t("Complete onboarding") }}</p>
+        <p class="section-label">{{ t("Account Setup") }}</p>
         <h2>{{ t("TAIRA Testnet Account") }}</h2>
         <p class="helper">
           {{
             t(
-              "Generate your account keys, store a recovery phrase, and register via Torii.",
+              "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
             )
           }}
         </p>
       </div>
       <div class="account-wizard-chips">
         <span class="pill positive">{{ t("TAIRA locked") }}</span>
-        <span class="pill">{{ t("Complete onboarding") }}</span>
+        <span class="pill">{{ t("Account Setup") }}</span>
       </div>
     </section>
 
@@ -160,11 +160,11 @@
         >
           <header class="card-header">
             <div>
-              <h2>{{ t("Register account") }}</h2>
+              <h2>{{ t("Save identity") }}</h2>
               <p class="helper">
                 {{
                   t(
-                    "Generate your account keys, store a recovery phrase, and register via Torii.",
+                    "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
                   )
                 }}
               </p>
@@ -190,24 +190,59 @@
               <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
             </div>
           </div>
-          <label>
-            {{ t("Identity Metadata (JSON, optional)") }}
-            <textarea
-              v-model.trim="identityInput"
-              rows="3"
-              placeholder='{"country":"JP","kyc_id":"..."}'
-            ></textarea>
-          </label>
           <div class="actions">
             <button
-              :disabled="!canRegisterGenerated"
-              @click="registerGeneratedIdentity"
+              :disabled="!canSaveGenerated || onboardingBusy"
+              @click="saveGeneratedIdentity"
             >
-              {{ onboardingBusy ? t("Registering…") : t("Register account") }}
+              {{ t("Save identity") }}
+            </button>
+            <button
+              class="secondary"
+              :disabled="onboardingBusy"
+              @click="showAliasRegistration = !showAliasRegistration"
+            >
+              {{ showAliasRegistration ? t("Hide advanced") : t("Advanced") }}
             </button>
             <button class="secondary" @click="startNewRegistration">
               {{ t("Reset") }}
             </button>
+          </div>
+          <div
+            v-if="showAliasRegistration"
+            class="backup-panel account-advanced-panel"
+          >
+            <p class="section-label">
+              {{ t("Optional on-chain alias registration") }}
+            </p>
+            <p class="helper">
+              {{
+                t(
+                  "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
+                )
+              }}
+            </p>
+            <label>
+              {{ t("Alias Metadata (JSON, optional)") }}
+              <textarea
+                v-model.trim="identityInput"
+                rows="3"
+                placeholder='{"country":"JP","kyc_id":"..."}'
+              ></textarea>
+            </label>
+            <div class="actions">
+              <button
+                class="secondary"
+                :disabled="!canSaveGenerated || onboardingBusy"
+                @click="registerGeneratedIdentity"
+              >
+                {{
+                  onboardingBusy
+                    ? t("Registering alias…")
+                    : t("Register on-chain alias")
+                }}
+              </button>
+            </div>
           </div>
           <p v-if="onboardingError" class="helper error">
             {{ onboardingError }}
@@ -228,7 +263,7 @@
           <p class="helper">
             {{
               t(
-                "Generate your account keys, store a recovery phrase, and register via Torii.",
+                "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
               )
             }}
           </p>
@@ -258,14 +293,6 @@
             <option :value="24">{{ t("24 words") }}</option>
           </select>
         </label>
-        <label class="wizard-field-wide">
-          {{ t("Identity Metadata (JSON, optional)") }}
-          <textarea
-            v-model.trim="identityInput"
-            rows="3"
-            placeholder='{"country":"JP","kyc_id":"..."}'
-          ></textarea>
-        </label>
       </div>
 
       <div v-if="generatedKeys" class="wizard-review-grid account-review-grid">
@@ -285,10 +312,17 @@
         </button>
         <button
           class="secondary"
-          :disabled="!canRegisterGenerated"
-          @click="registerGeneratedIdentity"
+          :disabled="!canSaveGenerated || onboardingBusy"
+          @click="saveGeneratedIdentity"
         >
-          {{ onboardingBusy ? t("Registering…") : t("Register account") }}
+          {{ t("Save identity") }}
+        </button>
+        <button
+          class="secondary"
+          :disabled="onboardingBusy"
+          @click="showAliasRegistration = !showAliasRegistration"
+        >
+          {{ showAliasRegistration ? t("Hide advanced") : t("Advanced") }}
         </button>
         <button
           v-if="generatedKeys || mnemonicWords.length"
@@ -303,6 +337,42 @@
       <p v-if="onboardingStatus" class="helper success">
         {{ onboardingStatus }}
       </p>
+      <div
+        v-if="showAliasRegistration && generatedKeys && backupConfirmed"
+        class="backup-panel account-advanced-panel"
+      >
+        <p class="section-label">
+          {{ t("Optional on-chain alias registration") }}
+        </p>
+        <p class="helper">
+          {{
+            t(
+              "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
+            )
+          }}
+        </p>
+        <label>
+          {{ t("Alias Metadata (JSON, optional)") }}
+          <textarea
+            v-model.trim="identityInput"
+            rows="3"
+            placeholder='{"country":"JP","kyc_id":"..."}'
+          ></textarea>
+        </label>
+        <div class="actions">
+          <button
+            class="secondary"
+            :disabled="!canSaveGenerated || onboardingBusy"
+            @click="registerGeneratedIdentity"
+          >
+            {{
+              onboardingBusy
+                ? t("Registering alias…")
+                : t("Register on-chain alias")
+            }}
+          </button>
+        </div>
+      </div>
 
       <div v-if="mnemonicWords.length" class="backup-panel">
         <p class="helper">
@@ -334,12 +404,10 @@
     <section class="card account-saved">
       <header class="card-header">
         <div>
-          <h2>{{ t("Saved Accounts") }}</h2>
+          <h2>{{ t("Saved Wallets") }}</h2>
           <p class="helper">
             {{
-              t(
-                "Switch between registered profiles or begin a fresh registration.",
-              )
+              t("Switch between saved wallets or begin a fresh wallet setup.")
             }}
           </p>
         </div>
@@ -398,14 +466,14 @@
         <p class="helper">
           {{
             t(
-              "No saved accounts yet. Complete the registration form to add one.",
+              "No saved wallets yet. Complete the wallet setup form to add one.",
             )
           }}
         </p>
       </div>
       <div class="actions">
         <button class="secondary" @click="startNewRegistration">
-          {{ t("Register another account") }}
+          {{ t("Add another wallet") }}
         </button>
       </div>
     </section>
@@ -517,6 +585,7 @@ const generatedKeys = ref<{
   publicKeyHex: string;
 } | null>(null);
 const backupConfirmed = ref(false);
+const showAliasRegistration = ref(false);
 const generating = ref(false);
 const generateError = ref("");
 const onboardingError = ref("");
@@ -566,7 +635,7 @@ const onboardingSteps = computed(() => [
   },
   {
     step: "03",
-    label: t("Register account"),
+    label: t("Save identity"),
     done: Boolean(onboardingStatus.value || session.hasAccount),
     current: onboardingStage.value === "register",
   },
@@ -581,7 +650,7 @@ const registrationChecklist = computed(() => [
     done: mnemonicWords.value.length > 0 && backupConfirmed.value,
   },
   {
-    label: t("Account registered"),
+    label: t("Account saved"),
     done: Boolean(onboardingStatus.value || session.hasAccount),
   },
 ]);
@@ -593,6 +662,7 @@ const startNewRegistration = () => {
   mnemonicWords.value = [];
   generatedKeys.value = null;
   backupConfirmed.value = false;
+  showAliasRegistration.value = false;
   generateError.value = "";
   onboardingStatus.value = "";
   onboardingError.value = "";
@@ -660,16 +730,62 @@ const parseIdentity = () => {
   }
 };
 
-const canRegisterGenerated = computed(() => {
+const canSaveGenerated = computed(() => {
   return Boolean(
     generatedKeys.value &&
       generatedAccountId.value &&
       backupConfirmed.value &&
       connectionForm.toriiUrl &&
-      connectionForm.chainId &&
-      aliasInput.value.trim(),
+      connectionForm.chainId,
   );
 });
+
+const persistGeneratedIdentity = (localOnly: boolean) => {
+  if (!generatedKeys.value || !generatedAccountId.value) {
+    return;
+  }
+  session.updateConnection({
+    toriiUrl: connectionForm.toriiUrl,
+    chainId: connectionForm.chainId,
+  });
+  session.addAccount({
+    displayName: aliasInput.value.trim(),
+    domain: normalizedDomain.value,
+    accountId: generatedAccountId.value,
+    publicKeyHex: generatedKeys.value.publicKeyHex,
+    privateKeyHex: generatedKeys.value.privateKeyHex,
+    localOnly,
+  });
+  session.persistState();
+};
+
+const saveGeneratedIdentity = async () => {
+  onboardingError.value = "";
+  onboardingStatus.value = "";
+  if (!generatedKeys.value) {
+    onboardingError.value = t("Generate a keypair first.");
+    return;
+  }
+  if (!generatedAccountId.value) {
+    onboardingError.value = t("Generate a keypair first.");
+    return;
+  }
+  if (!backupConfirmed.value) {
+    onboardingError.value = t("Confirm that you stored the recovery phrase.");
+    return;
+  }
+  if (!connectionForm.toriiUrl || !connectionForm.chainId) {
+    onboardingError.value = t(
+      "TAIRA connection is unavailable. Reload and try again.",
+    );
+    return;
+  }
+  persistGeneratedIdentity(true);
+  onboardingStatus.value = t("Account {accountId} saved locally.", {
+    accountId: generatedAccountId.value,
+  });
+  await router.push("/wallet");
+};
 
 const registerGeneratedIdentity = async () => {
   onboardingError.value = "";
@@ -701,25 +817,34 @@ const registerGeneratedIdentity = async () => {
       accountId: generatedAccountId.value,
       identity,
     });
-    session.updateConnection({
-      toriiUrl: connectionForm.toriiUrl,
-      chainId: connectionForm.chainId,
-    });
-    session.addAccount({
-      displayName: aliasInput.value.trim(),
-      domain: normalizedDomain.value,
-      accountId: generatedAccountId.value,
-      publicKeyHex: generatedKeys.value.publicKeyHex,
-      privateKeyHex: generatedKeys.value.privateKeyHex,
-    });
-    session.persistState();
-    onboardingStatus.value = t("Account {accountId} queued (tx {txHash}…)", {
-      accountId: response.account_id,
-      txHash: response.tx_hash_hex.slice(0, 12),
-    });
-    router.push("/wallet");
+    persistGeneratedIdentity(false);
+    onboardingStatus.value = t(
+      "On-chain alias {accountId} queued (tx {txHash}…)",
+      {
+        accountId: response.account_id,
+        txHash: response.tx_hash_hex.slice(0, 12),
+      },
+    );
+    await router.push("/wallet");
   } catch (err) {
-    onboardingError.value = err instanceof Error ? err.message : String(err);
+    const message = err instanceof Error ? err.message : String(err);
+    if (/status 409\b/i.test(message)) {
+      persistGeneratedIdentity(false);
+      await router.push("/wallet");
+      return;
+    }
+    if (
+      /status 403\b/i.test(message) ||
+      message.includes("UAID onboarding is disabled")
+    ) {
+      persistGeneratedIdentity(true);
+      onboardingStatus.value = t(
+        "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.",
+      );
+      await router.push("/wallet");
+      return;
+    }
+    onboardingError.value = message;
   } finally {
     onboardingBusy.value = false;
   }

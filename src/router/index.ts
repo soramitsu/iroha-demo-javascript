@@ -21,7 +21,7 @@ const routes = [
     component: AccountSetupView,
     meta: {
       titleKey: "Account Setup",
-      subtitleKey: "Provision your TAIRA testnet account",
+      subtitleKey: "Create and save your TAIRA wallet",
     },
   },
   {

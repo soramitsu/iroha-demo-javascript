@@ -1018,6 +1018,34 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Invoice asset does not match the active offline asset.",
   "Payment asset does not match the active offline asset.":
     "Payment asset does not match the active offline asset.",
+  "Create and save your TAIRA wallet": "Create and save your TAIRA wallet",
+  "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
+    "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.",
+  "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
+    "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
+  Advanced: "Advanced",
+  "Hide advanced": "Hide advanced",
+  "Optional on-chain alias registration":
+    "Optional on-chain alias registration",
+  "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
+    "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
+  "Alias Metadata (JSON, optional)": "Alias Metadata (JSON, optional)",
+  "Register on-chain alias": "Register on-chain alias",
+  "Registering alias…": "Registering alias…",
+  "On-chain alias {accountId} queued (tx {txHash}…)":
+    "On-chain alias {accountId} queued (tx {txHash}…)",
+  "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.":
+    "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.",
+  "Saved Wallets": "Saved Wallets",
+  "Switch between saved wallets or begin a fresh wallet setup.":
+    "Switch between saved wallets or begin a fresh wallet setup.",
+  "No saved wallets yet. Complete the wallet setup form to add one.":
+    "No saved wallets yet. Complete the wallet setup form to add one.",
+  "Add another wallet": "Add another wallet",
+  "Switch between saved profiles or begin a fresh wallet setup.":
+    "Switch between saved profiles or begin a fresh wallet setup.",
+  "No saved accounts yet. Complete the wallet setup form to add one.":
+    "No saved accounts yet. Complete the wallet setup form to add one.",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
@@ -1025,6 +1053,13 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Requesting…": "Requesting…",
   "Testnet XOR requested: {hash}": "Testnet XOR requested: {hash}",
   "Failed to request faucet funds.": "Failed to request faucet funds.",
+  "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
+    "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+  "Wallet data is unavailable until this account exists on-chain.":
+    "Wallet data is unavailable until this account exists on-chain.",
+  "Account {accountId} saved locally.": "Account {accountId} saved locally.",
+  "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
+    "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",

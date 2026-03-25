@@ -27,7 +27,10 @@ describe("WalletView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (assetDefinitionId = "xor#wonderland") => {
+  const mountView = (
+    assetDefinitionId = "xor#wonderland",
+    options?: { localOnly?: boolean },
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -45,6 +48,7 @@ describe("WalletView", () => {
           accountId: "alice@wonderland",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
+          localOnly: Boolean(options?.localOnly),
         },
       ],
       activeAccountId: "alice@wonderland",
@@ -158,8 +162,35 @@ describe("WalletView", () => {
     expect(session.connection.assetDefinitionId).toBe(
       "norito:abcdef0123456789",
     );
+    expect(session.activeAccount?.localOnly).toBe(false);
     expect(wrapper.text()).toContain("Testnet XOR requested: 0xabc");
     expect(wrapper.text()).toContain("norito:abcdef0123456789");
     expect(wrapper.text()).toContain("25000");
+  });
+
+  it("shows a wallet error when local-only accounts are not live on-chain yet", async () => {
+    fetchAccountAssetsMock.mockRejectedValueOnce(
+      new Error("Account not found"),
+    );
+
+    const wrapper = mountView("xor#wonderland", { localOnly: true });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+    );
+    expect(wrapper.text()).toContain("Account not found");
+  });
+
+  it("clears the local-only flag once on-chain wallet data loads", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+    });
+
+    mountView("xor#wonderland", { localOnly: true });
+    await flushPromises();
+
+    expect(useSessionStore().activeAccount?.localOnly).toBe(false);
   });
 });

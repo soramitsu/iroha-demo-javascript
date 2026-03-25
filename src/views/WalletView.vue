@@ -51,6 +51,19 @@
       >
         {{ faucetError }}
       </p>
+      <p
+        v-if="activeAccount?.localOnly"
+        class="helper wallet-local-account-note"
+      >
+        {{
+          t(
+            "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+          )
+        }}
+      </p>
+      <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
+        {{ walletError }}
+      </p>
       <div class="wallet-kpis">
         <div class="kv">
           <span class="kv-label">{{ t("Assets") }}</span>
@@ -167,6 +180,7 @@ const loading = ref(false);
 const faucetLoading = ref(false);
 const faucetMessage = ref("");
 const faucetError = ref("");
+const walletError = ref("");
 const requestGeneration = ref(0);
 
 const formatDate = (timestamp?: number) => {
@@ -182,6 +196,7 @@ const resetWalletState = () => {
   transactionsRaw.value = [];
   faucetMessage.value = "";
   faucetError.value = "";
+  walletError.value = "";
 };
 
 const refresh = async () => {
@@ -196,6 +211,7 @@ const refresh = async () => {
   const currentGeneration = requestGeneration.value + 1;
   requestGeneration.value = currentGeneration;
   loading.value = true;
+  walletError.value = "";
   try {
     const [{ items: assetItems }, { items: txItems }] = await Promise.all([
       fetchAccountAssets({
@@ -218,6 +234,23 @@ const refresh = async () => {
     }
     assets.value = assetItems;
     transactionsRaw.value = txItems as AccountTx[];
+    if (activeAccount.value?.localOnly) {
+      session.updateActiveAccount({ localOnly: false });
+    }
+  } catch (error) {
+    if (
+      currentGeneration !== requestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      activeAccount.value?.accountId !== accountId
+    ) {
+      return;
+    }
+    assets.value = [];
+    transactionsRaw.value = [];
+    walletError.value =
+      error instanceof Error
+        ? error.message
+        : t("Wallet data is unavailable until this account exists on-chain.");
   } finally {
     if (currentGeneration === requestGeneration.value) {
       loading.value = false;
@@ -254,6 +287,7 @@ const requestStarterFunds = async () => {
           result.asset_id.trim() || result.asset_definition_id.trim(),
       });
     }
+    session.updateActiveAccount({ localOnly: false });
     faucetMessage.value = t("Testnet XOR requested: {hash}", {
       hash: result.tx_hash_hex,
     });
@@ -423,6 +457,10 @@ watch(
 .wallet-faucet-message {
   margin: 12px 0 0;
   color: var(--iroha-text);
+}
+
+.wallet-local-account-note {
+  margin: 12px 0 0;
 }
 
 .wallet-faucet-error {

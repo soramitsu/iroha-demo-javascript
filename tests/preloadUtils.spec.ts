@@ -35,7 +35,7 @@ describe("preload utils", () => {
         detail: "torii.onboarding.enabled is false",
       }),
     ).toBe(
-      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. This TAIRA wallet build requires UAID onboarding enabled on the target Torii. Detail: torii.onboarding.enabled is false",
+      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain. Detail: torii.onboarding.enabled is false",
     );
     expect(
       formatOnboardingError({
@@ -43,7 +43,7 @@ describe("preload utils", () => {
         statusText: "Forbidden",
       }),
     ).toBe(
-      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. This TAIRA wallet build requires UAID onboarding enabled on the target Torii.",
+      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain.",
     );
   });
 

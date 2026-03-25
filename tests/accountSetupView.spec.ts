@@ -99,7 +99,7 @@ describe("AccountSetupView", () => {
 
     expect(wrapper.text()).toContain("TAIRA Testnet Account");
     expect(wrapper.text()).not.toContain("IrohaConnect Pairing");
-    expect(wrapper.text()).not.toContain("Saved Accounts");
+    expect(wrapper.text()).not.toContain("Saved Wallets");
     expect(wrapper.findAll(".account-step")).toHaveLength(3);
   });
 
@@ -204,7 +204,11 @@ describe("AccountSetupView", () => {
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    await getButtonByText(wrapper, "Register account").trigger("click");
+    expect(wrapper.text()).not.toContain("Register on-chain alias");
+    await getButtonByText(wrapper, "Advanced").trigger("click");
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
     await flushPromises();
 
     expect(onboardAccountMock).toHaveBeenCalledWith(
@@ -216,5 +220,88 @@ describe("AccountSetupView", () => {
     );
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccount?.localOnly).toBe(false);
+  });
+
+  it("saves the first account locally without UAID onboarding", async () => {
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+
+    expect(inputs).toHaveLength(2);
+
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await flushPromises();
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Save identity").trigger("click");
+    await flushPromises();
+
+    expect(onboardAccountMock).not.toHaveBeenCalled();
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccount?.displayName).toBe("");
+    expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("falls back to a local wallet when UAID onboarding is disabled", async () => {
+    onboardAccountMock.mockRejectedValueOnce(
+      new Error(
+        "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint.",
+      ),
+    );
+
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await flushPromises();
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Advanced").trigger("click");
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
+    await flushPromises();
+
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("treats onboarding conflicts as an already-registered account", async () => {
+    onboardAccountMock.mockRejectedValueOnce(
+      new Error("Onboarding failed with status 409 (Conflict)"),
+    );
+
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await flushPromises();
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Advanced").trigger("click");
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
+    await flushPromises();
+
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBe("alice@flowers");
+    expect(session.activeAccount?.localOnly).toBe(false);
   });
 });

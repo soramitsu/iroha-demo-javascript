@@ -16,6 +16,7 @@ export type UserProfile = {
   accountId: string;
   publicKeyHex: string;
   privateKeyHex: string;
+  localOnly: boolean;
 };
 
 export type AuthorityProfile = {
@@ -43,6 +44,7 @@ const defaultUser = (): UserProfile => ({
   accountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
+  localOnly: false,
 });
 
 const defaultState = (): SessionState => ({
@@ -138,6 +140,7 @@ const normalizeUser = (
     accountId: resolvedAccountId,
     publicKeyHex: trimString(normalized.publicKeyHex),
     privateKeyHex: trimString(normalized.privateKeyHex),
+    localOnly: Boolean(normalized.localOnly),
   };
 };
 

@@ -93,9 +93,7 @@
         <div class="sidebar-top">
           <p class="nav-title">{{ t("Navigate") }}</p>
           <span class="nav-pill" :class="{ positive: session.hasAccount }">
-            {{
-              session.hasAccount ? t("Account ready") : t("Complete onboarding")
-            }}
+            {{ session.hasAccount ? t("Account ready") : t("Account Setup") }}
           </span>
         </div>
         <details class="sidebar-panel">
@@ -169,11 +167,7 @@
               }}
             </span>
             <span class="pill" :class="{ positive: session.hasAccount }">
-              {{
-                session.hasAccount
-                  ? t("Account saved")
-                  : t("Onboarding required")
-              }}
+              {{ session.hasAccount ? t("Account saved") : t("Account Setup") }}
             </span>
             <span
               v-if="
