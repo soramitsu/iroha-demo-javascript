@@ -125,4 +125,29 @@ describe("ReceiveView", () => {
     expect(wrapper.text()).toContain('"accountId":"bob@wonderland"');
     expect(wrapper.text()).not.toContain('"accountId":"alice@wonderland"');
   });
+
+  it("renders the receive qr with scan-friendly contrast colors", async () => {
+    qrToStringMock.mockResolvedValueOnce("<svg></svg>");
+
+    const wrapper = mountView();
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+
+    expect(qrToStringMock).toHaveBeenCalledWith(
+      JSON.stringify({
+        accountId: "alice@wonderland",
+        assetDefinitionId: "xor#wonderland",
+        amount: "0",
+      }),
+      expect.objectContaining({
+        type: "svg",
+        width: 240,
+        color: {
+          dark: "#14202b",
+          light: "#ffffff",
+        },
+      }),
+    );
+  });
 });

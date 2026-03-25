@@ -1,6 +1,6 @@
 # AGENT NOTES — iroha-demo-javascript
 
-Last updated: 2026-03-07
+Last updated: 2026-03-25
 
 ## Purpose
 
@@ -11,7 +11,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testn
 - **Account onboarding (`/account`)**: Users generate recovery phrases, derive their accountId, register via `/v1/accounts/onboard`, and optionally bootstrap an IrohaConnect pairing session.
 - **Network profile lock**: Setup/onboarding now lock connection selection to TAIRA testnet only (`https://taira.sora.org`, chain id `809574f5-fee7-5e69-bfcf-52451e42d50f`), and the public explorer link is `https://taira-explorer.sora.org`.
 - **Torii Bridge (Electron preload)**: `window.iroha` exposes helpers wrapped around `@iroha/iroha-js` (register account, transfer asset, explorer metrics, Connect preview, NPOS staking tx builders) plus Nexus public-lane fetch endpoints. Remember to build native bindings after installing deps (`npm install` runs scripts/postinstall).
-- **Wallet / Send / Receive**: Vue views in `src/views`. Receive uses QR generation; Send leverages ZXing for camera + file upload to populate transfer params, and includes a shield toggle that performs self-shielding only (`public -> shielded`) when policy mode supports it.
+- **Wallet / Send / Receive**: Vue views in `src/views`. Wallet now includes a TAIRA starter-funds faucet action that first fetches `GET /v1/accounts/faucet/puzzle`, solves the returned memory-hard scrypt proof-of-work asynchronously in preload, and then submits `POST /v1/accounts/faucet`; puzzle difficulty can rise with recent committed plus queued faucet claim volume, and TAIRA currently requires finalized Sumeragi VRF seed material in the challenge whenever faucet PoW is enabled. When a fresh account claims funds, the view stores the returned funded `asset_id` into `session.connection.assetDefinitionId` if that field was blank so later send/offline flows can reuse the exact faucet-funded asset bucket. Receive uses QR generation; Send leverages ZXing for camera + file upload to populate transfer params, and includes a shield toggle that performs self-shielding only (`public -> shielded`) when policy mode supports it.
 - **Offline move-to-online**: `/offline` includes an on-chain move action that now mirrors Send shield behavior (policy preflight + self-shielding constraints).
 - **Staking (`/staking`)**: Dataspace-first validator nomination flow for public-lane NPOS. Lane is auto-resolved from `getSumeragiStatus` (with dataspace commitment fallback), validator list is loaded from `/v1/nexus/public_lanes/{lane_id}/validators`, stake balance is surfaced in-view, and stake/reward actions submit staking instructions via `buildTransaction`.
 - **Parliament (`/parliament`)**: Governance helper screen for citizenship + voting. It fetches account permissions and governance payloads, supports a fixed `10,000 XOR` `RegisterCitizen` bond, can submit `CastPlainBallot`, and prepares finalize/enact governance drafts. Referendum/proposal history is persisted per active account in localStorage and chip clicks trigger instant lookup. Referendum lookup still runs when proposal input is invalid (proposal fetch is skipped), ballots enforce positive whole-number amounts that are <= available XOR balance, and stale async payloads are invalidated for both lookup and bootstrap refresh paths when refresh/account context changes.
@@ -53,6 +53,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testn
 - Parliament proposal IDs are expected to be 32-byte hex values (with or without `0x` prefix); referendum IDs are free-form strings from governance storage.
 - The send view requires navigator media permissions. In headless test contexts, avoid invoking scanner logic.
 - If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`.
+- Electron main window runs with `webSecurity: false` because TAIRA Torii does not emit CORS headers; otherwise preload/renderer `fetch()` calls (including onboarding) fail with `Failed to fetch` before the request reaches the network.
 
 ## Pending Ideas
 

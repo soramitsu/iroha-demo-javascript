@@ -71,6 +71,8 @@ const amount = ref("0");
 const showQr = ref(false);
 const qrGeneration = ref(0);
 const receiveIcon = ReceiveIcon;
+const QR_DARK_COLOR = "#14202b";
+const QR_LIGHT_COLOR = "#ffffff";
 
 const generateQr = async () => {
   const accountId = activeAccountId.value;
@@ -95,8 +97,8 @@ const generateQr = async () => {
       type: "svg",
       width: 240,
       color: {
-        dark: "#ffffff",
-        light: "#00000000",
+        dark: QR_DARK_COLOR,
+        light: QR_LIGHT_COLOR,
       },
     });
     if (
@@ -201,12 +203,19 @@ watch(
 }
 
 .qr {
-  width: 100%;
+  max-width: min(312px, 100%);
   display: grid;
   place-items: center;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(20, 32, 43, 0.16);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), #f7f2ec);
+  box-shadow:
+    0 18px 34px rgba(11, 17, 24, 0.18),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.82);
 }
 
-.qr svg {
+.qr :deep(svg) {
   width: min(280px, 100%);
   height: auto;
   display: block;

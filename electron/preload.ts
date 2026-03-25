@@ -33,6 +33,7 @@ import {
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
+import { solveFaucetPowPuzzle, type FaucetPowPuzzle } from "./faucetPow";
 
 type HexString = string;
 
@@ -110,6 +111,17 @@ type AccountOnboardingResponse = {
   tx_hash_hex: string;
   status: string;
 };
+
+type AccountFaucetResponse = {
+  account_id: string;
+  asset_definition_id: string;
+  asset_id: string;
+  amount: string;
+  tx_hash_hex: string;
+  status: string;
+};
+
+type AccountFaucetPuzzleResponse = FaucetPowPuzzle;
 
 type ConnectPreviewResponse = {
   sidHex: string;
@@ -315,6 +327,10 @@ type IrohaBridge = {
     accountId: string;
     identity?: Record<string, unknown>;
   }): Promise<AccountOnboardingResponse>;
+  requestFaucetFunds(input: {
+    toriiUrl: string;
+    accountId: string;
+  }): Promise<AccountFaucetResponse>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;
@@ -994,6 +1010,92 @@ const api: IrohaBridge = {
       );
     }
     return (await response.json()) as AccountOnboardingResponse;
+  },
+  async requestFaucetFunds({ toriiUrl, accountId }) {
+    const baseUrl = normalizeBaseUrl(toriiUrl);
+    const normalizedAccountId = normalizeAccountId(accountId, "accountId");
+    const puzzleResponse = await fetch(`${baseUrl}/v1/accounts/faucet/puzzle`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    });
+    if (!puzzleResponse.ok) {
+      const contentType = puzzleResponse.headers.get("content-type") ?? "";
+      let detail = "";
+      if (contentType.includes("application/json")) {
+        const payload = (await puzzleResponse
+          .json()
+          .catch(() => null)) as Record<string, unknown> | null;
+        if (payload && typeof payload === "object") {
+          detail = String(
+            payload.detail ?? payload.message ?? payload.error ?? "",
+          ).trim();
+        }
+      } else {
+        const text = await puzzleResponse.text().catch(() => "");
+        const hasControlChars = Array.from(text).some((character) => {
+          const code = character.charCodeAt(0);
+          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
+        });
+        if (!hasControlChars) {
+          detail = text.trim();
+        }
+      }
+      const message =
+        detail || puzzleResponse.statusText || "Faucet puzzle failed.";
+      throw new Error(
+        `Faucet puzzle failed (${puzzleResponse.status}): ${message}`,
+      );
+    }
+    const puzzle = (await puzzleResponse.json()) as AccountFaucetPuzzleResponse;
+    const powPayload =
+      puzzle.difficulty_bits > 0
+        ? await solveFaucetPowPuzzle(normalizedAccountId, puzzle)
+        : null;
+    const response = await fetch(`${baseUrl}/v1/accounts/faucet`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        account_id: normalizedAccountId,
+        ...(powPayload
+          ? {
+              pow_anchor_height: powPayload.anchorHeight,
+              pow_nonce_hex: powPayload.nonceHex,
+            }
+          : {}),
+      }),
+    });
+    if (!response.ok) {
+      const contentType = response.headers.get("content-type") ?? "";
+      let detail = "";
+      if (contentType.includes("application/json")) {
+        const payload = (await response.json().catch(() => null)) as Record<
+          string,
+          unknown
+        > | null;
+        if (payload && typeof payload === "object") {
+          detail = String(
+            payload.detail ?? payload.message ?? payload.error ?? "",
+          ).trim();
+        }
+      } else {
+        const text = await response.text().catch(() => "");
+        const hasControlChars = Array.from(text).some((character) => {
+          const code = character.charCodeAt(0);
+          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
+        });
+        if (!hasControlChars) {
+          detail = text.trim();
+        }
+      }
+      const message = detail || response.statusText || "Faucet request failed.";
+      throw new Error(`Faucet request failed (${response.status}): ${message}`);
+    }
+    return (await response.json()) as AccountFaucetResponse;
   },
   async createConnectPreview({ toriiUrl, chainId, node }) {
     const client = getClient(toriiUrl);

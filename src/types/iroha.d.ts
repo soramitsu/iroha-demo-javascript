@@ -98,6 +98,15 @@ export interface AccountOnboardingResponse {
   status: string;
 }
 
+export interface AccountFaucetResponse {
+  account_id: string;
+  asset_definition_id: string;
+  asset_id: string;
+  amount: string;
+  tx_hash_hex: string;
+  status: string;
+}
+
 export interface ConnectPreview {
   sidHex: string;
   sidBase64Url: string;
@@ -408,6 +417,10 @@ export interface IrohaBridge {
     accountId: string;
     identity?: Record<string, unknown>;
   }): Promise<AccountOnboardingResponse>;
+  requestFaucetFunds(input: {
+    toriiUrl: string;
+    accountId: string;
+  }): Promise<AccountFaucetResponse>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;

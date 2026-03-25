@@ -1,6 +1,7 @@
 import type {
   AccountAddressView,
   AccountAssetsResponse,
+  AccountFaucetResponse,
   AccountOnboardingResponse,
   AccountPermissionsResponse,
   AccountTransactionsResponse,
@@ -132,6 +133,11 @@ export const onboardAccount = (input: {
   accountId: string;
   identity?: Record<string, unknown>;
 }): Promise<AccountOnboardingResponse> => bridge().onboardAccount(input);
+
+export const requestFaucetFunds = (input: {
+  toriiUrl: string;
+  accountId: string;
+}): Promise<AccountFaucetResponse> => bridge().requestFaucetFunds(input);
 
 export const createConnectPreview = (input: {
   toriiUrl: string;

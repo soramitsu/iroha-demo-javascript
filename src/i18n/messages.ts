@@ -1018,6 +1018,13 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Invoice asset does not match the active offline asset.",
   "Payment asset does not match the active offline asset.":
     "Payment asset does not match the active offline asset.",
+  "Faucet Request": "Faucet Request",
+  "Top up a new TAIRA account once with starter XOR.":
+    "Top up a new TAIRA account once with starter XOR.",
+  "Claim Testnet XOR": "Claim Testnet XOR",
+  "Requesting…": "Requesting…",
+  "Testnet XOR requested: {hash}": "Testnet XOR requested: {hash}",
+  "Failed to request faucet funds.": "Failed to request faucet funds.",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",

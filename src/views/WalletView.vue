@@ -27,6 +27,30 @@
           {{ t("Send Points") }}
         </a>
       </div>
+      <div class="wallet-faucet-panel">
+        <div>
+          <p class="wallet-faucet-label">{{ t("Faucet Request") }}</p>
+          <p class="helper">
+            {{ t("Top up a new TAIRA account once with starter XOR.") }}
+          </p>
+        </div>
+        <button
+          class="secondary"
+          :disabled="loading || faucetLoading || !canRequestFaucet"
+          @click="requestStarterFunds"
+        >
+          {{ faucetLoading ? t("Requesting…") : t("Claim Testnet XOR") }}
+        </button>
+      </div>
+      <p v-if="faucetMessage" class="wallet-faucet-message">
+        {{ faucetMessage }}
+      </p>
+      <p
+        v-else-if="faucetError"
+        class="wallet-faucet-message wallet-faucet-error"
+      >
+        {{ faucetError }}
+      </p>
       <div class="wallet-kpis">
         <div class="kv">
           <span class="kv-label">{{ t("Assets") }}</span>
@@ -105,7 +129,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { fetchAccountAssets, fetchAccountTransactions } from "@/services/iroha";
+import {
+  fetchAccountAssets,
+  fetchAccountTransactions,
+  requestFaucetFunds,
+} from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import type {
   AccountAssetsResponse,
@@ -136,6 +164,9 @@ type TransactionView = AccountTx & {
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
 const loading = ref(false);
+const faucetLoading = ref(false);
+const faucetMessage = ref("");
+const faucetError = ref("");
 const requestGeneration = ref(0);
 
 const formatDate = (timestamp?: number) => {
@@ -149,6 +180,8 @@ const formatDate = (timestamp?: number) => {
 const resetWalletState = () => {
   assets.value = [];
   transactionsRaw.value = [];
+  faucetMessage.value = "";
+  faucetError.value = "";
 };
 
 const refresh = async () => {
@@ -189,6 +222,49 @@ const refresh = async () => {
     if (currentGeneration === requestGeneration.value) {
       loading.value = false;
     }
+  }
+};
+
+const canRequestFaucet = computed(() =>
+  Boolean(
+    session.hasAccount &&
+      session.connection.toriiUrl &&
+      activeAccount.value?.accountId,
+  ),
+);
+
+const requestStarterFunds = async () => {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = activeAccount.value?.accountId;
+  if (!toriiUrl || !accountId) {
+    return;
+  }
+  const shouldConfigureAsset = !session.connection.assetDefinitionId.trim();
+  faucetLoading.value = true;
+  faucetMessage.value = "";
+  faucetError.value = "";
+  try {
+    const result = await requestFaucetFunds({
+      toriiUrl,
+      accountId,
+    });
+    if (shouldConfigureAsset) {
+      session.updateConnection({
+        assetDefinitionId:
+          result.asset_id.trim() || result.asset_definition_id.trim(),
+      });
+    }
+    faucetMessage.value = t("Testnet XOR requested: {hash}", {
+      hash: result.tx_hash_hex,
+    });
+    await refresh();
+  } catch (error) {
+    faucetError.value =
+      error instanceof Error
+        ? error.message
+        : t("Failed to request faucet funds.");
+  } finally {
+    faucetLoading.value = false;
   }
 };
 
@@ -236,7 +312,7 @@ const transactions = computed<TransactionView[]>(() =>
 );
 
 watch(
-  () => [session.connection.toriiUrl, activeAccount.value?.accountId],
+  [() => session.connection.toriiUrl, () => activeAccount.value?.accountId],
   () => {
     refresh();
   },
@@ -314,6 +390,43 @@ watch(
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 16px;
+}
+
+.wallet-faucet-panel {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--menu-highlight) 16%, transparent),
+    color-mix(in srgb, var(--glass-veil) 78%, transparent)
+  );
+}
+
+.wallet-faucet-panel .helper {
+  margin: 4px 0 0;
+}
+
+.wallet-faucet-label {
+  margin: 0;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--iroha-muted);
+}
+
+.wallet-faucet-message {
+  margin: 12px 0 0;
+  color: var(--iroha-text);
+}
+
+.wallet-faucet-error {
+  color: var(--accent-danger);
 }
 
 .wallet-kpi-account .kv-value {

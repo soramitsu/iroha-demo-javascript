@@ -21,6 +21,7 @@ import {
   getSumeragiStatus,
   listAccountPermissions,
   registerCitizen,
+  requestFaucetFunds,
   schedulePublicLaneUnbond,
   submitGovernancePlainBallot,
   transferAsset,
@@ -88,6 +89,31 @@ describe("iroha services bridge", () => {
     expect(getExplorerAccountQrMock).toHaveBeenCalledWith(input);
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
+  });
+
+  it("forwards faucet requests", async () => {
+    const requestFaucetFundsMock = vi.fn().mockResolvedValue({
+      account_id: "alice@wonderland",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "norito:abcdef0123456789",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+    (window as any).iroha = {
+      requestFaucetFunds: requestFaucetFundsMock,
+    };
+
+    const input = {
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    };
+    const result = await requestFaucetFunds(input);
+
+    expect(requestFaucetFundsMock).toHaveBeenCalledWith(input);
+    expect(result.asset_definition_id).toBe("61CtjvNd9T3THAR65GsMVHr82Bjc");
+    expect(result.asset_id).toBe("norito:abcdef0123456789");
+    expect(result.amount).toBe("25000");
   });
 
   it("forwards transfer payloads including shield flags", async () => {
