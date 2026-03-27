@@ -99,8 +99,8 @@ describe("i18n messages", () => {
     expect(translate("ur-PK", "Torii control deck")).toBe("Torii کنٹرول ڈیک");
     expect(translate("ja-JP", "Share QR or Account ID")).toContain("I105");
     expect(translate("hi-IN", "I105")).toBe("I105");
-    expect(translate("fr-FR", "n42u... (I105 account ID)")).toBe(
-      "n42u... (I105 account ID)",
+    expect(translate("fr-FR", "Example I105 Account ID")).toBe(
+      "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
     );
     expect(translate("de-DE", "norito:<asset-id-hex>")).toBe(
       "norito:<asset-id-hex>",
@@ -111,6 +111,25 @@ describe("i18n messages", () => {
         "referendumId is required before submitting a ballot.",
       ),
     ).toContain("referendumId");
+  });
+
+  it("overrides broken TAIRA chrome strings in manual locale tables", () => {
+    expect(translate("ja-JP", "TAIRA connection ready")).toBe(
+      "TAIRA接続準備完了",
+    );
+    expect(translate("ja-JP", "Open Taira Explorer")).toBe(
+      "TAIRA Explorerを開く",
+    );
+    expect(translate("zh-CN", "TAIRA locked")).toBe("TAIRA 已锁定");
+    expect(translate("zh-CN", "TAIRA Torii ready")).toBe("TAIRA Torii 已就绪");
+    expect(translate("zh-CN", "Open Taira Explorer")).toBe(
+      "打开 TAIRA Explorer",
+    );
+    expect(translate("zh-TW", "TAIRA locked")).toBe("TAIRA 已鎖定");
+    expect(translate("zh-TW", "TAIRA Torii ready")).toBe("TAIRA Torii 已就緒");
+    expect(translate("zh-TW", "Open Taira Explorer")).toBe(
+      "開啟 TAIRA Explorer",
+    );
   });
 
   it("validates locale support", () => {

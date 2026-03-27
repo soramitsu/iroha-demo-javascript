@@ -4,6 +4,13 @@ import { createPinia, setActivePinia } from "pinia";
 import SendView from "@/views/SendView.vue";
 import { useSessionStore } from "@/stores/session";
 
+const EXAMPLE_I105_ACCOUNT_ID =
+  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
+const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
+const BOB_I105_ACCOUNT_ID = "n42uBobRealI105AccountId";
+const MALLORY_I105_ACCOUNT_ID = "n42uMalloryRealI105AccountId";
+const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
+
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 type QrDecodeHandler = (payload: string) => void;
@@ -66,13 +73,14 @@ describe("SendView", () => {
       accounts: [
         {
           displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
+          domain: "default",
+          accountId: "alice@default",
+          i105AccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
         },
       ],
-      activeAccountId: "alice@wonderland",
+      activeAccountId: "alice@default",
     });
     return mount(SendView, {
       global: {
@@ -87,9 +95,7 @@ describe("SendView", () => {
     await flushPromises();
     expect(wrapper.text()).toContain("Shield policy mode: Convertible.");
 
-    await wrapper
-      .get('input[placeholder="n42u... (I105 account ID)"]')
-      .setValue("alice@wonderland");
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(ALICE_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
@@ -103,7 +109,7 @@ describe("SendView", () => {
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        destinationAccountId: "alice@wonderland",
+        destinationAccountId: ALICE_I105_ACCOUNT_ID,
         quantity: "10",
         shielded: true,
       }),
@@ -116,9 +122,7 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper
-      .get('input[placeholder="n42u... (I105 account ID)"]')
-      .setValue("bob@wonderland");
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
@@ -133,15 +137,15 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get('input[placeholder="n42u... (I105 account ID)"]')
-      .setValue(" bob@wonderland ");
+      .get(EXAMPLE_I105_SELECTOR)
+      .setValue(` ${BOB_I105_ACCOUNT_ID} `);
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
 
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        destinationAccountId: "bob@wonderland",
+        destinationAccountId: BOB_I105_ACCOUNT_ID,
         shielded: false,
       }),
     );
@@ -151,16 +155,12 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper
-      .get('input[placeholder="n42u... (I105 account ID)"]')
-      .setValue("bob@wonderland");
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
-    const destinationInput = wrapper.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      "alice@wonderland",
+      ALICE_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(true);
     expect(wrapper.find(".actions button").text()).toBe("Shield");
@@ -188,18 +188,16 @@ describe("SendView", () => {
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
       JSON.stringify({
-        accountId: "mallory@wonderland",
+        accountId: MALLORY_I105_ACCOUNT_ID,
         amount: "7",
       }),
     );
     await flushPromises();
 
-    const destinationInput = wrapper.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      "alice@wonderland",
+      ALICE_I105_ACCOUNT_ID,
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
     expect(wrapper.text()).toContain("QR decoded successfully.");
@@ -212,18 +210,16 @@ describe("SendView", () => {
     expect(typeof qrDecodeHandler).toBe("function");
     qrDecodeHandler?.(
       JSON.stringify({
-        accountId: "bob@wonderland",
+        accountId: BOB_I105_ACCOUNT_ID,
         amount: "3.5",
       }),
     );
     await flushPromises();
 
-    const destinationInput = wrapper.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      "bob@wonderland",
+      BOB_I105_ACCOUNT_ID,
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("3.5");
     expect(wrapper.text()).toContain("QR decoded successfully.");
@@ -250,17 +246,13 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper
-      .get('input[placeholder="n42u... (I105 account ID)"]')
-      .setValue("bob@wonderland");
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="checkbox"]').setValue(true);
     await wrapper.get('input[type="checkbox"]').setValue(false);
 
-    const destinationInput = wrapper.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      "bob@wonderland",
+      BOB_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
   });
@@ -269,9 +261,7 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const destinationInput = wrapper.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     await destinationInput.setValue("");
     await wrapper.get('input[type="checkbox"]').setValue(true);
     await wrapper.get('input[type="checkbox"]').setValue(false);

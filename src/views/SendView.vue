@@ -6,6 +6,7 @@
         <p class="helper send-account-copy">
           {{
             activeAccount?.displayName ||
+            activeAccount?.i105AccountId ||
             activeAccount?.accountId ||
             t("Configure account first")
           }}
@@ -37,7 +38,7 @@
           <div class="kv">
             <span class="kv-label">{{ t("Active account") }}</span>
             <span class="kv-value">{{
-              activeAccount?.accountId || t("Configure account first")
+              activeAccountDisplayId || t("Configure account first")
             }}</span>
           </div>
           <div class="kv">
@@ -67,7 +68,7 @@
             {{ t("Destination Account ID") }}
             <input
               v-model="form.destination"
-              :placeholder="t('n42u... (I105 account ID)')"
+              :placeholder="t('Example I105 Account ID')"
               :disabled="destinationLocked"
             />
           </label>
@@ -142,6 +143,10 @@ import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const activeAccountDisplayId = computed(
+  () =>
+    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+);
 const { t } = useAppI18n();
 const form = reactive({
   destination: "",
@@ -184,7 +189,7 @@ const sendIcon = SendIcon;
 const { destinationLocked } = useShieldedDestinationLock({
   shielded: toRef(form, "shielded"),
   destination: toRef(form, "destination"),
-  accountId: computed(() => activeAccount.value?.accountId),
+  accountId: activeAccountDisplayId,
 });
 const submitActionLabel = computed(() =>
   form.shielded ? t("Shield") : t("Send"),
@@ -202,7 +207,7 @@ const isDestinationValid = computed(() => {
   }
   return Boolean(
     activeAccount.value &&
-      destinationValue.value === activeAccount.value.accountId,
+      destinationValue.value === activeAccountDisplayId.value,
   );
 });
 
@@ -231,7 +236,7 @@ const handleSend = async () => {
   }
   if (form.shielded) {
     const amount = normalizedQuantity.value;
-    if (destinationValue.value !== account.accountId) {
+    if (destinationValue.value !== activeAccountDisplayId.value) {
       statusMessage.value = t(
         "Shield mode requires destination to be your active account.",
       );

@@ -6,7 +6,10 @@
           <h2>{{ t("Balances") }}</h2>
           <p class="helper wallet-account-copy">
             {{
-              activeAccount?.displayName || activeAccount?.accountId || t("—")
+              activeAccount?.displayName ||
+              activeAccount?.i105AccountId ||
+              activeAccount?.accountId ||
+              t("—")
             }}
           </p>
         </div>
@@ -70,10 +73,20 @@
           <span class="kv-value">{{ assets.length }}</span>
         </div>
         <div class="kv wallet-kpi-account">
-          <span class="kv-label">{{ t("Account ID") }}</span>
-          <span class="kv-value">{{ activeAccount?.accountId || t("—") }}</span>
+          <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
+          <span class="kv-value">{{ visibleAccountId || t("—") }}</span>
         </div>
       </div>
+      <p v-if="visibleAccountId" class="helper">
+        {{
+          t(
+            "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+            {
+              example: t("Example I105 Account ID"),
+            },
+          )
+        }}
+      </p>
       <div v-if="assets.length" class="table-wrap wallet-table-wrap">
         <table class="table">
           <thead>
@@ -159,6 +172,10 @@ import {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const visibleAccountId = computed(
+  () =>
+    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+);
 const { localeStore, t } = useAppI18n();
 
 type AccountTx = AccountTransactionsResponse["items"][number] &

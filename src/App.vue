@@ -64,18 +64,41 @@
             <span class="settings-toggle-caret" aria-hidden="true">↗</span>
           </summary>
           <div class="header-controls">
-            <label class="locale-switcher">
-              <span>{{ t("Language") }}</span>
-              <select v-model="activeLocale">
-                <option
+            <details ref="localeMenu" class="locale-switcher">
+              <summary class="locale-switcher-summary">
+                <span class="locale-switcher-glyph" aria-hidden="true">Aa</span>
+                <span class="locale-switcher-copy">
+                  <span class="locale-switcher-label">{{ t("Language") }}</span>
+                  <span class="locale-switcher-current">{{
+                    activeLocaleLabel
+                  }}</span>
+                </span>
+                <span class="locale-switcher-code mono">{{
+                  activeLocale
+                }}</span>
+                <span class="locale-switcher-caret" aria-hidden="true">↗</span>
+              </summary>
+              <div class="locale-switcher-menu" :aria-label="t('Language')">
+                <button
                   v-for="option in localeOptions"
                   :key="option.value"
-                  :value="option.value"
+                  :data-locale="option.value"
+                  type="button"
+                  class="locale-option"
+                  :class="{ active: option.value === activeLocale }"
+                  :aria-pressed="option.value === activeLocale"
+                  @click="selectLocale(option.value)"
                 >
-                  {{ option.label }}
-                </option>
-              </select>
-            </label>
+                  <span class="locale-option-copy">
+                    <span class="locale-option-label">{{ option.label }}</span>
+                    <span class="locale-option-meta mono">{{
+                      option.value
+                    }}</span>
+                  </span>
+                  <span class="locale-option-check" aria-hidden="true">●</span>
+                </button>
+              </div>
+            </details>
             <button class="theme-toggle" @click="theme.toggle()">
               <span class="theme-dot" :class="theme.current"></span>
               <span>{{
@@ -172,12 +195,14 @@
             <span
               v-if="
                 session.activeAccount?.displayName ||
+                session.activeAccount?.i105AccountId ||
                 session.activeAccount?.accountId
               "
               class="pill workspace-account"
             >
               {{
                 session.activeAccount?.displayName ||
+                session.activeAccount?.i105AccountId ||
                 session.activeAccount?.accountId
               }}
             </span>
@@ -192,7 +217,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount } from "vue";
+import { computed, onMounted, onBeforeUnmount, ref } from "vue";
 import { useRoute } from "vue-router";
 import { useSessionStore } from "./stores/session";
 import { useThemeStore } from "./stores/theme";
@@ -284,11 +309,23 @@ const session = useSessionStore();
 const theme = useThemeStore();
 const { localeStore, localeOptions, t } = useAppI18n();
 const logo = IrohaLogo;
+const localeMenu = ref<HTMLDetailsElement | null>(null);
 
 const activeLocale = computed({
   get: () => localeStore.current,
   set: (value: SupportedLocale) => localeStore.setLocale(value),
 });
+const activeLocaleLabel = computed(
+  () =>
+    localeOptions.value.find((option) => option.value === activeLocale.value)
+      ?.label ?? activeLocale.value,
+);
+const selectLocale = (locale: SupportedLocale) => {
+  activeLocale.value = locale;
+  if (localeMenu.value) {
+    localeMenu.value.open = false;
+  }
+};
 
 const routeTitle = computed(() =>
   t((route.meta.titleKey as string) || "Wallet Overview"),

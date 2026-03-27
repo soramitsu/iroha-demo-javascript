@@ -14,6 +14,8 @@ export type UserProfile = {
   displayName: string;
   domain: string;
   accountId: string;
+  i105AccountId?: string;
+  i105DefaultAccountId?: string;
   publicKeyHex: string;
   privateKeyHex: string;
   localOnly: boolean;
@@ -38,10 +40,15 @@ export type SavedChain = ConnectionConfig & {
   label: string;
 };
 
+const DEFAULT_DOMAIN_LABEL = "default";
+const LEGACY_PLACEHOLDER_DOMAIN_LABEL = "wonderland";
+
 const defaultUser = (): UserProfile => ({
   displayName: "",
-  domain: "wonderland",
+  domain: DEFAULT_DOMAIN_LABEL,
   accountId: "",
+  i105AccountId: "",
+  i105DefaultAccountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
   localOnly: false,
@@ -74,10 +81,28 @@ const isCanonicalAccountCandidate = (value: string): boolean => {
   return literal.length >= 16 && !isLegacyAccountLiteral(literal);
 };
 
-const deriveCanonicalAccountIdFromProfile = (
+const normalizeDomainLabel = (domain: string, accountId: string): string => {
+  const normalized = trimString(domain);
+  if (!normalized) {
+    return DEFAULT_DOMAIN_LABEL;
+  }
+  if (
+    normalized === LEGACY_PLACEHOLDER_DOMAIN_LABEL &&
+    (!accountId || !isLegacyAccountLiteral(accountId))
+  ) {
+    return DEFAULT_DOMAIN_LABEL;
+  }
+  return normalized;
+};
+
+const deriveAccountAddressesFromProfile = (
   user: Partial<UserProfile> & Record<string, unknown>,
   networkPrefix: number,
-): string | null => {
+): {
+  accountId: string;
+  i105AccountId: string;
+  i105DefaultAccountId: string;
+} | null => {
   if (typeof window === "undefined" || !window.iroha) {
     return null;
   }
@@ -92,11 +117,16 @@ const deriveCanonicalAccountIdFromProfile = (
       publicKeyHex,
       networkPrefix,
     });
-    const canonicalAccountId = trimString(derived.accountId);
-    if (!canonicalAccountId || isLegacyAccountLiteral(canonicalAccountId)) {
+    const accountId = trimString(derived.accountId);
+    const i105AccountId = trimString(derived.i105AccountId);
+    if (!accountId || isLegacyAccountLiteral(accountId)) {
       return null;
     }
-    return canonicalAccountId;
+    return {
+      accountId,
+      i105AccountId: i105AccountId || accountId,
+      i105DefaultAccountId: trimString(derived.i105DefaultAccountId),
+    };
   } catch (_error) {
     return null;
   }
@@ -104,18 +134,17 @@ const deriveCanonicalAccountIdFromProfile = (
 
 const resolveAccountIdLiteral = (
   user: Partial<UserProfile> & Record<string, unknown>,
-  networkPrefix: number,
+  derivedAccountId?: string | null,
 ): string => {
   const accountId = trimString(user.accountId);
+  if (derivedAccountId && accountId && !isLegacyAccountLiteral(accountId)) {
+    return derivedAccountId;
+  }
   if (!isLegacyAccountLiteral(accountId)) {
     return accountId;
   }
-  const derivedCanonicalAccountId = deriveCanonicalAccountIdFromProfile(
-    user,
-    networkPrefix,
-  );
-  if (derivedCanonicalAccountId) {
-    return derivedCanonicalAccountId;
+  if (derivedAccountId) {
+    return derivedAccountId;
   }
   const migratedCandidate = [
     readLegacyProfileField(user, "i105"),
@@ -125,19 +154,46 @@ const resolveAccountIdLiteral = (
   return migratedCandidate ?? accountId;
 };
 
+const resolveVisibleI105AccountId = (
+  user: Partial<UserProfile> & Record<string, unknown>,
+  accountId: string,
+  derivedI105AccountId?: string | null,
+): string => {
+  if (derivedI105AccountId) {
+    return derivedI105AccountId;
+  }
+  const storedI105AccountId = trimString(user.i105AccountId);
+  if (isCanonicalAccountCandidate(storedI105AccountId)) {
+    return storedI105AccountId;
+  }
+  return accountId;
+};
+
 const normalizeUser = (
   user: Partial<UserProfile> & Record<string, unknown>,
   options?: { networkPrefix?: number },
 ): UserProfile => {
   const normalized = { ...defaultUser(), ...user };
-  const resolvedAccountId = resolveAccountIdLiteral(
+  const derivedAccountAddresses = deriveAccountAddressesFromProfile(
     normalized,
     options?.networkPrefix ?? 42,
   );
+  const resolvedAccountId = resolveAccountIdLiteral(
+    normalized,
+    derivedAccountAddresses?.accountId,
+  );
   return {
     displayName: trimString(normalized.displayName),
-    domain: trimString(normalized.domain) || "wonderland",
+    domain: normalizeDomainLabel(normalized.domain, resolvedAccountId),
     accountId: resolvedAccountId,
+    i105AccountId: resolveVisibleI105AccountId(
+      normalized,
+      resolvedAccountId,
+      derivedAccountAddresses?.i105AccountId,
+    ),
+    i105DefaultAccountId:
+      derivedAccountAddresses?.i105DefaultAccountId ||
+      trimString(normalized.i105DefaultAccountId),
     publicKeyHex: trimString(normalized.publicKeyHex),
     privateKeyHex: trimString(normalized.privateKeyHex),
     localOnly: Boolean(normalized.localOnly),

@@ -19,7 +19,9 @@
           :key="account.accountId"
           :value="account.accountId"
         >
-          {{ account.displayName || account.accountId }}
+          {{
+            account.displayName || account.i105AccountId || account.accountId
+          }}
         </option>
       </select>
       <p class="helper">
@@ -47,6 +49,7 @@ const hasAccounts = computed(() => session.accounts.length > 0);
 const activeLabel = computed(
   () =>
     session.activeAccount?.displayName ||
+    session.activeAccount?.i105AccountId ||
     session.activeAccount?.accountId ||
     t("Not selected"),
 );

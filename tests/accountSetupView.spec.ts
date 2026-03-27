@@ -5,6 +5,8 @@ import AccountSetupView from "@/views/AccountSetupView.vue";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
+const EXAMPLE_REAL_I105_ACCOUNT_ID =
+  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -43,6 +45,11 @@ describe("AccountSetupView", () => {
     deriveAccountAddressMock.mockImplementation(
       (input: { domain?: string }) => ({
         accountId: `alice@${input.domain || "wonderland"}`,
+        i105AccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+        i105DefaultAccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+        i105DefaultFullwidthAccountId: "",
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
       }),
     );
     derivePublicKeyMock.mockResolvedValue({
@@ -98,6 +105,13 @@ describe("AccountSetupView", () => {
     const wrapper = mountView();
 
     expect(wrapper.text()).toContain("TAIRA Testnet Account");
+    expect(wrapper.text()).toContain("I105 Account ID");
+    expect(wrapper.text()).toContain(
+      `Use the real TAIRA I105 literal, for example ${EXAMPLE_REAL_I105_ACCOUNT_ID}. Do not use @domain, legacy compatibility literals, or i105: forms.`,
+    );
+    expect(wrapper.text()).toContain(
+      "The domain label defaults to default. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+    );
     expect(wrapper.text()).not.toContain("IrohaConnect Pairing");
     expect(wrapper.text()).not.toContain("Saved Wallets");
     expect(wrapper.findAll(".account-step")).toHaveLength(3);

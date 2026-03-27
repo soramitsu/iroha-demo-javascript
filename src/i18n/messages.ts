@@ -157,6 +157,7 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "No accounts saved yet": "保存済みアカウントはありません",
   "{count} saved": "{count}件保存済み",
   Connection: "接続",
+  "TAIRA connection ready": "TAIRA接続準備完了",
   "TAIRA Torii ready": "TAIRA Torii準備完了",
   "Torii unavailable": "Torii未接続",
   "Account saved": "アカウント保存済み",
@@ -209,6 +210,7 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Offline wallets, invoices, and payments":
     "オフラインウォレット、請求、支払い",
   "TAIRA locked": "TAIRA固定",
+  "Open Taira Explorer": "TAIRA Explorerを開く",
   "Iroha logo": "Irohaロゴ",
   "IrohaConnect pairing QR": "IrohaConnectペアリングQR",
   "Explorer account QR": "エクスプローラーのアカウントQR",
@@ -447,6 +449,11 @@ const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
   "referendumId is required before submitting a ballot.":
     "提交选票前需要 referendumId。",
   "proposalId is required for enact.": "执行 enact 需要 proposalId。",
+  "TAIRA connection ready": "TAIRA 连接就绪",
+  "TAIRA locked": "TAIRA 已锁定",
+  "TAIRA Testnet": "TAIRA 测试网",
+  "TAIRA Torii ready": "TAIRA Torii 已就绪",
+  "Open Taira Explorer": "打开 TAIRA Explorer",
   "Public TAIRA testnet profile.": "公开 TAIRA 测试网配置。",
   "Store for iCloud Drive": "保存到 iCloud Drive",
   "Store for Google Drive": "保存到 Google Drive",
@@ -465,6 +472,14 @@ const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
   "Usage based": "按使用量计费",
   "{unit} --": "{unit} --",
   "{unit} {amount}": "{unit} {amount}",
+};
+
+const ZH_TW_MANUAL_TRANSLATIONS: TranslationTable = {
+  "TAIRA connection ready": "TAIRA 連線就緒",
+  "TAIRA locked": "TAIRA 已鎖定",
+  "TAIRA Testnet": "TAIRA 測試網",
+  "TAIRA Torii ready": "TAIRA Torii 已就緒",
+  "Open Taira Explorer": "開啟 TAIRA Explorer",
 };
 
 const KO_MANUAL_TRANSLATIONS: TranslationTable = {
@@ -1012,7 +1027,10 @@ const UR_TRANSLATIONS: TranslationTable = {
   ...UR_MANUAL_TRANSLATIONS,
 };
 const VI_TRANSLATIONS: TranslationTable = VI_AUTO_TRANSLATIONS;
-const ZH_TW_TRANSLATIONS: TranslationTable = ZH_TW_AUTO_TRANSLATIONS;
+const ZH_TW_TRANSLATIONS: TranslationTable = {
+  ...ZH_TW_AUTO_TRANSLATIONS,
+  ...ZH_TW_MANUAL_TRANSLATIONS,
+};
 const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Invoice asset does not match the active offline asset.":
     "Invoice asset does not match the active offline asset.",
@@ -1046,6 +1064,18 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Switch between saved profiles or begin a fresh wallet setup.",
   "No saved accounts yet. Complete the wallet setup form to add one.":
     "No saved accounts yet. Complete the wallet setup form to add one.",
+  default: "default",
+  "Canonical I105 Account ID": "I105 Account ID",
+  "Example I105 Account ID":
+    "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.":
+    "Real TAIRA I105 account IDs are kana-based literals and may look like n42u..., not 6cmz... or i105:.",
+  "Use the real Base58 I105 account literal, for example {example}. Do not use @domain or i105: forms.":
+    "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
+    "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
+    "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
@@ -1070,8 +1100,9 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Share QR codes or account IDs to request funds",
   "Share QR codes or account IDs to request funds":
     "Share QR codes or account IDs to request funds",
-  "34m... or 0x...@wonderland": "n42u... (I105 account ID)",
-  "n42u... (I105 account ID)": "n42u... (I105 account ID)",
+  "34m... or 0x...@wonderland": "Example I105 Account ID",
+  "n42u... (I105 account ID)": "Example I105 Account ID",
+  "6cmz... (canonical I105 account ID)": "Example I105 Account ID",
   "rose#wonderland": "norito:<asset-id-hex>",
   "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };
@@ -1124,7 +1155,9 @@ const TRANSLATION_KEY_ALIASES: Record<string, string> = {
   "Share QR or Account ID": "Share QR or IH58",
   "Share QR codes or account IDs to request funds":
     "Share QR codes or IH58 to request funds",
-  "n42u... (I105 account ID)": "34m... or 0x...@wonderland",
+  "n42u... (I105 account ID)": "Example I105 Account ID",
+  "6cmz... (canonical I105 account ID)": "Example I105 Account ID",
+  "34m... or 0x...@wonderland": "Example I105 Account ID",
   "norito:<asset-id-hex>": "rose#wonderland",
 };
 
@@ -1132,8 +1165,8 @@ const LITERAL_KEY_OVERRIDES: Record<string, string> = {
   "Iroha Wallet": "Iroha Wallet",
   IH58: "I105",
   I105: "I105",
-  "34m... or 0x...@wonderland": "n42u... (I105 account ID)",
-  "n42u... (I105 account ID)": "n42u... (I105 account ID)",
+  "Example I105 Account ID":
+    "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
   "rose#wonderland": "norito:<asset-id-hex>",
   "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };

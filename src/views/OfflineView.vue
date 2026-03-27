@@ -288,7 +288,7 @@
           {{ t("Destination Account") }}
           <input
             v-model="onlineForm.receiver"
-            :placeholder="t('n42u... (I105 account ID)')"
+            :placeholder="t('Example I105 Account ID')"
             :disabled="onlineDestinationLocked"
           />
         </label>
@@ -412,6 +412,10 @@ import type { OfflineAllowanceItem } from "@/types/iroha";
 const session = useSessionStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
+const activeAccountDisplayId = computed(
+  () =>
+    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+);
 const activeOfflineAssetId = computed(() =>
   session.connection.assetDefinitionId.trim(),
 );
@@ -502,13 +506,13 @@ const { destinationLocked: onlineDestinationLocked } =
   useShieldedDestinationLock({
     shielded: toRef(onlineForm, "shielded"),
     destination: toRef(onlineForm, "receiver"),
-    accountId: computed(() => activeAccount.value?.accountId),
+    accountId: activeAccountDisplayId,
   });
 const normalizedMoveAmount = computed(
   () => onlineForm.amount.trim() || offline.wallet.balance,
 );
 const normalizedMoveReceiver = computed(
-  () => onlineForm.receiver.trim() || activeAccount.value?.accountId || "",
+  () => onlineForm.receiver.trim() || activeAccountDisplayId.value || "",
 );
 const isOnlineTransparentAmountValid = computed(
   () => Number(normalizedMoveAmount.value) > 0,
@@ -522,7 +526,7 @@ const isOnlineReceiverValid = computed(() => {
   }
   return Boolean(
     activeAccount.value &&
-      normalizedMoveReceiver.value === activeAccount.value.accountId,
+      normalizedMoveReceiver.value === activeAccountDisplayId.value,
   );
 });
 const canSubmitOnlineMove = computed(() =>
@@ -795,7 +799,7 @@ const moveToOnline = async () => {
       : t("Enter an amount to move online.");
     return;
   }
-  if (onlineForm.shielded && receiver !== activeAccount.value.accountId) {
+  if (onlineForm.shielded && receiver !== activeAccountDisplayId.value) {
     moveMessage.value = t(
       "Shield mode requires destination to be your active account.",
     );
@@ -860,7 +864,7 @@ watch(
   () => session.activeAccount,
   () => {
     if (activeAccount.value) {
-      onlineForm.receiver = activeAccount.value.accountId;
+      onlineForm.receiver = activeAccountDisplayId.value;
     }
   },
 );
@@ -868,7 +872,7 @@ watch(
 onMounted(() => {
   checkHardware();
   if (activeAccount.value) {
-    onlineForm.receiver = activeAccount.value.accountId;
+    onlineForm.receiver = activeAccountDisplayId.value;
   }
 });
 </script>

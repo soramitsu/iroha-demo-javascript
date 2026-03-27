@@ -9,12 +9,12 @@ import {
 } from "../scripts/e2e/electron-live-utils.mjs";
 
 const sampleI105AccountId = AccountAddress.fromAccount({
-  domain: "wonderland",
+  domain: "default",
   publicKey: Buffer.from(
     "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03",
     "hex",
   ),
-}).toI105();
+}).toI105(42);
 
 describe("electron live e2e utils", () => {
   it("parses valid network prefixes with TAIRA default fallback", () => {

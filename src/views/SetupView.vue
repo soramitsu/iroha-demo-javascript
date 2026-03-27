@@ -69,7 +69,7 @@
         </label>
         <label>
           {{ t("Domain") }}
-          <input v-model="userForm.domain" :placeholder="t('wonderland')" />
+          <input v-model="userForm.domain" :placeholder="t('default')" />
         </label>
         <label>
           {{ t("Private Key (hex)") }}
@@ -89,10 +89,33 @@
           ></textarea>
         </label>
         <label>
-          {{ t("Account ID") }}
-          <input v-model="userForm.accountId" readonly />
+          {{ t("Canonical I105 Account ID") }}
+          <input
+            :value="userForm.i105AccountId || userForm.accountId"
+            readonly
+          />
         </label>
       </div>
+      <p class="helper">
+        {{
+          t(
+            "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+            {
+              example: t("Example I105 Account ID"),
+            },
+          )
+        }}
+      </p>
+      <p class="helper">
+        {{
+          t(
+            "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+            {
+              domain: t("default"),
+            },
+          )
+        }}
+      </p>
       <div class="actions">
         <button :disabled="generating" @click="handleGenerate">
           {{ t("Generate pair") }}
@@ -126,7 +149,7 @@
           {{ t("Authority Account ID") }}
           <input
             v-model="authorityForm.accountId"
-            :placeholder="t('n42u... (I105 account ID)')"
+            :placeholder="t('Example I105 Account ID')"
           />
         </label>
         <label>
@@ -173,12 +196,15 @@ type PingState = "idle" | "ok" | "error";
 
 const session = useSessionStore();
 const { t } = useAppI18n();
+const DEFAULT_DOMAIN_LABEL = "default";
 
 const connectionForm = reactive({ ...session.connection });
 const emptyAccount = () => ({
   displayName: "",
-  domain: "wonderland",
+  domain: DEFAULT_DOMAIN_LABEL,
   accountId: "",
+  i105AccountId: "",
+  i105DefaultAccountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
 });
@@ -334,7 +360,7 @@ const handleGenerate = async () => {
     userForm.privateKeyHex = pair.privateKeyHex;
     userForm.publicKeyHex = pair.publicKeyHex;
     if (!userForm.domain) {
-      userForm.domain = "wonderland";
+      userForm.domain = DEFAULT_DOMAIN_LABEL;
     }
     const summary = deriveAccountAddress({
       domain: userForm.domain,
@@ -354,7 +380,7 @@ const handleDerivePublic = () => {
     const derived = derivePublicKey(userForm.privateKeyHex);
     userForm.publicKeyHex = derived.publicKeyHex;
     const summary = deriveAccountAddress({
-      domain: userForm.domain || "wonderland",
+      domain: userForm.domain || DEFAULT_DOMAIN_LABEL,
       publicKeyHex: derived.publicKeyHex,
       networkPrefix: connectionForm.networkPrefix,
     });

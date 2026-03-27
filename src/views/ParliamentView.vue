@@ -19,7 +19,7 @@
         <div class="kv">
           <span class="kv-label">{{ t("Account") }}</span>
           <span class="kv-value mono">{{
-            activeAccount?.accountId || t("—")
+            activeAccount?.i105AccountId || activeAccount?.accountId || t("—")
           }}</span>
         </div>
         <div class="kv">

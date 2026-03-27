@@ -5,6 +5,12 @@ import OfflineView from "@/views/OfflineView.vue";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 
+const EXAMPLE_I105_ACCOUNT_ID =
+  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
+const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
+const TREASURY_I105_ACCOUNT_ID = "n42uTreasuryRealI105AccountId";
+const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
+
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 
@@ -66,13 +72,14 @@ describe("OfflineView move-to-online shield mode", () => {
       accounts: [
         {
           displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
+          domain: "default",
+          accountId: "alice@default",
+          i105AccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
         },
       ],
-      activeAccountId: "alice@wonderland",
+      activeAccountId: "alice@default",
     });
     offline.$patch({
       wallet: {
@@ -118,19 +125,17 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
     const amountInput = moveSection.findAll('input[type="text"]')[0];
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     const submitButton = moveSection.get(".actions button");
 
-    await receiverInput.setValue("bob@wonderland");
+    await receiverInput.setValue(TREASURY_I105_ACCOUNT_ID);
     await amountInput.setValue("10");
     await shieldCheckbox.setValue(true);
 
     expect((receiverInput.element as HTMLInputElement).value).toBe(
-      "alice@wonderland",
+      ALICE_I105_ACCOUNT_ID,
     );
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(true);
     expect(submitButton.text()).toBe("Shield to online wallet");
@@ -144,7 +149,7 @@ describe("OfflineView move-to-online shield mode", () => {
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        destinationAccountId: "alice@wonderland",
+        destinationAccountId: ALICE_I105_ACCOUNT_ID,
         quantity: "10",
         shielded: true,
       }),
@@ -211,17 +216,15 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 
-    await receiverInput.setValue("treasury@wonderland");
+    await receiverInput.setValue(TREASURY_I105_ACCOUNT_ID);
     await shieldCheckbox.setValue(true);
     await shieldCheckbox.setValue(false);
 
     expect((receiverInput.element as HTMLInputElement).value).toBe(
-      "treasury@wonderland",
+      TREASURY_I105_ACCOUNT_ID,
     );
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
   });
@@ -231,9 +234,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(
-      'input[placeholder="n42u... (I105 account ID)"]',
-    );
+    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 
     await receiverInput.setValue("");

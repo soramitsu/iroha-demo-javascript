@@ -28,6 +28,9 @@ const assetDefinitionId = String(
   process.env.E2E_ASSET_DEFINITION_ID ?? "",
 ).trim();
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
+const defaultDerivationLabel = "default";
+const exampleI105AccountId =
+  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
 const {
   alias: onboardingAlias,
   privateKeyHex: onboardingPrivateKeyHex,
@@ -36,9 +39,9 @@ const {
 const deterministicSeedPublicKeyHex =
   "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
 const defaultAccountIdFallback = AccountAddress.fromAccount({
-  domain: "wonderland",
+  domain: defaultDerivationLabel,
   publicKey: Buffer.from(deterministicSeedPublicKeyHex, "hex"),
-}).toI105();
+}).toI105(networkPrefix);
 
 const defaultAccountId = process.env.E2E_ACCOUNT_ID || defaultAccountIdFallback;
 const syntheticPublicKeyHex =
@@ -179,6 +182,7 @@ async function runReadOnlyFlow(page, seededAccountId) {
       chain,
       assetId,
       prefix,
+      derivationLabel,
     }) => {
       localStorage.setItem(
         "iroha-demo:session",
@@ -197,7 +201,7 @@ async function runReadOnlyFlow(page, seededAccountId) {
           accounts: [
             {
               displayName: "E2E Synthetic",
-              domain: "wonderland",
+              domain: derivationLabel,
               accountId,
               publicKeyHex,
               privateKeyHex,
@@ -216,6 +220,7 @@ async function runReadOnlyFlow(page, seededAccountId) {
       chain: chainId,
       assetId: assetDefinitionId,
       prefix: networkPrefix,
+      derivationLabel: defaultDerivationLabel,
     },
   );
 
@@ -361,16 +366,17 @@ async function runOnboardingFlow(page) {
       alias,
       privateKeyHex,
       offlineBalance,
+      derivationLabel,
     }) => {
       const { publicKeyHex } = window.iroha.derivePublicKey(privateKeyHex);
       const summary = window.iroha.deriveAccountAddress({
-        domain: "wonderland",
+        domain: derivationLabel,
         publicKeyHex,
         networkPrefix: prefix,
       });
       const accountProfile = {
         displayName: alias,
-        domain: "wonderland",
+        domain: derivationLabel,
         accountId: summary.accountId,
         publicKeyHex,
         privateKeyHex,
@@ -449,6 +455,7 @@ async function runOnboardingFlow(page) {
       alias: onboardingAlias,
       privateKeyHex: onboardingPrivateKeyHex,
       offlineBalance: onboardingOfflineSeedBalance,
+      derivationLabel: defaultDerivationLabel,
     },
   );
 
@@ -512,9 +519,7 @@ async function runOnboardingFlow(page) {
     );
   }
   await sendShieldToggle.check();
-  const sendDestination = sendCard.getByPlaceholder(
-    "n42u... (I105 account ID)",
-  );
+  const sendDestination = sendCard.getByPlaceholder(exampleI105AccountId);
   if (!(await sendDestination.isDisabled())) {
     throw new Error(
       "Expected send destination to lock when shield transfer is enabled in onboarding flow.",
@@ -600,9 +605,7 @@ async function runOnboardingFlow(page) {
     );
   }
   await moveShieldToggle.check();
-  const moveDestination = moveCard.getByPlaceholder(
-    "n42u... (I105 account ID)",
-  );
+  const moveDestination = moveCard.getByPlaceholder(exampleI105AccountId);
   if (!(await moveDestination.isDisabled())) {
     throw new Error(
       'Expected offline destination to lock when "Shield transfer" is enabled in onboarding flow.',
@@ -795,9 +798,7 @@ async function runNavigationSmokeFlow(page) {
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
-      const destinationInput = page.getByPlaceholder(
-        "n42u... (I105 account ID)",
-      );
+      const destinationInput = page.getByPlaceholder(exampleI105AccountId);
       const amountInput = page.locator('input[type="number"]').first();
       const transparentDestination = "n42uRestoreSendAccount";
       await destinationInput.fill(transparentDestination);
@@ -948,9 +949,7 @@ async function runNavigationSmokeFlow(page) {
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
-      const destinationInput = moveCard.getByPlaceholder(
-        "n42u... (I105 account ID)",
-      );
+      const destinationInput = moveCard.getByPlaceholder(exampleI105AccountId);
       const transparentDestination = "n42uRestoreOfflineAccount";
       await destinationInput.fill(transparentDestination);
       let offlineShieldCheckable = true;

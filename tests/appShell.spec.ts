@@ -4,6 +4,7 @@ import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import App from "@/App.vue";
 import { useSessionStore } from "@/stores/session";
+import { useLocaleStore } from "@/stores/locale";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const route = reactive({
@@ -101,5 +102,26 @@ describe("App shell", () => {
     ]);
     expect(steps[0]).toBe("01");
     expect(steps.at(-1)).toBe("10");
+  });
+
+  it("shows a styled locale picker and updates the current language label", async () => {
+    const wrapper = mountApp();
+    const localeStore = useLocaleStore();
+    localeStore.setLocale("en-US");
+    await wrapper.vm.$nextTick();
+
+    const localeMenu = wrapper.get(".locale-switcher")
+      .element as HTMLDetailsElement;
+    localeMenu.open = true;
+
+    expect(wrapper.get(".locale-switcher-current").text()).toBe("English");
+    expect(wrapper.get(".locale-switcher-code").text()).toBe("en-US");
+
+    await wrapper.get('[data-locale="ja-JP"]').trigger("click");
+
+    expect(localeStore.current).toBe("ja-JP");
+    expect(localeMenu.open).toBe(false);
+    expect(wrapper.get(".locale-switcher-current").text()).toBe("日本語");
+    expect(wrapper.get(".locale-switcher-code").text()).toBe("ja-JP");
   });
 });

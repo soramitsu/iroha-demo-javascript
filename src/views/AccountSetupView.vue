@@ -46,9 +46,19 @@
             <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
           </div>
           <div class="wizard-summary-row">
-            <p class="meta-label">{{ t("Account ID") }}</p>
+            <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
             <p class="meta-value mono">
-              {{ generatedAccountId || t("Not created yet") }}
+              {{ generatedVisibleAccountId || t("Not created yet") }}
+            </p>
+            <p class="helper meta-sub">
+              {{
+                t(
+                  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+                  {
+                    example: t("Example I105 Account ID"),
+                  },
+                )
+              }}
             </p>
           </div>
         </section>
@@ -81,10 +91,7 @@
             </label>
             <label>
               {{ t("Domain") }}
-              <input
-                v-model.trim="domainInput"
-                :placeholder="t('wonderland')"
-              />
+              <input v-model.trim="domainInput" :placeholder="t('default')" />
             </label>
             <label class="wizard-field-compact">
               {{ t("Recovery Phrase Length") }}
@@ -94,6 +101,16 @@
               </select>
             </label>
           </div>
+          <p class="helper">
+            {{
+              t(
+                "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+                {
+                  domain: t("default"),
+                },
+              )
+            }}
+          </p>
           <div class="actions">
             <button :disabled="generating" @click="generateRecovery">
               {{
@@ -172,8 +189,8 @@
           </header>
           <div class="wizard-review-grid">
             <div class="wizard-review-item">
-              <p class="meta-label">{{ t("Account ID") }}</p>
-              <p class="meta-value mono">{{ generatedAccountId }}</p>
+              <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
+              <p class="meta-value mono">{{ generatedVisibleAccountId }}</p>
             </div>
             <div class="wizard-review-item">
               <p class="meta-label">
@@ -284,7 +301,7 @@
         </label>
         <label>
           {{ t("Domain") }}
-          <input v-model.trim="domainInput" :placeholder="t('wonderland')" />
+          <input v-model.trim="domainInput" :placeholder="t('default')" />
         </label>
         <label class="wizard-field-compact">
           {{ t("Recovery Phrase Length") }}
@@ -297,8 +314,8 @@
 
       <div v-if="generatedKeys" class="wizard-review-grid account-review-grid">
         <div class="wizard-review-item">
-          <p class="meta-label">{{ t("Account ID") }}</p>
-          <p class="meta-value mono">{{ generatedAccountId }}</p>
+          <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
+          <p class="meta-value mono">{{ generatedVisibleAccountId }}</p>
         </div>
         <div class="wizard-review-item">
           <p class="meta-label">{{ t("Domain") }}</p>
@@ -431,9 +448,15 @@
         >
           <div>
             <p class="account-name">
-              {{ account.displayName || account.accountId }}
+              {{
+                account.displayName ||
+                account.i105AccountId ||
+                account.accountId
+              }}
             </p>
-            <p class="helper monospace">{{ account.accountId }}</p>
+            <p class="helper monospace">
+              {{ account.i105AccountId || account.accountId }}
+            </p>
           </div>
           <div class="account-actions">
             <span
@@ -544,6 +567,7 @@ import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 const session = useSessionStore();
 const router = useRouter();
 const { t } = useAppI18n();
+const DEFAULT_DOMAIN_LABEL = "default";
 
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
@@ -576,7 +600,7 @@ watch(
 );
 
 const aliasInput = ref(session.activeAccount?.displayName || "");
-const domainInput = ref(session.activeAccount?.domain || "wonderland");
+const domainInput = ref(session.activeAccount?.domain || DEFAULT_DOMAIN_LABEL);
 const identityInput = ref("");
 const wordCount = ref<12 | 24>(24);
 const mnemonicWords = ref<string[]>([]);
@@ -594,23 +618,31 @@ const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const isFirstLaunch = computed(() => !hasSavedAccounts.value);
 const normalizedDomain = computed(
-  () => domainInput.value.trim() || "wonderland",
+  () => domainInput.value.trim() || DEFAULT_DOMAIN_LABEL,
 );
-const generatedAccountId = computed(() => {
+const generatedAccountSummary = computed(() => {
   if (!generatedKeys.value) {
-    return "";
+    return null;
   }
   try {
-    const summary = deriveAccountAddress({
+    return deriveAccountAddress({
       domain: normalizedDomain.value,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       networkPrefix: session.connection.networkPrefix,
     });
-    return summary.accountId;
   } catch (_error) {
-    return "";
+    return null;
   }
 });
+const generatedAccountId = computed(
+  () => generatedAccountSummary.value?.accountId ?? "",
+);
+const generatedVisibleAccountId = computed(
+  () =>
+    generatedAccountSummary.value?.i105AccountId ??
+    generatedAccountSummary.value?.accountId ??
+    "",
+);
 const onboardingStage = computed<"identity" | "backup" | "register">(() => {
   if (!generatedKeys.value) {
     return "identity";
@@ -657,7 +689,7 @@ const registrationChecklist = computed(() => [
 
 const startNewRegistration = () => {
   aliasInput.value = "";
-  domainInput.value = "wonderland";
+  domainInput.value = DEFAULT_DOMAIN_LABEL;
   identityInput.value = "";
   mnemonicWords.value = [];
   generatedKeys.value = null;
@@ -752,6 +784,9 @@ const persistGeneratedIdentity = (localOnly: boolean) => {
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
     accountId: generatedAccountId.value,
+    i105AccountId: generatedVisibleAccountId.value,
+    i105DefaultAccountId:
+      generatedAccountSummary.value?.i105DefaultAccountId ?? "",
     publicKeyHex: generatedKeys.value.publicKeyHex,
     privateKeyHex: generatedKeys.value.privateKeyHex,
     localOnly,
@@ -782,7 +817,7 @@ const saveGeneratedIdentity = async () => {
   }
   persistGeneratedIdentity(true);
   onboardingStatus.value = t("Account {accountId} saved locally.", {
-    accountId: generatedAccountId.value,
+    accountId: generatedVisibleAccountId.value || generatedAccountId.value,
   });
   await router.push("/wallet");
 };

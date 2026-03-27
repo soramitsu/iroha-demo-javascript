@@ -84,8 +84,11 @@ describe("ExploreView", () => {
     });
     getExplorerAccountQrMock.mockReturnValueOnce(aliceQrDeferred);
     getExplorerAccountQrMock.mockResolvedValueOnce({
-      accountId: "bob@wonderland",
+      canonicalId: "URpZvBobCompat",
+      literal: "n42uBobLiteral",
       networkPrefix: 42,
+      errorCorrection: "M",
+      modules: 29,
       qrVersion: 1,
       svg: "<svg />",
     });
@@ -96,18 +99,21 @@ describe("ExploreView", () => {
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("bob@wonderland");
+    expect(wrapper.text()).toContain("n42uBobLiteral");
 
     resolveAliceQr({
-      accountId: "alice@wonderland",
+      canonicalId: "URpZvAliceCompat",
+      literal: "n42uAliceLiteral",
       networkPrefix: 42,
+      errorCorrection: "M",
+      modules: 29,
       qrVersion: 1,
       svg: "<svg />",
     });
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("bob@wonderland");
-    expect(wrapper.text()).not.toContain("alice@wonderland");
+    expect(wrapper.text()).toContain("n42uBobLiteral");
+    expect(wrapper.text()).not.toContain("n42uAliceLiteral");
   });
 });

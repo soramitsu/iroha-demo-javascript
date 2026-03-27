@@ -146,6 +146,91 @@ export const normalizeBaseUrl = (url: string) => {
   return trimmed;
 };
 
+const GENERIC_API_ERROR_DETAILS = new Set([
+  "faucet puzzle failed",
+  "faucet request failed",
+  "request failed",
+  "forbidden",
+  "bad request",
+  "internal server error",
+  "too many requests",
+]);
+
+const normalizeApiErrorDetail = (value: string): string =>
+  value.trim().replace(/\.+$/, "").toLowerCase();
+
+const isGenericApiErrorDetail = (value: string): boolean =>
+  GENERIC_API_ERROR_DETAILS.has(normalizeApiErrorDetail(value));
+
+const collectApiErrorDetails = (payload: unknown): string[] => {
+  if (typeof payload === "string") {
+    const detail = payload.trim();
+    return detail ? [detail] : [];
+  }
+  if (typeof payload === "number" || typeof payload === "boolean") {
+    return [String(payload)];
+  }
+  if (Array.isArray(payload)) {
+    return payload.flatMap((item) => collectApiErrorDetails(item));
+  }
+  if (!payload || typeof payload !== "object") {
+    return [];
+  }
+
+  const record = payload as Record<string, unknown>;
+  const priorityKeys = [
+    "detail",
+    "details",
+    "message",
+    "error",
+    "errors",
+    "reason",
+    "cause",
+  ];
+  const details: string[] = [];
+
+  for (const key of priorityKeys) {
+    details.push(...collectApiErrorDetails(record[key]));
+  }
+
+  for (const [key, value] of Object.entries(record)) {
+    if (priorityKeys.includes(key)) {
+      continue;
+    }
+    details.push(...collectApiErrorDetails(value));
+  }
+
+  return details;
+};
+
+export const extractApiErrorDetail = (payload: unknown): string => {
+  const details = collectApiErrorDetails(payload);
+  return (
+    details.find((detail) => !isGenericApiErrorDetail(detail)) ??
+    details[0] ??
+    ""
+  );
+};
+
+export const readApiErrorDetail = async (
+  response: Pick<Response, "text">,
+): Promise<string> => {
+  const text = (await response.text().catch(() => "")).trim();
+  if (!text) {
+    return "";
+  }
+
+  try {
+    return extractApiErrorDetail(JSON.parse(text)) || text;
+  } catch {
+    const hasControlChars = Array.from(text).some((character) => {
+      const code = character.charCodeAt(0);
+      return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
+    });
+    return hasControlChars ? "" : text;
+  }
+};
+
 export const formatOnboardingError = (input: {
   status: number;
   statusText: string;

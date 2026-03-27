@@ -4,7 +4,7 @@
       <div>
         <h2>{{ t("Share Payment QR") }}</h2>
         <p class="helper receive-account-copy">
-          {{ activeAccountId || t("Configure account first") }}
+          {{ shareAccountId || t("Configure account first") }}
         </p>
       </div>
       <button class="icon-cta" @click="toggleQr">
@@ -15,11 +15,21 @@
     <div class="receive-layout">
       <div class="receive-context">
         <div class="kv receive-account-card">
-          <span class="kv-label">{{ t("Account ID") }}</span>
+          <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
           <span class="kv-value">{{
-            activeAccountId || t("Configure account first")
+            shareAccountId || t("Configure account first")
           }}</span>
         </div>
+        <p v-if="shareAccountId" class="helper">
+          {{
+            t(
+              "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+              {
+                example: t("Example I105 Account ID"),
+              },
+            )
+          }}
+        </p>
         <label v-if="activeAccountId" class="receive-amount">
           {{ t("Amount") }}
           <input
@@ -65,6 +75,9 @@ const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
+const shareAccountId = computed(
+  () => activeAccount.value?.i105AccountId || activeAccountId.value,
+);
 const qrMarkup = ref("");
 const qrMessage = ref(t("Tap the button to generate a QR."));
 const amount = ref("0");
@@ -75,7 +88,7 @@ const QR_DARK_COLOR = "#14202b";
 const QR_LIGHT_COLOR = "#ffffff";
 
 const generateQr = async () => {
-  const accountId = activeAccountId.value;
+  const accountId = shareAccountId.value;
   const assetDefinitionId = session.connection.assetDefinitionId;
   const currentAmount = amount.value;
   const currentGeneration = qrGeneration.value + 1;
@@ -104,7 +117,7 @@ const generateQr = async () => {
     if (
       currentGeneration !== qrGeneration.value ||
       !showQr.value ||
-      activeAccountId.value !== accountId ||
+      shareAccountId.value !== accountId ||
       session.connection.assetDefinitionId !== assetDefinitionId ||
       amount.value !== currentAmount
     ) {
@@ -139,7 +152,7 @@ const handleAmountChange = () => {
 };
 
 watch(
-  () => [activeAccountId.value, session.connection.assetDefinitionId],
+  () => [shareAccountId.value, session.connection.assetDefinitionId],
   () => {
     if (showQr.value) {
       generateQr();

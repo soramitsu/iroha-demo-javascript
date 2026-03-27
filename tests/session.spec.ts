@@ -197,6 +197,8 @@ describe("session store", () => {
     (window as any).iroha = {
       deriveAccountAddress: () => ({
         accountId: canonical,
+        i105AccountId: "n42uDerivedVisible1234567890",
+        i105DefaultAccountId: "sorauDerivedDefault1234567890",
         publicKeyHex: "ab".repeat(32),
         accountIdWarning: "",
       }),
@@ -228,7 +230,50 @@ describe("session store", () => {
     store.hydrate();
 
     expect(store.accounts[0]?.accountId).toBe(canonical);
+    expect(store.accounts[0]?.i105AccountId).toBe(
+      "n42uDerivedVisible1234567890",
+    );
     expect(store.activeAccountId).toBe(canonical);
+  });
+
+  it("rewrites stored native i105 ids back to the compatibility accountId field", () => {
+    (window as any).iroha = {
+      deriveAccountAddress: () => ({
+        accountId: "URpZvCompatAccountId1234567890",
+        i105AccountId: "n42uVisibleNativeAccountId1234567890",
+        i105DefaultAccountId: "sorauDefaultNativeAccountId1234567890",
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
+      }),
+    };
+
+    const payload = {
+      connection: {
+        toriiUrl: "https://legacy-torii",
+        chainId: "legacy",
+        networkPrefix: 42,
+      },
+      accounts: [
+        {
+          displayName: "Native",
+          domain: "default",
+          accountId: "n42uVisibleNativeAccountId1234567890",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "priv",
+        },
+      ],
+      activeAccountId: "n42uVisibleNativeAccountId1234567890",
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.accounts[0]?.accountId).toBe("URpZvCompatAccountId1234567890");
+    expect(store.accounts[0]?.i105AccountId).toBe(
+      "n42uVisibleNativeAccountId1234567890",
+    );
+    expect(store.activeAccountId).toBe("URpZvCompatAccountId1234567890");
   });
 
   it("updates the active account in place", () => {
@@ -246,6 +291,20 @@ describe("session store", () => {
 
     expect(store.activeAccount?.displayName).toBe("Renamed");
     expect(store.activeAccount?.accountId).toBe("first@wonderland");
+  });
+
+  it("normalizes the legacy wonderland placeholder to default for canonical accounts", () => {
+    const store = useSessionStore();
+    store.addAccount({
+      displayName: "Alice",
+      domain: "wonderland",
+      accountId: "6cmzPVPX8AmHxBYtL9tbVfEPntBHMDWKCn8NRwxRXGDMjz5QWhdyboK",
+      publicKeyHex: "pub",
+      privateKeyHex: "priv",
+      localOnly: true,
+    });
+
+    expect(store.activeAccount?.domain).toBe("default");
   });
 
   it("ignores custom chain network overrides in TAIRA-only mode", () => {

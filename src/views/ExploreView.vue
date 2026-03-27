@@ -98,8 +98,8 @@
           />
           <div class="qr-meta">
             <div class="kv">
-              <span class="kv-label">{{ t("Account ID") }}</span>
-              <span class="kv-value">{{ accountQr.canonicalId }}</span>
+              <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
+              <span class="kv-value">{{ accountQr.literal }}</span>
             </div>
             <div class="kv">
               <span class="kv-label">{{ t("Network Prefix") }}</span>

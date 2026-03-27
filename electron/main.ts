@@ -33,8 +33,8 @@ const createWindow = () => {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // TAIRA Torii omits CORS headers, so preload/renderer fetches need this off.
-      webSecurity: false,
+      // Keep browser security on; preload bridges Torii/Nexus traffic over Node HTTP.
+      webSecurity: true,
     },
   });
 

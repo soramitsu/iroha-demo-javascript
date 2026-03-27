@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   confidentialModeSupportsShield,
+  extractApiErrorDetail,
   formatOnboardingError,
   isPositiveWholeAmount,
   normalizeBaseUrl,
@@ -9,6 +10,7 @@ import {
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
+  readApiErrorDetail,
   readNexusUnbondingDelayMs,
   sanitizeFetchHeaders,
   sanitizeFetchInit,
@@ -118,6 +120,70 @@ describe("preload utils", () => {
         "x-version": "2",
       },
     });
+  });
+
+  it("extracts enum-style API error details", () => {
+    expect(
+      extractApiErrorDetail({
+        NotPermitted: "faucet pow vrf seed unavailable",
+      }),
+    ).toBe("faucet pow vrf seed unavailable");
+    expect(
+      extractApiErrorDetail({
+        QueryFailed: {
+          Conversion: "invalid account id literal",
+        },
+      }),
+    ).toBe("invalid account id literal");
+    expect(
+      extractApiErrorDetail({
+        message: "Faucet puzzle failed.",
+        details: {
+          NotPermitted: "faucet pow vrf seed unavailable",
+        },
+      }),
+    ).toBe("faucet pow vrf seed unavailable");
+  });
+
+  it("reads API error details from JSON and plain-text responses", async () => {
+    const jsonResponse = new Response(
+      JSON.stringify({
+        NotPermitted: "Account faucet disabled",
+      }),
+      {
+        status: 403,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+    const wrappedJsonResponse = new Response(
+      JSON.stringify({
+        message: "Faucet puzzle failed.",
+        details: {
+          NotPermitted: "Account faucet disabled",
+        },
+      }),
+      {
+        status: 403,
+        headers: {
+          "content-type": "application/json",
+        },
+      },
+    );
+    const textResponse = new Response("plain failure", {
+      status: 400,
+    });
+
+    await expect(readApiErrorDetail(jsonResponse)).resolves.toBe(
+      "Account faucet disabled",
+    );
+    await expect(readApiErrorDetail(wrappedJsonResponse)).resolves.toBe(
+      "Account faucet disabled",
+    );
+    await expect(readApiErrorDetail(textResponse)).resolves.toBe(
+      "plain failure",
+    );
   });
 
   it("maps explorer QR snake_case payloads to renderer contract fields", () => {

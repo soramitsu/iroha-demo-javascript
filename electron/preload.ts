@@ -1,7 +1,6 @@
 import { contextBridge } from "electron";
 import { randomBytes } from "crypto";
 import {
-  AccountAddress,
   ToriiClient,
   buildShieldTransaction,
   buildTransaction,
@@ -10,9 +9,7 @@ import {
   generateKeyPair,
   publicKeyFromPrivate,
   submitSignedTransaction,
-  normalizeAccountId,
   normalizeAssetId,
-  bootstrapConnectPreviewSession,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
@@ -26,14 +23,22 @@ import {
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
   readNexusUnbondingDelayMs,
-  sanitizeFetchInit,
   type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
   type PublicLaneRewardsResponseView,
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
-import { solveFaucetPowPuzzle, type FaucetPowPuzzle } from "./faucetPow";
+import { nodeFetch } from "./nodeFetch";
+import {
+  requestFaucetFundsWithPuzzle,
+  type AccountFaucetResponse,
+} from "./faucetApi";
+import { bootstrapPortableConnectPreviewSession } from "./connectPreview";
+import {
+  deriveAccountAddressView,
+  normalizeCompatAccountIdLiteral,
+} from "./accountAddress";
 
 type HexString = string;
 
@@ -111,17 +116,6 @@ type AccountOnboardingResponse = {
   tx_hash_hex: string;
   status: string;
 };
-
-type AccountFaucetResponse = {
-  account_id: string;
-  asset_definition_id: string;
-  asset_id: string;
-  amount: string;
-  tx_hash_hex: string;
-  status: string;
-};
-
-type AccountFaucetPuzzleResponse = FaucetPowPuzzle;
 
 type ConnectPreviewResponse = {
   sidHex: string;
@@ -246,6 +240,9 @@ type IrohaBridge = {
     networkPrefix?: number;
   }): {
     accountId: string;
+    i105AccountId: string;
+    i105DefaultAccountId: string;
+    i105DefaultFullwidthAccountId?: string;
     publicKeyHex: string;
     accountIdWarning: string;
   };
@@ -372,10 +369,7 @@ const getClient = (toriiUrlRaw: string) => {
     return cached;
   }
   const client = new ToriiClient(baseUrl, {
-    fetchImpl: (
-      input: Parameters<typeof fetch>[0],
-      init?: Parameters<typeof fetch>[1],
-    ) => fetch(input, sanitizeFetchInit(init)),
+    fetchImpl: nodeFetch,
   });
   clientCache.set(baseUrl, client);
   return client;
@@ -483,7 +477,7 @@ const fetchJson = async (
   endpoint: string,
   label: string,
 ): Promise<Record<string, unknown>> => {
-  const response = await fetch(endpoint, {
+  const response = await nodeFetch(endpoint, {
     method: "GET",
     headers: {
       Accept: "application/json",
@@ -545,7 +539,7 @@ const submitInstructionTransaction = async (input: {
   if (!chainId) {
     throw new Error("chainId is required.");
   }
-  const authority = normalizeAccountId(
+  const authority = normalizeCompatAccountIdLiteral(
     input.authorityAccountId,
     "authorityAccountId",
   );
@@ -565,24 +559,6 @@ const submitInstructionTransaction = async (input: {
   return { hash: submission.hash };
 };
 
-const accountSummaryFromPublicKey = (
-  domain: string,
-  publicKeyHex: string,
-  networkPrefix = 42,
-) => {
-  const publicKey = hexToBuffer(publicKeyHex, "publicKeyHex");
-  const rawPublicKeyHex = toHex(publicKey).toUpperCase();
-  const address = AccountAddress.fromAccount({ domain, publicKey });
-  const formats = address.displayFormats(networkPrefix);
-  const canonicalAccountId = normalizeAccountId(address.toI105(), "accountId");
-
-  return {
-    accountId: canonicalAccountId,
-    publicKeyHex: rawPublicKeyHex,
-    accountIdWarning: formats.i105Warning,
-  };
-};
-
 const api: IrohaBridge = {
   async ping(config) {
     const client = getClient(config.toriiUrl);
@@ -596,7 +572,7 @@ const api: IrohaBridge = {
     };
   },
   deriveAccountAddress({ domain, publicKeyHex, networkPrefix }) {
-    return accountSummaryFromPublicKey(domain, publicKeyHex, networkPrefix);
+    return deriveAccountAddressView({ domain, publicKeyHex, networkPrefix });
   },
   derivePublicKey(privateKeyHex) {
     const publicKey = publicKeyFromPrivate(
@@ -612,12 +588,15 @@ const api: IrohaBridge = {
     }
     const tx = buildRegisterAccountAndTransferTransaction({
       chainId: input.chainId,
-      authority: normalizeAccountId(
+      authority: normalizeCompatAccountIdLiteral(
         input.authorityAccountId,
         "authorityAccountId",
       ),
       account: {
-        accountId: normalizeAccountId(input.accountId, "accountId"),
+        accountId: normalizeCompatAccountIdLiteral(
+          input.accountId,
+          "accountId",
+        ),
         domainId,
         metadata: input.metadata ?? {},
       },
@@ -636,8 +615,11 @@ const api: IrohaBridge = {
     return { hash: submission.hash };
   },
   async transferAsset(input) {
-    const accountId = normalizeAccountId(input.accountId, "accountId");
-    const destinationAccountId = normalizeAccountId(
+    const accountId = normalizeCompatAccountIdLiteral(
+      input.accountId,
+      "accountId",
+    );
+    const destinationAccountId = normalizeCompatAccountIdLiteral(
       input.destinationAccountId,
       "destinationAccountId",
     );
@@ -783,7 +765,7 @@ const api: IrohaBridge = {
   fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
     const client = getClient(toriiUrl);
     return client.listAccountAssets(
-      normalizeAccountId(accountId, "accountId"),
+      normalizeCompatAccountIdLiteral(accountId, "accountId"),
       {
         limit,
         offset,
@@ -793,7 +775,7 @@ const api: IrohaBridge = {
   fetchAccountTransactions({ toriiUrl, accountId, limit = 20, offset }) {
     const client = getClient(toriiUrl);
     return client.listAccountTransactions(
-      normalizeAccountId(accountId, "accountId"),
+      normalizeCompatAccountIdLiteral(accountId, "accountId"),
       {
         limit,
         offset,
@@ -803,7 +785,7 @@ const api: IrohaBridge = {
   listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
     const client = getClient(toriiUrl);
     return client.listAccountPermissions(
-      normalizeAccountId(accountId, "accountId"),
+      normalizeCompatAccountIdLiteral(accountId, "accountId"),
       {
         limit,
         offset,
@@ -811,7 +793,10 @@ const api: IrohaBridge = {
     );
   },
   registerCitizen({ toriiUrl, chainId, accountId, amount, privateKeyHex }) {
-    const normalizedAccount = normalizeAccountId(accountId, "accountId");
+    const normalizedAccount = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
@@ -855,7 +840,10 @@ const api: IrohaBridge = {
     direction,
     privateKeyHex,
   }) {
-    const normalizedAccount = normalizeAccountId(accountId, "accountId");
+    const normalizedAccount = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
     const normalizedReferendumId = referendumId.trim();
     if (!normalizedReferendumId) {
       throw new Error("referendumId is required.");
@@ -895,10 +883,14 @@ const api: IrohaBridge = {
   },
   async getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl);
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
     const fetchFallback = async () => {
       const baseUrl = normalizeBaseUrl(toriiUrl);
-      const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(accountId)}/qr`;
-      const response = await fetch(endpoint, {
+      const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(normalizedAccountId)}/qr`;
+      const response = await nodeFetch(endpoint, {
         method: "GET",
         headers: {
           Accept: "application/json",
@@ -916,9 +908,7 @@ const api: IrohaBridge = {
     };
 
     try {
-      return await client.getExplorerAccountQr(
-        normalizeAccountId(accountId, "accountId"),
-      );
+      return await client.getExplorerAccountQr(normalizedAccountId);
     } catch (error) {
       if (!String(error).includes("Digest method not supported")) {
         throw error;
@@ -946,7 +936,10 @@ const api: IrohaBridge = {
   }) {
     const client = getClient(toriiUrl);
     return client.listOfflineAllowances({
-      controllerId: normalizeAccountId(controllerId, "controllerId"),
+      controllerId: normalizeCompatAccountIdLiteral(
+        controllerId,
+        "controllerId",
+      ),
       limit,
       offset,
       filter,
@@ -965,7 +958,7 @@ const api: IrohaBridge = {
   },
   async onboardAccount({ toriiUrl, alias, accountId, identity }) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
-    const response = await fetch(`${baseUrl}/v1/accounts/onboard`, {
+    const response = await nodeFetch(`${baseUrl}/v1/accounts/onboard`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1013,101 +1006,25 @@ const api: IrohaBridge = {
   },
   async requestFaucetFunds({ toriiUrl, accountId }) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
-    const normalizedAccountId = normalizeAccountId(accountId, "accountId");
-    const puzzleResponse = await fetch(`${baseUrl}/v1/accounts/faucet/puzzle`, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    return requestFaucetFundsWithPuzzle({
+      baseUrl,
+      accountId: normalizedAccountId,
+      fetchImpl: nodeFetch,
     });
-    if (!puzzleResponse.ok) {
-      const contentType = puzzleResponse.headers.get("content-type") ?? "";
-      let detail = "";
-      if (contentType.includes("application/json")) {
-        const payload = (await puzzleResponse
-          .json()
-          .catch(() => null)) as Record<string, unknown> | null;
-        if (payload && typeof payload === "object") {
-          detail = String(
-            payload.detail ?? payload.message ?? payload.error ?? "",
-          ).trim();
-        }
-      } else {
-        const text = await puzzleResponse.text().catch(() => "");
-        const hasControlChars = Array.from(text).some((character) => {
-          const code = character.charCodeAt(0);
-          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
-        });
-        if (!hasControlChars) {
-          detail = text.trim();
-        }
-      }
-      const message =
-        detail || puzzleResponse.statusText || "Faucet puzzle failed.";
-      throw new Error(
-        `Faucet puzzle failed (${puzzleResponse.status}): ${message}`,
-      );
-    }
-    const puzzle = (await puzzleResponse.json()) as AccountFaucetPuzzleResponse;
-    const powPayload =
-      puzzle.difficulty_bits > 0
-        ? await solveFaucetPowPuzzle(normalizedAccountId, puzzle)
-        : null;
-    const response = await fetch(`${baseUrl}/v1/accounts/faucet`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        account_id: normalizedAccountId,
-        ...(powPayload
-          ? {
-              pow_anchor_height: powPayload.anchorHeight,
-              pow_nonce_hex: powPayload.nonceHex,
-            }
-          : {}),
-      }),
-    });
-    if (!response.ok) {
-      const contentType = response.headers.get("content-type") ?? "";
-      let detail = "";
-      if (contentType.includes("application/json")) {
-        const payload = (await response.json().catch(() => null)) as Record<
-          string,
-          unknown
-        > | null;
-        if (payload && typeof payload === "object") {
-          detail = String(
-            payload.detail ?? payload.message ?? payload.error ?? "",
-          ).trim();
-        }
-      } else {
-        const text = await response.text().catch(() => "");
-        const hasControlChars = Array.from(text).some((character) => {
-          const code = character.charCodeAt(0);
-          return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
-        });
-        if (!hasControlChars) {
-          detail = text.trim();
-        }
-      }
-      const message = detail || response.statusText || "Faucet request failed.";
-      throw new Error(`Faucet request failed (${response.status}): ${message}`);
-    }
-    return (await response.json()) as AccountFaucetResponse;
   },
   async createConnectPreview({ toriiUrl, chainId, node }) {
     const client = getClient(toriiUrl);
     const baseUrl = new URL(normalizeBaseUrl(toriiUrl));
     const nodeHint = node ?? baseUrl.host;
-    const { preview, session, tokens } = await bootstrapConnectPreviewSession(
-      client,
-      {
+    const { preview, session, tokens } =
+      await bootstrapPortableConnectPreviewSession(client, {
         chainId,
         node: nodeHint,
-      },
-    );
+      });
     return {
       sidHex: toHex(Buffer.from(preview.sidBytes)),
       sidBase64Url: preview.sidBase64Url,
@@ -1137,7 +1054,7 @@ const api: IrohaBridge = {
       `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/stake`,
       {
         validator: validator
-          ? normalizeAccountId(validator, "validator")
+          ? normalizeCompatAccountIdLiteral(validator, "validator")
           : undefined,
       },
     );
@@ -1155,7 +1072,7 @@ const api: IrohaBridge = {
       toriiUrl,
       `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/rewards/pending`,
       {
-        account: normalizeAccountId(account, "account"),
+        account: normalizeCompatAccountIdLiteral(account, "account"),
         asset_id: assetId,
         upto_epoch:
           uptoEpoch === undefined
@@ -1182,7 +1099,7 @@ const api: IrohaBridge = {
     amount,
     privateKeyHex,
   }) {
-    const normalizedStakeAccount = normalizeAccountId(
+    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
     );
@@ -1194,7 +1111,7 @@ const api: IrohaBridge = {
       instruction: {
         BondPublicLaneStake: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeAccountId(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
           amount: normalizeAmount(amount, "amount"),
         },
       },
@@ -1210,7 +1127,7 @@ const api: IrohaBridge = {
     releaseAtMs,
     privateKeyHex,
   }) {
-    const normalizedStakeAccount = normalizeAccountId(
+    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
     );
@@ -1222,7 +1139,7 @@ const api: IrohaBridge = {
       instruction: {
         SchedulePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeAccountId(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
           amount: normalizeAmount(amount, "amount"),
           request_id: normalizeRequestId(requestId),
           release_at_ms: normalizeReleaseAtMs(releaseAtMs),
@@ -1238,7 +1155,7 @@ const api: IrohaBridge = {
     requestId,
     privateKeyHex,
   }) {
-    const normalizedStakeAccount = normalizeAccountId(
+    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
     );
@@ -1250,7 +1167,7 @@ const api: IrohaBridge = {
       instruction: {
         FinalizePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeAccountId(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
           request_id: normalizeRequestId(requestId),
         },
       },
@@ -1263,7 +1180,7 @@ const api: IrohaBridge = {
     validator,
     privateKeyHex,
   }) {
-    const normalizedStakeAccount = normalizeAccountId(
+    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
     );
@@ -1275,7 +1192,7 @@ const api: IrohaBridge = {
       instruction: {
         ClaimPublicLaneRewards: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeAccountId(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
         },
       },
     });

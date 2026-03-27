@@ -4,6 +4,9 @@ import { createPinia, setActivePinia } from "pinia";
 import ReceiveView from "@/views/ReceiveView.vue";
 import { useSessionStore } from "@/stores/session";
 
+const ALICE_I105_ACCOUNT_ID = "n42uAliceRealI105AccountId";
+const BOB_I105_ACCOUNT_ID = "n42uBobRealI105AccountId";
+const ASSET_DEFINITION_ID = "norito:abcdef0123456789";
 const qrToStringMock = vi.fn();
 
 vi.mock("qrcode", () => ({
@@ -27,19 +30,20 @@ describe("ReceiveView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "xor#wonderland",
+        assetDefinitionId: ASSET_DEFINITION_ID,
         networkPrefix: 42,
       },
       accounts: [
         {
           displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
+          domain: "default",
+          accountId: "alice@default",
+          i105AccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
         },
       ],
-      activeAccountId: "alice@wonderland",
+      activeAccountId: "alice@default",
     });
     return mount(ReceiveView, {
       global: {
@@ -55,13 +59,14 @@ describe("ReceiveView", () => {
         ...session.accounts,
         {
           displayName: "Bob",
-          domain: "wonderland",
-          accountId: "bob@wonderland",
+          domain: "default",
+          accountId: "bob@default",
+          i105AccountId: BOB_I105_ACCOUNT_ID,
           publicKeyHex: "ef".repeat(32),
           privateKeyHex: "12".repeat(32),
         },
       ],
-      activeAccountId: "bob@wonderland",
+      activeAccountId: "bob@default",
     });
     await flushPromises();
   };
@@ -87,7 +92,7 @@ describe("ReceiveView", () => {
     expect(wrapper.text()).toContain('"amount":5');
 
     resolveInitialQr(
-      '<svg><text>{"accountId":"alice@wonderland","assetDefinitionId":"xor#wonderland","amount":"0"}</text></svg>',
+      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
     );
     await flushPromises();
     await flushPromises();
@@ -114,16 +119,18 @@ describe("ReceiveView", () => {
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain('"accountId":"bob@wonderland"');
+    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
 
     resolveAliceQr(
-      '<svg><text>{"accountId":"alice@wonderland","assetDefinitionId":"xor#wonderland","amount":"0"}</text></svg>',
+      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
     );
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain('"accountId":"bob@wonderland"');
-    expect(wrapper.text()).not.toContain('"accountId":"alice@wonderland"');
+    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
+    expect(wrapper.text()).not.toContain(
+      `"accountId":"${ALICE_I105_ACCOUNT_ID}"`,
+    );
   });
 
   it("renders the receive qr with scan-friendly contrast colors", async () => {
@@ -136,8 +143,8 @@ describe("ReceiveView", () => {
 
     expect(qrToStringMock).toHaveBeenCalledWith(
       JSON.stringify({
-        accountId: "alice@wonderland",
-        assetDefinitionId: "xor#wonderland",
+        accountId: ALICE_I105_ACCOUNT_ID,
+        assetDefinitionId: ASSET_DEFINITION_ID,
         amount: "0",
       }),
       expect.objectContaining({

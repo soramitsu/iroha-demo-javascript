@@ -2,6 +2,9 @@ export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
 export interface AccountAddressView {
   accountId: string;
+  i105AccountId: string;
+  i105DefaultAccountId: string;
+  i105DefaultFullwidthAccountId?: string;
   publicKeyHex: string;
   accountIdWarning: string;
 }
