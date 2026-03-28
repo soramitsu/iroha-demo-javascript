@@ -276,6 +276,63 @@ describe("session store", () => {
     expect(store.activeAccountId).toBe("URpZvCompatAccountId1234567890");
   });
 
+  it("adopts a chain-reported network prefix and re-derives stored account literals", () => {
+    (window as any).iroha = {
+      deriveAccountAddress: ({ networkPrefix }: { networkPrefix: number }) => ({
+        accountId:
+          networkPrefix === 369
+            ? "testuAliceCompat1234567890"
+            : "n42uAliceCompat1234567890",
+        i105AccountId:
+          networkPrefix === 369
+            ? "testuAliceCompat1234567890"
+            : "n42uAliceCompat1234567890",
+        i105DefaultAccountId: "sorauAliceDefault1234567890",
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
+      }),
+    };
+
+    const store = useSessionStore();
+    store.$patch({
+      connection: {
+        ...store.connection,
+        networkPrefix: 42,
+      },
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "default",
+          accountId: "n42uAliceCompat1234567890",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "cd".repeat(32),
+          localOnly: false,
+        },
+      ],
+      activeAccountId: "n42uAliceCompat1234567890",
+      authority: {
+        accountId: "n42uAliceCompat1234567890",
+        privateKeyHex: "deadbeef",
+      },
+    });
+
+    expect(store.syncChainNetworkPrefix(369)).toBe(true);
+
+    expect(store.connection.networkPrefix).toBe(369);
+    expect(store.accounts[0]?.accountId).toBe("testuAliceCompat1234567890");
+    expect(store.accounts[0]?.i105AccountId).toBe("testuAliceCompat1234567890");
+    expect(store.activeAccountId).toBe("testuAliceCompat1234567890");
+    expect(store.authority.accountId).toBe("testuAliceCompat1234567890");
+  });
+
+  it("ignores invalid chain-reported network prefixes", () => {
+    const store = useSessionStore();
+    const before = store.connection.networkPrefix;
+
+    expect(store.syncChainNetworkPrefix(16384)).toBe(false);
+    expect(store.connection.networkPrefix).toBe(before);
+  });
+
   it("updates the active account in place", () => {
     const store = useSessionStore();
     store.addAccount({

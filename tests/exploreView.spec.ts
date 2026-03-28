@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ExploreView from "@/views/ExploreView.vue";
-import { useSessionStore } from "@/stores/session";
+import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
 
 const getExplorerMetricsMock = vi.fn();
 const getExplorerAccountQrMock = vi.fn();
+const sessionSnapshot = () =>
+  JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
 
 vi.mock("@/services/iroha", () => ({
   getExplorerMetrics: (toriiUrl: string) => getExplorerMetricsMock(toriiUrl),
@@ -115,5 +117,49 @@ describe("ExploreView", () => {
 
     expect(wrapper.text()).toContain("testuBobLiteral");
     expect(wrapper.text()).not.toContain("testuAliceLiteral");
+  });
+
+  it("adopts and persists the chain-reported network prefix from explorer qr", async () => {
+    getExplorerAccountQrMock.mockResolvedValueOnce({
+      canonicalId: "URpZvAliceCompat",
+      literal: "testuAliceLiteral",
+      networkPrefix: 369,
+      errorCorrection: "M",
+      modules: 29,
+      qrVersion: 1,
+      svg: "<svg />",
+    });
+
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const session = useSessionStore();
+    session.$patch({
+      connection: {
+        toriiUrl: "http://localhost:8080",
+        chainId: "chain",
+        assetDefinitionId: "xor#wonderland",
+        networkPrefix: 42,
+      },
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "wonderland",
+          accountId: "alice@wonderland",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "cd".repeat(32),
+        },
+      ],
+      activeAccountId: "alice@wonderland",
+    });
+
+    mount(ExploreView, {
+      global: {
+        plugins: [pinia],
+      },
+    });
+    await flushPromises();
+
+    expect(session.connection.networkPrefix).toBe(369);
+    expect(sessionSnapshot().connection.networkPrefix).toBe(369);
   });
 });

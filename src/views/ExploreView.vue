@@ -185,6 +185,12 @@ const refresh = async () => {
     ) {
       return;
     }
+    const adoptedChainPrefix = session.syncChainNetworkPrefix(
+      qrPayload.networkPrefix,
+    );
+    if (adoptedChainPrefix) {
+      session.persistState();
+    }
     metrics.value = metricsPayload;
     accountQr.value = qrPayload;
   } finally {

@@ -42,6 +42,7 @@ export type SavedChain = ConnectionConfig & {
 
 const DEFAULT_DOMAIN_LABEL = "default";
 const LEGACY_PLACEHOLDER_DOMAIN_LABEL = "wonderland";
+const MAX_NETWORK_PREFIX = 0x3fff;
 
 const defaultUser = (): UserProfile => ({
   displayName: "",
@@ -214,15 +215,28 @@ const normalizeConnection = (
   };
 };
 
+const normalizeSessionNetworkPrefix = (value: unknown): number | null => {
+  const normalized = Number(value);
+  if (
+    !Number.isInteger(normalized) ||
+    normalized < 0 ||
+    normalized > MAX_NETWORK_PREFIX
+  ) {
+    return null;
+  }
+  return normalized;
+};
+
 const normalizeAccounts = (
   payload: Partial<SessionState> & { user?: UserProfile },
+  options?: { networkPrefix?: number },
 ): Pick<SessionState, "accounts" | "activeAccountId"> & {
   accountIdMap: Map<string, string>;
 } => {
   const accountIdMap = new Map<string, string>();
-  const connectionNetworkPrefix = normalizeConnection(
-    payload.connection,
-  ).networkPrefix;
+  const connectionNetworkPrefix =
+    normalizeSessionNetworkPrefix(options?.networkPrefix) ??
+    normalizeConnection(payload.connection).networkPrefix;
 
   const normalizeCollection = (
     entries: Array<Partial<UserProfile> & Record<string, unknown>>,
@@ -352,6 +366,42 @@ export const useSessionStore = defineStore("session", {
     },
     updateConnection(partial: Partial<ConnectionConfig>) {
       this.connection = normalizeConnection({ ...this.connection, ...partial });
+    },
+    syncChainNetworkPrefix(networkPrefix: number) {
+      const normalizedPrefix = normalizeSessionNetworkPrefix(networkPrefix);
+      if (
+        normalizedPrefix === null ||
+        normalizedPrefix === this.connection.networkPrefix
+      ) {
+        return false;
+      }
+
+      const normalizedAccounts = normalizeAccounts(
+        {
+          accounts: this.accounts,
+          activeAccountId: this.activeAccountId,
+        },
+        { networkPrefix: normalizedPrefix },
+      );
+      const rawAuthorityAccountId = trimString(this.authority.accountId);
+      const migratedAuthorityAccountId = rawAuthorityAccountId
+        ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
+          rawAuthorityAccountId)
+        : "";
+
+      this.$patch({
+        connection: {
+          ...this.connection,
+          networkPrefix: normalizedPrefix,
+        },
+        authority: {
+          ...this.authority,
+          accountId: migratedAuthorityAccountId,
+        },
+        accounts: normalizedAccounts.accounts,
+        activeAccountId: normalizedAccounts.activeAccountId,
+      });
+      return true;
     },
     updateAuthority(partial: Partial<AuthorityProfile>) {
       this.authority = { ...this.authority, ...partial };
