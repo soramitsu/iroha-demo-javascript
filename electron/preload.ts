@@ -35,6 +35,7 @@ import { nodeFetch } from "./nodeFetch";
 import {
   requestFaucetFundsWithPuzzle,
   type AccountFaucetResponse,
+  type FaucetRequestProgress,
 } from "./faucetApi";
 import { bootstrapPortableConnectPreviewSession } from "./connectPreview";
 import {
@@ -134,6 +135,10 @@ type ConnectPreviewResponse = {
 type NexusStakingPolicyResponse = {
   unbondingDelayMs: number;
 };
+
+type FaucetStatusCallback = (
+  progress: FaucetRequestProgress,
+) => void | Promise<void>;
 
 type NexusPublicLaneBaseInput = {
   toriiUrl: string;
@@ -330,7 +335,7 @@ type IrohaBridge = {
   requestFaucetFunds(input: {
     toriiUrl: string;
     accountId: string;
-  }): Promise<AccountFaucetResponse>;
+  }, onStatus?: FaucetStatusCallback): Promise<AccountFaucetResponse>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;
@@ -1031,7 +1036,7 @@ const api: IrohaBridge = {
     }
     return (await response.json()) as AccountOnboardingResponse;
   },
-  async requestFaucetFunds({ toriiUrl, accountId }) {
+  async requestFaucetFunds({ toriiUrl, accountId }, onStatus) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
     const normalizedAccountId = normalizeCompatAccountIdLiteral(
       accountId,
@@ -1041,6 +1046,7 @@ const api: IrohaBridge = {
       baseUrl,
       accountId: normalizedAccountId,
       fetchImpl: nodeFetch,
+      onStatus,
     });
   },
   async createConnectPreview({ toriiUrl, chainId, node }) {

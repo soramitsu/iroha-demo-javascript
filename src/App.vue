@@ -119,7 +119,12 @@
             {{ session.hasAccount ? t("Account ready") : t("Account Setup") }}
           </span>
         </div>
-        <details class="sidebar-panel">
+        <details
+          ref="sidebarPanel"
+          class="sidebar-panel"
+          :open="!isCompactLayout || sidebarPanelOpen"
+          @toggle="handleSidebarToggle"
+        >
           <summary class="mobile-nav-toggle">
             <span class="mobile-nav-toggle-copy">
               <span class="mobile-nav-toggle-label">{{ t("Navigate") }}</span>
@@ -310,6 +315,10 @@ const theme = useThemeStore();
 const { localeStore, localeOptions, t } = useAppI18n();
 const logo = IrohaLogo;
 const localeMenu = ref<HTMLDetailsElement | null>(null);
+const sidebarPanel = ref<HTMLDetailsElement | null>(null);
+const isCompactLayout = ref(false);
+const sidebarPanelOpen = ref(false);
+let sidebarLayoutMediaQuery: MediaQueryList | null = null;
 
 const activeLocale = computed({
   get: () => localeStore.current,
@@ -349,6 +358,26 @@ const sidebarNavItems = computed(() => {
   }));
 });
 
+const syncSidebarLayout = (compact: boolean) => {
+  isCompactLayout.value = compact;
+  if (!compact) {
+    sidebarPanelOpen.value = false;
+    return;
+  }
+  sidebarPanelOpen.value = sidebarPanel.value?.open ?? false;
+};
+
+const handleSidebarToggle = (event: Event) => {
+  if (!isCompactLayout.value) {
+    return;
+  }
+  sidebarPanelOpen.value = (event.currentTarget as HTMLDetailsElement).open;
+};
+
+const handleSidebarLayoutChange = (event: MediaQueryListEvent) => {
+  syncSidebarLayout(event.matches);
+};
+
 const updateParallax = (event: PointerEvent) => {
   const x = (event.clientX / window.innerWidth - 0.5).toFixed(3);
   const y = (event.clientY / window.innerHeight - 0.5).toFixed(3);
@@ -358,9 +387,34 @@ const updateParallax = (event: PointerEvent) => {
 
 onMounted(() => {
   window.addEventListener("pointermove", updateParallax, { passive: true });
+  if (typeof window.matchMedia !== "function") {
+    syncSidebarLayout(false);
+    return;
+  }
+  sidebarLayoutMediaQuery = window.matchMedia("(max-width: 960px)");
+  syncSidebarLayout(sidebarLayoutMediaQuery.matches);
+  if (typeof sidebarLayoutMediaQuery.addEventListener === "function") {
+    sidebarLayoutMediaQuery.addEventListener(
+      "change",
+      handleSidebarLayoutChange,
+    );
+    return;
+  }
+  sidebarLayoutMediaQuery.addListener(handleSidebarLayoutChange);
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("pointermove", updateParallax);
+  if (!sidebarLayoutMediaQuery) {
+    return;
+  }
+  if (typeof sidebarLayoutMediaQuery.removeEventListener === "function") {
+    sidebarLayoutMediaQuery.removeEventListener(
+      "change",
+      handleSidebarLayoutChange,
+    );
+    return;
+  }
+  sidebarLayoutMediaQuery.removeListener(handleSidebarLayoutChange);
 });
 </script>

@@ -110,6 +110,20 @@ export interface AccountFaucetResponse {
   status: string;
 }
 
+export type FaucetRequestPhase =
+  | "requestingPuzzle"
+  | "waitingForPuzzleRetry"
+  | "solvingPuzzle"
+  | "submittingClaim"
+  | "claimAccepted";
+
+export interface FaucetRequestProgress {
+  phase: FaucetRequestPhase;
+  attempt?: number;
+  attempts?: number;
+  txHashHex?: string;
+}
+
 export interface ConnectPreview {
   sidHex: string;
   sidBase64Url: string;
@@ -423,7 +437,9 @@ export interface IrohaBridge {
   requestFaucetFunds(input: {
     toriiUrl: string;
     accountId: string;
-  }): Promise<AccountFaucetResponse>;
+  }, onProgress?: (
+    progress: FaucetRequestProgress,
+  ) => void | Promise<void>): Promise<AccountFaucetResponse>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;

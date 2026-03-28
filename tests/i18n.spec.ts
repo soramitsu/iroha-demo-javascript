@@ -100,7 +100,7 @@ describe("i18n messages", () => {
     expect(translate("ja-JP", "Share QR or Account ID")).toContain("I105");
     expect(translate("hi-IN", "I105")).toBe("I105");
     expect(translate("fr-FR", "Example I105 Account ID")).toBe(
-      "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+      translate("en-US", "Example I105 Account ID"),
     );
     expect(translate("de-DE", "norito:<asset-id-hex>")).toBe(
       "norito:<asset-id-hex>",
@@ -129,6 +129,26 @@ describe("i18n messages", () => {
     expect(translate("zh-TW", "TAIRA Torii ready")).toBe("TAIRA Torii 已就緒");
     expect(translate("zh-TW", "Open Taira Explorer")).toBe(
       "開啟 TAIRA Explorer",
+    );
+  });
+
+  it("falls back to wallet-first copy for shared runtime status keys", () => {
+    expect(translate("en-US", "Set up network and wallet first.")).toBe(
+      "Set up network and wallet first.",
+    );
+    expect(translate("nl-NL", "Set up network and wallet first.")).toBe(
+      "Set up network and wallet first.",
+    );
+    expect(translate("ja-JP", "Create on-chain account")).toBe(
+      "Create on-chain account",
+    );
+    expect(
+      translate(
+        "fr-FR",
+        "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
+      ),
+    ).toBe(
+      "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",
     );
   });
 
@@ -329,6 +349,6 @@ describe("locale store", () => {
     expect(n(1234)).not.toBe("");
 
     setLocale("en-US");
-    expect(t("Iroha Points")).toBe("Iroha Points");
+    expect(t("Iroha Points")).toBe(translate("en-US", "Iroha Points"));
   });
 });

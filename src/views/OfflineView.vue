@@ -7,13 +7,6 @@
           {{ hardwareStatus.label }}
         </span>
       </header>
-      <p class="helper">
-        {{
-          t(
-            "Register a hardware-backed offline wallet (e.g., macOS Secure Enclave) to keep your offline keys safer. Registration stays on-device; no data is sent to Torii.",
-          )
-        }}
-      </p>
       <div class="form-grid">
         <div>
           <p class="meta-label">{{ t("Status") }}</p>
@@ -102,13 +95,6 @@
           t("{count} entries", { count: allowances.length })
         }}</span>
       </header>
-      <p class="helper">
-        {{
-          t(
-            "Allowances come from Torii offline policies. Sync to refresh remaining amounts and expiry.",
-          )
-        }}
-      </p>
       <div v-if="allowances.length" class="table-wrap">
         <table class="table">
           <thead>
@@ -326,17 +312,12 @@
         {{ onlineShieldCapabilityMessage }}
       </p>
       <p
-        v-else-if="onlineShieldSupported && onlineShieldPolicyMode"
+        v-else-if="
+          onlineForm.shielded && onlineShieldSupported && onlineShieldPolicyMode
+        "
         class="helper"
       >
         {{ t("Shield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
-      </p>
-      <p v-if="onlineForm.shielded" class="helper">
-        {{
-          t(
-            "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.",
-          )
-        }}
       </p>
       <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
     </section>

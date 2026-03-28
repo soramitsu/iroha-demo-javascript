@@ -108,18 +108,14 @@
           </p>
           <p
             v-if="
-              shieldSupported && shieldPolicyMode && !shieldCapabilityMessage
+              form.shielded &&
+              shieldSupported &&
+              shieldPolicyMode &&
+              !shieldCapabilityMessage
             "
             class="helper send-note"
           >
             {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
-          </p>
-          <p v-if="form.shielded" class="helper send-note">
-            {{
-              t(
-                "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.",
-              )
-            }}
           </p>
           <p v-if="statusMessage" class="helper send-note">
             {{ statusMessage }}

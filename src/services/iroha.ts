@@ -9,6 +9,7 @@ import type {
   ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
+  FaucetRequestProgress,
   GovernanceCouncilCurrentResponse,
   GovernanceDraftResponse,
   GovernanceLocksResult,
@@ -137,7 +138,10 @@ export const onboardAccount = (input: {
 export const requestFaucetFunds = (input: {
   toriiUrl: string;
   accountId: string;
-}): Promise<AccountFaucetResponse> => bridge().requestFaucetFunds(input);
+}, onProgress?: (
+  progress: FaucetRequestProgress,
+) => void | Promise<void>): Promise<AccountFaucetResponse> =>
+  bridge().requestFaucetFunds(input, onProgress);
 
 export const createConnectPreview = (input: {
   toriiUrl: string;

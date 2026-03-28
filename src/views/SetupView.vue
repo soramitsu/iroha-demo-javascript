@@ -8,9 +8,6 @@
         </span>
       </header>
       <div class="chain-picker">
-        <p class="helper">
-          {{ t("TAIRA testnet connection is fixed in this build.") }}
-        </p>
         <div class="preset-row">
           <div class="preset-chip active fixed" role="status">
             <span class="chip-title">{{ t("TAIRA Testnet") }}</span>
@@ -135,13 +132,9 @@
 
     <section class="card setup-register-card">
       <header class="card-header">
-        <h2>{{ t("Register Account") }}</h2>
+        <h2>{{ t("Create on-chain account") }}</h2>
         <p class="helper">
-          {{
-            t(
-              "Requires authority credentials — Torii receives a direct Norito transaction.",
-            )
-          }}
+          {{ t("Requires authority credentials to create the account on-chain.") }}
         </p>
       </header>
       <div class="form-grid">
@@ -167,7 +160,7 @@
       </div>
       <div class="actions">
         <button :disabled="registering || !canRegister" @click="handleRegister">
-          {{ registering ? t("Submitting…") : t("Register account") }}
+          {{ registering ? t("Submitting…") : t("Create on-chain account") }}
         </button>
         <button class="secondary" @click="saveAuthority">
           {{ t("Save authority") }}
@@ -213,7 +206,7 @@ const userForm = reactive({
   ...(session.activeAccount ?? {}),
 });
 const authorityForm = reactive({ ...session.authority });
-const metadataPlaceholder = '{\n  "nickname": "Alice"\n}';
+const metadataPlaceholder = '{\n  "label": "Main wallet"\n}';
 const metadataInput = ref(
   JSON.stringify(
     { nickname: session.activeAccount?.displayName || "" },

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ParliamentView from "@/views/ParliamentView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { CITIZEN_BOND_XOR } from "@/utils/parliament";
 
@@ -35,6 +36,9 @@ vi.mock("@/services/iroha", () => ({
   enactGovernanceProposal: (input: unknown) =>
     enactGovernanceProposalMock(input),
 }));
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 describe("ParliamentView", () => {
   beforeEach(() => {
@@ -164,7 +168,9 @@ describe("ParliamentView", () => {
       amount: CITIZEN_BOND_XOR,
       privateKeyHex: "cd".repeat(32),
     });
-    expect(wrapper.text()).toContain("Citizenship bond submitted: 0xabc");
+    expect(wrapper.text()).toContain(
+      t("Citizenship bond submitted: {hash}", { hash: "0xabc" }),
+    );
   });
 
   it("disables the bond action when XOR balance is below threshold", async () => {
@@ -186,7 +192,7 @@ describe("ParliamentView", () => {
     );
     expect(bondButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Available XOR balance is below the required citizen bond amount.",
+      t("Available XOR balance is below the required citizen bond amount."),
     );
   });
 
@@ -204,7 +210,9 @@ describe("ParliamentView", () => {
     );
     expect(bondButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Citizenship voting permission detected. Bonding is no longer required.",
+      t(
+        "Citizenship voting permission detected. Bonding is no longer required.",
+      ),
     );
   });
 
@@ -226,10 +234,12 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(
-      "Citizenship voting permission detected. Bonding is no longer required.",
+      t(
+        "Citizenship voting permission detected. Bonding is no longer required.",
+      ),
     );
     expect(wrapper.text()).not.toContain(
-      "Available XOR balance is below the required citizen bond amount.",
+      t("Available XOR balance is below the required citizen bond amount."),
     );
   });
 
@@ -269,8 +279,12 @@ describe("ParliamentView", () => {
     expect((proposalInput.element as HTMLInputElement).value).toBe(
       inferredProposalId,
     );
-    expect(wrapper.text()).toContain("Referendum found: yes.");
-    expect(wrapper.text()).toContain("Proposal found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
+    expect(wrapper.text()).toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
 
     const rawHistory = localStorage.getItem(
       "iroha-demo:parliament-history:alice@wonderland",
@@ -311,10 +325,14 @@ describe("ParliamentView", () => {
           .element as HTMLInputElement
       ).value,
     ).toBe(inferredProposalId);
-    expect(wrapper.text()).toContain("Referendum found: yes.");
-    expect(wrapper.text()).toContain("Proposal found: yes.");
     expect(wrapper.text()).toContain(
-      "Governance records refreshed. Invalid proposal ID was ignored.",
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
+    expect(wrapper.text()).toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
+    expect(wrapper.text()).toContain(
+      t("Governance records refreshed. Invalid proposal ID was ignored."),
     );
   });
 
@@ -371,7 +389,7 @@ describe("ParliamentView", () => {
 
     expect(getGovernanceProposalMock).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain(
-      "Proposal ID must be 32-byte hex (with or without 0x prefix).",
+      t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
     );
   });
 
@@ -408,7 +426,7 @@ describe("ParliamentView", () => {
     });
     expect(getGovernanceProposalMock).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain(
-      "Governance records refreshed. Invalid proposal ID was ignored.",
+      t("Governance records refreshed. Invalid proposal ID was ignored."),
     );
   });
 
@@ -425,11 +443,15 @@ describe("ParliamentView", () => {
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("Referendum found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
 
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
     await flushPromises();
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
   });
 
   it("clears governance refresh status when lookup ids are edited", async () => {
@@ -445,11 +467,11 @@ describe("ParliamentView", () => {
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("Governance records refreshed.");
+    expect(wrapper.text()).toContain(t("Governance records refreshed."));
 
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
     await flushPromises();
-    expect(wrapper.text()).not.toContain("Governance records refreshed.");
+    expect(wrapper.text()).not.toContain(t("Governance records refreshed."));
   });
 
   it("clears stale lookup payloads when reloading the same ids fails", async () => {
@@ -465,7 +487,9 @@ describe("ParliamentView", () => {
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("Referendum found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
 
     getGovernanceReferendumMock.mockRejectedValueOnce(new Error("lookup down"));
     await findButtonByText(wrapper, "Load").trigger("click");
@@ -473,7 +497,9 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("lookup down");
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
   });
 
   it("clears stale lookup state and balance when refresh fails", async () => {
@@ -497,8 +523,12 @@ describe("ParliamentView", () => {
     await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
-    expect(wrapper.text()).toContain("Referendum found: yes.");
-    expect(wrapper.text()).toContain("Proposal found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
+    expect(wrapper.text()).toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
 
     fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
     await findButtonByText(wrapper, "Refresh").trigger("click");
@@ -506,10 +536,14 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("assets down");
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
-    expect(wrapper.text()).not.toContain("Proposal found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
+    expect(wrapper.text()).not.toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
     expect(wrapper.text()).toContain(
-      "Available XOR balance is below the required citizen bond amount.",
+      t("Available XOR balance is below the required citizen bond amount."),
     );
   });
 
@@ -541,7 +575,9 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("assets down");
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
 
     getGovernanceReferendumMock.mockResolvedValueOnce({
       found: true,
@@ -553,7 +589,9 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(getGovernanceReferendumMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.text()).toContain("Referendum found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
   });
 
   it("ignores stale lookup responses when ids change during request", async () => {
@@ -578,7 +616,9 @@ describe("ParliamentView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
   });
 
   it("keeps proposal lookup results visible after proposal id auto-normalizes", async () => {
@@ -599,7 +639,9 @@ describe("ParliamentView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Proposal found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
     expect(
       (
         wrapper.get('input[placeholder="0x0123..."]')
@@ -637,7 +679,9 @@ describe("ParliamentView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Proposal found: yes.");
+    expect(wrapper.text()).toContain(
+      t("Proposal found: {value}.", { value: t("yes") }),
+    );
   });
 
   it("ignores in-flight lookup payload after active account switch", async () => {
@@ -678,7 +722,9 @@ describe("ParliamentView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain("Referendum found: yes.");
+    expect(wrapper.text()).not.toContain(
+      t("Referendum found: {value}.", { value: t("yes") }),
+    );
     expect(wrapper.text()).toContain("bob@wonderland");
   });
 
@@ -731,11 +777,11 @@ describe("ParliamentView", () => {
 
     const xorBalanceRow = wrapper
       .findAll(".kv")
-      .find((node) => node.text().includes("XOR Balance"));
+      .find((node) => node.text().includes(t("XOR Balance")));
     expect(xorBalanceRow?.text()).toContain("15000 XOR");
     expect(wrapper.text()).toContain("bob@wonderland");
     expect(wrapper.text()).not.toContain(
-      "Available XOR balance is below the required citizen bond amount.",
+      t("Available XOR balance is below the required citizen bond amount."),
     );
   });
 
@@ -780,7 +826,7 @@ describe("ParliamentView", () => {
 
     const xorBalanceRow = wrapper
       .findAll(".kv")
-      .find((node) => node.text().includes("XOR Balance"));
+      .find((node) => node.text().includes(t("XOR Balance")));
     expect(xorBalanceRow?.text()).toContain("15000 XOR");
     expect(wrapper.text()).toContain("bob@wonderland");
     expect(wrapper.text()).not.toContain("assets down");
@@ -801,7 +847,7 @@ describe("ParliamentView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(
-      "Configure Torii and complete account onboarding first.",
+      t("Set up network and wallet first."),
     );
     expect(wrapper.text()).not.toContain("assets down");
   });
@@ -814,7 +860,9 @@ describe("ParliamentView", () => {
     const ballotButton = findButtonByText(wrapper, "Submit ballot");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Ballot permission is missing on this account.",
+      t(
+        "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
+      ),
     );
   });
 
@@ -832,10 +880,10 @@ describe("ParliamentView", () => {
     expect(finalizeButton.attributes("disabled")).toBeDefined();
     expect(enactButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Finalize requires CanManageParliament permission.",
+      t("Finalize requires CanManageParliament permission."),
     );
     expect(wrapper.text()).toContain(
-      "Enact requires CanEnactGovernance permission.",
+      t("Enact requires CanEnactGovernance permission."),
     );
   });
 
@@ -853,14 +901,14 @@ describe("ParliamentView", () => {
     await wrapper.get('input[placeholder="10000"]').setValue("10.5");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Ballot amount must be a whole number greater than zero.",
+      t("Ballot amount must be a whole number greater than zero."),
     );
 
     await wrapper.get('input[placeholder="10000"]').setValue("10");
     await wrapper.get('input[type="number"][min="1"]').setValue("0");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
-      "Lock duration must be a positive integer number of blocks.",
+      t("Lock duration must be a positive integer number of blocks."),
     );
   });
 

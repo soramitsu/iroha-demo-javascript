@@ -140,7 +140,7 @@ export const LOCALE_DIRECTIONS: Record<SupportedLocale, LocaleDirection> = {
 const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Iroha Points": "Irohaポイント",
   "Torii control deck": "Toriiコントロールデッキ",
-  "Modern Torii-connected wallet": "モダンなTorii接続ウォレット",
+  "Modern Torii-connected wallet": "TAIRAテストネット用ウォレット",
   Torii: "Torii",
   Chain: "チェーン",
   "Asset not set": "アセット未設定",
@@ -173,32 +173,25 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   Receive: "受信",
   Offline: "オフライン",
   Explore: "探索",
-  "Generate keys, recovery phrase, Connect pairing":
-    "鍵・リカバリーフレーズ生成、Connect連携",
-  "TAIRA connection, asset, and authority keys": "TAIRA接続、アセット、権限鍵",
-  "Balances, assets, and latest transactions":
-    "残高、アセット、最新トランザクション",
-  "Nominate validators and stake XOR for NPOS":
-    "バリデータを指名してXORをNPOSステーク",
-  "Bond citizenship and vote in governance referenda":
-    "市民権をボンドしガバナンス投票",
-  "Auto-deduct and manage recurring services":
-    "自動引き落としと定期サービス管理",
-  "Transfer assets with camera or QR upload":
-    "カメラまたはQRアップロードで送金",
-  "Share QR codes or IH58 to request funds": "QRコードまたはIH58で受取依頼",
-  "Offline wallets, invoices, and QR exchanges":
-    "オフラインウォレット、請求、QR交換",
-  "Network metrics and asset explorer": "ネットワーク指標とアセット探索",
+  "Generate keys, recovery phrase, Connect pairing": "鍵とリカバリを作成",
+  "TAIRA connection, asset, and authority keys": "TAIRA接続と鍵",
+  "Balances, assets, and latest transactions": "残高と履歴",
+  "Nominate validators and stake XOR for NPOS": "XORをステーク",
+  "Bond citizenship and vote in governance referenda": "市民権と投票",
+  "Auto-deduct and manage recurring services": "定期支払い",
+  "Transfer assets with camera or QR upload": "QRで送金",
+  "Share QR codes or IH58 to request funds": "QRで受取",
+  "Offline wallets, invoices, and QR exchanges": "オフライン決済",
+  "Network metrics and asset explorer": "ネットワーク状況",
   "Session Setup": "セッション設定",
   "Provision your TAIRA testnet account": "TAIRAテストネットアカウントを準備",
   "TAIRA connection & keys": "TAIRA接続と鍵",
   "Wallet Overview": "ウォレット概要",
   "Balances & activity": "残高とアクティビティ",
   "NPOS Staking": "NPOSステーキング",
-  "Nominate validators and stake XOR": "バリデータ指名とXORステーク",
+  "Nominate validators and stake XOR": "XORをステーク",
   "SORA Parliament": "SORA議会",
-  "Citizenship bond and governance voting": "市民権ボンドとガバナンス投票",
+  "Citizenship bond and governance voting": "市民権と投票",
   "Subscription Hub": "サブスクリプションハブ",
   "Auto-deduct and manage services": "自動引き落としとサービス管理",
   "Send Points": "ポイント送信",
@@ -206,9 +199,12 @@ const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "ポイント受信",
   "Share QR or IH58": "QRまたはIH58を共有",
   Explorer: "エクスプローラー",
-  "Network & asset insights": "ネットワークとアセット分析",
-  "Offline wallets, invoices, and payments":
-    "オフラインウォレット、請求、支払い",
+  "Network & asset insights": "ネットワーク状況",
+  "Offline wallets, invoices, and payments": "オフライン決済",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "{amount} XORをボンドして投票",
+  "Shield policy mode: {mode}.": "モード: {mode}。",
+  "Move funds to online wallet": "オンラインへ移動",
   "TAIRA locked": "TAIRA固定",
   "Open Taira Explorer": "TAIRA Explorerを開く",
   "Iroha logo": "Irohaロゴ",
@@ -264,10 +260,11 @@ const RU_MANUAL_TRANSLATIONS: TranslationTable = {
   Nay: "Против",
   Abstain: "Воздержаться",
   "SORA Parliament": "Парламент SORA",
-  "Citizenship bond and governance voting":
-    "Гражданский депозит и голосование по управлению",
+  "Citizenship bond and governance voting": "Гражданство и голосование",
   "Bond citizenship and vote in governance referenda":
-    "Заблокируйте гражданский депозит и голосуйте на референдумах управления",
+    "Внесите депозит и голосуйте",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "Внесите {amount} XOR, чтобы голосовать.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "Для регистрации гражданства требуется минимум {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -301,9 +298,10 @@ const RU_MANUAL_TRANSLATIONS: TranslationTable = {
     "Анстейк ({requestId}) запланирован на {datetime}. Tx: {hash}",
   "No {symbol} balance available to bond.":
     "Недостаточно баланса {symbol} для блокировки.",
-  "Nominate validators and stake XOR": "Выберите валидаторов и застейкайте XOR",
-  "Nominate validators and stake XOR for NPOS":
-    "Выберите валидаторов и застейкайте XOR для NPOS",
+  "Nominate validators and stake XOR": "Стейкайте XOR",
+  "Nominate validators and stake XOR for NPOS": "Стейкайте XOR",
+  "Shield policy mode: {mode}.": "Режим: {mode}.",
+  "Move funds to online wallet": "Перевести в онлайн-кошелек",
   "referendumId and proposalId are required for finalize.":
     "Для finalize требуются referendumId и proposalId.",
   "referendumId is required before submitting a ballot.":
@@ -336,10 +334,11 @@ const UK_MANUAL_TRANSLATIONS: TranslationTable = {
   Nay: "Проти",
   Abstain: "Утриматися",
   "SORA Parliament": "Парламент SORA",
-  "Citizenship bond and governance voting":
-    "Громадянський депозит і голосування з управління",
+  "Citizenship bond and governance voting": "Громадянство і голосування",
   "Bond citizenship and vote in governance referenda":
-    "Заблокуйте громадянський депозит і голосуйте на референдумах з управління",
+    "Внесіть депозит і голосуйте",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "Внесіть {amount} XOR, щоб голосувати.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "Для реєстрації громадянства потрібен мінімум {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -374,9 +373,10 @@ const UK_MANUAL_TRANSLATIONS: TranslationTable = {
     "Анстейк ({requestId}) заплановано на {datetime}. Tx: {hash}",
   "No {symbol} balance available to bond.":
     "Недостатньо балансу {symbol} для блокування.",
-  "Nominate validators and stake XOR": "Оберіть валідаторів і застейкайте XOR",
-  "Nominate validators and stake XOR for NPOS":
-    "Оберіть валідаторів і застейкайте XOR для NPOS",
+  "Nominate validators and stake XOR": "Стейкайте XOR",
+  "Nominate validators and stake XOR for NPOS": "Стейкайте XOR",
+  "Shield policy mode: {mode}.": "Режим: {mode}.",
+  "Move funds to online wallet": "Перевести в онлайн-гаманець",
   "referendumId and proposalId are required for finalize.":
     "Для finalize потрібні referendumId і proposalId.",
   "referendumId is required before submitting a ballot.":
@@ -408,9 +408,10 @@ const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
   Aye: "赞成",
   Nay: "反对",
   "SORA Parliament": "SORA 议会",
-  "Citizenship bond and governance voting": "公民保证金与治理投票",
-  "Bond citizenship and vote in governance referenda":
-    "质押公民保证金并在治理公投中投票",
+  "Citizenship bond and governance voting": "公民与投票",
+  "Bond citizenship and vote in governance referenda": "质押后投票",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "质押 {amount} XOR 后即可投票。",
   "A minimum of {amount} XOR is required to register citizenship.":
     "注册公民身份至少需要 {amount} XOR。",
   "Available XOR balance is below the required citizen bond amount.":
@@ -442,8 +443,10 @@ const ZH_MANUAL_TRANSLATIONS: TranslationTable = {
   "Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}":
     "解质押（{requestId}）已安排在 {datetime}。Tx: {hash}",
   "No {symbol} balance available to bond.": "没有可用于质押的 {symbol} 余额。",
-  "Nominate validators and stake XOR": "提名验证者并质押 XOR",
-  "Nominate validators and stake XOR for NPOS": "提名验证者并为 NPOS 质押 XOR",
+  "Nominate validators and stake XOR": "质押 XOR",
+  "Nominate validators and stake XOR for NPOS": "质押 XOR",
+  "Shield policy mode: {mode}.": "模式：{mode}。",
+  "Move funds to online wallet": "转到在线钱包",
   "referendumId and proposalId are required for finalize.":
     "执行 finalize 需要 referendumId 和 proposalId。",
   "referendumId is required before submitting a ballot.":
@@ -480,14 +483,21 @@ const ZH_TW_MANUAL_TRANSLATIONS: TranslationTable = {
   "TAIRA Testnet": "TAIRA 測試網",
   "TAIRA Torii ready": "TAIRA Torii 已就緒",
   "Open Taira Explorer": "開啟 TAIRA Explorer",
+  "Citizenship bond and governance voting": "公民與投票",
+  "Bond citizenship and vote in governance referenda": "質押後投票",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "質押 {amount} XOR 後即可投票。",
+  "Shield policy mode: {mode}.": "模式：{mode}。",
+  "Move funds to online wallet": "移到線上錢包",
 };
 
 const KO_MANUAL_TRANSLATIONS: TranslationTable = {
   Nay: "반대",
   "SORA Parliament": "SORA 의회",
-  "Citizenship bond and governance voting": "시민권 본딩 및 거버넌스 투표",
-  "Bond citizenship and vote in governance referenda":
-    "시민권 본딩을 완료하고 거버넌스 국민투표에 참여하세요",
+  "Citizenship bond and governance voting": "시민권과 투표",
+  "Bond citizenship and vote in governance referenda": "본딩 후 투표",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "{amount} XOR 본딩 후 투표",
   "A minimum of {amount} XOR is required to register citizenship.":
     "시민권 등록에는 최소 {amount} XOR이 필요합니다.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -520,9 +530,10 @@ const KO_MANUAL_TRANSLATIONS: TranslationTable = {
     "언본딩({requestId})이 {datetime}에 예약되었습니다. Tx: {hash}",
   "No {symbol} balance available to bond.":
     "본딩에 사용할 {symbol} 잔액이 없습니다.",
-  "Nominate validators and stake XOR": "검증인을 지명하고 XOR을 스테이킹하세요",
-  "Nominate validators and stake XOR for NPOS":
-    "NPOS용 검증인을 지명하고 XOR을 스테이킹하세요",
+  "Nominate validators and stake XOR": "XOR 스테이킹",
+  "Nominate validators and stake XOR for NPOS": "XOR 스테이킹",
+  "Shield policy mode: {mode}.": "모드: {mode}.",
+  "Move funds to online wallet": "온라인 지갑으로 이동",
   "referendumId and proposalId are required for finalize.":
     "finalize에는 referendumId와 proposalId가 필요합니다.",
   "referendumId is required before submitting a ballot.":
@@ -553,7 +564,7 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   Abstain: "امتناع",
   "Iroha Points": "نقاط إيروها",
   "Torii control deck": "لوحة تحكم Torii",
-  "Modern Torii-connected wallet": "محفظة حديثة متصلة بـ Torii",
+  "Modern Torii-connected wallet": "محفظة TAIRA",
   Language: "اللغة",
   Navigate: "التنقل",
   "Account Setup": "إعداد الحساب",
@@ -573,19 +584,14 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "TAIRA Torii ready": "Torii TAIRA جاهز",
   "Torii unavailable": "Torii غير متاح",
   "Generate keys, recovery phrase, Connect pairing":
-    "أنشئ المفاتيح وعبارة الاسترداد واقتران Connect",
-  "TAIRA connection, asset, and authority keys":
-    "اتصال TAIRA والأصل ومفاتيح الصلاحية",
-  "Balances, assets, and latest transactions": "الأرصدة والأصول وآخر المعاملات",
-  "Auto-deduct and manage recurring services":
-    "خصم تلقائي وإدارة الخدمات المتكررة",
-  "Transfer assets with camera or QR upload":
-    "انقل الأصول بالكاميرا أو عبر رفع QR",
-  "Share QR codes or IH58 to request funds":
-    "شارك رموز QR أو IH58 لطلب الأموال",
-  "Offline wallets, invoices, and QR exchanges":
-    "محافظ دون اتصال وفواتير وتبادل QR",
-  "Network metrics and asset explorer": "مقاييس الشبكة ومستكشف الأصول",
+    "أنشئ المفاتيح والنسخة الاحتياطية",
+  "TAIRA connection, asset, and authority keys": "اتصال TAIRA والمفاتيح",
+  "Balances, assets, and latest transactions": "الأرصدة والنشاط",
+  "Auto-deduct and manage recurring services": "الدفعات المتكررة",
+  "Transfer assets with camera or QR upload": "إرسال عبر QR",
+  "Share QR codes or IH58 to request funds": "استلام عبر QR",
+  "Offline wallets, invoices, and QR exchanges": "مدفوعات دون اتصال",
+  "Network metrics and asset explorer": "بيانات الشبكة",
   "Wallet Overview": "نظرة عامة على المحفظة",
   "Balances & activity": "الأرصدة والنشاط",
   "Subscription Hub": "مركز الاشتراكات",
@@ -593,9 +599,10 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "استلام النقاط",
   "Network & asset insights": "رؤى الشبكة والأصول",
   "SORA Parliament": "برلمان SORA",
-  "Citizenship bond and governance voting": "سند المواطنة والتصويت على الحوكمة",
-  "Bond citizenship and vote in governance referenda":
-    "أودع سند المواطنة وصوّت في استفتاءات الحوكمة",
+  "Citizenship bond and governance voting": "المواطنة والتصويت",
+  "Bond citizenship and vote in governance referenda": "أودع للمواطنة وصوّت",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "أودع {amount} XOR للتصويت.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "يتطلب تسجيل المواطنة حدًا أدنى قدره {amount} XOR.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -632,6 +639,8 @@ const AR_MANUAL_TRANSLATIONS: TranslationTable = {
   "referendumId is required before submitting a ballot.":
     "يلزم referendumId قبل إرسال الاقتراع.",
   "proposalId is required for enact.": "يلزم proposalId لعملية enact.",
+  "Shield policy mode: {mode}.": "الوضع: {mode}.",
+  "Move funds to online wallet": "انقل إلى المحفظة المتصلة",
   "TAIRA Testnet": "شبكة TAIRA التجريبية",
   "Public TAIRA testnet profile.": "ملف شبكة TAIRA التجريبية العامة.",
   "Store for iCloud Drive": "حفظ في iCloud Drive",
@@ -658,7 +667,7 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   Abstain: "ممتنع",
   "Iroha Points": "امتیازهای Iroha",
   "Torii control deck": "داشبورد کنترل Torii",
-  "Modern Torii-connected wallet": "کیف پول مدرن متصل به Torii",
+  "Modern Torii-connected wallet": "کیف پول TAIRA",
   Language: "زبان",
   Navigate: "پیمایش",
   "Account Setup": "راه‌اندازی حساب",
@@ -678,20 +687,14 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "TAIRA Torii ready": "Torii TAIRA آماده است",
   "Torii unavailable": "Torii در دسترس نیست",
   "Generate keys, recovery phrase, Connect pairing":
-    "کلیدها، عبارت بازیابی و جفت‌سازی Connect را ایجاد کنید",
-  "TAIRA connection, asset, and authority keys":
-    "اتصال TAIRA، دارایی و کلیدهای مجوز",
-  "Balances, assets, and latest transactions":
-    "موجودی‌ها، دارایی‌ها و آخرین تراکنش‌ها",
-  "Auto-deduct and manage recurring services":
-    "برداشت خودکار و مدیریت خدمات تکرارشونده",
-  "Transfer assets with camera or QR upload":
-    "دارایی‌ها را با دوربین یا آپلود QR منتقل کنید",
-  "Share QR codes or IH58 to request funds":
-    "برای درخواست وجه، کد QR یا IH58 را به‌اشتراک بگذارید",
-  "Offline wallets, invoices, and QR exchanges":
-    "کیف پول آفلاین، فاکتور و تبادل QR",
-  "Network metrics and asset explorer": "شاخص‌های شبکه و کاوشگر دارایی",
+    "کلید و نسخه پشتیبان را بسازید",
+  "TAIRA connection, asset, and authority keys": "اتصال TAIRA و کلیدها",
+  "Balances, assets, and latest transactions": "موجودی و فعالیت",
+  "Auto-deduct and manage recurring services": "پرداخت های دوره ای",
+  "Transfer assets with camera or QR upload": "ارسال با QR",
+  "Share QR codes or IH58 to request funds": "دریافت با QR",
+  "Offline wallets, invoices, and QR exchanges": "پرداخت آفلاین",
+  "Network metrics and asset explorer": "داده های شبکه",
   "Wallet Overview": "نمای کلی کیف پول",
   "Balances & activity": "موجودی و فعالیت",
   "Subscription Hub": "مرکز اشتراک",
@@ -699,9 +702,10 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "دریافت امتیاز",
   "Network & asset insights": "بینش شبکه و دارایی",
   "SORA Parliament": "پارلمان SORA",
-  "Citizenship bond and governance voting": "باند شهروندی و رای‌گیری حاکمیتی",
-  "Bond citizenship and vote in governance referenda":
-    "برای شهروندی باند کنید و در همه‌پرسی‌های حاکمیتی رای دهید",
+  "Citizenship bond and governance voting": "شهروندی و رای",
+  "Bond citizenship and vote in governance referenda": "باند شهروندی و رای",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "{amount} XOR باند کنید و رای دهید.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "برای ثبت شهروندی حداقل {amount} XOR لازم است.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -740,6 +744,8 @@ const FA_MANUAL_TRANSLATIONS: TranslationTable = {
   "referendumId is required before submitting a ballot.":
     "پیش از ارسال رای referendumId لازم است.",
   "proposalId is required for enact.": "برای enact به proposalId نیاز است.",
+  "Shield policy mode: {mode}.": "حالت: {mode}.",
+  "Move funds to online wallet": "انتقال به کیف پول آنلاین",
   "TAIRA Testnet": "تست‌نت TAIRA",
   "Public TAIRA testnet profile.": "پروفایل عمومی تست‌نت TAIRA.",
   "Store for iCloud Drive": "ذخیره در iCloud Drive",
@@ -766,7 +772,7 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   Abstain: "נמנע",
   "Iroha Points": "נקודות Iroha",
   "Torii control deck": "לוח בקרה של Torii",
-  "Modern Torii-connected wallet": "ארנק מודרני המחובר ל-Torii",
+  "Modern Torii-connected wallet": "ארנק TAIRA",
   Language: "שפה",
   Navigate: "ניווט",
   "Account Setup": "הגדרת חשבון",
@@ -785,20 +791,14 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "Onboarding required": "נדרש תהליך הצטרפות",
   "TAIRA Torii ready": "Torii של TAIRA מוכן",
   "Torii unavailable": "Torii לא זמין",
-  "Generate keys, recovery phrase, Connect pairing":
-    "יצירת מפתחות, משפט שחזור וצימוד Connect",
-  "TAIRA connection, asset, and authority keys":
-    "חיבור TAIRA, נכס ומפתחות הרשאה",
-  "Balances, assets, and latest transactions": "יתרות, נכסים ועסקאות אחרונות",
-  "Auto-deduct and manage recurring services":
-    "חיוב אוטומטי וניהול שירותים חוזרים",
-  "Transfer assets with camera or QR upload":
-    "העברת נכסים עם מצלמה או העלאת QR",
-  "Share QR codes or IH58 to request funds":
-    "שתפו קודי QR או IH58 כדי לבקש כספים",
-  "Offline wallets, invoices, and QR exchanges":
-    "ארנקים אופליין, חשבוניות והחלפות QR",
-  "Network metrics and asset explorer": "מדדי רשת וסייר נכסים",
+  "Generate keys, recovery phrase, Connect pairing": "צרו מפתחות וגיבוי",
+  "TAIRA connection, asset, and authority keys": "חיבור TAIRA ומפתחות",
+  "Balances, assets, and latest transactions": "יתרות ופעילות",
+  "Auto-deduct and manage recurring services": "תשלומים חוזרים",
+  "Transfer assets with camera or QR upload": "שליחה עם QR",
+  "Share QR codes or IH58 to request funds": "קבלה עם QR",
+  "Offline wallets, invoices, and QR exchanges": "תשלומים אופליין",
+  "Network metrics and asset explorer": "נתוני רשת",
   "Wallet Overview": "סקירת ארנק",
   "Balances & activity": "יתרות ופעילות",
   "Subscription Hub": "מרכז מנויים",
@@ -806,9 +806,10 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "קבלת נקודות",
   "Network & asset insights": "תובנות רשת ונכסים",
   "SORA Parliament": "פרלמנט SORA",
-  "Citizenship bond and governance voting": "בונד אזרחות והצבעה בממשל",
-  "Bond citizenship and vote in governance referenda":
-    "בצעו בונד אזרחות והצביעו במשאלי ממשל",
+  "Citizenship bond and governance voting": "אזרחות והצבעה",
+  "Bond citizenship and vote in governance referenda": "בונד אזרחות והצביעו",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "בצעו בונד של {amount} XOR כדי להצביע.",
   "A minimum of {amount} XOR is required to register citizenship.":
     "נדרש מינימום של {amount} XOR לרישום אזרחות.",
   "Available XOR balance is below the required citizen bond amount.":
@@ -844,6 +845,8 @@ const HE_MANUAL_TRANSLATIONS: TranslationTable = {
   "referendumId is required before submitting a ballot.":
     "נדרש referendumId לפני שליחת הצבעה.",
   "proposalId is required for enact.": "נדרש proposalId עבור enact.",
+  "Shield policy mode: {mode}.": "מצב: {mode}.",
+  "Move funds to online wallet": "העברה לארנק אונליין",
   "TAIRA Testnet": "רשת בדיקות TAIRA",
   "Public TAIRA testnet profile.": "פרופיל ציבורי של רשת הבדיקות TAIRA.",
   "Store for iCloud Drive": "שמירה ב-iCloud Drive",
@@ -870,7 +873,7 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   Abstain: "غیر حاضر",
   "Iroha Points": "Iroha پوائنٹس",
   "Torii control deck": "Torii کنٹرول ڈیک",
-  "Modern Torii-connected wallet": "جدید Torii سے منسلک والیٹ",
+  "Modern Torii-connected wallet": "TAIRA والیٹ",
   Language: "زبان",
   Navigate: "نیویگیٹ کریں",
   "Account Setup": "اکاؤنٹ سیٹ اپ",
@@ -889,21 +892,14 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Onboarding required": "آن بورڈنگ درکار ہے",
   "TAIRA Torii ready": "TAIRA Torii تیار ہے",
   "Torii unavailable": "Torii دستیاب نہیں",
-  "Generate keys, recovery phrase, Connect pairing":
-    "کلیدیں، ریکوری فریز اور Connect پیئرنگ بنائیں",
-  "TAIRA connection, asset, and authority keys":
-    "TAIRA کنکشن، اثاثہ اور اتھارٹی کلیدیں",
-  "Balances, assets, and latest transactions":
-    "بیلنس، اثاثے اور تازہ ترین ٹرانزیکشنز",
-  "Auto-deduct and manage recurring services":
-    "خودکار کٹوتی اور باربار سروسز کا انتظام",
-  "Transfer assets with camera or QR upload":
-    "کیمرے یا QR اپ لوڈ سے اثاثے منتقل کریں",
-  "Share QR codes or IH58 to request funds":
-    "فنڈز کی درخواست کے لیے QR کوڈز یا IH58 شیئر کریں",
-  "Offline wallets, invoices, and QR exchanges":
-    "آف لائن والیٹس، انوائسز اور QR تبادلے",
-  "Network metrics and asset explorer": "نیٹ ورک میٹرکس اور اثاثہ ایکسپلورر",
+  "Generate keys, recovery phrase, Connect pairing": "کلیدیں اور بیک اپ بنائیں",
+  "TAIRA connection, asset, and authority keys": "TAIRA کنکشن اور کلیدیں",
+  "Balances, assets, and latest transactions": "بیلنس اور سرگرمی",
+  "Auto-deduct and manage recurring services": "باربار ادائیگیاں",
+  "Transfer assets with camera or QR upload": "QR سے بھیجیں",
+  "Share QR codes or IH58 to request funds": "QR سے وصول کریں",
+  "Offline wallets, invoices, and QR exchanges": "آف لائن ادائیگیاں",
+  "Network metrics and asset explorer": "نیٹ ورک ڈیٹا",
   "Wallet Overview": "والیٹ کا جائزہ",
   "Balances & activity": "بیلنس اور سرگرمی",
   "Subscription Hub": "سبسکرپشن ہب",
@@ -911,9 +907,11 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "Receive Points": "پوائنٹس وصول کریں",
   "Network & asset insights": "نیٹ ورک اور اثاثہ بصیرت",
   "SORA Parliament": "سورا پارلیمنٹ",
-  "Citizenship bond and governance voting": "شہریت بانڈ اور گورننس ووٹنگ",
+  "Citizenship bond and governance voting": "شہریت اور ووٹنگ",
   "Bond citizenship and vote in governance referenda":
-    "شہریت کے لیے بانڈ کریں اور گورننس ریفرنڈم میں ووٹ دیں",
+    "شہریت بانڈ کریں اور ووٹ دیں",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "{amount} XOR بانڈ کریں اور ووٹ دیں۔",
   "A minimum of {amount} XOR is required to register citizenship.":
     "شہریت رجسٹر کرنے کے لیے کم از کم {amount} XOR درکار ہے۔",
   "Available XOR balance is below the required citizen bond amount.":
@@ -951,6 +949,8 @@ const UR_MANUAL_TRANSLATIONS: TranslationTable = {
   "referendumId is required before submitting a ballot.":
     "بیلٹ جمع کرنے سے پہلے referendumId درکار ہے۔",
   "proposalId is required for enact.": "enact کے لیے proposalId درکار ہے۔",
+  "Shield policy mode: {mode}.": "موڈ: {mode}۔",
+  "Move funds to online wallet": "آن لائن والیٹ میں منتقل کریں",
   "TAIRA Testnet": "TAIRA ٹیسٹ نیٹ",
   "Public TAIRA testnet profile.": "عوامی TAIRA ٹیسٹ نیٹ پروفائل۔",
   "Store for iCloud Drive": "iCloud Drive میں محفوظ کریں",
@@ -1036,30 +1036,35 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Invoice asset does not match the active offline asset.",
   "Payment asset does not match the active offline asset.":
     "Payment asset does not match the active offline asset.",
+  "Create on-chain account": "Create on-chain account",
+  "Requires authority credentials to create the account on-chain.":
+    "Requires authority credentials to create the account on-chain.",
+  "Set up network and wallet first.": "Set up network and wallet first.",
   "Create and save your TAIRA wallet": "Create and save your TAIRA wallet",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
-    "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.",
+    "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
-    "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
+    "Create keys, back up your phrase, and save the wallet. Alias is optional.",
   Advanced: "Advanced",
   "Hide advanced": "Hide advanced",
-  "Optional on-chain alias registration":
-    "Optional on-chain alias registration",
+  "Optional on-chain alias registration": "Optional alias",
   "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
-    "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
-  "Alias Metadata (JSON, optional)": "Alias Metadata (JSON, optional)",
-  "Register on-chain alias": "Register on-chain alias",
+    "Register an alias if you want one. The wallet works without it.",
+  "Alias Metadata (JSON, optional)": "Alias metadata",
+  "Register on-chain alias": "Register alias",
   "Registering alias…": "Registering alias…",
   "On-chain alias {accountId} queued (tx {txHash}…)":
-    "On-chain alias {accountId} queued (tx {txHash}…)",
+    "Alias queued: {accountId} ({txHash}...)",
   "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.":
-    "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.",
-  "Saved Wallets": "Saved Wallets",
+    "Alias registration is unavailable here. Wallet saved locally.",
+  "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.":
+    "Alias registration is unavailable here. Wallet saved locally.",
+  "Saved Wallets": "Wallets",
   "Switch between saved wallets or begin a fresh wallet setup.":
-    "Switch between saved wallets or begin a fresh wallet setup.",
+    "Switch wallets or create one.",
   "No saved wallets yet. Complete the wallet setup form to add one.":
-    "No saved wallets yet. Complete the wallet setup form to add one.",
-  "Add another wallet": "Add another wallet",
+    "No saved wallets yet.",
+  "Add another wallet": "Add wallet",
   "Switch between saved profiles or begin a fresh wallet setup.":
     "Switch between saved profiles or begin a fresh wallet setup.",
   "No saved accounts yet. Complete the wallet setup form to add one.":
@@ -1073,36 +1078,427 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Use the real Base58 I105 account literal, for example {example}. Do not use @domain or i105: forms.":
     "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
-    "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+    "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
-    "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+    "{domain} is local only.",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
   "Claim Testnet XOR": "Claim Testnet XOR",
   "Requesting…": "Requesting…",
+  "Faucet request in progress": "Faucet request in progress",
+  "Requesting faucet puzzle…": "Requesting faucet puzzle…",
+  "Waiting for finalized faucet seed data…":
+    "Waiting for finalized faucet seed data…",
+  "Solving faucet proof-of-work…": "Solving faucet proof-of-work…",
+  "Submitting faucet claim…": "Submitting faucet claim…",
+  "Faucet claim accepted. Updating wallet…":
+    "Faucet claim accepted. Updating wallet…",
+  "Refreshing wallet balance…": "Refreshing wallet balance…",
+  "Your TAIRA faucet request is in flight. This can take a few seconds.":
+    "Your TAIRA faucet request is in flight. This can take a few seconds.",
+  "Waiting for TAIRA to expose the funded asset in account balances.":
+    "Waiting for TAIRA to expose the funded asset in account balances.",
   "Testnet XOR requested: {hash}": "Testnet XOR requested: {hash}",
+  "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.":
+    "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
   "Failed to request faucet funds.": "Failed to request faucet funds.",
   "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
-    "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+    "This wallet is local only. Balances stay empty until it is live on-chain.",
+  "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.":
+    "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",
   "Wallet data is unavailable until this account exists on-chain.":
-    "Wallet data is unavailable until this account exists on-chain.",
-  "Account {accountId} saved locally.": "Account {accountId} saved locally.",
+    "No on-chain wallet data yet.",
+  "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
-    "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.",
+    "UAID alias registration is unavailable here. Wallet saved locally.",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
   I105: "I105",
-  "Share QR or IH58": "Share QR or Account ID",
-  "Share QR or Account ID": "Share QR or Account ID",
-  "Share QR codes or IH58 to request funds":
-    "Share QR codes or account IDs to request funds",
-  "Share QR codes or account IDs to request funds":
-    "Share QR codes or account IDs to request funds",
-  "34m... or 0x...@wonderland": "Example I105 Account ID",
-  "n42u... (I105 account ID)": "Example I105 Account ID",
-  "6cmz... (canonical I105 account ID)": "Example I105 Account ID",
+  "Iroha Points": "TAIRA Testnet",
+  "Modern Torii-connected wallet": "TAIRA testnet wallet",
+  Navigate: "Menu",
+  "Asset not set": "No asset",
+  "Switch to light": "Light mode",
+  "Switch to dark": "Dark mode",
+  "Account ready": "Wallet ready",
+  "Account saved": "Wallet saved",
+  "Complete onboarding": "Finish setup",
+  "Onboarding required": "Setup required",
+  "Complete account setup first": "Create a wallet first.",
+  "TAIRA Torii ready": "Network ready",
+  "Torii unavailable": "Network unavailable",
+  "TAIRA locked": "TAIRA only",
+  "Open Taira Explorer": "Open explorer",
+  "Explorer Metrics": "Network metrics",
+  "Metrics unavailable. Check Torii status.":
+    "Metrics unavailable. Check the network.",
+  "Account Setup": "Create Wallet",
+  Session: "Network",
+  Parliament: "Governance",
+  Explorer: "Explore",
+  "Create and save your TAIRA wallet": "Create wallet",
+  "Generate keys, recovery phrase, Connect pairing":
+    "Create wallet and pair Connect",
+  "Balances, assets, and latest transactions": "Balances and activity",
+  "Transfer assets with camera or QR upload": "Send with QR",
+  "Share QR or IH58": "Show QR or Account ID",
+  "Share QR or Account ID": "Show QR or Account ID",
+  "Share QR codes or IH58 to request funds": "Show QR to get paid",
+  "Share QR codes or account IDs to request funds": "Show QR to get paid",
+  "Auto-deduct and manage recurring services": "Manage recurring payments",
+  "Nominate validators and stake XOR for NPOS": "Stake XOR",
+  "Bond citizenship and vote in governance referenda":
+    "Bond citizenship to vote",
+  "Offline wallets, invoices, and QR exchanges": "Offline payments",
+  "Network metrics and asset explorer": "Network and assets",
+  "TAIRA connection, asset, and authority keys": "Network and keys",
+  "Wallet Overview": "Wallet",
+  "Balances & activity": "Balances and activity",
+  "NPOS Staking": "Stake",
+  "SORA Parliament": "Governance",
+  "Citizenship bond and governance voting": "Citizenship and voting",
+  "Subscription Hub": "Subscriptions",
+  "Auto-deduct and manage services": "Recurring payments",
+  "Send Points": "Send",
+  "Transfer assets via Torii": "Send funds",
+  "Receive Points": "Receive",
+  "Network & asset insights": "Network and assets",
+  "Session Setup": "Network",
+  "TAIRA connection & keys": "Network and keys",
+  "Offline wallets, invoices, and payments": "Offline payments",
+  "TAIRA Testnet Account": "Create wallet",
+  "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
+    "Create keys, back up your phrase, and save the wallet. Registration is optional.",
+  "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
+    "Create keys, back up your phrase, and save the wallet. Alias is optional.",
+  "Display Name (local only, not on-chain)": "Wallet name",
+  "Canonical I105 Account ID": "I105 Account ID",
+  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
+    "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
+  "Generate recovery phrase": "Create recovery phrase",
+  "TAIRA testnet connection is fixed in this build.": "TAIRA only.",
+  "TAIRA testnet connection is fixed for onboarding in this build.":
+    "TAIRA only.",
+  "Public TAIRA testnet profile.": "Public testnet.",
+  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
+    "{domain} is local only.",
+  "Download backup": "Back up phrase",
+  "Write these words down in order. They restore your wallet.":
+    "Back these words up. They restore this wallet.",
+  "I stored my recovery phrase safely.": "I backed up my phrase.",
+  "Save identity": "Save wallet",
+  "Create on-chain account": "Create on-chain account",
+  "Optional on-chain alias registration": "Optional alias",
+  "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
+    "Register an alias if you want one. The wallet works without it.",
+  "Alias Metadata (JSON, optional)": "Alias metadata",
+  "Register on-chain alias": "Register alias",
+  "Registering alias…": "Registering...",
+  "On-chain alias {accountId} queued (tx {txHash}…)":
+    "Alias queued: {accountId} ({txHash}...)",
+  "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.":
+    "Alias registration is unavailable here. Wallet saved locally.",
+  "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.":
+    "Alias registration is unavailable here. Wallet saved locally.",
+  "Saved Wallets": "Wallets",
+  "Switch between saved wallets or begin a fresh wallet setup.":
+    "Switch wallets or create one.",
+  "No saved wallets yet. Complete the wallet setup form to add one.":
+    "No saved wallets yet.",
+  "Add another wallet": "Add wallet",
+  "Register another": "New wallet",
+  "Start registration": "Create wallet",
+  "Active account": "Active wallet",
+  "Select account": "Select wallet",
+  "Switch between saved accounts without re-entering keys.":
+    "Switch wallets without re-entering keys.",
+  "No saved accounts yet. Start the registration flow to add one.":
+    "No saved wallets yet.",
+  "Not selected": "No wallet selected",
+  "Recovery phrase saved": "Phrase backed up",
+  "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
+  "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
+    "UAID alias registration is unavailable here. Wallet saved locally.",
+  "Confirm that you stored the recovery phrase.": "Confirm you backed it up.",
+  "Generate a keypair first.": "Create keys first.",
+  "Identity metadata must be a JSON object.": "Metadata must be a JSON object.",
+  "Invalid identity metadata JSON payload.": "Invalid metadata JSON.",
+  Unnamed: "Wallet",
+  "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.":
+    "Pair from your phone. Keys stay there.",
+  "IrohaConnect Pairing": "Connect pairing",
+  "Generate pairing QR": "Show pairing QR",
+  "TAIRA connection is unavailable. Reload and try again.":
+    "TAIRA connection unavailable. Reload and try again.",
+  "Torii Connection": "Network",
+  "Check health": "Test connection",
+  "Key Material": "Keys",
+  "Private Key (hex)": "Private key (hex)",
+  "Public Key": "Public key",
+  "Generate pair": "Generate keys",
+  "Derive from private key": "Derive public key",
+  "Register Account": "Create on-chain account",
+  "Register account": "Create on-chain account",
+  "Requires authority credentials to create the account on-chain.":
+    "Requires authority credentials to create the account on-chain.",
+  "Requires authority credentials — Torii receives a direct Norito transaction.":
+    "Requires authority credentials to create the account on-chain.",
+  "Authority Account ID": "Authority account",
+  "Authority Private Key (hex)": "Authority key (hex)",
+  "Account Metadata (JSON)": "Metadata",
+  Healthy: "Ready",
+  Idle: "Not checked",
+  "Torii responded successfully.": "Connection OK.",
+  "No response from Torii.": "No response.",
+  "Submitted transaction {hash}": "Submitted: {hash}",
+  Alice: "Main wallet",
+  "Thanks for lunch": "Lunch",
+  "Coffee refill": "Coffee",
+  "Thanks!": "Thanks",
+  "Back to hot wallet": "Back to main wallet",
+  "Service or merchant": "Merchant",
+  "Optional note": "Note (optional)",
+  "Faucet Request": "Testnet faucet",
+  "Top up a new TAIRA account once with starter XOR.":
+    "Fund a new wallet with starter XOR.",
+  "Claim Testnet XOR": "Claim XOR",
+  "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
+    "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",
+  "No assets found for this account.": "No assets yet.",
+  "Latest Transactions": "Recent activity",
+  "No transfers recorded yet.": "No activity yet.",
+  "Faucet request in progress": "Claiming testnet XOR",
+  "Requesting faucet puzzle…": "Loading faucet challenge...",
+  "Waiting for finalized faucet seed data…": "Waiting for faucet seed...",
+  "Solving faucet proof-of-work…": "Solving faucet proof...",
+  "Submitting faucet claim…": "Submitting claim...",
+  "Faucet claim accepted. Updating wallet…":
+    "Claim accepted. Updating wallet...",
+  "Refreshing wallet balance…": "Refreshing wallet...",
+  "Your TAIRA faucet request is in flight. This can take a few seconds.":
+    "This can take a few seconds.",
+  "Waiting for TAIRA to expose the funded asset in account balances.":
+    "Waiting for balances to index.",
+  "Testnet XOR requested: {hash}": "XOR claimed: {hash}",
+  "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.":
+    "Claim accepted. Balances are still indexing. Refresh in a few seconds.",
+  "Failed to request faucet funds.": "Faucet request failed.",
+  "Wallet data is unavailable until this account exists on-chain.":
+    "No on-chain wallet data yet.",
+  "Share Payment QR": "Receive",
+  "Configure account first": "Create wallet first",
+  "Configure an account first.": "Create wallet first.",
+  "Configure an account before generating QR codes.":
+    "Create a wallet before showing a QR.",
+  "Show QR Code": "Show QR",
+  "Hide QR Code": "Hide QR",
+  "QR encodes account + amount + asset definition for compatible wallets.":
+    "QR includes account, amount, and asset.",
+  "Use the button above to render a QR that wallets can scan.":
+    "Show the QR to request funds.",
+  "Tap the button to generate a QR.": "Tap to show a QR.",
+  "Generating QR...": "Generating QR...",
+  "Failed to render QR.": "Could not render QR.",
+  "Transfer Asset": "Send",
+  "Scan QR Code": "Scan QR",
+  "Upload QR Image": "Upload QR",
+  "Destination Account ID": "To",
+  "Destination Account": "To",
+  "Memo (optional)": "Note",
+  "Shield transfer": "Shielded send",
+  "Shield policy mode: {mode}.": "Mode: {mode}.",
+  "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.":
+    "Shielding only supports sending to yourself in whole base units.",
+  "QR decoded successfully.": "QR loaded.",
+  "QR payload is invalid.": "Invalid QR.",
+  "Configure Torii + account first.": "Set up network and wallet first.",
+  "Configure Torii and account first.": "Set up network and wallet first.",
+  "Configure account and asset first.": "Set up wallet and asset first.",
+  "Shield mode is unavailable.": "Shielding is unavailable.",
+  "Shield mode requires destination to be your active account.":
+    "Shielded sends must go to your own account.",
+  "Shield amount must be a whole number greater than zero.":
+    "Enter a whole-number shield amount.",
+  "Shield transaction submitted: {hash}": "Shielded send: {hash}",
+  "Transaction submitted: {hash}": "Sent: {hash}",
+  "Citizenship Bond": "Citizenship",
+  "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
+    "Bond {amount} XOR to vote.",
+  "Ballot: {state}": "Vote: {state}",
+  "Granted permissions: {permissions}": "Permissions: {permissions}",
+  "Citizenship voting permission detected. Bonding is no longer required.":
+    "Voting is already enabled. No bond needed.",
+  "Available XOR balance is below the required citizen bond amount.":
+    "Not enough XOR for the bond.",
+  "Referendum Lookup": "Lookup",
+  "Proposal ID must be 32-byte hex (with or without 0x prefix).":
+    "Proposal ID must be 32-byte hex.",
+  "Referendum found: {value}.": "Referendum found: {value}",
+  "Proposal found: {value}.": "Proposal found: {value}",
+  "Cast Plain Ballot": "Vote",
+  "Submit a signed CastPlainBallot instruction directly to Torii.":
+    "Submit a CastPlainBallot directly to Torii.",
+  "Lock Records": "Locks",
+  "Lock duration (blocks)": "Lock (blocks)",
+  "Requires CanSubmitGovernanceBallot permission on the active account.":
+    "Needs CanSubmitGovernanceBallot on the active wallet.",
+  "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.":
+    "Voting permission is missing. Bond citizenship and refresh.",
+  "Council & Draft Ops": "Council and drafts",
+  "Finalize requires CanManageParliament permission.":
+    "Finalize needs CanManageParliament.",
+  "Enact requires CanEnactGovernance permission.":
+    "Enact needs CanEnactGovernance.",
+  "Loaded {count} permission token(s).": "Loaded {count} permissions.",
+  "Provide a referendum id or proposal id first.":
+    "Enter a referendum or proposal ID.",
+  "Governance records refreshed. Invalid proposal ID was ignored.":
+    "Governance refreshed. Invalid proposal ID ignored.",
+  "Governance records refreshed.": "Governance refreshed.",
+  "Set up network and wallet first.": "Set up network and wallet first.",
+  "Configure Torii and complete account onboarding first.":
+    "Set up network and wallet first.",
+  "This account already has governance ballot permission and does not need another citizenship bond.":
+    "This wallet already has voting permission.",
+  "A minimum of {amount} XOR is required to register citizenship.":
+    "You need at least {amount} XOR to register citizenship.",
+  "referendumId is required before submitting a ballot.":
+    "Enter a referendum ID before voting.",
+  "CanManageParliament permission is required for finalize.":
+    "CanManageParliament is required to finalize.",
+  "referendumId and proposalId are required for finalize.":
+    "Finalize needs a referendum ID and proposal ID.",
+  "Finalize draft prepared with {count} instruction(s).":
+    "Finalize draft ready with {count} instruction(s).",
+  "CanEnactGovernance permission is required for enact.":
+    "CanEnactGovernance is required to enact.",
+  "proposalId is required for enact.": "Enter a proposal ID to enact.",
+  "Enact draft prepared with {count} instruction(s).":
+    "Enact draft ready with {count} instruction(s).",
+  "Connection, chain, and active account are required.":
+    "Network, chain, and wallet are required.",
+  enabled: "ready",
+  "Nominate Validators": "Stake",
+  "Stake XOR by dataspace. Lane selection is automatic from live governance, then validators are loaded for that lane.":
+    "Pick a dataspace and validator. The lane is resolved automatically.",
+  "Stake Token Balance": "Stake balance",
+  "Validator total stake {total} XOR, self stake {self} XOR, status {status}.":
+    "Total {total} XOR, self {self} XOR, {status}.",
+  "Bond / Unbond": "Stake / Unstake",
+  "Bond amount": "Stake amount",
+  "Bond amount (XOR)": "Stake amount",
+  "Bond XOR": "Stake",
+  "Pending Unbonds": "Pending unstakes",
+  "Unbond Delay": "Unstake delay",
+  "Unbond amount": "Unstake amount",
+  "Unbond amount (XOR)": "Unstake amount",
+  "Schedule Unbond": "Unstake",
+  "Finalize Unbond": "Finalize unstake",
+  "Release is set from on-chain policy: {datetime}.": "Release: {datetime}.",
+  "Your Position": "Your stake",
+  "Finalize request": "Pending request",
+  "No pending unbond requests for the selected validator.":
+    "No pending unstakes.",
+  "No pending rewards for this lane/account.": "No pending rewards.",
+  "Loaded {count} dataspace option(s).": "Loaded {count} dataspaces.",
+  "No dataspace governance found on this Torii endpoint.":
+    "No staking data found on this endpoint.",
+  "Connection, account, dataspace, and validator are required.":
+    "Network, wallet, dataspace, and validator are required.",
+  "No {symbol} balance available to bond.": "No {symbol} available to stake.",
+  "Bond submitted: {hash}": "Stake submitted: {hash}",
+  "Connection, account, validator, and staking policy are required.":
+    "Network, wallet, validator, and policy are required.",
+  "No bonded stake available to unbond.": "No stake available to unstake.",
+  "bonded stake": "staked amount",
+  "Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}":
+    "Unstake scheduled ({requestId}) for {datetime}. Tx: {hash}",
+  "Reward claim submitted: {hash}": "Rewards claimed: {hash}",
+  "Auto-deduct runs on due dates. Usage-based subscriptions can fluctuate each billing cycle.":
+    "Auto-pay runs on due dates. Usage-based charges can vary.",
+  "Auto-deduct on": "Auto-pay on",
+  "Leave amount blank and set a max for usage-based billing. Auto-deduct runs automatically.":
+    "Leave amount blank and set a max for usage-based billing.",
+  "Add subscription": "New subscription",
+  "All subscriptions": "Subscriptions",
+  "Service name": "Merchant",
+  "Max for usage-based ({unit})": "Usage cap ({unit})",
+  "Canceling at period end": "Ends at period end",
+  "No subscriptions yet.": "No subscriptions.",
+  "Next auto-deduct": "Next charge",
+  "Offline wallet & hardware": "Offline wallet",
+  "Register a hardware-backed offline wallet (e.g., macOS Secure Enclave) to keep your offline keys safer. Registration stays on-device; no data is sent to Torii.":
+    "Register a device-backed offline wallet. It stays on this device.",
+  "Register secure offline wallet": "Register device wallet",
+  "Sync offline allowance": "Sync allowances",
+  "Allowances come from Torii offline policies. Sync to refresh remaining amounts and expiry.":
+    "Sync to refresh offline spend limits and expiry.",
+  "No allowances synced yet.": "No offline allowances yet.",
+  "Request offline payment": "Request payment",
+  "Generate invoice": "Create invoice",
+  "Send offline payment": "Send payment",
+  "Accept offline payment": "Accept payment",
+  "Invoice ready. Share the QR or copy the JSON payload.":
+    "Invoice ready. Share the QR or JSON.",
+  "Payment payload created and recorded locally.":
+    "Payment created and saved locally.",
+  "Payment recorded to offline wallet.": "Payment saved to the offline wallet.",
+  "Move funds to online wallet": "Move to online wallet",
+  "Send to online wallet": "Send to wallet",
+  "Shield to online wallet": "Shield to wallet",
+  "No offline transfers yet.": "No offline activity yet.",
+  "Offline wallet registered on this device.":
+    "Offline wallet saved on this device.",
+  "Offline balance updated: {total}": "Offline balance: {total}",
+  "Transfer submitted and offline balance updated.":
+    "Transfer sent and offline balance updated.",
+  "Shield transfer submitted and offline balance updated.":
+    "Shielded transfer sent and offline balance updated.",
+  "Failed to move funds online.": "Move failed.",
+  "Enter an amount to move online.": "Enter an amount.",
+  "Enter an amount to request.": "Enter an amount.",
+  "Provide an invoice payload.": "Paste an invoice payload.",
+  "Provide a payment payload.": "Paste a payment payload.",
+  "Unable to create payment.": "Could not create payment.",
+  "Failed to generate invoice.": "Could not create invoice.",
+  "Failed to record payment.": "Could not save payment.",
+  "Invoice asset does not match the active offline asset.":
+    "Invoice asset does not match the offline asset.",
+  "Payment asset does not match the active offline asset.":
+    "Payment asset does not match the offline asset.",
+  "Payment is addressed to a different account.":
+    "Payment targets a different account.",
+  "Invoice expired. Ask the receiver to generate a new invoice.":
+    "Invoice expired. Ask for a new one.",
+  "Rendered straight from Torii so wallets can scan the exact payload.":
+    "Rendered directly from Torii.",
+  "No QR payload yet. Connect to Torii and choose an account.":
+    "No QR yet. Connect to Torii and choose a wallet.",
+  "No QR payload yet. Connect to Torii and pick an account.":
+    "No QR yet. Connect to Torii and choose a wallet.",
+  "Hardware wallet registered": "Device wallet registered",
+  "Secure hardware available": "Secure hardware ready",
+  "Platform authenticator ready": "Device authenticator ready",
+  "No platform authenticator": "No device authenticator",
+  "Fallback to software keys": "Software keys only",
+  "Pending detection": "Checking device",
+  "Unable to detect secure hardware.": "Could not detect secure hardware.",
+  "WebAuthn is not supported in this environment.":
+    "WebAuthn is not available here.",
+  "Camera access is not supported on this device.":
+    "Camera access is unavailable on this device.",
+  "Camera preview is not ready.": "Camera is not ready.",
+  "Unable to decode the selected image.": "Could not read the selected image.",
+  "Unable to read QR from image.": "Could not read the QR from the image.",
+  "Unable to start scanner.": "Could not start the scanner.",
+  "Building…": "Creating...",
+  "Recording…": "Saving...",
+  "Transferring…": "Sending...",
+  "34m... or 0x...@wonderland": "sorau...",
+  "n42u... (I105 account ID)": "sorau...",
+  "6cmz... (canonical I105 account ID)": "sorau...",
   "rose#wonderland": "norito:<asset-id-hex>",
   "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };
@@ -1165,8 +1561,7 @@ const LITERAL_KEY_OVERRIDES: Record<string, string> = {
   "Iroha Wallet": "Iroha Wallet",
   IH58: "I105",
   I105: "I105",
-  "Example I105 Account ID":
-    "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "Example I105 Account ID": "sorau...",
   "rose#wonderland": "norito:<asset-id-hex>",
   "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };

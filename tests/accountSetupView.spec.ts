@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import AccountSetupView from "@/views/AccountSetupView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
@@ -13,6 +14,8 @@ const derivePublicKeyMock = vi.fn();
 const onboardAccountMock = vi.fn();
 const routerPushMock = vi.fn();
 const qrToDataUrlMock = vi.fn();
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 vi.mock("vue-router", () => ({
   useRouter: () => ({
@@ -104,16 +107,26 @@ describe("AccountSetupView", () => {
   it("focuses first launch on the onboarding wizard", () => {
     const wrapper = mountView();
 
-    expect(wrapper.text()).toContain("TAIRA Testnet Account");
+    expect(wrapper.text()).toContain(t("TAIRA Testnet Account"));
     expect(wrapper.text()).toContain("I105 Account ID");
     expect(wrapper.text()).toContain(
-      `Use the real TAIRA I105 literal, for example ${EXAMPLE_REAL_I105_ACCOUNT_ID}. Do not use @domain, legacy compatibility literals, or i105: forms.`,
+      t(
+        "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
+        {
+          example: t("Example I105 Account ID"),
+        },
+      ),
     );
     expect(wrapper.text()).toContain(
-      "The domain label defaults to default. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+      t(
+        "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+        {
+          domain: t("default"),
+        },
+      ),
     );
-    expect(wrapper.text()).not.toContain("IrohaConnect Pairing");
-    expect(wrapper.text()).not.toContain("Saved Wallets");
+    expect(wrapper.text()).not.toContain(t("IrohaConnect Pairing"));
+    expect(wrapper.text()).not.toContain(t("Saved Wallets"));
     expect(wrapper.findAll(".account-step")).toHaveLength(3);
   });
 
@@ -134,19 +147,19 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView({ withSavedAccount: true });
 
-    await getButtonByText(wrapper, "Generate pairing QR").trigger("click");
+    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("sid-1");
 
-    await getButtonByText(wrapper, "Generate pairing QR").trigger("click");
+    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
     await flushPromises();
     await getButtonByText(wrapper, "Reset").trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("sid-1");
     expect(
-      getButtonByText(wrapper, "Generate pairing QR").attributes("disabled"),
+      getButtonByText(wrapper, t("Generate pairing QR")).attributes("disabled"),
     ).toBeUndefined();
 
     resolveSecondPreview({
@@ -177,12 +190,12 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView({ withSavedAccount: true });
 
-    await getButtonByText(wrapper, "Generate pairing QR").trigger("click");
+    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
     await flushPromises();
 
     expect(wrapper.text()).toContain("sid-1");
 
-    await getButtonByText(wrapper, "Generate pairing QR").trigger("click");
+    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
     await flushPromises();
     await getButtonByText(wrapper, "Reset").trigger("click");
     await flushPromises();
@@ -194,7 +207,7 @@ describe("AccountSetupView", () => {
     expect(wrapper.text()).not.toContain("preview down");
     expect(wrapper.text()).not.toContain("sid-1");
     expect(
-      getButtonByText(wrapper, "Generate pairing QR").attributes("disabled"),
+      getButtonByText(wrapper, t("Generate pairing QR")).attributes("disabled"),
     ).toBeUndefined();
   });
 
@@ -212,17 +225,21 @@ describe("AccountSetupView", () => {
 
     await inputs[0].setValue("Alice");
     await inputs[1].setValue("flowers");
-    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
     await flushPromises();
 
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain("Register on-chain alias");
-    await getButtonByText(wrapper, "Advanced").trigger("click");
+    expect(wrapper.text()).not.toContain(t("Register on-chain alias"));
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
     await flushPromises();
 
-    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
+    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
+      "click",
+    );
     await flushPromises();
 
     expect(onboardAccountMock).toHaveBeenCalledWith(
@@ -245,13 +262,15 @@ describe("AccountSetupView", () => {
     expect(inputs).toHaveLength(2);
 
     await inputs[1].setValue("flowers");
-    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
     await flushPromises();
 
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    await getButtonByText(wrapper, "Save identity").trigger("click");
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
     await flushPromises();
 
     expect(onboardAccountMock).not.toHaveBeenCalled();
@@ -274,16 +293,20 @@ describe("AccountSetupView", () => {
 
     await inputs[0].setValue("Alice");
     await inputs[1].setValue("flowers");
-    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
     await flushPromises();
 
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    await getButtonByText(wrapper, "Advanced").trigger("click");
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
     await flushPromises();
 
-    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
+    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
+      "click",
+    );
     await flushPromises();
 
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
@@ -302,16 +325,20 @@ describe("AccountSetupView", () => {
 
     await inputs[0].setValue("Alice");
     await inputs[1].setValue("flowers");
-    await getButtonByText(wrapper, "Generate recovery phrase").trigger("click");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
     await flushPromises();
 
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    await getButtonByText(wrapper, "Advanced").trigger("click");
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
     await flushPromises();
 
-    await getButtonByText(wrapper, "Register on-chain alias").trigger("click");
+    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
+      "click",
+    );
     await flushPromises();
 
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");

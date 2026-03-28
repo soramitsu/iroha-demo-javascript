@@ -1,19 +1,35 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import WalletView from "@/views/WalletView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 
 const fetchAccountAssetsMock = vi.fn();
 const fetchAccountTransactionsMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
 
+type FaucetResponseFixture = {
+  account_id: string;
+  asset_definition_id: string;
+  asset_id: string;
+  amount: string;
+  tx_hash_hex: string;
+  status: string;
+};
+
 vi.mock("@/services/iroha", () => ({
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   fetchAccountTransactions: (input: unknown) =>
     fetchAccountTransactionsMock(input),
-  requestFaucetFunds: (input: unknown) => requestFaucetFundsMock(input),
+  requestFaucetFunds: (
+    input: unknown,
+    onProgress?: (progress: unknown) => void,
+  ) => requestFaucetFundsMock(input, onProgress),
 }));
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 describe("WalletView", () => {
   beforeEach(() => {
@@ -25,6 +41,10 @@ describe("WalletView", () => {
       total: 0,
     });
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   const mountView = (
@@ -150,20 +170,136 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button.secondary")
-      .find((button) => button.text().includes("Claim Testnet XOR"))!
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
       .trigger("click");
     await flushPromises();
 
     const session = useSessionStore();
-    expect(requestFaucetFundsMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-    });
+    expect(requestFaucetFundsMock).toHaveBeenCalledWith(
+      {
+        toriiUrl: "http://localhost:8080",
+        accountId: "alice@wonderland",
+      },
+      expect.any(Function),
+    );
     expect(session.connection.assetDefinitionId).toBe(
       "norito:abcdef0123456789",
     );
     expect(session.activeAccount?.localOnly).toBe(false);
-    expect(wrapper.text()).toContain("Testnet XOR requested: 0xabc");
+    expect(wrapper.text()).toContain(
+      t("Testnet XOR requested: {hash}", { hash: "0xabc" }),
+    );
+    expect(wrapper.text()).toContain("norito:abcdef0123456789");
+    expect(wrapper.text()).toContain("25000");
+  });
+
+  it("shows a blocking faucet status modal while a claim is in flight", async () => {
+    vi.useFakeTimers();
+    const fundedAssets = {
+      items: [
+        {
+          asset_id: "norito:abcdef0123456789",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    };
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce(fundedAssets);
+
+    let resolveFaucet: (value: FaucetResponseFixture) => void = () => {};
+    requestFaucetFundsMock.mockImplementation(
+      async (_input: unknown, onProgress?: (progress: any) => void) => {
+        onProgress?.({ phase: "solvingPuzzle" });
+        return new Promise<FaucetResponseFixture>((resolve) => {
+          resolveFaucet = resolve;
+        });
+      },
+    );
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button.secondary")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(true);
+    expect(wrapper.text()).toContain(t("Faucet request in progress"));
+    expect(wrapper.text()).toContain(t("Solving faucet proof-of-work…"));
+
+    resolveFaucet({
+      account_id: "alice@wonderland",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "norito:abcdef0123456789",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(1_500);
+    await flushPromises();
+
+    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(false);
+  });
+
+  it("keeps polling wallet refresh until the funded faucet asset appears", async () => {
+    vi.useFakeTimers();
+    const fundedAssets = {
+      items: [
+        {
+          asset_id: "norito:abcdef0123456789",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    };
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce(fundedAssets);
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "alice@wonderland",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "norito:abcdef0123456789",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button.secondary")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(3_000);
+    await flushPromises();
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(4);
     expect(wrapper.text()).toContain("norito:abcdef0123456789");
     expect(wrapper.text()).toContain("25000");
   });
@@ -177,7 +313,9 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(
-      "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+      t(
+        "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
+      ),
     );
     expect(wrapper.text()).toContain("Account not found");
   });

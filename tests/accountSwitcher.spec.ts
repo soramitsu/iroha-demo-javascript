@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 
 vi.mock("vue-router", () => ({
@@ -9,6 +10,8 @@ vi.mock("vue-router", () => ({
     push: vi.fn(),
   }),
 }));
+
+const t = (key: string) => translate("en-US", key);
 
 describe("AccountSwitcher", () => {
   beforeEach(() => {
@@ -48,7 +51,7 @@ describe("AccountSwitcher", () => {
       },
     });
 
-    expect(wrapper.text()).toContain("Active account");
+    expect(wrapper.text()).toContain(t("Active account"));
     const selector = wrapper.get("select");
     await selector.setValue("bob@wonderland");
 
@@ -65,7 +68,9 @@ describe("AccountSwitcher", () => {
       },
     });
 
-    expect(wrapper.text()).toContain("No saved accounts yet");
-    expect(wrapper.text()).toContain("Start registration");
+    expect(wrapper.text()).toContain(
+      t("No saved accounts yet. Start the registration flow to add one."),
+    );
+    expect(wrapper.text()).toContain(t("Start registration"));
   });
 });

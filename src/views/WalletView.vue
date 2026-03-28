@@ -60,7 +60,7 @@
       >
         {{
           t(
-            "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.",
+            "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
           )
         }}
       </p>
@@ -149,6 +149,30 @@
         <p class="helper">{{ t("Latest Transactions") }}</p>
       </div>
     </section>
+
+    <div
+      v-if="faucetLoading"
+      class="wallet-faucet-modal-backdrop"
+    >
+      <div
+        class="card wallet-faucet-modal"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-busy="true"
+      >
+        <span class="wallet-faucet-spinner" aria-hidden="true"></span>
+        <p class="wallet-faucet-modal-label">
+          {{ t("Faucet request in progress") }}
+        </p>
+        <h2 id="wallet-faucet-modal-title" class="wallet-faucet-modal-title">
+          {{ faucetStatusMessage }}
+        </h2>
+        <p id="wallet-faucet-modal-detail" class="helper wallet-faucet-modal-detail">
+          {{ faucetStatusDetail }}
+        </p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -164,6 +188,7 @@ import { useSessionStore } from "@/stores/session";
 import type {
   AccountAssetsResponse,
   AccountTransactionsResponse,
+  FaucetRequestProgress,
 } from "@/types/iroha";
 import {
   extractTransferInsight,
@@ -191,6 +216,11 @@ type TransactionView = AccountTx & {
   counterparty: string | null;
 };
 
+type WalletFaucetPhase = FaucetRequestProgress["phase"] | "refreshingWallet";
+
+const FAUCET_REFRESH_MAX_ATTEMPTS = 4;
+const FAUCET_REFRESH_DELAY_MS = 1_500;
+
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
 const loading = ref(false);
@@ -199,6 +229,7 @@ const faucetMessage = ref("");
 const faucetError = ref("");
 const walletError = ref("");
 const requestGeneration = ref(0);
+const faucetStatusPhase = ref<WalletFaucetPhase>("requestingPuzzle");
 
 const formatDate = (timestamp?: number) => {
   if (!timestamp) return t("—");
@@ -215,6 +246,31 @@ const resetWalletState = () => {
   faucetError.value = "";
   walletError.value = "";
 };
+
+const faucetStatusMessage = computed(() => {
+  switch (faucetStatusPhase.value) {
+    case "requestingPuzzle":
+      return t("Requesting faucet puzzle…");
+    case "waitingForPuzzleRetry":
+      return t("Waiting for finalized faucet seed data…");
+    case "solvingPuzzle":
+      return t("Solving faucet proof-of-work…");
+    case "submittingClaim":
+      return t("Submitting faucet claim…");
+    case "claimAccepted":
+      return t("Faucet claim accepted. Updating wallet…");
+    case "refreshingWallet":
+      return t("Refreshing wallet balance…");
+    default:
+      return t("Requesting…");
+  }
+});
+
+const faucetStatusDetail = computed(() =>
+  faucetStatusPhase.value === "refreshingWallet"
+    ? t("Waiting for TAIRA to expose the funded asset in account balances.")
+    : t("Your TAIRA faucet request is in flight. This can take a few seconds."),
+);
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
@@ -283,6 +339,34 @@ const canRequestFaucet = computed(() =>
   ),
 );
 
+const waitFor = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
+
+const refreshAfterFaucetClaim = async (assetId: string) => {
+  const normalizedAssetId = assetId.trim().toLowerCase();
+  faucetStatusPhase.value = "refreshingWallet";
+  for (
+    let attempt = 1;
+    attempt <= FAUCET_REFRESH_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    await refresh();
+    if (
+      assets.value.some(
+        (asset) => asset.asset_id.trim().toLowerCase() === normalizedAssetId,
+      )
+    ) {
+      return true;
+    }
+    if (attempt < FAUCET_REFRESH_MAX_ATTEMPTS) {
+      await waitFor(FAUCET_REFRESH_DELAY_MS);
+    }
+  }
+  return false;
+};
+
 const requestStarterFunds = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = activeAccount.value?.accountId;
@@ -293,10 +377,13 @@ const requestStarterFunds = async () => {
   faucetLoading.value = true;
   faucetMessage.value = "";
   faucetError.value = "";
+  faucetStatusPhase.value = "requestingPuzzle";
   try {
     const result = await requestFaucetFunds({
       toriiUrl,
       accountId,
+    }, (progress) => {
+      faucetStatusPhase.value = progress.phase;
     });
     if (shouldConfigureAsset) {
       session.updateConnection({
@@ -305,10 +392,15 @@ const requestStarterFunds = async () => {
       });
     }
     session.updateActiveAccount({ localOnly: false });
-    faucetMessage.value = t("Testnet XOR requested: {hash}", {
-      hash: result.tx_hash_hex,
-    });
-    await refresh();
+    faucetStatusPhase.value = "claimAccepted";
+    const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);
+    faucetMessage.value = balanceVisible
+      ? t("Testnet XOR requested: {hash}", {
+          hash: result.tx_hash_hex,
+        })
+      : t(
+          "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+        );
   } catch (error) {
     faucetError.value =
       error instanceof Error
@@ -373,6 +465,7 @@ watch(
 
 <style scoped>
 .wallet-layout {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
   gap: 20px;
@@ -484,6 +577,58 @@ watch(
   color: var(--accent-danger);
 }
 
+.wallet-faucet-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--surface-base) 40%, transparent);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.wallet-faucet-modal {
+  width: min(100%, 420px);
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 28px 24px;
+  text-align: center;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.wallet-faucet-spinner {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  border: 3px solid color-mix(in srgb, var(--glass-border) 88%, transparent);
+  border-top-color: var(--accent-primary);
+  box-shadow: 0 0 24px color-mix(in srgb, var(--accent-primary) 24%, transparent);
+  animation: wallet-faucet-spin 0.85s linear infinite;
+}
+
+.wallet-faucet-modal-label {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+  color: var(--iroha-muted);
+}
+
+.wallet-faucet-modal-title {
+  margin: 0;
+  font-size: clamp(1.2rem, 3vw, 1.5rem);
+}
+
+.wallet-faucet-modal-detail {
+  margin: 0;
+  max-width: 32ch;
+}
+
 .wallet-kpi-account .kv-value {
   word-break: break-all;
   unicode-bidi: plaintext;
@@ -516,6 +661,12 @@ watch(
 
 .wallet-ledger-empty {
   justify-items: center;
+}
+
+@keyframes wallet-faucet-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .wallet-transactions-card .table td:last-child,

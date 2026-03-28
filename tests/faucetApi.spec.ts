@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
 
 import {
+  type FaucetRequestProgress,
   requestFaucetFundsWithPuzzle,
   shouldRetryFaucetPuzzle,
 } from "../electron/faucetApi";
@@ -114,6 +115,83 @@ describe("faucetApi", () => {
       }),
     );
     expect(result.tx_hash_hex).toBe("0xabc");
+  });
+
+  it("reports faucet progress while retrying, solving, and submitting", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            NotPermitted: "faucet pow vrf seed unavailable",
+          }),
+          {
+            status: 403,
+            statusText: "Forbidden",
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(basePuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            account_id: canonicalAccountId,
+            asset_definition_id: "xor#sora",
+            asset_id: `xor#sora#${canonicalAccountId}`,
+            amount: "25000",
+            tx_hash_hex: "0xdef",
+            status: "QUEUED",
+          }),
+          {
+            status: 202,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+    const onStatus = vi.fn<
+      (progress: FaucetRequestProgress) => void | Promise<void>
+    >();
+
+    await requestFaucetFundsWithPuzzle({
+      baseUrl: "https://taira.sora.org",
+      accountId: displayAccountId,
+      fetchImpl,
+      sleep: vi.fn().mockResolvedValue(undefined),
+      solvePuzzle: vi.fn().mockResolvedValue({
+        anchorHeight: basePuzzle.anchor_height,
+        nonceHex: "0000000000000002",
+        attempts: 4,
+      }),
+      puzzleRetryAttempts: 2,
+      onStatus,
+    });
+
+    expect(onStatus.mock.calls.map(([progress]) => progress.phase)).toEqual([
+      "requestingPuzzle",
+      "waitingForPuzzleRetry",
+      "requestingPuzzle",
+      "solvingPuzzle",
+      "submittingClaim",
+      "claimAccepted",
+    ]);
+    expect(onStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phase: "claimAccepted",
+        txHashHex: "0xdef",
+      }),
+    );
   });
 
   it("does not retry non-retryable faucet puzzle failures and preserves the detail", async () => {

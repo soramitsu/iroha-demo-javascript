@@ -38,7 +38,7 @@ describe("preload utils", () => {
         detail: "torii.onboarding.enabled is false",
       }),
     ).toBe(
-      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain. Detail: torii.onboarding.enabled is false",
+      "Alias registration failed with status 403 (Forbidden): UAID alias registration is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain. Detail: torii.onboarding.enabled is false",
     );
     expect(
       formatOnboardingError({
@@ -46,7 +46,7 @@ describe("preload utils", () => {
         statusText: "Forbidden",
       }),
     ).toBe(
-      "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain.",
+      "Alias registration failed with status 403 (Forbidden): UAID alias registration is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain.",
     );
   });
 
@@ -58,14 +58,14 @@ describe("preload utils", () => {
         detail: "unexpected backend failure",
       }),
     ).toBe(
-      "Onboarding failed with status 500 (Internal Server Error): unexpected backend failure",
+      "Alias registration failed with status 500 (Internal Server Error): unexpected backend failure",
     );
     expect(
       formatOnboardingError({
         status: 429,
         statusText: "Too Many Requests",
       }),
-    ).toBe("Onboarding failed with status 429 (Too Many Requests)");
+    ).toBe("Alias registration failed with status 429 (Too Many Requests)");
   });
 
   it("normalizes fetch headers from multiple input formats", () => {

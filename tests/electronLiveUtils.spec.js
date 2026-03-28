@@ -6,6 +6,7 @@ import {
   isSupportedAccountIdLiteral,
   parseOnboardingEnvConfig,
   parseNetworkPrefix,
+  resolveOptionalAliasRegistrationOutcome,
 } from "../scripts/e2e/electron-live-utils.mjs";
 
 const sampleI105AccountId = AccountAddress.fromAccount({
@@ -78,6 +79,30 @@ describe("electron live e2e utils", () => {
     expect(isOnboardingConflictError("status 403")).toBe(false);
     expect(isOnboardingConflictError("")).toBe(false);
     expect(isOnboardingConflictError(null)).toBe(false);
+  });
+
+  it("classifies optional alias registration outcomes", () => {
+    expect(resolveOptionalAliasRegistrationOutcome("ok", "")).toBe("executed");
+    expect(
+      resolveOptionalAliasRegistrationOutcome(
+        "error",
+        "Alias registration failed with status 403 (Forbidden)",
+      ),
+    ).toBe("skipped");
+    expect(
+      resolveOptionalAliasRegistrationOutcome(
+        "error",
+        "Alias registration failed with status 409 (Conflict)",
+      ),
+    ).toBe("executed");
+    expect(() =>
+      resolveOptionalAliasRegistrationOutcome(
+        "error",
+        "Alias registration failed with status 500 (Internal Server Error)",
+      ),
+    ).toThrow(
+      "Optional alias registration probe failed: Alias registration failed with status 500 (Internal Server Error)",
+    );
   });
 
   it("parses onboarding env defaults when vars are absent", () => {

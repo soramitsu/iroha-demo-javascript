@@ -7,7 +7,7 @@
           {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
-      <p class="helper">
+      <p v-if="!alreadyCitizen" class="helper">
         {{
           t(
             "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.",
@@ -71,14 +71,6 @@
         </span>
       </div>
 
-      <p v-if="permissionNames.length" class="helper tight">
-        {{
-          t("Granted permissions: {permissions}", {
-            permissions: permissionNames.join(", "),
-          })
-        }}
-      </p>
-
       <div class="actions">
         <button :disabled="!canBondCitizen" @click="handleBondCitizen">
           {{
@@ -119,14 +111,18 @@
       <div class="form-grid">
         <label>
           {{ t("Referendum ID") }}
-          <input v-model.trim="referendumId" type="text" placeholder="ref-1" />
+          <input
+            v-model.trim="referendumId"
+            type="text"
+            :placeholder="referendumPlaceholder"
+          />
         </label>
         <label>
           {{ t("Proposal ID (0x...)") }}
           <input
             v-model.trim="proposalId"
             type="text"
-            placeholder="0x0123..."
+            :placeholder="proposalPlaceholder"
           />
         </label>
       </div>
@@ -229,11 +225,6 @@
       <header class="card-header">
         <h2>{{ t("Cast Plain Ballot") }}</h2>
       </header>
-      <p class="helper">
-        {{
-          t("Submit a signed CastPlainBallot instruction directly to Torii.")
-        }}
-      </p>
       <div class="form-grid">
         <label>
           {{ t("Amount (XOR)") }}
@@ -262,13 +253,6 @@
           {{ actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot") }}
         </button>
       </div>
-      <p class="helper tight">
-        {{
-          t(
-            "Requires CanSubmitGovernanceBallot permission on the active account.",
-          )
-        }}
-      </p>
       <p v-if="missingBallotPermission" class="message warning">
         {{
           t(
@@ -393,7 +377,6 @@ import {
   isValidProposalId,
   isPositiveInteger,
   isPositiveWholeNumberString,
-  listGovernancePermissions,
   parseParliamentHistory,
   pushRecentValue,
   resolveXorBalance,
@@ -412,6 +395,8 @@ const actionBusy = ref<"bond" | "ballot" | "finalize" | "enact" | null>(null);
 const statusMessage = ref("");
 const actionMessage = ref("");
 const errorMessage = ref("");
+const referendumPlaceholder = "ref-1";
+const proposalPlaceholder = "0x0123...";
 
 const xorBalance = ref("0");
 const permissions = ref<AccountPermissionItem[]>([]);
@@ -446,9 +431,6 @@ const canSubmit = computed(() =>
 );
 
 const isActionBusy = computed(() => actionBusy.value !== null);
-const permissionNames = computed(() =>
-  listGovernancePermissions(permissions.value),
-);
 const hasBallotPermission = computed(() =>
   hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
 );
@@ -658,9 +640,7 @@ const refresh = async () => {
     refreshGeneration.value += 1;
     loadingBootstrap.value = false;
     errorMessage.value = "";
-    statusMessage.value = t(
-      "Configure Torii and complete account onboarding first.",
-    );
+    statusMessage.value = t("Set up network and wallet first.");
     permissionsLoaded.value = false;
     permissions.value = [];
     council.value = null;

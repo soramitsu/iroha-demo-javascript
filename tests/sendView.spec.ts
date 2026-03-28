@@ -2,10 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SendView from "@/views/SendView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 
-const EXAMPLE_I105_ACCOUNT_ID =
-  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
+const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
 const BOB_I105_ACCOUNT_ID = "n42uBobRealI105AccountId";
 const MALLORY_I105_ACCOUNT_ID = "n42uMalloryRealI105AccountId";
@@ -39,6 +39,9 @@ vi.mock("@/composables/useQrScanner", async () => {
     },
   };
 });
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 describe("SendView", () => {
   beforeEach(() => {
@@ -93,11 +96,13 @@ describe("SendView", () => {
     transferAssetMock.mockResolvedValue({ hash: "0xabc" });
     const wrapper = mountView();
     await flushPromises();
-    expect(wrapper.text()).toContain("Shield policy mode: Convertible.");
 
     await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(ALICE_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(wrapper.text()).toContain(
+      t("Shield policy mode: {mode}.", { mode: "Convertible" }),
+    );
 
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
@@ -114,7 +119,9 @@ describe("SendView", () => {
         shielded: true,
       }),
     );
-    expect(wrapper.text()).toContain("Shield transaction submitted: 0xabc");
+    expect(wrapper.text()).toContain(
+      t("Shield transaction submitted: {hash}", { hash: "0xabc" }),
+    );
   });
 
   it("shows transfer-specific success text for transparent sends", async () => {
@@ -127,8 +134,10 @@ describe("SendView", () => {
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("Transaction submitted: 0x123");
-    expect(wrapper.text()).not.toContain("Shield transaction submitted:");
+    expect(wrapper.text()).toContain(
+      t("Transaction submitted: {hash}", { hash: "0x123" }),
+    );
+    expect(wrapper.text()).not.toContain(t("Shield transaction submitted:"));
   });
 
   it("trims transparent destination before submit", async () => {
@@ -200,7 +209,7 @@ describe("SendView", () => {
       ALICE_I105_ACCOUNT_ID,
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
-    expect(wrapper.text()).toContain("QR decoded successfully.");
+    expect(wrapper.text()).toContain(t("QR decoded successfully."));
   });
 
   it("applies qr destination payload when shield mode is disabled", async () => {
@@ -222,7 +231,7 @@ describe("SendView", () => {
       BOB_I105_ACCOUNT_ID,
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("3.5");
-    expect(wrapper.text()).toContain("QR decoded successfully.");
+    expect(wrapper.text()).toContain(t("QR decoded successfully."));
   });
 
   it("shows an error message for malformed qr payloads", async () => {
@@ -235,7 +244,7 @@ describe("SendView", () => {
       qrDecodeHandler?.("{not-valid-json");
       await flushPromises();
 
-      expect(wrapper.text()).toContain("QR payload is invalid.");
+      expect(wrapper.text()).toContain(t("QR payload is invalid."));
       expect(warnSpy).toHaveBeenCalled();
     } finally {
       warnSpy.mockRestore();
@@ -287,7 +296,9 @@ describe("SendView", () => {
     const checkbox = wrapper.get('input[type="checkbox"]');
     expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
-      "Shield mode unavailable: effective policy mode is TransparentOnly.",
+      t("Shield mode unavailable: effective policy mode is {mode}.", {
+        mode: "TransparentOnly",
+      }),
     );
   });
 
@@ -301,7 +312,10 @@ describe("SendView", () => {
     const checkbox = wrapper.get('input[type="checkbox"]');
     expect((checkbox.element as HTMLInputElement).disabled).toBe(false);
     expect(wrapper.text()).toContain(
-      "Shield policy check failed: network timeout. Submission may still fail if shield mode is unsupported.",
+      t(
+        "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
+        { message: "network timeout" },
+      ),
     );
   });
 

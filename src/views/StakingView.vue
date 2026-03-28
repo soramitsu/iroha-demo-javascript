@@ -555,9 +555,7 @@ const refresh = async () => {
     laneRequestGeneration.value += 1;
     errorMessage.value = "";
     actionMessage.value = "";
-    statusMessage.value = t(
-      "Configure Torii and complete account onboarding first.",
-    );
+    statusMessage.value = t("Set up network and wallet first.");
     resetBootstrapState();
     return;
   }

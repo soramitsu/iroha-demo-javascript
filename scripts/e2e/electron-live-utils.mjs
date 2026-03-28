@@ -28,6 +28,23 @@ export function isOnboardingConflictError(detail) {
   return /\bstatus(?:\s|[^a-z0-9_])+409\b/i.test(String(detail ?? ""));
 }
 
+export function resolveOptionalAliasRegistrationOutcome(status, detail) {
+  const normalizedStatus = String(status ?? "").trim().toLowerCase();
+  const normalizedDetail = String(detail ?? "");
+  if (normalizedStatus !== "error") {
+    return "executed";
+  }
+  if (isOnboardingDisabledError(normalizedDetail)) {
+    return "skipped";
+  }
+  if (isOnboardingConflictError(normalizedDetail)) {
+    return "executed";
+  }
+  throw new Error(
+    `Optional alias registration probe failed: ${normalizedDetail || "unknown error"}`,
+  );
+}
+
 const defaultOnboardingAlias = "E2E Onboarding Shared";
 const defaultOnboardingPrivateKeyHex =
   "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";

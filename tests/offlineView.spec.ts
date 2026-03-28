@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import OfflineView from "@/views/OfflineView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 
-const EXAMPLE_I105_ACCOUNT_ID =
-  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
+const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
 const TREASURY_I105_ACCOUNT_ID = "n42uTreasuryRealI105AccountId";
 const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
@@ -38,6 +38,9 @@ vi.mock("@/composables/useQrScanner", async () => {
     }),
   };
 });
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 describe("OfflineView move-to-online shield mode", () => {
   beforeEach(() => {
@@ -102,7 +105,7 @@ describe("OfflineView move-to-online shield mode", () => {
   const getMoveSection = (wrapper: ReturnType<typeof mount>) => {
     const section = wrapper
       .findAll("section.card")
-      .find((node) => node.text().includes("Move funds to online wallet"));
+      .find((node) => node.text().includes(t("Move funds to online wallet")));
     if (!section) {
       throw new Error("Move-to-online section not found");
     }
@@ -138,7 +141,7 @@ describe("OfflineView move-to-online shield mode", () => {
       ALICE_I105_ACCOUNT_ID,
     );
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(true);
-    expect(submitButton.text()).toBe("Shield to online wallet");
+    expect(submitButton.text()).toBe(t("Shield to online wallet"));
 
     await submitButton.trigger("click");
     await flushPromises();
@@ -155,7 +158,7 @@ describe("OfflineView move-to-online shield mode", () => {
       }),
     );
     expect(moveSection.text()).toContain(
-      "Shield transfer submitted and offline balance updated.",
+      t("Shield transfer submitted and offline balance updated."),
     );
   });
 
@@ -177,7 +180,9 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
     expect(moveSection.text()).toContain(
-      "Shield mode unavailable: effective policy mode is TransparentOnly.",
+      t("Shield mode unavailable: effective policy mode is {mode}.", {
+        mode: "TransparentOnly",
+      }),
     );
   });
 
@@ -192,7 +197,10 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(false);
     expect(moveSection.text()).toContain(
-      "Shield policy check failed: service unavailable. Submission may still fail if shield mode is unsupported.",
+      t(
+        "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
+        { message: "service unavailable" },
+      ),
     );
   });
 
@@ -249,7 +257,7 @@ describe("OfflineView move-to-online shield mode", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const paymentSection = getSection(wrapper, "Send offline payment");
+    const paymentSection = getSection(wrapper, t("Send offline payment"));
     await paymentSection.get("textarea").setValue(
       JSON.stringify({
         invoice_id: "inv-1",
@@ -265,7 +273,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     expect(paymentSection.text()).toContain(
-      "Invoice asset does not match the active offline asset.",
+      t("Invoice asset does not match the active offline asset."),
     );
     expect(transferAssetMock).not.toHaveBeenCalled();
   });
@@ -274,7 +282,7 @@ describe("OfflineView move-to-online shield mode", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const acceptSection = getSection(wrapper, "Accept offline payment");
+    const acceptSection = getSection(wrapper, t("Accept offline payment"));
     await acceptSection.get("textarea").setValue(
       JSON.stringify({
         tx_id: "tx-1",
@@ -293,7 +301,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     expect(acceptSection.text()).toContain(
-      "Payment asset does not match the active offline asset.",
+      t("Payment asset does not match the active offline asset."),
     );
   });
 });

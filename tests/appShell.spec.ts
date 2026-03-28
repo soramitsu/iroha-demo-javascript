@@ -6,6 +6,7 @@ import App from "@/App.vue";
 import { useSessionStore } from "@/stores/session";
 import { useLocaleStore } from "@/stores/locale";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { translate } from "@/i18n/messages";
 
 const route = reactive({
   path: "/account",
@@ -18,6 +19,8 @@ const route = reactive({
 vi.mock("vue-router", () => ({
   useRoute: () => route,
 }));
+
+const t = (key: string) => translate("en-US", key);
 
 describe("App shell", () => {
   beforeEach(() => {
@@ -74,7 +77,15 @@ describe("App shell", () => {
     const wrapper = mountApp();
     const labels = wrapper.findAll(".nav-label").map((node) => node.text());
 
-    expect(labels).toEqual(["Account Setup"]);
+    expect(labels).toEqual([t("Account Setup")]);
+  });
+
+  it("keeps the sidebar details open on desktop layouts", () => {
+    const wrapper = mountApp({ withAccount: true });
+    const sidebarPanel = wrapper.get(".sidebar-panel")
+      .element as HTMLDetailsElement;
+
+    expect(sidebarPanel.open).toBe(true);
   });
 
   it("prioritizes wallet actions in the sidebar once an account exists", () => {
@@ -89,16 +100,16 @@ describe("App shell", () => {
     const steps = wrapper.findAll(".nav-step").map((node) => node.text());
 
     expect(labels).toEqual([
-      "Wallet",
-      "Send",
-      "Receive",
-      "Subscriptions",
-      "Staking",
-      "Parliament",
-      "Offline",
-      "Explore",
-      "Session",
-      "Account Setup",
+      t("Wallet"),
+      t("Send"),
+      t("Receive"),
+      t("Subscriptions"),
+      t("Staking"),
+      t("Parliament"),
+      t("Offline"),
+      t("Explore"),
+      t("Session"),
+      t("Account Setup"),
     ]);
     expect(steps[0]).toBe("01");
     expect(steps.at(-1)).toBe("10");

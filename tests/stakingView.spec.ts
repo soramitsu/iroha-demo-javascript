@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import StakingView from "@/views/StakingView.vue";
+import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 
 const getSumeragiStatusMock = vi.fn();
@@ -33,6 +34,9 @@ vi.mock("@/services/iroha", () => ({
     finalizePublicLaneUnbondMock(input),
   claimPublicLaneRewards: (input: unknown) => claimPublicLaneRewardsMock(input),
 }));
+
+const t = (key: string, params?: Record<string, string | number>) =>
+  translate("en-US", key, params);
 
 describe("StakingView", () => {
   beforeEach(() => {
@@ -156,9 +160,9 @@ describe("StakingView", () => {
   const getStakeBalanceRow = (wrapper: ReturnType<typeof mount>) => {
     const row = wrapper
       .findAll(".kv")
-      .find((node) => node.text().includes("Stake Token Balance"));
+      .find((node) => node.text().includes(t("Stake Token Balance")));
     if (!row) {
-      throw new Error("Stake Token Balance row not found");
+      throw new Error(`${t("Stake Token Balance")} row not found`);
     }
     return row;
   };
@@ -174,9 +178,9 @@ describe("StakingView", () => {
   const getUnbondDelayRow = (wrapper: ReturnType<typeof mount>) => {
     const row = wrapper
       .findAll(".kv")
-      .find((node) => node.text().includes("Unbond Delay"));
+      .find((node) => node.text().includes(t("Unbond Delay")));
     if (!row) {
-      throw new Error("Unbond Delay row not found");
+      throw new Error(`${t("Unbond Delay")} row not found`);
     }
     return row;
   };
@@ -329,7 +333,7 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(
-      "Configure Torii and complete account onboarding first.",
+      t("Set up network and wallet first."),
     );
     expect(getStakeBalanceRow(wrapper).text()).toContain("0 XOR");
     expect(getUnbondDelayRow(wrapper).text()).toContain("—");
@@ -346,7 +350,7 @@ describe("StakingView", () => {
     fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
     const refreshButton = wrapper
       .findAll("button")
-      .find((node) => node.text() === "Refresh");
+      .find((node) => node.text() === t("Refresh"));
     if (!refreshButton) {
       throw new Error("Refresh button not found");
     }

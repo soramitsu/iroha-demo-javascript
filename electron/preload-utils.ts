@@ -249,14 +249,14 @@ export const formatOnboardingError = (input: {
   const detail = String(input.detail ?? "").trim();
   if (input.status === 403) {
     const guidance =
-      "UAID onboarding is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain.";
+      "UAID alias registration is disabled on this Torii endpoint. Save the wallet locally instead, or use authority registration if you need the account on-chain.";
     return detail
-      ? `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance} Detail: ${detail}`
-      : `Onboarding failed with status ${input.status} (${input.statusText}): ${guidance}`;
+      ? `Alias registration failed with status ${input.status} (${input.statusText}): ${guidance} Detail: ${detail}`
+      : `Alias registration failed with status ${input.status} (${input.statusText}): ${guidance}`;
   }
   return detail
-    ? `Onboarding failed with status ${input.status} (${input.statusText}): ${detail}`
-    : `Onboarding failed with status ${input.status} (${input.statusText})`;
+    ? `Alias registration failed with status ${input.status} (${input.statusText}): ${detail}`
+    : `Alias registration failed with status ${input.status} (${input.statusText})`;
 };
 
 export const normalizeExplorerAccountQrPayload = (

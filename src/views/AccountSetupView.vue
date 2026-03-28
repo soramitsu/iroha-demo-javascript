@@ -75,13 +75,6 @@
           <header class="card-header">
             <div>
               <h2>{{ t("Generate recovery phrase") }}</h2>
-              <p class="helper">
-                {{
-                  t(
-                    "TAIRA testnet connection is fixed for onboarding in this build.",
-                  )
-                }}
-              </p>
             </div>
           </header>
           <div class="form-grid wizard-form-grid">
@@ -178,13 +171,6 @@
           <header class="card-header">
             <div>
               <h2>{{ t("Save identity") }}</h2>
-              <p class="helper">
-                {{
-                  t(
-                    "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
-                  )
-                }}
-              </p>
             </div>
           </header>
           <div class="wizard-review-grid">
@@ -232,19 +218,12 @@
             <p class="section-label">
               {{ t("Optional on-chain alias registration") }}
             </p>
-            <p class="helper">
-              {{
-                t(
-                  "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
-                )
-              }}
-            </p>
             <label>
               {{ t("Alias Metadata (JSON, optional)") }}
               <textarea
                 v-model.trim="identityInput"
                 rows="3"
-                placeholder='{"country":"JP","kyc_id":"..."}'
+                :placeholder="aliasMetadataPlaceholder"
               ></textarea>
             </label>
             <div class="actions">
@@ -286,13 +265,6 @@
           </p>
         </div>
       </header>
-      <div class="chain-quickpick">
-        <p class="helper">
-          {{
-            t("TAIRA testnet connection is fixed for onboarding in this build.")
-          }}
-        </p>
-      </div>
 
       <div class="form-grid wizard-form-grid">
         <label>
@@ -361,19 +333,12 @@
         <p class="section-label">
           {{ t("Optional on-chain alias registration") }}
         </p>
-        <p class="helper">
-          {{
-            t(
-              "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.",
-            )
-          }}
-        </p>
         <label>
           {{ t("Alias Metadata (JSON, optional)") }}
           <textarea
             v-model.trim="identityInput"
             rows="3"
-            placeholder='{"country":"JP","kyc_id":"..."}'
+            :placeholder="aliasMetadataPlaceholder"
           ></textarea>
         </label>
         <div class="actions">
@@ -422,11 +387,6 @@
       <header class="card-header">
         <div>
           <h2>{{ t("Saved Wallets") }}</h2>
-          <p class="helper">
-            {{
-              t("Switch between saved wallets or begin a fresh wallet setup.")
-            }}
-          </p>
         </div>
       </header>
       <div class="registration-steps">
@@ -602,6 +562,7 @@ watch(
 const aliasInput = ref(session.activeAccount?.displayName || "");
 const domainInput = ref(session.activeAccount?.domain || DEFAULT_DOMAIN_LABEL);
 const identityInput = ref("");
+const aliasMetadataPlaceholder = '{"country":"JP","kyc_id":"..."}';
 const wordCount = ref<12 | 24>(24);
 const mnemonicWords = ref<string[]>([]);
 const generatedKeys = ref<{
@@ -870,11 +831,12 @@ const registerGeneratedIdentity = async () => {
     }
     if (
       /status 403\b/i.test(message) ||
-      message.includes("UAID onboarding is disabled")
+      message.includes("UAID onboarding is disabled") ||
+      message.includes("UAID alias registration is disabled")
     ) {
       persistGeneratedIdentity(true);
       onboardingStatus.value = t(
-        "On-chain alias registration is unavailable on this Torii endpoint. The wallet was saved locally instead.",
+        "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.",
       );
       await router.push("/wallet");
       return;

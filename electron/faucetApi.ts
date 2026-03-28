@@ -11,6 +11,20 @@ export type AccountFaucetResponse = {
   status: string;
 };
 
+export type FaucetRequestPhase =
+  | "requestingPuzzle"
+  | "waitingForPuzzleRetry"
+  | "solvingPuzzle"
+  | "submittingClaim"
+  | "claimAccepted";
+
+export type FaucetRequestProgress = {
+  phase: FaucetRequestPhase;
+  attempt?: number;
+  attempts?: number;
+  txHashHex?: string;
+};
+
 type SolvedFaucetPow = Awaited<ReturnType<typeof solveFaucetPowPuzzle>>;
 
 type RequestFaucetFundsWithPowInput = {
@@ -24,6 +38,9 @@ type RequestFaucetFundsWithPowInput = {
   ) => Promise<SolvedFaucetPow>;
   puzzleRetryAttempts?: number;
   puzzleRetryDelayMs?: number;
+  onStatus?: (
+    progress: FaucetRequestProgress,
+  ) => void | Promise<void>;
 };
 
 const DEFAULT_PUZZLE_RETRY_ATTEMPTS = 8;
@@ -34,6 +51,20 @@ const sleepFor = (delayMs: number) =>
   new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });
+
+const emitStatus = async (
+  onStatus: RequestFaucetFundsWithPowInput["onStatus"],
+  progress: FaucetRequestProgress,
+) => {
+  if (!onStatus) {
+    return;
+  }
+  try {
+    await onStatus(progress);
+  } catch {
+    // Renderer-side status hooks must not break the faucet request itself.
+  }
+};
 
 export const shouldRetryFaucetPuzzle = (status: number, detail: string) =>
   status === 403 &&
@@ -47,6 +78,7 @@ export const requestFaucetFundsWithPuzzle = async ({
   solvePuzzle = solveFaucetPowPuzzle,
   puzzleRetryAttempts = DEFAULT_PUZZLE_RETRY_ATTEMPTS,
   puzzleRetryDelayMs = DEFAULT_PUZZLE_RETRY_DELAY_MS,
+  onStatus,
 }: RequestFaucetFundsWithPowInput): Promise<AccountFaucetResponse> => {
   const normalizedAccountId = normalizeAccountId(accountId, "accountId");
   const retryAttempts = Math.max(1, Math.trunc(puzzleRetryAttempts));
@@ -56,6 +88,11 @@ export const requestFaucetFundsWithPuzzle = async ({
   let puzzleDetail = "";
 
   for (let attempt = 1; attempt <= retryAttempts; attempt += 1) {
+    await emitStatus(onStatus, {
+      phase: "requestingPuzzle",
+      attempt,
+      attempts: retryAttempts,
+    });
     const puzzleResponse = await fetchImpl(
       `${baseUrl}/v1/accounts/faucet/puzzle`,
       {
@@ -73,6 +110,11 @@ export const requestFaucetFundsWithPuzzle = async ({
         attempt < retryAttempts &&
         shouldRetryFaucetPuzzle(puzzleStatus, puzzleDetail)
       ) {
+        await emitStatus(onStatus, {
+          phase: "waitingForPuzzleRetry",
+          attempt,
+          attempts: retryAttempts,
+        });
         await sleep(retryDelayMs);
         continue;
       }
@@ -82,8 +124,18 @@ export const requestFaucetFundsWithPuzzle = async ({
     const puzzle = (await puzzleResponse.json()) as FaucetPowPuzzle;
     const powPayload =
       puzzle.difficulty_bits > 0
-        ? await solvePuzzle(normalizedAccountId, puzzle)
+        ? (await emitStatus(onStatus, {
+            phase: "solvingPuzzle",
+            attempt,
+            attempts: retryAttempts,
+          }),
+          await solvePuzzle(normalizedAccountId, puzzle))
         : null;
+    await emitStatus(onStatus, {
+      phase: "submittingClaim",
+      attempt,
+      attempts: retryAttempts,
+    });
     const response = await fetchImpl(`${baseUrl}/v1/accounts/faucet`, {
       method: "POST",
       headers: {
@@ -105,7 +157,14 @@ export const requestFaucetFundsWithPuzzle = async ({
       const message = detail || response.statusText || "Faucet request failed.";
       throw new Error(`Faucet request failed (${response.status}): ${message}`);
     }
-    return (await response.json()) as AccountFaucetResponse;
+    const payload = (await response.json()) as AccountFaucetResponse;
+    await emitStatus(onStatus, {
+      phase: "claimAccepted",
+      attempt,
+      attempts: retryAttempts,
+      txHashHex: payload.tx_hash_hex,
+    });
+    return payload;
   }
 
   const message = shouldRetryFaucetPuzzle(puzzleStatus, puzzleDetail)

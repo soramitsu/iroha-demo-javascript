@@ -108,9 +108,10 @@ describe("iroha services bridge", () => {
       toriiUrl: "http://localhost:8080",
       accountId: "alice@wonderland",
     };
-    const result = await requestFaucetFunds(input);
+    const onProgress = vi.fn();
+    const result = await requestFaucetFunds(input, onProgress);
 
-    expect(requestFaucetFundsMock).toHaveBeenCalledWith(input);
+    expect(requestFaucetFundsMock).toHaveBeenCalledWith(input, onProgress);
     expect(result.asset_definition_id).toBe("61CtjvNd9T3THAR65GsMVHr82Bjc");
     expect(result.asset_id).toBe("norito:abcdef0123456789");
     expect(result.amount).toBe("25000");
