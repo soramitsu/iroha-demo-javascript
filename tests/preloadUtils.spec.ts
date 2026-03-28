@@ -189,9 +189,9 @@ describe("preload utils", () => {
 
   it("maps explorer QR snake_case payloads to renderer contract fields", () => {
     const normalized = normalizeExplorerAccountQrPayload({
-      canonical_id: "n42uSampleCanonical",
-      literal: "n42uSampleLiteral",
-      network_prefix: 42,
+      canonical_id: "testuSampleCanonical",
+      literal: "testuSampleLiteral",
+      network_prefix: 369,
       error_correction: "M",
       modules: 33,
       qr_version: 4,
@@ -199,9 +199,9 @@ describe("preload utils", () => {
     });
 
     expect(normalized).toEqual({
-      canonicalId: "n42uSampleCanonical",
-      literal: "n42uSampleLiteral",
-      networkPrefix: 42,
+      canonicalId: "testuSampleCanonical",
+      literal: "testuSampleLiteral",
+      networkPrefix: 369,
       errorCorrection: "M",
       modules: 33,
       qrVersion: 4,
@@ -210,7 +210,7 @@ describe("preload utils", () => {
 
     expect(() =>
       normalizeExplorerAccountQrPayload({
-        canonical_id: "n42uSampleCanonical",
+        canonical_id: "testuSampleCanonical",
         svg: "<svg/>",
       }),
     ).toThrow("Explorer QR response was missing required fields.");

@@ -39,7 +39,7 @@
             v-model.number="connectionForm.networkPrefix"
             type="number"
             min="0"
-            max="255"
+            max="16383"
             readonly
           />
         </label>

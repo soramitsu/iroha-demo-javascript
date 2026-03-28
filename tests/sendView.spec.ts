@@ -7,8 +7,8 @@ import { useSessionStore } from "@/stores/session";
 
 const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
-const BOB_I105_ACCOUNT_ID = "n42uBobRealI105AccountId";
-const MALLORY_I105_ACCOUNT_ID = "n42uMalloryRealI105AccountId";
+const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
+const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
 const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
 
 const transferAssetMock = vi.fn();
@@ -71,7 +71,7 @@ describe("SendView", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId: "norito:abcdef0123456789",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {

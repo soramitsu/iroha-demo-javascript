@@ -15,7 +15,7 @@ describe("session store", () => {
 
   it("initialises with defaults", () => {
     const store = useSessionStore();
-    expect(store.connection.networkPrefix).toBe(42);
+    expect(store.connection.networkPrefix).toBe(369);
     expect(store.connection.toriiUrl).toBe(
       TAIRA_CHAIN_PRESET.connection.toriiUrl,
     );
@@ -157,7 +157,7 @@ describe("session store", () => {
   });
 
   it("upgrades legacy account ids from stored canonical literals", () => {
-    const canonical = "n42u1234567890abcdef1234567890";
+    const canonical = "testu1234567890abcdef1234567890";
     const payload = {
       connection: {
         toriiUrl: "https://legacy-torii",
@@ -193,11 +193,11 @@ describe("session store", () => {
   });
 
   it("derives canonical account ids from stored key material when bridge is available", () => {
-    const canonical = "n42uDerivedFromPublicKey1234567890";
+    const canonical = "testuDerivedFromPublicKey1234567890";
     (window as any).iroha = {
       deriveAccountAddress: () => ({
         accountId: canonical,
-        i105AccountId: "n42uDerivedVisible1234567890",
+        i105AccountId: "testuDerivedVisible1234567890",
         i105DefaultAccountId: "sorauDerivedDefault1234567890",
         publicKeyHex: "ab".repeat(32),
         accountIdWarning: "",
@@ -208,7 +208,7 @@ describe("session store", () => {
       connection: {
         toriiUrl: "https://legacy-torii",
         chainId: "legacy",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {
@@ -231,7 +231,7 @@ describe("session store", () => {
 
     expect(store.accounts[0]?.accountId).toBe(canonical);
     expect(store.accounts[0]?.i105AccountId).toBe(
-      "n42uDerivedVisible1234567890",
+      "testuDerivedVisible1234567890",
     );
     expect(store.activeAccountId).toBe(canonical);
   });
@@ -240,7 +240,7 @@ describe("session store", () => {
     (window as any).iroha = {
       deriveAccountAddress: () => ({
         accountId: "URpZvCompatAccountId1234567890",
-        i105AccountId: "n42uVisibleNativeAccountId1234567890",
+        i105AccountId: "testuVisibleNativeAccountId1234567890",
         i105DefaultAccountId: "sorauDefaultNativeAccountId1234567890",
         publicKeyHex: "ab".repeat(32),
         accountIdWarning: "",
@@ -251,18 +251,18 @@ describe("session store", () => {
       connection: {
         toriiUrl: "https://legacy-torii",
         chainId: "legacy",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {
           displayName: "Native",
           domain: "default",
-          accountId: "n42uVisibleNativeAccountId1234567890",
+          accountId: "testuVisibleNativeAccountId1234567890",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "priv",
         },
       ],
-      activeAccountId: "n42uVisibleNativeAccountId1234567890",
+      activeAccountId: "testuVisibleNativeAccountId1234567890",
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
 
@@ -271,7 +271,7 @@ describe("session store", () => {
 
     expect(store.accounts[0]?.accountId).toBe("URpZvCompatAccountId1234567890");
     expect(store.accounts[0]?.i105AccountId).toBe(
-      "n42uVisibleNativeAccountId1234567890",
+      "testuVisibleNativeAccountId1234567890",
     );
     expect(store.activeAccountId).toBe("URpZvCompatAccountId1234567890");
   });

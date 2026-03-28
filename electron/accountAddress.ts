@@ -6,7 +6,8 @@ import {
   normalizeAccountId as normalizeSdkAccountId,
 } from "@iroha/iroha-js";
 
-const DEFAULT_NETWORK_PREFIX = 42;
+// TAIRA display literals use the testnet chain discriminant.
+const DEFAULT_NETWORK_PREFIX = 369;
 const SORA_NETWORK_PREFIX = 753;
 const HEX_RE = /^[0-9a-fA-F]+$/;
 

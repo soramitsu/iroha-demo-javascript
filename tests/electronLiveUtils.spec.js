@@ -14,28 +14,28 @@ const sampleI105AccountId = AccountAddress.fromAccount({
     "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03",
     "hex",
   ),
-}).toI105(42);
+}).toI105(369);
 
 describe("electron live e2e utils", () => {
   it("parses valid network prefixes with TAIRA default fallback", () => {
-    expect(parseNetworkPrefix(undefined)).toBe(42);
-    expect(parseNetworkPrefix("42")).toBe(42);
+    expect(parseNetworkPrefix(undefined)).toBe(369);
+    expect(parseNetworkPrefix("369")).toBe(369);
     expect(parseNetworkPrefix("0")).toBe(0);
-    expect(parseNetworkPrefix("255")).toBe(255);
+    expect(parseNetworkPrefix("16383")).toBe(16383);
   });
 
   it("rejects invalid network prefixes", () => {
     expect(() => parseNetworkPrefix("-1")).toThrow(
-      "E2E_NETWORK_PREFIX must be an integer from 0 to 255.",
+      "E2E_NETWORK_PREFIX must be an integer from 0 to 16383.",
     );
-    expect(() => parseNetworkPrefix("256")).toThrow(
-      "E2E_NETWORK_PREFIX must be an integer from 0 to 255.",
+    expect(() => parseNetworkPrefix("16384")).toThrow(
+      "E2E_NETWORK_PREFIX must be an integer from 0 to 16383.",
     );
     expect(() => parseNetworkPrefix("1.5")).toThrow(
-      "E2E_NETWORK_PREFIX must be an integer from 0 to 255.",
+      "E2E_NETWORK_PREFIX must be an integer from 0 to 16383.",
     );
     expect(() => parseNetworkPrefix("abc")).toThrow(
-      "E2E_NETWORK_PREFIX must be an integer from 0 to 255.",
+      "E2E_NETWORK_PREFIX must be an integer from 0 to 16383.",
     );
   });
 

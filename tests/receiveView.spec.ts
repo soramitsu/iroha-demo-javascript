@@ -4,8 +4,8 @@ import { createPinia, setActivePinia } from "pinia";
 import ReceiveView from "@/views/ReceiveView.vue";
 import { useSessionStore } from "@/stores/session";
 
-const ALICE_I105_ACCOUNT_ID = "n42uAliceRealI105AccountId";
-const BOB_I105_ACCOUNT_ID = "n42uBobRealI105AccountId";
+const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
+const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const ASSET_DEFINITION_ID = "norito:abcdef0123456789";
 const qrToStringMock = vi.fn();
 
@@ -31,7 +31,7 @@ describe("ReceiveView", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId: ASSET_DEFINITION_ID,
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {

@@ -119,7 +119,7 @@ describe("ParliamentView", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId: "xor#wonderland",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {

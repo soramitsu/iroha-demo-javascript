@@ -39,7 +39,7 @@ describe("ExploreView", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId: "xor#wonderland",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {
@@ -85,8 +85,8 @@ describe("ExploreView", () => {
     getExplorerAccountQrMock.mockReturnValueOnce(aliceQrDeferred);
     getExplorerAccountQrMock.mockResolvedValueOnce({
       canonicalId: "URpZvBobCompat",
-      literal: "n42uBobLiteral",
-      networkPrefix: 42,
+      literal: "testuBobLiteral",
+      networkPrefix: 369,
       errorCorrection: "M",
       modules: 29,
       qrVersion: 1,
@@ -99,12 +99,12 @@ describe("ExploreView", () => {
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("n42uBobLiteral");
+    expect(wrapper.text()).toContain("testuBobLiteral");
 
     resolveAliceQr({
       canonicalId: "URpZvAliceCompat",
-      literal: "n42uAliceLiteral",
-      networkPrefix: 42,
+      literal: "testuAliceLiteral",
+      networkPrefix: 369,
       errorCorrection: "M",
       modules: 29,
       qrVersion: 1,
@@ -113,7 +113,7 @@ describe("ExploreView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("n42uBobLiteral");
-    expect(wrapper.text()).not.toContain("n42uAliceLiteral");
+    expect(wrapper.text()).toContain("testuBobLiteral");
+    expect(wrapper.text()).not.toContain("testuAliceLiteral");
   });
 });

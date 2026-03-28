@@ -7,7 +7,7 @@ import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const EXAMPLE_REAL_I105_ACCOUNT_ID =
-  "n42uﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
+  "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();

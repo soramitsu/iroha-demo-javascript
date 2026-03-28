@@ -67,9 +67,9 @@ describe("iroha services bridge", () => {
 
   it("returns explorer QR snapshots with svg markup", async () => {
     const snapshot = {
-      canonicalId: "n42uAliceCanonical",
-      literal: "n42uAliceLiteral",
-      networkPrefix: 42,
+      canonicalId: "testuAliceCanonical",
+      literal: "testuAliceLiteral",
+      networkPrefix: 369,
       errorCorrection: "Q",
       modules: 21,
       qrVersion: 6,
@@ -82,7 +82,7 @@ describe("iroha services bridge", () => {
 
     const input = {
       toriiUrl: "http://localhost:8080",
-      accountId: "n42uAliceCanonical",
+      accountId: "testuAliceCanonical",
     };
     const result = await getExplorerAccountQr(input);
 

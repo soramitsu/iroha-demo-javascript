@@ -8,7 +8,7 @@ import { useOfflineStore } from "@/stores/offline";
 
 const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
-const TREASURY_I105_ACCOUNT_ID = "n42uTreasuryRealI105AccountId";
+const TREASURY_I105_ACCOUNT_ID = "testuTreasuryRealI105AccountId";
 const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
 
 const transferAssetMock = vi.fn();
@@ -70,7 +70,7 @@ describe("OfflineView move-to-online shield mode", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId: "norito:abcdef0123456789",
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {

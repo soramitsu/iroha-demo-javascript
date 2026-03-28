@@ -1,10 +1,10 @@
 import { normalizeAccountId } from "@iroha/iroha-js";
 
 export function parseNetworkPrefix(rawValue) {
-  if (!rawValue) return 42;
+  if (!rawValue) return 369;
   const parsed = Number(rawValue);
-  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) {
-    throw new Error("E2E_NETWORK_PREFIX must be an integer from 0 to 255.");
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0x3fff) {
+    throw new Error("E2E_NETWORK_PREFIX must be an integer from 0 to 16383.");
   }
   return parsed;
 }

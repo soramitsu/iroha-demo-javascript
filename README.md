@@ -96,7 +96,7 @@ Optional env vars:
 - `E2E_TORII_URL` (default: `https://taira.sora.org`)
 - `E2E_CHAIN_ID` (default: `809574f5-fee7-5e69-bfcf-52451e42d50f`)
 - `E2E_ASSET_DEFINITION_ID` (required; canonical encoded asset ID, e.g. `norito:<hex>`)
-- `E2E_NETWORK_PREFIX` (default: `42`)
+- `E2E_NETWORK_PREFIX` (default: `369`)
 - `E2E_ACCOUNT_ID` (optional seed account for read-only Explore QR assertions; canonical I105 literal)
 - `E2E_ONBOARDING_ALIAS` (default: `E2E Onboarding Shared`)
 - `E2E_ONBOARDING_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable onboarding account reuse)
@@ -138,7 +138,7 @@ If a test fails, screenshots are written under `output/playwright/`.
 ## Usage notes
 
 1. **Account setup** — first-run wizard for provisioning a TAIRA testnet account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
-2. **Setup tab** — TAIRA Torii URL + chain ID are locked; set your asset definition and key material. Generate or import a key pair to derive the canonical I105 `accountId` (for example `n42u...`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
+2. **Setup tab** — TAIRA Torii URL + chain ID are locked; set your asset definition and key material. Generate or import a key pair to derive the canonical I105 `accountId` (for example `testu...`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
 4. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
 5. **Parliament tab** — bond a fixed `10,000 XOR` amount via `RegisterCitizen`, inspect referendum/proposal/tally/locks payloads, submit plain ballots, and prepare finalize/enact draft calls for governance operations. Recent referendum/proposal chips are persisted per account and trigger lookup when clicked. If referendum ID is set, lookup continues even when proposal ID input is invalid (proposal lookup is skipped). Ballot submit requires a positive whole-number amount that does not exceed the current XOR balance.

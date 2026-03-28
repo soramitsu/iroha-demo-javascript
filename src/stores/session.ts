@@ -176,7 +176,7 @@ const normalizeUser = (
   const normalized = { ...defaultUser(), ...user };
   const derivedAccountAddresses = deriveAccountAddressesFromProfile(
     normalized,
-    options?.networkPrefix ?? 42,
+    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
   );
   const resolvedAccountId = resolveAccountIdLiteral(
     normalized,

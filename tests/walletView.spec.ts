@@ -59,7 +59,7 @@ describe("WalletView", () => {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
         assetDefinitionId,
-        networkPrefix: 42,
+        networkPrefix: 369,
       },
       accounts: [
         {

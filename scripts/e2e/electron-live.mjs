@@ -971,7 +971,7 @@ async function runNavigationSmokeFlow(page) {
       }
       const destinationInput = page.getByLabel("To", { exact: true });
       const amountInput = page.locator('input[type="number"]').first();
-      const transparentDestination = "n42uRestoreSendAccount";
+      const transparentDestination = "testuRestoreSendAccount";
       await destinationInput.fill(transparentDestination);
 
       const transparentStep = await amountInput.getAttribute("step");
@@ -1121,7 +1121,7 @@ async function runNavigationSmokeFlow(page) {
         continue;
       }
       const destinationInput = moveCard.getByLabel("To", { exact: true });
-      const transparentDestination = "n42uRestoreOfflineAccount";
+      const transparentDestination = "testuRestoreOfflineAccount";
       await destinationInput.fill(transparentDestination);
       let offlineShieldCheckable = true;
       for (let attempt = 0; attempt < 3; attempt += 1) {

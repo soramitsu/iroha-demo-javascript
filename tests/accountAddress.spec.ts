@@ -14,28 +14,27 @@ describe("accountAddress helper", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
 
     expect(derived.accountId).toBe(
       AccountAddress.fromAccount({
         publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
-      }).toI105(42),
+      }).toI105(369),
     );
-    expect(derived.i105AccountId.startsWith("n42u")).toBe(true);
+    expect(derived.i105AccountId.startsWith("testu")).toBe(true);
     expect(derived.i105DefaultAccountId.startsWith("sorau")).toBe(true);
-    expect(derived.i105AccountId).not.toBe(derived.accountId);
   });
 
   it("converts native TAIRA I105 literals into the compatibility literal", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
 
     expect(
-      normalizeCompatAccountIdLiteral(derived.i105AccountId, "accountId", 42),
+      normalizeCompatAccountIdLiteral(derived.i105AccountId, "accountId", 369),
     ).toBe(derived.accountId);
   });
 
@@ -43,14 +42,14 @@ describe("accountAddress helper", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
 
     expect(
       normalizeCompatAccountIdLiteral(
         derived.i105DefaultAccountId,
         "accountId",
-        42,
+        369,
       ),
     ).toBe(derived.accountId);
   });
@@ -59,22 +58,22 @@ describe("accountAddress helper", () => {
     const derived = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
     const canonicalAccountId = normalizeCanonicalAccountIdLiteral(
       derived.i105DefaultAccountId,
       "accountId",
-      42,
+      369,
     );
 
     expect(
-      normalizeCanonicalAccountIdLiteral(derived.accountId, "accountId", 42),
+      normalizeCanonicalAccountIdLiteral(derived.accountId, "accountId", 369),
     ).toBe(canonicalAccountId);
     expect(
       normalizeCanonicalAccountIdLiteral(
         derived.i105AccountId,
         "accountId",
-        42,
+        369,
       ),
     ).toBe(canonicalAccountId);
   });
@@ -83,12 +82,12 @@ describe("accountAddress helper", () => {
     const defaultDomain = deriveAccountAddressView({
       domain: "default",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
     const alternateDomain = deriveAccountAddressView({
       domain: "advanced-panel-alias",
       publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
-      networkPrefix: 42,
+      networkPrefix: 369,
     });
 
     expect(alternateDomain.accountId).toBe(defaultDomain.accountId);
