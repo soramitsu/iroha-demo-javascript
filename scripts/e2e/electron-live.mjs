@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 
 import { mkdirSync, existsSync } from "node:fs";
-import { randomBytes } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
-import { AccountAddress, normalizeAssetId } from "@iroha/iroha-js";
 import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
@@ -36,17 +34,6 @@ const {
   privateKeyHex: onboardingPrivateKeyHex,
   offlineBalance: onboardingOfflineSeedBalance,
 } = parseOnboardingEnvConfig(process.env);
-const deterministicSeedPublicKeyHex =
-  "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
-const defaultAccountIdFallback = AccountAddress.fromAccount({
-  domain: defaultDerivationLabel,
-  publicKey: Buffer.from(deterministicSeedPublicKeyHex, "hex"),
-}).toI105(networkPrefix);
-
-const defaultAccountId = process.env.E2E_ACCOUNT_ID || defaultAccountIdFallback;
-const syntheticPublicKeyHex =
-  `ed0120${randomBytes(32).toString("hex")}`.toUpperCase();
-const syntheticPrivateKeyHex = randomBytes(32).toString("hex");
 
 async function main() {
   if (!existsSync(mainEntry)) {
@@ -55,23 +42,8 @@ async function main() {
     );
   }
 
-  if (!assetDefinitionId) {
-    throw new Error(
-      "E2E_ASSET_DEFINITION_ID is required. Provide a canonical encoded asset ID (norito:<hex>).",
-    );
-  }
-  try {
-    normalizeAssetId(assetDefinitionId, "E2E_ASSET_DEFINITION_ID");
-  } catch (error) {
-    throw new Error(
-      `E2E_ASSET_DEFINITION_ID has unsupported format: ${assetDefinitionId}. Provide a canonical encoded asset ID (norito:<hex>).`,
-      { cause: error },
-    );
-  }
-
   assertTairaTarget(toriiUrl, chainId);
   await preflightToriiHealth(toriiUrl);
-  const seededAccountId = await resolveSeedAccountId(toriiUrl);
   mkdirSync(screenshotDir, { recursive: true });
 
   let app;
@@ -84,10 +56,23 @@ async function main() {
     page = await app.firstWindow();
     page.setDefaultTimeout(45_000);
 
-    await runReadOnlyFlow(page, seededAccountId);
-    await runOnboardingFlow(page);
+    const faucetFlow = await runFaucetFlow(page);
+    const readOnlyAssetId = assetDefinitionId || faucetFlow.assetId;
+    const onboardingAssetId = assetDefinitionId || faucetFlow.assetDefinitionId;
 
-    console.log("Live Electron E2E passed (read-only + onboarding flows).");
+    await runReadOnlyFlow(page, {
+      accountId: faucetFlow.displayAccountId,
+      i105AccountId: faucetFlow.i105AccountId,
+      i105DefaultAccountId: faucetFlow.i105DefaultAccountId,
+      publicKeyHex: faucetFlow.publicKeyHex,
+      privateKeyHex: faucetFlow.privateKeyHex,
+      assetDefinitionId: readOnlyAssetId,
+    });
+    await runOnboardingFlow(page, onboardingAssetId);
+
+    console.log(
+      "Live Electron E2E passed (faucet + read-only + onboarding flows).",
+    );
   } catch (error) {
     if (page) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -162,7 +147,219 @@ async function preflightToriiHealth(baseUrl) {
   );
 }
 
-async function runReadOnlyFlow(page, seededAccountId) {
+async function runFaucetFlow(page) {
+  await page.evaluate(() => {
+    localStorage.removeItem("iroha-demo:session");
+    localStorage.removeItem("iroha-demo:offline");
+    localStorage.setItem("iroha-demo:locale", "en-US");
+  });
+  await page.reload();
+
+  await waitForAccountView(page);
+  await configureConnection(page);
+  const faucetBootstrap = await page.evaluate(
+    ({ torii, chain, prefix, derivationLabel }) => {
+      const { publicKeyHex, privateKeyHex } = window.iroha.generateKeyPair();
+      const summary = window.iroha.deriveAccountAddress({
+        domain: derivationLabel,
+        publicKeyHex,
+        networkPrefix: prefix,
+      });
+
+      localStorage.setItem(
+        "iroha-demo:session",
+        JSON.stringify({
+          hydrated: true,
+          connection: {
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: "",
+            networkPrefix: prefix,
+          },
+          authority: {
+            accountId: "",
+            privateKeyHex: "",
+          },
+          accounts: [
+            {
+              displayName: "E2E Faucet",
+              domain: derivationLabel,
+              accountId: summary.accountId,
+              i105AccountId: summary.i105AccountId,
+              i105DefaultAccountId: summary.i105DefaultAccountId,
+              publicKeyHex,
+              privateKeyHex,
+              localOnly: true,
+            },
+          ],
+          activeAccountId: summary.accountId,
+          customChains: [],
+        }),
+      );
+
+      return {
+        displayAccountId: summary.accountId,
+        i105AccountId: summary.i105AccountId,
+        i105DefaultAccountId: summary.i105DefaultAccountId,
+        publicKeyHex,
+        privateKeyHex,
+      };
+    },
+    {
+      torii: toriiUrl,
+      chain: chainId,
+      prefix: networkPrefix,
+      derivationLabel: defaultDerivationLabel,
+    },
+  );
+
+  await page.reload();
+  await page.evaluate(() => {
+    window.location.hash = "#/wallet";
+  });
+  await page.waitForFunction(() => window.location.hash === "#/wallet", {
+    timeout: 45_000,
+  });
+  await page
+    .getByRole("heading", { name: "Wallet Overview", exact: true, level: 1 })
+    .waitFor({ state: "visible", timeout: 45_000 });
+
+  const claimButton = page.getByRole("button", {
+    name: "Claim Testnet XOR",
+    exact: true,
+  });
+  await claimButton.waitFor({ state: "visible", timeout: 45_000 });
+  await claimButton.click();
+
+  const faucetState = await page
+    .waitForFunction(
+      () => {
+        const text = document.body.textContent ?? "";
+        if (!text.includes("Testnet XOR requested:")) {
+          return null;
+        }
+        const raw = localStorage.getItem("iroha-demo:session");
+        if (!raw) {
+          return null;
+        }
+        try {
+          const session = JSON.parse(raw);
+          const configuredAssetId = String(
+            session?.connection?.assetDefinitionId ?? "",
+          ).trim();
+          const activeAccount = Array.isArray(session?.accounts)
+            ? session.accounts.find(
+                (account) => account?.accountId === session?.activeAccountId,
+              )
+            : null;
+          if (!configuredAssetId || !activeAccount || activeAccount.localOnly) {
+            return null;
+          }
+          return {
+            messageText: text,
+            configuredAssetId,
+          };
+        } catch {
+          return null;
+        }
+      },
+      { timeout: 120_000 },
+    )
+    .then((handle) => handle.jsonValue());
+
+  const fundedBalance = await page.evaluate(
+    async ({ torii, accountId }) => {
+      let lastError = "";
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        try {
+          const response = await window.iroha.fetchAccountAssets({
+            toriiUrl: torii,
+            accountId,
+            limit: 50,
+          });
+          const items = Array.isArray(response?.items) ? response.items : [];
+          const positiveAsset = items.find((asset) => {
+            const quantity = Number(String(asset?.quantity ?? ""));
+            return Number.isFinite(quantity) && quantity > 0;
+          });
+          if (positiveAsset) {
+            return {
+              assetId: String(positiveAsset.asset_id ?? "").trim(),
+              quantity: String(positiveAsset.quantity ?? "").trim(),
+              error: "",
+            };
+          }
+        } catch (error) {
+          lastError = String(error ?? "");
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+      }
+      return {
+        assetId: "",
+        quantity: "",
+        error: lastError,
+      };
+    },
+    {
+      torii: toriiUrl,
+      accountId: faucetBootstrap.displayAccountId,
+    },
+  );
+
+  if (!fundedBalance?.assetId || !fundedBalance?.quantity) {
+    throw new Error(
+      `Faucet flow queued a request but did not observe a funded balance within 60s. State: ${JSON.stringify(
+        {
+          faucetState,
+          fundedBalance,
+          faucetBootstrap,
+        },
+      ).slice(0, 1600)}`,
+    );
+  }
+
+  const txHashMatch = /Testnet XOR requested:\s*([0-9a-f]+)/i.exec(
+    String(faucetState?.messageText ?? ""),
+  );
+  const txHash = txHashMatch?.[1]?.trim() ?? "";
+  if (!txHash) {
+    throw new Error(
+      `Faucet flow did not expose a transaction hash in the wallet status message. State: ${JSON.stringify(
+        faucetState,
+      ).slice(0, 1200)}`,
+    );
+  }
+
+  const assetId = String(fundedBalance.assetId).trim();
+  const assetDefinitionId =
+    assetId.split("#", 1)[0]?.trim() || String(faucetState.configuredAssetId);
+
+  if (!assetDefinitionId) {
+    throw new Error(
+      `Faucet flow did not resolve an asset definition id. State: ${JSON.stringify(
+        {
+          faucetState,
+          fundedBalance,
+        },
+      ).slice(0, 1200)}`,
+    );
+  }
+
+  console.log(
+    `Faucet probe queued ${txHash} and observed ${fundedBalance.quantity} units on ${assetId}.`,
+  );
+
+  return {
+    ...faucetBootstrap,
+    canonicalAccountId: assetId.split("#").slice(1).join("#"),
+    assetId,
+    assetDefinitionId,
+    txHash,
+    quantity: String(fundedBalance.quantity).trim(),
+  };
+}
+
+async function runReadOnlyFlow(page, fundedAccount) {
   await page.evaluate(() => {
     localStorage.removeItem("iroha-demo:session");
     localStorage.removeItem("iroha-demo:offline");
@@ -176,6 +373,8 @@ async function runReadOnlyFlow(page, seededAccountId) {
   await page.evaluate(
     ({
       accountId,
+      i105AccountId,
+      i105DefaultAccountId,
       publicKeyHex,
       privateKeyHex,
       torii,
@@ -203,6 +402,8 @@ async function runReadOnlyFlow(page, seededAccountId) {
               displayName: "E2E Synthetic",
               domain: derivationLabel,
               accountId,
+              i105AccountId,
+              i105DefaultAccountId,
               publicKeyHex,
               privateKeyHex,
             },
@@ -213,12 +414,14 @@ async function runReadOnlyFlow(page, seededAccountId) {
       );
     },
     {
-      accountId: seededAccountId,
-      publicKeyHex: syntheticPublicKeyHex,
-      privateKeyHex: syntheticPrivateKeyHex,
+      accountId: fundedAccount.accountId,
+      i105AccountId: fundedAccount.i105AccountId,
+      i105DefaultAccountId: fundedAccount.i105DefaultAccountId,
+      publicKeyHex: fundedAccount.publicKeyHex,
+      privateKeyHex: fundedAccount.privateKeyHex,
       torii: toriiUrl,
       chain: chainId,
-      assetId: assetDefinitionId,
+      assetId: fundedAccount.assetDefinitionId,
       prefix: networkPrefix,
       derivationLabel: defaultDerivationLabel,
     },
@@ -265,7 +468,7 @@ async function runReadOnlyFlow(page, seededAccountId) {
       }
       return out;
     },
-    { torii: toriiUrl, accountId: seededAccountId },
+    { torii: toriiUrl, accountId: fundedAccount.accountId },
   );
 
   if (!bridgeProbe.metrics) {
@@ -318,36 +521,7 @@ async function runReadOnlyFlow(page, seededAccountId) {
   await runNavigationSmokeFlow(page);
 }
 
-async function resolveSeedAccountId(baseUrl) {
-  if (process.env.E2E_ACCOUNT_ID?.trim()) {
-    const fromEnv = process.env.E2E_ACCOUNT_ID.trim();
-    if (isSupportedAccountIdLiteral(fromEnv)) {
-      return fromEnv;
-    }
-    throw new Error(
-      `E2E_ACCOUNT_ID has unsupported format: ${fromEnv}. Provide a canonical I105 account literal accepted by normalizeAccountId().`,
-    );
-  }
-  const normalizedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-  const accountsUrl = new URL("v1/accounts?limit=1", normalizedBase).toString();
-  try {
-    const response = await fetch(accountsUrl, {
-      method: "GET",
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) return defaultAccountId;
-    const payload = await response.json().catch(() => null);
-    const firstId = payload?.items?.[0]?.id;
-    if (isSupportedAccountIdLiteral(firstId)) {
-      return firstId;
-    }
-  } catch (_error) {
-    // Fall back to the deterministic bootstrap account id below.
-  }
-  return defaultAccountId;
-}
-
-async function runOnboardingFlow(page) {
+async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
   await page.evaluate(() => {
     localStorage.removeItem("iroha-demo:session");
     localStorage.removeItem("iroha-demo:offline");
@@ -450,7 +624,7 @@ async function runOnboardingFlow(page) {
     {
       torii: toriiUrl,
       chain: chainId,
-      assetId: assetDefinitionId,
+      assetId: resolvedAssetDefinitionId,
       prefix: networkPrefix,
       alias: onboardingAlias,
       privateKeyHex: onboardingPrivateKeyHex,

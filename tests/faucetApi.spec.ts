@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AccountAddress } from "@iroha/iroha-js";
 
 import {
   requestFaucetFundsWithPuzzle,
@@ -20,8 +21,17 @@ const basePuzzle: FaucetPowPuzzle = {
   max_anchor_age_blocks: 6,
 };
 
+const SAMPLE_PUBLIC_KEY_HEX =
+  "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
+const displayAccountId = AccountAddress.fromAccount({
+  publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
+}).toI105(42);
+const canonicalAccountId = AccountAddress.fromAccount({
+  publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
+}).toI105();
+
 describe("faucetApi", () => {
-  it("retries faucet puzzles while VRF seed material is temporarily unavailable", async () => {
+  it("canonicalizes the account literal before solving and posting the faucet proof", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -49,9 +59,9 @@ describe("faucetApi", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            account_id: "alice@wonderland",
+            account_id: canonicalAccountId,
             asset_definition_id: "xor#sora",
-            asset_id: "xor#sora##alice@wonderland",
+            asset_id: `xor#sora#${canonicalAccountId}`,
             amount: "25000",
             tx_hash_hex: "0xabc",
             status: "QUEUED",
@@ -73,7 +83,7 @@ describe("faucetApi", () => {
 
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
-      accountId: "alice@wonderland",
+      accountId: displayAccountId,
       fetchImpl,
       sleep,
       solvePuzzle,
@@ -82,7 +92,7 @@ describe("faucetApi", () => {
     });
 
     expect(sleep).toHaveBeenCalledWith(125);
-    expect(solvePuzzle).toHaveBeenCalledWith("alice@wonderland", basePuzzle);
+    expect(solvePuzzle).toHaveBeenCalledWith(canonicalAccountId, basePuzzle);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
@@ -97,7 +107,7 @@ describe("faucetApi", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          account_id: "alice@wonderland",
+          account_id: canonicalAccountId,
           pow_anchor_height: 42,
           pow_nonce_hex: "0000000000000001",
         }),
@@ -126,7 +136,7 @@ describe("faucetApi", () => {
     await expect(
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
-        accountId: "alice@wonderland",
+        accountId: displayAccountId,
         fetchImpl,
         sleep,
         puzzleRetryAttempts: 3,
@@ -158,7 +168,7 @@ describe("faucetApi", () => {
     await expect(
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
-        accountId: "alice@wonderland",
+        accountId: displayAccountId,
         fetchImpl,
       }),
     ).rejects.toThrow("Faucet puzzle failed (403): Account faucet disabled");

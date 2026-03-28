@@ -4,6 +4,7 @@ import {
   extractApiErrorDetail,
   formatOnboardingError,
   isPositiveWholeAmount,
+  normalizeAccountAssetListPayload,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
@@ -213,6 +214,51 @@ describe("preload utils", () => {
         svg: "<svg/>",
       }),
     ).toThrow("Explorer QR response was missing required fields.");
+  });
+
+  it("normalizes account asset list payloads from legacy and split-field responses", () => {
+    expect(
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            asset_id: "xor#sora#alice",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      }),
+    ).toEqual({
+      items: [
+        {
+          asset_id: "xor#sora#alice",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
+
+    expect(
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            account_id: "sorauAlice",
+            asset: "5PeSrQmLNwwKtruJvDZrbrm9RuMw",
+            asset_alias: null,
+            asset_name: "Localnet Fee",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      }),
+    ).toEqual({
+      items: [
+        {
+          asset_id: "5PeSrQmLNwwKtruJvDZrbrm9RuMw#sorauAlice",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
   });
 
   it("normalizes public lane validators payloads", () => {

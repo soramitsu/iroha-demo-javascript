@@ -93,6 +93,16 @@ export interface ConfidentialAssetPolicyView {
   pending_transition: ConfidentialPolicyTransitionView | null;
 }
 
+export interface AccountAssetListItemView {
+  asset_id: string;
+  quantity: string;
+}
+
+export interface AccountAssetListResponseView {
+  items: AccountAssetListItemView[];
+  total: number;
+}
+
 const toRecord = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -276,6 +286,47 @@ export const normalizeExplorerAccountQrPayload = (
     modules,
     qrVersion,
     svg,
+  };
+};
+
+export const normalizeAccountAssetListPayload = (
+  payload: unknown,
+): AccountAssetListResponseView => {
+  const record = toRecord(payload, "account asset list response");
+  const items = toArray(record.items, "account asset list response.items").map(
+    (value, index) => {
+      const entry = toRecord(
+        value,
+        `account asset list response.items[${index}]`,
+      );
+      const legacyAssetId = String(entry.asset_id ?? "").trim();
+      const assetDefinitionId = String(entry.asset ?? "").trim();
+      const accountId = String(entry.account_id ?? "").trim();
+      const assetId =
+        legacyAssetId ||
+        (assetDefinitionId && accountId
+          ? `${assetDefinitionId}#${accountId}`
+          : "");
+      if (!assetId) {
+        throw new Error(
+          `account asset list response.items[${index}].asset_id must be a string`,
+        );
+      }
+      return {
+        asset_id: assetId,
+        quantity: toStringValue(
+          entry.quantity,
+          `account asset list response.items[${index}].quantity`,
+        ),
+      };
+    },
+  );
+  return {
+    items,
+    total: toPositiveInteger(
+      record.total ?? items.length,
+      "account asset list response.total",
+    ),
   };
 };
 

@@ -16,12 +16,14 @@ import {
   confidentialModeSupportsShield,
   formatOnboardingError,
   isPositiveWholeAmount,
+  normalizeAccountAssetListPayload,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
+  readApiErrorDetail,
   readNexusUnbondingDelayMs,
   type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
@@ -37,6 +39,7 @@ import {
 import { bootstrapPortableConnectPreviewSession } from "./connectPreview";
 import {
   deriveAccountAddressView,
+  normalizeCanonicalAccountIdLiteral,
   normalizeCompatAccountIdLiteral,
 } from "./accountAddress";
 
@@ -744,7 +747,7 @@ const api: IrohaBridge = {
     const tx = buildTransferAssetTransaction({
       chainId: input.chainId,
       authority: accountId,
-      sourceAssetId,
+      sourceAssetHoldingId: sourceAssetId,
       quantity: input.quantity,
       destinationAccountId,
       metadata: input.metadata ?? null,
@@ -763,19 +766,39 @@ const api: IrohaBridge = {
     return fetchConfidentialAssetPolicy(toriiUrl, assetDefinitionId);
   },
   fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
-    const client = getClient(toriiUrl);
-    return client.listAccountAssets(
-      normalizeCompatAccountIdLiteral(accountId, "accountId"),
-      {
-        limit,
-        offset,
-      },
+    const normalizedBaseUrl = `${normalizeBaseUrl(toriiUrl)}/`;
+    const normalizedAccountId = encodeURIComponent(
+      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
     );
+    const endpoint = new URL(
+      `v1/accounts/${normalizedAccountId}/assets`,
+      normalizedBaseUrl,
+    );
+    endpoint.searchParams.set("limit", String(limit));
+    if (offset !== undefined) {
+      endpoint.searchParams.set("offset", String(offset));
+    }
+    return nodeFetch(endpoint.toString(), {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+      },
+    }).then(async (response) => {
+      if (!response.ok) {
+        const detail = await readApiErrorDetail(response);
+        throw new Error(
+          detail ||
+            `Account assets request failed with status ${response.status} (${response.statusText})`,
+        );
+      }
+      const payload = (await response.json()) as unknown;
+      return normalizeAccountAssetListPayload(payload);
+    });
   },
   fetchAccountTransactions({ toriiUrl, accountId, limit = 20, offset }) {
     const client = getClient(toriiUrl);
     return client.listAccountTransactions(
-      normalizeCompatAccountIdLiteral(accountId, "accountId"),
+      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
       {
         limit,
         offset,
@@ -785,7 +808,7 @@ const api: IrohaBridge = {
   listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
     const client = getClient(toriiUrl);
     return client.listAccountPermissions(
-      normalizeCompatAccountIdLiteral(accountId, "accountId"),
+      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
       {
         limit,
         offset,
@@ -883,7 +906,7 @@ const api: IrohaBridge = {
   },
   async getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl);
-    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
     );
@@ -958,6 +981,10 @@ const api: IrohaBridge = {
   },
   async onboardAccount({ toriiUrl, alias, accountId, identity }) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
     const response = await nodeFetch(`${baseUrl}/v1/accounts/onboard`, {
       method: "POST",
       headers: {
@@ -966,7 +993,7 @@ const api: IrohaBridge = {
       },
       body: JSON.stringify({
         alias,
-        account_id: accountId,
+        account_id: normalizedAccountId,
         identity: identity ?? undefined,
       }),
     });

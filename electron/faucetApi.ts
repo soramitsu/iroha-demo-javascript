@@ -1,3 +1,4 @@
+import { normalizeAccountId } from "@iroha/iroha-js";
 import { solveFaucetPowPuzzle, type FaucetPowPuzzle } from "./faucetPow";
 import { readApiErrorDetail } from "./preload-utils";
 
@@ -47,6 +48,7 @@ export const requestFaucetFundsWithPuzzle = async ({
   puzzleRetryAttempts = DEFAULT_PUZZLE_RETRY_ATTEMPTS,
   puzzleRetryDelayMs = DEFAULT_PUZZLE_RETRY_DELAY_MS,
 }: RequestFaucetFundsWithPowInput): Promise<AccountFaucetResponse> => {
+  const normalizedAccountId = normalizeAccountId(accountId, "accountId");
   const retryAttempts = Math.max(1, Math.trunc(puzzleRetryAttempts));
   const retryDelayMs = Math.max(0, Math.trunc(puzzleRetryDelayMs));
   let puzzleStatus = 0;
@@ -79,7 +81,9 @@ export const requestFaucetFundsWithPuzzle = async ({
 
     const puzzle = (await puzzleResponse.json()) as FaucetPowPuzzle;
     const powPayload =
-      puzzle.difficulty_bits > 0 ? await solvePuzzle(accountId, puzzle) : null;
+      puzzle.difficulty_bits > 0
+        ? await solvePuzzle(normalizedAccountId, puzzle)
+        : null;
     const response = await fetchImpl(`${baseUrl}/v1/accounts/faucet`, {
       method: "POST",
       headers: {
@@ -87,7 +91,7 @@ export const requestFaucetFundsWithPuzzle = async ({
         Accept: "application/json",
       },
       body: JSON.stringify({
-        account_id: accountId,
+        account_id: normalizedAccountId,
         ...(powPayload
           ? {
               pow_anchor_height: powPayload.anchorHeight,

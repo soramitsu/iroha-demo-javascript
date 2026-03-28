@@ -192,6 +192,10 @@ const normalizeCompatLiteralFromAddress = (
   networkPrefix: number,
 ) => address.toI105(networkPrefix);
 
+const normalizeCanonicalLiteralFromAddress = (
+  address: InstanceType<typeof AccountAddress>,
+) => address.toI105(SORA_NETWORK_PREFIX);
+
 const fallbackCompatLiteral = (
   literal: string,
   label: string,
@@ -231,6 +235,34 @@ export const normalizeCompatAccountIdLiteral = (
   return fallbackCompatLiteral(literal, label, normalizedPrefix);
 };
 
+export const normalizeCanonicalAccountIdLiteral = (
+  value: string,
+  label: string,
+  networkPrefix = DEFAULT_NETWORK_PREFIX,
+) => {
+  const literal = trimString(value);
+  if (!literal) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
+
+  try {
+    const parsed = AccountAddress.parseEncoded(literal);
+    return normalizeCanonicalLiteralFromAddress(parsed.address);
+  } catch {
+    // Fall through to native I105 parsing or legacy SDK normalization.
+  }
+
+  const nativeParsed = parseNativeAccountLiteral(literal, normalizedPrefix);
+  if (nativeParsed) {
+    return normalizeCanonicalLiteralFromAddress(
+      AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes),
+    );
+  }
+
+  return normalizeSdkAccountId(literal, label);
+};
+
 export const deriveAccountAddressView = (input: {
   domain: string;
   publicKeyHex: string;
@@ -238,10 +270,10 @@ export const deriveAccountAddressView = (input: {
 }) => {
   const networkPrefix = normalizeNetworkPrefix(input.networkPrefix);
   const publicKey = hexToBuffer(input.publicKeyHex, "publicKeyHex");
-  const address = AccountAddress.fromAccount({
-    domain: trimString(input.domain),
-    publicKey,
-  });
+  // Modern account addresses are signatory-only; keep `domain` on the input
+  // for compatibility with stored profile metadata and onboarding UX.
+  void trimString(input.domain);
+  const address = AccountAddress.fromAccount({ publicKey });
   const canonicalBytes = Uint8Array.from(address.canonicalBytes());
   const compatAccountId = normalizeCompatLiteralFromAddress(
     address,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
 import {
   deriveAccountAddressView,
+  normalizeCanonicalAccountIdLiteral,
   normalizeCompatAccountIdLiteral,
 } from "../electron/accountAddress";
 
@@ -18,7 +19,6 @@ describe("accountAddress helper", () => {
 
     expect(derived.accountId).toBe(
       AccountAddress.fromAccount({
-        domain: "default",
         publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
       }).toI105(42),
     );
@@ -53,5 +53,48 @@ describe("accountAddress helper", () => {
         42,
       ),
     ).toBe(derived.accountId);
+  });
+
+  it("canonicalizes compatibility literals for Torii wire requests", () => {
+    const derived = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 42,
+    });
+    const canonicalAccountId = normalizeCanonicalAccountIdLiteral(
+      derived.i105DefaultAccountId,
+      "accountId",
+      42,
+    );
+
+    expect(
+      normalizeCanonicalAccountIdLiteral(derived.accountId, "accountId", 42),
+    ).toBe(canonicalAccountId);
+    expect(
+      normalizeCanonicalAccountIdLiteral(
+        derived.i105AccountId,
+        "accountId",
+        42,
+      ),
+    ).toBe(canonicalAccountId);
+  });
+
+  it("keeps the derived literal stable regardless of the stored domain label", () => {
+    const defaultDomain = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 42,
+    });
+    const alternateDomain = deriveAccountAddressView({
+      domain: "advanced-panel-alias",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 42,
+    });
+
+    expect(alternateDomain.accountId).toBe(defaultDomain.accountId);
+    expect(alternateDomain.i105AccountId).toBe(defaultDomain.i105AccountId);
+    expect(alternateDomain.i105DefaultAccountId).toBe(
+      defaultDomain.i105DefaultAccountId,
+    );
   });
 });
