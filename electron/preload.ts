@@ -48,9 +48,12 @@ import {
 } from "./accountAddress";
 import {
   decryptKaigiPayload,
+  decryptKaigiPayloadWithSecret,
   encryptKaigiPayload,
+  encryptKaigiPayloadWithSecret,
   generateKaigiX25519KeyPair,
   type KaigiSealedBox,
+  type KaigiSecretBox,
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
 
@@ -147,6 +150,16 @@ type NexusStakingPolicyResponse = {
 };
 
 type KaigiSignalKeyPair = KaigiX25519KeyPair;
+type KaigiMeetingPrivacy = "private" | "transparent";
+type KaigiPeerIdentityReveal = "Hidden" | "RevealAfterJoin";
+type KaigiOfferDescription = {
+  type: "offer";
+  sdp: string;
+};
+type KaigiAnswerDescription = {
+  type: "answer";
+  sdp: string;
+};
 
 type KaigiCreateMeetingInput = {
   toriiUrl: string;
@@ -156,6 +169,14 @@ type KaigiCreateMeetingInput = {
   callId: string;
   title?: string;
   scheduledStartMs: number;
+  meetingCode: string;
+  inviteSecretBase64Url: string;
+  hostDisplayName: string;
+  hostParticipantId: string;
+  hostKaigiPublicKeyBase64Url: string;
+  offerDescription: KaigiOfferDescription;
+  privacyMode?: KaigiMeetingPrivacy;
+  peerIdentityReveal?: KaigiPeerIdentityReveal;
 };
 
 type KaigiJoinMeetingInput = {
@@ -170,10 +191,13 @@ type KaigiJoinMeetingInput = {
   participantName: string;
   walletIdentity?: string;
   roomId?: string;
-  answerDescription: {
-    type: "answer";
-    sdp: string;
-  };
+  answerDescription: KaigiAnswerDescription;
+};
+
+type KaigiGetMeetingInput = {
+  toriiUrl: string;
+  callId: string;
+  inviteSecretBase64Url: string;
 };
 
 type KaigiPollMeetingSignalsInput = {
@@ -206,10 +230,26 @@ type KaigiMeetingSignalRecord = {
   walletIdentity?: string;
   roomId?: string;
   createdAtMs: number;
-  answerDescription: {
-    type: "answer";
-    sdp: string;
-  };
+  answerDescription: KaigiAnswerDescription;
+};
+
+type KaigiMeetingView = {
+  callId: string;
+  meetingCode: string;
+  title?: string;
+  hostAccountId?: string;
+  hostDisplayName?: string;
+  hostParticipantId?: string;
+  hostKaigiPublicKeyBase64Url: string;
+  scheduledStartMs: number;
+  expiresAtMs: number;
+  createdAtMs: number;
+  live: boolean;
+  ended: boolean;
+  endedAtMs?: number;
+  privacyMode: KaigiMeetingPrivacy;
+  peerIdentityReveal: KaigiPeerIdentityReveal;
+  offerDescription: KaigiOfferDescription;
 };
 
 type FaucetStatusCallback = (
@@ -414,6 +454,7 @@ type IrohaBridge = {
     accountId: string;
   }, onStatus?: FaucetStatusCallback): Promise<AccountFaucetResponse>;
   createKaigiMeeting(input: KaigiCreateMeetingInput): Promise<{ hash: string }>;
+  getKaigiCall(input: KaigiGetMeetingInput): Promise<KaigiMeetingView>;
   joinKaigiMeeting(input: KaigiJoinMeetingInput): Promise<{ hash: string }>;
   pollKaigiMeetingSignals(
     input: KaigiPollMeetingSignalsInput,
@@ -549,6 +590,8 @@ const normalizeRequestId = (value: string) => {
 
 const KAIGI_CHAIN_SIGNAL_SCHEMA = "iroha-demo-kaigi-chain-signal/v1";
 const KAIGI_CHAIN_ANSWER_SCHEMA = "iroha-demo-kaigi-answer/v1";
+const KAIGI_CALL_METADATA_SCHEMA = "iroha-demo-kaigi-call-metadata/v2";
+const KAIGI_CALL_OFFER_SCHEMA = "iroha-demo-kaigi-offer/v2";
 
 type KaigiChainAnswerPayload = {
   schema: typeof KAIGI_CHAIN_ANSWER_SCHEMA;
@@ -564,6 +607,27 @@ type KaigiChainAnswerPayload = {
     type: "answer";
     sdp: string;
   };
+};
+
+type KaigiCallOfferPayload = {
+  schema: typeof KAIGI_CALL_OFFER_SCHEMA;
+  callId: string;
+  hostAccountId: string;
+  hostDisplayName: string;
+  hostParticipantId: string;
+  hostKaigiPublicKeyBase64Url: string;
+  createdAtMs: number;
+  description: KaigiOfferDescription;
+};
+
+type KaigiCallMetadata = {
+  schema: typeof KAIGI_CALL_METADATA_SCHEMA;
+  meetingCode: string;
+  expiresAtMs: number;
+  live: boolean;
+  privacyMode: KaigiMeetingPrivacy;
+  peerIdentityReveal: KaigiPeerIdentityReveal;
+  encryptedOffer: KaigiSecretBox;
 };
 
 type KaigiChainSignalMetadata = {
@@ -633,6 +697,61 @@ const normalizeKaigiAnswerDescription = (
   };
 };
 
+const normalizeKaigiOfferDescription = (
+  value: {
+    type?: string;
+    sdp?: string;
+  },
+) => {
+  const type = String(value?.type ?? "").trim();
+  const sdp = String(value?.sdp ?? "");
+  if (type !== "offer") {
+    throw new Error("Kaigi offerDescription.type must be offer.");
+  }
+  if (!sdp.trim()) {
+    throw new Error("Kaigi offerDescription.sdp is required.");
+  }
+  return {
+    type: "offer" as const,
+    sdp,
+  };
+};
+
+const normalizeKaigiMeetingPrivacy = (
+  value: unknown,
+): KaigiMeetingPrivacy => {
+  const normalized = String(value ?? "private").trim().toLowerCase();
+  if (normalized === "transparent") {
+    return "transparent";
+  }
+  return "private";
+};
+
+const normalizeKaigiPeerIdentityReveal = (
+  value: unknown,
+): KaigiPeerIdentityReveal => {
+  const normalized = String(value ?? "Hidden").trim().toLowerCase();
+  if (
+    normalized === "revealafterjoin" ||
+    normalized === "reveal_after_join" ||
+    normalized === "reveal-after-join"
+  ) {
+    return "RevealAfterJoin";
+  }
+  return "Hidden";
+};
+
+const normalizeBase64UrlString = (value: unknown, label: string): string => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
+    throw new Error(`${label} must be base64url.`);
+  }
+  return normalized;
+};
+
 const parseJsonRecord = (
   value: unknown,
 ): Record<string, unknown> | null => {
@@ -654,6 +773,33 @@ const parseJsonRecord = (
     return value as Record<string, unknown>;
   }
   return null;
+};
+
+const splitKaigiCallId = (callId: string) => {
+  const normalized = normalizeKaigiCallId(callId, "callId");
+  const [domainId, ...callNameParts] = normalized.split(":");
+  const callName = callNameParts.join(":").trim();
+  if (!domainId || !callName) {
+    throw new Error("callId must be in domain:meeting format.");
+  }
+  return {
+    domainId,
+    callName,
+  };
+};
+
+const readKaigiMetadataKey = (callId: string) => {
+  const { callName } = splitKaigiCallId(callId);
+  return `kaigi__${callName}`;
+};
+
+const normalizeKaigiMeetingCode = (value: unknown, callId: string): string => {
+  const explicit = String(value ?? "").trim();
+  if (explicit) {
+    return explicit;
+  }
+  const { callName } = splitKaigiCallId(callId);
+  return callName.replace(/^kaigi-/, "") || callName;
 };
 
 const extractTransactionMetadata = (
@@ -804,6 +950,122 @@ const parseKaigiChainAnswerPayload = (
   };
 };
 
+const parseKaigiCallMetadata = (
+  value: unknown,
+  callId: string,
+): KaigiCallMetadata => {
+  const record = parseJsonRecord(value);
+  if (!record || record.schema !== KAIGI_CALL_METADATA_SCHEMA) {
+    throw new Error("Kaigi meeting metadata schema is invalid.");
+  }
+  const encryptedOffer = parseJsonRecord(
+    record.encryptedOffer ?? record.encrypted_offer,
+  );
+  if (!encryptedOffer) {
+    throw new Error("Kaigi meeting metadata.encryptedOffer is required.");
+  }
+  return {
+    schema: KAIGI_CALL_METADATA_SCHEMA,
+    meetingCode: normalizeKaigiMeetingCode(
+      record.meetingCode ?? record.meeting_code,
+      callId,
+    ),
+    expiresAtMs: normalizeTimestampMs(
+      Number(record.expiresAtMs ?? record.expires_at_ms),
+      "kaigi meeting metadata.expiresAtMs",
+    ),
+    live: record.live !== false,
+    privacyMode: normalizeKaigiMeetingPrivacy(
+      record.privacyMode ?? record.privacy_mode,
+    ),
+    peerIdentityReveal: normalizeKaigiPeerIdentityReveal(
+      record.peerIdentityReveal ?? record.peer_identity_reveal,
+    ),
+    encryptedOffer: encryptedOffer as KaigiSecretBox,
+  };
+};
+
+const resolveKaigiCallRecord = (
+  payload: Record<string, unknown>,
+  callId: string,
+): Record<string, unknown> => {
+  const metadata = parseJsonRecord(payload.metadata);
+  if (!metadata) {
+    throw new Error("Kaigi domain metadata is missing.");
+  }
+  const callRecord = parseJsonRecord(metadata[readKaigiMetadataKey(callId)]);
+  if (!callRecord) {
+    throw new Error("Kaigi meeting was not found.");
+  }
+  return callRecord;
+};
+
+const resolveKaigiMeetingView = (
+  domainPayload: Record<string, unknown>,
+  callId: string,
+  inviteSecretBase64Url: string,
+): KaigiMeetingView => {
+  const callRecord = resolveKaigiCallRecord(domainPayload, callId);
+  const callMetadata = parseKaigiCallMetadata(
+    parseJsonRecord(callRecord.metadata)?.kaigi_call ??
+      parseJsonRecord(callRecord.metadata)?.kaigiCall,
+    callId,
+  );
+  const offerPayload = decryptKaigiPayloadWithSecret<KaigiCallOfferPayload>(
+    callMetadata.encryptedOffer,
+    inviteSecretBase64Url,
+  );
+  if (offerPayload.schema !== KAIGI_CALL_OFFER_SCHEMA) {
+    throw new Error("Kaigi offer metadata schema is invalid.");
+  }
+  const scheduledStartValue =
+    callRecord.scheduled_start_ms ?? callRecord.scheduledStartMs;
+  const createdAtValue = callRecord.created_at_ms ?? callRecord.createdAtMs;
+  const endedAtValue = callRecord.ended_at_ms ?? callRecord.endedAtMs;
+  const statusValue = String(callRecord.status ?? "").toLowerCase();
+  const ended =
+    Number(endedAtValue) > 0 ||
+    statusValue.includes("ended") ||
+    statusValue.includes("inactive");
+
+  return {
+    callId: normalizeKaigiCallId(callId, "callId"),
+    meetingCode: callMetadata.meetingCode || normalizeKaigiMeetingCode(null, callId),
+    ...(String(callRecord.title ?? "").trim()
+      ? { title: String(callRecord.title).trim() }
+      : {}),
+    hostAccountId: offerPayload.hostAccountId,
+    ...(offerPayload.hostDisplayName
+      ? { hostDisplayName: offerPayload.hostDisplayName }
+      : {}),
+    ...(offerPayload.hostParticipantId
+      ? { hostParticipantId: offerPayload.hostParticipantId }
+      : {}),
+    hostKaigiPublicKeyBase64Url: normalizeBase64UrlString(
+      offerPayload.hostKaigiPublicKeyBase64Url,
+      "hostKaigiPublicKeyBase64Url",
+    ),
+    scheduledStartMs:
+      Number.isFinite(Number(scheduledStartValue)) &&
+      Number(scheduledStartValue) > 0
+        ? Number(scheduledStartValue)
+        : offerPayload.createdAtMs,
+    expiresAtMs: callMetadata.expiresAtMs,
+    createdAtMs: normalizeTimestampMs(
+      Number(createdAtValue ?? offerPayload.createdAtMs),
+      "kaigi record.createdAtMs",
+    ),
+    live: Boolean(callMetadata.live),
+    ended,
+    ...(Number.isFinite(Number(endedAtValue)) && Number(endedAtValue) > 0
+      ? { endedAtMs: Number(endedAtValue) }
+      : {}),
+    privacyMode: callMetadata.privacyMode,
+    peerIdentityReveal: callMetadata.peerIdentityReveal,
+    offerDescription: normalizeKaigiOfferDescription(offerPayload.description),
+  };
+};
+
 const ensureObjectResponse = (
   payload: unknown,
   label: string,
@@ -833,6 +1095,65 @@ const fetchJson = async (
   }
   const payload = (await response.json()) as unknown;
   return ensureObjectResponse(payload, label);
+};
+
+const fetchKaigiMeetingView = async (
+  input: KaigiGetMeetingInput,
+): Promise<KaigiMeetingView> => {
+  const { domainId } = splitKaigiCallId(input.callId);
+  const endpoint = `${normalizeBaseUrl(input.toriiUrl)}/v1/explorer/domains/${encodeURIComponent(domainId)}`;
+  const payload = await fetchJson(endpoint, "Kaigi meeting");
+  return resolveKaigiMeetingView(
+    payload,
+    input.callId,
+    normalizeBase64UrlString(
+      input.inviteSecretBase64Url,
+      "inviteSecretBase64Url",
+    ),
+  );
+};
+
+const resolveKaigiRelayManifest = async (
+  client: ToriiClient,
+  expiryMs: number,
+) => {
+  try {
+    const summaries = await client.listKaigiRelays();
+    const candidates = [...(summaries.items ?? [])]
+      .filter((item) =>
+        ["healthy", "degraded", ""].includes(String(item.status ?? "").trim()),
+      )
+      .sort((left, right) => {
+        if ((left.status ?? "") !== (right.status ?? "")) {
+          if (left.status === "healthy") return -1;
+          if (right.status === "healthy") return 1;
+        }
+        return Number(right.bandwidth_class ?? 0) - Number(left.bandwidth_class ?? 0);
+      })
+      .slice(0, 2);
+    if (candidates.length === 0) {
+      return null;
+    }
+    const details = await Promise.all(
+      candidates.map((candidate) => client.getKaigiRelay(candidate.relay_id)),
+    );
+    const hops = details
+      .filter((detail): detail is Exclude<(typeof details)[number], null> => detail !== null)
+      .map((detail, index) => ({
+        relayId: detail.relay.relay_id,
+        hpkePublicKey: detail.hpke_public_key_b64,
+        weight: Math.max(1, 2 - index),
+      }));
+    if (hops.length === 0) {
+      return null;
+    }
+    return {
+      expiryMs,
+      hops,
+    };
+  } catch (_error) {
+    return null;
+  }
 };
 
 const buildNexusEndpoint = (
@@ -1393,23 +1714,76 @@ const api: IrohaBridge = {
     callId,
     title,
     scheduledStartMs,
+    meetingCode,
+    inviteSecretBase64Url,
+    hostDisplayName,
+    hostParticipantId,
+    hostKaigiPublicKeyBase64Url,
+    offerDescription,
+    privacyMode,
+    peerIdentityReveal,
   }) {
     const authority = normalizeCompatAccountIdLiteral(
       hostAccountId,
       "hostAccountId",
     );
+    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    const normalizedScheduledStartMs = normalizeTimestampMs(
+      scheduledStartMs,
+      "scheduledStartMs",
+    );
+    const createdAtMs = Date.now();
+    const expiresAtMs = normalizedScheduledStartMs + 24 * 60 * 60 * 1000;
+    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
+    const resolvedPeerIdentityReveal = normalizeKaigiPeerIdentityReveal(
+      peerIdentityReveal,
+    );
+    const inviteSecret = normalizeBase64UrlString(
+      inviteSecretBase64Url,
+      "inviteSecretBase64Url",
+    );
+    const resolvedRelayManifest = await resolveKaigiRelayManifest(
+      getClient(toriiUrl),
+      expiresAtMs,
+    );
+    const encryptedOffer = encryptKaigiPayloadWithSecret(
+      {
+        schema: KAIGI_CALL_OFFER_SCHEMA,
+        callId: normalizedCallId,
+        hostAccountId: authority,
+        hostDisplayName: String(hostDisplayName ?? "").trim() || "Host",
+        hostParticipantId: normalizeKaigiParticipantId(hostParticipantId),
+        hostKaigiPublicKeyBase64Url: normalizeBase64UrlString(
+          hostKaigiPublicKeyBase64Url,
+          "hostKaigiPublicKeyBase64Url",
+        ),
+        createdAtMs,
+        description: normalizeKaigiOfferDescription(offerDescription),
+      } satisfies KaigiCallOfferPayload,
+      inviteSecret,
+    );
     const tx = buildCreateKaigiTransaction({
       chainId: chainId.trim(),
       authority,
       call: {
-        id: normalizeKaigiCallId(callId, "callId"),
+        id: normalizedCallId,
         host: authority,
         title: title?.trim() || null,
-        scheduledStartMs: normalizeTimestampMs(scheduledStartMs, "scheduledStartMs"),
+        scheduledStartMs: normalizedScheduledStartMs,
         privacyMode: "Transparent",
         roomPolicy: "authenticated",
-        relayManifest: null,
-        metadata: {},
+        relayManifest: resolvedRelayManifest,
+        metadata: {
+          kaigi_call: {
+            schema: KAIGI_CALL_METADATA_SCHEMA,
+            meetingCode: String(meetingCode ?? "").trim() || normalizeKaigiMeetingCode(null, normalizedCallId),
+            expiresAtMs,
+            live: true,
+            privacyMode: resolvedPrivacyMode,
+            peerIdentityReveal: resolvedPeerIdentityReveal,
+            encryptedOffer,
+          } satisfies KaigiCallMetadata,
+        },
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
@@ -1421,6 +1795,13 @@ const api: IrohaBridge = {
       },
     );
     return { hash: submission.hash };
+  },
+  async getKaigiCall({ toriiUrl, callId, inviteSecretBase64Url }) {
+    return fetchKaigiMeetingView({
+      toriiUrl,
+      callId,
+      inviteSecretBase64Url,
+    });
   },
   async joinKaigiMeeting({
     toriiUrl,

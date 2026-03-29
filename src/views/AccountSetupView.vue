@@ -148,6 +148,13 @@
               <button :disabled="restoring" @click="restoreRecovery">
                 {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
               </button>
+              <button
+                class="secondary"
+                :disabled="restoring"
+                @click="openBackupImportPicker"
+              >
+                {{ t("Import backup JSON") }}
+              </button>
             </div>
             <p v-if="restoreError" class="helper error">{{ restoreError }}</p>
           </div>
@@ -382,6 +389,13 @@
           <button :disabled="restoring" @click="restoreRecovery">
             {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
           </button>
+          <button
+            class="secondary"
+            :disabled="restoring"
+            @click="openBackupImportPicker"
+          >
+            {{ t("Import backup JSON") }}
+          </button>
         </div>
         <p v-if="restoreError" class="helper error">{{ restoreError }}</p>
       </div>
@@ -565,6 +579,13 @@
       <p v-if="connectError" class="helper error">{{ connectError }}</p>
     </section>
   </div>
+  <input
+    ref="backupFileInput"
+    type="file"
+    accept=".json,application/json"
+    style="display: none"
+    @change="handleBackupFileSelection"
+  />
 </template>
 
 <script setup lang="ts">
@@ -584,6 +605,10 @@ import {
   mnemonicToPrivateKeyHex,
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
+import {
+  buildWalletBackupPayload,
+  parseWalletBackupPayload,
+} from "@/utils/walletBackup";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
@@ -630,6 +655,7 @@ const identityInput = ref("");
 const aliasMetadataPlaceholder = '{"country":"JP","kyc_id":"..."}';
 const wordCount = ref<12 | 24>(24);
 const mnemonicWords = ref<string[]>([]);
+const backupFileInput = ref<HTMLInputElement | null>(null);
 const generatedKeys = ref<{
   privateKeyHex: string;
   publicKeyHex: string;
@@ -697,8 +723,8 @@ const generatedStoredI105AccountId = computed(
     generatedAccountSummary.value?.accountId ??
     "",
 );
-const generatedVisibleAccountId = computed(
-  () => getPublicAccountId(generatedAccountSummary.value),
+const generatedVisibleAccountId = computed(() =>
+  getPublicAccountId(generatedAccountSummary.value),
 );
 const onboardingStage = computed<"identity" | "backup" | "register">(() => {
   if (!generatedKeys.value) {
@@ -782,6 +808,18 @@ const startNewRegistration = () => {
   onboardingError.value = "";
 };
 
+const applyBackupMetadata = (payload: {
+  displayName?: string;
+  domain?: string;
+}) => {
+  if (typeof payload.displayName === "string") {
+    aliasInput.value = payload.displayName;
+  }
+  if (typeof payload.domain === "string" && payload.domain.trim()) {
+    domainInput.value = payload.domain;
+  }
+};
+
 const toggleRestorePanel = () => {
   if (showRestorePanel.value) {
     startNewRegistration();
@@ -790,6 +828,15 @@ const toggleRestorePanel = () => {
   startNewRegistration();
   accountFlowMode.value = "restore";
   showRestorePanel.value = true;
+};
+
+const openBackupImportPicker = () => {
+  restoreError.value = "";
+  if (!backupFileInput.value) {
+    return;
+  }
+  backupFileInput.value.value = "";
+  backupFileInput.value.click();
 };
 
 const setActiveAccount = (accountId: string) => {
@@ -842,6 +889,30 @@ const generateRecovery = async () => {
   }
 };
 
+const restoreFromPhrase = async (phrase: string) => {
+  const normalizedPhrase = normalizeMnemonicPhrase(phrase);
+  if (!normalizedPhrase) {
+    throw new Error(t("Enter a recovery phrase."));
+  }
+
+  const wordTotal = normalizedPhrase.split(" ").filter(Boolean).length;
+  if (wordTotal !== 12 && wordTotal !== 24) {
+    throw new Error(t("Recovery phrase must contain 12 or 24 words."));
+  }
+
+  const privateKeyHex = mnemonicToPrivateKeyHex(normalizedPhrase);
+  const { publicKeyHex } = await derivePublicKey(privateKeyHex);
+  mnemonicWords.value = [];
+  generatedKeys.value = {
+    privateKeyHex,
+    publicKeyHex,
+  };
+  wordCount.value = wordTotal as 12 | 24;
+  backupConfirmed.value = true;
+  restorePhraseInput.value = "";
+  showRestorePanel.value = false;
+};
+
 const restoreRecovery = async () => {
   restoreError.value = "";
   generateError.value = "";
@@ -850,30 +921,9 @@ const restoreRecovery = async () => {
   showAliasRegistration.value = false;
   accountFlowMode.value = "restore";
 
-  const normalizedPhrase = normalizeMnemonicPhrase(restorePhraseInput.value);
-  if (!normalizedPhrase) {
-    restoreError.value = t("Enter a recovery phrase.");
-    return;
-  }
-
-  const wordTotal = normalizedPhrase.split(" ").filter(Boolean).length;
-  if (wordTotal !== 12 && wordTotal !== 24) {
-    restoreError.value = t("Recovery phrase must contain 12 or 24 words.");
-    return;
-  }
-
   try {
     restoring.value = true;
-    const privateKeyHex = mnemonicToPrivateKeyHex(normalizedPhrase);
-    const { publicKeyHex } = await derivePublicKey(privateKeyHex);
-    mnemonicWords.value = [];
-    generatedKeys.value = {
-      privateKeyHex,
-      publicKeyHex,
-    };
-    backupConfirmed.value = true;
-    restorePhraseInput.value = "";
-    showRestorePanel.value = false;
+    await restoreFromPhrase(restorePhraseInput.value);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     restoreError.value =
@@ -883,6 +933,40 @@ const restoreRecovery = async () => {
     generatedKeys.value = null;
   } finally {
     restoring.value = false;
+  }
+};
+
+const handleBackupFileSelection = async (event: Event) => {
+  const input = event.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  restoreError.value = "";
+  generateError.value = "";
+  onboardingError.value = "";
+  onboardingStatus.value = "";
+  showAliasRegistration.value = false;
+  accountFlowMode.value = "restore";
+
+  try {
+    restoring.value = true;
+    const payload = parseWalletBackupPayload(await file.text());
+    await restoreFromPhrase(payload.mnemonic);
+    applyBackupMetadata(payload);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    restoreError.value =
+      message === "Invalid recovery phrase"
+        ? t("Invalid recovery phrase")
+        : message;
+    generatedKeys.value = null;
+  } finally {
+    restoring.value = false;
+    if (input) {
+      input.value = "";
+    }
   }
 };
 
@@ -1041,12 +1125,13 @@ const downloadBackup = (target: "manual" | "icloud" | "google") => {
   if (!mnemonicWords.value.length) {
     return;
   }
-  const payload = {
+  const payload = buildWalletBackupPayload({
     mnemonic: mnemonicWords.value.join(" "),
     wordCount: wordCount.value,
-    createdAt: new Date().toISOString(),
     target,
-  };
+    displayName: aliasInput.value.trim(),
+    domain: normalizedDomain.value,
+  });
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: "application/json",
   });

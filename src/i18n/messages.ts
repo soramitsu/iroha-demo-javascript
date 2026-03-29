@@ -1054,6 +1054,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Hide restore": "Hide restore",
   "Recovery Phrase": "Recovery phrase",
   "Load recovery phrase": "Load phrase",
+  "Import backup JSON": "Import backup JSON",
   "Restoring…": "Restoring…",
   Advanced: "Advanced",
   "Hide advanced": "Hide advanced",
@@ -1095,6 +1096,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Recovery phrase must contain 12 or 24 words.":
     "Recovery phrase must contain 12 or 24 words.",
   "Invalid recovery phrase": "Invalid recovery phrase",
+  "Invalid backup file.": "Invalid backup file.",
+  "Backup file is missing a recovery phrase.":
+    "Backup file is missing a recovery phrase.",
   "Recovery phrase confirmed": "Phrase confirmed",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
@@ -1229,6 +1233,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Create offer packet first.": "Create offer packet first.",
   "Answer applied. The call can connect now.":
     "Answer applied. The call can connect now.",
+  "This meeting has already ended.": "This meeting has already ended.",
+  "Resumed active meeting link.": "Resumed active meeting link.",
+  "Host wallet is unavailable for this invite.":
+    "Host wallet is unavailable for this invite.",
   "Create a Kaigi packet first.": "Create a Kaigi packet first.",
   "Kaigi packet copied to clipboard.": "Kaigi packet copied to clipboard.",
   "Kaigi packet pasted from clipboard.": "Kaigi packet pasted from clipboard.",
@@ -1250,12 +1258,18 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Start meeting": "Start meeting",
   "Join meeting": "Join meeting",
   "Meeting title": "Meeting title",
+  "Meeting privacy": "Meeting privacy",
+  "Private invite": "Private invite",
+  "Transparent invite": "Transparent invite",
+  "Peer identity reveal": "Peer identity reveal",
+  Hidden: "Hidden",
+  "Reveal after join": "Reveal after join",
   Optional: "Optional",
   "Scheduled start": "Scheduled start",
   "Start now": "Start now",
   "Meeting invite": "Meeting invite",
-  "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.":
-    "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.",
+  "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.":
+    "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.",
   "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
     "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
   "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
@@ -1442,6 +1456,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Hide restore": "Hide restore",
   "Recovery Phrase": "Recovery phrase",
   "Load recovery phrase": "Load phrase",
+  "Import backup JSON": "Import backup JSON",
   "Restoring…": "Restoring…",
   "Download backup": "Back up phrase",
   "Write these words down in order. They restore your wallet.":
@@ -1451,6 +1466,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Recovery phrase must contain 12 or 24 words.":
     "Recovery phrase must contain 12 or 24 words.",
   "Invalid recovery phrase": "Invalid recovery phrase",
+  "Invalid backup file.": "Invalid backup file.",
+  "Backup file is missing a recovery phrase.":
+    "Backup file is missing a recovery phrase.",
   "Recovery phrase confirmed": "Phrase confirmed",
   "Save identity": "Save wallet",
   "Restore wallet": "Restore wallet",

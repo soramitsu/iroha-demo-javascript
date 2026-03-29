@@ -87,6 +87,22 @@
               {{ t("Wallet identity") }}
               <input :value="walletIdentity || t('Not connected')" readonly />
             </label>
+            <label>
+              {{ t("Meeting privacy") }}
+              <select v-model="meetingPrivacyMode">
+                <option value="private">{{ t("Private invite") }}</option>
+                <option value="transparent">{{ t("Transparent invite") }}</option>
+              </select>
+            </label>
+            <label>
+              {{ t("Peer identity reveal") }}
+              <select v-model="peerIdentityReveal">
+                <option value="Hidden">{{ t("Hidden") }}</option>
+                <option value="RevealAfterJoin">
+                  {{ t("Reveal after join") }}
+                </option>
+              </select>
+            </label>
           </div>
 
           <div v-else class="form-grid kaigi-config-form">
@@ -98,7 +114,7 @@
                 spellcheck="false"
                 :placeholder="
                   t(
-                    'Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.',
+                    'Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.',
                   )
                 "
               ></textarea>
@@ -246,12 +262,36 @@
               </div>
               <div class="kv">
                 <span class="kv-label">{{ t("Host") }}</span>
-                <span class="kv-value">{{ parsedInvite.hostDisplayName }}</span>
+                <span class="kv-value">{{
+                  parsedInvite.hostDisplayName || t("Hidden")
+                }}</span>
               </div>
-              <div class="kv">
+              <div
+                v-if="
+                  parsedInvite.privacyMode === 'transparent' &&
+                  parsedInvite.hostAccountId
+                "
+                class="kv"
+              >
                 <span class="kv-label">{{ t("Host wallet") }}</span>
                 <span class="kv-value mono">{{
                   parsedInvite.hostAccountId
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Meeting privacy") }}</span>
+                <span class="kv-value">{{
+                  parsedInvite.privacyMode === "private"
+                    ? t("Private invite")
+                    : t("Transparent invite")
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Peer identity reveal") }}</span>
+                <span class="kv-value">{{
+                  parsedInvite.peerIdentityReveal === "RevealAfterJoin"
+                    ? t("Reveal after join")
+                    : t("Hidden")
                 }}</span>
               </div>
               <div class="kv">
@@ -594,12 +634,17 @@ import {
   createKaigiMeeting,
   endKaigiMeeting,
   generateKaigiSignalKeyPair,
+  getKaigiCall,
   joinKaigiMeeting,
   pollKaigiMeetingSignals,
 } from "@/services/iroha";
+import { useKaigiStore } from "@/stores/kaigi";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
 import type {
+  KaigiMeetingPrivacy,
+  KaigiMeetingView,
+  KaigiPeerIdentityReveal,
   KaigiMeetingSignalRecord,
   KaigiSignalKeyPair,
 } from "@/types/iroha";
@@ -613,20 +658,47 @@ import {
 } from "@/utils/kaigi";
 import {
   KAIGI_INVITE_SCHEMA,
+  buildKaigiCompactInviteDeepLink,
+  buildKaigiCompactInviteHashRoute,
+  buildKaigiCompactInvitePayload,
   buildKaigiCallId,
   buildKaigiInviteDeepLink,
   buildKaigiInviteHashRoute,
   computeKaigiMeetingExpiryMs,
+  createKaigiInviteSecretBase64Url,
   encodeKaigiInvitePayload,
   isKaigiInviteExpired,
   parseKaigiInviteInput,
   type KaigiInvitePayload,
+  type ParsedKaigiInviteInput,
 } from "@/utils/kaigiInvite";
 
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
 const HOST_SIGNAL_POLL_INTERVAL_MS = 4_000;
 type HostPromptKind = "meetingReady" | "answerReady";
+type LoadedKaigiInvite = {
+  source: "legacy" | "compact";
+  callId: string;
+  meetingCode: string;
+  title?: string;
+  hostAccountId?: string;
+  hostDisplayName?: string;
+  hostParticipantId?: string;
+  hostKaigiPublicKeyBase64Url: string;
+  scheduledStartMs: number;
+  expiresAtMs: number;
+  createdAtMs: number;
+  live: boolean;
+  ended?: boolean;
+  endedAtMs?: number;
+  privacyMode: KaigiMeetingPrivacy;
+  peerIdentityReveal: KaigiPeerIdentityReveal;
+  offerDescription: {
+    type: "offer";
+    sdp: string;
+  };
+};
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   {
     urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
@@ -656,6 +728,10 @@ const createMeetingCode = () => {
 };
 
 const session = useSessionStore();
+const kaigiStore = useKaigiStore();
+if (!kaigiStore.hydrated) {
+  kaigiStore.hydrate();
+}
 const { d, t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
@@ -664,6 +740,8 @@ const activeAccountDisplayId = computed(() =>
 
 const callMode = ref<"start" | "join">("start");
 const meetingTitle = ref("");
+const meetingPrivacyMode = ref<KaigiMeetingPrivacy>("private");
+const peerIdentityReveal = ref<KaigiPeerIdentityReveal>("Hidden");
 const inviteInput = ref("");
 const participantNameDraft = ref("");
 const scheduledStartInput = ref(formatDateTimeLocalInput(Date.now()));
@@ -672,11 +750,12 @@ const hostMeetingCode = ref("");
 const hostMeetingLive = ref(false);
 const hostInviteDeepLink = ref("");
 const hostInviteHashRoute = ref("");
+const hostInviteSecretBase64Url = ref("");
 const hostMeetingKeys = shallowRef<KaigiSignalKeyPair | null>(null);
 const hostMeetingCreatedAtMs = ref(0);
 const hostLastSignalAtMs = ref(0);
 const manualRoomId = ref(DEFAULT_ROOM_ID);
-const parsedInvite = shallowRef<KaigiInvitePayload | null>(null);
+const parsedInvite = shallowRef<LoadedKaigiInvite | null>(null);
 const advancedSignalsOpen = ref(false);
 const hostPromptKind = ref<HostPromptKind | null>(null);
 const lastHostPromptedAnswerPacket = ref("");
@@ -918,11 +997,95 @@ const clearHostMeetingState = () => {
   hostMeetingLive.value = false;
   hostInviteDeepLink.value = "";
   hostInviteHashRoute.value = "";
+  hostInviteSecretBase64Url.value = "";
   hostMeetingKeys.value = null;
   hostMeetingCreatedAtMs.value = 0;
   hostLastSignalAtMs.value = 0;
   dismissHostPrompt();
 };
+
+const removePersistedHostSession = (callId = hostMeetingCallId.value) => {
+  if (!activeAccount.value || !callId) {
+    return;
+  }
+  kaigiStore.removeHostSession(activeAccount.value.accountId, callId);
+};
+
+const savePersistedHostSession = (input: {
+  callId: string;
+  meetingCode: string;
+  inviteSecretBase64Url: string;
+  hostKaigiKeys: KaigiSignalKeyPair;
+  createdAtMs: number;
+  scheduledStartMs: number;
+  expiresAtMs: number;
+  title?: string;
+  live: boolean;
+  privacyMode: KaigiMeetingPrivacy;
+  peerIdentityReveal: KaigiPeerIdentityReveal;
+}) => {
+  if (!activeAccount.value) {
+    return;
+  }
+  kaigiStore.saveHostSession({
+    accountId: activeAccount.value.accountId,
+    callId: input.callId,
+    meetingCode: input.meetingCode,
+    inviteSecretBase64Url: input.inviteSecretBase64Url,
+    hostKaigiKeys: input.hostKaigiKeys,
+    createdAtMs: input.createdAtMs,
+    scheduledStartMs: input.scheduledStartMs,
+    expiresAtMs: input.expiresAtMs,
+    ...(input.title ? { title: input.title } : {}),
+    live: input.live,
+    privacyMode: input.privacyMode,
+    peerIdentityReveal: input.peerIdentityReveal,
+  });
+};
+
+const toLoadedInviteFromLegacyPayload = (
+  invite: KaigiInvitePayload,
+): LoadedKaigiInvite => ({
+  source: "legacy",
+  callId: invite.callId,
+  meetingCode: invite.meetingCode,
+  ...(invite.title ? { title: invite.title } : {}),
+  hostAccountId: invite.hostAccountId,
+  hostDisplayName: invite.hostDisplayName,
+  hostParticipantId: invite.hostParticipantId,
+  hostKaigiPublicKeyBase64Url: invite.hostKaigiPublicKeyBase64Url,
+  scheduledStartMs: invite.scheduledStartMs,
+  expiresAtMs: invite.expiresAtMs,
+  createdAtMs: invite.createdAtMs,
+  live: invite.live,
+  privacyMode: "transparent",
+  peerIdentityReveal: "RevealAfterJoin",
+  offerDescription: invite.offerDescription,
+});
+
+const toLoadedInviteFromMeetingView = (
+  invite: KaigiMeetingView,
+): LoadedKaigiInvite => ({
+  source: "compact",
+  callId: invite.callId,
+  meetingCode: invite.meetingCode,
+  ...(invite.title ? { title: invite.title } : {}),
+  ...(invite.hostAccountId ? { hostAccountId: invite.hostAccountId } : {}),
+  ...(invite.hostDisplayName ? { hostDisplayName: invite.hostDisplayName } : {}),
+  ...(invite.hostParticipantId
+    ? { hostParticipantId: invite.hostParticipantId }
+    : {}),
+  hostKaigiPublicKeyBase64Url: invite.hostKaigiPublicKeyBase64Url,
+  scheduledStartMs: invite.scheduledStartMs,
+  expiresAtMs: invite.expiresAtMs,
+  createdAtMs: invite.createdAtMs,
+  live: invite.live,
+  ...(invite.ended ? { ended: invite.ended } : {}),
+  ...(invite.endedAtMs ? { endedAtMs: invite.endedAtMs } : {}),
+  privacyMode: invite.privacyMode,
+  peerIdentityReveal: invite.peerIdentityReveal,
+  offerDescription: invite.offerDescription,
+});
 
 const resetSignalState = () => {
   const peer = peerConnection.value;
@@ -1086,6 +1249,7 @@ const buildOutgoingPacket = (input: {
   roomId: string;
   description: RTCSessionDescriptionInit;
   createdAtMs?: number;
+  walletIdentity?: string;
 }) =>
   stringifyKaigiSignalEnvelope(
     buildKaigiSignalEnvelope({
@@ -1093,7 +1257,7 @@ const buildOutgoingPacket = (input: {
       roomId: input.roomId,
       participantId: participantId.value,
       participantName: participantName.value,
-      walletIdentity: walletIdentity.value,
+      walletIdentity: input.walletIdentity ?? walletIdentity.value,
       description: input.description,
       createdAtMs: input.createdAtMs,
     }),
@@ -1133,7 +1297,10 @@ const readIncomingPacket = (expectedKind: "offer" | "answer") => {
   return packet;
 };
 
-const createOfferPacket = async (roomId: string) => {
+const createOfferPacket = async (
+  roomId: string,
+  options?: { localWalletIdentity?: string },
+) => {
   const peer = await createPeerConnection();
   const offer = await peer.createOffer({
     offerToReceiveAudio: true,
@@ -1154,6 +1321,7 @@ const createOfferPacket = async (roomId: string) => {
     kind: "offer",
     roomId,
     description: normalizedDescription,
+    walletIdentity: options?.localWalletIdentity,
   });
   return normalizedDescription;
 };
@@ -1168,6 +1336,7 @@ const createAnswerPacketFromOffer = async (
       sdp: string;
     };
     createdAtMs?: number;
+    localWalletIdentity?: string;
   },
 ) => {
   const peer = await createPeerConnection();
@@ -1194,6 +1363,7 @@ const createAnswerPacketFromOffer = async (
     kind: "answer",
     roomId: offerPacket.roomId || currentRoomId.value || DEFAULT_ROOM_ID,
     description: normalizedDescription,
+    walletIdentity: offerPacket.localWalletIdentity,
   });
   return normalizedDescription;
 };
@@ -1380,9 +1550,12 @@ const setScheduledStartToNow = () => {
   scheduledStartInput.value = formatDateTimeLocalInput(Date.now());
 };
 
-const hydrateInvite = (invite: KaigiInvitePayload, rawInput: string) => {
+const hydrateInvite = (invite: LoadedKaigiInvite, rawInput: string) => {
   if (isKaigiInviteExpired(invite)) {
     throw new Error(t("This meeting invite has expired."));
+  }
+  if (invite.ended) {
+    throw new Error(t("This meeting has already ended."));
   }
   clearHostMeetingState();
   resetSignalState();
@@ -1394,14 +1567,17 @@ const hydrateInvite = (invite: KaigiInvitePayload, rawInput: string) => {
     buildKaigiSignalEnvelope({
       kind: "offer",
       roomId: invite.callId,
-      participantId: invite.hostParticipantId,
-      participantName: invite.hostDisplayName,
-      walletIdentity: invite.hostAccountId,
+      participantId: invite.hostParticipantId || "host",
+      participantName: invite.hostDisplayName || t("Host"),
+      walletIdentity:
+        invite.privacyMode === "transparent"
+          ? invite.hostAccountId
+          : undefined,
       description: invite.offerDescription,
       createdAtMs: invite.createdAtMs,
     }),
   );
-  remoteParticipantName.value = invite.hostDisplayName;
+  remoteParticipantName.value = invite.hostDisplayName || t("Host");
   setStatus(
     invite.live
       ? t("Meeting invite loaded. Join when your media is ready.")
@@ -1411,9 +1587,25 @@ const hydrateInvite = (invite: KaigiInvitePayload, rawInput: string) => {
   );
 };
 
-const loadInviteFromInput = () => {
+const resolveParsedInviteInput = async (
+  parsed: ParsedKaigiInviteInput,
+): Promise<LoadedKaigiInvite> => {
+  if (parsed.kind === "legacy") {
+    return toLoadedInviteFromLegacyPayload(parsed.payload);
+  }
+  const meeting = await getKaigiCall({
+    toriiUrl: session.connection.toriiUrl,
+    callId: parsed.payload.callId,
+    inviteSecretBase64Url: parsed.payload.inviteSecretBase64Url,
+  });
+  return toLoadedInviteFromMeetingView(meeting);
+};
+
+const loadInviteFromInput = async () => {
+  signalBusy.value = true;
   try {
-    const invite = parseKaigiInviteInput(inviteInput.value);
+    const parsed = parseKaigiInviteInput(inviteInput.value);
+    const invite = await resolveParsedInviteInput(parsed);
     hydrateInvite(invite, inviteInput.value);
   } catch (error) {
     setError(
@@ -1421,32 +1613,41 @@ const loadInviteFromInput = () => {
         ? error.message
         : t("Meeting invite link is invalid."),
     );
+  } finally {
+    signalBusy.value = false;
   }
 };
 
 const loadInviteFromLocationHash = () => {
   if (
     typeof window === "undefined" ||
-    !window.location.hash.includes("invite=")
+    (!window.location.hash.includes("invite=") &&
+      !window.location.hash.includes("call="))
   ) {
     return;
   }
-  try {
-    const invite = parseKaigiInviteInput(window.location.href);
-    if (
-      parsedInvite.value?.callId === invite.callId &&
-      parsedInvite.value.offerDescription.sdp === invite.offerDescription.sdp
-    ) {
-      return;
+  signalBusy.value = true;
+  void (async () => {
+    try {
+      const parsed = parseKaigiInviteInput(window.location.href);
+      const invite = await resolveParsedInviteInput(parsed);
+      if (
+        parsedInvite.value?.callId === invite.callId &&
+        parsedInvite.value.offerDescription.sdp === invite.offerDescription.sdp
+      ) {
+        return;
+      }
+      hydrateInvite(invite, window.location.hash.slice(1));
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : t("Meeting invite link is invalid."),
+      );
+    } finally {
+      signalBusy.value = false;
     }
-    hydrateInvite(invite, window.location.hash.slice(1));
-  } catch (error) {
-    setError(
-      error instanceof Error
-        ? error.message
-        : t("Meeting invite link is invalid."),
-    );
-  }
+  })();
 };
 
 const switchMode = (mode: "start" | "join") => {
@@ -1464,6 +1665,90 @@ const switchMode = (mode: "start" | "join") => {
   setStatus(t("Paste or open a meeting invite to join."));
 };
 
+const restoreHostOfferFromMeeting = async (invite: KaigiMeetingView) => {
+  const peer = await createPeerConnection();
+  await peer.setLocalDescription(invite.offerDescription);
+  syncPeerStateRefs(peer);
+  outgoingPacket.value = buildOutgoingPacket({
+    kind: "offer",
+    roomId: invite.callId,
+    description: invite.offerDescription,
+    createdAtMs: invite.createdAtMs,
+    walletIdentity:
+      invite.privacyMode === "transparent"
+        ? walletIdentity.value || undefined
+        : undefined,
+  });
+};
+
+const restoreLatestHostMeetingSession = async () => {
+  if (
+    !activeAccount.value ||
+    parsedInvite.value ||
+    hostMeetingCallId.value ||
+    callMode.value === "join"
+  ) {
+    return;
+  }
+  kaigiStore.pruneExpired();
+  const sessionRecord = kaigiStore.findLatestActiveHostSession(
+    activeAccount.value.accountId,
+  );
+  if (!sessionRecord?.live) {
+    return;
+  }
+
+  signalBusy.value = true;
+  try {
+    const meeting = await getKaigiCall({
+      toriiUrl: session.connection.toriiUrl,
+      callId: sessionRecord.callId,
+      inviteSecretBase64Url: sessionRecord.inviteSecretBase64Url,
+    });
+    if (meeting.ended || isKaigiInviteExpired(meeting)) {
+      removePersistedHostSession(sessionRecord.callId);
+      return;
+    }
+
+    clearHostMeetingState();
+    resetSignalState();
+    callMode.value = "start";
+    hostMeetingCallId.value = sessionRecord.callId;
+    hostMeetingCode.value = sessionRecord.meetingCode;
+    hostMeetingLive.value = true;
+    hostInviteSecretBase64Url.value = sessionRecord.inviteSecretBase64Url;
+    hostInviteDeepLink.value = buildKaigiCompactInviteDeepLink(
+      buildKaigiCompactInvitePayload(
+        sessionRecord.callId,
+        sessionRecord.inviteSecretBase64Url,
+      ),
+    );
+    hostInviteHashRoute.value = buildKaigiCompactInviteHashRoute(
+      buildKaigiCompactInvitePayload(
+        sessionRecord.callId,
+        sessionRecord.inviteSecretBase64Url,
+      ),
+    );
+    hostMeetingKeys.value = sessionRecord.hostKaigiKeys;
+    hostMeetingCreatedAtMs.value = sessionRecord.createdAtMs;
+    hostLastSignalAtMs.value = sessionRecord.createdAtMs;
+    meetingTitle.value = meeting.title || "";
+    scheduledStartInput.value = formatDateTimeLocalInput(meeting.scheduledStartMs);
+    meetingPrivacyMode.value = sessionRecord.privacyMode;
+    peerIdentityReveal.value = sessionRecord.peerIdentityReveal;
+    manualRoomId.value = sessionRecord.callId;
+    await restoreHostOfferFromMeeting(meeting);
+    seenHostSignalHashes.clear();
+    startHostSignalPolling();
+    setStatus(t("Resumed active meeting link."));
+  } catch (_error) {
+    // If the call can no longer be resolved, drop the stale local session quietly.
+    removePersistedHostSession(sessionRecord.callId);
+  } finally {
+    signalBusy.value = false;
+  }
+};
+
 const createMeetingLink = async () => {
   if (!activeAccount.value) {
     setError(t("Save a wallet before using Kaigi."));
@@ -1479,20 +1764,28 @@ const createMeetingLink = async () => {
 
     const scheduledStartMs = parseScheduledStartMs();
     const createdAtMs = Date.now();
+    const expiresAtMs = computeKaigiMeetingExpiryMs(scheduledStartMs);
     const meetingCode = createMeetingCode();
     const callId = buildKaigiCallId(
       activeAccount.value.domain || "default",
       meetingCode,
     );
+    const inviteSecretBase64Url = createKaigiInviteSecretBase64Url();
     manualRoomId.value = callId;
     hostMeetingCallId.value = callId;
     hostMeetingCode.value = meetingCode;
+    hostInviteSecretBase64Url.value = inviteSecretBase64Url;
     hostMeetingCreatedAtMs.value = createdAtMs;
     hostLastSignalAtMs.value = createdAtMs;
     hostMeetingKeys.value = generateKaigiSignalKeyPair();
 
-    const offerDescription = await createOfferPacket(callId);
-    const invite: KaigiInvitePayload = {
+    const offerDescription = await createOfferPacket(callId, {
+      localWalletIdentity:
+        meetingPrivacyMode.value === "transparent"
+          ? walletIdentity.value || undefined
+          : undefined,
+    });
+    const legacyInvite: KaigiInvitePayload = {
       schema: KAIGI_INVITE_SCHEMA,
       callId,
       meetingCode,
@@ -1504,7 +1797,7 @@ const createMeetingLink = async () => {
       hostParticipantId: participantId.value,
       hostKaigiPublicKeyBase64Url: hostMeetingKeys.value.publicKeyBase64Url,
       scheduledStartMs,
-      expiresAtMs: computeKaigiMeetingExpiryMs(scheduledStartMs),
+      expiresAtMs,
       createdAtMs,
       live: false,
       offerDescription,
@@ -1522,6 +1815,15 @@ const createMeetingLink = async () => {
           callId,
           title: meetingTitle.value.trim() || undefined,
           scheduledStartMs,
+          meetingCode,
+          inviteSecretBase64Url,
+          hostDisplayName: participantName.value,
+          hostParticipantId: participantId.value,
+          hostKaigiPublicKeyBase64Url:
+            hostMeetingKeys.value.publicKeyBase64Url,
+          offerDescription,
+          privacyMode: meetingPrivacyMode.value,
+          peerIdentityReveal: peerIdentityReveal.value,
         });
         liveMeeting = true;
       } catch (error) {
@@ -1532,17 +1834,39 @@ const createMeetingLink = async () => {
       }
     }
 
-    invite.live = liveMeeting;
+    legacyInvite.live = liveMeeting;
     hostMeetingLive.value = liveMeeting;
-    const inviteToken = encodeKaigiInvitePayload(invite);
-    hostInviteDeepLink.value = buildKaigiInviteDeepLink(inviteToken);
-    hostInviteHashRoute.value = buildKaigiInviteHashRoute(inviteToken);
 
     if (liveMeeting) {
+      const compactInvite = buildKaigiCompactInvitePayload(
+        callId,
+        inviteSecretBase64Url,
+      );
+      hostInviteDeepLink.value = buildKaigiCompactInviteDeepLink(compactInvite);
+      hostInviteHashRoute.value = buildKaigiCompactInviteHashRoute(
+        compactInvite,
+      );
+      savePersistedHostSession({
+        callId,
+        meetingCode,
+        inviteSecretBase64Url,
+        hostKaigiKeys: hostMeetingKeys.value,
+        createdAtMs,
+        scheduledStartMs,
+        expiresAtMs,
+        title: meetingTitle.value.trim() || undefined,
+        live: true,
+        privacyMode: meetingPrivacyMode.value,
+        peerIdentityReveal: peerIdentityReveal.value,
+      });
       seenHostSignalHashes.clear();
       startHostSignalPolling();
       setStatus(t("Meeting link ready. Share it with the other participant."));
     } else {
+      const inviteToken = encodeKaigiInvitePayload(legacyInvite);
+      hostInviteDeepLink.value = buildKaigiInviteDeepLink(inviteToken);
+      hostInviteHashRoute.value = buildKaigiInviteHashRoute(inviteToken);
+      removePersistedHostSession(callId);
       clearHostSignalPolling();
       setStatus(
         isLiveWallet.value
@@ -1591,15 +1915,26 @@ const joinLoadedMeeting = async () => {
     manualRoomId.value = invite.callId;
     const answerDescription = await createAnswerPacketFromOffer({
       roomId: invite.callId,
-      participantId: invite.hostParticipantId,
-      participantName: invite.hostDisplayName,
-      walletIdentity: invite.hostAccountId,
+      participantId: invite.hostParticipantId || "host",
+      participantName: invite.hostDisplayName || t("Host"),
+      walletIdentity:
+        invite.privacyMode === "transparent"
+          ? invite.hostAccountId
+          : undefined,
       createdAtMs: invite.createdAtMs,
+      localWalletIdentity:
+        invite.privacyMode === "transparent" ||
+        invite.peerIdentityReveal === "RevealAfterJoin"
+          ? walletIdentity.value || undefined
+          : undefined,
       description: invite.offerDescription,
     });
 
     if (invite.live && isLiveWallet.value && activeAccount.value) {
       try {
+        if (!invite.hostAccountId) {
+          throw new Error(t("Host wallet is unavailable for this invite."));
+        }
         await joinKaigiMeeting({
           toriiUrl: session.connection.toriiUrl,
           chainId: session.connection.chainId,
@@ -1610,7 +1945,11 @@ const joinLoadedMeeting = async () => {
           hostKaigiPublicKeyBase64Url: invite.hostKaigiPublicKeyBase64Url,
           participantId: participantId.value,
           participantName: participantName.value,
-          walletIdentity: walletIdentity.value || undefined,
+          walletIdentity:
+            invite.privacyMode === "transparent" ||
+            invite.peerIdentityReveal === "RevealAfterJoin"
+              ? walletIdentity.value || undefined
+              : undefined,
           roomId: invite.callId,
           answerDescription,
         });
@@ -1743,6 +2082,7 @@ const hangUp = async () => {
   }
 
   if (callMode.value === "start") {
+    removePersistedHostSession();
     clearHostMeetingState();
   }
 };
@@ -1751,6 +2091,7 @@ watch(
   () => activeAccount.value?.accountId,
   () => {
     clearHostSignalPolling();
+    void restoreLatestHostMeetingSession();
   },
 );
 
@@ -1769,6 +2110,13 @@ watch(
 onMounted(() => {
   loadInviteFromLocationHash();
   window.addEventListener("hashchange", loadInviteFromLocationHash);
+  if (
+    typeof window !== "undefined" &&
+    !window.location.hash.includes("invite=") &&
+    !window.location.hash.includes("call=")
+  ) {
+    void restoreLatestHostMeetingSession();
+  }
 });
 
 onBeforeUnmount(() => {

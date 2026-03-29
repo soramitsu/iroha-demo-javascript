@@ -17,6 +17,7 @@ import type {
   GovernanceReferendumResult,
   GovernanceTallyResult,
   IrohaBridge,
+  KaigiMeetingView,
   KaigiMeetingSignalRecord,
   KaigiSignalKeyPair,
   NexusStakingPolicy,
@@ -151,6 +152,10 @@ export const requestFaucetFunds = (input: {
 export const createKaigiMeeting = (
   input: Parameters<IrohaBridge["createKaigiMeeting"]>[0],
 ) => bridge().createKaigiMeeting(input);
+
+export const getKaigiCall = (
+  input: Parameters<IrohaBridge["getKaigiCall"]>[0],
+): Promise<KaigiMeetingView> => bridge().getKaigiCall(input);
 
 export const joinKaigiMeeting = (
   input: Parameters<IrohaBridge["joinKaigiMeeting"]>[0],

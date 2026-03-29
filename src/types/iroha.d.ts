@@ -140,9 +140,36 @@ export interface KaigiSignalKeyPair {
   privateKeyBase64Url: string;
 }
 
+export type KaigiMeetingPrivacy = "private" | "transparent";
+export type KaigiPeerIdentityReveal = "Hidden" | "RevealAfterJoin";
+
+export interface KaigiOfferDescription {
+  type: "offer";
+  sdp: string;
+}
+
 export interface KaigiAnswerDescription {
   type: "answer";
   sdp: string;
+}
+
+export interface KaigiMeetingView {
+  callId: string;
+  meetingCode: string;
+  title?: string;
+  hostAccountId?: string;
+  hostDisplayName?: string;
+  hostParticipantId?: string;
+  hostKaigiPublicKeyBase64Url: string;
+  scheduledStartMs: number;
+  expiresAtMs: number;
+  createdAtMs: number;
+  live: boolean;
+  ended: boolean;
+  endedAtMs?: number;
+  privacyMode: KaigiMeetingPrivacy;
+  peerIdentityReveal: KaigiPeerIdentityReveal;
+  offerDescription: KaigiOfferDescription;
 }
 
 export interface KaigiMeetingSignalRecord {
@@ -473,7 +500,20 @@ export interface IrohaBridge {
     callId: string;
     title?: string;
     scheduledStartMs: number;
+    meetingCode: string;
+    inviteSecretBase64Url: string;
+    hostDisplayName: string;
+    hostParticipantId: string;
+    hostKaigiPublicKeyBase64Url: string;
+    offerDescription: KaigiOfferDescription;
+    privacyMode?: KaigiMeetingPrivacy;
+    peerIdentityReveal?: KaigiPeerIdentityReveal;
   }): Promise<{ hash: string }>;
+  getKaigiCall(input: {
+    toriiUrl: string;
+    callId: string;
+    inviteSecretBase64Url: string;
+  }): Promise<KaigiMeetingView>;
   joinKaigiMeeting(input: {
     toriiUrl: string;
     chainId: string;
