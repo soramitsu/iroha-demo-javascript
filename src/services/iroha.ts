@@ -17,6 +17,8 @@ import type {
   GovernanceReferendumResult,
   GovernanceTallyResult,
   IrohaBridge,
+  KaigiMeetingSignalRecord,
+  KaigiSignalKeyPair,
   NexusStakingPolicy,
   NexusSumeragiStatus,
   OfflineAllowanceResponse,
@@ -44,6 +46,9 @@ export const pingTorii = (toriiUrl: string): Promise<ToriiHealth> =>
   bridge().ping({ toriiUrl });
 
 export const generateKeyPair = () => bridge().generateKeyPair();
+
+export const generateKaigiSignalKeyPair = (): KaigiSignalKeyPair =>
+  bridge().generateKaigiSignalKeyPair();
 
 export const deriveAccountAddress = (params: {
   domain: string;
@@ -176,6 +181,22 @@ export const requestFaucetFunds = (
   onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
 ): Promise<AccountFaucetResponse> =>
   bridge().requestFaucetFunds(input, onProgress);
+
+export const createKaigiMeeting = (
+  input: Parameters<IrohaBridge["createKaigiMeeting"]>[0],
+) => bridge().createKaigiMeeting(input);
+
+export const joinKaigiMeeting = (
+  input: Parameters<IrohaBridge["joinKaigiMeeting"]>[0],
+) => bridge().joinKaigiMeeting(input);
+
+export const pollKaigiMeetingSignals = (
+  input: Parameters<IrohaBridge["pollKaigiMeetingSignals"]>[0],
+): Promise<KaigiMeetingSignalRecord[]> => bridge().pollKaigiMeetingSignals(input);
+
+export const endKaigiMeeting = (
+  input: Parameters<IrohaBridge["endKaigiMeeting"]>[0],
+) => bridge().endKaigiMeeting(input);
 
 export const createConnectPreview = (input: {
   toriiUrl: string;

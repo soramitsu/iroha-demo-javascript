@@ -18,9 +18,7 @@
       <div class="grid-2 parliament-summary">
         <div class="kv">
           <span class="kv-label">{{ t("Account") }}</span>
-          <span class="kv-value mono">{{
-            activeAccount?.i105AccountId || activeAccount?.accountId || t("—")
-          }}</span>
+          <span class="kv-value mono">{{ activeAccountDisplayId || t("—") }}</span>
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Chain") }}</span>
@@ -358,6 +356,7 @@ import {
   submitGovernancePlainBallot,
 } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
+import { getPublicAccountId } from "@/utils/accountId";
 import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
@@ -385,6 +384,9 @@ import {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const activeAccountDisplayId = computed(() =>
+  getPublicAccountId(activeAccount.value),
+);
 const { t } = useAppI18n();
 
 const loadingBootstrap = ref(false);

@@ -3,11 +3,16 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { VpnRuntime } from "./vpnRuntime";
+import { extractKaigiDeepLinkFromArgv, parseKaigiDeepLinkToHashRoute } from "./deepLink";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const isMac = process.platform === "darwin";
+const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
+let mainWindow: BrowserWindow | null = null;
+let pendingKaigiHashRoute: string | null =
+  extractKaigiDeepLinkFromArgv(process.argv);
 const devProfileSuffix = createHash("sha1")
   .update(process.cwd())
   .digest("hex")
@@ -20,6 +25,67 @@ if (!app.isPackaged) {
   );
   app.setPath("userData", scopedUserDataPath);
 }
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+const formatHashRoute = (hashRoute: string) => `#${hashRoute}`;
+
+const flushPendingKaigiHashRoute = async (
+  window: BrowserWindow | null,
+) => {
+  if (!window || window.isDestroyed() || !pendingKaigiHashRoute) {
+    return;
+  }
+  const hashRoute = pendingKaigiHashRoute;
+  pendingKaigiHashRoute = null;
+  try {
+    await window.webContents.executeJavaScript(
+      `window.location.hash = ${JSON.stringify(formatHashRoute(hashRoute))};`,
+      true,
+    );
+  } catch (_error) {
+    pendingKaigiHashRoute = hashRoute;
+  }
+};
+
+const queueKaigiHashRoute = (hashRoute: string | null) => {
+  if (!hashRoute) {
+    return;
+  }
+  pendingKaigiHashRoute = hashRoute;
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.focus();
+  if (!window.webContents.isLoadingMainFrame()) {
+    void flushPendingKaigiHashRoute(window);
+  }
+};
+
+const registerKaigiProtocol = () => {
+  if (process.defaultApp && process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient("iroha", process.execPath, [
+      process.argv[1]!,
+    ]);
+    return;
+  }
+  app.setAsDefaultProtocolClient("iroha");
+};
+
+app.on("second-instance", (_event, argv) => {
+  queueKaigiHashRoute(extractKaigiDeepLinkFromArgv(argv));
+});
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  queueKaigiHashRoute(parseKaigiDeepLinkToHashRoute(url));
+});
 
 const createWindow = () => {
   const window = new BrowserWindow({
@@ -38,6 +104,17 @@ const createWindow = () => {
       webSecurity: true,
     },
   });
+  // Keep WebRTC on the OS default route so Chromium does not probe AWDL/link-local
+  // interfaces that routinely time out on macOS during Kaigi STUN gathering.
+  window.webContents.setWebRTCIPHandlingPolicy(WEBRTC_IP_HANDLING_POLICY);
+  window.webContents.on("did-finish-load", () => {
+    void flushPendingKaigiHashRoute(window);
+  });
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
 
   const rendererUrl = process.env["ELECTRON_RENDERER_URL"];
   if (rendererUrl) {
@@ -45,6 +122,8 @@ const createWindow = () => {
   } else {
     window.loadFile(join(__dirname, "../renderer/index.html"));
   }
+  mainWindow = window;
+  return window;
 };
 
 const vpnRuntime = new VpnRuntime({
@@ -76,12 +155,15 @@ const registerVpnHandlers = () => {
 
 app.whenReady().then(() => {
   registerVpnHandlers();
+  registerKaigiProtocol();
   createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+      return;
     }
+    queueKaigiHashRoute(pendingKaigiHashRoute);
   });
 });
 

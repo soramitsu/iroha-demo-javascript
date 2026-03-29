@@ -1045,6 +1045,16 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Alias is optional.",
+  "Restore your wallet from a recovery phrase and save it locally.":
+    "Restore a wallet from your phrase and save it locally.",
+  "Restore from recovery phrase": "Restore from phrase",
+  "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
+    "Paste a 12- or 24-word phrase to derive this wallet locally.",
+  "Create recovery phrase": "Create recovery phrase",
+  "Hide restore": "Hide restore",
+  "Recovery Phrase": "Recovery phrase",
+  "Load recovery phrase": "Load phrase",
+  "Restoring…": "Restoring…",
   Advanced: "Advanced",
   "Hide advanced": "Hide advanced",
   "Optional on-chain alias registration": "Optional alias",
@@ -1072,15 +1082,20 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   default: "default",
   "Canonical I105 Account ID": "I105 Account ID",
   "Example I105 Account ID":
-    "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+    "sorauロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
   "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.":
-    "Real TAIRA I105 account IDs are kana-based literals and may look like testu..., not 6cmz... or i105:.",
+    "Real TAIRA I105 account IDs are kana-based literals and may look like sorau..., not 6cmz... or i105:.",
   "Use the real Base58 I105 account literal, for example {example}. Do not use @domain or i105: forms.":
     "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
     "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
+  "Enter a recovery phrase.": "Enter a recovery phrase.",
+  "Recovery phrase must contain 12 or 24 words.":
+    "Recovery phrase must contain 12 or 24 words.",
+  "Invalid recovery phrase": "Invalid recovery phrase",
+  "Recovery phrase confirmed": "Phrase confirmed",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
@@ -1110,6 +1125,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Wallet data is unavailable until this account exists on-chain.":
     "No on-chain wallet data yet.",
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
+  "Wallet {accountId} restored locally.":
+    "Wallet restored locally: {accountId}.",
+  "Restore wallet": "Restore wallet",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   Kaigi: "Kaigi",
@@ -1118,6 +1136,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Kaigi Calls": "Kaigi Calls",
   "Direct audio/video room with manual signaling":
     "Direct room with manual signaling.",
+  "Meeting links and direct audio/video room":
+    "Meeting links and direct audio/video room",
   "Kaigi Room": "Kaigi Room",
   "Direct browser audio and video between two wallet users.":
     "Direct browser call between two wallet users.",
@@ -1136,6 +1156,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Paste the offer, create an answer, and send it back.",
   "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
     "This Kaigi page uses manual offer and answer packets today.",
+  "How to join a Kaigi call": "How to join a Kaigi call",
+  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
+    "The caller invites you by sending an offer packet through another channel.",
+  "Choose Join call and prepare your local media.":
+    "Choose Join call and prepare your local media.",
+  "Paste the caller's offer packet into Remote packet.":
+    "Paste the caller's offer packet into Remote packet.",
+  "Create your answer packet and send it back to the caller.":
+    "Create your answer packet and send it back to the caller.",
+  "Wait for the caller to apply your answer so the call can connect.":
+    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",
@@ -1302,6 +1333,122 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "VPN control plane is unavailable on this Torii node.",
   "No VPN session yet.": "No VPN session yet.",
   "0s": "0s",
+  "Share a Kaigi meeting link, then connect browser audio and video between two wallet users.":
+    "Share a meeting link, then connect browser audio and video between two wallet users.",
+  "Start meeting": "Start meeting",
+  "Join meeting": "Join meeting",
+  "Meeting title": "Meeting title",
+  Optional: "Optional",
+  "Scheduled start": "Scheduled start",
+  "Start now": "Start now",
+  "Meeting invite": "Meeting invite",
+  "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.":
+    "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.",
+  "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
+    "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
+  "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
+    "This wallet is local only, so Kaigi falls back to a manual answer packet.",
+  "Meeting link ready": "Meeting link ready",
+  "Host prompt": "Host prompt",
+  "Host checklist": "Host checklist",
+  "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.":
+    "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.",
+  "Share the invite link. The guest can still open the meeting directly, but answer delivery falls back to the Advanced signaling section.":
+    "Share the invite link. If automatic delivery is unavailable, answer delivery falls back to Advanced signaling.",
+  "Meeting code": "Meeting code",
+  "Invite link": "Invite link",
+  "Copy invite link": "Copy invite link",
+  "Meeting invite copied to clipboard.": "Meeting invite copied to clipboard.",
+  "Fallback route": "Fallback route",
+  "Copy fallback route": "Copy fallback route",
+  "Fallback route copied to clipboard.": "Fallback route copied to clipboard.",
+  "Meeting summary": "Meeting summary",
+  "This meeting invite has expired.": "This meeting invite has expired.",
+  "Open local media, then join the loaded meeting.":
+    "Open local media, then join the loaded meeting.",
+  Host: "Host",
+  "Host wallet": "Host wallet",
+  Expires: "Expires",
+  "Untitled meeting": "Untitled meeting",
+  "Join path": "Join path",
+  Waiting: "Waiting",
+  "Creating meeting link…": "Creating meeting link…",
+  "Create meeting link": "Create meeting link",
+  "Joining meeting…": "Joining meeting…",
+  "Load invite": "Load invite",
+  "Advanced signaling": "Advanced signaling",
+  "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.":
+    "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
+  "Show raw packets": "Show raw packets",
+  "Create manual answer packet": "Create manual answer packet",
+  "Creating manual answer…": "Creating manual answer…",
+  "Open local media before creating or joining a Kaigi meeting.":
+    "Open local media before creating or joining a Kaigi meeting.",
+  "Create a meeting link to invite another wallet user.":
+    "Create a meeting link to invite another wallet user.",
+  "Create a Kaigi meeting link, share it, then wait for the participant answer to arrive automatically or through the Advanced signaling fallback.":
+    "Create a meeting link, share it, then wait for the participant answer automatically or through Advanced signaling.",
+  "Open or paste a Kaigi invite, create your answer locally, and let the app deliver it automatically when possible.":
+    "Open or paste an invite, create your answer locally, and let the app deliver it automatically when possible.",
+  "Automatic join": "Automatic join",
+  "Manual fallback": "Manual fallback",
+  "Nothing to copy yet.": "Nothing to copy yet.",
+  "Packet buffers cleared.": "Packet buffers cleared.",
+  "Scheduled start is invalid.": "Scheduled start is invalid.",
+  "Meeting invite loaded. Join when your media is ready.":
+    "Meeting invite loaded. Join when your media is ready.",
+  "Meeting invite loaded. This meeting will use a manual answer fallback.":
+    "Meeting invite loaded. This meeting will use a manual answer fallback.",
+  "Meeting invite link is invalid.": "Meeting invite link is invalid.",
+  "Paste or open a meeting invite to join.":
+    "Paste or open a meeting invite to join.",
+  "Save a wallet before using Kaigi.": "Save a wallet before using Kaigi.",
+  "Unable to create a live Kaigi meeting.":
+    "Unable to create a live Kaigi meeting.",
+  "Meeting link ready. Share it with the other participant.":
+    "Meeting link ready. Share it with the other participant.",
+  "Keep this host window open after sharing the invite. If the guest joins but remote media does not appear, open Advanced signaling and apply the answer packet.":
+    "Keep this host window open after sharing the invite. If remote media does not appear, open Advanced signaling and apply the answer packet.",
+  "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.":
+    "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
+  "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
+    "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
+  "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
+    "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
+  "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.":
+    "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.",
+  "Automatic meeting registration failed: {message}":
+    "Automatic meeting registration failed: {message}",
+  "Unable to create a Kaigi meeting link.":
+    "Unable to create a Kaigi meeting link.",
+  "Load a meeting invite first.": "Load a meeting invite first.",
+  "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.":
+    "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.",
+  "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.":
+    "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.",
+  "Automatic join failed: {message}": "Automatic join failed: {message}",
+  "Unable to join the live Kaigi meeting.":
+    "Unable to join the live Kaigi meeting.",
+  "Participant answer ready": "Participant answer ready",
+  "The guest answer packet is ready. Apply it now so audio and video can start.":
+    "The guest answer packet is ready. Apply it now so audio and video can start.",
+  "I will keep this window open": "I will keep this window open",
+  "Show Advanced signaling": "Show Advanced signaling",
+  Later: "Later",
+  "Answer packet ready. Send it to the host manually.":
+    "Answer packet ready. Send it to the host manually.",
+  "Manual answer packet ready. Send it to the host.":
+    "Manual answer packet ready. Send it to the host.",
+  "Participant answer detected and applied automatically.":
+    "Participant answer detected and applied automatically.",
+  "Meeting invite pasted from clipboard.":
+    "Meeting invite pasted from clipboard.",
+  "Create a meeting link first.": "Create a meeting link first.",
+  "Meeting ended.": "Meeting ended.",
+  "Meeting ended locally.": "Meeting ended locally.",
+  "Unable to publish the meeting end signal: {message}":
+    "Unable to publish the meeting end signal: {message}",
+  "Unknown Kaigi end error": "Unknown Kaigi end error",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
@@ -1363,22 +1510,38 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Alias is optional.",
+  "Restore your wallet from a recovery phrase and save it locally.":
+    "Restore a wallet from your phrase and save it locally.",
   "Display Name (local only, not on-chain)": "Wallet name",
   "Canonical I105 Account ID": "I105 Account ID",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
     "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "Generate recovery phrase": "Create recovery phrase",
+  "Restore from recovery phrase": "Restore from phrase",
+  "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
+    "Paste a 12- or 24-word phrase to derive this wallet locally.",
   "TAIRA testnet connection is fixed in this build.": "TAIRA only.",
   "TAIRA testnet connection is fixed for onboarding in this build.":
     "TAIRA only.",
   "Public TAIRA testnet profile.": "Public testnet.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
+  "Create recovery phrase": "Create recovery phrase",
+  "Hide restore": "Hide restore",
+  "Recovery Phrase": "Recovery phrase",
+  "Load recovery phrase": "Load phrase",
+  "Restoring…": "Restoring…",
   "Download backup": "Back up phrase",
   "Write these words down in order. They restore your wallet.":
     "Back these words up. They restore this wallet.",
   "I stored my recovery phrase safely.": "I backed up my phrase.",
+  "Enter a recovery phrase.": "Enter a recovery phrase.",
+  "Recovery phrase must contain 12 or 24 words.":
+    "Recovery phrase must contain 12 or 24 words.",
+  "Invalid recovery phrase": "Invalid recovery phrase",
+  "Recovery phrase confirmed": "Phrase confirmed",
   "Save identity": "Save wallet",
+  "Restore wallet": "Restore wallet",
   "Create on-chain account": "Create on-chain account",
   "Optional on-chain alias registration": "Optional alias",
   "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
@@ -1409,6 +1572,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Not selected": "No wallet selected",
   "Recovery phrase saved": "Phrase backed up",
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
+  "Wallet {accountId} restored locally.":
+    "Wallet restored locally: {accountId}.",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   "Confirm that you stored the recovery phrase.": "Confirm you backed it up.",
@@ -1705,6 +1870,17 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Paste the offer, create an answer, and send it back.",
   "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
     "This Kaigi page uses manual offer and answer packets today.",
+  "How to join a Kaigi call": "How to join a Kaigi call",
+  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
+    "The caller invites you by sending an offer packet through another channel.",
+  "Choose Join call and prepare your local media.":
+    "Choose Join call and prepare your local media.",
+  "Paste the caller's offer packet into Remote packet.":
+    "Paste the caller's offer packet into Remote packet.",
+  "Create your answer packet and send it back to the caller.":
+    "Create your answer packet and send it back to the caller.",
+  "Wait for the caller to apply your answer so the call can connect.":
+    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",
