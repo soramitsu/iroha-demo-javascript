@@ -1118,6 +1118,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Kaigi Calls": "Kaigi Calls",
   "Direct audio/video room with manual signaling":
     "Direct room with manual signaling.",
+  "Meeting links and direct audio/video room":
+    "Meeting links and direct audio/video room",
   "Kaigi Room": "Kaigi Room",
   "Direct browser audio and video between two wallet users.":
     "Direct browser call between two wallet users.",
@@ -1225,6 +1227,112 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unable to create an answer.": "Could not create an answer.",
   "Unable to apply the answer.": "Could not apply the answer.",
   "Local preview stopped.": "Local preview stopped.",
+  "Share a Kaigi meeting link, then connect browser audio and video between two wallet users.":
+    "Share a meeting link, then connect browser audio and video between two wallet users.",
+  "Start meeting": "Start meeting",
+  "Join meeting": "Join meeting",
+  "Meeting title": "Meeting title",
+  Optional: "Optional",
+  "Scheduled start": "Scheduled start",
+  "Start now": "Start now",
+  "Meeting invite": "Meeting invite",
+  "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.":
+    "Paste an iroha:// invite link, a #/kaigi invite route, or the raw invite token.",
+  "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
+    "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
+  "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
+    "This wallet is local only, so Kaigi falls back to a manual answer packet.",
+  "Meeting link ready": "Meeting link ready",
+  "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.":
+    "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.",
+  "Share the invite link. The guest can still open the meeting directly, but answer delivery falls back to the Advanced signaling section.":
+    "Share the invite link. If automatic delivery is unavailable, answer delivery falls back to Advanced signaling.",
+  "Meeting code": "Meeting code",
+  "Invite link": "Invite link",
+  "Copy invite link": "Copy invite link",
+  "Meeting invite copied to clipboard.":
+    "Meeting invite copied to clipboard.",
+  "Fallback route": "Fallback route",
+  "Copy fallback route": "Copy fallback route",
+  "Fallback route copied to clipboard.":
+    "Fallback route copied to clipboard.",
+  "Meeting summary": "Meeting summary",
+  "This meeting invite has expired.": "This meeting invite has expired.",
+  "Open local media, then join the loaded meeting.":
+    "Open local media, then join the loaded meeting.",
+  Host: "Host",
+  "Host wallet": "Host wallet",
+  Expires: "Expires",
+  "Untitled meeting": "Untitled meeting",
+  "Join path": "Join path",
+  Waiting: "Waiting",
+  "Creating meeting link…": "Creating meeting link…",
+  "Create meeting link": "Create meeting link",
+  "Joining meeting…": "Joining meeting…",
+  "Load invite": "Load invite",
+  "Advanced signaling": "Advanced signaling",
+  "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.":
+    "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
+  "Show raw packets": "Show raw packets",
+  "Create manual answer packet": "Create manual answer packet",
+  "Creating manual answer…": "Creating manual answer…",
+  "Open local media before creating or joining a Kaigi meeting.":
+    "Open local media before creating or joining a Kaigi meeting.",
+  "Create a meeting link to invite another wallet user.":
+    "Create a meeting link to invite another wallet user.",
+  "Create a Kaigi meeting link, share it, then wait for the participant answer to arrive automatically or through the Advanced signaling fallback.":
+    "Create a meeting link, share it, then wait for the participant answer automatically or through Advanced signaling.",
+  "Open or paste a Kaigi invite, create your answer locally, and let the app deliver it automatically when possible.":
+    "Open or paste an invite, create your answer locally, and let the app deliver it automatically when possible.",
+  "Automatic join": "Automatic join",
+  "Manual fallback": "Manual fallback",
+  "Nothing to copy yet.": "Nothing to copy yet.",
+  "Packet buffers cleared.": "Packet buffers cleared.",
+  "Scheduled start is invalid.": "Scheduled start is invalid.",
+  "Meeting invite loaded. Join when your media is ready.":
+    "Meeting invite loaded. Join when your media is ready.",
+  "Meeting invite loaded. This meeting will use a manual answer fallback.":
+    "Meeting invite loaded. This meeting will use a manual answer fallback.",
+  "Meeting invite link is invalid.": "Meeting invite link is invalid.",
+  "Paste or open a meeting invite to join.":
+    "Paste or open a meeting invite to join.",
+  "Save a wallet before using Kaigi.": "Save a wallet before using Kaigi.",
+  "Unable to create a live Kaigi meeting.":
+    "Unable to create a live Kaigi meeting.",
+  "Meeting link ready. Share it with the other participant.":
+    "Meeting link ready. Share it with the other participant.",
+  "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
+    "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
+  "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
+    "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
+  "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.":
+    "Meeting link ready. This wallet is local only, so joining will use a manual answer fallback.",
+  "Automatic meeting registration failed: {message}":
+    "Automatic meeting registration failed: {message}",
+  "Unable to create a Kaigi meeting link.":
+    "Unable to create a Kaigi meeting link.",
+  "Load a meeting invite first.": "Load a meeting invite first.",
+  "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.":
+    "Joined the meeting. Your encrypted answer was posted on-chain for the host to apply automatically.",
+  "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.":
+    "Answer packet ready. Automatic join failed, so send the manual answer packet to the host.",
+  "Automatic join failed: {message}": "Automatic join failed: {message}",
+  "Unable to join the live Kaigi meeting.":
+    "Unable to join the live Kaigi meeting.",
+  "Answer packet ready. Send it to the host manually.":
+    "Answer packet ready. Send it to the host manually.",
+  "Manual answer packet ready. Send it to the host.":
+    "Manual answer packet ready. Send it to the host.",
+  "Participant answer detected and applied automatically.":
+    "Participant answer detected and applied automatically.",
+  "Meeting invite pasted from clipboard.":
+    "Meeting invite pasted from clipboard.",
+  "Create a meeting link first.": "Create a meeting link first.",
+  "Meeting ended.": "Meeting ended.",
+  "Meeting ended locally.": "Meeting ended locally.",
+  "Unable to publish the meeting end signal: {message}":
+    "Unable to publish the meeting end signal: {message}",
+  "Unknown Kaigi end error": "Unknown Kaigi end error",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
