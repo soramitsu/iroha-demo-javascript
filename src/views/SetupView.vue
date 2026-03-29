@@ -88,7 +88,11 @@
         <label>
           {{ t("Canonical I105 Account ID") }}
           <input
-            :value="userForm.i105AccountId || userForm.accountId"
+            :value="
+              userForm.i105DefaultAccountId ||
+              userForm.i105AccountId ||
+              userForm.accountId
+            "
             readonly
           />
         </label>

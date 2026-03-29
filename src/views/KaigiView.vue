@@ -301,6 +301,7 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
+import { getPublicAccountId } from "@/utils/accountId";
 import {
   buildKaigiSignalEnvelope,
   normalizeKaigiParticipantId,
@@ -319,9 +320,8 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
 const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
-const activeAccountDisplayId = computed(
-  () =>
-    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+const activeAccountDisplayId = computed(() =>
+  getPublicAccountId(activeAccount.value),
 );
 
 const callMode = ref<"start" | "join">("start");

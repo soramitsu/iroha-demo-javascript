@@ -1072,9 +1072,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   default: "default",
   "Canonical I105 Account ID": "I105 Account ID",
   "Example I105 Account ID":
-    "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+    "sorauロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
   "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.":
-    "Real TAIRA I105 account IDs are kana-based literals and may look like testu..., not 6cmz... or i105:.",
+    "Real TAIRA I105 account IDs are kana-based literals and may look like sorau..., not 6cmz... or i105:.",
   "Use the real Base58 I105 account literal, for example {example}. Do not use @domain or i105: forms.":
     "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":

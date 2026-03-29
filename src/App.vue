@@ -198,18 +198,10 @@
               {{ session.hasAccount ? t("Account saved") : t("Account Setup") }}
             </span>
             <span
-              v-if="
-                session.activeAccount?.displayName ||
-                session.activeAccount?.i105AccountId ||
-                session.activeAccount?.accountId
-              "
+              v-if="activeAccountLabel"
               class="pill workspace-account"
             >
-              {{
-                session.activeAccount?.displayName ||
-                session.activeAccount?.i105AccountId ||
-                session.activeAccount?.accountId
-              }}
+              {{ activeAccountLabel }}
             </span>
           </div>
         </header>
@@ -235,6 +227,7 @@ import ReceiveIcon from "@/assets/receive.svg";
 import UserIcon from "@/assets/user.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
+import { getAccountDisplayLabel } from "@/utils/accountId";
 
 const navItems = [
   {
@@ -320,6 +313,9 @@ const route = useRoute();
 const session = useSessionStore();
 const theme = useThemeStore();
 const { localeStore, localeOptions, t } = useAppI18n();
+const activeAccountLabel = computed(() =>
+  getAccountDisplayLabel(session.activeAccount),
+);
 const logo = IrohaLogo;
 const localeMenu = ref<HTMLDetailsElement | null>(null);
 const sidebarPanel = ref<HTMLDetailsElement | null>(null);
