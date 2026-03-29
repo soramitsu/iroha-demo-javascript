@@ -4,6 +4,10 @@ import { createPinia, setActivePinia } from "pinia";
 import KaigiView from "@/views/KaigiView.vue";
 import { useSessionStore } from "@/stores/session";
 import {
+  buildKaigiSignalEnvelope,
+  stringifyKaigiSignalEnvelope,
+} from "@/utils/kaigi";
+import {
   buildKaigiInviteHashRoute,
   encodeKaigiInvitePayload,
   KAIGI_INVITE_SCHEMA,
@@ -22,7 +26,8 @@ const readTextMock = vi.fn();
 vi.mock("@/services/iroha", () => ({
   createKaigiMeeting: (input: unknown) => createKaigiMeetingMock(input),
   joinKaigiMeeting: (input: unknown) => joinKaigiMeetingMock(input),
-  pollKaigiMeetingSignals: (input: unknown) => pollKaigiMeetingSignalsMock(input),
+  pollKaigiMeetingSignals: (input: unknown) =>
+    pollKaigiMeetingSignalsMock(input),
   generateKaigiSignalKeyPair: () => generateKaigiSignalKeyPairMock(),
   endKaigiMeeting: (input: unknown) => endKaigiMeetingMock(input),
 }));
@@ -69,6 +74,7 @@ class FakeMediaStream {
 
 class FakePeerConnection {
   static instances: FakePeerConnection[] = [];
+  static emitStreamlessTrackEvents = false;
 
   localDescription: RTCSessionDescriptionInit | null = null;
   remoteDescription: RTCSessionDescriptionInit | null = null;
@@ -131,14 +137,27 @@ class FakePeerConnection {
     if (description.type === "answer") {
       this.connectionState = "connected";
       this.iceConnectionState = "connected";
-      const stream = new FakeMediaStream([
-        new FakeMediaTrack("audio", "remote-audio"),
-        new FakeMediaTrack("video", "remote-video"),
-      ]);
-      const trackEvent = {
-        streams: [stream],
-      } as unknown as RTCTrackEvent;
-      this.ontrack?.(trackEvent);
+      const remoteAudioTrack = new FakeMediaTrack("audio", "remote-audio");
+      const remoteVideoTrack = new FakeMediaTrack("video", "remote-video");
+      if (FakePeerConnection.emitStreamlessTrackEvents) {
+        this.ontrack?.({
+          streams: [],
+          track: remoteAudioTrack,
+        } as unknown as RTCTrackEvent);
+        this.ontrack?.({
+          streams: [],
+          track: remoteVideoTrack,
+        } as unknown as RTCTrackEvent);
+      } else {
+        const stream = new FakeMediaStream([
+          remoteAudioTrack,
+          remoteVideoTrack,
+        ]);
+        this.ontrack?.({
+          streams: [stream],
+          track: remoteVideoTrack,
+        } as unknown as RTCTrackEvent);
+      }
       this.onconnectionstatechange?.();
       this.oniceconnectionstatechange?.();
     }
@@ -168,10 +187,7 @@ class FakePeerConnection {
   }
 }
 
-const getButtonByText = (
-  wrapper: ReturnType<typeof mount>,
-  text: string,
-) => {
+const getButtonByText = (wrapper: ReturnType<typeof mount>, text: string) => {
   const matches = wrapper
     .findAll("button")
     .filter((node) => node.text().includes(text));
@@ -206,6 +222,22 @@ const buildInviteHash = (options?: { live?: boolean }) => {
   return `#${buildKaigiInviteHashRoute(token)}`;
 };
 
+const buildAnswerPacket = (roomId: string) =>
+  stringifyKaigiSignalEnvelope(
+    buildKaigiSignalEnvelope({
+      kind: "answer",
+      roomId,
+      participantId: "Bob",
+      participantName: "Bob",
+      walletIdentity: "bob@wonderland",
+      createdAtMs: Date.now(),
+      description: {
+        type: "answer",
+        sdp: "manual-answer-sdp",
+      },
+    }),
+  );
+
 describe("KaigiView", () => {
   let activeWrapper: ReturnType<typeof mount> | null = null;
 
@@ -219,6 +251,7 @@ describe("KaigiView", () => {
     writeTextMock.mockReset();
     readTextMock.mockReset();
     FakePeerConnection.instances = [];
+    FakePeerConnection.emitStreamlessTrackEvents = false;
     window.location.hash = "";
 
     generateKaigiSignalKeyPairMock.mockReturnValue({
@@ -331,6 +364,23 @@ describe("KaigiView", () => {
     );
   });
 
+  it("shows a host checklist dialog after creating a meeting link", async () => {
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Host checklist");
+    expect(wrapper.text()).toContain("Keep this host window open");
+
+    await getButtonByText(wrapper, "Show Advanced signaling").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
+    expect(wrapper.find("details").element.open).toBe(true);
+  });
+
   it("loads an invite from the hash route and joins through the live path", async () => {
     window.location.hash = buildInviteHash({ live: true });
     const wrapper = mountView();
@@ -378,23 +428,23 @@ describe("KaigiView", () => {
   });
 
   it("auto-applies a polled participant answer after host meeting creation", async () => {
-    pollKaigiMeetingSignalsMock.mockImplementation(async (input: {
-      callId: string;
-    }) => [
-      {
-        entrypointHash: "0xanswer",
-        authority: "bob@wonderland",
-        callId: input.callId,
-        participantAccountId: "bob@wonderland",
-        participantId: "bob",
-        participantName: "Bob",
-        createdAtMs: 1_700_000_010_000,
-        answerDescription: {
-          type: "answer",
-          sdp: "remote-answer-sdp",
+    pollKaigiMeetingSignalsMock.mockImplementation(
+      async (input: { callId: string }) => [
+        {
+          entrypointHash: "0xanswer",
+          authority: "bob@wonderland",
+          callId: input.callId,
+          participantAccountId: "bob@wonderland",
+          participantId: "bob",
+          participantName: "Bob",
+          createdAtMs: 1_700_000_010_000,
+          answerDescription: {
+            type: "answer",
+            sdp: "remote-answer-sdp",
+          },
         },
-      },
-    ]);
+      ],
+    );
 
     const wrapper = mountView();
 
@@ -410,5 +460,66 @@ describe("KaigiView", () => {
       "Participant answer detected and applied automatically.",
     );
     expect(wrapper.text()).toContain("Bob");
+  });
+
+  it("renders remote media when the browser emits streamless track events", async () => {
+    FakePeerConnection.emitStreamlessTrackEvents = true;
+    pollKaigiMeetingSignalsMock.mockImplementation(
+      async (input: { callId: string }) => [
+        {
+          entrypointHash: "0xanswer",
+          authority: "bob@wonderland",
+          callId: input.callId,
+          participantAccountId: "bob@wonderland",
+          participantId: "bob",
+          participantName: "Bob",
+          createdAtMs: 1_700_000_010_000,
+          answerDescription: {
+            type: "answer",
+            sdp: "remote-answer-sdp",
+          },
+        },
+      ],
+    );
+
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain(
+      "No remote media yet. The other user will appear here after the answer is applied and media starts flowing.",
+    );
+    expect(FakePeerConnection.instances[0]?.connectionState).toBe("connected");
+  });
+
+  it("prompts the host to apply a pasted answer packet", async () => {
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    const roomId = String(
+      createKaigiMeetingMock.mock.calls[0]?.[0]?.callId ?? "",
+    );
+    readTextMock.mockResolvedValueOnce(buildAnswerPacket(roomId));
+
+    await getButtonByText(wrapper, "Paste from clipboard").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(true);
+    expect(wrapper.text()).toContain("Participant answer ready");
+    expect(wrapper.text()).toContain(
+      "The guest answer packet is ready. Apply it now so audio and video can start.",
+    );
+
+    await getButtonByText(wrapper, "Apply answer packet").trigger("click");
+    await flushPromises();
+
+    expect(FakePeerConnection.instances[0]?.remoteDescription).toEqual({
+      type: "answer",
+      sdp: "manual-answer-sdp",
+    });
+    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
   });
 });

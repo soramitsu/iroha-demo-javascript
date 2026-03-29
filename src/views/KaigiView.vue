@@ -26,7 +26,10 @@
                 : t("Not connected")
             }}
           </span>
-          <span class="pill" :class="{ positive: signalModeLabel !== t('Idle') }">
+          <span
+            class="pill"
+            :class="{ positive: signalModeLabel !== t('Idle') }"
+          >
             {{ signalModeLabel }}
           </span>
         </div>
@@ -109,7 +112,11 @@
               <input :value="walletIdentity || t('Not connected')" readonly />
             </label>
             <div class="actions-row kaigi-inline-actions">
-              <button type="button" :disabled="busy" @click="loadInviteFromInput">
+              <button
+                type="button"
+                :disabled="busy"
+                @click="loadInviteFromInput"
+              >
                 {{ t("Load invite") }}
               </button>
               <button
@@ -168,7 +175,11 @@
             </div>
             <div class="kaigi-link-field">
               <span class="helper">{{ t("Invite link") }}</span>
-              <textarea :value="hostInviteDeepLink" rows="3" readonly></textarea>
+              <textarea
+                :value="hostInviteDeepLink"
+                rows="3"
+                readonly
+              ></textarea>
             </div>
             <div class="actions-row kaigi-inline-actions">
               <button
@@ -182,7 +193,11 @@
             </div>
             <div class="kaigi-link-field">
               <span class="helper">{{ t("Fallback route") }}</span>
-              <textarea :value="hostInviteHashRouteDisplay" rows="2" readonly></textarea>
+              <textarea
+                :value="hostInviteHashRouteDisplay"
+                rows="2"
+                readonly
+              ></textarea>
             </div>
             <div class="actions-row kaigi-inline-actions">
               <button
@@ -211,7 +226,10 @@
                   }}
                 </p>
               </div>
-              <span class="pill" :class="{ positive: inviteCanUseAutomaticJoin }">
+              <span
+                class="pill"
+                :class="{ positive: inviteCanUseAutomaticJoin }"
+              >
                 {{
                   inviteCanUseAutomaticJoin
                     ? t("Automatic join")
@@ -222,7 +240,9 @@
             <div class="kaigi-kpis">
               <div class="kv">
                 <span class="kv-label">{{ t("Meeting code") }}</span>
-                <span class="kv-value mono">{{ parsedInvite.meetingCode }}</span>
+                <span class="kv-value mono">{{
+                  parsedInvite.meetingCode
+                }}</span>
               </div>
               <div class="kv">
                 <span class="kv-label">{{ t("Host") }}</span>
@@ -230,7 +250,9 @@
               </div>
               <div class="kv">
                 <span class="kv-label">{{ t("Host wallet") }}</span>
-                <span class="kv-value mono">{{ parsedInvite.hostAccountId }}</span>
+                <span class="kv-value mono">{{
+                  parsedInvite.hostAccountId
+                }}</span>
               </div>
               <div class="kv">
                 <span class="kv-label">{{ t("Scheduled start") }}</span>
@@ -300,7 +322,9 @@
               @click="createMeetingLink"
             >
               {{
-                signalBusy ? t("Creating meeting link…") : t("Create meeting link")
+                signalBusy
+                  ? t("Creating meeting link…")
+                  : t("Create meeting link")
               }}
             </button>
             <button
@@ -311,9 +335,16 @@
             >
               {{ signalBusy ? t("Joining meeting…") : t("Join meeting") }}
             </button>
-            <button type="button" class="secondary" :disabled="busy" @click="prepareLocalMedia">
+            <button
+              type="button"
+              class="secondary"
+              :disabled="busy"
+              @click="prepareLocalMedia"
+            >
               {{
-                mediaBusy ? t("Preparing local media…") : t("Prepare local media")
+                mediaBusy
+                  ? t("Preparing local media…")
+                  : t("Prepare local media")
               }}
             </button>
           </div>
@@ -377,7 +408,9 @@
             <p>{{ t("Camera + microphone preview") }}</p>
             <p class="helper">
               {{
-                t("Open local media before creating or joining a Kaigi meeting.")
+                t(
+                  "Open local media before creating or joining a Kaigi meeting.",
+                )
               }}
             </p>
           </div>
@@ -419,7 +452,11 @@
         </div>
       </header>
 
-      <details class="kaigi-advanced">
+      <details
+        class="kaigi-advanced"
+        :open="advancedSignalsOpen"
+        @toggle="handleAdvancedSignalsToggle"
+      >
         <summary>{{ t("Show raw packets") }}</summary>
         <div class="actions-row kaigi-signal-actions">
           <button
@@ -484,11 +521,74 @@
         </div>
       </details>
     </section>
+
+    <div
+      v-if="hostPromptVisible"
+      class="kaigi-host-modal-backdrop"
+      @click.self="dismissHostPrompt"
+    >
+      <div
+        class="card kaigi-host-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="kaigi-host-modal-title"
+        aria-describedby="kaigi-host-modal-detail"
+      >
+        <p class="kaigi-host-modal-label">{{ t("Host prompt") }}</p>
+        <h2 id="kaigi-host-modal-title" class="kaigi-host-modal-title">
+          {{ hostPromptTitle }}
+        </h2>
+        <p id="kaigi-host-modal-detail" class="helper kaigi-host-modal-detail">
+          {{ hostPromptDetail }}
+        </p>
+        <div class="actions-row kaigi-host-modal-actions">
+          <button
+            v-if="hostPromptKind === 'answerReady'"
+            type="button"
+            :disabled="busy"
+            @click="applyAnswerPacket"
+          >
+            {{
+              signalBusy
+                ? t("Applying remote answer…")
+                : t("Apply answer packet")
+            }}
+          </button>
+          <button
+            v-else
+            type="button"
+            :disabled="busy"
+            @click="dismissHostPrompt"
+          >
+            {{ t("I will keep this window open") }}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            :disabled="busy"
+            @click="openAdvancedSignaling"
+          >
+            {{
+              hostPromptKind === "answerReady"
+                ? t("Later")
+                : t("Show Advanced signaling")
+            }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
+import {
+  computed,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  watch,
+} from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   createKaigiMeeting,
@@ -499,9 +599,13 @@ import {
 } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
-import type { KaigiMeetingSignalRecord, KaigiSignalKeyPair } from "@/types/iroha";
+import type {
+  KaigiMeetingSignalRecord,
+  KaigiSignalKeyPair,
+} from "@/types/iroha";
 import {
   buildKaigiSignalEnvelope,
+  mergeKaigiRemoteTrackIntoStream,
   normalizeKaigiParticipantId,
   parseKaigiSignalInput,
   stringifyKaigiSignalEnvelope,
@@ -522,6 +626,7 @@ import {
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
 const HOST_SIGNAL_POLL_INTERVAL_MS = 4_000;
+type HostPromptKind = "meetingReady" | "answerReady";
 const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
   {
     urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
@@ -532,12 +637,14 @@ const padDateTimePart = (value: number) => String(value).padStart(2, "0");
 
 const formatDateTimeLocalInput = (value: number) => {
   const date = new Date(value);
-  return [
-    date.getFullYear(),
-    padDateTimePart(date.getMonth() + 1),
-    padDateTimePart(date.getDate()),
-  ].join("-") +
-    `T${padDateTimePart(date.getHours())}:${padDateTimePart(date.getMinutes())}`;
+  return (
+    [
+      date.getFullYear(),
+      padDateTimePart(date.getMonth() + 1),
+      padDateTimePart(date.getDate()),
+    ].join("-") +
+    `T${padDateTimePart(date.getHours())}:${padDateTimePart(date.getMinutes())}`
+  );
 };
 
 const createMeetingCode = () => {
@@ -570,6 +677,9 @@ const hostMeetingCreatedAtMs = ref(0);
 const hostLastSignalAtMs = ref(0);
 const manualRoomId = ref(DEFAULT_ROOM_ID);
 const parsedInvite = shallowRef<KaigiInvitePayload | null>(null);
+const advancedSignalsOpen = ref(false);
+const hostPromptKind = ref<HostPromptKind | null>(null);
+const lastHostPromptedAnswerPacket = ref("");
 
 const localVideoRef = ref<HTMLVideoElement | null>(null);
 const remoteVideoRef = ref<HTMLVideoElement | null>(null);
@@ -580,7 +690,9 @@ const peerConnection = shallowRef<RTCPeerConnection | null>(null);
 const outgoingPacket = ref("");
 const incomingPacket = ref("");
 const remoteParticipantName = ref("");
-const statusMessage = ref(t("Create a meeting link to invite another wallet user."));
+const statusMessage = ref(
+  t("Create a meeting link to invite another wallet user."),
+);
 const errorMessage = ref("");
 const audioEnabled = ref(true);
 const videoEnabled = ref(true);
@@ -601,6 +713,7 @@ const participantName = computed({
   get: () =>
     participantNameDraft.value.trim() ||
     activeAccount.value?.displayName ||
+    activeAccount.value?.accountId ||
     activeAccountDisplayId.value ||
     t("Guest"),
   set: (value: string) => {
@@ -614,7 +727,9 @@ const participantId = computed(() =>
 const walletIdentity = computed(() => activeAccountDisplayId.value);
 const busy = computed(() => mediaBusy.value || signalBusy.value);
 const localStreamReady = computed(() => Boolean(localStream.value));
-const isLiveWallet = computed(() => Boolean(activeAccount.value && !activeAccount.value.localOnly));
+const isLiveWallet = computed(() =>
+  Boolean(activeAccount.value && !activeAccount.value.localOnly),
+);
 const inviteExpired = computed(() =>
   parsedInvite.value ? isKaigiInviteExpired(parsedInvite.value) : false,
 );
@@ -673,6 +788,26 @@ const modeHelperText = computed(() =>
         "Open or paste a Kaigi invite, create your answer locally, and let the app deliver it automatically when possible.",
       ),
 );
+const hostPromptVisible = computed(() => hostPromptKind.value !== null);
+const hostPromptTitle = computed(() =>
+  hostPromptKind.value === "answerReady"
+    ? t("Participant answer ready")
+    : t("Host checklist"),
+);
+const hostPromptDetail = computed(() => {
+  if (hostPromptKind.value === "answerReady") {
+    return t(
+      "The guest answer packet is ready. Apply it now so audio and video can start.",
+    );
+  }
+  return hostMeetingLive.value
+    ? t(
+        "Keep this host window open after sharing the invite. If the guest joins but remote media does not appear, open Advanced signaling and apply the answer packet.",
+      )
+    : t(
+        "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
+      );
+});
 
 watch([localVideoRef, localStream], ([videoElement, stream]) => {
   if (!videoElement) {
@@ -702,6 +837,46 @@ const setStatus = (message: string) => {
 const setError = (message: string) => {
   statusMessage.value = "";
   errorMessage.value = message;
+};
+
+const dismissHostPrompt = () => {
+  hostPromptKind.value = null;
+};
+
+const openAdvancedSignaling = () => {
+  advancedSignalsOpen.value = true;
+  dismissHostPrompt();
+};
+
+const handleAdvancedSignalsToggle = (event: Event) => {
+  advancedSignalsOpen.value = (event.currentTarget as HTMLDetailsElement).open;
+};
+
+const maybePromptHostForAnswerPacket = () => {
+  if (callMode.value !== "start") {
+    return;
+  }
+  if (
+    !peerConnection.value?.localDescription ||
+    peerConnection.value?.remoteDescription
+  ) {
+    return;
+  }
+  const packet = incomingPacket.value.trim();
+  if (!packet || packet === lastHostPromptedAnswerPacket.value) {
+    return;
+  }
+  try {
+    const parsed = parseKaigiSignalInput(packet, "answer");
+    if (parsed.kind !== "answer") {
+      return;
+    }
+  } catch (_error) {
+    return;
+  }
+  lastHostPromptedAnswerPacket.value = packet;
+  advancedSignalsOpen.value = true;
+  hostPromptKind.value = "answerReady";
 };
 
 const syncPeerStateRefs = (peer: RTCPeerConnection | null) => {
@@ -746,6 +921,7 @@ const clearHostMeetingState = () => {
   hostMeetingKeys.value = null;
   hostMeetingCreatedAtMs.value = 0;
   hostLastSignalAtMs.value = 0;
+  dismissHostPrompt();
 };
 
 const resetSignalState = () => {
@@ -772,6 +948,8 @@ const resetSignalState = () => {
   outgoingPacket.value = "";
   incomingPacket.value = "";
   remoteParticipantName.value = "";
+  lastHostPromptedAnswerPacket.value = "";
+  dismissHostPrompt();
 };
 
 const attachLocalTrackStates = () => {
@@ -876,18 +1054,10 @@ const createPeerConnection = async () => {
     }
   };
   peer.ontrack = (event) => {
-    if (!remoteStream.value) {
-      remoteStream.value = new MediaStream();
-    }
-    event.streams.forEach((streamValue) => {
-      streamValue.getTracks().forEach((track) => {
-        if (
-          !remoteStream.value?.getTracks().some((item) => item.id === track.id)
-        ) {
-          remoteStream.value?.addTrack(track);
-        }
-      });
-    });
+    remoteStream.value = mergeKaigiRemoteTrackIntoStream(
+      remoteStream.value,
+      event,
+    );
   };
 
   peerConnection.value = peer;
@@ -1044,7 +1214,11 @@ const applyRemoteAnswerDescription = async (
   }
   await peer.setRemoteDescription(description);
   syncPeerStateRefs(peer);
-  if (options?.participantName || options?.participantId || options?.walletIdentity) {
+  if (
+    options?.participantName ||
+    options?.participantId ||
+    options?.walletIdentity
+  ) {
     remoteParticipantName.value =
       options.participantName ||
       options.participantId ||
@@ -1054,7 +1228,10 @@ const applyRemoteAnswerDescription = async (
   if (options?.packet) {
     incomingPacket.value = options.packet;
   }
-  setStatus(options?.statusMessage || t("Answer applied. The call can connect now."));
+  dismissHostPrompt();
+  setStatus(
+    options?.statusMessage || t("Answer applied. The call can connect now."),
+  );
 };
 
 const applyPolledAnswerSignal = async (signal: KaigiMeetingSignalRecord) => {
@@ -1146,7 +1323,10 @@ const copyText = async (value: string, successMessage: string) => {
 };
 
 const copyInviteLink = async () => {
-  await copyText(hostInviteDeepLink.value, t("Meeting invite copied to clipboard."));
+  await copyText(
+    hostInviteDeepLink.value,
+    t("Meeting invite copied to clipboard."),
+  );
 };
 
 const copyFallbackLink = async () => {
@@ -1181,6 +1361,10 @@ const pasteInviteFromClipboard = async () => {
 const clearPackets = () => {
   outgoingPacket.value = "";
   incomingPacket.value = "";
+  lastHostPromptedAnswerPacket.value = "";
+  if (hostPromptKind.value === "answerReady") {
+    dismissHostPrompt();
+  }
   setStatus(t("Packet buffers cleared."));
 };
 
@@ -1221,7 +1405,9 @@ const hydrateInvite = (invite: KaigiInvitePayload, rawInput: string) => {
   setStatus(
     invite.live
       ? t("Meeting invite loaded. Join when your media is ready.")
-      : t("Meeting invite loaded. This meeting will use a manual answer fallback."),
+      : t(
+          "Meeting invite loaded. This meeting will use a manual answer fallback.",
+        ),
   );
 };
 
@@ -1231,13 +1417,18 @@ const loadInviteFromInput = () => {
     hydrateInvite(invite, inviteInput.value);
   } catch (error) {
     setError(
-      error instanceof Error ? error.message : t("Meeting invite link is invalid."),
+      error instanceof Error
+        ? error.message
+        : t("Meeting invite link is invalid."),
     );
   }
 };
 
 const loadInviteFromLocationHash = () => {
-  if (typeof window === "undefined" || !window.location.hash.includes("invite=")) {
+  if (
+    typeof window === "undefined" ||
+    !window.location.hash.includes("invite=")
+  ) {
     return;
   }
   try {
@@ -1251,13 +1442,17 @@ const loadInviteFromLocationHash = () => {
     hydrateInvite(invite, window.location.hash.slice(1));
   } catch (error) {
     setError(
-      error instanceof Error ? error.message : t("Meeting invite link is invalid."),
+      error instanceof Error
+        ? error.message
+        : t("Meeting invite link is invalid."),
     );
   }
 };
 
 const switchMode = (mode: "start" | "join") => {
   callMode.value = mode;
+  advancedSignalsOpen.value = false;
+  dismissHostPrompt();
   if (mode === "start") {
     parsedInvite.value = null;
     inviteInput.value = "";
@@ -1301,7 +1496,9 @@ const createMeetingLink = async () => {
       schema: KAIGI_INVITE_SCHEMA,
       callId,
       meetingCode,
-      ...(meetingTitle.value.trim() ? { title: meetingTitle.value.trim() } : {}),
+      ...(meetingTitle.value.trim()
+        ? { title: meetingTitle.value.trim() }
+        : {}),
       hostAccountId: activeAccount.value.accountId,
       hostDisplayName: participantName.value,
       hostParticipantId: participantId.value,
@@ -1357,11 +1554,15 @@ const createMeetingLink = async () => {
             ),
       );
       if (automaticError) {
-        errorMessage.value = t("Automatic meeting registration failed: {message}", {
-          message: automaticError,
-        });
+        errorMessage.value = t(
+          "Automatic meeting registration failed: {message}",
+          {
+            message: automaticError,
+          },
+        );
       }
     }
+    hostPromptKind.value = "meetingReady";
   } catch (error) {
     clearHostMeetingState();
     setError(
@@ -1512,6 +1713,7 @@ const hangUp = async () => {
 
   clearHostSignalPolling();
   resetSignalState();
+  advancedSignalsOpen.value = false;
   manualRoomId.value = parsedInvite.value?.callId || DEFAULT_ROOM_ID;
 
   if (shouldEndLiveMeeting && activeAccount.value) {
@@ -1526,12 +1728,15 @@ const hangUp = async () => {
       setStatus(t("Meeting ended."));
     } catch (error) {
       setStatus(t("Meeting ended locally."));
-      errorMessage.value = t("Unable to publish the meeting end signal: {message}", {
-        message:
-          error instanceof Error
-            ? error.message
-            : t("Unknown Kaigi end error"),
-      });
+      errorMessage.value = t(
+        "Unable to publish the meeting end signal: {message}",
+        {
+          message:
+            error instanceof Error
+              ? error.message
+              : t("Unknown Kaigi end error"),
+        },
+      );
     }
   } else {
     setStatus(t("Ready to prepare a Kaigi call."));
@@ -1546,6 +1751,18 @@ watch(
   () => activeAccount.value?.accountId,
   () => {
     clearHostSignalPolling();
+  },
+);
+
+watch(
+  [
+    incomingPacket,
+    callMode,
+    () => peerConnection.value?.localDescription,
+    () => peerConnection.value?.remoteDescription,
+  ],
+  () => {
+    maybePromptHostForAnswerPacket();
   },
 );
 
@@ -1648,6 +1865,50 @@ onBeforeUnmount(() => {
 
 .kaigi-link-box p {
   margin: 0.35rem 0 0;
+}
+
+.kaigi-host-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--surface-base) 42%, transparent);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+}
+
+.kaigi-host-modal {
+  width: min(100%, 460px);
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.4rem;
+}
+
+.kaigi-host-modal-label,
+.kaigi-host-modal-title,
+.kaigi-host-modal-detail {
+  margin: 0;
+}
+
+.kaigi-host-modal-label {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+  color: var(--iroha-muted);
+}
+
+.kaigi-host-modal-title {
+  font-size: clamp(1.25rem, 3vw, 1.55rem);
+}
+
+.kaigi-host-modal-detail {
+  max-width: 38ch;
+}
+
+.kaigi-host-modal-actions {
+  flex-wrap: wrap;
 }
 
 .kaigi-link-field textarea,

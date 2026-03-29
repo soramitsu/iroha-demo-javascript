@@ -1243,6 +1243,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
     "This wallet is local only, so Kaigi falls back to a manual answer packet.",
   "Meeting link ready": "Meeting link ready",
+  "Host prompt": "Host prompt",
+  "Host checklist": "Host checklist",
   "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.":
     "Share the deep link. The guest can answer without pasting SDP when both wallets are live on-chain.",
   "Share the invite link. The guest can still open the meeting directly, but answer delivery falls back to the Advanced signaling section.":
@@ -1250,12 +1252,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Meeting code": "Meeting code",
   "Invite link": "Invite link",
   "Copy invite link": "Copy invite link",
-  "Meeting invite copied to clipboard.":
-    "Meeting invite copied to clipboard.",
+  "Meeting invite copied to clipboard.": "Meeting invite copied to clipboard.",
   "Fallback route": "Fallback route",
   "Copy fallback route": "Copy fallback route",
-  "Fallback route copied to clipboard.":
-    "Fallback route copied to clipboard.",
+  "Fallback route copied to clipboard.": "Fallback route copied to clipboard.",
   "Meeting summary": "Meeting summary",
   "This meeting invite has expired.": "This meeting invite has expired.",
   "Open local media, then join the loaded meeting.":
@@ -1301,6 +1301,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Unable to create a live Kaigi meeting.",
   "Meeting link ready. Share it with the other participant.":
     "Meeting link ready. Share it with the other participant.",
+  "Keep this host window open after sharing the invite. If the guest joins but remote media does not appear, open Advanced signaling and apply the answer packet.":
+    "Keep this host window open after sharing the invite. If remote media does not appear, open Advanced signaling and apply the answer packet.",
+  "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.":
+    "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
   "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
     "Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.",
   "Meeting link ready. Automatic on-chain signaling is unavailable, so this meeting will use a manual answer fallback.":
@@ -1319,6 +1323,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Automatic join failed: {message}": "Automatic join failed: {message}",
   "Unable to join the live Kaigi meeting.":
     "Unable to join the live Kaigi meeting.",
+  "Participant answer ready": "Participant answer ready",
+  "The guest answer packet is ready. Apply it now so audio and video can start.":
+    "The guest answer packet is ready. Apply it now so audio and video can start.",
+  "I will keep this window open": "I will keep this window open",
+  "Show Advanced signaling": "Show Advanced signaling",
+  Later: "Later",
   "Answer packet ready. Send it to the host manually.":
     "Answer packet ready. Send it to the host manually.",
   "Manual answer packet ready. Send it to the host.":
