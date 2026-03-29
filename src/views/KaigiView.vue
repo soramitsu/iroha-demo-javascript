@@ -678,6 +678,7 @@ import {
 
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
+const DEFAULT_KAIGI_CALL_DOMAIN = "kaigi";
 type HostPromptKind = "meetingReady" | "answerReady";
 type LoadedKaigiInvite = {
   source: "legacy" | "compact";
@@ -696,6 +697,7 @@ type LoadedKaigiInvite = {
   endedAtMs?: number;
   privacyMode: KaigiMeetingPrivacy;
   peerIdentityReveal: KaigiPeerIdentityReveal;
+  rosterRootHex?: string;
   offerDescription: {
     type: "offer";
     sdp: string;
@@ -1086,6 +1088,7 @@ const toLoadedInviteFromMeetingView = (
   ...(invite.endedAtMs ? { endedAtMs: invite.endedAtMs } : {}),
   privacyMode: invite.privacyMode,
   peerIdentityReveal: invite.peerIdentityReveal,
+  rosterRootHex: invite.rosterRootHex,
   offerDescription: invite.offerDescription,
 });
 
@@ -1413,7 +1416,7 @@ const applyPolledAnswerSignal = async (signal: KaigiMeetingSignalRecord) => {
       roomId: signal.roomId || signal.callId,
       participantId: signal.participantId,
       participantName: signal.participantName,
-      walletIdentity: signal.walletIdentity || signal.participantAccountId,
+      walletIdentity: signal.walletIdentity,
       description: signal.answerDescription,
       createdAtMs: signal.createdAtMs,
     }),
@@ -1421,7 +1424,7 @@ const applyPolledAnswerSignal = async (signal: KaigiMeetingSignalRecord) => {
   await applyRemoteAnswerDescription(signal.answerDescription, {
     participantName: signal.participantName,
     participantId: signal.participantId,
-    walletIdentity: signal.walletIdentity || signal.participantAccountId,
+    walletIdentity: signal.walletIdentity,
     packet,
     statusMessage: t("Participant answer detected and applied automatically."),
   });
@@ -1782,10 +1785,7 @@ const createMeetingLink = async () => {
     const createdAtMs = Date.now();
     const expiresAtMs = computeKaigiMeetingExpiryMs(scheduledStartMs);
     const meetingCode = createMeetingCode();
-    const callId = buildKaigiCallId(
-      activeAccount.value.domain || "default",
-      meetingCode,
-    );
+    const callId = buildKaigiCallId(DEFAULT_KAIGI_CALL_DOMAIN, meetingCode);
     const inviteSecretBase64Url = createKaigiInviteSecretBase64Url();
     manualRoomId.value = callId;
     hostMeetingCallId.value = callId;
@@ -1948,9 +1948,6 @@ const joinLoadedMeeting = async () => {
 
     if (invite.live && isLiveWallet.value && activeAccount.value) {
       try {
-        if (!invite.hostAccountId) {
-          throw new Error(t("Host wallet is unavailable for this invite."));
-        }
         await joinKaigiMeeting({
           toriiUrl: session.connection.toriiUrl,
           chainId: session.connection.chainId,
@@ -1967,6 +1964,8 @@ const joinLoadedMeeting = async () => {
               ? walletIdentity.value || undefined
               : undefined,
           roomId: invite.callId,
+          privacyMode: invite.privacyMode,
+          rosterRootHex: invite.rosterRootHex,
           answerDescription,
         });
         setStatus(

@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import {
   ToriiClient,
+  buildKaigiRosterJoinProof,
   buildCreateKaigiTransaction,
   buildEndKaigiTransaction,
   buildJoinKaigiTransaction,
@@ -264,12 +265,14 @@ type KaigiJoinMeetingInput = {
   participantAccountId: string;
   privateKeyHex: HexString;
   callId: string;
-  hostAccountId: string;
+  hostAccountId?: string;
   hostKaigiPublicKeyBase64Url: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
   roomId?: string;
+  privacyMode?: KaigiMeetingPrivacy;
+  rosterRootHex?: string;
   answerDescription: KaigiAnswerDescription;
 };
 
@@ -300,10 +303,10 @@ type KaigiEndMeetingInput = {
 
 type KaigiMeetingSignalRecord = {
   entrypointHash: string;
-  authority: string;
+  authority?: string;
   timestampMs?: number;
   callId: string;
-  participantAccountId: string;
+  participantAccountId?: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
@@ -328,6 +331,7 @@ type KaigiMeetingView = {
   endedAtMs?: number;
   privacyMode: KaigiMeetingPrivacy;
   peerIdentityReveal: KaigiPeerIdentityReveal;
+  rosterRootHex: string;
   offerDescription: KaigiOfferDescription;
 };
 
@@ -728,7 +732,7 @@ type KaigiChainAnswerPayload = {
   schema: typeof KAIGI_CHAIN_ANSWER_SCHEMA;
   callId: string;
   kind: "answer";
-  participantAccountId: string;
+  participantAccountId?: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
@@ -743,7 +747,7 @@ type KaigiChainAnswerPayload = {
 type KaigiCallOfferPayload = {
   schema: typeof KAIGI_CALL_OFFER_SCHEMA;
   callId: string;
-  hostAccountId: string;
+  hostAccountId?: string;
   hostDisplayName: string;
   hostParticipantId: string;
   hostKaigiPublicKeyBase64Url: string;
@@ -765,8 +769,8 @@ type KaigiChainSignalMetadata = {
   schema: typeof KAIGI_CHAIN_SIGNAL_SCHEMA;
   callId: string;
   signalKind: "answer";
-  hostAccountId: string;
-  participantAccountId: string;
+  hostAccountId?: string;
+  participantAccountId?: string;
   createdAtMs: number;
   encryptedSignal: KaigiSealedBox;
 };
@@ -882,6 +886,53 @@ const normalizeBase64UrlString = (value: unknown, label: string): string => {
   }
   return normalized;
 };
+
+const normalizeKaigiRosterRootHex = (value: unknown, label: string) => {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/^0x/i, "")
+    .toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error(`${label} must be a 32-byte hex digest.`);
+  }
+  return normalized;
+};
+
+const normalizeOptionalCompatAccountIdLiteral = (
+  value: unknown,
+  label: string,
+) => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  return normalizeCompatAccountIdLiteral(normalized, label);
+};
+
+const deriveKaigiRosterJoinSeed = (input: {
+  callId: string;
+  participantAccountId: string;
+  privateKeyHex: string;
+}) =>
+  createHash("sha256")
+    .update("iroha-demo-kaigi-roster-join/v1\0")
+    .update(input.callId)
+    .update("\0")
+    .update(input.participantAccountId)
+    .update("\0")
+    .update(input.privateKeyHex.trim().toLowerCase())
+    .digest();
+
+const deriveKaigiHostActionSeed = (input: {
+  callId: string;
+  hostAccountId: string;
+  privateKeyHex: string;
+}) =>
+  deriveKaigiRosterJoinSeed({
+    callId: input.callId,
+    participantAccountId: input.hostAccountId,
+    privateKeyHex: input.privateKeyHex,
+  });
 
 const parseJsonRecord = (
   value: unknown,
@@ -1020,16 +1071,12 @@ const parseKaigiChainSignalMetadata = (
   if (signalKind !== "answer") {
     return null;
   }
-  const hostAccountId = normalizeCompatAccountIdLiteral(
-    String(signalRecord.hostAccountId ?? signalRecord.host_account_id ?? ""),
+  const hostAccountId = normalizeOptionalCompatAccountIdLiteral(
+    signalRecord.hostAccountId ?? signalRecord.host_account_id,
     "kaigi signal metadata.hostAccountId",
   );
-  const participantAccountId = normalizeCompatAccountIdLiteral(
-    String(
-      signalRecord.participantAccountId ??
-        signalRecord.participant_account_id ??
-        "",
-    ),
+  const participantAccountId = normalizeOptionalCompatAccountIdLiteral(
+    signalRecord.participantAccountId ?? signalRecord.participant_account_id,
     "kaigi signal metadata.participantAccountId",
   );
   const createdAtMs = normalizeTimestampMs(
@@ -1047,8 +1094,8 @@ const parseKaigiChainSignalMetadata = (
     schema: KAIGI_CHAIN_SIGNAL_SCHEMA,
     callId,
     signalKind: "answer",
-    hostAccountId,
-    participantAccountId,
+    ...(hostAccountId ? { hostAccountId } : {}),
+    ...(participantAccountId ? { participantAccountId } : {}),
     createdAtMs,
     encryptedSignal: encryptedSignal as KaigiSealedBox,
   };
@@ -1065,8 +1112,8 @@ const parseKaigiChainAnswerPayload = (
     String(record.callId ?? record.call_id ?? ""),
     "kaigi answer payload.callId",
   );
-  const participantAccountId = normalizeCompatAccountIdLiteral(
-    String(record.participantAccountId ?? record.participant_account_id ?? ""),
+  const participantAccountId = normalizeOptionalCompatAccountIdLiteral(
+    record.participantAccountId ?? record.participant_account_id,
     "kaigi answer payload.participantAccountId",
   );
   const participantId = normalizeKaigiParticipantId(
@@ -1096,7 +1143,7 @@ const parseKaigiChainAnswerPayload = (
     schema: KAIGI_CHAIN_ANSWER_SCHEMA,
     callId,
     kind: "answer",
-    participantAccountId,
+    ...(participantAccountId ? { participantAccountId } : {}),
     participantId,
     participantName,
     ...(walletIdentity ? { walletIdentity } : {}),
@@ -1173,7 +1220,14 @@ const resolveKaigiMeetingView = (
     ...(String(callPayload.title ?? "").trim()
       ? { title: String(callPayload.title).trim() }
       : {}),
-    hostAccountId: offerPayload.hostAccountId,
+    ...(offerPayload.hostAccountId
+      ? {
+          hostAccountId: normalizeCompatAccountIdLiteral(
+            offerPayload.hostAccountId,
+            "hostAccountId",
+          ),
+        }
+      : {}),
     ...(offerPayload.hostDisplayName
       ? { hostDisplayName: offerPayload.hostDisplayName }
       : {}),
@@ -1201,6 +1255,10 @@ const resolveKaigiMeetingView = (
       : {}),
     privacyMode: callMetadata.privacyMode,
     peerIdentityReveal: callMetadata.peerIdentityReveal,
+    rosterRootHex: normalizeKaigiRosterRootHex(
+      callPayload.roster_root_hex,
+      "kaigi call.roster_root_hex",
+    ),
     offerDescription: normalizeKaigiOfferDescription(offerPayload.description),
   };
 };
@@ -1901,6 +1959,8 @@ const api: IrohaBridge = {
     const resolvedPeerIdentityReveal = normalizeKaigiPeerIdentityReveal(
       peerIdentityReveal,
     );
+    const normalizedHostParticipantId =
+      normalizeKaigiParticipantId(hostParticipantId);
     const inviteSecret = normalizeBase64UrlString(
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
@@ -1913,9 +1973,11 @@ const api: IrohaBridge = {
       {
         schema: KAIGI_CALL_OFFER_SCHEMA,
         callId: normalizedCallId,
-        hostAccountId: authority,
+        ...(resolvedPrivacyMode === "transparent"
+          ? { hostAccountId: authority }
+          : {}),
         hostDisplayName: String(hostDisplayName ?? "").trim() || "Host",
-        hostParticipantId: normalizeKaigiParticipantId(hostParticipantId),
+        hostParticipantId: normalizedHostParticipantId,
         hostKaigiPublicKeyBase64Url: normalizeBase64UrlString(
           hostKaigiPublicKeyBase64Url,
           "hostKaigiPublicKeyBase64Url",
@@ -1925,6 +1987,16 @@ const api: IrohaBridge = {
       } satisfies KaigiCallOfferPayload,
       inviteSecret,
     );
+    const hostCreateProof =
+      resolvedPrivacyMode === "private"
+        ? buildKaigiRosterJoinProof({
+            seed: deriveKaigiHostActionSeed({
+              callId: normalizedCallId,
+              hostAccountId: authority,
+              privateKeyHex,
+            }),
+          })
+        : null;
     const tx = buildCreateKaigiTransaction({
       chainId: chainId.trim(),
       authority,
@@ -1933,9 +2005,23 @@ const api: IrohaBridge = {
         host: authority,
         title: title?.trim() || null,
         scheduledStartMs: normalizedScheduledStartMs,
-        privacyMode: "Transparent",
+        privacyMode:
+          resolvedPrivacyMode === "private" ? "ZkRosterV1" : "Transparent",
         roomPolicy: "authenticated",
         relayManifest: resolvedRelayManifest,
+        ...(hostCreateProof
+          ? {
+              commitment: {
+                commitment: hostCreateProof.commitmentHex,
+              },
+              nullifier: {
+                digest: hostCreateProof.nullifierHex,
+                issuedAtMs: createdAtMs,
+              },
+              rosterRoot: hostCreateProof.rosterRootHex,
+              proof: hostCreateProof.proofBase64,
+            }
+          : {}),
         metadata: {
           kaigi_call: {
             schema: KAIGI_CALL_METADATA_SCHEMA,
@@ -1978,18 +2064,25 @@ const api: IrohaBridge = {
     participantName,
     walletIdentity,
     roomId,
+    privacyMode,
+    rosterRootHex,
     answerDescription,
   }) {
     const authority = normalizeCompatAccountIdLiteral(
       participantAccountId,
       "participantAccountId",
     );
+    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
     const createdAtMs = Date.now();
+    const revealWalletIdentity =
+      resolvedPrivacyMode === "transparent" ||
+      String(walletIdentity ?? "").trim().length > 0;
     const answerPayload: KaigiChainAnswerPayload = {
       schema: KAIGI_CHAIN_ANSWER_SCHEMA,
-      callId: normalizeKaigiCallId(callId, "callId"),
+      callId: normalizedCallId,
       kind: "answer",
-      participantAccountId: authority,
+      ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
       participantId: normalizeKaigiParticipantId(participantId),
       participantName: String(participantName ?? "").trim() || "Participant",
       ...(String(walletIdentity ?? "").trim()
@@ -2004,11 +2097,15 @@ const api: IrohaBridge = {
         schema: KAIGI_CHAIN_SIGNAL_SCHEMA,
         callId: answerPayload.callId,
         signalKind: "answer",
-        hostAccountId: normalizeCompatAccountIdLiteral(
-          hostAccountId,
-          "hostAccountId",
-        ),
-        participantAccountId: authority,
+        ...(resolvedPrivacyMode === "transparent" && hostAccountId
+          ? {
+              hostAccountId: normalizeCompatAccountIdLiteral(
+                hostAccountId,
+                "hostAccountId",
+              ),
+            }
+          : {}),
+        ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
         createdAtMs,
         encryptedSignal: encryptKaigiPayload(
           answerPayload,
@@ -2016,13 +2113,42 @@ const api: IrohaBridge = {
         ),
       } satisfies KaigiChainSignalMetadata,
     };
+    const join =
+      resolvedPrivacyMode === "private"
+        ? (() => {
+            const joinProof = buildKaigiRosterJoinProof({
+              seed: deriveKaigiRosterJoinSeed({
+                callId: normalizedCallId,
+                participantAccountId: authority,
+                privateKeyHex,
+              }),
+              rosterRootHex: normalizeKaigiRosterRootHex(
+                rosterRootHex,
+                "rosterRootHex",
+              ),
+            });
+            return {
+              callId: answerPayload.callId,
+              participant: authority,
+              commitment: {
+                commitment: joinProof.commitment,
+              },
+              nullifier: {
+                digest: joinProof.nullifier,
+                issuedAtMs: createdAtMs,
+              },
+              rosterRoot: joinProof.rosterRoot,
+              proof: joinProof.proof,
+            };
+          })()
+        : {
+            callId: answerPayload.callId,
+            participant: authority,
+          };
     const tx = buildJoinKaigiTransaction({
       chainId: chainId.trim(),
       authority,
-      join: {
-        callId: answerPayload.callId,
-        participant: authority,
-      },
+      join,
       metadata,
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
@@ -2125,20 +2251,22 @@ const api: IrohaBridge = {
           if (!entrypointHash) {
             return [];
           }
-          const authority = normalizeCompatAccountIdLiteral(
-            String(record.authority ?? decrypted.participantAccountId),
+          const authority = normalizeOptionalCompatAccountIdLiteral(
+            record.authority ?? decrypted.participantAccountId,
             "transaction.authority",
           );
           const timestampMs = Number(record.timestamp_ms);
           return [
             {
               entrypointHash,
-              authority,
+              ...(authority ? { authority } : {}),
               ...(Number.isFinite(timestampMs) && timestampMs > 0
                 ? { timestampMs }
                 : {}),
               callId: decrypted.callId,
-              participantAccountId: decrypted.participantAccountId,
+              ...(decrypted.participantAccountId
+                ? { participantAccountId: decrypted.participantAccountId }
+                : {}),
               participantId: decrypted.participantId,
               participantName: decrypted.participantName,
               ...(decrypted.walletIdentity
@@ -2168,20 +2296,56 @@ const api: IrohaBridge = {
       hostAccountId,
       "hostAccountId",
     );
+    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    const resolvedEndedAtMs =
+      endedAtMs === undefined
+        ? Date.now()
+        : normalizeTimestampMs(endedAtMs, "endedAtMs");
+    const client = getClient(toriiUrl);
+    const callPayload = (await client.getKaigiCall(
+      normalizedCallId,
+    )) as KaigiCallView;
+    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(
+      callPayload.privacy_mode,
+    );
+    const hostEndProof =
+      resolvedPrivacyMode === "private"
+        ? buildKaigiRosterJoinProof({
+            seed: deriveKaigiHostActionSeed({
+              callId: normalizedCallId,
+              hostAccountId: authority,
+              privateKeyHex,
+            }),
+            rosterRootHex: normalizeKaigiRosterRootHex(
+              callPayload.roster_root_hex,
+              "kaigi call.roster_root_hex",
+            ),
+          })
+        : null;
     const tx = buildEndKaigiTransaction({
       chainId: chainId.trim(),
       authority,
       end: {
-        callId: normalizeKaigiCallId(callId, "callId"),
-        endedAtMs:
-          endedAtMs === undefined
-            ? Date.now()
-            : normalizeTimestampMs(endedAtMs, "endedAtMs"),
+        callId: normalizedCallId,
+        endedAtMs: resolvedEndedAtMs,
+        ...(hostEndProof
+          ? {
+              commitment: {
+                commitment: hostEndProof.commitmentHex,
+              },
+              nullifier: {
+                digest: hostEndProof.nullifierHex,
+                issuedAtMs: resolvedEndedAtMs,
+              },
+              rosterRoot: hostEndProof.rosterRootHex,
+              proof: hostEndProof.proofBase64,
+            }
+          : {}),
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransaction(
-      getClient(toriiUrl),
+      client,
       tx.signedTransaction,
       {
         waitForCommit: true,

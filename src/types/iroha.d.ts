@@ -270,15 +270,16 @@ export interface KaigiMeetingView {
   endedAtMs?: number;
   privacyMode: KaigiMeetingPrivacy;
   peerIdentityReveal: KaigiPeerIdentityReveal;
+  rosterRootHex: string;
   offerDescription: KaigiOfferDescription;
 }
 
 export interface KaigiMeetingSignalRecord {
   entrypointHash: string;
-  authority: string;
+  authority?: string;
   timestampMs?: number;
   callId: string;
-  participantAccountId: string;
+  participantAccountId?: string;
   participantId: string;
   participantName: string;
   walletIdentity?: string;
@@ -644,12 +645,14 @@ export interface IrohaBridge {
     participantAccountId: string;
     privateKeyHex: string;
     callId: string;
-    hostAccountId: string;
+    hostAccountId?: string;
     hostKaigiPublicKeyBase64Url: string;
     participantId: string;
     participantName: string;
     walletIdentity?: string;
     roomId?: string;
+    privacyMode?: KaigiMeetingPrivacy;
+    rosterRootHex?: string;
     answerDescription: KaigiAnswerDescription;
   }): Promise<{ hash: string }>;
   watchKaigiCallEvents(input: {

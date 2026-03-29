@@ -213,7 +213,7 @@ const buildInviteHash = (options?: { live?: boolean }) => {
   const nowMs = Date.now();
   const invite: KaigiInvitePayload = {
     schema: KAIGI_INVITE_SCHEMA,
-    callId: "wonderland:kaigi-testroom",
+    callId: "kaigi:kaigi-testroom",
     meetingCode: "testroom",
     title: "Demo Call",
     hostAccountId: "alice@wonderland",
@@ -235,7 +235,7 @@ const buildInviteHash = (options?: { live?: boolean }) => {
 
 const buildCompactInviteHash = () => {
   const compact = buildKaigiCompactInvitePayload(
-    "wonderland:kaigi-testroom",
+    "kaigi:kaigi-testroom",
     "bXktc2VjcmV0",
   );
   return `#${buildKaigiCompactInviteHashRoute(compact)}`;
@@ -282,10 +282,9 @@ describe("KaigiView", () => {
     });
     createKaigiMeetingMock.mockResolvedValue({ hash: "create-hash" });
     getKaigiCallMock.mockResolvedValue({
-      callId: "wonderland:kaigi-testroom",
+      callId: "kaigi:kaigi-testroom",
       meetingCode: "testroom",
       title: "Demo Call",
-      hostAccountId: "alice@wonderland",
       hostDisplayName: "Alice",
       hostParticipantId: "alice",
       hostKaigiPublicKeyBase64Url: "host-public",
@@ -296,6 +295,7 @@ describe("KaigiView", () => {
       ended: false,
       privacyMode: "private",
       peerIdentityReveal: "Hidden",
+      rosterRootHex: "00".repeat(32),
       offerDescription: {
         type: "offer",
         sdp: "offer-sdp",
@@ -405,7 +405,7 @@ describe("KaigiView", () => {
     });
     expect(
       String(createKaigiMeetingMock.mock.calls[0]?.[0]?.callId ?? ""),
-    ).toMatch(/^wonderland:kaigi-[a-z0-9-]+$/);
+    ).toMatch(/^kaigi:kaigi-[a-z0-9-]+$/);
     expect(wrapper.text()).toContain("Meeting link ready");
     expect(wrapper.text()).toContain("Automatic join");
 
@@ -453,7 +453,7 @@ describe("KaigiView", () => {
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "wonderland:kaigi-testroom",
+      callId: "kaigi:kaigi-testroom",
       inviteSecretBase64Url: "bXktc2VjcmV0",
     });
     expect(wrapper.text()).toContain("Meeting summary");
@@ -469,9 +469,10 @@ describe("KaigiView", () => {
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
       participantAccountId: "alice@wonderland",
-      hostAccountId: "alice@wonderland",
       hostKaigiPublicKeyBase64Url: "host-public",
-      roomId: "wonderland:kaigi-testroom",
+      roomId: "kaigi:kaigi-testroom",
+      privacyMode: "private",
+      rosterRootHex: "00".repeat(32),
       walletIdentity: undefined,
       answerDescription: {
         type: "answer",
@@ -504,9 +505,7 @@ describe("KaigiView", () => {
       async (input: { callId: string }) => [
         {
           entrypointHash: "0xanswer",
-          authority: "bob@wonderland",
           callId: input.callId,
-          participantAccountId: "bob@wonderland",
           participantId: "bob",
           participantName: "Bob",
           createdAtMs: 1_700_000_010_000,
@@ -549,9 +548,7 @@ describe("KaigiView", () => {
       return [
         {
           entrypointHash: "0xanswer-2",
-          authority: "bob@wonderland",
           callId: input.callId,
-          participantAccountId: "bob@wonderland",
           participantId: "bob",
           participantName: "Bob",
           createdAtMs: 1_700_000_020_000,
@@ -566,7 +563,7 @@ describe("KaigiView", () => {
       async (_input: unknown, onEvent: (event: { kind: string; callId: string }) => Promise<void>) => {
         await onEvent({
           kind: "roster_updated",
-          callId: "wonderland:kaigi-testroom",
+          callId: "kaigi:kaigi-testroom",
         });
         return "watch-2";
       },
@@ -596,7 +593,7 @@ describe("KaigiView", () => {
         hostSessions: [
           {
             accountId: "alice@wonderland",
-            callId: "wonderland:kaigi-testroom",
+            callId: "kaigi:kaigi-testroom",
             meetingCode: "testroom",
             inviteSecretBase64Url: "bXktc2VjcmV0",
             hostKaigiKeys: {
@@ -619,7 +616,7 @@ describe("KaigiView", () => {
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "wonderland:kaigi-testroom",
+      callId: "kaigi:kaigi-testroom",
       inviteSecretBase64Url: "bXktc2VjcmV0",
     });
     expect(wrapper.text()).toContain("Resumed active meeting link.");
@@ -631,9 +628,7 @@ describe("KaigiView", () => {
       async (input: { callId: string }) => [
         {
           entrypointHash: "0xanswer",
-          authority: "bob@wonderland",
           callId: input.callId,
-          participantAccountId: "bob@wonderland",
           participantId: "bob",
           participantName: "Bob",
           createdAtMs: 1_700_000_010_000,
