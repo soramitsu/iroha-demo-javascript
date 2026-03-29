@@ -103,6 +103,7 @@ describe("App shell", () => {
       t("Wallet"),
       t("Send"),
       t("Receive"),
+      t("Kaigi"),
       t("Subscriptions"),
       t("Staking"),
       t("Parliament"),
@@ -112,7 +113,7 @@ describe("App shell", () => {
       t("Account Setup"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("10");
+    expect(steps.at(-1)).toBe("11");
   });
 
   it("shows a styled locale picker and updates the current language label", async () => {

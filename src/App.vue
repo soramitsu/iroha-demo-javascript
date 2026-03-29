@@ -266,6 +266,13 @@ const navItems = [
     requiresAccount: true,
   },
   {
+    to: "/kaigi",
+    labelKey: "Kaigi",
+    descriptionKey: "Manual audio/video calls with another wallet user",
+    icon: ReceiveIcon,
+    requiresAccount: true,
+  },
+  {
     to: "/subscriptions",
     labelKey: "Subscriptions",
     descriptionKey: "Auto-deduct and manage recurring services",

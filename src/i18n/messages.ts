@@ -1112,6 +1112,108 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
+  Kaigi: "Kaigi",
+  "Manual audio/video calls with another wallet user":
+    "Direct calls with another wallet user.",
+  "Kaigi Calls": "Kaigi Calls",
+  "Direct audio/video room with manual signaling":
+    "Direct room with manual signaling.",
+  "Kaigi Room": "Kaigi Room",
+  "Direct browser audio and video between two wallet users.":
+    "Direct browser call between two wallet users.",
+  "Start call": "Start call",
+  "Join call": "Join call",
+  "Room ID": "Room ID",
+  "Participant name": "Participant name",
+  "Participant ID": "Participant ID",
+  "Wallet identity": "Wallet identity",
+  "Local media": "Local media",
+  "Remote media": "Remote media",
+  "Signal exchange": "Signal exchange",
+  "Create an offer, send it to the other wallet user, then apply their answer.":
+    "Create an offer, send it, then apply the answer.",
+  "Paste the caller offer packet, create an answer, and send it back.":
+    "Paste the offer, create an answer, and send it back.",
+  "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
+    "This Kaigi page uses manual offer and answer packets today.",
+  "Peer connection": "Peer connection",
+  "ICE connection": "ICE connection",
+  "ICE gathering": "ICE gathering",
+  Signaling: "Signaling",
+  "Remote participant": "Remote participant",
+  "Waiting for the other wallet user.": "Waiting for the other wallet user.",
+  "Call controls": "Call controls",
+  Live: "Live",
+  Idle: "Idle",
+  "Preparing local media…": "Preparing media...",
+  "Prepare local media": "Prepare local media",
+  "Mute mic": "Mute mic",
+  "Unmute mic": "Unmute mic",
+  "Stop camera": "Stop camera",
+  "Start camera": "Start camera",
+  "Stop preview": "Stop preview",
+  "Microphone on": "Mic on",
+  "Microphone off": "Mic off",
+  "Camera on": "Camera on",
+  "Camera off": "Camera off",
+  "Camera + microphone preview": "Camera + microphone preview",
+  "Open local media before creating or answering a Kaigi call.":
+    "Open local media before creating or answering.",
+  "No remote media yet. The other user will appear here after the answer is applied and media starts flowing.":
+    "No remote media yet. The other user appears here after the answer is applied.",
+  "Create offer packet": "Create offer packet",
+  "Create answer packet": "Create answer packet",
+  "Applying remote answer…": "Applying remote answer...",
+  "Apply answer packet": "Apply answer packet",
+  "Copy packet": "Copy packet",
+  "Paste from clipboard": "Paste from clipboard",
+  "Clear packets": "Clear packets",
+  "Hang up": "Hang up",
+  "Outgoing packet": "Outgoing packet",
+  "Remote packet": "Remote packet",
+  "Ready to prepare a Kaigi call.": "Ready to prepare a Kaigi call.",
+  "Enable at least audio or video before starting Kaigi.":
+    "Enable at least audio or video before starting Kaigi.",
+  "Kaigi media is unavailable in this environment.":
+    "Kaigi media is unavailable here.",
+  "Camera or microphone permission was denied.":
+    "Camera or microphone permission was denied.",
+  "No camera or microphone device is available.":
+    "No camera or microphone device is available.",
+  "Unable to start Kaigi media: {message}":
+    "Could not start Kaigi media: {message}",
+  "Local media is ready.": "Local media is ready.",
+  "Kaigi packet is invalid.": "Kaigi packet is invalid.",
+  "Signal packet kind must be {kind}.": "Signal packet kind must be {kind}.",
+  "Signal packet room ID does not match this Kaigi room.":
+    "Signal packet room ID does not match this room.",
+  "Offer packet is missing session data.":
+    "Offer packet is missing session data.",
+  "Answer packet is missing session data.":
+    "Answer packet is missing session data.",
+  "Offer packet ready. Send it to the other wallet user.":
+    "Offer packet ready. Send it to the other wallet user.",
+  "Answer packet ready. Send it back to the caller.":
+    "Answer packet ready. Send it back to the caller.",
+  "Create offer packet first.": "Create offer packet first.",
+  "Answer applied. The call can connect now.":
+    "Answer applied. The call can connect now.",
+  "Create a Kaigi packet first.": "Create a Kaigi packet first.",
+  "Kaigi packet copied to clipboard.": "Kaigi packet copied to clipboard.",
+  "Kaigi packet pasted from clipboard.": "Kaigi packet pasted from clipboard.",
+  "Clipboard access failed. Copy the packet manually.":
+    "Clipboard failed. Copy the packet manually.",
+  "Clipboard access failed. Paste the packet manually.":
+    "Clipboard failed. Paste the packet manually.",
+  "Connected to {name}.": "Connected to {name}.",
+  Guest: "Guest",
+  Connected: "Connected",
+  "Not connected": "Not connected",
+  "Paste a Kaigi packet first.": "Paste a Kaigi packet first.",
+  "Unable to create an offer.": "Could not create an offer.",
+  "Unable to create an answer.": "Could not create an answer.",
+  "Unable to apply the answer.": "Could not apply the answer.",
+  "Local preview stopped.": "Local preview stopped.",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
@@ -1493,6 +1595,104 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Unable to decode the selected image.": "Could not read the selected image.",
   "Unable to read QR from image.": "Could not read the QR from the image.",
   "Unable to start scanner.": "Could not start the scanner.",
+  Kaigi: "Kaigi",
+  "Manual audio/video calls with another wallet user":
+    "Direct calls with another wallet user.",
+  "Kaigi Calls": "Kaigi Calls",
+  "Direct audio/video room with manual signaling":
+    "Direct room with manual signaling.",
+  "Kaigi Room": "Kaigi Room",
+  "Direct browser audio and video between two wallet users.":
+    "Direct browser call between two wallet users.",
+  "Start call": "Start call",
+  "Join call": "Join call",
+  "Room ID": "Room ID",
+  "Participant name": "Participant name",
+  "Participant ID": "Participant ID",
+  "Wallet identity": "Wallet identity",
+  "Signal exchange": "Signal exchange",
+  "Create an offer, send it to the other wallet user, then apply their answer.":
+    "Create an offer, send it, then apply the answer.",
+  "Paste the caller offer packet, create an answer, and send it back.":
+    "Paste the offer, create an answer, and send it back.",
+  "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
+    "This Kaigi page uses manual offer and answer packets today.",
+  "Peer connection": "Peer connection",
+  "ICE connection": "ICE connection",
+  "ICE gathering": "ICE gathering",
+  Signaling: "Signaling",
+  "Remote participant": "Remote participant",
+  "Waiting for the other wallet user.": "Waiting for the other wallet user.",
+  "Call controls": "Call controls",
+  "Preparing local media…": "Preparing media...",
+  "Prepare local media": "Prepare local media",
+  "Mute mic": "Mute mic",
+  "Unmute mic": "Unmute mic",
+  "Stop camera": "Stop camera",
+  "Start camera": "Start camera",
+  "Stop preview": "Stop preview",
+  "Microphone on": "Mic on",
+  "Microphone off": "Mic off",
+  "Camera on": "Camera on",
+  "Camera off": "Camera off",
+  "Camera + microphone preview": "Camera + microphone preview",
+  "Open local media before creating or answering a Kaigi call.":
+    "Open local media before creating or answering.",
+  "No remote media yet. The other user will appear here after the answer is applied and media starts flowing.":
+    "No remote media yet. The other user appears here after the answer is applied.",
+  "Create offer packet": "Create offer packet",
+  "Create answer packet": "Create answer packet",
+  "Applying remote answer…": "Applying remote answer...",
+  "Apply answer packet": "Apply answer packet",
+  "Copy packet": "Copy packet",
+  "Paste from clipboard": "Paste from clipboard",
+  "Clear packets": "Clear packets",
+  "Hang up": "Hang up",
+  "Outgoing packet": "Outgoing packet",
+  "Remote packet": "Remote packet",
+  "Ready to prepare a Kaigi call.": "Ready to prepare a Kaigi call.",
+  "Enable at least audio or video before starting Kaigi.":
+    "Enable at least audio or video before starting Kaigi.",
+  "Kaigi media is unavailable in this environment.":
+    "Kaigi media is unavailable here.",
+  "Camera or microphone permission was denied.":
+    "Camera or microphone permission was denied.",
+  "No camera or microphone device is available.":
+    "No camera or microphone device is available.",
+  "Unable to start Kaigi media: {message}":
+    "Could not start Kaigi media: {message}",
+  "Local media is ready.": "Local media is ready.",
+  "Kaigi packet is invalid.": "Kaigi packet is invalid.",
+  "Signal packet kind must be {kind}.": "Signal packet kind must be {kind}.",
+  "Signal packet room ID does not match this Kaigi room.":
+    "Signal packet room ID does not match this room.",
+  "Offer packet is missing session data.":
+    "Offer packet is missing session data.",
+  "Answer packet is missing session data.":
+    "Answer packet is missing session data.",
+  "Offer packet ready. Send it to the other wallet user.":
+    "Offer packet ready. Send it to the other wallet user.",
+  "Answer packet ready. Send it back to the caller.":
+    "Answer packet ready. Send it back to the caller.",
+  "Create offer packet first.": "Create offer packet first.",
+  "Answer applied. The call can connect now.":
+    "Answer applied. The call can connect now.",
+  "Create a Kaigi packet first.": "Create a Kaigi packet first.",
+  "Kaigi packet copied to clipboard.": "Kaigi packet copied to clipboard.",
+  "Kaigi packet pasted from clipboard.": "Kaigi packet pasted from clipboard.",
+  "Clipboard access failed. Copy the packet manually.":
+    "Clipboard failed. Copy the packet manually.",
+  "Clipboard access failed. Paste the packet manually.":
+    "Clipboard failed. Paste the packet manually.",
+  "Connected to {name}.": "Connected to {name}.",
+  Guest: "Guest",
+  Connected: "Connected",
+  "Not connected": "Not connected",
+  "Paste a Kaigi packet first.": "Paste a Kaigi packet first.",
+  "Unable to create an offer.": "Could not create an offer.",
+  "Unable to create an answer.": "Could not create an answer.",
+  "Unable to apply the answer.": "Could not apply the answer.",
+  "Local preview stopped.": "Local preview stopped.",
   "Building…": "Creating...",
   "Recording…": "Saving...",
   "Transferring…": "Sending...",

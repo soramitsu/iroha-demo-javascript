@@ -9,6 +9,7 @@ import ExploreView from "@/views/ExploreView.vue";
 import AccountSetupView from "@/views/AccountSetupView.vue";
 import OfflineView from "@/views/OfflineView.vue";
 import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
+import KaigiView from "@/views/KaigiView.vue";
 import { useSessionStore } from "@/stores/session";
 
 const routes = [
@@ -78,6 +79,14 @@ const routes = [
     meta: {
       titleKey: "Receive Points",
       subtitleKey: "Share QR or Account ID",
+    },
+  },
+  {
+    path: "/kaigi",
+    component: KaigiView,
+    meta: {
+      titleKey: "Kaigi Calls",
+      subtitleKey: "Direct audio/video room with manual signaling",
     },
   },
   {
