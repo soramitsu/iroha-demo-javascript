@@ -6,19 +6,32 @@ import {
 } from "../electron/deepLink";
 
 describe("Kaigi deep-link helpers", () => {
-  it("maps app protocol links into renderer hash routes", () => {
+  it("maps app protocol compact links into renderer hash routes", () => {
     expect(
-      parseKaigiDeepLinkToHashRoute("iroha://kaigi/join?invite=abc123"),
-    ).toBe(buildKaigiHashRoute("abc123"));
+      parseKaigiDeepLinkToHashRoute(
+        "iroha://kaigi/join?call=kaigi%3Aroom&secret=abc123",
+      ),
+    ).toBe(buildKaigiHashRoute({ call: "kaigi:room", secret: "abc123" }));
+  });
+
+  it("still maps legacy invite links during migration", () => {
+    expect(
+      parseKaigiDeepLinkToHashRoute("iroha://kaigi/join?invite=legacy-token"),
+    ).toBe(buildKaigiHashRoute({ invite: "legacy-token" }));
   });
 
   it("extracts the first matching deep link from argv", () => {
     expect(
       extractKaigiDeepLinkFromArgv([
         "--flag",
-        "iroha://kaigi/join?invite=meeting-token",
+        "iroha://kaigi/join?call=kaigi%3Aroom&secret=meeting-secret",
       ]),
-    ).toBe(buildKaigiHashRoute("meeting-token"));
+    ).toBe(
+      buildKaigiHashRoute({
+        call: "kaigi:room",
+        secret: "meeting-secret",
+      }),
+    );
   });
 
   it("rejects unrelated urls", () => {

@@ -5,6 +5,8 @@ import AccountSetupView from "@/views/AccountSetupView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { mnemonicToPrivateKeyHex } from "@/utils/mnemonic";
+import { buildWalletBackupPayload } from "@/utils/walletBackup";
 
 const EXAMPLE_REAL_I105_ACCOUNT_ID =
   "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
@@ -12,6 +14,8 @@ const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const VALID_MNEMONIC_PRIVATE_KEY_HEX =
   "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1";
+const VALID_24_WORD_MNEMONIC =
+  "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -117,6 +121,16 @@ describe("AccountSetupView", () => {
       throw new Error(`Button not found: ${label}`);
     }
     return button;
+  };
+
+  const getTextInputs = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findAll('input:not([type="checkbox"]):not([type="file"])');
+
+  const setInputFiles = (input: HTMLInputElement, files: File[]) => {
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: files,
+    });
   };
 
   it("focuses first launch on the onboarding wizard", () => {
@@ -234,7 +248,7 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView();
     const session = useSessionStore();
-    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+    const inputs = getTextInputs(wrapper);
 
     expect(inputs).toHaveLength(2);
 
@@ -272,7 +286,7 @@ describe("AccountSetupView", () => {
   it("saves the first account locally without UAID onboarding", async () => {
     const wrapper = mountView();
     const session = useSessionStore();
-    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+    const inputs = getTextInputs(wrapper);
 
     expect(inputs).toHaveLength(2);
 
@@ -328,6 +342,86 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
+  it("restores local metadata from an imported backup JSON file", async () => {
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const backupPayload = JSON.stringify(
+      buildWalletBackupPayload({
+        mnemonic: VALID_MNEMONIC,
+        wordCount: 12,
+        target: "manual",
+        createdAt: "2026-03-29T00:00:00.000Z",
+        displayName: "Backup Alice",
+        domain: "backup-domain",
+      }),
+    );
+    const backupFile = new File([backupPayload], "iroha-backup.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(backupFile, "text", {
+      configurable: true,
+      value: () => Promise.resolve(backupPayload),
+    });
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    const fileInput = wrapper.find('input[type="file"]');
+    expect(fileInput.exists()).toBe(true);
+    setInputFiles(fileInput.element as HTMLInputElement, [backupFile]);
+    await fileInput.trigger("change");
+    await flushPromises();
+    await flushPromises();
+
+    expect(derivePublicKeyMock).toHaveBeenCalledWith(
+      VALID_MNEMONIC_PRIVATE_KEY_HEX,
+    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    expect(session.activeAccount?.displayName).toBe("Backup Alice");
+    expect(session.activeAccount?.domain).toBe("backup-domain");
+    expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("does not apply backup metadata when imported recovery data is invalid", async () => {
+    const wrapper = mountView();
+    const invalidBackupPayload = JSON.stringify({
+      mnemonic:
+        "invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid",
+      displayName: "Backup Alice",
+      domain: "backup-domain",
+    });
+    const backupFile = new File([invalidBackupPayload], "iroha-backup.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(backupFile, "text", {
+      configurable: true,
+      value: () => Promise.resolve(invalidBackupPayload),
+    });
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    const fileInput = wrapper.find('input[type="file"]');
+    expect(fileInput.exists()).toBe(true);
+    setInputFiles(fileInput.element as HTMLInputElement, [backupFile]);
+    await fileInput.trigger("change");
+    await flushPromises();
+    await flushPromises();
+
+    const inputs = getTextInputs(wrapper);
+    expect(wrapper.text()).toContain(t("Invalid recovery phrase"));
+    expect((inputs[0].element as HTMLInputElement).value).toBe("");
+    expect((inputs[1].element as HTMLInputElement).value).toBe("default");
+    expect(derivePublicKeyMock).not.toHaveBeenCalled();
+    expect(useSessionStore().hasAccount).toBe(false);
+  });
+
   it("validates restore phrases before deriving or saving", async () => {
     const wrapper = mountView();
 
@@ -361,6 +455,51 @@ describe("AccountSetupView", () => {
     expect(useSessionStore().hasAccount).toBe(false);
   });
 
+  it("restores a 24-word recovery phrase", async () => {
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const expectedPrivateKeyHex = mnemonicToPrivateKeyHex(
+      VALID_24_WORD_MNEMONIC,
+    );
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    await wrapper.find("textarea").setValue(VALID_24_WORD_MNEMONIC);
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    expect(derivePublicKeyMock).toHaveBeenCalledWith(expectedPrivateKeyHex);
+    expect(session.activeAccount?.privateKeyHex).toBe(expectedPrivateKeyHex);
+  });
+
+  it("surfaces bridge failures while deriving a restored wallet", async () => {
+    derivePublicKeyMock.mockRejectedValueOnce(new Error("bridge down"));
+
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    await wrapper.find("textarea").setValue(VALID_MNEMONIC);
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("bridge down");
+    expect(
+      wrapper
+        .findAll("button")
+        .some((button) => button.text() === t("Restore wallet")),
+    ).toBe(false);
+    expect(useSessionStore().hasAccount).toBe(false);
+  });
+
   it("falls back to a local wallet when UAID onboarding is disabled", async () => {
     onboardAccountMock.mockRejectedValueOnce(
       new Error(
@@ -370,7 +509,7 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView();
     const session = useSessionStore();
-    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+    const inputs = getTextInputs(wrapper);
 
     await inputs[0].setValue("Alice");
     await inputs[1].setValue("flowers");
@@ -402,7 +541,7 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView();
     const session = useSessionStore();
-    const inputs = wrapper.findAll('input:not([type="checkbox"])');
+    const inputs = getTextInputs(wrapper);
 
     await inputs[0].setValue("Alice");
     await inputs[1].setValue("flowers");

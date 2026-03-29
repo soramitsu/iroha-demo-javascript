@@ -7,6 +7,7 @@ import { useThemeStore } from "./stores/theme";
 import { useOfflineStore } from "./stores/offline";
 import { useSubscriptionStore } from "./stores/subscriptions";
 import { useLocaleStore } from "./stores/locale";
+import { useKaigiStore } from "./stores/kaigi";
 import "./styles/main.css";
 
 const app = createApp(App);
@@ -18,11 +19,13 @@ const theme = useThemeStore();
 const offline = useOfflineStore();
 const subscriptions = useSubscriptionStore();
 const locale = useLocaleStore();
+const kaigi = useKaigiStore();
 session.hydrate();
 theme.hydrate();
 offline.hydrate();
 subscriptions.hydrate();
 locale.hydrate();
+kaigi.hydrate();
 
 app.use(router);
 
