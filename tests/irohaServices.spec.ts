@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   bondPublicLaneStake,
   claimPublicLaneRewards,
+  connectVpn,
+  disconnectVpn,
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
@@ -19,7 +21,12 @@ import {
   getNexusPublicLaneValidators,
   getNexusStakingPolicy,
   getSumeragiStatus,
+  getVpnAvailability,
+  getVpnProfile,
+  getVpnStatus,
   listAccountPermissions,
+  listVpnReceipts,
+  repairVpn,
   registerCitizen,
   requestFaucetFunds,
   schedulePublicLaneUnbond,
@@ -89,6 +96,218 @@ describe("iroha services bridge", () => {
     expect(getExplorerAccountQrMock).toHaveBeenCalledWith(input);
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
+  });
+
+  it("forwards VPN bridge methods", async () => {
+    const getVpnAvailabilityMock = vi.fn().mockResolvedValue({
+      platformSupported: true,
+      helperManaged: true,
+      helperReady: true,
+      serverReachable: true,
+      profileAvailable: true,
+      actionsEnabled: true,
+      status: "ready",
+      message: "ready",
+      helperVersion: "embedded-1.0.0",
+      platform: "darwin",
+      controllerInstalled: true,
+      controllerVersion: "1.0.0",
+      controllerKind: "macos-network-extension",
+      controllerPath: "/tmp/sora-vpn-controller",
+      repairRequired: false,
+      systemTunnelConfigured: true,
+      systemTunnelActive: false,
+      systemTunnelKind: "macos-networksetup",
+      systemTunnelInterface: "utun7",
+      systemTunnelService: "Wi-Fi",
+    });
+    const getVpnProfileMock = vi.fn().mockResolvedValue({
+      available: true,
+      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+      supportedExitClasses: ["standard", "low-latency", "high-security"],
+      defaultExitClass: "standard",
+      leaseSecs: 600,
+      dnsPushIntervalSecs: 90,
+      meterFamily: "soranet.vpn.standard",
+      routePushes: [],
+      excludedRoutes: [],
+      dnsServers: ["1.1.1.1"],
+      tunnelAddresses: ["10.208.0.2/32"],
+      mtuBytes: 1280,
+      displayBillingLabel: "standard · soranet.vpn.standard",
+    });
+    const getVpnStatusMock = vi.fn().mockResolvedValue({
+      state: "idle",
+      sessionId: null,
+      exitClass: null,
+      relayEndpoint: null,
+      connectedAtMs: null,
+      expiresAtMs: null,
+      durationMs: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      routePushes: [],
+      excludedRoutes: [],
+      dnsServers: [],
+      tunnelAddresses: [],
+      mtuBytes: 0,
+      helperStatus: "idle",
+      controllerInstalled: true,
+      controllerVersion: "1.0.0",
+      controllerKind: "macos-network-extension",
+      reconcileState: null,
+      repairRequired: false,
+      remoteSessionActive: false,
+      systemTunnelActive: false,
+      systemTunnelKind: "macos-networksetup",
+      systemTunnelInterface: "utun7",
+      systemTunnelService: "Wi-Fi",
+      errorMessage: null,
+      lastReceipt: null,
+    });
+    const connectVpnMock = vi.fn().mockResolvedValue({
+      state: "connected",
+      sessionId: "sess_1",
+      exitClass: "standard",
+      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+      connectedAtMs: 1,
+      expiresAtMs: 2,
+      durationMs: 1,
+      bytesIn: 0,
+      bytesOut: 0,
+      routePushes: [],
+      excludedRoutes: [],
+      dnsServers: [],
+      tunnelAddresses: [],
+      mtuBytes: 1280,
+      helperStatus: "embedded-connected",
+      controllerInstalled: true,
+      controllerVersion: "1.0.0",
+      controllerKind: "macos-network-extension",
+      reconcileState: null,
+      repairRequired: false,
+      remoteSessionActive: true,
+      systemTunnelActive: true,
+      systemTunnelKind: "macos-networksetup",
+      systemTunnelInterface: "utun7",
+      systemTunnelService: "Wi-Fi",
+      errorMessage: null,
+      lastReceipt: null,
+    });
+    const repairVpnMock = vi.fn().mockResolvedValue({
+      state: "idle",
+      sessionId: null,
+      exitClass: null,
+      relayEndpoint: null,
+      connectedAtMs: null,
+      expiresAtMs: null,
+      durationMs: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      routePushes: [],
+      excludedRoutes: [],
+      dnsServers: [],
+      tunnelAddresses: [],
+      mtuBytes: 0,
+      helperStatus: "idle",
+      controllerInstalled: true,
+      controllerVersion: "1.0.0",
+      controllerKind: "macos-network-extension",
+      reconcileState: null,
+      repairRequired: false,
+      remoteSessionActive: false,
+      systemTunnelActive: false,
+      systemTunnelKind: "macos-networksetup",
+      systemTunnelInterface: "utun7",
+      systemTunnelService: "Wi-Fi",
+      errorMessage: null,
+      lastReceipt: null,
+    });
+    const disconnectVpnMock = vi.fn().mockResolvedValue({
+      state: "idle",
+      sessionId: null,
+      exitClass: null,
+      relayEndpoint: null,
+      connectedAtMs: null,
+      expiresAtMs: null,
+      durationMs: 0,
+      bytesIn: 0,
+      bytesOut: 0,
+      routePushes: [],
+      excludedRoutes: [],
+      dnsServers: [],
+      tunnelAddresses: [],
+      mtuBytes: 0,
+      helperStatus: "idle",
+      controllerInstalled: true,
+      controllerVersion: "1.0.0",
+      controllerKind: "macos-network-extension",
+      reconcileState: null,
+      repairRequired: false,
+      remoteSessionActive: false,
+      systemTunnelActive: false,
+      systemTunnelKind: "macos-networksetup",
+      systemTunnelInterface: "utun7",
+      systemTunnelService: "Wi-Fi",
+      errorMessage: null,
+      lastReceipt: null,
+    });
+    const listVpnReceiptsMock = vi.fn().mockResolvedValue([
+      {
+        sessionId: "sess_1",
+        accountId: "alice@wonderland",
+        exitClass: "standard",
+        relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
+        meterFamily: "soranet.vpn.standard",
+        connectedAtMs: 1,
+        disconnectedAtMs: 2,
+        durationMs: 1,
+        bytesIn: 0,
+        bytesOut: 0,
+        status: "disconnected",
+        receiptSource: "torii",
+      },
+    ]);
+
+    (window as any).iroha = {
+      getVpnAvailability: getVpnAvailabilityMock,
+      getVpnProfile: getVpnProfileMock,
+      getVpnStatus: getVpnStatusMock,
+      connectVpn: connectVpnMock,
+      repairVpn: repairVpnMock,
+      disconnectVpn: disconnectVpnMock,
+      listVpnReceipts: listVpnReceiptsMock,
+    };
+
+    const availabilityInput = { toriiUrl: "https://taira.sora.org" };
+    const connectInput = {
+      toriiUrl: "https://taira.sora.org",
+      accountId: "alice@wonderland",
+      privateKeyHex: "aa".repeat(32),
+      exitClass: "standard" as const,
+    };
+    const disconnectInput = {
+      toriiUrl: "https://taira.sora.org",
+      accountId: "alice@wonderland",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const statusInput = disconnectInput;
+
+    await getVpnAvailability(availabilityInput);
+    await getVpnProfile(availabilityInput);
+    await getVpnStatus(statusInput);
+    await connectVpn(connectInput);
+    await repairVpn(statusInput);
+    await disconnectVpn(disconnectInput);
+    await listVpnReceipts(statusInput);
+
+    expect(getVpnAvailabilityMock).toHaveBeenCalledWith(availabilityInput);
+    expect(getVpnProfileMock).toHaveBeenCalledWith(availabilityInput);
+    expect(getVpnStatusMock).toHaveBeenCalledWith(statusInput);
+    expect(connectVpnMock).toHaveBeenCalledWith(connectInput);
+    expect(repairVpnMock).toHaveBeenCalledWith(statusInput);
+    expect(disconnectVpnMock).toHaveBeenCalledWith(disconnectInput);
+    expect(listVpnReceiptsMock).toHaveBeenCalledWith(statusInput);
   });
 
   it("forwards faucet requests", async () => {

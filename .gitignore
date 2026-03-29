@@ -10,3 +10,6 @@ yarn-debug.log*
 yarn-error.log*
 *.tsbuildinfo
 output/playwright/
+dist-native/
+native/macos-vpn-controller/.build/
+native/macos-vpn-controller/.swiftpm/

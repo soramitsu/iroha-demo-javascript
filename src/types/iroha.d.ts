@@ -95,6 +95,107 @@ export interface ExplorerAccountQrResponse {
   svg: string;
 }
 
+export type VpnExitClass = "standard" | "low-latency" | "high-security";
+export type VpnReceiptSource = "torii" | "local-fallback";
+
+export interface VpnAuthContext {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex: string;
+}
+
+export interface VpnAvailability {
+  platformSupported: boolean;
+  helperManaged: boolean;
+  helperReady: boolean;
+  serverReachable: boolean;
+  profileAvailable: boolean;
+  actionsEnabled: boolean;
+  status: "ready" | "unsupported" | "unavailable" | "error";
+  message: string;
+  helperVersion: string;
+  platform: string;
+  controllerInstalled: boolean;
+  controllerVersion: string | null;
+  controllerKind: string | null;
+  controllerPath: string | null;
+  repairRequired: boolean;
+  systemTunnelConfigured: boolean;
+  systemTunnelActive: boolean;
+  systemTunnelKind: string | null;
+  systemTunnelInterface: string | null;
+  systemTunnelService: string | null;
+}
+
+export interface VpnProfile {
+  available: boolean;
+  relayEndpoint: string;
+  supportedExitClasses: VpnExitClass[];
+  defaultExitClass: VpnExitClass;
+  leaseSecs: number;
+  dnsPushIntervalSecs: number;
+  meterFamily: string;
+  routePushes: string[];
+  excludedRoutes: string[];
+  dnsServers: string[];
+  tunnelAddresses: string[];
+  mtuBytes: number;
+  displayBillingLabel: string;
+}
+
+export interface VpnReceipt {
+  sessionId: string;
+  accountId: string;
+  exitClass: VpnExitClass;
+  relayEndpoint: string;
+  meterFamily: string;
+  connectedAtMs: number;
+  disconnectedAtMs: number;
+  durationMs: number;
+  bytesIn: number;
+  bytesOut: number;
+  status: string;
+  receiptSource: VpnReceiptSource;
+}
+
+export interface VpnStatus {
+  state:
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "disconnecting"
+    | "reconciling"
+    | "remote-delete-pending"
+    | "repair-needed"
+    | "error";
+  sessionId: string | null;
+  exitClass: VpnExitClass | null;
+  relayEndpoint: string | null;
+  connectedAtMs: number | null;
+  expiresAtMs: number | null;
+  durationMs: number;
+  bytesIn: number;
+  bytesOut: number;
+  routePushes: string[];
+  excludedRoutes: string[];
+  dnsServers: string[];
+  tunnelAddresses: string[];
+  mtuBytes: number;
+  helperStatus: string;
+  controllerInstalled: boolean;
+  controllerVersion: string | null;
+  controllerKind: string | null;
+  reconcileState: string | null;
+  repairRequired: boolean;
+  remoteSessionActive: boolean;
+  systemTunnelActive: boolean;
+  systemTunnelKind: string | null;
+  systemTunnelInterface: string | null;
+  systemTunnelService: string | null;
+  errorMessage: string | null;
+  lastReceipt: VpnReceipt | null;
+}
+
 export interface AccountOnboardingResponse {
   account_id: string;
   tx_hash_hex: string;
@@ -410,6 +511,22 @@ export interface IrohaBridge {
     toriiUrl: string;
     accountId: string;
   }): Promise<ExplorerAccountQrResponse>;
+  getVpnAvailability(input: { toriiUrl: string }): Promise<VpnAvailability>;
+  getVpnProfile(input: { toriiUrl: string }): Promise<VpnProfile | null>;
+  getVpnStatus(input?: Partial<VpnAuthContext>): Promise<VpnStatus>;
+  connectVpn(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex: string;
+    exitClass: VpnExitClass;
+  }): Promise<VpnStatus>;
+  disconnectVpn(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex: string;
+  }): Promise<VpnStatus>;
+  repairVpn(input: Partial<VpnAuthContext>): Promise<VpnStatus>;
+  listVpnReceipts(input?: Partial<VpnAuthContext>): Promise<VpnReceipt[]>;
   listOfflineAllowances(input: {
     toriiUrl: string;
     controllerId: string;
@@ -434,12 +551,13 @@ export interface IrohaBridge {
     accountId: string;
     identity?: Record<string, unknown>;
   }): Promise<AccountOnboardingResponse>;
-  requestFaucetFunds(input: {
-    toriiUrl: string;
-    accountId: string;
-  }, onProgress?: (
-    progress: FaucetRequestProgress,
-  ) => void | Promise<void>): Promise<AccountFaucetResponse>;
+  requestFaucetFunds(
+    input: {
+      toriiUrl: string;
+      accountId: string;
+    },
+    onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
+  ): Promise<AccountFaucetResponse>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;

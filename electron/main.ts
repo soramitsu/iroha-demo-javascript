@@ -1,7 +1,8 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
+import { VpnRuntime } from "./vpnRuntime";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -46,7 +47,35 @@ const createWindow = () => {
   }
 };
 
+const vpnRuntime = new VpnRuntime({
+  userDataPath: app.getPath("userData"),
+  helperVersion: `embedded-${app.getVersion()}`,
+});
+
+let quittingForVpnShutdown = false;
+
+const registerVpnHandlers = () => {
+  ipcMain.handle("vpn:getAvailability", (_event, input) =>
+    vpnRuntime.getAvailability(input),
+  );
+  ipcMain.handle("vpn:getProfile", (_event, input) =>
+    vpnRuntime.getProfile(input),
+  );
+  ipcMain.handle("vpn:getStatus", (_event, input) =>
+    vpnRuntime.getStatus(input),
+  );
+  ipcMain.handle("vpn:connect", (_event, input) => vpnRuntime.connect(input));
+  ipcMain.handle("vpn:disconnect", (_event, input) =>
+    vpnRuntime.disconnect(input),
+  );
+  ipcMain.handle("vpn:repair", (_event, input) => vpnRuntime.repair(input));
+  ipcMain.handle("vpn:listReceipts", (_event, input) =>
+    vpnRuntime.listReceipts(input),
+  );
+};
+
 app.whenReady().then(() => {
+  registerVpnHandlers();
   createWindow();
 
   app.on("activate", () => {
@@ -54,6 +83,22 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+});
+
+app.on("before-quit", (event) => {
+  if (quittingForVpnShutdown) {
+    return;
+  }
+  quittingForVpnShutdown = true;
+  event.preventDefault();
+  void vpnRuntime
+    .shutdown()
+    .catch((error) => {
+      console.error("Failed to persist VPN runtime state before quit.", error);
+    })
+    .finally(() => {
+      app.exit(0);
+    });
 });
 
 app.on("window-all-closed", () => {
