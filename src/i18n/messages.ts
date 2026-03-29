@@ -1136,6 +1136,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Paste the offer, create an answer, and send it back.",
   "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
     "This Kaigi page uses manual offer and answer packets today.",
+  "How to join a Kaigi call": "How to join a Kaigi call",
+  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
+    "The caller invites you by sending an offer packet through another channel.",
+  "Choose Join call and prepare your local media.":
+    "Choose Join call and prepare your local media.",
+  "Paste the caller's offer packet into Remote packet.":
+    "Paste the caller's offer packet into Remote packet.",
+  "Create your answer packet and send it back to the caller.":
+    "Create your answer packet and send it back to the caller.",
+  "Wait for the caller to apply your answer so the call can connect.":
+    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",
@@ -1617,6 +1628,17 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Paste the offer, create an answer, and send it back.",
   "This Kaigi page uses manual offer and answer packets today, aligned with the sibling Sora Kaigi transport work.":
     "This Kaigi page uses manual offer and answer packets today.",
+  "How to join a Kaigi call": "How to join a Kaigi call",
+  "The caller invites you by sending an offer packet through chat, email, or any other channel.":
+    "The caller invites you by sending an offer packet through another channel.",
+  "Choose Join call and prepare your local media.":
+    "Choose Join call and prepare your local media.",
+  "Paste the caller's offer packet into Remote packet.":
+    "Paste the caller's offer packet into Remote packet.",
+  "Create your answer packet and send it back to the caller.":
+    "Create your answer packet and send it back to the caller.",
+  "Wait for the caller to apply your answer so the call can connect.":
+    "Wait for the caller to apply your answer so the call can connect.",
   "Peer connection": "Peer connection",
   "ICE connection": "ICE connection",
   "ICE gathering": "ICE gathering",

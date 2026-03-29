@@ -16,6 +16,16 @@ export type KaigiSignalEnvelope = {
   createdAtMs: number;
 };
 
+export type ParsedKaigiSignalInput = {
+  kind: KaigiSignalKind;
+  roomId?: string;
+  participantId?: string;
+  participantName?: string;
+  walletIdentity?: string;
+  description: KaigiSignalDescription;
+  createdAtMs?: number;
+};
+
 type BuildKaigiSignalEnvelopeInput = {
   kind: KaigiSignalKind;
   roomId: string;
@@ -30,6 +40,32 @@ const trimString = (value: unknown): string => String(value ?? "").trim();
 
 const isKaigiSignalKind = (value: unknown): value is KaigiSignalKind =>
   value === "offer" || value === "answer";
+
+const looksLikeSdp = (value: string): boolean => {
+  const trimmed = trimString(value);
+  return (
+    trimmed.startsWith("v=0") ||
+    (trimmed.includes("m=") && trimmed.includes("a=ice-ufrag:")) ||
+    (trimmed.includes("\\r\\n") && trimmed.includes("a=ice-ufrag:"))
+  );
+};
+
+const parseJsonLikeValue = (raw: string): unknown => {
+  const trimmed = trimString(raw);
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    if (
+      trimmed.includes(":") &&
+      /^(?:"(?:schema|kind|type|description|roomId|participantId|participantName|walletIdentity|sdp)")/.test(
+        trimmed,
+      )
+    ) {
+      return JSON.parse(`{${trimmed}}`);
+    }
+    throw new Error("Kaigi packet is invalid.");
+  }
+};
 
 export const normalizeKaigiParticipantId = (raw: string): string => {
   const source = trimString(raw);
@@ -168,5 +204,107 @@ export const parseKaigiSignalEnvelope = (raw: string): KaigiSignalEnvelope => {
       sdp,
     },
     createdAtMs,
+  };
+};
+
+export const parseKaigiSignalInput = (
+  raw: string,
+  expectedKind?: KaigiSignalKind,
+): ParsedKaigiSignalInput => {
+  const rawText = String(raw ?? "");
+  const trimmed = trimString(rawText);
+  if (!trimmed) {
+    throw new Error("Kaigi packet is invalid.");
+  }
+
+  let parsed: unknown;
+  const shouldTryJsonLike =
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    trimmed.startsWith('"');
+
+  if (shouldTryJsonLike) {
+    try {
+      parsed = parseJsonLikeValue(trimmed);
+    } catch (_error) {
+      if (!looksLikeSdp(trimmed)) {
+        throw new Error("Kaigi packet is invalid.");
+      }
+      parsed = rawText.replace(/^\s+/, "");
+    }
+  } else if (looksLikeSdp(trimmed)) {
+    parsed = rawText.replace(/^\s+/, "");
+  } else {
+    parsed = parseJsonLikeValue(trimmed);
+  }
+
+  if (typeof parsed === "string") {
+    if (!expectedKind || !looksLikeSdp(parsed)) {
+      throw new Error("Kaigi packet is invalid.");
+    }
+    return {
+      kind: expectedKind,
+      description: {
+        type: expectedKind,
+        sdp: parsed,
+      },
+    };
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Kaigi packet is invalid.");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const descriptionRecord =
+    record.description && typeof record.description === "object"
+      ? (record.description as Record<string, unknown>)
+      : record;
+  const packetKind = trimString(record.kind);
+  const descriptionKind = trimString(descriptionRecord.type);
+  const roomId = trimString(record.roomId);
+  const participantId = trimString(record.participantId);
+  const participantName = trimString(record.participantName);
+  const walletIdentity = trimString(record.walletIdentity);
+  const sdp = String(
+    descriptionRecord.sdp ?? record.sdp ?? descriptionRecord.description ?? "",
+  );
+  const createdAtCandidate = Number(record.createdAtMs);
+  const createdAtMs =
+    Number.isFinite(createdAtCandidate) && createdAtCandidate > 0
+      ? createdAtCandidate
+      : undefined;
+
+  if (
+    isKaigiSignalKind(packetKind) &&
+    isKaigiSignalKind(descriptionKind) &&
+    packetKind !== descriptionKind
+  ) {
+    throw new Error("Kaigi packet kind must match the session description.");
+  }
+
+  const resolvedKind = isKaigiSignalKind(descriptionKind)
+    ? descriptionKind
+    : isKaigiSignalKind(packetKind)
+      ? packetKind
+      : expectedKind;
+
+  if (!resolvedKind || !trimString(sdp)) {
+    throw new Error("Kaigi packet is invalid.");
+  }
+
+  return {
+    kind: resolvedKind,
+    ...(roomId ? { roomId } : {}),
+    ...(participantId
+      ? { participantId: normalizeKaigiParticipantId(participantId) }
+      : {}),
+    ...(participantName ? { participantName } : {}),
+    ...(walletIdentity ? { walletIdentity } : {}),
+    ...(createdAtMs ? { createdAtMs } : {}),
+    description: {
+      type: resolvedKind,
+      sdp,
+    },
   };
 };

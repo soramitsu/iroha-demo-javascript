@@ -73,6 +73,37 @@
               )
             }}
           </p>
+
+          <div class="kaigi-help-box">
+            <h3>{{ t("How to join a Kaigi call") }}</h3>
+            <p class="helper">
+              {{
+                t(
+                  "The caller invites you by sending an offer packet through chat, email, or any other channel.",
+                )
+              }}
+            </p>
+            <ol class="kaigi-help-steps">
+              <li>{{ t("Choose Join call and prepare your local media.") }}</li>
+              <li>
+                {{ t("Paste the caller's offer packet into Remote packet.") }}
+              </li>
+              <li>
+                {{
+                  t(
+                    "Create your answer packet and send it back to the caller.",
+                  )
+                }}
+              </li>
+              <li>
+                {{
+                  t(
+                    "Wait for the caller to apply your answer so the call can connect.",
+                  )
+                }}
+              </li>
+            </ol>
+          </div>
         </div>
 
         <div class="kaigi-status-pane">
@@ -273,7 +304,7 @@ import { useSessionStore } from "@/stores/session";
 import {
   buildKaigiSignalEnvelope,
   normalizeKaigiParticipantId,
-  parseKaigiSignalEnvelope,
+  parseKaigiSignalInput,
   stringifyKaigiSignalEnvelope,
 } from "@/utils/kaigi";
 
@@ -373,6 +404,7 @@ const setStatus = (message: string) => {
 };
 
 const setError = (message: string) => {
+  statusMessage.value = "";
   errorMessage.value = message;
 };
 
@@ -566,7 +598,7 @@ const readIncomingPacket = (expectedKind: "offer" | "answer") => {
   }
   let packet;
   try {
-    packet = parseKaigiSignalEnvelope(incomingPacket.value);
+    packet = parseKaigiSignalInput(incomingPacket.value, expectedKind);
   } catch (_error) {
     throw new Error(t("Kaigi packet is invalid."));
   }
@@ -576,12 +608,17 @@ const readIncomingPacket = (expectedKind: "offer" | "answer") => {
     );
   }
   if (callMode.value === "join") {
-    roomId.value = packet.roomId;
-  } else if (packet.roomId !== roomId.value.trim()) {
+    if (packet.roomId) {
+      roomId.value = packet.roomId;
+    }
+  } else if (packet.roomId && packet.roomId !== roomId.value.trim()) {
     throw new Error(t("Signal packet room ID does not match this Kaigi room."));
   }
   remoteParticipantName.value =
-    packet.participantName || packet.participantId || t("Remote participant");
+    packet.participantName ||
+    packet.participantId ||
+    packet.walletIdentity ||
+    t("Remote participant");
   return packet;
 };
 
@@ -646,7 +683,7 @@ const createAnswerPacket = async () => {
     outgoingPacket.value = stringifyKaigiSignalEnvelope(
       buildKaigiSignalEnvelope({
         kind: "answer",
-        roomId: remotePacket.roomId,
+        roomId: remotePacket.roomId || roomId.value.trim() || DEFAULT_ROOM_ID,
         participantId: participantId.value,
         participantName: participantName.value,
         walletIdentity: walletIdentity.value,
@@ -768,6 +805,29 @@ onBeforeUnmount(() => {
 .kaigi-status-pane {
   display: grid;
   gap: 1rem;
+}
+
+.kaigi-help-box {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  background: linear-gradient(135deg, var(--surface-soft), transparent 130%);
+}
+
+.kaigi-help-box h3 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.kaigi-help-steps {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+  display: grid;
+  gap: 0.45rem;
+  color: var(--iroha-muted);
+  font-size: 0.9rem;
 }
 
 .kaigi-mode-toggle .secondary.active {

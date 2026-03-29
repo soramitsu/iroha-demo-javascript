@@ -3,6 +3,7 @@ import {
   buildKaigiSignalEnvelope,
   normalizeKaigiParticipantId,
   parseKaigiSignalEnvelope,
+  parseKaigiSignalInput,
   stringifyKaigiSignalEnvelope,
 } from "@/utils/kaigi";
 
@@ -83,5 +84,59 @@ describe("Kaigi helpers", () => {
         }),
       ),
     ).toThrow("Kaigi packet kind must match the session description.");
+  });
+
+  it("accepts a raw session description object when the expected kind is known", () => {
+    expect(
+      parseKaigiSignalInput(
+        JSON.stringify({
+          type: "offer",
+          sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+        }),
+        "offer",
+      ),
+    ).toEqual({
+      kind: "offer",
+      description: {
+        type: "offer",
+        sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+      },
+    });
+  });
+
+  it("accepts an sdp fragment without the outer envelope", () => {
+    expect(
+      parseKaigiSignalInput(
+        [
+          '"sdp": "v=0\\r\\na=ice-ufrag:test\\r\\nm=audio 9 UDP/TLS/RTP/SAVPF 111\\r\\n",',
+          '"roomId": "daily-standup",',
+          '"participantName": "Bob"',
+        ].join("\n"),
+        "offer",
+      ),
+    ).toEqual({
+      kind: "offer",
+      roomId: "daily-standup",
+      participantName: "Bob",
+      description: {
+        type: "offer",
+        sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+      },
+    });
+  });
+
+  it("accepts plain sdp text when the caller already knows the signal kind", () => {
+    expect(
+      parseKaigiSignalInput(
+        "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+        "answer",
+      ),
+    ).toEqual({
+      kind: "answer",
+      description: {
+        type: "answer",
+        sdp: "v=0\r\na=ice-ufrag:test\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n",
+      },
+    });
   });
 });

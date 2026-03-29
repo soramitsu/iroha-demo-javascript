@@ -221,6 +221,11 @@ describe("KaigiView", () => {
   it("creates an offer packet and copies it to the clipboard", async () => {
     const wrapper = mountView();
 
+    expect(wrapper.text()).toContain("How to join a Kaigi call");
+    expect(wrapper.text()).toContain(
+      "Paste the caller's offer packet into Remote packet.",
+    );
+
     await wrapper
       .findAll("button")
       .find((node) => node.text().includes("Create offer packet"))!
@@ -291,6 +296,34 @@ describe("KaigiView", () => {
     ).value;
     expect(outgoingPacket).toContain('"kind": "answer"');
     expect(outgoingPacket).toContain('"participantName": "Alice"');
+  });
+
+  it("creates an answer packet from a raw sdp fragment without envelope metadata", async () => {
+    const wrapper = mountView();
+    const rawOfferFragment = [
+      '"sdp": "v=0\\r\\na=ice-ufrag:test\\r\\nm=audio 9 UDP/TLS/RTP/SAVPF 111\\r\\n",',
+      '"type": "offer"',
+    ].join("\n");
+
+    await wrapper
+      .findAll("button")
+      .find((node) => node.text().includes("Join call"))!
+      .trigger("click");
+    await wrapper.findAll("textarea")[1].setValue(rawOfferFragment);
+    await wrapper
+      .findAll("button")
+      .find((node) => node.text().includes("Create answer packet"))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Answer packet ready. Send it back to the caller.",
+    );
+    const outgoingPacket = (
+      wrapper.findAll("textarea")[0].element as HTMLTextAreaElement
+    ).value;
+    expect(outgoingPacket).toContain('"kind": "answer"');
+    expect(outgoingPacket).toContain('"roomId": "sakura-room"');
   });
 
   it("applies a remote answer packet and marks the call connected", async () => {
