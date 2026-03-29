@@ -21,6 +21,8 @@ const createKaigiMeetingMock = vi.fn();
 const getKaigiCallMock = vi.fn();
 const joinKaigiMeetingMock = vi.fn();
 const pollKaigiMeetingSignalsMock = vi.fn();
+const watchKaigiCallEventsMock = vi.fn();
+const stopWatchingKaigiCallEventsMock = vi.fn();
 const generateKaigiSignalKeyPairMock = vi.fn();
 const endKaigiMeetingMock = vi.fn();
 const getUserMediaMock = vi.fn();
@@ -31,6 +33,10 @@ vi.mock("@/services/iroha", () => ({
   createKaigiMeeting: (input: unknown) => createKaigiMeetingMock(input),
   getKaigiCall: (input: unknown) => getKaigiCallMock(input),
   joinKaigiMeeting: (input: unknown) => joinKaigiMeetingMock(input),
+  watchKaigiCallEvents: (input: unknown, onEvent: unknown) =>
+    watchKaigiCallEventsMock(input, onEvent),
+  stopWatchingKaigiCallEvents: (subscriptionId: unknown) =>
+    stopWatchingKaigiCallEventsMock(subscriptionId),
   pollKaigiMeetingSignals: (input: unknown) =>
     pollKaigiMeetingSignalsMock(input),
   generateKaigiSignalKeyPair: () => generateKaigiSignalKeyPairMock(),
@@ -259,6 +265,8 @@ describe("KaigiView", () => {
     getKaigiCallMock.mockReset();
     joinKaigiMeetingMock.mockReset();
     pollKaigiMeetingSignalsMock.mockReset();
+    watchKaigiCallEventsMock.mockReset();
+    stopWatchingKaigiCallEventsMock.mockReset();
     generateKaigiSignalKeyPairMock.mockReset();
     endKaigiMeetingMock.mockReset();
     getUserMediaMock.mockReset();
@@ -295,6 +303,7 @@ describe("KaigiView", () => {
     });
     joinKaigiMeetingMock.mockResolvedValue({ hash: "join-hash" });
     pollKaigiMeetingSignalsMock.mockResolvedValue([]);
+    watchKaigiCallEventsMock.mockResolvedValue("watch-1");
     endKaigiMeetingMock.mockResolvedValue({ hash: "end-hash" });
 
     vi.stubGlobal("MediaStream", FakeMediaStream);
@@ -515,6 +524,11 @@ describe("KaigiView", () => {
     await flushPromises();
 
     expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(1);
+    expect(watchKaigiCallEventsMock).toHaveBeenCalledTimes(1);
+    expect(watchKaigiCallEventsMock.mock.calls[0]?.[0]).toMatchObject({
+      toriiUrl: "http://localhost:8080",
+      callId: expect.any(String),
+    });
     expect(FakePeerConnection.instances[0]?.remoteDescription).toEqual({
       type: "answer",
       sdp: "remote-answer-sdp",
@@ -523,6 +537,54 @@ describe("KaigiView", () => {
       "Participant answer detected and applied automatically.",
     );
     expect(wrapper.text()).toContain("Bob");
+  });
+
+  it("checks for signals again when the Kaigi call stream reports a roster update", async () => {
+    let signalPollCount = 0;
+    pollKaigiMeetingSignalsMock.mockImplementation(async (input: { callId: string }) => {
+      signalPollCount += 1;
+      if (signalPollCount === 1) {
+        return [];
+      }
+      return [
+        {
+          entrypointHash: "0xanswer-2",
+          authority: "bob@wonderland",
+          callId: input.callId,
+          participantAccountId: "bob@wonderland",
+          participantId: "bob",
+          participantName: "Bob",
+          createdAtMs: 1_700_000_020_000,
+          answerDescription: {
+            type: "answer",
+            sdp: "stream-answer-sdp",
+          },
+        },
+      ];
+    });
+    watchKaigiCallEventsMock.mockImplementation(
+      async (_input: unknown, onEvent: (event: { kind: string; callId: string }) => Promise<void>) => {
+        await onEvent({
+          kind: "roster_updated",
+          callId: "wonderland:kaigi-testroom",
+        });
+        return "watch-2";
+      },
+    );
+
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(2);
+    expect(FakePeerConnection.instances[0]?.remoteDescription).toEqual({
+      type: "answer",
+      sdp: "stream-answer-sdp",
+    });
+    expect(wrapper.text()).toContain(
+      "Participant answer detected and applied automatically.",
+    );
   });
 
   it("restores the latest live host meeting from persisted state", async () => {

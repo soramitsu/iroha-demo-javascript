@@ -637,11 +637,14 @@ import {
   getKaigiCall,
   joinKaigiMeeting,
   pollKaigiMeetingSignals,
+  stopWatchingKaigiCallEvents,
+  watchKaigiCallEvents,
 } from "@/services/iroha";
 import { useKaigiStore } from "@/stores/kaigi";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
 import type {
+  KaigiCallEvent,
   KaigiMeetingPrivacy,
   KaigiMeetingView,
   KaigiPeerIdentityReveal,
@@ -675,7 +678,6 @@ import {
 
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
-const HOST_SIGNAL_POLL_INTERVAL_MS = 4_000;
 type HostPromptKind = "meetingReady" | "answerReady";
 type LoadedKaigiInvite = {
   source: "legacy" | "compact";
@@ -784,8 +786,8 @@ const peerConnectionState = ref<RTCPeerConnectionState | "idle" | "closed">(
   "idle",
 );
 
-let hostSignalPollTimer: number | null = null;
 let hostSignalPollBusy = false;
+let hostSignalWatchId: string | null = null;
 const seenHostSignalHashes = new Set<string>();
 
 const participantName = computed({
@@ -982,9 +984,9 @@ const clearRemoteStream = () => {
 };
 
 const clearHostSignalPolling = () => {
-  if (hostSignalPollTimer !== null) {
-    window.clearInterval(hostSignalPollTimer);
-    hostSignalPollTimer = null;
+  if (hostSignalWatchId) {
+    stopWatchingKaigiCallEvents(hostSignalWatchId);
+    hostSignalWatchId = null;
   }
   hostSignalPollBusy = false;
 };
@@ -1425,7 +1427,7 @@ const applyPolledAnswerSignal = async (signal: KaigiMeetingSignalRecord) => {
   });
 };
 
-const startHostSignalPolling = () => {
+const startHostSignalWatch = async () => {
   clearHostSignalPolling();
   if (
     !hostMeetingLive.value ||
@@ -1436,9 +1438,10 @@ const startHostSignalPolling = () => {
     return;
   }
   const hostAccountId = activeAccount.value.accountId;
+  const callId = hostMeetingCallId.value;
   const hostKaigiKeys = hostMeetingKeys.value;
 
-  const pollSignals = async () => {
+  const checkSignals = async () => {
     if (hostSignalPollBusy) {
       return;
     }
@@ -1447,7 +1450,7 @@ const startHostSignalPolling = () => {
       const signals = await pollKaigiMeetingSignals({
         toriiUrl: session.connection.toriiUrl,
         accountId: hostAccountId,
-        callId: hostMeetingCallId.value,
+        callId,
         hostKaigiKeys,
         afterTimestampMs:
           hostLastSignalAtMs.value || hostMeetingCreatedAtMs.value || undefined,
@@ -1466,16 +1469,29 @@ const startHostSignalPolling = () => {
       await applyPolledAnswerSignal(nextSignal);
       clearHostSignalPolling();
     } catch (_error) {
-      // Keep polling silent so temporary Torii lag does not block the manual fallback.
+      // Keep automatic watch silent so temporary Torii lag does not block the manual fallback.
     } finally {
       hostSignalPollBusy = false;
     }
   };
 
-  void pollSignals();
-  hostSignalPollTimer = window.setInterval(
-    () => void pollSignals(),
-    HOST_SIGNAL_POLL_INTERVAL_MS,
+  await checkSignals();
+  if (!hostMeetingLive.value || !hostMeetingCallId.value) {
+    return;
+  }
+
+  hostSignalWatchId = await watchKaigiCallEvents(
+    {
+      toriiUrl: session.connection.toriiUrl,
+      callId,
+    },
+    async (event: KaigiCallEvent) => {
+      if (event.kind === "ended") {
+        clearHostSignalPolling();
+        return;
+      }
+      await checkSignals();
+    },
   );
 };
 
@@ -1739,7 +1755,7 @@ const restoreLatestHostMeetingSession = async () => {
     manualRoomId.value = sessionRecord.callId;
     await restoreHostOfferFromMeeting(meeting);
     seenHostSignalHashes.clear();
-    startHostSignalPolling();
+    void startHostSignalWatch();
     setStatus(t("Resumed active meeting link."));
   } catch (_error) {
     // If the call can no longer be resolved, drop the stale local session quietly.
@@ -1860,7 +1876,7 @@ const createMeetingLink = async () => {
         peerIdentityReveal: peerIdentityReveal.value,
       });
       seenHostSignalHashes.clear();
-      startHostSignalPolling();
+      void startHostSignalWatch();
       setStatus(t("Meeting link ready. Share it with the other participant."));
     } else {
       const inviteToken = encodeKaigiInvitePayload(legacyInvite);

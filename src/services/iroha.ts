@@ -17,6 +17,7 @@ import type {
   GovernanceReferendumResult,
   GovernanceTallyResult,
   IrohaBridge,
+  KaigiCallEvent,
   KaigiMeetingView,
   KaigiMeetingSignalRecord,
   KaigiSignalKeyPair,
@@ -160,6 +161,14 @@ export const getKaigiCall = (
 export const joinKaigiMeeting = (
   input: Parameters<IrohaBridge["joinKaigiMeeting"]>[0],
 ) => bridge().joinKaigiMeeting(input);
+
+export const watchKaigiCallEvents = (
+  input: Parameters<IrohaBridge["watchKaigiCallEvents"]>[0],
+  onEvent: (event: KaigiCallEvent) => void | Promise<void>,
+): Promise<string> => bridge().watchKaigiCallEvents(input, onEvent);
+
+export const stopWatchingKaigiCallEvents = (subscriptionId: string): void =>
+  bridge().stopWatchingKaigiCallEvents(subscriptionId);
 
 export const pollKaigiMeetingSignals = (
   input: Parameters<IrohaBridge["pollKaigiMeetingSignals"]>[0],

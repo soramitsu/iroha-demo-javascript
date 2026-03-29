@@ -186,6 +186,12 @@ export interface KaigiMeetingSignalRecord {
   answerDescription: KaigiAnswerDescription;
 }
 
+export interface KaigiCallEvent {
+  kind: "roster_updated" | "ended";
+  callId: string;
+  endedAtMs?: number;
+}
+
 export interface ConfidentialPolicyTransitionView {
   transition_id: string;
   previous_mode: string;
@@ -528,6 +534,13 @@ export interface IrohaBridge {
     roomId?: string;
     answerDescription: KaigiAnswerDescription;
   }): Promise<{ hash: string }>;
+  watchKaigiCallEvents(input: {
+    toriiUrl: string;
+    callId: string;
+  }, onEvent: (
+    event: KaigiCallEvent,
+  ) => void | Promise<void>): Promise<string>;
+  stopWatchingKaigiCallEvents(subscriptionId: string): void;
   pollKaigiMeetingSignals(input: {
     toriiUrl: string;
     accountId: string;
