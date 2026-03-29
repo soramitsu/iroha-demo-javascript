@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { VpnRuntime } from "./vpnRuntime";
-import { extractKaigiDeepLinkFromArgv, parseKaigiDeepLinkToHashRoute } from "./deepLink";
+import {
+  extractKaigiDeepLinkFromArgv,
+  parseKaigiDeepLinkToHashRoute,
+} from "./deepLink";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -11,8 +14,9 @@ const __dirname = dirname(__filename);
 const isMac = process.platform === "darwin";
 const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
 let mainWindow: BrowserWindow | null = null;
-let pendingKaigiHashRoute: string | null =
-  extractKaigiDeepLinkFromArgv(process.argv);
+let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
+  process.argv,
+);
 const devProfileSuffix = createHash("sha1")
   .update(process.cwd())
   .digest("hex")
@@ -32,9 +36,7 @@ if (!app.requestSingleInstanceLock()) {
 
 const formatHashRoute = (hashRoute: string) => `#${hashRoute}`;
 
-const flushPendingKaigiHashRoute = async (
-  window: BrowserWindow | null,
-) => {
+const flushPendingKaigiHashRoute = async (window: BrowserWindow | null) => {
   if (!window || window.isDestroyed() || !pendingKaigiHashRoute) {
     return;
   }

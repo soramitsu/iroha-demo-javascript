@@ -29,7 +29,9 @@ export function isOnboardingConflictError(detail) {
 }
 
 export function resolveOptionalAliasRegistrationOutcome(status, detail) {
-  const normalizedStatus = String(status ?? "").trim().toLowerCase();
+  const normalizedStatus = String(status ?? "")
+    .trim()
+    .toLowerCase();
   const normalizedDetail = String(detail ?? "");
   if (normalizedStatus !== "error") {
     return "executed";

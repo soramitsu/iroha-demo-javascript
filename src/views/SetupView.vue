@@ -138,7 +138,9 @@
       <header class="card-header">
         <h2>{{ t("Create on-chain account") }}</h2>
         <p class="helper">
-          {{ t("Requires authority credentials to create the account on-chain.") }}
+          {{
+            t("Requires authority credentials to create the account on-chain.")
+          }}
         </p>
       </header>
       <div class="form-grid">

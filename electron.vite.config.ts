@@ -23,6 +23,16 @@ export default defineConfig({
     },
   },
   preload: {
+    resolve: {
+      alias: {
+        // electron-vite resolves preload with browser conditions by default;
+        // force the native-capable SDK crypto entry for proof/key helpers.
+        "@iroha/iroha-js/crypto": resolve(
+          projectRoot,
+          "../iroha/javascript/iroha_js/dist/crypto.js",
+        ),
+      },
+    },
     build: {
       outDir: "dist/preload",
       rollupOptions: {

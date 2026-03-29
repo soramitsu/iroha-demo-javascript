@@ -846,9 +846,7 @@ describe("ParliamentView", () => {
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t("Set up network and wallet first."),
-    );
+    expect(wrapper.text()).toContain(t("Set up network and wallet first."));
     expect(wrapper.text()).not.toContain("assets down");
   });
 

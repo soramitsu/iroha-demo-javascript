@@ -25,6 +25,8 @@ const watchKaigiCallEventsMock = vi.fn();
 const stopWatchingKaigiCallEventsMock = vi.fn();
 const generateKaigiSignalKeyPairMock = vi.fn();
 const endKaigiMeetingMock = vi.fn();
+const getPrivateKaigiConfidentialXorStateMock = vi.fn();
+const selfShieldPrivateKaigiXorMock = vi.fn();
 const getUserMediaMock = vi.fn();
 const writeTextMock = vi.fn();
 const readTextMock = vi.fn();
@@ -41,6 +43,10 @@ vi.mock("@/services/iroha", () => ({
     pollKaigiMeetingSignalsMock(input),
   generateKaigiSignalKeyPair: () => generateKaigiSignalKeyPairMock(),
   endKaigiMeeting: (input: unknown) => endKaigiMeetingMock(input),
+  getPrivateKaigiConfidentialXorState: (input: unknown) =>
+    getPrivateKaigiConfidentialXorStateMock(input),
+  selfShieldPrivateKaigiXor: (input: unknown) =>
+    selfShieldPrivateKaigiXorMock(input),
 }));
 
 class FakeMediaTrack {
@@ -269,6 +275,8 @@ describe("KaigiView", () => {
     stopWatchingKaigiCallEventsMock.mockReset();
     generateKaigiSignalKeyPairMock.mockReset();
     endKaigiMeetingMock.mockReset();
+    getPrivateKaigiConfidentialXorStateMock.mockReset();
+    selfShieldPrivateKaigiXorMock.mockReset();
     getUserMediaMock.mockReset();
     writeTextMock.mockReset();
     readTextMock.mockReset();
@@ -305,6 +313,16 @@ describe("KaigiView", () => {
     pollKaigiMeetingSignalsMock.mockResolvedValue([]);
     watchKaigiCallEventsMock.mockResolvedValue("watch-1");
     endKaigiMeetingMock.mockResolvedValue({ hash: "end-hash" });
+    getPrivateKaigiConfidentialXorStateMock.mockResolvedValue({
+      assetDefinitionId: "xor#universal",
+      resolvedAssetId: "xor#universal",
+      policyMode: "Convertible",
+      shieldedBalance: "0",
+      shieldedBalanceExact: true,
+      transparentBalance: "9",
+      canSelfShield: true,
+    });
+    selfShieldPrivateKaigiXorMock.mockResolvedValue({ hash: "shield-hash" });
 
     vi.stubGlobal("MediaStream", FakeMediaStream);
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
@@ -435,6 +453,61 @@ describe("KaigiView", () => {
     expect(wrapper.find("details").element.open).toBe(true);
   });
 
+  it("falls back to a transparent manual invite when private live registration fails", async () => {
+    createKaigiMeetingMock.mockRejectedValueOnce(
+      new Error("proof helper unavailable"),
+    );
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.",
+    );
+    expect(wrapper.text()).toContain(
+      "Automatic private meeting registration failed: proof helper unavailable. Share the manual invite instead. This fallback does not preserve private on-chain signaling.",
+    );
+    expect(wrapper.text()).toContain("Manual fallback");
+  });
+
+  it("prompts for self-shielding and retries private meeting creation", async () => {
+    createKaigiMeetingMock.mockRejectedValueOnce(
+      new Error(
+        "Private Kaigi needs 2 shielded XOR in xor#universal, but only 0 is available. Self-shield XOR first.",
+      ),
+    );
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(getPrivateKaigiConfidentialXorStateMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    });
+    expect(wrapper.text()).toContain(
+      "Private Kaigi needs shielded XOR before it can submit this action.",
+    );
+    expect(wrapper.text()).toContain("Transparent XOR balance");
+    expect(wrapper.text()).toContain("Self-shield 2 XOR and retry");
+
+    await getButtonByText(wrapper, "Self-shield 2 XOR and retry").trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(selfShieldPrivateKaigiXorMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      privateKeyHex: "cd".repeat(32),
+      amount: "2",
+    });
+    expect(createKaigiMeetingMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("Meeting link ready");
+  });
+
   it("still loads legacy invite tokens for manual fallback", async () => {
     window.location.hash = buildInviteHash({ live: false });
     const wrapper = mountView();
@@ -479,6 +552,65 @@ describe("KaigiView", () => {
         sdp: "answer-sdp",
       },
     });
+    expect(wrapper.text()).toContain(
+      "Your encrypted answer was posted on-chain for the host to apply automatically.",
+    );
+  });
+
+  it("falls back to a manual answer when private automatic join fails", async () => {
+    window.location.hash = buildCompactInviteHash();
+    joinKaigiMeetingMock.mockRejectedValueOnce(
+      new Error("join proof rejected"),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Join meeting").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.",
+    );
+    expect(wrapper.text()).toContain(
+      "Automatic private join failed: join proof rejected. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.",
+    );
+  });
+
+  it("prompts for self-shielding and retries private join", async () => {
+    window.location.hash = buildCompactInviteHash();
+    joinKaigiMeetingMock.mockRejectedValueOnce(
+      new Error(
+        "Private Kaigi needs 2.1 shielded XOR in xor#universal, but only 0 is available. Self-shield XOR first.",
+      ),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    await getButtonByText(wrapper, "Join meeting").trigger("click");
+    await flushPromises();
+
+    expect(getPrivateKaigiConfidentialXorStateMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    });
+    expect(wrapper.text()).toContain(
+      "Private Kaigi needs shielded XOR before it can submit this action.",
+    );
+    expect(wrapper.text()).toContain("Self-shield 3 XOR and retry");
+
+    await getButtonByText(wrapper, "Self-shield 3 XOR and retry").trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(selfShieldPrivateKaigiXorMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      privateKeyHex: "cd".repeat(32),
+      amount: "3",
+    });
+    expect(joinKaigiMeetingMock).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain(
       "Your encrypted answer was posted on-chain for the host to apply automatically.",
     );
@@ -540,27 +672,32 @@ describe("KaigiView", () => {
 
   it("checks for signals again when the Kaigi call stream reports a roster update", async () => {
     let signalPollCount = 0;
-    pollKaigiMeetingSignalsMock.mockImplementation(async (input: { callId: string }) => {
-      signalPollCount += 1;
-      if (signalPollCount === 1) {
-        return [];
-      }
-      return [
-        {
-          entrypointHash: "0xanswer-2",
-          callId: input.callId,
-          participantId: "bob",
-          participantName: "Bob",
-          createdAtMs: 1_700_000_020_000,
-          answerDescription: {
-            type: "answer",
-            sdp: "stream-answer-sdp",
+    pollKaigiMeetingSignalsMock.mockImplementation(
+      async (input: { callId: string }) => {
+        signalPollCount += 1;
+        if (signalPollCount === 1) {
+          return [];
+        }
+        return [
+          {
+            entrypointHash: "0xanswer-2",
+            callId: input.callId,
+            participantId: "bob",
+            participantName: "Bob",
+            createdAtMs: 1_700_000_020_000,
+            answerDescription: {
+              type: "answer",
+              sdp: "stream-answer-sdp",
+            },
           },
-        },
-      ];
-    });
+        ];
+      },
+    );
     watchKaigiCallEventsMock.mockImplementation(
-      async (_input: unknown, onEvent: (event: { kind: string; callId: string }) => Promise<void>) => {
+      async (
+        _input: unknown,
+        onEvent: (event: { kind: string; callId: string }) => Promise<void>,
+      ) => {
         await onEvent({
           kind: "roster_updated",
           callId: "kaigi:kaigi-testroom",

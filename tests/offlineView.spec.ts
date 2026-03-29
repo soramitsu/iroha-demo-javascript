@@ -186,6 +186,26 @@ describe("OfflineView move-to-online shield mode", () => {
     );
   });
 
+  it("shows an unshielded transparency note while shielding stays optional", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    expect(moveSection.text()).toContain(
+      t(
+        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+      ),
+    );
+
+    await moveSection.get('input[type="checkbox"]').setValue(true);
+
+    expect(moveSection.text()).not.toContain(
+      t(
+        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+      ),
+    );
+  });
+
   it("keeps offline shield enabled and shows warning when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error("service unavailable"),

@@ -274,6 +274,17 @@ export interface KaigiMeetingView {
   offerDescription: KaigiOfferDescription;
 }
 
+export interface PrivateKaigiConfidentialXorState {
+  assetDefinitionId: string;
+  resolvedAssetId: string;
+  policyMode: string;
+  shieldedBalance: string | null;
+  shieldedBalanceExact: boolean;
+  transparentBalance: string;
+  canSelfShield: boolean;
+  message?: string;
+}
+
 export interface KaigiMeetingSignalRecord {
   entrypointHash: string;
   authority?: string;
@@ -500,6 +511,17 @@ export interface IrohaBridge {
     toriiUrl: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getPrivateKaigiConfidentialXorState(input: {
+    toriiUrl: string;
+    accountId: string;
+  }): Promise<PrivateKaigiConfidentialXorState>;
+  selfShieldPrivateKaigiXor(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    amount: string;
+  }): Promise<{ hash: string }>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
@@ -655,12 +677,13 @@ export interface IrohaBridge {
     rosterRootHex?: string;
     answerDescription: KaigiAnswerDescription;
   }): Promise<{ hash: string }>;
-  watchKaigiCallEvents(input: {
-    toriiUrl: string;
-    callId: string;
-  }, onEvent: (
-    event: KaigiCallEvent,
-  ) => void | Promise<void>): Promise<string>;
+  watchKaigiCallEvents(
+    input: {
+      toriiUrl: string;
+      callId: string;
+    },
+    onEvent: (event: KaigiCallEvent) => void | Promise<void>,
+  ): Promise<string>;
   stopWatchingKaigiCallEvents(subscriptionId: string): void;
   pollKaigiMeetingSignals(input: {
     toriiUrl: string;

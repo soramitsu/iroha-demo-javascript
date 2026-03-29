@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global BigInt */
 
 import { mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -224,8 +225,7 @@ async function runFaucetFlow(page) {
     .waitFor({ state: "visible", timeout: 45_000 });
 
   const claimButton = page.getByRole("button", {
-    name: "Claim XOR",
-    exact: true,
+    name: /Claim(?: Testnet)? XOR/,
   });
   await claimButton.waitFor({ state: "visible", timeout: 45_000 });
   await claimButton.click();
@@ -314,9 +314,10 @@ async function runFaucetFlow(page) {
     );
   }
 
-  const txHashMatch = /(?:Testnet XOR requested:|XOR claimed:)\s*([0-9a-f]+)/i.exec(
-    String(faucetState?.messageText ?? ""),
-  );
+  const txHashMatch =
+    /(?:Testnet XOR requested:|XOR claimed:)\s*([0-9a-f]+)/i.exec(
+      String(faucetState?.messageText ?? ""),
+    );
   const txHash = txHashMatch?.[1]?.trim() ?? "";
 
   const assetId = String(fundedBalance.assetId).trim();
@@ -419,6 +420,140 @@ async function runReadOnlyFlow(page, fundedAccount) {
   );
 
   await page.reload();
+  await page.evaluate(() => {
+    window.location.hash = "#/wallet";
+  });
+
+  await page.waitForFunction(() => window.location.hash === "#/wallet", {
+    timeout: 45_000,
+  });
+  await page
+    .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
+    .waitFor({ state: "visible", timeout: 45_000 });
+
+  const initialShieldedBalance = await page
+    .waitForFunction(
+      () => {
+        const panel = document.querySelector(".wallet-shield-panel");
+        if (!panel) {
+          return null;
+        }
+        const rows = [...panel.querySelectorAll(".kv")];
+        const shieldedRow = rows.find((row) =>
+          row
+            .querySelector(".kv-label")
+            ?.textContent?.includes("Shielded balance"),
+        );
+        const value = shieldedRow
+          ?.querySelector(".kv-value")
+          ?.textContent?.trim();
+        return value && /^\d+$/.test(value) ? value : null;
+      },
+      { timeout: 45_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  const shieldAmountInput = page.locator(".wallet-shield-input input").first();
+  await shieldAmountInput.fill("1");
+  const createShieldedBalanceButton = page.getByRole("button", {
+    name: "Create shielded balance",
+    exact: true,
+  });
+  const walletShieldCapability = await page
+    .waitForFunction(
+      () => {
+        const panel = document.querySelector(".wallet-shield-panel");
+        if (!panel) {
+          return null;
+        }
+        const button = [...panel.querySelectorAll("button")].find((node) =>
+          (node.textContent ?? "").includes("Create shielded balance"),
+        );
+        if (!button) {
+          return null;
+        }
+        const notes = [...panel.querySelectorAll("p")]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        const blockingNote =
+          notes.find((note) => note.includes("Shield mode unavailable:")) ??
+          null;
+        if (blockingNote || !button.disabled) {
+          return {
+            buttonDisabled: button.disabled,
+            blockingNote,
+          };
+        }
+        return null;
+      },
+      { timeout: 45_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  if (walletShieldCapability?.buttonDisabled) {
+    throw new Error(
+      `Wallet shield submission is blocked on live TAIRA: ${String(walletShieldCapability.blockingNote ?? "shield policy unavailable")}`,
+    );
+  }
+  if (await createShieldedBalanceButton.isDisabled()) {
+    throw new Error(
+      'Expected wallet "Create shielded balance" action to be enabled after entering a whole-number amount.',
+    );
+  }
+  await createShieldedBalanceButton.click();
+  const walletShieldStatus = await page
+    .waitForFunction(
+      () => {
+        const messages = [
+          ...document.querySelectorAll(
+            ".wallet-shield-panel .wallet-faucet-message",
+          ),
+        ]
+          .map((node) => (node.textContent ?? "").trim())
+          .filter(Boolean);
+        return (
+          messages.find((message) =>
+            message.includes("Shield transaction submitted:"),
+          ) ?? null
+        );
+      },
+      { timeout: 90_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  if (!walletShieldStatus) {
+    throw new Error(
+      'Wallet "Create shielded balance" submission did not surface a success message.',
+    );
+  }
+  const updatedShieldedBalance = await page
+    .waitForFunction(
+      ({ baseline }) => {
+        const panel = document.querySelector(".wallet-shield-panel");
+        if (!panel) {
+          return null;
+        }
+        const rows = [...panel.querySelectorAll(".kv")];
+        const shieldedRow = rows.find((row) =>
+          row
+            .querySelector(".kv-label")
+            ?.textContent?.includes("Shielded balance"),
+        );
+        const value = shieldedRow
+          ?.querySelector(".kv-value")
+          ?.textContent?.trim();
+        if (!value || !/^\d+$/.test(value)) {
+          return null;
+        }
+        return BigInt(value) > BigInt(baseline) ? value : null;
+      },
+      { baseline: String(initialShieldedBalance ?? "0") },
+      { timeout: 90_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  if (!updatedShieldedBalance) {
+    throw new Error(
+      "Wallet shielded balance did not increase after the live shield submission.",
+    );
+  }
+
   await page.evaluate(() => {
     window.location.hash = "#/explore";
   });

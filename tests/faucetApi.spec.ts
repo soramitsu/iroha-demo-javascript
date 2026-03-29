@@ -160,9 +160,8 @@ describe("faucetApi", () => {
           },
         ),
       );
-    const onStatus = vi.fn<
-      (progress: FaucetRequestProgress) => void | Promise<void>
-    >();
+    const onStatus =
+      vi.fn<(progress: FaucetRequestProgress) => void | Promise<void>>();
 
     await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",

@@ -74,6 +74,14 @@ export const getConfidentialAssetPolicy = (
 ): Promise<ConfidentialAssetPolicyView> =>
   bridge().getConfidentialAssetPolicy(input);
 
+export const getPrivateKaigiConfidentialXorState = (
+  input: Parameters<IrohaBridge["getPrivateKaigiConfidentialXorState"]>[0],
+) => bridge().getPrivateKaigiConfidentialXorState(input);
+
+export const selfShieldPrivateKaigiXor = (
+  input: Parameters<IrohaBridge["selfShieldPrivateKaigiXor"]>[0],
+) => bridge().selfShieldPrivateKaigiXor(input);
+
 export const fetchAccountAssets = (
   input: Parameters<IrohaBridge["fetchAccountAssets"]>[0],
 ): Promise<AccountAssetsResponse> => bridge().fetchAccountAssets(input);
@@ -206,7 +214,8 @@ export const stopWatchingKaigiCallEvents = (subscriptionId: string): void =>
 
 export const pollKaigiMeetingSignals = (
   input: Parameters<IrohaBridge["pollKaigiMeetingSignals"]>[0],
-): Promise<KaigiMeetingSignalRecord[]> => bridge().pollKaigiMeetingSignals(input);
+): Promise<KaigiMeetingSignalRecord[]> =>
+  bridge().pollKaigiMeetingSignals(input);
 
 export const endKaigiMeeting = (
   input: Parameters<IrohaBridge["endKaigiMeeting"]>[0],

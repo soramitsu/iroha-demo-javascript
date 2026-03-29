@@ -135,19 +135,14 @@ export const deriveKaigiMeetingCode = (callId: string): string => {
   return callName.replace(/^kaigi-/, "") || callName;
 };
 
-export const computeKaigiMeetingExpiryMs = (
-  scheduledStartMs: number,
-): number =>
+export const computeKaigiMeetingExpiryMs = (scheduledStartMs: number): number =>
   requirePositiveInteger(scheduledStartMs, "scheduledStartMs") +
   KAIGI_MEETING_WINDOW_MS;
 
-export const encodeKaigiInvitePayload = (
-  payload: KaigiInvitePayload,
-): string => toBase64Url(JSON.stringify(payload));
+export const encodeKaigiInvitePayload = (payload: KaigiInvitePayload): string =>
+  toBase64Url(JSON.stringify(payload));
 
-export const decodeKaigiInvitePayload = (
-  token: string,
-): KaigiInvitePayload => {
+export const decodeKaigiInvitePayload = (token: string): KaigiInvitePayload => {
   const parsed = JSON.parse(fromBase64Url(token)) as Record<string, unknown>;
   if (parsed.schema !== KAIGI_INVITE_SCHEMA) {
     throw new Error("Unsupported Kaigi invite schema.");
@@ -218,12 +213,16 @@ export const buildKaigiCompactInvitePayload = (
 });
 
 export const buildKaigiCompactInviteDeepLink = (
-  payload: KaigiCompactInvitePayload | { callId: string; inviteSecretBase64Url: string },
+  payload:
+    | KaigiCompactInvitePayload
+    | { callId: string; inviteSecretBase64Url: string },
 ): string =>
   `iroha://kaigi/join?call=${encodeURIComponent(requireNonEmptyString(payload.callId, "callId"))}&secret=${encodeURIComponent(requireBase64Url(payload.inviteSecretBase64Url, "inviteSecretBase64Url"))}`;
 
 export const buildKaigiCompactInviteHashRoute = (
-  payload: KaigiCompactInvitePayload | { callId: string; inviteSecretBase64Url: string },
+  payload:
+    | KaigiCompactInvitePayload
+    | { callId: string; inviteSecretBase64Url: string },
 ): string =>
   `/kaigi?call=${encodeURIComponent(requireNonEmptyString(payload.callId, "callId"))}&secret=${encodeURIComponent(requireBase64Url(payload.inviteSecretBase64Url, "inviteSecretBase64Url"))}`;
 
@@ -261,7 +260,8 @@ export const extractKaigiInviteToken = (input: string): string => {
 
 export const parseKaigiLegacyInviteInput = (
   input: string,
-): KaigiInvitePayload => decodeKaigiInvitePayload(extractKaigiInviteToken(input));
+): KaigiInvitePayload =>
+  decodeKaigiInvitePayload(extractKaigiInviteToken(input));
 
 const extractCompactInvitePayload = (
   params: URLSearchParams,
@@ -300,7 +300,9 @@ const parseCompactInviteFromInput = (
   return extractCompactInvitePayload(parsed.searchParams);
 };
 
-export const parseKaigiInviteInput = (input: string): ParsedKaigiInviteInput => {
+export const parseKaigiInviteInput = (
+  input: string,
+): ParsedKaigiInviteInput => {
   const compact = parseCompactInviteFromInput(input);
   if (compact) {
     return {

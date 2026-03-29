@@ -117,6 +117,21 @@
           >
             {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
           </p>
+          <p
+            v-if="
+              !form.shielded &&
+              shieldSupported &&
+              shieldPolicyMode &&
+              !shieldCapabilityMessage
+            "
+            class="helper send-note"
+          >
+            {{
+              t(
+                "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+              )
+            }}
+          </p>
           <p v-if="statusMessage" class="helper send-note">
             {{ statusMessage }}
           </p>
@@ -260,6 +275,9 @@ const handleSend = async () => {
       metadata: form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
     });
+    if (submitMode === "shield") {
+      session.updateActiveAccount({ localOnly: false });
+    }
     statusMessage.value =
       submitMode === "shield"
         ? t("Shield transaction submitted: {hash}", { hash: result.hash })

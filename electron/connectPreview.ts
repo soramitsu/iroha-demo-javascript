@@ -8,6 +8,7 @@ const SID_LENGTH = 32;
 const NONCE_LENGTH = 16;
 const X25519_KEY_LENGTH = 32;
 const CONNECT_URI_VERSION = "1";
+const CONNECT_URI_SCHEME = "iroha://connect";
 
 type BinaryLike =
   | Buffer
@@ -105,8 +106,8 @@ export function createPortableConnectSessionPreview(
     sidBase64Url,
     nonce,
     appKeyPair,
-    walletUri: buildConnectUri("connect", sidBase64Url, chainId, node),
-    appUri: buildConnectUri("connect/app", sidBase64Url, chainId, node),
+    walletUri: buildConnectUri(sidBase64Url, chainId, node, "wallet"),
+    appUri: buildConnectUri(sidBase64Url, chainId, node, "app"),
   };
 }
 
@@ -160,11 +161,18 @@ function generateX25519KeyPair() {
   };
 }
 
+function normalizeConnectRole(role: string, name = "role") {
+  if (role === "app" || role === "wallet") {
+    return role;
+  }
+  throw new TypeError(`${name} must be 'app' or 'wallet'`);
+}
+
 function buildConnectUri(
-  path: string,
   sidBase64Url: string,
   chainId: string,
   node: string | null,
+  role: "app" | "wallet",
 ) {
   const params = new URLSearchParams();
   params.set("sid", sidBase64Url);
@@ -173,7 +181,8 @@ function buildConnectUri(
     params.set("node", node);
   }
   params.set("v", CONNECT_URI_VERSION);
-  return `iroha://${path}?${params.toString()}`;
+  params.set("role", normalizeConnectRole(role));
+  return `${CONNECT_URI_SCHEME}?${params.toString()}`;
 }
 
 function requireNonEmptyString(value: string, name: string) {

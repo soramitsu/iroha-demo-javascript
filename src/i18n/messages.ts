@@ -1036,10 +1036,26 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Invoice asset does not match the active offline asset.",
   "Payment asset does not match the active offline asset.":
     "Payment asset does not match the active offline asset.",
+  "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.":
+    "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+  "Shielded balance": "Shielded balance",
+  "Transparent balance": "Transparent balance",
+  "Create shielded balance": "Create shielded balance",
+  "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.":
+    "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
+  "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
   "Create on-chain account": "Create on-chain account",
   "Requires authority credentials to create the account on-chain.":
     "Requires authority credentials to create the account on-chain.",
   "Set up network and wallet first.": "Set up network and wallet first.",
+  "Private Kaigi needs shielded XOR before it can submit this action.":
+    "Private Kaigi needs shielded XOR before it can submit this action.",
+  "Transparent XOR balance": "Transparent XOR balance",
+  "Self-shield {amount} XOR and retry": "Self-shield {amount} XOR and retry",
+  "Self-shielding XOR for private Kaigi…":
+    "Self-shielding XOR for private Kaigi…",
+  "Unable to self-shield XOR for private Kaigi.":
+    "Unable to self-shield XOR for private Kaigi.",
   "Create and save your TAIRA wallet": "Create and save your TAIRA wallet",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
@@ -1070,6 +1086,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Alias registration is unavailable here. Wallet saved locally.",
   "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.":
     "Alias registration is unavailable here. Wallet saved locally.",
+  "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.":
+    "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.",
+  "Automatic private meeting registration failed: {message}. Share the manual invite instead. This fallback does not preserve private on-chain signaling.":
+    "Automatic private meeting registration failed: {message}. Share the manual invite instead. This fallback does not preserve private on-chain signaling.",
+  "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.":
+    "Answer packet ready. Private automatic join failed, so send the manual answer packet to the host. This fallback does not preserve private on-chain signaling.",
+  "Automatic private join failed: {message}. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.":
+    "Automatic private join failed: {message}. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.",
   "Saved Wallets": "Wallets",
   "Switch between saved wallets or begin a fresh wallet setup.":
     "Switch wallets or create one.",

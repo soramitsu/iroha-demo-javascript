@@ -38,9 +38,7 @@ type RequestFaucetFundsWithPowInput = {
   ) => Promise<SolvedFaucetPow>;
   puzzleRetryAttempts?: number;
   puzzleRetryDelayMs?: number;
-  onStatus?: (
-    progress: FaucetRequestProgress,
-  ) => void | Promise<void>;
+  onStatus?: (progress: FaucetRequestProgress) => void | Promise<void>;
 };
 
 const DEFAULT_PUZZLE_RETRY_ATTEMPTS = 8;

@@ -25,9 +25,7 @@ const buildKaigiQueryString = (query: KaigiRouteQuery): string => {
 export const buildKaigiHashRoute = (query: KaigiRouteQuery): string =>
   `/kaigi?${buildKaigiQueryString(query)}`;
 
-export const parseKaigiDeepLinkToHashRoute = (
-  input: string,
-): string | null => {
+export const parseKaigiDeepLinkToHashRoute = (input: string): string | null => {
   const raw = trimString(input);
   if (!raw) {
     return null;
