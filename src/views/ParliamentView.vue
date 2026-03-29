@@ -18,7 +18,9 @@
       <div class="grid-2 parliament-summary">
         <div class="kv">
           <span class="kv-label">{{ t("Account") }}</span>
-          <span class="kv-value mono">{{ activeAccountDisplayId || t("—") }}</span>
+          <span class="kv-value mono">{{
+            activeAccountDisplayId || t("—")
+          }}</span>
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Chain") }}</span>

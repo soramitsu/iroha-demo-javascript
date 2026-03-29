@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  getAccountDisplayLabel,
-  getPublicAccountId,
-} from "@/utils/accountId";
+import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
 describe("accountId utils", () => {
   it("prefers the canonical public account id when present", () => {

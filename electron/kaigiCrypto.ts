@@ -96,14 +96,14 @@ const deriveAesKey = (
     ),
   );
 
-const deriveSecretAesKey = (
-  secretBase64Url: string,
-  salt: Buffer,
-): Buffer =>
+const deriveSecretAesKey = (secretBase64Url: string, salt: Buffer): Buffer =>
   Buffer.from(
     hkdfSync(
       "sha256",
-      Buffer.from(requireBase64Url(secretBase64Url, "inviteSecretBase64Url"), "base64url"),
+      Buffer.from(
+        requireBase64Url(secretBase64Url, "inviteSecretBase64Url"),
+        "base64url",
+      ),
       salt,
       SECRET_ENCRYPTION_INFO,
       AES_KEY_LENGTH,
@@ -138,10 +138,7 @@ export const encryptKaigiPayload = (
   const key = deriveAesKey(ephemeralPrivateKey, recipientPublicKey, salt);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const plaintext = Buffer.from(JSON.stringify(payload), "utf8");
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext),
-    cipher.final(),
-  ]);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
 
   return {
     schema: KAIGI_SEALED_BOX_SCHEMA,

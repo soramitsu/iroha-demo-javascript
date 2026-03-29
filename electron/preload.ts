@@ -2,7 +2,10 @@ import { contextBridge, ipcRenderer } from "electron";
 import { createHash, randomBytes } from "crypto";
 import {
   ToriiClient,
-  buildKaigiRosterJoinProof,
+  buildPrivateCreateKaigiTransaction,
+  buildPrivateEndKaigiTransaction,
+  buildPrivateJoinKaigiTransaction,
+  buildPrivateKaigiFeeSpend,
   buildCreateKaigiTransaction,
   buildEndKaigiTransaction,
   buildJoinKaigiTransaction,
@@ -10,13 +13,17 @@ import {
   buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
-  generateKeyPair,
-  publicKeyFromPrivate,
+  submitTransactionEntrypoint,
   submitSignedTransaction,
   normalizeAssetId,
   type KaigiCallView,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
+import {
+  buildKaigiRosterJoinProof,
+  generateKeyPair,
+  publicKeyFromPrivate,
+} from "@iroha/iroha-js/crypto";
 import {
   confidentialModeSupportsShield,
   formatOnboardingError,
@@ -36,6 +43,7 @@ import {
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
+import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
   requestFaucetFundsWithPuzzle,
@@ -335,6 +343,42 @@ type KaigiMeetingView = {
   offerDescription: KaigiOfferDescription;
 };
 
+type PrivateKaigiConfidentialXorState = {
+  assetDefinitionId: string;
+  resolvedAssetId: string;
+  policyMode: string;
+  shieldedBalance: string | null;
+  shieldedBalanceExact: boolean;
+  transparentBalance: string;
+  canSelfShield: boolean;
+  message?: string;
+};
+
+type PrivateKaigiFeeSchedule = {
+  enabled: boolean;
+  baseFee: string;
+  perByteFee: string;
+  perInstructionFee: string;
+  perGasUnitFee: string;
+};
+
+type PrivateKaigiConfidentialXorContext = {
+  state: PrivateKaigiConfidentialXorState;
+};
+
+type PrivateKaigiConfidentialXorFeeContext =
+  PrivateKaigiConfidentialXorContext & {
+    latestRootHex: string;
+    verifyingKey: Record<string, unknown>;
+    feeSchedule: PrivateKaigiFeeSchedule;
+  };
+
+type PrivateKaigiXorShadowState = {
+  lastOnChainShieldedBalance: string | null;
+  pendingShieldCredit: string;
+  privateFeeDebit: string;
+};
+
 type KaigiCallEvent = {
   kind: "roster_updated" | "ended";
   callId: string;
@@ -346,9 +390,7 @@ type KaigiWatchCallEventsInput = {
   callId: string;
 };
 
-type KaigiCallEventCallback = (
-  event: KaigiCallEvent,
-) => void | Promise<void>;
+type KaigiCallEventCallback = (event: KaigiCallEvent) => void | Promise<void>;
 
 type FaucetStatusCallback = (
   progress: FaucetRequestProgress,
@@ -495,6 +537,17 @@ type IrohaBridge = {
     toriiUrl: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getPrivateKaigiConfidentialXorState(input: {
+    toriiUrl: string;
+    accountId: string;
+  }): Promise<PrivateKaigiConfidentialXorState>;
+  selfShieldPrivateKaigiXor(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    amount: string;
+  }): Promise<{ hash: string }>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
@@ -723,6 +776,411 @@ const normalizeRequestId = (value: string) => {
   return requestId;
 };
 
+const PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal";
+const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
+const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
+const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
+const PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT = "1";
+const PRIVATE_KAIGI_CREATE_GAS = 420;
+const PRIVATE_KAIGI_JOIN_ZK_GAS = 1520;
+const PRIVATE_KAIGI_END_GAS = 220;
+const PRIVATE_KAIGI_PROOF_GAS_PER_BYTE = 5;
+
+type DecimalAmount = {
+  mantissa: bigint;
+  scale: number;
+};
+
+const readCrc16 = (namespace: string, body: string) => {
+  let crc = 0xffff;
+  const payload = `${namespace}:${body}`;
+  for (let index = 0; index < payload.length; index += 1) {
+    crc ^= payload.charCodeAt(index) << 8;
+    for (let shift = 0; shift < 8; shift += 1) {
+      if ((crc & 0x8000) !== 0) {
+        crc = ((crc << 1) ^ 0x1021) & 0xffff;
+      } else {
+        crc = (crc << 1) & 0xffff;
+      }
+    }
+  }
+  return crc & 0xffff;
+};
+
+const canonicalHashLiteralFromBuffer = (value: Buffer) => {
+  if (value.length !== 32) {
+    throw new Error("hash values must be 32 bytes.");
+  }
+  const normalized = Buffer.from(value);
+  normalized[normalized.length - 1] |= 1;
+  const body = normalized.toString("hex").toUpperCase();
+  const checksum = readCrc16("hash", body)
+    .toString(16)
+    .toUpperCase()
+    .padStart(4, "0");
+  return `hash:${body}#${checksum}`;
+};
+
+const canonicalHashLiteralFromHex = (value: string, label: string) =>
+  canonicalHashLiteralFromBuffer(hexToBuffer(value, label));
+
+const toPrivateKaigiCallIdDto = (value: string, label: string) => {
+  const normalized = normalizeKaigiCallId(value, label);
+  const [domainId, ...callNameParts] = normalized.split(":");
+  return {
+    domain_id: domainId,
+    call_name: callNameParts.join(":"),
+  };
+};
+
+const binaryToBuffer = (
+  value: Buffer | ArrayBuffer | ArrayBufferView,
+): Buffer => {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+};
+
+const toJsonByteArray = (
+  value: Buffer | ArrayBuffer | ArrayBufferView,
+): number[] => {
+  return Array.from(binaryToBuffer(value));
+};
+
+const parseDecimalAmount = (value: string, label: string): DecimalAmount => {
+  const normalized = String(value ?? "").trim();
+  const match = /^(\d+)(?:\.(\d+))?$/.exec(normalized);
+  if (!match) {
+    throw new Error(`${label} must be a non-negative numeric string.`);
+  }
+  const fractional = match[2] ?? "";
+  return {
+    mantissa: BigInt(`${match[1]}${fractional}`),
+    scale: fractional.length,
+  };
+};
+
+const trimDecimalAmount = (value: DecimalAmount): DecimalAmount => {
+  let { mantissa, scale } = value;
+  while (scale > 0 && mantissa % 10n === 0n) {
+    mantissa /= 10n;
+    scale -= 1;
+  }
+  return { mantissa, scale };
+};
+
+const formatDecimalAmount = (value: DecimalAmount): string => {
+  const normalized = trimDecimalAmount(value);
+  const negative = normalized.mantissa < 0n;
+  const digits = (
+    negative ? -normalized.mantissa : normalized.mantissa
+  ).toString();
+  if (normalized.scale === 0) {
+    return `${negative ? "-" : ""}${digits}`;
+  }
+  const padded = digits.padStart(normalized.scale + 1, "0");
+  const whole = padded.slice(0, -normalized.scale) || "0";
+  const fraction = padded.slice(-normalized.scale).replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
+};
+
+const alignDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
+  if (left.scale === right.scale) {
+    return { left, right, scale: left.scale };
+  }
+  if (left.scale > right.scale) {
+    return {
+      left,
+      right: {
+        mantissa: right.mantissa * 10n ** BigInt(left.scale - right.scale),
+        scale: left.scale,
+      },
+      scale: left.scale,
+    };
+  }
+  return {
+    left: {
+      mantissa: left.mantissa * 10n ** BigInt(right.scale - left.scale),
+      scale: right.scale,
+    },
+    right,
+    scale: right.scale,
+  };
+};
+
+const addDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
+  const aligned = alignDecimalAmounts(left, right);
+  return trimDecimalAmount({
+    mantissa: aligned.left.mantissa + aligned.right.mantissa,
+    scale: aligned.scale,
+  });
+};
+
+const subtractDecimalAmounts = (left: DecimalAmount, right: DecimalAmount) => {
+  const aligned = alignDecimalAmounts(left, right);
+  return trimDecimalAmount({
+    mantissa: aligned.left.mantissa - aligned.right.mantissa,
+    scale: aligned.scale,
+  });
+};
+
+const multiplyDecimalAmountByInteger = (
+  value: DecimalAmount,
+  multiplier: number,
+) =>
+  trimDecimalAmount({
+    mantissa: value.mantissa * BigInt(multiplier),
+    scale: value.scale,
+  });
+
+const compareDecimalStrings = (left: string, right: string) => {
+  const aligned = alignDecimalAmounts(
+    parseDecimalAmount(left, "left"),
+    parseDecimalAmount(right, "right"),
+  );
+  if (aligned.left.mantissa === aligned.right.mantissa) {
+    return 0;
+  }
+  return aligned.left.mantissa > aligned.right.mantissa ? 1 : -1;
+};
+
+const minDecimalString = (left: string, right: string) =>
+  compareDecimalStrings(left, right) <= 0 ? left : right;
+
+const ceilDecimalToIntegerString = (value: string) => {
+  const parsed = parseDecimalAmount(value, "value");
+  if (parsed.scale === 0) {
+    return parsed.mantissa.toString();
+  }
+  const divisor = 10n ** BigInt(parsed.scale);
+  const whole = parsed.mantissa / divisor;
+  const remainder = parsed.mantissa % divisor;
+  return (remainder === 0n ? whole : whole + 1n).toString();
+};
+
+const parseNonNegativeConfigAmount = (
+  value: unknown,
+  label: string,
+): string => {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error(`${label} must be a non-negative number.`);
+    }
+    return formatDecimalAmount(parseDecimalAmount(String(value), label));
+  }
+  return formatDecimalAmount(
+    parseDecimalAmount(String(value ?? "").trim(), label),
+  );
+};
+
+const newPrivateKaigiShadowState = (): PrivateKaigiXorShadowState => ({
+  lastOnChainShieldedBalance: null,
+  pendingShieldCredit: "0",
+  privateFeeDebit: "0",
+});
+
+const privateKaigiShadowStateCache = new Map<
+  string,
+  PrivateKaigiXorShadowState
+>();
+
+const getPrivateKaigiShadowKey = (input: {
+  toriiUrl: string;
+  accountId: string;
+  assetDefinitionId: string;
+}) =>
+  [
+    PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX,
+    normalizeBaseUrl(input.toriiUrl),
+    input.accountId.trim().toLowerCase(),
+    input.assetDefinitionId.trim().toLowerCase(),
+  ].join("");
+
+const readPrivateKaigiShadowState = (
+  key: string,
+): PrivateKaigiXorShadowState => {
+  const cached = privateKaigiShadowStateCache.get(key);
+  if (cached) {
+    return { ...cached };
+  }
+  const storage = globalThis.localStorage;
+  if (!storage) {
+    const empty = newPrivateKaigiShadowState();
+    privateKaigiShadowStateCache.set(key, empty);
+    return { ...empty };
+  }
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) {
+      const empty = newPrivateKaigiShadowState();
+      privateKaigiShadowStateCache.set(key, empty);
+      return { ...empty };
+    }
+    const parsed = JSON.parse(raw) as Partial<PrivateKaigiXorShadowState>;
+    const state: PrivateKaigiXorShadowState = {
+      lastOnChainShieldedBalance:
+        typeof parsed.lastOnChainShieldedBalance === "string"
+          ? parsed.lastOnChainShieldedBalance
+          : null,
+      pendingShieldCredit:
+        typeof parsed.pendingShieldCredit === "string"
+          ? parsed.pendingShieldCredit
+          : "0",
+      privateFeeDebit:
+        typeof parsed.privateFeeDebit === "string"
+          ? parsed.privateFeeDebit
+          : "0",
+    };
+    privateKaigiShadowStateCache.set(key, state);
+    return { ...state };
+  } catch {
+    const empty = newPrivateKaigiShadowState();
+    privateKaigiShadowStateCache.set(key, empty);
+    return { ...empty };
+  }
+};
+
+const writePrivateKaigiShadowState = (
+  key: string,
+  state: PrivateKaigiXorShadowState,
+) => {
+  const normalized = {
+    lastOnChainShieldedBalance: state.lastOnChainShieldedBalance,
+    pendingShieldCredit: formatDecimalAmount(
+      parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
+    ),
+    privateFeeDebit: formatDecimalAmount(
+      parseDecimalAmount(state.privateFeeDebit, "privateFeeDebit"),
+    ),
+  } satisfies PrivateKaigiXorShadowState;
+  privateKaigiShadowStateCache.set(key, normalized);
+  const storage = globalThis.localStorage;
+  if (!storage) {
+    return;
+  }
+  try {
+    storage.setItem(key, JSON.stringify(normalized));
+  } catch {
+    // Ignore storage write failures and keep the in-memory shadow state.
+  }
+};
+
+const syncPrivateKaigiShadowState = (
+  state: PrivateKaigiXorShadowState,
+  onChainShieldedBalance: string,
+) => {
+  if (state.lastOnChainShieldedBalance) {
+    const delta = subtractDecimalAmounts(
+      parseDecimalAmount(onChainShieldedBalance, "onChainShieldedBalance"),
+      parseDecimalAmount(
+        state.lastOnChainShieldedBalance,
+        "lastOnChainShieldedBalance",
+      ),
+    );
+    if (delta.mantissa > 0n) {
+      const consumed = minDecimalString(
+        formatDecimalAmount(delta),
+        state.pendingShieldCredit,
+      );
+      state.pendingShieldCredit = formatDecimalAmount(
+        subtractDecimalAmounts(
+          parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
+          parseDecimalAmount(consumed, "consumed"),
+        ),
+      );
+    }
+  }
+  state.lastOnChainShieldedBalance = formatDecimalAmount(
+    parseDecimalAmount(onChainShieldedBalance, "onChainShieldedBalance"),
+  );
+  return state;
+};
+
+const computePrivateKaigiEffectiveShieldedBalance = (input: {
+  onChainShieldedBalance: string;
+  shadowState: PrivateKaigiXorShadowState;
+}) => {
+  const balance = addDecimalAmounts(
+    parseDecimalAmount(input.onChainShieldedBalance, "onChainShieldedBalance"),
+    parseDecimalAmount(
+      input.shadowState.pendingShieldCredit,
+      "pendingShieldCredit",
+    ),
+  );
+  const effective = subtractDecimalAmounts(
+    balance,
+    parseDecimalAmount(input.shadowState.privateFeeDebit, "privateFeeDebit"),
+  );
+  return effective.mantissa > 0n ? formatDecimalAmount(effective) : "0";
+};
+
+const appendPrivateKaigiShieldCredit = (input: {
+  toriiUrl: string;
+  accountId: string;
+  amount: string;
+  assetDefinitionId?: string;
+}) => {
+  const key = getPrivateKaigiShadowKey({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    assetDefinitionId:
+      input.assetDefinitionId ?? PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+  });
+  const state = readPrivateKaigiShadowState(key);
+  state.pendingShieldCredit = formatDecimalAmount(
+    addDecimalAmounts(
+      parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
+      parseDecimalAmount(input.amount, "amount"),
+    ),
+  );
+  writePrivateKaigiShadowState(key, state);
+};
+
+const appendPrivateKaigiFeeDebit = (input: {
+  toriiUrl: string;
+  accountId: string;
+  amount: string;
+  assetDefinitionId?: string;
+}) => {
+  const key = getPrivateKaigiShadowKey({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    assetDefinitionId:
+      input.assetDefinitionId ?? PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+  });
+  const state = readPrivateKaigiShadowState(key);
+  state.privateFeeDebit = formatDecimalAmount(
+    addDecimalAmounts(
+      parseDecimalAmount(state.privateFeeDebit, "privateFeeDebit"),
+      parseDecimalAmount(input.amount, "amount"),
+    ),
+  );
+  writePrivateKaigiShadowState(key, state);
+};
+
+const computePrivateKaigiInstructionGas = (input: {
+  action: "create" | "join" | "end";
+  proofByteLength: number;
+}) => {
+  switch (input.action) {
+    case "create":
+      return PRIVATE_KAIGI_CREATE_GAS;
+    case "join":
+      return (
+        PRIVATE_KAIGI_JOIN_ZK_GAS +
+        PRIVATE_KAIGI_PROOF_GAS_PER_BYTE * Math.max(0, input.proofByteLength)
+      );
+    case "end":
+      return PRIVATE_KAIGI_END_GAS;
+    default:
+      return PRIVATE_KAIGI_END_GAS;
+  }
+};
+
 const KAIGI_CHAIN_SIGNAL_SCHEMA = "iroha-demo-kaigi-chain-signal/v1";
 const KAIGI_CHAIN_ANSWER_SCHEMA = "iroha-demo-kaigi-answer/v1";
 const KAIGI_CALL_METADATA_SCHEMA = "iroha-demo-kaigi-call-metadata/v2";
@@ -812,12 +1270,10 @@ const normalizeKaigiParticipantId = (value: string) => {
   return normalized || "participant";
 };
 
-const normalizeKaigiAnswerDescription = (
-  value: {
-    type?: string;
-    sdp?: string;
-  },
-) => {
+const normalizeKaigiAnswerDescription = (value: {
+  type?: string;
+  sdp?: string;
+}) => {
   const type = String(value?.type ?? "").trim();
   const sdp = String(value?.sdp ?? "");
   if (type !== "answer") {
@@ -832,12 +1288,10 @@ const normalizeKaigiAnswerDescription = (
   };
 };
 
-const normalizeKaigiOfferDescription = (
-  value: {
-    type?: string;
-    sdp?: string;
-  },
-) => {
+const normalizeKaigiOfferDescription = (value: {
+  type?: string;
+  sdp?: string;
+}) => {
   const type = String(value?.type ?? "").trim();
   const sdp = String(value?.sdp ?? "");
   if (type !== "offer") {
@@ -852,10 +1306,10 @@ const normalizeKaigiOfferDescription = (
   };
 };
 
-const normalizeKaigiMeetingPrivacy = (
-  value: unknown,
-): KaigiMeetingPrivacy => {
-  const normalized = String(value ?? "private").trim().toLowerCase();
+const normalizeKaigiMeetingPrivacy = (value: unknown): KaigiMeetingPrivacy => {
+  const normalized = String(value ?? "private")
+    .trim()
+    .toLowerCase();
   if (normalized === "transparent") {
     return "transparent";
   }
@@ -865,7 +1319,9 @@ const normalizeKaigiMeetingPrivacy = (
 const normalizeKaigiPeerIdentityReveal = (
   value: unknown,
 ): KaigiPeerIdentityReveal => {
-  const normalized = String(value ?? "Hidden").trim().toLowerCase();
+  const normalized = String(value ?? "Hidden")
+    .trim()
+    .toLowerCase();
   if (
     normalized === "revealafterjoin" ||
     normalized === "reveal_after_join" ||
@@ -883,6 +1339,17 @@ const normalizeBase64UrlString = (value: unknown, label: string): string => {
   }
   if (!/^[A-Za-z0-9_-]+$/.test(normalized)) {
     throw new Error(`${label} must be base64url.`);
+  }
+  return normalized;
+};
+
+const normalizeBase64String = (value: unknown, label: string): string => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  if (!/^[A-Za-z0-9+/=]+$/.test(normalized)) {
+    throw new Error(`${label} must be base64.`);
   }
   return normalized;
 };
@@ -934,9 +1401,7 @@ const deriveKaigiHostActionSeed = (input: {
     privateKeyHex: input.privateKeyHex,
   });
 
-const parseJsonRecord = (
-  value: unknown,
-): Record<string, unknown> | null => {
+const parseJsonRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value) {
     return null;
   }
@@ -984,7 +1449,9 @@ const normalizeKaigiCallEvent = (value: unknown): KaigiCallEvent | null => {
   if (!record) {
     return null;
   }
-  const kind = String(record.kind ?? "").trim().toLowerCase();
+  const kind = String(record.kind ?? "")
+    .trim()
+    .toLowerCase();
   const callRecord = parseJsonRecord(record.call);
   const callId = normalizeKaigiCallId(
     String(callRecord?.call_id ?? callRecord?.callId ?? ""),
@@ -1216,7 +1683,8 @@ const resolveKaigiMeetingView = (
 
   return {
     callId: normalizeKaigiCallId(callId, "callId"),
-    meetingCode: callMetadata.meetingCode || normalizeKaigiMeetingCode(null, callId),
+    meetingCode:
+      callMetadata.meetingCode || normalizeKaigiMeetingCode(null, callId),
     ...(String(callPayload.title ?? "").trim()
       ? { title: String(callPayload.title).trim() }
       : {}),
@@ -1328,7 +1796,9 @@ const resolveKaigiRelayManifest = async (
           if (left.status === "healthy") return -1;
           if (right.status === "healthy") return 1;
         }
-        return Number(right.bandwidth_class ?? 0) - Number(left.bandwidth_class ?? 0);
+        return (
+          Number(right.bandwidth_class ?? 0) - Number(left.bandwidth_class ?? 0)
+        );
       })
       .slice(0, 2);
     if (candidates.length === 0) {
@@ -1338,7 +1808,10 @@ const resolveKaigiRelayManifest = async (
       candidates.map((candidate) => client.getKaigiRelay(candidate.relay_id)),
     );
     const hops = details
-      .filter((detail): detail is Exclude<(typeof details)[number], null> => detail !== null)
+      .filter(
+        (detail): detail is Exclude<(typeof details)[number], null> =>
+          detail !== null,
+      )
       .map((detail, index) => ({
         relayId: detail.relay.relay_id,
         hpkePublicKey: detail.hpke_public_key_b64,
@@ -1390,6 +1863,387 @@ const fetchConfidentialAssetPolicy = async (
   return normalizeConfidentialAssetPolicyPayload(payload);
 };
 
+const fetchAccountAssetsList = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  limit?: number;
+  offset?: number;
+}) => {
+  const normalizedBaseUrl = `${normalizeBaseUrl(input.toriiUrl)}/`;
+  const normalizedAccountId = encodeURIComponent(
+    normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
+  );
+  const endpoint = new URL(
+    `v1/accounts/${normalizedAccountId}/assets`,
+    normalizedBaseUrl,
+  );
+  endpoint.searchParams.set("limit", String(input.limit ?? 50));
+  if (input.offset !== undefined) {
+    endpoint.searchParams.set("offset", String(input.offset));
+  }
+  const response = await nodeFetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    const detail = await readApiErrorDetail(response);
+    throw new Error(
+      detail ||
+        `Account assets request failed with status ${response.status} (${response.statusText})`,
+    );
+  }
+  const payload = (await response.json()) as unknown;
+  return normalizeAccountAssetListPayload(payload);
+};
+
+const listAllAccountTransactionsForPrivateKaigi = async (input: {
+  toriiUrl: string;
+  accountId: string;
+}) => {
+  const client = getClient(input.toriiUrl);
+  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const items: Array<Record<string, unknown>> = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (offset < total) {
+    const page = await client.listAccountTransactions(normalizedAccountId, {
+      limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
+      offset,
+    });
+    const pageItems = Array.isArray(page?.items)
+      ? (page.items as Array<Record<string, unknown>>)
+      : [];
+    items.push(...pageItems);
+    total = Number(page?.total ?? items.length);
+    offset += pageItems.length;
+    if (
+      pageItems.length === 0 ||
+      pageItems.length < PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE
+    ) {
+      break;
+    }
+  }
+
+  return items;
+};
+
+const fetchPrivateKaigiAssetDefinition = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) =>
+  fetchJson(
+    buildNexusEndpoint(
+      toriiUrlRaw,
+      `/v1/assets/definitions/${encodeURIComponent(assetDefinitionId.trim())}`,
+    ),
+    "Private Kaigi XOR asset definition",
+  );
+
+const fetchPrivateKaigiRoots = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => {
+  const endpoint = buildNexusEndpoint(toriiUrlRaw, "/v1/zk/roots");
+  const response = await nodeFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      asset_id: assetDefinitionId,
+      max: PRIVATE_KAIGI_ROOT_LOOKBACK,
+    }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      detail ||
+        `Private Kaigi XOR root request failed with status ${response.status} (${response.statusText})`,
+    );
+  }
+  const payload = ensureObjectResponse(
+    (await response.json()) as unknown,
+    "Private Kaigi XOR roots",
+  );
+  const roots = Array.isArray(payload.roots) ? payload.roots : [];
+  const latest = String(payload.latest ?? roots[roots.length - 1] ?? "").trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(latest)) {
+    throw new Error(
+      "Private Kaigi requires a recent 32-byte confidential XOR root.",
+    );
+  }
+  return latest.toLowerCase();
+};
+
+const readPrivateKaigiVkTransferRef = (
+  assetDefinition: Record<string, unknown>,
+) => {
+  const metadata = ensureObjectResponse(
+    assetDefinition.metadata ?? {},
+    "Private Kaigi XOR asset definition metadata",
+  );
+  const policyRecord =
+    metadata["zk.policy"] ??
+    ensureObjectResponse(metadata.zk ?? {}, "metadata.zk").policy ??
+    null;
+  const policy = ensureObjectResponse(
+    policyRecord ?? {},
+    "Private Kaigi XOR asset zk.policy",
+  );
+  const rawVk = String(policy.vk_transfer ?? policy.vkTransfer ?? "").trim();
+  const match = /^([^:]+)::(.+)$/.exec(rawVk);
+  if (!match) {
+    throw new Error(
+      "Private Kaigi XOR asset is missing metadata.zk.policy.vk_transfer.",
+    );
+  }
+  return {
+    backend: match[1],
+    name: match[2],
+  };
+};
+
+const readPrivateKaigiFeeSchedule = (
+  configuration: Record<string, unknown> | null,
+) => {
+  const nexus =
+    configuration &&
+    typeof configuration.nexus === "object" &&
+    configuration.nexus &&
+    !Array.isArray(configuration.nexus)
+      ? (configuration.nexus as Record<string, unknown>)
+      : {};
+  const fees =
+    typeof nexus.fees === "object" && nexus.fees && !Array.isArray(nexus.fees)
+      ? (nexus.fees as Record<string, unknown>)
+      : {};
+  const enabled =
+    nexus.enabled === undefined || nexus.enabled === null
+      ? true
+      : Boolean(nexus.enabled);
+  return {
+    enabled,
+    baseFee: parseNonNegativeConfigAmount(
+      fees.base_fee ?? fees.baseFee ?? "0",
+      "nexus.fees.base_fee",
+    ),
+    perByteFee: parseNonNegativeConfigAmount(
+      fees.per_byte_fee ?? fees.perByteFee ?? "0",
+      "nexus.fees.per_byte_fee",
+    ),
+    perInstructionFee: parseNonNegativeConfigAmount(
+      fees.per_instruction_fee ?? fees.perInstructionFee ?? "0",
+      "nexus.fees.per_instruction_fee",
+    ),
+    perGasUnitFee: parseNonNegativeConfigAmount(
+      fees.per_gas_unit_fee ?? fees.perGasUnitFee ?? "0",
+      "nexus.fees.per_gas_unit_fee",
+    ),
+  };
+};
+
+const computePrivateKaigiFeeAmount = (input: {
+  enabled: boolean;
+  baseFee: string;
+  perByteFee: string;
+  perInstructionFee: string;
+  perGasUnitFee: string;
+  txByteLength: number;
+  gasUsed: number;
+}) => {
+  if (!input.enabled) {
+    return "0";
+  }
+  let fee = parseDecimalAmount(input.baseFee, "baseFee");
+  fee = addDecimalAmounts(
+    fee,
+    multiplyDecimalAmountByInteger(
+      parseDecimalAmount(input.perByteFee, "perByteFee"),
+      input.txByteLength,
+    ),
+  );
+  fee = addDecimalAmounts(
+    fee,
+    multiplyDecimalAmountByInteger(
+      parseDecimalAmount(input.perInstructionFee, "perInstructionFee"),
+      1,
+    ),
+  );
+  fee = addDecimalAmounts(
+    fee,
+    multiplyDecimalAmountByInteger(
+      parseDecimalAmount(input.perGasUnitFee, "perGasUnitFee"),
+      input.gasUsed,
+    ),
+  );
+  return formatDecimalAmount(fee);
+};
+
+const resolveTransparentXorBalance = (
+  items: Array<{ asset_id: string; quantity: string }>,
+  trackedAssetIds: string[],
+) => {
+  const targets = trackedAssetIds.map((value) => value.toLowerCase());
+  return (
+    items.find((asset) => {
+      const assetId = String(asset.asset_id ?? "")
+        .trim()
+        .toLowerCase();
+      return targets.some(
+        (target) =>
+          assetId === target ||
+          assetId.startsWith(`${target}##`) ||
+          assetId.includes(target),
+      );
+    })?.quantity ?? "0"
+  );
+};
+
+async function resolvePrivateKaigiConfidentialXorContext(
+  input: {
+    toriiUrl: string;
+    accountId: string;
+  },
+  options: {
+    includeFeeMaterials: true;
+  },
+): Promise<PrivateKaigiConfidentialXorFeeContext>;
+async function resolvePrivateKaigiConfidentialXorContext(
+  input: {
+    toriiUrl: string;
+    accountId: string;
+  },
+  options?: {
+    includeFeeMaterials?: boolean;
+  },
+): Promise<PrivateKaigiConfidentialXorContext>;
+async function resolvePrivateKaigiConfidentialXorContext(
+  input: {
+    toriiUrl: string;
+    accountId: string;
+  },
+  options?: {
+    includeFeeMaterials?: boolean;
+  },
+): Promise<
+  PrivateKaigiConfidentialXorContext | PrivateKaigiConfidentialXorFeeContext
+> {
+  const policy = await fetchConfidentialAssetPolicy(
+    input.toriiUrl,
+    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+  );
+  const policyMode = String(
+    policy.effective_mode ?? policy.current_mode ?? "",
+  ).trim();
+  const resolvedAssetId =
+    String(policy.asset_id ?? "").trim() ||
+    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID;
+  const trackedAssetIds = [
+    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    resolvedAssetId,
+  ].filter(
+    (value, index, items) =>
+      value && items.findIndex((candidate) => candidate === value) === index,
+  );
+  const [assetsResponse, transactions] = await Promise.all([
+    fetchAccountAssetsList({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      limit: 200,
+    }),
+    listAllAccountTransactionsForPrivateKaigi({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+    }),
+  ]);
+  const shieldedBalance = deriveOnChainShieldedBalance(transactions, {
+    assetDefinitionIds: trackedAssetIds,
+    accountIds: [
+      input.accountId,
+      normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
+      normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
+    ],
+  });
+  const shadowKey = getPrivateKaigiShadowKey({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    assetDefinitionId: resolvedAssetId,
+  });
+  const shadowState = readPrivateKaigiShadowState(shadowKey);
+  let effectiveShieldedBalance: string | null = shieldedBalance.quantity;
+  if (shieldedBalance.exact && shieldedBalance.quantity !== null) {
+    syncPrivateKaigiShadowState(shadowState, shieldedBalance.quantity);
+    writePrivateKaigiShadowState(shadowKey, shadowState);
+    effectiveShieldedBalance = computePrivateKaigiEffectiveShieldedBalance({
+      onChainShieldedBalance: shieldedBalance.quantity,
+      shadowState,
+    });
+  }
+  const state: PrivateKaigiConfidentialXorState = {
+    assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    resolvedAssetId,
+    policyMode,
+    shieldedBalance: effectiveShieldedBalance,
+    shieldedBalanceExact: shieldedBalance.exact,
+    transparentBalance: resolveTransparentXorBalance(
+      assetsResponse.items ?? [],
+      trackedAssetIds,
+    ),
+    canSelfShield:
+      confidentialModeSupportsShield(policyMode) &&
+      compareDecimalStrings(
+        resolveTransparentXorBalance(
+          assetsResponse.items ?? [],
+          trackedAssetIds,
+        ),
+        "0",
+      ) > 0,
+    ...(shieldedBalance.exact
+      ? {}
+      : {
+          message:
+            "Shielded XOR balance is unavailable after confidential transfers. This wallet does not scan confidential notes yet.",
+        }),
+  };
+
+  if (!options?.includeFeeMaterials) {
+    return { state };
+  }
+
+  const client = getClient(input.toriiUrl);
+  const [assetDefinition, latestRootHex, configuration] = await Promise.all([
+    fetchPrivateKaigiAssetDefinition(input.toriiUrl, resolvedAssetId),
+    fetchPrivateKaigiRoots(input.toriiUrl, resolvedAssetId),
+    client.getConfiguration(),
+  ]);
+  const vkTransferRef = readPrivateKaigiVkTransferRef(assetDefinition);
+  const verifyingKey = await client.getVerifyingKeyTyped(
+    vkTransferRef.backend,
+    vkTransferRef.name,
+  );
+
+  const configurationRecord =
+    configuration &&
+    typeof configuration === "object" &&
+    !Array.isArray(configuration)
+      ? (configuration as Record<string, unknown>)
+      : null;
+
+  return {
+    state,
+    latestRootHex,
+    verifyingKey: verifyingKey as unknown as Record<string, unknown>,
+    feeSchedule: readPrivateKaigiFeeSchedule(configurationRecord),
+  };
+}
+
 const submitInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
@@ -1419,6 +2273,177 @@ const submitInstructionTransaction = async (input: {
     },
   );
   return { hash: submission.hash };
+};
+
+const createPrivateKaigiNonce = () => {
+  let value = randomBytes(4).readUInt32BE(0);
+  if (value === 0) {
+    value = 1;
+  }
+  return value;
+};
+
+const buildPrivateKaigiPlaceholderFeeSpendDto = (input: {
+  assetDefinitionId: string;
+  anchorRootHex: string;
+}) => ({
+  asset_definition_id: input.assetDefinitionId,
+  anchor_root: canonicalHashLiteralFromHex(
+    input.anchorRootHex,
+    "privateKaigi.placeholder.anchorRootHex",
+  ),
+  nullifiers: [Array.from({ length: 32 }, (_entry, index) => index)],
+  output_commitments: [
+    Array.from({ length: 32 }, (_entry, index) => 255 - index),
+  ],
+  encrypted_change_payloads: [[0]],
+  proof: Buffer.from("private-kaigi-placeholder", "utf8").toString("base64"),
+});
+
+const buildPrivateKaigiArtifactsDto = (input: {
+  commitmentHex: string;
+  nullifierHex: string;
+  issuedAtMs: number;
+  rosterRootHex: string;
+  proofBase64: string;
+}) => ({
+  commitment: {
+    commitment: canonicalHashLiteralFromHex(
+      input.commitmentHex,
+      "privateKaigi.commitment",
+    ),
+  },
+  nullifier: {
+    digest: canonicalHashLiteralFromHex(
+      input.nullifierHex,
+      "privateKaigi.nullifier",
+    ),
+    issued_at_ms: input.issuedAtMs,
+  },
+  roster_root: canonicalHashLiteralFromHex(
+    input.rosterRootHex,
+    "privateKaigi.rosterRoot",
+  ),
+  proof: normalizeBase64String(input.proofBase64, "privateKaigi.proof"),
+});
+
+const buildPrivateKaigiFeeSpendDto = (input: {
+  asset_definition_id: string;
+  anchor_root: Buffer | ArrayBuffer | ArrayBufferView;
+  nullifiers: ReadonlyArray<Buffer | ArrayBuffer | ArrayBufferView>;
+  output_commitments: ReadonlyArray<Buffer | ArrayBuffer | ArrayBufferView>;
+  encrypted_change_payloads: ReadonlyArray<
+    Buffer | ArrayBuffer | ArrayBufferView
+  >;
+  proof: Buffer | ArrayBuffer | ArrayBufferView;
+}) => ({
+  asset_definition_id: input.asset_definition_id,
+  anchor_root: canonicalHashLiteralFromBuffer(
+    binaryToBuffer(input.anchor_root),
+  ),
+  nullifiers: input.nullifiers.map((entry) => toJsonByteArray(entry)),
+  output_commitments: input.output_commitments.map((entry) =>
+    toJsonByteArray(entry),
+  ),
+  encrypted_change_payloads: input.encrypted_change_payloads.map((entry) =>
+    toJsonByteArray(entry),
+  ),
+  proof: binaryToBuffer(input.proof).toString("base64"),
+});
+
+const buildFundedPrivateKaigiEntrypoint = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  action: "create" | "join" | "end";
+  proofByteLength: number;
+  buildEntrypoint: (options: {
+    feeSpend: Record<string, unknown>;
+    creationTimeMs: number;
+    nonce: number;
+  }) => {
+    transactionEntrypoint: Buffer;
+    hash: Buffer;
+    actionHash: Buffer;
+  };
+}) => {
+  const context = await resolvePrivateKaigiConfidentialXorContext(
+    {
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+    },
+    { includeFeeMaterials: true },
+  );
+  if (!confidentialModeSupportsShield(context.state.policyMode)) {
+    throw new Error(
+      `Private Kaigi requires confidential XOR shielding support, but the effective mode is ${context.state.policyMode}.`,
+    );
+  }
+  if (
+    !context.state.shieldedBalanceExact ||
+    context.state.shieldedBalance === null
+  ) {
+    throw new Error(
+      context.state.message ||
+        "Shielded XOR balance is unavailable for private Kaigi fee payment.",
+    );
+  }
+
+  const creationTimeMs = Date.now();
+  const nonce = createPrivateKaigiNonce();
+  const provisional = input.buildEntrypoint({
+    feeSpend: buildPrivateKaigiPlaceholderFeeSpendDto({
+      assetDefinitionId: context.state.resolvedAssetId,
+      anchorRootHex: context.latestRootHex,
+    }),
+    creationTimeMs,
+    nonce,
+  });
+  const gasUsed = computePrivateKaigiInstructionGas({
+    action: input.action,
+    proofByteLength: input.proofByteLength,
+  });
+
+  let feeAmount = "0";
+  let finalEntrypoint = provisional;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const envelope = buildPrivateKaigiFeeSpend({
+      chainId: input.chainId.trim(),
+      assetDefinitionId: context.state.resolvedAssetId,
+      actionHash: provisional.actionHash,
+      anchorRootHex: context.latestRootHex,
+      feeAmount,
+      verifyingKey: context.verifyingKey,
+    });
+    finalEntrypoint = input.buildEntrypoint({
+      feeSpend: buildPrivateKaigiFeeSpendDto(envelope),
+      creationTimeMs,
+      nonce,
+    });
+    const nextFeeAmount = computePrivateKaigiFeeAmount({
+      ...context.feeSchedule,
+      txByteLength: finalEntrypoint.transactionEntrypoint.length,
+      gasUsed,
+    });
+    if (nextFeeAmount === feeAmount) {
+      feeAmount = nextFeeAmount;
+      break;
+    }
+    feeAmount = nextFeeAmount;
+  }
+
+  if (compareDecimalStrings(context.state.shieldedBalance, feeAmount) < 0) {
+    throw new Error(
+      `Private Kaigi needs ${feeAmount} shielded XOR in ${context.state.resolvedAssetId}, but only ${context.state.shieldedBalance} is available. Self-shield XOR first.`,
+    );
+  }
+
+  return {
+    transactionEntrypoint: finalEntrypoint.transactionEntrypoint,
+    hashHex: Buffer.from(finalEntrypoint.hash).toString("hex"),
+    feeAmount,
+    resolvedAssetId: context.state.resolvedAssetId,
+  };
 };
 
 const api: IrohaBridge = {
@@ -1545,6 +2570,18 @@ const api: IrohaBridge = {
           waitForCommit: true,
         },
       );
+      if (
+        destinationAccountId === accountId &&
+        input.assetDefinitionId.trim().toLowerCase() ===
+          PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
+      ) {
+        appendPrivateKaigiShieldCredit({
+          toriiUrl: input.toriiUrl,
+          accountId,
+          amount: normalizedAmount,
+          assetDefinitionId: input.assetDefinitionId,
+        });
+      }
       return { hash: submission.hash };
     }
 
@@ -1627,34 +2664,44 @@ const api: IrohaBridge = {
   getConfidentialAssetPolicy({ toriiUrl, assetDefinitionId }) {
     return fetchConfidentialAssetPolicy(toriiUrl, assetDefinitionId);
   },
-  fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
-    const normalizedBaseUrl = `${normalizeBaseUrl(toriiUrl)}/`;
-    const normalizedAccountId = encodeURIComponent(
-      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
+  async getPrivateKaigiConfidentialXorState({ toriiUrl, accountId }) {
+    return (
+      await resolvePrivateKaigiConfidentialXorContext({
+        toriiUrl,
+        accountId,
+      })
+    ).state;
+  },
+  async selfShieldPrivateKaigiXor({
+    toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    amount,
+  }) {
+    const normalizedAmount = ceilDecimalToIntegerString(
+      amount || PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT,
     );
-    const endpoint = new URL(
-      `v1/accounts/${normalizedAccountId}/assets`,
-      normalizedBaseUrl,
-    );
-    endpoint.searchParams.set("limit", String(limit));
-    if (offset !== undefined) {
-      endpoint.searchParams.set("offset", String(offset));
+    if (compareDecimalStrings(normalizedAmount, "0") <= 0) {
+      throw new Error("amount must be greater than zero.");
     }
-    return nodeFetch(endpoint.toString(), {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    }).then(async (response) => {
-      if (!response.ok) {
-        const detail = await readApiErrorDetail(response);
-        throw new Error(
-          detail ||
-            `Account assets request failed with status ${response.status} (${response.statusText})`,
-        );
-      }
-      const payload = (await response.json()) as unknown;
-      return normalizeAccountAssetListPayload(payload);
+    return api.transferAsset({
+      toriiUrl,
+      chainId,
+      assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+      accountId,
+      destinationAccountId: accountId,
+      quantity: normalizedAmount,
+      privateKeyHex,
+      shielded: true,
+    });
+  },
+  fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
+    return fetchAccountAssetsList({
+      toriiUrl,
+      accountId,
+      limit,
+      offset,
     });
   },
   fetchAccountTransactions({ toriiUrl, accountId, limit = 20, offset }) {
@@ -1956,9 +3003,8 @@ const api: IrohaBridge = {
     const createdAtMs = Date.now();
     const expiresAtMs = normalizedScheduledStartMs + 24 * 60 * 60 * 1000;
     const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
-    const resolvedPeerIdentityReveal = normalizeKaigiPeerIdentityReveal(
-      peerIdentityReveal,
-    );
+    const resolvedPeerIdentityReveal =
+      normalizeKaigiPeerIdentityReveal(peerIdentityReveal);
     const normalizedHostParticipantId =
       normalizeKaigiParticipantId(hostParticipantId);
     const inviteSecret = normalizeBase64UrlString(
@@ -1997,6 +3043,87 @@ const api: IrohaBridge = {
             }),
           })
         : null;
+    const callMetadata = {
+      kaigi_call: {
+        schema: KAIGI_CALL_METADATA_SCHEMA,
+        meetingCode:
+          String(meetingCode ?? "").trim() ||
+          normalizeKaigiMeetingCode(null, normalizedCallId),
+        expiresAtMs,
+        live: true,
+        privacyMode: resolvedPrivacyMode,
+        peerIdentityReveal: resolvedPeerIdentityReveal,
+        encryptedOffer,
+      } satisfies KaigiCallMetadata,
+    };
+
+    if (resolvedPrivacyMode === "private" && hostCreateProof) {
+      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
+        toriiUrl,
+        chainId,
+        accountId: authority,
+        action: "create",
+        proofByteLength: Buffer.from(hostCreateProof.proofBase64, "base64")
+          .length,
+        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
+          buildPrivateCreateKaigiTransaction({
+            chainId: chainId.trim(),
+            call: {
+              id: toPrivateKaigiCallIdDto(normalizedCallId, "callId"),
+              title: title?.trim() || null,
+              description: null,
+              max_participants: null,
+              gas_rate_per_minute: 0,
+              metadata: callMetadata,
+              scheduled_start_ms: normalizedScheduledStartMs,
+              privacy_mode: {
+                mode: "ZkRosterV1",
+                state: null,
+              },
+              room_policy: {
+                policy: "Authenticated",
+                state: null,
+              },
+              relay_manifest: resolvedRelayManifest
+                ? {
+                    expiry_ms: resolvedRelayManifest.expiryMs,
+                    hops: resolvedRelayManifest.hops.map((hop) => ({
+                      relay_id: hop.relayId,
+                      hpke_public_key: hop.hpkePublicKey,
+                      weight: hop.weight,
+                    })),
+                  }
+                : null,
+            },
+            artifacts: buildPrivateKaigiArtifactsDto({
+              commitmentHex: hostCreateProof.commitmentHex,
+              nullifierHex: hostCreateProof.nullifierHex,
+              issuedAtMs: createdAtMs,
+              rosterRootHex: hostCreateProof.rosterRootHex,
+              proofBase64: hostCreateProof.proofBase64,
+            }),
+            feeSpend,
+            creationTimeMs,
+            nonce,
+          }),
+      });
+      const submission = await submitTransactionEntrypoint(
+        getClient(toriiUrl),
+        entrypoint.transactionEntrypoint,
+        {
+          hashHex: entrypoint.hashHex,
+          waitForCommit: true,
+        },
+      );
+      appendPrivateKaigiFeeDebit({
+        toriiUrl,
+        accountId: authority,
+        amount: entrypoint.feeAmount,
+        assetDefinitionId: entrypoint.resolvedAssetId,
+      });
+      return { hash: submission.hash };
+    }
+
     const tx = buildCreateKaigiTransaction({
       chainId: chainId.trim(),
       authority,
@@ -2005,34 +3132,10 @@ const api: IrohaBridge = {
         host: authority,
         title: title?.trim() || null,
         scheduledStartMs: normalizedScheduledStartMs,
-        privacyMode:
-          resolvedPrivacyMode === "private" ? "ZkRosterV1" : "Transparent",
+        privacyMode: "Transparent",
         roomPolicy: "authenticated",
         relayManifest: resolvedRelayManifest,
-        ...(hostCreateProof
-          ? {
-              commitment: {
-                commitment: hostCreateProof.commitmentHex,
-              },
-              nullifier: {
-                digest: hostCreateProof.nullifierHex,
-                issuedAtMs: createdAtMs,
-              },
-              rosterRoot: hostCreateProof.rosterRootHex,
-              proof: hostCreateProof.proofBase64,
-            }
-          : {}),
-        metadata: {
-          kaigi_call: {
-            schema: KAIGI_CALL_METADATA_SCHEMA,
-            meetingCode: String(meetingCode ?? "").trim() || normalizeKaigiMeetingCode(null, normalizedCallId),
-            expiresAtMs,
-            live: true,
-            privacyMode: resolvedPrivacyMode,
-            peerIdentityReveal: resolvedPeerIdentityReveal,
-            encryptedOffer,
-          } satisfies KaigiCallMetadata,
-        },
+        metadata: callMetadata,
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
@@ -2113,42 +3216,65 @@ const api: IrohaBridge = {
         ),
       } satisfies KaigiChainSignalMetadata,
     };
-    const join =
-      resolvedPrivacyMode === "private"
-        ? (() => {
-            const joinProof = buildKaigiRosterJoinProof({
-              seed: deriveKaigiRosterJoinSeed({
-                callId: normalizedCallId,
-                participantAccountId: authority,
-                privateKeyHex,
-              }),
-              rosterRootHex: normalizeKaigiRosterRootHex(
-                rosterRootHex,
-                "rosterRootHex",
-              ),
-            });
-            return {
-              callId: answerPayload.callId,
-              participant: authority,
-              commitment: {
-                commitment: joinProof.commitment,
-              },
-              nullifier: {
-                digest: joinProof.nullifier,
-                issuedAtMs: createdAtMs,
-              },
-              rosterRoot: joinProof.rosterRoot,
-              proof: joinProof.proof,
-            };
-          })()
-        : {
-            callId: answerPayload.callId,
-            participant: authority,
-          };
+    if (resolvedPrivacyMode === "private") {
+      const joinProof = buildKaigiRosterJoinProof({
+        seed: deriveKaigiRosterJoinSeed({
+          callId: normalizedCallId,
+          participantAccountId: authority,
+          privateKeyHex,
+        }),
+        rosterRootHex: normalizeKaigiRosterRootHex(
+          rosterRootHex,
+          "rosterRootHex",
+        ),
+      });
+      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
+        toriiUrl,
+        chainId,
+        accountId: authority,
+        action: "join",
+        proofByteLength: Buffer.from(joinProof.proofBase64, "base64").length,
+        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
+          buildPrivateJoinKaigiTransaction({
+            chainId: chainId.trim(),
+            callId: normalizedCallId,
+            artifacts: buildPrivateKaigiArtifactsDto({
+              commitmentHex: joinProof.commitmentHex,
+              nullifierHex: joinProof.nullifierHex,
+              issuedAtMs: createdAtMs,
+              rosterRootHex: joinProof.rosterRootHex,
+              proofBase64: joinProof.proofBase64,
+            }),
+            feeSpend,
+            metadata,
+            creationTimeMs,
+            nonce,
+          }),
+      });
+      const submission = await submitTransactionEntrypoint(
+        getClient(toriiUrl),
+        entrypoint.transactionEntrypoint,
+        {
+          hashHex: entrypoint.hashHex,
+          waitForCommit: true,
+        },
+      );
+      appendPrivateKaigiFeeDebit({
+        toriiUrl,
+        accountId: authority,
+        amount: entrypoint.feeAmount,
+        assetDefinitionId: entrypoint.resolvedAssetId,
+      });
+      return { hash: submission.hash };
+    }
+
     const tx = buildJoinKaigiTransaction({
       chainId: chainId.trim(),
       authority,
-      join,
+      join: {
+        callId: answerPayload.callId,
+        participant: authority,
+      },
       metadata,
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
@@ -2170,9 +3296,12 @@ const api: IrohaBridge = {
 
     void (async () => {
       try {
-        for await (const event of client.streamKaigiCallEvents(normalizedCallId, {
-          signal: controller.signal,
-        })) {
+        for await (const event of client.streamKaigiCallEvents(
+          normalizedCallId,
+          {
+            signal: controller.signal,
+          },
+        )) {
           if (controller.signal.aborted) {
             break;
           }
@@ -2213,18 +3342,21 @@ const api: IrohaBridge = {
   }) {
     const client = getClient(toriiUrl);
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
-    const signalsResponse = await client.listKaigiCallSignals(normalizedCallId, {
-      ...(afterTimestampMs === undefined
-        ? {}
-        : {
-            afterTimestampMs: normalizeTimestampMs(
-              afterTimestampMs,
-              "afterTimestampMs",
-            ),
-          }),
-      limit,
-      offset,
-    });
+    const signalsResponse = await client.listKaigiCallSignals(
+      normalizedCallId,
+      {
+        ...(afterTimestampMs === undefined
+          ? {}
+          : {
+              afterTimestampMs: normalizeTimestampMs(
+                afterTimestampMs,
+                "afterTimestampMs",
+              ),
+            }),
+        limit,
+        offset,
+      },
+    );
     const signals = (signalsResponse.items ?? [])
       .flatMap((item) => {
         try {
@@ -2242,10 +3374,7 @@ const api: IrohaBridge = {
             return [];
           }
           const decrypted = parseKaigiChainAnswerPayload(
-            decryptKaigiPayload(
-              chainSignal.encryptedSignal,
-              hostKaigiKeys,
-            ),
+            decryptKaigiPayload(chainSignal.encryptedSignal, hostKaigiKeys),
           );
           const entrypointHash = String(record.entrypoint_hash ?? "").trim();
           if (!entrypointHash) {
@@ -2322,25 +3451,54 @@ const api: IrohaBridge = {
             ),
           })
         : null;
+
+    if (resolvedPrivacyMode === "private" && hostEndProof) {
+      const entrypoint = await buildFundedPrivateKaigiEntrypoint({
+        toriiUrl,
+        chainId,
+        accountId: authority,
+        action: "end",
+        proofByteLength: Buffer.from(hostEndProof.proofBase64, "base64").length,
+        buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
+          buildPrivateEndKaigiTransaction({
+            chainId: chainId.trim(),
+            callId: normalizedCallId,
+            endedAtMs: resolvedEndedAtMs,
+            artifacts: buildPrivateKaigiArtifactsDto({
+              commitmentHex: hostEndProof.commitmentHex,
+              nullifierHex: hostEndProof.nullifierHex,
+              issuedAtMs: resolvedEndedAtMs,
+              rosterRootHex: hostEndProof.rosterRootHex,
+              proofBase64: hostEndProof.proofBase64,
+            }),
+            feeSpend,
+            creationTimeMs,
+            nonce,
+          }),
+      });
+      const submission = await submitTransactionEntrypoint(
+        client,
+        entrypoint.transactionEntrypoint,
+        {
+          hashHex: entrypoint.hashHex,
+          waitForCommit: true,
+        },
+      );
+      appendPrivateKaigiFeeDebit({
+        toriiUrl,
+        accountId: authority,
+        amount: entrypoint.feeAmount,
+        assetDefinitionId: entrypoint.resolvedAssetId,
+      });
+      return { hash: submission.hash };
+    }
+
     const tx = buildEndKaigiTransaction({
       chainId: chainId.trim(),
       authority,
       end: {
         callId: normalizedCallId,
         endedAtMs: resolvedEndedAtMs,
-        ...(hostEndProof
-          ? {
-              commitment: {
-                commitment: hostEndProof.commitmentHex,
-              },
-              nullifier: {
-                digest: hostEndProof.nullifierHex,
-                issuedAtMs: resolvedEndedAtMs,
-              },
-              rosterRoot: hostEndProof.rosterRootHex,
-              proof: hostEndProof.proofBase64,
-            }
-          : {}),
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });

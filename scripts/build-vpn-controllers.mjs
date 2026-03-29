@@ -37,7 +37,6 @@ const copyBuiltBinary = (source, target) => {
 };
 
 const buildLinuxController = () => {
-  const crateRoot = join(irohaRoot, "tools", "sora-vpn-helper");
   run("cargo", ["build", "--release", "-p", "sora-vpn-helper"], {
     cwd: irohaRoot,
   });
@@ -65,5 +64,7 @@ if (platform === "linux") {
 } else if (platform === "darwin") {
   buildMacController();
 } else {
-  console.log(`No VPN controller build is configured for platform ${platform}.`);
+  console.log(
+    `No VPN controller build is configured for platform ${platform}.`,
+  );
 }

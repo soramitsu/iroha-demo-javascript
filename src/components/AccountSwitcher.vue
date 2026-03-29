@@ -45,12 +45,11 @@ const { t } = useAppI18n();
 
 const selectedAccountId = ref(session.activeAccountId ?? "");
 const hasAccounts = computed(() => session.accounts.length > 0);
-const activeLabel = computed(
-  () => getAccountDisplayLabel(session.activeAccount, t("Not selected")),
+const activeLabel = computed(() =>
+  getAccountDisplayLabel(session.activeAccount, t("Not selected")),
 );
-const getAccountOptionLabel = (
-  account: (typeof session.accounts)[number],
-) => getAccountDisplayLabel(account, account.accountId);
+const getAccountOptionLabel = (account: (typeof session.accounts)[number]) =>
+  getAccountDisplayLabel(account, account.accountId);
 
 watch(
   () => session.activeAccountId,

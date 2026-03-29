@@ -332,9 +332,7 @@ describe("StakingView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t("Set up network and wallet first."),
-    );
+    expect(wrapper.text()).toContain(t("Set up network and wallet first."));
     expect(getStakeBalanceRow(wrapper).text()).toContain("0 XOR");
     expect(getUnbondDelayRow(wrapper).text()).toContain("—");
     expect(wrapper.findAll("select")[0]?.attributes("disabled")).toBeDefined();

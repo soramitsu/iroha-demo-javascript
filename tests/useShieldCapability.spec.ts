@@ -41,7 +41,7 @@ describe("useShieldCapability", () => {
 
   it("uses policy mode to keep shielding enabled when supported", async () => {
     const toriiUrl = ref("http://localhost:8080");
-    const assetDefinitionId = ref("norito:abcdef0123456789");
+    const assetDefinitionId = ref("xor#universal");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
@@ -53,11 +53,15 @@ describe("useShieldCapability", () => {
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      assetDefinitionId: "norito:abcdef0123456789",
+      assetDefinitionId: "xor#universal",
     });
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldCapabilityMessage.value).toBe("");
     expect(capability.shieldPolicyMode.value).toBe("Convertible");
+    expect(capability.shieldCapabilityReady.value).toBe(true);
+    expect(capability.shieldResolvedAssetId.value).toBe(
+      "norito:abcdef0123456789",
+    );
     expect(shielded.value).toBe(true);
   });
 
@@ -134,6 +138,8 @@ describe("useShieldCapability", () => {
 
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldPolicyMode.value).toBe("");
+    expect(capability.shieldCapabilityReady.value).toBe(true);
+    expect(capability.shieldResolvedAssetId.value).toBe("");
     expect(capability.shieldCapabilityMessage.value).toContain(
       "Shield policy check failed: timeout.",
     );
@@ -153,6 +159,7 @@ describe("useShieldCapability", () => {
     await flushReactiveEffects();
 
     expect(getConfidentialAssetPolicyMock).not.toHaveBeenCalled();
+    expect(capability.shieldCapabilityReady.value).toBe(true);
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldCapabilityMessage.value).toBe("");
 
@@ -227,6 +234,10 @@ describe("useShieldCapability", () => {
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldCapabilityMessage.value).toBe("");
     expect(capability.shieldPolicyMode.value).toBe("Convertible");
+    expect(capability.shieldCapabilityReady.value).toBe(true);
+    expect(capability.shieldResolvedAssetId.value).toBe(
+      "norito:abcdef0123456789",
+    );
     expect(shielded.value).toBe(true);
   });
 
@@ -287,6 +298,8 @@ describe("useShieldCapability", () => {
     expect(capability.shieldSupported.value).toBe(true);
     expect(capability.shieldCapabilityMessage.value).toBe("");
     expect(capability.shieldPolicyMode.value).toBe("Convertible");
+    expect(capability.shieldCapabilityReady.value).toBe(true);
+    expect(capability.shieldResolvedAssetId.value).toBe("xst#wonderland");
     expect(shielded.value).toBe(true);
   });
 });

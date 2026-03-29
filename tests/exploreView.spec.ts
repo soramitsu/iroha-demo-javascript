@@ -162,4 +162,17 @@ describe("ExploreView", () => {
     expect(session.connection.networkPrefix).toBe(369);
     expect(sessionSnapshot().connection.networkPrefix).toBe(369);
   });
+
+  it("keeps metrics visible when explorer qr is temporarily unavailable", async () => {
+    getExplorerAccountQrMock.mockResolvedValueOnce(null);
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Block Height");
+    expect(wrapper.text()).toContain("1");
+    expect(wrapper.text()).toContain(
+      "No QR yet. Connect to Torii and choose a wallet.",
+    );
+  });
 });

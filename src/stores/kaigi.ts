@@ -47,12 +47,8 @@ const normalizeHostSession = (
   const meetingCode = trimString(value.meetingCode);
   const inviteSecretBase64Url = trimString(value.inviteSecretBase64Url);
   const hostKaigiKeys = asRecord(value.hostKaigiKeys);
-  const publicKeyBase64Url = trimString(
-    hostKaigiKeys?.publicKeyBase64Url,
-  );
-  const privateKeyBase64Url = trimString(
-    hostKaigiKeys?.privateKeyBase64Url,
-  );
+  const publicKeyBase64Url = trimString(hostKaigiKeys?.publicKeyBase64Url);
+  const privateKeyBase64Url = trimString(hostKaigiKeys?.privateKeyBase64Url);
   const createdAtMs = Number(value.createdAtMs);
   const scheduledStartMs = Number(value.scheduledStartMs);
   const expiresAtMs = Number(value.expiresAtMs);
@@ -84,16 +80,21 @@ const normalizeHostSession = (
     ...(trimString(value.title) ? { title: trimString(value.title) } : {}),
     live: value.live !== false,
     privacyMode:
-      String(value.privacyMode ?? "").trim().toLowerCase() === "transparent"
+      String(value.privacyMode ?? "")
+        .trim()
+        .toLowerCase() === "transparent"
         ? "transparent"
         : "private",
     peerIdentityReveal:
-      String(value.peerIdentityReveal ?? "").trim().toLowerCase() ===
-        "revealafterjoin" ||
-      String(value.peerIdentityReveal ?? "").trim().toLowerCase() ===
-        "reveal_after_join" ||
-      String(value.peerIdentityReveal ?? "").trim().toLowerCase() ===
-        "reveal-after-join"
+      String(value.peerIdentityReveal ?? "")
+        .trim()
+        .toLowerCase() === "revealafterjoin" ||
+      String(value.peerIdentityReveal ?? "")
+        .trim()
+        .toLowerCase() === "reveal_after_join" ||
+      String(value.peerIdentityReveal ?? "")
+        .trim()
+        .toLowerCase() === "reveal-after-join"
         ? "RevealAfterJoin"
         : "Hidden",
   };
@@ -113,17 +114,15 @@ export const useKaigiStore = defineStore("kaigi", {
           const hostSessions = Array.isArray(parsed.hostSessions)
             ? parsed.hostSessions
                 .map((entry) =>
-                  entry &&
-                  typeof entry === "object" &&
-                  !Array.isArray(entry)
+                  entry && typeof entry === "object" && !Array.isArray(entry)
                     ? normalizeHostSession(
                         entry as Partial<KaigiHostSessionRecord> &
                           Record<string, unknown>,
                       )
                     : null,
                 )
-                .filter(
-                  (entry): entry is KaigiHostSessionRecord => Boolean(entry),
+                .filter((entry): entry is KaigiHostSessionRecord =>
+                  Boolean(entry),
                 )
             : [];
           this.$patch({

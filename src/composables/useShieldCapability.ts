@@ -25,20 +25,25 @@ export const useShieldCapability = ({
   shielded,
   translate = fallbackTranslate,
 }: UseShieldCapabilityInput) => {
+  const shieldCapabilityReady = ref(false);
   const shieldSupported = ref(true);
   const shieldCapabilityMessage = ref("");
   const shieldPolicyMode = ref("");
+  const shieldResolvedAssetId = ref("");
   let refreshRevision = 0;
 
   const refreshShieldCapability = async () => {
     const revision = ++refreshRevision;
+    shieldCapabilityReady.value = false;
     shieldPolicyMode.value = "";
     shieldCapabilityMessage.value = "";
+    shieldResolvedAssetId.value = "";
     shieldSupported.value = true;
 
     const normalizedToriiUrl = toriiUrl.value.trim();
     const normalizedAssetDefinitionId = assetDefinitionId.value.trim();
     if (!normalizedToriiUrl || !normalizedAssetDefinitionId) {
+      shieldCapabilityReady.value = true;
       return;
     }
 
@@ -50,8 +55,11 @@ export const useShieldCapability = ({
       if (revision !== refreshRevision) {
         return;
       }
+      shieldResolvedAssetId.value =
+        String(policy.asset_id ?? "").trim() || normalizedAssetDefinitionId;
       const effectiveMode = policy.effective_mode || policy.current_mode;
       shieldPolicyMode.value = effectiveMode;
+      shieldCapabilityReady.value = true;
       if (!confidentialModeSupportsShield(effectiveMode)) {
         shieldSupported.value = false;
         shielded.value = false;
@@ -64,6 +72,7 @@ export const useShieldCapability = ({
       if (revision !== refreshRevision) {
         return;
       }
+      shieldCapabilityReady.value = true;
       shieldSupported.value = true;
       shieldCapabilityMessage.value =
         error instanceof Error
@@ -86,9 +95,11 @@ export const useShieldCapability = ({
   );
 
   return {
+    shieldCapabilityReady,
     shieldSupported,
     shieldCapabilityMessage,
     shieldPolicyMode,
+    shieldResolvedAssetId,
     refreshShieldCapability,
   };
 };

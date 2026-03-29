@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
-import {
-  KAIGI_STORAGE_KEY,
-  useKaigiStore,
-} from "@/stores/kaigi";
+import { KAIGI_STORAGE_KEY, useKaigiStore } from "@/stores/kaigi";
 
 describe("kaigi store", () => {
   beforeEach(() => {
@@ -40,7 +37,10 @@ describe("kaigi store", () => {
       "wonderland:kaigi-room",
     );
     expect(
-      restored.findLatestActiveHostSession("alice@wonderland", 1_700_000_000_001),
+      restored.findLatestActiveHostSession(
+        "alice@wonderland",
+        1_700_000_000_001,
+      ),
     )?.toMatchObject({
       meetingCode: "room",
       privacyMode: "private",

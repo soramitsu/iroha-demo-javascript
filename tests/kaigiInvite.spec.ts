@@ -45,10 +45,16 @@ describe("Kaigi invite helpers", () => {
 
   it("extracts legacy invite tokens from deep links and hash routes", () => {
     const token = encodeKaigiInvitePayload(invite);
-    expect(extractKaigiInviteToken(buildKaigiInviteDeepLink(token))).toBe(token);
-    expect(extractKaigiInviteToken(buildKaigiInviteHashRoute(token))).toBe(token);
+    expect(extractKaigiInviteToken(buildKaigiInviteDeepLink(token))).toBe(
+      token,
+    );
+    expect(extractKaigiInviteToken(buildKaigiInviteHashRoute(token))).toBe(
+      token,
+    );
     expect(
-      extractKaigiInviteToken(`https://example.invalid/#/kaigi?invite=${token}`),
+      extractKaigiInviteToken(
+        `https://example.invalid/#/kaigi?invite=${token}`,
+      ),
     ).toBe(token);
   });
 

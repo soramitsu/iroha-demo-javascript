@@ -319,6 +319,20 @@
       >
         {{ t("Shield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
       </p>
+      <p
+        v-else-if="
+          !onlineForm.shielded &&
+          onlineShieldSupported &&
+          onlineShieldPolicyMode
+        "
+        class="helper"
+      >
+        {{
+          t(
+            "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+          )
+        }}
+      </p>
       <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
     </section>
 
@@ -812,6 +826,9 @@ const moveToOnline = async () => {
       metadata: onlineForm.memo ? { memo: onlineForm.memo } : undefined,
       shielded: onlineForm.shielded,
     });
+    if (onlineForm.shielded) {
+      session.updateActiveAccount({ localOnly: false });
+    }
     moveMessage.value = onlineForm.shielded
       ? t("Shield transfer submitted and offline balance updated.")
       : t("Transfer submitted and offline balance updated.");

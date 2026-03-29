@@ -197,10 +197,7 @@
             <span class="pill" :class="{ positive: session.hasAccount }">
               {{ session.hasAccount ? t("Account saved") : t("Account Setup") }}
             </span>
-            <span
-              v-if="activeAccountLabel"
-              class="pill workspace-account"
-            >
+            <span v-if="activeAccountLabel" class="pill workspace-account">
               {{ activeAccountLabel }}
             </span>
           </div>

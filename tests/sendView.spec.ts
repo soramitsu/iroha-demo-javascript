@@ -140,6 +140,25 @@ describe("SendView", () => {
     expect(wrapper.text()).not.toContain(t("Shield transaction submitted:"));
   });
 
+  it("shows an unshielded transparency note while shielding stays optional", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t(
+        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+      ),
+    );
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+
+    expect(wrapper.text()).not.toContain(
+      t(
+        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+      ),
+    );
+  });
+
   it("trims transparent destination before submit", async () => {
     transferAssetMock.mockResolvedValue({ hash: "0xdef" });
     const wrapper = mountView();

@@ -15,6 +15,75 @@
         <p class="wallet-balance-value">{{ primaryAssetQuantity }}</p>
         <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
       </div>
+      <div class="wallet-shield-panel">
+        <div class="wallet-shield-summary">
+          <div>
+            <p class="wallet-balance-label">{{ t("Shielded balance") }}</p>
+            <p class="wallet-shield-asset">
+              {{ shieldedXorAssetLabel }}
+            </p>
+          </div>
+          <div class="wallet-shield-kpis">
+            <div class="kv">
+              <span class="kv-label">{{ t("Transparent balance") }}</span>
+              <span class="kv-value">{{ transparentXorBalance }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Shielded balance") }}</span>
+              <span class="kv-value">{{ shieldedXorBalanceDisplay }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="wallet-shield-actions">
+          <label class="wallet-shield-input">
+            <span>{{ t("Amount") }}</span>
+            <input
+              v-model="shieldForm.quantity"
+              type="number"
+              min="0"
+              step="1"
+            />
+          </label>
+          <button
+            class="secondary"
+            :disabled="shieldLoading || !canCreateShieldedXor"
+            @click="createShieldedXor"
+          >
+            {{
+              shieldLoading ? t("Submitting…") : t("Create shielded balance")
+            }}
+          </button>
+        </div>
+        <p
+          v-if="shieldedXorCapabilityMessage"
+          class="helper wallet-shield-note"
+        >
+          {{ shieldedXorCapabilityMessage }}
+        </p>
+        <p v-else-if="shieldedXorPolicyMode" class="helper wallet-shield-note">
+          {{
+            t("Shield policy mode: {mode}.", {
+              mode: shieldedXorPolicyMode,
+            })
+          }}
+        </p>
+        <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
+          {{
+            t(
+              "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
+            )
+          }}
+        </p>
+        <p v-if="shieldMessage" class="wallet-faucet-message">
+          {{ shieldMessage }}
+        </p>
+        <p
+          v-else-if="shieldError"
+          class="wallet-faucet-message wallet-faucet-error"
+        >
+          {{ shieldError }}
+        </p>
+      </div>
       <div class="wallet-quick-actions">
         <a class="secondary wallet-action-link" href="#/receive">
           {{ t("Receive Points") }}
@@ -143,10 +212,7 @@
       </div>
     </section>
 
-    <div
-      v-if="faucetLoading"
-      class="wallet-faucet-modal-backdrop"
-    >
+    <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
       <div
         class="card wallet-faucet-modal"
         role="status"
@@ -161,7 +227,10 @@
         <h2 id="wallet-faucet-modal-title" class="wallet-faucet-modal-title">
           {{ faucetStatusMessage }}
         </h2>
-        <p id="wallet-faucet-modal-detail" class="helper wallet-faucet-modal-detail">
+        <p
+          id="wallet-faucet-modal-detail"
+          class="helper wallet-faucet-modal-detail"
+        >
           {{ faucetStatusDetail }}
         </p>
       </div>
@@ -170,13 +239,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, reactive, ref, toRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   fetchAccountAssets,
   fetchAccountTransactions,
   requestFaucetFunds,
+  transferAsset,
 } from "@/services/iroha";
+import { useShieldCapability } from "@/composables/useShieldCapability";
 import { useSessionStore } from "@/stores/session";
 import type {
   AccountAssetsResponse,
@@ -187,15 +258,44 @@ import {
   extractTransferInsight,
   type AccountTransactionLike,
 } from "@/utils/transactions";
+import {
+  deriveOnChainShieldedBalance,
+  isPositiveWholeAmount,
+} from "@/utils/confidential";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
+
+const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
+const ACCOUNT_TRANSACTION_PAGE_SIZE = 200;
+const WALLET_TRANSACTION_DISPLAY_LIMIT = 25;
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const { localeStore, t } = useAppI18n();
-const visibleAccountId = computed(() => getPublicAccountId(activeAccount.value));
+const visibleAccountId = computed(() =>
+  getPublicAccountId(activeAccount.value),
+);
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(activeAccount.value, t("—")),
 );
+const shieldForm = reactive({
+  quantity: "0",
+});
+const shieldLoading = ref(false);
+const shieldMessage = ref("");
+const shieldError = ref("");
+const walletShieldEnabled = ref(true);
+const {
+  shieldCapabilityReady: shieldedXorCapabilityReady,
+  shieldSupported: shieldedXorSupported,
+  shieldCapabilityMessage: shieldedXorCapabilityMessage,
+  shieldPolicyMode: shieldedXorPolicyMode,
+  shieldResolvedAssetId: shieldedXorResolvedAssetId,
+} = useShieldCapability({
+  toriiUrl: toRef(session.connection, "toriiUrl"),
+  assetDefinitionId: computed(() => SHIELDED_XOR_ASSET_DEFINITION_ID),
+  shielded: walletShieldEnabled,
+  translate: t,
+});
 
 type AccountTx = AccountTransactionsResponse["items"][number] &
   AccountTransactionLike & {
@@ -266,6 +366,36 @@ const faucetStatusDetail = computed(() =>
     : t("Your TAIRA faucet request is in flight. This can take a few seconds."),
 );
 
+const fetchAllAccountTransactions = async (input: {
+  toriiUrl: string;
+  accountId: string;
+}): Promise<AccountTx[]> => {
+  const items: AccountTx[] = [];
+  let offset = 0;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (offset < total) {
+    const response = await fetchAccountTransactions({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      limit: ACCOUNT_TRANSACTION_PAGE_SIZE,
+      offset,
+    });
+    const pageItems = (response.items ?? []) as AccountTx[];
+    items.push(...pageItems);
+    total = Number(response.total ?? items.length);
+    offset += pageItems.length;
+    if (
+      pageItems.length === 0 ||
+      pageItems.length < ACCOUNT_TRANSACTION_PAGE_SIZE
+    ) {
+      break;
+    }
+  }
+
+  return items;
+};
+
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = activeAccount.value?.accountId;
@@ -280,16 +410,15 @@ const refresh = async () => {
   loading.value = true;
   walletError.value = "";
   try {
-    const [{ items: assetItems }, { items: txItems }] = await Promise.all([
+    const [{ items: assetItems }, txItems] = await Promise.all([
       fetchAccountAssets({
         toriiUrl,
         accountId,
         limit: 50,
       }),
-      fetchAccountTransactions({
+      fetchAllAccountTransactions({
         toriiUrl,
         accountId,
-        limit: 25,
       }),
     ]);
     if (
@@ -341,11 +470,7 @@ const waitFor = (delayMs: number) =>
 const refreshAfterFaucetClaim = async (assetId: string) => {
   const normalizedAssetId = assetId.trim().toLowerCase();
   faucetStatusPhase.value = "refreshingWallet";
-  for (
-    let attempt = 1;
-    attempt <= FAUCET_REFRESH_MAX_ATTEMPTS;
-    attempt += 1
-  ) {
+  for (let attempt = 1; attempt <= FAUCET_REFRESH_MAX_ATTEMPTS; attempt += 1) {
     await refresh();
     if (
       assets.value.some(
@@ -373,12 +498,15 @@ const requestStarterFunds = async () => {
   faucetError.value = "";
   faucetStatusPhase.value = "requestingPuzzle";
   try {
-    const result = await requestFaucetFunds({
-      toriiUrl,
-      accountId,
-    }, (progress) => {
-      faucetStatusPhase.value = progress.phase;
-    });
+    const result = await requestFaucetFunds(
+      {
+        toriiUrl,
+        accountId,
+      },
+      (progress) => {
+        faucetStatusPhase.value = progress.phase;
+      },
+    );
     if (shouldConfigureAsset) {
       session.updateConnection({
         assetDefinitionId:
@@ -432,9 +560,73 @@ const primaryAssetLabel = computed(() => {
 const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
 );
+const shieldedXorTrackedAssetIds = computed(() => {
+  const seen = new Set<string>();
+  return [SHIELDED_XOR_ASSET_DEFINITION_ID, shieldedXorResolvedAssetId.value]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => {
+      const normalized = value.toLowerCase();
+      if (!normalized || seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+});
+const shieldedXorAssetLabel = computed(
+  () => shieldedXorResolvedAssetId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+);
+const transparentXorAsset = computed(() => {
+  const targets = shieldedXorTrackedAssetIds.value.map((value) =>
+    value.toLowerCase(),
+  );
+  if (!targets.length) {
+    return null;
+  }
+  return (
+    assets.value.find((asset) => {
+      const assetId = asset.asset_id.toLowerCase();
+      return targets.some(
+        (target) =>
+          assetId === target ||
+          assetId.startsWith(`${target}##`) ||
+          assetId.includes(target),
+      );
+    }) ?? null
+  );
+});
+const transparentXorBalance = computed(
+  () => transparentXorAsset.value?.quantity ?? "0",
+);
+const shieldedXorBalanceResult = computed(() =>
+  deriveOnChainShieldedBalance(transactionsRaw.value, {
+    assetDefinitionIds: shieldedXorTrackedAssetIds.value,
+    accountIds: [
+      activeAccount.value?.accountId,
+      activeAccount.value?.i105AccountId,
+      activeAccount.value?.i105DefaultAccountId,
+    ],
+  }),
+);
+const shieldedXorBalanceExact = computed(
+  () => shieldedXorBalanceResult.value.exact,
+);
+const shieldedXorBalanceDisplay = computed(
+  () => shieldedXorBalanceResult.value.quantity ?? t("—"),
+);
+const canCreateShieldedXor = computed(() =>
+  Boolean(
+    session.hasAccount &&
+      session.connection.toriiUrl &&
+      activeAccount.value &&
+      shieldedXorCapabilityReady.value &&
+      shieldedXorSupported.value &&
+      isPositiveWholeAmount(shieldForm.quantity),
+  ),
+);
 
 const transactions = computed<TransactionView[]>(() =>
-  transactionsRaw.value.map((tx) => {
+  transactionsRaw.value.slice(0, WALLET_TRANSACTION_DISPLAY_LIMIT).map((tx) => {
     const insight = extractTransferInsight(
       tx,
       activeAccount.value?.accountId ?? "",
@@ -448,9 +640,58 @@ const transactions = computed<TransactionView[]>(() =>
   }),
 );
 
+const createShieldedXor = async () => {
+  if (!session.connection.toriiUrl || !activeAccount.value) {
+    shieldError.value = t("Configure Torii + account first.");
+    shieldMessage.value = "";
+    return;
+  }
+  if (!shieldedXorSupported.value) {
+    shieldError.value =
+      shieldedXorCapabilityMessage.value || t("Shield mode is unavailable.");
+    shieldMessage.value = "";
+    return;
+  }
+  const amount = String(shieldForm.quantity).trim();
+  if (!isPositiveWholeAmount(amount)) {
+    shieldError.value = t("Enter a whole-number shield amount.");
+    shieldMessage.value = "";
+    return;
+  }
+  shieldLoading.value = true;
+  shieldMessage.value = "";
+  shieldError.value = "";
+  try {
+    const result = await transferAsset({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      assetDefinitionId: shieldedXorAssetLabel.value,
+      accountId: activeAccount.value.accountId,
+      destinationAccountId:
+        visibleAccountId.value || activeAccount.value.accountId,
+      quantity: amount,
+      privateKeyHex: activeAccount.value.privateKeyHex,
+      shielded: true,
+    });
+    session.updateActiveAccount({ localOnly: false });
+    shieldForm.quantity = "0";
+    shieldMessage.value = t("Shield transaction submitted: {hash}", {
+      hash: result.hash,
+    });
+    await refresh();
+  } catch (error) {
+    shieldError.value =
+      error instanceof Error ? error.message : t("Shield mode is unavailable.");
+  } finally {
+    shieldLoading.value = false;
+  }
+};
+
 watch(
   [() => session.connection.toriiUrl, () => activeAccount.value?.accountId],
   () => {
+    shieldMessage.value = "";
+    shieldError.value = "";
     refresh();
   },
   { immediate: true },
@@ -517,6 +758,65 @@ watch(
   gap: 12px;
   flex-wrap: wrap;
   margin-top: 16px;
+}
+
+.wallet-shield-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 18px 20px;
+  border-radius: 22px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(145deg, var(--glass-veil), transparent 78%),
+    linear-gradient(135deg, rgba(255, 198, 112, 0.16), transparent 55%),
+    var(--surface-soft);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--shadow-soft);
+}
+
+.wallet-shield-summary {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.wallet-shield-asset {
+  margin: 4px 0 0;
+  font-weight: 600;
+  word-break: break-word;
+  unicode-bidi: plaintext;
+}
+
+.wallet-shield-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 12px;
+  flex: 1 1 260px;
+}
+
+.wallet-shield-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+
+.wallet-shield-input {
+  display: grid;
+  gap: 6px;
+  flex: 1 1 200px;
+}
+
+.wallet-shield-input input {
+  width: 100%;
+}
+
+.wallet-shield-note {
+  margin: 0;
 }
 
 .wallet-action-link {
@@ -601,7 +901,8 @@ watch(
   border-radius: 999px;
   border: 3px solid color-mix(in srgb, var(--glass-border) 88%, transparent);
   border-top-color: var(--accent-primary);
-  box-shadow: 0 0 24px color-mix(in srgb, var(--accent-primary) 24%, transparent);
+  box-shadow: 0 0 24px
+    color-mix(in srgb, var(--accent-primary) 24%, transparent);
   animation: wallet-faucet-spin 0.85s linear infinite;
 }
 
