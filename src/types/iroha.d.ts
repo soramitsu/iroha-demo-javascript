@@ -135,6 +135,30 @@ export interface ConnectPreview {
   appPrivateKeyHex: string;
 }
 
+export interface KaigiSignalKeyPair {
+  publicKeyBase64Url: string;
+  privateKeyBase64Url: string;
+}
+
+export interface KaigiAnswerDescription {
+  type: "answer";
+  sdp: string;
+}
+
+export interface KaigiMeetingSignalRecord {
+  entrypointHash: string;
+  authority: string;
+  timestampMs?: number;
+  callId: string;
+  participantAccountId: string;
+  participantId: string;
+  participantName: string;
+  walletIdentity?: string;
+  roomId?: string;
+  createdAtMs: number;
+  answerDescription: KaigiAnswerDescription;
+}
+
 export interface ConfidentialPolicyTransitionView {
   transition_id: string;
   previous_mode: string;
@@ -310,6 +334,7 @@ export interface GovernanceDraftResponse {
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
+  generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
@@ -440,6 +465,46 @@ export interface IrohaBridge {
   }, onProgress?: (
     progress: FaucetRequestProgress,
   ) => void | Promise<void>): Promise<AccountFaucetResponse>;
+  createKaigiMeeting(input: {
+    toriiUrl: string;
+    chainId: string;
+    hostAccountId: string;
+    privateKeyHex: string;
+    callId: string;
+    title?: string;
+    scheduledStartMs: number;
+  }): Promise<{ hash: string }>;
+  joinKaigiMeeting(input: {
+    toriiUrl: string;
+    chainId: string;
+    participantAccountId: string;
+    privateKeyHex: string;
+    callId: string;
+    hostAccountId: string;
+    hostKaigiPublicKeyBase64Url: string;
+    participantId: string;
+    participantName: string;
+    walletIdentity?: string;
+    roomId?: string;
+    answerDescription: KaigiAnswerDescription;
+  }): Promise<{ hash: string }>;
+  pollKaigiMeetingSignals(input: {
+    toriiUrl: string;
+    accountId: string;
+    callId: string;
+    hostKaigiKeys: KaigiSignalKeyPair;
+    afterTimestampMs?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<KaigiMeetingSignalRecord[]>;
+  endKaigiMeeting(input: {
+    toriiUrl: string;
+    chainId: string;
+    hostAccountId: string;
+    privateKeyHex: string;
+    callId: string;
+    endedAtMs?: number;
+  }): Promise<{ hash: string }>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;

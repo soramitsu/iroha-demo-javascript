@@ -86,7 +86,7 @@ const routes = [
     component: KaigiView,
     meta: {
       titleKey: "Kaigi Calls",
-      subtitleKey: "Direct audio/video room with manual signaling",
+      subtitleKey: "Meeting links and direct audio/video room",
     },
   },
   {
