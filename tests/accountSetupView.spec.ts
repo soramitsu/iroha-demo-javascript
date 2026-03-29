@@ -8,6 +8,10 @@ import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const EXAMPLE_REAL_I105_ACCOUNT_ID =
   "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
+const VALID_MNEMONIC =
+  "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const VALID_MNEMONIC_PRIVATE_KEY_HEX =
+  "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1";
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -61,7 +65,17 @@ describe("AccountSetupView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (options?: { withSavedAccount?: boolean }) => {
+  const mountView = (options?: {
+    withSavedAccount?: boolean;
+    savedAccount?: {
+      displayName?: string;
+      domain?: string;
+      accountId?: string;
+      publicKeyHex?: string;
+      privateKeyHex?: string;
+      localOnly?: boolean;
+    };
+  }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -70,18 +84,19 @@ describe("AccountSetupView", () => {
         ...TAIRA_CHAIN_PRESET.connection,
       },
     });
-    if (options?.withSavedAccount) {
+    if (options?.withSavedAccount || options?.savedAccount) {
+      const savedAccount = {
+        displayName: "Alice",
+        domain: "wonderland",
+        accountId: "alice@wonderland",
+        publicKeyHex: "ab".repeat(32),
+        privateKeyHex: "cd".repeat(32),
+        localOnly: false,
+        ...options?.savedAccount,
+      };
       session.$patch({
-        accounts: [
-          {
-            displayName: "Alice",
-            domain: "wonderland",
-            accountId: "alice@wonderland",
-            publicKeyHex: "ab".repeat(32),
-            privateKeyHex: "cd".repeat(32),
-          },
-        ],
-        activeAccountId: "alice@wonderland",
+        accounts: [savedAccount],
+        activeAccountId: savedAccount.accountId,
       });
     }
     return mount(AccountSetupView, {
@@ -280,6 +295,72 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
+  it("restores a wallet from a recovery phrase without re-registering it", async () => {
+    const wrapper = mountView();
+    const session = useSessionStore();
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    const textarea = wrapper.find("textarea");
+    expect(textarea.exists()).toBe(true);
+    await textarea.setValue(VALID_MNEMONIC);
+
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+
+    expect(derivePublicKeyMock).toHaveBeenCalledWith(
+      VALID_MNEMONIC_PRIVATE_KEY_HEX,
+    );
+    expect(wrapper.text()).not.toContain(t("Download backup"));
+
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    expect(onboardAccountMock).not.toHaveBeenCalled();
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBe("alice@default");
+    expect(session.activeAccount?.privateKeyHex).toBe(
+      VALID_MNEMONIC_PRIVATE_KEY_HEX,
+    );
+    expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("validates restore phrases before deriving or saving", async () => {
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain(t("Enter a recovery phrase."));
+    expect(derivePublicKeyMock).not.toHaveBeenCalled();
+
+    const textarea = wrapper.find("textarea");
+    await textarea.setValue("one two three");
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain(
+      t("Recovery phrase must contain 12 or 24 words."),
+    );
+    expect(derivePublicKeyMock).not.toHaveBeenCalled();
+
+    await textarea.setValue(
+      "invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid invalid",
+    );
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(t("Invalid recovery phrase"));
+    expect(derivePublicKeyMock).not.toHaveBeenCalled();
+    expect(useSessionStore().hasAccount).toBe(false);
+  });
+
   it("falls back to a local wallet when UAID onboarding is disabled", async () => {
     onboardAccountMock.mockRejectedValueOnce(
       new Error(
@@ -344,5 +425,42 @@ describe("AccountSetupView", () => {
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
     expect(session.activeAccount?.localOnly).toBe(false);
+  });
+
+  it("restores from the saved-wallet layout and updates an existing account entry", async () => {
+    const wrapper = mountView({
+      savedAccount: {
+        displayName: "Existing Alice",
+        domain: "default",
+        accountId: "alice@default",
+        publicKeyHex: "11".repeat(32),
+        privateKeyHex: "22".repeat(32),
+        localOnly: false,
+      },
+    });
+    const session = useSessionStore();
+
+    expect(session.accounts).toHaveLength(1);
+
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    const textarea = wrapper.find("textarea");
+    await textarea.setValue(VALID_MNEMONIC);
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    expect(onboardAccountMock).not.toHaveBeenCalled();
+    expect(session.accounts).toHaveLength(1);
+    expect(session.activeAccountId).toBe("alice@default");
+    expect(session.activeAccount?.displayName).toBe("");
+    expect(session.activeAccount?.privateKeyHex).toBe(
+      VALID_MNEMONIC_PRIVATE_KEY_HEX,
+    );
+    expect(session.activeAccount?.localOnly).toBe(true);
   });
 });

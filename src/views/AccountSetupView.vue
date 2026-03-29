@@ -4,13 +4,7 @@
       <div class="account-wizard-copy">
         <p class="section-label">{{ t("Account Setup") }}</p>
         <h2>{{ t("TAIRA Testnet Account") }}</h2>
-        <p class="helper">
-          {{
-            t(
-              "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
-            )
-          }}
-        </p>
+        <p class="helper">{{ accountSetupHelperText }}</p>
       </div>
       <div class="account-wizard-chips">
         <span class="pill positive">{{ t("TAIRA locked") }}</span>
@@ -74,7 +68,10 @@
         >
           <header class="card-header">
             <div>
-              <h2>{{ t("Generate recovery phrase") }}</h2>
+              <h2>{{ identityStageTitle }}</h2>
+              <p v-if="identityStageHelperText" class="helper">
+                {{ identityStageHelperText }}
+              </p>
             </div>
           </header>
           <div class="form-grid wizard-form-grid">
@@ -86,7 +83,7 @@
               {{ t("Domain") }}
               <input v-model.trim="domainInput" :placeholder="t('default')" />
             </label>
-            <label class="wizard-field-compact">
+            <label v-if="!isRestoreMode" class="wizard-field-compact">
               {{ t("Recovery Phrase Length") }}
               <select v-model.number="wordCount">
                 <option :value="12">{{ t("12 words") }}</option>
@@ -105,13 +102,36 @@
             }}
           </p>
           <div class="actions">
-            <button :disabled="generating" @click="generateRecovery">
+            <button
+              v-if="!isRestoreMode"
+              :disabled="generating || restoring"
+              @click="generateRecovery"
+            >
               {{
                 generating ? t("Generating…") : t("Generate recovery phrase")
               }}
             </button>
             <button
-              v-if="generatedKeys || mnemonicWords.length"
+              v-else
+              class="secondary"
+              :disabled="generating || restoring"
+              @click="startNewRegistration"
+            >
+              {{ t("Create recovery phrase") }}
+            </button>
+            <button
+              class="secondary"
+              :disabled="generating || restoring || onboardingBusy"
+              @click="toggleRestorePanel"
+            >
+              {{
+                showRestorePanel
+                  ? t("Hide restore")
+                  : t("Restore from recovery phrase")
+              }}
+            </button>
+            <button
+              v-if="hasPendingSetupState"
               class="secondary"
               @click="startNewRegistration"
             >
@@ -119,10 +139,22 @@
             </button>
           </div>
           <p v-if="generateError" class="helper error">{{ generateError }}</p>
+          <div v-if="showRestorePanel" class="backup-panel restore-panel">
+            <label>
+              {{ t("Recovery Phrase") }}
+              <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
+            </label>
+            <div class="actions">
+              <button :disabled="restoring" @click="restoreRecovery">
+                {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
+              </button>
+            </div>
+            <p v-if="restoreError" class="helper error">{{ restoreError }}</p>
+          </div>
         </section>
 
         <section
-          v-if="mnemonicWords.length"
+          v-if="showBackupPanel"
           class="card wizard-stage"
           :class="{
             current: onboardingStage === 'backup',
@@ -170,7 +202,7 @@
         >
           <header class="card-header">
             <div>
-              <h2>{{ t("Save identity") }}</h2>
+              <h2>{{ finalizeIdentityLabel }}</h2>
             </div>
           </header>
           <div class="wizard-review-grid">
@@ -198,9 +230,10 @@
               :disabled="!canSaveGenerated || onboardingBusy"
               @click="saveGeneratedIdentity"
             >
-              {{ t("Save identity") }}
+              {{ finalizeIdentityLabel }}
             </button>
             <button
+              v-if="!isRestoreMode"
               class="secondary"
               :disabled="onboardingBusy"
               @click="showAliasRegistration = !showAliasRegistration"
@@ -212,7 +245,7 @@
             </button>
           </div>
           <div
-            v-if="showAliasRegistration"
+            v-if="showAliasRegistration && !isRestoreMode"
             class="backup-panel account-advanced-panel"
           >
             <p class="section-label">
@@ -256,13 +289,7 @@
       <header class="card-header">
         <div>
           <h2>{{ t("TAIRA Testnet Account") }}</h2>
-          <p class="helper">
-            {{
-              t(
-                "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
-              )
-            }}
-          </p>
+          <p class="helper">{{ accountSetupHelperText }}</p>
         </div>
       </header>
 
@@ -275,7 +302,7 @@
           {{ t("Domain") }}
           <input v-model.trim="domainInput" :placeholder="t('default')" />
         </label>
-        <label class="wizard-field-compact">
+        <label v-if="!isRestoreMode" class="wizard-field-compact">
           {{ t("Recovery Phrase Length") }}
           <select v-model.number="wordCount">
             <option :value="12">{{ t("12 words") }}</option>
@@ -296,17 +323,41 @@
       </div>
 
       <div class="actions">
-        <button :disabled="generating" @click="generateRecovery">
+        <button
+          v-if="!isRestoreMode"
+          :disabled="generating || restoring"
+          @click="generateRecovery"
+        >
           {{ generating ? t("Generating…") : t("Generate recovery phrase") }}
+        </button>
+        <button
+          v-else
+          class="secondary"
+          :disabled="generating || restoring"
+          @click="startNewRegistration"
+        >
+          {{ t("Create recovery phrase") }}
+        </button>
+        <button
+          class="secondary"
+          :disabled="generating || restoring || onboardingBusy"
+          @click="toggleRestorePanel"
+        >
+          {{
+            showRestorePanel
+              ? t("Hide restore")
+              : t("Restore from recovery phrase")
+          }}
         </button>
         <button
           class="secondary"
           :disabled="!canSaveGenerated || onboardingBusy"
           @click="saveGeneratedIdentity"
         >
-          {{ t("Save identity") }}
+          {{ finalizeIdentityLabel }}
         </button>
         <button
+          v-if="!isRestoreMode"
           class="secondary"
           :disabled="onboardingBusy"
           @click="showAliasRegistration = !showAliasRegistration"
@@ -314,7 +365,7 @@
           {{ showAliasRegistration ? t("Hide advanced") : t("Advanced") }}
         </button>
         <button
-          v-if="generatedKeys || mnemonicWords.length"
+          v-if="hasPendingSetupState"
           class="secondary"
           @click="startNewRegistration"
         >
@@ -322,12 +373,29 @@
         </button>
       </div>
       <p v-if="generateError" class="helper error">{{ generateError }}</p>
+      <div v-if="showRestorePanel" class="backup-panel restore-panel">
+        <label>
+          {{ t("Recovery Phrase") }}
+          <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
+        </label>
+        <div class="actions">
+          <button :disabled="restoring" @click="restoreRecovery">
+            {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
+          </button>
+        </div>
+        <p v-if="restoreError" class="helper error">{{ restoreError }}</p>
+      </div>
       <p v-if="onboardingError" class="helper error">{{ onboardingError }}</p>
       <p v-if="onboardingStatus" class="helper success">
         {{ onboardingStatus }}
       </p>
       <div
-        v-if="showAliasRegistration && generatedKeys && backupConfirmed"
+        v-if="
+          showAliasRegistration &&
+          generatedKeys &&
+          backupConfirmed &&
+          !isRestoreMode
+        "
         class="backup-panel account-advanced-panel"
       >
         <p class="section-label">
@@ -356,7 +424,7 @@
         </div>
       </div>
 
-      <div v-if="mnemonicWords.length" class="backup-panel">
+      <div v-if="showBackupPanel" class="backup-panel">
         <p class="helper">
           {{ t("Write these words down in order. They restore your wallet.") }}
         </p>
@@ -569,15 +637,43 @@ const generatedKeys = ref<{
   privateKeyHex: string;
   publicKeyHex: string;
 } | null>(null);
+const restorePhraseInput = ref("");
 const backupConfirmed = ref(false);
+const showRestorePanel = ref(false);
 const showAliasRegistration = ref(false);
+const accountFlowMode = ref<"generate" | "restore">("generate");
 const generating = ref(false);
+const restoring = ref(false);
 const generateError = ref("");
+const restoreError = ref("");
 const onboardingError = ref("");
 const onboardingStatus = ref("");
 const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const isFirstLaunch = computed(() => !hasSavedAccounts.value);
+const isRestoreMode = computed(() => accountFlowMode.value === "restore");
+const accountSetupHelperText = computed(() =>
+  isRestoreMode.value
+    ? t("Restore your wallet from a recovery phrase and save it locally.")
+    : t(
+        "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
+      ),
+);
+const identityStageTitle = computed(() =>
+  isRestoreMode.value
+    ? t("Restore from recovery phrase")
+    : t("Generate recovery phrase"),
+);
+const identityStageHelperText = computed(() =>
+  isRestoreMode.value
+    ? t(
+        "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.",
+      )
+    : "",
+);
+const finalizeIdentityLabel = computed(() =>
+  isRestoreMode.value ? t("Restore wallet") : t("Save identity"),
+);
 const normalizedDomain = computed(
   () => domainInput.value.trim() || DEFAULT_DOMAIN_LABEL,
 );
@@ -613,52 +709,87 @@ const onboardingStage = computed<"identity" | "backup" | "register">(() => {
   }
   return "register";
 });
+const recoveryStepLabel = computed(() =>
+  isRestoreMode.value
+    ? t("Recovery phrase confirmed")
+    : t("Recovery phrase saved"),
+);
 const onboardingSteps = computed(() => [
   {
     step: "01",
-    label: t("Generate recovery phrase"),
+    label: identityStageTitle.value,
     done: Boolean(generatedKeys.value),
     current: onboardingStage.value === "identity",
   },
   {
     step: "02",
-    label: t("Recovery phrase saved"),
+    label: recoveryStepLabel.value,
     done: backupConfirmed.value,
     current: onboardingStage.value === "backup",
   },
   {
     step: "03",
-    label: t("Save identity"),
+    label: finalizeIdentityLabel.value,
     done: Boolean(onboardingStatus.value || session.hasAccount),
     current: onboardingStage.value === "register",
   },
 ]);
+const showBackupPanel = computed(
+  () => mnemonicWords.value.length > 0 && !isRestoreMode.value,
+);
 const registrationChecklist = computed(() => [
   {
     label: t("TAIRA connection ready"),
     done: Boolean(connectionForm.toriiUrl && connectionForm.chainId),
   },
   {
-    label: t("Recovery phrase saved"),
-    done: mnemonicWords.value.length > 0 && backupConfirmed.value,
+    label: recoveryStepLabel.value,
+    done:
+      backupConfirmed.value &&
+      (isRestoreMode.value || mnemonicWords.value.length > 0),
   },
   {
     label: t("Account saved"),
     done: Boolean(onboardingStatus.value || session.hasAccount),
   },
 ]);
+const hasPendingSetupState = computed(() =>
+  Boolean(
+    generatedKeys.value ||
+      mnemonicWords.value.length ||
+      restorePhraseInput.value.trim() ||
+      showRestorePanel.value,
+  ),
+);
 
 const startNewRegistration = () => {
   aliasInput.value = "";
   domainInput.value = DEFAULT_DOMAIN_LABEL;
   identityInput.value = "";
+  wordCount.value = 24;
   mnemonicWords.value = [];
   generatedKeys.value = null;
+  restorePhraseInput.value = "";
   backupConfirmed.value = false;
+  showRestorePanel.value = false;
   showAliasRegistration.value = false;
+  accountFlowMode.value = "generate";
+  generating.value = false;
+  restoring.value = false;
   generateError.value = "";
+  restoreError.value = "";
   onboardingStatus.value = "";
   onboardingError.value = "";
+};
+
+const toggleRestorePanel = () => {
+  if (showRestorePanel.value) {
+    startNewRegistration();
+    return;
+  }
+  startNewRegistration();
+  accountFlowMode.value = "restore";
+  showRestorePanel.value = true;
 };
 
 const setActiveAccount = (accountId: string) => {
@@ -683,6 +814,13 @@ watch(
 
 const generateRecovery = async () => {
   generateError.value = "";
+  restoreError.value = "";
+  onboardingError.value = "";
+  onboardingStatus.value = "";
+  accountFlowMode.value = "generate";
+  showRestorePanel.value = false;
+  restorePhraseInput.value = "";
+  showAliasRegistration.value = false;
   try {
     generating.value = true;
     const words = generateMnemonicWords(wordCount.value);
@@ -701,6 +839,50 @@ const generateRecovery = async () => {
     generatedKeys.value = null;
   } finally {
     generating.value = false;
+  }
+};
+
+const restoreRecovery = async () => {
+  restoreError.value = "";
+  generateError.value = "";
+  onboardingError.value = "";
+  onboardingStatus.value = "";
+  showAliasRegistration.value = false;
+  accountFlowMode.value = "restore";
+
+  const normalizedPhrase = normalizeMnemonicPhrase(restorePhraseInput.value);
+  if (!normalizedPhrase) {
+    restoreError.value = t("Enter a recovery phrase.");
+    return;
+  }
+
+  const wordTotal = normalizedPhrase.split(" ").filter(Boolean).length;
+  if (wordTotal !== 12 && wordTotal !== 24) {
+    restoreError.value = t("Recovery phrase must contain 12 or 24 words.");
+    return;
+  }
+
+  try {
+    restoring.value = true;
+    const privateKeyHex = mnemonicToPrivateKeyHex(normalizedPhrase);
+    const { publicKeyHex } = await derivePublicKey(privateKeyHex);
+    mnemonicWords.value = [];
+    generatedKeys.value = {
+      privateKeyHex,
+      publicKeyHex,
+    };
+    backupConfirmed.value = true;
+    restorePhraseInput.value = "";
+    showRestorePanel.value = false;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    restoreError.value =
+      message === "Invalid recovery phrase"
+        ? t("Invalid recovery phrase")
+        : message;
+    generatedKeys.value = null;
+  } finally {
+    restoring.value = false;
   }
 };
 
@@ -777,15 +959,23 @@ const saveGeneratedIdentity = async () => {
     return;
   }
   persistGeneratedIdentity(true);
-  onboardingStatus.value = t("Account {accountId} saved locally.", {
-    accountId: generatedVisibleAccountId.value || generatedAccountId.value,
-  });
+  onboardingStatus.value = isRestoreMode.value
+    ? t("Wallet {accountId} restored locally.", {
+        accountId: generatedVisibleAccountId.value || generatedAccountId.value,
+      })
+    : t("Account {accountId} saved locally.", {
+        accountId: generatedVisibleAccountId.value || generatedAccountId.value,
+      });
   await router.push("/wallet");
 };
 
 const registerGeneratedIdentity = async () => {
   onboardingError.value = "";
   onboardingStatus.value = "";
+  if (isRestoreMode.value) {
+    await saveGeneratedIdentity();
+    return;
+  }
   if (!generatedKeys.value) {
     onboardingError.value = t("Generate a keypair first.");
     return;
@@ -995,6 +1185,11 @@ const resetConnect = () => {
   gap: 8px;
   align-items: center;
   font-size: 0.85rem;
+}
+
+.restore-panel textarea {
+  resize: vertical;
+  min-height: 112px;
 }
 
 .error {

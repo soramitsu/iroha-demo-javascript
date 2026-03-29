@@ -1045,6 +1045,16 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Alias is optional.",
+  "Restore your wallet from a recovery phrase and save it locally.":
+    "Restore a wallet from your phrase and save it locally.",
+  "Restore from recovery phrase": "Restore from phrase",
+  "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
+    "Paste a 12- or 24-word phrase to derive this wallet locally.",
+  "Create recovery phrase": "Create recovery phrase",
+  "Hide restore": "Hide restore",
+  "Recovery Phrase": "Recovery phrase",
+  "Load recovery phrase": "Load phrase",
+  "Restoring…": "Restoring…",
   Advanced: "Advanced",
   "Hide advanced": "Hide advanced",
   "Optional on-chain alias registration": "Optional alias",
@@ -1081,6 +1091,11 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
+  "Enter a recovery phrase.": "Enter a recovery phrase.",
+  "Recovery phrase must contain 12 or 24 words.":
+    "Recovery phrase must contain 12 or 24 words.",
+  "Invalid recovery phrase": "Invalid recovery phrase",
+  "Recovery phrase confirmed": "Phrase confirmed",
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
@@ -1110,6 +1125,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Wallet data is unavailable until this account exists on-chain.":
     "No on-chain wallet data yet.",
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
+  "Wallet {accountId} restored locally.":
+    "Wallet restored locally: {accountId}.",
+  "Restore wallet": "Restore wallet",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   Kaigi: "Kaigi",
@@ -1250,12 +1268,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Meeting code": "Meeting code",
   "Invite link": "Invite link",
   "Copy invite link": "Copy invite link",
-  "Meeting invite copied to clipboard.":
-    "Meeting invite copied to clipboard.",
+  "Meeting invite copied to clipboard.": "Meeting invite copied to clipboard.",
   "Fallback route": "Fallback route",
   "Copy fallback route": "Copy fallback route",
-  "Fallback route copied to clipboard.":
-    "Fallback route copied to clipboard.",
+  "Fallback route copied to clipboard.": "Fallback route copied to clipboard.",
   "Meeting summary": "Meeting summary",
   "This meeting invite has expired.": "This meeting invite has expired.",
   "Open local media, then join the loaded meeting.":
@@ -1394,22 +1410,38 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Alias is optional.",
+  "Restore your wallet from a recovery phrase and save it locally.":
+    "Restore a wallet from your phrase and save it locally.",
   "Display Name (local only, not on-chain)": "Wallet name",
   "Canonical I105 Account ID": "I105 Account ID",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
     "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "Generate recovery phrase": "Create recovery phrase",
+  "Restore from recovery phrase": "Restore from phrase",
+  "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
+    "Paste a 12- or 24-word phrase to derive this wallet locally.",
   "TAIRA testnet connection is fixed in this build.": "TAIRA only.",
   "TAIRA testnet connection is fixed for onboarding in this build.":
     "TAIRA only.",
   "Public TAIRA testnet profile.": "Public testnet.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
+  "Create recovery phrase": "Create recovery phrase",
+  "Hide restore": "Hide restore",
+  "Recovery Phrase": "Recovery phrase",
+  "Load recovery phrase": "Load phrase",
+  "Restoring…": "Restoring…",
   "Download backup": "Back up phrase",
   "Write these words down in order. They restore your wallet.":
     "Back these words up. They restore this wallet.",
   "I stored my recovery phrase safely.": "I backed up my phrase.",
+  "Enter a recovery phrase.": "Enter a recovery phrase.",
+  "Recovery phrase must contain 12 or 24 words.":
+    "Recovery phrase must contain 12 or 24 words.",
+  "Invalid recovery phrase": "Invalid recovery phrase",
+  "Recovery phrase confirmed": "Phrase confirmed",
   "Save identity": "Save wallet",
+  "Restore wallet": "Restore wallet",
   "Create on-chain account": "Create on-chain account",
   "Optional on-chain alias registration": "Optional alias",
   "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
@@ -1440,6 +1472,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Not selected": "No wallet selected",
   "Recovery phrase saved": "Phrase backed up",
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
+  "Wallet {accountId} restored locally.":
+    "Wallet restored locally: {accountId}.",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   "Confirm that you stored the recovery phrase.": "Confirm you backed it up.",
