@@ -476,15 +476,9 @@
         >
           <div>
             <p class="account-name">
-              {{
-                account.displayName ||
-                account.i105AccountId ||
-                account.accountId
-              }}
+              {{ getAccountLabel(account) }}
             </p>
-            <p class="helper monospace">
-              {{ account.i105AccountId || account.accountId }}
-            </p>
+            <p class="helper monospace">{{ getPublicAccountId(account) }}</p>
           </div>
           <div class="account-actions">
             <span
@@ -591,11 +585,14 @@ import {
   normalizeMnemonicPhrase,
 } from "@/utils/mnemonic";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
 const session = useSessionStore();
 const router = useRouter();
 const { t } = useAppI18n();
 const DEFAULT_DOMAIN_LABEL = "default";
+const getAccountLabel = (account: (typeof session.accounts)[number]) =>
+  getAccountDisplayLabel(account, account.accountId);
 
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
@@ -694,11 +691,14 @@ const generatedAccountSummary = computed(() => {
 const generatedAccountId = computed(
   () => generatedAccountSummary.value?.accountId ?? "",
 );
-const generatedVisibleAccountId = computed(
+const generatedStoredI105AccountId = computed(
   () =>
     generatedAccountSummary.value?.i105AccountId ??
     generatedAccountSummary.value?.accountId ??
     "",
+);
+const generatedVisibleAccountId = computed(
+  () => getPublicAccountId(generatedAccountSummary.value),
 );
 const onboardingStage = computed<"identity" | "backup" | "register">(() => {
   if (!generatedKeys.value) {
@@ -927,7 +927,7 @@ const persistGeneratedIdentity = (localOnly: boolean) => {
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
     accountId: generatedAccountId.value,
-    i105AccountId: generatedVisibleAccountId.value,
+    i105AccountId: generatedStoredI105AccountId.value,
     i105DefaultAccountId:
       generatedAccountSummary.value?.i105DefaultAccountId ?? "",
     publicKeyHex: generatedKeys.value.publicKeyHex,

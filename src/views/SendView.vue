@@ -135,13 +135,13 @@ import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
 import { useShieldCapability } from "@/composables/useShieldCapability";
 import { isPositiveWholeAmount } from "@/utils/confidential";
+import { getPublicAccountId } from "@/utils/accountId";
 import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
-const activeAccountDisplayId = computed(
-  () =>
-    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+const activeAccountDisplayId = computed(() =>
+  getPublicAccountId(activeAccount.value),
 );
 const { t } = useAppI18n();
 const form = reactive({

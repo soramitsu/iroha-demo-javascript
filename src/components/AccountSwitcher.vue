@@ -19,9 +19,7 @@
           :key="account.accountId"
           :value="account.accountId"
         >
-          {{
-            account.displayName || account.i105AccountId || account.accountId
-          }}
+          {{ getAccountOptionLabel(account) }}
         </option>
       </select>
       <p class="helper">
@@ -39,6 +37,7 @@ import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
+import { getAccountDisplayLabel } from "@/utils/accountId";
 
 const session = useSessionStore();
 const router = useRouter();
@@ -47,12 +46,11 @@ const { t } = useAppI18n();
 const selectedAccountId = ref(session.activeAccountId ?? "");
 const hasAccounts = computed(() => session.accounts.length > 0);
 const activeLabel = computed(
-  () =>
-    session.activeAccount?.displayName ||
-    session.activeAccount?.i105AccountId ||
-    session.activeAccount?.accountId ||
-    t("Not selected"),
+  () => getAccountDisplayLabel(session.activeAccount, t("Not selected")),
 );
+const getAccountOptionLabel = (
+  account: (typeof session.accounts)[number],
+) => getAccountDisplayLabel(account, account.accountId);
 
 watch(
   () => session.activeAccountId,

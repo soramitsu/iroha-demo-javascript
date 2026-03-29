@@ -389,13 +389,13 @@ import { useShieldCapability } from "@/composables/useShieldCapability";
 import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import type { OfflineAllowanceItem } from "@/types/iroha";
+import { getPublicAccountId } from "@/utils/accountId";
 
 const session = useSessionStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
-const activeAccountDisplayId = computed(
-  () =>
-    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
+const activeAccountDisplayId = computed(() =>
+  getPublicAccountId(activeAccount.value),
 );
 const activeOfflineAssetId = computed(() =>
   session.connection.assetDefinitionId.trim(),

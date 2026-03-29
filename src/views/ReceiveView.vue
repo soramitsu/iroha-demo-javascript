@@ -69,15 +69,14 @@ import { computed, ref, watch } from "vue";
 import QRCode from "qrcode";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
+import { getPublicAccountId } from "@/utils/accountId";
 import ReceiveIcon from "@/assets/receive.svg";
 
 const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
-const shareAccountId = computed(
-  () => activeAccount.value?.i105AccountId || activeAccountId.value,
-);
+const shareAccountId = computed(() => getPublicAccountId(activeAccount.value));
 const qrMarkup = ref("");
 const qrMessage = ref(t("Tap the button to generate a QR."));
 const amount = ref("0");

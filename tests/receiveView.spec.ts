@@ -6,6 +6,8 @@ import { useSessionStore } from "@/stores/session";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
+const ALICE_PUBLIC_ACCOUNT_ID = "sorauAliceCanonicalAccountId";
+const BOB_PUBLIC_ACCOUNT_ID = "sorauBobCanonicalAccountId";
 const ASSET_DEFINITION_ID = "norito:abcdef0123456789";
 const qrToStringMock = vi.fn();
 
@@ -39,6 +41,7 @@ describe("ReceiveView", () => {
           domain: "default",
           accountId: "alice@default",
           i105AccountId: ALICE_I105_ACCOUNT_ID,
+          i105DefaultAccountId: ALICE_PUBLIC_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
         },
@@ -62,6 +65,7 @@ describe("ReceiveView", () => {
           domain: "default",
           accountId: "bob@default",
           i105AccountId: BOB_I105_ACCOUNT_ID,
+          i105DefaultAccountId: BOB_PUBLIC_ACCOUNT_ID,
           publicKeyHex: "ef".repeat(32),
           privateKeyHex: "12".repeat(32),
         },
@@ -92,7 +96,7 @@ describe("ReceiveView", () => {
     expect(wrapper.text()).toContain('"amount":5');
 
     resolveInitialQr(
-      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
+      `<svg><text>{"accountId":"${ALICE_PUBLIC_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
     );
     await flushPromises();
     await flushPromises();
@@ -119,17 +123,17 @@ describe("ReceiveView", () => {
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
+    expect(wrapper.text()).toContain(`"accountId":"${BOB_PUBLIC_ACCOUNT_ID}"`);
 
     resolveAliceQr(
-      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
+      `<svg><text>{"accountId":"${ALICE_PUBLIC_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
     );
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
+    expect(wrapper.text()).toContain(`"accountId":"${BOB_PUBLIC_ACCOUNT_ID}"`);
     expect(wrapper.text()).not.toContain(
-      `"accountId":"${ALICE_I105_ACCOUNT_ID}"`,
+      `"accountId":"${ALICE_PUBLIC_ACCOUNT_ID}"`,
     );
   });
 
@@ -143,7 +147,7 @@ describe("ReceiveView", () => {
 
     expect(qrToStringMock).toHaveBeenCalledWith(
       JSON.stringify({
-        accountId: ALICE_I105_ACCOUNT_ID,
+        accountId: ALICE_PUBLIC_ACCOUNT_ID,
         assetDefinitionId: ASSET_DEFINITION_ID,
         amount: "0",
       }),

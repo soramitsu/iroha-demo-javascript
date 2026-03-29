@@ -4,14 +4,7 @@
       <header class="card-header wallet-summary-header">
         <div>
           <h2>{{ t("Balances") }}</h2>
-          <p class="helper wallet-account-copy">
-            {{
-              activeAccount?.displayName ||
-              activeAccount?.i105AccountId ||
-              activeAccount?.accountId ||
-              t("—")
-            }}
-          </p>
+          <p class="helper wallet-account-copy">{{ activeAccountLabel }}</p>
         </div>
         <button class="secondary" :disabled="loading" @click="refresh">
           {{ loading ? t("Refreshing…") : t("Refresh") }}
@@ -194,14 +187,15 @@ import {
   extractTransferInsight,
   type AccountTransactionLike,
 } from "@/utils/transactions";
+import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
-const visibleAccountId = computed(
-  () =>
-    activeAccount.value?.i105AccountId || activeAccount.value?.accountId || "",
-);
 const { localeStore, t } = useAppI18n();
+const visibleAccountId = computed(() => getPublicAccountId(activeAccount.value));
+const activeAccountLabel = computed(() =>
+  getAccountDisplayLabel(activeAccount.value, t("—")),
+);
 
 type AccountTx = AccountTransactionsResponse["items"][number] &
   AccountTransactionLike & {

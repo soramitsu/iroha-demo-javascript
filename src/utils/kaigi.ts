@@ -36,6 +36,8 @@ type BuildKaigiSignalEnvelopeInput = {
   createdAtMs?: number;
 };
 
+type KaigiRemoteTrackEventInput = Pick<RTCTrackEvent, "streams" | "track">;
+
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
 const isKaigiSignalKind = (value: unknown): value is KaigiSignalKind =>
@@ -307,4 +309,47 @@ export const parseKaigiSignalInput = (
       sdp,
     },
   };
+};
+
+export const mergeKaigiRemoteTrackIntoStream = (
+  currentStream: MediaStream | null,
+  event: KaigiRemoteTrackEventInput,
+): MediaStream | null => {
+  const nextStream = currentStream ?? new MediaStream();
+  const existingTrackIds = new Set(
+    nextStream
+      .getTracks()
+      .map((track) => trimString(track.id))
+      .filter(Boolean),
+  );
+  let addedTrack = false;
+
+  event.streams.forEach((stream) => {
+    stream.getTracks().forEach((track) => {
+      const trackId = trimString(track.id);
+      if (trackId && existingTrackIds.has(trackId)) {
+        return;
+      }
+      nextStream.addTrack(track);
+      if (trackId) {
+        existingTrackIds.add(trackId);
+      }
+      addedTrack = true;
+    });
+  });
+
+  const remoteTrackId = trimString(event.track?.id);
+  if (!remoteTrackId) {
+    return addedTrack || nextStream.getTracks().length > 0
+      ? nextStream
+      : currentStream;
+  }
+  if (!existingTrackIds.has(remoteTrackId)) {
+    nextStream.addTrack(event.track);
+    addedTrack = true;
+  }
+
+  return addedTrack || nextStream.getTracks().length > 0
+    ? nextStream
+    : currentStream;
 };
