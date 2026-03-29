@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
 import {
+  buildToriiSurfaceProbeUrls,
+  buildToriiMcpToolsListRequest,
+  extractToriiMcpToolNames,
+  findMissingToriiVpnMcpTools,
+  findMissingToriiVpnOpenApiPaths,
+  formatSurfaceProbeAttempt,
   isOnboardingConflictError,
   isOnboardingDisabledError,
   isSupportedAccountIdLiteral,
@@ -17,6 +23,122 @@ const sampleI105AccountId = AccountAddress.fromAccount({
 }).toI105(369);
 
 describe("electron live e2e utils", () => {
+  it("builds TAIRA surface probe URLs from a base Torii URL", () => {
+    expect(buildToriiSurfaceProbeUrls("https://taira.sora.org")).toEqual({
+      healthUrls: [
+        "https://taira.sora.org/v1/health",
+        "https://taira.sora.org/health",
+      ],
+      mcpUrl: "https://taira.sora.org/v1/mcp",
+      openApiUrl: "https://taira.sora.org/openapi.json",
+      vpnProfileUrl: "https://taira.sora.org/v1/vpn/profile",
+    });
+    expect(buildToriiSurfaceProbeUrls("https://taira.sora.org/")).toEqual({
+      healthUrls: [
+        "https://taira.sora.org/v1/health",
+        "https://taira.sora.org/health",
+      ],
+      mcpUrl: "https://taira.sora.org/v1/mcp",
+      openApiUrl: "https://taira.sora.org/openapi.json",
+      vpnProfileUrl: "https://taira.sora.org/v1/vpn/profile",
+    });
+  });
+
+  it("rejects empty base URLs for surface probes", () => {
+    expect(() => buildToriiSurfaceProbeUrls("")).toThrow(
+      "Torii base URL must not be empty.",
+    );
+    expect(() => buildToriiSurfaceProbeUrls("   ")).toThrow(
+      "Torii base URL must not be empty.",
+    );
+  });
+
+  it("formats surface probe failures with trimmed body snippets", () => {
+    expect(
+      formatSurfaceProbeAttempt(
+        "https://taira.sora.org/v1/vpn/profile",
+        404,
+        "Not Found",
+        "  missing route  ",
+      ),
+    ).toBe(
+      "https://taira.sora.org/v1/vpn/profile -> 404 Not Found: missing route",
+    );
+    expect(
+      formatSurfaceProbeAttempt(
+        "https://taira.sora.org/v1/mcp",
+        200,
+        "OK",
+        "",
+      ),
+    ).toBe("https://taira.sora.org/v1/mcp -> 200 OK");
+  });
+
+  it("builds a JSON-RPC tools/list request for MCP discovery", () => {
+    expect(buildToriiMcpToolsListRequest()).toEqual({
+      jsonrpc: "2.0",
+      id: "taira-vpn-surface",
+      method: "tools/list",
+      params: {},
+    });
+    expect(buildToriiMcpToolsListRequest("custom-id")).toEqual({
+      jsonrpc: "2.0",
+      id: "custom-id",
+      method: "tools/list",
+      params: {},
+    });
+  });
+
+  it("extracts MCP tool names and reports missing VPN tools", () => {
+    const payload = {
+      result: {
+        tools: [
+          { name: "iroha.health" },
+          { name: "iroha.vpn.profile" },
+          { name: "iroha.vpn.sessions.create" },
+          { name: "iroha.vpn.receipts.list" },
+        ],
+      },
+    };
+    expect(extractToriiMcpToolNames(payload)).toEqual([
+      "iroha.health",
+      "iroha.vpn.profile",
+      "iroha.vpn.sessions.create",
+      "iroha.vpn.receipts.list",
+    ]);
+    expect(findMissingToriiVpnMcpTools(payload)).toEqual([
+      "iroha.vpn.sessions.get",
+      "iroha.vpn.sessions.delete",
+    ]);
+    expect(findMissingToriiVpnMcpTools({ result: { tools: [] } })).toEqual([
+      "iroha.vpn.profile",
+      "iroha.vpn.sessions.create",
+      "iroha.vpn.sessions.get",
+      "iroha.vpn.sessions.delete",
+      "iroha.vpn.receipts.list",
+    ]);
+  });
+
+  it("reports missing VPN OpenAPI paths", () => {
+    expect(
+      findMissingToriiVpnOpenApiPaths({
+        paths: {
+          "/v1/vpn/profile": {},
+          "/v1/vpn/sessions": {},
+        },
+      }),
+    ).toEqual([
+      "/v1/vpn/sessions/{session_id}",
+      "/v1/vpn/receipts",
+    ]);
+    expect(findMissingToriiVpnOpenApiPaths({ paths: {} })).toEqual([
+      "/v1/vpn/profile",
+      "/v1/vpn/sessions",
+      "/v1/vpn/sessions/{session_id}",
+      "/v1/vpn/receipts",
+    ]);
+  });
+
   it("parses valid network prefixes with TAIRA default fallback", () => {
     expect(parseNetworkPrefix(undefined)).toBe(369);
     expect(parseNetworkPrefix("369")).toBe(369);

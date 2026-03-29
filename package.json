@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm test",
     "verify:live": "npm run verify && npm run e2e:live",
+    "verify:live:vpn-surface": "node scripts/e2e/taira-vpn-surface.mjs",
     "e2e:live": "npm run build && node scripts/e2e/electron-live.mjs",
     "postinstall": "node scripts/postinstall.mjs"
   },

@@ -1,5 +1,81 @@
 import { normalizeAccountId } from "@iroha/iroha-js";
 
+export function buildToriiSurfaceProbeUrls(baseUrl) {
+  const normalizedBase = String(baseUrl ?? "").trim();
+  if (!normalizedBase) {
+    throw new Error("Torii base URL must not be empty.");
+  }
+  const rootedBase = normalizedBase.endsWith("/")
+    ? normalizedBase
+    : `${normalizedBase}/`;
+  return {
+    healthUrls: ["v1/health", "health"].map((path) =>
+      new URL(path, rootedBase).toString(),
+    ),
+    mcpUrl: new URL("v1/mcp", rootedBase).toString(),
+    openApiUrl: new URL("openapi.json", rootedBase).toString(),
+    vpnProfileUrl: new URL("v1/vpn/profile", rootedBase).toString(),
+  };
+}
+
+export function formatSurfaceProbeAttempt(
+  url,
+  status,
+  statusText = "",
+  bodySnippet = "",
+) {
+  const normalizedStatusText = String(statusText ?? "").trim();
+  const normalizedBody = String(bodySnippet ?? "").trim();
+  return `${url} -> ${status}${normalizedStatusText ? ` ${normalizedStatusText}` : ""}${normalizedBody ? `: ${normalizedBody.slice(0, 120)}` : ""}`;
+}
+
+const requiredToriiVpnOpenApiPaths = [
+  "/v1/vpn/profile",
+  "/v1/vpn/sessions",
+  "/v1/vpn/sessions/{session_id}",
+  "/v1/vpn/receipts",
+];
+
+const requiredToriiVpnMcpToolNames = [
+  "iroha.vpn.profile",
+  "iroha.vpn.sessions.create",
+  "iroha.vpn.sessions.get",
+  "iroha.vpn.sessions.delete",
+  "iroha.vpn.receipts.list",
+];
+
+export function buildToriiMcpToolsListRequest(id = "taira-vpn-surface") {
+  return {
+    jsonrpc: "2.0",
+    id,
+    method: "tools/list",
+    params: {},
+  };
+}
+
+export function extractToriiMcpToolNames(payload) {
+  const tools = payload?.result?.tools;
+  if (!Array.isArray(tools)) {
+    return [];
+  }
+  return tools
+    .map((tool) => String(tool?.name ?? "").trim())
+    .filter(Boolean);
+}
+
+export function findMissingToriiVpnMcpTools(payload) {
+  const availableNames = new Set(extractToriiMcpToolNames(payload));
+  return requiredToriiVpnMcpToolNames.filter((name) => !availableNames.has(name));
+}
+
+export function findMissingToriiVpnOpenApiPaths(payload) {
+  const paths = payload?.paths;
+  if (!paths || typeof paths !== "object" || Array.isArray(paths)) {
+    return [...requiredToriiVpnOpenApiPaths];
+  }
+  return requiredToriiVpnOpenApiPaths.filter((path) => !(path in paths));
+}
+
 export function parseNetworkPrefix(rawValue) {
   if (!rawValue) return 369;
   const parsed = Number(rawValue);

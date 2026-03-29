@@ -29,6 +29,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testn
 - **Lint/Typecheck**: `npm run lint`, `npm run typecheck` (renderer + Electron), plus `npm run typecheck:renderer` / `npm run typecheck:electron`.
 - **Live verification bundles**: `npm run verify:live` (base verify + strict live TAIRA E2E including onboarding + shield submit checks).
 - **Verification bundles**: `npm run verify` (lint + typecheck + unit tests).
+- **Live VPN surface check**: `npm run verify:live:vpn-surface` verifies that the deployed TAIRA node is healthy, serves `/v1/mcp`, publishes the VPN paths in `/openapi.json`, exposes the `iroha.vpn.*` MCP aliases, and serves `/v1/vpn/profile` before attempting VPN-focused live bring-up.
 - **Live E2E**: `npm run e2e:live` (defaults to TAIRA Torii + chain ID, strict reachability preflight, boots a fresh local wallet through the live faucet to discover the funded asset bucket, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline, then runs optional alias-registration + shield-submit checks). `E2E_ASSET_DEFINITION_ID` is now optional because the harness can bootstrap it from the faucet response. The app itself no longer requires UAID onboarding to create a wallet; the live alias-registration probe treats onboarding `HTTP 409` as reusable-account success and skips cleanly when TAIRA returns onboarding `HTTP 403`.
 
 ## File Map (high level)
