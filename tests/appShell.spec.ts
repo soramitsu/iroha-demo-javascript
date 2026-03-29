@@ -101,6 +101,7 @@ describe("App shell", () => {
 
     expect(labels).toEqual([
       t("Wallet"),
+      t("VPN"),
       t("Send"),
       t("Receive"),
       t("Kaigi"),
@@ -113,7 +114,7 @@ describe("App shell", () => {
       t("Account Setup"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("11");
+    expect(steps.at(-1)).toBe("12");
   });
 
   it("shows a styled locale picker and updates the current language label", async () => {

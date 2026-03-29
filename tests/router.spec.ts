@@ -34,9 +34,9 @@ describe("router guard", () => {
   it("allows protected routes when a saved account is present", async () => {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(savedSession));
 
-    await router.push("/kaigi");
+    await router.push("/vpn");
 
-    expect(router.currentRoute.value.path).toBe("/kaigi");
+    expect(router.currentRoute.value.path).toBe("/vpn");
     expect(useSessionStore().hasAccount).toBe(true);
   });
 

@@ -10,6 +10,7 @@ import AccountSetupView from "@/views/AccountSetupView.vue";
 import OfflineView from "@/views/OfflineView.vue";
 import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
 import KaigiView from "@/views/KaigiView.vue";
+import VpnView from "@/views/VpnView.vue";
 import { useSessionStore } from "@/stores/session";
 
 const routes = [
@@ -39,6 +40,14 @@ const routes = [
     meta: {
       titleKey: "Wallet Overview",
       subtitleKey: "Balances & activity",
+    },
+  },
+  {
+    path: "/vpn",
+    component: VpnView,
+    meta: {
+      titleKey: "Sora VPN",
+      subtitleKey: "Connect through the TAIRA privacy lane",
     },
   },
   {

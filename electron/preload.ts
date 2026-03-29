@@ -1,4 +1,4 @@
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import { randomBytes } from "crypto";
 import {
   ToriiClient,
@@ -90,6 +90,84 @@ type TransferAssetInput = {
 type ExplorerMetricsResponse = Awaited<
   ReturnType<ToriiClient["getExplorerMetrics"]>
 >;
+
+type VpnAvailabilityResponse = {
+  platformSupported: boolean;
+  helperManaged: boolean;
+  helperReady: boolean;
+  serverReachable: boolean;
+  profileAvailable: boolean;
+  actionsEnabled: boolean;
+  status: "ready" | "unsupported" | "unavailable" | "error";
+  message: string;
+  helperVersion: string;
+  platform: string;
+  controllerInstalled: boolean;
+  controllerVersion: string | null;
+  controllerKind: string | null;
+  controllerPath: string | null;
+  repairRequired: boolean;
+  systemTunnelConfigured: boolean;
+  systemTunnelActive: boolean;
+  systemTunnelKind: string | null;
+  systemTunnelInterface: string | null;
+  systemTunnelService: string | null;
+};
+
+type VpnProfileResponse = Awaited<ReturnType<ToriiClient["getVpnProfile"]>>;
+
+type VpnStatusResponse = {
+  state:
+    | "idle"
+    | "connecting"
+    | "connected"
+    | "disconnecting"
+    | "reconciling"
+    | "remote-delete-pending"
+    | "repair-needed"
+    | "error";
+  sessionId: string | null;
+  exitClass: "standard" | "low-latency" | "high-security" | null;
+  relayEndpoint: string | null;
+  connectedAtMs: number | null;
+  expiresAtMs: number | null;
+  durationMs: number;
+  bytesIn: number;
+  bytesOut: number;
+  routePushes: string[];
+  excludedRoutes: string[];
+  dnsServers: string[];
+  tunnelAddresses: string[];
+  mtuBytes: number;
+  helperStatus: string;
+  controllerInstalled: boolean;
+  controllerVersion: string | null;
+  controllerKind: string | null;
+  reconcileState: string | null;
+  repairRequired: boolean;
+  remoteSessionActive: boolean;
+  systemTunnelActive: boolean;
+  systemTunnelKind: string | null;
+  systemTunnelInterface: string | null;
+  systemTunnelService: string | null;
+  errorMessage: string | null;
+  lastReceipt: VpnReceiptResponse | null;
+};
+
+type VpnReceiptResponse = {
+  sessionId: string;
+  accountId: string;
+  exitClass: "standard" | "low-latency" | "high-security";
+  relayEndpoint: string;
+  meterFamily: string;
+  connectedAtMs: number;
+  disconnectedAtMs: number;
+  durationMs: number;
+  bytesIn: number;
+  bytesOut: number;
+  status: string;
+  receiptSource: "torii" | "local-fallback";
+};
 
 type AssetsResponse = Awaited<ReturnType<ToriiClient["listAccountAssets"]>>;
 
@@ -331,6 +409,25 @@ type AccountPermissionsInput = {
   offset?: number;
 };
 
+type VpnAvailabilityInput = {
+  toriiUrl: string;
+};
+
+type VpnConnectInput = {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex: HexString;
+  exitClass: "standard" | "low-latency" | "high-security";
+};
+
+type VpnDisconnectInput = {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex: HexString;
+};
+
+type VpnStatusInput = Partial<VpnDisconnectInput>;
+
 type RegisterCitizenInput = {
   toriiUrl: string;
   chainId: string;
@@ -441,6 +538,15 @@ type IrohaBridge = {
     toriiUrl: string;
     accountId: string;
   }): Promise<ExplorerAccountQrResponse>;
+  getVpnAvailability(
+    input: VpnAvailabilityInput,
+  ): Promise<VpnAvailabilityResponse>;
+  getVpnProfile(input: VpnAvailabilityInput): Promise<VpnProfileResponse>;
+  getVpnStatus(input?: VpnStatusInput): Promise<VpnStatusResponse>;
+  connectVpn(input: VpnConnectInput): Promise<VpnStatusResponse>;
+  disconnectVpn(input: VpnDisconnectInput): Promise<VpnStatusResponse>;
+  repairVpn(input: VpnStatusInput): Promise<VpnStatusResponse>;
+  listVpnReceipts(input?: VpnStatusInput): Promise<VpnReceiptResponse[]>;
   listOfflineAllowances(input: {
     toriiUrl: string;
     controllerId: string;
@@ -465,10 +571,13 @@ type IrohaBridge = {
     accountId: string;
     identity?: Record<string, unknown>;
   }): Promise<AccountOnboardingResponse>;
-  requestFaucetFunds(input: {
-    toriiUrl: string;
-    accountId: string;
-  }, onStatus?: FaucetStatusCallback): Promise<AccountFaucetResponse>;
+  requestFaucetFunds(
+    input: {
+      toriiUrl: string;
+      accountId: string;
+    },
+    onStatus?: FaucetStatusCallback,
+  ): Promise<AccountFaucetResponse>;
   createKaigiMeeting(input: KaigiCreateMeetingInput): Promise<{ hash: string }>;
   getKaigiCall(input: KaigiGetMeetingInput): Promise<KaigiMeetingView>;
   joinKaigiMeeting(input: KaigiJoinMeetingInput): Promise<{ hash: string }>;
@@ -1634,6 +1743,27 @@ const api: IrohaBridge = {
       return fetchFallback();
     }
   },
+  getVpnAvailability(input) {
+    return ipcRenderer.invoke("vpn:getAvailability", input);
+  },
+  getVpnProfile(input) {
+    return ipcRenderer.invoke("vpn:getProfile", input);
+  },
+  getVpnStatus(input) {
+    return ipcRenderer.invoke("vpn:getStatus", input);
+  },
+  connectVpn(input) {
+    return ipcRenderer.invoke("vpn:connect", input);
+  },
+  disconnectVpn(input) {
+    return ipcRenderer.invoke("vpn:disconnect", input);
+  },
+  repairVpn(input) {
+    return ipcRenderer.invoke("vpn:repair", input);
+  },
+  listVpnReceipts(input) {
+    return ipcRenderer.invoke("vpn:listReceipts", input);
+  },
   listOfflineAllowances({
     toriiUrl,
     controllerId,
@@ -2243,9 +2373,3 @@ const api: IrohaBridge = {
 };
 
 contextBridge.exposeInMainWorld("iroha", api);
-
-declare global {
-  interface Window {
-    iroha: IrohaBridge;
-  }
-}

@@ -28,6 +28,11 @@ import type {
   PublicLaneStakeResponseView,
   PublicLaneValidatorsResponseView,
   ToriiHealth,
+  VpnAvailability,
+  VpnAuthContext,
+  VpnProfile,
+  VpnReceipt,
+  VpnStatus,
 } from "@/types/iroha";
 
 const bridge = (): IrohaBridge => {
@@ -131,6 +136,34 @@ export const getExplorerAccountQr = (
   input: Parameters<IrohaBridge["getExplorerAccountQr"]>[0],
 ): Promise<ExplorerAccountQrResponse> => bridge().getExplorerAccountQr(input);
 
+export const getVpnAvailability = (
+  input: Parameters<IrohaBridge["getVpnAvailability"]>[0],
+): Promise<VpnAvailability> => bridge().getVpnAvailability(input);
+
+export const getVpnProfile = (
+  input: Parameters<IrohaBridge["getVpnProfile"]>[0],
+): Promise<VpnProfile | null> => bridge().getVpnProfile(input);
+
+export const getVpnStatus = (
+  input?: Partial<VpnAuthContext>,
+): Promise<VpnStatus> => bridge().getVpnStatus(input);
+
+export const connectVpn = (
+  input: Parameters<IrohaBridge["connectVpn"]>[0],
+): Promise<VpnStatus> => bridge().connectVpn(input);
+
+export const disconnectVpn = (
+  input: Parameters<IrohaBridge["disconnectVpn"]>[0],
+): Promise<VpnStatus> => bridge().disconnectVpn(input);
+
+export const repairVpn = (
+  input: Parameters<IrohaBridge["repairVpn"]>[0],
+): Promise<VpnStatus> => bridge().repairVpn(input);
+
+export const listVpnReceipts = (
+  input?: Partial<VpnAuthContext>,
+): Promise<VpnReceipt[]> => bridge().listVpnReceipts(input);
+
 export const listOfflineAllowances = (
   input: Parameters<IrohaBridge["listOfflineAllowances"]>[0],
 ): Promise<OfflineAllowanceResponse> => bridge().listOfflineAllowances(input);
@@ -142,12 +175,13 @@ export const onboardAccount = (input: {
   identity?: Record<string, unknown>;
 }): Promise<AccountOnboardingResponse> => bridge().onboardAccount(input);
 
-export const requestFaucetFunds = (input: {
-  toriiUrl: string;
-  accountId: string;
-}, onProgress?: (
-  progress: FaucetRequestProgress,
-) => void | Promise<void>): Promise<AccountFaucetResponse> =>
+export const requestFaucetFunds = (
+  input: {
+    toriiUrl: string;
+    accountId: string;
+  },
+  onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
+): Promise<AccountFaucetResponse> =>
   bridge().requestFaucetFunds(input, onProgress);
 
 export const createKaigiMeeting = (

@@ -245,6 +245,13 @@ const navItems = [
     requiresAccount: true,
   },
   {
+    to: "/vpn",
+    labelKey: "VPN",
+    descriptionKey: "Connect, disconnect, and inspect Sora VPN sessions",
+    icon: WalletIcon,
+    requiresAccount: true,
+  },
+  {
     to: "/send",
     labelKey: "Send",
     descriptionKey: "Transfer assets with camera or QR upload",
