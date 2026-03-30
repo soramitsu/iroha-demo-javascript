@@ -131,10 +131,16 @@
         <button class="secondary" @click="saveUser">
           {{ t("Save identity") }}
         </button>
+        <button
+          class="secondary"
+          @click="showAdvancedRegistration = !showAdvancedRegistration"
+        >
+          {{ showAdvancedRegistration ? t("Hide advanced") : t("Advanced") }}
+        </button>
       </div>
     </section>
 
-    <section class="card setup-register-card">
+    <section v-if="showAdvancedRegistration" class="card setup-register-card">
       <header class="card-header">
         <h2>{{ t("Create on-chain account") }}</h2>
         <p class="helper">
@@ -227,6 +233,7 @@ const pingLoading = ref(false);
 const generating = ref(false);
 const registering = ref(false);
 const registerMessage = ref("");
+const showAdvancedRegistration = ref(false);
 
 watch(
   () => session.connection,

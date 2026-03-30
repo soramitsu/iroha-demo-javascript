@@ -636,6 +636,7 @@ export interface IrohaBridge {
     input: {
       toriiUrl: string;
       accountId: string;
+      networkPrefix?: number;
     },
     onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
   ): Promise<AccountFaucetResponse>;

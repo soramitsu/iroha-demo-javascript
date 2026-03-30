@@ -140,7 +140,7 @@ describe("i18n messages", () => {
       "Set up network and wallet first.",
     );
     expect(translate("ja-JP", "Create on-chain account")).toBe(
-      "Create on-chain account",
+      "Authority-only registration",
     );
     expect(
       translate(

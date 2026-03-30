@@ -66,6 +66,7 @@ describe("accountAddress helper", () => {
       369,
     );
 
+    expect(canonicalAccountId.startsWith("testu")).toBe(true);
     expect(
       normalizeCanonicalAccountIdLiteral(derived.accountId, "accountId", 369),
     ).toBe(canonicalAccountId);

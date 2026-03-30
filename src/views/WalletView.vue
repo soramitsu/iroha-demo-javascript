@@ -502,6 +502,7 @@ const requestStarterFunds = async () => {
       {
         toriiUrl,
         accountId,
+        networkPrefix: session.connection.networkPrefix,
       },
       (progress) => {
         faucetStatusPhase.value = progress.phase;

@@ -1,4 +1,4 @@
-import { normalizeAccountId } from "@iroha/iroha-js";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 import { solveFaucetPowPuzzle, type FaucetPowPuzzle } from "./faucetPow";
 import { readApiErrorDetail } from "./preload-utils";
 
@@ -30,6 +30,7 @@ type SolvedFaucetPow = Awaited<ReturnType<typeof solveFaucetPowPuzzle>>;
 type RequestFaucetFundsWithPowInput = {
   baseUrl: string;
   accountId: string;
+  networkPrefix?: number;
   fetchImpl?: typeof fetch;
   sleep?: (delayMs: number) => Promise<void>;
   solvePuzzle?: (
@@ -71,6 +72,7 @@ export const shouldRetryFaucetPuzzle = (status: number, detail: string) =>
 export const requestFaucetFundsWithPuzzle = async ({
   baseUrl,
   accountId,
+  networkPrefix,
   fetchImpl = fetch,
   sleep = sleepFor,
   solvePuzzle = solveFaucetPowPuzzle,
@@ -78,7 +80,11 @@ export const requestFaucetFundsWithPuzzle = async ({
   puzzleRetryDelayMs = DEFAULT_PUZZLE_RETRY_DELAY_MS,
   onStatus,
 }: RequestFaucetFundsWithPowInput): Promise<AccountFaucetResponse> => {
-  const normalizedAccountId = normalizeAccountId(accountId, "accountId");
+  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+    accountId,
+    "accountId",
+    networkPrefix,
+  );
   const retryAttempts = Math.max(1, Math.trunc(puzzleRetryAttempts));
   const retryDelayMs = Math.max(0, Math.trunc(puzzleRetryDelayMs));
   let puzzleStatus = 0;

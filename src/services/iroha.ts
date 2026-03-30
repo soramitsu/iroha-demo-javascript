@@ -187,6 +187,7 @@ export const requestFaucetFunds = (
   input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
   },
   onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
 ): Promise<AccountFaucetResponse> =>

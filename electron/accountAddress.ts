@@ -195,7 +195,8 @@ const normalizeCompatLiteralFromAddress = (
 
 const normalizeCanonicalLiteralFromAddress = (
   address: InstanceType<typeof AccountAddress>,
-) => address.toI105(SORA_NETWORK_PREFIX);
+  networkPrefix: number,
+) => address.toI105(networkPrefix);
 
 const fallbackCompatLiteral = (
   literal: string,
@@ -205,6 +206,16 @@ const fallbackCompatLiteral = (
   const normalizedLiteral = normalizeSdkAccountId(literal, label);
   const parsed = AccountAddress.parseEncoded(normalizedLiteral);
   return normalizeCompatLiteralFromAddress(parsed.address, networkPrefix);
+};
+
+const fallbackCanonicalLiteral = (
+  literal: string,
+  label: string,
+  networkPrefix: number,
+) => {
+  const normalizedLiteral = normalizeSdkAccountId(literal, label);
+  const parsed = AccountAddress.parseEncoded(normalizedLiteral);
+  return normalizeCanonicalLiteralFromAddress(parsed.address, networkPrefix);
 };
 
 export const normalizeCompatAccountIdLiteral = (
@@ -249,7 +260,10 @@ export const normalizeCanonicalAccountIdLiteral = (
 
   try {
     const parsed = AccountAddress.parseEncoded(literal);
-    return normalizeCanonicalLiteralFromAddress(parsed.address);
+    return normalizeCanonicalLiteralFromAddress(
+      parsed.address,
+      normalizedPrefix,
+    );
   } catch {
     // Fall through to native I105 parsing or legacy SDK normalization.
   }
@@ -258,10 +272,11 @@ export const normalizeCanonicalAccountIdLiteral = (
   if (nativeParsed) {
     return normalizeCanonicalLiteralFromAddress(
       AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes),
+      normalizedPrefix,
     );
   }
 
-  return normalizeSdkAccountId(literal, label);
+  return fallbackCanonicalLiteral(literal, label, normalizedPrefix);
 };
 
 export const deriveAccountAddressView = (input: {

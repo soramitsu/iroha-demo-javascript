@@ -231,20 +231,17 @@ const navItems = [
     to: "/account",
     labelKey: "Account Setup",
     descriptionKey: "Generate keys, recovery phrase, Connect pairing",
+    signedInLabelKey: "Saved Wallets",
+    signedInDescriptionKey:
+      "Switch between saved wallets or begin a fresh wallet setup.",
     icon: UserIcon,
     requiresAccount: false,
+    utility: true,
   },
   {
     to: "/wallet",
     labelKey: "Wallet",
     descriptionKey: "Balances, assets, and latest transactions",
-    icon: WalletIcon,
-    requiresAccount: true,
-  },
-  {
-    to: "/vpn",
-    labelKey: "VPN",
-    descriptionKey: "Connect, disconnect, and inspect Sora VPN sessions",
     icon: WalletIcon,
     requiresAccount: true,
   },
@@ -263,20 +260,6 @@ const navItems = [
     requiresAccount: true,
   },
   {
-    to: "/kaigi",
-    labelKey: "Kaigi",
-    descriptionKey: "Manual audio/video calls with another wallet user",
-    icon: ReceiveIcon,
-    requiresAccount: true,
-  },
-  {
-    to: "/subscriptions",
-    labelKey: "Subscriptions",
-    descriptionKey: "Auto-deduct and manage recurring services",
-    icon: WalletIcon,
-    requiresAccount: true,
-  },
-  {
     to: "/staking",
     labelKey: "Staking",
     descriptionKey: "Nominate validators and stake XOR for NPOS",
@@ -291,13 +274,6 @@ const navItems = [
     requiresAccount: true,
   },
   {
-    to: "/offline",
-    labelKey: "Offline",
-    descriptionKey: "Offline wallets, invoices, and QR exchanges",
-    icon: SendIcon,
-    requiresAccount: true,
-  },
-  {
     to: "/explore",
     labelKey: "Explore",
     descriptionKey: "Network metrics and asset explorer",
@@ -305,11 +281,41 @@ const navItems = [
     requiresAccount: true,
   },
   {
+    to: "/subscriptions",
+    labelKey: "Subscriptions",
+    descriptionKey: "Auto-deduct and manage recurring services",
+    icon: WalletIcon,
+    requiresAccount: true,
+  },
+  {
+    to: "/offline",
+    labelKey: "Offline",
+    descriptionKey: "Offline wallets, invoices, and QR exchanges",
+    icon: SendIcon,
+    requiresAccount: true,
+  },
+  {
+    to: "/kaigi",
+    labelKey: "Kaigi",
+    descriptionKey: "Manual audio/video calls with another wallet user",
+    icon: ReceiveIcon,
+    requiresAccount: true,
+  },
+  {
+    to: "/vpn",
+    labelKey: "VPN",
+    descriptionKey: "Connect, disconnect, and inspect Sora VPN sessions",
+    icon: WalletIcon,
+    requiresAccount: true,
+    utility: true,
+  },
+  {
     to: "/setup",
     labelKey: "Session",
     descriptionKey: "TAIRA connection, asset, and authority keys",
     icon: UserIcon,
     requiresAccount: true,
+    utility: true,
   },
 ];
 
@@ -343,24 +349,54 @@ const selectLocale = (locale: SupportedLocale) => {
   }
 };
 
-const routeTitle = computed(() =>
-  t((route.meta.titleKey as string) || "Wallet Overview"),
-);
-const routeSubtitle = computed(() =>
-  t((route.meta.subtitleKey as string) || "Balances & activity"),
-);
+const routeTitle = computed(() => {
+  if (route.path === "/account" && session.hasAccount) {
+    return t("Saved Wallets");
+  }
+  return t((route.meta.titleKey as string) || "Wallet Overview");
+});
+const routeSubtitle = computed(() => {
+  if (route.path === "/account" && session.hasAccount) {
+    return t("Switch between saved wallets or begin a fresh wallet setup.");
+  }
+  return t((route.meta.subtitleKey as string) || "Balances & activity");
+});
 const onboardingNavItem =
   navItems.find((item) => !item.requiresAccount) ?? null;
 const signedInNavItems = navItems.filter((item) => item.requiresAccount);
 const sidebarNavItems = computed(() => {
-  const orderedItems =
-    session.hasAccount && onboardingNavItem
-      ? [...signedInNavItems, onboardingNavItem]
-      : onboardingNavItem
-        ? [onboardingNavItem]
-        : [];
+  if (!onboardingNavItem) {
+    return [];
+  }
+
+  if (!session.hasAccount) {
+    return [
+      {
+        ...onboardingNavItem,
+        step: "01",
+      },
+    ];
+  }
+
+  const primaryItems = signedInNavItems.filter((item) => !item.utility);
+  const utilityItems = [
+    ...signedInNavItems.filter((item) => item.utility),
+    onboardingNavItem,
+  ];
+  const orderedItems = [...primaryItems, ...utilityItems];
+
   return orderedItems.map((item, index) => ({
     ...item,
+    labelKey:
+      !item.requiresAccount && session.hasAccount && item.signedInLabelKey
+        ? item.signedInLabelKey
+        : item.labelKey,
+    descriptionKey:
+      !item.requiresAccount &&
+      session.hasAccount &&
+      item.signedInDescriptionKey
+        ? item.signedInDescriptionKey
+        : item.descriptionKey,
     step: String(index + 1).padStart(2, "0"),
   }));
 });

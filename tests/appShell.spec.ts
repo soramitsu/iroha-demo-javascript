@@ -101,20 +101,36 @@ describe("App shell", () => {
 
     expect(labels).toEqual([
       t("Wallet"),
-      t("VPN"),
       t("Send"),
       t("Receive"),
-      t("Kaigi"),
-      t("Subscriptions"),
       t("Staking"),
       t("Parliament"),
-      t("Offline"),
       t("Explore"),
+      t("Subscriptions"),
+      t("Offline"),
+      t("Kaigi"),
+      t("VPN"),
       t("Session"),
-      t("Account Setup"),
+      t("Saved Wallets"),
     ]);
     expect(steps[0]).toBe("01");
     expect(steps.at(-1)).toBe("12");
+  });
+
+  it("renames the account route to wallets once an account exists", () => {
+    route.path = "/account";
+    route.meta = {
+      titleKey: "Account Setup",
+      subtitleKey: "Create and save your TAIRA wallet",
+    };
+
+    const wrapper = mountApp({ withAccount: true });
+
+    expect(wrapper.get(".workspace-heading h1").text()).toBe(t("Saved Wallets"));
+    expect(wrapper.get(".section-label").text()).toBe(
+      t("Switch between saved wallets or begin a fresh wallet setup."),
+    );
+    expect(wrapper.findAll(".nav-label").at(-1)?.text()).toBe(t("Saved Wallets"));
   });
 
   it("shows a styled locale picker and updates the current language label", async () => {

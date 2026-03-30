@@ -24,15 +24,15 @@ const basePuzzle: FaucetPowPuzzle = {
 
 const SAMPLE_PUBLIC_KEY_HEX =
   "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
-const displayAccountId = AccountAddress.fromAccount({
+const testnetAccountId = AccountAddress.fromAccount({
   publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
 }).toI105(369);
-const canonicalAccountId = AccountAddress.fromAccount({
+const soraAccountId = AccountAddress.fromAccount({
   publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
 }).toI105();
 
 describe("faucetApi", () => {
-  it("canonicalizes the account literal before solving and posting the faucet proof", async () => {
+  it("canonicalizes the account literal onto the active network before solving and posting the faucet proof", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -60,9 +60,9 @@ describe("faucetApi", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            account_id: canonicalAccountId,
+            account_id: testnetAccountId,
             asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${canonicalAccountId}`,
+            asset_id: `xor#sora#${testnetAccountId}`,
             amount: "25000",
             tx_hash_hex: "0xabc",
             status: "QUEUED",
@@ -84,7 +84,8 @@ describe("faucetApi", () => {
 
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
-      accountId: displayAccountId,
+      accountId: soraAccountId,
+      networkPrefix: 369,
       fetchImpl,
       sleep,
       solvePuzzle,
@@ -93,7 +94,7 @@ describe("faucetApi", () => {
     });
 
     expect(sleep).toHaveBeenCalledWith(125);
-    expect(solvePuzzle).toHaveBeenCalledWith(canonicalAccountId, basePuzzle);
+    expect(solvePuzzle).toHaveBeenCalledWith(testnetAccountId, basePuzzle);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
@@ -108,7 +109,7 @@ describe("faucetApi", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
-          account_id: canonicalAccountId,
+          account_id: testnetAccountId,
           pow_anchor_height: 42,
           pow_nonce_hex: "0000000000000001",
         }),
@@ -145,9 +146,9 @@ describe("faucetApi", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            account_id: canonicalAccountId,
+            account_id: testnetAccountId,
             asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${canonicalAccountId}`,
+            asset_id: `xor#sora#${testnetAccountId}`,
             amount: "25000",
             tx_hash_hex: "0xdef",
             status: "QUEUED",
@@ -165,7 +166,8 @@ describe("faucetApi", () => {
 
     await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
-      accountId: displayAccountId,
+      accountId: testnetAccountId,
+      networkPrefix: 369,
       fetchImpl,
       sleep: vi.fn().mockResolvedValue(undefined),
       solvePuzzle: vi.fn().mockResolvedValue({
@@ -213,7 +215,8 @@ describe("faucetApi", () => {
     await expect(
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
-        accountId: displayAccountId,
+        accountId: testnetAccountId,
+        networkPrefix: 369,
         fetchImpl,
         sleep,
         puzzleRetryAttempts: 3,
@@ -245,7 +248,8 @@ describe("faucetApi", () => {
     await expect(
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
-        accountId: displayAccountId,
+        accountId: testnetAccountId,
+        networkPrefix: 369,
         fetchImpl,
       }),
     ).rejects.toThrow("Faucet puzzle failed (403): Account faucet disabled");

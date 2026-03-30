@@ -435,6 +435,7 @@ describe("WalletView", () => {
       {
         toriiUrl: "http://localhost:8080",
         accountId: "alice@wonderland",
+        networkPrefix: 369,
       },
       expect.any(Function),
     );

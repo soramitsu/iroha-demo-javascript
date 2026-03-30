@@ -31,7 +31,7 @@ const routes = [
     component: SetupView,
     meta: {
       titleKey: "Session Setup",
-      subtitleKey: "TAIRA connection & keys",
+      subtitleKey: "TAIRA connection, asset, and authority keys",
     },
   },
   {

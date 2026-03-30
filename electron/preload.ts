@@ -632,6 +632,7 @@ type IrohaBridge = {
     input: {
       toriiUrl: string;
       accountId: string;
+      networkPrefix?: number;
     },
     onStatus?: FaucetStatusCallback,
   ): Promise<AccountFaucetResponse>;
@@ -2961,15 +2962,17 @@ const api: IrohaBridge = {
     }
     return (await response.json()) as AccountOnboardingResponse;
   },
-  async requestFaucetFunds({ toriiUrl, accountId }, onStatus) {
+  async requestFaucetFunds({ toriiUrl, accountId, networkPrefix }, onStatus) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
     const normalizedAccountId = normalizeCompatAccountIdLiteral(
       accountId,
       "accountId",
+      networkPrefix,
     );
     return requestFaucetFundsWithPuzzle({
       baseUrl,
       accountId: normalizedAccountId,
+      networkPrefix,
       fetchImpl: nodeFetch,
       onStatus,
     });

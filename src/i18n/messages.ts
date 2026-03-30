@@ -1044,9 +1044,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.":
     "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
-  "Create on-chain account": "Create on-chain account",
+  "Create on-chain account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":
-    "Requires authority credentials to create the account on-chain.",
+    "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
   "Set up network and wallet first.": "Set up network and wallet first.",
   "Private Kaigi needs shielded XOR before it can submit this action.":
     "Private Kaigi needs shielded XOR before it can submit this action.",
@@ -1510,7 +1510,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Metrics unavailable. Check Torii status.":
     "Metrics unavailable. Check the network.",
   "Account Setup": "Create Wallet",
-  Session: "Network",
+  Session: "Advanced",
   Parliament: "Governance",
   Explorer: "Explore",
   "Create and save your TAIRA wallet": "Create wallet",
@@ -1528,7 +1528,8 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Bond citizenship to vote",
   "Offline wallets, invoices, and QR exchanges": "Offline payments",
   "Network metrics and asset explorer": "Network and assets",
-  "TAIRA connection, asset, and authority keys": "Network and keys",
+  "TAIRA connection, asset, and authority keys":
+    "Advanced network and authority tools",
   "Wallet Overview": "Wallet",
   "Balances & activity": "Balances and activity",
   "NPOS Staking": "Stake",
@@ -1540,7 +1541,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Transfer assets via Torii": "Send funds",
   "Receive Points": "Receive",
   "Network & asset insights": "Network and assets",
-  "Session Setup": "Network",
+  "Session Setup": "Advanced",
   "TAIRA connection & keys": "Network and keys",
   "Offline wallets, invoices, and payments": "Offline payments",
   "TAIRA Testnet Account": "Create wallet",
@@ -1584,7 +1585,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Recovery phrase confirmed": "Phrase confirmed",
   "Save identity": "Save wallet",
   "Restore wallet": "Restore wallet",
-  "Create on-chain account": "Create on-chain account",
+  "Create on-chain account": "Authority-only registration",
   "Optional on-chain alias registration": "Optional alias",
   "This submits the UAID alias registration flow when the endpoint supports it. Your wallet already works without this step.":
     "Register an alias if you want one. The wallet works without it.",
@@ -1636,12 +1637,12 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Public Key": "Public key",
   "Generate pair": "Generate keys",
   "Derive from private key": "Derive public key",
-  "Register Account": "Create on-chain account",
-  "Register account": "Create on-chain account",
+  "Register Account": "Authority-only registration",
+  "Register account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":
-    "Requires authority credentials to create the account on-chain.",
+    "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
   "Requires authority credentials — Torii receives a direct Norito transaction.":
-    "Requires authority credentials to create the account on-chain.",
+    "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
   "Authority Account ID": "Authority account",
   "Authority Private Key (hex)": "Authority key (hex)",
   "Account Metadata (JSON)": "Metadata",
