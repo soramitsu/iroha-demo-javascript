@@ -299,6 +299,7 @@ import {
   type DataspaceOption,
 } from "@/utils/staking";
 import { deriveAssetSymbol } from "@/utils/assetId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
@@ -539,7 +540,10 @@ const loadLaneData = async () => {
       return;
     }
     resetLaneState();
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load lane validators."),
+    );
   } finally {
     if (requestGeneration === laneRequestGeneration.value) {
       loadingLaneData.value = false;
@@ -653,7 +657,10 @@ const refresh = async () => {
     }
     statusMessage.value = "";
     resetBootstrapState();
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load staking state."),
+    );
   } finally {
     if (requestGeneration === refreshGeneration.value) {
       loadingBootstrap.value = false;
@@ -679,7 +686,7 @@ const runAction = async (
     actionMessage.value = message;
     await loadLaneData();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(error, t("Action failed."));
   } finally {
     actionBusy.value = null;
   }
@@ -841,8 +848,10 @@ watch(
         return;
       }
       stakeResponse.value = null;
-      errorMessage.value =
-        error instanceof Error ? error.message : String(error);
+      errorMessage.value = toUserFacingErrorMessage(
+        error,
+        t("Failed to load lane validators."),
+      );
     } finally {
       if (requestGeneration === laneRequestGeneration.value) {
         loadingLaneData.value = false;

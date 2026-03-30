@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
+import {
+  getAccountDisplayLabel,
+  getPublicAccountId,
+  normalizeTairaAccountIdLiteral,
+} from "@/utils/accountId";
 
 describe("accountId utils", () => {
-  it("prefers the canonical public account id when present", () => {
+  it("rewrites stale SORA-native literals onto the TAIRA prefix", () => {
+    expect(
+      normalizeTairaAccountIdLiteral("sorauCanonicalAccountId1234567890"),
+    ).toBe("testuCanonicalAccountId1234567890");
+    expect(normalizeTairaAccountIdLiteral("testuVisibleAccountId")).toBe(
+      "testuVisibleAccountId",
+    );
+  });
+
+  it("prefers the TAIRA-visible account id when present", () => {
     expect(
       getPublicAccountId({
         displayName: "",
@@ -10,10 +23,18 @@ describe("accountId utils", () => {
         i105AccountId: "testuVisibleAccountId",
         i105DefaultAccountId: "sorauCanonicalAccountId",
       }),
-    ).toBe("sorauCanonicalAccountId");
+    ).toBe("testuVisibleAccountId");
   });
 
-  it("falls back through visible and stored account ids", () => {
+  it("falls back through normalized default and stored account ids", () => {
+    expect(
+      getPublicAccountId({
+        displayName: "",
+        accountId: "6cmzCompatAccountId",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauCanonicalAccountId",
+      }),
+    ).toBe("testuCanonicalAccountId");
     expect(
       getPublicAccountId({
         displayName: "",
@@ -57,6 +78,6 @@ describe("accountId utils", () => {
         },
         "fallback",
       ),
-    ).toBe("sorauCanonicalAccountId");
+    ).toBe("testuVisibleAccountId");
   });
 });

@@ -123,12 +123,34 @@ describe("VpnView", () => {
     vi.useRealTimers();
   });
 
-  const mountView = async () => {
+  const mountView = async (
+    options?: {
+      account?: Partial<{
+        displayName: string;
+        domain: string;
+        accountId: string;
+        i105AccountId: string;
+        i105DefaultAccountId: string;
+        publicKeyHex: string;
+        privateKeyHex: string;
+        localOnly: boolean;
+      }>;
+    },
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
     const vpnStore = useVpnStore();
     vpnStore.hydrate();
+    const account = {
+      displayName: "Alice",
+      domain: "wonderland",
+      accountId: "alice@wonderland",
+      publicKeyHex: "ab".repeat(32),
+      privateKeyHex: "cd".repeat(32),
+      localOnly: false,
+      ...options?.account,
+    };
     session.$patch({
       connection: {
         toriiUrl: "https://taira.sora.org",
@@ -136,17 +158,8 @@ describe("VpnView", () => {
         assetDefinitionId: "xor#taira",
         networkPrefix: 369,
       },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-          localOnly: false,
-        },
-      ],
-      activeAccountId: "alice@wonderland",
+      accounts: [account],
+      activeAccountId: account.accountId,
     });
 
     const wrapper = mount(VpnView, {
@@ -206,6 +219,38 @@ describe("VpnView", () => {
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
+      privateKeyHex: "cd".repeat(32),
+      exitClass: "standard",
+    });
+    wrapper.unmount();
+  });
+
+  it("uses the TAIRA i105 literal for vpn requests when stored ids are stale", async () => {
+    const wrapper = await mountView({
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+
+    expect(getVpnStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      privateKeyHex: "cd".repeat(32),
+    });
+    expect(listVpnReceiptsMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      privateKeyHex: "cd".repeat(32),
+    });
+
+    await wrapper.get("button:not(.secondary)").trigger("click");
+    await flushPromises();
+
+    expect(connectVpnMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testuLegacyVisibleAccount1234567890",
       privateKeyHex: "cd".repeat(32),
       exitClass: "standard",
     });

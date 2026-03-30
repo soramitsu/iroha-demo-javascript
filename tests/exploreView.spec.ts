@@ -32,10 +32,30 @@ describe("ExploreView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (
+    options?: {
+      account?: Partial<{
+        displayName: string;
+        domain: string;
+        accountId: string;
+        i105AccountId: string;
+        i105DefaultAccountId: string;
+        publicKeyHex: string;
+        privateKeyHex: string;
+      }>;
+    },
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
+    const account = {
+      displayName: "Alice",
+      domain: "wonderland",
+      accountId: "alice@wonderland",
+      publicKeyHex: "ab".repeat(32),
+      privateKeyHex: "cd".repeat(32),
+      ...options?.account,
+    };
     session.$patch({
       connection: {
         toriiUrl: "http://localhost:8080",
@@ -43,16 +63,8 @@ describe("ExploreView", () => {
         assetDefinitionId: "xor#wonderland",
         networkPrefix: 369,
       },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-        },
-      ],
-      activeAccountId: "alice@wonderland",
+      accounts: [account],
+      activeAccountId: account.accountId,
     });
     return mount(ExploreView, {
       global: {
@@ -174,5 +186,46 @@ describe("ExploreView", () => {
     expect(wrapper.text()).toContain(
       "No QR yet. Connect to Torii and choose a wallet.",
     );
+  });
+
+  it("keeps metrics visible when explorer qr request fails", async () => {
+    getExplorerAccountQrMock.mockRejectedValueOnce(new Error("qr down"));
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Block Height");
+    expect(wrapper.text()).toContain("1");
+    expect(wrapper.text()).toContain(
+      "No QR yet. Connect to Torii and choose a wallet.",
+    );
+  });
+
+  it("uses the TAIRA i105 literal for explorer qr requests when stored ids are stale", async () => {
+    getExplorerAccountQrMock.mockResolvedValueOnce({
+      canonicalId: "URpZvAliceCompat",
+      literal: "testuLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
+      errorCorrection: "M",
+      modules: 29,
+      qrVersion: 1,
+      svg: "<svg />",
+    });
+
+    const wrapper = mountView({
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    expect(getExplorerAccountQrMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "testuLegacyVisibleAccount1234567890",
+    });
+    expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
+    expect(wrapper.text()).toContain("Block Height");
   });
 });

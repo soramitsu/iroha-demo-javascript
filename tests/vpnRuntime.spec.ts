@@ -201,6 +201,68 @@ describe("VpnRuntime", () => {
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
 
+  it("normalizes stale SORA-prefixed account ids for vpn auth calls", async () => {
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
+    const privateKey = Buffer.from("ab".repeat(32), "hex");
+
+    await runtime.connect({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorauLegacyVisibleAccount1234567890",
+      privateKeyHex: "ab".repeat(32),
+      exitClass: "standard",
+    });
+    expect(createVpnSessionMock).toHaveBeenCalledWith(
+      { exitClass: "standard" },
+      {
+        canonicalAuth: {
+          accountId: "testuLegacyVisibleAccount1234567890",
+          privateKey,
+        },
+      },
+    );
+
+    await runtime.getStatus({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorauLegacyVisibleAccount1234567890",
+      privateKeyHex: "ab".repeat(32),
+    });
+    expect(getVpnSessionMock).toHaveBeenCalledWith("sess_1", {
+      canonicalAuth: {
+        accountId: "testuLegacyVisibleAccount1234567890",
+        privateKey,
+      },
+    });
+
+    await runtime.disconnect({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorauLegacyVisibleAccount1234567890",
+      privateKeyHex: "ab".repeat(32),
+    });
+    expect(deleteVpnSessionMock).toHaveBeenCalledWith("sess_1", {
+      canonicalAuth: {
+        accountId: "testuLegacyVisibleAccount1234567890",
+        privateKey,
+      },
+    });
+
+    await runtime.listReceipts({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorauLegacyVisibleAccount1234567890",
+      privateKeyHex: "ab".repeat(32),
+    });
+    expect(listVpnReceiptsMock).toHaveBeenCalledWith({
+      canonicalAuth: {
+        accountId: "testuLegacyVisibleAccount1234567890",
+        privateKey,
+      },
+    });
+  });
+
   it("reports unavailable availability when the profile endpoint is missing", async () => {
     getVpnProfileMock.mockResolvedValueOnce(null);
     const controller = createControllerMock();

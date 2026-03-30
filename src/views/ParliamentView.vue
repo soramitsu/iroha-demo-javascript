@@ -383,11 +383,15 @@ import {
   resolveXorBalance,
   sanitizeReferendumId,
 } from "@/utils/parliament";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
   getPublicAccountId(activeAccount.value),
+);
+const requestAccountId = computed(
+  () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
 );
 const { t } = useAppI18n();
 
@@ -429,7 +433,7 @@ const canSubmit = computed(() =>
   Boolean(
     session.connection.toriiUrl &&
       session.connection.chainId &&
-      activeAccount.value?.accountId &&
+      requestAccountId.value &&
       activeAccount.value?.privateKeyHex,
   ),
 );
@@ -639,7 +643,7 @@ const shortenIdentifier = (value: string) => {
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
-  const accountId = activeAccount.value?.accountId;
+  const accountId = requestAccountId.value;
   if (!toriiUrl || !accountId) {
     refreshGeneration.value += 1;
     loadingBootstrap.value = false;
@@ -678,7 +682,7 @@ const refresh = async () => {
     if (
       requestGeneration !== refreshGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
-      activeAccount.value?.accountId !== accountId
+      requestAccountId.value !== accountId
     ) {
       return;
     }
@@ -702,7 +706,10 @@ const refresh = async () => {
     council.value = null;
     xorBalance.value = "0";
     resetGovernanceLookup();
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load governance state."),
+    );
   } finally {
     if (requestGeneration === refreshGeneration.value) {
       loadingBootstrap.value = false;
@@ -823,7 +830,10 @@ const lookupGovernance = async () => {
     enactDraft.value = null;
     loadedReferendumInput.value = null;
     loadedProposalInput.value = null;
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to refresh governance records."),
+    );
   } finally {
     if (requestGeneration === lookupGeneration.value) {
       lookupLoading.value = false;
@@ -841,7 +851,7 @@ const runAction = async (
   try {
     actionMessage.value = await run();
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error);
+    errorMessage.value = toUserFacingErrorMessage(error, t("Action failed."));
   } finally {
     actionBusy.value = null;
   }
@@ -849,7 +859,7 @@ const runAction = async (
 
 const handleBondCitizen = () =>
   runAction("bond", async () => {
-    if (!canSubmit.value || !activeAccount.value) {
+    if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
       throw new Error(t("Connection, chain, and active account are required."));
     }
     if (alreadyCitizen.value) {
@@ -869,7 +879,7 @@ const handleBondCitizen = () =>
     const result = await registerCitizen({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      accountId: activeAccount.value.accountId,
+      accountId: requestAccountId.value,
       amount: CITIZEN_BOND_XOR,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
@@ -879,7 +889,7 @@ const handleBondCitizen = () =>
 
 const handleBallot = () =>
   runAction("ballot", async () => {
-    if (!canSubmit.value || !activeAccount.value) {
+    if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
       throw new Error(t("Connection, chain, and active account are required."));
     }
     if (missingBallotPermission.value) {
@@ -911,7 +921,7 @@ const handleBallot = () =>
     const result = await submitGovernancePlainBallot({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      accountId: activeAccount.value.accountId,
+      accountId: requestAccountId.value,
       referendumId: referendumLiteral,
       amount: ballotAmountLiteral.value,
       durationBlocks: durationBlocks.value,
@@ -1006,7 +1016,7 @@ const summarizeDraft = (draft: GovernanceDraftResponse) => {
 };
 
 watch(
-  () => activeAccount.value?.accountId,
+  () => requestAccountId.value,
   (nextAccountId, previousAccountId) => {
     loadHistory();
     if (
@@ -1067,7 +1077,7 @@ watch(
   () => [
     session.connection.toriiUrl,
     session.connection.chainId,
-    activeAccount.value?.accountId,
+    requestAccountId.value,
   ],
   () => {
     refresh();

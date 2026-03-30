@@ -1057,6 +1057,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unable to self-shield XOR for private Kaigi.":
     "Unable to self-shield XOR for private Kaigi.",
   "Create and save your TAIRA wallet": "Create and save your TAIRA wallet",
+  "Generate your account keys, store a recovery phrase, and save the wallet locally.":
+    "Create keys, back up your phrase, and save the wallet.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. Torii registration is optional.":
     "Create keys, back up your phrase, and save the wallet. Registration is optional.",
   "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.":
@@ -1114,6 +1116,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
   "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
     "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
+  "Edit raw asset ID": "Edit raw asset ID",
+  "Raw asset ID": "Raw asset ID",
+  "Example encoded asset ID": "Example encoded asset ID",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
   "Enter a recovery phrase.": "Enter a recovery phrase.",
@@ -1152,6 +1157,11 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",
   "Wallet data is unavailable until this account exists on-chain.":
     "No on-chain wallet data yet.",
+  "Unable to reach Torii.": "Could not reach Torii.",
+  "Failed to create the on-chain account.":
+    "Could not create the on-chain account.",
+  "Failed to save the authority account.":
+    "Could not save the authority account.",
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
   "Wallet {accountId} restored locally.":
     "Wallet restored locally: {accountId}.",
@@ -1266,6 +1276,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Kaigi packet pasted from clipboard.": "Kaigi packet pasted from clipboard.",
   "Clipboard access failed. Copy the packet manually.":
     "Clipboard failed. Copy the packet manually.",
+  "Clipboard access failed. Copy the payload manually.":
+    "Clipboard failed. Copy the payload manually.",
   "Clipboard access failed. Paste the packet manually.":
     "Clipboard failed. Paste the packet manually.",
   "Connected to {name}.": "Connected to {name}.",
@@ -1276,6 +1288,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unable to create an offer.": "Could not create an offer.",
   "Unable to create an answer.": "Could not create an answer.",
   "Unable to apply the answer.": "Could not apply the answer.",
+  "Failed to load governance state.": "Could not load governance state.",
+  "Failed to refresh governance records.":
+    "Could not refresh governance records.",
+  "Failed to load staking state.": "Could not load staking state.",
+  "Failed to load lane validators.": "Could not load lane validators.",
+  "Transaction failed.": "Transaction failed.",
+  "Action failed.": "Action failed.",
+  "Copy invoice JSON": "Copy invoice JSON",
+  "Copy payment JSON": "Copy payment JSON",
+  "Invoice JSON copied.": "Invoice JSON copied.",
+  "Payment JSON copied.": "Payment JSON copied.",
   "Local preview stopped.": "Local preview stopped.",
   "Sora VPN": "Sora VPN",
   "Connect through the TAIRA privacy lane":
@@ -1803,6 +1826,13 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Loaded {count} dataspace option(s).": "Loaded {count} dataspaces.",
   "No dataspace governance found on this Torii endpoint.":
     "No staking data found on this endpoint.",
+  "Failed to load governance state.": "Could not load governance state.",
+  "Failed to refresh governance records.":
+    "Could not refresh governance records.",
+  "Failed to load staking state.": "Could not load staking state.",
+  "Failed to load lane validators.": "Could not load lane validators.",
+  "Transaction failed.": "Transaction failed.",
+  "Action failed.": "Action failed.",
   "Connection, account, dataspace, and validator are required.":
     "Network, wallet, dataspace, and validator are required.",
   "No {symbol} balance available to bond.": "No {symbol} available to stake.",
@@ -1999,10 +2029,22 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Unable to create an offer.": "Could not create an offer.",
   "Unable to create an answer.": "Could not create an answer.",
   "Unable to apply the answer.": "Could not apply the answer.",
+  "Unable to reach Torii.": "Could not reach Torii.",
+  "Failed to create the on-chain account.":
+    "Could not create the on-chain account.",
+  "Failed to save the authority account.":
+    "Could not save the authority account.",
   "Local preview stopped.": "Local preview stopped.",
   "Building…": "Creating...",
   "Recording…": "Saving...",
   "Transferring…": "Sending...",
+  "Copy invoice JSON": "Copy invoice JSON",
+  "Copy payment JSON": "Copy payment JSON",
+  "Invoice JSON copied.": "Invoice JSON copied.",
+  "Payment JSON copied.": "Payment JSON copied.",
+  "Edit raw asset ID": "Edit raw asset ID",
+  "Raw asset ID": "Raw asset ID",
+  "Example encoded asset ID": "Example encoded asset ID",
   "34m... or 0x...@wonderland": "sorau...",
   "n42u... (I105 account ID)": "sorau...",
   "6cmz... (canonical I105 account ID)": "sorau...",

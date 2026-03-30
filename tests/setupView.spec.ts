@@ -5,6 +5,7 @@ import SetupView from "@/views/SetupView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -55,12 +56,13 @@ describe("SetupView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (assetDefinitionId = TAIRA_CHAIN_PRESET.connection.assetDefinitionId) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     useSessionStore().$patch({
       connection: {
         ...TAIRA_CHAIN_PRESET.connection,
+        assetDefinitionId,
       },
     });
     return mount(SetupView, {
@@ -104,5 +106,37 @@ describe("SetupView", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain(t("Create on-chain account"));
+  });
+
+  it("shows a humanized asset label without echoing the raw literal", async () => {
+    const rawAssetDefinitionId = "norito:abcdefghijklmnopqrstuvwxyz012345";
+    const wrapper = mountView(rawAssetDefinitionId);
+
+    const inputs = wrapper.findAll("input");
+    expect(
+      inputs.some(
+        (node) =>
+          (node.element as HTMLInputElement).value ===
+          formatAssetDefinitionLabel(rawAssetDefinitionId),
+      ),
+    ).toBe(true);
+    expect(
+      inputs.some(
+        (node) =>
+          (node.element as HTMLInputElement).value === rawAssetDefinitionId,
+      ),
+    ).toBe(false);
+
+    await wrapper.get(".setup-asset-literal summary").trigger("click");
+    await flushPromises();
+
+    const rawInput = wrapper
+      .findAll("input")
+      .find(
+        (node) =>
+          node.attributes("placeholder") === t("Example encoded asset ID"),
+      );
+    expect(rawInput).toBeDefined();
+    expect((rawInput!.element as HTMLInputElement).value).toBe("");
   });
 });

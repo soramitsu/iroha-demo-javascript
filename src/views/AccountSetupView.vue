@@ -121,7 +121,7 @@
             </button>
             <button
               class="secondary"
-              :disabled="generating || restoring || onboardingBusy"
+              :disabled="generating || restoring"
               @click="toggleRestorePanel"
             >
               {{
@@ -234,51 +234,14 @@
           </div>
           <div class="actions">
             <button
-              :disabled="!canSaveGenerated || onboardingBusy"
+              :disabled="!canSaveGenerated"
               @click="saveGeneratedIdentity"
             >
               {{ finalizeIdentityLabel }}
             </button>
-            <button
-              v-if="!isRestoreMode"
-              class="secondary"
-              :disabled="onboardingBusy"
-              @click="showAliasRegistration = !showAliasRegistration"
-            >
-              {{ showAliasRegistration ? t("Hide advanced") : t("Advanced") }}
-            </button>
             <button class="secondary" @click="startNewRegistration">
               {{ t("Reset") }}
             </button>
-          </div>
-          <div
-            v-if="showAliasRegistration && !isRestoreMode"
-            class="backup-panel account-advanced-panel"
-          >
-            <p class="section-label">
-              {{ t("Optional on-chain alias registration") }}
-            </p>
-            <label>
-              {{ t("Alias Metadata (JSON, optional)") }}
-              <textarea
-                v-model.trim="identityInput"
-                rows="3"
-                :placeholder="aliasMetadataPlaceholder"
-              ></textarea>
-            </label>
-            <div class="actions">
-              <button
-                class="secondary"
-                :disabled="!canSaveGenerated || onboardingBusy"
-                @click="registerGeneratedIdentity"
-              >
-                {{
-                  onboardingBusy
-                    ? t("Registering alias…")
-                    : t("Register on-chain alias")
-                }}
-              </button>
-            </div>
           </div>
           <p v-if="onboardingError" class="helper error">
             {{ onboardingError }}
@@ -347,7 +310,7 @@
         </button>
         <button
           class="secondary"
-          :disabled="generating || restoring || onboardingBusy"
+          :disabled="generating || restoring"
           @click="toggleRestorePanel"
         >
           {{
@@ -358,18 +321,10 @@
         </button>
         <button
           class="secondary"
-          :disabled="!canSaveGenerated || onboardingBusy"
+          :disabled="!canSaveGenerated"
           @click="saveGeneratedIdentity"
         >
           {{ finalizeIdentityLabel }}
-        </button>
-        <button
-          v-if="!isRestoreMode"
-          class="secondary"
-          :disabled="onboardingBusy"
-          @click="showAliasRegistration = !showAliasRegistration"
-        >
-          {{ showAliasRegistration ? t("Hide advanced") : t("Advanced") }}
         </button>
         <button
           v-if="hasPendingSetupState"
@@ -403,40 +358,6 @@
       <p v-if="onboardingStatus" class="helper success">
         {{ onboardingStatus }}
       </p>
-      <div
-        v-if="
-          showAliasRegistration &&
-          generatedKeys &&
-          backupConfirmed &&
-          !isRestoreMode
-        "
-        class="backup-panel account-advanced-panel"
-      >
-        <p class="section-label">
-          {{ t("Optional on-chain alias registration") }}
-        </p>
-        <label>
-          {{ t("Alias Metadata (JSON, optional)") }}
-          <textarea
-            v-model.trim="identityInput"
-            rows="3"
-            :placeholder="aliasMetadataPlaceholder"
-          ></textarea>
-        </label>
-        <div class="actions">
-          <button
-            class="secondary"
-            :disabled="!canSaveGenerated || onboardingBusy"
-            @click="registerGeneratedIdentity"
-          >
-            {{
-              onboardingBusy
-                ? t("Registering alias…")
-                : t("Register on-chain alias")
-            }}
-          </button>
-        </div>
-      </div>
 
       <div v-if="showBackupPanel" class="backup-panel">
         <p class="helper">
@@ -598,7 +519,6 @@ import {
   createConnectPreview,
   deriveAccountAddress,
   derivePublicKey,
-  onboardAccount,
 } from "@/services/iroha";
 import {
   generateMnemonicWords,
@@ -651,8 +571,6 @@ watch(
 
 const aliasInput = ref(session.activeAccount?.displayName || "");
 const domainInput = ref(session.activeAccount?.domain || DEFAULT_DOMAIN_LABEL);
-const identityInput = ref("");
-const aliasMetadataPlaceholder = '{"country":"JP","kyc_id":"..."}';
 const wordCount = ref<12 | 24>(24);
 const mnemonicWords = ref<string[]>([]);
 const backupFileInput = ref<HTMLInputElement | null>(null);
@@ -663,7 +581,6 @@ const generatedKeys = ref<{
 const restorePhraseInput = ref("");
 const backupConfirmed = ref(false);
 const showRestorePanel = ref(false);
-const showAliasRegistration = ref(false);
 const accountFlowMode = ref<"generate" | "restore">("generate");
 const generating = ref(false);
 const restoring = ref(false);
@@ -671,7 +588,6 @@ const generateError = ref("");
 const restoreError = ref("");
 const onboardingError = ref("");
 const onboardingStatus = ref("");
-const onboardingBusy = ref(false);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const isFirstLaunch = computed(() => !hasSavedAccounts.value);
 const isRestoreMode = computed(() => accountFlowMode.value === "restore");
@@ -679,7 +595,7 @@ const accountSetupHelperText = computed(() =>
   isRestoreMode.value
     ? t("Restore your wallet from a recovery phrase and save it locally.")
     : t(
-        "Generate your account keys, store a recovery phrase, and save the wallet locally. On-chain alias registration is optional.",
+        "Generate your account keys, store a recovery phrase, and save the wallet locally.",
       ),
 );
 const identityStageTitle = computed(() =>
@@ -791,14 +707,12 @@ const hasPendingSetupState = computed(() =>
 const startNewRegistration = () => {
   aliasInput.value = "";
   domainInput.value = DEFAULT_DOMAIN_LABEL;
-  identityInput.value = "";
   wordCount.value = 24;
   mnemonicWords.value = [];
   generatedKeys.value = null;
   restorePhraseInput.value = "";
   backupConfirmed.value = false;
   showRestorePanel.value = false;
-  showAliasRegistration.value = false;
   accountFlowMode.value = "generate";
   generating.value = false;
   restoring.value = false;
@@ -867,7 +781,6 @@ const generateRecovery = async () => {
   accountFlowMode.value = "generate";
   showRestorePanel.value = false;
   restorePhraseInput.value = "";
-  showAliasRegistration.value = false;
   try {
     generating.value = true;
     const words = generateMnemonicWords(wordCount.value);
@@ -918,7 +831,6 @@ const restoreRecovery = async () => {
   generateError.value = "";
   onboardingError.value = "";
   onboardingStatus.value = "";
-  showAliasRegistration.value = false;
   accountFlowMode.value = "restore";
 
   try {
@@ -947,7 +859,6 @@ const handleBackupFileSelection = async (event: Event) => {
   generateError.value = "";
   onboardingError.value = "";
   onboardingStatus.value = "";
-  showAliasRegistration.value = false;
   accountFlowMode.value = "restore";
 
   try {
@@ -967,25 +878,6 @@ const handleBackupFileSelection = async (event: Event) => {
     if (input) {
       input.value = "";
     }
-  }
-};
-
-const parseIdentity = () => {
-  if (!identityInput.value.trim()) {
-    return undefined;
-  }
-  try {
-    const parsed = JSON.parse(identityInput.value);
-    if (parsed && typeof parsed === "object") {
-      return parsed;
-    }
-    throw new Error(t("Identity metadata must be a JSON object."));
-  } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? error.message
-        : t("Invalid identity metadata JSON payload."),
-    );
   }
 };
 
@@ -1051,74 +943,6 @@ const saveGeneratedIdentity = async () => {
         accountId: generatedVisibleAccountId.value || generatedAccountId.value,
       });
   await router.push("/wallet");
-};
-
-const registerGeneratedIdentity = async () => {
-  onboardingError.value = "";
-  onboardingStatus.value = "";
-  if (isRestoreMode.value) {
-    await saveGeneratedIdentity();
-    return;
-  }
-  if (!generatedKeys.value) {
-    onboardingError.value = t("Generate a keypair first.");
-    return;
-  }
-  if (!generatedAccountId.value) {
-    onboardingError.value = t("Generate a keypair first.");
-    return;
-  }
-  if (!backupConfirmed.value) {
-    onboardingError.value = t("Confirm that you stored the recovery phrase.");
-    return;
-  }
-  if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    onboardingError.value = t(
-      "TAIRA connection is unavailable. Reload and try again.",
-    );
-    return;
-  }
-  onboardingBusy.value = true;
-  try {
-    const identity = parseIdentity();
-    const response = await onboardAccount({
-      toriiUrl: connectionForm.toriiUrl,
-      alias: aliasInput.value.trim() || t("Unnamed"),
-      accountId: generatedAccountId.value,
-      identity,
-    });
-    persistGeneratedIdentity(false);
-    onboardingStatus.value = t(
-      "On-chain alias {accountId} queued (tx {txHash}…)",
-      {
-        accountId: response.account_id,
-        txHash: response.tx_hash_hex.slice(0, 12),
-      },
-    );
-    await router.push("/wallet");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (/status 409\b/i.test(message)) {
-      persistGeneratedIdentity(false);
-      await router.push("/wallet");
-      return;
-    }
-    if (
-      /status 403\b/i.test(message) ||
-      message.includes("UAID onboarding is disabled") ||
-      message.includes("UAID alias registration is disabled")
-    ) {
-      persistGeneratedIdentity(true);
-      onboardingStatus.value = t(
-        "On-chain alias registration is unavailable on this Torii endpoint. The wallet was still saved locally.",
-      );
-      await router.push("/wallet");
-      return;
-    }
-    onboardingError.value = message;
-  } finally {
-    onboardingBusy.value = false;
-  }
 };
 
 const downloadBackup = (target: "manual" | "icloud" | "google") => {

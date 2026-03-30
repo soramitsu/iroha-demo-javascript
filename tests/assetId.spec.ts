@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   deriveAssetSymbol,
   extractAssetDefinitionId,
+  formatAssetDefinitionLabel,
+  formatAssetReferenceLabel,
+  formatOpaqueAssetLiteralsInText,
   splitAssetReference,
 } from "@/utils/assetId";
 
@@ -36,5 +39,27 @@ describe("asset ID helpers", () => {
   it("uses fallback labels for opaque encoded IDs", () => {
     expect(deriveAssetSymbol("norito:abcdef0123456789", "units")).toBe("units");
     expect(deriveAssetSymbol("", "units")).toBe("units");
+  });
+
+  it("formats opaque norito asset IDs for display", () => {
+    expect(formatAssetDefinitionLabel("norito:abcdef0123456789")).toBe(
+      "abcdef01...23456789",
+    );
+    expect(
+      formatAssetDefinitionLabel("norito:abcdefghijklmnopqrstuvwxyz012345"),
+    ).toBe("abcdefgh...yz012345");
+    expect(
+      formatAssetReferenceLabel(
+        "norito:abcdefghijklmnopqrstuvwxyz012345##alice@wonderland",
+      ),
+    ).toBe("abcdefgh...yz012345 | alice@wonderland");
+  });
+
+  it("replaces opaque norito literals inside user-facing text", () => {
+    expect(
+      formatOpaqueAssetLiteralsInText(
+        'shield policy mismatch for "norito:abcdefghijklmnopqrstuvwxyz012345"',
+      ),
+    ).toBe('shield policy mismatch for "abcdefgh...yz012345"');
   });
 });

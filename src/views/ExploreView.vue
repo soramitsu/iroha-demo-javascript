@@ -126,6 +126,7 @@ import { useAppI18n } from "@/composables/useAppI18n";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
+import { getPublicAccountId } from "@/utils/accountId";
 import type {
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
@@ -133,6 +134,9 @@ import type {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const requestAccountId = computed(
+  () => getPublicAccountId(activeAccount.value) || activeAccount.value?.accountId || "",
+);
 const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
 const accountQr = ref<ExplorerAccountQrResponse | null>(null);
@@ -160,8 +164,8 @@ const resetExplorerState = () => {
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
-  const accountId = activeAccount.value?.accountId;
-  if (!toriiUrl || !session.hasAccount || !accountId) {
+  const accountId = requestAccountId.value;
+  if (!toriiUrl) {
     requestGeneration.value += 1;
     loading.value = false;
     resetExplorerState();
@@ -171,22 +175,27 @@ const refresh = async () => {
   requestGeneration.value = currentGeneration;
   loading.value = true;
   try {
-    const [metricsPayload, qrPayload] = await Promise.all([
+    const [metricsResult, qrResult] = await Promise.allSettled([
       getExplorerMetrics(toriiUrl),
-      getExplorerAccountQr({
-        toriiUrl,
-        accountId,
-      }),
+      accountId
+        ? getExplorerAccountQr({
+            toriiUrl,
+            accountId,
+          })
+        : Promise.resolve(null),
     ]);
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
-      activeAccount.value?.accountId !== accountId
+      requestAccountId.value !== accountId
     ) {
       return;
     }
+    metrics.value =
+      metricsResult.status === "fulfilled" ? metricsResult.value : null;
+    const qrPayload =
+      qrResult.status === "fulfilled" ? qrResult.value : null;
     if (!qrPayload) {
-      metrics.value = metricsPayload;
       accountQr.value = null;
       return;
     }
@@ -196,7 +205,6 @@ const refresh = async () => {
     if (adoptedChainPrefix) {
       session.persistState();
     }
-    metrics.value = metricsPayload;
     accountQr.value = qrPayload;
   } finally {
     if (currentGeneration === requestGeneration.value) {
@@ -217,7 +225,7 @@ const copyQr = async () => {
 };
 
 watch(
-  () => [session.connection.toriiUrl, activeAccount.value?.accountId],
+  () => [session.connection.toriiUrl, requestAccountId.value],
   () => {
     refresh();
   },

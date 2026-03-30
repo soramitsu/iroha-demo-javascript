@@ -28,10 +28,7 @@
         </label>
         <label>
           {{ t("Asset Definition ID") }}
-          <input
-            v-model="connectionForm.assetDefinitionId"
-            :placeholder="t('norito:<asset-id-hex>')"
-          />
+          <input :value="displayAssetDefinitionId" readonly />
         </label>
         <label>
           {{ t("Network Prefix") }}
@@ -44,6 +41,16 @@
           />
         </label>
       </div>
+      <details class="setup-asset-literal">
+        <summary>{{ t("Edit raw asset ID") }}</summary>
+        <label>
+          {{ t("Raw asset ID") }}
+          <input
+            v-model="assetDefinitionDraft"
+            :placeholder="t('Example encoded asset ID')"
+          />
+        </label>
+      </details>
       <div class="actions">
         <button :disabled="pingLoading" @click="handlePing">
           {{ t("Check health") }}
@@ -196,6 +203,8 @@ import {
   registerAccount,
 } from "@/services/iroha";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 type PingState = "idle" | "ok" | "error";
 
@@ -204,6 +213,13 @@ const { t } = useAppI18n();
 const DEFAULT_DOMAIN_LABEL = "default";
 
 const connectionForm = reactive({ ...session.connection });
+const assetDefinitionDraft = ref("");
+const displayAssetDefinitionId = computed(() =>
+  formatAssetDefinitionLabel(
+    connectionForm.assetDefinitionId,
+    t("Asset not set"),
+  ),
+);
 const emptyAccount = () => ({
   displayName: "",
   domain: DEFAULT_DOMAIN_LABEL,
@@ -246,6 +262,7 @@ watch(
       ? { ...value }
       : { ...TAIRA_CHAIN_PRESET.connection };
     Object.assign(connectionForm, nextConnection);
+    assetDefinitionDraft.value = "";
     if (!isTaira) {
       session.updateConnection({ ...TAIRA_CHAIN_PRESET.connection });
       session.persistState();
@@ -319,15 +336,18 @@ const canRegister = computed(() =>
 const metadataSchema = z.record(z.any()).catch(() => ({}));
 
 const saveConnection = () => {
+  const nextAssetDefinitionId =
+    assetDefinitionDraft.value.trim() ||
+    connectionForm.assetDefinitionId ||
+    TAIRA_CHAIN_PRESET.connection.assetDefinitionId;
   const nextConnection = {
     toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
     chainId: TAIRA_CHAIN_PRESET.connection.chainId,
     networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    assetDefinitionId:
-      connectionForm.assetDefinitionId ||
-      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+    assetDefinitionId: nextAssetDefinitionId,
   };
   Object.assign(connectionForm, nextConnection);
+  assetDefinitionDraft.value = "";
   session.updateConnection(nextConnection);
   session.persistState();
 };
@@ -353,7 +373,10 @@ const handlePing = async () => {
       : t("No response from Torii.");
   } catch (error) {
     pingState.value = "error";
-    pingMessage.value = error instanceof Error ? error.message : String(error);
+    pingMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Unable to reach Torii."),
+    );
   } finally {
     pingLoading.value = false;
   }
@@ -392,8 +415,10 @@ const handleDerivePublic = () => {
     });
     Object.assign(userForm, summary);
   } catch (error) {
-    registerMessage.value =
-      error instanceof Error ? error.message : String(error);
+    registerMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to create the on-chain account."),
+    );
   }
 };
 
@@ -420,8 +445,10 @@ const handleRegister = async () => {
       hash: result.hash,
     });
   } catch (error) {
-    registerMessage.value =
-      error instanceof Error ? error.message : String(error);
+    registerMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to save the authority account."),
+    );
   } finally {
     registering.value = false;
   }

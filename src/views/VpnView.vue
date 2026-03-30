@@ -267,6 +267,8 @@ import type {
   VpnReceipt,
   VpnStatus,
 } from "@/types/iroha";
+import { getPublicAccountId } from "@/utils/accountId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
 const vpnStore = useVpnStore();
@@ -307,6 +309,9 @@ const emptyStatus = (): VpnStatus => ({
 });
 
 const activeAccount = computed(() => session.activeAccount);
+const requestAccountId = computed(
+  () => getPublicAccountId(activeAccount.value) || activeAccount.value?.accountId || "",
+);
 const toriiUrl = computed(() => session.connection.toriiUrl);
 const availability = ref<VpnAvailability | null>(vpnStore.helperHealth);
 const profile = ref<VpnProfile | null>(vpnStore.lastProfile);
@@ -337,7 +342,7 @@ const supportedExitClasses = computed<VpnExitClass[]>(() => {
 const canOperate = computed(() =>
   Boolean(
     toriiUrl.value &&
-      activeAccount.value?.accountId &&
+      requestAccountId.value &&
       activeAccount.value?.privateKeyHex,
   ),
 );
@@ -345,14 +350,14 @@ const canOperate = computed(() =>
 const authContext = computed<Partial<VpnAuthContext> | undefined>(() => {
   if (
     !toriiUrl.value ||
-    !activeAccount.value?.accountId ||
+    !requestAccountId.value ||
     !activeAccount.value?.privateKeyHex
   ) {
     return undefined;
   }
   return {
     toriiUrl: toriiUrl.value,
-    accountId: activeAccount.value.accountId,
+    accountId: requestAccountId.value,
     privateKeyHex: activeAccount.value.privateKeyHex,
   };
 });
@@ -528,7 +533,7 @@ const syncStatusOnly = async () => {
     status.value = {
       ...emptyStatus(),
       state: "error",
-      errorMessage: error instanceof Error ? error.message : String(error),
+      errorMessage: toUserFacingErrorMessage(error),
       helperStatus: "error",
       controllerInstalled: availability.value?.controllerInstalled ?? false,
       controllerVersion: availability.value?.controllerVersion ?? null,
@@ -582,8 +587,10 @@ const refreshAll = async () => {
     if (generation !== requestGeneration.value) {
       return;
     }
-    loadError.value =
-      error instanceof Error ? error.message : t("Failed to load VPN state.");
+    loadError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load VPN state."),
+    );
   } finally {
     if (generation === requestGeneration.value) {
       loading.value = false;
@@ -600,15 +607,17 @@ const handleConnect = async () => {
   try {
     status.value = await connectVpn({
       toriiUrl: toriiUrl.value,
-      accountId: activeAccount.value.accountId,
+      accountId: requestAccountId.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
       exitClass: selectedExitClass.value,
     });
     receipts.value = await listVpnReceipts(authContext.value);
     vpnStore.setReceipts(receipts.value);
   } catch (error) {
-    actionError.value =
-      error instanceof Error ? error.message : t("Failed to connect VPN.");
+    actionError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to connect VPN."),
+    );
   } finally {
     actionPending.value = false;
     await refreshAll();
@@ -624,14 +633,16 @@ const handleDisconnect = async () => {
   try {
     status.value = await disconnectVpn({
       toriiUrl: toriiUrl.value,
-      accountId: activeAccount.value.accountId,
+      accountId: requestAccountId.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     receipts.value = await listVpnReceipts(authContext.value);
     vpnStore.setReceipts(receipts.value);
   } catch (error) {
-    actionError.value =
-      error instanceof Error ? error.message : t("Failed to disconnect VPN.");
+    actionError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to disconnect VPN."),
+    );
   } finally {
     actionPending.value = false;
     await refreshAll();
@@ -644,8 +655,10 @@ const handleRepair = async () => {
   try {
     status.value = await repairVpn(authContext.value ?? {});
   } catch (error) {
-    actionError.value =
-      error instanceof Error ? error.message : t("Failed to repair VPN.");
+    actionError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to repair VPN."),
+    );
   } finally {
     actionPending.value = false;
     await refreshAll();
@@ -658,7 +671,7 @@ const handleExitClassChange = (event: Event) => {
 };
 
 watch(
-  () => `${toriiUrl.value}::${activeAccount.value?.accountId || ""}`,
+  () => `${toriiUrl.value}::${requestAccountId.value}`,
   () => {
     void refreshAll();
   },

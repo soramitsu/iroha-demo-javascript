@@ -3,6 +3,7 @@ import {
   confidentialModeSupportsShield,
   isPositiveWholeAmount,
 } from "../src/utils/confidential";
+import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 
 export { confidentialModeSupportsShield, isPositiveWholeAmount };
 
@@ -214,7 +215,9 @@ const collectApiErrorDetails = (payload: unknown): string[] => {
 };
 
 export const extractApiErrorDetail = (payload: unknown): string => {
-  const details = collectApiErrorDetails(payload);
+  const details = collectApiErrorDetails(payload)
+    .map((detail) => sanitizeErrorMessage(detail))
+    .filter(Boolean);
   return (
     details.find((detail) => !isGenericApiErrorDetail(detail)) ??
     details[0] ??
@@ -231,13 +234,9 @@ export const readApiErrorDetail = async (
   }
 
   try {
-    return extractApiErrorDetail(JSON.parse(text)) || text;
+    return sanitizeErrorMessage(extractApiErrorDetail(JSON.parse(text)) || text);
   } catch {
-    const hasControlChars = Array.from(text).some((character) => {
-      const code = character.charCodeAt(0);
-      return (code >= 0 && code <= 8) || (code >= 14 && code <= 31);
-    });
-    return hasControlChars ? "" : text;
+    return sanitizeErrorMessage(text);
   }
 };
 

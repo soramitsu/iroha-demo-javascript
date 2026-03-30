@@ -159,7 +159,7 @@
           </thead>
           <tbody>
             <tr v-for="asset in assets" :key="asset.asset_id">
-              <td>{{ asset.asset_id }}</td>
+              <td>{{ formatAssetReferenceLabel(asset.asset_id, t("—")) }}</td>
               <td>{{ asset.quantity }}</td>
             </tr>
           </tbody>
@@ -263,6 +263,11 @@ import {
   isPositiveWholeAmount,
 } from "@/utils/confidential";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
+import {
+  formatAssetDefinitionLabel,
+  formatAssetReferenceLabel,
+} from "@/utils/assetId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const ACCOUNT_TRANSACTION_PAGE_SIZE = 200;
@@ -273,6 +278,9 @@ const activeAccount = computed(() => session.activeAccount);
 const { localeStore, t } = useAppI18n();
 const visibleAccountId = computed(() =>
   getPublicAccountId(activeAccount.value),
+);
+const requestAccountId = computed(
+  () => visibleAccountId.value || activeAccount.value?.accountId || "",
 );
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(activeAccount.value, t("—")),
@@ -398,7 +406,7 @@ const fetchAllAccountTransactions = async (input: {
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
-  const accountId = activeAccount.value?.accountId;
+  const accountId = requestAccountId.value;
   if (!session.hasAccount || !toriiUrl || !accountId) {
     requestGeneration.value += 1;
     loading.value = false;
@@ -424,7 +432,7 @@ const refresh = async () => {
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
-      activeAccount.value?.accountId !== accountId
+      requestAccountId.value !== accountId
     ) {
       return;
     }
@@ -437,16 +445,16 @@ const refresh = async () => {
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
-      activeAccount.value?.accountId !== accountId
+      requestAccountId.value !== accountId
     ) {
       return;
     }
     assets.value = [];
     transactionsRaw.value = [];
-    walletError.value =
-      error instanceof Error
-        ? error.message
-        : t("Wallet data is unavailable until this account exists on-chain.");
+    walletError.value = toUserFacingErrorMessage(
+      error,
+      t("Wallet data is unavailable until this account exists on-chain."),
+    );
   } finally {
     if (currentGeneration === requestGeneration.value) {
       loading.value = false;
@@ -456,9 +464,7 @@ const refresh = async () => {
 
 const canRequestFaucet = computed(() =>
   Boolean(
-    session.hasAccount &&
-      session.connection.toriiUrl &&
-      activeAccount.value?.accountId,
+    session.hasAccount && session.connection.toriiUrl && requestAccountId.value,
   ),
 );
 
@@ -488,7 +494,7 @@ const refreshAfterFaucetClaim = async (assetId: string) => {
 
 const requestStarterFunds = async () => {
   const toriiUrl = session.connection.toriiUrl;
-  const accountId = activeAccount.value?.accountId;
+  const accountId = requestAccountId.value;
   if (!toriiUrl || !accountId) {
     return;
   }
@@ -525,10 +531,10 @@ const requestStarterFunds = async () => {
           "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
         );
   } catch (error) {
-    faucetError.value =
-      error instanceof Error
-        ? error.message
-        : t("Failed to request faucet funds.");
+    faucetError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to request faucet funds."),
+    );
   } finally {
     faucetLoading.value = false;
   }
@@ -556,7 +562,10 @@ const primaryAsset = computed(() => {
 
 const primaryAssetLabel = computed(() => {
   const fallback = session.connection.assetDefinitionId || t("—");
-  return primaryAsset.value?.asset_id ?? fallback;
+  return formatAssetReferenceLabel(
+    primaryAsset.value?.asset_id ?? fallback,
+    t("—"),
+  );
 });
 const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
@@ -574,8 +583,14 @@ const shieldedXorTrackedAssetIds = computed(() => {
       return true;
     });
 });
-const shieldedXorAssetLabel = computed(
+const shieldedXorAssetId = computed(
   () => shieldedXorResolvedAssetId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+);
+const shieldedXorAssetLabel = computed(() =>
+  formatAssetDefinitionLabel(
+    shieldedXorAssetId.value,
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
+  ),
 );
 const transparentXorAsset = computed(() => {
   const targets = shieldedXorTrackedAssetIds.value.map((value) =>
@@ -666,7 +681,7 @@ const createShieldedXor = async () => {
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      assetDefinitionId: shieldedXorAssetLabel.value,
+      assetDefinitionId: shieldedXorAssetId.value,
       accountId: activeAccount.value.accountId,
       destinationAccountId:
         visibleAccountId.value || activeAccount.value.accountId,
@@ -681,8 +696,10 @@ const createShieldedXor = async () => {
     });
     await refresh();
   } catch (error) {
-    shieldError.value =
-      error instanceof Error ? error.message : t("Shield mode is unavailable.");
+    shieldError.value = toUserFacingErrorMessage(
+      error,
+      t("Shield mode is unavailable."),
+    );
   } finally {
     shieldLoading.value = false;
   }

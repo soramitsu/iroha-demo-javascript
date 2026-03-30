@@ -364,6 +364,30 @@ describe("session store", () => {
     expect(store.activeAccount?.domain).toBe("default");
   });
 
+  it("rewrites stored SORA-native account literals onto the TAIRA prefix", () => {
+    const store = useSessionStore();
+    store.addAccount({
+      displayName: "Alice",
+      domain: "default",
+      accountId: "sorauLegacyVisibleAccount1234567890",
+      i105AccountId: "",
+      i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      publicKeyHex: "",
+      privateKeyHex: "priv",
+      localOnly: true,
+    });
+
+    expect(store.activeAccount?.accountId).toBe(
+      "testuLegacyVisibleAccount1234567890",
+    );
+    expect(store.activeAccount?.i105AccountId).toBe(
+      "testuLegacyVisibleAccount1234567890",
+    );
+    expect(store.activeAccount?.i105DefaultAccountId).toBe(
+      "sorauLegacyVisibleAccount1234567890",
+    );
+  });
+
   it("ignores custom chain network overrides in TAIRA-only mode", () => {
     const store = useSessionStore();
     store.addCustomChain({

@@ -1753,7 +1753,7 @@ const fetchJson = async (
     },
   });
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const detail = await readApiErrorDetail(response);
     throw new Error(
       detail ||
         `${label} request failed with status ${response.status} (${response.statusText})`,
@@ -2638,7 +2638,7 @@ const api: IrohaBridge = {
           ? ` Available asset IDs: ${available.join(", ")}.`
           : "";
         throw new Error(
-          `Unable to resolve source asset ID from configured value "${configuredAssetId}". Set Asset Definition ID to a canonical encoded asset ID (norito:<hex>) for this account.${availableHint}`,
+          `Unable to resolve the source asset from configured value "${configuredAssetId}". Set Asset Definition ID to the canonical TAIRA asset literal for this account.${availableHint}`,
         );
       }
       sourceAssetId = normalizeAssetId(selectedAssetId, "sourceAssetId");

@@ -43,9 +43,7 @@
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Asset Definition ID") }}</span>
-            <span class="kv-value">{{
-              session.connection.assetDefinitionId || t("—")
-            }}</span>
+            <span class="kv-value">{{ activeAssetLabel }}</span>
           </div>
         </div>
         <div
@@ -151,14 +149,19 @@ import { useShieldedDestinationLock } from "@/composables/useShieldedDestination
 import { useShieldCapability } from "@/composables/useShieldCapability";
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getPublicAccountId } from "@/utils/accountId";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const { t } = useAppI18n();
 const activeAccountDisplayId = computed(() =>
   getPublicAccountId(activeAccount.value),
 );
-const { t } = useAppI18n();
+const activeAssetLabel = computed(() =>
+  formatAssetDefinitionLabel(session.connection.assetDefinitionId, t("—")),
+);
 const form = reactive({
   destination: "",
   quantity: "0",
@@ -283,8 +286,10 @@ const handleSend = async () => {
         ? t("Shield transaction submitted: {hash}", { hash: result.hash })
         : t("Transaction submitted: {hash}", { hash: result.hash });
   } catch (error) {
-    statusMessage.value =
-      error instanceof Error ? error.message : String(error);
+    statusMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Transaction failed."),
+    );
   } finally {
     sending.value = false;
   }

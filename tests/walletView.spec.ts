@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import WalletView from "@/views/WalletView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const fetchAccountAssetsMock = vi.fn();
 const fetchAccountTransactionsMock = vi.fn();
@@ -68,11 +69,30 @@ describe("WalletView", () => {
     assetDefinitionId = "xor#wonderland",
     options?: {
       localOnly?: boolean;
+      account?: Partial<{
+        displayName: string;
+        domain: string;
+        accountId: string;
+        i105AccountId: string;
+        i105DefaultAccountId: string;
+        publicKeyHex: string;
+        privateKeyHex: string;
+        localOnly: boolean;
+      }>;
     },
   ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
+    const account = {
+      displayName: "Alice",
+      domain: "wonderland",
+      accountId: "alice@wonderland",
+      publicKeyHex: "ab".repeat(32),
+      privateKeyHex: "cd".repeat(32),
+      localOnly: Boolean(options?.localOnly),
+      ...options?.account,
+    };
     session.$patch({
       connection: {
         toriiUrl: "http://localhost:8080",
@@ -80,17 +100,8 @@ describe("WalletView", () => {
         assetDefinitionId,
         networkPrefix: 369,
       },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-          localOnly: Boolean(options?.localOnly),
-        },
-      ],
-      activeAccountId: "alice@wonderland",
+      accounts: [account],
+      activeAccountId: account.accountId,
     });
     return mount(WalletView, {
       global: {
@@ -374,9 +385,12 @@ describe("WalletView", () => {
     const wrapper = mountView("xor#wonderland");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("norito:resolvedxorasset");
+    expect(wrapper.text()).toContain(
+      formatAssetDefinitionLabel("norito:resolvedxorasset"),
+    );
     expect(wrapper.text()).toContain("40");
     expect(wrapper.text()).toContain("6");
+    expect(wrapper.text()).not.toContain("norito:resolvedxorasset");
 
     await wrapper.get(".wallet-shield-input input").setValue("2");
     await wrapper
@@ -446,8 +460,57 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain(
       t("Testnet XOR requested: {hash}", { hash: "0xabc" }),
     );
-    expect(wrapper.text()).toContain("norito:abcdef0123456789");
+    expect(wrapper.text()).toContain(
+      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+    );
     expect(wrapper.text()).toContain("25000");
+    expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
+  });
+
+  it("uses the TAIRA i105 literal for faucet requests when stored ids are stale", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValue({
+        items: [],
+        total: 0,
+      });
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "testuLegacyVisibleAccount1234567890",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "norito:abcdef0123456789",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+
+    const wrapper = mountView("", {
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
+
+    await wrapper
+      .findAll("button.secondary")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(requestFaucetFundsMock).toHaveBeenCalledWith(
+      {
+        toriiUrl: "http://localhost:8080",
+        accountId: "testuLegacyVisibleAccount1234567890",
+        networkPrefix: 369,
+      },
+      expect.any(Function),
+    );
   });
 
   it("shows a blocking faucet status modal while a claim is in flight", async () => {
@@ -557,8 +620,11 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(4);
-    expect(wrapper.text()).toContain("norito:abcdef0123456789");
+    expect(wrapper.text()).toContain(
+      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+    );
     expect(wrapper.text()).toContain("25000");
+    expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
   });
 
   it("shows a wallet error when local-only accounts are not live on-chain yet", async () => {

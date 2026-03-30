@@ -3,6 +3,7 @@ import {
   type IScannerControls,
 } from "@zxing/browser";
 import { onBeforeUnmount, ref } from "vue";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 type Decoder = (payload: string) => void;
 type Translate = (key: string) => string;
@@ -75,7 +76,7 @@ export const useQrScanner = (
             message.value = t("QR decoded successfully.");
             requestStop();
           } else if (error && error.name !== "NotFoundException") {
-            message.value = error.message ?? t("Camera error.");
+            message.value = toUserFacingErrorMessage(error, t("Camera error."));
             requestStop();
           }
         },
@@ -86,8 +87,10 @@ export const useQrScanner = (
       }
     } catch (error) {
       scanning.value = false;
-      message.value =
-        error instanceof Error ? error.message : t("Unable to start scanner.");
+      message.value = toUserFacingErrorMessage(
+        error,
+        t("Unable to start scanner."),
+      );
     }
   };
 
@@ -108,10 +111,10 @@ export const useQrScanner = (
         message.value = t("Unable to read QR from image.");
       }
     } catch (error) {
-      message.value =
-        error instanceof Error
-          ? error.message
-          : t("Unable to decode the selected image.");
+      message.value = toUserFacingErrorMessage(
+        error,
+        t("Unable to decode the selected image."),
+      );
     } finally {
       URL.revokeObjectURL(url);
       target.value = "";

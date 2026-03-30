@@ -1,6 +1,7 @@
 import { ref, watch, type Ref } from "vue";
 import { getConfidentialAssetPolicy } from "@/services/iroha";
 import { confidentialModeSupportsShield } from "@/utils/confidential";
+import { sanitizeErrorMessage } from "@/utils/errorMessage";
 
 interface UseShieldCapabilityInput {
   toriiUrl: Ref<string>;
@@ -74,11 +75,13 @@ export const useShieldCapability = ({
       }
       shieldCapabilityReady.value = true;
       shieldSupported.value = true;
+      const message =
+        error instanceof Error ? sanitizeErrorMessage(error.message) : "";
       shieldCapabilityMessage.value =
-        error instanceof Error
+        message
           ? translate(
               "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
-              { message: error.message },
+              { message },
             )
           : translate(
               "Shield policy check failed. Submission may still fail if shield mode is unsupported.",

@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { normalizeTairaAccountIdLiteral } from "@/utils/accountId";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
 
@@ -137,7 +138,7 @@ const resolveAccountIdLiteral = (
   user: Partial<UserProfile> & Record<string, unknown>,
   derivedAccountId?: string | null,
 ): string => {
-  const accountId = trimString(user.accountId);
+  const accountId = normalizeTairaAccountIdLiteral(user.accountId);
   if (derivedAccountId && accountId && !isLegacyAccountLiteral(accountId)) {
     return derivedAccountId;
   }
@@ -151,7 +152,9 @@ const resolveAccountIdLiteral = (
     readLegacyProfileField(user, "i105"),
     readLegacyProfileField(user, "ih58"),
     readLegacyProfileField(user, "compressed"),
-  ].find(isCanonicalAccountCandidate);
+  ]
+    .map(normalizeTairaAccountIdLiteral)
+    .find(isCanonicalAccountCandidate);
   return migratedCandidate ?? accountId;
 };
 
@@ -163,11 +166,19 @@ const resolveVisibleI105AccountId = (
   if (derivedI105AccountId) {
     return derivedI105AccountId;
   }
-  const storedI105AccountId = trimString(user.i105AccountId);
+  const storedI105AccountId = normalizeTairaAccountIdLiteral(
+    user.i105AccountId,
+  );
   if (isCanonicalAccountCandidate(storedI105AccountId)) {
     return storedI105AccountId;
   }
-  return accountId;
+  const storedDefaultI105AccountId = normalizeTairaAccountIdLiteral(
+    user.i105DefaultAccountId,
+  );
+  if (isCanonicalAccountCandidate(storedDefaultI105AccountId)) {
+    return storedDefaultI105AccountId;
+  }
+  return normalizeTairaAccountIdLiteral(accountId);
 };
 
 const normalizeUser = (

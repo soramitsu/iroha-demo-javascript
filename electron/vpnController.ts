@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { VpnExitClass } from "../src/types/iroha";
+import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 
 const execFileAsync = promisify(execFile);
 
@@ -183,7 +184,9 @@ export class BundledVpnController implements VpnLocalController {
       return {
         ...missingStatus(this.platform, this.controllerPath),
         controllerPath: this.controllerPath,
-        message: error instanceof Error ? error.message : String(error),
+        message: sanitizeErrorMessage(
+          error instanceof Error ? error.message : String(error),
+        ),
       };
     }
   }

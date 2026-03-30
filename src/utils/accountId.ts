@@ -6,15 +6,32 @@ type AccountIdentity = {
 };
 
 const trimString = (value: unknown) => String(value ?? "").trim();
+const SORA_I105_PREFIX = "sorau";
+const SORA_I105_FULLWIDTH_PREFIX = "ｓｏｒａu";
+const TAIRA_I105_PREFIX = "testu";
+
+export const normalizeTairaAccountIdLiteral = (value: unknown) => {
+  const literal = trimString(value);
+  if (!literal) {
+    return "";
+  }
+  if (literal.startsWith(SORA_I105_PREFIX)) {
+    return `${TAIRA_I105_PREFIX}${literal.slice(SORA_I105_PREFIX.length)}`;
+  }
+  if (literal.startsWith(SORA_I105_FULLWIDTH_PREFIX)) {
+    return `${TAIRA_I105_PREFIX}${literal.slice(SORA_I105_FULLWIDTH_PREFIX.length)}`;
+  }
+  return literal;
+};
 
 export const getPublicAccountId = (
   account: AccountIdentity | null | undefined,
 ) => {
   return (
     [
-      trimString(account?.i105DefaultAccountId),
-      trimString(account?.i105AccountId),
-      trimString(account?.accountId),
+      normalizeTairaAccountIdLiteral(account?.i105AccountId),
+      normalizeTairaAccountIdLiteral(account?.i105DefaultAccountId),
+      normalizeTairaAccountIdLiteral(account?.accountId),
     ].find(Boolean) ?? ""
   );
 };

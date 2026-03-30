@@ -15,6 +15,8 @@ import type {
   VpnReceipt,
   VpnStatus,
 } from "../src/types/iroha";
+import { normalizeTairaAccountIdLiteral } from "../src/utils/accountId";
+import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 
 type VpnAvailabilityInput = {
   toriiUrl: string;
@@ -98,6 +100,14 @@ const toPrivateKeyBuffer = (privateKeyHex: string) =>
   Buffer.from(normalizeHex(privateKeyHex, "privateKeyHex"), "hex");
 
 const nowMs = () => Date.now();
+
+const normalizeVpnAccountId = (value: string, label: string) => {
+  const normalized = normalizeTairaAccountIdLiteral(value).trim();
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  return normalized;
+};
 
 const VPN_EXIT_CLASSES: readonly VpnExitClass[] = [
   "standard",
@@ -291,7 +301,9 @@ export class VpnRuntime {
         profileAvailable: false,
         actionsEnabled: false,
         status: "error",
-        message: error instanceof Error ? error.message : String(error),
+        message: sanitizeErrorMessage(
+          error instanceof Error ? error.message : String(error),
+        ),
         helperVersion: this.helperVersion,
         platform: this.platform,
         controllerInstalled: false,
@@ -353,6 +365,7 @@ export class VpnRuntime {
     }
 
     const exitClass = normalizeProfileExitClass(profile, input.exitClass);
+    const accountId = normalizeVpnAccountId(input.accountId, "accountId");
     let session: Awaited<ReturnType<ToriiClient["createVpnSession"]>> | null =
       null;
     try {
@@ -360,12 +373,15 @@ export class VpnRuntime {
         { exitClass },
         {
           canonicalAuth: {
-            accountId: input.accountId,
+            accountId,
             privateKey: toPrivateKeyBuffer(input.privateKeyHex),
           },
         },
       );
-      const normalizedSession = this.normalizeRemoteSession(session, input);
+      const normalizedSession = this.normalizeRemoteSession(session, {
+        ...input,
+        accountId,
+      });
       await this.controller.connect({
         sessionId: normalizedSession.sessionId,
         relayEndpoint: normalizedSession.relayEndpoint,
@@ -388,7 +404,7 @@ export class VpnRuntime {
         const receipt = await this.getClient(input.toriiUrl)
           .deleteVpnSession(session.sessionId, {
             canonicalAuth: {
-              accountId: input.accountId,
+              accountId,
               privateKey: toPrivateKeyBuffer(input.privateKeyHex),
             },
           })
@@ -398,7 +414,9 @@ export class VpnRuntime {
         }
       }
       this.state = "error";
-      this.lastError = error instanceof Error ? error.message : String(error);
+      this.lastError = sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
       throw error;
     }
   }
@@ -463,7 +481,9 @@ export class VpnRuntime {
       );
       this.remoteSessionActive = true;
       this.state = "remote-delete-pending";
-      this.lastError = error instanceof Error ? error.message : String(error);
+      this.lastError = sanitizeErrorMessage(
+        error instanceof Error ? error.message : String(error),
+      );
       return this.buildStatus(controller);
     }
   }
@@ -624,12 +644,16 @@ export class VpnRuntime {
     session?: ActiveVpnSession | null,
   ): VpnAuthContext | null {
     const toriiUrl = input?.toriiUrl ?? session?.toriiUrl;
-    const accountId = input?.accountId ?? session?.accountId;
+    const accountIdRaw = input?.accountId ?? session?.accountId;
     const privateKeyHex = input?.privateKeyHex ?? session?.privateKeyHex;
-    if (!toriiUrl || !accountId || !privateKeyHex) {
+    if (!toriiUrl || !accountIdRaw || !privateKeyHex) {
       return null;
     }
-    return { toriiUrl, accountId, privateKeyHex };
+    return {
+      toriiUrl,
+      accountId: normalizeVpnAccountId(accountIdRaw, "accountId"),
+      privateKeyHex,
+    };
   }
 
   private async reconcile(input?: VpnStatusInput) {

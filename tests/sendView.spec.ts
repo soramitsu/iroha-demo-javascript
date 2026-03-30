@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import SendView from "@/views/SendView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
@@ -208,6 +209,16 @@ describe("SendView", () => {
     expect(amountInput.attributes("step")).toBe("0.01");
   });
 
+  it("shows a humanized asset label instead of raw norito bytes", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+    );
+    expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
+  });
+
   it("ignores qr destination payload while shield mode is enabled", async () => {
     const wrapper = mountView();
     await flushPromises();
@@ -336,6 +347,21 @@ describe("SendView", () => {
         { message: "network timeout" },
       ),
     );
+  });
+
+  it("sanitizes unreadable shield policy errors on the send page", async () => {
+    getConfidentialAssetPolicyMock.mockRejectedValue(
+      new Error(
+        "ERR_UNEXPECTED_NETWORK_PREFIX — NRT0`\uFFFD6W\uFFFD5 invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
+      ),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
+    );
+    expect(wrapper.text()).not.toContain("NRT0`");
   });
 
   it("disables submit for non-integer shield amounts", async () => {

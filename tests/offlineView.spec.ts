@@ -5,6 +5,7 @@ import OfflineView from "@/views/OfflineView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
@@ -296,6 +297,21 @@ describe("OfflineView move-to-online shield mode", () => {
       t("Invoice asset does not match the active offline asset."),
     );
     expect(transferAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("shows humanized norito labels in offline payload previews", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const requestSection = getSection(wrapper, t("Request offline payment"));
+    await requestSection.get('input[type="text"]').setValue("5");
+    await requestSection.get(".icon-cta").trigger("click");
+    await flushPromises();
+
+    expect(requestSection.text()).toContain(
+      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+    );
+    expect(requestSection.text()).not.toContain("norito:abcdef0123456789");
   });
 
   it("rejects offline payments for a different asset", async () => {

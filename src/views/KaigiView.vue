@@ -721,6 +721,10 @@ import {
   type KaigiInvitePayload,
   type ParsedKaigiInviteInput,
 } from "@/utils/kaigiInvite";
+import {
+  sanitizeErrorMessage,
+  toUserFacingErrorMessage,
+} from "@/utils/errorMessage";
 
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
@@ -1021,7 +1025,7 @@ const setStatus = (message: string) => {
 
 const setError = (message: string) => {
   statusMessage.value = "";
-  errorMessage.value = message;
+  errorMessage.value = sanitizeErrorMessage(message);
 };
 
 const dismissHostPrompt = () => {
@@ -1344,9 +1348,10 @@ const prepareLocalMedia = async () => {
     setStatus(t("Local media is ready."));
   } catch (error) {
     setError(
-      error instanceof Error
-        ? error.message
-        : t("Kaigi media is unavailable in this environment."),
+      toUserFacingErrorMessage(
+        error,
+        t("Kaigi media is unavailable in this environment."),
+      ),
     );
   } finally {
     mediaBusy.value = false;
@@ -1730,9 +1735,7 @@ const loadInviteFromInput = async () => {
     hydrateInvite(invite, inviteInput.value);
   } catch (error) {
     setError(
-      error instanceof Error
-        ? error.message
-        : t("Meeting invite link is invalid."),
+      toUserFacingErrorMessage(error, t("Meeting invite link is invalid.")),
     );
   } finally {
     signalBusy.value = false;
@@ -1761,9 +1764,7 @@ const loadInviteFromLocationHash = () => {
       hydrateInvite(invite, window.location.hash.slice(1));
     } catch (error) {
       setError(
-        error instanceof Error
-          ? error.message
-          : t("Meeting invite link is invalid."),
+        toUserFacingErrorMessage(error, t("Meeting invite link is invalid.")),
       );
     } finally {
       signalBusy.value = false;
@@ -1948,10 +1949,10 @@ const createMeetingLink = async () => {
         });
         liveMeeting = true;
       } catch (error) {
-        automaticError =
-          error instanceof Error
-            ? error.message
-            : t("Unable to create a live Kaigi meeting.");
+        automaticError = toUserFacingErrorMessage(
+          error,
+          t("Unable to create a live Kaigi meeting."),
+        );
         if (
           meetingPrivacyMode.value === "private" &&
           (await preparePrivateKaigiFundingPrompt("create", automaticError))
@@ -2028,9 +2029,10 @@ const createMeetingLink = async () => {
   } catch (error) {
     clearHostMeetingState();
     setError(
-      error instanceof Error
-        ? error.message
-        : t("Unable to create a Kaigi meeting link."),
+      toUserFacingErrorMessage(
+        error,
+        t("Unable to create a Kaigi meeting link."),
+      ),
     );
   } finally {
     signalBusy.value = false;
@@ -2095,10 +2097,10 @@ const joinLoadedMeeting = async () => {
           ),
         );
       } catch (error) {
-        const automaticJoinError =
-          error instanceof Error
-            ? error.message
-            : t("Unable to join the live Kaigi meeting.");
+        const automaticJoinError = toUserFacingErrorMessage(
+          error,
+          t("Unable to join the live Kaigi meeting."),
+        );
         if (
           invite.privacyMode === "private" &&
           (await preparePrivateKaigiFundingPrompt("join", automaticJoinError))
@@ -2137,9 +2139,7 @@ const joinLoadedMeeting = async () => {
 
     setStatus(t("Answer packet ready. Send it to the host manually."));
   } catch (error) {
-    setError(
-      error instanceof Error ? error.message : t("Unable to create an answer."),
-    );
+    setError(toUserFacingErrorMessage(error, t("Unable to create an answer.")));
   } finally {
     signalBusy.value = false;
   }
@@ -2166,10 +2166,10 @@ const selfShieldPrivateKaigiAndRetry = async () => {
     }
     await joinLoadedMeeting();
   } catch (error) {
-    errorMessage.value =
-      error instanceof Error
-        ? error.message
-        : t("Unable to self-shield XOR for private Kaigi.");
+    errorMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Unable to self-shield XOR for private Kaigi."),
+    );
   } finally {
     privateKaigiShieldBusy.value = false;
   }
@@ -2189,9 +2189,7 @@ const createManualAnswerPacket = async () => {
     });
     setStatus(t("Manual answer packet ready. Send it to the host."));
   } catch (error) {
-    setError(
-      error instanceof Error ? error.message : t("Unable to create an answer."),
-    );
+    setError(toUserFacingErrorMessage(error, t("Unable to create an answer.")));
   } finally {
     signalBusy.value = false;
   }
@@ -2210,9 +2208,7 @@ const applyAnswerPacket = async () => {
       },
     );
   } catch (error) {
-    setError(
-      error instanceof Error ? error.message : t("Unable to apply the answer."),
-    );
+    setError(toUserFacingErrorMessage(error, t("Unable to apply the answer.")));
   } finally {
     signalBusy.value = false;
   }
@@ -2261,10 +2257,10 @@ const hangUp = async () => {
       errorMessage.value = t(
         "Unable to publish the meeting end signal: {message}",
         {
-          message:
-            error instanceof Error
-              ? error.message
-              : t("Unknown Kaigi end error"),
+          message: toUserFacingErrorMessage(
+            error,
+            t("Unknown Kaigi end error"),
+          ),
         },
       );
     }

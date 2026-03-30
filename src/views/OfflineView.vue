@@ -107,7 +107,7 @@
           </thead>
           <tbody>
             <tr v-for="item in allowances" :key="item.certificate_id_hex">
-              <td>{{ item.asset_id }}</td>
+              <td>{{ formatAssetReferenceLabel(item.asset_id, t("—")) }}</td>
               <td>{{ item.remaining_amount }}</td>
               <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
               <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
@@ -151,7 +151,12 @@
       <div v-if="invoicePayload" class="qr-panel">
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div v-if="invoiceQr" class="qr" v-html="invoiceQr"></div>
-        <pre class="qr-payload">{{ invoicePayload }}</pre>
+        <div class="actions">
+          <button class="secondary" @click="copyInvoicePayload">
+            {{ t("Copy invoice JSON") }}
+          </button>
+        </div>
+        <pre class="qr-payload">{{ invoicePayloadPreview }}</pre>
       </div>
       <p v-if="invoiceMessage" class="helper">{{ invoiceMessage }}</p>
     </section>
@@ -209,7 +214,12 @@
       <div v-if="paymentPayload" class="qr-panel">
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div v-if="paymentQr" class="qr" v-html="paymentQr"></div>
-        <pre class="qr-payload">{{ paymentPayload }}</pre>
+        <div class="actions">
+          <button class="secondary" @click="copyPaymentPayload">
+            {{ t("Copy payment JSON") }}
+          </button>
+        </div>
+        <pre class="qr-payload">{{ paymentPayloadPreview }}</pre>
       </div>
     </section>
 
@@ -404,6 +414,12 @@ import { useShieldedDestinationLock } from "@/composables/useShieldedDestination
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import type { OfflineAllowanceItem } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
+import {
+  formatAssetDefinitionLabel,
+  formatAssetReferenceLabel,
+  formatOpaqueAssetLiteralsInText,
+} from "@/utils/assetId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
 const offline = useOfflineStore();
@@ -497,6 +513,37 @@ const paymentScanner = useQrScanner(
 );
 
 const reversedHistory = computed(() => [...offline.wallet.history].reverse());
+const formatPayloadPreview = (payload: string) => {
+  const literal = payload.trim();
+  if (!literal) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(literal) as Record<string, unknown>;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const next = { ...parsed };
+      if (typeof next.asset === "string") {
+        next.asset = formatAssetReferenceLabel(next.asset, next.asset);
+      }
+      if (typeof next.assetDefinitionId === "string") {
+        next.assetDefinitionId = formatAssetDefinitionLabel(
+          next.assetDefinitionId,
+          next.assetDefinitionId,
+        );
+      }
+      return JSON.stringify(next, null, 2);
+    }
+  } catch {
+    // Fall through to string replacement for already-serialized payloads.
+  }
+  return formatOpaqueAssetLiteralsInText(literal);
+};
+const invoicePayloadPreview = computed(() =>
+  formatPayloadPreview(invoicePayload.value),
+);
+const paymentPayloadPreview = computed(() =>
+  formatPayloadPreview(paymentPayload.value),
+);
 const { destinationLocked: onlineDestinationLocked } =
   useShieldedDestinationLock({
     shielded: toRef(onlineForm, "shielded"),
@@ -544,6 +591,50 @@ const formatDate = (value?: number | null) => {
   }).format(new Date(value));
 };
 
+const copyPayload = async (
+  payload: string,
+  onSuccess: () => void,
+  onFailure: () => void,
+) => {
+  if (!payload.trim()) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(payload);
+    onSuccess();
+  } catch {
+    onFailure();
+  }
+};
+
+const copyInvoicePayload = async () => {
+  await copyPayload(
+    invoicePayload.value,
+    () => {
+      invoiceMessage.value = t("Invoice JSON copied.");
+    },
+    () => {
+      invoiceMessage.value = t(
+        "Clipboard access failed. Copy the payload manually.",
+      );
+    },
+  );
+};
+
+const copyPaymentPayload = async () => {
+  await copyPayload(
+    paymentPayload.value,
+    () => {
+      paymentMessage.value = t("Payment JSON copied.");
+    },
+    () => {
+      paymentMessage.value = t(
+        "Clipboard access failed. Copy the payload manually.",
+      );
+    },
+  );
+};
+
 const checkHardware = async () => {
   hardwareBusy.value = true;
   hardwareMessage.value = "";
@@ -569,10 +660,10 @@ const checkHardware = async () => {
       label: t("Unknown"),
       detail: t("Hardware check failed"),
     };
-    hardwareMessage.value =
-      error instanceof Error
-        ? error.message
-        : t("Unable to detect secure hardware.");
+    hardwareMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Unable to detect secure hardware."),
+    );
   } finally {
     hardwareBusy.value = false;
   }
@@ -619,8 +710,10 @@ const registerHardware = async () => {
     };
     hardwareMessage.value = t("Offline wallet registered on this device.");
   } catch (error) {
-    hardwareMessage.value =
-      error instanceof Error ? error.message : t("Failed to register wallet.");
+    hardwareMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to register wallet."),
+    );
   } finally {
     hardwareBusy.value = false;
   }
@@ -654,8 +747,10 @@ const syncAllowances = async () => {
       total: snapshot.total,
     });
   } catch (error) {
-    syncMessage.value =
-      error instanceof Error ? error.message : t("Failed to sync allowances.");
+    syncMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to sync allowances."),
+    );
   } finally {
     syncingAllowances.value = false;
   }
@@ -691,8 +786,10 @@ const generateInvoice = async () => {
       "Invoice ready. Share the QR or copy the JSON payload.",
     );
   } catch (error) {
-    invoiceMessage.value =
-      error instanceof Error ? error.message : t("Failed to generate invoice.");
+    invoiceMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to generate invoice."),
+    );
   }
 };
 
@@ -737,8 +834,10 @@ const createPayment = async () => {
     });
     paymentMessage.value = t("Payment payload created and recorded locally.");
   } catch (error) {
-    paymentMessage.value =
-      error instanceof Error ? error.message : t("Unable to create payment.");
+    paymentMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Unable to create payment."),
+    );
   } finally {
     sendingPayment.value = false;
   }
@@ -768,8 +867,10 @@ const acceptPayment = async () => {
     offline.recordIncomingPayment(payload);
     acceptMessage.value = t("Payment recorded to offline wallet.");
   } catch (error) {
-    acceptMessage.value =
-      error instanceof Error ? error.message : t("Failed to record payment.");
+    acceptMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to record payment."),
+    );
   } finally {
     acceptingPayment.value = false;
   }
@@ -835,10 +936,10 @@ const moveToOnline = async () => {
   } catch (error) {
     offline.$patch({ wallet: snapshot });
     offline.persist();
-    moveMessage.value =
-      error instanceof Error
-        ? error.message
-        : t("Failed to move funds online.");
+    moveMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to move funds online."),
+    );
   } finally {
     movingOnline.value = false;
   }

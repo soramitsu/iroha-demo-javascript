@@ -110,10 +110,30 @@ describe("ParliamentView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (
+    options?: {
+      account?: Partial<{
+        displayName: string;
+        domain: string;
+        accountId: string;
+        i105AccountId: string;
+        i105DefaultAccountId: string;
+        publicKeyHex: string;
+        privateKeyHex: string;
+      }>;
+    },
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
+    const account = {
+      displayName: "Alice",
+      domain: "wonderland",
+      accountId: "alice@wonderland",
+      publicKeyHex: "ab".repeat(32),
+      privateKeyHex: "cd".repeat(32),
+      ...options?.account,
+    };
     session.$patch({
       connection: {
         toriiUrl: "http://localhost:8080",
@@ -121,16 +141,8 @@ describe("ParliamentView", () => {
         assetDefinitionId: "xor#wonderland",
         networkPrefix: 369,
       },
-      accounts: [
-        {
-          displayName: "Alice",
-          domain: "wonderland",
-          accountId: "alice@wonderland",
-          publicKeyHex: "ab".repeat(32),
-          privateKeyHex: "cd".repeat(32),
-        },
-      ],
-      activeAccountId: "alice@wonderland",
+      accounts: [account],
+      activeAccountId: account.accountId,
     });
     return mount(ParliamentView, {
       global: {
@@ -171,6 +183,42 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).toContain(
       t("Citizenship bond submitted: {hash}", { hash: "0xabc" }),
     );
+  });
+
+  it("uses the TAIRA i105 literal for governance refresh and bond submit when stored ids are stale", async () => {
+    const wrapper = mountView({
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      limit: 200,
+    });
+    expect(listAccountPermissionsMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      limit: 200,
+    });
+
+    await findButtonByText(wrapper, `Bond ${CITIZEN_BOND_XOR} XOR`).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(registerCitizenMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      amount: CITIZEN_BOND_XOR,
+      privateKeyHex: "cd".repeat(32),
+    });
   });
 
   it("disables the bond action when XOR balance is below threshold", async () => {
@@ -850,6 +898,22 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).not.toContain("assets down");
   });
 
+  it("sanitizes unreadable governance refresh errors", async () => {
+    fetchAccountAssetsMock.mockRejectedValueOnce(
+      new Error(
+        "ERR_UNEXPECTED_NETWORK_PREFIX — NRT0`\uFFFD6W\uFFFD5 invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
+      ),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
+    );
+    expect(wrapper.text()).not.toContain("NRT0`");
+  });
+
   it("disables ballot submission without governance ballot permission", async () => {
     const wrapper = mountView();
     await flushPromises();
@@ -861,6 +925,39 @@ describe("ParliamentView", () => {
       t(
         "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
       ),
+    );
+  });
+
+  it("uses the TAIRA i105 literal for ballot submission when stored ids are stale", async () => {
+    listAccountPermissionsMock.mockResolvedValueOnce({
+      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
+      total: 1,
+    });
+    const wrapper = mountView({
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await findButtonByText(wrapper, "Submit ballot").trigger("click");
+    await flushPromises();
+
+    expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "testuLegacyVisibleAccount1234567890",
+      referendumId: "ref-1",
+      amount: CITIZEN_BOND_XOR,
+      durationBlocks: 7200,
+      direction: "Aye",
+      privateKeyHex: "cd".repeat(32),
+    });
+    expect(wrapper.text()).toContain(
+      t("Ballot submitted: {hash}", { hash: "0xballot" }),
     );
   });
 

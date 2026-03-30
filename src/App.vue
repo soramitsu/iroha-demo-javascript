@@ -24,7 +24,7 @@
               }}</span>
             </span>
             <span class="mobile-status-toggle-meta">{{
-              session.connection.assetDefinitionId || t("Asset not set")
+              activeAssetLabel
             }}</span>
             <span class="mobile-status-toggle-caret" aria-hidden="true"
               >↗</span
@@ -41,9 +41,7 @@
               <span class="chip-value mono chain-value">{{
                 session.connection.chainId
               }}</span>
-              <span class="chip-sub">{{
-                session.connection.assetDefinitionId || t("Asset not set")
-              }}</span>
+              <span class="chip-sub">{{ activeAssetLabel }}</span>
             </div>
           </div>
         </details>
@@ -225,6 +223,7 @@ import UserIcon from "@/assets/user.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
 import { getAccountDisplayLabel } from "@/utils/accountId";
+import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const navItems = [
   {
@@ -323,6 +322,12 @@ const route = useRoute();
 const session = useSessionStore();
 const theme = useThemeStore();
 const { localeStore, localeOptions, t } = useAppI18n();
+const activeAssetLabel = computed(() =>
+  formatAssetDefinitionLabel(
+    session.connection.assetDefinitionId,
+    t("Asset not set"),
+  ),
+);
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(session.activeAccount),
 );
@@ -392,9 +397,7 @@ const sidebarNavItems = computed(() => {
         ? item.signedInLabelKey
         : item.labelKey,
     descriptionKey:
-      !item.requiresAccount &&
-      session.hasAccount &&
-      item.signedInDescriptionKey
+      !item.requiresAccount && session.hasAccount && item.signedInDescriptionKey
         ? item.signedInDescriptionKey
         : item.descriptionKey,
     step: String(index + 1).padStart(2, "0"),
