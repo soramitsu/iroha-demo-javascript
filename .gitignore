@@ -8,7 +8,7 @@
 /dist-native
 /.vite
 
-/.playwright-cli
+.playwright-cli*
 /playwright-report
 /test-results
 /output/playwright
