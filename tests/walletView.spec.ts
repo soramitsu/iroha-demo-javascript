@@ -226,6 +226,56 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain("9");
   });
 
+  it("keeps the faucet action ahead of shielding controls in the wallet summary", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "22",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const summaryHtml = wrapper.get(".wallet-summary-card").html();
+    expect(summaryHtml.indexOf("wallet-faucet-panel")).toBeGreaterThan(-1);
+    expect(summaryHtml.indexOf("wallet-shield-panel")).toBeGreaterThan(-1);
+    expect(summaryHtml.indexOf("wallet-faucet-panel")).toBeLessThan(
+      summaryHtml.indexOf("wallet-shield-panel"),
+    );
+  });
+
+  it("hides shield controls for unfunded wallets", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.find(".wallet-shield-panel").exists()).toBe(false);
+  });
+
+  it("disables send until the wallet has a positive balance", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const sendLink = wrapper
+      .findAll("a.secondary")
+      .find((link) => link.text().includes(t("Send Points")))!;
+    expect(sendLink.attributes("aria-disabled")).toBe("true");
+    expect(sendLink.attributes("href")).toBeUndefined();
+  });
+
   it("marks the on-chain shielded balance unavailable after private zk transfers", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
@@ -409,6 +459,55 @@ describe("WalletView", () => {
     );
   });
 
+  it("shows the live Torii XOR balance instead of the cached faucet asset bucket", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "norito:cachedbucket",
+          quantity: "25000",
+        },
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "75000",
+        },
+      ],
+      total: 2,
+    });
+
+    const wrapper = mountView("norito:cachedbucket");
+    await flushPromises();
+
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("75000");
+    expect(wrapper.get(".wallet-balance-asset").text()).toBe("xor#universal");
+  });
+
+  it("keeps the faucet action enabled while wallet refresh is still loading", async () => {
+    let resolveAssets: (value: {
+      items: Array<{ asset_id: string; quantity: string }>;
+      total: number;
+    }) => void = () => {};
+    fetchAccountAssetsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAssets = resolve;
+      }),
+    );
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    const faucetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!;
+
+    expect(faucetButton.attributes("disabled")).toBeUndefined();
+
+    resolveAssets({
+      items: [],
+      total: 0,
+    });
+    await flushPromises();
+  });
+
   it("requests faucet funds and refreshes balances", async () => {
     const fundedAssets = {
       items: [
@@ -439,7 +538,7 @@ describe("WalletView", () => {
     await flushPromises();
 
     await wrapper
-      .findAll("button.secondary")
+      .findAll("button")
       .find((button) => button.text().includes(t("Claim Testnet XOR")))!
       .trigger("click");
     await flushPromises();
@@ -498,7 +597,7 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
 
     await wrapper
-      .findAll("button.secondary")
+      .findAll("button")
       .find((button) => button.text().includes(t("Claim Testnet XOR")))!
       .trigger("click");
     await flushPromises();
@@ -511,6 +610,27 @@ describe("WalletView", () => {
       },
       expect.any(Function),
     );
+  });
+
+  it("disables faucet claims after the configured faucet asset already has a positive balance", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "norito:abcdef0123456789",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView("norito:abcdef0123456789");
+    await flushPromises();
+
+    const faucetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!;
+
+    expect(faucetButton.attributes("disabled")).toBeDefined();
   });
 
   it("shows a blocking faucet status modal while a claim is in flight", async () => {
@@ -549,7 +669,7 @@ describe("WalletView", () => {
     await flushPromises();
 
     await wrapper
-      .findAll("button.secondary")
+      .findAll("button")
       .find((button) => button.text().includes(t("Claim Testnet XOR")))!
       .trigger("click");
     await flushPromises();
@@ -611,7 +731,7 @@ describe("WalletView", () => {
     await flushPromises();
 
     await wrapper
-      .findAll("button.secondary")
+      .findAll("button")
       .find((button) => button.text().includes(t("Claim Testnet XOR")))!
       .trigger("click");
     await flushPromises();

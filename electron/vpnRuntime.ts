@@ -1,4 +1,6 @@
+import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { ToriiClient } from "@iroha/iroha-js";
 import { nodeFetch } from "./nodeFetch";
@@ -114,12 +116,139 @@ const VPN_EXIT_CLASSES: readonly VpnExitClass[] = [
   "low-latency",
   "high-security",
 ];
+const FULL_TUNNEL_ROUTE_PUSHES = ["0.0.0.0/0", "::/0"] as const;
 
 const isVpnExitClass = (value: unknown): value is VpnExitClass =>
   typeof value === "string" &&
   (VPN_EXIT_CLASSES as readonly string[]).includes(value);
 
-const normalizeProfile = (profile: VpnProfile | null): VpnProfile | null => {
+const inferTunnelAddressFamily = (value: string) => {
+  const address = value.split("/", 1)[0]?.trim() ?? "";
+  const family = isIP(address);
+  return family === 4 || family === 6 ? family : null;
+};
+
+export const resolveVpnRelayEndpoint = (
+  relayEndpoint: string,
+  toriiUrl: string,
+) => {
+  const segments = relayEndpoint
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) {
+    return relayEndpoint;
+  }
+  const [hostKind, hostValue] = segments;
+  if (
+    (hostKind !== "dns" && hostKind !== "dns4" && hostKind !== "dns6") ||
+    hostValue !== "torii"
+  ) {
+    return relayEndpoint;
+  }
+  try {
+    const hostname = new URL(toriiUrl).hostname.trim();
+    if (!hostname) {
+      return relayEndpoint;
+    }
+    const ipFamily = isIP(hostname);
+    segments[0] = ipFamily === 4 ? "ip4" : ipFamily === 6 ? "ip6" : hostKind;
+    segments[1] = hostname;
+    return `/${segments.join("/")}`;
+  } catch {
+    return relayEndpoint;
+  }
+};
+
+export const resolveVpnRelayEndpointForController = async (
+  relayEndpoint: string,
+  toriiUrl: string,
+) => {
+  const normalized = resolveVpnRelayEndpoint(relayEndpoint, toriiUrl);
+  const segments = normalized
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) {
+    return normalized;
+  }
+  const [hostKind, hostValue] = segments;
+  if (hostKind !== "dns" && hostKind !== "dns4" && hostKind !== "dns6") {
+    return normalized;
+  }
+  try {
+    const lookupOptions =
+      hostKind === "dns4"
+        ? { family: 4 as const }
+        : hostKind === "dns6"
+          ? { family: 6 as const }
+          : {};
+    const resolved = await dnsLookup(hostValue, lookupOptions);
+    const address = typeof resolved === "string" ? resolved : resolved.address;
+    const family = typeof resolved === "string" ? isIP(resolved) : resolved.family;
+    if (family !== 4 && family !== 6) {
+      return normalized;
+    }
+    segments[0] = family === 4 ? "ip4" : "ip6";
+    segments[1] = address;
+    return `/${segments.join("/")}`;
+  } catch {
+    return normalized;
+  }
+};
+
+export const resolveVpnRoutePushesForController = (
+  routePushes: readonly string[],
+  tunnelAddresses: readonly string[],
+) => {
+  if (routePushes.length > 0) {
+    return [...routePushes];
+  }
+
+  const families = new Set(
+    tunnelAddresses
+      .map(inferTunnelAddressFamily)
+      .filter((family): family is 4 | 6 => family === 4 || family === 6),
+  );
+
+  return FULL_TUNNEL_ROUTE_PUSHES.filter((cidr) => {
+    const family = inferTunnelAddressFamily(cidr);
+    return family ? families.has(family) : false;
+  });
+};
+
+export const resolveVpnExcludedRoutesForController = (
+  excludedRoutes: readonly string[],
+  relayEndpoint: string,
+  routePushes: readonly string[],
+) => {
+  const normalized = [...excludedRoutes];
+  const segments = relayEndpoint
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  if (segments.length < 2) {
+    return normalized;
+  }
+
+  const [hostKind, hostValue] = segments;
+  const relayCidr =
+    hostKind === "ip4" && routePushes.includes("0.0.0.0/0")
+      ? `${hostValue}/32`
+      : hostKind === "ip6" && routePushes.includes("::/0")
+        ? `${hostValue}/128`
+        : null;
+  if (!relayCidr || normalized.includes(relayCidr)) {
+    return normalized;
+  }
+  normalized.push(relayCidr);
+  return normalized;
+};
+
+const normalizeProfile = (
+  profile: VpnProfile | null,
+  toriiUrl: string,
+): VpnProfile | null => {
   if (!profile) {
     return null;
   }
@@ -130,7 +259,7 @@ const normalizeProfile = (profile: VpnProfile | null): VpnProfile | null => {
     : (supportedExitClasses[0] ?? "standard");
   return {
     available: Boolean(profile.available),
-    relayEndpoint: profile.relayEndpoint,
+    relayEndpoint: resolveVpnRelayEndpoint(profile.relayEndpoint, toriiUrl),
     supportedExitClasses:
       supportedExitClasses.length > 0
         ? [...supportedExitClasses]
@@ -162,13 +291,16 @@ const normalizeProfileExitClass = (
 
 const normalizeReceipt = (
   receipt: VpnReceipt,
+  toriiUrl?: string,
   receiptSource: VpnReceipt["receiptSource"] = receipt.receiptSource ??
     "local-fallback",
 ): VpnReceipt => ({
   sessionId: receipt.sessionId,
   accountId: receipt.accountId,
   exitClass: receipt.exitClass,
-  relayEndpoint: receipt.relayEndpoint,
+  relayEndpoint: toriiUrl
+    ? resolveVpnRelayEndpoint(receipt.relayEndpoint, toriiUrl)
+    : receipt.relayEndpoint,
   meterFamily: receipt.meterFamily,
   connectedAtMs: receipt.connectedAtMs,
   disconnectedAtMs: receipt.disconnectedAtMs,
@@ -382,13 +514,26 @@ export class VpnRuntime {
         ...input,
         accountId,
       });
+      const controllerRelayEndpoint = await resolveVpnRelayEndpointForController(
+        normalizedSession.relayEndpoint,
+        input.toriiUrl,
+      );
+      const controllerRoutePushes = resolveVpnRoutePushesForController(
+        normalizedSession.routePushes,
+        normalizedSession.tunnelAddresses,
+      );
       await this.controller.connect({
         sessionId: normalizedSession.sessionId,
-        relayEndpoint: normalizedSession.relayEndpoint,
+        relayEndpoint: controllerRelayEndpoint,
         exitClass: normalizedSession.exitClass,
         helperTicketHex: normalizedSession.helperTicketHex,
-        routePushes: normalizedSession.routePushes,
-        excludedRoutes: normalizedSession.excludedRoutes,
+        // Torii currently omits default route pushes for exit VPN sessions.
+        routePushes: controllerRoutePushes,
+        excludedRoutes: resolveVpnExcludedRoutesForController(
+          normalizedSession.excludedRoutes,
+          controllerRelayEndpoint,
+          controllerRoutePushes,
+        ),
         dnsServers: normalizedSession.dnsServers,
         tunnelAddresses: normalizedSession.tunnelAddresses,
         mtuBytes: normalizedSession.mtuBytes,
@@ -410,7 +555,12 @@ export class VpnRuntime {
           })
           .catch(() => null);
         if (receipt) {
-          this.storeReceipt(normalizeReceipt(receipt as unknown as VpnReceipt));
+          this.storeReceipt(
+            normalizeReceipt(
+              receipt as unknown as VpnReceipt,
+              input.toriiUrl,
+            ),
+          );
         }
       }
       this.state = "error";
@@ -463,7 +613,9 @@ export class VpnRuntime {
         },
       );
       if (receipt) {
-        this.storeReceipt(normalizeReceipt(receipt as unknown as VpnReceipt));
+        this.storeReceipt(
+          normalizeReceipt(receipt as unknown as VpnReceipt, auth.toriiUrl),
+        );
       }
       await this.syncReceiptsFromServer(auth).catch(() => undefined);
       this.activeSession = null;
@@ -524,7 +676,7 @@ export class VpnRuntime {
 
   private async fetchProfile(toriiUrl: string) {
     const profile = await this.getClient(toriiUrl).getVpnProfile();
-    return normalizeProfile(profile as VpnProfile | null);
+    return normalizeProfile(profile as VpnProfile | null, toriiUrl);
   }
 
   private loadReceipts(): VpnReceipt[] {
@@ -542,7 +694,14 @@ export class VpnRuntime {
   private loadActiveSession(): ActiveVpnSession | null {
     try {
       const raw = readFileSync(this.activeSessionPath, "utf8");
-      return JSON.parse(raw) as ActiveVpnSession;
+      const parsed = JSON.parse(raw) as ActiveVpnSession;
+      return {
+        ...parsed,
+        relayEndpoint: resolveVpnRelayEndpoint(
+          parsed.relayEndpoint,
+          parsed.toriiUrl,
+        ),
+      };
     } catch {
       return null;
     }
@@ -608,7 +767,10 @@ export class VpnRuntime {
       exitClass: isVpnExitClass(session.exitClass)
         ? session.exitClass
         : "standard",
-      relayEndpoint: session.relayEndpoint,
+      relayEndpoint: resolveVpnRelayEndpoint(
+        session.relayEndpoint,
+        auth.toriiUrl,
+      ),
       leaseSecs: session.leaseSecs,
       expiresAtMs: session.expiresAtMs,
       connectedAtMs: session.connectedAtMs,
@@ -633,7 +795,13 @@ export class VpnRuntime {
       },
     });
     this.receipts = receipts
-      .map((item) => normalizeReceipt(item as unknown as VpnReceipt, "torii"))
+      .map((item) =>
+        normalizeReceipt(
+          item as unknown as VpnReceipt,
+          auth.toriiUrl,
+          "torii",
+        ),
+      )
       .slice(0, MAX_RECEIPTS);
     this.persistReceipts();
     return this.receipts;

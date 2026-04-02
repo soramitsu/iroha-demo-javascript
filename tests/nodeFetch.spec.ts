@@ -156,17 +156,16 @@ describe("nodeFetch", () => {
     expect(request.end).toHaveBeenCalledWith(
       Buffer.from('{"hello":"world"}', "utf8"),
     );
-    expect(httpRequestMock).toHaveBeenCalledWith(
-      expect.any(URL),
-      expect.objectContaining({
-        method: "POST",
-        headers: expect.objectContaining({
-          "content-length": "17",
-          "content-type": "application/json",
-        }),
-      }),
-      expect.any(Function),
-    );
+    const [url, options, callback] = httpRequestMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe("http://taira.sora.org/submit");
+    expect(options).toMatchObject({
+      method: "POST",
+      headers: {
+        "content-length": "17",
+        "Content-Type": "application/json",
+      },
+    });
+    expect(callback).toEqual(expect.any(Function));
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
@@ -186,5 +185,122 @@ describe("nodeFetch", () => {
       name: "AbortError",
     });
     expect(request.destroy).toHaveBeenCalled();
+  });
+
+  it("encodes raw UTF-8 headers for Node transport without passing them through Request", async () => {
+    const request = createMockRequest();
+    httpRequestMock.mockImplementation(
+      (
+        _url: URL,
+        _options: unknown,
+        callback: (response: MockResponse) => void,
+      ) => {
+        const response = createMockResponse({
+          statusCode: 200,
+          statusMessage: "OK",
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+        queueMicrotask(() => {
+          callback(response);
+          queueMicrotask(() => {
+            response.emit("data", Buffer.from(JSON.stringify({ ok: true })));
+            response.emit("end");
+            request.emit("close");
+          });
+        });
+        return request;
+      },
+    );
+
+    const { nodeFetch } = await import("../electron/nodeFetch");
+    expect(
+      (
+        nodeFetch as typeof nodeFetch & {
+          __irohaSupportsRawUtf8Headers?: boolean;
+        }
+      ).__irohaSupportsRawUtf8Headers,
+    ).not.toBe(true);
+    const accountId = "testuロ1NtルaFbdカ";
+    const response = await nodeFetch("http://taira.sora.org/v1/vpn/profile", {
+      method: "GET",
+      headers: {
+        "X-Iroha-Account": accountId,
+        Accept: "application/json",
+      },
+      __irohaRawUtf8Headers: {
+        "X-Iroha-Account": accountId,
+      },
+    } as RequestInit & {
+      __irohaRawUtf8Headers: Record<string, string>;
+    });
+
+    expect(response.ok).toBe(true);
+    const [url, options, callback] = httpRequestMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe("http://taira.sora.org/v1/vpn/profile");
+    expect(options).toMatchObject({
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "X-Iroha-Account": Buffer.from(accountId, "utf8").toString("latin1"),
+      },
+    });
+    expect(callback).toEqual(expect.any(Function));
+  });
+
+  it("supports Request inputs without reconstructing them through WHATWG fetch", async () => {
+    const request = createMockRequest();
+    httpRequestMock.mockImplementation(
+      (
+        _url: URL,
+        _options: unknown,
+        callback: (response: MockResponse) => void,
+      ) => {
+        const response = createMockResponse({
+          statusCode: 202,
+          statusMessage: "Accepted",
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+        queueMicrotask(() => {
+          callback(response);
+          queueMicrotask(() => {
+            response.emit("data", Buffer.from(JSON.stringify({ ok: true })));
+            response.emit("end");
+            request.emit("close");
+          });
+        });
+        return request;
+      },
+    );
+
+    const { nodeFetch } = await import("../electron/nodeFetch");
+    const input = new Request("http://taira.sora.org/v1/vpn/sessions", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ exit_class: "standard" }),
+    });
+
+    const response = await nodeFetch(input);
+
+    expect(response.status).toBe(202);
+    expect(request.end).toHaveBeenCalledWith(
+      Buffer.from('{"exit_class":"standard"}', "utf8"),
+    );
+    expect(httpRequestMock).toHaveBeenCalledWith(
+      expect.any(URL),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          accept: "application/json",
+          "content-length": "25",
+        }),
+      }),
+      expect.any(Function),
+    );
   });
 });

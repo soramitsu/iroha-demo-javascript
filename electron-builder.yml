@@ -3,6 +3,7 @@ productName: TAIRA Wallet
 directories:
   output: release
   buildResources: buildResources
+afterPack: scripts/after-pack.mjs
 files:
   - dist/**
   - package.json

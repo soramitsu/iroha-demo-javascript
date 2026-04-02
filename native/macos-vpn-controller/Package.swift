@@ -14,5 +14,10 @@ let package = Package(
             name: "SoraVpnController",
             path: "Sources/SoraVpnController"
         ),
+        .testTarget(
+            name: "SoraVpnControllerTests",
+            dependencies: ["SoraVpnController"],
+            path: "Tests/SoraVpnControllerTests"
+        ),
     ]
 )

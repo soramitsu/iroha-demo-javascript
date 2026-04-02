@@ -1,0 +1,67 @@
+name: SoraVpnController
+options:
+  minimumXcodeGenVersion: 2.45.0
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    MACOSX_DEPLOYMENT_TARGET: 13.0
+targets:
+  SoraVpnController:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../macos-vpn-controller/Sources/SoraVpnController
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        SoraVpnAppGroupId: $(VPN_APP_GROUP_ID)
+        SoraVpnManagerDescription: $(VPN_MANAGER_DESCRIPTION)
+        SoraVpnPacketTunnelBundleId: $(VPN_PACKET_TUNNEL_BUNDLE_ID)
+    entitlements:
+      path: ../../buildResources/entitlements.vpn-controller.plist
+      properties:
+        com.apple.developer.networking.networkextension:
+          - $(VPN_NETWORK_EXTENSION_ENTITLEMENT)
+        com.apple.developer.system-extension.install: true
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(VPN_APP_GROUP_ID)
+    attributes:
+      SystemCapabilities:
+        com.apple.NetworkExtensions:
+          enabled: 1
+        com.apple.Sandbox:
+          enabled: 1
+        com.apple.SystemExtensionInstall:
+          enabled: 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.sora.wallet.demo.vpn-controller
+        PRODUCT_NAME: SoraVpnController
+        EXECUTABLE_NAME: sora-vpn-controller
+        CURRENT_PROJECT_VERSION: 1
+        MARKETING_VERSION: 1.0.0
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_APP_SANDBOX: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        OTHER_SWIFT_FLAGS: "$(inherited) -parse-as-library"
+        VPN_APP_GROUP_ID: group.org.sora.wallet.demo.vpn
+        VPN_MANAGER_DESCRIPTION: TAIRA Wallet VPN
+        VPN_NETWORK_EXTENSION_ENTITLEMENT: packet-tunnel-provider
+        VPN_PACKET_TUNNEL_BUNDLE_ID: org.sora.wallet.demo.packet-tunnel
+    dependencies:
+      - sdk: NetworkExtension.framework
+      - sdk: SystemExtensions.framework
+schemes:
+  SoraVpnController:
+    build:
+      targets:
+        SoraVpnController: all

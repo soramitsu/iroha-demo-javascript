@@ -96,7 +96,7 @@ const createWindow = () => {
     minWidth: 1024,
     minHeight: 720,
     backgroundColor: "#101418",
-    titleBarStyle: isMac ? "hiddenInset" : "default",
+    titleBarStyle: isMac ? "hidden" : "default",
     webPreferences: {
       preload: join(__dirname, "../preload/preload.mjs"),
       contextIsolation: true,

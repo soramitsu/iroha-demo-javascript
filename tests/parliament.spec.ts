@@ -14,7 +14,7 @@ import {
 } from "@/utils/parliament";
 
 describe("parliament utilities", () => {
-  it("prefers configured asset IDs, then XOR balances, and falls back safely", () => {
+  it("prefers Torii-resolved XOR asset IDs, then XOR balances, and falls back safely", () => {
     expect(
       resolveXorBalance(
         [
@@ -27,7 +27,7 @@ describe("parliament utilities", () => {
             quantity: "42",
           },
         ],
-        "norito:9876543210fedcba",
+        ["norito:9876543210fedcba"],
       ),
     ).toBe("42");
 

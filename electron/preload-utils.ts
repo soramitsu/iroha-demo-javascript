@@ -157,6 +157,28 @@ export const normalizeBaseUrl = (url: string) => {
   return trimmed;
 };
 
+const BINARY_API_ERROR_CONTENT_TYPES = ["application/x-norito"];
+
+const readResponseHeader = (
+  response: Pick<Response, "headers">,
+  name: string,
+): string => {
+  if (!response.headers || typeof response.headers.get !== "function") {
+    return "";
+  }
+  return response.headers.get(name)?.trim() ?? "";
+};
+
+const isBinaryApiErrorContentType = (contentType: string) => {
+  const normalized = contentType.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return BINARY_API_ERROR_CONTENT_TYPES.some((candidate) =>
+    normalized.includes(candidate),
+  );
+};
+
 const GENERIC_API_ERROR_DETAILS = new Set([
   "faucet puzzle failed",
   "faucet request failed",
@@ -226,8 +248,20 @@ export const extractApiErrorDetail = (payload: unknown): string => {
 };
 
 export const readApiErrorDetail = async (
-  response: Pick<Response, "text">,
+  response: Pick<Response, "headers" | "text">,
 ): Promise<string> => {
+  const rejectCode = sanitizeErrorMessage(
+    readResponseHeader(response, "x-iroha-reject-code"),
+  );
+  if (rejectCode) {
+    return rejectCode;
+  }
+
+  const contentType = readResponseHeader(response, "content-type");
+  if (isBinaryApiErrorContentType(contentType)) {
+    return "";
+  }
+
   const text = (await response.text().catch(() => "")).trim();
   if (!text) {
     return "";
