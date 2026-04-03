@@ -3,6 +3,7 @@
   "include": [
     "electron/**/*.ts",
     "src/**/*.d.ts",
+    "src/utils/accountId.ts",
     "src/utils/assetId.ts",
     "src/utils/confidential.ts",
     "src/utils/errorMessage.ts"
