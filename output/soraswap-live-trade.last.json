@@ -1,0 +1,31 @@
+{
+  "ranAt": "2026-04-03T19:43:02.041Z",
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "accountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+  "publicKeyHex": "66975DF1AC60CCACF2D6B42B0F9895E1B028E87CCA294B24BF1E158AF0767738",
+  "pool": {
+    "contractAddress": "tairac1qyqqqqqqqqqqqqyprlla0vew22w3malfu9w5wraat0grrfqw6queu",
+    "baseAssetId": "6qLb5RYJbzychndCXgFa9aZzjWyx",
+    "quoteAssetId": "7Dsw1EgqCsPmv9HpEztf26xEL2qo",
+    "vaultAccountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H"
+  },
+  "trade": {
+    "inputAssetId": "6qLb5RYJbzychndCXgFa9aZzjWyx",
+    "receiveAssetId": "7Dsw1EgqCsPmv9HpEztf26xEL2qo",
+    "amountInBaseUnits": "10",
+    "amountInDisplay": "10",
+    "quoteBaseUnits": "9",
+    "quoteDisplay": "9",
+    "minOutBaseUnits": "8",
+    "minOutDisplay": "8",
+    "slippageBps": "50"
+  },
+  "connect": {
+    "sid": "UXihekcSqYahonh66jm1IDcqnq_uNrvuLsfSYFWD6as",
+    "appUri": "iroha://connect?sid=UXihekcSqYahonh66jm1IDcqnq_uNrvuLsfSYFWD6as&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=app",
+    "walletUri": "iroha://connect?sid=UXihekcSqYahonh66jm1IDcqnq_uNrvuLsfSYFWD6as&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=wallet"
+  },
+  "txHashHex": "906f5d97e657d84c1b8d1ca872507fc44a890910132a4c1914fbe49c7c8dd30d",
+  "pipelineStatus": null
+}

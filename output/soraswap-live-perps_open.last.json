@@ -1,0 +1,47 @@
+{
+  "ranAt": "2026-04-03T19:49:34.825Z",
+  "mode": "perps_open",
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "accountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+  "publicKeyHex": "66975DF1AC60CCACF2D6B42B0F9895E1B028E87CCA294B24BF1E158AF0767738",
+  "draftRequest": {
+    "authority": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+    "contract_address": "tairac1qyqqqqqqqqqqqqzsg9pe4a38fx96tsw086fjrvdlwjg60hqj44edr",
+    "entrypoint": "open_position_priced_with_assets",
+    "payload": {
+      "trader": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+      "position": "connect_live_mnjbhhqd",
+      "vault_account": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+      "collateral_asset": "6qLb5RYJbzychndCXgFa9aZzjWyx",
+      "size": "10",
+      "collateral": "2",
+      "entry_price_bps": "10000"
+    },
+    "gas_limit": 5000
+  },
+  "engine": {
+    "contractAddress": "tairac1qyqqqqqqqqqqqqzsg9pe4a38fx96tsw086fjrvdlwjg60hqj44edr",
+    "collateralAssetId": "6qLb5RYJbzychndCXgFa9aZzjWyx",
+    "vaultAccountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+    "fundingBps": "100",
+    "maxLeverageBps": "50000",
+    "maintenanceMarginBps": "500",
+    "liquidationFeeBps": "1000"
+  },
+  "trade": {
+    "positionId": "connect_live_mnjbhhqd",
+    "direction": "long",
+    "size": "10",
+    "collateralBaseUnits": "2",
+    "collateralDisplay": "2",
+    "entryPriceBps": "10000"
+  },
+  "connect": {
+    "sid": "bNt7MoaavOjXuDtKf2PYPzvKOzPlho6oplwnLzXthQo",
+    "appUri": "iroha://connect?sid=bNt7MoaavOjXuDtKf2PYPzvKOzPlho6oplwnLzXthQo&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=app",
+    "walletUri": "iroha://connect?sid=bNt7MoaavOjXuDtKf2PYPzvKOzPlho6oplwnLzXthQo&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=wallet"
+  },
+  "txHashHex": "da9cc72206e6fd1a7a559c0d4362c66f827a9f3941a072d1b8c19f11824fbaf1",
+  "pipelineStatus": null
+}

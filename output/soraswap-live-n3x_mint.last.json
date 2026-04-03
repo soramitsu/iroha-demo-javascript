@@ -1,0 +1,50 @@
+{
+  "ranAt": "2026-04-03T19:50:30.126Z",
+  "mode": "n3x_mint",
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "accountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+  "publicKeyHex": "66975DF1AC60CCACF2D6B42B0F9895E1B028E87CCA294B24BF1E158AF0767738",
+  "draftRequest": {
+    "authority": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+    "contract_address": "tairac1qyqqqqqqqqqqqq9grgu03pwn7635qu0hz5y7dmywpcderfcn32tc3",
+    "entrypoint": "deposit_and_mint_with_assets",
+    "payload": {
+      "user": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+      "vault": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+      "usdt_asset": "7Dsw1EgqCsPmv9HpEztf26xEL2qo",
+      "usdc_asset": "4wicsaHQFueXc3GKLG7WoQaKMWWq",
+      "kusd_asset": "6Fjwa298w3A7KDnGxjFncsfqj8qC",
+      "n3x_asset": "5N3DQmQr8sx9bKRU87WVkqQR6D2j",
+      "usdt_in": "10",
+      "usdc_in": "0",
+      "kusd_in": "0"
+    },
+    "gas_limit": 5000
+  },
+  "hub": {
+    "contractAddress": "tairac1qyqqqqqqqqqqqq9grgu03pwn7635qu0hz5y7dmywpcderfcn32tc3",
+    "vaultAccountId": "testuロ1P7tセEbxワ4ユカzZ1ヲxXニvaxエsイエユkxハリシPdM1シリキチKSAT7H",
+    "usdtAssetId": "7Dsw1EgqCsPmv9HpEztf26xEL2qo",
+    "usdcAssetId": "4wicsaHQFueXc3GKLG7WoQaKMWWq",
+    "kusdAssetId": "6Fjwa298w3A7KDnGxjFncsfqj8qC",
+    "n3xAssetId": "5N3DQmQr8sx9bKRU87WVkqQR6D2j"
+  },
+  "mint": {
+    "usdtIn": "10",
+    "usdcIn": "0",
+    "kusdIn": "0",
+    "usdtDisplay": "10",
+    "usdcDisplay": "0",
+    "kusdDisplay": "0",
+    "quotedN3xOut": "10",
+    "quotedN3xDisplay": "10"
+  },
+  "connect": {
+    "sid": "mei0RdKoagGVlNbmfBYBow7pCu2ImHX45IECxKLnFfw",
+    "appUri": "iroha://connect?sid=mei0RdKoagGVlNbmfBYBow7pCu2ImHX45IECxKLnFfw&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=app",
+    "walletUri": "iroha://connect?sid=mei0RdKoagGVlNbmfBYBow7pCu2ImHX45IECxKLnFfw&chain_id=809574f5-fee7-5e69-bfcf-52451e42d50f&v=1&role=wallet"
+  },
+  "txHashHex": "ff8ea1e8d37e49ccdb3df201b5061645fce2c69137d433e2b7095c29307181f7",
+  "pipelineStatus": null
+}
