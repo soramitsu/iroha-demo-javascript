@@ -4,6 +4,7 @@
     <div class="app-ambient app-ambient-left"></div>
     <div class="app-ambient app-ambient-right"></div>
     <header class="app-header">
+      <div class="app-header-drag-region" aria-hidden="true"></div>
       <div class="logo-wrapper">
         <span class="logo-badge">
           <img :src="logo" :alt="t('Iroha logo')" class="logo" />
@@ -51,7 +52,7 @@
             <span class="settings-toggle-copy">
               <span class="settings-toggle-label">{{ t("Language") }}</span>
               <span class="settings-toggle-current">
-                {{ activeLocale }} ·
+                {{ activeLocaleLabel }} ·
                 {{
                   theme.current === "dark"
                     ? t("Switch to light")
@@ -71,9 +72,6 @@
                     activeLocaleLabel
                   }}</span>
                 </span>
-                <span class="locale-switcher-code mono">{{
-                  activeLocale
-                }}</span>
                 <span class="locale-switcher-caret" aria-hidden="true">↗</span>
               </summary>
               <div class="locale-switcher-menu" :aria-label="t('Language')">
@@ -89,9 +87,6 @@
                 >
                   <span class="locale-option-copy">
                     <span class="locale-option-label">{{ option.label }}</span>
-                    <span class="locale-option-meta mono">{{
-                      option.value
-                    }}</span>
                   </span>
                   <span class="locale-option-check" aria-hidden="true">●</span>
                 </button>

@@ -2,7 +2,7 @@ import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
 } from "@/types/iroha";
-import { extractAssetDefinitionId } from "@/utils/assetId";
+import { resolveToriiXorAsset } from "@/utils/assetId";
 
 export const CITIZEN_BOND_XOR = "10000";
 export const PARLIAMENT_HISTORY_LIMIT = 8;
@@ -16,39 +16,15 @@ const PROPOSAL_ID_PATTERN = /^(?:0x)?[0-9a-fA-F]{64}$/;
 
 export const resolveXorBalance = (
   assets: Array<{ asset_id: string; quantity: string }>,
-  preferredAssetDefinitionId = "",
+  preferredAssetDefinitionIds: string | Array<string | null | undefined> = [],
 ) => {
-  const normalizedPreferredDefinitionId = preferredAssetDefinitionId
-    .trim()
-    .toLowerCase();
-  if (normalizedPreferredDefinitionId) {
-    const preferredMatch = assets.find((asset) => {
-      const definitionId = extractAssetDefinitionId(asset.asset_id)
-        .trim()
-        .toLowerCase();
-      return definitionId === normalizedPreferredDefinitionId;
-    });
-    if (preferredMatch) {
-      return preferredMatch.quantity;
-    }
-  }
-
-  const xorAsset = assets.find((asset) =>
-    asset.asset_id.toLowerCase().startsWith("xor#"),
+  const resolvedAsset = resolveToriiXorAsset(
+    assets,
+    Array.isArray(preferredAssetDefinitionIds)
+      ? preferredAssetDefinitionIds
+      : [preferredAssetDefinitionIds],
   );
-  if (xorAsset) {
-    return xorAsset.quantity;
-  }
-  const xorLikeAsset = assets.find((asset) =>
-    asset.asset_id.toLowerCase().includes("xor"),
-  );
-  if (xorLikeAsset) {
-    return xorLikeAsset.quantity;
-  }
-  if (assets.length === 1) {
-    return assets[0]?.quantity ?? "0";
-  }
-  return "0";
+  return resolvedAsset?.quantity ?? "0";
 };
 
 export const listGovernancePermissions = (

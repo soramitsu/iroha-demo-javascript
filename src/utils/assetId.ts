@@ -1,12 +1,20 @@
+import { blake3 } from "@noble/hashes/blake3.js";
+
 export type ParsedAssetReference = {
   definitionId: string;
   accountId: string;
 };
 
 const NORITO_PREFIX = "norito:";
+const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/i;
 const OPAQUE_PREVIEW_HEAD = 8;
 const OPAQUE_PREVIEW_TAIL = 8;
 const OPAQUE_ASSET_LITERAL_PATTERN = /\bnorito:[A-Za-z0-9._:@#-]+/gi;
+const ASSET_DEFINITION_ADDRESS_VERSION = 1;
+const ASSET_DEFINITION_ADDRESS_LEN = 21;
+const BARE_ASSET_DEFINITION_LEN = 16;
+const BASE58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 export const splitAssetReference = (
   value: string | null | undefined,
@@ -38,6 +46,79 @@ export const splitAssetReference = (
 export const extractAssetDefinitionId = (
   value: string | null | undefined,
 ): string => splitAssetReference(value).definitionId;
+
+const parseHexBytes = (value: string) => {
+  const literal = value.trim();
+  if (
+    !literal ||
+    literal.length % 2 !== 0 ||
+    !NORITO_HEX_BODY_PATTERN.test(literal)
+  ) {
+    return null;
+  }
+
+  const out = new Uint8Array(literal.length / 2);
+  for (let index = 0; index < literal.length; index += 2) {
+    const byte = Number.parseInt(literal.slice(index, index + 2), 16);
+    if (Number.isNaN(byte)) {
+      return null;
+    }
+    out[index / 2] = byte;
+  }
+  return out;
+};
+
+const encodeBase58 = (bytes: Uint8Array) => {
+  if (!bytes.length) {
+    return "";
+  }
+
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let index = 0; index < digits.length; index += 1) {
+      const next = digits[index]! * 256 + carry;
+      digits[index] = next % 58;
+      carry = Math.floor(next / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+
+  let leadingZeroCount = 0;
+  while (leadingZeroCount < bytes.length && bytes[leadingZeroCount] === 0) {
+    leadingZeroCount += 1;
+  }
+
+  let out = "1".repeat(leadingZeroCount);
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    out += BASE58_ALPHABET[digits[index]!]!;
+  }
+  return out;
+};
+
+export const decodeNoritoAssetDefinitionId = (
+  value: string | null | undefined,
+) => {
+  const definitionId = extractAssetDefinitionId(value);
+  if (!isNoritoAssetDefinitionId(definitionId)) {
+    return null;
+  }
+
+  const bodyHex = definitionId.slice(NORITO_PREFIX.length);
+  const bareBytes = parseHexBytes(bodyHex);
+  if (!bareBytes || bareBytes.length !== BARE_ASSET_DEFINITION_LEN) {
+    return null;
+  }
+
+  const payload = new Uint8Array(ASSET_DEFINITION_ADDRESS_LEN);
+  payload[0] = ASSET_DEFINITION_ADDRESS_VERSION;
+  payload.set(bareBytes, 1);
+  payload.set(blake3(payload.slice(0, 17)).slice(0, 4), 17);
+  return encodeBase58(payload);
+};
 
 const shortenOpaqueAssetLiteral = (value: string) => {
   const literal = value.trim();
@@ -108,7 +189,11 @@ export const formatAssetDefinitionLabel = (
   if (!isNoritoAssetDefinitionId(definitionId)) {
     return definitionId;
   }
-  return shortenOpaqueAssetLiteral(definitionId) || fallback;
+  return (
+    decodeNoritoAssetDefinitionId(definitionId) ||
+    shortenOpaqueAssetLiteral(definitionId) ||
+    fallback
+  );
 };
 
 export const formatAssetReferenceLabel = (
@@ -125,6 +210,69 @@ export const formatAssetReferenceLabel = (
   const { definitionId, accountId } = splitAssetReference(literal);
   const definitionLabel = formatAssetDefinitionLabel(definitionId, fallback);
   return accountId ? `${definitionLabel} | ${accountId}` : definitionLabel;
+};
+
+export const resolveToriiXorAsset = (
+  assets: Array<{ asset_id: string; quantity: string }>,
+  preferredAssetDefinitionIds: Array<string | null | undefined> = [],
+) => {
+  const normalizedPreferredDefinitionIds = new Set(
+    preferredAssetDefinitionIds
+      .map((value) => extractAssetDefinitionId(value).trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const rankedAssets = assets
+    .map((asset, index) => {
+      const assetId = String(asset.asset_id ?? "").trim();
+      const definitionId = extractAssetDefinitionId(assetId).trim().toLowerCase();
+      if (!assetId || !definitionId) {
+        return null;
+      }
+
+      const quantity = Number(String(asset.quantity ?? "").trim());
+      const quantityScore =
+        Number.isFinite(quantity) && quantity > 0
+          ? Math.min(quantity, 1_000_000)
+          : 0;
+      const isPreferred = normalizedPreferredDefinitionIds.has(definitionId);
+      const isExplicitXor = definitionId.startsWith("xor#");
+      const isXorLike = !isExplicitXor && definitionId.includes("xor");
+
+      let score = quantityScore;
+      if (isPreferred) {
+        score += 1_000_000;
+      } else if (isExplicitXor) {
+        score += 100_000;
+      } else if (isXorLike) {
+        score += 50_000;
+      }
+
+      return {
+        asset,
+        index,
+        score,
+        isPositive: quantityScore > 0,
+        isXorCandidate: isPreferred || isExplicitXor || isXorLike,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  const liveXorAsset = rankedAssets
+    .filter((entry) => entry.isXorCandidate)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        Number(right.isPositive) - Number(left.isPositive) ||
+        left.index - right.index,
+    )[0];
+  if (liveXorAsset) {
+    return liveXorAsset.asset;
+  }
+
+  const positiveAsset = rankedAssets
+    .filter((entry) => entry.isPositive)
+    .sort((left, right) => right.score - left.score || left.index - right.index)[0];
+  return positiveAsset?.asset ?? rankedAssets[0]?.asset ?? null;
 };
 
 export const formatOpaqueAssetLiteralsInText = (

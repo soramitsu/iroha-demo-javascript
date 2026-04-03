@@ -15,23 +15,106 @@
         <p class="wallet-balance-value">{{ primaryAssetQuantity }}</p>
         <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
       </div>
-      <div class="wallet-shield-panel">
-        <div class="wallet-shield-summary">
+      <div
+        class="wallet-faucet-panel"
+        :class="{ 'wallet-faucet-panel-priority': showFundingPriority }"
+      >
+        <div>
+          <p class="wallet-faucet-label">{{ t("Faucet Request") }}</p>
+          <p
+            class="helper"
+            :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
+          >
+            {{ t("Top up a new TAIRA account once with starter XOR.") }}
+          </p>
+        </div>
+        <button
+          :class="
+            showFundingPriority
+              ? 'wallet-faucet-button'
+              : 'secondary wallet-faucet-button'
+          "
+          :disabled="faucetLoading || !canRequestFaucet"
+          @click="requestStarterFunds"
+        >
+          {{ faucetLoading ? t("Requesting…") : t("Claim Testnet XOR") }}
+        </button>
+      </div>
+      <div class="wallet-quick-actions">
+        <a class="secondary wallet-action-link" href="#/receive">
+          {{ t("Receive Points") }}
+        </a>
+        <a
+          class="secondary wallet-action-link"
+          :class="{ 'wallet-action-link-disabled': !canSendAssets }"
+          :href="canSendAssets ? '#/send' : undefined"
+          :aria-disabled="!canSendAssets"
+          :tabindex="canSendAssets ? undefined : -1"
+        >
+          {{ t("Send Points") }}
+        </a>
+      </div>
+      <p v-if="faucetMessage" class="wallet-faucet-message">
+        {{ faucetMessage }}
+      </p>
+      <p
+        v-else-if="faucetError"
+        class="wallet-faucet-message wallet-faucet-error"
+      >
+        {{ faucetError }}
+      </p>
+      <p
+        v-if="activeAccount?.localOnly"
+        class="helper wallet-local-account-note"
+      >
+        {{
+          t(
+            "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
+          )
+        }}
+      </p>
+      <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
+        {{ walletError }}
+      </p>
+      <div v-if="assets.length" class="table-wrap wallet-table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ t("Asset ID") }}</th>
+              <th>{{ t("Quantity") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="asset in assets" :key="asset.asset_id">
+              <td>{{ formatAssetReferenceLabel(asset.asset_id, t("—")) }}</td>
+              <td>{{ asset.quantity }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div v-else class="wallet-empty">
+        <p class="wallet-empty-title">
+          {{ t("No assets found for this account.") }}
+        </p>
+        <p class="helper">
+          {{ t("Share QR or Account ID") }} ·
+          {{ t("Transfer assets via Torii") }}
+        </p>
+      </div>
+      <div v-if="showShieldSection" class="wallet-shield-panel">
+        <div class="wallet-shield-header">
           <div>
-            <p class="wallet-balance-label">{{ t("Shielded balance") }}</p>
+            <p class="wallet-faucet-label">{{ t("Shielded balance") }}</p>
+            <p class="wallet-shield-balance">
+              {{ shieldedXorBalanceDisplay }}
+            </p>
             <p class="wallet-shield-asset">
               {{ shieldedXorAssetLabel }}
             </p>
           </div>
-          <div class="wallet-shield-kpis">
-            <div class="kv">
-              <span class="kv-label">{{ t("Transparent balance") }}</span>
-              <span class="kv-value">{{ transparentXorBalance }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("Shielded balance") }}</span>
-              <span class="kv-value">{{ shieldedXorBalanceDisplay }}</span>
-            </div>
+          <div class="wallet-shield-kpi">
+            <span class="kv-label">{{ t("Transparent balance") }}</span>
+            <span class="kv-value">{{ transparentXorBalance }}</span>
           </div>
         </div>
         <div class="wallet-shield-actions">
@@ -60,7 +143,10 @@
         >
           {{ shieldedXorCapabilityMessage }}
         </p>
-        <p v-else-if="shieldedXorPolicyMode" class="helper wallet-shield-note">
+        <p
+          v-else-if="shieldedXorPolicyMode"
+          class="helper wallet-shield-note"
+        >
           {{
             t("Shield policy mode: {mode}.", {
               mode: shieldedXorPolicyMode,
@@ -84,61 +170,12 @@
           {{ shieldError }}
         </p>
       </div>
-      <div class="wallet-quick-actions">
-        <a class="secondary wallet-action-link" href="#/receive">
-          {{ t("Receive Points") }}
-        </a>
-        <a class="secondary wallet-action-link" href="#/send">
-          {{ t("Send Points") }}
-        </a>
-      </div>
-      <div class="wallet-faucet-panel">
-        <div>
-          <p class="wallet-faucet-label">{{ t("Faucet Request") }}</p>
-          <p class="helper">
-            {{ t("Top up a new TAIRA account once with starter XOR.") }}
-          </p>
-        </div>
-        <button
-          class="secondary"
-          :disabled="loading || faucetLoading || !canRequestFaucet"
-          @click="requestStarterFunds"
-        >
-          {{ faucetLoading ? t("Requesting…") : t("Claim Testnet XOR") }}
-        </button>
-      </div>
-      <p v-if="faucetMessage" class="wallet-faucet-message">
-        {{ faucetMessage }}
+      <p v-if="visibleAccountId" class="helper wallet-account-id-note">
+        <span class="wallet-account-id-label">
+          {{ t("Canonical I105 Account ID") }}
+        </span>
+        <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
       </p>
-      <p
-        v-else-if="faucetError"
-        class="wallet-faucet-message wallet-faucet-error"
-      >
-        {{ faucetError }}
-      </p>
-      <p
-        v-if="activeAccount?.localOnly"
-        class="helper wallet-local-account-note"
-      >
-        {{
-          t(
-            "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
-          )
-        }}
-      </p>
-      <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
-        {{ walletError }}
-      </p>
-      <div class="wallet-kpis">
-        <div class="kv">
-          <span class="kv-label">{{ t("Assets") }}</span>
-          <span class="kv-value">{{ assets.length }}</span>
-        </div>
-        <div class="kv wallet-kpi-account">
-          <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
-          <span class="kv-value">{{ visibleAccountId || t("—") }}</span>
-        </div>
-      </div>
       <p v-if="visibleAccountId" class="helper">
         {{
           t(
@@ -149,31 +186,6 @@
           )
         }}
       </p>
-      <div v-if="assets.length" class="table-wrap wallet-table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t("Asset ID") }}</th>
-              <th>{{ t("Quantity") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="asset in assets" :key="asset.asset_id">
-              <td>{{ formatAssetReferenceLabel(asset.asset_id, t("—")) }}</td>
-              <td>{{ asset.quantity }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div v-else class="wallet-empty">
-        <p class="wallet-empty-title">
-          {{ t("No assets found for this account.") }}
-        </p>
-        <p class="helper">
-          {{ t("Share QR or Account ID") }} ·
-          {{ t("Transfer assets via Torii") }}
-        </p>
-      </div>
     </section>
 
     <section class="card wallet-transactions-card">
@@ -264,8 +276,10 @@ import {
 } from "@/utils/confidential";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 import {
+  extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
+  resolveToriiXorAsset,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
@@ -462,12 +476,6 @@ const refresh = async () => {
   }
 };
 
-const canRequestFaucet = computed(() =>
-  Boolean(
-    session.hasAccount && session.connection.toriiUrl && requestAccountId.value,
-  ),
-);
-
 const waitFor = (delayMs: number) =>
   new Promise<void>((resolve) => {
     window.setTimeout(resolve, delayMs);
@@ -495,7 +503,7 @@ const refreshAfterFaucetClaim = async (assetId: string) => {
 const requestStarterFunds = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
-  if (!toriiUrl || !accountId) {
+  if (!toriiUrl || !accountId || !canRequestFaucet.value) {
     return;
   }
   const shouldConfigureAsset = !session.connection.assetDefinitionId.trim();
@@ -541,34 +549,67 @@ const requestStarterFunds = async () => {
 };
 
 const primaryAsset = computed(() => {
-  const items = assets.value;
-  if (!items.length) {
-    return null;
-  }
-  const target = session.connection.assetDefinitionId.trim();
-  if (!target) {
-    return items[0] ?? null;
-  }
-  const normalizedTarget = target.toLowerCase();
-  return (
-    items.find((asset) => asset.asset_id === target) ??
-    items.find((asset) => asset.asset_id.startsWith(target)) ??
-    items.find((asset) =>
-      asset.asset_id.toLowerCase().includes(normalizedTarget),
-    ) ??
-    (items.length === 1 ? items[0] : null)
-  );
+  return resolveToriiXorAsset(assets.value, [
+    shieldedXorResolvedAssetId.value,
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
+  ]);
 });
 
+const primaryAssetFallback = computed(
+  () => shieldedXorResolvedAssetId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+);
+
 const primaryAssetLabel = computed(() => {
-  const fallback = session.connection.assetDefinitionId || t("—");
-  return formatAssetReferenceLabel(
-    primaryAsset.value?.asset_id ?? fallback,
+  return formatAssetDefinitionLabel(
+    primaryAsset.value?.asset_id ?? primaryAssetFallback.value,
     t("—"),
   );
 });
 const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
+);
+const hasPositiveConfiguredFaucetBalance = computed(() => {
+  const configuredDefinitionId = extractAssetDefinitionId(
+    session.connection.assetDefinitionId,
+  )
+    .trim()
+    .toLowerCase();
+  if (!configuredDefinitionId) {
+    return false;
+  }
+  return assets.value.some((asset) => {
+    const assetDefinitionId = extractAssetDefinitionId(asset.asset_id)
+      .trim()
+      .toLowerCase();
+    const quantity = Number(String(asset.quantity ?? "").trim());
+    return (
+      assetDefinitionId === configuredDefinitionId &&
+      Number.isFinite(quantity) &&
+      quantity > 0
+    );
+  });
+});
+const canRequestFaucet = computed(
+  () =>
+    Boolean(
+      session.hasAccount &&
+        session.connection.toriiUrl &&
+        requestAccountId.value,
+    ) && !hasPositiveConfiguredFaucetBalance.value,
+);
+const showFundingPriority = computed(
+  () => Boolean(activeAccount.value?.localOnly || !assets.value.length),
+);
+const canSendAssets = computed(() =>
+  assets.value.some((asset) => Number(asset.quantity) > 0),
+);
+const showShieldSection = computed(() =>
+  Boolean(
+    assets.value.length ||
+      transactionsRaw.value.length ||
+      shieldMessage.value ||
+      shieldError.value,
+  ),
 );
 const shieldedXorTrackedAssetIds = computed(() => {
   const seen = new Set<string>();
@@ -794,12 +835,19 @@ watch(
     var(--shadow-soft);
 }
 
-.wallet-shield-summary {
+.wallet-shield-header {
   display: flex;
   gap: 16px;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.wallet-shield-balance {
+  margin: 6px 0 0;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+  font-weight: 700;
+  line-height: 1;
 }
 
 .wallet-shield-asset {
@@ -809,11 +857,10 @@ watch(
   unicode-bidi: plaintext;
 }
 
-.wallet-shield-kpis {
+.wallet-shield-kpi {
   display: grid;
-  grid-template-columns: repeat(2, minmax(120px, 1fr));
-  gap: 12px;
-  flex: 1 1 260px;
+  gap: 4px;
+  min-width: 150px;
 }
 
 .wallet-shield-actions {
@@ -841,17 +888,15 @@ watch(
   flex: 1 1 180px;
 }
 
-.wallet-kpis {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
+.wallet-action-link-disabled {
+  pointer-events: none;
 }
 
 .wallet-faucet-panel {
   display: flex;
   gap: 16px;
-  align-items: center;
+  flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: space-between;
   margin-top: 16px;
   padding: 16px 18px;
@@ -862,6 +907,37 @@ watch(
     color-mix(in srgb, var(--menu-highlight) 16%, transparent),
     color-mix(in srgb, var(--glass-veil) 78%, transparent)
   );
+}
+
+.wallet-faucet-panel-priority {
+  padding: 20px 22px;
+  background:
+    radial-gradient(
+      circle at 0% 50%,
+      color-mix(in srgb, var(--iroha-accent) 18%, transparent),
+      transparent 48%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--glass-veil) 90%, transparent),
+      color-mix(in srgb, var(--menu-highlight) 42%, transparent)
+    );
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 18px 40px color-mix(in srgb, var(--iroha-accent) 12%, transparent);
+}
+
+.wallet-faucet-panel > :first-child {
+  flex: 1 1 260px;
+}
+
+.wallet-faucet-button {
+  flex: 0 0 auto;
+}
+
+.wallet-faucet-copy-priority {
+  font-size: 0.98rem;
+  color: inherit;
 }
 
 .wallet-faucet-panel .helper {
@@ -878,7 +954,7 @@ watch(
 
 .wallet-faucet-message {
   margin: 12px 0 0;
-  color: var(--iroha-text);
+  color: inherit;
 }
 
 .wallet-local-account-note {
@@ -887,6 +963,27 @@ watch(
 
 .wallet-faucet-error {
   color: var(--accent-danger);
+}
+
+.wallet-account-id-note {
+  margin: 18px 0 0;
+  display: grid;
+  gap: 4px;
+}
+
+.wallet-account-id-label {
+  display: inline-block;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  color: var(--iroha-muted);
+}
+
+.wallet-account-id-value {
+  display: block;
+  color: inherit;
+  word-break: break-all;
+  unicode-bidi: plaintext;
 }
 
 .wallet-faucet-modal-backdrop {
@@ -998,6 +1095,14 @@ watch(
     padding: 16px;
   }
 
+  .wallet-faucet-panel {
+    align-items: stretch;
+  }
+
+  .wallet-faucet-button {
+    width: 100%;
+  }
+
   .wallet-quick-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1007,10 +1112,6 @@ watch(
   .wallet-action-link {
     min-width: 0;
     padding-inline: 12px;
-  }
-
-  .wallet-kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

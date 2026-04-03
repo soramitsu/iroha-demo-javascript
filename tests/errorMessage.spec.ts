@@ -30,9 +30,9 @@ describe("sanitizeErrorMessage", () => {
   it("formats opaque norito literals inside readable errors", () => {
     expect(
       sanitizeErrorMessage(
-        "Shield policy check failed for norito:abcdefghijklmnopqrstuvwxyz012345",
+        "Shield policy check failed for norito:00112233445566778899aabbccddeeff",
       ),
-    ).toBe("Shield policy check failed for abcdefgh...yz012345");
+    ).toBe("Shield policy check failed for 4Zust3cNxsgov3757wxRW7DtR8n6");
   });
 });
 

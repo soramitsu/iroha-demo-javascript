@@ -19,6 +19,9 @@ const jsonResponse = (body: unknown, status = 200) => ({
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
+  normalizeCanonicalAccountIdLiteralMock: vi.fn(),
+  normalizeCompatAccountIdLiteralMock: vi.fn(),
+  requestFaucetFundsWithPuzzleMock: vi.fn(),
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
@@ -118,8 +121,19 @@ vi.mock("../electron/nodeFetch", () => ({
 
 vi.mock("../electron/accountAddress", () => ({
   deriveAccountAddressView: vi.fn(),
-  normalizeCanonicalAccountIdLiteral: (value: string) => String(value).trim(),
-  normalizeCompatAccountIdLiteral: (value: string) => String(value).trim(),
+  normalizeCanonicalAccountIdLiteral: (
+    value: string,
+    label?: string,
+    networkPrefix?: number,
+  ) =>
+    mocks.normalizeCanonicalAccountIdLiteralMock(value, label, networkPrefix),
+  normalizeCompatAccountIdLiteral: (value: string, label?: string) =>
+    mocks.normalizeCompatAccountIdLiteralMock(value, label),
+}));
+
+vi.mock("../electron/faucetApi", () => ({
+  requestFaucetFundsWithPuzzle: (input: unknown, onStatus?: unknown) =>
+    mocks.requestFaucetFundsWithPuzzleMock(input, onStatus),
 }));
 
 vi.mock("@iroha/iroha-js", () => {
@@ -211,6 +225,10 @@ const loadBridge = async () => {
     selfShieldPrivateKaigiXor: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    requestFaucetFunds: (
+      input: Record<string, unknown>,
+      onStatus?: (progress: unknown) => void,
+    ) => Promise<Record<string, unknown>>;
   };
 };
 
@@ -218,6 +236,9 @@ describe("preload Kaigi bridge", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-29T12:00:00.000Z"));
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockReset();
+    mocks.normalizeCompatAccountIdLiteralMock.mockReset();
+    mocks.requestFaucetFundsWithPuzzleMock.mockReset();
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
@@ -236,6 +257,16 @@ describe("preload Kaigi bridge", () => {
     mocks.buildPrivateEndKaigiTransactionMock.mockClear();
     mocks.submitSignedTransactionMock.mockClear();
     mocks.submitTransactionEntrypointMock.mockClear();
+
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string) => String(value).trim(),
+    );
+    mocks.normalizeCompatAccountIdLiteralMock.mockImplementation(
+      (value: string) => String(value).trim(),
+    );
+    mocks.requestFaucetFundsWithPuzzleMock.mockResolvedValue({
+      tx_hash_hex: "0xfaucet",
+    });
 
     mocks.listKaigiRelaysMock.mockResolvedValue({
       items: [
@@ -361,6 +392,47 @@ describe("preload Kaigi bridge", () => {
     mocks.exposedApi = null;
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("routes faucet requests through canonical account-id normalization", async () => {
+    const bridge = await loadBridge();
+    const onStatus = vi.fn();
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string) => `canonical:${String(value).trim()}`,
+    );
+
+    await expect(
+      bridge.requestFaucetFunds(
+        {
+          toriiUrl: "https://taira.sora.org",
+          accountId: "  sorau-stale-id  ",
+          networkPrefix: 369,
+        },
+        onStatus,
+      ),
+    ).resolves.toEqual({
+      tx_hash_hex: "0xfaucet",
+    });
+
+    expect(mocks.normalizeCanonicalAccountIdLiteralMock).toHaveBeenCalledWith(
+      "  sorau-stale-id  ",
+      "accountId",
+      369,
+    );
+    expect(mocks.normalizeCompatAccountIdLiteralMock).not.toHaveBeenCalledWith(
+      "  sorau-stale-id  ",
+      "accountId",
+    );
+    expect(mocks.requestFaucetFundsWithPuzzleMock).toHaveBeenCalledWith(
+      {
+        baseUrl: "https://taira.sora.org",
+        accountId: "canonical:sorau-stale-id",
+        networkPrefix: 369,
+        fetchImpl: expect.any(Function),
+        onStatus,
+      },
+      undefined,
+    );
   });
 
   it("creates a private Kaigi meeting through the authority-free entrypoint path", async () => {

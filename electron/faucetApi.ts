@@ -45,6 +45,7 @@ type RequestFaucetFundsWithPowInput = {
 const DEFAULT_PUZZLE_RETRY_ATTEMPTS = 8;
 const DEFAULT_PUZZLE_RETRY_DELAY_MS = 750;
 const PUZZLE_VRF_UNAVAILABLE_DETAIL = "faucet pow vrf seed unavailable";
+const NORITO_CONTENT_TYPE = "application/x-norito";
 
 const sleepFor = (delayMs: number) =>
   new Promise<void>((resolve) => {
@@ -68,6 +69,27 @@ const emitStatus = async (
 export const shouldRetryFaucetPuzzle = (status: number, detail: string) =>
   status === 403 &&
   detail.toLowerCase().includes(PUZZLE_VRF_UNAVAILABLE_DETAIL);
+
+const readResponseHeader = (
+  response: Pick<Response, "headers">,
+  name: string,
+) => response.headers.get(name)?.trim().toLowerCase() ?? "";
+
+const isNoritoResponse = (response: Pick<Response, "headers">) =>
+  readResponseHeader(response, "content-type").includes(NORITO_CONTENT_TYPE);
+
+const buildFaucetRequestErrorMessage = (
+  response: Pick<Response, "headers" | "status" | "statusText">,
+  detail: string,
+) => {
+  if (detail) {
+    return detail;
+  }
+  if (response.status === 400 && isNoritoResponse(response)) {
+    return "TAIRA rejected this faucet claim. Repeated claims usually fail once the account already holds starter XOR, and stale faucet proof challenges can also trigger this response.";
+  }
+  return response.statusText || "Faucet request failed.";
+};
 
 export const requestFaucetFundsWithPuzzle = async ({
   baseUrl,
@@ -158,7 +180,7 @@ export const requestFaucetFundsWithPuzzle = async ({
     });
     if (!response.ok) {
       const detail = await readApiErrorDetail(response);
-      const message = detail || response.statusText || "Faucet request failed.";
+      const message = buildFaucetRequestErrorMessage(response, detail);
       throw new Error(`Faucet request failed (${response.status}): ${message}`);
     }
     const payload = (await response.json()) as AccountFaucetResponse;

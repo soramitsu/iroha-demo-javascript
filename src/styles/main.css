@@ -354,7 +354,6 @@ body::before {
   justify-content: space-between;
   align-items: center;
   gap: 20px;
-  -webkit-app-region: drag;
   user-select: none;
   backdrop-filter: blur(32px) saturate(185%);
   -webkit-backdrop-filter: blur(32px) saturate(185%);
@@ -367,13 +366,23 @@ body::before {
   border-radius: 28px;
 }
 
+.app-header-drag-region {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
 .logo-wrapper {
   display: flex;
   align-items: center;
   gap: 14px;
-  -webkit-app-region: no-drag;
   min-width: 0;
   flex: 1;
+  position: relative;
+  z-index: 1;
 }
 
 .logo-badge {
@@ -423,7 +432,6 @@ body::before {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px 14px;
-  -webkit-app-region: no-drag;
   flex: 1;
   min-width: 0;
   max-width: 720px;
@@ -447,7 +455,7 @@ body::before {
 }
 
 .settings-panel > summary {
-  display: inline-grid;
+  display: none;
 }
 
 .status-panel > .status-chips {
@@ -456,6 +464,8 @@ body::before {
 
 .mobile-status-toggle {
   list-style: none;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
 }
 
 .mobile-status-toggle::-webkit-details-marker {
@@ -479,6 +489,7 @@ body::before {
     inset 0 1px 0 var(--glass-highlight),
     var(--shadow-soft);
   cursor: pointer;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
@@ -492,29 +503,11 @@ body::before {
 }
 
 .settings-panel > .header-controls {
-  display: none;
-}
-
-.settings-panel[open] > .header-controls {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
   gap: 10px;
-  position: absolute;
-  inset-inline-end: 0;
-  top: calc(100% + 10px);
-  min-width: 272px;
-  padding: 14px;
-  border-radius: 22px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 68%),
-    linear-gradient(135deg, var(--menu-highlight), transparent 46%),
-    var(--menu-glass-strong);
-  box-shadow:
-    0 18px 36px rgba(0, 0, 0, 0.22),
-    var(--shadow-soft);
-  backdrop-filter: blur(24px) saturate(170%);
-  -webkit-backdrop-filter: blur(24px) saturate(170%);
-  z-index: 6;
 }
 
 .status-chips {
@@ -602,13 +595,14 @@ body::before {
 .locale-switcher {
   position: relative;
   min-width: 0;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
 }
 
 .locale-switcher > summary {
   list-style: none;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
@@ -686,16 +680,6 @@ body::before {
   unicode-bidi: plaintext;
 }
 
-.locale-switcher-code {
-  font-size: 0.72rem;
-  color: var(--iroha-muted);
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.05);
-  unicode-bidi: plaintext;
-}
-
 .locale-switcher-caret {
   color: var(--iroha-muted);
   transition:
@@ -709,7 +693,11 @@ body::before {
 }
 
 .locale-switcher-menu {
-  margin-top: 10px;
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 10px);
+  inline-size: min(320px, calc(100vw - 48px));
+  min-inline-size: 100%;
   padding: 8px;
   border-radius: 20px;
   border: 1px solid var(--glass-border);
@@ -726,6 +714,7 @@ body::before {
   gap: 6px;
   max-height: 280px;
   overflow-y: auto;
+  z-index: 8;
 }
 
 .locale-option {
@@ -767,8 +756,7 @@ body::before {
 
 .locale-option-copy {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
   min-width: 0;
 }
 
@@ -776,13 +764,6 @@ body::before {
   font-size: 0.92rem;
   font-weight: 700;
   line-height: 1.15;
-  unicode-bidi: plaintext;
-}
-
-.locale-option-meta {
-  font-size: 0.7rem;
-  color: var(--iroha-muted);
-  letter-spacing: 0.05em;
   unicode-bidi: plaintext;
 }
 
@@ -815,6 +796,7 @@ body::before {
     transform 0.15s ease,
     box-shadow 0.15s ease,
     border-color 0.2s;
+  app-region: no-drag;
   -webkit-app-region: no-drag;
   display: inline-flex;
   align-items: center;
@@ -2680,6 +2662,14 @@ button:not(.secondary):hover {
     position: static;
     min-width: 0;
     padding: 12px;
+  }
+  .locale-switcher-menu {
+    position: static;
+    inset: auto;
+    top: auto;
+    inline-size: auto;
+    min-inline-size: 0;
+    margin-top: 8px;
   }
   .mobile-status-toggle {
     display: grid;

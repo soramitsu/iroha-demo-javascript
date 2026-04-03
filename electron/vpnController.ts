@@ -94,6 +94,37 @@ const missingStatus = (
 const normalizeNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
+export const hasRequiredMacVpnEntitlements = (entitlements: string) =>
+  entitlements.includes("com.apple.developer.system-extension.install") &&
+  entitlements.includes("com.apple.developer.networking.networkextension");
+
+export const getMacVpnProvisioningMessage = (input: {
+  entitlements: string;
+  signatureDetails?: string;
+}) => {
+  const normalizedEntitlements = input.entitlements.trim();
+  const normalizedSignatureDetails = String(input.signatureDetails ?? "").trim();
+  const adHocOrUnsigned =
+    /Signature=adhoc/i.test(normalizedSignatureDetails) ||
+    /TeamIdentifier=not set/i.test(normalizedSignatureDetails);
+  if (
+    (!normalizedEntitlements ||
+      !normalizedEntitlements.includes("com.apple.")) &&
+    adHocOrUnsigned
+  ) {
+    return "Bundled VPN helper is ad hoc-signed and cannot install the macOS VPN system extension. Rebuild the macOS helper app with Apple provisioning and the VPN capabilities enabled for its App ID.";
+  }
+  if (
+    !normalizedEntitlements ||
+    !normalizedEntitlements.includes("com.apple.")
+  ) {
+    return null;
+  }
+  return hasRequiredMacVpnEntitlements(normalizedEntitlements)
+    ? null
+    : "Bundled VPN helper is missing Apple system-extension or NetworkExtension entitlements. Rebuild the macOS helper app with the VPN capabilities enabled for its App ID.";
+};
+
 const normalizeStatus = (
   platform: string,
   fallbackPath: string | null,
@@ -139,7 +170,57 @@ const resolveCandidatePaths = (platform: string, env: NodeJS.ProcessEnv) => {
       ? (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
       : null;
   if (resourcesPath) {
+    if (platform === "darwin") {
+      candidates.push(
+        join(
+          resourcesPath,
+          "..",
+          "Helpers",
+          "SoraVpnController.app",
+          "Contents",
+          "MacOS",
+          binaryName,
+        ),
+      );
+      candidates.push(
+        join(
+          resourcesPath,
+          "..",
+          "Helpers",
+          "SoraVpnController.bundle",
+          "Contents",
+          "MacOS",
+          binaryName,
+        ),
+      );
+    }
     candidates.push(join(resourcesPath, "vpn", binaryName));
+  }
+  if (platform === "darwin") {
+    candidates.push(
+      join(
+        process.cwd(),
+        "dist-native",
+        "vpn",
+        platform,
+        "SoraVpnController.app",
+        "Contents",
+        "MacOS",
+        binaryName,
+      ),
+    );
+    candidates.push(
+      join(
+        process.cwd(),
+        "dist-native",
+        "vpn",
+        platform,
+        "SoraVpnController.bundle",
+        "Contents",
+        "MacOS",
+        binaryName,
+      ),
+    );
   }
   candidates.push(
     join(process.cwd(), "dist-native", "vpn", platform, binaryName),
@@ -157,6 +238,14 @@ const firstExistingPath = async (paths: string[]) => {
     }
   }
   return null;
+};
+
+const resolveMacBundlePath = (controllerPath: string) => {
+  const marker = "/Contents/MacOS/";
+  const markerIndex = controllerPath.lastIndexOf(marker);
+  return markerIndex >= 0
+    ? controllerPath.slice(0, markerIndex)
+    : controllerPath;
 };
 
 export class BundledVpnController implements VpnLocalController {
@@ -177,6 +266,17 @@ export class BundledVpnController implements VpnLocalController {
     );
     if (!this.controllerPath) {
       return missingStatus(this.platform, null);
+    }
+    const provisioningMessage = await this.validateMacProvisioning(
+      this.controllerPath,
+    );
+    if (provisioningMessage) {
+      return {
+        ...missingStatus(this.platform, this.controllerPath),
+        controllerPath: this.controllerPath,
+        repairRequired: true,
+        message: provisioningMessage,
+      };
     }
     try {
       return await this.run("install-check");
@@ -235,6 +335,31 @@ export class BundledVpnController implements VpnLocalController {
       resolveCandidatePaths(this.platform, this.env),
     );
     return Boolean(this.controllerPath);
+  }
+
+  private async validateMacProvisioning(controllerPath: string) {
+    if (this.platform !== "darwin") {
+      return null;
+    }
+    try {
+      const inspectPath = resolveMacBundlePath(controllerPath);
+      const [{ stdout: entitlementStdout, stderr: entitlementStderr }, { stdout: signatureStdout, stderr: signatureStderr }] =
+        await Promise.all([
+          execFileAsync("/usr/bin/codesign", [
+            "-d",
+            "--entitlements",
+            ":-",
+            inspectPath,
+          ]),
+          execFileAsync("/usr/bin/codesign", ["-dvv", inspectPath]),
+        ]);
+      return getMacVpnProvisioningMessage({
+        entitlements: `${entitlementStdout ?? ""}${entitlementStderr ?? ""}`,
+        signatureDetails: `${signatureStdout ?? ""}${signatureStderr ?? ""}`,
+      });
+    } catch {
+      return null;
+    }
   }
 
   private async run(command: ControllerCommand, payload?: unknown) {

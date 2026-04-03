@@ -1,0 +1,62 @@
+name: SoraVpnPacketTunnel
+options:
+  minimumXcodeGenVersion: 2.45.0
+settings:
+  base:
+    SWIFT_VERSION: 5.10
+    MACOSX_DEPLOYMENT_TARGET: 13.0
+targets:
+  SoraVpnPacketTunnel:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: Sources/SoraVpnPacketTunnel
+    info:
+      path: Info.plist
+      properties:
+        CFBundleDevelopmentRegion: $(DEVELOPMENT_LANGUAGE)
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: $(PRODUCT_NAME)
+        CFBundlePackageType: SYSX
+        CFBundleShortVersionString: "1.0.1"
+        CFBundleVersion: "2"
+        NetworkExtension:
+          NEProviderClasses:
+            com.apple.networkextension.packet-tunnel: $(PRODUCT_MODULE_NAME).PacketTunnelProvider
+          NEMachServiceName: $(VPN_APP_GROUP_ID)
+        NSSystemExtensionUsageDescription: Sora VPN installs this system extension to route packet-tunnel traffic.
+    entitlements:
+      path: ../../buildResources/entitlements.packet-tunnel.plist
+      properties:
+        com.apple.developer.networking.networkextension:
+          - $(VPN_NETWORK_EXTENSION_ENTITLEMENT)
+        com.apple.security.app-sandbox: true
+        com.apple.security.application-groups:
+          - $(VPN_APP_GROUP_ID)
+    attributes:
+      SystemCapabilities:
+        com.apple.NetworkExtensions:
+          enabled: 1
+        com.apple.Sandbox:
+          enabled: 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: org.sora.wallet.demo.packet-tunnel
+        PRODUCT_NAME: org.sora.wallet.demo.packet-tunnel
+        EXECUTABLE_NAME: SoraVpnPacketTunnel
+        CURRENT_PROJECT_VERSION: 2
+        MARKETING_VERSION: 1.0.1
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../Frameworks"
+        VPN_APP_GROUP_ID: group.org.sora.wallet.demo.vpn
+        VPN_NETWORK_EXTENSION_ENTITLEMENT: packet-tunnel-provider
+    dependencies:
+      - sdk: NetworkExtension.framework
+schemes:
+  SoraVpnPacketTunnel:
+    build:
+      targets:
+        SoraVpnPacketTunnel: all

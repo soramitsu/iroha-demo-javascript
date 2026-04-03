@@ -2964,7 +2964,7 @@ const api: IrohaBridge = {
   },
   async requestFaucetFunds({ toriiUrl, accountId, networkPrefix }, onStatus) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
-    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
       networkPrefix,

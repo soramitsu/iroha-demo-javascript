@@ -143,14 +143,23 @@ describe("App shell", () => {
       .element as HTMLDetailsElement;
     localeMenu.open = true;
 
+    expect(wrapper.get(".settings-toggle-current").text()).toContain("English");
+    expect(wrapper.get(".settings-toggle-current").text()).not.toContain("en-US");
     expect(wrapper.get(".locale-switcher-current").text()).toBe("English");
-    expect(wrapper.get(".locale-switcher-code").text()).toBe("en-US");
+    expect(wrapper.find(".locale-switcher-code").exists()).toBe(false);
+    expect(
+      wrapper.get('[data-locale="en-US"] .locale-option-label').text(),
+    ).toBe("English");
+    expect(
+      wrapper.get('[data-locale="ja-JP"] .locale-option-label').text(),
+    ).toBe("日本語");
 
     await wrapper.get('[data-locale="ja-JP"]').trigger("click");
 
     expect(localeStore.current).toBe("ja-JP");
     expect(localeMenu.open).toBe(false);
+    expect(wrapper.get(".settings-toggle-current").text()).toContain("日本語");
+    expect(wrapper.get(".settings-toggle-current").text()).not.toContain("ja-JP");
     expect(wrapper.get(".locale-switcher-current").text()).toBe("日本語");
-    expect(wrapper.get(".locale-switcher-code").text()).toBe("ja-JP");
   });
 });

@@ -187,6 +187,35 @@ describe("preload utils", () => {
     );
   });
 
+  it("uses reject-code headers and skips unreadable Norito error bodies", async () => {
+    const noritoResponse = new Response(
+      new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),
+      {
+        status: 400,
+        headers: {
+          "content-type": "application/x-norito",
+          "x-iroha-reject-code": "ERR_INVALID_SINGULAR_PARAMETERS",
+        },
+      },
+    );
+    const noritoResponseWithoutHeader = new Response(
+      new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),
+      {
+        status: 400,
+        headers: {
+          "content-type": "application/x-norito",
+        },
+      },
+    );
+
+    await expect(readApiErrorDetail(noritoResponse)).resolves.toBe(
+      "ERR_INVALID_SINGULAR_PARAMETERS",
+    );
+    await expect(readApiErrorDetail(noritoResponseWithoutHeader)).resolves.toBe(
+      "",
+    );
+  });
+
   it("strips unreadable prefixes from plain-text API errors", async () => {
     const textResponse = new Response(
       "ERR_UNEXPECTED_NETWORK_PREFIX — NRT0`\uFFFD6W\uFFFD5 invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",

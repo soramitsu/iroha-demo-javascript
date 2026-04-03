@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeNoritoAssetDefinitionId,
   deriveAssetSymbol,
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
   formatOpaqueAssetLiteralsInText,
+  resolveToriiXorAsset,
   splitAssetReference,
 } from "@/utils/assetId";
 
@@ -41,7 +43,23 @@ describe("asset ID helpers", () => {
     expect(deriveAssetSymbol("", "units")).toBe("units");
   });
 
-  it("formats opaque norito asset IDs for display", () => {
+  it("decodes canonical norito asset IDs into standard base58 literals", () => {
+    expect(
+      decodeNoritoAssetDefinitionId(
+        "norito:00112233445566778899aabbccddeeff",
+      ),
+    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
+    expect(
+      formatAssetDefinitionLabel("norito:00112233445566778899aabbccddeeff"),
+    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
+    expect(
+      formatAssetReferenceLabel(
+        "norito:00112233445566778899aabbccddeeff##alice@wonderland",
+      ),
+    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6 | alice@wonderland");
+  });
+
+  it("falls back to shortened labels when norito literals are not decodable", () => {
     expect(formatAssetDefinitionLabel("norito:abcdef0123456789")).toBe(
       "abcdef01...23456789",
     );
@@ -58,8 +76,65 @@ describe("asset ID helpers", () => {
   it("replaces opaque norito literals inside user-facing text", () => {
     expect(
       formatOpaqueAssetLiteralsInText(
-        'shield policy mismatch for "norito:abcdefghijklmnopqrstuvwxyz012345"',
+        'shield policy mismatch for "norito:00112233445566778899aabbccddeeff"',
       ),
-    ).toBe('shield policy mismatch for "abcdefgh...yz012345"');
+    ).toBe('shield policy mismatch for "4Zust3cNxsgov3757wxRW7DtR8n6"');
+  });
+
+  it("prefers the live Torii XOR asset over unrelated cached asset buckets", () => {
+    expect(
+      resolveToriiXorAsset([
+        {
+          asset_id: "norito:cachedbucket",
+          quantity: "25000",
+        },
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "75000",
+        },
+      ]),
+    ).toEqual({
+      asset_id: "xor#universal##alice@wonderland",
+      quantity: "75000",
+    });
+  });
+
+  it("uses a Torii-resolved preferred XOR asset id when the live asset is opaque", () => {
+    expect(
+      resolveToriiXorAsset(
+        [
+          {
+            asset_id: "norito:resolvedxorasset##alice@wonderland",
+            quantity: "40",
+          },
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "5",
+          },
+        ],
+        ["norito:resolvedxorasset"],
+      ),
+    ).toEqual({
+      asset_id: "norito:resolvedxorasset##alice@wonderland",
+      quantity: "40",
+    });
+  });
+
+  it("falls back to the first positive Torii asset when no XOR marker exists", () => {
+    expect(
+      resolveToriiXorAsset([
+        {
+          asset_id: "norito:firstasset",
+          quantity: "25",
+        },
+        {
+          asset_id: "norito:secondasset",
+          quantity: "0",
+        },
+      ]),
+    ).toEqual({
+      asset_id: "norito:firstasset",
+      quantity: "25",
+    });
   });
 });
