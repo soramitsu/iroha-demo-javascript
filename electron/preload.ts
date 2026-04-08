@@ -50,7 +50,10 @@ import {
   type AccountFaucetResponse,
   type FaucetRequestProgress,
 } from "./faucetApi";
-import { bootstrapPortableConnectPreviewSession } from "./connectPreview";
+import {
+  bootstrapPortableConnectPreviewSession,
+  resolvePortableConnectLaunchUri,
+} from "./connectPreview";
 import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
@@ -227,6 +230,9 @@ type ConnectPreviewResponse = {
   sidBase64Url: string;
   walletUri: string | null;
   appUri: string | null;
+  walletCanonicalUri: string | null;
+  appCanonicalUri: string | null;
+  launchProtocol: string | null;
   tokenApp: string | null;
   tokenWallet: string | null;
   appPublicKeyHex: string;
@@ -652,6 +658,7 @@ type IrohaBridge = {
     toriiUrl: string;
     chainId: string;
     node?: string | null;
+    launchProtocol?: string | null;
   }): Promise<ConnectPreviewResponse>;
   getSumeragiStatus(config: ToriiConfig): Promise<ToriiSumeragiStatus>;
   getNexusPublicLaneValidators(
@@ -3514,7 +3521,7 @@ const api: IrohaBridge = {
     );
     return { hash: submission.hash };
   },
-  async createConnectPreview({ toriiUrl, chainId, node }) {
+  async createConnectPreview({ toriiUrl, chainId, node, launchProtocol }) {
     const client = getClient(toriiUrl);
     const baseUrl = new URL(normalizeBaseUrl(toriiUrl));
     const nodeHint = node ?? baseUrl.host;
@@ -3523,11 +3530,25 @@ const api: IrohaBridge = {
         chainId,
         node: nodeHint,
       });
+    const normalizedLaunchProtocol = launchProtocol?.trim() || "irohaconnect";
+    const walletCanonicalUri = session?.wallet_uri ?? preview.walletUri ?? null;
+    const appCanonicalUri = session?.app_uri ?? preview.appUri ?? null;
     return {
       sidHex: toHex(Buffer.from(preview.sidBytes)),
       sidBase64Url: preview.sidBase64Url,
-      walletUri: session?.wallet_uri ?? preview.walletUri ?? null,
-      appUri: session?.app_uri ?? preview.appUri ?? null,
+      walletUri: resolvePortableConnectLaunchUri(
+        walletCanonicalUri,
+        preview.walletUri,
+        normalizedLaunchProtocol,
+      ),
+      appUri: resolvePortableConnectLaunchUri(
+        appCanonicalUri,
+        preview.appUri,
+        normalizedLaunchProtocol,
+      ),
+      walletCanonicalUri,
+      appCanonicalUri,
+      launchProtocol: normalizedLaunchProtocol,
       tokenApp: tokens?.app ?? null,
       tokenWallet: tokens?.wallet ?? null,
       appPublicKeyHex: toHex(Buffer.from(preview.appKeyPair.publicKey)),

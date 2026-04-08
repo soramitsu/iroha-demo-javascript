@@ -535,6 +535,7 @@ import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 const session = useSessionStore();
 const router = useRouter();
 const { t } = useAppI18n();
+const CONNECT_LAUNCH_PROTOCOL = "irohaconnect";
 const DEFAULT_DOMAIN_LABEL = "default";
 const getAccountLabel = (account: (typeof session.accounts)[number]) =>
   getAccountDisplayLabel(account, account.accountId);
@@ -997,6 +998,7 @@ const startConnectPairing = async () => {
     const preview = await createConnectPreview({
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId,
+      launchProtocol: CONNECT_LAUNCH_PROTOCOL,
     });
     const nextConnectQr = preview.walletUri
       ? await QRCode.toDataURL(preview.walletUri)

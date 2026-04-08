@@ -9,6 +9,7 @@ const NONCE_LENGTH = 16;
 const X25519_KEY_LENGTH = 32;
 const CONNECT_URI_VERSION = "1";
 const CONNECT_URI_SCHEME = "iroha://connect";
+const CONNECT_LAUNCH_PROTOCOL = "irohaconnect";
 
 type BinaryLike =
   | Buffer
@@ -109,6 +110,28 @@ export function createPortableConnectSessionPreview(
     walletUri: buildConnectUri(sidBase64Url, chainId, node, "wallet"),
     appUri: buildConnectUri(sidBase64Url, chainId, node, "app"),
   };
+}
+
+export function rewriteConnectUriProtocol(
+  uri: string,
+  protocol = CONNECT_LAUNCH_PROTOCOL,
+) {
+  const parsed = new URL(requireNonEmptyString(uri, "uri"));
+  const normalized = requireNonEmptyString(protocol, "protocol");
+  parsed.protocol = normalized.endsWith(":") ? normalized : `${normalized}:`;
+  return parsed.toString();
+}
+
+export function resolvePortableConnectLaunchUri(
+  canonicalSessionUri: string | null | undefined,
+  previewUri: string | null | undefined,
+  protocol = CONNECT_LAUNCH_PROTOCOL,
+) {
+  const selected = canonicalSessionUri ?? previewUri;
+  if (!selected) {
+    return null;
+  }
+  return rewriteConnectUriProtocol(selected, protocol);
 }
 
 function computePortableConnectSid(

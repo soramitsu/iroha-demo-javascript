@@ -226,6 +226,7 @@ export const createConnectPreview = (input: {
   toriiUrl: string;
   chainId: string;
   node?: string | null;
+  launchProtocol?: string | null;
 }): Promise<ConnectPreview> => bridge().createConnectPreview(input);
 
 export const getSumeragiStatus = (

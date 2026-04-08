@@ -159,6 +159,31 @@ describe("AccountSetupView", () => {
     expect(wrapper.findAll(".account-step")).toHaveLength(3);
   });
 
+  it("requests the irohaconnect launch URI for pairing QR generation", async () => {
+    createConnectPreviewMock.mockResolvedValueOnce({
+      walletUri: "irohaconnect://connect?sid=preview-1",
+      walletCanonicalUri: "iroha://connect?sid=preview-1",
+      sidBase64Url: "sid-1",
+      tokenWallet: "wallet-token-1",
+    });
+    qrToDataUrlMock.mockResolvedValueOnce("data:image/png;base64,preview-1");
+
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
+    await flushPromises();
+
+    expect(createConnectPreviewMock).toHaveBeenCalledWith({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      launchProtocol: "irohaconnect",
+    });
+    expect(qrToDataUrlMock).toHaveBeenCalledWith(
+      "irohaconnect://connect?sid=preview-1",
+    );
+    expect(wrapper.text()).toContain("sid-1");
+  });
+
   it("ignores stale pairing preview success after reset", async () => {
     createConnectPreviewMock.mockResolvedValueOnce({
       walletUri: "wc:preview-1",

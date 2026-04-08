@@ -11,7 +11,7 @@
 .playwright-cli*
 /playwright-report
 /test-results
-/output/playwright
+/output/*
 
 /.DS_Store
 Thumbs.db
