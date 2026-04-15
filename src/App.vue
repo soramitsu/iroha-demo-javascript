@@ -46,62 +46,48 @@
             </div>
           </div>
         </details>
-        <details class="settings-panel">
-          <summary class="settings-toggle">
-            <span class="theme-dot" :class="theme.current"></span>
-            <span class="settings-toggle-copy">
-              <span class="settings-toggle-label">{{ t("Language") }}</span>
-              <span class="settings-toggle-current">
-                {{ activeLocaleLabel }} ·
-                {{
-                  theme.current === "dark"
-                    ? t("Switch to light")
-                    : t("Switch to dark")
-                }}
+        <div class="header-controls">
+          <details
+            ref="localeMenu"
+            class="locale-switcher locale-switcher-prominent"
+          >
+            <summary class="locale-switcher-summary">
+              <span class="locale-switcher-glyph" aria-hidden="true">Aa</span>
+              <span class="locale-switcher-copy">
+                <span class="locale-switcher-label">{{ t("Language") }}</span>
+                <span class="locale-switcher-current">{{
+                  activeLocaleLabel
+                }}</span>
               </span>
-            </span>
-            <span class="settings-toggle-caret" aria-hidden="true">↗</span>
-          </summary>
-          <div class="header-controls">
-            <details ref="localeMenu" class="locale-switcher">
-              <summary class="locale-switcher-summary">
-                <span class="locale-switcher-glyph" aria-hidden="true">Aa</span>
-                <span class="locale-switcher-copy">
-                  <span class="locale-switcher-label">{{ t("Language") }}</span>
-                  <span class="locale-switcher-current">{{
-                    activeLocaleLabel
-                  }}</span>
+              <span class="locale-switcher-caret" aria-hidden="true">↗</span>
+            </summary>
+            <div class="locale-switcher-menu" :aria-label="t('Language')">
+              <button
+                v-for="option in localeOptions"
+                :key="option.value"
+                :data-locale="option.value"
+                type="button"
+                class="locale-option"
+                :class="{ active: option.value === activeLocale }"
+                :aria-pressed="option.value === activeLocale"
+                @click="selectLocale(option.value)"
+              >
+                <span class="locale-option-copy">
+                  <span class="locale-option-label">{{ option.label }}</span>
                 </span>
-                <span class="locale-switcher-caret" aria-hidden="true">↗</span>
-              </summary>
-              <div class="locale-switcher-menu" :aria-label="t('Language')">
-                <button
-                  v-for="option in localeOptions"
-                  :key="option.value"
-                  :data-locale="option.value"
-                  type="button"
-                  class="locale-option"
-                  :class="{ active: option.value === activeLocale }"
-                  :aria-pressed="option.value === activeLocale"
-                  @click="selectLocale(option.value)"
-                >
-                  <span class="locale-option-copy">
-                    <span class="locale-option-label">{{ option.label }}</span>
-                  </span>
-                  <span class="locale-option-check" aria-hidden="true">●</span>
-                </button>
-              </div>
-            </details>
-            <button class="theme-toggle" @click="theme.toggle()">
-              <span class="theme-dot" :class="theme.current"></span>
-              <span>{{
-                theme.current === "dark"
-                  ? t("Switch to light")
-                  : t("Switch to dark")
-              }}</span>
-            </button>
-          </div>
-        </details>
+                <span class="locale-option-check" aria-hidden="true">●</span>
+              </button>
+            </div>
+          </details>
+          <button class="theme-toggle" type="button" @click="theme.toggle()">
+            <span class="theme-dot" :class="theme.current"></span>
+            <span>{{
+              theme.current === "dark"
+                ? t("Switch to light")
+                : t("Switch to dark")
+            }}</span>
+          </button>
+        </div>
       </div>
     </header>
     <div class="app-shell">

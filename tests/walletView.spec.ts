@@ -278,6 +278,21 @@ describe("WalletView", () => {
     expect(wrapper.find(".wallet-shield-panel").exists()).toBe(false);
   });
 
+  it("skips confidential balance reads for unfunded local wallets without a funded asset id", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [],
+      total: 0,
+    });
+
+    const wrapper = mountView("", { localOnly: true });
+    await flushPromises();
+
+    expect(getConfidentialAssetBalanceMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).not.toContain(
+      t("Wallet data is unavailable until this account exists on-chain."),
+    );
+  });
+
   it("disables send until the wallet has a positive balance", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [],
@@ -829,6 +844,107 @@ describe("WalletView", () => {
       ),
     );
     expect(wrapper.text()).toContain("Account not found");
+  });
+
+  it("keeps funded assets visible when confidential balance refresh fails", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    try {
+      fetchAccountAssetsMock.mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      });
+      getConfidentialAssetBalanceMock.mockRejectedValueOnce(
+        new Error(
+          "Confidential asset policy request failed with status 404 (Not Found)",
+        ),
+      );
+
+      const wrapper = mountView("61CtjvNd9T3THAR65GsMVHr82Bjc", {
+        localOnly: false,
+      });
+      await flushPromises();
+      await flushPromises();
+
+      expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+      expect(wrapper.find(".wallet-shield-panel").exists()).toBe(true);
+      expect(wrapper.text()).not.toContain(
+        t("No assets found for this account."),
+      );
+      expect(wrapper.text()).not.toContain(
+        "Confidential asset policy request failed",
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
+  });
+
+  it("strips TAIRA account suffixes from opaque asset refs before self-shielding", async () => {
+    const consoleWarnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    try {
+      getConfidentialAssetPolicyMock.mockResolvedValueOnce({
+        asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        block_height: 1,
+        current_mode: "Convertible",
+        effective_mode: "Convertible",
+        vk_set_hash: null,
+        poseidon_params_id: null,
+        pedersen_params_id: null,
+        pending_transition: null,
+      });
+      fetchAccountAssetsMock.mockResolvedValueOnce({
+        items: [
+          {
+            asset_id:
+              "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      });
+      getConfidentialAssetBalanceMock.mockRejectedValueOnce(
+        new Error(
+          "Confidential asset policy request failed with status 404 (Not Found)",
+        ),
+      );
+      transferAssetMock.mockResolvedValue({ hash: "0xshield" });
+
+      const wrapper = mountView("6TEAJqbb8oEPmLncoNiMRbLEK6tw", {
+        localOnly: false,
+        account: {
+          accountId:
+            "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+          i105AccountId:
+            "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+        },
+      });
+      await flushPromises();
+      await flushPromises();
+
+      await wrapper.get(".wallet-shield-input input").setValue("5");
+      await wrapper
+        .findAll("button.secondary")
+        .find((button) => button.text().includes(t("Create shielded balance")))!
+        .trigger("click");
+      await flushPromises();
+
+      expect(transferAssetMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          shielded: true,
+        }),
+      );
+    } finally {
+      consoleWarnSpy.mockRestore();
+    }
   });
 
   it("clears the local-only flag once on-chain wallet data loads", async () => {

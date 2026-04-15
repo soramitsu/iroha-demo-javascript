@@ -44,6 +44,7 @@ import {
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
+import { extractAssetDefinitionId } from "../src/utils/assetId";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -1888,7 +1889,9 @@ const fetchConfidentialAssetPolicy = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
 ): Promise<ConfidentialAssetPolicyView> => {
-  const normalizedAssetDefinitionId = assetDefinitionId.trim();
+  const normalizedAssetDefinitionId =
+    extractAssetDefinitionId(assetDefinitionId).trim() ||
+    assetDefinitionId.trim();
   if (!normalizedAssetDefinitionId) {
     throw new Error("assetDefinitionId is required.");
   }
@@ -2076,7 +2079,7 @@ const resolveTrackedConfidentialAssetIds = (input: {
 }) => {
   const seen = new Set<string>();
   return [input.requestedAssetDefinitionId, input.resolvedAssetId]
-    .map((value) => String(value ?? "").trim())
+    .map((value) => extractAssetDefinitionId(String(value ?? "")).trim())
     .filter((value) => {
       const normalized = value.toLowerCase();
       if (!normalized || seen.has(normalized)) {
@@ -2099,7 +2102,9 @@ const resolveConfidentialAssetBalance = async (input: {
     input.assetDefinitionId,
   );
   const resolvedAssetId =
-    trimString(policy.asset_id) || trimString(input.assetDefinitionId);
+    extractAssetDefinitionId(
+      trimString(policy.asset_id) || trimString(input.assetDefinitionId),
+    ).trim() || trimString(input.assetDefinitionId);
   const trackedAssetIds = resolveTrackedConfidentialAssetIds({
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId,
@@ -2683,13 +2688,18 @@ const api: IrohaBridge = {
     );
 
     if (input.shielded) {
+      const requestedShieldAssetDefinitionId =
+        extractAssetDefinitionId(input.assetDefinitionId).trim() ||
+        trimString(input.assetDefinitionId);
       const policy = await fetchConfidentialAssetPolicy(
         input.toriiUrl,
-        input.assetDefinitionId,
+        requestedShieldAssetDefinitionId,
       );
       const effectiveMode = policy.effective_mode || policy.current_mode;
       const resolvedAssetId =
-        trimString(policy.asset_id) || trimString(input.assetDefinitionId);
+        extractAssetDefinitionId(
+          trimString(policy.asset_id) || requestedShieldAssetDefinitionId,
+        ).trim() || requestedShieldAssetDefinitionId;
       if (!confidentialModeSupportsShield(effectiveMode)) {
         throw new Error(
           `Shielded transfer is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,

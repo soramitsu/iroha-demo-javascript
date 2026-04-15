@@ -56,23 +56,19 @@ async function shot(page, name) {
 
 async function armFaucetResultCapture(page) {
   await page.evaluate(() => {
-    if (window.__codexFaucetCaptureInstalled) {
-      window.__codexLastFaucetResult = null;
-      return;
-    }
-    const original = window.iroha.requestFaucetFunds.bind(window.iroha);
+    // The bridge is exposed as a sealed object in preload, so live runs must
+    // capture faucet hashes from visible UI state instead of monkeypatching it.
     window.__codexLastFaucetResult = null;
-    window.iroha.requestFaucetFunds = async (...args) => {
-      const response = await original(...args);
-      window.__codexLastFaucetResult = response;
-      return response;
-    };
+    window.__codexLastFaucetProgress = null;
     window.__codexFaucetCaptureInstalled = true;
   });
 }
 
 async function readCapturedFaucetResult(page) {
-  return await page.evaluate(() => window.__codexLastFaucetResult ?? null);
+  return await page.evaluate(() => ({
+    result: window.__codexLastFaucetResult ?? null,
+    progress: window.__codexLastFaucetProgress ?? null,
+  }));
 }
 
 async function waitForWallet(page) {
@@ -255,6 +251,46 @@ async function waitForExplorerCommittedTx({
   );
 }
 
+async function waitForPipelineTransactionOutcome(hash, timeoutMs = 180_000) {
+  const deadline = Date.now() + timeoutMs;
+  const trimmedHash = String(hash ?? "").trim();
+  while (Date.now() < deadline) {
+    const url = new URL("/v1/pipeline/transactions/status", toriiUrl);
+    url.searchParams.set("hash", trimmedHash);
+    url.searchParams.set("scope", "auto");
+    const response = await fetch(url, { method: "GET" });
+    if (!response.ok) {
+      throw new Error(
+        `Pipeline status failed for ${trimmedHash}: ${response.status} ${response.statusText}`,
+      );
+    }
+    const raw = await response.text();
+    let payload = null;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      continue;
+    }
+    const status = payload?.status ?? payload?.content?.status ?? null;
+    const kind = String(status?.kind ?? "").trim();
+    if (/^(Applied|Committed)$/i.test(kind)) {
+      return {
+        hash: trimmedHash,
+        kind,
+        payload,
+      };
+    }
+    if (/^Rejected$/i.test(kind)) {
+      throw new Error(
+        `Transaction ${trimmedHash} rejected: ${JSON.stringify(payload)}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error(`Timed out waiting for pipeline status on ${trimmedHash}`);
+}
+
 function extractHash(text, pattern) {
   return String(text ?? "").match(pattern)?.[1] ?? null;
 }
@@ -263,6 +299,7 @@ async function claimFaucet(page, label, accountId, excludeHashes = new Set()) {
   await gotoRoute(page, "#/wallet");
   await waitForWallet(page);
   await armFaucetResultCapture(page);
+  await shot(page, `${label}-wallet-before-faucet`);
   const claimButton = page.getByRole("button", {
     name: /Claim(?: Testnet)? XOR/i,
   });
@@ -271,19 +308,78 @@ async function claimFaucet(page, label, accountId, excludeHashes = new Set()) {
     throw new Error(`${label}: faucet button disabled before claim`);
   }
   const startedAtMs = Date.now() - 5_000;
+  log(`${label}-faucet-click`);
   await claimButton.click();
-  let balanceMatch = null;
-  let balanceWaitError = null;
-  try {
-    balanceMatch = await waitForAccountAsset(page, accountId, 25_000, 300_000);
-  } catch (error) {
-    balanceWaitError = error;
+  await shot(page, `${label}-wallet-after-faucet-click`);
+  const state = await page
+    .waitForFunction(
+      () => {
+        const raw = localStorage.getItem("iroha-demo:session");
+        if (!raw) {
+          return null;
+        }
+        try {
+          const session = JSON.parse(raw);
+          const activeAccount = Array.isArray(session?.accounts)
+            ? session.accounts.find(
+                (account) => account?.accountId === session?.activeAccountId,
+              )
+            : null;
+          const faucetMessage =
+            document.querySelector(".wallet-faucet-message")?.textContent?.trim() ??
+            "";
+          const faucetError =
+            document
+              .querySelector(".wallet-faucet-message.wallet-faucet-error")
+              ?.textContent?.trim() ?? "";
+          const assetDefinitionId = String(
+            session?.connection?.assetDefinitionId ?? "",
+          ).trim();
+          if (faucetError) {
+            return {
+              assetDefinitionId,
+              faucetMessage,
+              faucetError,
+              localOnly: activeAccount?.localOnly ?? null,
+            };
+          }
+          if (assetDefinitionId && activeAccount && activeAccount.localOnly === false) {
+            return {
+              assetDefinitionId,
+              faucetMessage,
+              faucetError,
+              localOnly: false,
+            };
+          }
+        } catch {
+          return null;
+        }
+        return null;
+      },
+      { timeout: 180_000 },
+    )
+    .then((handle) => handle.jsonValue());
+  if (state?.faucetError) {
+    throw new Error(`${label}: ${state.faucetError}`);
   }
-  const captured = await readCapturedFaucetResult(page);
+  log(`${label}-faucet-accepted`, state);
+  const captured = await readCapturedFaucetResult(page).catch(() => null);
+  const capturedProgress = captured?.progress ?? null;
+  if (capturedProgress) {
+    log(`${label}-faucet-progress`, capturedProgress);
+  }
+  const uiHash = extractHash(
+    String(state?.faucetMessage ?? ""),
+    /([0-9a-f]{64})/i,
+  );
+  if (uiHash) {
+    await waitForPipelineTransactionOutcome(uiHash);
+  }
+  const balanceMatch = await waitForAccountAsset(page, accountId, 25_000, 180_000);
   let tx = null;
-  if (captured?.tx_hash_hex) {
+  if (uiHash) {
     tx = {
-      hash: String(captured.tx_hash_hex).trim(),
+      hash: uiHash,
       authority: faucetAuthority,
       createdAt: null,
       createdAtMs: null,
@@ -296,30 +392,9 @@ async function claimFaucet(page, label, accountId, excludeHashes = new Set()) {
       excludeHashes,
     });
   }
-  const state = await page.evaluate(() => {
-    const raw = localStorage.getItem("iroha-demo:session");
-    const session = raw ? JSON.parse(raw) : null;
-    return {
-      assetDefinitionId: String(session?.connection?.assetDefinitionId ?? ""),
-      faucetMessage:
-        document.querySelector(".wallet-faucet-message")?.textContent?.trim() ??
-        "",
-      faucetError:
-        document
-          .querySelector(".wallet-faucet-message.wallet-faucet-error")
-          ?.textContent?.trim() ?? "",
-    };
-  });
-  if (balanceWaitError) {
-    const acceptedMessage = String(state.faucetMessage ?? "");
-    if (!/accepted|requested|claimed/i.test(acceptedMessage)) {
-      throw balanceWaitError;
-    }
-  }
   return {
     tx_hash_hex: tx.hash,
-    asset_definition_id:
-      String(captured?.asset_definition_id ?? "").trim() || state.assetDefinitionId,
+    asset_definition_id: state.assetDefinitionId,
     explorer: tx,
     state,
     balanceMatch,
@@ -414,24 +489,42 @@ async function submitShieldedSend(page, receiverAccountId, amount) {
   });
   const destinationInput = page
     .locator(".send-form label")
-    .filter({ hasText: "Destination Account ID" })
+    .filter({ hasText: /Destination Account ID|To/i })
     .locator("input")
     .first();
-  await destinationInput.waitFor({ state: "visible", timeout: 60_000 });
-  await destinationInput.fill(receiverAccountId);
-  const amountInput = page.locator('input[type="number"]').first();
+  const fallbackTextInputs = page.locator(
+    '.send-form-pane input:not([type="file"]):not([type="checkbox"])',
+  );
+  if ((await destinationInput.count()) === 0) {
+    await fallbackTextInputs.first().waitFor({ state: "visible", timeout: 60_000 });
+  } else {
+    await destinationInput.waitFor({ state: "visible", timeout: 60_000 });
+  }
+  await ((await destinationInput.count()) === 0
+    ? fallbackTextInputs.nth(0)
+    : destinationInput
+  ).fill(receiverAccountId);
+  const amountInput =
+    (await page.locator('input[type="number"]').count())
+      ? page.locator('input[type="number"]').first()
+      : fallbackTextInputs.nth(1);
   await amountInput.fill(String(amount));
   const shieldToggle = page
     .locator('.shield-option input[type="checkbox"]')
     .first();
-  await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
-  if (!(await shieldToggle.isEnabled())) {
+  const fallbackShieldToggle = page
+    .locator('.send-form-pane input[type="checkbox"]')
+    .first();
+  const activeShieldToggle =
+    (await shieldToggle.count()) > 0 ? shieldToggle : fallbackShieldToggle;
+  await activeShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
+  if (!(await activeShieldToggle.isEnabled())) {
     const notes = await page
       .locator(".send-feedback .send-note")
       .allTextContents();
     throw new Error(`send shield toggle disabled: ${notes.join(" | ")}`);
   }
-  await shieldToggle.check();
+  await activeShieldToggle.check();
   const submitButton = page.locator(".actions button").first();
   await submitButton.waitFor({ state: "visible", timeout: 30_000 });
   if (await submitButton.isDisabled()) {
@@ -534,8 +627,9 @@ async function main() {
 
   try {
     await page.waitForFunction(() => Boolean(window.iroha), { timeout: 60_000 });
+    let prior = null;
     if (reuseResultPath) {
-      const prior = JSON.parse(readFileSync(reuseResultPath, "utf8"));
+      prior = JSON.parse(readFileSync(reuseResultPath, "utf8"));
       result.accounts = prior.accounts;
       result.faucet = prior.faucet ?? {};
       await seedSessionWithAccounts(
@@ -576,19 +670,25 @@ async function main() {
       await shot(page, "02-receiver-after-faucet");
       saveResult();
     } else {
-      await waitForAccountAsset(page, result.accounts.sender.accountId, 25_000, 60_000);
-      await setActiveAccount(page, result.accounts.receiver.accountId);
-      await waitForAccountAsset(page, result.accounts.receiver.accountId, 25_000, 60_000);
       await setActiveAccount(page, result.accounts.sender.accountId);
+      await gotoRoute(page, "#/wallet");
+      await waitForWallet(page);
       await shot(page, "01-reused-funded-accounts");
       saveResult();
     }
 
     await setActiveAccount(page, result.accounts.sender.accountId);
-    result.shield = await createShieldedBalance(page, 5);
-    log("sender-shield", { hash: result.shield.hash });
-    await shot(page, "03-sender-after-shield");
-    saveResult();
+    if (prior?.shield?.hash) {
+      result.shield = prior.shield;
+      log("sender-shield-reused", { hash: result.shield.hash });
+      await shot(page, "03-reused-shielded-balance");
+      saveResult();
+    } else {
+      result.shield = await createShieldedBalance(page, 5);
+      log("sender-shield", { hash: result.shield.hash });
+      await shot(page, "03-sender-after-shield");
+      saveResult();
+    }
 
     result.shieldedSend = await submitShieldedSend(
       page,

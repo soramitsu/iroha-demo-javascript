@@ -430,6 +430,7 @@ const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
   const privateKeyHex = activeAccount.value?.privateKeyHex;
+  const accountWasLocalOnly = Boolean(activeAccount.value?.localOnly);
   if (!session.hasAccount || !toriiUrl || !accountId || !privateKeyHex) {
     requestGeneration.value += 1;
     loading.value = false;
@@ -448,25 +449,54 @@ const refresh = async () => {
   loading.value = true;
   walletError.value = "";
   try {
-    const [{ items: assetItems }, txItems, confidentialBalance] =
-      await Promise.all([
-        fetchAccountAssets({
-          toriiUrl,
-          accountId,
-          limit: 50,
-        }),
-        fetchAllAccountTransactions({
-          toriiUrl,
-          accountId,
-        }),
-        getConfidentialAssetBalance({
+    const [{ items: assetItems }, txItems] = await Promise.all([
+      fetchAccountAssets({
+        toriiUrl,
+        accountId,
+        limit: 50,
+      }),
+      fetchAllAccountTransactions({
+        toriiUrl,
+        accountId,
+      }),
+    ]);
+    const configuredAssetDefinitionId = extractAssetDefinitionId(
+      session.connection.assetDefinitionId,
+    ).trim();
+    const detectedShieldAsset = resolveToriiXorAsset(assetItems, [
+      shieldedXorResolvedAssetId.value,
+      configuredShieldAssetDefinitionId.value,
+      configuredAssetDefinitionId,
+      SHIELDED_XOR_ASSET_DEFINITION_ID,
+    ]);
+    const confidentialAssetDefinitionId = extractAssetDefinitionId(
+      detectedShieldAsset?.asset_id ?? configuredAssetDefinitionId,
+    ).trim();
+    const shouldFetchConfidentialBalance = Boolean(
+      confidentialAssetDefinitionId &&
+        (!accountWasLocalOnly || assetItems.length || txItems.length),
+    );
+    let confidentialBalance: ConfidentialAssetBalanceView = {
+      resolvedAssetId:
+        confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
+      quantity: "0",
+      onChainQuantity: "0",
+      spendableQuantity: "0",
+      exact: true,
+    };
+    if (shouldFetchConfidentialBalance) {
+      try {
+        confidentialBalance = await getConfidentialAssetBalance({
           toriiUrl,
           chainId: session.connection.chainId,
           accountId,
           privateKeyHex,
-          assetDefinitionId: configuredShieldAssetDefinitionId.value,
-        }),
-      ]);
+          assetDefinitionId: confidentialAssetDefinitionId,
+        });
+      } catch (error) {
+        console.warn("Failed to refresh confidential balance", error);
+      }
+    }
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
@@ -564,14 +594,13 @@ const requestStarterFunds = async () => {
     }
     session.updateActiveAccount({ localOnly: false });
     faucetStatusPhase.value = "claimAccepted";
+    faucetMessage.value = t("Testnet XOR requested: {hash}", {
+      hash: result.tx_hash_hex,
+    });
     const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);
-    faucetMessage.value = balanceVisible
-      ? t("Testnet XOR requested: {hash}", {
-          hash: result.tx_hash_hex,
-        })
-      : t(
-          "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
-        );
+    if (!balanceVisible) {
+      faucetError.value = "";
+    }
   } catch (error) {
     faucetError.value = toUserFacingErrorMessage(
       error,
@@ -756,10 +785,13 @@ const createShieldedXor = async () => {
   shieldMessage.value = "";
   shieldError.value = "";
   try {
+    const shieldAssetDefinitionId =
+      extractAssetDefinitionId(shieldedXorAssetId.value).trim() ||
+      shieldedXorAssetId.value;
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      assetDefinitionId: shieldedXorAssetId.value,
+      assetDefinitionId: shieldAssetDefinitionId,
       accountId: activeAccount.value.accountId,
       destinationAccountId:
         visibleAccountId.value || activeAccount.value.accountId,

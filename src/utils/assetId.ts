@@ -7,6 +7,7 @@ export type ParsedAssetReference = {
 
 const NORITO_PREFIX = "norito:";
 const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/i;
+const ACCOUNT_REFERENCE_PATTERN = /^(?:[^#@]+@[^#]+|testu.+|sorau.+|ｓｏｒａu.+|n\d{1,4}u.+)$/u;
 const OPAQUE_PREVIEW_HEAD = 8;
 const OPAQUE_PREVIEW_TAIL = 8;
 const OPAQUE_ASSET_LITERAL_PATTERN = /\bnorito:[A-Za-z0-9._:@#-]+/gi;
@@ -33,6 +34,17 @@ export const splitAssetReference = (
   }
 
   const hashParts = literal.split("#");
+  if (hashParts.length === 2) {
+    const [definitionId, accountId] = hashParts;
+    const normalizedAccountId = (accountId ?? "").trim();
+    if (ACCOUNT_REFERENCE_PATTERN.test(normalizedAccountId)) {
+      return {
+        definitionId: (definitionId ?? "").trim(),
+        accountId: normalizedAccountId,
+      };
+    }
+  }
+
   if (hashParts.length >= 3) {
     return {
       definitionId: hashParts.slice(0, 2).join("#"),

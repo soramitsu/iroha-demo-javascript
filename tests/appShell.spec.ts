@@ -126,14 +126,18 @@ describe("App shell", () => {
 
     const wrapper = mountApp({ withAccount: true });
 
-    expect(wrapper.get(".workspace-heading h1").text()).toBe(t("Saved Wallets"));
+    expect(wrapper.get(".workspace-heading h1").text()).toBe(
+      t("Saved Wallets"),
+    );
     expect(wrapper.get(".section-label").text()).toBe(
       t("Switch between saved wallets or begin a fresh wallet setup."),
     );
-    expect(wrapper.findAll(".nav-label").at(-1)?.text()).toBe(t("Saved Wallets"));
+    expect(wrapper.findAll(".nav-label").at(-1)?.text()).toBe(
+      t("Saved Wallets"),
+    );
   });
 
-  it("shows a styled locale picker and updates the current language label", async () => {
+  it("shows a visible header locale picker and updates the current language label", async () => {
     const wrapper = mountApp();
     const localeStore = useLocaleStore();
     localeStore.setLocale("en-US");
@@ -143,8 +147,7 @@ describe("App shell", () => {
       .element as HTMLDetailsElement;
     localeMenu.open = true;
 
-    expect(wrapper.get(".settings-toggle-current").text()).toContain("English");
-    expect(wrapper.get(".settings-toggle-current").text()).not.toContain("en-US");
+    expect(wrapper.get(".header-controls").text()).toContain(t("Language"));
     expect(wrapper.get(".locale-switcher-current").text()).toBe("English");
     expect(wrapper.find(".locale-switcher-code").exists()).toBe(false);
     expect(
@@ -158,8 +161,7 @@ describe("App shell", () => {
 
     expect(localeStore.current).toBe("ja-JP");
     expect(localeMenu.open).toBe(false);
-    expect(wrapper.get(".settings-toggle-current").text()).toContain("日本語");
-    expect(wrapper.get(".settings-toggle-current").text()).not.toContain("ja-JP");
     expect(wrapper.get(".locale-switcher-current").text()).toBe("日本語");
+    expect(wrapper.get(".header-controls").text()).toContain("日本語");
   });
 });

@@ -32,6 +32,23 @@ describe("asset ID helpers", () => {
     );
   });
 
+  it("splits TAIRA base58 asset references that append an I105 account id", () => {
+    expect(
+      splitAssetReference(
+        "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+      ),
+    ).toEqual({
+      definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      accountId:
+        "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+    });
+    expect(
+      extractAssetDefinitionId(
+        "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+      ),
+    ).toBe("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
+  });
+
   it("derives readable symbols for legacy IDs and XOR-like IDs", () => {
     expect(deriveAssetSymbol("token#wonderland")).toBe("TOKEN");
     expect(deriveAssetSymbol("XOR#wonderland##alice@wonderland")).toBe("XOR");
