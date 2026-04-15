@@ -3,6 +3,8 @@ import { createConnectSessionPreview } from "@iroha/iroha-js";
 import {
   bootstrapPortableConnectPreviewSession,
   createPortableConnectSessionPreview,
+  resolvePortableConnectLaunchUri,
+  rewriteConnectUriProtocol,
 } from "../electron/connectPreview";
 
 describe("connectPreview", () => {
@@ -95,5 +97,33 @@ describe("connectPreview", () => {
         },
       }),
     ).toThrow("nonce must be 16 bytes");
+  });
+
+  it("rewrites canonical connect URIs to the irohaconnect launch protocol", () => {
+    expect(
+      rewriteConnectUriProtocol(
+        "iroha://connect?sid=session&role=wallet&token=wallet-token",
+      ),
+    ).toBe(
+      "irohaconnect://connect?sid=session&role=wallet&token=wallet-token",
+    );
+  });
+
+  it("prefers the registered session URI when resolving renderer launch links", () => {
+    expect(
+      resolvePortableConnectLaunchUri(
+        "iroha://connect?sid=session&role=wallet&token=wallet-token",
+        "iroha://connect?sid=preview&role=wallet",
+      ),
+    ).toBe(
+      "irohaconnect://connect?sid=session&role=wallet&token=wallet-token",
+    );
+    expect(
+      resolvePortableConnectLaunchUri(
+        null,
+        "iroha://connect?sid=preview&role=wallet",
+        "irohaconnect",
+      ),
+    ).toBe("irohaconnect://connect?sid=preview&role=wallet");
   });
 });

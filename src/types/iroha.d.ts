@@ -238,6 +238,9 @@ export interface ConnectPreview {
   sidBase64Url: string;
   walletUri: string | null;
   appUri: string | null;
+  walletCanonicalUri: string | null;
+  appCanonicalUri: string | null;
+  launchProtocol: string | null;
   tokenApp: string | null;
   tokenWallet: string | null;
   appPublicKeyHex: string;
@@ -722,6 +725,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     node?: string | null;
+    launchProtocol?: string | null;
   }): Promise<ConnectPreview>;
   getSumeragiStatus(config: { toriiUrl: string }): Promise<NexusSumeragiStatus>;
   getNexusPublicLaneValidators(input: {
