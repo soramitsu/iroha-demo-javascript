@@ -1,6 +1,7 @@
 import type {
   AccountAddressView,
   AccountAssetsResponse,
+  ConfidentialAssetBalanceView,
   AccountFaucetResponse,
   AccountOnboardingResponse,
   AccountPermissionsResponse,
@@ -73,6 +74,11 @@ export const getConfidentialAssetPolicy = (
   input: Parameters<IrohaBridge["getConfidentialAssetPolicy"]>[0],
 ): Promise<ConfidentialAssetPolicyView> =>
   bridge().getConfidentialAssetPolicy(input);
+
+export const getConfidentialAssetBalance = (
+  input: Parameters<IrohaBridge["getConfidentialAssetBalance"]>[0],
+): Promise<ConfidentialAssetBalanceView> =>
+  bridge().getConfidentialAssetBalance(input);
 
 export const getPrivateKaigiConfidentialXorState = (
   input: Parameters<IrohaBridge["getPrivateKaigiConfidentialXorState"]>[0],

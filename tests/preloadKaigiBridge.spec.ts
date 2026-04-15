@@ -47,6 +47,9 @@ const mocks = vi.hoisted(() => ({
   buildShieldTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("shield-xor", "utf8"),
   })),
+  buildZkTransferTransactionMock: vi.fn(() => ({
+    signedTransaction: Buffer.from("zk-transfer", "utf8"),
+  })),
   buildCreateKaigiTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("create-transparent", "utf8"),
   })),
@@ -173,7 +176,18 @@ vi.mock("@iroha/iroha-js", () => {
 
   return {
     ToriiClient: MockToriiClient,
+    AccountAddress: {
+      parseEncoded: vi.fn(() => ({
+        address: {
+          _controller: {
+            publicKey: Buffer.alloc(32, 0x21),
+          },
+          canonicalBytes: () => Buffer.alloc(0),
+        },
+      })),
+    },
     buildShieldTransaction: mocks.buildShieldTransactionMock,
+    buildZkTransferTransaction: mocks.buildZkTransferTransactionMock,
     buildCreateKaigiTransaction: mocks.buildCreateKaigiTransactionMock,
     buildJoinKaigiTransaction: mocks.buildJoinKaigiTransactionMock,
     buildEndKaigiTransaction: mocks.buildEndKaigiTransactionMock,

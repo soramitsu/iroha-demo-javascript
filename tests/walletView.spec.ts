@@ -8,6 +8,7 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const fetchAccountAssetsMock = vi.fn();
 const fetchAccountTransactionsMock = vi.fn();
+const getConfidentialAssetBalanceMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 const transferAssetMock = vi.fn();
@@ -25,6 +26,8 @@ vi.mock("@/services/iroha", () => ({
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   fetchAccountTransactions: (input: unknown) =>
     fetchAccountTransactionsMock(input),
+  getConfidentialAssetBalance: (input: unknown) =>
+    getConfidentialAssetBalanceMock(input),
   getConfidentialAssetPolicy: (input: unknown) =>
     getConfidentialAssetPolicyMock(input),
   requestFaucetFunds: (
@@ -41,12 +44,20 @@ describe("WalletView", () => {
   beforeEach(() => {
     fetchAccountAssetsMock.mockReset();
     fetchAccountTransactionsMock.mockReset();
+    getConfidentialAssetBalanceMock.mockReset();
     requestFaucetFundsMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     transferAssetMock.mockReset();
     fetchAccountTransactionsMock.mockResolvedValue({
       items: [],
       total: 0,
+    });
+    getConfidentialAssetBalanceMock.mockResolvedValue({
+      resolvedAssetId: "xor#universal",
+      quantity: "0",
+      onChainQuantity: "0",
+      spendableQuantity: "0",
+      exact: true,
     });
     getConfidentialAssetPolicyMock.mockResolvedValue({
       asset_id: "xor#universal",
@@ -216,6 +227,13 @@ describe("WalletView", () => {
       ],
       total: 2,
     });
+    getConfidentialAssetBalanceMock.mockResolvedValueOnce({
+      resolvedAssetId: "xor#universal",
+      quantity: "9",
+      onChainQuantity: "9",
+      spendableQuantity: "9",
+      exact: true,
+    });
 
     const wrapper = mountView("xor#wonderland");
     await flushPromises();
@@ -276,7 +294,7 @@ describe("WalletView", () => {
     expect(sendLink.attributes("href")).toBeUndefined();
   });
 
-  it("marks the on-chain shielded balance unavailable after private zk transfers", async () => {
+  it("shows the shielded-note warning when wallet balance is inexact", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
@@ -286,24 +304,12 @@ describe("WalletView", () => {
       ],
       total: 1,
     });
-    fetchAccountTransactionsMock.mockResolvedValueOnce({
-      items: [
-        {
-          entrypoint_hash: "0xzk",
-          result_ok: true,
-          authority: "alice@wonderland",
-          instructions: [
-            {
-              zk: {
-                ZkTransfer: {
-                  asset: "xor#universal",
-                },
-              },
-            },
-          ],
-        },
-      ],
-      total: 1,
+    getConfidentialAssetBalanceMock.mockResolvedValueOnce({
+      resolvedAssetId: "xor#universal",
+      quantity: "4",
+      onChainQuantity: null,
+      spendableQuantity: "4",
+      exact: false,
     });
 
     const wrapper = mountView("xor#wonderland");
@@ -311,7 +317,7 @@ describe("WalletView", () => {
 
     expect(wrapper.text()).toContain(
       t(
-        "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
+        "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
       ),
     );
   });
@@ -361,6 +367,21 @@ describe("WalletView", () => {
           },
         ],
         total: 1,
+      });
+    getConfidentialAssetBalanceMock
+      .mockResolvedValueOnce({
+        resolvedAssetId: "xor#universal",
+        quantity: "0",
+        onChainQuantity: "0",
+        spendableQuantity: "0",
+        exact: true,
+      })
+      .mockResolvedValueOnce({
+        resolvedAssetId: "xor#universal",
+        quantity: "5",
+        onChainQuantity: "5",
+        spendableQuantity: "5",
+        exact: true,
       });
     transferAssetMock.mockResolvedValue({ hash: "0xshield" });
 
@@ -429,6 +450,13 @@ describe("WalletView", () => {
         },
       ],
       total: 1,
+    });
+    getConfidentialAssetBalanceMock.mockResolvedValue({
+      resolvedAssetId: "norito:resolvedxorasset",
+      quantity: "6",
+      onChainQuantity: "6",
+      spendableQuantity: "6",
+      exact: true,
     });
     transferAssetMock.mockResolvedValue({ hash: "0xresolved" });
 
@@ -553,7 +581,7 @@ describe("WalletView", () => {
       expect.any(Function),
     );
     expect(session.connection.assetDefinitionId).toBe(
-      "norito:abcdef0123456789",
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
     );
     expect(session.activeAccount?.localOnly).toBe(false);
     expect(wrapper.text()).toContain(
@@ -564,6 +592,46 @@ describe("WalletView", () => {
     );
     expect(wrapper.text()).toContain("25000");
     expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
+  });
+
+  it("falls back to the funded asset reference when faucet omits the definition id", async () => {
+    const fundedAssets = {
+      items: [
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    };
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce(fundedAssets)
+      .mockResolvedValue(fundedAssets);
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "alice@wonderland",
+      asset_definition_id: "",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
   });
 
   it("uses the TAIRA i105 literal for faucet requests when stored ids are stale", async () => {

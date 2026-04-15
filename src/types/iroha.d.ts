@@ -211,6 +211,14 @@ export interface AccountFaucetResponse {
   status: string;
 }
 
+export interface ConfidentialAssetBalanceView {
+  resolvedAssetId: string;
+  quantity: string | null;
+  onChainQuantity: string | null;
+  spendableQuantity: string;
+  exact: boolean;
+}
+
 export type FaucetRequestPhase =
   | "requestingPuzzle"
   | "waitingForPuzzleRetry"
@@ -511,6 +519,13 @@ export interface IrohaBridge {
     toriiUrl: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getConfidentialAssetBalance(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetBalanceView>;
   getPrivateKaigiConfidentialXorState(input: {
     toriiUrl: string;
     accountId: string;

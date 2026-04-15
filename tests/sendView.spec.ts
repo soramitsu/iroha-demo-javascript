@@ -98,7 +98,7 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(ALICE_I105_ACCOUNT_ID);
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.text()).toContain(
@@ -115,7 +115,7 @@ describe("SendView", () => {
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        destinationAccountId: ALICE_I105_ACCOUNT_ID,
+        destinationAccountId: BOB_I105_ACCOUNT_ID,
         quantity: "10",
         shielded: true,
       }),
@@ -180,7 +180,7 @@ describe("SendView", () => {
     );
   });
 
-  it("locks destination to active account when shield mode is enabled", async () => {
+  it("keeps destination editable when shield mode is enabled", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -189,10 +189,10 @@ describe("SendView", () => {
 
     const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      ALICE_I105_ACCOUNT_ID,
+      BOB_I105_ACCOUNT_ID,
     );
-    expect((destinationInput.element as HTMLInputElement).disabled).toBe(true);
-    expect(wrapper.find(".actions button").text()).toBe("Shield");
+    expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
+    expect(wrapper.find(".actions button").text()).toBe(t("Shield transfer"));
   });
 
   it("switches amount input step when shield mode changes", async () => {
@@ -219,7 +219,7 @@ describe("SendView", () => {
     expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
   });
 
-  it("ignores qr destination payload while shield mode is enabled", async () => {
+  it("applies qr destination payload while shield mode is enabled", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -236,7 +236,7 @@ describe("SendView", () => {
     const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
-      ALICE_I105_ACCOUNT_ID,
+      MALLORY_I105_ACCOUNT_ID,
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
     expect(wrapper.text()).toContain(t("QR decoded successfully."));
@@ -279,34 +279,6 @@ describe("SendView", () => {
     } finally {
       warnSpy.mockRestore();
     }
-  });
-
-  it("restores previous transparent destination after turning shield mode off", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
-    await wrapper.get('input[type="checkbox"]').setValue(true);
-    await wrapper.get('input[type="checkbox"]').setValue(false);
-
-    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
-    expect((destinationInput.element as HTMLInputElement).value).toBe(
-      BOB_I105_ACCOUNT_ID,
-    );
-    expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
-  });
-
-  it("restores empty destination after turning shield mode off", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
-    await destinationInput.setValue("");
-    await wrapper.get('input[type="checkbox"]').setValue(true);
-    await wrapper.get('input[type="checkbox"]').setValue(false);
-
-    expect((destinationInput.element as HTMLInputElement).value).toBe("");
-    expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
   });
 
   it("disables shield mode when policy does not support shielding", async () => {

@@ -67,7 +67,6 @@
             <input
               v-model="form.destination"
               :placeholder="t('Example I105 Account ID')"
-              :disabled="destinationLocked"
             />
           </label>
           <label>
@@ -145,7 +144,6 @@ import { useAppI18n } from "@/composables/useAppI18n";
 import { transferAsset } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
-import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
 import { useShieldCapability } from "@/composables/useShieldCapability";
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getPublicAccountId } from "@/utils/accountId";
@@ -183,9 +181,7 @@ const scanner = useQrScanner(
     try {
       const parsed = JSON.parse(payload);
       if (parsed.accountId) {
-        if (!form.shielded) {
-          form.destination = parsed.accountId;
-        }
+        form.destination = parsed.accountId;
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
@@ -200,13 +196,8 @@ const scanner = useQrScanner(
 );
 const sendIcon = SendIcon;
 
-const { destinationLocked } = useShieldedDestinationLock({
-  shielded: toRef(form, "shielded"),
-  destination: toRef(form, "destination"),
-  accountId: activeAccountDisplayId,
-});
 const submitActionLabel = computed(() =>
-  form.shielded ? t("Shield") : t("Send"),
+  form.shielded ? t("Shield transfer") : t("Send"),
 );
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
@@ -215,15 +206,7 @@ const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
 const isShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedQuantity.value),
 );
-const isDestinationValid = computed(() => {
-  if (!form.shielded) {
-    return Boolean(destinationValue.value);
-  }
-  return Boolean(
-    activeAccount.value &&
-      destinationValue.value === activeAccountDisplayId.value,
-  );
-});
+const isDestinationValid = computed(() => Boolean(destinationValue.value));
 
 const isValid = computed(() =>
   Boolean(
@@ -250,12 +233,6 @@ const handleSend = async () => {
   }
   if (form.shielded) {
     const amount = normalizedQuantity.value;
-    if (destinationValue.value !== activeAccountDisplayId.value) {
-      statusMessage.value = t(
-        "Shield mode requires destination to be your active account.",
-      );
-      return;
-    }
     if (!isPositiveWholeAmount(amount)) {
       statusMessage.value = t(
         "Shield amount must be a whole number greater than zero.",

@@ -10,6 +10,7 @@ import {
   buildEndKaigiTransaction,
   buildJoinKaigiTransaction,
   buildShieldTransaction,
+  buildZkTransferTransaction,
   buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
@@ -66,12 +67,25 @@ import {
   type KaigiSecretBox,
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
+import {
+  buildWalletConfidentialMetadata,
+  collectWalletConfidentialLedger,
+  CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+  createWalletConfidentialNote,
+  selectWalletConfidentialNotes,
+  type WalletConfidentialTransactionLike,
+} from "./confidentialWallet";
+import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
 
 type HexString = string;
+
+configureIrohaJsNativeDir(import.meta.url);
 
 type ToriiConfig = {
   toriiUrl: string;
 };
+
+const trimString = (value: unknown): string => String(value ?? "").trim();
 
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
 type RegisterAccountInput = {
@@ -94,6 +108,14 @@ type TransferAssetInput = {
   privateKeyHex: HexString;
   metadata?: Record<string, unknown>;
   shielded?: boolean;
+};
+
+type ConfidentialAssetBalanceResponse = {
+  resolvedAssetId: string;
+  quantity: string | null;
+  onChainQuantity: string | null;
+  spendableQuantity: string;
+  exact: boolean;
 };
 
 type ExplorerMetricsResponse = Awaited<
@@ -537,6 +559,13 @@ type IrohaBridge = {
     toriiUrl: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getConfidentialAssetBalance(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetBalanceResponse>;
   getPrivateKaigiConfidentialXorState(input: {
     toriiUrl: string;
     accountId: string;
@@ -1934,6 +1963,15 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
   return items;
 };
 
+const listAllAccountTransactions = async (input: {
+  toriiUrl: string;
+  accountId: string;
+}) =>
+  listAllAccountTransactionsForPrivateKaigi({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+  });
+
 const fetchPrivateKaigiAssetDefinition = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
@@ -1983,6 +2021,16 @@ const fetchPrivateKaigiRoots = async (
   return latest.toLowerCase();
 };
 
+const fetchConfidentialAssetDefinition = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => fetchPrivateKaigiAssetDefinition(toriiUrlRaw, assetDefinitionId);
+
+const fetchConfidentialAssetRoots = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => fetchPrivateKaigiRoots(toriiUrlRaw, assetDefinitionId);
+
 const readPrivateKaigiVkTransferRef = (
   assetDefinition: Record<string, unknown>,
 ) => {
@@ -2008,6 +2056,118 @@ const readPrivateKaigiVkTransferRef = (
   return {
     backend: match[1],
     name: match[2],
+  };
+};
+
+const readConfidentialVkTransferRef = (
+  assetDefinition: Record<string, unknown>,
+) => readPrivateKaigiVkTransferRef(assetDefinition);
+
+const resolveTrackedConfidentialAssetIds = (input: {
+  requestedAssetDefinitionId: string;
+  resolvedAssetId: string;
+}) => {
+  const seen = new Set<string>();
+  return [input.requestedAssetDefinitionId, input.resolvedAssetId]
+    .map((value) => String(value ?? "").trim())
+    .filter((value) => {
+      const normalized = value.toLowerCase();
+      if (!normalized || seen.has(normalized)) {
+        return false;
+      }
+      seen.add(normalized);
+      return true;
+    });
+};
+
+const resolveConfidentialAssetBalance = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  privateKeyHex: string;
+  assetDefinitionId: string;
+}): Promise<ConfidentialAssetBalanceResponse> => {
+  const policy = await fetchConfidentialAssetPolicy(
+    input.toriiUrl,
+    input.assetDefinitionId,
+  );
+  const resolvedAssetId =
+    trimString(policy.asset_id) || trimString(input.assetDefinitionId);
+  const trackedAssetIds = resolveTrackedConfidentialAssetIds({
+    requestedAssetDefinitionId: input.assetDefinitionId,
+    resolvedAssetId,
+  });
+  const transactions = await listAllAccountTransactions({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+  });
+  const onChainBalance = deriveOnChainShieldedBalance(transactions, {
+    assetDefinitionIds: trackedAssetIds,
+    accountIds: [
+      input.accountId,
+      normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
+      normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
+    ],
+  });
+  const ledger = collectWalletConfidentialLedger(
+    transactions as WalletConfidentialTransactionLike[],
+    {
+      privateKeyHex: input.privateKeyHex,
+      chainId: input.chainId,
+      assetDefinitionIds: trackedAssetIds,
+    },
+  );
+  return {
+    resolvedAssetId,
+    quantity: onChainBalance.exact
+      ? onChainBalance.quantity
+      : ledger.spendableQuantity,
+    onChainQuantity: onChainBalance.quantity,
+    spendableQuantity: ledger.spendableQuantity,
+    exact: ledger.exact,
+  };
+};
+
+const resolveConfidentialTransferMaterials = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  privateKeyHex: string;
+  assetDefinitionId: string;
+}) => {
+  const client = getClient(input.toriiUrl);
+  const balance = await resolveConfidentialAssetBalance(input);
+  const trackedAssetIds = resolveTrackedConfidentialAssetIds({
+    requestedAssetDefinitionId: input.assetDefinitionId,
+    resolvedAssetId: balance.resolvedAssetId,
+  });
+  const [transactions, assetDefinition, latestRootHex] = await Promise.all([
+    listAllAccountTransactions({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+    }),
+    fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
+    fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
+  ]);
+  const ledger = collectWalletConfidentialLedger(
+    transactions as WalletConfidentialTransactionLike[],
+    {
+      privateKeyHex: input.privateKeyHex,
+      chainId: input.chainId,
+      assetDefinitionIds: trackedAssetIds,
+    },
+  );
+  const vkTransferRef = readConfidentialVkTransferRef(assetDefinition);
+  const verifyingKey = await client.getVerifyingKeyTyped(
+    vkTransferRef.backend,
+    vkTransferRef.name,
+  );
+  return {
+    resolvedAssetId: balance.resolvedAssetId,
+    trackedAssetIds,
+    ledger,
+    latestRootHex,
+    verifyingKey: verifyingKey as unknown as Record<string, unknown>,
   };
 };
 
@@ -2521,14 +2681,11 @@ const api: IrohaBridge = {
         input.assetDefinitionId,
       );
       const effectiveMode = policy.effective_mode || policy.current_mode;
+      const resolvedAssetId =
+        trimString(policy.asset_id) || trimString(input.assetDefinitionId);
       if (!confidentialModeSupportsShield(effectiveMode)) {
         throw new Error(
-          `Shielded transfer is unavailable for ${policy.asset_id}; effective mode is ${effectiveMode}.`,
-        );
-      }
-      if (destinationAccountId !== accountId) {
-        throw new Error(
-          "Shielding currently supports only your own account. Set destination to the sender account.",
+          `Shielded transfer is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,
         );
       }
       const normalizedAmount = String(input.quantity).trim();
@@ -2538,31 +2695,135 @@ const api: IrohaBridge = {
         );
       }
 
-      const tx = buildShieldTransaction({
+      const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
+
+      if (destinationAccountId === accountId) {
+        const note = createWalletConfidentialNote({
+          assetDefinitionId: resolvedAssetId,
+          amount: normalizedAmount,
+        });
+        const tx = buildShieldTransaction({
+          chainId: input.chainId,
+          authority: accountId,
+          shield: {
+            assetDefinitionId: resolvedAssetId,
+            fromAccountId: accountId,
+            amount: normalizedAmount,
+            noteCommitment: Buffer.from(note.commitment_hex, "hex"),
+            encryptedPayload: {
+              version: 1,
+              ephemeralPublicKey: randomBytes(32),
+              nonce: randomBytes(24),
+              ciphertext: Buffer.from(
+                JSON.stringify({
+                  schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+                  commitment_hex: note.commitment_hex,
+                }),
+                "utf8",
+              ),
+            },
+          },
+          metadata: buildWalletConfidentialMetadata({
+            baseMetadata: input.metadata,
+            outputs: [{ note, recipientAccountId: accountId }],
+          }),
+          privateKey,
+        });
+        const submission = await submitSignedTransaction(
+          getClient(input.toriiUrl),
+          tx.signedTransaction,
+          {
+            waitForCommit: true,
+          },
+        );
+        if (
+          resolvedAssetId.trim().toLowerCase() ===
+          PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
+        ) {
+          appendPrivateKaigiShieldCredit({
+            toriiUrl: input.toriiUrl,
+            accountId,
+            amount: normalizedAmount,
+            assetDefinitionId: resolvedAssetId,
+          });
+        }
+        return { hash: submission.hash };
+      }
+
+      const materials = await resolveConfidentialTransferMaterials({
+        toriiUrl: input.toriiUrl,
+        chainId: input.chainId,
+        accountId,
+        privateKeyHex: input.privateKeyHex,
+        assetDefinitionId: resolvedAssetId,
+      });
+      if (
+        BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
+      ) {
+        throw new Error(
+          `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
+        );
+      }
+      const selection = selectWalletConfidentialNotes(
+        materials.ledger.notes,
+        normalizedAmount,
+      );
+      const outputs = [
+        {
+          note: createWalletConfidentialNote({
+            assetDefinitionId: materials.resolvedAssetId,
+            amount: normalizedAmount,
+          }),
+          recipientAccountId: destinationAccountId,
+        },
+      ];
+      if (selection.change !== "0") {
+        outputs.push({
+          note: createWalletConfidentialNote({
+            assetDefinitionId: materials.resolvedAssetId,
+            amount: selection.change,
+          }),
+          recipientAccountId: accountId,
+        });
+      }
+      const proofEnvelope = buildPrivateKaigiFeeSpend({
+        chainId: input.chainId.trim(),
+        assetDefinitionId: materials.resolvedAssetId,
+        actionHash: randomBytes(32),
+        anchorRootHex: materials.latestRootHex,
+        feeAmount: normalizedAmount,
+        verifyingKey: materials.verifyingKey,
+      });
+      const tx = buildZkTransferTransaction({
         chainId: input.chainId,
         authority: accountId,
-        shield: {
-          assetDefinitionId: input.assetDefinitionId,
-          fromAccountId: accountId,
-          amount: normalizedAmount,
-          noteCommitment: randomBytes(32),
-          encryptedPayload: {
-            version: 1,
-            ephemeralPublicKey: randomBytes(32),
-            nonce: randomBytes(24),
-            ciphertext: Buffer.from(
-              JSON.stringify({
-                accountId,
-                amount: normalizedAmount,
-                memo: input.metadata ?? null,
-                createdAtMs: Date.now(),
-              }),
-              "utf8",
+        transfer: {
+          assetDefinitionId: materials.resolvedAssetId,
+          inputs: selection.selected.map((note) =>
+            Buffer.from(note.nullifier_hex, "hex"),
+          ),
+          outputs: outputs.map(({ note }) =>
+            Buffer.from(note.commitment_hex, "hex"),
+          ),
+          proof: {
+            backend: String(
+              (materials.verifyingKey as { id?: { backend?: string } }).id
+                ?.backend ?? "halo2/ipa",
             ),
+            proof: Buffer.from(proofEnvelope.proof),
+            verifyingKeyRef: (
+              materials.verifyingKey as {
+                id?: { backend: string; name: string };
+              }
+            ).id,
           },
+          rootHint: Buffer.from(materials.latestRootHex, "hex"),
         },
-        metadata: input.metadata ?? null,
-        privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
+        metadata: buildWalletConfidentialMetadata({
+          baseMetadata: input.metadata,
+          outputs,
+        }),
+        privateKey,
       });
       const submission = await submitSignedTransaction(
         getClient(input.toriiUrl),
@@ -2571,18 +2832,6 @@ const api: IrohaBridge = {
           waitForCommit: true,
         },
       );
-      if (
-        destinationAccountId === accountId &&
-        input.assetDefinitionId.trim().toLowerCase() ===
-          PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
-      ) {
-        appendPrivateKaigiShieldCredit({
-          toriiUrl: input.toriiUrl,
-          accountId,
-          amount: normalizedAmount,
-          assetDefinitionId: input.assetDefinitionId,
-        });
-      }
       return { hash: submission.hash };
     }
 
@@ -2664,6 +2913,21 @@ const api: IrohaBridge = {
   },
   getConfidentialAssetPolicy({ toriiUrl, assetDefinitionId }) {
     return fetchConfidentialAssetPolicy(toriiUrl, assetDefinitionId);
+  },
+  getConfidentialAssetBalance({
+    toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    assetDefinitionId,
+  }) {
+    return resolveConfidentialAssetBalance({
+      toriiUrl,
+      chainId,
+      accountId,
+      privateKeyHex,
+      assetDefinitionId,
+    });
   },
   async getPrivateKaigiConfidentialXorState({ toriiUrl, accountId }) {
     return (

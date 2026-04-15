@@ -1041,8 +1041,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",
-  "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.":
-    "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
+  "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.":
+    "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
   "Create on-chain account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":

@@ -143,10 +143,7 @@
         >
           {{ shieldedXorCapabilityMessage }}
         </p>
-        <p
-          v-else-if="shieldedXorPolicyMode"
-          class="helper wallet-shield-note"
-        >
+        <p v-else-if="shieldedXorPolicyMode" class="helper wallet-shield-note">
           {{
             t("Shield policy mode: {mode}.", {
               mode: shieldedXorPolicyMode,
@@ -156,7 +153,7 @@
         <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
           {{
             t(
-              "On-chain shielded balance is unavailable after shielded transfers. This wallet does not scan confidential notes yet.",
+              "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
             )
           }}
         </p>
@@ -256,6 +253,7 @@ import { useAppI18n } from "@/composables/useAppI18n";
 import {
   fetchAccountAssets,
   fetchAccountTransactions,
+  getConfidentialAssetBalance,
   requestFaucetFunds,
   transferAsset,
 } from "@/services/iroha";
@@ -264,16 +262,14 @@ import { useSessionStore } from "@/stores/session";
 import type {
   AccountAssetsResponse,
   AccountTransactionsResponse,
+  ConfidentialAssetBalanceView,
   FaucetRequestProgress,
 } from "@/types/iroha";
 import {
   extractTransferInsight,
   type AccountTransactionLike,
 } from "@/utils/transactions";
-import {
-  deriveOnChainShieldedBalance,
-  isPositiveWholeAmount,
-} from "@/utils/confidential";
+import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 import {
   extractAssetDefinitionId,
@@ -299,6 +295,11 @@ const requestAccountId = computed(
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(activeAccount.value, t("—")),
 );
+const configuredShieldAssetDefinitionId = computed(
+  () =>
+    extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
+);
 const shieldForm = reactive({
   quantity: "0",
 });
@@ -314,7 +315,7 @@ const {
   shieldResolvedAssetId: shieldedXorResolvedAssetId,
 } = useShieldCapability({
   toriiUrl: toRef(session.connection, "toriiUrl"),
-  assetDefinitionId: computed(() => SHIELDED_XOR_ASSET_DEFINITION_ID),
+  assetDefinitionId: configuredShieldAssetDefinitionId,
   shielded: walletShieldEnabled,
   translate: t,
 });
@@ -339,6 +340,13 @@ const FAUCET_REFRESH_DELAY_MS = 1_500;
 
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
+const shieldedXorBalanceState = ref<ConfidentialAssetBalanceView>({
+  resolvedAssetId: configuredShieldAssetDefinitionId.value,
+  quantity: "0",
+  onChainQuantity: "0",
+  spendableQuantity: "0",
+  exact: true,
+});
 const loading = ref(false);
 const faucetLoading = ref(false);
 const faucetMessage = ref("");
@@ -421,10 +429,18 @@ const fetchAllAccountTransactions = async (input: {
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
-  if (!session.hasAccount || !toriiUrl || !accountId) {
+  const privateKeyHex = activeAccount.value?.privateKeyHex;
+  if (!session.hasAccount || !toriiUrl || !accountId || !privateKeyHex) {
     requestGeneration.value += 1;
     loading.value = false;
     resetWalletState();
+    shieldedXorBalanceState.value = {
+      resolvedAssetId: configuredShieldAssetDefinitionId.value,
+      quantity: "0",
+      onChainQuantity: "0",
+      spendableQuantity: "0",
+      exact: true,
+    };
     return;
   }
   const currentGeneration = requestGeneration.value + 1;
@@ -432,17 +448,25 @@ const refresh = async () => {
   loading.value = true;
   walletError.value = "";
   try {
-    const [{ items: assetItems }, txItems] = await Promise.all([
-      fetchAccountAssets({
-        toriiUrl,
-        accountId,
-        limit: 50,
-      }),
-      fetchAllAccountTransactions({
-        toriiUrl,
-        accountId,
-      }),
-    ]);
+    const [{ items: assetItems }, txItems, confidentialBalance] =
+      await Promise.all([
+        fetchAccountAssets({
+          toriiUrl,
+          accountId,
+          limit: 50,
+        }),
+        fetchAllAccountTransactions({
+          toriiUrl,
+          accountId,
+        }),
+        getConfidentialAssetBalance({
+          toriiUrl,
+          chainId: session.connection.chainId,
+          accountId,
+          privateKeyHex,
+          assetDefinitionId: configuredShieldAssetDefinitionId.value,
+        }),
+      ]);
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
@@ -452,6 +476,7 @@ const refresh = async () => {
     }
     assets.value = assetItems;
     transactionsRaw.value = txItems as AccountTx[];
+    shieldedXorBalanceState.value = confidentialBalance;
     if (activeAccount.value?.localOnly) {
       session.updateActiveAccount({ localOnly: false });
     }
@@ -465,6 +490,13 @@ const refresh = async () => {
     }
     assets.value = [];
     transactionsRaw.value = [];
+    shieldedXorBalanceState.value = {
+      resolvedAssetId: configuredShieldAssetDefinitionId.value,
+      quantity: "0",
+      onChainQuantity: "0",
+      spendableQuantity: "0",
+      exact: true,
+    };
     walletError.value = toUserFacingErrorMessage(
       error,
       t("Wallet data is unavailable until this account exists on-chain."),
@@ -525,7 +557,9 @@ const requestStarterFunds = async () => {
     if (shouldConfigureAsset) {
       session.updateConnection({
         assetDefinitionId:
-          result.asset_id.trim() || result.asset_definition_id.trim(),
+          result.asset_definition_id.trim() ||
+          extractAssetDefinitionId(result.asset_id).trim() ||
+          result.asset_id.trim(),
       });
     }
     session.updateActiveAccount({ localOnly: false });
@@ -551,12 +585,16 @@ const requestStarterFunds = async () => {
 const primaryAsset = computed(() => {
   return resolveToriiXorAsset(assets.value, [
     shieldedXorResolvedAssetId.value,
+    configuredShieldAssetDefinitionId.value,
     SHIELDED_XOR_ASSET_DEFINITION_ID,
   ]);
 });
 
 const primaryAssetFallback = computed(
-  () => shieldedXorResolvedAssetId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+  () =>
+    shieldedXorResolvedAssetId.value ||
+    configuredShieldAssetDefinitionId.value ||
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
 );
 
 const primaryAssetLabel = computed(() => {
@@ -597,8 +635,8 @@ const canRequestFaucet = computed(
         requestAccountId.value,
     ) && !hasPositiveConfiguredFaucetBalance.value,
 );
-const showFundingPriority = computed(
-  () => Boolean(activeAccount.value?.localOnly || !assets.value.length),
+const showFundingPriority = computed(() =>
+  Boolean(activeAccount.value?.localOnly || !assets.value.length),
 );
 const canSendAssets = computed(() =>
   assets.value.some((asset) => Number(asset.quantity) > 0),
@@ -613,7 +651,12 @@ const showShieldSection = computed(() =>
 );
 const shieldedXorTrackedAssetIds = computed(() => {
   const seen = new Set<string>();
-  return [SHIELDED_XOR_ASSET_DEFINITION_ID, shieldedXorResolvedAssetId.value]
+  return [
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
+    configuredShieldAssetDefinitionId.value,
+    shieldedXorBalanceState.value.resolvedAssetId,
+    shieldedXorResolvedAssetId.value,
+  ]
     .map((value) => String(value ?? "").trim())
     .filter((value) => {
       const normalized = value.toLowerCase();
@@ -625,12 +668,16 @@ const shieldedXorTrackedAssetIds = computed(() => {
     });
 });
 const shieldedXorAssetId = computed(
-  () => shieldedXorResolvedAssetId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+  () =>
+    shieldedXorBalanceState.value.resolvedAssetId ||
+    shieldedXorResolvedAssetId.value ||
+    configuredShieldAssetDefinitionId.value ||
+    SHIELDED_XOR_ASSET_DEFINITION_ID,
 );
 const shieldedXorAssetLabel = computed(() =>
   formatAssetDefinitionLabel(
     shieldedXorAssetId.value,
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
+    configuredShieldAssetDefinitionId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
   ),
 );
 const transparentXorAsset = computed(() => {
@@ -655,21 +702,11 @@ const transparentXorAsset = computed(() => {
 const transparentXorBalance = computed(
   () => transparentXorAsset.value?.quantity ?? "0",
 );
-const shieldedXorBalanceResult = computed(() =>
-  deriveOnChainShieldedBalance(transactionsRaw.value, {
-    assetDefinitionIds: shieldedXorTrackedAssetIds.value,
-    accountIds: [
-      activeAccount.value?.accountId,
-      activeAccount.value?.i105AccountId,
-      activeAccount.value?.i105DefaultAccountId,
-    ],
-  }),
-);
 const shieldedXorBalanceExact = computed(
-  () => shieldedXorBalanceResult.value.exact,
+  () => shieldedXorBalanceState.value.exact,
 );
 const shieldedXorBalanceDisplay = computed(
-  () => shieldedXorBalanceResult.value.quantity ?? t("—"),
+  () => shieldedXorBalanceState.value.quantity ?? t("—"),
 );
 const canCreateShieldedXor = computed(() =>
   Boolean(

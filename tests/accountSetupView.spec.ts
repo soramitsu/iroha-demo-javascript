@@ -240,12 +240,7 @@ describe("AccountSetupView", () => {
     ).toBeUndefined();
   });
 
-  it("registers the first account and routes to the wallet", async () => {
-    onboardAccountMock.mockResolvedValueOnce({
-      account_id: "alice@flowers",
-      tx_hash_hex: "a".repeat(64),
-    });
-
+  it("saves the first generated account locally and routes to the wallet", async () => {
     const wrapper = mountView();
     const session = useSessionStore();
     const inputs = getTextInputs(wrapper);
@@ -263,24 +258,19 @@ describe("AccountSetupView", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain(t("Register on-chain alias"));
-    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    expect(
+      wrapper
+        .findAll("button")
+        .some((button) => button.text() === t("Advanced")),
+    ).toBe(false);
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
     await flushPromises();
 
-    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
-      "click",
-    );
-    await flushPromises();
-
-    expect(onboardAccountMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        alias: "Alice",
-        accountId: "alice@flowers",
-        toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      }),
-    );
+    expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
-    expect(session.activeAccount?.localOnly).toBe(false);
+    expect(session.activeAccount?.displayName).toBe("Alice");
+    expect(session.activeAccount?.localOnly).toBe(true);
   });
 
   it("saves the first account locally without UAID onboarding", async () => {
@@ -500,11 +490,28 @@ describe("AccountSetupView", () => {
     expect(useSessionStore().hasAccount).toBe(false);
   });
 
-  it("falls back to a local wallet when UAID onboarding is disabled", async () => {
+  it("does not expose advanced on-chain onboarding controls on first launch", async () => {
+    const wrapper = mountView();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain(t("Advanced"));
+    expect(wrapper.text()).not.toContain(t("Register on-chain alias"));
+    expect(onboardAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale onboarding bridge mocks and still saves locally", async () => {
     onboardAccountMock.mockRejectedValueOnce(
-      new Error(
-        "Onboarding failed with status 403 (Forbidden): UAID onboarding is disabled on this Torii endpoint.",
-      ),
+      new Error("Onboarding bridge should not be called"),
     );
 
     const wrapper = mountView();
@@ -521,49 +528,13 @@ describe("AccountSetupView", () => {
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
     await flushPromises();
 
-    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
-      "click",
-    );
-    await flushPromises();
-
+    expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
     expect(session.activeAccount?.localOnly).toBe(true);
-  });
-
-  it("treats onboarding conflicts as an already-registered account", async () => {
-    onboardAccountMock.mockRejectedValueOnce(
-      new Error("Onboarding failed with status 409 (Conflict)"),
-    );
-
-    const wrapper = mountView();
-    const session = useSessionStore();
-    const inputs = getTextInputs(wrapper);
-
-    await inputs[0].setValue("Alice");
-    await inputs[1].setValue("flowers");
-    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
-      "click",
-    );
-    await flushPromises();
-
-    await wrapper.find('input[type="checkbox"]').setValue(true);
-    await flushPromises();
-
-    await getButtonByText(wrapper, t("Advanced")).trigger("click");
-    await flushPromises();
-
-    await getButtonByText(wrapper, t("Register on-chain alias")).trigger(
-      "click",
-    );
-    await flushPromises();
-
-    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
-    expect(session.activeAccountId).toBe("alice@flowers");
-    expect(session.activeAccount?.localOnly).toBe(false);
   });
 
   it("restores from the saved-wallet layout and updates an existing account entry", async () => {

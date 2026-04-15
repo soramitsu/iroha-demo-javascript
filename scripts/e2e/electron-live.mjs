@@ -438,15 +438,11 @@ async function runReadOnlyFlow(page, fundedAccount) {
         if (!panel) {
           return null;
         }
-        const rows = [...panel.querySelectorAll(".kv")];
-        const shieldedRow = rows.find((row) =>
-          row
-            .querySelector(".kv-label")
-            ?.textContent?.includes("Shielded balance"),
-        );
-        const value = shieldedRow
-          ?.querySelector(".kv-value")
-          ?.textContent?.trim();
+        const value =
+          panel
+            .querySelector(".wallet-shield-balance")
+            ?.textContent?.trim() ??
+          null;
         return value && /^\d+$/.test(value) ? value : null;
       },
       { timeout: 45_000 },

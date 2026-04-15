@@ -7,6 +7,7 @@ import {
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
+  getConfidentialAssetBalance,
   finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
   getGovernanceCouncilCurrent,
@@ -70,6 +71,32 @@ describe("iroha services bridge", () => {
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledWith(assetsInput);
     expect(fetchAccountTransactionsMock).toHaveBeenCalledWith(txInput);
+  });
+
+  it("forwards confidential asset balance requests to the bridge", async () => {
+    const getConfidentialAssetBalanceMock = vi.fn().mockResolvedValue({
+      resolvedAssetId: "xor#universal",
+      quantity: "4",
+      onChainQuantity: null,
+      spendableQuantity: "4",
+      exact: false,
+    });
+    (window as any).iroha = {
+      getConfidentialAssetBalance: getConfidentialAssetBalanceMock,
+    };
+
+    const input = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      privateKeyHex: "ab".repeat(32),
+      assetDefinitionId: "xor#universal",
+    };
+    const result = await getConfidentialAssetBalance(input);
+
+    expect(getConfidentialAssetBalanceMock).toHaveBeenCalledWith(input);
+    expect(result.spendableQuantity).toBe("4");
+    expect(result.exact).toBe(false);
   });
 
   it("returns explorer QR snapshots with svg markup", async () => {
