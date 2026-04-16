@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { resolveNativeBuildRequirement } from "./postinstallNativeCheck.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(ROOT);
@@ -11,7 +12,6 @@ const irohaPackagePath = join(
   "@iroha",
   "iroha-js",
 );
-const nativeModulePath = join(irohaPackagePath, "native", "iroha_js_host.node");
 
 if (!existsSync(irohaPackagePath)) {
   console.warn(
@@ -20,11 +20,15 @@ if (!existsSync(irohaPackagePath)) {
   process.exit(0);
 }
 
-if (existsSync(nativeModulePath)) {
+const requirement = resolveNativeBuildRequirement(irohaPackagePath);
+
+if (!requirement.shouldBuild) {
   process.exit(0);
 }
 
-console.log("[postinstall] Building @iroha/iroha-js native bindings...");
+console.log(
+  `[postinstall] Building @iroha/iroha-js native bindings (${requirement.reason})...`,
+);
 const result = spawnSync("npm", ["run", "build:native"], {
   cwd: irohaPackagePath,
   stdio: "inherit",

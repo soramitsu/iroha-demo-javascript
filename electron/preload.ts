@@ -2876,7 +2876,10 @@ const readPrivateKaigiVkTransferRef = (
 const readConfidentialAllowUnshield = (
   assetDefinition: Record<string, unknown>,
 ) => {
-  const policy = readConfidentialPolicyMetadata(assetDefinition, "Confidential");
+  const policy = readConfidentialPolicyMetadata(
+    assetDefinition,
+    "Confidential",
+  );
   return policy.allow_unshield !== false && policy.allowUnshield !== false;
 };
 
@@ -3824,8 +3827,9 @@ const api: IrohaBridge = {
         if (
           resolvedAssetId.trim().toLowerCase() ===
             PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID ||
-          extractAssetDefinitionId(input.assetDefinitionId).trim().toLowerCase() ===
-            PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
+          extractAssetDefinitionId(input.assetDefinitionId)
+            .trim()
+            .toLowerCase() === PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
         ) {
           appendPrivateKaigiShieldCredit({
             toriiUrl: input.toriiUrl,
