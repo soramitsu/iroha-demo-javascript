@@ -21,7 +21,9 @@ const ALICE_ACCOUNT_ID =
   "testuロ1PクCカrムhyワエトhウヤSqP2GFGラヱミケヌマzヘオミMヌヨトksJヱRRJXVB";
 const BOB_ACCOUNT_ID =
   "testuロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
-const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
+  "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const RELAY_TX_HASH = "ab".repeat(32);
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
@@ -396,10 +398,15 @@ describe("preload Kaigi bridge", () => {
         const method = String(init?.method ?? "GET").toUpperCase();
         if (
           method === "GET" &&
-          href.includes("/v1/confidential/assets/xor%23universal/transitions")
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
         ) {
           return jsonResponse({
-            asset_id: "xor#universal",
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
             block_height: 1,
             current_mode: "Convertible",
             effective_mode: "Convertible",
@@ -409,12 +416,24 @@ describe("preload Kaigi bridge", () => {
             pending_transition: null,
           });
         }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential note index request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
         if (
           method === "GET" &&
-          href.includes("/v1/assets/definitions/xor%23universal")
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
         ) {
           return jsonResponse({
-            id: "xor#universal",
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
             metadata: {
               "zk.policy": {
                 vk_transfer: "halo2/ipa::vk_transfer",
@@ -430,6 +449,15 @@ describe("preload Kaigi bridge", () => {
           });
         }
         if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
+          });
+        }
+        if (
           method === "GET" &&
           href.includes("/v1/accounts/") &&
           href.includes("/assets")
@@ -437,7 +465,7 @@ describe("preload Kaigi bridge", () => {
           return jsonResponse({
             items: [
               {
-                asset_id: "xor#universal##sora:alice",
+                asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}##${ALICE_ACCOUNT_ID}`,
                 quantity: "9",
               },
             ],
@@ -661,10 +689,10 @@ describe("preload Kaigi bridge", () => {
     });
 
     const requestPromise = bridge.requestFaucetFunds({
-        toriiUrl: "https://taira.sora.org",
-        accountId: "testu-faucet",
-        networkPrefix: 369,
-      });
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testu-faucet",
+      networkPrefix: 369,
+    });
     const rejection = expect(requestPromise).rejects.toThrow(
       "Faucet claim 0xexpired-6 expired before TAIRA committed it. Please retry once the faucet queue clears.",
     );
@@ -882,7 +910,7 @@ describe("preload Kaigi bridge", () => {
         assetDefinitionId: "xor#universal",
       }),
     ).resolves.toMatchObject({
-      resolvedAssetId: "xor#universal",
+      resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
       quantity: "5",
       onChainQuantity: "0",
       spendableQuantity: "5",
@@ -925,6 +953,16 @@ describe("preload Kaigi bridge", () => {
             pending_transition: null,
           });
         }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential note index request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
         if (
           method === "GET" &&
           href.includes(
@@ -945,6 +983,15 @@ describe("preload Kaigi bridge", () => {
             latest: "44".repeat(32),
             roots: ["44".repeat(32)],
             height: 1,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
           });
         }
         if (
@@ -993,21 +1040,6 @@ describe("preload Kaigi bridge", () => {
     });
 
     await expect(
-      bridge.transferAsset({
-        toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        assetDefinitionId: "xor#universal",
-        accountId: ALICE_ACCOUNT_ID,
-        destinationAccountId: BOB_ACCOUNT_ID,
-        quantity: "3",
-        privateKeyHex: "11".repeat(32),
-        shielded: true,
-      }),
-    ).resolves.toEqual({
-      hash: "hash-zk-transfer",
-    });
-
-    await expect(
       bridge.getConfidentialAssetBalance({
         toriiUrl: "https://taira.sora.org",
         chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
@@ -1017,20 +1049,13 @@ describe("preload Kaigi bridge", () => {
       }),
     ).resolves.toMatchObject({
       resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      spendableQuantity: "2",
+      spendableQuantity: "5",
       exact: true,
     });
 
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         shield: expect.objectContaining({
-          assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-        }),
-      }),
-    );
-    expect(mocks.buildZkTransferTransactionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        transfer: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
         }),
       }),
@@ -1148,7 +1173,7 @@ describe("preload Kaigi bridge", () => {
     ).toBe(false);
   });
 
-  it("uses the local confidential shadow ledger to spend immediately and credit the receiver", async () => {
+  it("keeps recipient shielded sends blocked until the global note index catches up", async () => {
     mocks.listAccountTransactionsMock.mockResolvedValue({
       items: [],
       total: 0,
@@ -1177,9 +1202,9 @@ describe("preload Kaigi bridge", () => {
         privateKeyHex: "11".repeat(32),
         shielded: true,
       }),
-    ).resolves.toEqual({
-      hash: "hash-zk-transfer",
-    });
+    ).rejects.toThrow(
+      "Confidential note index is unavailable for this asset; recipient shielded transfers require the global note index.",
+    );
 
     await expect(
       bridge.getConfidentialAssetBalance({
@@ -1190,22 +1215,9 @@ describe("preload Kaigi bridge", () => {
         assetDefinitionId: "xor#universal",
       }),
     ).resolves.toMatchObject({
-      quantity: "2",
-      spendableQuantity: "2",
-      exact: true,
-    });
-
-    await expect(
-      bridge.getConfidentialAssetBalance({
-        toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        accountId: BOB_ACCOUNT_ID,
-        privateKeyHex: "22".repeat(32),
-        assetDefinitionId: "xor#universal",
-      }),
-    ).resolves.toMatchObject({
-      quantity: "3",
-      spendableQuantity: "3",
+      resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      quantity: "5",
+      spendableQuantity: "5",
       exact: true,
     });
   });
@@ -1220,7 +1232,7 @@ describe("preload Kaigi bridge", () => {
       }),
     ).resolves.toMatchObject({
       assetDefinitionId: "xor#universal",
-      resolvedAssetId: "xor#universal",
+      resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
       policyMode: "Convertible",
       shieldedBalance: "5",
       shieldedBalanceExact: true,
@@ -1243,7 +1255,7 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         shield: expect.objectContaining({
-          assetDefinitionId: "xor#universal",
+          assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
           amount: "2",
         }),
       }),

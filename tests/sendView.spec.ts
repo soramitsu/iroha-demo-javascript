@@ -10,6 +10,8 @@ const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
 const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
+const BOB_OWNER_TAG_HEX = "11".repeat(32);
+const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
 const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
 
 const transferAssetMock = vi.fn();
@@ -101,6 +103,14 @@ describe("SendView", () => {
     await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
+    qrDecodeHandler?.(
+      JSON.stringify({
+        accountId: BOB_I105_ACCOUNT_ID,
+        amount: "10",
+        shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+      }),
+    );
+    await flushPromises();
     expect(wrapper.text()).toContain(
       t("Shield policy mode: {mode}.", { mode: "Convertible" }),
     );
@@ -119,6 +129,7 @@ describe("SendView", () => {
         destinationAccountId: BOB_I105_ACCOUNT_ID,
         quantity: "10",
         shielded: true,
+        shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
       }),
     );
     expect(wrapper.text()).toContain(
@@ -267,6 +278,7 @@ describe("SendView", () => {
       JSON.stringify({
         accountId: MALLORY_I105_ACCOUNT_ID,
         amount: "7",
+        shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
       }),
     );
     await flushPromises();
@@ -278,6 +290,15 @@ describe("SendView", () => {
     );
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
     expect(wrapper.text()).toContain(t("QR decoded successfully."));
+
+    transferAssetMock.mockResolvedValue({ hash: "0xqrshield" });
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
+      }),
+    );
   });
 
   it("applies qr destination payload when shield mode is disabled", async () => {

@@ -64,9 +64,7 @@ describe("asset ID helpers", () => {
 
   it("decodes canonical norito asset IDs into standard base58 literals", () => {
     expect(
-      decodeNoritoAssetDefinitionId(
-        "norito:00112233445566778899aabbccddeeff",
-      ),
+      decodeNoritoAssetDefinitionId("norito:00112233445566778899aabbccddeeff"),
     ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
     expect(
       formatAssetDefinitionLabel("norito:00112233445566778899aabbccddeeff"),

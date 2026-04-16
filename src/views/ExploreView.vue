@@ -135,7 +135,10 @@ import type {
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const requestAccountId = computed(
-  () => getPublicAccountId(activeAccount.value) || activeAccount.value?.accountId || "",
+  () =>
+    getPublicAccountId(activeAccount.value) ||
+    activeAccount.value?.accountId ||
+    "",
 );
 const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
@@ -193,8 +196,7 @@ const refresh = async () => {
     }
     metrics.value =
       metricsResult.status === "fulfilled" ? metricsResult.value : null;
-    const qrPayload =
-      qrResult.status === "fulfilled" ? qrResult.value : null;
+    const qrPayload = qrResult.status === "fulfilled" ? qrResult.value : null;
     if (!qrPayload) {
       accountQr.value = null;
       return;

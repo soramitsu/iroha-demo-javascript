@@ -80,6 +80,7 @@ const generateQr = async () => {
   const accountId = shareAccountId.value;
   const assetDefinitionId = session.connection.assetDefinitionId;
   const currentAmount = amount.value;
+  const privateKeyHex = activeAccount.value?.privateKeyHex ?? "";
   const currentGeneration = qrGeneration.value + 1;
   qrGeneration.value = currentGeneration;
 
@@ -89,10 +90,20 @@ const generateQr = async () => {
     return;
   }
   qrMessage.value = t("Generating QR...");
+  let shieldedOwnerTagHex = "";
+  if (privateKeyHex) {
+    try {
+      shieldedOwnerTagHex =
+        window.iroha.deriveConfidentialOwnerTag(privateKeyHex).ownerTagHex;
+    } catch (error) {
+      console.warn("Failed to derive confidential owner tag for QR", error);
+    }
+  }
   const payload = {
     accountId,
     assetDefinitionId,
     amount: currentAmount,
+    shieldedOwnerTagHex,
   };
   try {
     const nextQrMarkup = await QRCode.toString(JSON.stringify(payload), {
@@ -108,7 +119,8 @@ const generateQr = async () => {
       !showQr.value ||
       shareAccountId.value !== accountId ||
       session.connection.assetDefinitionId !== assetDefinitionId ||
-      amount.value !== currentAmount
+      amount.value !== currentAmount ||
+      activeAccount.value?.privateKeyHex !== privateKeyHex
     ) {
       return;
     }

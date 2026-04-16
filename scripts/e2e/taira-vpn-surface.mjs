@@ -9,8 +9,8 @@ import {
 } from "./electron-live-utils.mjs";
 
 const tairaToriiUrl = "https://taira.sora.org";
-const toriiUrl = String(process.env.E2E_TORII_URL ?? tairaToriiUrl).trim()
-  || tairaToriiUrl;
+const toriiUrl =
+  String(process.env.E2E_TORII_URL ?? tairaToriiUrl).trim() || tairaToriiUrl;
 
 async function main() {
   const { healthUrls, mcpUrl, openApiUrl, vpnProfileUrl } =
@@ -18,7 +18,11 @@ async function main() {
   await preflightHealth(healthUrls);
   const failures = [];
 
-  const mcpCapabilities = await probeJson(mcpUrl, "TAIRA MCP surface", failures);
+  const mcpCapabilities = await probeJson(
+    mcpUrl,
+    "TAIRA MCP surface",
+    failures,
+  );
   const openApi = await probeJson(openApiUrl, "TAIRA OpenAPI", failures);
   const mcpToolList = await probeJsonPost(
     mcpUrl,
@@ -29,7 +33,9 @@ async function main() {
   await probeJson(vpnProfileUrl, "TAIRA VPN profile", failures);
 
   if (mcpCapabilities) {
-    const protocolVersion = String(mcpCapabilities.protocolVersion ?? "").trim();
+    const protocolVersion = String(
+      mcpCapabilities.protocolVersion ?? "",
+    ).trim();
     if (!protocolVersion) {
       failures.push(
         "TAIRA MCP surface is missing a `protocolVersion` in the capabilities response.",

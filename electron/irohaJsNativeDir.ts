@@ -13,7 +13,15 @@ export const resolveIrohaJsNativeDir = (
   const baseDir = dirname(fileURLToPath(moduleUrl));
   const candidates = [
     resolve(baseDir, "..", "native"),
-    resolve(baseDir, "..", "..", "node_modules", "@iroha", "iroha-js", "native"),
+    resolve(
+      baseDir,
+      "..",
+      "..",
+      "node_modules",
+      "@iroha",
+      "iroha-js",
+      "native",
+    ),
     resolve(
       baseDir,
       "..",

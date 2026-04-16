@@ -65,12 +65,7 @@ describe("electron live e2e utils", () => {
       "https://taira.sora.org/v1/vpn/profile -> 404 Not Found: missing route",
     );
     expect(
-      formatSurfaceProbeAttempt(
-        "https://taira.sora.org/v1/mcp",
-        200,
-        "OK",
-        "",
-      ),
+      formatSurfaceProbeAttempt("https://taira.sora.org/v1/mcp", 200, "OK", ""),
     ).toBe("https://taira.sora.org/v1/mcp -> 200 OK");
   });
 
@@ -127,10 +122,7 @@ describe("electron live e2e utils", () => {
           "/v1/vpn/sessions": {},
         },
       }),
-    ).toEqual([
-      "/v1/vpn/sessions/{session_id}",
-      "/v1/vpn/receipts",
-    ]);
+    ).toEqual(["/v1/vpn/sessions/{session_id}", "/v1/vpn/receipts"]);
     expect(findMissingToriiVpnOpenApiPaths({ paths: {} })).toEqual([
       "/v1/vpn/profile",
       "/v1/vpn/sessions",

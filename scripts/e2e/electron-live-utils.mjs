@@ -58,14 +58,14 @@ export function extractToriiMcpToolNames(payload) {
   if (!Array.isArray(tools)) {
     return [];
   }
-  return tools
-    .map((tool) => String(tool?.name ?? "").trim())
-    .filter(Boolean);
+  return tools.map((tool) => String(tool?.name ?? "").trim()).filter(Boolean);
 }
 
 export function findMissingToriiVpnMcpTools(payload) {
   const availableNames = new Set(extractToriiMcpToolNames(payload));
-  return requiredToriiVpnMcpToolNames.filter((name) => !availableNames.has(name));
+  return requiredToriiVpnMcpToolNames.filter(
+    (name) => !availableNames.has(name),
+  );
 }
 
 export function findMissingToriiVpnOpenApiPaths(payload) {

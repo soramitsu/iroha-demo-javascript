@@ -104,9 +104,7 @@ describe("connectPreview", () => {
       rewriteConnectUriProtocol(
         "iroha://connect?sid=session&role=wallet&token=wallet-token",
       ),
-    ).toBe(
-      "irohaconnect://connect?sid=session&role=wallet&token=wallet-token",
-    );
+    ).toBe("irohaconnect://connect?sid=session&role=wallet&token=wallet-token");
   });
 
   it("prefers the registered session URI when resolving renderer launch links", () => {
@@ -115,9 +113,7 @@ describe("connectPreview", () => {
         "iroha://connect?sid=session&role=wallet&token=wallet-token",
         "iroha://connect?sid=preview&role=wallet",
       ),
-    ).toBe(
-      "irohaconnect://connect?sid=session&role=wallet&token=wallet-token",
-    );
+    ).toBe("irohaconnect://connect?sid=session&role=wallet&token=wallet-token");
     expect(
       resolvePortableConnectLaunchUri(
         null,

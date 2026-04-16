@@ -501,6 +501,7 @@ export interface IrohaBridge {
     networkPrefix?: number;
   }): AccountAddressView;
   derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
+  deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
   registerAccount(input: {
     toriiUrl: string;
     chainId: string;
@@ -520,6 +521,7 @@ export interface IrohaBridge {
     privateKeyHex: string;
     metadata?: Record<string, unknown>;
     shielded?: boolean;
+    shieldedOwnerTagHex?: string;
   }): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;

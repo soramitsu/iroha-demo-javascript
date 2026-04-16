@@ -51,7 +51,8 @@ const normalizeMethod = (
   input: Parameters<typeof fetch>[0],
   init?: RequestInit,
 ) => {
-  const candidate = init?.method ?? (isRequestInput(input) ? input.method : "GET");
+  const candidate =
+    init?.method ?? (isRequestInput(input) ? input.method : "GET");
   return String(candidate || "GET").toUpperCase();
 };
 
@@ -106,14 +107,19 @@ const normalizeBodyBuffer = async (body: unknown): Promise<Buffer | null> => {
   if (ArrayBuffer.isView(body)) {
     return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
   }
-  if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+  if (
+    typeof URLSearchParams !== "undefined" &&
+    body instanceof URLSearchParams
+  ) {
     return Buffer.from(body.toString());
   }
   if (typeof Blob !== "undefined" && body instanceof Blob) {
     return Buffer.from(await body.arrayBuffer());
   }
   if (typeof ReadableStream !== "undefined" && body instanceof ReadableStream) {
-    throw new Error("nodeFetch does not support ReadableStream request bodies.");
+    throw new Error(
+      "nodeFetch does not support ReadableStream request bodies.",
+    );
   }
   return Buffer.from(String(body));
 };
@@ -210,7 +216,10 @@ const normalizeRequestHeaders = (
   if (isRequestInput(input)) {
     appendHeadersToRecord(headers, input.headers);
   }
-  appendHeadersToRecord(headers, omitRawUtf8Headers(initHeaders, rawUtf8Headers));
+  appendHeadersToRecord(
+    headers,
+    omitRawUtf8Headers(initHeaders, rawUtf8Headers),
+  );
   if (rawUtf8Headers) {
     for (const [key, value] of Object.entries(rawUtf8Headers)) {
       headers[key] = encodeUtf8HeaderValueForNode(value);
@@ -239,7 +248,10 @@ export const nodeFetch = async (
     sanitizedInit?.headers,
     rawUtf8Headers,
   );
-  if (body && !Object.keys(headers).some((key) => key.toLowerCase() === "content-length")) {
+  if (
+    body &&
+    !Object.keys(headers).some((key) => key.toLowerCase() === "content-length")
+  ) {
     headers["content-length"] = String(body.byteLength);
   }
 

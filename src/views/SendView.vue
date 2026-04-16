@@ -169,6 +169,7 @@ const form = reactive({
   quantity: "0",
   memo: "",
   shielded: false,
+  shieldedOwnerTagHex: "",
 });
 const sending = ref(false);
 const statusMessage = ref("");
@@ -218,6 +219,11 @@ const scanner = useQrScanner(
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
+      }
+      if (parsed.shieldedOwnerTagHex || parsed.ownerTagHex) {
+        form.shieldedOwnerTagHex = String(
+          parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex,
+        ).trim();
       }
       scanMessage.value = t("QR decoded successfully.");
     } catch (err) {
@@ -293,6 +299,7 @@ const handleSend = async () => {
       privateKeyHex: account.privateKeyHex,
       metadata: form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
+      shieldedOwnerTagHex: form.shieldedOwnerTagHex,
     });
     if (submitMode === "shield") {
       session.updateActiveAccount({ localOnly: false });

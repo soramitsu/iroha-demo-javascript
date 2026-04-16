@@ -185,7 +185,8 @@ export const resolveVpnRelayEndpointForController = async (
           : {};
     const resolved = await dnsLookup(hostValue, lookupOptions);
     const address = typeof resolved === "string" ? resolved : resolved.address;
-    const family = typeof resolved === "string" ? isIP(resolved) : resolved.family;
+    const family =
+      typeof resolved === "string" ? isIP(resolved) : resolved.family;
     if (family !== 4 && family !== 6) {
       return normalized;
     }
@@ -514,10 +515,11 @@ export class VpnRuntime {
         ...input,
         accountId,
       });
-      const controllerRelayEndpoint = await resolveVpnRelayEndpointForController(
-        normalizedSession.relayEndpoint,
-        input.toriiUrl,
-      );
+      const controllerRelayEndpoint =
+        await resolveVpnRelayEndpointForController(
+          normalizedSession.relayEndpoint,
+          input.toriiUrl,
+        );
       const controllerRoutePushes = resolveVpnRoutePushesForController(
         normalizedSession.routePushes,
         normalizedSession.tunnelAddresses,
@@ -556,10 +558,7 @@ export class VpnRuntime {
           .catch(() => null);
         if (receipt) {
           this.storeReceipt(
-            normalizeReceipt(
-              receipt as unknown as VpnReceipt,
-              input.toriiUrl,
-            ),
+            normalizeReceipt(receipt as unknown as VpnReceipt, input.toriiUrl),
           );
         }
       }
@@ -796,11 +795,7 @@ export class VpnRuntime {
     });
     this.receipts = receipts
       .map((item) =>
-        normalizeReceipt(
-          item as unknown as VpnReceipt,
-          auth.toriiUrl,
-          "torii",
-        ),
+        normalizeReceipt(item as unknown as VpnReceipt, auth.toriiUrl, "torii"),
       )
       .slice(0, MAX_RECEIPTS);
     this.persistReceipts();

@@ -1,4 +1,10 @@
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
@@ -172,7 +178,8 @@ const buildSignedXcodeArgs = ({
     derivedDataPath,
   ];
   const networkExtensionEntitlement =
-    signing?.networkExtensionEntitlement || defaultMacNetworkExtensionEntitlement;
+    signing?.networkExtensionEntitlement ||
+    defaultMacNetworkExtensionEntitlement;
   const appGroupId = signing?.appGroupId || defaultMacAppGroupId;
   args.push(`VPN_NETWORK_EXTENSION_ENTITLEMENT=${networkExtensionEntitlement}`);
   args.push(`VPN_APP_GROUP_ID=${appGroupId}`);
@@ -243,7 +250,9 @@ const readCodesignEntitlements = (targetPath) => {
     },
   );
   if (result.status !== 0) {
-    throw new Error(`codesign entitlements inspection failed for ${targetPath}`);
+    throw new Error(
+      `codesign entitlements inspection failed for ${targetPath}`,
+    );
   }
   return `${result.stdout ?? ""}${result.stderr ?? ""}`;
 };
@@ -316,7 +325,13 @@ const buildMacControllerApp = (signing) => {
       cwd: repoRoot,
     },
   );
-  return join(derivedDataPath, "Build", "Products", "Release", macHelperAppName);
+  return join(
+    derivedDataPath,
+    "Build",
+    "Products",
+    "Release",
+    macHelperAppName,
+  );
 };
 
 const buildMacPacketEngine = () => {
@@ -328,7 +343,9 @@ const buildMacPacketEngine = () => {
   });
   copyBuiltBinaryToTargets(
     join(irohaRoot, "target", "release", "sora-vpn-controller"),
-    macDistTargets.map((target) => join(distRoot, target, "sora-vpn-packet-engine")),
+    macDistTargets.map((target) =>
+      join(distRoot, target, "sora-vpn-packet-engine"),
+    ),
   );
 };
 
@@ -501,11 +518,15 @@ if (platform === "linux") {
   const builtPacketTunnel = buildMacPacketTunnelExtension(signing);
   copyBuiltBinaryToTargets(
     join(builtControllerApp, "Contents", "MacOS", "sora-vpn-controller"),
-    macDistTargets.map((target) => join(distRoot, target, "sora-vpn-controller")),
+    macDistTargets.map((target) =>
+      join(distRoot, target, "sora-vpn-controller"),
+    ),
   );
   copyBuiltBinaryToTargets(
     join(irohaRoot, "target", "release", "sora-vpn-controller"),
-    macDistTargets.map((target) => join(distRoot, target, "sora-vpn-packet-engine")),
+    macDistTargets.map((target) =>
+      join(distRoot, target, "sora-vpn-packet-engine"),
+    ),
   );
   copyBuiltDirectoryToTargets(
     builtPacketTunnel,
@@ -515,7 +536,12 @@ if (platform === "linux") {
   );
   stageMacControllerApp({
     builtApp: builtControllerApp,
-    packetEnginePath: join(irohaRoot, "target", "release", "sora-vpn-controller"),
+    packetEnginePath: join(
+      irohaRoot,
+      "target",
+      "release",
+      "sora-vpn-controller",
+    ),
     packetTunnelPath: builtPacketTunnel,
     signing,
     systemExtensionName: macConfig.systemExtensionName,

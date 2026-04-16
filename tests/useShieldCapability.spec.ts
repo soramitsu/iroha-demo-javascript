@@ -203,9 +203,7 @@ describe("useShieldCapability", () => {
     expect(capability.shieldCapabilityMessage.value).toContain(
       "ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
     );
-    expect(capability.shieldCapabilityMessage.value).not.toContain(
-      "NRT0`",
-    );
+    expect(capability.shieldCapabilityMessage.value).not.toContain("NRT0`");
   });
 
   it("does not fetch policy when torii url or asset definition is missing", async () => {

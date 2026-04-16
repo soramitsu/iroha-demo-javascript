@@ -123,20 +123,18 @@ describe("VpnView", () => {
     vi.useRealTimers();
   });
 
-  const mountView = async (
-    options?: {
-      account?: Partial<{
-        displayName: string;
-        domain: string;
-        accountId: string;
-        i105AccountId: string;
-        i105DefaultAccountId: string;
-        publicKeyHex: string;
-        privateKeyHex: string;
-        localOnly: boolean;
-      }>;
-    },
-  ) => {
+  const mountView = async (options?: {
+    account?: Partial<{
+      displayName: string;
+      domain: string;
+      accountId: string;
+      i105AccountId: string;
+      i105DefaultAccountId: string;
+      publicKeyHex: string;
+      privateKeyHex: string;
+      localOnly: boolean;
+    }>;
+  }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();

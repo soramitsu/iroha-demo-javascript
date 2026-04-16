@@ -103,7 +103,9 @@ export const getMacVpnProvisioningMessage = (input: {
   signatureDetails?: string;
 }) => {
   const normalizedEntitlements = input.entitlements.trim();
-  const normalizedSignatureDetails = String(input.signatureDetails ?? "").trim();
+  const normalizedSignatureDetails = String(
+    input.signatureDetails ?? "",
+  ).trim();
   const adHocOrUnsigned =
     /Signature=adhoc/i.test(normalizedSignatureDetails) ||
     /TeamIdentifier=not set/i.test(normalizedSignatureDetails);
@@ -343,16 +345,18 @@ export class BundledVpnController implements VpnLocalController {
     }
     try {
       const inspectPath = resolveMacBundlePath(controllerPath);
-      const [{ stdout: entitlementStdout, stderr: entitlementStderr }, { stdout: signatureStdout, stderr: signatureStderr }] =
-        await Promise.all([
-          execFileAsync("/usr/bin/codesign", [
-            "-d",
-            "--entitlements",
-            ":-",
-            inspectPath,
-          ]),
-          execFileAsync("/usr/bin/codesign", ["-dvv", inspectPath]),
-        ]);
+      const [
+        { stdout: entitlementStdout, stderr: entitlementStderr },
+        { stdout: signatureStdout, stderr: signatureStderr },
+      ] = await Promise.all([
+        execFileAsync("/usr/bin/codesign", [
+          "-d",
+          "--entitlements",
+          ":-",
+          inspectPath,
+        ]),
+        execFileAsync("/usr/bin/codesign", ["-dvv", inspectPath]),
+      ]);
       return getMacVpnProvisioningMessage({
         entitlements: `${entitlementStdout ?? ""}${entitlementStderr ?? ""}`,
         signatureDetails: `${signatureStdout ?? ""}${signatureStderr ?? ""}`,

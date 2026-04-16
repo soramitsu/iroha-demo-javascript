@@ -285,8 +285,8 @@ const requestAccountId = computed(
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(activeAccount.value, t("—")),
 );
-const configuredShieldAssetDefinitionId = computed(
-  () => extractAssetDefinitionId(session.connection.assetDefinitionId).trim(),
+const configuredShieldAssetDefinitionId = computed(() =>
+  extractAssetDefinitionId(session.connection.assetDefinitionId).trim(),
 );
 const shieldForm = reactive({
   quantity: "0",
@@ -419,14 +419,18 @@ const faucetStatusMessage = computed(() => {
 
 const faucetStatusDetail = computed(() => {
   if (faucetStatusPhase.value === "refreshingWallet") {
-    return t("Waiting for TAIRA to expose the funded asset in account balances.");
+    return t(
+      "Waiting for TAIRA to expose the funded asset in account balances.",
+    );
   }
   if (faucetStatusPhase.value === "waitingForClaimRetry") {
     return t(
       "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
     );
   }
-  return t("Your TAIRA faucet request is in flight. This can take a few seconds.");
+  return t(
+    "Your TAIRA faucet request is in flight. This can take a few seconds.",
+  );
 });
 
 const fetchAllAccountTransactions = async (input: {
