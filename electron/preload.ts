@@ -1041,7 +1041,7 @@ const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
-const CONFIDENTIAL_TX_COMMITTED_STATUS = "Committed";
+const CONFIDENTIAL_TX_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
 const CONFIDENTIAL_TX_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
 const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS = new Set([
   "halo2/pasta/ipa/anon-unshield-merkle16-poseidon",
@@ -2364,6 +2364,48 @@ const buildNexusEndpoint = (
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
 };
 
+const extractTransactionRecordStatus = (payload: unknown): string | null => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const rawStatus = (payload as Record<string, unknown>).status;
+  if (typeof rawStatus === "string") {
+    const normalized = rawStatus.trim();
+    return normalized || null;
+  }
+  if (
+    rawStatus &&
+    typeof rawStatus === "object" &&
+    !Array.isArray(rawStatus) &&
+    typeof (rawStatus as Record<string, unknown>).kind === "string"
+  ) {
+    const normalized = String(
+      (rawStatus as Record<string, unknown>).kind,
+    ).trim();
+    return normalized || null;
+  }
+  return null;
+};
+
+const fetchTransactionRecordStatus = async (
+  toriiUrl: string,
+  hashHex: string,
+): Promise<string | null> => {
+  const endpoint = buildNexusEndpoint(
+    toriiUrl,
+    `/v1/transactions/${encodeURIComponent(hashHex)}`,
+  );
+  try {
+    const payload = await fetchJson(endpoint, `Transaction ${hashHex}`);
+    return extractTransactionRecordStatus(payload);
+  } catch (error) {
+    if (isApiRequestError(error) && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
   const client = getClient(toriiUrl);
   const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
@@ -2372,7 +2414,18 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
     const payload = await client.getTransactionStatus(hashHex);
     const statusKind = extractPipelineStatusKind(payload);
     lastStatusKind = statusKind;
-    if (statusKind === CONFIDENTIAL_TX_COMMITTED_STATUS) {
+    if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
+      if (statusKind === "Applied") {
+        const recordStatus = await fetchTransactionRecordStatus(toriiUrl, hashHex);
+        if (recordStatus) {
+          lastStatusKind = recordStatus;
+        }
+        if (recordStatus && CONFIDENTIAL_TX_FAILURE_STATUSES.has(recordStatus)) {
+          throw new Error(
+            `Transaction ${hashHex} ${recordStatus.toLowerCase()} before it committed.`,
+          );
+        }
+      }
       return;
     }
     if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
@@ -2886,8 +2939,115 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
   return [...byHash.values()];
 };
 
+const confidentialNoteIndexIncludesEntrypointHash = async (input: {
+  toriiUrl: string;
+  assetDefinitionId: string;
+  hashHex: string;
+}) => {
+  const normalizedHash = trimString(input.hashHex).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedHash)) {
+    throw new Error("Confidential relay wait requires a 32-byte hash.");
+  }
+  let cursor: string | null = "";
+  const seenCursors = new Set<string>();
+  while (cursor !== null) {
+    if (cursor) {
+      if (seenCursors.has(cursor)) {
+        throw new Error("Confidential note index returned a repeated cursor.");
+      }
+      seenCursors.add(cursor);
+    }
+    const endpoint = buildNexusEndpoint(
+      input.toriiUrl,
+      "/v1/confidential/notes",
+      {
+        asset_definition_id: input.assetDefinitionId,
+        limit: CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE,
+        ...(cursor ? { cursor } : {}),
+      },
+    );
+    const response = await nodeFetch(endpoint, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (response.status === 404 || response.status === 405) {
+      return false;
+    }
+    if (!response.ok) {
+      const detail = await readApiErrorDetail(response);
+      throw new Error(
+        detail ||
+          `Confidential note index request failed with status ${response.status} (${response.statusText})`,
+      );
+    }
+    const payload = ensureObjectResponse(
+      (await response.json()) as unknown,
+      "Confidential note index",
+    );
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    for (const item of items) {
+      const normalized = normalizeConfidentialNoteIndexItem(item, 0);
+      if (
+        normalized &&
+        normalized.result_ok !== false &&
+        typeof normalized.entrypoint_hash === "string" &&
+        normalized.entrypoint_hash.toLowerCase() === normalizedHash
+      ) {
+        return true;
+      }
+    }
+    const nextCursor = trimString(payload.next_cursor);
+    cursor = nextCursor || null;
+  }
+  return false;
+};
+
+const waitForConfidentialRelayCommit = async (input: {
+  toriiUrl: string;
+  assetDefinitionId: string;
+  hashHex: string;
+}) => {
+  const client = getClient(input.toriiUrl);
+  const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
+  let lastStatusKind: string | null = null;
+  while (Date.now() <= deadline) {
+    const payload = await client.getTransactionStatus(input.hashHex);
+    const statusKind = extractPipelineStatusKind(payload);
+    lastStatusKind = statusKind;
+    if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
+      return;
+    }
+    if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
+      throw new Error(
+        `Transaction ${input.hashHex} ${statusKind.toLowerCase()} before it committed.`,
+      );
+    }
+    if (
+      await confidentialNoteIndexIncludesEntrypointHash({
+        toriiUrl: input.toriiUrl,
+        assetDefinitionId: input.assetDefinitionId,
+        hashHex: input.hashHex,
+      })
+    ) {
+      return;
+    }
+    if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
+      break;
+    }
+    await waitForMs(CONFIDENTIAL_TX_FINALITY_INTERVAL_MS);
+  }
+
+  const timeoutSeconds = Math.trunc(CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS / 1000);
+  throw new Error(
+    lastStatusKind
+      ? `Transaction ${input.hashHex} stayed in ${lastStatusKind} and did not commit within ${timeoutSeconds} seconds.`
+      : `Transaction ${input.hashHex} did not commit within ${timeoutSeconds} seconds.`,
+  );
+};
+
 const submitConfidentialRelayTransfer = async (input: {
   toriiUrl: string;
+  assetDefinitionId: string;
   signedTransaction: Buffer | ArrayBuffer | ArrayBufferView;
 }): Promise<{ hash: string; relayAuthority: string; sourceHash: string }> => {
   const endpoint = buildNexusEndpoint(
@@ -2925,7 +3085,11 @@ const submitConfidentialRelayTransfer = async (input: {
       "Anonymous shielded relay returned an invalid source hash.",
     );
   }
-  await waitForTransactionCommit(input.toriiUrl, hash);
+  await waitForConfidentialRelayCommit({
+    toriiUrl: input.toriiUrl,
+    assetDefinitionId: input.assetDefinitionId,
+    hashHex: hash,
+  });
   return {
     hash,
     relayAuthority: trimString(payload.relay_authority),
@@ -3408,6 +3572,7 @@ const submitConfidentialSelfConsolidation = async (input: {
   });
   const submission = await submitConfidentialRelayTransfer({
     toriiUrl: input.toriiUrl,
+    assetDefinitionId: materials.resolvedAssetId,
     signedTransaction: tx.signedTransaction,
   });
   upsertConfidentialWalletShadowTransaction({
@@ -4082,6 +4247,7 @@ const api: IrohaBridge = {
           inputs: selection.selected.map((note) => ({
             amount: note.amount,
             rhoHex: note.rho_hex,
+            diversifierHex: note.diversifier_hex,
             leafIndex: note.leaf_index,
           })),
           publicAmount: normalizedAmount,
@@ -4121,6 +4287,7 @@ const api: IrohaBridge = {
           inputs: selection.selected.map((note) => ({
             amount: note.amount,
             rhoHex: note.rho_hex,
+            diversifierHex: note.diversifier_hex,
             leafIndex: note.leaf_index,
           })),
           outputs: changeOutputs.map(({ note }) => ({
@@ -4498,6 +4665,7 @@ const api: IrohaBridge = {
       ];
       const submission = await submitConfidentialRelayTransfer({
         toriiUrl: input.toriiUrl,
+        assetDefinitionId: materials.resolvedAssetId,
         signedTransaction: tx.signedTransaction,
       });
       upsertConfidentialWalletShadowTransaction({
