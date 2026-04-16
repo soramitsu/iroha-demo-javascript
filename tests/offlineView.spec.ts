@@ -156,7 +156,7 @@ describe("OfflineView move-to-online shield mode", () => {
       expect.objectContaining({
         destinationAccountId: ALICE_I105_ACCOUNT_ID,
         quantity: "10",
-        shielded: true,
+        unshield: true,
       }),
     );
     expect(moveSection.text()).toContain(
@@ -198,7 +198,7 @@ describe("OfflineView move-to-online shield mode", () => {
       expect.objectContaining({
         assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
         destinationAccountId: ALICE_I105_ACCOUNT_ID,
-        shielded: true,
+        unshield: true,
       }),
     );
   });

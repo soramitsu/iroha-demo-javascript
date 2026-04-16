@@ -959,7 +959,7 @@ const moveToOnline = async () => {
       quantity: amount,
       privateKeyHex: activeAccount.value.privateKeyHex,
       metadata: onlineForm.memo ? { memo: onlineForm.memo } : undefined,
-      shielded: onlineForm.shielded,
+      ...(onlineForm.shielded ? { unshield: true } : {}),
     });
     if (onlineForm.shielded) {
       session.updateActiveAccount({ localOnly: false });

@@ -813,3 +813,54 @@ export const selectWalletConfidentialNotes = (
     change: (total - target).toString(),
   };
 };
+
+export const selectWalletConfidentialNotesForExactAmount = (
+  notes: ReadonlyArray<WalletSpendableConfidentialNote>,
+  amount: string,
+): {
+  selected: WalletSpendableConfidentialNote[];
+  total: string;
+  change: string;
+} => {
+  const target = parsePositiveWholeAmount(amount, "amount");
+
+  for (const note of notes) {
+    if (parsePositiveWholeAmount(note.amount, "note.amount") === target) {
+      return {
+        selected: [note],
+        total: target.toString(),
+        change: "0",
+      };
+    }
+  }
+
+  for (let leftIndex = 0; leftIndex < notes.length; leftIndex += 1) {
+    const left = notes[leftIndex];
+    if (!left) {
+      continue;
+    }
+    const leftAmount = parsePositiveWholeAmount(left.amount, "note.amount");
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < notes.length;
+      rightIndex += 1
+    ) {
+      const right = notes[rightIndex];
+      if (!right) {
+        continue;
+      }
+      const rightAmount = parsePositiveWholeAmount(right.amount, "note.amount");
+      if (leftAmount + rightAmount === target) {
+        return {
+          selected: [left, right],
+          total: target.toString(),
+          change: "0",
+        };
+      }
+    }
+  }
+
+  throw new Error(
+    "Unable to match the requested amount with an exact one- or two-note shielded spend. Re-shield or consolidate first.",
+  );
+};

@@ -8,6 +8,7 @@ import {
   deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialNullifierHex,
   selectWalletConfidentialNotes,
+  selectWalletConfidentialNotesForExactAmount,
 } from "../electron/confidentialWallet";
 
 const CHAIN_ID = "chain";
@@ -312,5 +313,70 @@ describe("confidential wallet helpers", () => {
     expect(selected.total).toBe("10");
     expect(selected.change).toBe("5");
     expect(selected.selected).toHaveLength(2);
+  });
+
+  it("finds an exact one- or two-note match for unshield amounts", () => {
+    const alice = makeAccount();
+    const firstNote = createWalletConfidentialNote({
+      assetDefinitionId: ASSET_ID,
+      amount: "4",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
+      createdAtMs: 1,
+    });
+    const secondNote = createWalletConfidentialNote({
+      assetDefinitionId: ASSET_ID,
+      amount: "6",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
+      createdAtMs: 2,
+    });
+    const thirdNote = createWalletConfidentialNote({
+      assetDefinitionId: ASSET_ID,
+      amount: "3",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
+      createdAtMs: 3,
+    });
+    const selected = selectWalletConfidentialNotesForExactAmount(
+      [
+        {
+          ...firstNote,
+          nullifier_hex: deriveWalletConfidentialNullifierHex({
+            privateKeyHex: alice.privateKeyHex,
+            assetDefinitionId: ASSET_ID,
+            chainId: CHAIN_ID,
+            rhoHex: firstNote.rho_hex,
+          }),
+          source_tx_hash: "0x1",
+          leaf_index: 0,
+        },
+        {
+          ...secondNote,
+          nullifier_hex: deriveWalletConfidentialNullifierHex({
+            privateKeyHex: alice.privateKeyHex,
+            assetDefinitionId: ASSET_ID,
+            chainId: CHAIN_ID,
+            rhoHex: secondNote.rho_hex,
+          }),
+          source_tx_hash: "0x2",
+          leaf_index: 1,
+        },
+        {
+          ...thirdNote,
+          nullifier_hex: deriveWalletConfidentialNullifierHex({
+            privateKeyHex: alice.privateKeyHex,
+            assetDefinitionId: ASSET_ID,
+            chainId: CHAIN_ID,
+            rhoHex: thirdNote.rho_hex,
+          }),
+          source_tx_hash: "0x3",
+          leaf_index: 2,
+        },
+      ],
+      "7",
+    );
+
+    expect(selected.total).toBe("7");
+    expect(selected.change).toBe("0");
+    expect(selected.selected).toHaveLength(2);
+    expect(selected.selected.map((note) => note.amount)).toEqual(["4", "3"]);
   });
 });

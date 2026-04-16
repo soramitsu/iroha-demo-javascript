@@ -521,6 +521,7 @@ export interface IrohaBridge {
     privateKeyHex: string;
     metadata?: Record<string, unknown>;
     shielded?: boolean;
+    unshield?: boolean;
     shieldedOwnerTagHex?: string;
   }): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {

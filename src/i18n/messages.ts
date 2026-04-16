@@ -1901,7 +1901,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Payment recorded to offline wallet.": "Payment saved to the offline wallet.",
   "Move funds to online wallet": "Move to online wallet",
   "Send to online wallet": "Send to wallet",
-  "Shield to online wallet": "Shield to wallet",
+  "Shield to online wallet": "Unshield to wallet",
   "No offline transfers yet.": "No offline activity yet.",
   "Offline wallet registered on this device.":
     "Offline wallet saved on this device.",
@@ -1909,7 +1909,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Transfer submitted and offline balance updated.":
     "Transfer sent and offline balance updated.",
   "Shield transfer submitted and offline balance updated.":
-    "Shielded transfer sent and offline balance updated.",
+    "Unshield sent and offline balance updated.",
   "Failed to move funds online.": "Move failed.",
   "Enter an amount to move online.": "Enter an amount.",
   "Enter an amount to request.": "Enter an amount.",
