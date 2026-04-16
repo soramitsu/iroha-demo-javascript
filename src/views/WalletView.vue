@@ -117,6 +117,22 @@
             <span class="kv-value">{{ transparentXorBalance }}</span>
           </div>
         </div>
+        <div class="wallet-shield-recovery-row">
+          <p class="helper wallet-shield-note">
+            {{ shieldedXorRecoveryMessage }}
+          </p>
+          <button
+            class="secondary"
+            :disabled="shieldScanLoading || !canScanShieldedXor"
+            @click="rescanShieldedXor"
+          >
+            {{
+              shieldScanLoading
+                ? t("Scanning shielded notes…")
+                : t("Rescan shielded notes")
+            }}
+          </button>
+        </div>
         <div class="wallet-shield-actions">
           <label class="wallet-shield-input">
             <span>{{ t("Amount") }}</span>
@@ -244,6 +260,7 @@ import {
   fetchAccountTransactions,
   getConfidentialAssetBalance,
   requestFaucetFunds,
+  scanConfidentialWallet,
   transferAsset,
 } from "@/services/iroha";
 import { useShieldCapability } from "@/composables/useShieldCapability";
@@ -292,6 +309,7 @@ const shieldForm = reactive({
   quantity: "0",
 });
 const shieldLoading = ref(false);
+const shieldScanLoading = ref(false);
 const shieldMessage = ref("");
 const shieldError = ref("");
 const walletShieldEnabled = ref(true);
@@ -336,13 +354,23 @@ const FAUCET_REFRESH_DELAY_MS = 1_500;
 
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
-const shieldedXorBalanceState = ref<ConfidentialAssetBalanceView>({
-  resolvedAssetId: configuredShieldAssetDefinitionId.value,
+const emptyConfidentialBalance = (
+  resolvedAssetId = configuredShieldAssetDefinitionId.value,
+): ConfidentialAssetBalanceView => ({
+  resolvedAssetId,
   quantity: "0",
   onChainQuantity: "0",
   spendableQuantity: "0",
   exact: true,
+  scanSource: "account-transactions",
+  scanStatus: "complete",
+  scanWatermarkBlock: null,
+  recoveredNoteCount: 0,
+  trackedAssetIds: resolvedAssetId ? [resolvedAssetId] : [],
 });
+const shieldedXorBalanceState = ref<ConfidentialAssetBalanceView>(
+  emptyConfidentialBalance(),
+);
 const loading = ref(false);
 const faucetLoading = ref(false);
 const faucetMessage = ref("");
@@ -475,13 +503,7 @@ const refresh = async () => {
     requestGeneration.value += 1;
     loading.value = false;
     resetWalletState();
-    shieldedXorBalanceState.value = {
-      resolvedAssetId: configuredShieldAssetDefinitionId.value,
-      quantity: "0",
-      onChainQuantity: "0",
-      spendableQuantity: "0",
-      exact: true,
-    };
+    shieldedXorBalanceState.value = emptyConfidentialBalance();
     return;
   }
   const currentGeneration = requestGeneration.value + 1;
@@ -521,15 +543,9 @@ const refresh = async () => {
       confidentialAssetDefinitionId &&
         (!accountWasLocalOnly || assetItems.length || txItems.length),
     );
-    let confidentialBalance: ConfidentialAssetBalanceView = {
-      resolvedAssetId:
-        confidentialAssetDefinitionId ||
-        configuredShieldAssetDefinitionId.value,
-      quantity: "0",
-      onChainQuantity: "0",
-      spendableQuantity: "0",
-      exact: true,
-    };
+    let confidentialBalance = emptyConfidentialBalance(
+      confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
+    );
     if (shouldFetchConfidentialBalance) {
       try {
         confidentialBalance = await getConfidentialAssetBalance({
@@ -566,13 +582,7 @@ const refresh = async () => {
     }
     assets.value = [];
     transactionsRaw.value = [];
-    shieldedXorBalanceState.value = {
-      resolvedAssetId: configuredShieldAssetDefinitionId.value,
-      quantity: "0",
-      onChainQuantity: "0",
-      spendableQuantity: "0",
-      exact: true,
-    };
+    shieldedXorBalanceState.value = emptyConfidentialBalance();
     walletError.value = toUserFacingErrorMessage(
       error,
       t("Wallet data is unavailable until this account exists on-chain."),
@@ -795,6 +805,44 @@ const shieldedXorBalanceExact = computed(
 const shieldedXorBalanceDisplay = computed(
   () => shieldedXorBalanceState.value.quantity ?? t("—"),
 );
+const canScanShieldedXor = computed(() =>
+  Boolean(
+    session.hasAccount &&
+      session.connection.toriiUrl &&
+      activeAccount.value?.privateKeyHex &&
+      shieldedXorAssetId.value,
+  ),
+);
+const shieldedXorRecoveryMessage = computed(() => {
+  const state = shieldedXorBalanceState.value;
+  const source =
+    state.scanSource === "global-note-index"
+      ? t("global note index")
+      : t("account history fallback");
+  const watermark =
+    state.scanWatermarkBlock === null
+      ? t("current available history")
+      : t("block {block}", { block: state.scanWatermarkBlock });
+  if (state.scanStatus === "complete") {
+    return t(
+      "Recovered {count} shielded note(s) from {source} through {watermark}.",
+      {
+        count: state.recoveredNoteCount,
+        source,
+        watermark,
+      },
+    );
+  }
+  if (state.scanStatus === "limited") {
+    return t(
+      "Global note index is unavailable, so recovery is limited to this account history through {watermark}.",
+      { watermark },
+    );
+  }
+  return t(
+    "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.",
+  );
+});
 const canCreateShieldedXor = computed(() =>
   Boolean(
     session.hasAccount &&
@@ -805,6 +853,35 @@ const canCreateShieldedXor = computed(() =>
       isPositiveWholeAmount(shieldForm.quantity),
   ),
 );
+
+const rescanShieldedXor = async () => {
+  if (!canScanShieldedXor.value || !activeAccount.value) {
+    return;
+  }
+  shieldScanLoading.value = true;
+  shieldError.value = "";
+  try {
+    const shieldAssetDefinitionId =
+      extractAssetDefinitionId(shieldedXorAssetId.value).trim() ||
+      shieldedXorAssetId.value;
+    shieldedXorBalanceState.value = await scanConfidentialWallet({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      accountId: requestAccountId.value || activeAccount.value.accountId,
+      privateKeyHex: activeAccount.value.privateKeyHex,
+      assetDefinitionId: shieldAssetDefinitionId,
+      force: true,
+    });
+    shieldMessage.value = t("Shielded note scan complete.");
+  } catch (error) {
+    shieldError.value = toUserFacingErrorMessage(
+      error,
+      t("Shielded note scan failed."),
+    );
+  } finally {
+    shieldScanLoading.value = false;
+  }
+};
 
 const transactions = computed<TransactionView[]>(() =>
   transactionsRaw.value.slice(0, WALLET_TRANSACTION_DISPLAY_LIMIT).map((tx) => {
@@ -968,6 +1045,18 @@ watch(
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.wallet-shield-recovery-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wallet-shield-recovery-row .wallet-shield-note {
+  flex: 1 1 260px;
 }
 
 .wallet-shield-balance {

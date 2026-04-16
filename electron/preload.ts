@@ -155,6 +155,11 @@ type ConfidentialAssetBalanceResponse = {
   onChainQuantity: string | null;
   spendableQuantity: string;
   exact: boolean;
+  scanSource: "global-note-index" | "account-transactions";
+  scanStatus: "complete" | "limited" | "incomplete";
+  scanWatermarkBlock: number | null;
+  recoveredNoteCount: number;
+  trackedAssetIds: string[];
 };
 
 type ExplorerMetricsResponse = Awaited<
@@ -620,6 +625,21 @@ type IrohaBridge = {
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
   getConfidentialAssetBalance(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetBalanceResponse>;
+  scanConfidentialWallet(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+    force?: boolean;
+  }): Promise<ConfidentialAssetBalanceResponse>;
+  getConfidentialWalletState(input: {
     toriiUrl: string;
     chainId: string;
     accountId: string;
@@ -2735,7 +2755,11 @@ const fetchConfidentialAssetRootWindow = async (
   );
   const recentRootsHex = Array.isArray(payload.roots)
     ? payload.roots
-        .map((value) => String(value ?? "").trim().toLowerCase())
+        .map((value) =>
+          String(value ?? "")
+            .trim()
+            .toLowerCase(),
+        )
         .filter((value) => /^[0-9a-f]{64}$/.test(value))
     : [];
   const latestRootHex = String(
@@ -2758,7 +2782,9 @@ const fetchConfidentialAssetRootWindow = async (
 const fetchPrivateKaigiRoots = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
-) => (await fetchConfidentialAssetRootWindow(toriiUrlRaw, assetDefinitionId)).latestRootHex;
+) =>
+  (await fetchConfidentialAssetRootWindow(toriiUrlRaw, assetDefinitionId))
+    .latestRootHex;
 
 const fetchConfidentialAssetDefinition = async (
   toriiUrlRaw: string,
@@ -3238,6 +3264,10 @@ const resolveConfidentialAssetBalance = async (input: {
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
     }));
+  const scanSource =
+    noteIndexTransactions === null
+      ? "account-transactions"
+      : "global-note-index";
   const displayTransactions = mergeConfidentialWalletShadowTransactions({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
@@ -3249,6 +3279,19 @@ const resolveConfidentialAssetBalance = async (input: {
     assetDefinitionIds: trackedAssetIds,
     markUnrecognizedTransfersInexact: noteIndexTransactions === null,
   });
+  const scanWatermarkBlock = displayTransactions.reduce<number | null>(
+    (maxBlock, transaction) => {
+      const block = Number(transaction.block);
+      if (!Number.isFinite(block) || block < 0) {
+        return maxBlock;
+      }
+      const normalizedBlock = Math.trunc(block);
+      return maxBlock === null
+        ? normalizedBlock
+        : Math.max(maxBlock, normalizedBlock);
+    },
+    null,
+  );
   const onChainBalance =
     noteIndexTransactions === null
       ? deriveOnChainShieldedBalance(committedTransactions, {
@@ -3280,6 +3323,15 @@ const resolveConfidentialAssetBalance = async (input: {
     onChainQuantity: onChainBalance.quantity,
     spendableQuantity: ledger.spendableQuantity,
     exact: ledger.exact,
+    scanSource,
+    scanStatus: ledger.exact
+      ? "complete"
+      : noteIndexTransactions === null
+        ? "limited"
+        : "incomplete",
+    scanWatermarkBlock,
+    recoveredNoteCount: ledger.notes.length,
+    trackedAssetIds,
   };
 };
 
@@ -3303,10 +3355,7 @@ const resolveConfidentialTransferMaterials = async (input: {
         assetDefinitionIds: trackedAssetIds,
       }),
       fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
-      fetchConfidentialAssetRootWindow(
-        input.toriiUrl,
-        balance.resolvedAssetId,
-      ),
+      fetchConfidentialAssetRootWindow(input.toriiUrl, balance.resolvedAssetId),
     ]);
   if (noteIndexTransactions === null) {
     throw new Error(
@@ -4742,6 +4791,36 @@ const api: IrohaBridge = {
     }
   },
   getConfidentialAssetBalance({
+    toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    assetDefinitionId,
+  }) {
+    return resolveConfidentialAssetBalance({
+      toriiUrl,
+      chainId,
+      accountId,
+      privateKeyHex,
+      assetDefinitionId,
+    });
+  },
+  scanConfidentialWallet({
+    toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    assetDefinitionId,
+  }) {
+    return resolveConfidentialAssetBalance({
+      toriiUrl,
+      chainId,
+      accountId,
+      privateKeyHex,
+      assetDefinitionId,
+    });
+  },
+  getConfidentialWalletState({
     toriiUrl,
     chainId,
     accountId,

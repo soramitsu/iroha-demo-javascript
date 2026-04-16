@@ -300,7 +300,9 @@ export function summarizePublicFinalityDiagnostic({
     lockedQcHeight:
       normalizeOptionalNumber(statusSumeragi?.locked_qc_height) ??
       normalizeOptionalNumber(sumeragiPayload?.locked_qc?.height),
-    membershipHeight: normalizeOptionalNumber(sumeragiPayload?.membership?.height),
+    membershipHeight: normalizeOptionalNumber(
+      sumeragiPayload?.membership?.height,
+    ),
     viewChanges:
       normalizeOptionalNumber(statusPayload?.view_changes) ??
       normalizeOptionalNumber(sumeragiPayload?.view_change_index),
@@ -312,7 +314,8 @@ export function summarizePublicFinalityDiagnostic({
       latestBlockHeight !== null &&
       commitQcHeight !== null &&
       latestBlockHeight === commitQcHeight &&
-      (viewChangeCause === "missing_qc" || viewChangeCause === "quorum_timeout"),
+      (viewChangeCause === "missing_qc" ||
+        viewChangeCause === "quorum_timeout"),
   };
 }
 

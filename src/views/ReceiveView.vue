@@ -108,10 +108,13 @@ const generateQr = async () => {
   const payload = {
     schema: "iroha-confidential-payment-address/v2",
     accountId,
+    chainId: session.connection.chainId,
     assetDefinitionId,
     amount: currentAmount,
     shieldedOwnerTagHex,
     shieldedDiversifierHex,
+    shieldedAddressIndex: 0,
+    recoveryHint: "encrypted-note-envelope-required",
   };
   try {
     const nextQrMarkup = await QRCode.toString(JSON.stringify(payload), {

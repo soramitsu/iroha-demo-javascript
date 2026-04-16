@@ -83,7 +83,7 @@ async function main() {
         ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned HTTP 403)."
         : onboardingOutcome === "skipped_400"
           ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned a reusable HTTP 400 on the deterministic onboarding probe)."
-        : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
+          : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
     );
   } catch (error) {
     const publicFinalityDiagnostic = await collectPublicFinalityDiagnostic(
@@ -150,9 +150,7 @@ function writeCachedFundedWalletConfig(fundedAccount) {
       String(fundedAccount?.i105AccountId ?? "").trim() ||
       String(fundedAccount?.displayAccountId ?? "").trim(),
     assetId: String(fundedAccount?.assetId ?? "").trim(),
-    assetDefinitionId: String(
-      fundedAccount?.assetDefinitionId ?? "",
-    ).trim(),
+    assetDefinitionId: String(fundedAccount?.assetDefinitionId ?? "").trim(),
   };
 
   if (!payload.privateKeyHex) {
@@ -341,7 +339,8 @@ async function runFaucetFlow(page) {
       await configureConnection(page);
       const faucetBootstrap = await page.evaluate(
         ({ torii, chain, prefix, derivationLabel }) => {
-          const { publicKeyHex, privateKeyHex } = window.iroha.generateKeyPair();
+          const { publicKeyHex, privateKeyHex } =
+            window.iroha.generateKeyPair();
           const summary = window.iroha.deriveAccountAddress({
             domain: derivationLabel,
             publicKeyHex,
@@ -468,7 +467,9 @@ async function runFaucetFlow(page) {
                 accountId,
                 limit: 50,
               });
-              const items = Array.isArray(response?.items) ? response.items : [];
+              const items = Array.isArray(response?.items)
+                ? response.items
+                : [];
               const positiveAsset = items.find((asset) => {
                 const quantity = Number(String(asset?.quantity ?? ""));
                 return Number.isFinite(quantity) && quantity > 0;
@@ -544,10 +545,7 @@ async function runFaucetFlow(page) {
       };
     } catch (error) {
       lastError = error;
-      if (
-        attempt < 2 &&
-        isRetryableFaucetBadRequest(String(error ?? ""))
-      ) {
+      if (attempt < 2 && isRetryableFaucetBadRequest(String(error ?? ""))) {
         console.log(
           `Faucet probe attempt ${attempt + 1} hit a retryable TAIRA 400; retrying with a fresh account.`,
         );
@@ -875,7 +873,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
         bobSummary.i105AccountId,
         bobKeyPair.privateKeyHex,
       );
-      const initialBobSpendable = BigInt(readSpendableQuantity(initialBobBalance));
+      const initialBobSpendable = BigInt(
+        readSpendableQuantity(initialBobBalance),
+      );
 
       const selfShieldQuantity =
         initialAliceSpendable >= 2n ? 0n : 2n - initialAliceSpendable;
@@ -887,19 +887,35 @@ async function runReadOnlyFlow(page, fundedAccount) {
         spendableQuantity: initialAliceSpendable.toString(),
       };
       if (selfShieldQuantity > 0n) {
-        const selfShield = await window.iroha.transferAsset({
-          toriiUrl: torii,
-          chainId: chain,
-          assetDefinitionId: assetId,
-          accountId: aliceAccountId,
-          destinationAccountId: aliceAccountId,
-          quantity: selfShieldQuantity.toString(),
-          privateKeyHex: alicePrivateKeyHex,
-          shielded: true,
-          metadata: {
-            source: "electron-live-self-shield",
-          },
-        });
+        let selfShield;
+        try {
+          selfShield = await Promise.race([
+            window.iroha.transferAsset({
+              toriiUrl: torii,
+              chainId: chain,
+              assetDefinitionId: assetId,
+              accountId: aliceAccountId,
+              destinationAccountId: aliceAccountId,
+              quantity: selfShieldQuantity.toString(),
+              privateKeyHex: alicePrivateKeyHex,
+              shielded: true,
+              metadata: {
+                source: "electron-live-self-shield",
+              },
+            }),
+            waitForMs(120_000).then(() => {
+              throw new Error("self-shield submit timed out");
+            }),
+          ]);
+        } catch (error) {
+          return {
+            ok: false,
+            stage: "self-shield-submit",
+            error: String(error ?? ""),
+            selfShieldQuantity: selfShieldQuantity.toString(),
+            initialAliceBalance,
+          };
+        }
         selfShieldHash = selfShield.hash;
         aliceAfterSelfShield = await waitForConfidentialBalance({
           accountId: aliceAccountId,
@@ -922,21 +938,40 @@ async function runReadOnlyFlow(page, fundedAccount) {
         }
       }
 
-      const recipientTransfer = await window.iroha.transferAsset({
-        toriiUrl: torii,
-        chainId: chain,
-        assetDefinitionId: assetId,
-        accountId: aliceAccountId,
-        destinationAccountId: bobSummary.i105AccountId,
-        quantity: "1",
-        privateKeyHex: alicePrivateKeyHex,
-        shielded: true,
-        shieldedOwnerTagHex: bobOwnerTagHex,
-        shieldedDiversifierHex: bobDiversifierHex,
-        metadata: {
-          source: "electron-live-recipient-shielded-send",
-        },
-      });
+      let recipientTransfer;
+      try {
+        recipientTransfer = await Promise.race([
+          window.iroha.transferAsset({
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: assetId,
+            accountId: aliceAccountId,
+            destinationAccountId: bobSummary.i105AccountId,
+            quantity: "1",
+            privateKeyHex: alicePrivateKeyHex,
+            shielded: true,
+            shieldedOwnerTagHex: bobOwnerTagHex,
+            shieldedDiversifierHex: bobDiversifierHex,
+            metadata: {
+              source: "electron-live-recipient-shielded-send",
+            },
+          }),
+          waitForMs(120_000).then(() => {
+            throw new Error("recipient shielded send timed out");
+          }),
+        ]);
+      } catch (error) {
+        return {
+          ok: false,
+          stage: "recipient-submit",
+          error: String(error ?? ""),
+          selfShieldHash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+        };
+      }
 
       const expectedAliceAfterRecipient =
         initialAliceSpendable + selfShieldQuantity - 1n;
@@ -973,19 +1008,41 @@ async function runReadOnlyFlow(page, fundedAccount) {
         };
       }
 
-      const unshield = await window.iroha.transferAsset({
-        toriiUrl: torii,
-        chainId: chain,
-        assetDefinitionId: assetId,
-        accountId: aliceAccountId,
-        destinationAccountId: aliceAccountId,
-        quantity: "1",
-        privateKeyHex: alicePrivateKeyHex,
-        unshield: true,
-        metadata: {
-          source: "electron-live-unshield",
-        },
-      });
+      let unshield;
+      try {
+        unshield = await Promise.race([
+          window.iroha.transferAsset({
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: assetId,
+            accountId: aliceAccountId,
+            destinationAccountId: aliceAccountId,
+            quantity: "1",
+            privateKeyHex: alicePrivateKeyHex,
+            unshield: true,
+            metadata: {
+              source: "electron-live-unshield",
+            },
+          }),
+          waitForMs(120_000).then(() => {
+            throw new Error("unshield submit timed out");
+          }),
+        ]);
+      } catch (error) {
+        return {
+          ok: false,
+          stage: "unshield-submit",
+          error: String(error ?? ""),
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          aliceAfterRecipient,
+          bobAfterRecipient,
+        };
+      }
       const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
       const aliceAfterUnshield = await waitForConfidentialBalance({
         accountId: aliceAccountId,
