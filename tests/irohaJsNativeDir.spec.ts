@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   configureIrohaJsNativeDir,
+  hasRequiredIrohaJsNativeExports,
   resolveIrohaJsNativeDir,
 } from "../electron/irohaJsNativeDir";
 
@@ -15,12 +16,20 @@ describe("irohaJsNativeDir", () => {
           "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
         );
       },
+      () => ({
+        deriveConfidentialReceiveAddressV2() {},
+        buildConfidentialTransferProofV2() {},
+        buildConfidentialUnshieldProofV2() {},
+        buildConfidentialUnshieldProofV3() {},
+      }),
     );
 
     expect(resolved).toBe(
       "/Users/test/app/node_modules/@iroha/iroha-js/native",
     );
-    expect(seenPaths[0]).toBe("/Users/test/app/dist/native/iroha_js_host.node");
+    expect(seenPaths[0]).toBe(
+      "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+    );
   });
 
   it("does not overwrite an explicit native-dir override", () => {
@@ -36,5 +45,47 @@ describe("irohaJsNativeDir", () => {
 
     expect(resolved).toBe("/custom/native");
     expect(env.IROHA_JS_NATIVE_DIR).toBe("/custom/native");
+  });
+
+  it("falls back to dist/native when the installed package native binary is incompatible", () => {
+    const resolved = resolveIrohaJsNativeDir(
+      "file:///Users/test/app/dist/preload/preload.mjs",
+      (path) =>
+        path.endsWith(
+          "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+        ) || path.endsWith("/dist/native/iroha_js_host.node"),
+      (_moduleUrl, nativeModulePath) =>
+        nativeModulePath.endsWith("/dist/native/iroha_js_host.node")
+          ? {
+              deriveConfidentialReceiveAddressV2() {},
+              buildConfidentialTransferProofV2() {},
+              buildConfidentialUnshieldProofV2() {},
+              buildConfidentialUnshieldProofV3() {},
+            }
+          : {},
+    );
+
+    expect(resolved).toBe("/Users/test/app/dist/native");
+  });
+});
+
+describe("hasRequiredIrohaJsNativeExports", () => {
+  it("accepts binaries that expose confidential v2 helpers", () => {
+    expect(
+      hasRequiredIrohaJsNativeExports({
+        deriveConfidentialReceiveAddressV2() {},
+        buildConfidentialTransferProofV2() {},
+        buildConfidentialUnshieldProofV2() {},
+        buildConfidentialUnshieldProofV3() {},
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects binaries missing confidential v2 helpers", () => {
+    expect(
+      hasRequiredIrohaJsNativeExports({
+        deriveConfidentialOwnerTagV2() {},
+      }),
+    ).toBe(false);
   });
 });

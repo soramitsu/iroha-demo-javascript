@@ -832,8 +832,14 @@ const waitForMs = (delayMs: number) =>
     setTimeout(resolve, delayMs);
   });
 
+const CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS = 3;
+const CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS = 750;
 const FAUCET_CLAIM_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
 const FAUCET_CLAIM_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
+const isConfidentialRootHintMismatchError = (error: unknown) =>
+  (error instanceof Error ? error.message : String(error ?? "")).includes(
+    "tree commitments do not match the supplied root_hint",
+  );
 
 const waitForFaucetClaimFinality = async (
   client: ToriiClient,
@@ -2630,7 +2636,7 @@ const fetchPrivateKaigiAssetDefinition = async (
     "Private Kaigi XOR asset definition",
   );
 
-const fetchPrivateKaigiRoots = async (
+const fetchConfidentialAssetRootWindow = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
 ) => {
@@ -2650,22 +2656,39 @@ const fetchPrivateKaigiRoots = async (
     const detail = await response.text().catch(() => "");
     throw new Error(
       detail ||
-        `Private Kaigi XOR root request failed with status ${response.status} (${response.statusText})`,
+        `Confidential asset root request failed with status ${response.status} (${response.statusText})`,
     );
   }
   const payload = ensureObjectResponse(
     (await response.json()) as unknown,
-    "Private Kaigi XOR roots",
+    "Confidential asset roots",
   );
-  const roots = Array.isArray(payload.roots) ? payload.roots : [];
-  const latest = String(payload.latest ?? roots[roots.length - 1] ?? "").trim();
-  if (!/^[0-9a-fA-F]{64}$/.test(latest)) {
+  const recentRootsHex = Array.isArray(payload.roots)
+    ? payload.roots
+        .map((value) => String(value ?? "").trim().toLowerCase())
+        .filter((value) => /^[0-9a-f]{64}$/.test(value))
+    : [];
+  const latestRootHex = String(
+    payload.latest ?? recentRootsHex[recentRootsHex.length - 1] ?? "",
+  )
+    .trim()
+    .toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(latestRootHex)) {
     throw new Error(
-      "Private Kaigi requires a recent 32-byte confidential XOR root.",
+      "Confidential asset root response did not include a recent 32-byte root.",
     );
   }
-  return latest.toLowerCase();
+  return {
+    latestRootHex,
+    recentRootsHex:
+      recentRootsHex.length > 0 ? recentRootsHex : [latestRootHex],
+  };
 };
+
+const fetchPrivateKaigiRoots = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => (await fetchConfidentialAssetRootWindow(toriiUrlRaw, assetDefinitionId)).latestRootHex;
 
 const fetchConfidentialAssetDefinition = async (
   toriiUrlRaw: string,
@@ -3092,14 +3115,17 @@ const resolveConfidentialTransferMaterials = async (input: {
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId: balance.resolvedAssetId,
   });
-  const [noteIndexTransactions, assetDefinition, latestRootHex] =
+  const [noteIndexTransactions, assetDefinition, rootWindow] =
     await Promise.all([
       fetchConfidentialNoteIndexTransactions({
         toriiUrl: input.toriiUrl,
         assetDefinitionIds: trackedAssetIds,
       }),
       fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
-      fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
+      fetchConfidentialAssetRootWindow(
+        input.toriiUrl,
+        balance.resolvedAssetId,
+      ),
     ]);
   if (noteIndexTransactions === null) {
     throw new Error(
@@ -3121,7 +3147,8 @@ const resolveConfidentialTransferMaterials = async (input: {
     resolvedAssetId: balance.resolvedAssetId,
     trackedAssetIds,
     ledger,
-    latestRootHex,
+    latestRootHex: rootWindow.latestRootHex,
+    recentRootHexes: rootWindow.recentRootsHex,
     verifyingKey: verifyingKey as unknown as Record<string, unknown>,
   };
 };
@@ -4221,24 +4248,13 @@ const api: IrohaBridge = {
         return { hash: submission.hash };
       }
 
-      const materials = await resolveConfidentialTransferMaterials({
+      let materials = await resolveConfidentialTransferMaterials({
         toriiUrl: input.toriiUrl,
         chainId: input.chainId,
         accountId,
         privateKeyHex: input.privateKeyHex,
         assetDefinitionId: resolvedAssetId,
       });
-      if (
-        BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
-      ) {
-        throw new Error(
-          `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
-        );
-      }
-      const selection = selectWalletConfidentialNotes(
-        materials.ledger.notes,
-        normalizedAmount,
-      );
       const recipientOwnerTagHex = trimString(
         input.shieldedOwnerTagHex,
       ).toLowerCase();
@@ -4255,61 +4271,130 @@ const api: IrohaBridge = {
           "Shielded recipient QR is missing a valid diversifier. Ask the recipient to refresh their Receive QR code.",
         );
       }
-      const outputs = [
-        {
-          note: createWalletConfidentialNote({
-            assetDefinitionId: materials.resolvedAssetId,
-            amount: normalizedAmount,
-            ownerTagHex: recipientOwnerTagHex,
-            diversifierHex: recipientDiversifierHex,
-          }),
-          recipientAccountId: destinationAccountId,
-        },
-      ];
-      if (selection.change !== "0") {
-        const changeReceiveAddress = deriveWalletConfidentialReceiveAddress({
-          privateKeyHex: input.privateKeyHex,
-        });
-        outputs.push({
-          note: createWalletConfidentialNote({
-            assetDefinitionId: materials.resolvedAssetId,
-            amount: selection.change,
-            ownerTagHex: changeReceiveAddress.ownerTagHex,
-            diversifierHex: changeReceiveAddress.diversifierHex,
-          }),
-          recipientAccountId: accountId,
-        });
+      let orderedOutputs: Array<{
+        note: ReturnType<typeof createWalletConfidentialNote>;
+        recipientAccountId: string;
+      }> = [];
+      let proofEnvelope!: ReturnType<typeof buildConfidentialTransferProofV2>;
+      let selectedRootHintHex = materials.latestRootHex;
+      for (
+        let attempt = 1;
+        attempt <= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS;
+        attempt += 1
+      ) {
+        if (
+          BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
+        ) {
+          throw new Error(
+            `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
+          );
+        }
+        const selection = selectWalletConfidentialNotes(
+          materials.ledger.notes,
+          normalizedAmount,
+        );
+        const outputs = [
+          {
+            note: createWalletConfidentialNote({
+              assetDefinitionId: materials.resolvedAssetId,
+              amount: normalizedAmount,
+              ownerTagHex: recipientOwnerTagHex,
+              diversifierHex: recipientDiversifierHex,
+            }),
+            recipientAccountId: destinationAccountId,
+          },
+        ];
+        if (selection.change !== "0") {
+          const changeReceiveAddress = deriveWalletConfidentialReceiveAddress({
+            privateKeyHex: input.privateKeyHex,
+          });
+          outputs.push({
+            note: createWalletConfidentialNote({
+              assetDefinitionId: materials.resolvedAssetId,
+              amount: selection.change,
+              ownerTagHex: changeReceiveAddress.ownerTagHex,
+              diversifierHex: changeReceiveAddress.diversifierHex,
+            }),
+            recipientAccountId: accountId,
+          });
+        }
+        orderedOutputs = [...outputs].sort((left, right) =>
+          left.note.commitment_hex.localeCompare(right.note.commitment_hex),
+        );
+        const verifyingKeyContext = readInlineVerifyingKeyRecord(
+          materials.verifyingKey,
+        );
+        const proofVerifyingKey = {
+          id: materials.verifyingKey.id,
+          record: verifyingKeyContext.record,
+          inline_key: verifyingKeyContext.inlineKey,
+        };
+        const candidateRootHintHexes = [
+          ...new Set([
+            materials.latestRootHex,
+            ...[...materials.recentRootHexes].reverse(),
+          ]),
+        ];
+        let rootMismatchError: unknown = null;
+        let proofBuilt = false;
+        for (const candidateRootHintHex of candidateRootHintHexes) {
+          try {
+            proofEnvelope = buildConfidentialTransferProofV2({
+              chainId: input.chainId.trim(),
+              assetDefinitionId: materials.resolvedAssetId,
+              spendKey: privateKey,
+              treeCommitments: materials.ledger.treeCommitmentsHex,
+              inputs: selection.selected.map((note) => ({
+                amount: note.amount,
+                rhoHex: note.rho_hex,
+                diversifierHex: note.diversifier_hex,
+                leafIndex: note.leaf_index,
+              })),
+              outputs: orderedOutputs.map(({ note }) => ({
+                amount: note.amount,
+                rhoHex: note.rho_hex,
+                ownerTagHex: note.owner_tag_hex,
+              })),
+              rootHintHex: candidateRootHintHex,
+              verifyingKey: proofVerifyingKey,
+            });
+            selectedRootHintHex = candidateRootHintHex;
+            proofBuilt = true;
+            break;
+          } catch (error) {
+            if (!isConfidentialRootHintMismatchError(error)) {
+              throw error;
+            }
+            rootMismatchError = error;
+          }
+        }
+        if (proofBuilt) {
+          break;
+        }
+        if (
+          attempt >= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS ||
+          !isConfidentialRootHintMismatchError(rootMismatchError)
+        ) {
+          throw rootMismatchError;
+        }
+        try {
+          await waitForMs(CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS);
+          materials = await resolveConfidentialTransferMaterials({
+            toriiUrl: input.toriiUrl,
+            chainId: input.chainId,
+            accountId,
+            privateKeyHex: input.privateKeyHex,
+            assetDefinitionId: resolvedAssetId,
+          });
+        } catch (error) {
+          if (
+            attempt >= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS ||
+            !isConfidentialRootHintMismatchError(error)
+          ) {
+            throw error;
+          }
+        }
       }
-      const orderedOutputs = [...outputs].sort((left, right) =>
-        left.note.commitment_hex.localeCompare(right.note.commitment_hex),
-      );
-      const verifyingKeyContext = readInlineVerifyingKeyRecord(
-        materials.verifyingKey,
-      );
-      const proofVerifyingKey = {
-        id: materials.verifyingKey.id,
-        record: verifyingKeyContext.record,
-        inline_key: verifyingKeyContext.inlineKey,
-      };
-      const proofEnvelope = buildConfidentialTransferProofV2({
-        chainId: input.chainId.trim(),
-        assetDefinitionId: materials.resolvedAssetId,
-        spendKey: privateKey,
-        treeCommitments: materials.ledger.treeCommitmentsHex,
-        inputs: selection.selected.map((note) => ({
-          amount: note.amount,
-          rhoHex: note.rho_hex,
-          diversifierHex: note.diversifier_hex,
-          leafIndex: note.leaf_index,
-        })),
-        outputs: orderedOutputs.map(({ note }) => ({
-          amount: note.amount,
-          rhoHex: note.rho_hex,
-          ownerTagHex: note.owner_tag_hex,
-        })),
-        rootHintHex: materials.latestRootHex,
-        verifyingKey: proofVerifyingKey,
-      });
       const metadata = buildWalletConfidentialMetadata({
         baseMetadata: confidentialBaseMetadata,
         outputs: orderedOutputs,
@@ -4333,7 +4418,7 @@ const api: IrohaBridge = {
               }
             ).id,
           },
-          rootHint: Buffer.from(materials.latestRootHex, "hex"),
+          rootHint: Buffer.from(selectedRootHintHex, "hex"),
         },
         metadata,
         privateKey,

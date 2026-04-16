@@ -12,11 +12,13 @@ type NativeBuildRequirement = {
   checksumManifestPath: string;
   expectedSha256?: string;
   actualSha256?: string;
+  missingExports?: string[];
 };
 
 type ResolveNativeBuildRequirement = (
   irohaPackagePath: string,
   platformKey?: string,
+  loadNativeModule?: (nativeModulePath: string) => unknown,
 ) => NativeBuildRequirement;
 
 const postinstallNativeCheckModuleUrl = pathToFileURL(
@@ -37,6 +39,13 @@ const makeTempPackage = () => {
 
 const sha256 = (value: string): string =>
   createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
+
+const compatibleNativeModule = () => ({
+  deriveConfidentialReceiveAddressV2() {},
+  buildConfidentialTransferProofV2() {},
+  buildConfidentialUnshieldProofV2() {},
+  buildConfidentialUnshieldProofV3() {},
+});
 
 const tempRoots: string[] = [];
 
@@ -111,6 +120,7 @@ describe("resolveNativeBuildRequirement", () => {
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
       "darwin-arm64",
+      compatibleNativeModule,
     );
 
     expect(result.shouldBuild).toBe(false);
@@ -141,11 +151,44 @@ describe("resolveNativeBuildRequirement", () => {
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
       "darwin-arm64",
+      compatibleNativeModule,
     );
 
     expect(result.shouldBuild).toBe(false);
     expect(result.reason).toBe("native binding is current");
     expect(result.expectedSha256).toBe(sha256("native-binary"));
     expect(result.actualSha256).toBe(sha256("native-binary"));
+  });
+
+  it("requests a rebuild when required confidential v2 exports are missing", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        "darwin-arm64": { sha256: sha256("native-binary") },
+      }),
+      "utf8",
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => ({
+        deriveConfidentialOwnerTagV2() {},
+      }),
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toContain("missing native exports");
+    expect(result.missingExports).toContain(
+      "deriveConfidentialReceiveAddressV2",
+    );
   });
 });

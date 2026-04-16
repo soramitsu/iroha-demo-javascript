@@ -1,13 +1,34 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 
 const NATIVE_MODULE_FILENAME = "iroha_js_host.node";
 const CHECKSUM_FILENAME = "iroha_js_host.checksums.json";
+const REQUIRED_NATIVE_EXPORTS = [
+  "deriveConfidentialReceiveAddressV2",
+  "buildConfidentialTransferProofV2",
+  "buildConfidentialUnshieldProofV2",
+  "buildConfidentialUnshieldProofV3",
+];
+
+const defaultLoadNativeModule = (nativeModulePath) => {
+  const require = createRequire(import.meta.url);
+  return require(nativeModulePath);
+};
+
+const listMissingNativeExports = (nativeModule) =>
+  REQUIRED_NATIVE_EXPORTS.filter(
+    (exportName) =>
+      !nativeModule ||
+      typeof nativeModule !== "object" ||
+      typeof nativeModule[exportName] !== "function",
+  );
 
 export const resolveNativeBuildRequirement = (
   irohaPackagePath,
   platformKey = `${process.platform}-${process.arch}`,
+  loadNativeModule = defaultLoadNativeModule,
 ) => {
   const nativeModulePath = join(
     irohaPackagePath,
@@ -72,6 +93,33 @@ export const resolveNativeBuildRequirement = (
       checksumManifestPath,
       expectedSha256,
       actualSha256,
+    };
+  }
+
+  let nativeModule;
+  try {
+    nativeModule = loadNativeModule(nativeModulePath);
+  } catch (error) {
+    return {
+      shouldBuild: true,
+      reason: `native module failed to load: ${error instanceof Error ? error.message : String(error)}`,
+      nativeModulePath,
+      checksumManifestPath,
+      expectedSha256,
+      actualSha256,
+    };
+  }
+
+  const missingExports = listMissingNativeExports(nativeModule);
+  if (missingExports.length > 0) {
+    return {
+      shouldBuild: true,
+      reason: `missing native exports: ${missingExports.join(", ")}`,
+      nativeModulePath,
+      checksumManifestPath,
+      expectedSha256,
+      actualSha256,
+      missingExports,
     };
   }
 

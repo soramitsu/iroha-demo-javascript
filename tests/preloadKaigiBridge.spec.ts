@@ -1669,6 +1669,306 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
+  it("falls back to an older compatible root from the recent root window", async () => {
+    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "5",
+      ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    let rootsRequestCount = 0;
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "5",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          rootsRequestCount += 1;
+          return jsonResponse({
+            latest: "55".repeat(32),
+            roots: ["44".repeat(32), "55".repeat(32)],
+            height: 2,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    mocks.buildConfidentialTransferProofV2Mock
+      .mockImplementationOnce(() => {
+        throw new Error(
+          "tree commitments do not match the supplied root_hint",
+        );
+      })
+      .mockImplementation((input: { rootHintHex: string }) => ({
+        nullifiers: [Buffer.from("11".repeat(32), "hex")],
+        outputCommitments: [Buffer.from("22".repeat(32), "hex")],
+        root: Buffer.from(input.rootHintHex, "hex"),
+        proof: Buffer.from("transfer-proof", "utf8"),
+      }));
+    const bridge = await loadBridge();
+    const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+        shieldedOwnerTagHex: recipient.ownerTagHex,
+        shieldedDiversifierHex: recipient.diversifierHex,
+      }),
+    ).resolves.toEqual({
+      hash: RELAY_TX_HASH,
+    });
+
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenCalledTimes(2);
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        rootHintHex: "55".repeat(32),
+      }),
+    );
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        rootHintHex: "44".repeat(32),
+      }),
+    );
+    expect(rootsRequestCount).toBe(1);
+  });
+
+  it("retries recipient shielded sends after refreshing a stale confidential root hint", async () => {
+    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "5",
+      ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    let rootsRequestCount = 0;
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "5",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          rootsRequestCount += 1;
+          const latestRootHex =
+            rootsRequestCount === 1 ? "44".repeat(32) : "55".repeat(32);
+          return jsonResponse({
+            latest: latestRootHex,
+            roots: [latestRootHex],
+            height: rootsRequestCount,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    mocks.buildConfidentialTransferProofV2Mock
+      .mockImplementationOnce(() => {
+        throw new Error(
+          "tree commitments do not match the supplied root_hint",
+        );
+      })
+      .mockImplementation((input: { rootHintHex: string }) => ({
+        nullifiers: [Buffer.from("11".repeat(32), "hex")],
+        outputCommitments: [Buffer.from("22".repeat(32), "hex")],
+        root: Buffer.from(input.rootHintHex, "hex"),
+        proof: Buffer.from("transfer-proof", "utf8"),
+      }));
+    const bridge = await loadBridge();
+    const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+
+    const transferPromise = bridge.transferAsset({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      assetDefinitionId: "xor#universal",
+      accountId: ALICE_ACCOUNT_ID,
+      destinationAccountId: BOB_ACCOUNT_ID,
+      quantity: "3",
+      privateKeyHex: "11".repeat(32),
+      shielded: true,
+      shieldedOwnerTagHex: recipient.ownerTagHex,
+      shieldedDiversifierHex: recipient.diversifierHex,
+    });
+    await vi.runAllTimersAsync();
+
+    await expect(transferPromise).resolves.toEqual({
+      hash: RELAY_TX_HASH,
+    });
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenCalledTimes(2);
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        rootHintHex: "44".repeat(32),
+      }),
+    );
+    expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        rootHintHex: "55".repeat(32),
+      }),
+    );
+    expect(rootsRequestCount).toBe(2);
+  });
+
   it("reports shielded XOR state and self-shields through the preload helper", async () => {
     const bridge = await loadBridge();
 

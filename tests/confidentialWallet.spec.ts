@@ -197,10 +197,13 @@ describe("confidential wallet helpers", () => {
     expect(aliceLedger.notes[0]?.commitment_hex).toBe(
       changeNote.commitment_hex,
     );
-    expect(aliceLedger.treeCommitmentsHex).toEqual([
-      shieldNote.commitment_hex,
+    const sortedTransferOutputs = [
       bobNote.commitment_hex,
       changeNote.commitment_hex,
+    ].sort();
+    expect(aliceLedger.treeCommitmentsHex).toEqual([
+      shieldNote.commitment_hex,
+      ...sortedTransferOutputs,
     ]);
 
     expect(bobLedger).toMatchObject({
@@ -296,6 +299,46 @@ describe("confidential wallet helpers", () => {
     });
     expect(ledger.notes).toHaveLength(1);
     expect(ledger.notes[0]?.commitment_hex).toBe(changeNote.commitment_hex);
+  });
+
+  it("sorts multi-output transfer commitments to match on-chain tree order", () => {
+    const alice = makeAccount();
+    const highCommitmentHex = "ff".repeat(32);
+    const lowCommitmentHex = "00".repeat(32);
+    const ledger = collectWalletConfidentialLedger(
+      [
+        {
+          entrypoint_hash: "0xtransfer",
+          result_ok: true,
+          metadata: {},
+          instructions: [
+            {
+              zk: {
+                ZkTransfer: {
+                  asset: ASSET_ID,
+                  inputs: [Array.from({ length: 32 }, () => 0xaa)],
+                  outputs: [
+                    Array.from(Buffer.from(highCommitmentHex, "hex")),
+                    Array.from(Buffer.from(lowCommitmentHex, "hex")),
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        privateKeyHex: alice.privateKeyHex,
+        chainId: CHAIN_ID,
+        assetDefinitionIds: [ASSET_ID],
+        markUnrecognizedTransfersInexact: false,
+      },
+    );
+
+    expect(ledger.treeCommitmentsHex).toEqual([
+      lowCommitmentHex,
+      highCommitmentHex,
+    ]);
   });
 
   it("marks the balance inexact when confidential activity cannot be decoded", () => {
