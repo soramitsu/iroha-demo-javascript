@@ -1554,17 +1554,22 @@ const mergeConfidentialWalletShadowTransactions = (input: {
   toriiUrl: string;
   accountId: string;
   transactions: Array<WalletConfidentialTransactionLike | null | undefined>;
+  includeUnmatchedShadowTransactions?: boolean;
 }): WalletConfidentialTransactionLike[] => {
+  const baseTransactions = input.transactions.filter(
+    (transaction): transaction is WalletConfidentialTransactionLike =>
+      Boolean(transaction),
+  );
+  if (input.includeUnmatchedShadowTransactions === false) {
+    return baseTransactions;
+  }
   const key = getConfidentialWalletShadowKey({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
   });
   const shadowState = readConfidentialWalletShadowState(key);
   if (!shadowState.transactions.length) {
-    return input.transactions.filter(
-      (transaction): transaction is WalletConfidentialTransactionLike =>
-        Boolean(transaction),
-    );
+    return baseTransactions;
   }
   const shadowByHash = new Map(
     shadowState.transactions.map((transaction) => [
@@ -1573,11 +1578,7 @@ const mergeConfidentialWalletShadowTransactions = (input: {
     ]),
   );
   const mergedHashes = new Set<string>();
-  const merged = input.transactions
-    .filter((transaction): transaction is WalletConfidentialTransactionLike =>
-      Boolean(transaction),
-    )
-    .map((transaction) => {
+  const merged = baseTransactions.map((transaction) => {
       const txHash = trimString(transaction.entrypoint_hash).toLowerCase();
       const shadow = shadowByHash.get(txHash);
       if (!shadow || transaction.result_ok === false) {
@@ -2868,6 +2869,7 @@ const resolveConfidentialAssetBalance = async (input: {
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
     transactions,
+    includeUnmatchedShadowTransactions: noteIndexTransactions === null,
   });
   const ledger = collectWalletConfidentialLedger(
     effectiveTransactions as WalletConfidentialTransactionLike[],
@@ -2934,6 +2936,7 @@ const resolveConfidentialTransferMaterials = async (input: {
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
     transactions,
+    includeUnmatchedShadowTransactions: noteIndexTransactions === null,
   });
   const ledger = collectWalletConfidentialLedger(
     effectiveTransactions as WalletConfidentialTransactionLike[],

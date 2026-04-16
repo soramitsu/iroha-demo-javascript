@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { deriveConfidentialKeysetFromHex } from "@iroha/iroha-js/crypto";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha3_512 } from "@noble/hashes/sha3.js";
 import {
   decryptPayloadForAccount,
   encryptPayloadForAccountId,
@@ -64,6 +65,11 @@ export type WalletConfidentialLedger = {
 const HEX_RE = /^[0-9a-fA-F]+$/;
 const NOTE_COMMITMENT_LABEL = "iroha-demo:confidential-wallet:commitment:v1";
 const NOTE_NULLIFIER_LABEL = "iroha-demo:confidential-wallet:nullifier:v1";
+const CONFIDENTIAL_KEY_SALT = Buffer.from(
+  "iroha:confidential:key-derivation:v1",
+  "utf8",
+);
+const CONFIDENTIAL_INFO_NK = Buffer.from("iroha:confidential:nk", "utf8");
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
@@ -109,6 +115,50 @@ const hash32Hex = (label: string, parts: Array<string | Buffer>): string => {
   )
     .toString("hex")
     .slice(0, 64);
+};
+
+const hkdfSha3512 = (
+  seed: Buffer,
+  salt: Buffer,
+  info: Buffer,
+  length: number,
+): Buffer => {
+  const prk = Buffer.from(
+    hmac(sha3_512, new Uint8Array(salt), new Uint8Array(seed)),
+  );
+  const chunks: Buffer[] = [];
+  let previous = Buffer.alloc(0);
+  let produced = 0;
+  let counter = 1;
+  while (produced < length) {
+    previous = Buffer.from(
+      hmac(
+        sha3_512,
+        new Uint8Array(prk),
+        new Uint8Array(Buffer.concat([previous, info, Buffer.from([counter])])),
+      ),
+    );
+    chunks.push(previous);
+    produced += previous.length;
+    counter += 1;
+  }
+  return Buffer.concat(chunks).subarray(0, length);
+};
+
+const deriveWalletNullifierKeyHex = (privateKeyHex: string): string => {
+  const normalized = trimString(privateKeyHex).replace(/^0x/i, "");
+  if (!HEX_RE.test(normalized) || ![64, 128].includes(normalized.length)) {
+    throw new Error(
+      "privateKeyHex must contain a 32-byte Ed25519 seed or 64-byte seed+public payload.",
+    );
+  }
+  const seed = Buffer.from(normalized.slice(0, 64), "hex");
+  return hkdfSha3512(
+    seed,
+    CONFIDENTIAL_KEY_SALT,
+    CONFIDENTIAL_INFO_NK,
+    32,
+  ).toString("hex");
 };
 
 const readFixedBytesHex = (value: unknown): string | null => {
@@ -361,9 +411,7 @@ export const deriveWalletConfidentialNullifierHex = (input: {
   chainId: string;
   rhoHex: string;
 }): string => {
-  const keyset = deriveConfidentialKeysetFromHex(
-    trimString(input.privateKeyHex),
-  );
+  const nkHex = deriveWalletNullifierKeyHex(input.privateKeyHex);
   const assetDefinitionId = trimString(input.assetDefinitionId);
   const chainId = trimString(input.chainId);
   const rhoHex = trimString(input.rhoHex).toLowerCase();
@@ -377,7 +425,7 @@ export const deriveWalletConfidentialNullifierHex = (input: {
     throw new Error("rhoHex must be a 32-byte hex string.");
   }
   return hash32Hex(NOTE_NULLIFIER_LABEL, [
-    Buffer.from(keyset.nkHex, "hex"),
+    Buffer.from(nkHex, "hex"),
     Buffer.from(rhoHex, "hex"),
     assetDefinitionId,
     chainId,
