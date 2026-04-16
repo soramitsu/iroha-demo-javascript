@@ -7,8 +7,10 @@ import {
   findMissingToriiVpnMcpTools,
   findMissingToriiVpnOpenApiPaths,
   formatSurfaceProbeAttempt,
+  isOnboardingBadRequestError,
   isOnboardingConflictError,
   isOnboardingDisabledError,
+  isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
   parseFundedEnvConfig,
   parseOnboardingEnvConfig,
@@ -186,6 +188,18 @@ describe("electron live e2e utils", () => {
     expect(isOnboardingDisabledError(null)).toBe(false);
   });
 
+  it("detects onboarding-bad-request responses from status text", () => {
+    expect(
+      isOnboardingBadRequestError(
+        "Alias registration failed with status 400 (Bad Request)",
+      ),
+    ).toBe(true);
+    expect(isOnboardingBadRequestError("status400")).toBe(false);
+    expect(isOnboardingBadRequestError("status 403")).toBe(false);
+    expect(isOnboardingBadRequestError("")).toBe(false);
+    expect(isOnboardingBadRequestError(null)).toBe(false);
+  });
+
   it("detects onboarding-conflict responses from status text", () => {
     expect(
       isOnboardingConflictError("Onboarding failed with status 409 (Conflict)"),
@@ -207,6 +221,12 @@ describe("electron live e2e utils", () => {
     expect(
       resolveOptionalAliasRegistrationOutcome(
         "error",
+        "Alias registration failed with status 400 (Bad Request)",
+      ),
+    ).toBe("skipped");
+    expect(
+      resolveOptionalAliasRegistrationOutcome(
+        "error",
         "Alias registration failed with status 409 (Conflict)",
       ),
     ).toBe("executed");
@@ -218,6 +238,24 @@ describe("electron live e2e utils", () => {
     ).toThrow(
       "Optional alias registration probe failed: Alias registration failed with status 500 (Internal Server Error)",
     );
+  });
+
+  it("detects retryable faucet 400 responses", () => {
+    expect(
+      isRetryableFaucetBadRequest(
+        "Faucet request failed (400): TAIRA rejected this faucet claim. Repeated claims usually fail once the account already holds starter XOR, and stale faucet proof challenges can also trigger this response.",
+      ),
+    ).toBe(true);
+    expect(
+      isRetryableFaucetBadRequest(
+        "Faucet request failed (400): some unrelated bad request",
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableFaucetBadRequest(
+        "Faucet request failed (500): stale faucet proof challenges can also trigger this response.",
+      ),
+    ).toBe(false);
   });
 
   it("parses onboarding env defaults when vars are absent", () => {

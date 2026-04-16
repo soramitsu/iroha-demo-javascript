@@ -8,6 +8,7 @@ import { _electron as electron } from "playwright";
 import {
   parseFundedEnvConfig,
   parseOnboardingEnvConfig,
+  isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
@@ -156,217 +157,236 @@ async function preflightToriiHealth(baseUrl) {
 }
 
 async function runFaucetFlow(page) {
-  await page.evaluate(() => {
-    localStorage.removeItem("iroha-demo:session");
-    localStorage.removeItem("iroha-demo:offline");
-    localStorage.setItem("iroha-demo:locale", "en-US");
-  });
-  await page.reload();
-
-  await waitForAccountView(page);
-  await configureConnection(page);
-  const faucetBootstrap = await page.evaluate(
-    ({ torii, chain, prefix, derivationLabel }) => {
-      const { publicKeyHex, privateKeyHex } = window.iroha.generateKeyPair();
-      const summary = window.iroha.deriveAccountAddress({
-        domain: derivationLabel,
-        publicKeyHex,
-        networkPrefix: prefix,
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await page.evaluate(() => {
+        localStorage.removeItem("iroha-demo:session");
+        localStorage.removeItem("iroha-demo:offline");
+        localStorage.setItem("iroha-demo:locale", "en-US");
       });
+      await page.reload();
 
-      localStorage.setItem(
-        "iroha-demo:session",
-        JSON.stringify({
-          hydrated: true,
-          connection: {
-            toriiUrl: torii,
-            chainId: chain,
-            assetDefinitionId: "",
+      await waitForAccountView(page);
+      await configureConnection(page);
+      const faucetBootstrap = await page.evaluate(
+        ({ torii, chain, prefix, derivationLabel }) => {
+          const { publicKeyHex, privateKeyHex } = window.iroha.generateKeyPair();
+          const summary = window.iroha.deriveAccountAddress({
+            domain: derivationLabel,
+            publicKeyHex,
             networkPrefix: prefix,
-          },
-          authority: {
-            accountId: "",
-            privateKeyHex: "",
-          },
-          accounts: [
-            {
-              displayName: "E2E Faucet",
-              domain: derivationLabel,
-              accountId: summary.accountId,
-              i105AccountId: summary.i105AccountId,
-              i105DefaultAccountId: summary.i105DefaultAccountId,
-              publicKeyHex,
-              privateKeyHex,
-              localOnly: true,
-            },
-          ],
-          activeAccountId: summary.accountId,
-          customChains: [],
-        }),
-      );
+          });
 
-      return {
-        displayAccountId: summary.accountId,
-        i105AccountId: summary.i105AccountId,
-        i105DefaultAccountId: summary.i105DefaultAccountId,
-        publicKeyHex,
-        privateKeyHex,
-      };
-    },
-    {
-      torii: toriiUrl,
-      chain: chainId,
-      prefix: networkPrefix,
-      derivationLabel: defaultDerivationLabel,
-    },
-  );
-
-  await page.reload();
-  await page.evaluate(() => {
-    window.location.hash = "#/wallet";
-  });
-  await page.waitForFunction(
-    () => window.location.hash === "#/wallet",
-    undefined,
-    {
-      timeout: 45_000,
-    },
-  );
-  await page
-    .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
-    .waitFor({ state: "visible", timeout: 45_000 });
-
-  const faucetReceipt = await page.evaluate(
-    async ({ torii, accountId, prefix }) => {
-      const result = await window.iroha.requestFaucetFunds({
-        toriiUrl: torii,
-        accountId,
-        networkPrefix: prefix,
-      });
-      const raw = localStorage.getItem("iroha-demo:session");
-      if (raw) {
-        try {
-          const session = JSON.parse(raw);
-          const configuredAssetDefinitionId =
-            String(result?.asset_definition_id ?? "").trim() ||
-            String(result?.asset_id ?? "").trim();
-          const nextAccounts = Array.isArray(session?.accounts)
-            ? session.accounts.map((entry) =>
-                entry?.accountId === session?.activeAccountId
-                  ? {
-                      ...entry,
-                      localOnly: false,
-                    }
-                  : entry,
-              )
-            : [];
           localStorage.setItem(
             "iroha-demo:session",
             JSON.stringify({
-              ...session,
+              hydrated: true,
               connection: {
-                ...session?.connection,
-                assetDefinitionId: configuredAssetDefinitionId,
+                toriiUrl: torii,
+                chainId: chain,
+                assetDefinitionId: "",
+                networkPrefix: prefix,
               },
-              accounts: nextAccounts,
+              authority: {
+                accountId: "",
+                privateKeyHex: "",
+              },
+              accounts: [
+                {
+                  displayName: "E2E Faucet",
+                  domain: derivationLabel,
+                  accountId: summary.accountId,
+                  i105AccountId: summary.i105AccountId,
+                  i105DefaultAccountId: summary.i105DefaultAccountId,
+                  publicKeyHex,
+                  privateKeyHex,
+                  localOnly: true,
+                },
+              ],
+              activeAccountId: summary.accountId,
+              customChains: [],
             }),
           );
-        } catch {
-          // Ignore storage repair failures in the live harness.
-        }
-      }
-      return result;
-    },
-    {
-      torii: toriiUrl,
-      accountId: faucetBootstrap.displayAccountId,
-      prefix: networkPrefix,
-    },
-  );
 
-  const fundedBalance = await page.evaluate(
-    async ({ torii, accountId }) => {
-      let lastError = "";
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        try {
-          const response = await window.iroha.fetchAccountAssets({
+          return {
+            displayAccountId: summary.accountId,
+            i105AccountId: summary.i105AccountId,
+            i105DefaultAccountId: summary.i105DefaultAccountId,
+            publicKeyHex,
+            privateKeyHex,
+          };
+        },
+        {
+          torii: toriiUrl,
+          chain: chainId,
+          prefix: networkPrefix,
+          derivationLabel: defaultDerivationLabel,
+        },
+      );
+
+      await page.reload();
+      await page.evaluate(() => {
+        window.location.hash = "#/wallet";
+      });
+      await page.waitForFunction(
+        () => window.location.hash === "#/wallet",
+        undefined,
+        {
+          timeout: 45_000,
+        },
+      );
+      await page
+        .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
+        .waitFor({ state: "visible", timeout: 45_000 });
+
+      const faucetReceipt = await page.evaluate(
+        async ({ torii, accountId, prefix }) => {
+          const result = await window.iroha.requestFaucetFunds({
             toriiUrl: torii,
             accountId,
-            limit: 50,
+            networkPrefix: prefix,
           });
-          const items = Array.isArray(response?.items) ? response.items : [];
-          const positiveAsset = items.find((asset) => {
-            const quantity = Number(String(asset?.quantity ?? ""));
-            return Number.isFinite(quantity) && quantity > 0;
-          });
-          if (positiveAsset) {
-            return {
-              assetId: String(positiveAsset.asset_id ?? "").trim(),
-              quantity: String(positiveAsset.quantity ?? "").trim(),
-              error: "",
-            };
+          const raw = localStorage.getItem("iroha-demo:session");
+          if (raw) {
+            try {
+              const session = JSON.parse(raw);
+              const configuredAssetDefinitionId =
+                String(result?.asset_definition_id ?? "").trim() ||
+                String(result?.asset_id ?? "").trim();
+              const nextAccounts = Array.isArray(session?.accounts)
+                ? session.accounts.map((entry) =>
+                    entry?.accountId === session?.activeAccountId
+                      ? {
+                          ...entry,
+                          localOnly: false,
+                        }
+                      : entry,
+                  )
+                : [];
+              localStorage.setItem(
+                "iroha-demo:session",
+                JSON.stringify({
+                  ...session,
+                  connection: {
+                    ...session?.connection,
+                    assetDefinitionId: configuredAssetDefinitionId,
+                  },
+                  accounts: nextAccounts,
+                }),
+              );
+            } catch {
+              // Ignore storage repair failures in the live harness.
+            }
           }
-        } catch (error) {
-          lastError = String(error ?? "");
-        }
-        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          return result;
+        },
+        {
+          torii: toriiUrl,
+          accountId: faucetBootstrap.displayAccountId,
+          prefix: networkPrefix,
+        },
+      );
+
+      const fundedBalance = await page.evaluate(
+        async ({ torii, accountId }) => {
+          let lastError = "";
+          for (let attempt = 0; attempt < 30; attempt += 1) {
+            try {
+              const response = await window.iroha.fetchAccountAssets({
+                toriiUrl: torii,
+                accountId,
+                limit: 50,
+              });
+              const items = Array.isArray(response?.items) ? response.items : [];
+              const positiveAsset = items.find((asset) => {
+                const quantity = Number(String(asset?.quantity ?? ""));
+                return Number.isFinite(quantity) && quantity > 0;
+              });
+              if (positiveAsset) {
+                return {
+                  assetId: String(positiveAsset.asset_id ?? "").trim(),
+                  quantity: String(positiveAsset.quantity ?? "").trim(),
+                  error: "",
+                };
+              }
+            } catch (error) {
+              lastError = String(error ?? "");
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          }
+          return {
+            assetId: "",
+            quantity: "",
+            error: lastError,
+          };
+        },
+        {
+          torii: toriiUrl,
+          accountId: faucetBootstrap.displayAccountId,
+        },
+      );
+
+      if (!fundedBalance?.assetId || !fundedBalance?.quantity) {
+        throw new Error(
+          `Faucet flow queued a request but did not observe a funded balance within 60s. State: ${JSON.stringify(
+            {
+              faucetReceipt,
+              fundedBalance,
+              faucetBootstrap,
+            },
+          ).slice(0, 1600)}`,
+        );
       }
+
+      const txHash = String(faucetReceipt?.tx_hash_hex ?? "").trim();
+
+      const assetId = String(fundedBalance.assetId).trim();
+      const assetDefinitionId =
+        assetId.split("#", 1)[0]?.trim() ||
+        String(faucetReceipt?.asset_definition_id ?? "");
+
+      if (!assetDefinitionId) {
+        throw new Error(
+          `Faucet flow did not resolve an asset definition id. State: ${JSON.stringify(
+            {
+              faucetReceipt,
+              fundedBalance,
+            },
+          ).slice(0, 1200)}`,
+        );
+      }
+
+      console.log(
+        txHash
+          ? `Faucet probe queued ${txHash} and observed ${fundedBalance.quantity} units on ${assetId}.`
+          : `Faucet probe observed ${fundedBalance.quantity} units on ${assetId}; bridge result did not expose a transaction hash before sampling.`,
+      );
+
       return {
-        assetId: "",
-        quantity: "",
-        error: lastError,
+        ...faucetBootstrap,
+        canonicalAccountId: assetId.split("#").slice(1).join("#"),
+        assetId,
+        assetDefinitionId,
+        txHash,
+        quantity: String(fundedBalance.quantity).trim(),
       };
-    },
-    {
-      torii: toriiUrl,
-      accountId: faucetBootstrap.displayAccountId,
-    },
-  );
-
-  if (!fundedBalance?.assetId || !fundedBalance?.quantity) {
-    throw new Error(
-      `Faucet flow queued a request but did not observe a funded balance within 60s. State: ${JSON.stringify(
-        {
-          faucetReceipt,
-          fundedBalance,
-          faucetBootstrap,
-        },
-      ).slice(0, 1600)}`,
-    );
+    } catch (error) {
+      lastError = error;
+      if (
+        attempt < 2 &&
+        isRetryableFaucetBadRequest(String(error ?? ""))
+      ) {
+        console.log(
+          `Faucet probe attempt ${attempt + 1} hit a retryable TAIRA 400; retrying with a fresh account.`,
+        );
+        continue;
+      }
+      throw error;
+    }
   }
 
-  const txHash = String(faucetReceipt?.tx_hash_hex ?? "").trim();
-
-  const assetId = String(fundedBalance.assetId).trim();
-  const assetDefinitionId =
-    assetId.split("#", 1)[0]?.trim() ||
-    String(faucetReceipt?.asset_definition_id ?? "");
-
-  if (!assetDefinitionId) {
-    throw new Error(
-      `Faucet flow did not resolve an asset definition id. State: ${JSON.stringify(
-        {
-          faucetReceipt,
-          fundedBalance,
-        },
-      ).slice(0, 1200)}`,
-    );
-  }
-
-  console.log(
-    txHash
-      ? `Faucet probe queued ${txHash} and observed ${fundedBalance.quantity} units on ${assetId}.`
-      : `Faucet probe observed ${fundedBalance.quantity} units on ${assetId}; bridge result did not expose a transaction hash before sampling.`,
-  );
-
-  return {
-    ...faucetBootstrap,
-    canonicalAccountId: assetId.split("#").slice(1).join("#"),
-    assetId,
-    assetDefinitionId,
-    txHash,
-    quantity: String(fundedBalance.quantity).trim(),
-  };
+  throw lastError ?? new Error("Faucet flow exhausted its retry budget.");
 }
 
 async function runFundedFlow(page, fundedWallet) {
@@ -1037,47 +1057,47 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
   const checks = [
     {
       hash: "#/setup",
-      heading: "Advanced",
+      headingOptions: ["Advanced", "Session Setup"],
       sectionText: "Network",
     },
     {
       hash: "#/wallet",
-      heading: "Wallet",
+      headingOptions: ["Wallet", "Wallet Overview"],
       sectionText: "Balances",
     },
     {
       hash: "#/staking",
-      heading: "Stake",
+      headingOptions: ["Stake", "NPOS Staking"],
       sectionText: "Stake",
     },
     {
       hash: "#/parliament",
-      heading: "Governance",
+      headingOptions: ["Governance", "SORA Parliament"],
       sectionText: "Citizenship",
     },
     {
       hash: "#/subscriptions",
-      heading: "Subscriptions",
+      headingOptions: ["Subscriptions", "Subscription Hub"],
       sectionText: "New subscription",
     },
     {
       hash: "#/send",
-      heading: "Send",
+      headingOptions: ["Send", "Send Points"],
       sectionText: "Send",
     },
     {
       hash: "#/receive",
-      heading: "Receive",
+      headingOptions: ["Receive", "Receive Points"],
       sectionText: "Receive",
     },
     {
       hash: "#/offline",
-      heading: "Offline",
+      headingOptions: ["Offline"],
       sectionText: "Offline wallet",
     },
     {
       hash: "#/explore",
-      heading: "Explore",
+      headingOptions: ["Explore", "Explorer"],
       sectionText: "Network metrics",
     },
   ];
@@ -1094,12 +1114,20 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         timeout: 45_000,
       },
     );
-    await page
-      .getByRole("heading", { name: check.heading, exact: true, level: 1 })
-      .waitFor({
-        state: "visible",
+    await page.waitForFunction(
+      (expectedHeadings) => {
+        const heading = document.querySelector(".workspace-header h1");
+        if (!(heading instanceof HTMLElement)) {
+          return false;
+        }
+        const title = heading.innerText.trim();
+        return expectedHeadings.includes(title);
+      },
+      check.headingOptions,
+      {
         timeout: 45_000,
-      });
+      },
+    );
     await page
       .locator(".workspace-body")
       .getByText(check.sectionText, { exact: true })

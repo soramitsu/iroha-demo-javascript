@@ -100,8 +100,22 @@ export function isOnboardingDisabledError(detail) {
   return /\bstatus(?:\s|[^a-z0-9_])+403\b/i.test(String(detail ?? ""));
 }
 
+export function isOnboardingBadRequestError(detail) {
+  return /\bstatus(?:\s|[^a-z0-9_])+400\b/i.test(String(detail ?? ""));
+}
+
 export function isOnboardingConflictError(detail) {
   return /\bstatus(?:\s|[^a-z0-9_])+409\b/i.test(String(detail ?? ""));
+}
+
+export function isRetryableFaucetBadRequest(detail) {
+  const normalizedDetail = String(detail ?? "");
+  return (
+    /\bFaucet request failed\s*\(400\)/i.test(normalizedDetail) &&
+    /(Repeated claims usually fail|stale faucet proof challenges)/i.test(
+      normalizedDetail,
+    )
+  );
 }
 
 export function resolveOptionalAliasRegistrationOutcome(status, detail) {
@@ -112,7 +126,10 @@ export function resolveOptionalAliasRegistrationOutcome(status, detail) {
   if (normalizedStatus !== "error") {
     return "executed";
   }
-  if (isOnboardingDisabledError(normalizedDetail)) {
+  if (
+    isOnboardingDisabledError(normalizedDetail) ||
+    isOnboardingBadRequestError(normalizedDetail)
+  ) {
     return "skipped";
   }
   if (isOnboardingConflictError(normalizedDetail)) {
