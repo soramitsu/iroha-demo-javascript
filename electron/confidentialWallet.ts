@@ -294,7 +294,9 @@ const parseWalletLegacyConfidentialNote = (
   };
 };
 
-const parseWalletConfidentialNote = (value: unknown): WalletParsedNote | null => {
+const parseWalletConfidentialNote = (
+  value: unknown,
+): WalletParsedNote | null => {
   const noteV2 = parseWalletConfidentialNoteV2(value);
   if (noteV2) {
     return { kind: "v2", note: noteV2 };
@@ -362,7 +364,8 @@ const readWalletMetadataRecord = (
   );
 };
 
-const normalizeAssetDefinitionId = (value: string): string => value.trim().toLowerCase();
+const normalizeAssetDefinitionId = (value: string): string =>
+  value.trim().toLowerCase();
 
 const parseShieldInstruction = (
   instruction: ConfidentialInstructionLike | null | undefined,
@@ -381,7 +384,9 @@ const parseShieldInstruction = (
   if (!isPlainRecord(shield)) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(trimString(shield.asset));
+  const assetDefinitionId = normalizeAssetDefinitionId(
+    trimString(shield.asset),
+  );
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
@@ -413,7 +418,9 @@ const parseTransferInstruction = (
   if (!isPlainRecord(transfer)) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(trimString(transfer.asset));
+  const assetDefinitionId = normalizeAssetDefinitionId(
+    trimString(transfer.asset),
+  );
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
@@ -445,7 +452,9 @@ const parseUnshieldInstruction = (
   if (!isPlainRecord(unshield)) {
     return null;
   }
-  const assetDefinitionId = normalizeAssetDefinitionId(trimString(unshield.asset));
+  const assetDefinitionId = normalizeAssetDefinitionId(
+    trimString(unshield.asset),
+  );
   if (!assetDefinitionIds.has(assetDefinitionId)) {
     return null;
   }
@@ -542,7 +551,9 @@ export const createWalletConfidentialNote = (input: {
   if (!Number.isFinite(createdAtMs) || createdAtMs < 0) {
     throw new Error("createdAtMs must be a non-negative integer.");
   }
-  const rhoHex = trimString(input.rhoHex ?? randomBytes(32).toString("hex")).toLowerCase();
+  const rhoHex = trimString(
+    input.rhoHex ?? randomBytes(32).toString("hex"),
+  ).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(rhoHex)) {
     throw new Error("rhoHex must be a 32-byte hex string.");
   }
@@ -657,9 +668,8 @@ export const collectWalletConfidentialLedger = (
   const spentNullifiers = new Set<string>();
   const treeCommitmentsHex: string[] = [];
   const txList = transactions
-    .filter(
-      (transaction): transaction is WalletConfidentialTransactionLike =>
-        Boolean(transaction),
+    .filter((transaction): transaction is WalletConfidentialTransactionLike =>
+      Boolean(transaction),
     )
     .map((transaction, index) => ({ ...transaction, __index: index }))
     .sort(compareTransactionsChronologically);
@@ -670,14 +680,17 @@ export const collectWalletConfidentialLedger = (
     if (transaction.result_ok === false) {
       continue;
     }
-    const txHash = trimString(transaction.entrypoint_hash) || `tx-${transaction.__index}`;
+    const txHash =
+      trimString(transaction.entrypoint_hash) || `tx-${transaction.__index}`;
     const notesByCommitment = readWalletNotesForTransaction(transaction, {
       privateKeyHex: input.privateKeyHex,
       assetDefinitionIds,
     });
 
     const shieldInstructions = (transaction.instructions ?? [])
-      .map((instruction) => parseShieldInstruction(instruction, assetDefinitionIds))
+      .map((instruction) =>
+        parseShieldInstruction(instruction, assetDefinitionIds),
+      )
       .filter((entry): entry is ParsedShieldInstruction => Boolean(entry));
     for (const shield of shieldInstructions) {
       const leafIndex = treeCommitmentsHex.length;
@@ -703,7 +716,9 @@ export const collectWalletConfidentialLedger = (
     }
 
     const transferInstructions = (transaction.instructions ?? [])
-      .map((instruction) => parseTransferInstruction(instruction, assetDefinitionIds))
+      .map((instruction) =>
+        parseTransferInstruction(instruction, assetDefinitionIds),
+      )
       .filter((entry): entry is ParsedTransferInstruction => Boolean(entry));
     for (const transfer of transferInstructions) {
       for (const nullifierHex of transfer.inputs) {
@@ -732,7 +747,10 @@ export const collectWalletConfidentialLedger = (
           });
         } else if (decrypted?.kind === "legacy") {
           recognizedOutput = true;
-          legacyQuantity = addWholeAmounts(legacyQuantity, decrypted.note.amount);
+          legacyQuantity = addWholeAmounts(
+            legacyQuantity,
+            decrypted.note.amount,
+          );
           exact = false;
         }
       }
@@ -746,7 +764,9 @@ export const collectWalletConfidentialLedger = (
     }
 
     const unshieldInstructions = (transaction.instructions ?? [])
-      .map((instruction) => parseUnshieldInstruction(instruction, assetDefinitionIds))
+      .map((instruction) =>
+        parseUnshieldInstruction(instruction, assetDefinitionIds),
+      )
       .filter((entry): entry is ParsedUnshieldInstruction => Boolean(entry));
     for (const unshield of unshieldInstructions) {
       for (const nullifierHex of unshield.inputs) {

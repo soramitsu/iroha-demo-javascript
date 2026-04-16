@@ -8,7 +8,7 @@
   "main": "dist/main/index.cjs",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/copy-iroha-native.mjs",
     "build:vpn:controllers": "node scripts/build-vpn-controllers.mjs",
     "build:vpn:linux-controller": "node scripts/build-vpn-controllers.mjs --platform linux",
     "build:vpn:macos-controller": "node scripts/build-vpn-controllers.mjs --platform darwin",

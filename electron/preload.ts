@@ -1559,17 +1559,22 @@ const mergeConfidentialWalletShadowTransactions = (input: {
   toriiUrl: string;
   accountId: string;
   transactions: Array<WalletConfidentialTransactionLike | null | undefined>;
+  includeUnmatchedShadowTransactions?: boolean;
 }): WalletConfidentialTransactionLike[] => {
+  const baseTransactions = input.transactions.filter(
+    (transaction): transaction is WalletConfidentialTransactionLike =>
+      Boolean(transaction),
+  );
+  if (input.includeUnmatchedShadowTransactions === false) {
+    return baseTransactions;
+  }
   const key = getConfidentialWalletShadowKey({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
   });
   const shadowState = readConfidentialWalletShadowState(key);
   if (!shadowState.transactions.length) {
-    return input.transactions.filter(
-      (transaction): transaction is WalletConfidentialTransactionLike =>
-        Boolean(transaction),
-    );
+    return baseTransactions;
   }
   const shadowByHash = new Map(
     shadowState.transactions.map((transaction) => [
@@ -1578,39 +1583,35 @@ const mergeConfidentialWalletShadowTransactions = (input: {
     ]),
   );
   const mergedHashes = new Set<string>();
-  const merged = input.transactions
-    .filter((transaction): transaction is WalletConfidentialTransactionLike =>
-      Boolean(transaction),
-    )
-    .map((transaction) => {
-      const txHash = trimString(transaction.entrypoint_hash).toLowerCase();
-      const shadow = shadowByHash.get(txHash);
-      if (!shadow || transaction.result_ok === false) {
-        return transaction;
-      }
-      mergedHashes.add(txHash);
-      const hasDirectMetadata =
-        transaction.metadata !== undefined &&
-        transaction.metadata !== null &&
-        !(
-          isPlainRecord(transaction.metadata) &&
-          !Object.keys(transaction.metadata).length
-        );
-      const hasInstructions =
-        Array.isArray(transaction.instructions) &&
-        transaction.instructions.length > 0;
-      return {
-        ...transaction,
-        entrypoint_hash: txHash || shadow.hash,
-        authority:
-          trimString((transaction as { authority?: unknown }).authority) ||
-          shadow.authority,
-        metadata: hasDirectMetadata ? transaction.metadata : shadow.metadata,
-        instructions: hasInstructions
-          ? transaction.instructions
-          : shadow.instructions,
-      };
-    });
+  const merged = baseTransactions.map((transaction) => {
+    const txHash = trimString(transaction.entrypoint_hash).toLowerCase();
+    const shadow = shadowByHash.get(txHash);
+    if (!shadow || transaction.result_ok === false) {
+      return transaction;
+    }
+    mergedHashes.add(txHash);
+    const hasDirectMetadata =
+      transaction.metadata !== undefined &&
+      transaction.metadata !== null &&
+      !(
+        isPlainRecord(transaction.metadata) &&
+        !Object.keys(transaction.metadata).length
+      );
+    const hasInstructions =
+      Array.isArray(transaction.instructions) &&
+      transaction.instructions.length > 0;
+    return {
+      ...transaction,
+      entrypoint_hash: txHash || shadow.hash,
+      authority:
+        trimString((transaction as { authority?: unknown }).authority) ||
+        shadow.authority,
+      metadata: hasDirectMetadata ? transaction.metadata : shadow.metadata,
+      instructions: hasInstructions
+        ? transaction.instructions
+        : shadow.instructions,
+    };
+  });
   for (const shadow of shadowState.transactions) {
     if (mergedHashes.has(shadow.hash)) {
       continue;
@@ -2416,8 +2417,7 @@ const confidentialPolicyLookupSupportsLiveAssetFallback = (
   return isApiRequestError(error) && error.status === 404;
 };
 
-const CONFIDENTIAL_ASSET_DEFINITION_ID_PATTERN =
-  /^[1-9A-HJ-NP-Za-km-z]+$/;
+const CONFIDENTIAL_ASSET_DEFINITION_ID_PATTERN = /^[1-9A-HJ-NP-Za-km-z]+$/;
 
 const resolveLiveConfidentialAssetDefinitionIdForAccount = async (input: {
   toriiUrl: string;
@@ -2719,7 +2719,9 @@ const normalizeConfidentialNoteIndexItem = (
     entrypoint_hash: hash,
     result_ok: item.result_ok !== false,
     authority: trimString(item.authority),
-    block: Number.isFinite(Number(item.block)) ? Math.trunc(Number(item.block)) : undefined,
+    block: Number.isFinite(Number(item.block))
+      ? Math.trunc(Number(item.block))
+      : undefined,
     note_index_order: noteIndexOrder,
     metadata: isPlainRecord(item.metadata)
       ? (item.metadata as Record<string, unknown>)
@@ -2920,7 +2922,7 @@ const resolveConfidentialAssetBalance = async (input: {
   privateKeyHex: string;
   assetDefinitionId: string;
 }): Promise<ConfidentialAssetBalanceResponse> => {
-  const { policy, requestedAssetDefinitionId, resolvedAssetDefinitionId } =
+  const { requestedAssetDefinitionId, resolvedAssetDefinitionId } =
     await fetchConfidentialAssetPolicyForAccount({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
@@ -2947,15 +2949,12 @@ const resolveConfidentialAssetBalance = async (input: {
     accountId: input.accountId,
     transactions: committedTransactions as WalletConfidentialTransactionLike[],
   });
-  const ledger = collectWalletConfidentialLedger(
-    displayTransactions,
-    {
-      privateKeyHex: input.privateKeyHex,
-      chainId: input.chainId,
-      assetDefinitionIds: trackedAssetIds,
-      markUnrecognizedTransfersInexact: noteIndexTransactions === null,
-    },
-  );
+  const ledger = collectWalletConfidentialLedger(displayTransactions, {
+    privateKeyHex: input.privateKeyHex,
+    chainId: input.chainId,
+    assetDefinitionIds: trackedAssetIds,
+    markUnrecognizedTransfersInexact: noteIndexTransactions === null,
+  });
   const onChainBalance =
     noteIndexTransactions === null
       ? deriveOnChainShieldedBalance(committedTransactions, {
@@ -3017,15 +3016,12 @@ const resolveConfidentialTransferMaterials = async (input: {
       "Confidential note index is unavailable for this asset; recipient shielded transfers require the global note index.",
     );
   }
-  const ledger = collectWalletConfidentialLedger(
-    noteIndexTransactions,
-    {
-      privateKeyHex: input.privateKeyHex,
-      chainId: input.chainId,
-      assetDefinitionIds: trackedAssetIds,
-      markUnrecognizedTransfersInexact: false,
-    },
-  );
+  const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
+    privateKeyHex: input.privateKeyHex,
+    chainId: input.chainId,
+    assetDefinitionIds: trackedAssetIds,
+    markUnrecognizedTransfersInexact: false,
+  });
   const vkTransferRef = readConfidentialVkTransferRef(assetDefinition);
   const verifyingKey = await client.getVerifyingKeyTyped(
     vkTransferRef.backend,
@@ -3950,7 +3946,9 @@ const api: IrohaBridge = {
           zk: {
             ZkTransfer: {
               asset: materials.resolvedAssetId,
-              inputs: proofEnvelope.nullifiers.map((entry) => entry.toString("hex")),
+              inputs: proofEnvelope.nullifiers.map((entry) =>
+                entry.toString("hex"),
+              ),
               outputs: orderedOutputs.map(({ note }) => note.commitment_hex),
             },
           },

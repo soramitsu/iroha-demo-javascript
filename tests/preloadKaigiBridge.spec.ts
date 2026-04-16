@@ -426,7 +426,9 @@ describe("preload Kaigi bridge", () => {
         const method = String(init?.method ?? "GET").toUpperCase();
         if (
           method === "GET" &&
-          (href.includes("/v1/confidential/assets/xor%23universal/transitions") ||
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
             href.includes(
               `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
             ))
