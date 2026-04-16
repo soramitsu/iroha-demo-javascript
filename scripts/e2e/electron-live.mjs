@@ -802,6 +802,15 @@ async function runReadOnlyFlow(page, fundedAccount) {
           privateKeyHex,
           assetDefinitionId: assetId,
         });
+      const scanConfidentialBalance = (accountId, privateKeyHex) =>
+        window.iroha.scanConfidentialWallet({
+          toriiUrl: torii,
+          chainId: chain,
+          accountId,
+          privateKeyHex,
+          assetDefinitionId: assetId,
+          force: true,
+        });
       const fetchAccountTransactions = (accountId, privateKeyHex) =>
         window.iroha.fetchAccountTransactions({
           toriiUrl: torii,
@@ -1060,6 +1069,31 @@ async function runReadOnlyFlow(page, fundedAccount) {
           expectedBobAfterRecipient: expectedBobAfterRecipient.toString(),
         };
       }
+      const bobRecoveredAfterRecipient = await scanConfidentialBalance(
+        bobSummary.i105AccountId,
+        bobKeyPair.privateKeyHex,
+      );
+      const bobRecoveredSpendable = readSpendableQuantity(
+        bobRecoveredAfterRecipient,
+      );
+      if (bobRecoveredSpendable !== expectedBobAfterRecipient.toString()) {
+        return {
+          ok: false,
+          stage: "recipient-recovery-scan",
+          txHashHex: recipientTransfer.hash,
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          aliceAfterRecipient,
+          bobAfterRecipient,
+          bobRecoveredAfterRecipient,
+          expectedBobAfterRecipient: expectedBobAfterRecipient.toString(),
+          observedBobRecoveredAfterRecipient: bobRecoveredSpendable,
+        };
+      }
 
       const unshield = await window.iroha.transferAsset({
         toriiUrl: torii,
@@ -1093,6 +1127,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           aliceAfterSelfShield,
           aliceAfterRecipient,
           bobAfterRecipient,
+          bobRecoveredAfterRecipient,
           unshieldCommitted,
         };
       }
@@ -1117,6 +1152,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           aliceAfterSelfShield,
           aliceAfterRecipient,
           bobAfterRecipient,
+          bobRecoveredAfterRecipient,
           aliceAfterUnshield,
           expectedAliceAfterUnshield: expectedAliceAfterUnshield.toString(),
         };
@@ -1138,12 +1174,14 @@ async function runReadOnlyFlow(page, fundedAccount) {
         aliceAfterSelfShield,
         aliceAfterRecipient,
         bobAfterRecipient,
+        bobRecoveredAfterRecipient,
         aliceAfterUnshield,
         expectedAliceAfterRecipient: expectedAliceAfterRecipient.toString(),
         expectedBobAfterRecipient: expectedBobAfterRecipient.toString(),
         expectedAliceAfterUnshield: expectedAliceAfterUnshield.toString(),
         observedAliceAfterRecipient: aliceAfterRecipient.spendableQuantity,
         observedBobAfterRecipient: bobAfterRecipient.spendableQuantity,
+        observedBobRecoveredAfterRecipient: bobRecoveredSpendable,
         observedAliceAfterUnshield: aliceAfterUnshield.spendableQuantity,
       };
     },
@@ -1173,9 +1211,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
       confidentialTransferProbe.selfShieldHash ?? "skipped",
     )}, recipient shielded send ${
       confidentialTransferProbe.recipientTransferHash
-    } to ${confidentialTransferProbe.bobAccountId}, and unshield ${
-      confidentialTransferProbe.unshieldHash
-    }.`,
+    } to ${confidentialTransferProbe.bobAccountId}, recipient recovery scan ${
+      confidentialTransferProbe.observedBobRecoveredAfterRecipient
+    }, and unshield ${confidentialTransferProbe.unshieldHash}.`,
   );
 
   await page.evaluate(() => {
