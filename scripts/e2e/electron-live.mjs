@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 /* global BigInt */
 
-import { mkdirSync, existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
 import {
+  extractTransactionHashHex,
+  summarizePublicFinalityDiagnostic,
+  parseCachedFundedWalletRecord,
   parseFundedEnvConfig,
   parseOnboardingEnvConfig,
+  isOnboardingDisabledError,
   isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
   parseNetworkPrefix,
@@ -18,6 +22,8 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..", "..");
 const mainEntry = join(projectRoot, "dist", "main", "index.cjs");
 const screenshotDir = join(projectRoot, "output", "playwright");
+const e2eStateDir = join(projectRoot, "output", "e2e");
+const fundedWalletCachePath = join(e2eStateDir, "live-funded-wallet.json");
 const tairaToriiUrl = "https://taira.sora.org";
 const tairaChainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const tairaToriiHosts = new Set(["taira.sora.org", "www.taira.sora.org"]);
@@ -46,6 +52,7 @@ async function main() {
   assertTairaTarget(toriiUrl, chainId);
   await preflightToriiHealth(toriiUrl);
   mkdirSync(screenshotDir, { recursive: true });
+  mkdirSync(e2eStateDir, { recursive: true });
 
   let app;
   let page;
@@ -57,9 +64,7 @@ async function main() {
     page = await app.firstWindow();
     page.setDefaultTimeout(45_000);
 
-    const fundedFlow = fundedWalletConfig
-      ? await runFundedFlow(page, fundedWalletConfig)
-      : await runFaucetFlow(page);
+    const fundedFlow = await resolveBootstrapFlow(page);
     const readOnlyAssetId = assetDefinitionId || fundedFlow.assetDefinitionId;
     const onboardingAssetId = assetDefinitionId || fundedFlow.assetDefinitionId;
 
@@ -74,11 +79,25 @@ async function main() {
     const onboardingOutcome = await runOnboardingFlow(page, onboardingAssetId);
 
     console.log(
-      onboardingOutcome === "skipped"
+      onboardingOutcome === "skipped_403"
         ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned HTTP 403)."
+        : onboardingOutcome === "skipped_400"
+          ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned a reusable HTTP 400 on the deterministic onboarding probe)."
         : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
     );
   } catch (error) {
+    const publicFinalityDiagnostic = await collectPublicFinalityDiagnostic(
+      toriiUrl,
+      error,
+    );
+    if (publicFinalityDiagnostic) {
+      console.error("Public finality diagnostic:", publicFinalityDiagnostic);
+      if (error instanceof Error) {
+        error.message = `${error.message}\nPublic finality diagnostic: ${JSON.stringify(
+          publicFinalityDiagnostic,
+        )}`;
+      }
+    }
     console.error("Live Electron E2E failed:", error);
     if (page) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -102,6 +121,157 @@ async function main() {
       ]);
     }
   }
+}
+
+function readCachedFundedWalletConfig() {
+  if (!existsSync(fundedWalletCachePath)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(readFileSync(fundedWalletCachePath, "utf8"));
+    return parseCachedFundedWalletRecord(payload);
+  } catch (error) {
+    console.warn(
+      `Ignoring unreadable funded-wallet cache at ${fundedWalletCachePath}: ${String(
+        error ?? "",
+      )}`,
+    );
+    return null;
+  }
+}
+
+function writeCachedFundedWalletConfig(fundedAccount) {
+  const payload = {
+    cachedAt: new Date().toISOString(),
+    domain: String(fundedAccount?.domain ?? defaultDerivationLabel).trim(),
+    privateKeyHex: String(fundedAccount?.privateKeyHex ?? "").trim(),
+    accountId:
+      String(fundedAccount?.i105AccountId ?? "").trim() ||
+      String(fundedAccount?.displayAccountId ?? "").trim(),
+    assetId: String(fundedAccount?.assetId ?? "").trim(),
+    assetDefinitionId: String(
+      fundedAccount?.assetDefinitionId ?? "",
+    ).trim(),
+  };
+
+  if (!payload.privateKeyHex) {
+    return;
+  }
+
+  writeFileSync(
+    fundedWalletCachePath,
+    `${JSON.stringify(payload, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function fetchDiagnosticPayload(url) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        accept: "application/json",
+      },
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      return {
+        payload: null,
+        error: `${response.status} ${response.statusText}${text ? `: ${text.slice(0, 200)}` : ""}`,
+      };
+    }
+    return {
+      payload: text ? JSON.parse(text) : null,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      payload: null,
+      error: String(error ?? ""),
+    };
+  }
+}
+
+async function collectPublicFinalityDiagnostic(baseUrl, error) {
+  const rootedBase = String(baseUrl ?? "").endsWith("/")
+    ? String(baseUrl)
+    : `${String(baseUrl ?? "").trim()}/`;
+  if (!rootedBase.trim()) {
+    return null;
+  }
+  const txHashHex = extractTransactionHashHex(
+    error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error,
+  );
+
+  const statusUrl = new URL("status", rootedBase).toString();
+  const sumeragiUrl = new URL("v1/sumeragi/status", rootedBase).toString();
+  const blocksUrl = new URL("v1/ledger/headers?limit=3", rootedBase).toString();
+  const txStatusUrl = txHashHex
+    ? new URL(
+        `v1/pipeline/transactions/status?hash=${encodeURIComponent(txHashHex)}`,
+        rootedBase,
+      ).toString()
+    : null;
+
+  const [statusResult, sumeragiResult, blocksResult, txStatusResult] =
+    await Promise.all([
+      fetchDiagnosticPayload(statusUrl),
+      fetchDiagnosticPayload(sumeragiUrl),
+      fetchDiagnosticPayload(blocksUrl),
+      txStatusUrl
+        ? fetchDiagnosticPayload(txStatusUrl)
+        : Promise.resolve({ payload: null, error: null }),
+    ]);
+
+  const endpointErrors = Object.fromEntries(
+    Object.entries({
+      ...(txStatusResult.error ? { txStatus: txStatusResult.error } : {}),
+      ...(statusResult.error ? { status: statusResult.error } : {}),
+      ...(sumeragiResult.error ? { sumeragi: sumeragiResult.error } : {}),
+      ...(blocksResult.error ? { blocks: blocksResult.error } : {}),
+    }),
+  );
+
+  return {
+    ...summarizePublicFinalityDiagnostic({
+      txHashHex,
+      txStatusPayload: txStatusResult.payload,
+      statusPayload: statusResult.payload,
+      sumeragiPayload: sumeragiResult.payload,
+      blocksPayload: blocksResult.payload,
+    }),
+    ...(Object.keys(endpointErrors).length > 0 ? { endpointErrors } : {}),
+  };
+}
+
+async function resolveBootstrapFlow(page) {
+  if (fundedWalletConfig) {
+    const fundedFlow = await runFundedFlow(page, fundedWalletConfig);
+    writeCachedFundedWalletConfig(fundedFlow);
+    return fundedFlow;
+  }
+
+  const cachedFundedWallet = readCachedFundedWalletConfig();
+  if (cachedFundedWallet) {
+    try {
+      const fundedFlow = await runFundedFlow(page, cachedFundedWallet);
+      console.log(
+        `Reused cached TAIRA funded wallet ${fundedFlow.i105AccountId} with ${fundedFlow.quantity} units on ${fundedFlow.assetId}.`,
+      );
+      writeCachedFundedWalletConfig(fundedFlow);
+      return fundedFlow;
+    } catch (error) {
+      console.warn(
+        `Cached funded-wallet bootstrap failed, falling back to faucet: ${String(
+          error ?? "",
+        )}`,
+      );
+    }
+  }
+
+  const faucetFlow = await runFaucetFlow(page);
+  writeCachedFundedWalletConfig(faucetFlow);
+  return faucetFlow;
 }
 
 function readEnv(name, fallback) {
@@ -365,6 +535,7 @@ async function runFaucetFlow(page) {
 
       return {
         ...faucetBootstrap,
+        domain: defaultDerivationLabel,
         canonicalAccountId: assetId.split("#").slice(1).join("#"),
         assetId,
         assetDefinitionId,
@@ -485,6 +656,7 @@ async function runFundedFlow(page, fundedWallet) {
         i105DefaultAccountId: summary.i105DefaultAccountId,
         publicKeyHex,
         privateKeyHex,
+        domain,
         assetId,
         assetDefinitionId: resolvedAssetDefinitionId,
         quantity: String(matchingAsset?.quantity ?? "").trim(),
@@ -632,29 +804,90 @@ async function runReadOnlyFlow(page, fundedAccount) {
           privateKeyHex,
           assetDefinitionId: assetId,
         });
+      const fetchAccountTransactions = (accountId, privateKeyHex) =>
+        window.iroha.fetchAccountTransactions({
+          toriiUrl: torii,
+          accountId,
+          privateKeyHex,
+          limit: 50,
+        });
+      const waitForAccountTransaction = async ({
+        accountId,
+        privateKeyHex,
+        txHashHex,
+        timeoutMs = 90_000,
+      }) => {
+        const normalizedHash = String(txHashHex ?? "").trim().toLowerCase();
+        const deadline = Date.now() + timeoutMs;
+        let lastTransactions = null;
+        let lastError = "";
+        while (Date.now() < deadline) {
+          try {
+            lastTransactions = await fetchAccountTransactions(
+              accountId,
+              privateKeyHex,
+            );
+            const items = Array.isArray(lastTransactions?.items)
+              ? lastTransactions.items
+              : [];
+            if (
+              items.some(
+                (item) =>
+                  String(
+                    item?.entrypoint_hash ?? item?.entrypointHash ?? "",
+                  ).trim().toLowerCase() === normalizedHash,
+              )
+            ) {
+              return {
+                ok: true,
+                transactions: lastTransactions,
+                error: "",
+              };
+            }
+          } catch (error) {
+            lastError = String(error ?? "");
+          }
+          await waitForMs(1_500);
+        }
+        return {
+          ok: false,
+          transactions: lastTransactions,
+          error: lastError,
+        };
+      };
       const waitForConfidentialBalance = async ({
         accountId,
         privateKeyHex,
-        minimumQuantity,
+        expectedSpendableQuantity,
+        requireOnChainParity = false,
         timeoutMs = 90_000,
       }) => {
         const deadline = Date.now() + timeoutMs;
         let lastBalance = null;
         let lastError = "";
+        const normalizedExpected = String(expectedSpendableQuantity);
         while (Date.now() < deadline) {
           try {
             lastBalance = await readConfidentialBalance(
               accountId,
               privateKeyHex,
             );
-            if (
-              BigInt(readSpendableQuantity(lastBalance)) >=
-              BigInt(String(minimumQuantity))
-            ) {
+            const spendableQuantity = readSpendableQuantity(lastBalance);
+            const onChainQuantity = String(
+              lastBalance?.onChainQuantity ?? "",
+            ).trim();
+            const quantity = String(lastBalance?.quantity ?? "").trim();
+            const hasOnChainParity =
+              !requireOnChainParity ||
+              (quantity !== "" &&
+                onChainQuantity !== "" &&
+                quantity === onChainQuantity);
+            if (spendableQuantity === normalizedExpected && hasOnChainParity) {
               return {
                 ok: true,
                 balance: lastBalance,
                 error: "",
+                spendableQuantity,
               };
             }
           } catch (error) {
@@ -666,6 +899,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           ok: false,
           balance: lastBalance,
           error: lastError,
+          spendableQuantity: readSpendableQuantity(lastBalance),
         };
       };
 
@@ -673,7 +907,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
         aliceAccountId,
         alicePrivateKeyHex,
       );
-      const initialAliceSpendable = readSpendableQuantity(initialAliceBalance);
+      const initialAliceSpendable = BigInt(
+        readSpendableQuantity(initialAliceBalance),
+      );
 
       const bobKeyPair = window.iroha.generateKeyPair();
       const bobSummary = window.iroha.deriveAccountAddress({
@@ -690,34 +926,67 @@ async function runReadOnlyFlow(page, fundedAccount) {
         bobSummary.i105AccountId,
         bobKeyPair.privateKeyHex,
       );
-      const initialBobSpendable = readSpendableQuantity(initialBobBalance);
+      const initialBobSpendable = BigInt(readSpendableQuantity(initialBobBalance));
 
-      const selfShield = await window.iroha.transferAsset({
-        toriiUrl: torii,
-        chainId: chain,
-        assetDefinitionId: assetId,
-        accountId: aliceAccountId,
-        destinationAccountId: aliceAccountId,
-        quantity: "2",
-        privateKeyHex: alicePrivateKeyHex,
-        shielded: true,
-        metadata: {
-          source: "electron-live-self-shield",
-        },
-      });
-      const aliceAfterSelfShield = await waitForConfidentialBalance({
-        accountId: aliceAccountId,
-        privateKeyHex: alicePrivateKeyHex,
-        minimumQuantity: BigInt(initialAliceSpendable) + 2n,
-      });
-      if (!aliceAfterSelfShield.ok) {
-        return {
-          ok: false,
-          stage: "self-shield-balance",
-          selfShieldHash: selfShield.hash,
-          initialAliceBalance,
-          result: aliceAfterSelfShield,
-        };
+      const selfShieldQuantity =
+        initialAliceSpendable >= 2n ? 0n : 2n - initialAliceSpendable;
+      let selfShieldHash = null;
+      let aliceAfterSelfShield = {
+        ok: true,
+        balance: initialAliceBalance,
+        error: "",
+        spendableQuantity: initialAliceSpendable.toString(),
+      };
+      if (selfShieldQuantity > 0n) {
+        const selfShield = await window.iroha.transferAsset({
+          toriiUrl: torii,
+          chainId: chain,
+          assetDefinitionId: assetId,
+          accountId: aliceAccountId,
+          destinationAccountId: aliceAccountId,
+          quantity: selfShieldQuantity.toString(),
+          privateKeyHex: alicePrivateKeyHex,
+          shielded: true,
+          metadata: {
+            source: "electron-live-self-shield",
+          },
+        });
+        selfShieldHash = selfShield.hash;
+        const selfShieldCommitted = await waitForAccountTransaction({
+          accountId: aliceAccountId,
+          privateKeyHex: alicePrivateKeyHex,
+          txHashHex: selfShield.hash,
+        });
+        if (!selfShieldCommitted.ok) {
+          return {
+            ok: false,
+            stage: "self-shield-transaction",
+            txHashHex: selfShield.hash,
+            selfShieldHash,
+            selfShieldQuantity: selfShieldQuantity.toString(),
+            initialAliceBalance,
+            selfShieldCommitted,
+          };
+        }
+        aliceAfterSelfShield = await waitForConfidentialBalance({
+          accountId: aliceAccountId,
+          privateKeyHex: alicePrivateKeyHex,
+          expectedSpendableQuantity: (
+            initialAliceSpendable + selfShieldQuantity
+          ).toString(),
+          requireOnChainParity: true,
+        });
+        if (!aliceAfterSelfShield.ok) {
+          return {
+            ok: false,
+            stage: "self-shield-balance",
+            txHashHex: selfShield.hash,
+            selfShieldHash,
+            selfShieldQuantity: selfShieldQuantity.toString(),
+            initialAliceBalance,
+            aliceAfterSelfShield,
+          };
+        }
       }
 
       const recipientTransfer = await window.iroha.transferAsset({
@@ -735,51 +1004,145 @@ async function runReadOnlyFlow(page, fundedAccount) {
           source: "electron-live-recipient-shielded-send",
         },
       });
-
-      const expectedAliceSpendable = BigInt(initialAliceSpendable) + 1n;
-      const expectedBobSpendable = BigInt(initialBobSpendable) + 1n;
-      const finalAliceBalance = await waitForConfidentialBalance({
+      const recipientCommitted = await waitForAccountTransaction({
         accountId: aliceAccountId,
         privateKeyHex: alicePrivateKeyHex,
-        minimumQuantity: expectedAliceSpendable,
+        txHashHex: recipientTransfer.hash,
       });
-      const finalBobBalance = await waitForConfidentialBalance({
+      if (!recipientCommitted.ok) {
+        return {
+          ok: false,
+          stage: "recipient-transaction",
+          txHashHex: recipientTransfer.hash,
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          recipientCommitted,
+        };
+      }
+
+      const expectedAliceAfterRecipient =
+        initialAliceSpendable + selfShieldQuantity - 1n;
+      const expectedBobAfterRecipient = initialBobSpendable + 1n;
+      const aliceAfterRecipient = await waitForConfidentialBalance({
+        accountId: aliceAccountId,
+        privateKeyHex: alicePrivateKeyHex,
+        expectedSpendableQuantity: expectedAliceAfterRecipient.toString(),
+        requireOnChainParity: true,
+      });
+      const bobAfterRecipient = await waitForConfidentialBalance({
         accountId: bobSummary.i105AccountId,
         privateKeyHex: bobKeyPair.privateKeyHex,
-        minimumQuantity: expectedBobSpendable,
+        expectedSpendableQuantity: expectedBobAfterRecipient.toString(),
+        requireOnChainParity: true,
       });
+      if (!aliceAfterRecipient.ok || !bobAfterRecipient.ok) {
+        return {
+          ok: false,
+          stage: !aliceAfterRecipient.ok
+            ? "sender-final-balance"
+            : "recipient-final-balance",
+          txHashHex: recipientTransfer.hash,
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          aliceAfterRecipient,
+          bobAfterRecipient,
+          expectedAliceAfterRecipient: expectedAliceAfterRecipient.toString(),
+          expectedBobAfterRecipient: expectedBobAfterRecipient.toString(),
+        };
+      }
 
-      const aliceSpendable = readSpendableQuantity(finalAliceBalance.balance);
-      const bobSpendable = readSpendableQuantity(finalBobBalance.balance);
-      const aliceMatches = aliceSpendable === expectedAliceSpendable.toString();
-      const bobMatches = bobSpendable === expectedBobSpendable.toString();
+      const unshield = await window.iroha.transferAsset({
+        toriiUrl: torii,
+        chainId: chain,
+        assetDefinitionId: assetId,
+        accountId: aliceAccountId,
+        destinationAccountId: aliceAccountId,
+        quantity: "1",
+        privateKeyHex: alicePrivateKeyHex,
+        unshield: true,
+        metadata: {
+          source: "electron-live-unshield",
+        },
+      });
+      const unshieldCommitted = await waitForAccountTransaction({
+        accountId: aliceAccountId,
+        privateKeyHex: alicePrivateKeyHex,
+        txHashHex: unshield.hash,
+      });
+      if (!unshieldCommitted.ok) {
+        return {
+          ok: false,
+          stage: "unshield-transaction",
+          txHashHex: unshield.hash,
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          unshieldHash: unshield.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          aliceAfterRecipient,
+          bobAfterRecipient,
+          unshieldCommitted,
+        };
+      }
+      const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
+      const aliceAfterUnshield = await waitForConfidentialBalance({
+        accountId: aliceAccountId,
+        privateKeyHex: alicePrivateKeyHex,
+        expectedSpendableQuantity: expectedAliceAfterUnshield.toString(),
+        requireOnChainParity: true,
+      });
+      if (!aliceAfterUnshield.ok) {
+        return {
+          ok: false,
+          stage: "unshield-final-balance",
+          txHashHex: unshield.hash,
+          selfShieldHash,
+          recipientTransferHash: recipientTransfer.hash,
+          unshieldHash: unshield.hash,
+          selfShieldQuantity: selfShieldQuantity.toString(),
+          initialAliceBalance,
+          initialBobBalance,
+          aliceAfterSelfShield,
+          aliceAfterRecipient,
+          bobAfterRecipient,
+          aliceAfterUnshield,
+          expectedAliceAfterUnshield: expectedAliceAfterUnshield.toString(),
+        };
+      }
 
       return {
-        ok:
-          finalAliceBalance.ok &&
-          finalBobBalance.ok &&
-          aliceMatches &&
-          bobMatches,
-        stage: !finalAliceBalance.ok
-          ? "sender-final-balance"
-          : !finalBobBalance.ok
-            ? "recipient-final-balance"
-            : !aliceMatches || !bobMatches
-              ? "unexpected-final-quantity"
-              : "completed",
+        ok: true,
+        stage: "completed",
+        txHashHex: unshield.hash,
         bobAccountId: bobSummary.i105AccountId,
         bobOwnerTagHex,
         bobDiversifierHex,
-        selfShieldHash: selfShield.hash,
+        selfShieldHash,
         recipientTransferHash: recipientTransfer.hash,
+        unshieldHash: unshield.hash,
+        selfShieldQuantity: selfShieldQuantity.toString(),
         initialAliceBalance,
         initialBobBalance,
-        finalAliceBalance,
-        finalBobBalance,
-        expectedAliceSpendable: expectedAliceSpendable.toString(),
-        expectedBobSpendable: expectedBobSpendable.toString(),
-        observedAliceSpendable: aliceSpendable,
-        observedBobSpendable: bobSpendable,
+        aliceAfterSelfShield,
+        aliceAfterRecipient,
+        bobAfterRecipient,
+        aliceAfterUnshield,
+        expectedAliceAfterRecipient: expectedAliceAfterRecipient.toString(),
+        expectedBobAfterRecipient: expectedBobAfterRecipient.toString(),
+        expectedAliceAfterUnshield: expectedAliceAfterUnshield.toString(),
+        observedAliceAfterRecipient: aliceAfterRecipient.spendableQuantity,
+        observedBobAfterRecipient: bobAfterRecipient.spendableQuantity,
+        observedAliceAfterUnshield: aliceAfterUnshield.spendableQuantity,
       };
     },
     {
@@ -797,12 +1160,20 @@ async function runReadOnlyFlow(page, fundedAccount) {
     throw new Error(
       `TAIRA confidential transfer probe failed at stage ${String(
         confidentialTransferProbe?.stage ?? "unknown",
-      )}. Probe: ${JSON.stringify(confidentialTransferProbe).slice(0, 2000)}`,
+      )} (tx ${String(confidentialTransferProbe?.txHashHex ?? "unknown")}). Probe: ${JSON.stringify(
+        confidentialTransferProbe,
+      ).slice(0, 2000)}`,
     );
   }
 
   console.log(
-    `Confidential transfer probe committed self-shield ${confidentialTransferProbe.selfShieldHash} and recipient shielded send ${confidentialTransferProbe.recipientTransferHash} to ${confidentialTransferProbe.bobAccountId}.`,
+    `Confidential transfer probe completed self-shield ${String(
+      confidentialTransferProbe.selfShieldHash ?? "skipped",
+    )}, recipient shielded send ${
+      confidentialTransferProbe.recipientTransferHash
+    } to ${confidentialTransferProbe.bobAccountId}, and unshield ${
+      confidentialTransferProbe.unshieldHash
+    }.`,
   );
 
   await page.evaluate(() => {
@@ -1024,10 +1395,16 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
   );
   if (onboardingStatus === "error") {
     if (aliasRegistrationOutcome === "skipped") {
+      if (isOnboardingDisabledError(onboardingDetail)) {
+        console.log(
+          `Optional alias registration probe: skipped because ${toriiUrl} returned HTTP 403. Local-wallet-only operation remains valid on this build.`,
+        );
+        return "skipped_403";
+      }
       console.log(
-        `Optional alias registration probe: skipped because ${toriiUrl} returned HTTP 403. Local-wallet-only operation remains valid on this build.`,
+        `Optional alias registration probe: skipped because ${toriiUrl} returned HTTP 400 on the deterministic onboarding probe. This deployment currently reports reusable onboarding failures through the binary bad_request path.`,
       );
-      return "skipped";
+      return "skipped_400";
     }
     console.log(
       "Optional alias registration probe: deterministic account already exists (HTTP 409), reusing existing account profile.",

@@ -7,15 +7,18 @@ import {
   findMissingToriiVpnMcpTools,
   findMissingToriiVpnOpenApiPaths,
   formatSurfaceProbeAttempt,
+  extractTransactionHashHex,
   isOnboardingBadRequestError,
   isOnboardingConflictError,
   isOnboardingDisabledError,
   isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
+  parseCachedFundedWalletRecord,
   parseFundedEnvConfig,
   parseOnboardingEnvConfig,
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
+  summarizePublicFinalityDiagnostic,
 } from "../scripts/e2e/electron-live-utils.mjs";
 
 const sampleI105AccountId = AccountAddress.fromAccount({
@@ -396,5 +399,164 @@ describe("electron live e2e utils", () => {
     ).toThrow(
       "E2E_FUNDED_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
     );
+  });
+
+  it("returns null for missing cached funded-wallet payloads", () => {
+    expect(parseCachedFundedWalletRecord(null)).toBeNull();
+    expect(parseCachedFundedWalletRecord(undefined)).toBeNull();
+    expect(parseCachedFundedWalletRecord({})).toBeNull();
+    expect(parseCachedFundedWalletRecord([])).toBeNull();
+  });
+
+  it("parses cached funded-wallet records", () => {
+    expect(
+      parseCachedFundedWalletRecord({
+        privateKeyHex:
+          "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+        domain: "  treasury  ",
+        accountId: ` ${sampleI105AccountId} `,
+        assetId: " xor#test-account ",
+        assetDefinitionId: " xor ",
+        cachedAt: " 2026-04-16T12:00:00.000Z ",
+      }),
+    ).toEqual({
+      privateKeyHex:
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      domain: "treasury",
+      accountId: sampleI105AccountId,
+      assetId: "xor#test-account",
+      assetDefinitionId: "xor",
+      cachedAt: "2026-04-16T12:00:00.000Z",
+    });
+  });
+
+  it("defaults cached funded-wallet domains to default", () => {
+    expect(
+      parseCachedFundedWalletRecord({
+        privateKeyHex:
+          "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+      }),
+    ).toEqual({
+      privateKeyHex:
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      domain: "default",
+      accountId: "",
+      assetId: "",
+      assetDefinitionId: "",
+      cachedAt: "",
+    });
+  });
+
+  it("rejects invalid cached funded-wallet private keys", () => {
+    expect(() =>
+      parseCachedFundedWalletRecord({
+        privateKeyHex: "abc",
+      }),
+    ).toThrow(
+      "Cached funded wallet privateKeyHex must be a 64-character hexadecimal string.",
+    );
+  });
+
+  it("extracts transaction hashes from timeout details", () => {
+    expect(
+      extractTransactionHashHex(
+        "Transaction BB939A46A679E4D79B1533239D04CF43CB4B1F9A79ECC9AD7D0175CE697923ED did not reach a terminal status within 180000ms",
+      ),
+    ).toBe(
+      "bb939a46a679e4d79b1533239d04cf43cb4b1f9a79ecc9ad7d0175ce697923ed",
+    );
+    expect(
+      extractTransactionHashHex(
+        "Faucet claim 92832455f5657312325370bce215055d9b7b4e894d2294de9d42c11f7c5715db stayed queued and did not finalize within 240 seconds.",
+      ),
+    ).toBe(
+      "92832455f5657312325370bce215055d9b7b4e894d2294de9d42c11f7c5715db",
+    );
+    expect(extractTransactionHashHex("no hash here")).toBeNull();
+  });
+
+  it("summarizes public finality diagnostics", () => {
+    expect(
+      summarizePublicFinalityDiagnostic({
+        txHashHex:
+          "bb939a46a679e4d79b1533239d04cf43cb4b1f9a79ecc9ad7d0175ce697923ed",
+        txStatusPayload: {
+          status: {
+            kind: "Queued",
+          },
+        },
+        statusPayload: {
+          blocks: 720,
+          queue_size: 0,
+          view_changes: 119,
+          sumeragi: {
+            commit_qc_height: 720,
+            tx_queue_depth: 0,
+            tx_queue_saturated: false,
+            highest_qc_height: 714,
+            locked_qc_height: 714,
+          },
+        },
+        sumeragiPayload: {
+          membership: {
+            height: 721,
+          },
+          view_change_causes: {
+            last_cause: "quorum_timeout",
+          },
+        },
+        blocksPayload: {
+          items: [
+            {
+              height: 720,
+              created_at: "2026-04-16T12:19:33.459Z",
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      txHashHex:
+        "bb939a46a679e4d79b1533239d04cf43cb4b1f9a79ecc9ad7d0175ce697923ed",
+      txStatus: "Queued",
+      blocks: 720,
+      queueSize: 0,
+      txQueueDepth: 0,
+      txQueueSaturated: false,
+      commitQcHeight: 720,
+      highestQcHeight: 714,
+      lockedQcHeight: 714,
+      membershipHeight: 721,
+      viewChanges: 119,
+      viewChangeCause: "quorum_timeout",
+      latestBlockHeight: 720,
+      latestBlockCreatedAt: "2026-04-16T12:19:33.459Z",
+      likelyFinalityStall: true,
+    });
+
+    expect(
+      summarizePublicFinalityDiagnostic({
+        statusPayload: {
+          blocks: 58,
+          sumeragi: {
+            commit_qc_height: 58,
+          },
+        },
+        sumeragiPayload: {
+          view_change_causes: {
+            last_cause: "missing_qc",
+          },
+        },
+        blocksPayload: [
+          {
+            height: 58,
+            created_at: "2026-04-16T15:58:34.489Z",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      latestBlockHeight: 58,
+      latestBlockCreatedAt: "2026-04-16T15:58:34.489Z",
+      commitQcHeight: 58,
+    });
   });
 });

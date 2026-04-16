@@ -154,6 +154,22 @@ const deprecatedOnboardingEnvVarNames = Object.keys(
   deprecatedOnboardingEnvVarMap,
 );
 
+function parseFundedWalletPrivateKeyHex(privateKeyHex, sourceLabel) {
+  const normalizedPrivateKeyHex = String(privateKeyHex ?? "")
+    .trim()
+    .toLowerCase();
+  if (!/^[0-9a-f]{64}$/i.test(normalizedPrivateKeyHex)) {
+    throw new Error(
+      `${sourceLabel} must be a 64-character hexadecimal string.`,
+    );
+  }
+  return normalizedPrivateKeyHex;
+}
+
+function normalizeFundedWalletDomain(domain) {
+  return String(domain ?? "").trim() || defaultFundedDomain;
+}
+
 export function parseOnboardingEnvConfig(env = process.env) {
   const deprecated = deprecatedOnboardingEnvVarNames.filter((name) =>
     String(env?.[name] ?? "").trim(),
@@ -202,17 +218,123 @@ export function parseFundedEnvConfig(env = process.env) {
   if (!privateKeyHex) {
     return null;
   }
-  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
-    throw new Error(
-      "E2E_FUNDED_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
-    );
-  }
-
-  const domain =
-    String(env?.E2E_FUNDED_DOMAIN ?? "").trim() || defaultFundedDomain;
 
   return {
-    privateKeyHex: privateKeyHex.toLowerCase(),
-    domain,
+    privateKeyHex: parseFundedWalletPrivateKeyHex(
+      privateKeyHex,
+      "E2E_FUNDED_PRIVATE_KEY_HEX",
+    ),
+    domain: normalizeFundedWalletDomain(env?.E2E_FUNDED_DOMAIN),
+  };
+}
+
+export function extractTransactionHashHex(detail) {
+  const match = String(detail ?? "").match(/\b([0-9a-f]{64})\b/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+const normalizeOptionalNumber = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const normalizeOptionalString = (value) => {
+  const normalized = String(value ?? "").trim();
+  return normalized || null;
+};
+
+export function summarizePublicFinalityDiagnostic({
+  txHashHex = "",
+  txStatusPayload = null,
+  statusPayload = null,
+  sumeragiPayload = null,
+  blocksPayload = null,
+} = {}) {
+  const lastBlock = Array.isArray(blocksPayload)
+    ? blocksPayload[0]
+    : Array.isArray(blocksPayload?.items)
+      ? blocksPayload.items[0]
+      : null;
+  const statusSumeragi =
+    statusPayload &&
+    typeof statusPayload === "object" &&
+    !Array.isArray(statusPayload) &&
+    statusPayload.sumeragi &&
+    typeof statusPayload.sumeragi === "object" &&
+    !Array.isArray(statusPayload.sumeragi)
+      ? statusPayload.sumeragi
+      : null;
+  const viewChangeCauses =
+    sumeragiPayload &&
+    typeof sumeragiPayload === "object" &&
+    !Array.isArray(sumeragiPayload) &&
+    sumeragiPayload.view_change_causes &&
+    typeof sumeragiPayload.view_change_causes === "object" &&
+    !Array.isArray(sumeragiPayload.view_change_causes)
+      ? sumeragiPayload.view_change_causes
+      : null;
+  const txStatus =
+    normalizeOptionalString(txStatusPayload?.status?.kind) ??
+    normalizeOptionalString(txStatusPayload?.status);
+  const latestBlockHeight =
+    normalizeOptionalNumber(lastBlock?.height) ??
+    normalizeOptionalNumber(statusPayload?.blocks);
+  const commitQcHeight =
+    normalizeOptionalNumber(statusSumeragi?.commit_qc_height) ??
+    normalizeOptionalNumber(sumeragiPayload?.commit_qc?.height);
+  const viewChangeCause = normalizeOptionalString(viewChangeCauses?.last_cause);
+  return {
+    txHashHex: normalizeOptionalString(txHashHex),
+    txStatus,
+    blocks: normalizeOptionalNumber(statusPayload?.blocks),
+    queueSize: normalizeOptionalNumber(statusPayload?.queue_size),
+    txQueueDepth: normalizeOptionalNumber(statusSumeragi?.tx_queue_depth),
+    txQueueSaturated:
+      typeof statusSumeragi?.tx_queue_saturated === "boolean"
+        ? statusSumeragi.tx_queue_saturated
+        : null,
+    commitQcHeight,
+    highestQcHeight:
+      normalizeOptionalNumber(statusSumeragi?.highest_qc_height) ??
+      normalizeOptionalNumber(sumeragiPayload?.highest_qc?.height),
+    lockedQcHeight:
+      normalizeOptionalNumber(statusSumeragi?.locked_qc_height) ??
+      normalizeOptionalNumber(sumeragiPayload?.locked_qc?.height),
+    membershipHeight: normalizeOptionalNumber(sumeragiPayload?.membership?.height),
+    viewChanges:
+      normalizeOptionalNumber(statusPayload?.view_changes) ??
+      normalizeOptionalNumber(sumeragiPayload?.view_change_index),
+    viewChangeCause,
+    latestBlockHeight,
+    latestBlockCreatedAt: normalizeOptionalString(lastBlock?.created_at),
+    likelyFinalityStall:
+      txStatus === "Queued" &&
+      latestBlockHeight !== null &&
+      commitQcHeight !== null &&
+      latestBlockHeight === commitQcHeight &&
+      (viewChangeCause === "missing_qc" || viewChangeCause === "quorum_timeout"),
+  };
+}
+
+export function parseCachedFundedWalletRecord(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const privateKeyHex = String(payload.privateKeyHex ?? "").trim();
+  if (!privateKeyHex) {
+    return null;
+  }
+
+  return {
+    privateKeyHex: parseFundedWalletPrivateKeyHex(
+      privateKeyHex,
+      "Cached funded wallet privateKeyHex",
+    ),
+    domain: normalizeFundedWalletDomain(payload.domain),
+    accountId: String(payload.accountId ?? "").trim(),
+    assetId: String(payload.assetId ?? "").trim(),
+    assetDefinitionId: String(payload.assetDefinitionId ?? "").trim(),
+    cachedAt: String(payload.cachedAt ?? "").trim(),
   };
 }

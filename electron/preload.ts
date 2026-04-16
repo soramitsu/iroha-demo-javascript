@@ -1021,10 +1021,16 @@ const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
-const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID =
-  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon";
-const CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID =
-  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon";
+const CONFIDENTIAL_TX_COMMITTED_STATUS = "Committed";
+const CONFIDENTIAL_TX_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
+const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS = new Set([
+  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon",
+  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon-diversified",
+]);
+const CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_IDS = new Set([
+  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon",
+  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon-diversified",
+]);
 const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
 const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
   "iroha-demo:confidential-wallet:";
@@ -2340,35 +2346,18 @@ const buildNexusEndpoint = (
 
 const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
   const client = getClient(toriiUrl);
-  const waitableClient = client as ToriiClient & {
-    waitForTransactionStatus?: (
-      txHashHex: string,
-      options: {
-        intervalMs: number;
-        timeoutMs: number;
-      },
-    ) => Promise<unknown>;
-  };
-  if (typeof waitableClient.waitForTransactionStatus === "function") {
-    await waitableClient.waitForTransactionStatus(hashHex, {
-      intervalMs: CONFIDENTIAL_TX_FINALITY_INTERVAL_MS,
-      timeoutMs: CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS,
-    });
-    return;
-  }
-
   const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
   let lastStatusKind: string | null = null;
   while (Date.now() <= deadline) {
     const payload = await client.getTransactionStatus(hashHex);
     const statusKind = extractPipelineStatusKind(payload);
     lastStatusKind = statusKind;
-    if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
+    if (statusKind === CONFIDENTIAL_TX_COMMITTED_STATUS) {
       return;
     }
-    if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
+    if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
       throw new Error(
-        `Transaction ${hashHex} ${statusKind.toLowerCase()} before it reached finality.`,
+        `Transaction ${hashHex} ${statusKind.toLowerCase()} before it committed.`,
       );
     }
     if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
@@ -2380,9 +2369,37 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
   const timeoutSeconds = Math.trunc(CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS / 1000);
   throw new Error(
     lastStatusKind
-      ? `Transaction ${hashHex} stayed in ${lastStatusKind} and did not finalize within ${timeoutSeconds} seconds.`
-      : `Transaction ${hashHex} did not finalize within ${timeoutSeconds} seconds.`,
+      ? `Transaction ${hashHex} stayed in ${lastStatusKind} and did not commit within ${timeoutSeconds} seconds.`
+      : `Transaction ${hashHex} did not commit within ${timeoutSeconds} seconds.`,
   );
+};
+
+const submitSignedTransactionAndWaitForCommit = async (
+  toriiUrl: string,
+  signedTransaction: Buffer,
+) => {
+  const submission = await submitSignedTransaction(
+    getClient(toriiUrl),
+    signedTransaction,
+  );
+  await waitForTransactionCommit(toriiUrl, submission.hash);
+  return submission;
+};
+
+const submitTransactionEntrypointAndWaitForCommit = async (
+  toriiUrl: string,
+  transactionEntrypoint: Buffer,
+  hashHex: string,
+) => {
+  const submission = await submitTransactionEntrypoint(
+    getClient(toriiUrl),
+    transactionEntrypoint,
+    {
+      hashHex,
+    },
+  );
+  await waitForTransactionCommit(toriiUrl, submission.hash);
+  return submission;
 };
 
 const fetchConfidentialAssetPolicy = async (
@@ -3224,7 +3241,14 @@ const readInlineVerifyingKeyRecord = (value: Record<string, unknown>) => {
 const normalizeConfidentialCircuitId = (value: unknown): string =>
   trimString(value)
     .toLowerCase()
-    .replace(/^halo2\/pasta\//, "halo2/pasta/ipa/");
+    .replace(/^halo2\/pasta\/(?!ipa\/)/, "halo2/pasta/ipa/")
+    .replace(/^halo2\/pasta\/ipa\/ipa\//, "halo2/pasta/ipa/");
+
+const isConfidentialUnshieldV2CircuitId = (circuitId: string): boolean =>
+  CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS.has(circuitId);
+
+const isConfidentialUnshieldV3CircuitId = (circuitId: string): boolean =>
+  CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_IDS.has(circuitId);
 
 const readConfidentialVerifyingKeyContext = (
   value: Record<string, unknown>,
@@ -3622,12 +3646,9 @@ const submitInstructionTransaction = async (input: {
     instructions: [input.instruction],
     privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
   });
-  const submission = await submitSignedTransaction(
-    getClient(input.toriiUrl),
+  const submission = await submitSignedTransactionAndWaitForCommit(
+    input.toriiUrl,
     tx.signedTransaction,
-    {
-      waitForCommit: true,
-    },
   );
   return { hash: submission.hash };
 };
@@ -3844,7 +3865,6 @@ const api: IrohaBridge = {
     return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
   },
   async registerAccount(input) {
-    const client = getClient(input.toriiUrl);
     const domainId = input.domainId.trim();
     if (!domainId) {
       throw new Error("domainId is required.");
@@ -3868,12 +3888,9 @@ const api: IrohaBridge = {
         "authorityPrivateKeyHex",
       ),
     });
-    const submission = await submitSignedTransaction(
-      client,
+    const submission = await submitSignedTransactionAndWaitForCommit(
+      input.toriiUrl,
       tx.signedTransaction,
-      {
-        waitForCommit: true,
-      },
     );
     return { hash: submission.hash };
   },
@@ -3936,9 +3953,7 @@ const api: IrohaBridge = {
       let verifyingKeyContext = readConfidentialVerifyingKeyContext(
         refreshedMaterials.verifyingKey,
       );
-      while (
-        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID
-      ) {
+      while (isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)) {
         const candidateSelection = selectWalletConfidentialNotes(
           refreshedMaterials.ledger.notes,
           normalizedAmount,
@@ -4004,9 +4019,7 @@ const api: IrohaBridge = {
       let proofEnvelope:
         | ReturnType<typeof buildConfidentialUnshieldProofV2>
         | ReturnType<typeof buildConfidentialUnshieldProofV3>;
-      if (
-        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID
-      ) {
+      if (isConfidentialUnshieldV2CircuitId(verifyingKeyContext.circuitId)) {
         const selection = selectWalletConfidentialNotesForExactAmount(
           refreshedMaterials.ledger.notes,
           normalizedAmount,
@@ -4027,7 +4040,7 @@ const api: IrohaBridge = {
           verifyingKey: verifyingKeyContext.proofVerifyingKey,
         });
       } else if (
-        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID
+        isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)
       ) {
         const selection = selectWalletConfidentialNotes(
           refreshedMaterials.ledger.notes,
@@ -4103,12 +4116,9 @@ const api: IrohaBridge = {
         metadata,
         privateKey,
       });
-      const submission = await submitSignedTransaction(
-        getClient(input.toriiUrl),
+      const submission = await submitSignedTransactionAndWaitForCommit(
+        input.toriiUrl,
         tx.signedTransaction,
-        {
-          waitForCommit: true,
-        },
       );
       upsertConfidentialWalletShadowTransaction({
         toriiUrl: input.toriiUrl,
@@ -4537,12 +4547,9 @@ const api: IrohaBridge = {
       metadata: input.metadata ?? null,
       privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
     });
-    const submission = await submitSignedTransaction(
-      client,
+    const submission = await submitSignedTransactionAndWaitForCommit(
+      input.toriiUrl,
       tx.signedTransaction,
-      {
-        waitForCommit: true,
-      },
     );
     return { hash: submission.hash };
   },
@@ -5136,13 +5143,10 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypoint(
-        getClient(toriiUrl),
+      const submission = await submitTransactionEntrypointAndWaitForCommit(
+        toriiUrl,
         entrypoint.transactionEntrypoint,
-        {
-          hashHex: entrypoint.hashHex,
-          waitForCommit: true,
-        },
+        entrypoint.hashHex,
       );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
@@ -5168,12 +5172,9 @@ const api: IrohaBridge = {
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
-    const submission = await submitSignedTransaction(
-      getClient(toriiUrl),
+    const submission = await submitSignedTransactionAndWaitForCommit(
+      toriiUrl,
       tx.signedTransaction,
-      {
-        waitForCommit: true,
-      },
     );
     return { hash: submission.hash };
   },
@@ -5280,13 +5281,10 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypoint(
-        getClient(toriiUrl),
+      const submission = await submitTransactionEntrypointAndWaitForCommit(
+        toriiUrl,
         entrypoint.transactionEntrypoint,
-        {
-          hashHex: entrypoint.hashHex,
-          waitForCommit: true,
-        },
+        entrypoint.hashHex,
       );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
@@ -5307,12 +5305,9 @@ const api: IrohaBridge = {
       metadata,
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
-    const submission = await submitSignedTransaction(
-      getClient(toriiUrl),
+    const submission = await submitSignedTransactionAndWaitForCommit(
+      toriiUrl,
       tx.signedTransaction,
-      {
-        waitForCommit: true,
-      },
     );
     return { hash: submission.hash };
   },
@@ -5505,13 +5500,10 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypoint(
-        client,
+      const submission = await submitTransactionEntrypointAndWaitForCommit(
+        toriiUrl,
         entrypoint.transactionEntrypoint,
-        {
-          hashHex: entrypoint.hashHex,
-          waitForCommit: true,
-        },
+        entrypoint.hashHex,
       );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
@@ -5531,12 +5523,9 @@ const api: IrohaBridge = {
       },
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
-    const submission = await submitSignedTransaction(
-      client,
+    const submission = await submitSignedTransactionAndWaitForCommit(
+      toriiUrl,
       tx.signedTransaction,
-      {
-        waitForCommit: true,
-      },
     );
     return { hash: submission.hash };
   },

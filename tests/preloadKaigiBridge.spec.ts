@@ -69,12 +69,14 @@ const mocks = vi.hoisted(() => ({
   buildZkTransferTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("zk-transfer", "utf8"),
   })),
-  buildConfidentialTransferProofV2Mock: vi.fn(() => ({
-    nullifiers: [Buffer.from("11".repeat(32), "hex")],
-    outputCommitments: [Buffer.from("22".repeat(32), "hex")],
-    root: Buffer.from("44".repeat(32), "hex"),
-    proof: Buffer.from("transfer-proof", "utf8"),
-  })),
+  buildConfidentialTransferProofV2Mock: vi.fn(
+    (input?: { rootHintHex?: string }) => ({
+      nullifiers: [Buffer.from("11".repeat(32), "hex")],
+      outputCommitments: [Buffer.from("22".repeat(32), "hex")],
+      root: Buffer.from(String(input?.rootHintHex ?? "44".repeat(32)), "hex"),
+      proof: Buffer.from("transfer-proof", "utf8"),
+    }),
+  ),
   buildConfidentialUnshieldProofV2Mock: vi.fn(() => ({
     nullifiers: [Buffer.from("11".repeat(32), "hex")],
     root: Buffer.from("44".repeat(32), "hex"),
@@ -294,6 +296,9 @@ const loadBridge = async () => {
     transferAsset: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    deriveConfidentialReceiveAddress: (
+      privateKeyHex: string,
+    ) => { ownerTagHex: string; diversifierHex: string };
     getConfidentialAssetPolicy: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -420,7 +425,7 @@ describe("preload Kaigi bridge", () => {
         record: {
           circuit_id:
             name === "vk_unshield"
-              ? "halo2/pasta/anon-unshield-merkle16-poseidon"
+              ? "halo2/pasta/ipa/anon-unshield-merkle16-poseidon-diversified"
               : "halo2/ipa:tiny-add",
           inline_key: {
             backend,
@@ -789,7 +794,6 @@ describe("preload Kaigi bridge", () => {
       Buffer.from("private-create-entrypoint", "utf8"),
       expect.objectContaining({
         hashHex: "aa".repeat(32),
-        waitForCommit: true,
       }),
     );
 
@@ -1120,6 +1124,132 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
+  it("waits for committed unshield finality instead of returning on Applied", async () => {
+    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "5",
+      ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const nullifierHex = deriveWalletConfidentialNullifierHex({
+      privateKeyHex: "11".repeat(32),
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      rhoHex: note.rho_hex,
+    });
+    mocks.buildConfidentialUnshieldProofV2Mock.mockImplementationOnce(() => ({
+      nullifiers: [Buffer.from(nullifierHex, "hex")],
+      root: Buffer.from("44".repeat(32), "hex"),
+      proof: Buffer.from("unshield-proof", "utf8"),
+    }));
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Applied",
+      },
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "5",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          return jsonResponse({
+            latest: "44".repeat(32),
+            roots: ["44".repeat(32)],
+            height: 1,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    const transferPromise = bridge.transferAsset({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      assetDefinitionId: "xor#universal",
+      accountId: ALICE_ACCOUNT_ID,
+      destinationAccountId: ALICE_ACCOUNT_ID,
+      quantity: "5",
+      privateKeyHex: "11".repeat(32),
+      unshield: true,
+    });
+
+    const rejection = expect(transferPromise).rejects.toThrow(
+      "Transaction hash-unshield stayed in Applied and did not commit within 180 seconds.",
+    );
+    await vi.runAllTimersAsync();
+    await rejection;
+  });
+
   it("uses the v3 unshield circuit to preserve private change outputs", async () => {
     const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
       privateKeyHex: "11".repeat(32),
@@ -1148,7 +1278,7 @@ describe("preload Kaigi bridge", () => {
         record: {
           circuit_id:
             name === "vk_unshield"
-              ? "halo2/pasta/anon-unshield-2in-1change-merkle16-poseidon"
+              ? "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon-diversified"
               : "halo2/ipa:tiny-add",
           inline_key: {
             backend,
@@ -1776,10 +1906,10 @@ describe("preload Kaigi bridge", () => {
           "tree commitments do not match the supplied root_hint",
         );
       })
-      .mockImplementation((input: { rootHintHex: string }) => ({
+      .mockImplementation((input?: { rootHintHex?: string }) => ({
         nullifiers: [Buffer.from("11".repeat(32), "hex")],
         outputCommitments: [Buffer.from("22".repeat(32), "hex")],
-        root: Buffer.from(input.rootHintHex, "hex"),
+        root: Buffer.from(String(input?.rootHintHex ?? "44".repeat(32)), "hex"),
         proof: Buffer.from("transfer-proof", "utf8"),
       }));
     const bridge = await loadBridge();
@@ -1927,10 +2057,10 @@ describe("preload Kaigi bridge", () => {
           "tree commitments do not match the supplied root_hint",
         );
       })
-      .mockImplementation((input: { rootHintHex: string }) => ({
+      .mockImplementation((input?: { rootHintHex?: string }) => ({
         nullifiers: [Buffer.from("11".repeat(32), "hex")],
         outputCommitments: [Buffer.from("22".repeat(32), "hex")],
-        root: Buffer.from(input.rootHintHex, "hex"),
+        root: Buffer.from(String(input?.rootHintHex ?? "44".repeat(32)), "hex"),
         proof: Buffer.from("transfer-proof", "utf8"),
       }));
     const bridge = await loadBridge();
