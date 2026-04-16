@@ -66,7 +66,7 @@
             {{ t("Destination Account ID") }}
             <input
               v-model="form.destination"
-              :placeholder="t('Example I105 Account ID')"
+              data-testid="destination-account-input"
             />
           </label>
           <label>
@@ -80,7 +80,7 @@
           </label>
           <label v-if="!form.shielded">
             {{ t("Memo (optional)") }}
-            <input v-model="form.memo" :placeholder="t('Thanks for lunch')" />
+            <input v-model="form.memo" />
           </label>
           <p v-else class="helper send-note">
             {{

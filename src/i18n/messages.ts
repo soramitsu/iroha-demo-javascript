@@ -1150,13 +1150,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "No saved accounts yet. Complete the wallet setup form to add one.",
   default: "default",
   "Canonical I105 Account ID": "I105 Account ID",
-  "Example I105 Account ID":
-    "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
   "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.":
     "Real TAIRA I105 account IDs are kana-based literals and may look like testu..., not 6cmz... or i105:.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
-  "Example encoded asset ID": "Example encoded asset ID",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
   "Enter a recovery phrase.": "Enter a recovery phrase.",
@@ -1720,13 +1717,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Torii responded successfully.": "Connection OK.",
   "No response from Torii.": "No response.",
   "Submitted transaction {hash}": "Submitted: {hash}",
-  Alice: "Main wallet",
-  "Thanks for lunch": "Lunch",
-  "Coffee refill": "Coffee",
-  "Thanks!": "Thanks",
-  "Back to hot wallet": "Back to main wallet",
-  "Service or merchant": "Merchant",
-  "Optional note": "Note (optional)",
   "Faucet Request": "Testnet faucet",
   "Top up a new TAIRA account once with starter XOR.":
     "Fund a new wallet with starter XOR.",
@@ -2104,12 +2094,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Payment JSON copied.": "Payment JSON copied.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
-  "Example encoded asset ID": "Example encoded asset ID",
-  "34m... or 0x...@wonderland": "testu...",
-  "n42u... (I105 account ID)": "testu...",
-  "6cmz... (canonical I105 account ID)": "testu...",
-  "rose#wonderland": "norito:<asset-id-hex>",
-  "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };
 
 const TABLES: Record<SupportedLocale, TranslationTable> = {
@@ -2160,20 +2144,12 @@ const TRANSLATION_KEY_ALIASES: Record<string, string> = {
   "Share QR or Account ID": "Share QR or IH58",
   "Share QR codes or account IDs to request funds":
     "Share QR codes or IH58 to request funds",
-  "n42u... (I105 account ID)": "Example I105 Account ID",
-  "6cmz... (canonical I105 account ID)": "Example I105 Account ID",
-  "34m... or 0x...@wonderland": "Example I105 Account ID",
-  "norito:<asset-id-hex>": "rose#wonderland",
 };
 
 const LITERAL_KEY_OVERRIDES: Record<string, string> = {
   "Iroha Wallet": "Iroha Wallet",
   IH58: "I105",
   I105: "I105",
-  "Example I105 Account ID":
-    "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
-  "rose#wonderland": "norito:<asset-id-hex>",
-  "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };
 
 export const isSupportedLocale = (value: string): value is SupportedLocale =>

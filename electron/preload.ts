@@ -3613,21 +3613,21 @@ const createPrivateKaigiNonce = () => {
   return value;
 };
 
-const buildPrivateKaigiPlaceholderFeeSpendDto = (input: {
+// Bootstrap with a deterministic zeroed envelope so we can obtain the
+// action hash and initial byte size before the real fee spend is derived.
+const buildPrivateKaigiBootstrapFeeSpendDto = (input: {
   assetDefinitionId: string;
   anchorRootHex: string;
 }) => ({
   asset_definition_id: input.assetDefinitionId,
   anchor_root: canonicalHashLiteralFromHex(
     input.anchorRootHex,
-    "privateKaigi.placeholder.anchorRootHex",
+    "privateKaigi.bootstrap.anchorRootHex",
   ),
-  nullifiers: [Array.from({ length: 32 }, (_entry, index) => index)],
-  output_commitments: [
-    Array.from({ length: 32 }, (_entry, index) => 255 - index),
-  ],
+  nullifiers: [Array.from({ length: 32 }, () => 0)],
+  output_commitments: [Array.from({ length: 32 }, () => 0)],
   encrypted_change_payloads: [[0]],
-  proof: Buffer.from("private-kaigi-placeholder", "utf8").toString("base64"),
+  proof: Buffer.alloc(25).toString("base64"),
 });
 
 const buildPrivateKaigiArtifactsDto = (input: {
@@ -3722,7 +3722,7 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
   const creationTimeMs = Date.now();
   const nonce = createPrivateKaigiNonce();
   const provisional = input.buildEntrypoint({
-    feeSpend: buildPrivateKaigiPlaceholderFeeSpendDto({
+    feeSpend: buildPrivateKaigiBootstrapFeeSpendDto({
       assetDefinitionId: context.state.resolvedAssetId,
       anchorRootHex: context.latestRootHex,
     }),

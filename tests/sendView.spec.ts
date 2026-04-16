@@ -6,15 +6,15 @@ import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
-const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
-const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
+const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
 const BOB_OWNER_TAG_HEX = "11".repeat(32);
 const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
 const BOB_DIVERSIFIER_HEX = "33".repeat(32);
 const MALLORY_DIVERSIFIER_HEX = "44".repeat(32);
-const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
+const DESTINATION_ACCOUNT_SELECTOR =
+  'input[data-testid="destination-account-input"]';
 
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
@@ -59,9 +59,12 @@ describe("SendView", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
-      vk_transfer: "halo2/ipa::transfer",
-      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -104,7 +107,9 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
@@ -148,7 +153,9 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
@@ -186,7 +193,7 @@ describe("SendView", () => {
     await flushPromises();
 
     await wrapper
-      .get(EXAMPLE_I105_SELECTOR)
+      .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(` ${BOB_I105_ACCOUNT_ID} `);
     await wrapper.get('input[type="number"]').setValue("2");
     await wrapper.get(".actions button").trigger("click");
@@ -204,10 +211,12 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
-    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
+    const destinationInput = wrapper.get(DESTINATION_ACCOUNT_SELECTOR);
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       BOB_I105_ACCOUNT_ID,
     );
@@ -245,9 +254,12 @@ describe("SendView", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
-      vk_transfer: "halo2/ipa::transfer",
-      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -261,7 +273,9 @@ describe("SendView", () => {
       "61CtjvNd9T3THAR65GsMVHr82Bjc",
     );
 
-    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("4");
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
@@ -301,7 +315,7 @@ describe("SendView", () => {
     );
     await flushPromises();
 
-    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
+    const destinationInput = wrapper.get(DESTINATION_ACCOUNT_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       MALLORY_I105_ACCOUNT_ID,
@@ -333,7 +347,7 @@ describe("SendView", () => {
     );
     await flushPromises();
 
-    const destinationInput = wrapper.get(EXAMPLE_I105_SELECTOR);
+    const destinationInput = wrapper.get(DESTINATION_ACCOUNT_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       BOB_I105_ACCOUNT_ID,

@@ -59,7 +59,7 @@
           <div v-if="callMode === 'start'" class="form-grid kaigi-config-form">
             <label>
               {{ t("Meeting title") }}
-              <input v-model="meetingTitle" :placeholder="t('Optional')" />
+              <input v-model="meetingTitle" />
             </label>
             <label>
               {{ t("Participant name") }}
@@ -114,11 +114,6 @@
                 v-model="inviteInput"
                 rows="5"
                 spellcheck="false"
-                :placeholder="
-                  t(
-                    'Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.',
-                  )
-                "
               ></textarea>
             </label>
             <label>

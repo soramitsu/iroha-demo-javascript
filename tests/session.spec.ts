@@ -350,7 +350,7 @@ describe("session store", () => {
     expect(store.activeAccount?.accountId).toBe("first@wonderland");
   });
 
-  it("normalizes the legacy wonderland placeholder to default for canonical accounts", () => {
+  it("normalizes the legacy wonderland example domain to default for canonical accounts", () => {
     const store = useSessionStore();
     store.addAccount({
       displayName: "Alice",

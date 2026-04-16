@@ -132,11 +132,11 @@
       <div class="form-grid">
         <label>
           {{ t("Amount") }}
-          <input v-model="invoiceForm.amount" type="text" placeholder="10.00" />
+          <input v-model="invoiceForm.amount" type="text" />
         </label>
         <label>
           {{ t("Memo (optional)") }}
-          <input v-model="invoiceForm.memo" :placeholder="t('Coffee refill')" />
+          <input v-model="invoiceForm.memo" />
         </label>
         <label>
           {{ t("Validity (minutes)") }}
@@ -190,15 +190,11 @@
       </div>
       <label>
         {{ t("Invoice payload") }}
-        <textarea
-          v-model="invoiceInput"
-          rows="3"
-          placeholder='{"invoice_id":"..."}'
-        ></textarea>
+        <textarea v-model="invoiceInput" rows="3"></textarea>
       </label>
       <label>
         {{ t("Memo (optional)") }}
-        <input v-model="paymentMemo" :placeholder="t('Thanks!')" />
+        <input v-model="paymentMemo" />
       </label>
       <div class="actions">
         <button
@@ -252,11 +248,7 @@
       </div>
       <label>
         {{ t("Payment payload") }}
-        <textarea
-          v-model="paymentInput"
-          rows="3"
-          placeholder='{"tx_id":"..."}'
-        ></textarea>
+        <textarea v-model="paymentInput" rows="3"></textarea>
       </label>
       <div class="actions">
         <button
@@ -284,16 +276,13 @@
           {{ t("Destination Account") }}
           <input
             v-model="onlineForm.receiver"
-            :placeholder="t('Example I105 Account ID')"
+            data-testid="offline-online-destination-input"
             :disabled="onlineDestinationLocked"
           />
         </label>
         <label>
           {{ t("Memo (optional)") }}
-          <input
-            v-model="onlineForm.memo"
-            :placeholder="t('Back to hot wallet')"
-          />
+          <input v-model="onlineForm.memo" />
         </label>
         <label class="shield-option">
           <input

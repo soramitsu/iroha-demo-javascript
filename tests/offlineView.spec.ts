@@ -7,10 +7,10 @@ import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
-const EXAMPLE_I105_ACCOUNT_ID = translate("en-US", "Example I105 Account ID");
-const ALICE_I105_ACCOUNT_ID = EXAMPLE_I105_ACCOUNT_ID;
+const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const TREASURY_I105_ACCOUNT_ID = "testuTreasuryRealI105AccountId";
-const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
+const ONLINE_DESTINATION_SELECTOR =
+  'input[data-testid="offline-online-destination-input"]';
 
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
@@ -134,7 +134,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
+    const receiverInput = moveSection.get(ONLINE_DESTINATION_SELECTOR);
     const amountInput = moveSection.findAll('input[type="text"]')[0];
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     const submitButton = moveSection.get(".actions button");
@@ -320,7 +320,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
+    const receiverInput = moveSection.get(ONLINE_DESTINATION_SELECTOR);
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 
     await receiverInput.setValue(TREASURY_I105_ACCOUNT_ID);
@@ -338,7 +338,7 @@ describe("OfflineView move-to-online shield mode", () => {
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
-    const receiverInput = moveSection.get(EXAMPLE_I105_SELECTOR);
+    const receiverInput = moveSection.get(ONLINE_DESTINATION_SELECTOR);
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
 
     await receiverInput.setValue("");

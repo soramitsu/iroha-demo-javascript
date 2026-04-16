@@ -47,7 +47,7 @@
           {{ t("Raw asset ID") }}
           <input
             v-model="assetDefinitionDraft"
-            :placeholder="t('Example encoded asset ID')"
+            data-testid="raw-asset-id-input"
           />
         </label>
       </details>
@@ -69,26 +69,21 @@
       <div class="form-grid">
         <label>
           {{ t("Display Name (local only, not on-chain)") }}
-          <input v-model="userForm.displayName" :placeholder="t('Alice')" />
+          <input v-model="userForm.displayName" />
         </label>
         <label>
           {{ t("Domain") }}
-          <input v-model="userForm.domain" :placeholder="t('default')" />
+          <input v-model="userForm.domain" />
         </label>
         <label>
           {{ t("Private Key (hex)") }}
-          <textarea
-            v-model="userForm.privateKeyHex"
-            rows="2"
-            :placeholder="t('64 hex chars')"
-          ></textarea>
+          <textarea v-model="userForm.privateKeyHex" rows="2"></textarea>
         </label>
         <label>
           {{ t("Public Key") }}
           <textarea
             v-model="userForm.publicKeyHex"
             rows="2"
-            :placeholder="t('auto-derived')"
             readonly
           ></textarea>
         </label>
@@ -149,10 +144,7 @@
       <div class="form-grid">
         <label>
           {{ t("Authority Account ID") }}
-          <input
-            v-model="authorityForm.accountId"
-            :placeholder="t('Example I105 Account ID')"
-          />
+          <input v-model="authorityForm.accountId" />
         </label>
         <label>
           {{ t("Authority Private Key (hex)") }}
@@ -160,11 +152,7 @@
         </label>
         <label>
           {{ t("Account Metadata (JSON)") }}
-          <textarea
-            v-model="metadataInput"
-            rows="4"
-            :placeholder="metadataPlaceholder"
-          ></textarea>
+          <textarea v-model="metadataInput" rows="4"></textarea>
         </label>
       </div>
       <div class="actions">
@@ -224,7 +212,6 @@ const userForm = reactive({
   ...(session.activeAccount ?? {}),
 });
 const authorityForm = reactive({ ...session.authority });
-const metadataPlaceholder = '{\n  "label": "Main wallet"\n}';
 const metadataInput = ref(
   JSON.stringify(
     { nickname: session.activeAccount?.displayName || "" },

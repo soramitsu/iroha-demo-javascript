@@ -104,11 +104,7 @@
       <div class="form-grid staking-action-grid">
         <label>
           {{ t("Bond amount (XOR)") }}
-          <input
-            v-model.trim="bondAmount"
-            type="text"
-            :placeholder="t('100')"
-          />
+          <input v-model.trim="bondAmount" type="text" />
         </label>
         <p class="helper tight">
           {{
@@ -139,11 +135,7 @@
 
         <label>
           {{ t("Unbond amount (XOR)") }}
-          <input
-            v-model.trim="unbondAmount"
-            type="text"
-            :placeholder="t('50')"
-          />
+          <input v-model.trim="unbondAmount" type="text" />
         </label>
         <div class="actions-inline">
           <button
