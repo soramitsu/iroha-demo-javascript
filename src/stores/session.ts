@@ -42,7 +42,7 @@ export type SavedChain = ConnectionConfig & {
 };
 
 const DEFAULT_DOMAIN_LABEL = "default";
-const LEGACY_PLACEHOLDER_DOMAIN_LABEL = "wonderland";
+const LEGACY_EXAMPLE_DOMAIN_LABEL = "wonderland";
 const MAX_NETWORK_PREFIX = 0x3fff;
 
 const defaultUser = (): UserProfile => ({
@@ -89,7 +89,7 @@ const normalizeDomainLabel = (domain: string, accountId: string): string => {
     return DEFAULT_DOMAIN_LABEL;
   }
   if (
-    normalized === LEGACY_PLACEHOLDER_DOMAIN_LABEL &&
+    normalized === LEGACY_EXAMPLE_DOMAIN_LABEL &&
     (!accountId || !isLegacyAccountLiteral(accountId))
   ) {
     return DEFAULT_DOMAIN_LABEL;

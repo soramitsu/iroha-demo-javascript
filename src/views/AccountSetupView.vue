@@ -67,11 +67,11 @@
           <div class="form-grid wizard-form-grid">
             <label>
               {{ t("Display Name (local only, not on-chain)") }}
-              <input v-model.trim="aliasInput" :placeholder="t('Alice')" />
+              <input v-model.trim="aliasInput" />
             </label>
             <label>
               {{ t("Domain") }}
-              <input v-model.trim="domainInput" :placeholder="t('default')" />
+              <input v-model.trim="domainInput" />
             </label>
             <label v-if="!isRestoreMode" class="wizard-field-compact">
               {{ t("Recovery Phrase Length") }}
@@ -256,11 +256,11 @@
       <div class="form-grid wizard-form-grid">
         <label>
           {{ t("Display Name (local only, not on-chain)") }}
-          <input v-model.trim="aliasInput" :placeholder="t('Alice')" />
+          <input v-model.trim="aliasInput" />
         </label>
         <label>
           {{ t("Domain") }}
-          <input v-model.trim="domainInput" :placeholder="t('default')" />
+          <input v-model.trim="domainInput" />
         </label>
         <label v-if="!isRestoreMode" class="wizard-field-compact">
           {{ t("Recovery Phrase Length") }}

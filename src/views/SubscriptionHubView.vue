@@ -66,20 +66,11 @@
       >
         <label class="subscription-span-2">
           {{ t("Service name") }}
-          <input
-            v-model.trim="form.merchant"
-            :placeholder="t('Service or merchant')"
-          />
+          <input v-model.trim="form.merchant" />
         </label>
         <label>
           {{ t("Amount ({unit})", { unit: unitLabel }) }}
-          <input
-            v-model.trim="form.amount"
-            type="number"
-            min="0"
-            step="0.01"
-            placeholder="1500"
-          />
+          <input v-model.trim="form.amount" type="number" min="0" step="0.01" />
         </label>
         <label>
           {{ t("Max for usage-based ({unit})", { unit: unitLabel }) }}
@@ -88,7 +79,6 @@
             type="number"
             min="0"
             step="0.01"
-            placeholder="9000"
           />
         </label>
         <label>
@@ -101,7 +91,7 @@
         </label>
         <label class="subscription-span-2">
           {{ t("Note") }}
-          <input v-model.trim="form.note" :placeholder="t('Optional note')" />
+          <input v-model.trim="form.note" />
         </label>
         <button type="submit" class="subscription-submit">
           {{ t("Add subscription") }}

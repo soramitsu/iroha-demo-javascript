@@ -46,7 +46,7 @@
       >
         <!-- eslint-disable-next-line vue/no-v-html -->
         <div v-if="showQr && qrMarkup" class="qr" v-html="qrMarkup"></div>
-        <p v-else class="helper receive-placeholder">
+        <p v-else class="helper receive-empty-state">
           {{ showQr ? qrMessage : t("Tap the button to generate a QR.") }}
         </p>
       </div>
@@ -235,7 +235,7 @@ watch(
   display: block;
 }
 
-.receive-placeholder {
+.receive-empty-state {
   max-width: 320px;
   text-align: center;
 }
@@ -273,7 +273,7 @@ watch(
     min-height: 148px;
   }
 
-  .receive-placeholder {
+  .receive-empty-state {
     max-width: none;
   }
 }

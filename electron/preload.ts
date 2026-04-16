@@ -3168,7 +3168,9 @@ const normalizeConfidentialCircuitId = (value: unknown): string =>
     .toLowerCase()
     .replace(/^halo2\/pasta\//, "halo2/pasta/ipa/");
 
-const readConfidentialVerifyingKeyContext = (value: Record<string, unknown>) => {
+const readConfidentialVerifyingKeyContext = (
+  value: Record<string, unknown>,
+) => {
   const { record, inlineKey } = readInlineVerifyingKeyRecord(value);
   const id =
     isPlainRecord(value.id) && !Array.isArray(value.id)
@@ -3285,7 +3287,9 @@ const submitConfidentialSelfConsolidation = async (input: {
         zk: {
           ZkTransfer: {
             asset: materials.resolvedAssetId,
-            inputs: proofEnvelope.nullifiers.map((entry) => entry.toString("hex")),
+            inputs: proofEnvelope.nullifiers.map((entry) =>
+              entry.toString("hex"),
+            ),
             outputs: [output.note.commitment_hex],
           },
         },
@@ -3575,21 +3579,21 @@ const createPrivateKaigiNonce = () => {
   return value;
 };
 
-const buildPrivateKaigiPlaceholderFeeSpendDto = (input: {
+// Bootstrap with a deterministic zeroed envelope so we can obtain the
+// action hash and initial byte size before the real fee spend is derived.
+const buildPrivateKaigiBootstrapFeeSpendDto = (input: {
   assetDefinitionId: string;
   anchorRootHex: string;
 }) => ({
   asset_definition_id: input.assetDefinitionId,
   anchor_root: canonicalHashLiteralFromHex(
     input.anchorRootHex,
-    "privateKaigi.placeholder.anchorRootHex",
+    "privateKaigi.bootstrap.anchorRootHex",
   ),
-  nullifiers: [Array.from({ length: 32 }, (_entry, index) => index)],
-  output_commitments: [
-    Array.from({ length: 32 }, (_entry, index) => 255 - index),
-  ],
+  nullifiers: [Array.from({ length: 32 }, () => 0)],
+  output_commitments: [Array.from({ length: 32 }, () => 0)],
   encrypted_change_payloads: [[0]],
-  proof: Buffer.from("private-kaigi-placeholder", "utf8").toString("base64"),
+  proof: Buffer.alloc(25).toString("base64"),
 });
 
 const buildPrivateKaigiArtifactsDto = (input: {
@@ -3684,7 +3688,7 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
   const creationTimeMs = Date.now();
   const nonce = createPrivateKaigiNonce();
   const provisional = input.buildEntrypoint({
-    feeSpend: buildPrivateKaigiPlaceholderFeeSpendDto({
+    feeSpend: buildPrivateKaigiBootstrapFeeSpendDto({
       assetDefinitionId: context.state.resolvedAssetId,
       anchorRootHex: context.latestRootHex,
     }),
@@ -3936,7 +3940,9 @@ const api: IrohaBridge = {
       let proofEnvelope:
         | ReturnType<typeof buildConfidentialUnshieldProofV2>
         | ReturnType<typeof buildConfidentialUnshieldProofV3>;
-      if (verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID) {
+      if (
+        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID
+      ) {
         const selection = selectWalletConfidentialNotesForExactAmount(
           refreshedMaterials.ledger.notes,
           normalizedAmount,
@@ -4412,7 +4418,10 @@ const api: IrohaBridge = {
         toriiUrl,
         resolvedAssetDefinitionId,
       );
-      return mergeConfidentialPolicyWithAssetDefinition(policy, assetDefinition);
+      return mergeConfidentialPolicyWithAssetDefinition(
+        policy,
+        assetDefinition,
+      );
     } catch {
       return policy;
     }

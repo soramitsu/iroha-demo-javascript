@@ -99,24 +99,12 @@ describe("i18n messages", () => {
     expect(translate("ur-PK", "Torii control deck")).toBe("Torii کنٹرول ڈیک");
     expect(translate("ja-JP", "Share QR or Account ID")).toContain("I105");
     expect(translate("hi-IN", "I105")).toBe("I105");
-    expect(translate("fr-FR", "Example I105 Account ID")).toBe(
-      translate("en-US", "Example I105 Account ID"),
-    );
-    expect(
-      translate("en-US", "Example I105 Account ID").startsWith("testu"),
-    ).toBe(true);
-    expect(translate("en-US", "34m... or 0x...@wonderland")).toBe(
-      translate("en-US", "Example I105 Account ID"),
-    );
     expect(
       translate(
         "en-US",
         "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.",
       ),
     ).toContain("testu...");
-    expect(translate("de-DE", "norito:<asset-id-hex>")).toBe(
-      "norito:<asset-id-hex>",
-    );
     expect(
       translate(
         "ko-KR",
@@ -275,17 +263,7 @@ describe("i18n messages", () => {
   });
 
   it("does not keep non-technical hardcoded placeholder text in Vue templates", () => {
-    const allowedStaticPlaceholders = new Set([
-      "ref-1",
-      "0x0123...",
-      "10000",
-      "10.00",
-      "1500",
-      "9000",
-      '{"country":"JP","kyc_id":"..."}',
-      '{"invoice_id":"..."}',
-      '{"tx_id":"..."}',
-    ]);
+    const allowedStaticPlaceholders = new Set<string>();
     const offenders = collectHardcodedPlaceholders().filter(({ value }) => {
       if (allowedStaticPlaceholders.has(value)) {
         return false;

@@ -174,7 +174,7 @@ describe("VpnRuntime", () => {
     rmSync(userDataPath, { recursive: true, force: true });
   });
 
-  it("rewrites the placeholder torii relay host onto the public torii host", () => {
+  it("rewrites the torii relay host marker onto the public torii host", () => {
     expect(
       resolveVpnRelayEndpoint(
         "/dns/torii/udp/9443/quic",
@@ -343,9 +343,9 @@ describe("VpnRuntime", () => {
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
 
-  it("rewrites placeholder relay endpoints before handing them to the controller", async () => {
+  it("rewrites torii relay host markers before handing them to the controller", async () => {
     createVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_placeholder",
+      sessionId: "sess_torii_marker",
       accountId: "alice@wonderland",
       exitClass: "standard",
       relayEndpoint: "/dns/torii/udp/9443/quic",
@@ -364,7 +364,7 @@ describe("VpnRuntime", () => {
       status: "active",
     });
     getVpnSessionMock.mockResolvedValueOnce({
-      sessionId: "sess_placeholder",
+      sessionId: "sess_torii_marker",
       accountId: "alice@wonderland",
       exitClass: "standard",
       relayEndpoint: "/dns/torii/udp/9443/quic",
@@ -399,7 +399,7 @@ describe("VpnRuntime", () => {
     expect(connected.relayEndpoint).toBe("/dns/taira.sora.org/udp/9443/quic");
     expect(controller.connect).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: "sess_placeholder",
+        sessionId: "sess_torii_marker",
         relayEndpoint: "/ip4/208.83.1.62/udp/9443/quic",
       }),
     );

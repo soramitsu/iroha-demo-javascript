@@ -134,13 +134,7 @@ describe("SetupView", () => {
     await wrapper.get(".setup-asset-literal summary").trigger("click");
     await flushPromises();
 
-    const rawInput = wrapper
-      .findAll("input")
-      .find(
-        (node) =>
-          node.attributes("placeholder") === t("Example encoded asset ID"),
-      );
-    expect(rawInput).toBeDefined();
-    expect((rawInput!.element as HTMLInputElement).value).toBe("");
+    const rawInput = wrapper.get('input[data-testid="raw-asset-id-input"]');
+    expect((rawInput.element as HTMLInputElement).value).toBe("");
   });
 });

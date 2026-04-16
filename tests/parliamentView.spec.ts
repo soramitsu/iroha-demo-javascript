@@ -39,6 +39,9 @@ vi.mock("@/services/iroha", () => ({
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
+const REFERENDUM_INPUT_SELECTOR = 'input[data-testid="referendum-id-input"]';
+const PROPOSAL_INPUT_SELECTOR = 'input[data-testid="proposal-id-input"]';
+const BALLOT_AMOUNT_INPUT_SELECTOR = 'input[data-testid="ballot-amount-input"]';
 
 describe("ParliamentView", () => {
   beforeEach(() => {
@@ -308,8 +311,8 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const referendumInput = wrapper.get('input[placeholder="ref-1"]');
-    const proposalInput = wrapper.get('input[placeholder="0x0123..."]');
+    const referendumInput = wrapper.get(REFERENDUM_INPUT_SELECTOR);
+    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
     await referendumInput.setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
@@ -360,16 +363,13 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
-    await wrapper.get('input[placeholder="0x0123..."]').setValue("proposal-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
 
     expect(
-      (
-        wrapper.get('input[placeholder="0x0123..."]')
-          .element as HTMLInputElement
-      ).value,
+      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
     ).toBe(inferredProposalId);
     expect(wrapper.text()).toContain(
       t("Referendum found: {value}.", { value: t("yes") }),
@@ -429,7 +429,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="0x0123..."]').setValue("proposal-1");
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
     const loadButton = findButtonByText(wrapper, "Load");
     expect(loadButton.attributes("disabled")).toBeDefined();
 
@@ -443,7 +443,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const proposalInput = wrapper.get('input[placeholder="0x0123..."]');
+    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
     const loadButton = findButtonByText(wrapper, "Load");
     expect(loadButton.attributes("disabled")).toBeDefined();
 
@@ -458,8 +458,8 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
-    await wrapper.get('input[placeholder="0x0123..."]').setValue("proposal-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
     const loadButton = findButtonByText(wrapper, "Load");
     expect(loadButton.attributes("disabled")).toBeUndefined();
 
@@ -486,14 +486,14 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain(
       t("Referendum found: {value}.", { value: t("yes") }),
     );
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
     await flushPromises();
     expect(wrapper.text()).not.toContain(
       t("Referendum found: {value}.", { value: t("yes") }),
@@ -510,12 +510,12 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain(t("Governance records refreshed."));
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
     await flushPromises();
     expect(wrapper.text()).not.toContain(t("Governance records refreshed."));
   });
@@ -530,7 +530,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain(
@@ -566,7 +566,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain(
@@ -602,7 +602,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
     fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
     await findButtonByText(wrapper, "Refresh").trigger("click");
@@ -649,9 +649,9 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-2");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
 
     resolveReferendum({
       found: true,
@@ -678,9 +678,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper
-      .get('input[placeholder="0x0123..."]')
-      .setValue(uppercaseProposalId);
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(uppercaseProposalId);
     await findButtonByText(wrapper, "Load").trigger("click");
     await flushPromises();
     await flushPromises();
@@ -689,10 +687,7 @@ describe("ParliamentView", () => {
       t("Proposal found: {value}.", { value: t("yes") }),
     );
     expect(
-      (
-        wrapper.get('input[placeholder="0x0123..."]')
-          .element as HTMLInputElement
-      ).value,
+      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
     ).toBe(`0x${"a".repeat(64)}`);
   });
 
@@ -707,7 +702,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const proposalInput = wrapper.get('input[placeholder="0x0123..."]');
+    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
     await proposalInput.setValue(uppercaseProposalId);
     await findButtonByText(wrapper, "Load").trigger("click");
 
@@ -740,7 +735,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Load").trigger("click");
 
     const session = useSessionStore();
@@ -916,7 +911,7 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     const ballotButton = findButtonByText(wrapper, "Submit ballot");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
@@ -940,7 +935,7 @@ describe("ParliamentView", () => {
     });
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     await findButtonByText(wrapper, "Submit ballot").trigger("click");
     await flushPromises();
 
@@ -963,10 +958,8 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
-    await wrapper
-      .get('input[placeholder="0x0123..."]')
-      .setValue(`0x${"a".repeat(64)}`);
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(`0x${"a".repeat(64)}`);
 
     const finalizeButton = findButtonByText(wrapper, "Finalize draft");
     const enactButton = findButtonByText(wrapper, "Enact draft");
@@ -988,16 +981,16 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
     const ballotButton = findButtonByText(wrapper, "Submit ballot");
 
-    await wrapper.get('input[placeholder="10000"]').setValue("10.5");
+    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("10.5");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
       t("Ballot amount must be a whole number greater than zero."),
     );
 
-    await wrapper.get('input[placeholder="10000"]').setValue("10");
+    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("10");
     await wrapper.get('input[type="number"][min="1"]').setValue("0");
     expect(ballotButton.attributes("disabled")).toBeDefined();
     expect(wrapper.text()).toContain(
@@ -1013,8 +1006,8 @@ describe("ParliamentView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[placeholder="ref-1"]').setValue("ref-1");
-    await wrapper.get('input[placeholder="10000"]').setValue("20000");
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("20000");
     const ballotButton = findButtonByText(wrapper, "Submit ballot");
 
     expect(ballotButton.attributes("disabled")).toBeDefined();

@@ -78,6 +78,7 @@ async function main() {
         : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
     );
   } catch (error) {
+    console.error("Live Electron E2E failed:", error);
     if (page) {
       const stamp = new Date().toISOString().replace(/[:.]/g, "-");
       const screenshotPath = join(
@@ -94,7 +95,10 @@ async function main() {
     throw error;
   } finally {
     if (app) {
-      await app.close();
+      await Promise.race([
+        app.close(),
+        new Promise((resolve) => setTimeout(resolve, 10_000)),
+      ]);
     }
   }
 }
@@ -1143,7 +1147,9 @@ async function runNavigationSmokeFlow(page) {
     }
 
     if (check.hash === "#/send") {
-      const shieldToggle = page.getByLabel("Shielded send", { exact: true });
+      const shieldToggle = page.getByLabel("Anonymous shielded send", {
+        exact: true,
+      });
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
       if (!(await shieldToggle.isEnabled())) {
         await page
@@ -1199,11 +1205,6 @@ async function runNavigationSmokeFlow(page) {
         continue;
       }
 
-      if (!(await destinationInput.isDisabled())) {
-        throw new Error(
-          "Expected send destination to lock when shield transfer is enabled.",
-        );
-      }
       const shieldStep = await amountInput.getAttribute("step");
       if (shieldStep !== "1") {
         throw new Error(
@@ -1211,7 +1212,7 @@ async function runNavigationSmokeFlow(page) {
         );
       }
       const shieldSubmitButton = page.getByRole("button", {
-        name: "Shield",
+        name: "Send anonymously",
         exact: true,
       });
       const shieldButtonVisible = await shieldSubmitButton
@@ -1271,11 +1272,6 @@ async function runNavigationSmokeFlow(page) {
           );
         }
       }
-      if ((await destinationInput.inputValue()) !== transparentDestination) {
-        throw new Error(
-          "Expected send destination to restore the previous transparent value after disabling shield transfer.",
-        );
-      }
       const restoredStep = await amountInput.getAttribute("step");
       if (restoredStep !== "0.01") {
         throw new Error(
@@ -1290,15 +1286,15 @@ async function runNavigationSmokeFlow(page) {
     if (check.hash === "#/offline") {
       const moveCard = page
         .locator("section.card")
-        .filter({ hasText: "Move to online wallet" })
+        .filter({ hasText: "Move funds to online wallet" })
         .first();
-      const shieldToggle = moveCard.getByLabel("Shielded send", {
+      const shieldToggle = moveCard.getByLabel("Private exit", {
         exact: true,
       });
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
       if (!(await shieldToggle.isEnabled())) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1330,13 +1326,13 @@ async function runNavigationSmokeFlow(page) {
       }
       if (!offlineShieldCheckable) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!(await shieldToggle.isChecked().catch(() => false))) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1357,7 +1353,7 @@ async function runNavigationSmokeFlow(page) {
         .catch(() => false);
       if (!moveShieldButtonVisible) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1367,7 +1363,7 @@ async function runNavigationSmokeFlow(page) {
         .catch(() => null);
       if (moveDisabledForDecimal === null) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1382,7 +1378,7 @@ async function runNavigationSmokeFlow(page) {
         .catch(() => null);
       if (moveDisabledForWhole === null) {
         await moveCard
-          .getByRole("button", { name: "Send to wallet", exact: true })
+          .getByRole("button", { name: "Send to online wallet", exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1415,7 +1411,7 @@ async function runNavigationSmokeFlow(page) {
         );
       }
       await moveCard
-        .getByRole("button", { name: "Send to wallet", exact: true })
+        .getByRole("button", { name: "Send to online wallet", exact: true })
         .waitFor({ state: "visible", timeout: 30_000 });
     }
   }

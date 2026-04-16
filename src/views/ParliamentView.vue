@@ -114,7 +114,7 @@
           <input
             v-model.trim="referendumId"
             type="text"
-            :placeholder="referendumPlaceholder"
+            data-testid="referendum-id-input"
           />
         </label>
         <label>
@@ -122,7 +122,7 @@
           <input
             v-model.trim="proposalId"
             type="text"
-            :placeholder="proposalPlaceholder"
+            data-testid="proposal-id-input"
           />
         </label>
       </div>
@@ -228,7 +228,11 @@
       <div class="form-grid">
         <label>
           {{ t("Amount (XOR)") }}
-          <input v-model.trim="ballotAmount" type="text" placeholder="10000" />
+          <input
+            v-model.trim="ballotAmount"
+            type="text"
+            data-testid="ballot-amount-input"
+          />
         </label>
         <label>
           {{ t("Lock duration (blocks)") }}
@@ -403,8 +407,6 @@ const actionBusy = ref<"bond" | "ballot" | "finalize" | "enact" | null>(null);
 const statusMessage = ref("");
 const actionMessage = ref("");
 const errorMessage = ref("");
-const referendumPlaceholder = "ref-1";
-const proposalPlaceholder = "0x0123...";
 
 const xorBalance = ref("0");
 const permissions = ref<AccountPermissionItem[]>([]);
