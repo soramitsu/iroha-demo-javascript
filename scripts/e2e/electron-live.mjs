@@ -1365,7 +1365,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
 
       if (!(await destinationInput.isDisabled())) {
         throw new Error(
-          'Expected offline "Move funds to online wallet" destination to lock when shield transfer is enabled.',
+          'Expected offline "Move funds to online wallet" destination to lock when private exit is enabled.',
         );
       }
       const moveAmountInput = moveCard.locator('input[type="text"]').first();
@@ -1433,7 +1433,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
       if ((await destinationInput.inputValue()) !== transparentDestination) {
         throw new Error(
-          'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling shield transfer.',
+          'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling private exit.',
         );
       }
       await moveCard

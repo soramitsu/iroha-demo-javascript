@@ -53,9 +53,12 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
-      vk_transfer: "halo2/ipa::transfer",
-      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -144,7 +147,7 @@ describe("OfflineView move-to-online shield mode", () => {
       ALICE_I105_ACCOUNT_ID,
     );
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(true);
-    expect(submitButton.text()).toBe(t("Shield to online wallet"));
+    expect(submitButton.text()).toBe(t("Unshield to wallet"));
 
     await submitButton.trigger("click");
     await flushPromises();
@@ -172,9 +175,12 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
-      vk_transfer: "halo2/ipa::transfer",
-      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -213,6 +219,11 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
@@ -232,7 +243,7 @@ describe("OfflineView move-to-online shield mode", () => {
     );
   });
 
-  it("shows an unshielded transparency note while shielding stays optional", async () => {
+  it("shows a private-exit note while unshield stays optional", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -252,7 +263,7 @@ describe("OfflineView move-to-online shield mode", () => {
     );
   });
 
-  it("keeps offline shield enabled and shows warning when policy check fails", async () => {
+  it("keeps private exit enabled and shows warning when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error("service unavailable"),
     );
@@ -270,7 +281,7 @@ describe("OfflineView move-to-online shield mode", () => {
     );
   });
 
-  it("disables offline shield mode when the configured asset definition is missing", async () => {
+  it("disables private exit when the configured asset definition is missing", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error(
         "Confidential asset policy request failed with status 404 (Not Found)",
@@ -289,7 +300,7 @@ describe("OfflineView move-to-online shield mode", () => {
     );
   });
 
-  it("disables online move submit for non-integer shield amount", async () => {
+  it("disables online move submit for non-integer unshield amount", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -304,7 +315,7 @@ describe("OfflineView move-to-online shield mode", () => {
     expect(submitButton.attributes("disabled")).toBeDefined();
   });
 
-  it("restores previous transparent receiver after turning shield mode off", async () => {
+  it("restores previous transparent receiver after turning private exit off", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -322,7 +333,7 @@ describe("OfflineView move-to-online shield mode", () => {
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
   });
 
-  it("restores empty receiver after turning shield mode off", async () => {
+  it("restores empty receiver after turning private exit off", async () => {
     const wrapper = mountView();
     await flushPromises();
 
