@@ -30,7 +30,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testn
 - **Live verification bundles**: `npm run verify:live` (base verify + strict live TAIRA E2E including onboarding + shield submit checks).
 - **Verification bundles**: `npm run verify` (lint + typecheck + unit tests).
 - **Live VPN surface check**: `npm run verify:live:vpn-surface` verifies that the deployed TAIRA node is healthy, serves `/v1/mcp`, publishes the VPN paths in `/openapi.json`, exposes the `iroha.vpn.*` MCP aliases, and serves `/v1/vpn/profile` before attempting VPN-focused live bring-up.
-- **Live E2E**: `npm run e2e:live` (defaults to TAIRA Torii + chain ID, strict reachability preflight, boots a fresh local wallet through the live faucet to discover the funded asset bucket, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline, then runs optional alias-registration + shield/shielded-send checks). `E2E_ASSET_DEFINITION_ID` is now optional because the harness can bootstrap it from the faucet response. The app itself no longer requires UAID onboarding to create a wallet; the live alias-registration probe treats onboarding `HTTP 409` as reusable-account success and skips cleanly when TAIRA returns onboarding `HTTP 403`.
+- **Live E2E**: `npm run e2e:live` (defaults to TAIRA Torii + chain ID, strict reachability preflight, boots a fresh local wallet through the live faucet to discover the funded asset bucket unless `E2E_FUNDED_PRIVATE_KEY_HEX` is set, validates Explore metrics/QR and route-smoke checks for Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline, then runs optional alias-registration + shield/shielded-send checks). `E2E_ASSET_DEFINITION_ID` is optional because the harness can bootstrap it from the faucet response or funded-wallet holdings. The app itself no longer requires UAID onboarding to create a wallet; the live alias-registration probe treats onboarding `HTTP 409` as reusable-account success and skips cleanly when TAIRA returns onboarding `HTTP 403`.
 
 ## File Map (high level)
 
@@ -70,7 +70,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (TAIRA testn
 - Offline "Move funds to online wallet" remains same-account only and does not inherit `/send`'s recipient shielded-transfer support.
 - Parliament proposal IDs are expected to be 32-byte hex values (with or without `0x` prefix); referendum IDs are free-form strings from governance storage.
 - The send view requires navigator media permissions. In headless test contexts, avoid invoking scanner logic.
-- If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`.
+- If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`. `npm run build` now also refreshes the copied `dist/native` bundle when the SDK checksum manifest is stale, so runtime confidential v2 helpers do not regress after a linked-SDK rebuild.
 - Electron main window keeps `webSecurity: true`. Torii/Nexus requests must stay inside the preload bridge's Node-backed HTTP transport rather than renderer `fetch()`, or TAIRA CORS failures will return.
 
 ## Pending Ideas

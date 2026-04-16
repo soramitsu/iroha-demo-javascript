@@ -333,6 +333,11 @@ export interface ConfidentialAssetPolicyView {
   block_height: number;
   current_mode: string;
   effective_mode: string;
+  allow_shield: boolean | null;
+  allow_unshield: boolean | null;
+  vk_transfer: string | null;
+  vk_unshield: string | null;
+  vk_shield: string | null;
   vk_set_hash: string | null;
   poseidon_params_id: number | null;
   pedersen_params_id: number | null;

@@ -30,7 +30,7 @@ npm run dev
 
 `@iroha/iroha-js` is sourced from the sibling local checkout at `../iroha/javascript/iroha_js`.
 
-The postinstall hook auto-builds the `@iroha/iroha-js` native binding the first time you install dependencies. If you update the SDK manually, re-run:
+The postinstall hook auto-builds the `@iroha/iroha-js` native binding when it is missing or its checksum manifest is stale. `npm run build` also refreshes the copied native bundle before staging `dist/native`. If you update the SDK manually, re-run:
 
 ```bash
 (cd node_modules/@iroha/iroha-js && npm run build:native)
@@ -95,9 +95,10 @@ Optional env vars:
 
 - `E2E_TORII_URL` (default: `https://taira.sora.org`)
 - `E2E_CHAIN_ID` (default: `809574f5-fee7-5e69-bfcf-52451e42d50f`)
-- `E2E_ASSET_DEFINITION_ID` (required; canonical encoded asset ID, e.g. `norito:<hex>`)
+- `E2E_ASSET_DEFINITION_ID` (optional; when omitted, live E2E derives the funded asset bucket from the faucet response or funded wallet holdings)
 - `E2E_NETWORK_PREFIX` (default: `369`)
-- `E2E_ACCOUNT_ID` (optional seed account for read-only Explore QR assertions; canonical I105 literal)
+- `E2E_FUNDED_PRIVATE_KEY_HEX` (optional; bypasses the faucet path and uses an already funded TAIRA wallet for live shield / shielded-send checks)
+- `E2E_FUNDED_DOMAIN` (default: `default`; used with `E2E_FUNDED_PRIVATE_KEY_HEX` when deriving the local wallet profile)
 - `E2E_ONBOARDING_ALIAS` (default: `E2E Onboarding Shared`)
 - `E2E_ONBOARDING_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable onboarding account reuse)
 - `E2E_ONBOARDING_OFFLINE_BALANCE` (default: `100`; seeded offline balance for onboarding shield submission checks)
@@ -115,7 +116,7 @@ Example migration command:
 E2E_ONBOARDING_ALIAS="E2E Onboarding Shared" \
 E2E_ONBOARDING_PRIVATE_KEY_HEX="<64-char-hex>" \
 E2E_ONBOARDING_OFFLINE_BALANCE="100" \
-E2E_ASSET_DEFINITION_ID="norito:<asset-id-hex>" \
+E2E_FUNDED_PRIVATE_KEY_HEX="<64-char-funded-wallet-key>" \
 npm run e2e:live
 ```
 
@@ -123,7 +124,7 @@ In this TAIRA-only wallet build, live E2E only supports TAIRA Torii + chain ID v
 
 The preflight checks `GET /v1/health` first, then falls back to `GET /health`.
 
-Live E2E always validates read-only navigation first (Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore), then runs onboarding/shield-submit checks.
+Live E2E always validates read-only navigation first (Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore), then runs onboarding plus confidential self-shield / shielded-recipient-transfer checks.
 
 The onboarding pass reuses a deterministic account to avoid writing a new TAIRA account record on every run.
 

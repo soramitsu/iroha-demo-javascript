@@ -7,6 +7,7 @@ import {
   buildPrivateJoinKaigiTransaction,
   buildConfidentialTransferProofV2,
   buildConfidentialUnshieldProofV2,
+  buildConfidentialUnshieldProofV3,
   buildPrivateKaigiFeeSpend,
   buildCreateKaigiTransaction,
   buildEndKaigiTransaction,
@@ -50,7 +51,7 @@ import {
 } from "./preload-utils";
 import {
   extractAssetDefinitionId,
-  resolveToriiXorAsset,
+  resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
@@ -102,7 +103,7 @@ type ToriiConfig = {
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 90_000;
+const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
@@ -2429,11 +2430,9 @@ const resolveLiveConfidentialAssetDefinitionIdForAccount = async (input: {
     accountId: input.accountId,
     limit: 200,
   });
-  const candidate = resolveToriiXorAsset(assetsResponse.items, [
+  const resolvedAssetDefinitionId = resolveUniqueLiveAssetDefinitionId(
+    assetsResponse.items,
     input.requestedAssetDefinitionId,
-  ]);
-  const resolvedAssetDefinitionId = extractAssetDefinitionId(
-    candidate?.asset_id,
   ).trim();
   if (
     !resolvedAssetDefinitionId ||
@@ -2848,10 +2847,15 @@ const readConfidentialPolicyMetadata = (
 
 const readConfidentialVkRef = (
   policy: Record<string, unknown>,
-  key: "vk_transfer" | "vk_unshield",
+  key: "vk_transfer" | "vk_unshield" | "vk_shield",
   label: string,
 ) => {
-  const camelKey = key === "vk_transfer" ? "vkTransfer" : "vkUnshield";
+  const camelKey =
+    key === "vk_transfer"
+      ? "vkTransfer"
+      : key === "vk_unshield"
+        ? "vkUnshield"
+        : "vkShield";
   const rawVk = String(policy[key] ?? policy[camelKey] ?? "").trim();
   const match = /^([^:]+)::(.+)$/.exec(rawVk);
   if (!match) {
@@ -2883,6 +2887,34 @@ const readConfidentialAllowUnshield = (
   return policy.allow_unshield !== false && policy.allowUnshield !== false;
 };
 
+const readConfidentialAllowShield = (
+  assetDefinition: Record<string, unknown>,
+) => {
+  const policy = readConfidentialPolicyMetadata(
+    assetDefinition,
+    "Confidential",
+  );
+  return policy.allow_shield !== false && policy.allowShield !== false;
+};
+
+const readOptionalConfidentialVkLiteral = (
+  assetDefinition: Record<string, unknown>,
+  key: "vk_transfer" | "vk_unshield" | "vk_shield",
+) => {
+  const policy = readConfidentialPolicyMetadata(
+    assetDefinition,
+    "Confidential",
+  );
+  const camelKey =
+    key === "vk_transfer"
+      ? "vkTransfer"
+      : key === "vk_unshield"
+        ? "vkUnshield"
+        : "vkShield";
+  const literal = trimString(policy[key] ?? policy[camelKey]);
+  return literal || null;
+};
+
 const readConfidentialVkUnshieldRef = (
   assetDefinition: Record<string, unknown>,
 ) =>
@@ -2900,6 +2932,24 @@ const readConfidentialVkTransferRef = (
     "vk_transfer",
     "Confidential",
   );
+
+const mergeConfidentialPolicyWithAssetDefinition = (
+  policy: ConfidentialAssetPolicyView,
+  assetDefinition: Record<string, unknown>,
+): ConfidentialAssetPolicyView => ({
+  ...policy,
+  allow_shield: readConfidentialAllowShield(assetDefinition),
+  allow_unshield: readConfidentialAllowUnshield(assetDefinition),
+  vk_transfer:
+    readOptionalConfidentialVkLiteral(assetDefinition, "vk_transfer") ??
+    policy.vk_transfer,
+  vk_unshield:
+    readOptionalConfidentialVkLiteral(assetDefinition, "vk_unshield") ??
+    policy.vk_unshield,
+  vk_shield:
+    readOptionalConfidentialVkLiteral(assetDefinition, "vk_shield") ??
+    policy.vk_shield,
+});
 
 const resolveTrackedConfidentialAssetIds = (input: {
   requestedAssetDefinitionId: string;
@@ -3104,6 +3154,143 @@ const readInlineVerifyingKeyRecord = (value: Record<string, unknown>) => {
   return {
     record,
     inlineKey,
+  };
+};
+
+const normalizeConfidentialCircuitId = (value: unknown): string =>
+  trimString(value)
+    .toLowerCase()
+    .replace(/^halo2\/pasta\//, "halo2/pasta/ipa/");
+
+const readConfidentialVerifyingKeyContext = (value: Record<string, unknown>) => {
+  const { record, inlineKey } = readInlineVerifyingKeyRecord(value);
+  const id =
+    isPlainRecord(value.id) && !Array.isArray(value.id)
+      ? (value.id as Record<string, unknown>)
+      : {};
+  const backend = trimString(id.backend) || "halo2/ipa";
+  const circuitId = normalizeConfidentialCircuitId(
+    record.circuit_id ?? record.circuitId,
+  );
+  return {
+    record,
+    inlineKey,
+    backend,
+    circuitId,
+    proofVerifyingKey: {
+      id: {
+        backend,
+        name: trimString(id.name),
+      },
+      record,
+      inline_key: inlineKey,
+    },
+  };
+};
+
+const submitConfidentialSelfConsolidation = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  privateKeyHex: string;
+  assetDefinitionId: string;
+  notes: Array<WalletSpendableConfidentialNote>;
+}) => {
+  if (input.notes.length !== 2) {
+    throw new Error("Confidential consolidation requires exactly two notes.");
+  }
+  const materials = await resolveConfidentialTransferMaterials({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
+    assetDefinitionId: input.assetDefinitionId,
+  });
+  const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
+  const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+    privateKeyHex: input.privateKeyHex,
+  });
+  const totalAmount = input.notes
+    .reduce((sum, note) => sum + BigInt(note.amount), 0n)
+    .toString();
+  const output = {
+    note: createWalletConfidentialNote({
+      assetDefinitionId: materials.resolvedAssetId,
+      amount: totalAmount,
+      ownerTagHex,
+    }),
+    recipientAccountId: input.accountId,
+  };
+  const verifyingKeyContext = readConfidentialVerifyingKeyContext(
+    materials.verifyingKey,
+  );
+  const proofEnvelope = buildConfidentialTransferProofV2({
+    chainId: input.chainId.trim(),
+    assetDefinitionId: materials.resolvedAssetId,
+    spendKey: privateKey,
+    treeCommitments: materials.ledger.treeCommitmentsHex,
+    inputs: input.notes.map((note) => ({
+      amount: note.amount,
+      rhoHex: note.rho_hex,
+      leafIndex: note.leaf_index,
+    })),
+    outputs: [
+      {
+        amount: output.note.amount,
+        rhoHex: output.note.rho_hex,
+        ownerTagHex: output.note.owner_tag_hex,
+      },
+    ],
+    rootHintHex: materials.latestRootHex,
+    verifyingKey: verifyingKeyContext.proofVerifyingKey,
+  });
+  const metadata = buildWalletConfidentialMetadata({
+    outputs: [output],
+  });
+  const tx = buildZkTransferTransaction({
+    chainId: input.chainId,
+    authority: input.accountId,
+    transfer: {
+      assetDefinitionId: materials.resolvedAssetId,
+      inputs: proofEnvelope.nullifiers,
+      outputs: proofEnvelope.outputCommitments,
+      proof: {
+        backend: verifyingKeyContext.backend,
+        proof: Buffer.from(proofEnvelope.proof),
+        verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
+      },
+      rootHint: Buffer.from(materials.latestRootHex, "hex"),
+    },
+    metadata,
+    privateKey,
+  });
+  const submission = await submitConfidentialRelayTransfer({
+    toriiUrl: input.toriiUrl,
+    signedTransaction: tx.signedTransaction,
+  });
+  upsertConfidentialWalletShadowTransaction({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    txHash: submission.hash,
+    authority: submission.relayAuthority || "confidential-relay",
+    metadata,
+    instructions: [
+      {
+        zk: {
+          ZkTransfer: {
+            asset: materials.resolvedAssetId,
+            inputs: proofEnvelope.nullifiers.map((entry) => entry.toString("hex")),
+            outputs: [output.note.commitment_hex],
+          },
+        },
+      },
+    ],
+    createdAtMs: output.note.created_at_ms,
+  });
+  return {
+    hash: submission.hash,
+    output,
+    resolvedAssetId: materials.resolvedAssetId,
   };
 };
 
@@ -4068,13 +4255,21 @@ const api: IrohaBridge = {
     return { hash: submission.hash };
   },
   async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
-    return (
+    const { policy, resolvedAssetDefinitionId } =
       await fetchConfidentialAssetPolicyForAccount({
         toriiUrl,
         accountId,
         assetDefinitionId,
-      })
-    ).policy;
+      });
+    try {
+      const assetDefinition = await fetchConfidentialAssetDefinition(
+        toriiUrl,
+        resolvedAssetDefinitionId,
+      );
+      return mergeConfidentialPolicyWithAssetDefinition(policy, assetDefinition);
+    } catch {
+      return policy;
+    }
   },
   getConfidentialAssetBalance({
     toriiUrl,

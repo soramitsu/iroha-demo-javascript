@@ -323,6 +323,81 @@ export const resolveToriiXorAsset = (
   return positiveAsset?.asset ?? rankedAssets[0]?.asset ?? null;
 };
 
+export const resolveUniqueLiveAssetDefinitionId = (
+  assets: Array<{ asset_id: string; quantity: string }>,
+  requestedAssetDefinitionId: string | null | undefined,
+): string => {
+  const requestedDefinitionId = extractAssetDefinitionId(
+    requestedAssetDefinitionId,
+  ).trim();
+  const candidates = assets
+    .map((asset, index) => {
+      const assetId = String(asset.asset_id ?? "").trim();
+      const definitionId = extractAssetDefinitionId(assetId).trim();
+      if (!assetId || !definitionId) {
+        return null;
+      }
+
+      const quantity = Number(String(asset.quantity ?? "").trim());
+      return {
+        definitionId,
+        comparableDefinitionId: normalizeComparableAssetDefinitionId(
+          definitionId,
+        ),
+        isPositive: Number.isFinite(quantity) && quantity > 0,
+        index,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+
+  if (!candidates.length) {
+    return "";
+  }
+
+  if (requestedDefinitionId) {
+    const matchingCandidates = candidates.filter((candidate) =>
+      areAssetDefinitionIdsEquivalent(
+        candidate.definitionId,
+        requestedDefinitionId,
+      ),
+    );
+    if (matchingCandidates.length > 0) {
+      return (
+        matchingCandidates.find((candidate) => candidate.isPositive)
+          ?.definitionId ||
+        matchingCandidates.sort((left, right) => left.index - right.index)[0]
+          ?.definitionId ||
+        ""
+      );
+    }
+  }
+
+  const uniquePositiveCandidates = new Map<
+    string,
+    { definitionId: string; index: number }
+  >();
+  for (const candidate of candidates) {
+    if (!candidate.isPositive) {
+      continue;
+    }
+    if (!uniquePositiveCandidates.has(candidate.comparableDefinitionId)) {
+      uniquePositiveCandidates.set(candidate.comparableDefinitionId, {
+        definitionId: candidate.definitionId,
+        index: candidate.index,
+      });
+    }
+  }
+
+  if (uniquePositiveCandidates.size !== 1) {
+    return "";
+  }
+
+  const resolvedCandidate = Array.from(uniquePositiveCandidates.values()).sort(
+    (left, right) => left.index - right.index,
+  )[0];
+  return resolvedCandidate?.definitionId || "";
+};
+
 export const shouldReplaceConfiguredAssetDefinitionId = (input: {
   configuredAssetDefinitionId: string | null | undefined;
   detectedAssetDefinitionId: string | null | undefined;

@@ -207,6 +207,7 @@ const {
   accountId: activeAccountDisplayId,
   assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
   shielded: toRef(form, "shielded"),
+  operation: "shieldedTransfer",
   translate: t,
   onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
 });

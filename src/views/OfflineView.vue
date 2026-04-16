@@ -301,7 +301,7 @@
             type="checkbox"
             :disabled="!onlineShieldSupported"
           />
-          <span>{{ t("Shield transfer") }}</span>
+          <span>{{ t("Private exit") }}</span>
         </label>
       </div>
       <div class="actions">
@@ -313,7 +313,7 @@
             movingOnline
               ? t("Transferring…")
               : onlineForm.shielded
-                ? t("Shield to online wallet")
+                ? t("Unshield to wallet")
                 : t("Send to online wallet")
           }}
         </button>
@@ -327,7 +327,7 @@
         "
         class="helper"
       >
-        {{ t("Shield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
+        {{ t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
       </p>
       <p
         v-else-if="
@@ -339,7 +339,7 @@
       >
         {{
           t(
-            "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+            "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
           )
         }}
       </p>
@@ -521,6 +521,7 @@ const {
   accountId: activeAccountDisplayId,
   assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
   shielded: toRef(onlineForm, "shielded"),
+  operation: "unshield",
   translate: t,
   onResolvedAssetDefinitionId: persistResolvedOnlineShieldAssetDefinitionId,
 });
@@ -918,26 +919,26 @@ const moveToOnline = async () => {
   }
   if (onlineForm.shielded && !onlineShieldSupported.value) {
     moveMessage.value =
-      onlineShieldCapabilityMessage.value || t("Shield mode is unavailable.");
+      onlineShieldCapabilityMessage.value || t("Private exit is unavailable.");
     return;
   }
   const amount = normalizedMoveAmount.value;
   const receiver = normalizedMoveReceiver.value;
   if (!amount || Number(amount) <= 0) {
     moveMessage.value = onlineForm.shielded
-      ? t("Shield amount must be a whole number greater than zero.")
+      ? t("Unshield amount must be a whole number greater than zero.")
       : t("Enter an amount to move online.");
     return;
   }
   if (onlineForm.shielded && receiver !== activeAccountDisplayId.value) {
     moveMessage.value = t(
-      "Shield mode requires destination to be your active account.",
+      "Private exit requires destination to be your active account.",
     );
     return;
   }
   if (onlineForm.shielded && !isPositiveWholeAmount(amount)) {
     moveMessage.value = t(
-      "Shield amount must be a whole number greater than zero.",
+      "Unshield amount must be a whole number greater than zero.",
     );
     return;
   }
@@ -965,7 +966,7 @@ const moveToOnline = async () => {
       session.updateActiveAccount({ localOnly: false });
     }
     moveMessage.value = onlineForm.shielded
-      ? t("Shield transfer submitted and offline balance updated.")
+      ? t("Unshield submitted and offline balance updated.")
       : t("Transfer submitted and offline balance updated.");
   } catch (error) {
     offline.$patch({ wallet: snapshot });

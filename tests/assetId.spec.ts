@@ -7,6 +7,7 @@ import {
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
   formatOpaqueAssetLiteralsInText,
+  resolveUniqueLiveAssetDefinitionId,
   resolveToriiXorAsset,
   shouldReplaceConfiguredAssetDefinitionId,
   splitAssetReference,
@@ -153,6 +154,60 @@ describe("asset ID helpers", () => {
       asset_id: "norito:firstasset",
       quantity: "25",
     });
+  });
+
+  it("resolves a semantically equivalent live asset definition before any fallback", () => {
+    expect(
+      resolveUniqueLiveAssetDefinitionId(
+        [
+          {
+            asset_id: "4Zust3cNxsgov3757wxRW7DtR8n6##alice@wonderland",
+            quantity: "0",
+          },
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "12",
+          },
+        ],
+        "norito:00112233445566778899aabbccddeeff",
+      ),
+    ).toBe("4Zust3cNxsgov3757wxRW7DtR8n6");
+  });
+
+  it("resolves the single positive live asset when the configured id is stale", () => {
+    expect(
+      resolveUniqueLiveAssetDefinitionId(
+        [
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "12",
+          },
+          {
+            asset_id: "norito:emptybucket##alice@wonderland",
+            quantity: "0",
+          },
+        ],
+        "5OldBucket1111111111111111111",
+      ),
+    ).toBe("61CtjvNd9T3THAR65GsMVHr82Bjc");
+  });
+
+  it("refuses to guess when multiple positive live asset buckets remain", () => {
+    expect(
+      resolveUniqueLiveAssetDefinitionId(
+        [
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "12",
+          },
+          {
+            asset_id: "72AnotherLiveBucket1111111111##alice@wonderland",
+            quantity: "3",
+          },
+        ],
+        "5OldBucket1111111111111111111",
+      ),
+    ).toBe("");
   });
 
   it("replaces stale legacy asset aliases with a detected live asset bucket", () => {

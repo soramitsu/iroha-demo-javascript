@@ -50,7 +50,8 @@ export const resolveNativeBuildRequirement = (
     };
   }
 
-  const expectedSha256 = checksumManifest?.[platformKey]?.sha256;
+  const checksumEntries = checksumManifest?.entries ?? checksumManifest;
+  const expectedSha256 = checksumEntries?.[platformKey]?.sha256;
   if (typeof expectedSha256 !== "string" || !expectedSha256.trim()) {
     return {
       shouldBuild: true,

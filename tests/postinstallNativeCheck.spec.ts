@@ -118,4 +118,34 @@ describe("resolveNativeBuildRequirement", () => {
     expect(result.expectedSha256).toBe(sha256("native-binary"));
     expect(result.actualSha256).toBe(sha256("native-binary"));
   });
+
+  it("accepts checksum manifests that wrap platform hashes under entries", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        entries: {
+          "darwin-arm64": { sha256: sha256("native-binary") },
+        },
+      }),
+      "utf8",
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+    );
+
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+    expect(result.expectedSha256).toBe(sha256("native-binary"));
+    expect(result.actualSha256).toBe(sha256("native-binary"));
+  });
 });

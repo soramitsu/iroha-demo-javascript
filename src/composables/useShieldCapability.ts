@@ -3,11 +3,17 @@ import { getConfidentialAssetPolicy } from "@/services/iroha";
 import { confidentialModeSupportsShield } from "@/utils/confidential";
 import { sanitizeErrorMessage } from "@/utils/errorMessage";
 
+export type ConfidentialCapabilityOperation =
+  | "selfShield"
+  | "shieldedTransfer"
+  | "unshield";
+
 interface UseShieldCapabilityInput {
   toriiUrl: Ref<string>;
   accountId: Ref<string>;
   assetDefinitionId: Ref<string>;
   shielded: Ref<boolean>;
+  operation?: ConfidentialCapabilityOperation;
   translate?: (key: string, params?: Record<string, string | number>) => string;
   onResolvedAssetDefinitionId?: (assetDefinitionId: string) => void;
 }
@@ -22,11 +28,38 @@ const fallbackTranslate = (
   );
 };
 
+const normalizeMode = (value: string | null | undefined): string =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
+
+const confidentialModeSupportsUnshield = (
+  mode: string | null | undefined,
+): boolean => {
+  const normalized = normalizeMode(mode);
+  return (
+    normalized === "convertible" ||
+    normalized === "hybrid" ||
+    normalized === "zknative"
+  );
+};
+
+const hasVerifierBinding = (value: string | null | undefined) =>
+  /^[^:]+::.+$/.test(String(value ?? "").trim());
+
+const operationLabelByKey: Record<ConfidentialCapabilityOperation, string> = {
+  selfShield: "Self-shield",
+  shieldedTransfer: "Shielded send",
+  unshield: "Unshield",
+};
+
 export const useShieldCapability = ({
   toriiUrl,
   accountId,
   assetDefinitionId,
   shielded,
+  operation = "selfShield",
   translate = fallbackTranslate,
   onResolvedAssetDefinitionId,
 }: UseShieldCapabilityInput) => {
@@ -75,19 +108,80 @@ export const useShieldCapability = ({
       const effectiveMode = policy.effective_mode || policy.current_mode;
       shieldPolicyMode.value = effectiveMode;
       shieldCapabilityReady.value = true;
-      if (!confidentialModeSupportsShield(effectiveMode)) {
+      const operationLabel = operationLabelByKey[operation];
+      let supported = true;
+      let unsupportedMessage = "";
+
+      if (operation === "selfShield") {
+        if (!confidentialModeSupportsShield(effectiveMode)) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is unavailable: effective policy mode is {mode}.",
+            {
+              operation: operationLabel,
+              mode: effectiveMode,
+            },
+          );
+        } else if (policy.allow_shield === false) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is disabled by the asset policy.",
+            { operation: operationLabel },
+          );
+        }
+      } else if (operation === "shieldedTransfer") {
+        if (!confidentialModeSupportsShield(effectiveMode)) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is unavailable: effective policy mode is {mode}.",
+            {
+              operation: operationLabel,
+              mode: effectiveMode,
+            },
+          );
+        } else if (!hasVerifierBinding(policy.vk_transfer)) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is unavailable because the asset policy is missing vk_transfer.",
+            { operation: operationLabel },
+          );
+        }
+      } else if (operation === "unshield") {
+        if (!confidentialModeSupportsUnshield(effectiveMode)) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is unavailable: effective policy mode is {mode}.",
+            {
+              operation: operationLabel,
+              mode: effectiveMode,
+            },
+          );
+        } else if (policy.allow_unshield === false) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is disabled by the asset policy.",
+            { operation: operationLabel },
+          );
+        } else if (!hasVerifierBinding(policy.vk_unshield)) {
+          supported = false;
+          unsupportedMessage = translate(
+            "{operation} is unavailable because the asset policy is missing vk_unshield.",
+            { operation: operationLabel },
+          );
+        }
+      }
+
+      if (!supported) {
         shieldSupported.value = false;
         shielded.value = false;
-        shieldCapabilityMessage.value = translate(
-          "Shield mode unavailable: effective policy mode is {mode}.",
-          { mode: effectiveMode },
-        );
+        shieldCapabilityMessage.value = unsupportedMessage;
       }
     } catch (error) {
       if (revision !== refreshRevision) {
         return;
       }
       shieldCapabilityReady.value = true;
+      const operationLabel = operationLabelByKey[operation];
       const message =
         error instanceof Error ? sanitizeErrorMessage(error.message) : "";
       const policyMissingForAsset =
@@ -97,18 +191,20 @@ export const useShieldCapability = ({
         shieldSupported.value = false;
         shielded.value = false;
         shieldCapabilityMessage.value = translate(
-          "Shield mode is unavailable for the current asset definition.",
+          "{operation} is unavailable for the current asset definition.",
+          { operation: operationLabel },
         );
         return;
       }
       shieldSupported.value = true;
       shieldCapabilityMessage.value = message
         ? translate(
-            "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
-            { message },
+            "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+            { operation: operationLabel, message },
           )
         : translate(
-            "Shield policy check failed. Submission may still fail if shield mode is unsupported.",
+            "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.",
+            { operation: operationLabel },
           );
     }
   };

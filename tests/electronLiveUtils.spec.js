@@ -10,6 +10,7 @@ import {
   isOnboardingConflictError,
   isOnboardingDisabledError,
   isSupportedAccountIdLiteral,
+  parseFundedEnvConfig,
   parseOnboardingEnvConfig,
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
@@ -315,6 +316,47 @@ describe("electron live e2e utils", () => {
       }),
     ).toThrow(
       "E2E_ONBOARDING_OFFLINE_BALANCE must be a positive numeric string.",
+    );
+  });
+
+  it("returns null when no funded-wallet override is set", () => {
+    expect(parseFundedEnvConfig({})).toBeNull();
+  });
+
+  it("parses funded-wallet env vars", () => {
+    expect(
+      parseFundedEnvConfig({
+        E2E_FUNDED_PRIVATE_KEY_HEX:
+          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        E2E_FUNDED_DOMAIN: "  treasury  ",
+      }),
+    ).toEqual({
+      privateKeyHex:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      domain: "treasury",
+    });
+  });
+
+  it("defaults the funded-wallet domain to default", () => {
+    expect(
+      parseFundedEnvConfig({
+        E2E_FUNDED_PRIVATE_KEY_HEX:
+          "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      }),
+    ).toEqual({
+      privateKeyHex:
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      domain: "default",
+    });
+  });
+
+  it("rejects invalid funded-wallet private key values", () => {
+    expect(() =>
+      parseFundedEnvConfig({
+        E2E_FUNDED_PRIVATE_KEY_HEX: "abc",
+      }),
+    ).toThrow(
+      "E2E_FUNDED_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
     );
   });
 });

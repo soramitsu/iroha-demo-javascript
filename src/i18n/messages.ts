@@ -1036,6 +1036,34 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Invoice asset does not match the active offline asset.",
   "Payment asset does not match the active offline asset.":
     "Payment asset does not match the active offline asset.",
+  "Private exit": "Private exit",
+  "Unshield to wallet": "Unshield to wallet",
+  "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.":
+    "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
+  "Private exit is unavailable for the current asset definition.":
+    "Private exit is unavailable for the current asset definition.",
+  "Private exit is unavailable.": "Private exit is unavailable.",
+  "Private exit requires destination to be your active account.":
+    "Private exit requires destination to be your active account.",
+  "Unshield amount must be a whole number greater than zero.":
+    "Unshield amount must be a whole number greater than zero.",
+  "Unshield policy mode: {mode}.": "Unshield policy mode: {mode}.",
+  "Unshield submitted and offline balance updated.":
+    "Unshield submitted and offline balance updated.",
+  "{operation} is unavailable for the current asset definition.":
+    "{operation} is unavailable for the current asset definition.",
+  "{operation} is unavailable: effective policy mode is {mode}.":
+    "{operation} is unavailable: effective policy mode is {mode}.",
+  "{operation} is disabled by the asset policy.":
+    "{operation} is disabled by the asset policy.",
+  "{operation} is unavailable because the asset policy is missing vk_transfer.":
+    "{operation} is unavailable because the asset policy is missing vk_transfer.",
+  "{operation} is unavailable because the asset policy is missing vk_unshield.":
+    "{operation} is unavailable because the asset policy is missing vk_unshield.",
+  "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.":
+    "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+  "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.":
+    "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.",
   "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.":
     "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
   "Shielded balance": "Shielded balance",

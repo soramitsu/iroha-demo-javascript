@@ -306,6 +306,7 @@ const {
   accountId: requestAccountId,
   assetDefinitionId: configuredShieldAssetDefinitionId,
   shielded: walletShieldEnabled,
+  operation: "selfShield",
   translate: t,
   onResolvedAssetDefinitionId: (resolvedAssetDefinitionId) => {
     updateConfiguredAssetDefinitionIdFromLiveEvidence(

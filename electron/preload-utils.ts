@@ -88,6 +88,11 @@ export interface ConfidentialAssetPolicyView {
   block_height: number;
   current_mode: string;
   effective_mode: string;
+  allow_shield: boolean | null;
+  allow_unshield: boolean | null;
+  vk_transfer: string | null;
+  vk_unshield: string | null;
+  vk_shield: string | null;
   vk_set_hash: string | null;
   poseidon_params_id: number | null;
   pedersen_params_id: number | null;
@@ -607,11 +612,40 @@ export const normalizeConfidentialAssetPolicyPayload = (
       ? null
       : String(vkSetHashRaw);
 
+  const readNullableBoolean = (value: unknown): boolean | null => {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+    if (typeof value === "boolean") {
+      return value;
+    }
+    if (typeof value === "string") {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+    return Boolean(value);
+  };
+
+  const readNullableString = (value: unknown) => {
+    const normalized = String(value ?? "").trim();
+    return normalized ? normalized : null;
+  };
+
   return {
     asset_id,
     block_height,
     current_mode,
     effective_mode,
+    allow_shield: readNullableBoolean(
+      payload.allow_shield ?? payload.allowShield,
+    ),
+    allow_unshield: readNullableBoolean(
+      payload.allow_unshield ?? payload.allowUnshield,
+    ),
+    vk_transfer: readNullableString(payload.vk_transfer ?? payload.vkTransfer),
+    vk_unshield: readNullableString(payload.vk_unshield ?? payload.vkUnshield),
+    vk_shield: readNullableString(payload.vk_shield ?? payload.vkShield),
     vk_set_hash,
     poseidon_params_id: toNullableInteger(
       payload.poseidon_params_id ?? payload.poseidonParamsId,

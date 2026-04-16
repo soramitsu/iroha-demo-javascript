@@ -1321,6 +1321,66 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
+  it("refuses to guess across multiple live funded asset buckets on policy 404", async () => {
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/confidential/assets/5OldBucket1111111111111111111/transitions",
+          )
+        ) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential asset policy request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
+        if (
+          method === "GET" &&
+          href.includes("/v1/accounts/") &&
+          href.includes("/assets")
+        ) {
+          return jsonResponse({
+            items: [
+              {
+                asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}##${ALICE_ACCOUNT_ID}`,
+                quantity: "9",
+              },
+              {
+                asset_id: `72AnotherLiveBucket1111111111##${ALICE_ACCOUNT_ID}`,
+                quantity: "4",
+              },
+            ],
+            total: 2,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getConfidentialAssetPolicy({
+        toriiUrl: "https://taira.sora.org",
+        accountId: ALICE_ACCOUNT_ID,
+        assetDefinitionId: "5OldBucket1111111111111111111",
+      }),
+    ).rejects.toThrow(
+      "Confidential asset policy request failed with status 404 (ERR)",
+    );
+
+    const policyFetches = mocks.nodeFetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/v1/confidential/assets/"),
+    );
+    expect(policyFetches).toHaveLength(1);
+  });
+
   it("does not retry account-asset fallback for policy 500 responses", async () => {
     mocks.nodeFetchMock.mockImplementation(
       async (input: unknown, init?: Record<string, unknown>) => {

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { _electron as electron } from "playwright";
 import {
+  parseFundedEnvConfig,
   parseOnboardingEnvConfig,
   isSupportedAccountIdLiteral,
   parseNetworkPrefix,
@@ -32,6 +33,7 @@ const {
   privateKeyHex: onboardingPrivateKeyHex,
   offlineBalance: onboardingOfflineSeedBalance,
 } = parseOnboardingEnvConfig(process.env);
+const fundedWalletConfig = parseFundedEnvConfig(process.env);
 
 async function main() {
   if (!existsSync(mainEntry)) {
@@ -54,24 +56,26 @@ async function main() {
     page = await app.firstWindow();
     page.setDefaultTimeout(45_000);
 
-    const faucetFlow = await runFaucetFlow(page);
-    const readOnlyAssetId = assetDefinitionId || faucetFlow.assetId;
-    const onboardingAssetId = assetDefinitionId || faucetFlow.assetDefinitionId;
+    const fundedFlow = fundedWalletConfig
+      ? await runFundedFlow(page, fundedWalletConfig)
+      : await runFaucetFlow(page);
+    const readOnlyAssetId = assetDefinitionId || fundedFlow.assetDefinitionId;
+    const onboardingAssetId = assetDefinitionId || fundedFlow.assetDefinitionId;
 
     await runReadOnlyFlow(page, {
-      accountId: faucetFlow.displayAccountId,
-      i105AccountId: faucetFlow.i105AccountId,
-      i105DefaultAccountId: faucetFlow.i105DefaultAccountId,
-      publicKeyHex: faucetFlow.publicKeyHex,
-      privateKeyHex: faucetFlow.privateKeyHex,
+      accountId: fundedFlow.displayAccountId,
+      i105AccountId: fundedFlow.i105AccountId,
+      i105DefaultAccountId: fundedFlow.i105DefaultAccountId,
+      publicKeyHex: fundedFlow.publicKeyHex,
+      privateKeyHex: fundedFlow.privateKeyHex,
       assetDefinitionId: readOnlyAssetId,
     });
     const onboardingOutcome = await runOnboardingFlow(page, onboardingAssetId);
 
     console.log(
       onboardingOutcome === "skipped"
-        ? "Live Electron E2E passed (faucet + read-only flows; optional alias registration skipped because TAIRA returned HTTP 403)."
-        : "Live Electron E2E passed (faucet + read-only + optional alias-registration checks).",
+        ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned HTTP 403)."
+        : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
     );
   } catch (error) {
     if (page) {
@@ -217,51 +221,64 @@ async function runFaucetFlow(page) {
   await page.evaluate(() => {
     window.location.hash = "#/wallet";
   });
-  await page.waitForFunction(() => window.location.hash === "#/wallet", {
-    timeout: 45_000,
-  });
+  await page.waitForFunction(
+    () => window.location.hash === "#/wallet",
+    undefined,
+    {
+      timeout: 45_000,
+    },
+  );
   await page
     .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
     .waitFor({ state: "visible", timeout: 45_000 });
 
-  const claimButton = page.getByRole("button", {
-    name: /Claim(?: Testnet)? XOR/,
-  });
-  await claimButton.waitFor({ state: "visible", timeout: 45_000 });
-  await claimButton.click();
-
-  const faucetState = await page
-    .waitForFunction(
-      () => {
-        const text = document.body.textContent ?? "";
-        const raw = localStorage.getItem("iroha-demo:session");
-        if (!raw) {
-          return null;
-        }
+  const faucetReceipt = await page.evaluate(
+    async ({ torii, accountId, prefix }) => {
+      const result = await window.iroha.requestFaucetFunds({
+        toriiUrl: torii,
+        accountId,
+        networkPrefix: prefix,
+      });
+      const raw = localStorage.getItem("iroha-demo:session");
+      if (raw) {
         try {
           const session = JSON.parse(raw);
-          const configuredAssetId = String(
-            session?.connection?.assetDefinitionId ?? "",
-          ).trim();
-          const activeAccount = Array.isArray(session?.accounts)
-            ? session.accounts.find(
-                (account) => account?.accountId === session?.activeAccountId,
+          const configuredAssetDefinitionId =
+            String(result?.asset_definition_id ?? "").trim() ||
+            String(result?.asset_id ?? "").trim();
+          const nextAccounts = Array.isArray(session?.accounts)
+            ? session.accounts.map((entry) =>
+                entry?.accountId === session?.activeAccountId
+                  ? {
+                      ...entry,
+                      localOnly: false,
+                    }
+                  : entry,
               )
-            : null;
-          if (!configuredAssetId || !activeAccount || activeAccount.localOnly) {
-            return null;
-          }
-          return {
-            messageText: text,
-            configuredAssetId,
-          };
+            : [];
+          localStorage.setItem(
+            "iroha-demo:session",
+            JSON.stringify({
+              ...session,
+              connection: {
+                ...session?.connection,
+                assetDefinitionId: configuredAssetDefinitionId,
+              },
+              accounts: nextAccounts,
+            }),
+          );
         } catch {
-          return null;
+          // Ignore storage repair failures in the live harness.
         }
-      },
-      { timeout: 120_000 },
-    )
-    .then((handle) => handle.jsonValue());
+      }
+      return result;
+    },
+    {
+      torii: toriiUrl,
+      accountId: faucetBootstrap.displayAccountId,
+      prefix: networkPrefix,
+    },
+  );
 
   const fundedBalance = await page.evaluate(
     async ({ torii, accountId }) => {
@@ -306,7 +323,7 @@ async function runFaucetFlow(page) {
     throw new Error(
       `Faucet flow queued a request but did not observe a funded balance within 60s. State: ${JSON.stringify(
         {
-          faucetState,
+          faucetReceipt,
           fundedBalance,
           faucetBootstrap,
         },
@@ -314,21 +331,18 @@ async function runFaucetFlow(page) {
     );
   }
 
-  const txHashMatch =
-    /(?:Testnet XOR requested:|XOR claimed:)\s*([0-9a-f]+)/i.exec(
-      String(faucetState?.messageText ?? ""),
-    );
-  const txHash = txHashMatch?.[1]?.trim() ?? "";
+  const txHash = String(faucetReceipt?.tx_hash_hex ?? "").trim();
 
   const assetId = String(fundedBalance.assetId).trim();
   const assetDefinitionId =
-    assetId.split("#", 1)[0]?.trim() || String(faucetState.configuredAssetId);
+    assetId.split("#", 1)[0]?.trim() ||
+    String(faucetReceipt?.asset_definition_id ?? "");
 
   if (!assetDefinitionId) {
     throw new Error(
       `Faucet flow did not resolve an asset definition id. State: ${JSON.stringify(
         {
-          faucetState,
+          faucetReceipt,
           fundedBalance,
         },
       ).slice(0, 1200)}`,
@@ -338,7 +352,7 @@ async function runFaucetFlow(page) {
   console.log(
     txHash
       ? `Faucet probe queued ${txHash} and observed ${fundedBalance.quantity} units on ${assetId}.`
-      : `Faucet probe observed ${fundedBalance.quantity} units on ${assetId}; wallet status text did not expose a transaction hash before sampling.`,
+      : `Faucet probe observed ${fundedBalance.quantity} units on ${assetId}; bridge result did not expose a transaction hash before sampling.`,
   );
 
   return {
@@ -349,6 +363,135 @@ async function runFaucetFlow(page) {
     txHash,
     quantity: String(fundedBalance.quantity).trim(),
   };
+}
+
+async function runFundedFlow(page, fundedWallet) {
+  await page.evaluate(() => {
+    localStorage.removeItem("iroha-demo:session");
+    localStorage.removeItem("iroha-demo:offline");
+    localStorage.setItem("iroha-demo:locale", "en-US");
+  });
+  await page.reload();
+
+  await waitForAccountView(page);
+  await configureConnection(page);
+
+  const fundedBootstrap = await page.evaluate(
+    async ({
+      torii,
+      chain,
+      prefix,
+      domain,
+      privateKeyHex,
+      requestedAssetDefinitionId,
+    }) => {
+      const { publicKeyHex } = window.iroha.derivePublicKey(privateKeyHex);
+      const summary = window.iroha.deriveAccountAddress({
+        domain,
+        publicKeyHex,
+        networkPrefix: prefix,
+      });
+      const assetsResponse = await window.iroha.fetchAccountAssets({
+        toriiUrl: torii,
+        accountId: summary.i105AccountId,
+        limit: 200,
+      });
+      const items = Array.isArray(assetsResponse?.items)
+        ? assetsResponse.items
+        : [];
+      const requested = String(requestedAssetDefinitionId ?? "").trim();
+      const requestedLower = requested.toLowerCase();
+      const positiveItems = items.filter((asset) => {
+        const quantity = Number(String(asset?.quantity ?? ""));
+        return Number.isFinite(quantity) && quantity > 0;
+      });
+      const matchingAsset =
+        (requestedLower
+          ? positiveItems.find((asset) => {
+              const assetId = String(asset?.asset_id ?? "")
+                .trim()
+                .toLowerCase();
+              return (
+                assetId === requestedLower ||
+                assetId.startsWith(`${requestedLower}#`) ||
+                assetId.includes(requestedLower)
+              );
+            })
+          : null) ??
+        positiveItems[0] ??
+        null;
+      const assetId = String(matchingAsset?.asset_id ?? "").trim();
+      const resolvedAssetDefinitionId =
+        requested || assetId.split("#", 1)[0]?.trim() || "";
+
+      localStorage.setItem(
+        "iroha-demo:session",
+        JSON.stringify({
+          hydrated: true,
+          connection: {
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: resolvedAssetDefinitionId,
+            networkPrefix: prefix,
+          },
+          authority: {
+            accountId: "",
+            privateKeyHex: "",
+          },
+          accounts: [
+            {
+              displayName: "E2E Funded",
+              domain,
+              accountId: summary.accountId,
+              i105AccountId: summary.i105AccountId,
+              i105DefaultAccountId: summary.i105DefaultAccountId,
+              publicKeyHex,
+              privateKeyHex,
+              localOnly: false,
+            },
+          ],
+          activeAccountId: summary.accountId,
+          customChains: [],
+        }),
+      );
+
+      return {
+        displayAccountId: summary.accountId,
+        i105AccountId: summary.i105AccountId,
+        i105DefaultAccountId: summary.i105DefaultAccountId,
+        publicKeyHex,
+        privateKeyHex,
+        assetId,
+        assetDefinitionId: resolvedAssetDefinitionId,
+        quantity: String(matchingAsset?.quantity ?? "").trim(),
+        availableAssetIds: items
+          .map((asset) => String(asset?.asset_id ?? "").trim())
+          .filter(Boolean),
+      };
+    },
+    {
+      torii: toriiUrl,
+      chain: chainId,
+      prefix: networkPrefix,
+      domain: fundedWallet.domain,
+      privateKeyHex: fundedWallet.privateKeyHex,
+      requestedAssetDefinitionId: assetDefinitionId,
+    },
+  );
+
+  if (!fundedBootstrap?.assetId || !fundedBootstrap?.assetDefinitionId) {
+    throw new Error(
+      `Funded-account bootstrap could not resolve a positive live asset balance. State: ${JSON.stringify(
+        fundedBootstrap,
+      ).slice(0, 1600)}`,
+    );
+  }
+
+  console.log(
+    `Using funded TAIRA account ${fundedBootstrap.i105AccountId} with ${fundedBootstrap.quantity} units on ${fundedBootstrap.assetId}.`,
+  );
+
+  return fundedBootstrap;
 }
 
 async function runReadOnlyFlow(page, fundedAccount) {
@@ -424,137 +567,227 @@ async function runReadOnlyFlow(page, fundedAccount) {
     window.location.hash = "#/wallet";
   });
 
-  await page.waitForFunction(() => window.location.hash === "#/wallet", {
-    timeout: 45_000,
-  });
+  await page.waitForFunction(
+    () => window.location.hash === "#/wallet",
+    undefined,
+    {
+      timeout: 45_000,
+    },
+  );
   await page
     .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
     .waitFor({ state: "visible", timeout: 45_000 });
 
-  const initialShieldedBalance = await page
-    .waitForFunction(
-      () => {
-        const panel = document.querySelector(".wallet-shield-panel");
-        if (!panel) {
-          return null;
+  const confidentialTransferProbe = await page.evaluate(
+    async ({
+      torii,
+      chain,
+      assetId,
+      aliceAccountId,
+      alicePrivateKeyHex,
+      prefix,
+      derivationLabel,
+    }) => {
+      const waitForMs = (delayMs) =>
+        new Promise((resolve) => {
+          window.setTimeout(resolve, delayMs);
+        });
+      const readSpendableQuantity = (balance) => {
+        const raw =
+          balance?.spendableQuantity ??
+          balance?.quantity ??
+          balance?.onChainQuantity;
+        const normalized = String(raw ?? "").trim();
+        return /^\d+$/.test(normalized) ? normalized : "0";
+      };
+      const readConfidentialBalance = (accountId, privateKeyHex) =>
+        window.iroha.getConfidentialAssetBalance({
+          toriiUrl: torii,
+          chainId: chain,
+          accountId,
+          privateKeyHex,
+          assetDefinitionId: assetId,
+        });
+      const waitForConfidentialBalance = async ({
+        accountId,
+        privateKeyHex,
+        minimumQuantity,
+        timeoutMs = 90_000,
+      }) => {
+        const deadline = Date.now() + timeoutMs;
+        let lastBalance = null;
+        let lastError = "";
+        while (Date.now() < deadline) {
+          try {
+            lastBalance = await readConfidentialBalance(
+              accountId,
+              privateKeyHex,
+            );
+            if (
+              BigInt(readSpendableQuantity(lastBalance)) >=
+              BigInt(String(minimumQuantity))
+            ) {
+              return {
+                ok: true,
+                balance: lastBalance,
+                error: "",
+              };
+            }
+          } catch (error) {
+            lastError = String(error ?? "");
+          }
+          await waitForMs(1_500);
         }
-        const value =
-          panel.querySelector(".wallet-shield-balance")?.textContent?.trim() ??
-          null;
-        return value && /^\d+$/.test(value) ? value : null;
-      },
-      { timeout: 45_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  const shieldAmountInput = page.locator(".wallet-shield-input input").first();
-  await shieldAmountInput.fill("1");
-  const createShieldedBalanceButton = page.getByRole("button", {
-    name: "Create shielded balance",
-    exact: true,
-  });
-  const walletShieldCapability = await page
-    .waitForFunction(
-      () => {
-        const panel = document.querySelector(".wallet-shield-panel");
-        if (!panel) {
-          return null;
-        }
-        const button = [...panel.querySelectorAll("button")].find((node) =>
-          (node.textContent ?? "").includes("Create shielded balance"),
-        );
-        if (!button) {
-          return null;
-        }
-        const notes = [...panel.querySelectorAll("p")]
-          .map((node) => (node.textContent ?? "").trim())
-          .filter(Boolean);
-        const blockingNote =
-          notes.find((note) => note.includes("Shield mode unavailable:")) ??
-          null;
-        if (blockingNote || !button.disabled) {
-          return {
-            buttonDisabled: button.disabled,
-            blockingNote,
-          };
-        }
-        return null;
-      },
-      { timeout: 45_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  if (walletShieldCapability?.buttonDisabled) {
+        return {
+          ok: false,
+          balance: lastBalance,
+          error: lastError,
+        };
+      };
+
+      const initialAliceBalance = await readConfidentialBalance(
+        aliceAccountId,
+        alicePrivateKeyHex,
+      );
+      const initialAliceSpendable = readSpendableQuantity(initialAliceBalance);
+
+      const bobKeyPair = window.iroha.generateKeyPair();
+      const bobSummary = window.iroha.deriveAccountAddress({
+        domain: derivationLabel,
+        publicKeyHex: bobKeyPair.publicKeyHex,
+        networkPrefix: prefix,
+      });
+      const bobOwnerTagHex = window.iroha.deriveConfidentialOwnerTag(
+        bobKeyPair.privateKeyHex,
+      ).ownerTagHex;
+      const initialBobBalance = await readConfidentialBalance(
+        bobSummary.i105AccountId,
+        bobKeyPair.privateKeyHex,
+      );
+      const initialBobSpendable = readSpendableQuantity(initialBobBalance);
+
+      const selfShield = await window.iroha.transferAsset({
+        toriiUrl: torii,
+        chainId: chain,
+        assetDefinitionId: assetId,
+        accountId: aliceAccountId,
+        destinationAccountId: aliceAccountId,
+        quantity: "2",
+        privateKeyHex: alicePrivateKeyHex,
+        shielded: true,
+        metadata: {
+          source: "electron-live-self-shield",
+        },
+      });
+      const aliceAfterSelfShield = await waitForConfidentialBalance({
+        accountId: aliceAccountId,
+        privateKeyHex: alicePrivateKeyHex,
+        minimumQuantity: BigInt(initialAliceSpendable) + 2n,
+      });
+      if (!aliceAfterSelfShield.ok) {
+        return {
+          ok: false,
+          stage: "self-shield-balance",
+          selfShieldHash: selfShield.hash,
+          initialAliceBalance,
+          result: aliceAfterSelfShield,
+        };
+      }
+
+      const recipientTransfer = await window.iroha.transferAsset({
+        toriiUrl: torii,
+        chainId: chain,
+        assetDefinitionId: assetId,
+        accountId: aliceAccountId,
+        destinationAccountId: bobSummary.i105AccountId,
+        quantity: "1",
+        privateKeyHex: alicePrivateKeyHex,
+        shielded: true,
+        shieldedOwnerTagHex: bobOwnerTagHex,
+        metadata: {
+          source: "electron-live-recipient-shielded-send",
+        },
+      });
+
+      const expectedAliceSpendable = BigInt(initialAliceSpendable) + 1n;
+      const expectedBobSpendable = BigInt(initialBobSpendable) + 1n;
+      const finalAliceBalance = await waitForConfidentialBalance({
+        accountId: aliceAccountId,
+        privateKeyHex: alicePrivateKeyHex,
+        minimumQuantity: expectedAliceSpendable,
+      });
+      const finalBobBalance = await waitForConfidentialBalance({
+        accountId: bobSummary.i105AccountId,
+        privateKeyHex: bobKeyPair.privateKeyHex,
+        minimumQuantity: expectedBobSpendable,
+      });
+
+      const aliceSpendable = readSpendableQuantity(finalAliceBalance.balance);
+      const bobSpendable = readSpendableQuantity(finalBobBalance.balance);
+      const aliceMatches = aliceSpendable === expectedAliceSpendable.toString();
+      const bobMatches = bobSpendable === expectedBobSpendable.toString();
+
+      return {
+        ok:
+          finalAliceBalance.ok &&
+          finalBobBalance.ok &&
+          aliceMatches &&
+          bobMatches,
+        stage: !finalAliceBalance.ok
+          ? "sender-final-balance"
+          : !finalBobBalance.ok
+            ? "recipient-final-balance"
+            : !aliceMatches || !bobMatches
+              ? "unexpected-final-quantity"
+              : "completed",
+        bobAccountId: bobSummary.i105AccountId,
+        bobOwnerTagHex,
+        selfShieldHash: selfShield.hash,
+        recipientTransferHash: recipientTransfer.hash,
+        initialAliceBalance,
+        initialBobBalance,
+        finalAliceBalance,
+        finalBobBalance,
+        expectedAliceSpendable: expectedAliceSpendable.toString(),
+        expectedBobSpendable: expectedBobSpendable.toString(),
+        observedAliceSpendable: aliceSpendable,
+        observedBobSpendable: bobSpendable,
+      };
+    },
+    {
+      torii: toriiUrl,
+      chain: chainId,
+      assetId: fundedAccount.assetDefinitionId,
+      aliceAccountId: fundedAccount.accountId,
+      alicePrivateKeyHex: fundedAccount.privateKeyHex,
+      prefix: networkPrefix,
+      derivationLabel: defaultDerivationLabel,
+    },
+  );
+
+  if (!confidentialTransferProbe?.ok) {
     throw new Error(
-      `Wallet shield submission is blocked on live TAIRA: ${String(walletShieldCapability.blockingNote ?? "shield policy unavailable")}`,
+      `TAIRA confidential transfer probe failed at stage ${String(
+        confidentialTransferProbe?.stage ?? "unknown",
+      )}. Probe: ${JSON.stringify(confidentialTransferProbe).slice(0, 2000)}`,
     );
   }
-  if (await createShieldedBalanceButton.isDisabled()) {
-    throw new Error(
-      'Expected wallet "Create shielded balance" action to be enabled after entering a whole-number amount.',
-    );
-  }
-  await createShieldedBalanceButton.click();
-  const walletShieldStatus = await page
-    .waitForFunction(
-      () => {
-        const messages = [
-          ...document.querySelectorAll(
-            ".wallet-shield-panel .wallet-faucet-message",
-          ),
-        ]
-          .map((node) => (node.textContent ?? "").trim())
-          .filter(Boolean);
-        return (
-          messages.find((message) =>
-            message.includes("Shield transaction submitted:"),
-          ) ?? null
-        );
-      },
-      { timeout: 90_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  if (!walletShieldStatus) {
-    throw new Error(
-      'Wallet "Create shielded balance" submission did not surface a success message.',
-    );
-  }
-  const updatedShieldedBalance = await page
-    .waitForFunction(
-      ({ baseline }) => {
-        const panel = document.querySelector(".wallet-shield-panel");
-        if (!panel) {
-          return null;
-        }
-        const rows = [...panel.querySelectorAll(".kv")];
-        const shieldedRow = rows.find((row) =>
-          row
-            .querySelector(".kv-label")
-            ?.textContent?.includes("Shielded balance"),
-        );
-        const value = shieldedRow
-          ?.querySelector(".kv-value")
-          ?.textContent?.trim();
-        if (!value || !/^\d+$/.test(value)) {
-          return null;
-        }
-        return BigInt(value) > BigInt(baseline) ? value : null;
-      },
-      { baseline: String(initialShieldedBalance ?? "0") },
-      { timeout: 90_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  if (!updatedShieldedBalance) {
-    throw new Error(
-      "Wallet shielded balance did not increase after the live shield submission.",
-    );
-  }
+
+  console.log(
+    `Confidential transfer probe committed self-shield ${confidentialTransferProbe.selfShieldHash} and recipient shielded send ${confidentialTransferProbe.recipientTransferHash} to ${confidentialTransferProbe.bobAccountId}.`,
+  );
 
   await page.evaluate(() => {
     window.location.hash = "#/explore";
   });
 
-  await page.waitForFunction(() => window.location.hash === "#/explore", {
-    timeout: 45_000,
-  });
+  await page.waitForFunction(
+    () => window.location.hash === "#/explore",
+    undefined,
+    {
+      timeout: 45_000,
+    },
+  );
   await page.waitForTimeout(2_000);
 
   const bridgeProbe = await page.evaluate(
@@ -788,186 +1021,6 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
   }
 
   await page.reload();
-
-  await page.evaluate(() => {
-    window.location.hash = "#/send";
-  });
-  await page.waitForFunction(() => window.location.hash === "#/send", {
-    timeout: 45_000,
-  });
-  await page
-    .getByRole("heading", { name: "Send", exact: true, level: 1 })
-    .waitFor({ state: "visible", timeout: 45_000 });
-
-  const sendCard = page
-    .locator("section.card")
-    .filter({ hasText: "Transfer Asset" })
-    .first();
-  const sendShieldToggle = sendCard.getByLabel("Shielded send", {
-    exact: true,
-  });
-  await sendShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
-  if (!(await sendShieldToggle.isEnabled())) {
-    throw new Error(
-      "Expected send shield toggle to be enabled in onboarding flow.",
-    );
-  }
-  await sendShieldToggle.check();
-  const sendDestination = sendCard.getByLabel("To", { exact: true });
-  if (!(await sendDestination.isDisabled())) {
-    throw new Error(
-      "Expected send destination to lock when shield transfer is enabled in onboarding flow.",
-    );
-  }
-  if ((await sendDestination.inputValue()).trim() !== persistedAccountId) {
-    throw new Error(
-      `Expected send shield destination to auto-lock to active account ${persistedAccountId}.`,
-    );
-  }
-  const sendAmountInput = sendCard.locator('input[type="number"]').first();
-  await sendAmountInput.fill("1");
-  const sendSubmitButton = sendCard.getByRole("button", {
-    name: "Shield",
-    exact: true,
-  });
-  if (await sendSubmitButton.isDisabled()) {
-    throw new Error("Expected send shield submit button to be enabled.");
-  }
-  const sendStatusBefore = await sendCard
-    .locator("p.helper")
-    .last()
-    .textContent()
-    .then((value) => String(value ?? "").trim());
-  await sendSubmitButton.click();
-  const sendStatusAfter = await page
-    .waitForFunction(
-      ({ baseline }) => {
-        const cards = [...document.querySelectorAll("section.card")];
-        const card = cards.find((node) =>
-          node.querySelector("h2")?.textContent?.includes("Transfer Asset"),
-        );
-        if (!card) return null;
-        const helpers = [...card.querySelectorAll("p.helper")]
-          .map((node) => (node.textContent ?? "").trim())
-          .filter(Boolean);
-        if (!helpers.length) return null;
-        const last = helpers[helpers.length - 1];
-        return last && last !== baseline ? last : null;
-      },
-      { baseline: sendStatusBefore },
-      { timeout: 90_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  const sendStatus = String(sendStatusAfter ?? "").trim();
-  if (!sendStatus) {
-    throw new Error("Send shield submission did not produce a status message.");
-  }
-  if (
-    [
-      "Configure Torii + account first.",
-      "Shield mode is unavailable.",
-      "Shield mode requires destination to be your active account.",
-      "Shield amount must be a whole number greater than zero.",
-    ].includes(sendStatus)
-  ) {
-    throw new Error(
-      `Send shield submission did not reach bridge submission path: ${sendStatus}`,
-    );
-  }
-
-  await page.evaluate(() => {
-    window.location.hash = "#/offline";
-  });
-  await page.waitForFunction(() => window.location.hash === "#/offline", {
-    timeout: 45_000,
-  });
-  await page
-    .getByRole("heading", { name: "Offline", exact: true, level: 1 })
-    .waitFor({ state: "visible", timeout: 45_000 });
-
-  const moveCard = page
-    .locator("section.card")
-    .filter({ hasText: "Move to online wallet" })
-    .first();
-  const moveShieldToggle = moveCard.getByLabel("Shielded send", {
-    exact: true,
-  });
-  await moveShieldToggle.waitFor({ state: "visible", timeout: 30_000 });
-  if (!(await moveShieldToggle.isEnabled())) {
-    throw new Error(
-      'Expected offline "Shield transfer" toggle to be enabled in onboarding flow.',
-    );
-  }
-  await moveShieldToggle.check();
-  const moveDestination = moveCard.getByLabel("To", { exact: true });
-  if (!(await moveDestination.isDisabled())) {
-    throw new Error(
-      'Expected offline destination to lock when "Shield transfer" is enabled in onboarding flow.',
-    );
-  }
-  if ((await moveDestination.inputValue()).trim() !== persistedAccountId) {
-    throw new Error(
-      `Expected offline shield destination to auto-lock to active account ${persistedAccountId}.`,
-    );
-  }
-  const moveAmountInput = moveCard.locator('input[type="text"]').first();
-  await moveAmountInput.fill("1");
-  const moveSubmitButton = moveCard.getByRole("button", {
-    name: "Shield to wallet",
-    exact: true,
-  });
-  if (await moveSubmitButton.isDisabled()) {
-    throw new Error(
-      'Expected offline "Shield to online wallet" submit button to be enabled.',
-    );
-  }
-  const moveStatusBefore = await moveCard
-    .locator("p.helper")
-    .last()
-    .textContent()
-    .then((value) => String(value ?? "").trim());
-  await moveSubmitButton.click();
-  const moveStatusAfter = await page
-    .waitForFunction(
-      ({ baseline }) => {
-        const cards = [...document.querySelectorAll("section.card")];
-        const card = cards.find((node) =>
-          node
-            .querySelector("h2")
-            ?.textContent?.includes("Move to online wallet"),
-        );
-        if (!card) return null;
-        const helpers = [...card.querySelectorAll("p.helper")]
-          .map((node) => (node.textContent ?? "").trim())
-          .filter(Boolean);
-        if (!helpers.length) return null;
-        const last = helpers[helpers.length - 1];
-        return last && last !== baseline ? last : null;
-      },
-      { baseline: moveStatusBefore },
-      { timeout: 90_000 },
-    )
-    .then((handle) => handle.jsonValue());
-  const moveStatus = String(moveStatusAfter ?? "").trim();
-  if (!moveStatus) {
-    throw new Error(
-      'Offline "Shield to online wallet" submission did not produce a status message.',
-    );
-  }
-  if (
-    [
-      "Configure Torii and account first.",
-      "Shield mode is unavailable.",
-      "Shield mode requires destination to be your active account.",
-      "Shield amount must be a whole number greater than zero.",
-      "Enter an amount to move online.",
-      "Insufficient offline balance for this withdrawal.",
-    ].includes(moveStatus)
-  ) {
-    throw new Error(
-      `Offline shield submission did not reach bridge submission path: ${moveStatus}`,
-    );
-  }
 
   return "executed";
 }
@@ -1371,9 +1424,13 @@ async function runNavigationSmokeFlow(page) {
   await page.evaluate(() => {
     window.location.hash = "#/receive";
   });
-  await page.waitForFunction(() => window.location.hash === "#/receive", {
-    timeout: 45_000,
-  });
+  await page.waitForFunction(
+    () => window.location.hash === "#/receive",
+    undefined,
+    {
+      timeout: 45_000,
+    },
+  );
   await clickButton(page, "Show QR");
   await page
     .locator(".qr svg")
@@ -1387,6 +1444,7 @@ async function waitForAccountView(page) {
       window.location.hash === "#/account" ||
       window.location.hash === "#/" ||
       window.location.hash === "",
+    undefined,
     {
       timeout: 45_000,
     },
@@ -1398,6 +1456,7 @@ async function waitForAccountView(page) {
           typeof window.iroha.onboardAccount === "function" &&
           typeof window.iroha.derivePublicKey === "function",
       ),
+    undefined,
     {
       timeout: 45_000,
     },

@@ -127,6 +127,7 @@ const defaultOnboardingAlias = "E2E Onboarding Shared";
 const defaultOnboardingPrivateKeyHex =
   "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";
 const defaultOnboardingOfflineBalance = "100";
+const defaultFundedDomain = "default";
 const deprecatedOnboardingEnvVarMap = {
   E2E_STATEFUL_ALIAS: "E2E_ONBOARDING_ALIAS",
   E2E_STATEFUL_PRIVATE_KEY_HEX: "E2E_ONBOARDING_PRIVATE_KEY_HEX",
@@ -176,5 +177,25 @@ export function parseOnboardingEnvConfig(env = process.env) {
     alias,
     privateKeyHex,
     offlineBalance,
+  };
+}
+
+export function parseFundedEnvConfig(env = process.env) {
+  const privateKeyHex = String(env?.E2E_FUNDED_PRIVATE_KEY_HEX ?? "").trim();
+  if (!privateKeyHex) {
+    return null;
+  }
+  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+    throw new Error(
+      "E2E_FUNDED_PRIVATE_KEY_HEX must be a 64-character hexadecimal string.",
+    );
+  }
+
+  const domain =
+    String(env?.E2E_FUNDED_DOMAIN ?? "").trim() || defaultFundedDomain;
+
+  return {
+    privateKeyHex: privateKeyHex.toLowerCase(),
+    domain,
   };
 }

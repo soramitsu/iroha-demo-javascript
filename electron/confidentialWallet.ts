@@ -104,6 +104,7 @@ type ParsedTransferInstruction = {
 type ParsedUnshieldInstruction = {
   asset_definition_id: string;
   inputs: string[];
+  outputs: string[];
 };
 
 const HEX_RE = /^[0-9a-fA-F]+$/;
@@ -463,6 +464,9 @@ const parseUnshieldInstruction = (
     inputs: (Array.isArray(unshield.inputs) ? unshield.inputs : [])
       .map(readFixedBytesHex)
       .filter((value): value is string => Boolean(value)),
+    outputs: (Array.isArray(unshield.outputs) ? unshield.outputs : [])
+      .map(readFixedBytesHex)
+      .filter((value): value is string => Boolean(value)),
   };
 };
 
@@ -773,6 +777,41 @@ export const collectWalletConfidentialLedger = (
         if (spendableNotesByNullifier.has(nullifierHex)) {
           spentNullifiers.add(nullifierHex);
         }
+      }
+      let recognizedOutput = false;
+      for (const commitmentHex of unshield.outputs) {
+        const leafIndex = treeCommitmentsHex.length;
+        treeCommitmentsHex.push(commitmentHex);
+        const decrypted = notesByCommitment.get(commitmentHex);
+        if (decrypted?.kind === "v2") {
+          recognizedOutput = true;
+          const nullifierHex = deriveWalletConfidentialNullifierHex({
+            privateKeyHex: input.privateKeyHex,
+            assetDefinitionId: decrypted.note.asset_definition_id,
+            chainId: input.chainId,
+            rhoHex: decrypted.note.rho_hex,
+          });
+          spendableNotesByNullifier.set(nullifierHex, {
+            ...decrypted.note,
+            nullifier_hex: nullifierHex,
+            source_tx_hash: txHash,
+            leaf_index: leafIndex,
+          });
+        } else if (decrypted?.kind === "legacy") {
+          recognizedOutput = true;
+          legacyQuantity = addWholeAmounts(
+            legacyQuantity,
+            decrypted.note.amount,
+          );
+          exact = false;
+        }
+      }
+      if (
+        unshield.outputs.length > 0 &&
+        !recognizedOutput &&
+        notesByCommitment.size === 0
+      ) {
+        exact = false;
       }
     }
   }
