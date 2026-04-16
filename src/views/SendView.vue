@@ -88,7 +88,7 @@
               type="checkbox"
               :disabled="!shieldSupported"
             />
-            <span>{{ t("Shield transfer") }}</span>
+            <span>{{ t("Anonymous shielded send") }}</span>
           </label>
         </div>
         <div class="actions">
@@ -197,7 +197,7 @@ const scanner = useQrScanner(
 const sendIcon = SendIcon;
 
 const submitActionLabel = computed(() =>
-  form.shielded ? t("Shield transfer") : t("Send"),
+  form.shielded ? t("Send anonymously") : t("Send"),
 );
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
@@ -260,7 +260,9 @@ const handleSend = async () => {
     }
     statusMessage.value =
       submitMode === "shield"
-        ? t("Shield transaction submitted: {hash}", { hash: result.hash })
+        ? t("Anonymous shielded transaction committed: {hash}", {
+            hash: result.hash,
+          })
         : t("Transaction submitted: {hash}", { hash: result.hash });
   } catch (error) {
     statusMessage.value = toUserFacingErrorMessage(

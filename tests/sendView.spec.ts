@@ -121,7 +121,7 @@ describe("SendView", () => {
       }),
     );
     expect(wrapper.text()).toContain(
-      t("Shield transaction submitted: {hash}", { hash: "0xabc" }),
+      t("Anonymous shielded transaction committed: {hash}", { hash: "0xabc" }),
     );
   });
 
@@ -138,7 +138,9 @@ describe("SendView", () => {
     expect(wrapper.text()).toContain(
       t("Transaction submitted: {hash}", { hash: "0x123" }),
     );
-    expect(wrapper.text()).not.toContain(t("Shield transaction submitted:"));
+    expect(wrapper.text()).not.toContain(
+      t("Anonymous shielded transaction committed:"),
+    );
   });
 
   it("shows an unshielded transparency note while shielding stays optional", async () => {
@@ -192,7 +194,7 @@ describe("SendView", () => {
       BOB_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
-    expect(wrapper.find(".actions button").text()).toBe(t("Shield transfer"));
+    expect(wrapper.find(".actions button").text()).toBe(t("Send anonymously"));
   });
 
   it("switches amount input step when shield mode changes", async () => {

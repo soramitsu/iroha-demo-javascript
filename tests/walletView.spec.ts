@@ -432,7 +432,7 @@ describe("WalletView", () => {
     );
     expect(useSessionStore().activeAccount?.localOnly).toBe(false);
     expect(wrapper.text()).toContain(
-      t("Shield transaction submitted: {hash}", { hash: "0xshield" }),
+      t("Shield transaction committed: {hash}", { hash: "0xshield" }),
     );
     expect(wrapper.text()).toContain("5");
   });

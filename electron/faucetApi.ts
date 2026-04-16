@@ -16,7 +16,9 @@ export type FaucetRequestPhase =
   | "waitingForPuzzleRetry"
   | "solvingPuzzle"
   | "submittingClaim"
-  | "claimAccepted";
+  | "claimAccepted"
+  | "waitingForCommit"
+  | "claimCommitted";
 
 export type FaucetRequestProgress = {
   phase: FaucetRequestPhase;

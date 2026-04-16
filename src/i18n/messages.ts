@@ -1142,6 +1142,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Submitting faucet claim…": "Submitting faucet claim…",
   "Faucet claim accepted. Updating wallet…":
     "Faucet claim accepted. Updating wallet…",
+  "Faucet claim accepted. Waiting for finality…":
+    "Faucet claim accepted. Waiting for finality…",
+  "Waiting for faucet transaction finality…":
+    "Waiting for faucet transaction finality…",
+  "Faucet transaction committed. Updating wallet…":
+    "Faucet transaction committed. Updating wallet…",
   "Refreshing wallet balance…": "Refreshing wallet balance…",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "Your TAIRA faucet request is in flight. This can take a few seconds.",
@@ -1697,6 +1703,11 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Submitting faucet claim…": "Submitting claim...",
   "Faucet claim accepted. Updating wallet…":
     "Claim accepted. Updating wallet...",
+  "Faucet claim accepted. Waiting for finality…":
+    "Claim accepted. Waiting for finality...",
+  "Waiting for faucet transaction finality…": "Waiting for finality...",
+  "Faucet transaction committed. Updating wallet…":
+    "Claim committed. Updating wallet...",
   "Refreshing wallet balance…": "Refreshing wallet...",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "This can take a few seconds.",
@@ -1729,6 +1740,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Destination Account": "To",
   "Memo (optional)": "Note",
   "Shield transfer": "Shielded send",
+  "Anonymous shielded send": "Anonymous shielded send",
+  "Send anonymously": "Send anonymously",
   "Shield policy mode: {mode}.": "Mode: {mode}.",
   "Shield mode currently supports self-shielding only. Destination must be your own account, and amount must be a whole number in base units.":
     "Shielding only supports sending to yourself in whole base units.",
@@ -1743,6 +1756,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Shield amount must be a whole number greater than zero.":
     "Enter a whole-number shield amount.",
   "Shield transaction submitted: {hash}": "Shielded send: {hash}",
+  "Shield transaction committed: {hash}": "Shield transaction committed: {hash}",
+  "Anonymous shielded transaction committed: {hash}":
+    "Anonymous shielded send committed: {hash}",
   "Transaction submitted: {hash}": "Sent: {hash}",
   "Citizenship Bond": "Citizenship",
   "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
