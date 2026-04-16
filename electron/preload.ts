@@ -7,7 +7,6 @@ import {
   buildPrivateJoinKaigiTransaction,
   buildConfidentialTransferProofV2,
   buildConfidentialUnshieldProofV2,
-  buildConfidentialUnshieldProofV3,
   buildPrivateKaigiFeeSpend,
   buildCreateKaigiTransaction,
   buildEndKaigiTransaction,
@@ -86,9 +85,11 @@ import {
   CONFIDENTIAL_WALLET_METADATA_SCHEMA,
   createWalletConfidentialNote,
   deriveWalletConfidentialOwnerTagHex,
+  deriveWalletConfidentialReceiveAddress,
   selectWalletConfidentialNotes,
   selectWalletConfidentialNotesForExactAmount,
   type WalletConfidentialTransactionLike,
+  type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
 
@@ -103,6 +104,18 @@ type ToriiConfig = {
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+const stripConfidentialPublicMetadata = (
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  if (!isPlainRecord(metadata)) {
+    return undefined;
+  }
+  const next = { ...metadata };
+  delete next.memo;
+  delete next.message;
+  delete next.note;
+  return Object.keys(next).length ? next : undefined;
+};
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
@@ -131,6 +144,7 @@ type TransferAssetInput = {
   shielded?: boolean;
   unshield?: boolean;
   shieldedOwnerTagHex?: string;
+  shieldedDiversifierHex?: string;
 };
 
 type ConfidentialAssetBalanceResponse = {
@@ -592,6 +606,10 @@ type IrohaBridge = {
   };
   derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
   deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
+  deriveConfidentialReceiveAddress(privateKeyHex: string): {
+    ownerTagHex: string;
+    diversifierHex: string;
+  };
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
@@ -993,7 +1011,6 @@ const PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
 const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
-const CONFIDENTIAL_NOTE_INDEX_MAX_PAGES = 20;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
 const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
@@ -2740,8 +2757,17 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
   const byHash = new Map<string, WalletConfidentialTransactionLike>();
   let noteIndexOrder = 0;
   for (const assetDefinitionId of input.assetDefinitionIds) {
-    let cursor = "";
-    for (let page = 0; page < CONFIDENTIAL_NOTE_INDEX_MAX_PAGES; page += 1) {
+    let cursor: string | null = "";
+    const seenCursors = new Set<string>();
+    while (cursor !== null) {
+      if (cursor) {
+        if (seenCursors.has(cursor)) {
+          throw new Error(
+            "Confidential note index returned a repeated cursor.",
+          );
+        }
+        seenCursors.add(cursor);
+      }
       const endpoint = buildNexusEndpoint(
         input.toriiUrl,
         "/v1/confidential/notes",
@@ -2781,10 +2807,8 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
         }
         byHash.set(normalized.entrypoint_hash ?? "", normalized);
       }
-      cursor = trimString(payload.next_cursor);
-      if (!cursor) {
-        break;
-      }
+      const nextCursor = trimString(payload.next_cursor);
+      cursor = nextCursor || null;
     }
   }
   return [...byHash.values()];
@@ -2793,7 +2817,7 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
 const submitConfidentialRelayTransfer = async (input: {
   toriiUrl: string;
   signedTransaction: Buffer | ArrayBuffer | ArrayBufferView;
-}): Promise<{ hash: string; relayAuthority: string }> => {
+}): Promise<{ hash: string; relayAuthority: string; sourceHash: string }> => {
   const endpoint = buildNexusEndpoint(
     input.toriiUrl,
     "/v1/confidential/relay/submit",
@@ -2823,10 +2847,17 @@ const submitConfidentialRelayTransfer = async (input: {
   if (!/^[0-9a-f]{64}$/i.test(hash)) {
     throw new Error("Anonymous shielded relay returned an invalid hash.");
   }
+  const sourceHash = trimString(payload.source_tx_hash_hex);
+  if (sourceHash && !/^[0-9a-f]{64}$/i.test(sourceHash)) {
+    throw new Error(
+      "Anonymous shielded relay returned an invalid source hash.",
+    );
+  }
   await waitForTransactionCommit(input.toriiUrl, hash);
   return {
     hash,
     relayAuthority: trimString(payload.relay_authority),
+    sourceHash,
   };
 };
 
@@ -3162,7 +3193,9 @@ const normalizeConfidentialCircuitId = (value: unknown): string =>
     .toLowerCase()
     .replace(/^halo2\/pasta\//, "halo2/pasta/ipa/");
 
-const readConfidentialVerifyingKeyContext = (value: Record<string, unknown>) => {
+const readConfidentialVerifyingKeyContext = (
+  value: Record<string, unknown>,
+) => {
   const { record, inlineKey } = readInlineVerifyingKeyRecord(value);
   const id =
     isPlainRecord(value.id) && !Array.isArray(value.id)
@@ -3188,6 +3221,7 @@ const readConfidentialVerifyingKeyContext = (value: Record<string, unknown>) => 
   };
 };
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- retained for a future explicit consolidation UI action.
 const submitConfidentialSelfConsolidation = async (input: {
   toriiUrl: string;
   chainId: string;
@@ -3207,7 +3241,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     assetDefinitionId: input.assetDefinitionId,
   });
   const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
-  const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+  const receiveAddress = deriveWalletConfidentialReceiveAddress({
     privateKeyHex: input.privateKeyHex,
   });
   const totalAmount = input.notes
@@ -3217,7 +3251,8 @@ const submitConfidentialSelfConsolidation = async (input: {
     note: createWalletConfidentialNote({
       assetDefinitionId: materials.resolvedAssetId,
       amount: totalAmount,
-      ownerTagHex,
+      ownerTagHex: receiveAddress.ownerTagHex,
+      diversifierHex: receiveAddress.diversifierHex,
     }),
     recipientAccountId: input.accountId,
   };
@@ -3232,6 +3267,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     inputs: input.notes.map((note) => ({
       amount: note.amount,
       rhoHex: note.rho_hex,
+      diversifierHex: note.diversifier_hex,
       leafIndex: note.leaf_index,
     })),
     outputs: [
@@ -3279,7 +3315,9 @@ const submitConfidentialSelfConsolidation = async (input: {
         zk: {
           ZkTransfer: {
             asset: materials.resolvedAssetId,
-            inputs: proofEnvelope.nullifiers.map((entry) => entry.toString("hex")),
+            inputs: proofEnvelope.nullifiers.map((entry) =>
+              entry.toString("hex"),
+            ),
             outputs: [output.note.commitment_hex],
           },
         },
@@ -3764,6 +3802,9 @@ const api: IrohaBridge = {
       ownerTagHex: deriveWalletConfidentialOwnerTagHex({ privateKeyHex }),
     };
   },
+  deriveConfidentialReceiveAddress(privateKeyHex) {
+    return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
+  },
   async registerAccount(input) {
     const client = getClient(input.toriiUrl);
     const domainId = input.domainId.trim();
@@ -3863,6 +3904,7 @@ const api: IrohaBridge = {
         inputs: selection.selected.map((note) => ({
           amount: note.amount,
           rhoHex: note.rho_hex,
+          diversifierHex: note.diversifier_hex,
           leafIndex: note.leaf_index,
         })),
         publicAmount: normalizedAmount,
@@ -3948,18 +3990,22 @@ const api: IrohaBridge = {
       }
 
       const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
-      const senderOwnerTagHex = deriveWalletConfidentialOwnerTagHex({
+      const senderReceiveAddress = deriveWalletConfidentialReceiveAddress({
         privateKeyHex: input.privateKeyHex,
       });
+      const confidentialBaseMetadata = stripConfidentialPublicMetadata(
+        input.metadata,
+      );
 
       if (destinationAccountId === accountId) {
         const note = createWalletConfidentialNote({
           assetDefinitionId: resolvedAssetId,
           amount: normalizedAmount,
-          ownerTagHex: senderOwnerTagHex,
+          ownerTagHex: senderReceiveAddress.ownerTagHex,
+          diversifierHex: senderReceiveAddress.diversifierHex,
         });
         const metadata = buildWalletConfidentialMetadata({
-          baseMetadata: input.metadata,
+          baseMetadata: confidentialBaseMetadata,
           outputs: [{ note, recipientAccountId: accountId }],
         });
         const tx = buildShieldTransaction({
@@ -4049,9 +4095,17 @@ const api: IrohaBridge = {
       const recipientOwnerTagHex = trimString(
         input.shieldedOwnerTagHex,
       ).toLowerCase();
+      const recipientDiversifierHex = trimString(
+        input.shieldedDiversifierHex,
+      ).toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(recipientOwnerTagHex)) {
         throw new Error(
           "Shielded recipient QR is missing a valid owner tag. Ask the recipient to refresh their Receive QR code.",
+        );
+      }
+      if (!/^[0-9a-f]{64}$/.test(recipientDiversifierHex)) {
+        throw new Error(
+          "Shielded recipient QR is missing a valid diversifier. Ask the recipient to refresh their Receive QR code.",
         );
       }
       const outputs = [
@@ -4060,16 +4114,21 @@ const api: IrohaBridge = {
             assetDefinitionId: materials.resolvedAssetId,
             amount: normalizedAmount,
             ownerTagHex: recipientOwnerTagHex,
+            diversifierHex: recipientDiversifierHex,
           }),
           recipientAccountId: destinationAccountId,
         },
       ];
       if (selection.change !== "0") {
+        const changeReceiveAddress = deriveWalletConfidentialReceiveAddress({
+          privateKeyHex: input.privateKeyHex,
+        });
         outputs.push({
           note: createWalletConfidentialNote({
             assetDefinitionId: materials.resolvedAssetId,
             amount: selection.change,
-            ownerTagHex: senderOwnerTagHex,
+            ownerTagHex: changeReceiveAddress.ownerTagHex,
+            diversifierHex: changeReceiveAddress.diversifierHex,
           }),
           recipientAccountId: accountId,
         });
@@ -4093,6 +4152,7 @@ const api: IrohaBridge = {
         inputs: selection.selected.map((note) => ({
           amount: note.amount,
           rhoHex: note.rho_hex,
+          diversifierHex: note.diversifier_hex,
           leafIndex: note.leaf_index,
         })),
         outputs: orderedOutputs.map(({ note }) => ({
@@ -4104,7 +4164,7 @@ const api: IrohaBridge = {
         verifyingKey: proofVerifyingKey,
       });
       const metadata = buildWalletConfidentialMetadata({
-        baseMetadata: input.metadata,
+        baseMetadata: confidentialBaseMetadata,
         outputs: orderedOutputs,
       });
       const tx = buildZkTransferTransaction({
@@ -4266,7 +4326,10 @@ const api: IrohaBridge = {
         toriiUrl,
         resolvedAssetDefinitionId,
       );
-      return mergeConfidentialPolicyWithAssetDefinition(policy, assetDefinition);
+      return mergeConfidentialPolicyWithAssetDefinition(
+        policy,
+        assetDefinition,
+      );
     } catch {
       return policy;
     }

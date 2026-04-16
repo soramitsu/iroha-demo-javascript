@@ -12,6 +12,8 @@ const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
 const BOB_OWNER_TAG_HEX = "11".repeat(32);
 const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
+const BOB_DIVERSIFIER_HEX = "33".repeat(32);
+const MALLORY_DIVERSIFIER_HEX = "44".repeat(32);
 const EXAMPLE_I105_SELECTOR = `input[placeholder="${EXAMPLE_I105_ACCOUNT_ID}"]`;
 
 const transferAssetMock = vi.fn();
@@ -58,6 +60,8 @@ describe("SendView", () => {
       current_mode: "Convertible",
       effective_mode: "Convertible",
       vk_set_hash: null,
+      vk_transfer: "halo2/ipa::transfer",
+      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -108,6 +112,7 @@ describe("SendView", () => {
         accountId: BOB_I105_ACCOUNT_ID,
         amount: "10",
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+        shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
       }),
     );
     await flushPromises();
@@ -130,6 +135,7 @@ describe("SendView", () => {
         quantity: "10",
         shielded: true,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+        shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
       }),
     );
     expect(wrapper.text()).toContain(
@@ -240,6 +246,8 @@ describe("SendView", () => {
       current_mode: "Convertible",
       effective_mode: "Convertible",
       vk_set_hash: null,
+      vk_transfer: "halo2/ipa::transfer",
+      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -256,6 +264,15 @@ describe("SendView", () => {
     await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("4");
     await wrapper.get('input[type="checkbox"]').setValue(true);
+    qrDecodeHandler?.(
+      JSON.stringify({
+        accountId: BOB_I105_ACCOUNT_ID,
+        amount: "4",
+        shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+        shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
+      }),
+    );
+    await flushPromises();
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
 
@@ -279,6 +296,7 @@ describe("SendView", () => {
         accountId: MALLORY_I105_ACCOUNT_ID,
         amount: "7",
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
+        shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
       }),
     );
     await flushPromises();
@@ -297,6 +315,7 @@ describe("SendView", () => {
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
+        shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
       }),
     );
   });
@@ -357,7 +376,8 @@ describe("SendView", () => {
     const checkbox = wrapper.get('input[type="checkbox"]');
     expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
-      t("Shield mode unavailable: effective policy mode is {mode}.", {
+      t("{operation} is unavailable: effective policy mode is {mode}.", {
+        operation: "Shielded send",
         mode: "TransparentOnly",
       }),
     );
@@ -374,8 +394,8 @@ describe("SendView", () => {
     expect((checkbox.element as HTMLInputElement).disabled).toBe(false);
     expect(wrapper.text()).toContain(
       t(
-        "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
-        { message: "network timeout" },
+        "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+        { operation: "Shielded send", message: "network timeout" },
       ),
     );
   });
@@ -392,7 +412,9 @@ describe("SendView", () => {
     const checkbox = wrapper.get('input[type="checkbox"]');
     expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
-      t("Shield mode is unavailable for the current asset definition."),
+      t("{operation} is unavailable for the current asset definition.", {
+        operation: "Shielded send",
+      }),
     );
   });
 

@@ -54,6 +54,8 @@ describe("OfflineView move-to-online shield mode", () => {
       current_mode: "Convertible",
       effective_mode: "Convertible",
       vk_set_hash: null,
+      vk_transfer: "halo2/ipa::transfer",
+      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -160,7 +162,7 @@ describe("OfflineView move-to-online shield mode", () => {
       }),
     );
     expect(moveSection.text()).toContain(
-      t("Shield transfer submitted and offline balance updated."),
+      t("Unshield submitted and offline balance updated."),
     );
   });
 
@@ -171,6 +173,8 @@ describe("OfflineView move-to-online shield mode", () => {
       current_mode: "Convertible",
       effective_mode: "Convertible",
       vk_set_hash: null,
+      vk_transfer: "halo2/ipa::transfer",
+      vk_unshield: "halo2/ipa::unshield",
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
@@ -221,7 +225,8 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
     expect(moveSection.text()).toContain(
-      t("Shield mode unavailable: effective policy mode is {mode}.", {
+      t("{operation} is unavailable: effective policy mode is {mode}.", {
+        operation: "Unshield",
         mode: "TransparentOnly",
       }),
     );
@@ -234,7 +239,7 @@ describe("OfflineView move-to-online shield mode", () => {
     const moveSection = getMoveSection(wrapper);
     expect(moveSection.text()).toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
       ),
     );
 
@@ -242,7 +247,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     expect(moveSection.text()).not.toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
       ),
     );
   });
@@ -259,8 +264,8 @@ describe("OfflineView move-to-online shield mode", () => {
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(false);
     expect(moveSection.text()).toContain(
       t(
-        "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
-        { message: "service unavailable" },
+        "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+        { operation: "Unshield", message: "service unavailable" },
       ),
     );
   });
@@ -278,7 +283,9 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
     expect(moveSection.text()).toContain(
-      t("Shield mode is unavailable for the current asset definition."),
+      t("{operation} is unavailable for the current asset definition.", {
+        operation: "Unshield",
+      }),
     );
   });
 

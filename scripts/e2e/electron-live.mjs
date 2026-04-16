@@ -657,9 +657,11 @@ async function runReadOnlyFlow(page, fundedAccount) {
         publicKeyHex: bobKeyPair.publicKeyHex,
         networkPrefix: prefix,
       });
-      const bobOwnerTagHex = window.iroha.deriveConfidentialOwnerTag(
+      const bobReceiveAddress = window.iroha.deriveConfidentialReceiveAddress(
         bobKeyPair.privateKeyHex,
-      ).ownerTagHex;
+      );
+      const bobOwnerTagHex = bobReceiveAddress.ownerTagHex;
+      const bobDiversifierHex = bobReceiveAddress.diversifierHex;
       const initialBobBalance = await readConfidentialBalance(
         bobSummary.i105AccountId,
         bobKeyPair.privateKeyHex,
@@ -704,6 +706,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
         privateKeyHex: alicePrivateKeyHex,
         shielded: true,
         shieldedOwnerTagHex: bobOwnerTagHex,
+        shieldedDiversifierHex: bobDiversifierHex,
         metadata: {
           source: "electron-live-recipient-shielded-send",
         },
@@ -742,6 +745,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
               : "completed",
         bobAccountId: bobSummary.i105AccountId,
         bobOwnerTagHex,
+        bobDiversifierHex,
         selfShieldHash: selfShield.hash,
         recipientTransferHash: recipientTransfer.hash,
         initialAliceBalance,
@@ -871,7 +875,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
     timeout: 30_000,
   });
 
-  await runNavigationSmokeFlow(page);
+  await runNavigationSmokeFlow(page, fundedAccount);
 }
 
 async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
@@ -1025,7 +1029,7 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
   return "executed";
 }
 
-async function runNavigationSmokeFlow(page) {
+async function runNavigationSmokeFlow(page, fundedAccount) {
   const checks = [
     {
       hash: "#/setup",
@@ -1143,7 +1147,9 @@ async function runNavigationSmokeFlow(page) {
     }
 
     if (check.hash === "#/send") {
-      const shieldToggle = page.getByLabel("Shielded send", { exact: true });
+      const shieldToggle = page.getByLabel("Anonymous shielded send", {
+        exact: true,
+      });
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
       if (!(await shieldToggle.isEnabled())) {
         await page
@@ -1199,9 +1205,9 @@ async function runNavigationSmokeFlow(page) {
         continue;
       }
 
-      if (!(await destinationInput.isDisabled())) {
+      if (await destinationInput.isDisabled()) {
         throw new Error(
-          "Expected send destination to lock when shield transfer is enabled.",
+          "Expected send destination to remain editable when anonymous send is enabled.",
         );
       }
       const shieldStep = await amountInput.getAttribute("step");
@@ -1211,7 +1217,7 @@ async function runNavigationSmokeFlow(page) {
         );
       }
       const shieldSubmitButton = page.getByRole("button", {
-        name: "Shield",
+        name: "Send anonymously",
         exact: true,
       });
       const shieldButtonVisible = await shieldSubmitButton
@@ -1236,7 +1242,7 @@ async function runNavigationSmokeFlow(page) {
       }
       if (!shieldDisabledForDecimal) {
         throw new Error(
-          "Expected send shield action to be disabled for decimal amounts.",
+          "Expected anonymous send action to be disabled for decimal amounts.",
         );
       }
       await amountInput.fill("10");
@@ -1249,9 +1255,30 @@ async function runNavigationSmokeFlow(page) {
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
-      if (shieldDisabledForWhole) {
+      if (!shieldDisabledForWhole) {
         throw new Error(
-          "Expected send shield action to become enabled for whole-number amounts.",
+          "Expected anonymous send action to stay disabled for a non-self destination without a shielded Receive QR.",
+        );
+      }
+      await page
+        .getByText(
+          "Scan a shielded Receive QR for this destination before sending anonymously.",
+          { exact: true },
+        )
+        .waitFor({ state: "visible", timeout: 5_000 });
+      await destinationInput.fill(fundedAccount.accountId);
+      const shieldDisabledForSelf = await shieldSubmitButton
+        .isDisabled({ timeout: 3_000 })
+        .catch(() => null);
+      if (shieldDisabledForSelf === null) {
+        await page
+          .getByRole("button", { name: "Send", exact: true })
+          .waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      if (shieldDisabledForSelf) {
+        throw new Error(
+          "Expected anonymous self-shield action to become enabled for whole-number amounts.",
         );
       }
       if (await shieldToggle.isChecked()) {
@@ -1271,11 +1298,6 @@ async function runNavigationSmokeFlow(page) {
           );
         }
       }
-      if ((await destinationInput.inputValue()) !== transparentDestination) {
-        throw new Error(
-          "Expected send destination to restore the previous transparent value after disabling shield transfer.",
-        );
-      }
       const restoredStep = await amountInput.getAttribute("step");
       if (restoredStep !== "0.01") {
         throw new Error(
@@ -1292,7 +1314,7 @@ async function runNavigationSmokeFlow(page) {
         .locator("section.card")
         .filter({ hasText: "Move to online wallet" })
         .first();
-      const shieldToggle = moveCard.getByLabel("Shielded send", {
+      const shieldToggle = moveCard.getByLabel("Private exit", {
         exact: true,
       });
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
@@ -1348,7 +1370,7 @@ async function runNavigationSmokeFlow(page) {
       }
       const moveAmountInput = moveCard.locator('input[type="text"]').first();
       const moveSubmitButton = moveCard.getByRole("button", {
-        name: "Shield to wallet",
+        name: "Unshield to wallet",
         exact: true,
       });
       const moveShieldButtonVisible = await moveSubmitButton
@@ -1373,7 +1395,7 @@ async function runNavigationSmokeFlow(page) {
       }
       if (!moveDisabledForDecimal) {
         throw new Error(
-          'Expected offline "Shield to online wallet" action to be disabled for decimal amounts.',
+          'Expected offline "Unshield to wallet" action to be disabled for decimal amounts.',
         );
       }
       await moveAmountInput.fill("10");
@@ -1388,7 +1410,7 @@ async function runNavigationSmokeFlow(page) {
       }
       if (moveDisabledForWhole) {
         throw new Error(
-          'Expected offline "Shield to online wallet" action to become enabled for whole-number amounts.',
+          'Expected offline "Unshield to wallet" action to become enabled for whole-number amounts.',
         );
       }
 
@@ -1404,8 +1426,8 @@ async function runNavigationSmokeFlow(page) {
         if (await shieldToggle.isChecked()) {
           throw new Error(
             attemptedManualUncheck
-              ? 'Offline "Shield transfer" toggle stayed checked after uncheck attempt.'
-              : 'Offline "Shield transfer" toggle stayed checked after becoming disabled.',
+              ? 'Offline "Private exit" toggle stayed checked after uncheck attempt.'
+              : 'Offline "Private exit" toggle stayed checked after becoming disabled.',
           );
         }
       }

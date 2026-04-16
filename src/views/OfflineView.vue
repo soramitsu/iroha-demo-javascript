@@ -327,7 +327,9 @@
         "
         class="helper"
       >
-        {{ t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode }) }}
+        {{
+          t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
+        }}
       </p>
       <p
         v-else-if="

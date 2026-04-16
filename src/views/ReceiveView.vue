@@ -34,7 +34,7 @@
           {{
             showQr
               ? t(
-                  "QR encodes account + amount + asset definition for compatible wallets.",
+                  "QR encodes account, amount, asset definition, and a fresh shielded payment address.",
                 )
               : t("Use the button above to render a QR that wallets can scan.")
           }}
@@ -91,19 +91,27 @@ const generateQr = async () => {
   }
   qrMessage.value = t("Generating QR...");
   let shieldedOwnerTagHex = "";
+  let shieldedDiversifierHex = "";
   if (privateKeyHex) {
     try {
-      shieldedOwnerTagHex =
-        window.iroha.deriveConfidentialOwnerTag(privateKeyHex).ownerTagHex;
+      const shieldedAddress =
+        window.iroha.deriveConfidentialReceiveAddress(privateKeyHex);
+      shieldedOwnerTagHex = shieldedAddress.ownerTagHex;
+      shieldedDiversifierHex = shieldedAddress.diversifierHex;
     } catch (error) {
-      console.warn("Failed to derive confidential owner tag for QR", error);
+      console.warn(
+        "Failed to derive confidential receive address for QR",
+        error,
+      );
     }
   }
   const payload = {
+    schema: "iroha-confidential-payment-address/v2",
     accountId,
     assetDefinitionId,
     amount: currentAmount,
     shieldedOwnerTagHex,
+    shieldedDiversifierHex,
   };
   try {
     const nextQrMarkup = await QRCode.toString(JSON.stringify(payload), {

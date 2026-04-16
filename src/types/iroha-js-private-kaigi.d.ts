@@ -36,6 +36,13 @@ declare module "@iroha/iroha-js" {
     amount: string;
     rhoHex?: string;
     rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    diversifierHex?: string;
+    diversifier_hex?: string;
+    diversifier?:
+      | Buffer
+      | ArrayBuffer
+      | ArrayBufferView
+      | ReadonlyArray<number>;
     leafIndex?: number;
     leaf_index?: number;
   }
@@ -150,7 +157,39 @@ declare module "@iroha/iroha-js" {
 declare module "@iroha/iroha-js/crypto" {
   export function deriveConfidentialOwnerTagV2(
     spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>,
+    options?: {
+      diversifierHex?: string;
+      diversifier?:
+        | Buffer
+        | ArrayBuffer
+        | ArrayBufferView
+        | ReadonlyArray<number>;
+    },
   ): Buffer;
+
+  export function deriveConfidentialDiversifierV2(
+    seed:
+      | Buffer
+      | ArrayBuffer
+      | ArrayBufferView
+      | ReadonlyArray<number>
+      | string,
+  ): { diversifier: Buffer; diversifierHex: string };
+
+  export function deriveConfidentialReceiveAddressV2(input: {
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    diversifierSeed:
+      | Buffer
+      | ArrayBuffer
+      | ArrayBufferView
+      | ReadonlyArray<number>
+      | string;
+  }): {
+    ownerTag: Buffer;
+    ownerTagHex: string;
+    diversifier: Buffer;
+    diversifierHex: string;
+  };
 
   export function deriveConfidentialNoteV2(input: {
     assetDefinitionId: string;

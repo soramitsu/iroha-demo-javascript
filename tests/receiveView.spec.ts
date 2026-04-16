@@ -9,6 +9,8 @@ const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const ASSET_DEFINITION_ID = "norito:abcdef0123456789";
 const ALICE_OWNER_TAG_HEX = "11".repeat(32);
 const BOB_OWNER_TAG_HEX = "22".repeat(32);
+const ALICE_DIVERSIFIER_HEX = "33".repeat(32);
+const BOB_DIVERSIFIER_HEX = "44".repeat(32);
 const qrToStringMock = vi.fn();
 
 vi.mock("qrcode", () => ({
@@ -29,6 +31,18 @@ describe("ReceiveView", () => {
             privateKeyHex === "12".repeat(32)
               ? BOB_OWNER_TAG_HEX
               : ALICE_OWNER_TAG_HEX,
+        })),
+      deriveConfidentialReceiveAddress: vi
+        .fn()
+        .mockImplementation((privateKeyHex: string) => ({
+          ownerTagHex:
+            privateKeyHex === "12".repeat(32)
+              ? BOB_OWNER_TAG_HEX
+              : ALICE_OWNER_TAG_HEX,
+          diversifierHex:
+            privateKeyHex === "12".repeat(32)
+              ? BOB_DIVERSIFIER_HEX
+              : ALICE_DIVERSIFIER_HEX,
         })),
     } as unknown as typeof window.iroha;
     setActivePinia(createPinia());
@@ -157,10 +171,12 @@ describe("ReceiveView", () => {
 
     expect(qrToStringMock).toHaveBeenCalledWith(
       JSON.stringify({
+        schema: "iroha-confidential-payment-address/v2",
         accountId: ALICE_I105_ACCOUNT_ID,
         assetDefinitionId: ASSET_DEFINITION_ID,
         amount: "0",
         shieldedOwnerTagHex: ALICE_OWNER_TAG_HEX,
+        shieldedDiversifierHex: ALICE_DIVERSIFIER_HEX,
       }),
       expect.objectContaining({
         type: "svg",

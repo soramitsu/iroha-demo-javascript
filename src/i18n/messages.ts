@@ -1066,6 +1066,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.",
   "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.":
     "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+  "QR encodes account, amount, asset definition, and a fresh shielded payment address.":
+    "QR encodes account, amount, asset definition, and a fresh shielded payment address.",
+  "Scan a shielded Receive QR for this destination before sending anonymously.":
+    "Scan a shielded Receive QR for this destination before sending anonymously.",
+  "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
+    "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",

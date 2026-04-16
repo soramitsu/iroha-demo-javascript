@@ -7,6 +7,7 @@ import {
   createWalletConfidentialNote,
   deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialNullifierHex,
+  deriveWalletConfidentialReceiveAddress,
   selectWalletConfidentialNotes,
   selectWalletConfidentialNotesForExactAmount,
 } from "../electron/confidentialWallet";
@@ -34,6 +35,25 @@ describe("confidential wallet helpers", () => {
 
     expect(ownerTagHex).toMatch(/^[0-9a-f]{64}$/);
     expect(ownerTagHexFor(alice.privateKeyHex)).toBe(ownerTagHex);
+  });
+
+  it("derives diversified receive addresses from the wallet private key", () => {
+    const alice = makeAccount();
+    const first = deriveWalletConfidentialReceiveAddress({
+      privateKeyHex: alice.privateKeyHex,
+      diversifierSeedHex: "01".repeat(32),
+    });
+    const second = deriveWalletConfidentialReceiveAddress({
+      privateKeyHex: alice.privateKeyHex,
+      diversifierSeedHex: "02".repeat(32),
+    });
+
+    expect(first.ownerTagHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.diversifierHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(second.ownerTagHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(second.diversifierHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(first.diversifierHex).not.toBe(second.diversifierHex);
+    expect(first.ownerTagHex).not.toBe(second.ownerTagHex);
   });
 
   it("decrypts self-shield notes into spendable wallet balance", () => {
@@ -310,9 +330,9 @@ describe("confidential wallet helpers", () => {
       "5",
     );
 
-    expect(selected.total).toBe("10");
-    expect(selected.change).toBe("5");
-    expect(selected.selected).toHaveLength(2);
+    expect(selected.total).toBe("6");
+    expect(selected.change).toBe("1");
+    expect(selected.selected).toHaveLength(1);
   });
 
   it("finds an exact one- or two-note match for unshield amounts", () => {

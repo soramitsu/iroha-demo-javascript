@@ -78,10 +78,17 @@
               :step="form.shielded ? '1' : '0.01'"
             />
           </label>
-          <label>
+          <label v-if="!form.shielded">
             {{ t("Memo (optional)") }}
             <input v-model="form.memo" :placeholder="t('Thanks for lunch')" />
           </label>
+          <p v-else class="helper send-note">
+            {{
+              t(
+                "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
+              )
+            }}
+          </p>
           <label class="shield-option">
             <input
               v-model="form.shielded"
@@ -113,6 +120,18 @@
             class="helper send-note"
           >
             {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
+          </p>
+          <p
+            v-if="
+              form.shielded && !destinationIsSelf && !hasShieldedPaymentAddress
+            "
+            class="helper send-note"
+          >
+            {{
+              t(
+                "Scan a shielded Receive QR for this destination before sending anonymously.",
+              )
+            }}
           </p>
           <p
             v-if="
@@ -170,6 +189,8 @@ const form = reactive({
   memo: "",
   shielded: false,
   shieldedOwnerTagHex: "",
+  shieldedDiversifierHex: "",
+  shieldedAddressAccountId: "",
 });
 const sending = ref(false);
 const statusMessage = ref("");
@@ -215,8 +236,11 @@ const scanner = useQrScanner(
   (payload) => {
     try {
       const parsed = JSON.parse(payload);
+      const parsedAccountId = parsed.accountId
+        ? String(parsed.accountId).trim()
+        : "";
       if (parsed.accountId) {
-        form.destination = parsed.accountId;
+        form.destination = parsedAccountId;
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
@@ -225,6 +249,19 @@ const scanner = useQrScanner(
         form.shieldedOwnerTagHex = String(
           parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex,
         ).trim();
+      }
+      if (parsed.shieldedDiversifierHex || parsed.diversifierHex) {
+        form.shieldedDiversifierHex = String(
+          parsed.shieldedDiversifierHex ?? parsed.diversifierHex,
+        ).trim();
+      }
+      if (
+        parsed.schema === "iroha-confidential-payment-address/v2" ||
+        parsed.shieldedOwnerTagHex ||
+        parsed.shieldedDiversifierHex
+      ) {
+        form.shielded = true;
+        form.shieldedAddressAccountId = parsedAccountId;
       }
       scanMessage.value = t("QR decoded successfully.");
     } catch (err) {
@@ -253,6 +290,21 @@ const isShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedQuantity.value),
 );
 const isDestinationValid = computed(() => Boolean(destinationValue.value));
+const destinationIsSelf = computed(() => {
+  const destination = destinationValue.value;
+  return Boolean(
+    destination &&
+      (destination === activeAccountDisplayId.value ||
+        destination === activeAccount.value?.accountId ||
+        destination === activeAccount.value?.i105AccountId),
+  );
+});
+const hasShieldedPaymentAddress = computed(
+  () =>
+    /^[0-9a-f]{64}$/i.test(form.shieldedOwnerTagHex.trim()) &&
+    /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()) &&
+    form.shieldedAddressAccountId === destinationValue.value,
+);
 
 const isValid = computed(() =>
   Boolean(
@@ -262,7 +314,10 @@ const isValid = computed(() =>
       (form.shielded
         ? isShieldAmountValid.value
         : isTransparentAmountValid.value) &&
-      isDestinationValid.value,
+      isDestinationValid.value &&
+      (!form.shielded ||
+        destinationIsSelf.value ||
+        hasShieldedPaymentAddress.value),
   ),
 );
 
@@ -285,6 +340,12 @@ const handleSend = async () => {
       );
       return;
     }
+    if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
+      statusMessage.value = t(
+        "Scan a shielded Receive QR for this destination before sending anonymously.",
+      );
+      return;
+    }
   }
   const submitMode = form.shielded ? "shield" : "transfer";
   sending.value = true;
@@ -298,9 +359,10 @@ const handleSend = async () => {
       destinationAccountId: destinationValue.value,
       quantity: normalizedQuantity.value,
       privateKeyHex: account.privateKeyHex,
-      metadata: form.memo ? { memo: form.memo } : undefined,
+      metadata: !form.shielded && form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
       shieldedOwnerTagHex: form.shieldedOwnerTagHex,
+      shieldedDiversifierHex: form.shieldedDiversifierHex,
     });
     if (submitMode === "shield") {
       session.updateActiveAccount({ localOnly: false });

@@ -94,7 +94,7 @@ describe("useShieldCapability", () => {
 
     expect(capability.shieldSupported.value).toBe(false);
     expect(capability.shieldCapabilityMessage.value).toBe(
-      "Shield mode unavailable: effective policy mode is TransparentOnly.",
+      "Self-shield is unavailable: effective policy mode is TransparentOnly.",
     );
     expect(shielded.value).toBe(false);
   });
@@ -121,12 +121,14 @@ describe("useShieldCapability", () => {
       assetDefinitionId,
       shielded,
       translate: (key, params) =>
-        `JP:${key.replace("{mode}", String(params?.mode ?? ""))}`,
+        `JP:${key
+          .replace("{operation}", String(params?.operation ?? ""))
+          .replace("{mode}", String(params?.mode ?? ""))}`,
     });
     await flushReactiveEffects();
 
     expect(capability.shieldCapabilityMessage.value).toBe(
-      "JP:Shield mode unavailable: effective policy mode is TransparentOnly.",
+      "JP:Self-shield is unavailable: effective policy mode is TransparentOnly.",
     );
   });
 
@@ -150,7 +152,7 @@ describe("useShieldCapability", () => {
     expect(capability.shieldCapabilityReady.value).toBe(true);
     expect(capability.shieldResolvedAssetId.value).toBe("");
     expect(capability.shieldCapabilityMessage.value).toContain(
-      "Shield policy check failed: timeout.",
+      "Self-shield policy check failed: timeout.",
     );
     expect(shielded.value).toBe(true);
   });
@@ -176,7 +178,7 @@ describe("useShieldCapability", () => {
 
     expect(capability.shieldSupported.value).toBe(false);
     expect(capability.shieldCapabilityMessage.value).toBe(
-      "Shield mode is unavailable for the current asset definition.",
+      "Self-shield is unavailable for the current asset definition.",
     );
     expect(shielded.value).toBe(false);
   });

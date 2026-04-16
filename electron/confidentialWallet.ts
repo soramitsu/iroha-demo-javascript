@@ -3,6 +3,7 @@ import {
   deriveConfidentialNoteV2,
   deriveConfidentialNullifierV2,
   deriveConfidentialOwnerTagV2,
+  deriveConfidentialReceiveAddressV2,
 } from "@iroha/iroha-js/crypto";
 import {
   decryptPayloadForAccount,
@@ -17,6 +18,8 @@ export const CONFIDENTIAL_WALLET_METADATA_SCHEMA =
 export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY =
   "iroha-demo-confidential-wallet/v1";
 export const CONFIDENTIAL_WALLET_NOTE_SCHEMA =
+  "iroha-demo-confidential-note/v3";
+export const CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2 =
   "iroha-demo-confidential-note/v2";
 export const CONFIDENTIAL_WALLET_NOTE_SCHEMA_LEGACY =
   "iroha-demo-confidential-note/v1";
@@ -42,12 +45,15 @@ export type WalletConfidentialTransactionLike = {
 };
 
 export type WalletConfidentialNote = {
-  schema: typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA;
+  schema:
+    | typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA
+    | typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2;
   note_id: string;
   asset_definition_id: string;
   amount: string;
   rho_hex: string;
   owner_tag_hex: string;
+  diversifier_hex?: string;
   commitment_hex: string;
   created_at_ms: number;
 };
@@ -213,7 +219,8 @@ const parseWalletConfidentialNoteV2 = (
     return null;
   }
   const schema = trimString(value.schema);
-  if (schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA) {
+  const isCurrentSchema = schema === CONFIDENTIAL_WALLET_NOTE_SCHEMA;
+  if (!isCurrentSchema && schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2) {
     return null;
   }
   const noteId = trimString(value.note_id ?? value.noteId);
@@ -225,6 +232,9 @@ const parseWalletConfidentialNoteV2 = (
   const ownerTagHex = trimString(
     value.owner_tag_hex ?? value.ownerTagHex ?? value.ownerTag,
   ).toLowerCase();
+  const diversifierHex = trimString(
+    value.diversifier_hex ?? value.diversifierHex ?? value.diversifier,
+  ).toLowerCase();
   const commitmentHex = trimString(
     value.commitment_hex ?? value.commitmentHex,
   ).toLowerCase();
@@ -235,6 +245,8 @@ const parseWalletConfidentialNoteV2 = (
     !/^\d+$/.test(amount) ||
     !/^[0-9a-f]{64}$/.test(rhoHex) ||
     !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
+    (isCurrentSchema && !/^[0-9a-f]{64}$/.test(diversifierHex)) ||
+    (diversifierHex !== "" && !/^[0-9a-f]{64}$/.test(diversifierHex)) ||
     !/^[0-9a-f]{64}$/.test(commitmentHex) ||
     !Number.isFinite(createdAtMs) ||
     createdAtMs < 0
@@ -242,12 +254,15 @@ const parseWalletConfidentialNoteV2 = (
     return null;
   }
   return {
-    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
+    schema: isCurrentSchema
+      ? CONFIDENTIAL_WALLET_NOTE_SCHEMA
+      : CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2,
     note_id: noteId,
     asset_definition_id: assetDefinitionId,
     amount,
     rho_hex: rhoHex,
     owner_tag_hex: ownerTagHex,
+    ...(diversifierHex ? { diversifier_hex: diversifierHex } : {}),
     commitment_hex: commitmentHex,
     created_at_ms: Math.trunc(createdAtMs),
   };
@@ -539,6 +554,7 @@ export const createWalletConfidentialNote = (input: {
   assetDefinitionId: string;
   amount: string;
   ownerTagHex: string;
+  diversifierHex?: string;
   createdAtMs?: number;
   rhoHex?: string;
 }): WalletConfidentialNote => {
@@ -550,6 +566,10 @@ export const createWalletConfidentialNote = (input: {
   const ownerTagHex = trimString(input.ownerTagHex).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(ownerTagHex)) {
     throw new Error("ownerTagHex must be a 32-byte hex string.");
+  }
+  const diversifierHex = trimString(input.diversifierHex).toLowerCase();
+  if (diversifierHex && !/^[0-9a-f]{64}$/.test(diversifierHex)) {
+    throw new Error("diversifierHex must be a 32-byte hex string.");
   }
   const createdAtMs = Math.trunc(input.createdAtMs ?? Date.now());
   if (!Number.isFinite(createdAtMs) || createdAtMs < 0) {
@@ -568,12 +588,15 @@ export const createWalletConfidentialNote = (input: {
     ownerTagHex,
   });
   return {
-    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
+    schema: diversifierHex
+      ? CONFIDENTIAL_WALLET_NOTE_SCHEMA
+      : CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2,
     note_id: commitmentHex,
     asset_definition_id: assetDefinitionId,
     amount,
     rho_hex: rhoHex,
     owner_tag_hex: ownerTagHex,
+    ...(diversifierHex ? { diversifier_hex: diversifierHex } : {}),
     commitment_hex: commitmentHex,
     created_at_ms: createdAtMs,
   };
@@ -581,14 +604,46 @@ export const createWalletConfidentialNote = (input: {
 
 export const deriveWalletConfidentialOwnerTagHex = (input: {
   privateKeyHex: string;
+  diversifierHex?: string;
 }): string => {
   const privateKeyHex = trimString(input.privateKeyHex);
   if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
     throw new Error("privateKeyHex must be a 32-byte hex string.");
   }
+  const diversifierHex = trimString(input.diversifierHex).toLowerCase();
+  if (diversifierHex && !/^[0-9a-f]{64}$/.test(diversifierHex)) {
+    throw new Error("diversifierHex must be a 32-byte hex string.");
+  }
   return Buffer.from(
-    deriveConfidentialOwnerTagV2(Buffer.from(privateKeyHex, "hex")),
+    deriveConfidentialOwnerTagV2(
+      Buffer.from(privateKeyHex, "hex"),
+      diversifierHex ? { diversifierHex } : undefined,
+    ),
   ).toString("hex");
+};
+
+export const deriveWalletConfidentialReceiveAddress = (input: {
+  privateKeyHex: string;
+  diversifierSeedHex?: string;
+}): { ownerTagHex: string; diversifierHex: string } => {
+  const privateKeyHex = trimString(input.privateKeyHex);
+  if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
+    throw new Error("privateKeyHex must be a 32-byte hex string.");
+  }
+  const diversifierSeedHex = trimString(
+    input.diversifierSeedHex ?? randomBytes(32).toString("hex"),
+  ).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(diversifierSeedHex)) {
+    throw new Error("diversifierSeedHex must be a 32-byte hex string.");
+  }
+  const address = deriveConfidentialReceiveAddressV2({
+    spendKey: Buffer.from(privateKeyHex, "hex"),
+    diversifierSeed: Buffer.from(diversifierSeedHex, "hex"),
+  });
+  return {
+    ownerTagHex: address.ownerTagHex,
+    diversifierHex: address.diversifierHex,
+  };
 };
 
 export const deriveWalletConfidentialNullifierHex = (input: {
@@ -854,22 +909,77 @@ export const selectWalletConfidentialNotes = (
   change: string;
 } => {
   const target = parsePositiveWholeAmount(amount, "amount");
-  const selected: WalletSpendableConfidentialNote[] = [];
-  let total = 0n;
+  const candidates: Array<{
+    selected: WalletSpendableConfidentialNote[];
+    total: bigint;
+  }> = [];
+
   for (const note of notes) {
-    if (total >= target) {
-      break;
+    const noteAmount = parsePositiveWholeAmount(note.amount, "note.amount");
+    if (noteAmount === target) {
+      return {
+        selected: [note],
+        total: target.toString(),
+        change: "0",
+      };
     }
-    selected.push(note);
-    total += parsePositiveWholeAmount(note.amount, "note.amount");
+    if (noteAmount > target) {
+      candidates.push({ selected: [note], total: noteAmount });
+    }
   }
-  if (total < target) {
-    throw new Error("Insufficient shielded balance.");
+
+  for (let leftIndex = 0; leftIndex < notes.length; leftIndex += 1) {
+    const left = notes[leftIndex];
+    if (!left) {
+      continue;
+    }
+    const leftAmount = parsePositiveWholeAmount(left.amount, "note.amount");
+    for (
+      let rightIndex = leftIndex + 1;
+      rightIndex < notes.length;
+      rightIndex += 1
+    ) {
+      const right = notes[rightIndex];
+      if (!right) {
+        continue;
+      }
+      const total =
+        leftAmount + parsePositiveWholeAmount(right.amount, "note.amount");
+      if (total === target) {
+        return {
+          selected: [left, right],
+          total: target.toString(),
+          change: "0",
+        };
+      }
+      if (total > target) {
+        candidates.push({ selected: [left, right], total });
+      }
+    }
+  }
+
+  candidates.sort((left, right) => {
+    const leftChange = left.total - target;
+    const rightChange = right.total - target;
+    if (leftChange !== rightChange) {
+      return leftChange < rightChange ? -1 : 1;
+    }
+    if (left.selected.length !== right.selected.length) {
+      return left.selected.length - right.selected.length;
+    }
+    return left.selected[0]!.leaf_index - right.selected[0]!.leaf_index;
+  });
+
+  const best = candidates[0];
+  if (!best) {
+    throw new Error(
+      "Insufficient shielded balance in one or two spendable notes. Re-shield or consolidate first.",
+    );
   }
   return {
-    selected,
-    total: total.toString(),
-    change: (total - target).toString(),
+    selected: best.selected,
+    total: best.total.toString(),
+    change: (best.total - target).toString(),
   };
 };
 

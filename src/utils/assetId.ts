@@ -341,9 +341,8 @@ export const resolveUniqueLiveAssetDefinitionId = (
       const quantity = Number(String(asset.quantity ?? "").trim());
       return {
         definitionId,
-        comparableDefinitionId: normalizeComparableAssetDefinitionId(
-          definitionId,
-        ),
+        comparableDefinitionId:
+          normalizeComparableAssetDefinitionId(definitionId),
         isPositive: Number.isFinite(quantity) && quantity > 0,
         index,
       };
