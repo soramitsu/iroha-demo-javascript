@@ -415,9 +415,11 @@ import { isPositiveWholeAmount } from "@/utils/confidential";
 import type { OfflineAllowanceItem } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
 import {
+  extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
   formatOpaqueAssetLiteralsInText,
+  shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
@@ -486,15 +488,41 @@ const onlineForm = reactive({
   memo: "",
   shielded: false,
 });
+const persistResolvedOnlineShieldAssetDefinitionId = (
+  resolvedAssetDefinitionId: string,
+) => {
+  const normalizedResolvedAssetDefinitionId = extractAssetDefinitionId(
+    resolvedAssetDefinitionId,
+  ).trim();
+  if (
+    !normalizedResolvedAssetDefinitionId ||
+    !shouldReplaceConfiguredAssetDefinitionId({
+      configuredAssetDefinitionId: session.connection.assetDefinitionId,
+      detectedAssetDefinitionId: normalizedResolvedAssetDefinitionId,
+      knownAssetIds: [resolvedAssetDefinitionId],
+    })
+  ) {
+    return;
+  }
+  session.$patch({
+    connection: {
+      ...session.connection,
+      assetDefinitionId: normalizedResolvedAssetDefinitionId,
+    },
+  });
+};
 const {
   shieldSupported: onlineShieldSupported,
   shieldCapabilityMessage: onlineShieldCapabilityMessage,
   shieldPolicyMode: onlineShieldPolicyMode,
+  shieldResolvedAssetId: onlineShieldResolvedAssetId,
 } = useShieldCapability({
   toriiUrl: toRef(session.connection, "toriiUrl"),
+  accountId: activeAccountDisplayId,
   assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
   shielded: toRef(onlineForm, "shielded"),
   translate: t,
+  onResolvedAssetDefinitionId: persistResolvedOnlineShieldAssetDefinitionId,
 });
 
 const invoiceScanner = useQrScanner(
@@ -555,6 +583,12 @@ const normalizedMoveAmount = computed(
 );
 const normalizedMoveReceiver = computed(
   () => onlineForm.receiver.trim() || activeAccountDisplayId.value || "",
+);
+const resolvedOnlineShieldAssetDefinitionId = computed(
+  () =>
+    extractAssetDefinitionId(onlineShieldResolvedAssetId.value).trim() ||
+    extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
+    session.connection.assetDefinitionId.trim(),
 );
 const isOnlineTransparentAmountValid = computed(
   () => Number(normalizedMoveAmount.value) > 0,
@@ -919,7 +953,7 @@ const moveToOnline = async () => {
     await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      assetDefinitionId: session.connection.assetDefinitionId,
+      assetDefinitionId: resolvedOnlineShieldAssetDefinitionId.value,
       accountId: activeAccount.value.accountId,
       destinationAccountId: receiver,
       quantity: amount,

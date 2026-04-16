@@ -1041,6 +1041,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",
+  "Shield mode is unavailable for the current asset definition.":
+    "Shield mode is unavailable for the current asset definition.",
   "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.":
     "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
@@ -1109,13 +1111,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   default: "default",
   "Canonical I105 Account ID": "I105 Account ID",
   "Example I105 Account ID":
-    "sorauロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+    "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
   "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.":
-    "Real TAIRA I105 account IDs are kana-based literals and may look like sorau..., not 6cmz... or i105:.",
-  "Use the real Base58 I105 account literal, for example {example}. Do not use @domain or i105: forms.":
-    "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
-    "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
+    "Real TAIRA I105 account IDs are kana-based literals and may look like testu..., not 6cmz... or i105:.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
   "Example encoded asset ID": "Example encoded asset ID",
@@ -1140,11 +1138,15 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Waiting for finalized faucet seed data…",
   "Solving faucet proof-of-work…": "Solving faucet proof-of-work…",
   "Submitting faucet claim…": "Submitting faucet claim…",
+  "Retrying faucet claim after queue expiry…":
+    "Retrying faucet claim after queue expiry…",
   "Faucet claim accepted. Updating wallet…":
     "Faucet claim accepted. Updating wallet…",
   "Refreshing wallet balance…": "Refreshing wallet balance…",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "Your TAIRA faucet request is in flight. This can take a few seconds.",
+  "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.":
+    "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
   "Waiting for TAIRA to expose the funded asset in account balances.":
     "Waiting for TAIRA to expose the funded asset in account balances.",
   "Testnet XOR requested: {hash}": "Testnet XOR requested: {hash}",
@@ -1576,8 +1578,6 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Restore a wallet from your phrase and save it locally.",
   "Display Name (local only, not on-chain)": "Wallet name",
   "Canonical I105 Account ID": "I105 Account ID",
-  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.":
-    "Use a TAIRA I105 ID like {example}. No @domain or i105:.",
   "Generate recovery phrase": "Create recovery phrase",
   "Restore from recovery phrase": "Restore from phrase",
   "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
@@ -1695,11 +1695,15 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Waiting for finalized faucet seed data…": "Waiting for faucet seed...",
   "Solving faucet proof-of-work…": "Solving faucet proof...",
   "Submitting faucet claim…": "Submitting claim...",
+  "Retrying faucet claim after queue expiry…":
+    "Retrying after queue expiry...",
   "Faucet claim accepted. Updating wallet…":
     "Claim accepted. Updating wallet...",
   "Refreshing wallet balance…": "Refreshing wallet...",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "This can take a few seconds.",
+  "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.":
+    "The last queued faucet claim expired. Retrying automatically.",
   "Waiting for TAIRA to expose the funded asset in account balances.":
     "Waiting for balances to index.",
   "Testnet XOR requested: {hash}": "XOR claimed: {hash}",
@@ -2045,9 +2049,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
   "Example encoded asset ID": "Example encoded asset ID",
-  "34m... or 0x...@wonderland": "sorau...",
-  "n42u... (I105 account ID)": "sorau...",
-  "6cmz... (canonical I105 account ID)": "sorau...",
+  "34m... or 0x...@wonderland": "testu...",
+  "n42u... (I105 account ID)": "testu...",
+  "6cmz... (canonical I105 account ID)": "testu...",
   "rose#wonderland": "norito:<asset-id-hex>",
   "norito:<asset-id-hex>": "norito:<asset-id-hex>",
 };

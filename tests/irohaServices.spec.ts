@@ -403,6 +403,7 @@ describe("iroha services bridge", () => {
 
     const input = {
       toriiUrl: "http://localhost:8080",
+      accountId: "testuAlice",
       assetDefinitionId: "norito:abcdef0123456789",
     };
     const result = await getConfidentialAssetPolicy(input);

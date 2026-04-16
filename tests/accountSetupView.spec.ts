@@ -140,14 +140,6 @@ describe("AccountSetupView", () => {
     expect(wrapper.text()).toContain("I105 Account ID");
     expect(wrapper.text()).toContain(
       t(
-        "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-        {
-          example: t("Example I105 Account ID"),
-        },
-      ),
-    );
-    expect(wrapper.text()).toContain(
-      t(
         "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
         {
           domain: t("default"),

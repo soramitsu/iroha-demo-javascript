@@ -185,14 +185,7 @@ describe("faucetApi", () => {
       "requestingPuzzle",
       "solvingPuzzle",
       "submittingClaim",
-      "claimAccepted",
     ]);
-    expect(onStatus).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        phase: "claimAccepted",
-        txHashHex: "0xdef",
-      }),
-    );
   });
 
   it("maps Norito faucet validation failures to a readable repeated-claim message", async () => {

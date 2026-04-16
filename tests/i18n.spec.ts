@@ -102,6 +102,18 @@ describe("i18n messages", () => {
     expect(translate("fr-FR", "Example I105 Account ID")).toBe(
       translate("en-US", "Example I105 Account ID"),
     );
+    expect(translate("en-US", "Example I105 Account ID").startsWith("testu")).toBe(
+      true,
+    );
+    expect(translate("en-US", "34m... or 0x...@wonderland")).toBe(
+      translate("en-US", "Example I105 Account ID"),
+    );
+    expect(
+      translate(
+        "en-US",
+        "Canonical I105 account IDs are compact literals and may look like 6cmz..., not i105:.",
+      ),
+    ).toContain("testu...");
     expect(translate("de-DE", "norito:<asset-id-hex>")).toBe(
       "norito:<asset-id-hex>",
     );

@@ -63,7 +63,7 @@ describe("SendView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (assetDefinitionId = "norito:abcdef0123456789") => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -71,7 +71,7 @@ describe("SendView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "norito:abcdef0123456789",
+        assetDefinitionId,
         networkPrefix: 369,
       },
       accounts: [
@@ -111,6 +111,7 @@ describe("SendView", () => {
     expect(transferAssetMock).toHaveBeenCalledTimes(1);
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
+      accountId: ALICE_I105_ACCOUNT_ID,
       assetDefinitionId: "norito:abcdef0123456789",
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
@@ -219,6 +220,41 @@ describe("SendView", () => {
     expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
   });
 
+  it("heals a stale configured asset bucket before the first shielded send", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValue({
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    transferAssetMock.mockResolvedValue({ hash: "0xhealed" });
+    const wrapper = mountView("5OldBucket1111111111111111111");
+    const session = useSessionStore();
+    await flushPromises();
+
+    expect(session.connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+
+    await wrapper.get(EXAMPLE_I105_SELECTOR).setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("4");
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+        destinationAccountId: BOB_I105_ACCOUNT_ID,
+        shielded: true,
+      }),
+    );
+  });
+
   it("applies qr destination payload while shield mode is enabled", async () => {
     const wrapper = mountView();
     await flushPromises();
@@ -318,6 +354,22 @@ describe("SendView", () => {
         "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
         { message: "network timeout" },
       ),
+    );
+  });
+
+  it("disables shield mode when the configured asset definition is missing", async () => {
+    getConfidentialAssetPolicyMock.mockRejectedValue(
+      new Error(
+        "Confidential asset policy request failed with status 404 (Not Found)",
+      ),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    const checkbox = wrapper.get('input[type="checkbox"]');
+    expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
+    expect(wrapper.text()).toContain(
+      t("Shield mode is unavailable for the current asset definition."),
     );
   });
 

@@ -147,7 +147,11 @@ import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldCapability } from "@/composables/useShieldCapability";
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getPublicAccountId } from "@/utils/accountId";
-import { formatAssetDefinitionLabel } from "@/utils/assetId";
+import {
+  extractAssetDefinitionId,
+  formatAssetDefinitionLabel,
+  shouldReplaceConfiguredAssetDefinitionId,
+} from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import SendIcon from "@/assets/send.svg";
 
@@ -169,13 +173,42 @@ const form = reactive({
 const sending = ref(false);
 const statusMessage = ref("");
 const scanMessage = ref("");
-const { shieldSupported, shieldCapabilityMessage, shieldPolicyMode } =
-  useShieldCapability({
-    toriiUrl: toRef(session.connection, "toriiUrl"),
-    assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
-    shielded: toRef(form, "shielded"),
-    translate: t,
+const persistResolvedShieldAssetDefinitionId = (
+  resolvedAssetDefinitionId: string,
+) => {
+  const normalizedResolvedAssetDefinitionId = extractAssetDefinitionId(
+    resolvedAssetDefinitionId,
+  ).trim();
+  if (
+    !normalizedResolvedAssetDefinitionId ||
+    !shouldReplaceConfiguredAssetDefinitionId({
+      configuredAssetDefinitionId: session.connection.assetDefinitionId,
+      detectedAssetDefinitionId: normalizedResolvedAssetDefinitionId,
+      knownAssetIds: [resolvedAssetDefinitionId],
+    })
+  ) {
+    return;
+  }
+  session.$patch({
+    connection: {
+      ...session.connection,
+      assetDefinitionId: normalizedResolvedAssetDefinitionId,
+    },
   });
+};
+const {
+  shieldSupported,
+  shieldCapabilityMessage,
+  shieldPolicyMode,
+  shieldResolvedAssetId,
+} = useShieldCapability({
+  toriiUrl: toRef(session.connection, "toriiUrl"),
+  accountId: activeAccountDisplayId,
+  assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
+  shielded: toRef(form, "shielded"),
+  translate: t,
+  onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
+});
 const scanner = useQrScanner(
   (payload) => {
     try {
@@ -202,6 +235,12 @@ const submitActionLabel = computed(() =>
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
+const resolvedAssetDefinitionId = computed(
+  () =>
+    extractAssetDefinitionId(shieldResolvedAssetId.value).trim() ||
+    extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
+    session.connection.assetDefinitionId.trim(),
+);
 const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
 const isShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedQuantity.value),
@@ -247,7 +286,7 @@ const handleSend = async () => {
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
-      assetDefinitionId: session.connection.assetDefinitionId,
+      assetDefinitionId: resolvedAssetDefinitionId.value,
       accountId: account.accountId,
       destinationAccountId: destinationValue.value,
       quantity: normalizedQuantity.value,

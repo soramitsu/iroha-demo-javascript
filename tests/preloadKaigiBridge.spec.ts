@@ -21,12 +21,15 @@ const ALICE_ACCOUNT_ID =
   "testuロ1PクCカrムhyワエトhウヤSqP2GFGラヱミケヌマzヘオミMヌヨトksJヱRRJXVB";
 const BOB_ACCOUNT_ID =
   "testuロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
+const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
   normalizeCanonicalAccountIdLiteralMock: vi.fn(),
   normalizeCompatAccountIdLiteralMock: vi.fn(),
   requestFaucetFundsWithPuzzleMock: vi.fn(),
+  getTransactionStatusMock: vi.fn(),
+  getStatusSnapshotMock: vi.fn(),
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
@@ -145,9 +148,8 @@ vi.mock("../electron/faucetApi", () => ({
 }));
 
 vi.mock("@iroha/iroha-js", async () => {
-  const actual = await vi.importActual<typeof import("@iroha/iroha-js")>(
-    "@iroha/iroha-js",
-  );
+  const actual =
+    await vi.importActual<typeof import("@iroha/iroha-js")>("@iroha/iroha-js");
   class MockToriiClient {
     baseUrl: string;
     options: unknown;
@@ -179,6 +181,14 @@ vi.mock("@iroha/iroha-js", async () => {
 
     getVerifyingKeyTyped(...args: unknown[]) {
       return mocks.getVerifyingKeyTypedMock(...args);
+    }
+
+    getTransactionStatus(...args: unknown[]) {
+      return mocks.getTransactionStatusMock(...args);
+    }
+
+    getStatusSnapshot(...args: unknown[]) {
+      return mocks.getStatusSnapshotMock(...args);
     }
   }
 
@@ -212,14 +222,17 @@ vi.mock("@iroha/iroha-js/crypto", async () => {
   );
   return {
     ...actual,
-  buildKaigiRosterJoinProof: (input: unknown) =>
-    mocks.buildKaigiRosterJoinProofMock(
-      input as { rosterRootHex?: string | null } | undefined,
-    ),
-  generateKeyPair: vi.fn(() => ({
-    publicKey: Buffer.alloc(32, 0x21),
-    privateKey: Buffer.alloc(32, 0x34),
-  })),
+    buildKaigiRosterJoinProof: (input: unknown) =>
+      mocks.buildKaigiRosterJoinProofMock(
+        input as { rosterRootHex?: string | null } | undefined,
+      ),
+    deriveConfidentialKeysetFromHex: vi.fn(() => ({
+      nkHex: "ab".repeat(32),
+    })),
+    generateKeyPair: vi.fn(() => ({
+      publicKey: Buffer.alloc(32, 0x21),
+      privateKey: Buffer.alloc(32, 0x34),
+    })),
   };
 });
 
@@ -243,7 +256,12 @@ const loadBridge = async () => {
     selfShieldPrivateKaigiXor: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
-    transferAsset: (input: Record<string, unknown>) => Promise<{ hash: string }>;
+    transferAsset: (
+      input: Record<string, unknown>,
+    ) => Promise<{ hash: string }>;
+    getConfidentialAssetPolicy: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     getConfidentialAssetBalance: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -262,6 +280,8 @@ describe("preload Kaigi bridge", () => {
     mocks.normalizeCanonicalAccountIdLiteralMock.mockReset();
     mocks.normalizeCompatAccountIdLiteralMock.mockReset();
     mocks.requestFaucetFundsWithPuzzleMock.mockReset();
+    mocks.getTransactionStatusMock.mockReset();
+    mocks.getStatusSnapshotMock.mockReset();
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
@@ -289,6 +309,20 @@ describe("preload Kaigi bridge", () => {
     );
     mocks.requestFaucetFundsWithPuzzleMock.mockResolvedValue({
       tx_hash_hex: "0xfaucet",
+    });
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Committed",
+      },
+    });
+    mocks.getStatusSnapshotMock.mockResolvedValue({
+      status: {
+        queue_size: 0,
+        commit_time_ms: 1_000,
+        sumeragi: {
+          tx_queue_saturated: false,
+        },
+      },
     });
 
     mocks.listKaigiRelaysMock.mockResolvedValue({
@@ -410,10 +444,7 @@ describe("preload Kaigi bridge", () => {
             total: 1,
           });
         }
-        if (
-          method === "GET" &&
-          href.includes("/v1/explorer/transactions/")
-        ) {
+        if (method === "GET" && href.includes("/v1/explorer/transactions/")) {
           return jsonResponse(
             {
               error: "request_failed",
@@ -437,10 +468,39 @@ describe("preload Kaigi bridge", () => {
 
   it("routes faucet requests through canonical account-id normalization", async () => {
     const bridge = await loadBridge();
-    const onStatus = vi.fn();
+    const statusEvents: string[] = [];
+    const onStatus = vi.fn((progress: unknown) => {
+      const phase =
+        progress &&
+        typeof progress === "object" &&
+        "phase" in progress &&
+        typeof progress.phase === "string"
+          ? progress.phase
+          : "";
+      statusEvents.push(phase);
+    });
     mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
       (value: string) => `canonical:${String(value).trim()}`,
     );
+    mocks.requestFaucetFundsWithPuzzleMock.mockImplementation(
+      async (input: { onStatus?: (progress: unknown) => void }) => {
+        await input.onStatus?.({
+          phase: "submittingClaim",
+          txHashHex: "0xfaucet",
+        });
+        return {
+          tx_hash_hex: "0xfaucet",
+        };
+      },
+    );
+    mocks.getTransactionStatusMock.mockImplementation(async () => {
+      statusEvents.push("statusChecked");
+      return {
+        status: {
+          kind: "Committed",
+        },
+      };
+    });
 
     await expect(
       bridge.requestFaucetFunds(
@@ -453,6 +513,7 @@ describe("preload Kaigi bridge", () => {
       ),
     ).resolves.toEqual({
       tx_hash_hex: "0xfaucet",
+      status: "Committed",
     });
 
     expect(mocks.normalizeCanonicalAccountIdLiteralMock).toHaveBeenCalledWith(
@@ -474,6 +535,138 @@ describe("preload Kaigi bridge", () => {
       },
       undefined,
     );
+    expect(mocks.getTransactionStatusMock).toHaveBeenCalledWith("0xfaucet");
+    expect(statusEvents).toEqual([
+      "submittingClaim",
+      "statusChecked",
+      "claimAccepted",
+    ]);
+  });
+
+  it("retries faucet claims when TAIRA expires the queued transaction", async () => {
+    const bridge = await loadBridge();
+    const statusEvents: string[] = [];
+    mocks.requestFaucetFundsWithPuzzleMock
+      .mockImplementationOnce(
+        async (input: { onStatus?: (progress: unknown) => void }) => {
+          await input.onStatus?.({
+            phase: "submittingClaim",
+            txHashHex: "0xexpired",
+          });
+          return {
+            tx_hash_hex: "0xexpired",
+          };
+        },
+      )
+      .mockImplementationOnce(
+        async (input: { onStatus?: (progress: unknown) => void }) => {
+          await input.onStatus?.({
+            phase: "submittingClaim",
+            txHashHex: "0xcommitted",
+          });
+          return {
+            tx_hash_hex: "0xcommitted",
+          };
+        },
+      );
+    mocks.getTransactionStatusMock
+      .mockResolvedValueOnce({
+        status: {
+          kind: "Expired",
+        },
+      })
+      .mockResolvedValueOnce({
+        status: {
+          kind: "Committed",
+        },
+      });
+    mocks.getStatusSnapshotMock.mockResolvedValue({
+      status: {
+        queue_size: 0,
+        commit_time_ms: 1_000,
+        sumeragi: {
+          tx_queue_saturated: false,
+        },
+      },
+    });
+
+    const requestPromise = bridge.requestFaucetFunds(
+      {
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      },
+      (progress: unknown) => {
+        const phase =
+          progress &&
+          typeof progress === "object" &&
+          "phase" in progress &&
+          typeof progress.phase === "string"
+            ? progress.phase
+            : "";
+        statusEvents.push(phase);
+      },
+    );
+    await vi.runAllTimersAsync();
+    await expect(requestPromise).resolves.toEqual({
+      tx_hash_hex: "0xcommitted",
+      status: "Committed",
+    });
+    expect(mocks.requestFaucetFundsWithPuzzleMock).toHaveBeenCalledTimes(2);
+    expect(mocks.getTransactionStatusMock).toHaveBeenNthCalledWith(
+      1,
+      "0xexpired",
+    );
+    expect(mocks.getTransactionStatusMock).toHaveBeenNthCalledWith(
+      2,
+      "0xcommitted",
+    );
+    expect(mocks.getStatusSnapshotMock).toHaveBeenCalledTimes(1);
+    expect(statusEvents).toEqual([
+      "submittingClaim",
+      "waitingForClaimRetry",
+      "submittingClaim",
+      "claimAccepted",
+    ]);
+  });
+
+  it("surfaces a clear error after repeated faucet claim expiries", async () => {
+    const bridge = await loadBridge();
+    let expiredAttempt = 0;
+    mocks.requestFaucetFundsWithPuzzleMock.mockImplementation(async () => {
+      expiredAttempt += 1;
+      return {
+        tx_hash_hex: `0xexpired-${expiredAttempt}`,
+      };
+    });
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Expired",
+      },
+    });
+    mocks.getStatusSnapshotMock.mockResolvedValue({
+      status: {
+        queue_size: 0,
+        commit_time_ms: 1_000,
+        sumeragi: {
+          tx_queue_saturated: false,
+        },
+      },
+    });
+
+    const requestPromise = bridge.requestFaucetFunds({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      });
+    const rejection = expect(requestPromise).rejects.toThrow(
+      "Faucet claim 0xexpired-6 expired before TAIRA committed it. Please retry once the faucet queue clears.",
+    );
+    await vi.runAllTimersAsync();
+    await rejection;
+    expect(mocks.requestFaucetFundsWithPuzzleMock).toHaveBeenCalledTimes(6);
+    expect(mocks.getTransactionStatusMock).toHaveBeenCalledTimes(6);
+    expect(mocks.getStatusSnapshotMock).toHaveBeenCalledTimes(5);
   });
 
   it("creates a private Kaigi meeting through the authority-free entrypoint path", async () => {
@@ -689,6 +882,264 @@ describe("preload Kaigi bridge", () => {
       spendableQuantity: "5",
       exact: true,
     });
+  });
+
+  it("falls back to the live funded asset bucket when xor#universal policy lookup returns 404", async () => {
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes("/v1/confidential/assets/xor%23universal/transitions")
+        ) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential asset policy request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+          )
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                vk_transfer: "halo2/ipa::vk_transfer",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          return jsonResponse({
+            latest: "44".repeat(32),
+            roots: ["44".repeat(32)],
+            height: 1,
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes("/v1/accounts/") &&
+          href.includes("/assets")
+        ) {
+          return jsonResponse({
+            items: [
+              {
+                asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}##${ALICE_ACCOUNT_ID}`,
+                quantity: "9",
+              },
+            ],
+            total: 1,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/explorer/transactions/")) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Failed to process query",
+              status: 404,
+            },
+            404,
+          );
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: ALICE_ACCOUNT_ID,
+        quantity: "5",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+      }),
+    ).resolves.toEqual({
+      hash: "hash-shield-xor",
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+      }),
+    ).resolves.toEqual({
+      hash: "hash-zk-transfer",
+    });
+
+    await expect(
+      bridge.getConfidentialAssetBalance({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        assetDefinitionId: "xor#universal",
+      }),
+    ).resolves.toMatchObject({
+      resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      spendableQuantity: "2",
+      exact: true,
+    });
+
+    expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shield: expect.objectContaining({
+          assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        }),
+      }),
+    );
+    expect(mocks.buildZkTransferTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transfer: expect.objectContaining({
+          assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        }),
+      }),
+    );
+  });
+
+  it("heals stale canonical policy lookups through the account-aware bridge path", async () => {
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/confidential/assets/5OldBucket1111111111111111111/transitions",
+          )
+        ) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential asset policy request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+          )
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes("/v1/accounts/") &&
+          href.includes("/assets")
+        ) {
+          return jsonResponse({
+            items: [
+              {
+                asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}##${ALICE_ACCOUNT_ID}`,
+                quantity: "9",
+              },
+            ],
+            total: 1,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getConfidentialAssetPolicy({
+        toriiUrl: "https://taira.sora.org",
+        accountId: ALICE_ACCOUNT_ID,
+        assetDefinitionId: "5OldBucket1111111111111111111",
+      }),
+    ).resolves.toMatchObject({
+      asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      effective_mode: "Convertible",
+    });
+  });
+
+  it("does not retry account-asset fallback for policy 500 responses", async () => {
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes("/v1/confidential/assets/xor%23universal/transitions")
+        ) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential asset policy request failed",
+              status: 500,
+            },
+            500,
+          );
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getConfidentialAssetPolicy({
+        toriiUrl: "https://taira.sora.org",
+        accountId: ALICE_ACCOUNT_ID,
+        assetDefinitionId: "xor#universal",
+      }),
+    ).rejects.toThrow(
+      "Confidential asset policy request failed with status 500 (ERR)",
+    );
+
+    expect(
+      mocks.nodeFetchMock.mock.calls.some(
+        ([input]) =>
+          String(input).includes("/v1/accounts/") &&
+          String(input).includes("/assets"),
+      ),
+    ).toBe(false);
   });
 
   it("uses the local confidential shadow ledger to spend immediately and credit the receiver", async () => {

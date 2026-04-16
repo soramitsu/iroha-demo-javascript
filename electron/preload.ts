@@ -16,6 +16,7 @@ import {
   buildTransferAssetTransaction,
   submitTransactionEntrypoint,
   submitSignedTransaction,
+  extractPipelineStatusKind,
   normalizeAssetId,
   type KaigiCallView,
   type ToriiSumeragiStatus,
@@ -44,7 +45,10 @@ import {
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
-import { extractAssetDefinitionId } from "../src/utils/assetId";
+import {
+  extractAssetDefinitionId,
+  resolveToriiXorAsset,
+} from "../src/utils/assetId";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -52,6 +56,7 @@ import {
   type AccountFaucetResponse,
   type FaucetRequestProgress,
 } from "./faucetApi";
+import { computeFaucetClaimRetryDelayMs } from "./faucetRetry";
 import {
   bootstrapPortableConnectPreviewSession,
   resolvePortableConnectLaunchUri,
@@ -92,8 +97,12 @@ type ToriiConfig = {
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 90_000;
+const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
+const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
+type StatusSnapshot = Awaited<ReturnType<ToriiClient["getStatusSnapshot"]>>;
 type RegisterAccountInput = {
   toriiUrl: string;
   chainId: string;
@@ -578,6 +587,7 @@ type IrohaBridge = {
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
+    accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
   getConfidentialAssetBalance(input: {
@@ -732,6 +742,46 @@ type IrohaBridge = {
   ): Promise<{ hash: string }>;
 };
 
+class ApiRequestError extends Error {
+  status: number;
+  statusText: string;
+  detail: string;
+  label: string;
+
+  constructor(input: {
+    label: string;
+    status: number;
+    statusText: string;
+    detail?: string;
+  }) {
+    const detail = String(input.detail ?? "").trim();
+    super(
+      detail
+        ? `${input.label} request failed with status ${input.status} (${input.statusText}): ${detail}`
+        : `${input.label} request failed with status ${input.status} (${input.statusText})`,
+    );
+    this.name = "ApiRequestError";
+    this.status = input.status;
+    this.statusText = input.statusText;
+    this.detail = detail;
+    this.label = input.label;
+  }
+}
+
+const createApiRequestError = async (
+  response: Pick<Response, "status" | "statusText" | "headers" | "text">,
+  label: string,
+) =>
+  new ApiRequestError({
+    label,
+    status: response.status,
+    statusText: response.statusText,
+    detail: await readApiErrorDetail(response),
+  });
+
+const isApiRequestError = (error: unknown): error is ApiRequestError =>
+  error instanceof ApiRequestError;
+
 const clientCache = new Map<string, ToriiClient>();
 const kaigiCallWatchers = new Map<string, AbortController>();
 
@@ -746,6 +796,110 @@ const getClient = (toriiUrlRaw: string) => {
   });
   clientCache.set(baseUrl, client);
   return client;
+};
+
+const waitForMs = (delayMs: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  });
+
+const FAUCET_CLAIM_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
+const FAUCET_CLAIM_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
+
+const waitForFaucetClaimFinality = async (
+  client: ToriiClient,
+  txHashHex: string,
+) => {
+  const deadline = Date.now() + FAUCET_CLAIM_STATUS_TIMEOUT_MS;
+  let lastStatusKind: string | null = null;
+  let lastError: unknown = null;
+
+  while (Date.now() <= deadline) {
+    try {
+      const payload = await client.getTransactionStatus(txHashHex);
+      const statusKind = extractPipelineStatusKind(payload);
+      lastStatusKind = statusKind;
+      lastError = null;
+      if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
+        return {
+          statusKind,
+          timedOut: false,
+        };
+      }
+      if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
+        return {
+          statusKind,
+          timedOut: false,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (Date.now() + FAUCET_CLAIM_STATUS_INTERVAL_MS > deadline) {
+      break;
+    }
+    await waitForMs(FAUCET_CLAIM_STATUS_INTERVAL_MS);
+  }
+
+  return {
+    statusKind: lastStatusKind,
+    timedOut: true,
+    lastError,
+  };
+};
+
+const buildFaucetClaimFinalityError = (
+  txHashHex: string,
+  statusKind: string | null,
+  timedOut: boolean,
+  lastError?: unknown,
+) => {
+  if (statusKind === "Expired") {
+    return new Error(
+      `Faucet claim ${txHashHex} expired before TAIRA committed it. Please retry once the faucet queue clears.`,
+    );
+  }
+  if (statusKind === "Rejected") {
+    return new Error(
+      `Faucet claim ${txHashHex} was rejected on-chain before funding the wallet.`,
+    );
+  }
+  if (timedOut) {
+    const detail =
+      lastError instanceof Error ? trimString(lastError.message) : "";
+    return new Error(
+      detail
+        ? `Faucet claim ${txHashHex} stayed queued and did not finalize within ${Math.trunc(
+            FAUCET_CLAIM_STATUS_TIMEOUT_MS / 1000,
+          )} seconds. ${detail}`
+        : `Faucet claim ${txHashHex} stayed queued and did not finalize within ${Math.trunc(
+            FAUCET_CLAIM_STATUS_TIMEOUT_MS / 1000,
+          )} seconds.`,
+    );
+  }
+  return new Error(
+    `Faucet claim ${txHashHex} did not reach a committed state on TAIRA.`,
+  );
+};
+
+const readFaucetClaimRetryDelayMs = (
+  attempt: number,
+  snapshot?: StatusSnapshot | null,
+) => {
+  const rawSumeragiValue = snapshot?.status?.raw?.["sumeragi"];
+  const rawSumeragi = isPlainRecord(rawSumeragiValue)
+    ? rawSumeragiValue
+    : null;
+  return computeFaucetClaimRetryDelayMs(attempt, {
+    queueSize: snapshot?.status?.queue_size,
+    commitTimeMs: snapshot?.status?.commit_time_ms,
+    saturated:
+      rawSumeragi &&
+      typeof rawSumeragi.tx_queue_saturated === "boolean"
+        ? rawSumeragi.tx_queue_saturated
+        : false,
+  });
 };
 
 const stripHexPrefix = (hex: string) => hex.trim().replace(/^0x/i, "");
@@ -1299,15 +1453,15 @@ const readConfidentialWalletShadowState = (
         transactions: [],
       };
     }
-    const parsed = JSON.parse(raw) as Partial<PendingConfidentialWalletShadowState>;
+    const parsed = JSON.parse(
+      raw,
+    ) as Partial<PendingConfidentialWalletShadowState>;
     const state: PendingConfidentialWalletShadowState = {
       transactions: Array.isArray(parsed.transactions)
         ? parsed.transactions
             .map(normalizePendingConfidentialWalletShadowTransaction)
             .filter(
-              (
-                entry,
-              ): entry is PendingConfidentialWalletShadowTransaction =>
+              (entry): entry is PendingConfidentialWalletShadowTransaction =>
                 Boolean(entry),
             )
         : [],
@@ -1338,9 +1492,8 @@ const writeConfidentialWalletShadowState = (
   const normalized: PendingConfidentialWalletShadowState = {
     transactions: state.transactions
       .map(normalizePendingConfidentialWalletShadowTransaction)
-      .filter(
-        (entry): entry is PendingConfidentialWalletShadowTransaction =>
-          Boolean(entry),
+      .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
+        Boolean(entry),
       )
       .sort((left, right) => left.createdAtMs - right.createdAtMs)
       .slice(-128),
@@ -1405,20 +1558,20 @@ const mergeConfidentialWalletShadowTransactions = (input: {
   const shadowState = readConfidentialWalletShadowState(key);
   if (!shadowState.transactions.length) {
     return input.transactions.filter(
-      (
-        transaction,
-      ): transaction is WalletConfidentialTransactionLike => Boolean(transaction),
+      (transaction): transaction is WalletConfidentialTransactionLike =>
+        Boolean(transaction),
     );
   }
   const shadowByHash = new Map(
-    shadowState.transactions.map((transaction) => [transaction.hash, transaction]),
+    shadowState.transactions.map((transaction) => [
+      transaction.hash,
+      transaction,
+    ]),
   );
   const mergedHashes = new Set<string>();
   const merged = input.transactions
-    .filter(
-      (
-        transaction,
-      ): transaction is WalletConfidentialTransactionLike => Boolean(transaction),
+    .filter((transaction): transaction is WalletConfidentialTransactionLike =>
+      Boolean(transaction),
     )
     .map((transaction) => {
       const txHash = trimString(transaction.entrypoint_hash).toLowerCase();
@@ -1430,18 +1583,23 @@ const mergeConfidentialWalletShadowTransactions = (input: {
       const hasDirectMetadata =
         transaction.metadata !== undefined &&
         transaction.metadata !== null &&
-        !(isPlainRecord(transaction.metadata) && !Object.keys(transaction.metadata).length);
+        !(
+          isPlainRecord(transaction.metadata) &&
+          !Object.keys(transaction.metadata).length
+        );
       const hasInstructions =
-        Array.isArray(transaction.instructions) && transaction.instructions.length > 0;
+        Array.isArray(transaction.instructions) &&
+        transaction.instructions.length > 0;
       return {
         ...transaction,
         entrypoint_hash: txHash || shadow.hash,
         authority:
-          trimString(
-            (transaction as { authority?: unknown }).authority,
-          ) || shadow.authority,
+          trimString((transaction as { authority?: unknown }).authority) ||
+          shadow.authority,
         metadata: hasDirectMetadata ? transaction.metadata : shadow.metadata,
-        instructions: hasInstructions ? transaction.instructions : shadow.instructions,
+        instructions: hasInstructions
+          ? transaction.instructions
+          : shadow.instructions,
       };
     });
   for (const shadow of shadowState.transactions) {
@@ -2049,11 +2207,7 @@ const fetchJson = async (
     },
   });
   if (!response.ok) {
-    const detail = await readApiErrorDetail(response);
-    throw new Error(
-      detail ||
-        `${label} request failed with status ${response.status} (${response.statusText})`,
-    );
+    throw await createApiRequestError(response, label);
   }
   const payload = (await response.json()) as unknown;
   return ensureObjectResponse(payload, label);
@@ -2187,14 +2341,93 @@ const fetchAccountAssetsList = async (input: {
     },
   });
   if (!response.ok) {
-    const detail = await readApiErrorDetail(response);
-    throw new Error(
-      detail ||
-        `Account assets request failed with status ${response.status} (${response.statusText})`,
-    );
+    throw await createApiRequestError(response, "Account assets");
   }
   const payload = (await response.json()) as unknown;
   return normalizeAccountAssetListPayload(payload);
+};
+
+const confidentialPolicyLookupSupportsLiveAssetFallback = (
+  error: unknown,
+  requestedAssetDefinitionId: string,
+) => {
+  const normalizedRequestedAssetDefinitionId = requestedAssetDefinitionId
+    .trim()
+    .toLowerCase();
+  if (!normalizedRequestedAssetDefinitionId) {
+    return false;
+  }
+  return isApiRequestError(error) && error.status === 404;
+};
+
+const resolveLiveConfidentialAssetDefinitionIdForAccount = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  requestedAssetDefinitionId: string;
+}) => {
+  const assetsResponse = await fetchAccountAssetsList({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    limit: 200,
+  });
+  const candidate = resolveToriiXorAsset(assetsResponse.items, [
+    input.requestedAssetDefinitionId,
+  ]);
+  const resolvedAssetDefinitionId = extractAssetDefinitionId(
+    candidate?.asset_id,
+  ).trim();
+  if (
+    !resolvedAssetDefinitionId ||
+    resolvedAssetDefinitionId.toLowerCase() ===
+      input.requestedAssetDefinitionId.trim().toLowerCase()
+  ) {
+    return "";
+  }
+  return resolvedAssetDefinitionId;
+};
+
+const fetchConfidentialAssetPolicyForAccount = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  assetDefinitionId: string;
+}) => {
+  const requestedAssetDefinitionId =
+    extractAssetDefinitionId(input.assetDefinitionId).trim() ||
+    trimString(input.assetDefinitionId);
+  try {
+    return {
+      policy: await fetchConfidentialAssetPolicy(
+        input.toriiUrl,
+        requestedAssetDefinitionId,
+      ),
+      requestedAssetDefinitionId,
+    };
+  } catch (error) {
+    if (
+      !confidentialPolicyLookupSupportsLiveAssetFallback(
+        error,
+        requestedAssetDefinitionId,
+      )
+    ) {
+      throw error;
+    }
+    const resolvedAssetDefinitionId =
+      await resolveLiveConfidentialAssetDefinitionIdForAccount({
+        toriiUrl: input.toriiUrl,
+        accountId: input.accountId,
+        requestedAssetDefinitionId,
+      });
+    if (!resolvedAssetDefinitionId) {
+      throw error;
+    }
+    return {
+      policy: await fetchConfidentialAssetPolicy(
+        input.toriiUrl,
+        resolvedAssetDefinitionId,
+      ),
+      requestedAssetDefinitionId,
+    };
+  }
 };
 
 const accountTransactionsQuerySupportsCanonicalAuthFallback = (
@@ -2361,13 +2594,17 @@ const hydrateAccountTransactionsWithExplorerDetails = async (input: {
         return transaction;
       }
       try {
-        const detail = await fetchExplorerTransactionDetail(input.toriiUrl, txHash);
+        const detail = await fetchExplorerTransactionDetail(
+          input.toriiUrl,
+          txHash,
+        );
         return {
           ...transaction,
           ...detail,
           entrypoint_hash: txHash,
           result_ok:
-            typeof (transaction as Record<string, unknown>).result_ok === "boolean"
+            typeof (transaction as Record<string, unknown>).result_ok ===
+            "boolean"
               ? (transaction as Record<string, unknown>).result_ok
               : !/^rejected$/i.test(trimString(detail.status)),
         };
@@ -2434,16 +2671,18 @@ const resolveConfidentialAssetBalance = async (input: {
   privateKeyHex: string;
   assetDefinitionId: string;
 }): Promise<ConfidentialAssetBalanceResponse> => {
-  const policy = await fetchConfidentialAssetPolicy(
-    input.toriiUrl,
-    input.assetDefinitionId,
-  );
+  const { policy, requestedAssetDefinitionId } =
+    await fetchConfidentialAssetPolicyForAccount({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      assetDefinitionId: input.assetDefinitionId,
+    });
   const resolvedAssetId =
     extractAssetDefinitionId(
-      trimString(policy.asset_id) || trimString(input.assetDefinitionId),
-    ).trim() || trimString(input.assetDefinitionId);
+      trimString(policy.asset_id) || requestedAssetDefinitionId,
+    ).trim() || requestedAssetDefinitionId;
   const trackedAssetIds = resolveTrackedConfidentialAssetIds({
-    requestedAssetDefinitionId: input.assetDefinitionId,
+    requestedAssetDefinitionId,
     resolvedAssetId,
   });
   const transactions = await hydrateAccountTransactionsWithExplorerDetails({
@@ -2673,18 +2912,20 @@ async function resolvePrivateKaigiConfidentialXorContext(
 ): Promise<
   PrivateKaigiConfidentialXorContext | PrivateKaigiConfidentialXorFeeContext
 > {
-  const policy = await fetchConfidentialAssetPolicy(
-    input.toriiUrl,
-    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
-  );
+  const { policy, requestedAssetDefinitionId } =
+    await fetchConfidentialAssetPolicyForAccount({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    });
   const policyMode = String(
     policy.effective_mode ?? policy.current_mode ?? "",
   ).trim();
   const resolvedAssetId =
     String(policy.asset_id ?? "").trim() ||
-    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID;
+    requestedAssetDefinitionId;
   const trackedAssetIds = [
-    PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    requestedAssetDefinitionId,
     resolvedAssetId,
   ].filter(
     (value, index, items) =>
@@ -3061,18 +3302,17 @@ const api: IrohaBridge = {
     );
 
     if (input.shielded) {
-      const requestedShieldAssetDefinitionId =
-        extractAssetDefinitionId(input.assetDefinitionId).trim() ||
-        trimString(input.assetDefinitionId);
-      const policy = await fetchConfidentialAssetPolicy(
-        input.toriiUrl,
-        requestedShieldAssetDefinitionId,
-      );
+      const { policy, requestedAssetDefinitionId } =
+        await fetchConfidentialAssetPolicyForAccount({
+          toriiUrl: input.toriiUrl,
+          accountId,
+          assetDefinitionId: input.assetDefinitionId,
+        });
       const effectiveMode = policy.effective_mode || policy.current_mode;
       const resolvedAssetId =
         extractAssetDefinitionId(
-          trimString(policy.asset_id) || requestedShieldAssetDefinitionId,
-        ).trim() || requestedShieldAssetDefinitionId;
+          trimString(policy.asset_id) || requestedAssetDefinitionId,
+        ).trim() || requestedAssetDefinitionId;
       if (!confidentialModeSupportsShield(effectiveMode)) {
         throw new Error(
           `Shielded transfer is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,
@@ -3372,8 +3612,14 @@ const api: IrohaBridge = {
     );
     return { hash: submission.hash };
   },
-  getConfidentialAssetPolicy({ toriiUrl, assetDefinitionId }) {
-    return fetchConfidentialAssetPolicy(toriiUrl, assetDefinitionId);
+  async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
+    return (
+      await fetchConfidentialAssetPolicyForAccount({
+        toriiUrl,
+        accountId,
+        assetDefinitionId,
+      })
+    ).policy;
   },
   getConfidentialAssetBalance({
     toriiUrl,
@@ -3722,13 +3968,74 @@ const api: IrohaBridge = {
       "accountId",
       networkPrefix,
     );
-    return requestFaucetFundsWithPuzzle({
-      baseUrl,
-      accountId: normalizedAccountId,
-      networkPrefix,
-      fetchImpl: nodeFetch,
-      onStatus,
-    });
+    const client = getClient(baseUrl);
+
+    for (let attempt = 1; attempt <= FAUCET_CLAIM_MAX_ATTEMPTS; attempt += 1) {
+      const result = await requestFaucetFundsWithPuzzle({
+        baseUrl,
+        accountId: normalizedAccountId,
+        networkPrefix,
+        fetchImpl: nodeFetch,
+        onStatus,
+      });
+      const txHashHex = trimString(result.tx_hash_hex);
+      if (!txHashHex) {
+        return result;
+      }
+
+      const { statusKind, timedOut, lastError } =
+        await waitForFaucetClaimFinality(client, txHashHex);
+      if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
+        try {
+          await onStatus?.({
+            phase: "claimAccepted",
+            attempt,
+            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+            txHashHex,
+          });
+        } catch {
+          // Renderer-side status hooks must not break the faucet request itself.
+        }
+        return {
+          ...result,
+          status: statusKind,
+        };
+      }
+      if (statusKind === "Expired" && attempt < FAUCET_CLAIM_MAX_ATTEMPTS) {
+        let retryStatusSnapshot: StatusSnapshot | null = null;
+        try {
+          retryStatusSnapshot = await client.getStatusSnapshot();
+        } catch {
+          retryStatusSnapshot = null;
+        }
+        const retryDelayMs = readFaucetClaimRetryDelayMs(
+          attempt,
+          retryStatusSnapshot,
+        );
+        try {
+          await onStatus?.({
+            phase: "waitingForClaimRetry",
+            attempt: attempt + 1,
+            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+            txHashHex,
+          });
+        } catch {
+          // Renderer-side status hooks must not break the faucet request itself.
+        }
+        await waitForMs(retryDelayMs);
+        continue;
+      }
+      throw buildFaucetClaimFinalityError(
+        txHashHex,
+        statusKind,
+        timedOut,
+        lastError,
+      );
+    }
+
+    throw new Error(
+      "TAIRA kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
+    );
   },
   async createKaigiMeeting({
     toriiUrl,

@@ -61,7 +61,7 @@ describe("OfflineView move-to-online shield mode", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (assetDefinitionId = "norito:abcdef0123456789") => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -70,7 +70,7 @@ describe("OfflineView move-to-online shield mode", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "norito:abcdef0123456789",
+        assetDefinitionId,
         networkPrefix: 369,
       },
       accounts: [
@@ -149,6 +149,7 @@ describe("OfflineView move-to-online shield mode", () => {
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
+      accountId: ALICE_I105_ACCOUNT_ID,
       assetDefinitionId: "norito:abcdef0123456789",
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
@@ -160,6 +161,45 @@ describe("OfflineView move-to-online shield mode", () => {
     );
     expect(moveSection.text()).toContain(
       t("Shield transfer submitted and offline balance updated."),
+    );
+  });
+
+  it("heals a stale configured asset bucket before the first offline shield move", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValue({
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    transferAssetMock.mockResolvedValue({ hash: "0xhealed" });
+    const wrapper = mountView("5OldBucket1111111111111111111");
+    const session = useSessionStore();
+    await flushPromises();
+
+    expect(session.connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+
+    const moveSection = getMoveSection(wrapper);
+    const amountInput = moveSection.findAll('input[type="text"]')[0];
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    const submitButton = moveSection.get(".actions button");
+
+    await amountInput.setValue("4");
+    await shieldCheckbox.setValue(true);
+    await submitButton.trigger("click");
+    await flushPromises();
+
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+        destinationAccountId: ALICE_I105_ACCOUNT_ID,
+        shielded: true,
+      }),
     );
   });
 
@@ -222,6 +262,23 @@ describe("OfflineView move-to-online shield mode", () => {
         "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
         { message: "service unavailable" },
       ),
+    );
+  });
+
+  it("disables offline shield mode when the configured asset definition is missing", async () => {
+    getConfidentialAssetPolicyMock.mockRejectedValue(
+      new Error(
+        "Confidential asset policy request failed with status 404 (Not Found)",
+      ),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    const moveSection = getMoveSection(wrapper);
+    const shieldCheckbox = moveSection.get('input[type="checkbox"]');
+    expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
+    expect(moveSection.text()).toContain(
+      t("Shield mode is unavailable for the current asset definition."),
     );
   });
 

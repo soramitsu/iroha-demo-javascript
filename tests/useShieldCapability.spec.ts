@@ -41,11 +41,13 @@ describe("useShieldCapability", () => {
 
   it("uses policy mode to keep shielding enabled when supported", async () => {
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("xor#universal");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -53,6 +55,7 @@ describe("useShieldCapability", () => {
 
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
+      accountId: "testuAlice",
       assetDefinitionId: "xor#universal",
     });
     expect(capability.shieldSupported.value).toBe(true);
@@ -77,11 +80,13 @@ describe("useShieldCapability", () => {
       pending_transition: null,
     });
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -106,11 +111,13 @@ describe("useShieldCapability", () => {
       pending_transition: null,
     });
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
       translate: (key, params) =>
@@ -126,11 +133,13 @@ describe("useShieldCapability", () => {
   it("keeps shielding available and reports errors when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(new Error("timeout"));
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -146,6 +155,32 @@ describe("useShieldCapability", () => {
     expect(shielded.value).toBe(true);
   });
 
+  it("disables shielding when the current asset definition is missing on the policy route", async () => {
+    getConfidentialAssetPolicyMock.mockRejectedValue(
+      new Error(
+        "Confidential asset policy request failed with status 404 (Not Found)",
+      ),
+    );
+    const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
+    const assetDefinitionId = ref("xor#universal");
+    const shielded = ref(true);
+
+    const capability = useShieldCapability({
+      toriiUrl,
+      accountId,
+      assetDefinitionId,
+      shielded,
+    });
+    await flushReactiveEffects();
+
+    expect(capability.shieldSupported.value).toBe(false);
+    expect(capability.shieldCapabilityMessage.value).toBe(
+      "Shield mode is unavailable for the current asset definition.",
+    );
+    expect(shielded.value).toBe(false);
+  });
+
   it("sanitizes unreadable policy-check errors before exposing them", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error(
@@ -153,11 +188,13 @@ describe("useShieldCapability", () => {
       ),
     );
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -173,11 +210,13 @@ describe("useShieldCapability", () => {
 
   it("does not fetch policy when torii url or asset definition is missing", async () => {
     const toriiUrl = ref("");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(false);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -191,6 +230,50 @@ describe("useShieldCapability", () => {
     toriiUrl.value = "http://localhost:8080";
     await flushReactiveEffects();
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch policy when account id is missing", async () => {
+    const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("");
+    const assetDefinitionId = ref("norito:abcdef0123456789");
+    const shielded = ref(false);
+
+    const capability = useShieldCapability({
+      toriiUrl,
+      accountId,
+      assetDefinitionId,
+      shielded,
+    });
+    await flushReactiveEffects();
+
+    expect(getConfidentialAssetPolicyMock).not.toHaveBeenCalled();
+    expect(capability.shieldCapabilityReady.value).toBe(true);
+
+    accountId.value = "testuAlice";
+    await flushReactiveEffects();
+
+    expect(getConfidentialAssetPolicyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports resolved asset ids to callers so session state can heal", async () => {
+    const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
+    const assetDefinitionId = ref("xor#universal");
+    const shielded = ref(false);
+    const onResolvedAssetDefinitionId = vi.fn();
+
+    useShieldCapability({
+      toriiUrl,
+      accountId,
+      assetDefinitionId,
+      shielded,
+      onResolvedAssetDefinitionId,
+    });
+    await flushReactiveEffects();
+
+    expect(onResolvedAssetDefinitionId).toHaveBeenCalledWith(
+      "norito:abcdef0123456789",
+    );
   });
 
   it("ignores stale policy responses after connection changes", async () => {
@@ -219,11 +302,13 @@ describe("useShieldCapability", () => {
       .mockImplementationOnce(() => second.promise);
 
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });
@@ -292,11 +377,13 @@ describe("useShieldCapability", () => {
       .mockImplementationOnce(() => second.promise);
 
     const toriiUrl = ref("http://localhost:8080");
+    const accountId = ref("testuAlice");
     const assetDefinitionId = ref("norito:abcdef0123456789");
     const shielded = ref(true);
 
     const capability = useShieldCapability({
       toriiUrl,
+      accountId,
       assetDefinitionId,
       shielded,
     });

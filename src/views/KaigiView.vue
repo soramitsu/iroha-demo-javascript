@@ -2404,14 +2404,18 @@ onBeforeUnmount(() => {
 
 .kaigi-host-modal-backdrop {
   position: fixed;
-  inset: 0;
+  inset: 16px;
   z-index: 30;
   display: grid;
   place-items: center;
   padding: 24px;
+  border-radius: 32px;
   background: color-mix(in srgb, var(--surface-base) 42%, transparent);
   backdrop-filter: blur(18px) saturate(145%);
   -webkit-backdrop-filter: blur(18px) saturate(145%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--glass-border) 72%, transparent),
+    0 22px 48px color-mix(in srgb, #000 24%, transparent);
 }
 
 .kaigi-host-modal {

@@ -107,16 +107,6 @@
       <p class="helper">
         {{
           t(
-            "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-            {
-              example: t("Example I105 Account ID"),
-            },
-          )
-        }}
-      </p>
-      <p class="helper">
-        {{
-          t(
             "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
             {
               domain: t("default"),

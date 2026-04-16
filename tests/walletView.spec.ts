@@ -48,6 +48,10 @@ describe("WalletView", () => {
     requestFaucetFundsMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     transferAssetMock.mockReset();
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
     fetchAccountTransactionsMock.mockResolvedValue({
       items: [],
       total: 0,
@@ -59,16 +63,18 @@ describe("WalletView", () => {
       spendableQuantity: "0",
       exact: true,
     });
-    getConfidentialAssetPolicyMock.mockResolvedValue({
-      asset_id: "xor#universal",
-      block_height: 1,
-      current_mode: "Convertible",
-      effective_mode: "Convertible",
-      vk_set_hash: null,
-      poseidon_params_id: null,
-      pedersen_params_id: null,
-      pending_transition: null,
-    });
+    getConfidentialAssetPolicyMock.mockImplementation(
+      async (input: { assetDefinitionId?: string }) => ({
+        asset_id: String(input?.assetDefinitionId ?? "xor#universal"),
+        block_height: 1,
+        current_mode: "Convertible",
+        effective_mode: "Convertible",
+        vk_set_hash: null,
+        poseidon_params_id: null,
+        pedersen_params_id: null,
+        pending_transition: null,
+      }),
+    );
     setActivePinia(createPinia());
   });
 
@@ -193,7 +199,7 @@ describe("WalletView", () => {
   });
 
   it("shows on-chain shielded xor balance derived from committed history", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
+    fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
           asset_id: "xor#universal##alice@wonderland",
@@ -239,7 +245,7 @@ describe("WalletView", () => {
       ],
       total: 2,
     });
-    getConfidentialAssetBalanceMock.mockResolvedValueOnce({
+    getConfidentialAssetBalanceMock.mockResolvedValue({
       resolvedAssetId: "xor#universal",
       quantity: "9",
       onChainQuantity: "9",
@@ -257,7 +263,7 @@ describe("WalletView", () => {
   });
 
   it("keeps the faucet action ahead of shielding controls in the wallet summary", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
+    fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
           asset_id: "xor#universal##alice@wonderland",
@@ -322,7 +328,7 @@ describe("WalletView", () => {
   });
 
   it("shows the shielded-note warning when wallet balance is inexact", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
+    fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
           asset_id: "xor#universal##alice@wonderland",
@@ -331,7 +337,7 @@ describe("WalletView", () => {
       ],
       total: 1,
     });
-    getConfidentialAssetBalanceMock.mockResolvedValueOnce({
+    getConfidentialAssetBalanceMock.mockResolvedValue({
       resolvedAssetId: "xor#universal",
       quantity: "4",
       onChainQuantity: null,
@@ -536,6 +542,45 @@ describe("WalletView", () => {
     expect(wrapper.get(".wallet-balance-asset").text()).toBe("xor#universal");
   });
 
+  it("replaces a stale configured asset definition with the live detected bucket", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
+
+    mountView("xor#universal");
+    await flushPromises();
+
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+  });
+
+  it("heals a stale canonical asset bucket from the shield policy preflight", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValueOnce({
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+
+    mountView("5OldBucket1111111111111111111");
+    await flushPromises();
+
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+  });
+
   it("keeps the faucet action enabled while wallet refresh is still loading", async () => {
     let resolveAssets: (value: {
       items: Array<{ asset_id: string; quantity: string }>;
@@ -567,7 +612,7 @@ describe("WalletView", () => {
     const fundedAssets = {
       items: [
         {
-          asset_id: "norito:abcdef0123456789",
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
           quantity: "25000",
         },
       ],
@@ -583,7 +628,7 @@ describe("WalletView", () => {
     requestFaucetFundsMock.mockResolvedValue({
       account_id: "alice@wonderland",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      asset_id: "norito:abcdef0123456789",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
       tx_hash_hex: "0xabc",
       status: "QUEUED",
@@ -615,10 +660,9 @@ describe("WalletView", () => {
       t("Testnet XOR requested: {hash}", { hash: "0xabc" }),
     );
     expect(wrapper.text()).toContain(
-      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+      formatAssetDefinitionLabel("61CtjvNd9T3THAR65GsMVHr82Bjc"),
     );
     expect(wrapper.text()).toContain("25000");
-    expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
   });
 
   it("falls back to the funded asset reference when faucet omits the definition id", async () => {
@@ -661,6 +705,39 @@ describe("WalletView", () => {
     );
   });
 
+  it("replaces a stale configured asset definition from the faucet response before balances refresh", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValue({
+        items: [],
+        total: 0,
+      });
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "alice@wonderland",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "QUEUED",
+    });
+
+    const wrapper = mountView("xor#universal");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+  });
+
   it("uses the TAIRA i105 literal for faucet requests when stored ids are stale", async () => {
     fetchAccountAssetsMock
       .mockResolvedValueOnce({
@@ -674,7 +751,7 @@ describe("WalletView", () => {
     requestFaucetFundsMock.mockResolvedValue({
       account_id: "testuLegacyVisibleAccount1234567890",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      asset_id: "norito:abcdef0123456789",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
       tx_hash_hex: "0xabc",
       status: "QUEUED",
@@ -733,7 +810,7 @@ describe("WalletView", () => {
     const fundedAssets = {
       items: [
         {
-          asset_id: "norito:abcdef0123456789",
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
           quantity: "25000",
         },
       ],
@@ -776,7 +853,7 @@ describe("WalletView", () => {
     resolveFaucet({
       account_id: "alice@wonderland",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      asset_id: "norito:abcdef0123456789",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
       tx_hash_hex: "0xabc",
       status: "QUEUED",
@@ -793,7 +870,7 @@ describe("WalletView", () => {
     const fundedAssets = {
       items: [
         {
-          asset_id: "norito:abcdef0123456789",
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
           quantity: "25000",
         },
       ],
@@ -816,7 +893,7 @@ describe("WalletView", () => {
     requestFaucetFundsMock.mockResolvedValue({
       account_id: "alice@wonderland",
       asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      asset_id: "norito:abcdef0123456789",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
       amount: "25000",
       tx_hash_hex: "0xabc",
       status: "QUEUED",
@@ -836,10 +913,43 @@ describe("WalletView", () => {
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(4);
     expect(wrapper.text()).toContain(
-      formatAssetDefinitionLabel("norito:abcdef0123456789"),
+      formatAssetDefinitionLabel("61CtjvNd9T3THAR65GsMVHr82Bjc"),
     );
     expect(wrapper.text()).toContain("25000");
-    expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
+  });
+
+  it("shows an indexing fallback message when the funded asset is not visible yet", async () => {
+    vi.useFakeTimers();
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "alice@wonderland",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "Committed",
+    });
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .trigger("click");
+    await flushPromises();
+    await vi.advanceTimersByTimeAsync(4_500);
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t(
+        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+      ),
+    );
   });
 
   it("shows a wallet error when local-only accounts are not live on-chain yet", async () => {

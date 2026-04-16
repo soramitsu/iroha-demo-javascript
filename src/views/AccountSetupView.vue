@@ -44,16 +44,6 @@
             <p class="meta-value mono">
               {{ generatedVisibleAccountId || t("Not created yet") }}
             </p>
-            <p class="helper meta-sub">
-              {{
-                t(
-                  "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-                  {
-                    example: t("Example I105 Account ID"),
-                  },
-                )
-              }}
-            </p>
           </div>
         </section>
       </aside>

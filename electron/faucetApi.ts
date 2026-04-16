@@ -16,6 +16,7 @@ export type FaucetRequestPhase =
   | "waitingForPuzzleRetry"
   | "solvingPuzzle"
   | "submittingClaim"
+  | "waitingForClaimRetry"
   | "claimAccepted";
 
 export type FaucetRequestProgress = {
@@ -184,12 +185,6 @@ export const requestFaucetFundsWithPuzzle = async ({
       throw new Error(`Faucet request failed (${response.status}): ${message}`);
     }
     const payload = (await response.json()) as AccountFaucetResponse;
-    await emitStatus(onStatus, {
-      phase: "claimAccepted",
-      attempt,
-      attempts: retryAttempts,
-      txHashHex: payload.tx_hash_hex,
-    });
     return payload;
   }
 

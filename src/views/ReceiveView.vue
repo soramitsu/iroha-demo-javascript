@@ -20,16 +20,6 @@
             shareAccountId || t("Configure account first")
           }}</span>
         </div>
-        <p v-if="shareAccountId" class="helper">
-          {{
-            t(
-              "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-              {
-                example: t("Example I105 Account ID"),
-              },
-            )
-          }}
-        </p>
         <label v-if="activeAccountId" class="receive-amount">
           {{ t("Amount") }}
           <input

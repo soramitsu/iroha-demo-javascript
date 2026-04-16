@@ -5,9 +5,11 @@ import { sanitizeErrorMessage } from "@/utils/errorMessage";
 
 interface UseShieldCapabilityInput {
   toriiUrl: Ref<string>;
+  accountId: Ref<string>;
   assetDefinitionId: Ref<string>;
   shielded: Ref<boolean>;
   translate?: (key: string, params?: Record<string, string | number>) => string;
+  onResolvedAssetDefinitionId?: (assetDefinitionId: string) => void;
 }
 
 const fallbackTranslate = (
@@ -22,9 +24,11 @@ const fallbackTranslate = (
 
 export const useShieldCapability = ({
   toriiUrl,
+  accountId,
   assetDefinitionId,
   shielded,
   translate = fallbackTranslate,
+  onResolvedAssetDefinitionId,
 }: UseShieldCapabilityInput) => {
   const shieldCapabilityReady = ref(false);
   const shieldSupported = ref(true);
@@ -42,8 +46,13 @@ export const useShieldCapability = ({
     shieldSupported.value = true;
 
     const normalizedToriiUrl = toriiUrl.value.trim();
+    const normalizedAccountId = accountId.value.trim();
     const normalizedAssetDefinitionId = assetDefinitionId.value.trim();
-    if (!normalizedToriiUrl || !normalizedAssetDefinitionId) {
+    if (
+      !normalizedToriiUrl ||
+      !normalizedAccountId ||
+      !normalizedAssetDefinitionId
+    ) {
       shieldCapabilityReady.value = true;
       return;
     }
@@ -51,13 +60,18 @@ export const useShieldCapability = ({
     try {
       const policy = await getConfidentialAssetPolicy({
         toriiUrl: normalizedToriiUrl,
+        accountId: normalizedAccountId,
         assetDefinitionId: normalizedAssetDefinitionId,
       });
       if (revision !== refreshRevision) {
         return;
       }
-      shieldResolvedAssetId.value =
+      const resolvedAssetDefinitionId =
         String(policy.asset_id ?? "").trim() || normalizedAssetDefinitionId;
+      shieldResolvedAssetId.value = resolvedAssetDefinitionId;
+      if (resolvedAssetDefinitionId) {
+        onResolvedAssetDefinitionId?.(resolvedAssetDefinitionId);
+      }
       const effectiveMode = policy.effective_mode || policy.current_mode;
       shieldPolicyMode.value = effectiveMode;
       shieldCapabilityReady.value = true;
@@ -74,9 +88,20 @@ export const useShieldCapability = ({
         return;
       }
       shieldCapabilityReady.value = true;
-      shieldSupported.value = true;
       const message =
         error instanceof Error ? sanitizeErrorMessage(error.message) : "";
+      const policyMissingForAsset =
+        /\bstatus 404\b/i.test(message) ||
+        /\b404\b[^(]*\(\s*not found\s*\)/i.test(message);
+      if (policyMissingForAsset) {
+        shieldSupported.value = false;
+        shielded.value = false;
+        shieldCapabilityMessage.value = translate(
+          "Shield mode is unavailable for the current asset definition.",
+        );
+        return;
+      }
+      shieldSupported.value = true;
       shieldCapabilityMessage.value =
         message
           ? translate(
@@ -90,7 +115,7 @@ export const useShieldCapability = ({
   };
 
   watch(
-    () => [toriiUrl.value, assetDefinitionId.value],
+    () => [toriiUrl.value, accountId.value, assetDefinitionId.value],
     () => {
       void refreshShieldCapability();
     },

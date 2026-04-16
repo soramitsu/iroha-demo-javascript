@@ -173,16 +173,29 @@
         </span>
         <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
       </p>
-      <p v-if="visibleAccountId" class="helper">
-        {{
-          t(
-            "Use the real TAIRA I105 literal, for example {example}. Do not use @domain, legacy compatibility literals, or i105: forms.",
-            {
-              example: t("Example I105 Account ID"),
-            },
-          )
-        }}
-      </p>
+      <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
+        <div
+          class="card wallet-faucet-modal"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          aria-busy="true"
+        >
+          <span class="wallet-faucet-spinner" aria-hidden="true"></span>
+          <p class="wallet-faucet-modal-label">
+            {{ t("Faucet request in progress") }}
+          </p>
+          <h2 id="wallet-faucet-modal-title" class="wallet-faucet-modal-title">
+            {{ faucetStatusMessage }}
+          </h2>
+          <p
+            id="wallet-faucet-modal-detail"
+            class="helper wallet-faucet-modal-detail"
+          >
+            {{ faucetStatusDetail }}
+          </p>
+        </div>
+      </div>
     </section>
 
     <section class="card wallet-transactions-card">
@@ -220,30 +233,6 @@
         <p class="helper">{{ t("Latest Transactions") }}</p>
       </div>
     </section>
-
-    <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
-      <div
-        class="card wallet-faucet-modal"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-busy="true"
-      >
-        <span class="wallet-faucet-spinner" aria-hidden="true"></span>
-        <p class="wallet-faucet-modal-label">
-          {{ t("Faucet request in progress") }}
-        </p>
-        <h2 id="wallet-faucet-modal-title" class="wallet-faucet-modal-title">
-          {{ faucetStatusMessage }}
-        </h2>
-        <p
-          id="wallet-faucet-modal-detail"
-          class="helper wallet-faucet-modal-detail"
-        >
-          {{ faucetStatusDetail }}
-        </p>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -276,6 +265,7 @@ import {
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
   resolveToriiXorAsset,
+  shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
@@ -315,9 +305,16 @@ const {
   shieldResolvedAssetId: shieldedXorResolvedAssetId,
 } = useShieldCapability({
   toriiUrl: toRef(session.connection, "toriiUrl"),
+  accountId: requestAccountId,
   assetDefinitionId: configuredShieldAssetDefinitionId,
   shielded: walletShieldEnabled,
   translate: t,
+  onResolvedAssetDefinitionId: (resolvedAssetDefinitionId) => {
+    updateConfiguredAssetDefinitionIdFromLiveEvidence(
+      resolvedAssetDefinitionId,
+      [resolvedAssetDefinitionId],
+    );
+  },
 });
 
 type AccountTx = AccountTransactionsResponse["items"][number] &
@@ -363,6 +360,32 @@ const formatDate = (timestamp?: number) => {
   }).format(new Date(timestamp));
 };
 
+function updateConfiguredAssetDefinitionIdFromLiveEvidence(
+  detectedAssetDefinitionId: string | null | undefined,
+  knownAssetIds: Array<string | null | undefined> = [],
+) {
+  const normalizedDetectedAssetDefinitionId = extractAssetDefinitionId(
+    detectedAssetDefinitionId,
+  ).trim();
+  if (
+    !normalizedDetectedAssetDefinitionId ||
+    !shouldReplaceConfiguredAssetDefinitionId({
+      configuredAssetDefinitionId: session.connection.assetDefinitionId,
+      detectedAssetDefinitionId: normalizedDetectedAssetDefinitionId,
+      knownAssetIds,
+    })
+  ) {
+    return false;
+  }
+  session.$patch({
+    connection: {
+      ...session.connection,
+      assetDefinitionId: normalizedDetectedAssetDefinitionId,
+    },
+  });
+  return true;
+}
+
 const resetWalletState = () => {
   assets.value = [];
   transactionsRaw.value = [];
@@ -381,6 +404,8 @@ const faucetStatusMessage = computed(() => {
       return t("Solving faucet proof-of-work…");
     case "submittingClaim":
       return t("Submitting faucet claim…");
+    case "waitingForClaimRetry":
+      return t("Retrying faucet claim after queue expiry…");
     case "claimAccepted":
       return t("Faucet claim accepted. Updating wallet…");
     case "refreshingWallet":
@@ -390,11 +415,17 @@ const faucetStatusMessage = computed(() => {
   }
 });
 
-const faucetStatusDetail = computed(() =>
-  faucetStatusPhase.value === "refreshingWallet"
-    ? t("Waiting for TAIRA to expose the funded asset in account balances.")
-    : t("Your TAIRA faucet request is in flight. This can take a few seconds."),
-);
+const faucetStatusDetail = computed(() => {
+  if (faucetStatusPhase.value === "refreshingWallet") {
+    return t("Waiting for TAIRA to expose the funded asset in account balances.");
+  }
+  if (faucetStatusPhase.value === "waitingForClaimRetry") {
+    return t(
+      "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
+    );
+  }
+  return t("Your TAIRA faucet request is in flight. This can take a few seconds.");
+});
 
 const fetchAllAccountTransactions = async (input: {
   toriiUrl: string;
@@ -475,13 +506,18 @@ const refresh = async () => {
     const confidentialAssetDefinitionId = extractAssetDefinitionId(
       detectedShieldAsset?.asset_id ?? configuredAssetDefinitionId,
     ).trim();
+    updateConfiguredAssetDefinitionIdFromLiveEvidence(
+      confidentialAssetDefinitionId,
+      assetItems.map((asset) => asset.asset_id),
+    );
     const shouldFetchConfidentialBalance = Boolean(
       confidentialAssetDefinitionId &&
         (!accountWasLocalOnly || assetItems.length || txItems.length),
     );
     let confidentialBalance: ConfidentialAssetBalanceView = {
       resolvedAssetId:
-        confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
+        confidentialAssetDefinitionId ||
+        configuredShieldAssetDefinitionId.value,
       quantity: "0",
       onChainQuantity: "0",
       spendableQuantity: "0",
@@ -587,13 +623,22 @@ const requestStarterFunds = async () => {
         faucetStatusPhase.value = progress.phase;
       },
     );
+    const fundedAssetDefinitionId =
+      result.asset_definition_id.trim() ||
+      extractAssetDefinitionId(result.asset_id).trim() ||
+      result.asset_id.trim();
     if (shouldConfigureAsset) {
-      session.updateConnection({
-        assetDefinitionId:
-          result.asset_definition_id.trim() ||
-          extractAssetDefinitionId(result.asset_id).trim() ||
-          result.asset_id.trim(),
+      session.$patch({
+        connection: {
+          ...session.connection,
+          assetDefinitionId: fundedAssetDefinitionId,
+        },
       });
+    } else {
+      updateConfiguredAssetDefinitionIdFromLiveEvidence(
+        fundedAssetDefinitionId,
+        [result.asset_definition_id, result.asset_id],
+      );
     }
     session.updateActiveAccount({ localOnly: false });
     faucetStatusPhase.value = "claimAccepted";
@@ -603,6 +648,9 @@ const requestStarterFunds = async () => {
     const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);
     if (!balanceVisible) {
       faucetError.value = "";
+      faucetMessage.value = t(
+        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+      );
     }
   } catch (error) {
     faucetError.value = toUserFacingErrorMessage(
@@ -1065,6 +1113,7 @@ watch(
   display: grid;
   place-items: center;
   padding: 24px;
+  border-radius: inherit;
   pointer-events: none;
   background: color-mix(in srgb, var(--surface-base) 40%, transparent);
   backdrop-filter: blur(18px) saturate(140%);

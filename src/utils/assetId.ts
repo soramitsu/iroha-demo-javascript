@@ -132,6 +132,37 @@ export const decodeNoritoAssetDefinitionId = (
   return encodeBase58(payload);
 };
 
+const normalizeComparableAssetDefinitionId = (
+  value: string | null | undefined,
+) => {
+  const definitionId = extractAssetDefinitionId(value).trim();
+  if (!definitionId) {
+    return "";
+  }
+  return (
+    decodeNoritoAssetDefinitionId(definitionId)?.trim().toLowerCase() ||
+    definitionId.toLowerCase()
+  );
+};
+
+export const areAssetDefinitionIdsEquivalent = (
+  left: string | null | undefined,
+  right: string | null | undefined,
+) => {
+  const normalizedLeft = extractAssetDefinitionId(left).trim();
+  const normalizedRight = extractAssetDefinitionId(right).trim();
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+  if (normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()) {
+    return true;
+  }
+  return (
+    normalizeComparableAssetDefinitionId(normalizedLeft) ===
+    normalizeComparableAssetDefinitionId(normalizedRight)
+  );
+};
+
 const shortenOpaqueAssetLiteral = (value: string) => {
   const literal = value.trim();
   if (!literal) {
@@ -285,6 +316,49 @@ export const resolveToriiXorAsset = (
     .filter((entry) => entry.isPositive)
     .sort((left, right) => right.score - left.score || left.index - right.index)[0];
   return positiveAsset?.asset ?? rankedAssets[0]?.asset ?? null;
+};
+
+export const shouldReplaceConfiguredAssetDefinitionId = (input: {
+  configuredAssetDefinitionId: string | null | undefined;
+  detectedAssetDefinitionId: string | null | undefined;
+  knownAssetIds?: Array<string | null | undefined>;
+}) => {
+  const configured = extractAssetDefinitionId(
+    input.configuredAssetDefinitionId,
+  ).trim();
+  const detected = extractAssetDefinitionId(
+    input.detectedAssetDefinitionId,
+  ).trim();
+  if (!detected) {
+    return false;
+  }
+
+  if (areAssetDefinitionIdsEquivalent(configured, detected)) {
+    return false;
+  }
+  if (!configured) {
+    return true;
+  }
+
+  const configuredLooksLegacy = configured.includes("#");
+  const comparableConfigured = normalizeComparableAssetDefinitionId(configured);
+  const comparableDetected = normalizeComparableAssetDefinitionId(detected);
+  const knownAssetDefinitionIds = new Set(
+    (input.knownAssetIds ?? [])
+      .map((value) => normalizeComparableAssetDefinitionId(value))
+      .filter(Boolean),
+  );
+  if (knownAssetDefinitionIds.size > 0) {
+    if (!knownAssetDefinitionIds.has(comparableDetected)) {
+      return false;
+    }
+    if (configuredLooksLegacy) {
+      return true;
+    }
+    return !knownAssetDefinitionIds.has(comparableConfigured);
+  }
+
+  return configuredLooksLegacy;
 };
 
 export const formatOpaqueAssetLiteralsInText = (

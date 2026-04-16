@@ -224,6 +224,7 @@ export type FaucetRequestPhase =
   | "waitingForPuzzleRetry"
   | "solvingPuzzle"
   | "submittingClaim"
+  | "waitingForClaimRetry"
   | "claimAccepted";
 
 export interface FaucetRequestProgress {
@@ -520,6 +521,7 @@ export interface IrohaBridge {
   }): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
+    accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
   getConfidentialAssetBalance(input: {
