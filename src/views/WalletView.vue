@@ -399,6 +399,7 @@ const faucetStatusDetail = computed(() =>
 const fetchAllAccountTransactions = async (input: {
   toriiUrl: string;
   accountId: string;
+  privateKeyHex?: string;
 }): Promise<AccountTx[]> => {
   const items: AccountTx[] = [];
   let offset = 0;
@@ -408,6 +409,7 @@ const fetchAllAccountTransactions = async (input: {
     const response = await fetchAccountTransactions({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
       limit: ACCOUNT_TRANSACTION_PAGE_SIZE,
       offset,
     });
@@ -458,6 +460,7 @@ const refresh = async () => {
       fetchAllAccountTransactions({
         toriiUrl,
         accountId,
+        privateKeyHex,
       }),
     ]);
     const configuredAssetDefinitionId = extractAssetDefinitionId(

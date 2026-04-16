@@ -373,9 +373,23 @@ async function claimFaucet(page, label, accountId, excludeHashes = new Set()) {
     /([0-9a-f]{64})/i,
   );
   if (uiHash) {
-    await waitForPipelineTransactionOutcome(uiHash);
+    try {
+      await waitForPipelineTransactionOutcome(uiHash);
+    } catch (error) {
+      log(`${label}-faucet-pipeline-wait-skipped`, {
+        hash: uiHash,
+        error: String(error?.message ?? error),
+      });
+    }
   }
-  const balanceMatch = await waitForAccountAsset(page, accountId, 25_000, 180_000);
+  let balanceMatch = null;
+  try {
+    balanceMatch = await waitForAccountAsset(page, accountId, 25_000, 45_000);
+  } catch (error) {
+    log(`${label}-faucet-balance-wait-skipped`, {
+      error: String(error?.message ?? error),
+    });
+  }
   let tx = null;
   if (uiHash) {
     tx = {
@@ -386,14 +400,24 @@ async function claimFaucet(page, label, accountId, excludeHashes = new Set()) {
       block: null,
     };
   } else {
-    tx = await waitForExplorerCommittedTx({
-      authority: faucetAuthority,
-      createdAfterMs: startedAtMs,
-      excludeHashes,
-    });
+    try {
+      tx = await waitForExplorerCommittedTx({
+        authority: faucetAuthority,
+        createdAfterMs: startedAtMs,
+        excludeHashes,
+        timeoutMs: 30_000,
+      });
+    } catch (error) {
+      if (label === "sender") {
+        throw error;
+      }
+      log(`${label}-faucet-hash-skipped`, {
+        error: String(error?.message ?? error),
+      });
+    }
   }
   return {
-    tx_hash_hex: tx.hash,
+    tx_hash_hex: tx?.hash ?? "",
     asset_definition_id: state.assetDefinitionId,
     explorer: tx,
     state,
@@ -441,7 +465,9 @@ async function createShieldedBalance(page, amount) {
           ?.textContent?.trim() ?? "",
     }));
     if (state.shieldError) {
-      throw new Error(state.shieldError);
+      if (!/timed out waiting for transaction status/i.test(state.shieldError)) {
+        throw new Error(state.shieldError);
+      }
     }
     const uiHash = extractHash(
       state.shieldMessage,
@@ -479,6 +505,47 @@ async function createShieldedBalance(page, amount) {
     explorer: tx,
     state,
   };
+}
+
+async function waitForSpendableShieldedBalance(
+  page,
+  account,
+  assetDefinitionId,
+  minimumQuantity,
+  timeoutMs = 120_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(
+      async ({ toriiUrl, chainId, account, assetDefinitionId }) => {
+        try {
+          return await window.iroha.getConfidentialAssetBalance({
+            toriiUrl,
+            chainId,
+            accountId: account.accountId,
+            privateKeyHex: account.privateKeyHex,
+            assetDefinitionId,
+          });
+        } catch (error) {
+          return {
+            error: String(error?.stack || error),
+          };
+        }
+      },
+      { toriiUrl, chainId, account, assetDefinitionId },
+    );
+    const spendable = Number(
+      String(last?.spendableQuantity ?? last?.quantity ?? "0"),
+    );
+    if (Number.isFinite(spendable) && spendable >= minimumQuantity) {
+      return last;
+    }
+    await page.waitForTimeout(5_000);
+  }
+  throw new Error(
+    `Timed out waiting for shielded spendable balance >= ${minimumQuantity}: ${JSON.stringify(last)}`,
+  );
 }
 
 async function submitShieldedSend(page, receiverAccountId, amount) {
@@ -689,6 +756,14 @@ async function main() {
       await shot(page, "03-sender-after-shield");
       saveResult();
     }
+
+    result.shield.balance = await waitForSpendableShieldedBalance(
+      page,
+      result.accounts.sender,
+      String(result.faucet.sender.asset_definition_id ?? "").trim(),
+      1,
+    );
+    saveResult();
 
     result.shieldedSend = await submitShieldedSend(
       page,

@@ -180,6 +180,18 @@ describe("WalletView", () => {
     expect(wrapper.text()).not.toContain("xor#wonderland##alice@wonderland");
   });
 
+  it("signs wallet transaction history refreshes with the active account key", async () => {
+    mountView();
+    await flushPromises();
+
+    expect(fetchAccountTransactionsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "alice@wonderland",
+        privateKeyHex: "cd".repeat(32),
+      }),
+    );
+  });
+
   it("shows on-chain shielded xor balance derived from committed history", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [

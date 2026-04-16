@@ -17,6 +17,11 @@ const jsonResponse = (body: unknown, status = 200) => ({
   text: async () => JSON.stringify(body),
 });
 
+const ALICE_ACCOUNT_ID =
+  "testuロ1PクCカrムhyワエトhウヤSqP2GFGラヱミケヌマzヘオミMヌヨトksJヱRRJXVB";
+const BOB_ACCOUNT_ID =
+  "testuロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
+
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
   normalizeCanonicalAccountIdLiteralMock: vi.fn(),
@@ -139,7 +144,10 @@ vi.mock("../electron/faucetApi", () => ({
     mocks.requestFaucetFundsWithPuzzleMock(input, onStatus),
 }));
 
-vi.mock("@iroha/iroha-js", () => {
+vi.mock("@iroha/iroha-js", async () => {
+  const actual = await vi.importActual<typeof import("@iroha/iroha-js")>(
+    "@iroha/iroha-js",
+  );
   class MockToriiClient {
     baseUrl: string;
     options: unknown;
@@ -175,17 +183,8 @@ vi.mock("@iroha/iroha-js", () => {
   }
 
   return {
+    ...actual,
     ToriiClient: MockToriiClient,
-    AccountAddress: {
-      parseEncoded: vi.fn(() => ({
-        address: {
-          _controller: {
-            publicKey: Buffer.alloc(32, 0x21),
-          },
-          canonicalBytes: () => Buffer.alloc(0),
-        },
-      })),
-    },
     buildShieldTransaction: mocks.buildShieldTransactionMock,
     buildZkTransferTransaction: mocks.buildZkTransferTransactionMock,
     buildCreateKaigiTransaction: mocks.buildCreateKaigiTransactionMock,
@@ -207,7 +206,12 @@ vi.mock("@iroha/iroha-js", () => {
   };
 });
 
-vi.mock("@iroha/iroha-js/crypto", () => ({
+vi.mock("@iroha/iroha-js/crypto", async () => {
+  const actual = await vi.importActual<typeof import("@iroha/iroha-js/crypto")>(
+    "@iroha/iroha-js/crypto",
+  );
+  return {
+    ...actual,
   buildKaigiRosterJoinProof: (input: unknown) =>
     mocks.buildKaigiRosterJoinProofMock(
       input as { rosterRootHex?: string | null } | undefined,
@@ -216,8 +220,8 @@ vi.mock("@iroha/iroha-js/crypto", () => ({
     publicKey: Buffer.alloc(32, 0x21),
     privateKey: Buffer.alloc(32, 0x34),
   })),
-  publicKeyFromPrivate: vi.fn(() => Buffer.alloc(32, 0x56)),
-}));
+  };
+});
 
 const loadBridge = async () => {
   mocks.exposedApi = null;
@@ -239,6 +243,10 @@ const loadBridge = async () => {
     selfShieldPrivateKaigiXor: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    transferAsset: (input: Record<string, unknown>) => Promise<{ hash: string }>;
+    getConfidentialAssetBalance: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     requestFaucetFunds: (
       input: Record<string, unknown>,
       onStatus?: (progress: unknown) => void,
@@ -250,6 +258,7 @@ describe("preload Kaigi bridge", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-29T12:00:00.000Z"));
+    globalThis.localStorage?.clear();
     mocks.normalizeCanonicalAccountIdLiteralMock.mockReset();
     mocks.normalizeCompatAccountIdLiteralMock.mockReset();
     mocks.requestFaucetFundsWithPuzzleMock.mockReset();
@@ -302,13 +311,13 @@ describe("preload Kaigi bridge", () => {
         {
           entrypoint_hash: "tx-1",
           result_ok: true,
-          authority: "sora:alice",
+          authority: ALICE_ACCOUNT_ID,
           instructions: [
             {
               zk: {
                 Shield: {
                   asset: "xor#universal",
-                  from: "sora:alice",
+                  from: ALICE_ACCOUNT_ID,
                   amount: "5",
                 },
               },
@@ -336,6 +345,10 @@ describe("preload Kaigi bridge", () => {
       },
       record: {
         circuit_id: "halo2/ipa:tiny-add",
+        inline_key: {
+          backend: "halo2/ipa",
+          bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
+        },
       },
       inline_key: {
         backend: "halo2/ipa",
@@ -397,6 +410,19 @@ describe("preload Kaigi bridge", () => {
             total: 1,
           });
         }
+        if (
+          method === "GET" &&
+          href.includes("/v1/explorer/transactions/")
+        ) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Failed to process query",
+              status: 404,
+            },
+            404,
+          );
+        }
         throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
       },
     );
@@ -404,6 +430,7 @@ describe("preload Kaigi bridge", () => {
 
   afterEach(() => {
     mocks.exposedApi = null;
+    globalThis.localStorage?.clear();
     vi.useRealTimers();
     vi.resetModules();
   });
@@ -461,7 +488,7 @@ describe("preload Kaigi bridge", () => {
       bridge.createKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
         chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        hostAccountId: "sora:alice",
+        hostAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         callId: "wonderland:kaigi-private-room",
         title: "Private Room",
@@ -537,7 +564,7 @@ describe("preload Kaigi bridge", () => {
       bridge.joinKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
         chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        participantAccountId: "sora:alice",
+        participantAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "22".repeat(32),
         callId: "wonderland:kaigi-private-room",
         hostAccountId: "sora:host",
@@ -605,7 +632,7 @@ describe("preload Kaigi bridge", () => {
       bridge.endKaigiMeeting({
         toriiUrl: "https://taira.sora.org",
         chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        hostAccountId: "sora:alice",
+        hostAccountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         callId: "wonderland:kaigi-private-room",
         endedAtMs: Date.now(),
@@ -625,13 +652,114 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("makes an accepted self-shield immediately spendable before explorer hydration catches up", async () => {
+    mocks.listAccountTransactionsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: ALICE_ACCOUNT_ID,
+        quantity: "5",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+      }),
+    ).resolves.toEqual({
+      hash: "hash-shield-xor",
+    });
+
+    await expect(
+      bridge.getConfidentialAssetBalance({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        assetDefinitionId: "xor#universal",
+      }),
+    ).resolves.toMatchObject({
+      resolvedAssetId: "xor#universal",
+      quantity: "5",
+      onChainQuantity: "0",
+      spendableQuantity: "5",
+      exact: true,
+    });
+  });
+
+  it("uses the local confidential shadow ledger to spend immediately and credit the receiver", async () => {
+    mocks.listAccountTransactionsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    const bridge = await loadBridge();
+
+    await bridge.transferAsset({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      assetDefinitionId: "xor#universal",
+      accountId: ALICE_ACCOUNT_ID,
+      destinationAccountId: ALICE_ACCOUNT_ID,
+      quantity: "5",
+      privateKeyHex: "11".repeat(32),
+      shielded: true,
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+      }),
+    ).resolves.toEqual({
+      hash: "hash-zk-transfer",
+    });
+
+    await expect(
+      bridge.getConfidentialAssetBalance({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        assetDefinitionId: "xor#universal",
+      }),
+    ).resolves.toMatchObject({
+      quantity: "2",
+      spendableQuantity: "2",
+      exact: true,
+    });
+
+    await expect(
+      bridge.getConfidentialAssetBalance({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: BOB_ACCOUNT_ID,
+        privateKeyHex: "22".repeat(32),
+        assetDefinitionId: "xor#universal",
+      }),
+    ).resolves.toMatchObject({
+      quantity: "3",
+      spendableQuantity: "3",
+      exact: true,
+    });
+  });
+
   it("reports shielded XOR state and self-shields through the preload helper", async () => {
     const bridge = await loadBridge();
 
     await expect(
       bridge.getPrivateKaigiConfidentialXorState({
         toriiUrl: "https://taira.sora.org",
-        accountId: "sora:alice",
+        accountId: ALICE_ACCOUNT_ID,
       }),
     ).resolves.toMatchObject({
       assetDefinitionId: "xor#universal",
@@ -647,7 +775,7 @@ describe("preload Kaigi bridge", () => {
       bridge.selfShieldPrivateKaigiXor({
         toriiUrl: "https://taira.sora.org",
         chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        accountId: "sora:alice",
+        accountId: ALICE_ACCOUNT_ID,
         privateKeyHex: "11".repeat(32),
         amount: "1.2",
       }),

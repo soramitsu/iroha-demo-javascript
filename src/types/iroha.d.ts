@@ -549,6 +549,7 @@ export interface IrohaBridge {
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
+    privateKeyHex?: string;
     limit?: number;
     offset?: number;
   }): Promise<AccountTransactionsResponse>;

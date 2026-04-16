@@ -62,6 +62,7 @@ describe("iroha services bridge", () => {
     const txInput = {
       toriiUrl: "http://localhost:8080",
       accountId: "alice@wonderland",
+      privateKeyHex: "ab".repeat(32),
       limit: 6,
       offset: 0,
     };

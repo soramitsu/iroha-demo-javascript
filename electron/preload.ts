@@ -90,6 +90,8 @@ type ToriiConfig = {
 };
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
 type RegisterAccountInput = {
@@ -408,6 +410,18 @@ type PrivateKaigiXorShadowState = {
   privateFeeDebit: string;
 };
 
+type PendingConfidentialWalletShadowTransaction = {
+  hash: string;
+  createdAtMs: number;
+  authority: string;
+  metadata: Record<string, unknown> | null;
+  instructions: Array<Record<string, unknown>>;
+};
+
+type PendingConfidentialWalletShadowState = {
+  transactions: PendingConfidentialWalletShadowTransaction[];
+};
+
 type KaigiCallEvent = {
   kind: "roster_updated" | "ended";
   callId: string;
@@ -593,6 +607,7 @@ type IrohaBridge = {
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
+    privateKeyHex?: string;
     limit?: number;
     offset?: number;
   }): Promise<TransactionsResponse>;
@@ -818,6 +833,8 @@ const PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
 const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
+const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
+  "iroha-demo:confidential-wallet:";
 const PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT = "1";
 const PRIVATE_KAIGI_CREATE_GAS = 420;
 const PRIVATE_KAIGI_JOIN_ZK_GAS = 1520;
@@ -1025,6 +1042,10 @@ const privateKaigiShadowStateCache = new Map<
   string,
   PrivateKaigiXorShadowState
 >();
+const confidentialWalletShadowStateCache = new Map<
+  string,
+  PendingConfidentialWalletShadowState
+>();
 
 const getPrivateKaigiShadowKey = (input: {
   toriiUrl: string;
@@ -1198,6 +1219,244 @@ const appendPrivateKaigiFeeDebit = (input: {
     ),
   );
   writePrivateKaigiShadowState(key, state);
+};
+
+const newConfidentialWalletShadowState =
+  (): PendingConfidentialWalletShadowState => ({
+    transactions: [],
+  });
+
+const getConfidentialWalletShadowKey = (input: {
+  toriiUrl: string;
+  accountId: string;
+}) =>
+  [
+    CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX,
+    normalizeBaseUrl(input.toriiUrl),
+    input.accountId.trim().toLowerCase(),
+  ].join("");
+
+const normalizePendingConfidentialWalletShadowTransaction = (
+  value: unknown,
+): PendingConfidentialWalletShadowTransaction | null => {
+  if (!isPlainRecord(value)) {
+    return null;
+  }
+  const hash = trimString(
+    value.hash ?? value.txHash ?? value.entrypoint_hash,
+  ).toLowerCase();
+  if (!hash) {
+    return null;
+  }
+  const createdAtMs = Number(
+    value.createdAtMs ?? value.created_at_ms ?? Date.now(),
+  );
+  return {
+    hash,
+    createdAtMs:
+      Number.isFinite(createdAtMs) && createdAtMs >= 0
+        ? Math.trunc(createdAtMs)
+        : Date.now(),
+    authority: trimString(value.authority),
+    metadata: isPlainRecord(value.metadata)
+      ? { ...(value.metadata as Record<string, unknown>) }
+      : null,
+    instructions: Array.isArray(value.instructions)
+      ? value.instructions.filter(isPlainRecord).map((entry) => ({ ...entry }))
+      : [],
+  };
+};
+
+const readConfidentialWalletShadowState = (
+  key: string,
+): PendingConfidentialWalletShadowState => {
+  const cached = confidentialWalletShadowStateCache.get(key);
+  if (cached) {
+    return {
+      transactions: cached.transactions.map((entry) => ({
+        ...entry,
+        metadata: entry.metadata ? { ...entry.metadata } : null,
+        instructions: entry.instructions.map((instruction) => ({
+          ...instruction,
+        })),
+      })),
+    };
+  }
+  const storage = globalThis.localStorage;
+  if (!storage) {
+    const empty = newConfidentialWalletShadowState();
+    confidentialWalletShadowStateCache.set(key, empty);
+    return {
+      transactions: [],
+    };
+  }
+  try {
+    const raw = storage.getItem(key);
+    if (!raw) {
+      const empty = newConfidentialWalletShadowState();
+      confidentialWalletShadowStateCache.set(key, empty);
+      return {
+        transactions: [],
+      };
+    }
+    const parsed = JSON.parse(raw) as Partial<PendingConfidentialWalletShadowState>;
+    const state: PendingConfidentialWalletShadowState = {
+      transactions: Array.isArray(parsed.transactions)
+        ? parsed.transactions
+            .map(normalizePendingConfidentialWalletShadowTransaction)
+            .filter(
+              (
+                entry,
+              ): entry is PendingConfidentialWalletShadowTransaction =>
+                Boolean(entry),
+            )
+        : [],
+    };
+    confidentialWalletShadowStateCache.set(key, state);
+    return {
+      transactions: state.transactions.map((entry) => ({
+        ...entry,
+        metadata: entry.metadata ? { ...entry.metadata } : null,
+        instructions: entry.instructions.map((instruction) => ({
+          ...instruction,
+        })),
+      })),
+    };
+  } catch {
+    const empty = newConfidentialWalletShadowState();
+    confidentialWalletShadowStateCache.set(key, empty);
+    return {
+      transactions: [],
+    };
+  }
+};
+
+const writeConfidentialWalletShadowState = (
+  key: string,
+  state: PendingConfidentialWalletShadowState,
+) => {
+  const normalized: PendingConfidentialWalletShadowState = {
+    transactions: state.transactions
+      .map(normalizePendingConfidentialWalletShadowTransaction)
+      .filter(
+        (entry): entry is PendingConfidentialWalletShadowTransaction =>
+          Boolean(entry),
+      )
+      .sort((left, right) => left.createdAtMs - right.createdAtMs)
+      .slice(-128),
+  };
+  confidentialWalletShadowStateCache.set(key, normalized);
+  const storage = globalThis.localStorage;
+  if (!storage) {
+    return;
+  }
+  try {
+    storage.setItem(key, JSON.stringify(normalized));
+  } catch {
+    // Ignore storage write failures and keep the in-memory shadow state.
+  }
+};
+
+const upsertConfidentialWalletShadowTransaction = (input: {
+  toriiUrl: string;
+  accountId: string;
+  txHash: string;
+  authority: string;
+  metadata?: Record<string, unknown>;
+  instructions?: Array<Record<string, unknown>>;
+  createdAtMs?: number;
+}) => {
+  const key = getConfidentialWalletShadowKey({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+  });
+  const state = readConfidentialWalletShadowState(key);
+  const hash = trimString(input.txHash).toLowerCase();
+  if (!hash) {
+    return;
+  }
+  const nextTransaction: PendingConfidentialWalletShadowTransaction = {
+    hash,
+    createdAtMs: Math.trunc(input.createdAtMs ?? Date.now()),
+    authority: trimString(input.authority),
+    metadata: input.metadata ? { ...input.metadata } : null,
+    instructions: Array.isArray(input.instructions)
+      ? input.instructions
+          .filter(isPlainRecord)
+          .map((instruction) => ({ ...instruction }))
+      : [],
+  };
+  state.transactions = [
+    ...state.transactions.filter((transaction) => transaction.hash !== hash),
+    nextTransaction,
+  ];
+  writeConfidentialWalletShadowState(key, state);
+};
+
+const mergeConfidentialWalletShadowTransactions = (input: {
+  toriiUrl: string;
+  accountId: string;
+  transactions: Array<WalletConfidentialTransactionLike | null | undefined>;
+}): WalletConfidentialTransactionLike[] => {
+  const key = getConfidentialWalletShadowKey({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+  });
+  const shadowState = readConfidentialWalletShadowState(key);
+  if (!shadowState.transactions.length) {
+    return input.transactions.filter(
+      (
+        transaction,
+      ): transaction is WalletConfidentialTransactionLike => Boolean(transaction),
+    );
+  }
+  const shadowByHash = new Map(
+    shadowState.transactions.map((transaction) => [transaction.hash, transaction]),
+  );
+  const mergedHashes = new Set<string>();
+  const merged = input.transactions
+    .filter(
+      (
+        transaction,
+      ): transaction is WalletConfidentialTransactionLike => Boolean(transaction),
+    )
+    .map((transaction) => {
+      const txHash = trimString(transaction.entrypoint_hash).toLowerCase();
+      const shadow = shadowByHash.get(txHash);
+      if (!shadow || transaction.result_ok === false) {
+        return transaction;
+      }
+      mergedHashes.add(txHash);
+      const hasDirectMetadata =
+        transaction.metadata !== undefined &&
+        transaction.metadata !== null &&
+        !(isPlainRecord(transaction.metadata) && !Object.keys(transaction.metadata).length);
+      const hasInstructions =
+        Array.isArray(transaction.instructions) && transaction.instructions.length > 0;
+      return {
+        ...transaction,
+        entrypoint_hash: txHash || shadow.hash,
+        authority:
+          trimString(
+            (transaction as { authority?: unknown }).authority,
+          ) || shadow.authority,
+        metadata: hasDirectMetadata ? transaction.metadata : shadow.metadata,
+        instructions: hasInstructions ? transaction.instructions : shadow.instructions,
+      };
+    });
+  for (const shadow of shadowState.transactions) {
+    if (mergedHashes.has(shadow.hash)) {
+      continue;
+    }
+    merged.push({
+      entrypoint_hash: shadow.hash,
+      result_ok: true,
+      authority: shadow.authority,
+      metadata: shadow.metadata,
+      instructions: shadow.instructions,
+    });
+  }
+  return merged;
 };
 
 const computePrivateKaigiInstructionGas = (input: {
@@ -1938,24 +2197,55 @@ const fetchAccountAssetsList = async (input: {
   return normalizeAccountAssetListPayload(payload);
 };
 
+const accountTransactionsQuerySupportsCanonicalAuthFallback = (
+  error: unknown,
+) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return (
+    message.includes("HTTP 404 Not Found") ||
+    message.includes("ERR_ACCOUNT_NOT_FOUND")
+  );
+};
+
 const listAllAccountTransactionsForPrivateKaigi = async (input: {
   toriiUrl: string;
   accountId: string;
+  privateKeyHex?: string;
 }) => {
   const client = getClient(input.toriiUrl);
   const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
   );
+  const normalizedPrivateKeyHex = trimString(input.privateKeyHex);
+  let canonicalAuth = normalizedPrivateKeyHex
+    ? {
+        accountId: normalizedAccountId,
+        privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
+      }
+    : null;
   const items: Array<Record<string, unknown>> = [];
   let offset = 0;
   let total = Number.POSITIVE_INFINITY;
 
   while (offset < total) {
-    const page = await client.listAccountTransactions(normalizedAccountId, {
-      limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
-      offset,
-    });
+    let page;
+    try {
+      page = await client.listAccountTransactions(normalizedAccountId, {
+        limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
+        offset,
+        ...(canonicalAuth ? { canonicalAuth } : {}),
+      });
+    } catch (error) {
+      if (
+        canonicalAuth &&
+        accountTransactionsQuerySupportsCanonicalAuthFallback(error)
+      ) {
+        canonicalAuth = null;
+        continue;
+      }
+      throw error;
+    }
     const pageItems = Array.isArray(page?.items)
       ? (page.items as Array<Record<string, unknown>>)
       : [];
@@ -1976,10 +2266,12 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
 const listAllAccountTransactions = async (input: {
   toriiUrl: string;
   accountId: string;
+  privateKeyHex?: string;
 }) =>
   listAllAccountTransactionsForPrivateKaigi({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
   });
 
 const fetchPrivateKaigiAssetDefinition = async (
@@ -2040,6 +2332,51 @@ const fetchConfidentialAssetRoots = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
 ) => fetchPrivateKaigiRoots(toriiUrlRaw, assetDefinitionId);
+
+const fetchExplorerTransactionDetail = async (
+  toriiUrlRaw: string,
+  hashHex: string,
+) =>
+  fetchJson(
+    buildNexusEndpoint(
+      toriiUrlRaw,
+      `/v1/explorer/transactions/${encodeURIComponent(hashHex.trim())}`,
+    ),
+    "Explorer transaction detail",
+  );
+
+const hydrateAccountTransactionsWithExplorerDetails = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+}) => {
+  const transactions = await listAllAccountTransactions(input);
+  return await Promise.all(
+    transactions.map(async (transaction) => {
+      const txHash = trimString(
+        (transaction as Record<string, unknown>).entrypoint_hash ??
+          (transaction as Record<string, unknown>).hash,
+      );
+      if (!/^[0-9a-f]{64}$/i.test(txHash)) {
+        return transaction;
+      }
+      try {
+        const detail = await fetchExplorerTransactionDetail(input.toriiUrl, txHash);
+        return {
+          ...transaction,
+          ...detail,
+          entrypoint_hash: txHash,
+          result_ok:
+            typeof (transaction as Record<string, unknown>).result_ok === "boolean"
+              ? (transaction as Record<string, unknown>).result_ok
+              : !/^rejected$/i.test(trimString(detail.status)),
+        };
+      } catch {
+        return transaction;
+      }
+    }),
+  );
+};
 
 const readPrivateKaigiVkTransferRef = (
   assetDefinition: Record<string, unknown>,
@@ -2109,9 +2446,15 @@ const resolveConfidentialAssetBalance = async (input: {
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId,
   });
-  const transactions = await listAllAccountTransactions({
+  const transactions = await hydrateAccountTransactionsWithExplorerDetails({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
+  });
+  const effectiveTransactions = mergeConfidentialWalletShadowTransactions({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    transactions,
   });
   const onChainBalance = deriveOnChainShieldedBalance(transactions, {
     assetDefinitionIds: trackedAssetIds,
@@ -2122,7 +2465,7 @@ const resolveConfidentialAssetBalance = async (input: {
     ],
   });
   const ledger = collectWalletConfidentialLedger(
-    transactions as WalletConfidentialTransactionLike[],
+    effectiveTransactions as WalletConfidentialTransactionLike[],
     {
       privateKeyHex: input.privateKeyHex,
       chainId: input.chainId,
@@ -2131,9 +2474,7 @@ const resolveConfidentialAssetBalance = async (input: {
   );
   return {
     resolvedAssetId,
-    quantity: onChainBalance.exact
-      ? onChainBalance.quantity
-      : ledger.spendableQuantity,
+    quantity: ledger.spendableQuantity,
     onChainQuantity: onChainBalance.quantity,
     spendableQuantity: ledger.spendableQuantity,
     exact: ledger.exact,
@@ -2154,15 +2495,21 @@ const resolveConfidentialTransferMaterials = async (input: {
     resolvedAssetId: balance.resolvedAssetId,
   });
   const [transactions, assetDefinition, latestRootHex] = await Promise.all([
-    listAllAccountTransactions({
+    hydrateAccountTransactionsWithExplorerDetails({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
     }),
     fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
     fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
   ]);
+  const effectiveTransactions = mergeConfidentialWalletShadowTransactions({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    transactions,
+  });
   const ledger = collectWalletConfidentialLedger(
-    transactions as WalletConfidentialTransactionLike[],
+    effectiveTransactions as WalletConfidentialTransactionLike[],
     {
       privateKeyHex: input.privateKeyHex,
       chainId: input.chainId,
@@ -2180,6 +2527,24 @@ const resolveConfidentialTransferMaterials = async (input: {
     ledger,
     latestRootHex,
     verifyingKey: verifyingKey as unknown as Record<string, unknown>,
+  };
+};
+
+const readInlineVerifyingKeyRecord = (value: Record<string, unknown>) => {
+  const record = isPlainRecord(value.record)
+    ? (value.record as Record<string, unknown>)
+    : {};
+  const inlineKey = isPlainRecord(record.inline_key)
+    ? (record.inline_key as Record<string, unknown>)
+    : isPlainRecord(value.inline_key)
+      ? (value.inline_key as Record<string, unknown>)
+      : null;
+  if (!inlineKey) {
+    throw new Error("Confidential verifying key inline_key is unavailable.");
+  }
+  return {
+    record,
+    inlineKey,
   };
 };
 
@@ -2580,13 +2945,21 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
   let feeAmount = "0";
   let finalEntrypoint = provisional;
   for (let attempt = 0; attempt < 8; attempt += 1) {
+    const verifyingKeyContext = readInlineVerifyingKeyRecord(
+      context.verifyingKey,
+    );
+    const feeSpendVerifyingKey = {
+      id: context.verifyingKey.id,
+      record: verifyingKeyContext.record,
+      inline_key: verifyingKeyContext.inlineKey,
+    };
     const envelope = buildPrivateKaigiFeeSpend({
       chainId: input.chainId.trim(),
       assetDefinitionId: context.state.resolvedAssetId,
       actionHash: provisional.actionHash,
       anchorRootHex: context.latestRootHex,
       feeAmount,
-      verifyingKey: context.verifyingKey,
+      verifyingKey: feeSpendVerifyingKey,
     });
     finalEntrypoint = input.buildEntrypoint({
       feeSpend: buildPrivateKaigiFeeSpendDto(envelope),
@@ -2750,9 +3123,31 @@ const api: IrohaBridge = {
           getClient(input.toriiUrl),
           tx.signedTransaction,
           {
-            waitForCommit: true,
+            waitForCommit: false,
           },
         );
+        upsertConfidentialWalletShadowTransaction({
+          toriiUrl: input.toriiUrl,
+          accountId,
+          txHash: submission.hash,
+          authority: accountId,
+          metadata: buildWalletConfidentialMetadata({
+            baseMetadata: input.metadata,
+            outputs: [{ note, recipientAccountId: accountId }],
+          }),
+          instructions: [
+            {
+              zk: {
+                Shield: {
+                  asset: resolvedAssetId,
+                  from: accountId,
+                  amount: normalizedAmount,
+                },
+              },
+            },
+          ],
+          createdAtMs: note.created_at_ms,
+        });
         if (
           resolvedAssetId.trim().toLowerCase() ===
           PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
@@ -2803,13 +3198,21 @@ const api: IrohaBridge = {
           recipientAccountId: accountId,
         });
       }
+      const verifyingKeyContext = readInlineVerifyingKeyRecord(
+        materials.verifyingKey,
+      );
+      const proofVerifyingKey = {
+        id: materials.verifyingKey.id,
+        record: verifyingKeyContext.record,
+        inline_key: verifyingKeyContext.inlineKey,
+      };
       const proofEnvelope = buildPrivateKaigiFeeSpend({
         chainId: input.chainId.trim(),
         assetDefinitionId: materials.resolvedAssetId,
         actionHash: randomBytes(32),
         anchorRootHex: materials.latestRootHex,
         feeAmount: normalizedAmount,
-        verifyingKey: materials.verifyingKey,
+        verifyingKey: proofVerifyingKey,
       });
       const tx = buildZkTransferTransaction({
         chainId: input.chainId,
@@ -2842,13 +3245,54 @@ const api: IrohaBridge = {
         }),
         privateKey,
       });
+      const shadowMetadata = buildWalletConfidentialMetadata({
+        baseMetadata: input.metadata,
+        outputs,
+      });
+      const shadowInstructions = [
+        {
+          zk: {
+            ZkTransfer: {
+              asset: materials.resolvedAssetId,
+              inputs: selection.selected.map((note) => note.nullifier_hex),
+              outputs: outputs.map(({ note }) => note.commitment_hex),
+            },
+          },
+        },
+      ];
       const submission = await submitSignedTransaction(
         getClient(input.toriiUrl),
         tx.signedTransaction,
         {
-          waitForCommit: true,
+          waitForCommit: false,
         },
       );
+      upsertConfidentialWalletShadowTransaction({
+        toriiUrl: input.toriiUrl,
+        accountId,
+        txHash: submission.hash,
+        authority: accountId,
+        metadata: shadowMetadata,
+        instructions: shadowInstructions,
+        createdAtMs: Math.min(
+          ...outputs.map(({ note }) => note.created_at_ms),
+          Date.now(),
+        ),
+      });
+      if (destinationAccountId !== accountId) {
+        upsertConfidentialWalletShadowTransaction({
+          toriiUrl: input.toriiUrl,
+          accountId: destinationAccountId,
+          txHash: submission.hash,
+          authority: accountId,
+          metadata: shadowMetadata,
+          instructions: shadowInstructions,
+          createdAtMs: Math.min(
+            ...outputs.map(({ note }) => note.created_at_ms),
+            Date.now(),
+          ),
+        });
+      }
       return { hash: submission.hash };
     }
 
@@ -2986,15 +3430,43 @@ const api: IrohaBridge = {
       offset,
     });
   },
-  fetchAccountTransactions({ toriiUrl, accountId, limit = 20, offset }) {
+  fetchAccountTransactions({
+    toriiUrl,
+    accountId,
+    privateKeyHex,
+    limit = 20,
+    offset,
+  }) {
     const client = getClient(toriiUrl);
-    return client.listAccountTransactions(
-      normalizeCanonicalAccountIdLiteral(accountId, "accountId"),
-      {
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    const normalizedPrivateKeyHex = trimString(privateKeyHex);
+    const canonicalAuth = normalizedPrivateKeyHex
+      ? {
+          accountId: normalizedAccountId,
+          privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
+        }
+      : null;
+    return client
+      .listAccountTransactions(normalizedAccountId, {
         limit,
         offset,
-      },
-    );
+        ...(canonicalAuth ? { canonicalAuth } : {}),
+      })
+      .catch((error) => {
+        if (
+          canonicalAuth &&
+          accountTransactionsQuerySupportsCanonicalAuthFallback(error)
+        ) {
+          return client.listAccountTransactions(normalizedAccountId, {
+            limit,
+            offset,
+          });
+        }
+        throw error;
+      });
   },
   listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
     const client = getClient(toriiUrl);
