@@ -310,7 +310,10 @@ const emptyStatus = (): VpnStatus => ({
 
 const activeAccount = computed(() => session.activeAccount);
 const requestAccountId = computed(
-  () => getPublicAccountId(activeAccount.value) || activeAccount.value?.accountId || "",
+  () =>
+    getPublicAccountId(activeAccount.value) ||
+    activeAccount.value?.accountId ||
+    "",
 );
 const toriiUrl = computed(() => session.connection.toriiUrl);
 const availability = ref<VpnAvailability | null>(vpnStore.helperHealth);

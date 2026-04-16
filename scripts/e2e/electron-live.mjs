@@ -439,9 +439,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           return null;
         }
         const value =
-          panel
-            .querySelector(".wallet-shield-balance")
-            ?.textContent?.trim() ??
+          panel.querySelector(".wallet-shield-balance")?.textContent?.trim() ??
           null;
         return value && /^\d+$/.test(value) ? value : null;
       },

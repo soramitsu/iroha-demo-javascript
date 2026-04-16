@@ -1,4 +1,10 @@
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
@@ -51,7 +57,9 @@ describe("BundledVpnController", () => {
           <key>com.apple.security.app-sandbox</key>
         `,
       }),
-    ).toContain("missing Apple system-extension or NetworkExtension entitlements");
+    ).toContain(
+      "missing Apple system-extension or NetworkExtension entitlements",
+    );
     expect(
       getMacVpnProvisioningMessage({
         entitlements: `

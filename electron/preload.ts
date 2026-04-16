@@ -888,15 +888,12 @@ const readFaucetClaimRetryDelayMs = (
   snapshot?: StatusSnapshot | null,
 ) => {
   const rawSumeragiValue = snapshot?.status?.raw?.["sumeragi"];
-  const rawSumeragi = isPlainRecord(rawSumeragiValue)
-    ? rawSumeragiValue
-    : null;
+  const rawSumeragi = isPlainRecord(rawSumeragiValue) ? rawSumeragiValue : null;
   return computeFaucetClaimRetryDelayMs(attempt, {
     queueSize: snapshot?.status?.queue_size,
     commitTimeMs: snapshot?.status?.commit_time_ms,
     saturated:
-      rawSumeragi &&
-      typeof rawSumeragi.tx_queue_saturated === "boolean"
+      rawSumeragi && typeof rawSumeragi.tx_queue_saturated === "boolean"
         ? rawSumeragi.tx_queue_saturated
         : false,
   });
@@ -3111,12 +3108,8 @@ async function resolvePrivateKaigiConfidentialXorContext(
     policy.effective_mode ?? policy.current_mode ?? "",
   ).trim();
   const resolvedAssetId =
-    String(policy.asset_id ?? "").trim() ||
-    requestedAssetDefinitionId;
-  const trackedAssetIds = [
-    requestedAssetDefinitionId,
-    resolvedAssetId,
-  ].filter(
+    String(policy.asset_id ?? "").trim() || requestedAssetDefinitionId;
+  const trackedAssetIds = [requestedAssetDefinitionId, resolvedAssetId].filter(
     (value, index, items) =>
       value && items.findIndex((candidate) => candidate === value) === index,
   );

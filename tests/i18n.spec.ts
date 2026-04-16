@@ -102,9 +102,9 @@ describe("i18n messages", () => {
     expect(translate("fr-FR", "Example I105 Account ID")).toBe(
       translate("en-US", "Example I105 Account ID"),
     );
-    expect(translate("en-US", "Example I105 Account ID").startsWith("testu")).toBe(
-      true,
-    );
+    expect(
+      translate("en-US", "Example I105 Account ID").startsWith("testu"),
+    ).toBe(true);
     expect(translate("en-US", "34m... or 0x...@wonderland")).toBe(
       translate("en-US", "Example I105 Account ID"),
     );

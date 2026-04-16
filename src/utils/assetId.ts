@@ -7,7 +7,8 @@ export type ParsedAssetReference = {
 
 const NORITO_PREFIX = "norito:";
 const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/i;
-const ACCOUNT_REFERENCE_PATTERN = /^(?:[^#@]+@[^#]+|testu.+|sorau.+|ｓｏｒａu.+|n\d{1,4}u.+)$/u;
+const ACCOUNT_REFERENCE_PATTERN =
+  /^(?:[^#@]+@[^#]+|testu.+|sorau.+|ｓｏｒａu.+|n\d{1,4}u.+)$/u;
 const OPAQUE_PREVIEW_HEAD = 8;
 const OPAQUE_PREVIEW_TAIL = 8;
 const OPAQUE_ASSET_LITERAL_PATTERN = /\bnorito:[A-Za-z0-9._:@#-]+/gi;
@@ -267,7 +268,9 @@ export const resolveToriiXorAsset = (
   const rankedAssets = assets
     .map((asset, index) => {
       const assetId = String(asset.asset_id ?? "").trim();
-      const definitionId = extractAssetDefinitionId(assetId).trim().toLowerCase();
+      const definitionId = extractAssetDefinitionId(assetId)
+        .trim()
+        .toLowerCase();
       if (!assetId || !definitionId) {
         return null;
       }
@@ -314,7 +317,9 @@ export const resolveToriiXorAsset = (
 
   const positiveAsset = rankedAssets
     .filter((entry) => entry.isPositive)
-    .sort((left, right) => right.score - left.score || left.index - right.index)[0];
+    .sort(
+      (left, right) => right.score - left.score || left.index - right.index,
+    )[0];
   return positiveAsset?.asset ?? rankedAssets[0]?.asset ?? null;
 };
 

@@ -1041,11 +1041,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",
+  "Anonymous shielded send": "Anonymous shielded send",
+  "Send anonymously": "Send anonymously",
   "Shield mode is unavailable for the current asset definition.":
     "Shield mode is unavailable for the current asset definition.",
   "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.":
     "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
+  "Shield transaction committed: {hash}":
+    "Shield transaction committed: {hash}",
+  "Anonymous shielded transaction committed: {hash}":
+    "Anonymous shielded send committed: {hash}",
   "Create on-chain account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":
     "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
@@ -1701,8 +1707,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Waiting for finalized faucet seed data…": "Waiting for faucet seed...",
   "Solving faucet proof-of-work…": "Solving faucet proof...",
   "Submitting faucet claim…": "Submitting claim...",
-  "Retrying faucet claim after queue expiry…":
-    "Retrying after queue expiry...",
+  "Retrying faucet claim after queue expiry…": "Retrying after queue expiry...",
   "Faucet claim accepted. Updating wallet…":
     "Claim accepted. Updating wallet...",
   "Faucet claim accepted. Waiting for finality…":
@@ -1760,7 +1765,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Shield amount must be a whole number greater than zero.":
     "Enter a whole-number shield amount.",
   "Shield transaction submitted: {hash}": "Shielded send: {hash}",
-  "Shield transaction committed: {hash}": "Shield transaction committed: {hash}",
+  "Shield transaction committed: {hash}":
+    "Shield transaction committed: {hash}",
   "Anonymous shielded transaction committed: {hash}":
     "Anonymous shielded send committed: {hash}",
   "Transaction submitted: {hash}": "Sent: {hash}",

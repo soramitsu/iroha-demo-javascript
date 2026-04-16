@@ -110,19 +110,17 @@ describe("ParliamentView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (
-    options?: {
-      account?: Partial<{
-        displayName: string;
-        domain: string;
-        accountId: string;
-        i105AccountId: string;
-        i105DefaultAccountId: string;
-        publicKeyHex: string;
-        privateKeyHex: string;
-      }>;
-    },
-  ) => {
+  const mountView = (options?: {
+    account?: Partial<{
+      displayName: string;
+      domain: string;
+      accountId: string;
+      i105AccountId: string;
+      i105DefaultAccountId: string;
+      publicKeyHex: string;
+      privateKeyHex: string;
+    }>;
+  }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();

@@ -56,7 +56,9 @@ describe("SetupView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (assetDefinitionId = TAIRA_CHAIN_PRESET.connection.assetDefinitionId) => {
+  const mountView = (
+    assetDefinitionId = TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     useSessionStore().$patch({
@@ -92,7 +94,9 @@ describe("SetupView", () => {
     expect(
       wrapper.text(),
       "default screen should not show the authority-only explanation",
-    ).not.toContain(t("Requires authority credentials to create the account on-chain."));
+    ).not.toContain(
+      t("Requires authority credentials to create the account on-chain."),
+    );
 
     await getButtonByText(wrapper, t("Advanced")).trigger("click");
     await flushPromises();

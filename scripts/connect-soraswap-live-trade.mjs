@@ -1,8 +1,13 @@
+/* global BigInt */
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Buffer } from "node:buffer";
-import { generateKeyPair, publicKeyFromPrivate, signEd25519 } from "@iroha/iroha-js";
+import {
+  generateKeyPair,
+  publicKeyFromPrivate,
+  signEd25519,
+} from "@iroha/iroha-js";
 import { deriveAccountAddressView } from "../electron/accountAddress.ts";
 import { solveFaucetPowPuzzle } from "../electron/faucetPow.ts";
 import { generatedSoraswapRegistry } from "../../soraswap_web/src/generated/soraswapRegistry.ts";
@@ -11,7 +16,10 @@ import {
   openConnectWebSocket,
   registerConnectSession,
 } from "../../soraswap_web/src/services/connect.ts";
-import { scaleDecimalToBaseUnits, formatBaseUnits } from "../../soraswap_web/src/services/amounts.ts";
+import {
+  scaleDecimalToBaseUnits,
+  formatBaseUnits,
+} from "../../soraswap_web/src/services/amounts.ts";
 import { buildDetachedConnectSignatureRequest } from "../../soraswap_web/src/services/connectSignature.ts";
 import {
   base64ToBytes,
@@ -39,7 +47,10 @@ const DEFAULT_SLIPPAGE_BPS = 50n;
 const DEFAULT_DERIVATION_LABEL = "default";
 const DEFAULT_MODE = "spot";
 const DEFAULT_MAX_RETRIES = 4;
-const STATE_PATH = path.resolve(__dirname, "../output/soraswap-connect-wallet.json");
+const STATE_PATH = path.resolve(
+  __dirname,
+  "../output/soraswap-connect-wallet.json",
+);
 const TESTNET_CLIENT_CONFIG_PATH = path.resolve(
   __dirname,
   "../../soraswap/config/testnet/taira.client.toml",
@@ -124,7 +135,9 @@ const fetchJson = async (url, init) => {
   }
   if (!response.ok) {
     const message = await readResponseMessage(response);
-    throw new Error(`${response.status} ${response.statusText}: ${message || "request failed"}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${message || "request failed"}`,
+    );
   }
   return response.json();
 };
@@ -164,7 +177,9 @@ const deleteJson = async (url) => {
   }
   if (!response.ok && response.status !== 404) {
     const message = await readResponseMessage(response);
-    throw new Error(`${response.status} ${response.statusText}: ${message || "request failed"}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${message || "request failed"}`,
+    );
   }
 };
 
@@ -180,15 +195,22 @@ const spotRouterAddress = getRegistryAddress("dlmm.dlmm_router");
 const n3xHubAddress = getRegistryAddress("n3x.n3x_hub");
 const perpsEngineAddress = getRegistryAddress("perps.perps_engine");
 const farmsFarmAddress = getRegistryAddress("farms.farm");
-const optionsSeriesManagerAddress = getRegistryAddress("options.series_manager");
+const optionsSeriesManagerAddress = getRegistryAddress(
+  "options.series_manager",
+);
 const coverPolicyManagerAddress = getRegistryAddress("cover.policy_manager");
 const automationJobQueueAddress = getRegistryAddress("automation.job_queue");
-const launchpadSaleFactoryAddress = getRegistryAddress("launchpad.sale_factory");
+const launchpadSaleFactoryAddress = getRegistryAddress(
+  "launchpad.sale_factory",
+);
 const sccpBridgeAddress = getRegistryAddress("bridge.sccp_bridge");
 
 const fetchAssetDefinition = (toriiUrl, assetDefinitionId) =>
   fetchJson(
-    new URL(`/v1/assets/definitions/${encodeURIComponent(assetDefinitionId)}`, `${toriiUrl}/`),
+    new URL(
+      `/v1/assets/definitions/${encodeURIComponent(assetDefinitionId)}`,
+      `${toriiUrl}/`,
+    ),
   );
 
 const normalizeAssetItem = (item) => {
@@ -211,7 +233,10 @@ const fetchAccountAssets = async (toriiUrl, accountId) => {
   for (let attempt = 1; attempt <= DEFAULT_MAX_RETRIES; attempt += 1) {
     try {
       response = await fetch(
-        new URL(`/v1/accounts/${encodeURIComponent(accountId)}/assets?limit=200`, `${toriiUrl}/`),
+        new URL(
+          `/v1/accounts/${encodeURIComponent(accountId)}/assets?limit=200`,
+          `${toriiUrl}/`,
+        ),
         {
           headers: {
             Accept: "application/json",
@@ -236,14 +261,20 @@ const fetchAccountAssets = async (toriiUrl, accountId) => {
   }
   if (!response.ok) {
     const message = await readResponseMessage(response);
-    throw new Error(`${response.status} ${response.statusText}: ${message || "request failed"}`);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${message || "request failed"}`,
+    );
   }
   const payload = await response.json();
-  return Array.isArray(payload?.items) ? payload.items.map(normalizeAssetItem) : [];
+  return Array.isArray(payload?.items)
+    ? payload.items.map(normalizeAssetItem)
+    : [];
 };
 
 const findPositiveBalance = (assets, assetDefinitionId) => {
-  const match = assets.find((asset) => asset.assetDefinitionId === assetDefinitionId);
+  const match = assets.find(
+    (asset) => asset.assetDefinitionId === assetDefinitionId,
+  );
   if (!match) return null;
   try {
     return BigInt(match.quantity) > 0n ? match : null;
@@ -253,7 +284,9 @@ const findPositiveBalance = (assets, assetDefinitionId) => {
 };
 
 const findAssetQuantity = (assets, assetDefinitionId) => {
-  const match = assets.find((asset) => asset.assetDefinitionId === assetDefinitionId);
+  const match = assets.find(
+    (asset) => asset.assetDefinitionId === assetDefinitionId,
+  );
   return trim(match?.quantity) || "0";
 };
 
@@ -301,7 +334,13 @@ const hasVisibleBalance = (assets) =>
     }
   });
 
-const viewContract = async (toriiUrl, authority, contractAddress, entrypoint, payload = null) => {
+const viewContract = async (
+  toriiUrl,
+  authority,
+  contractAddress,
+  entrypoint,
+  payload = null,
+) => {
   const body = {
     authority,
     contract_address: contractAddress,
@@ -315,16 +354,26 @@ const viewContract = async (toriiUrl, authority, contractAddress, entrypoint, pa
 };
 
 const fetchPoolConfig = async (toriiUrl, authority) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: spotPoolAddress,
-    entrypoint: "pool_config",
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: spotPoolAddress,
+      entrypoint: "pool_config",
+      gas_limit: DEFAULT_GAS_LIMIT,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 6) {
     throw new Error("DLMM pool_config returned an unexpected tuple shape.");
   }
-  const [baseAssetId, quoteAssetId, vaultAccountId, feePips, binStep, activeBin] = response.result;
+  const [
+    baseAssetId,
+    quoteAssetId,
+    vaultAccountId,
+    feePips,
+    binStep,
+    activeBin,
+  ] = response.result;
   return {
     baseAssetId: trim(baseAssetId),
     quoteAssetId: trim(quoteAssetId),
@@ -336,12 +385,15 @@ const fetchPoolConfig = async (toriiUrl, authority) => {
 };
 
 const fetchMirrorState = async (toriiUrl, authority) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: spotPoolAddress,
-    entrypoint: "mirror_state",
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: spotPoolAddress,
+      entrypoint: "mirror_state",
+      gas_limit: DEFAULT_GAS_LIMIT,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 13) {
     throw new Error("DLMM mirror_state returned an unexpected tuple shape.");
   }
@@ -352,9 +404,9 @@ const fetchMirrorState = async (toriiUrl, authority) => {
     binStep,
     reserveBase,
     reserveQuote,
-    _totalReserves,
-    _binShareSupply,
-    _impactCapBps,
+    ,
+    ,
+    ,
     minReserveBase,
     minReserveQuote,
   ] = response.result;
@@ -373,12 +425,15 @@ const fetchMirrorState = async (toriiUrl, authority) => {
 };
 
 const fetchN3xHubConfig = async (toriiUrl, authority) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: n3xHubAddress,
-    entrypoint: "hub_config",
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: n3xHubAddress,
+      entrypoint: "hub_config",
+      gas_limit: DEFAULT_GAS_LIMIT,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 10) {
     throw new Error("n3x hub_config returned an unexpected tuple shape.");
   }
@@ -409,27 +464,33 @@ const fetchN3xHubConfig = async (toriiUrl, authority) => {
 };
 
 const quoteN3xMint = async (toriiUrl, authority, usdtIn, usdcIn, kusdIn) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: n3xHubAddress,
-    entrypoint: "quote_mint",
-    payload: {
-      usdt_in: usdtIn,
-      usdc_in: usdcIn,
-      kusd_in: kusdIn,
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: n3xHubAddress,
+      entrypoint: "quote_mint",
+      payload: {
+        usdt_in: usdtIn,
+        usdc_in: usdcIn,
+        kusd_in: kusdIn,
+      },
+      gas_limit: DEFAULT_GAS_LIMIT,
     },
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  );
   return ensureIntegerString("quote_mint", response.result);
 };
 
 const fetchPerpsEngineConfig = async (toriiUrl, authority) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: perpsEngineAddress,
-    entrypoint: "engine_config",
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: perpsEngineAddress,
+      entrypoint: "engine_config",
+      gas_limit: DEFAULT_GAS_LIMIT,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 6) {
     throw new Error("Perps engine_config returned an unexpected tuple shape.");
   }
@@ -452,26 +513,30 @@ const fetchPerpsEngineConfig = async (toriiUrl, authority) => {
 };
 
 const quoteN3xRedeem = async (toriiUrl, authority, n3xAmount) => {
-  const response = await viewContract(toriiUrl, authority, n3xHubAddress, "quote_redeem", {
-    n3x_amount: n3xAmount,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    n3xHubAddress,
+    "quote_redeem",
+    {
+      n3x_amount: n3xAmount,
+    },
+  );
   return ensureIntegerString("quote_redeem", response.result);
 };
 
-const fetchN3xMirrorState = async (toriiUrl, authority) => {
-  const response = await viewContract(toriiUrl, authority, n3xHubAddress, "mirror_state");
-  if (!Array.isArray(response.result) || response.result.length < 12) {
-    throw new Error("n3x mirror_state returned an unexpected tuple shape.");
-  }
-  return response.result.map((value) => ensureIntegerString("n3x_mirror_state", value));
-};
-
 const fetchFarmConfig = async (toriiUrl, authority) => {
-  const response = await viewContract(toriiUrl, authority, farmsFarmAddress, "farm_config");
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    farmsFarmAddress,
+    "farm_config",
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
     throw new Error("farm_config returned an unexpected tuple shape.");
   }
-  const [stakeAssetId, rewardAssetId, treasuryAccountId, rewardRate] = response.result;
+  const [stakeAssetId, rewardAssetId, treasuryAccountId, rewardRate] =
+    response.result;
   return {
     stakeAssetId: trim(stakeAssetId),
     rewardAssetId: trim(rewardAssetId),
@@ -481,23 +546,41 @@ const fetchFarmConfig = async (toriiUrl, authority) => {
 };
 
 const fetchFarmMirrorPosition = async (toriiUrl, authority, position) => {
-  const response = await viewContract(toriiUrl, authority, farmsFarmAddress, "mirror_position", {
-    position,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    farmsFarmAddress,
+    "mirror_position",
+    {
+      position,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 8) {
     throw new Error("farm mirror_position returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("farm_mirror_position", value));
+  return response.result.map((value) =>
+    ensureIntegerString("farm_mirror_position", value),
+  );
 };
 
 const fetchPerpsMirrorPosition = async (toriiUrl, authority, position) => {
-  const response = await viewContract(toriiUrl, authority, perpsEngineAddress, "mirror_position", {
-    position,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    perpsEngineAddress,
+    "mirror_position",
+    {
+      position,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 13) {
-    throw new Error("perps mirror_position returned an unexpected tuple shape.");
+    throw new Error(
+      "perps mirror_position returned an unexpected tuple shape.",
+    );
   }
-  return response.result.map((value) => ensureIntegerString("perps_mirror_position", value));
+  return response.result.map((value) =>
+    ensureIntegerString("perps_mirror_position", value),
+  );
 };
 
 const fetchSeriesConfig = async (toriiUrl, authority, series) => {
@@ -542,7 +625,9 @@ const fetchSeriesMirror = async (toriiUrl, authority, series) => {
   if (!Array.isArray(response.result) || response.result.length < 10) {
     throw new Error("mirror_series returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("options_mirror_series", value));
+  return response.result.map((value) =>
+    ensureIntegerString("options_mirror_series", value),
+  );
 };
 
 const fetchTicketMirror = async (toriiUrl, authority, ticket) => {
@@ -556,7 +641,9 @@ const fetchTicketMirror = async (toriiUrl, authority, ticket) => {
   if (!Array.isArray(response.result) || response.result.length < 6) {
     throw new Error("mirror_ticket returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("options_mirror_ticket", value));
+  return response.result.map((value) =>
+    ensureIntegerString("options_mirror_ticket", value),
+  );
 };
 
 const fetchPolicyConfig = async (toriiUrl, authority, policy) => {
@@ -570,7 +657,8 @@ const fetchPolicyConfig = async (toriiUrl, authority, policy) => {
   if (!Array.isArray(response.result) || response.result.length < 5) {
     throw new Error("policy_config returned an unexpected tuple shape.");
   }
-  const [settlementAssetId, vaultAccountId, durationSlots, payoutBps, premium] = response.result;
+  const [settlementAssetId, vaultAccountId, durationSlots, payoutBps, premium] =
+    response.result;
   return {
     settlementAssetId: trim(settlementAssetId),
     vaultAccountId: trim(vaultAccountId),
@@ -591,15 +679,29 @@ const fetchPolicyMirror = async (toriiUrl, authority, policy) => {
   if (!Array.isArray(response.result) || response.result.length < 9) {
     throw new Error("mirror_policy returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("cover_mirror_policy", value));
+  return response.result.map((value) =>
+    ensureIntegerString("cover_mirror_policy", value),
+  );
 };
 
 const fetchBridgeListingConfig = async (toriiUrl, authority) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "listing_config");
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "listing_config",
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
-    throw new Error("bridge listing_config returned an unexpected tuple shape.");
+    throw new Error(
+      "bridge listing_config returned an unexpected tuple shape.",
+    );
   }
-  const [listingFeeAssetId, treasuryAccountId, listingFeeAmount, registryEnabled] = response.result;
+  const [
+    listingFeeAssetId,
+    treasuryAccountId,
+    listingFeeAmount,
+    registryEnabled,
+  ] = response.result;
   return {
     listingFeeAssetId: trim(listingFeeAssetId),
     treasuryAccountId: trim(treasuryAccountId),
@@ -609,19 +711,33 @@ const fetchBridgeListingConfig = async (toriiUrl, authority) => {
 };
 
 const fetchBridgeAssetMirror = async (toriiUrl, authority, assetKey) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "mirror_asset", {
-    asset_key: assetKey,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "mirror_asset",
+    {
+      asset_key: assetKey,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
     throw new Error("bridge mirror_asset returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("bridge_mirror_asset", value));
+  return response.result.map((value) =>
+    ensureIntegerString("bridge_mirror_asset", value),
+  );
 };
 
 const fetchBridgeAssetConfig = async (toriiUrl, authority, assetKey) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "asset_config", {
-    asset_key: assetKey,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "asset_config",
+    {
+      asset_key: assetKey,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 3) {
     throw new Error("bridge asset_config returned an unexpected tuple shape.");
   }
@@ -634,23 +750,38 @@ const fetchBridgeAssetConfig = async (toriiUrl, authority, assetKey) => {
 };
 
 const fetchBridgeRouteMirror = async (toriiUrl, authority, route) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "mirror_route", {
-    route,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "mirror_route",
+    {
+      route,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
     throw new Error("bridge mirror_route returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("bridge_mirror_route", value));
+  return response.result.map((value) =>
+    ensureIntegerString("bridge_mirror_route", value),
+  );
 };
 
 const fetchBridgeRouteConfig = async (toriiUrl, authority, route) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "route_config", {
-    route,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "route_config",
+    {
+      route,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
     throw new Error("bridge route_config returned an unexpected tuple shape.");
   }
-  const [assetKey, remoteDomain, localAssetId, vaultAccountId] = response.result;
+  const [assetKey, remoteDomain, localAssetId, vaultAccountId] =
+    response.result;
   return {
     assetKey: trim(assetKey),
     remoteDomain: Number(remoteDomain),
@@ -660,21 +791,39 @@ const fetchBridgeRouteConfig = async (toriiUrl, authority, route) => {
 };
 
 const fetchBridgeOutboundMirror = async (toriiUrl, authority, transfer) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "mirror_outbound", {
-    transfer,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "mirror_outbound",
+    {
+      transfer,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
-    throw new Error("bridge mirror_outbound returned an unexpected tuple shape.");
+    throw new Error(
+      "bridge mirror_outbound returned an unexpected tuple shape.",
+    );
   }
-  return response.result.map((value) => ensureIntegerString("bridge_mirror_outbound", value));
+  return response.result.map((value) =>
+    ensureIntegerString("bridge_mirror_outbound", value),
+  );
 };
 
 const fetchBridgeOutboundConfig = async (toriiUrl, authority, transfer) => {
-  const response = await viewContract(toriiUrl, authority, sccpBridgeAddress, "outbound_config", {
-    transfer,
-  });
+  const response = await viewContract(
+    toriiUrl,
+    authority,
+    sccpBridgeAddress,
+    "outbound_config",
+    {
+      transfer,
+    },
+  );
   if (!Array.isArray(response.result) || response.result.length < 4) {
-    throw new Error("bridge outbound_config returned an unexpected tuple shape.");
+    throw new Error(
+      "bridge outbound_config returned an unexpected tuple shape.",
+    );
   }
   const [route, senderAccountId, recipient, amount] = response.result;
   return {
@@ -707,7 +856,9 @@ const fetchJobMirror = async (toriiUrl, authority, job) => {
   if (!Array.isArray(response.result) || response.result.length < 11) {
     throw new Error("mirror_job returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("automation_mirror_job", value));
+  return response.result.map((value) =>
+    ensureIntegerString("automation_mirror_job", value),
+  );
 };
 
 const fetchLaunchpadSaleConfig = async (toriiUrl, authority, sale) => {
@@ -754,7 +905,9 @@ const fetchLaunchpadMirrorSale = async (toriiUrl, authority, sale) => {
   if (!Array.isArray(response.result) || response.result.length < 13) {
     throw new Error("mirror_sale returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("launchpad_mirror_sale", value));
+  return response.result.map((value) =>
+    ensureIntegerString("launchpad_mirror_sale", value),
+  );
 };
 
 const fetchLaunchpadMirrorAccounting = async (toriiUrl, authority, sale) => {
@@ -766,12 +919,20 @@ const fetchLaunchpadMirrorAccounting = async (toriiUrl, authority, sale) => {
     { sale },
   );
   if (!Array.isArray(response.result) || response.result.length < 4) {
-    throw new Error("mirror_sale_accounting returned an unexpected tuple shape.");
+    throw new Error(
+      "mirror_sale_accounting returned an unexpected tuple shape.",
+    );
   }
-  return response.result.map((value) => ensureIntegerString("launchpad_mirror_accounting", value));
+  return response.result.map((value) =>
+    ensureIntegerString("launchpad_mirror_accounting", value),
+  );
 };
 
-const fetchLaunchpadMirrorAllocation = async (toriiUrl, authority, allocation) => {
+const fetchLaunchpadMirrorAllocation = async (
+  toriiUrl,
+  authority,
+  allocation,
+) => {
   const response = await viewContract(
     toriiUrl,
     authority,
@@ -782,27 +943,32 @@ const fetchLaunchpadMirrorAllocation = async (toriiUrl, authority, allocation) =
   if (!Array.isArray(response.result) || response.result.length < 5) {
     throw new Error("mirror_allocation returned an unexpected tuple shape.");
   }
-  return response.result.map((value) => ensureIntegerString("launchpad_mirror_allocation", value));
+  return response.result.map((value) =>
+    ensureIntegerString("launchpad_mirror_allocation", value),
+  );
 };
 
 const quoteActiveBin = async (toriiUrl, authority, input) => {
-  const response = await postJson(new URL("/v1/contracts/view", `${toriiUrl}/`), {
-    authority,
-    contract_address: spotRouterAddress,
-    entrypoint: "quote_bin",
-    payload: {
-      reserve_base: input.reserveBase,
-      reserve_quote: input.reserveQuote,
-      amount_in: input.amountIn,
-      fee_pips: input.feePips,
-      bin_id: input.activeBin,
-      bin_step: input.binStep,
-      input_is_base: input.inputIsBase ? 1 : 0,
-      min_reserve_base: input.minReserveBase,
-      min_reserve_quote: input.minReserveQuote,
+  const response = await postJson(
+    new URL("/v1/contracts/view", `${toriiUrl}/`),
+    {
+      authority,
+      contract_address: spotRouterAddress,
+      entrypoint: "quote_bin",
+      payload: {
+        reserve_base: input.reserveBase,
+        reserve_quote: input.reserveQuote,
+        amount_in: input.amountIn,
+        fee_pips: input.feePips,
+        bin_id: input.activeBin,
+        bin_step: input.binStep,
+        input_is_base: input.inputIsBase ? 1 : 0,
+        min_reserve_base: input.minReserveBase,
+        min_reserve_quote: input.minReserveQuote,
+      },
+      gas_limit: DEFAULT_GAS_LIMIT,
     },
-    gas_limit: DEFAULT_GAS_LIMIT,
-  });
+  );
   return ensureIntegerString("quote_bin", response.result);
 };
 
@@ -827,12 +993,19 @@ const waitForPipelineStatus = async (toriiUrl, hashHex) => {
         const payload = await response.json();
         const kind = trim(payload?.content?.status?.kind);
         if (kind) {
-          if (kind === "Applied" || kind === "Committed" || kind === "Rejected" || kind === "Expired") {
+          if (
+            kind === "Applied" ||
+            kind === "Committed" ||
+            kind === "Rejected" ||
+            kind === "Expired"
+          ) {
             return payload;
           }
         }
       }
-    } catch {}
+    } catch (error) {
+      void error;
+    }
     if (attempt < 12) {
       await sleep(Math.min(250 * 2 ** (attempt - 1), 2000));
     }
@@ -847,7 +1020,10 @@ const decodeMultihashKey = (literal, prefix, label) => {
   if (normalized.length === 64 || normalized.length === 128) {
     return Buffer.from(normalized.slice(0, 64), "hex");
   }
-  if (new RegExp(`^${prefix}`, "i").test(normalized) && normalized.length === 70) {
+  if (
+    new RegExp(`^${prefix}`, "i").test(normalized) &&
+    normalized.length === 70
+  ) {
     return Buffer.from(normalized.slice(6), "hex");
   }
   throw new Error(`${label} is not a supported Ed25519 key literal.`);
@@ -864,8 +1040,12 @@ const readTomlField = (content, pattern, label) => {
 const loadOrCreateWallet = async () => {
   if (await exists(STATE_PATH)) {
     const raw = JSON.parse(await readFile(STATE_PATH, "utf8"));
-    const privateKeyHex = trim(raw.privateKeyHex).replace(/^0x/iu, "").toUpperCase();
-    const publicKey = Buffer.from(publicKeyFromPrivate(Buffer.from(privateKeyHex, "hex")));
+    const privateKeyHex = trim(raw.privateKeyHex)
+      .replace(/^0x/iu, "")
+      .toUpperCase();
+    const publicKey = Buffer.from(
+      publicKeyFromPrivate(Buffer.from(privateKeyHex, "hex")),
+    );
     const summary = deriveAccountAddressView({
       domain: DEFAULT_DERIVATION_LABEL,
       publicKeyHex: publicKey.toString("hex").toUpperCase(),
@@ -882,8 +1062,12 @@ const loadOrCreateWallet = async () => {
   }
 
   const pair = generateKeyPair();
-  const publicKeyHex = Buffer.from(pair.publicKey).toString("hex").toUpperCase();
-  const privateKeyHex = Buffer.from(pair.privateKey).toString("hex").toUpperCase();
+  const publicKeyHex = Buffer.from(pair.publicKey)
+    .toString("hex")
+    .toUpperCase();
+  const privateKeyHex = Buffer.from(pair.privateKey)
+    .toString("hex")
+    .toUpperCase();
   const summary = deriveAccountAddressView({
     domain: DEFAULT_DERIVATION_LABEL,
     publicKeyHex,
@@ -908,18 +1092,28 @@ const loadSiblingTestnetClientWallet = async () => {
   }
   const config = await readFile(TESTNET_CLIENT_CONFIG_PATH, "utf8");
   const publicKey = decodeMultihashKey(
-    readTomlField(config, /^\[account\][\s\S]*?^public_key *= "([^"]+)"/mu, "account.public_key"),
+    readTomlField(
+      config,
+      /^\[account\][\s\S]*?^public_key *= "([^"]+)"/mu,
+      "account.public_key",
+    ),
     "ed0120",
     "account.public_key",
   );
   const privateKey = decodeMultihashKey(
-    readTomlField(config, /^\[account\][\s\S]*?^private_key = "([^"]+)"/mu, "account.private_key"),
+    readTomlField(
+      config,
+      /^\[account\][\s\S]*?^private_key = "([^"]+)"/mu,
+      "account.private_key",
+    ),
     "802620",
     "account.private_key",
   );
   const derivedPublicKey = Buffer.from(publicKeyFromPrivate(privateKey));
   if (Buffer.compare(Buffer.from(publicKey), derivedPublicKey) !== 0) {
-    throw new Error("The sibling TAIRA client private key does not match its public key.");
+    throw new Error(
+      "The sibling TAIRA client private key does not match its public key.",
+    );
   }
   const publicKeyHex = Buffer.from(publicKey).toString("hex").toUpperCase();
   const summary = deriveAccountAddressView({
@@ -939,7 +1133,9 @@ const loadSiblingTestnetClientWallet = async () => {
 };
 
 const requestFaucetFunds = async (toriiUrl, accountId) => {
-  const puzzleResponse = await fetchJson(new URL("/v1/accounts/faucet/puzzle", `${toriiUrl}/`));
+  const puzzleResponse = await fetchJson(
+    new URL("/v1/accounts/faucet/puzzle", `${toriiUrl}/`),
+  );
   const powPayload =
     Number(puzzleResponse.difficulty_bits) > 0
       ? await solveFaucetPowPuzzle(accountId, puzzleResponse)
@@ -976,7 +1172,11 @@ const waitForSocketOpen = (socket, label) =>
     };
     const handleClose = (event) => {
       cleanup();
-      reject(new Error(`${label} WebSocket closed before opening: ${event.reason || event.code}`));
+      reject(
+        new Error(
+          `${label} WebSocket closed before opening: ${event.reason || event.code}`,
+        ),
+      );
     };
     socket.addEventListener("open", handleOpen, { once: true });
     socket.addEventListener("error", handleError, { once: true });
@@ -986,7 +1186,8 @@ const waitForSocketOpen = (socket, label) =>
 const readMessageBytes = async (value) => {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value)) return new Uint8Array(value);
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(value))
+    return new Uint8Array(value);
   if (typeof Blob !== "undefined" && value instanceof Blob) {
     return new Uint8Array(await value.arrayBuffer());
   }
@@ -997,9 +1198,16 @@ const readMessageBytes = async (value) => {
 };
 
 const deleteConnectSession = async (toriiUrl, sid) =>
-  deleteJson(new URL(`/v1/connect/session/${encodeURIComponent(sid)}`, `${toriiUrl}/`));
+  deleteJson(
+    new URL(`/v1/connect/session/${encodeURIComponent(sid)}`, `${toriiUrl}/`),
+  );
 
-const resolveWalletWithAssets = async (toriiUrl, wallet, assets, requiredAssetIds) => {
+const resolveWalletWithAssets = async (
+  toriiUrl,
+  wallet,
+  assets,
+  requiredAssetIds,
+) => {
   const currentAsset = requiredAssetIds
     .map((assetId) => findPositiveBalance(assets, assetId))
     .find(Boolean);
@@ -1016,7 +1224,10 @@ const resolveWalletWithAssets = async (toriiUrl, wallet, assets, requiredAssetId
   if (!siblingWallet) {
     return null;
   }
-  const siblingAssets = await fetchAccountAssets(toriiUrl, siblingWallet.accountId);
+  const siblingAssets = await fetchAccountAssets(
+    toriiUrl,
+    siblingWallet.accountId,
+  );
   const siblingAsset = requiredAssetIds
     .map((assetId) => findPositiveBalance(siblingAssets, assetId))
     .find(Boolean);
@@ -1042,10 +1253,15 @@ const performConnectSignature = async ({
   const preview = createConnectPreview(chainId);
   const session = await registerConnectSession(toriiUrl, preview.sid);
   if (!session?.token_app || !session?.token_wallet) {
-    throw new Error("Torii Connect session registration did not return both app and wallet tokens.");
+    throw new Error(
+      "Torii Connect session registration did not return both app and wallet tokens.",
+    );
   }
 
-  const signatureRequest = buildDetachedConnectSignatureRequest(draft, domainTag);
+  const signatureRequest = buildDetachedConnectSignatureRequest(
+    draft,
+    domainTag,
+  );
   const walletSessionKeys = await crypto.subtle.generateKey(
     { name: "X25519" },
     true,
@@ -1055,8 +1271,18 @@ const performConnectSignature = async ({
     await crypto.subtle.exportKey("raw", walletSessionKeys.publicKey),
   );
   const walletSessionPublicKeyHex = bytesToHex(walletSessionPublicKey);
-  const appSocket = openConnectWebSocket(toriiUrl, preview.sid, session.token_app, "app");
-  const walletSocket = openConnectWebSocket(toriiUrl, preview.sid, session.token_wallet, "wallet");
+  const appSocket = openConnectWebSocket(
+    toriiUrl,
+    preview.sid,
+    session.token_app,
+    "app",
+  );
+  const walletSocket = openConnectWebSocket(
+    toriiUrl,
+    preview.sid,
+    session.token_wallet,
+    "wallet",
+  );
   appSocket.binaryType = "arraybuffer";
   walletSocket.binaryType = "arraybuffer";
 
@@ -1069,10 +1295,14 @@ const performConnectSignature = async ({
   const closeSockets = () => {
     try {
       appSocket.close(1000, "done");
-    } catch {}
+    } catch (error) {
+      void error;
+    }
     try {
       walletSocket.close(1000, "done");
-    } catch {}
+    } catch (error) {
+      void error;
+    }
   };
 
   const approvalPromise = new Promise((resolve, reject) => {
@@ -1092,11 +1322,20 @@ const performConnectSignature = async ({
         const frame = decodeConnectFrame(await readMessageBytes(event.data));
         if (frame.control?.type === "ping") {
           appOutgoingSeq += 1;
-          appSocket.send(encodePongConnectFrame(preview.sid, appOutgoingSeq, frame.control.nonce));
+          appSocket.send(
+            encodePongConnectFrame(
+              preview.sid,
+              appOutgoingSeq,
+              frame.control.nonce,
+            ),
+          );
           return;
         }
         if (frame.control?.type === "approve") {
-          appDirectionKeys = deriveConnectDirectionKeys(preview, frame.control.walletPublicKeyHex);
+          appDirectionKeys = deriveConnectDirectionKeys(
+            preview,
+            frame.control.walletPublicKeyHex,
+          );
           safeResolve(frame.control);
           return;
         }
@@ -1106,12 +1345,20 @@ const performConnectSignature = async ({
     };
 
     const handleFailure = (label) => (event) => {
-      safeReject(new Error(`${label}: ${event.reason || event.message || event.type}`));
+      safeReject(
+        new Error(`${label}: ${event.reason || event.message || event.type}`),
+      );
     };
 
     appSocket.addEventListener("message", handleAppMessage);
-    appSocket.addEventListener("error", handleFailure("Connect app socket error"));
-    appSocket.addEventListener("close", handleFailure("Connect app socket closed"));
+    appSocket.addEventListener(
+      "error",
+      handleFailure("Connect app socket error"),
+    );
+    appSocket.addEventListener(
+      "close",
+      handleFailure("Connect app socket closed"),
+    );
   });
 
   const signResultPromise = new Promise((resolve, reject) => {
@@ -1129,7 +1376,11 @@ const performConnectSignature = async ({
     const handleAppMessage = async (event) => {
       try {
         const frame = decodeConnectFrame(await readMessageBytes(event.data));
-        if (frame.kind === "ciphertext" && frame.ciphertext && appDirectionKeys) {
+        if (
+          frame.kind === "ciphertext" &&
+          frame.ciphertext &&
+          appDirectionKeys
+        ) {
           const envelope = decryptConnectEnvelope(
             appDirectionKeys.walletKey,
             preview.sid,
@@ -1142,7 +1393,11 @@ const performConnectSignature = async ({
             return;
           }
           if (envelope.payload.type === "sign_result_err") {
-            safeReject(new Error(`${envelope.payload.code}: ${envelope.payload.message}`));
+            safeReject(
+              new Error(
+                `${envelope.payload.code}: ${envelope.payload.message}`,
+              ),
+            );
           }
         }
       } catch (error) {
@@ -1151,11 +1406,19 @@ const performConnectSignature = async ({
     };
 
     const handleFailure = (label) => (event) =>
-      safeReject(new Error(`${label}: ${event.reason || event.message || event.type}`));
+      safeReject(
+        new Error(`${label}: ${event.reason || event.message || event.type}`),
+      );
 
     appSocket.addEventListener("message", handleAppMessage);
-    appSocket.addEventListener("error", handleFailure("Connect app socket error"));
-    appSocket.addEventListener("close", handleFailure("Connect app socket closed"));
+    appSocket.addEventListener(
+      "error",
+      handleFailure("Connect app socket error"),
+    );
+    appSocket.addEventListener(
+      "close",
+      handleFailure("Connect app socket closed"),
+    );
   });
 
   const walletReadyPromise = new Promise((resolve, reject) => {
@@ -1189,7 +1452,10 @@ const performConnectSignature = async ({
           return;
         }
         if (frame.control?.type === "open") {
-          walletDirectionKeys = deriveConnectDirectionKeys(preview, walletSessionPublicKeyHex);
+          walletDirectionKeys = deriveConnectDirectionKeys(
+            preview,
+            walletSessionPublicKeyHex,
+          );
           const approvePreimage = buildApprovePreimage({
             sid: preview.sid,
             appPublicKeyHex: preview.publicKeyHex,
@@ -1218,7 +1484,11 @@ const performConnectSignature = async ({
           safeResolve(frame.control);
           return;
         }
-        if (frame.kind === "ciphertext" && frame.ciphertext && walletDirectionKeys) {
+        if (
+          frame.kind === "ciphertext" &&
+          frame.ciphertext &&
+          walletDirectionKeys
+        ) {
           const envelope = decryptConnectEnvelope(
             walletDirectionKeys.appKey,
             preview.sid,
@@ -1226,7 +1496,10 @@ const performConnectSignature = async ({
             frame.seq,
             hexToBytes(frame.ciphertext.aeadHex),
           );
-          if (envelope.payload.type !== "sign_request_raw" && envelope.payload.type !== "sign_request_tx") {
+          if (
+            envelope.payload.type !== "sign_request_raw" &&
+            envelope.payload.type !== "sign_request_tx"
+          ) {
             return;
           }
           const requestBytes =
@@ -1267,12 +1540,20 @@ const performConnectSignature = async ({
     };
 
     const handleFailure = (label) => (event) => {
-      safeReject(new Error(`${label}: ${event.reason || event.message || event.type}`));
+      safeReject(
+        new Error(`${label}: ${event.reason || event.message || event.type}`),
+      );
     };
 
     walletSocket.addEventListener("message", handleWalletMessage);
-    walletSocket.addEventListener("error", handleFailure("Connect wallet socket error"));
-    walletSocket.addEventListener("close", handleFailure("Connect wallet socket closed"));
+    walletSocket.addEventListener(
+      "error",
+      handleFailure("Connect wallet socket error"),
+    );
+    walletSocket.addEventListener(
+      "close",
+      handleFailure("Connect wallet socket closed"),
+    );
   });
 
   try {
@@ -1311,7 +1592,9 @@ const performConnectSignature = async ({
           }
         : {
             type: "sign_request_tx",
-            txBytesHex: bytesToHex(base64ToBytes(signatureRequest.txBytesBase64)),
+            txBytesHex: bytesToHex(
+              base64ToBytes(signatureRequest.txBytesBase64),
+            ),
             txBytesBase64: signatureRequest.txBytesBase64,
             txBytesLength: base64ToBytes(signatureRequest.txBytesBase64).length,
           },
@@ -1348,7 +1631,11 @@ const prepareAndSubmitViaConnect = async ({
   if (draft.submitted !== false) {
     throw new Error("Torii did not return a detached draft.");
   }
-  if (!trim(draft.signing_message_b64) && !trim(draft.transaction_scaffold_b64) && !trim(draft.signed_transaction_b64)) {
+  if (
+    !trim(draft.signing_message_b64) &&
+    !trim(draft.transaction_scaffold_b64) &&
+    !trim(draft.signed_transaction_b64)
+  ) {
     throw new Error("Torii draft did not include signable content.");
   }
 
@@ -1361,7 +1648,9 @@ const prepareAndSubmitViaConnect = async ({
     draft,
     domainTag,
   });
-  console.log(`IrohaConnect signed via sid ${connect.preview.sid} for ${wallet.accountId}.`);
+  console.log(
+    `IrohaConnect signed via sid ${connect.preview.sid} for ${wallet.accountId}.`,
+  );
 
   const submitResponse = await prepareContractCall(toriiUrl, {
     ...draftRequest,
@@ -1374,7 +1663,10 @@ const prepareAndSubmitViaConnect = async ({
   }
 
   console.log(`Submitted tx: ${submitResponse.tx_hash_hex}`);
-  const pipeline = await waitForPipelineStatus(toriiUrl, submitResponse.tx_hash_hex);
+  const pipeline = await waitForPipelineStatus(
+    toriiUrl,
+    submitResponse.tx_hash_hex,
+  );
   const finalKind = trim(pipeline?.content?.status?.kind || "");
   console.log(`Pipeline status: ${finalKind || "pending"}`);
 
@@ -1389,7 +1681,9 @@ const prepareAndSubmitViaConnect = async ({
 
 const assertExpectedPipelineStatus = (label, finalKind) => {
   if (finalKind && finalKind !== "Applied" && finalKind !== "Committed") {
-    throw new Error(`${label} reached unexpected terminal pipeline status: ${finalKind}`);
+    throw new Error(
+      `${label} reached unexpected terminal pipeline status: ${finalKind}`,
+    );
   }
 };
 
@@ -1426,8 +1720,19 @@ const submitConnectedStep = async ({
   };
 };
 
-const resolveWalletSelection = async (toriiUrl, wallet, assets, requiredAssetIds, label) => {
-  const selection = await resolveWalletWithAssets(toriiUrl, wallet, assets, requiredAssetIds);
+const resolveWalletSelection = async (
+  toriiUrl,
+  wallet,
+  assets,
+  requiredAssetIds,
+  label,
+) => {
+  const selection = await resolveWalletWithAssets(
+    toriiUrl,
+    wallet,
+    assets,
+    requiredAssetIds,
+  );
   if (!selection?.matchedAsset) {
     throw new Error(label);
   }
@@ -1447,7 +1752,9 @@ const buildSpotTrade = async ({
   explicitTradeAmount,
 }) => {
   if (!spotPoolAddress || !spotRouterAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live DLMM pool/router addresses.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live DLMM pool/router addresses.",
+    );
   }
   const poolConfig = await fetchPoolConfig(toriiUrl, wallet.accountId);
   const mirrorState = await fetchMirrorState(toriiUrl, wallet.accountId);
@@ -1477,7 +1784,9 @@ const buildSpotTrade = async ({
 
   const inputAssetId = fundedAsset.assetDefinitionId;
   const receiveAssetId =
-    inputAssetId === poolConfig.baseAssetId ? poolConfig.quoteAssetId : poolConfig.baseAssetId;
+    inputAssetId === poolConfig.baseAssetId
+      ? poolConfig.quoteAssetId
+      : poolConfig.baseAssetId;
   const [inputAssetDefinition, receiveAssetDefinition] = await Promise.all([
     fetchAssetDefinition(toriiUrl, inputAssetId),
     fetchAssetDefinition(toriiUrl, receiveAssetId),
@@ -1493,7 +1802,13 @@ const buildSpotTrade = async ({
         ? inputBalanceBaseUnits / 10n
         : inputBalanceBaseUnits;
   const amountInBaseUnits = explicitTradeAmount
-    ? BigInt(scaleDecimalToBaseUnits(explicitTradeAmount, inputScale, "Trade amount"))
+    ? BigInt(
+        scaleDecimalToBaseUnits(
+          explicitTradeAmount,
+          inputScale,
+          "Trade amount",
+        ),
+      )
     : defaultAmountBaseUnits;
 
   if (amountInBaseUnits <= 0n) {
@@ -1547,11 +1862,15 @@ const buildSpotTrade = async ({
     }
   }
   if (quoteBaseUnits <= 0n) {
-    throw new Error("The live quote returned zero output for every tested amount on this wallet balance.");
+    throw new Error(
+      "The live quote returned zero output for every tested amount on this wallet balance.",
+    );
   }
   const minOutBaseUnits = (quoteBaseUnits * (10000n - slippageBps)) / 10000n;
   if (minOutBaseUnits <= 0n) {
-    throw new Error("The live quote collapses to zero after slippage protection.");
+    throw new Error(
+      "The live quote collapses to zero after slippage protection.",
+    );
   }
 
   console.log(
@@ -1593,11 +1912,17 @@ const buildSpotTrade = async ({
         inputAssetId,
         receiveAssetId,
         amountInBaseUnits: selectedAmountBaseUnits.toString(),
-        amountInDisplay: formatBaseUnits(selectedAmountBaseUnits.toString(), inputScale),
+        amountInDisplay: formatBaseUnits(
+          selectedAmountBaseUnits.toString(),
+          inputScale,
+        ),
         quoteBaseUnits: quoteBaseUnits.toString(),
         quoteDisplay: formatBaseUnits(quoteBaseUnits.toString(), receiveScale),
         minOutBaseUnits: minOutBaseUnits.toString(),
-        minOutDisplay: formatBaseUnits(minOutBaseUnits.toString(), receiveScale),
+        minOutDisplay: formatBaseUnits(
+          minOutBaseUnits.toString(),
+          receiveScale,
+        ),
         slippageBps: slippageBps.toString(),
       },
     },
@@ -1611,7 +1936,9 @@ const buildN3xMintTrade = async ({
   explicitTradeAmount,
 }) => {
   if (!n3xHubAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live n3x hub address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live n3x hub address.",
+    );
   }
   const hubConfig = await fetchN3xHubConfig(toriiUrl, wallet.accountId);
   console.log(
@@ -1625,7 +1952,9 @@ const buildN3xMintTrade = async ({
     [hubConfig.usdtAssetId, hubConfig.usdcAssetId, hubConfig.kusdAssetId],
   );
   if (!walletSelection) {
-    throw new Error("No connected wallet currently holds a live n3x basket asset on TAIRA.");
+    throw new Error(
+      "No connected wallet currently holds a live n3x basket asset on TAIRA.",
+    );
   }
   wallet = walletSelection.wallet;
   assets = walletSelection.assets;
@@ -1635,45 +1964,77 @@ const buildN3xMintTrade = async ({
     );
   }
 
-  const [usdtDefinition, usdcDefinition, kusdDefinition, n3xDefinition] = await Promise.all([
-    fetchAssetDefinition(toriiUrl, hubConfig.usdtAssetId),
-    fetchAssetDefinition(toriiUrl, hubConfig.usdcAssetId),
-    fetchAssetDefinition(toriiUrl, hubConfig.kusdAssetId),
-    fetchAssetDefinition(toriiUrl, hubConfig.n3xAssetId),
-  ]);
+  const [usdtDefinition, usdcDefinition, kusdDefinition, n3xDefinition] =
+    await Promise.all([
+      fetchAssetDefinition(toriiUrl, hubConfig.usdtAssetId),
+      fetchAssetDefinition(toriiUrl, hubConfig.usdcAssetId),
+      fetchAssetDefinition(toriiUrl, hubConfig.kusdAssetId),
+      fetchAssetDefinition(toriiUrl, hubConfig.n3xAssetId),
+    ]);
   const usdtScale = Number(usdtDefinition?.spec?.scale ?? 0);
   const usdcScale = Number(usdcDefinition?.spec?.scale ?? 0);
   const kusdScale = Number(kusdDefinition?.spec?.scale ?? 0);
   const n3xScale = Number(n3xDefinition?.spec?.scale ?? 0);
 
-  const usdtInput = trim(process.env.SORASWAP_N3X_USDT || explicitTradeAmount || "10");
+  const usdtInput = trim(
+    process.env.SORASWAP_N3X_USDT || explicitTradeAmount || "10",
+  );
   const usdcInput = trim(process.env.SORASWAP_N3X_USDC || "0");
   const kusdInput = trim(process.env.SORASWAP_N3X_KUSD || "0");
-  const usdtIn = scaleDecimalToBaseUnits(usdtInput, usdtScale, "USDT in", { allowZero: true });
-  const usdcIn = scaleDecimalToBaseUnits(usdcInput, usdcScale, "USDC in", { allowZero: true });
-  const kusdIn = scaleDecimalToBaseUnits(kusdInput, kusdScale, "KUSD in", { allowZero: true });
+  const usdtIn = scaleDecimalToBaseUnits(usdtInput, usdtScale, "USDT in", {
+    allowZero: true,
+  });
+  const usdcIn = scaleDecimalToBaseUnits(usdcInput, usdcScale, "USDC in", {
+    allowZero: true,
+  });
+  const kusdIn = scaleDecimalToBaseUnits(kusdInput, kusdScale, "KUSD in", {
+    allowZero: true,
+  });
   if (BigInt(usdtIn) + BigInt(usdcIn) + BigInt(kusdIn) <= 0n) {
     throw new Error("Enter at least one non-zero n3x basket input.");
   }
 
   const balances = new Map(
     assets
-      .map((asset) => [asset.assetDefinitionId, tryParseIntegerUnits(asset.quantity)])
+      .map((asset) => [
+        asset.assetDefinitionId,
+        tryParseIntegerUnits(asset.quantity),
+      ])
       .filter(([, quantity]) => quantity !== null),
   );
   const requiredBalances = [
-    [hubConfig.usdtAssetId, usdtIn, usdtDefinition?.alias || hubConfig.usdtAssetId],
-    [hubConfig.usdcAssetId, usdcIn, usdcDefinition?.alias || hubConfig.usdcAssetId],
-    [hubConfig.kusdAssetId, kusdIn, kusdDefinition?.alias || hubConfig.kusdAssetId],
+    [
+      hubConfig.usdtAssetId,
+      usdtIn,
+      usdtDefinition?.alias || hubConfig.usdtAssetId,
+    ],
+    [
+      hubConfig.usdcAssetId,
+      usdcIn,
+      usdcDefinition?.alias || hubConfig.usdcAssetId,
+    ],
+    [
+      hubConfig.kusdAssetId,
+      kusdIn,
+      kusdDefinition?.alias || hubConfig.kusdAssetId,
+    ],
   ];
   for (const [assetId, amount, label] of requiredBalances) {
     if (BigInt(amount) <= 0n) continue;
     if ((balances.get(assetId) || 0n) < BigInt(amount)) {
-      throw new Error(`Wallet ${wallet.accountId} does not hold enough ${label} for this n3x mint.`);
+      throw new Error(
+        `Wallet ${wallet.accountId} does not hold enough ${label} for this n3x mint.`,
+      );
     }
   }
 
-  const quotedMint = await quoteN3xMint(toriiUrl, wallet.accountId, usdtIn, usdcIn, kusdIn);
+  const quotedMint = await quoteN3xMint(
+    toriiUrl,
+    wallet.accountId,
+    usdtIn,
+    usdcIn,
+    kusdIn,
+  );
   console.log(
     `Mint inputs: ${usdtInput} ${usdtDefinition.alias || hubConfig.usdtAssetId}, ${usdcInput} ${usdcDefinition.alias || hubConfig.usdcAssetId}, ${kusdInput} ${kusdDefinition.alias || hubConfig.kusdAssetId}`,
   );
@@ -1724,13 +2085,11 @@ const buildN3xMintTrade = async ({
   };
 };
 
-const buildPerpsOpenTrade = async ({
-  toriiUrl,
-  wallet,
-  assets,
-}) => {
+const buildPerpsOpenTrade = async ({ toriiUrl, wallet, assets }) => {
   if (!perpsEngineAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live perps engine address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live perps engine address.",
+    );
   }
   const engineConfig = await fetchPerpsEngineConfig(toriiUrl, wallet.accountId);
   console.log(
@@ -1744,7 +2103,9 @@ const buildPerpsOpenTrade = async ({
     [engineConfig.collateralAssetId],
   );
   if (!walletSelection?.matchedAsset) {
-    throw new Error(`No connected wallet currently holds the perps collateral asset ${engineConfig.collateralAssetId}.`);
+    throw new Error(
+      `No connected wallet currently holds the perps collateral asset ${engineConfig.collateralAssetId}.`,
+    );
   }
   wallet = walletSelection.wallet;
   assets = walletSelection.assets;
@@ -1754,23 +2115,37 @@ const buildPerpsOpenTrade = async ({
     );
   }
 
-  const collateralDefinition = await fetchAssetDefinition(toriiUrl, engineConfig.collateralAssetId);
+  const collateralDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    engineConfig.collateralAssetId,
+  );
   const collateralScale = Number(collateralDefinition?.spec?.scale ?? 0);
   const sizeInput = trim(process.env.SORASWAP_PERPS_SIZE || "10");
-  const direction = trim(process.env.SORASWAP_PERPS_DIRECTION || "long").toLowerCase();
-  const sizeBaseUnits = BigInt(scaleDecimalToBaseUnits(sizeInput, 0, "Perps size"));
+  const direction = trim(
+    process.env.SORASWAP_PERPS_DIRECTION || "long",
+  ).toLowerCase();
+  const sizeBaseUnits = BigInt(
+    scaleDecimalToBaseUnits(sizeInput, 0, "Perps size"),
+  );
   if (sizeBaseUnits <= 0n) {
     throw new Error("Perps size must be greater than zero.");
   }
 
   const minimumCollateral = BigInt(
-    Math.ceil((Number(sizeBaseUnits) * 10000) / Math.max(1, engineConfig.maxLeverageBps)),
+    Math.ceil(
+      (Number(sizeBaseUnits) * 10000) /
+        Math.max(1, engineConfig.maxLeverageBps),
+    ),
   );
   const collateralInput = trim(
     process.env.SORASWAP_PERPS_COLLATERAL || minimumCollateral.toString(),
   );
   const collateralBaseUnits = BigInt(
-    scaleDecimalToBaseUnits(collateralInput, collateralScale, "Perps collateral"),
+    scaleDecimalToBaseUnits(
+      collateralInput,
+      collateralScale,
+      "Perps collateral",
+    ),
   );
   const balance = BigInt(walletSelection.matchedAsset.quantity);
   if (collateralBaseUnits > balance) {
@@ -1778,11 +2153,16 @@ const buildPerpsOpenTrade = async ({
       `Requested collateral ${collateralInput} exceeds the available ${collateralDefinition.alias || engineConfig.collateralAssetId} balance.`,
     );
   }
-  const entryPriceBps = trim(process.env.SORASWAP_PERPS_ENTRY_PRICE_BPS || "10000");
+  const entryPriceBps = trim(
+    process.env.SORASWAP_PERPS_ENTRY_PRICE_BPS || "10000",
+  );
   const positionId =
     trim(process.env.SORASWAP_POSITION_ID) ||
     `connect_live_${Date.now().toString(36)}`.replace(/[^a-z0-9_]/g, "_");
-  const signedSize = direction === "short" ? (-sizeBaseUnits).toString() : sizeBaseUnits.toString();
+  const signedSize =
+    direction === "short"
+      ? (-sizeBaseUnits).toString()
+      : sizeBaseUnits.toString();
 
   console.log(
     `Opening ${direction === "short" ? "short" : "long"} perps position ${positionId}: size ${sizeBaseUnits.toString()}, collateral ${formatBaseUnits(collateralBaseUnits.toString(), collateralScale)} ${collateralDefinition.alias || engineConfig.collateralAssetId}`,
@@ -1821,7 +2201,10 @@ const buildPerpsOpenTrade = async ({
         direction: direction === "short" ? "short" : "long",
         size: sizeBaseUnits.toString(),
         collateralBaseUnits: collateralBaseUnits.toString(),
-        collateralDisplay: formatBaseUnits(collateralBaseUnits.toString(), collateralScale),
+        collateralDisplay: formatBaseUnits(
+          collateralBaseUnits.toString(),
+          collateralScale,
+        ),
         entryPriceBps,
       },
     },
@@ -1835,7 +2218,9 @@ const buildN3xRedeemTrade = async ({
   explicitTradeAmount,
 }) => {
   if (!n3xHubAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live n3x hub address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live n3x hub address.",
+    );
   }
   const hubConfig = await fetchN3xHubConfig(toriiUrl, wallet.accountId);
   const walletSelection = await resolveWalletSelection(
@@ -1848,12 +2233,21 @@ const buildN3xRedeemTrade = async ({
   wallet = walletSelection.wallet;
   assets = walletSelection.assets;
 
-  const n3xDefinition = await fetchAssetDefinition(toriiUrl, hubConfig.n3xAssetId);
+  const n3xDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    hubConfig.n3xAssetId,
+  );
   const n3xScale = Number(n3xDefinition?.spec?.scale ?? 0);
   const n3xBalance = BigInt(walletSelection.matchedAsset.quantity);
   const defaultAmount = 10n ** BigInt(Math.max(0, n3xScale));
   const redeemAmount = explicitTradeAmount
-    ? BigInt(scaleDecimalToBaseUnits(explicitTradeAmount, n3xScale, "n3x redeem amount"))
+    ? BigInt(
+        scaleDecimalToBaseUnits(
+          explicitTradeAmount,
+          n3xScale,
+          "n3x redeem amount",
+        ),
+      )
     : n3xBalance >= defaultAmount
       ? defaultAmount
       : n3xBalance;
@@ -1861,10 +2255,16 @@ const buildN3xRedeemTrade = async ({
     throw new Error("The selected wallet does not hold enough n3x to redeem.");
   }
   if (redeemAmount > n3xBalance) {
-    throw new Error("Requested n3x redeem amount exceeds the available balance.");
+    throw new Error(
+      "Requested n3x redeem amount exceeds the available balance.",
+    );
   }
 
-  const redeemQuote = await quoteN3xRedeem(toriiUrl, wallet.accountId, redeemAmount.toString());
+  const redeemQuote = await quoteN3xRedeem(
+    toriiUrl,
+    wallet.accountId,
+    redeemAmount.toString(),
+  );
   console.log(
     `Redeeming ${formatBaseUnits(redeemAmount.toString(), n3xScale)} ${n3xDefinition.alias || hubConfig.n3xAssetId} for quoted basket output ${redeemQuote}.`,
   );
@@ -1905,14 +2305,11 @@ const buildN3xRedeemTrade = async ({
   };
 };
 
-const runFarmCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runFarmCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!farmsFarmAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live farm address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live farm address.",
+    );
   }
   const farmConfig = await fetchFarmConfig(toriiUrl, wallet.accountId);
   const walletSelection = await resolveWalletSelection(
@@ -1923,13 +2320,23 @@ const runFarmCycle = async ({
     `No connected wallet currently holds the live farm assets ${farmConfig.stakeAssetId} or ${farmConfig.rewardAssetId}.`,
   );
   wallet = walletSelection.wallet;
-  const positionId = trim(process.env.SORASWAP_FARM_POSITION || makeLiveName("live_farm"));
+  const positionId = trim(
+    process.env.SORASWAP_FARM_POSITION || makeLiveName("live_farm"),
+  );
   const rewardFundAmount = trim(process.env.SORASWAP_FARM_REWARD_FUND || "100");
   const stakeAmount = trim(process.env.SORASWAP_FARM_STAKE_AMOUNT || "3");
   const unstakeAmount = trim(process.env.SORASWAP_FARM_UNSTAKE_AMOUNT || "1");
-  const rewardRate = Number(trim(process.env.SORASWAP_FARM_REWARD_RATE || farmConfig.rewardRate));
-  const stakeDefinition = await fetchAssetDefinition(toriiUrl, farmConfig.stakeAssetId);
-  const rewardDefinition = await fetchAssetDefinition(toriiUrl, farmConfig.rewardAssetId);
+  const rewardRate = Number(
+    trim(process.env.SORASWAP_FARM_REWARD_RATE || farmConfig.rewardRate),
+  );
+  const stakeDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    farmConfig.stakeAssetId,
+  );
+  const rewardDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    farmConfig.rewardAssetId,
+  );
 
   console.log(
     `Farm cycle on position ${positionId}: stake ${stakeAmount} ${stakeDefinition.alias || farmConfig.stakeAssetId}, reward fund ${rewardFundAmount} ${rewardDefinition.alias || farmConfig.rewardAssetId}.`,
@@ -2061,14 +2468,11 @@ const runFarmCycle = async ({
   };
 };
 
-const runPerpsCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runPerpsCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!perpsEngineAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live perps engine address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live perps engine address.",
+    );
   }
   const engineConfig = await fetchPerpsEngineConfig(toriiUrl, wallet.accountId);
   const walletSelection = await resolveWalletSelection(
@@ -2080,17 +2484,34 @@ const runPerpsCycle = async ({
   );
   wallet = walletSelection.wallet;
 
-  const collateralDefinition = await fetchAssetDefinition(toriiUrl, engineConfig.collateralAssetId);
+  const collateralDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    engineConfig.collateralAssetId,
+  );
   const collateralScale = Number(collateralDefinition?.spec?.scale ?? 0);
-  const positionId = trim(process.env.SORASWAP_PERPS_POSITION || makeLiveName("live_perps"));
+  const positionId = trim(
+    process.env.SORASWAP_PERPS_POSITION || makeLiveName("live_perps"),
+  );
   const size = trim(process.env.SORASWAP_PERPS_SIZE || "1000");
-  const initialCollateral = trim(process.env.SORASWAP_PERPS_INITIAL_COLLATERAL || "250");
+  const initialCollateral = trim(
+    process.env.SORASWAP_PERPS_INITIAL_COLLATERAL || "250",
+  );
   const addCollateral = trim(process.env.SORASWAP_PERPS_ADD_COLLATERAL || "50");
-  const removeCollateral = trim(process.env.SORASWAP_PERPS_REMOVE_COLLATERAL || "40");
-  const entryPriceBps = Number(trim(process.env.SORASWAP_PERPS_ENTRY_PRICE_BPS || "10000"));
-  const fundingMarkPriceBps = Number(trim(process.env.SORASWAP_PERPS_FUNDING_MARK_PRICE_BPS || "11000"));
-  const fundingIndexPriceBps = Number(trim(process.env.SORASWAP_PERPS_FUNDING_INDEX_PRICE_BPS || "10000"));
-  const exitMarkPriceBps = Number(trim(process.env.SORASWAP_PERPS_EXIT_MARK_PRICE_BPS || "10200"));
+  const removeCollateral = trim(
+    process.env.SORASWAP_PERPS_REMOVE_COLLATERAL || "40",
+  );
+  const entryPriceBps = Number(
+    trim(process.env.SORASWAP_PERPS_ENTRY_PRICE_BPS || "10000"),
+  );
+  const fundingMarkPriceBps = Number(
+    trim(process.env.SORASWAP_PERPS_FUNDING_MARK_PRICE_BPS || "11000"),
+  );
+  const fundingIndexPriceBps = Number(
+    trim(process.env.SORASWAP_PERPS_FUNDING_INDEX_PRICE_BPS || "10000"),
+  );
+  const exitMarkPriceBps = Number(
+    trim(process.env.SORASWAP_PERPS_EXIT_MARK_PRICE_BPS || "10200"),
+  );
 
   console.log(
     `Perps cycle on ${positionId}: size ${size}, collateral ${formatBaseUnits(initialCollateral, collateralScale)} ${collateralDefinition.alias || engineConfig.collateralAssetId}.`,
@@ -2263,14 +2684,11 @@ const runPerpsCycle = async ({
   };
 };
 
-const runOptionsCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runOptionsCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!optionsSeriesManagerAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live options manager address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live options manager address.",
+    );
   }
   const poolConfig = await fetchPoolConfig(toriiUrl, wallet.accountId);
   const hubConfig = await fetchN3xHubConfig(toriiUrl, wallet.accountId);
@@ -2283,14 +2701,29 @@ const runOptionsCycle = async ({
   );
   wallet = walletSelection.wallet;
 
-  const seriesId = trim(process.env.SORASWAP_OPTIONS_SERIES || makeLiveName("live_series"));
-  const primaryTicketId = trim(process.env.SORASWAP_OPTIONS_TICKET || makeLiveName("live_option_ticket"));
-  const voidTicketId = trim(process.env.SORASWAP_OPTIONS_VOID_TICKET || makeLiveName("live_option_void"));
-  const strikePrice = Number(trim(process.env.SORASWAP_OPTIONS_STRIKE_PRICE || "2"));
+  const seriesId = trim(
+    process.env.SORASWAP_OPTIONS_SERIES || makeLiveName("live_series"),
+  );
+  const primaryTicketId = trim(
+    process.env.SORASWAP_OPTIONS_TICKET || makeLiveName("live_option_ticket"),
+  );
+  const voidTicketId = trim(
+    process.env.SORASWAP_OPTIONS_VOID_TICKET ||
+      makeLiveName("live_option_void"),
+  );
+  const strikePrice = Number(
+    trim(process.env.SORASWAP_OPTIONS_STRIKE_PRICE || "2"),
+  );
   const premium = Number(trim(process.env.SORASWAP_OPTIONS_PREMIUM || "1"));
-  const collateralAmount = Number(trim(process.env.SORASWAP_OPTIONS_COLLATERAL || "4"));
-  const exercisePayout = Number(trim(process.env.SORASWAP_OPTIONS_EXERCISE_PAYOUT || "2"));
-  const expirySlot = Number(trim(process.env.SORASWAP_OPTIONS_EXPIRY_SLOT || "12"));
+  const collateralAmount = Number(
+    trim(process.env.SORASWAP_OPTIONS_COLLATERAL || "4"),
+  );
+  const exercisePayout = Number(
+    trim(process.env.SORASWAP_OPTIONS_EXERCISE_PAYOUT || "2"),
+  );
+  const expirySlot = Number(
+    trim(process.env.SORASWAP_OPTIONS_EXPIRY_SLOT || "12"),
+  );
 
   console.log(
     `Options cycle on ${seriesId}: strike ${strikePrice}, premium ${premium}, collateral ${collateralAmount}.`,
@@ -2446,12 +2879,21 @@ const runOptionsCycle = async ({
     }),
   );
 
-  const [seriesConfig, seriesMirror, primaryTicketMirror, voidTicketMirror] = await Promise.all([
-    retryAsync("options series_config", () => fetchSeriesConfig(toriiUrl, wallet.accountId, seriesId)),
-    retryAsync("options mirror_series", () => fetchSeriesMirror(toriiUrl, wallet.accountId, seriesId)),
-    retryAsync("options mirror_ticket", () => fetchTicketMirror(toriiUrl, wallet.accountId, primaryTicketId)),
-    retryAsync("options mirror_void_ticket", () => fetchTicketMirror(toriiUrl, wallet.accountId, voidTicketId)),
-  ]);
+  const [seriesConfig, seriesMirror, primaryTicketMirror, voidTicketMirror] =
+    await Promise.all([
+      retryAsync("options series_config", () =>
+        fetchSeriesConfig(toriiUrl, wallet.accountId, seriesId),
+      ),
+      retryAsync("options mirror_series", () =>
+        fetchSeriesMirror(toriiUrl, wallet.accountId, seriesId),
+      ),
+      retryAsync("options mirror_ticket", () =>
+        fetchTicketMirror(toriiUrl, wallet.accountId, primaryTicketId),
+      ),
+      retryAsync("options mirror_void_ticket", () =>
+        fetchTicketMirror(toriiUrl, wallet.accountId, voidTicketId),
+      ),
+    ]);
 
   return {
     ranAt: new Date().toISOString(),
@@ -2471,14 +2913,11 @@ const runOptionsCycle = async ({
   };
 };
 
-const runCoverCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runCoverCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!coverPolicyManagerAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live cover manager address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live cover manager address.",
+    );
   }
   const hubConfig = await fetchN3xHubConfig(toriiUrl, wallet.accountId);
   const walletSelection = await resolveWalletSelection(
@@ -2490,14 +2929,30 @@ const runCoverCycle = async ({
   );
   wallet = walletSelection.wallet;
 
-  const claimPolicyId = trim(process.env.SORASWAP_COVER_POLICY || makeLiveName("live_cover_claim"));
-  const cancelPolicyId = trim(process.env.SORASWAP_COVER_CANCEL_POLICY || makeLiveName("live_cover_cancel"));
-  const expirePolicyId = trim(process.env.SORASWAP_COVER_EXPIRE_POLICY || makeLiveName("live_cover_expire"));
-  const durationSlots = Number(trim(process.env.SORASWAP_COVER_DURATION_SLOTS || "10"));
-  const payoutBps = Number(trim(process.env.SORASWAP_COVER_PAYOUT_BPS || "8000"));
+  const claimPolicyId = trim(
+    process.env.SORASWAP_COVER_POLICY || makeLiveName("live_cover_claim"),
+  );
+  const cancelPolicyId = trim(
+    process.env.SORASWAP_COVER_CANCEL_POLICY ||
+      makeLiveName("live_cover_cancel"),
+  );
+  const expirePolicyId = trim(
+    process.env.SORASWAP_COVER_EXPIRE_POLICY ||
+      makeLiveName("live_cover_expire"),
+  );
+  const durationSlots = Number(
+    trim(process.env.SORASWAP_COVER_DURATION_SLOTS || "10"),
+  );
+  const payoutBps = Number(
+    trim(process.env.SORASWAP_COVER_PAYOUT_BPS || "8000"),
+  );
   const premium = Number(trim(process.env.SORASWAP_COVER_PREMIUM || "5"));
-  const coveredNotional = Number(trim(process.env.SORASWAP_COVER_NOTIONAL || "10"));
-  const cancelRefundBps = Number(trim(process.env.SORASWAP_COVER_CANCEL_REFUND_BPS || "5000"));
+  const coveredNotional = Number(
+    trim(process.env.SORASWAP_COVER_NOTIONAL || "10"),
+  );
+  const cancelRefundBps = Number(
+    trim(process.env.SORASWAP_COVER_CANCEL_REFUND_BPS || "5000"),
+  );
 
   const initAndConfigure = async (policyId, stepPrefix) => {
     const steps = [];
@@ -2610,7 +3065,9 @@ const runCoverCycle = async ({
     }),
   );
 
-  steps.push(...(await initAndConfigure(cancelPolicyId, "cover_cancel_policy")));
+  steps.push(
+    ...(await initAndConfigure(cancelPolicyId, "cover_cancel_policy")),
+  );
   steps.push(
     await submitConnectedStep({
       name: "cover_buy_cancel_policy",
@@ -2655,7 +3112,9 @@ const runCoverCycle = async ({
     }),
   );
 
-  steps.push(...(await initAndConfigure(expirePolicyId, "cover_expire_policy")));
+  steps.push(
+    ...(await initAndConfigure(expirePolicyId, "cover_expire_policy")),
+  );
   steps.push(
     await submitConnectedStep({
       name: "cover_buy_expire_policy",
@@ -2697,11 +3156,24 @@ const runCoverCycle = async ({
     }),
   );
 
-  const [claimPolicyConfig, claimPolicyMirror, cancelPolicyMirror, expirePolicyMirror] = await Promise.all([
-    retryAsync("cover policy_config", () => fetchPolicyConfig(toriiUrl, wallet.accountId, claimPolicyId)),
-    retryAsync("cover claim mirror", () => fetchPolicyMirror(toriiUrl, wallet.accountId, claimPolicyId)),
-    retryAsync("cover cancel mirror", () => fetchPolicyMirror(toriiUrl, wallet.accountId, cancelPolicyId)),
-    retryAsync("cover expire mirror", () => fetchPolicyMirror(toriiUrl, wallet.accountId, expirePolicyId)),
+  const [
+    claimPolicyConfig,
+    claimPolicyMirror,
+    cancelPolicyMirror,
+    expirePolicyMirror,
+  ] = await Promise.all([
+    retryAsync("cover policy_config", () =>
+      fetchPolicyConfig(toriiUrl, wallet.accountId, claimPolicyId),
+    ),
+    retryAsync("cover claim mirror", () =>
+      fetchPolicyMirror(toriiUrl, wallet.accountId, claimPolicyId),
+    ),
+    retryAsync("cover cancel mirror", () =>
+      fetchPolicyMirror(toriiUrl, wallet.accountId, cancelPolicyId),
+    ),
+    retryAsync("cover expire mirror", () =>
+      fetchPolicyMirror(toriiUrl, wallet.accountId, expirePolicyId),
+    ),
   ]);
 
   return {
@@ -2722,14 +3194,11 @@ const runCoverCycle = async ({
   };
 };
 
-const runBridgeCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runBridgeCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!sccpBridgeAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live bridge contract address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live bridge contract address.",
+    );
   }
 
   const [hubConfig, poolConfig] = await Promise.all([
@@ -2740,33 +3209,55 @@ const runBridgeCycle = async ({
     toriiUrl,
     wallet,
     assets,
-    [hubConfig.usdtAssetId, hubConfig.n3xAssetId, poolConfig.baseAssetId, poolConfig.quoteAssetId],
+    [
+      hubConfig.usdtAssetId,
+      hubConfig.n3xAssetId,
+      poolConfig.baseAssetId,
+      poolConfig.quoteAssetId,
+    ],
     "Neither the demo wallet nor the sibling TAIRA wallet currently holds an asset usable for the bridge cycle.",
   );
   wallet = walletSelection.wallet;
   assets = walletSelection.assets;
 
   const fundedAsset = walletSelection.matchedAsset;
-  const assetDefinition = await fetchAssetDefinition(toriiUrl, fundedAsset.assetDefinitionId);
+  const assetDefinition = await fetchAssetDefinition(
+    toriiUrl,
+    fundedAsset.assetDefinitionId,
+  );
   const assetDecimals = Number(assetDefinition?.spec?.scale ?? 0);
-  const remoteDomain = Number(trim(process.env.SORASWAP_BRIDGE_REMOTE_DOMAIN || "1"));
-  const listingFeeAmount = Number(trim(process.env.SORASWAP_BRIDGE_LISTING_FEE_AMOUNT || "0"));
+  const remoteDomain = Number(
+    trim(process.env.SORASWAP_BRIDGE_REMOTE_DOMAIN || "1"),
+  );
+  const listingFeeAmount = Number(
+    trim(process.env.SORASWAP_BRIDGE_LISTING_FEE_AMOUNT || "0"),
+  );
   const bridgeAmount = ensureIntegerString(
     "bridge amount",
     trim(process.env.SORASWAP_BRIDGE_AMOUNT || "1"),
   );
-  const assetKey = trim(process.env.SORASWAP_BRIDGE_ASSET_KEY || makeLiveName("live_bridge_asset"));
-  const route = trim(process.env.SORASWAP_BRIDGE_ROUTE || makeLiveName("live_bridge_route"));
+  const assetKey = trim(
+    process.env.SORASWAP_BRIDGE_ASSET_KEY || makeLiveName("live_bridge_asset"),
+  );
+  const route = trim(
+    process.env.SORASWAP_BRIDGE_ROUTE || makeLiveName("live_bridge_route"),
+  );
   const transferId = trim(
-    process.env.SORASWAP_BRIDGE_TRANSFER_ID || makeLiveName("live_bridge_transfer"),
+    process.env.SORASWAP_BRIDGE_TRANSFER_ID ||
+      makeLiveName("live_bridge_transfer"),
   );
   const inboundMessageId = trim(
-    process.env.SORASWAP_BRIDGE_MESSAGE_ID || makeLiveName("live_bridge_message"),
+    process.env.SORASWAP_BRIDGE_MESSAGE_ID ||
+      makeLiveName("live_bridge_message"),
   );
   const recipient = trim(
-    process.env.SORASWAP_BRIDGE_RECIPIENT || makeLiveName("remote_bridge_recipient"),
+    process.env.SORASWAP_BRIDGE_RECIPIENT ||
+      makeLiveName("remote_bridge_recipient"),
   );
-  const assetBalanceBefore = findAssetQuantity(assets, fundedAsset.assetDefinitionId);
+  const assetBalanceBefore = findAssetQuantity(
+    assets,
+    fundedAsset.assetDefinitionId,
+  );
 
   let listingConfig = await retryAsync("bridge listing_config", async () => {
     try {
@@ -2774,7 +3265,9 @@ const runBridgeCycle = async ({
     } catch (error) {
       if (
         error instanceof Error &&
-        /bridge not initialized|assertion failed|constraint violation/i.test(error.message)
+        /bridge not initialized|assertion failed|constraint violation/i.test(
+          error.message,
+        )
       ) {
         return null;
       }
@@ -2815,10 +3308,13 @@ const runBridgeCycle = async ({
           contract_address: sccpBridgeAddress,
           entrypoint: "configure_listing",
           payload: {
-            listing_fee_asset: listingConfig.listingFeeAssetId || poolConfig.baseAssetId,
-            treasury: listingConfig.treasuryAccountId || hubConfig.vaultAccountId,
+            listing_fee_asset:
+              listingConfig.listingFeeAssetId || poolConfig.baseAssetId,
+            treasury:
+              listingConfig.treasuryAccountId || hubConfig.vaultAccountId,
             listing_fee_amount:
-              Number.isFinite(listingConfig.listingFeeAmount) && listingConfig.listingFeeAmount >= 0
+              Number.isFinite(listingConfig.listingFeeAmount) &&
+              listingConfig.listingFeeAmount >= 0
                 ? listingConfig.listingFeeAmount
                 : listingFeeAmount,
             registry_enabled: 1,
@@ -2896,7 +3392,9 @@ const runBridgeCycle = async ({
   );
 
   const assetBalanceAfterLock = findAssetQuantity(
-    await retryAsync("bridge balance after lock", () => fetchAccountAssets(toriiUrl, wallet.accountId)),
+    await retryAsync("bridge balance after lock", () =>
+      fetchAccountAssets(toriiUrl, wallet.accountId),
+    ),
     fundedAsset.assetDefinitionId,
   );
 
@@ -2922,7 +3420,9 @@ const runBridgeCycle = async ({
   );
 
   const assetBalanceAfterFinalize = findAssetQuantity(
-    await retryAsync("bridge balance after finalize", () => fetchAccountAssets(toriiUrl, wallet.accountId)),
+    await retryAsync("bridge balance after finalize", () =>
+      fetchAccountAssets(toriiUrl, wallet.accountId),
+    ),
     fundedAsset.assetDefinitionId,
   );
 
@@ -2936,14 +3436,30 @@ const runBridgeCycle = async ({
     outboundConfig,
     inboundConsumed,
   ] = await Promise.all([
-    retryAsync("bridge listing_config final", () => fetchBridgeListingConfig(toriiUrl, wallet.accountId)),
-    retryAsync("bridge mirror_asset", () => fetchBridgeAssetMirror(toriiUrl, wallet.accountId, assetKey)),
-    retryAsync("bridge asset_config", () => fetchBridgeAssetConfig(toriiUrl, wallet.accountId, assetKey)),
-    retryAsync("bridge mirror_route", () => fetchBridgeRouteMirror(toriiUrl, wallet.accountId, route)),
-    retryAsync("bridge route_config", () => fetchBridgeRouteConfig(toriiUrl, wallet.accountId, route)),
-    retryAsync("bridge mirror_outbound", () => fetchBridgeOutboundMirror(toriiUrl, wallet.accountId, transferId)),
-    retryAsync("bridge outbound_config", () => fetchBridgeOutboundConfig(toriiUrl, wallet.accountId, transferId)),
-    retryAsync("bridge inbound_consumed", () => fetchBridgeInboundConsumed(toriiUrl, wallet.accountId, inboundMessageId)),
+    retryAsync("bridge listing_config final", () =>
+      fetchBridgeListingConfig(toriiUrl, wallet.accountId),
+    ),
+    retryAsync("bridge mirror_asset", () =>
+      fetchBridgeAssetMirror(toriiUrl, wallet.accountId, assetKey),
+    ),
+    retryAsync("bridge asset_config", () =>
+      fetchBridgeAssetConfig(toriiUrl, wallet.accountId, assetKey),
+    ),
+    retryAsync("bridge mirror_route", () =>
+      fetchBridgeRouteMirror(toriiUrl, wallet.accountId, route),
+    ),
+    retryAsync("bridge route_config", () =>
+      fetchBridgeRouteConfig(toriiUrl, wallet.accountId, route),
+    ),
+    retryAsync("bridge mirror_outbound", () =>
+      fetchBridgeOutboundMirror(toriiUrl, wallet.accountId, transferId),
+    ),
+    retryAsync("bridge outbound_config", () =>
+      fetchBridgeOutboundConfig(toriiUrl, wallet.accountId, transferId),
+    ),
+    retryAsync("bridge inbound_consumed", () =>
+      fetchBridgeInboundConsumed(toriiUrl, wallet.accountId, inboundMessageId),
+    ),
   ]);
 
   return {
@@ -2975,42 +3491,87 @@ const runBridgeCycle = async ({
   };
 };
 
-const runAutomationCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-}) => {
+const runAutomationCycle = async ({ toriiUrl, chainId, wallet }) => {
   if (!automationJobQueueAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live automation queue address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live automation queue address.",
+    );
   }
-  const jobId = trim(process.env.SORASWAP_AUTOMATION_JOB || makeLiveName("live_job"));
-  const executor = trim(process.env.SORASWAP_AUTOMATION_EXECUTOR || wallet.accountId);
-  const payloadHash = Number(trim(process.env.SORASWAP_AUTOMATION_PAYLOAD_HASH || "123456"));
-  const nextSlot = Number(trim(process.env.SORASWAP_AUTOMATION_NEXT_SLOT || "5"));
-  const resumeSlot = Number(trim(process.env.SORASWAP_AUTOMATION_RESUME_SLOT || "6"));
-  const retryDelaySlots = Number(trim(process.env.SORASWAP_AUTOMATION_RETRY_DELAY_SLOTS || "3"));
-  const maxRetries = Number(trim(process.env.SORASWAP_AUTOMATION_MAX_RETRIES || "2"));
-  const cronIntervalSlots = Number(trim(process.env.SORASWAP_AUTOMATION_CRON_INTERVAL_SLOTS || "4"));
+  const jobId = trim(
+    process.env.SORASWAP_AUTOMATION_JOB || makeLiveName("live_job"),
+  );
+  const executor = trim(
+    process.env.SORASWAP_AUTOMATION_EXECUTOR || wallet.accountId,
+  );
+  const payloadHash = Number(
+    trim(process.env.SORASWAP_AUTOMATION_PAYLOAD_HASH || "123456"),
+  );
+  const nextSlot = Number(
+    trim(process.env.SORASWAP_AUTOMATION_NEXT_SLOT || "5"),
+  );
+  const resumeSlot = Number(
+    trim(process.env.SORASWAP_AUTOMATION_RESUME_SLOT || "6"),
+  );
+  const retryDelaySlots = Number(
+    trim(process.env.SORASWAP_AUTOMATION_RETRY_DELAY_SLOTS || "3"),
+  );
+  const maxRetries = Number(
+    trim(process.env.SORASWAP_AUTOMATION_MAX_RETRIES || "2"),
+  );
+  const cronIntervalSlots = Number(
+    trim(process.env.SORASWAP_AUTOMATION_CRON_INTERVAL_SLOTS || "4"),
+  );
   const retryRunSlot = resumeSlot + retryDelaySlots;
 
-  console.log(`Automation cycle on ${jobId}: next slot ${nextSlot}, retry run slot ${retryRunSlot}.`);
+  console.log(
+    `Automation cycle on ${jobId}: next slot ${nextSlot}, retry run slot ${retryRunSlot}.`,
+  );
 
   const steps = [];
   for (const [name, entrypoint, payload] of [
-    ["automation_enqueue", "enqueue", { job: jobId, owner: wallet.accountId, payload_hash: payloadHash }],
+    [
+      "automation_enqueue",
+      "enqueue",
+      { job: jobId, owner: wallet.accountId, payload_hash: payloadHash },
+    ],
     [
       "automation_configure",
       "configure_job",
-      { job: jobId, next_slot: nextSlot, max_retries: maxRetries, retry_delay_slots: retryDelaySlots },
+      {
+        job: jobId,
+        next_slot: nextSlot,
+        max_retries: maxRetries,
+        retry_delay_slots: retryDelaySlots,
+      },
     ],
     ["automation_assign_executor", "assign_executor", { job: jobId, executor }],
-    ["automation_configure_cron", "configure_cron", { job: jobId, interval_slots: cronIntervalSlots }],
-    ["automation_dispatch", "dispatch_job", { job: jobId, executor, current_slot: nextSlot }],
+    [
+      "automation_configure_cron",
+      "configure_cron",
+      { job: jobId, interval_slots: cronIntervalSlots },
+    ],
+    [
+      "automation_dispatch",
+      "dispatch_job",
+      { job: jobId, executor, current_slot: nextSlot },
+    ],
     ["automation_pause", "pause_job", { job: jobId }],
-    ["automation_resume", "resume_job", { job: jobId, current_slot: resumeSlot }],
+    [
+      "automation_resume",
+      "resume_job",
+      { job: jobId, current_slot: resumeSlot },
+    ],
     ["automation_retry", "retry_at", { job: jobId, current_slot: resumeSlot }],
-    ["automation_retry_dispatch", "dispatch_job", { job: jobId, executor, current_slot: retryRunSlot }],
-    ["automation_complete_run", "complete_run", { job: jobId, executor, current_slot: retryRunSlot }],
+    [
+      "automation_retry_dispatch",
+      "dispatch_job",
+      { job: jobId, executor, current_slot: retryRunSlot },
+    ],
+    [
+      "automation_complete_run",
+      "complete_run",
+      { job: jobId, executor, current_slot: retryRunSlot },
+    ],
   ]) {
     steps.push(
       await submitConnectedStep({
@@ -3053,14 +3614,11 @@ const runAutomationCycle = async ({
   };
 };
 
-const runLaunchpadCycle = async ({
-  toriiUrl,
-  chainId,
-  wallet,
-  assets,
-}) => {
+const runLaunchpadCycle = async ({ toriiUrl, chainId, wallet, assets }) => {
   if (!launchpadSaleFactoryAddress) {
-    throw new Error("The generated SoraSwap testnet registry does not include the live launchpad factory address.");
+    throw new Error(
+      "The generated SoraSwap testnet registry does not include the live launchpad factory address.",
+    );
   }
   const poolConfig = await fetchPoolConfig(toriiUrl, wallet.accountId);
   const hubConfig = await fetchN3xHubConfig(toriiUrl, wallet.accountId);
@@ -3073,22 +3631,52 @@ const runLaunchpadCycle = async ({
   );
   wallet = walletSelection.wallet;
 
-  const saleId = trim(process.env.SORASWAP_LAUNCHPAD_SALE || makeLiveName("live_sale"));
-  const allocationId = trim(process.env.SORASWAP_LAUNCHPAD_ALLOCATION || makeLiveName("live_allocation"));
-  const refundSaleId = trim(process.env.SORASWAP_LAUNCHPAD_REFUND_SALE || makeLiveName("live_refund_sale"));
-  const refundAllocationId = trim(
-    process.env.SORASWAP_LAUNCHPAD_REFUND_ALLOCATION || makeLiveName("live_refund_allocation"),
+  const saleId = trim(
+    process.env.SORASWAP_LAUNCHPAD_SALE || makeLiveName("live_sale"),
   );
-  const seedPositionId = trim(process.env.SORASWAP_LAUNCHPAD_SEED_POSITION || makeLiveName("live_seed_lp"));
-  const unitPrice = Number(trim(process.env.SORASWAP_LAUNCHPAD_UNIT_PRICE || "1"));
-  const paymentAmount = Number(trim(process.env.SORASWAP_LAUNCHPAD_PAYMENT_AMOUNT || "10"));
-  const claimInventoryAmount = Number(trim(process.env.SORASWAP_LAUNCHPAD_CLAIM_INVENTORY_AMOUNT || "10"));
-  const claimSlot = Number(trim(process.env.SORASWAP_LAUNCHPAD_CLAIM_SLOT || "0"));
-  const seedPaymentAmount = Number(trim(process.env.SORASWAP_LAUNCHPAD_SEED_PAYMENT_AMOUNT || "4"));
-  const seedSaleAmount = Number(trim(process.env.SORASWAP_LAUNCHPAD_SEED_SALE_AMOUNT || "6"));
-  const refundPaymentAmount = Number(trim(process.env.SORASWAP_LAUNCHPAD_REFUND_PAYMENT_AMOUNT || "10"));
-  const refundSoftCap = Number(trim(process.env.SORASWAP_LAUNCHPAD_REFUND_SOFT_CAP || "20"));
-  const hardCap = Number(trim(process.env.SORASWAP_LAUNCHPAD_HARD_CAP || "100000"));
+  const allocationId = trim(
+    process.env.SORASWAP_LAUNCHPAD_ALLOCATION ||
+      makeLiveName("live_allocation"),
+  );
+  const refundSaleId = trim(
+    process.env.SORASWAP_LAUNCHPAD_REFUND_SALE ||
+      makeLiveName("live_refund_sale"),
+  );
+  const refundAllocationId = trim(
+    process.env.SORASWAP_LAUNCHPAD_REFUND_ALLOCATION ||
+      makeLiveName("live_refund_allocation"),
+  );
+  const seedPositionId = trim(
+    process.env.SORASWAP_LAUNCHPAD_SEED_POSITION ||
+      makeLiveName("live_seed_lp"),
+  );
+  const unitPrice = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_UNIT_PRICE || "1"),
+  );
+  const paymentAmount = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_PAYMENT_AMOUNT || "10"),
+  );
+  const claimInventoryAmount = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_CLAIM_INVENTORY_AMOUNT || "10"),
+  );
+  const claimSlot = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_CLAIM_SLOT || "0"),
+  );
+  const seedPaymentAmount = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_SEED_PAYMENT_AMOUNT || "4"),
+  );
+  const seedSaleAmount = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_SEED_SALE_AMOUNT || "6"),
+  );
+  const refundPaymentAmount = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_REFUND_PAYMENT_AMOUNT || "10"),
+  );
+  const refundSoftCap = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_REFUND_SOFT_CAP || "20"),
+  );
+  const hardCap = Number(
+    trim(process.env.SORASWAP_LAUNCHPAD_HARD_CAP || "100000"),
+  );
 
   console.log(`Launchpad cycle on ${saleId} and ${refundSaleId}.`);
 
@@ -3130,53 +3718,77 @@ const runLaunchpadCycle = async ({
     claim_start_slot: 0,
     claim_end_slot: 0,
   });
-  await pushLaunchpadStep("launchpad_contribute_recorded", "contribute_recorded_with_assets", {
-    buyer: wallet.accountId,
-    sale: saleId,
-    allocation: allocationId,
-    treasury: hubConfig.vaultAccountId,
-    payment_asset: poolConfig.baseAssetId,
-    payment_amount: paymentAmount,
-  });
+  await pushLaunchpadStep(
+    "launchpad_contribute_recorded",
+    "contribute_recorded_with_assets",
+    {
+      buyer: wallet.accountId,
+      sale: saleId,
+      allocation: allocationId,
+      treasury: hubConfig.vaultAccountId,
+      payment_asset: poolConfig.baseAssetId,
+      payment_amount: paymentAmount,
+    },
+  );
   await pushLaunchpadStep("launchpad_close_sale", "close_sale", {
     sale: saleId,
   });
-  await pushLaunchpadStep("launchpad_deposit_claim_inventory", "deposit_claim_inventory_with_assets", {
-    owner: wallet.accountId,
-    sale: saleId,
-    treasury: hubConfig.vaultAccountId,
-    sale_asset: hubConfig.n3xAssetId,
-    amount: claimInventoryAmount,
-  });
-  await pushLaunchpadStep("launchpad_settle_claim_assets", "settle_claim_assets", {
-    buyer: wallet.accountId,
-    allocation: allocationId,
-    treasury: hubConfig.vaultAccountId,
-    sale_asset: hubConfig.n3xAssetId,
-    current_slot: claimSlot,
-  });
-  await pushLaunchpadStep("launchpad_deposit_seed_inventory", "deposit_seed_inventory_with_assets", {
-    owner: wallet.accountId,
-    sale: saleId,
-    treasury: hubConfig.vaultAccountId,
-    sale_asset: hubConfig.n3xAssetId,
-    amount: seedSaleAmount,
-  });
-  await pushLaunchpadStep("launchpad_register_seed_liquidity", "register_seed_liquidity", {
-    sale: saleId,
-    position_id: seedPositionId,
-    vault_account: hubConfig.vaultAccountId,
-    bin_id: poolConfig.activeBin,
-    payment_amount: seedPaymentAmount,
-    sale_amount: seedSaleAmount,
-  });
-  await pushLaunchpadStep("launchpad_seed_liquidity", "seed_liquidity_with_assets", {
-    sale: saleId,
-    treasury: hubConfig.vaultAccountId,
-    vault_account: hubConfig.vaultAccountId,
-    payment_asset: poolConfig.baseAssetId,
-    sale_asset: hubConfig.n3xAssetId,
-  });
+  await pushLaunchpadStep(
+    "launchpad_deposit_claim_inventory",
+    "deposit_claim_inventory_with_assets",
+    {
+      owner: wallet.accountId,
+      sale: saleId,
+      treasury: hubConfig.vaultAccountId,
+      sale_asset: hubConfig.n3xAssetId,
+      amount: claimInventoryAmount,
+    },
+  );
+  await pushLaunchpadStep(
+    "launchpad_settle_claim_assets",
+    "settle_claim_assets",
+    {
+      buyer: wallet.accountId,
+      allocation: allocationId,
+      treasury: hubConfig.vaultAccountId,
+      sale_asset: hubConfig.n3xAssetId,
+      current_slot: claimSlot,
+    },
+  );
+  await pushLaunchpadStep(
+    "launchpad_deposit_seed_inventory",
+    "deposit_seed_inventory_with_assets",
+    {
+      owner: wallet.accountId,
+      sale: saleId,
+      treasury: hubConfig.vaultAccountId,
+      sale_asset: hubConfig.n3xAssetId,
+      amount: seedSaleAmount,
+    },
+  );
+  await pushLaunchpadStep(
+    "launchpad_register_seed_liquidity",
+    "register_seed_liquidity",
+    {
+      sale: saleId,
+      position_id: seedPositionId,
+      vault_account: hubConfig.vaultAccountId,
+      bin_id: poolConfig.activeBin,
+      payment_amount: seedPaymentAmount,
+      sale_amount: seedSaleAmount,
+    },
+  );
+  await pushLaunchpadStep(
+    "launchpad_seed_liquidity",
+    "seed_liquidity_with_assets",
+    {
+      sale: saleId,
+      treasury: hubConfig.vaultAccountId,
+      vault_account: hubConfig.vaultAccountId,
+      payment_asset: poolConfig.baseAssetId,
+      sale_asset: hubConfig.n3xAssetId,
+    },
+  );
 
   await pushLaunchpadStep("launchpad_refund_init_sale", "init_sale", {
     sale: refundSaleId,
@@ -3192,23 +3804,31 @@ const runLaunchpadCycle = async ({
     soft_cap: refundSoftCap,
     hard_cap: hardCap,
   });
-  await pushLaunchpadStep("launchpad_refund_contribute_recorded", "contribute_recorded_with_assets", {
-    buyer: wallet.accountId,
-    sale: refundSaleId,
-    allocation: refundAllocationId,
-    treasury: hubConfig.vaultAccountId,
-    payment_asset: poolConfig.baseAssetId,
-    payment_amount: refundPaymentAmount,
-  });
+  await pushLaunchpadStep(
+    "launchpad_refund_contribute_recorded",
+    "contribute_recorded_with_assets",
+    {
+      buyer: wallet.accountId,
+      sale: refundSaleId,
+      allocation: refundAllocationId,
+      treasury: hubConfig.vaultAccountId,
+      payment_asset: poolConfig.baseAssetId,
+      payment_amount: refundPaymentAmount,
+    },
+  );
   await pushLaunchpadStep("launchpad_refund_close_sale", "close_sale", {
     sale: refundSaleId,
   });
-  await pushLaunchpadStep("launchpad_settle_refund_assets", "settle_refund_assets", {
-    buyer: wallet.accountId,
-    allocation: refundAllocationId,
-    treasury: hubConfig.vaultAccountId,
-    payment_asset: poolConfig.baseAssetId,
-  });
+  await pushLaunchpadStep(
+    "launchpad_settle_refund_assets",
+    "settle_refund_assets",
+    {
+      buyer: wallet.accountId,
+      allocation: refundAllocationId,
+      treasury: hubConfig.vaultAccountId,
+      payment_asset: poolConfig.baseAssetId,
+    },
+  );
 
   const [
     saleConfig,
@@ -3220,8 +3840,12 @@ const runLaunchpadCycle = async ({
     refundSaleAccountingMirror,
     refundAllocationMirror,
   ] = await Promise.all([
-    retryAsync("launchpad sale_config", () => fetchLaunchpadSaleConfig(toriiUrl, wallet.accountId, saleId)),
-    retryAsync("launchpad mirror_sale", () => fetchLaunchpadMirrorSale(toriiUrl, wallet.accountId, saleId)),
+    retryAsync("launchpad sale_config", () =>
+      fetchLaunchpadSaleConfig(toriiUrl, wallet.accountId, saleId),
+    ),
+    retryAsync("launchpad mirror_sale", () =>
+      fetchLaunchpadMirrorSale(toriiUrl, wallet.accountId, saleId),
+    ),
     retryAsync("launchpad mirror_sale_accounting", () =>
       fetchLaunchpadMirrorAccounting(toriiUrl, wallet.accountId, saleId),
     ),
@@ -3238,7 +3862,11 @@ const runLaunchpadCycle = async ({
       fetchLaunchpadMirrorAccounting(toriiUrl, wallet.accountId, refundSaleId),
     ),
     retryAsync("launchpad refund mirror_allocation", () =>
-      fetchLaunchpadMirrorAllocation(toriiUrl, wallet.accountId, refundAllocationId),
+      fetchLaunchpadMirrorAllocation(
+        toriiUrl,
+        wallet.accountId,
+        refundAllocationId,
+      ),
     ),
   ]);
 
@@ -3269,7 +3897,9 @@ const runLaunchpadCycle = async ({
 const main = async () => {
   const toriiUrl = trim(process.env.SORASWAP_TORII_URL || DEFAULT_TORII_URL);
   const chainId = trim(process.env.SORASWAP_CHAIN_ID || DEFAULT_CHAIN_ID);
-  const slippageBps = BigInt(trim(process.env.SORASWAP_SLIPPAGE_BPS || DEFAULT_SLIPPAGE_BPS));
+  const slippageBps = BigInt(
+    trim(process.env.SORASWAP_SLIPPAGE_BPS || DEFAULT_SLIPPAGE_BPS),
+  );
   const explicitTradeAmount = trim(process.env.SORASWAP_TRADE_AMOUNT || "");
   const mode = trim(process.env.SORASWAP_MODE || DEFAULT_MODE).toLowerCase();
 
@@ -3281,10 +3911,14 @@ const main = async () => {
   if (n3xHubAddress) console.log(`n3x hub: ${n3xHubAddress}`);
   if (perpsEngineAddress) console.log(`Perps engine: ${perpsEngineAddress}`);
   if (farmsFarmAddress) console.log(`Farm: ${farmsFarmAddress}`);
-  if (optionsSeriesManagerAddress) console.log(`Options manager: ${optionsSeriesManagerAddress}`);
-  if (coverPolicyManagerAddress) console.log(`Cover manager: ${coverPolicyManagerAddress}`);
-  if (automationJobQueueAddress) console.log(`Automation queue: ${automationJobQueueAddress}`);
-  if (launchpadSaleFactoryAddress) console.log(`Launchpad factory: ${launchpadSaleFactoryAddress}`);
+  if (optionsSeriesManagerAddress)
+    console.log(`Options manager: ${optionsSeriesManagerAddress}`);
+  if (coverPolicyManagerAddress)
+    console.log(`Cover manager: ${coverPolicyManagerAddress}`);
+  if (automationJobQueueAddress)
+    console.log(`Automation queue: ${automationJobQueueAddress}`);
+  if (launchpadSaleFactoryAddress)
+    console.log(`Launchpad factory: ${launchpadSaleFactoryAddress}`);
   if (sccpBridgeAddress) console.log(`Bridge: ${sccpBridgeAddress}`);
 
   let wallet = await loadOrCreateWallet();
@@ -3297,14 +3931,18 @@ const main = async () => {
   let assets = await fetchAccountAssets(toriiUrl, wallet.accountId);
 
   if (!hasVisibleBalance(assets)) {
-    console.log("Wallet has no visible on-chain assets yet. Requesting faucet funds.");
+    console.log(
+      "Wallet has no visible on-chain assets yet. Requesting faucet funds.",
+    );
     try {
       const faucet = await requestFaucetFunds(toriiUrl, wallet.accountId);
       console.log(
         `Faucet accepted: ${trim(faucet.amount)} units on ${trim(faucet.asset_id || faucet.asset_definition_id)} (tx ${trim(faucet.tx_hash_hex)})`,
       );
     } catch (error) {
-      console.log(`Faucet request returned: ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `Faucet request returned: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     for (let attempt = 1; attempt <= 30; attempt += 1) {
       assets = await fetchAccountAssets(toriiUrl, wallet.accountId);
@@ -3325,16 +3963,21 @@ const main = async () => {
       : mode === "perps_cycle"
         ? await runPerpsCycle({ toriiUrl, chainId, wallet, assets })
         : mode === "options_cycle"
-        ? await runOptionsCycle({ toriiUrl, chainId, wallet, assets })
-        : mode === "cover_cycle"
-          ? await runCoverCycle({ toriiUrl, chainId, wallet, assets })
-          : mode === "bridge_cycle"
-            ? await runBridgeCycle({ toriiUrl, chainId, wallet, assets })
-            : mode === "automation_cycle"
-              ? await runAutomationCycle({ toriiUrl, chainId, wallet })
-              : mode === "launchpad_cycle"
-                ? await runLaunchpadCycle({ toriiUrl, chainId, wallet, assets })
-                : null;
+          ? await runOptionsCycle({ toriiUrl, chainId, wallet, assets })
+          : mode === "cover_cycle"
+            ? await runCoverCycle({ toriiUrl, chainId, wallet, assets })
+            : mode === "bridge_cycle"
+              ? await runBridgeCycle({ toriiUrl, chainId, wallet, assets })
+              : mode === "automation_cycle"
+                ? await runAutomationCycle({ toriiUrl, chainId, wallet })
+                : mode === "launchpad_cycle"
+                  ? await runLaunchpadCycle({
+                      toriiUrl,
+                      chainId,
+                      wallet,
+                      assets,
+                    })
+                  : null;
 
   let artifact;
   if (cycleArtifact) {
@@ -3342,12 +3985,28 @@ const main = async () => {
   } else {
     const operation =
       mode === "n3x_mint"
-        ? await buildN3xMintTrade({ toriiUrl, wallet, assets, explicitTradeAmount })
+        ? await buildN3xMintTrade({
+            toriiUrl,
+            wallet,
+            assets,
+            explicitTradeAmount,
+          })
         : mode === "n3x_redeem"
-          ? await buildN3xRedeemTrade({ toriiUrl, wallet, assets, explicitTradeAmount })
+          ? await buildN3xRedeemTrade({
+              toriiUrl,
+              wallet,
+              assets,
+              explicitTradeAmount,
+            })
           : mode === "perps_open"
             ? await buildPerpsOpenTrade({ toriiUrl, wallet, assets })
-            : await buildSpotTrade({ toriiUrl, wallet, assets, slippageBps, explicitTradeAmount });
+            : await buildSpotTrade({
+                toriiUrl,
+                wallet,
+                assets,
+                slippageBps,
+                explicitTradeAmount,
+              });
     wallet = operation.wallet;
 
     const submit = await prepareAndSubmitViaConnect({
@@ -3379,7 +4038,10 @@ const main = async () => {
   }
 
   await mkdir(walletFileDir, { recursive: true });
-  const artifactPath = path.resolve(walletFileDir, `soraswap-live-${artifact.mode}.last.json`);
+  const artifactPath = path.resolve(
+    walletFileDir,
+    `soraswap-live-${artifact.mode}.last.json`,
+  );
   await writeFile(
     artifactPath,
     `${JSON.stringify(artifact, null, 2)}\n`,
@@ -3390,6 +4052,8 @@ const main = async () => {
 };
 
 await main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  console.error(
+    error instanceof Error ? error.stack || error.message : String(error),
+  );
   process.exit(1);
 });

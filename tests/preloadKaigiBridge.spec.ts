@@ -21,7 +21,9 @@ const ALICE_ACCOUNT_ID =
   "testuロ1PクCカrムhyワエトhウヤSqP2GFGラヱミケヌマzヘオミMヌヨトksJヱRRJXVB";
 const BOB_ACCOUNT_ID =
   "testuロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
-const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
+  "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const RELAY_TX_HASH = "ab".repeat(32);
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
@@ -409,6 +411,16 @@ describe("preload Kaigi bridge", () => {
             pending_transition: null,
           });
         }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential note index request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
         if (
           method === "GET" &&
           href.includes("/v1/assets/definitions/xor%23universal")
@@ -427,6 +439,15 @@ describe("preload Kaigi bridge", () => {
             latest: "44".repeat(32),
             roots: ["44".repeat(32)],
             height: 1,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
           });
         }
         if (
@@ -661,10 +682,10 @@ describe("preload Kaigi bridge", () => {
     });
 
     const requestPromise = bridge.requestFaucetFunds({
-        toriiUrl: "https://taira.sora.org",
-        accountId: "testu-faucet",
-        networkPrefix: 369,
-      });
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testu-faucet",
+      networkPrefix: 369,
+    });
     const rejection = expect(requestPromise).rejects.toThrow(
       "Faucet claim 0xexpired-6 expired before TAIRA committed it. Please retry once the faucet queue clears.",
     );
@@ -925,6 +946,16 @@ describe("preload Kaigi bridge", () => {
             pending_transition: null,
           });
         }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse(
+            {
+              error: "request_failed",
+              message: "Confidential note index request failed",
+              status: 404,
+            },
+            404,
+          );
+        }
         if (
           method === "GET" &&
           href.includes(
@@ -945,6 +976,15 @@ describe("preload Kaigi bridge", () => {
             latest: "44".repeat(32),
             roots: ["44".repeat(32)],
             height: 1,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
           });
         }
         if (
@@ -1004,7 +1044,7 @@ describe("preload Kaigi bridge", () => {
         shielded: true,
       }),
     ).resolves.toEqual({
-      hash: "hash-zk-transfer",
+      hash: RELAY_TX_HASH,
     });
 
     await expect(
@@ -1178,7 +1218,7 @@ describe("preload Kaigi bridge", () => {
         shielded: true,
       }),
     ).resolves.toEqual({
-      hash: "hash-zk-transfer",
+      hash: RELAY_TX_HASH,
     });
 
     await expect(

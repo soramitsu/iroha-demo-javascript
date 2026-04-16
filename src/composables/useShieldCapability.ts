@@ -102,15 +102,14 @@ export const useShieldCapability = ({
         return;
       }
       shieldSupported.value = true;
-      shieldCapabilityMessage.value =
-        message
-          ? translate(
-              "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
-              { message },
-            )
-          : translate(
-              "Shield policy check failed. Submission may still fail if shield mode is unsupported.",
-            );
+      shieldCapabilityMessage.value = message
+        ? translate(
+            "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
+            { message },
+          )
+        : translate(
+            "Shield policy check failed. Submission may still fail if shield mode is unsupported.",
+          );
     }
   };
 

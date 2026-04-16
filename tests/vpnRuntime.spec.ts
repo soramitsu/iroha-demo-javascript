@@ -212,19 +212,19 @@ describe("VpnRuntime", () => {
 
   it("synthesizes full-tunnel controller routes when torii omits route pushes", () => {
     expect(
-      resolveVpnRoutePushesForController([], [
-        "10.221.36.170/30",
-        "fd53:7261:6574:0:2134:f68e:bd1e:3332/126",
-      ]),
+      resolveVpnRoutePushesForController(
+        [],
+        ["10.221.36.170/30", "fd53:7261:6574:0:2134:f68e:bd1e:3332/126"],
+      ),
     ).toEqual(["0.0.0.0/0", "::/0"]);
     expect(
       resolveVpnRoutePushesForController([], ["10.221.36.170/30"]),
     ).toEqual(["0.0.0.0/0"]);
     expect(
-      resolveVpnRoutePushesForController(["10.0.0.0/8"], [
-        "10.221.36.170/30",
-        "fd53:7261:6574:0:2134:f68e:bd1e:3332/126",
-      ]),
+      resolveVpnRoutePushesForController(
+        ["10.0.0.0/8"],
+        ["10.221.36.170/30", "fd53:7261:6574:0:2134:f68e:bd1e:3332/126"],
+      ),
     ).toEqual(["10.0.0.0/8"]);
   });
 

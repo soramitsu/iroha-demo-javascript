@@ -268,7 +268,9 @@ export const readApiErrorDetail = async (
   }
 
   try {
-    return sanitizeErrorMessage(extractApiErrorDetail(JSON.parse(text)) || text);
+    return sanitizeErrorMessage(
+      extractApiErrorDetail(JSON.parse(text)) || text,
+    );
   } catch {
     return sanitizeErrorMessage(text);
   }
