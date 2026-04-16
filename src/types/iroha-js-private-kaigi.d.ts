@@ -62,6 +62,19 @@ declare module "@iroha/iroha-js" {
     proof: Buffer;
   }
 
+  export interface ConfidentialUnshieldProofOutputV3 {
+    amount: string;
+    rhoHex?: string;
+    rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+  }
+
+  export interface ConfidentialUnshieldProofResultV3 {
+    nullifiers: ReadonlyArray<Buffer>;
+    outputCommitments: ReadonlyArray<Buffer>;
+    root: Buffer;
+    proof: Buffer;
+  }
+
   export interface PrivateCreateKaigiTransactionInput {
     chainId: string;
     call: Record<string, unknown>;
@@ -123,6 +136,20 @@ declare module "@iroha/iroha-js" {
     verifyingKey: Record<string, unknown>;
   }): ConfidentialUnshieldProofResultV2;
 
+  export function buildConfidentialUnshieldProofV3(input: {
+    chainId: string;
+    assetDefinitionId: string;
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    treeCommitments: ReadonlyArray<
+      string | Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>
+    >;
+    inputs: ReadonlyArray<ConfidentialTransferProofInputV2>;
+    outputs?: ReadonlyArray<ConfidentialUnshieldProofOutputV3>;
+    publicAmount: string;
+    rootHintHex: string;
+    verifyingKey: Record<string, unknown>;
+  }): ConfidentialUnshieldProofResultV3;
+
   export function buildPrivateCreateKaigiTransaction(
     input: PrivateCreateKaigiTransactionInput,
   ): PrivateKaigiEntrypointResult;
@@ -145,6 +172,12 @@ declare module "@iroha/iroha-js" {
       timeoutMs?: number;
     },
   ): Promise<{ hash: string; submission: unknown; status?: unknown }>;
+
+  export interface UnshieldInstructionInput {
+    outputs?: ReadonlyArray<
+      string | Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>
+    >;
+  }
 }
 
 declare module "@iroha/iroha-js/crypto" {

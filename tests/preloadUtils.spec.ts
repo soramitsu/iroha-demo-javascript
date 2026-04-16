@@ -385,6 +385,11 @@ describe("preload utils", () => {
       block_height: 41,
       current_mode: "TransparentOnly",
       effective_mode: "Convertible",
+      allow_shield: "true",
+      allow_unshield: false,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: "AA".repeat(32),
       poseidon_params_id: 7,
       pedersen_params_id: 9,
@@ -400,6 +405,11 @@ describe("preload utils", () => {
 
     expect(normalized.asset_id).toBe("norito:abcdef0123456789");
     expect(normalized.effective_mode).toBe("Convertible");
+    expect(normalized.allow_shield).toBe(true);
+    expect(normalized.allow_unshield).toBe(false);
+    expect(normalized.vk_transfer).toBe("halo2/ipa::vk_transfer");
+    expect(normalized.vk_unshield).toBe("halo2/ipa::vk_unshield");
+    expect(normalized.vk_shield).toBe("halo2/ipa::vk_shield");
     expect(normalized.pending_transition?.effective_height).toBe(55);
     expect(normalized.pending_transition?.conversion_window).toBe(10);
   });

@@ -1343,12 +1343,12 @@ async function runNavigationSmokeFlow(page) {
 
       if (!(await destinationInput.isDisabled())) {
         throw new Error(
-          'Expected offline "Move funds to online wallet" destination to lock when shield transfer is enabled.',
+          'Expected offline "Move funds to online wallet" destination to lock when private exit is enabled.',
         );
       }
       const moveAmountInput = moveCard.locator('input[type="text"]').first();
       const moveSubmitButton = moveCard.getByRole("button", {
-        name: "Shield to wallet",
+        name: "Unshield to wallet",
         exact: true,
       });
       const moveShieldButtonVisible = await moveSubmitButton
@@ -1373,7 +1373,7 @@ async function runNavigationSmokeFlow(page) {
       }
       if (!moveDisabledForDecimal) {
         throw new Error(
-          'Expected offline "Shield to online wallet" action to be disabled for decimal amounts.',
+          'Expected offline "Unshield to wallet" action to be disabled for decimal amounts.',
         );
       }
       await moveAmountInput.fill("10");
@@ -1388,7 +1388,7 @@ async function runNavigationSmokeFlow(page) {
       }
       if (moveDisabledForWhole) {
         throw new Error(
-          'Expected offline "Shield to online wallet" action to become enabled for whole-number amounts.',
+          'Expected offline "Unshield to wallet" action to become enabled for whole-number amounts.',
         );
       }
 
@@ -1404,14 +1404,14 @@ async function runNavigationSmokeFlow(page) {
         if (await shieldToggle.isChecked()) {
           throw new Error(
             attemptedManualUncheck
-              ? 'Offline "Shield transfer" toggle stayed checked after uncheck attempt.'
-              : 'Offline "Shield transfer" toggle stayed checked after becoming disabled.',
+              ? 'Offline "Private exit" toggle stayed checked after uncheck attempt.'
+              : 'Offline "Private exit" toggle stayed checked after becoming disabled.',
           );
         }
       }
       if ((await destinationInput.inputValue()) !== transparentDestination) {
         throw new Error(
-          'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling shield transfer.',
+          'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling private exit.',
         );
       }
       await moveCard

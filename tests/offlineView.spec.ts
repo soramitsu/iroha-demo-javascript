@@ -53,6 +53,11 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
@@ -142,7 +147,7 @@ describe("OfflineView move-to-online shield mode", () => {
       ALICE_I105_ACCOUNT_ID,
     );
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(true);
-    expect(submitButton.text()).toBe(t("Shield to online wallet"));
+    expect(submitButton.text()).toBe(t("Unshield to wallet"));
 
     await submitButton.trigger("click");
     await flushPromises();
@@ -160,7 +165,7 @@ describe("OfflineView move-to-online shield mode", () => {
       }),
     );
     expect(moveSection.text()).toContain(
-      t("Shield transfer submitted and offline balance updated."),
+      t("Unshield submitted and offline balance updated."),
     );
   });
 
@@ -170,6 +175,11 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "Convertible",
       effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
@@ -209,6 +219,11 @@ describe("OfflineView move-to-online shield mode", () => {
       block_height: 1,
       current_mode: "TransparentOnly",
       effective_mode: "TransparentOnly",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
       vk_set_hash: null,
       poseidon_params_id: null,
       pedersen_params_id: null,
@@ -221,20 +236,20 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
     expect(moveSection.text()).toContain(
-      t("Shield mode unavailable: effective policy mode is {mode}.", {
+      t("Unshield is unavailable: effective policy mode is {mode}.", {
         mode: "TransparentOnly",
       }),
     );
   });
 
-  it("shows an unshielded transparency note while shielding stays optional", async () => {
+  it("shows a private-exit note while unshield stays optional", async () => {
     const wrapper = mountView();
     await flushPromises();
 
     const moveSection = getMoveSection(wrapper);
     expect(moveSection.text()).toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
       ),
     );
 
@@ -242,12 +257,12 @@ describe("OfflineView move-to-online shield mode", () => {
 
     expect(moveSection.text()).not.toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
       ),
     );
   });
 
-  it("keeps offline shield enabled and shows warning when policy check fails", async () => {
+  it("keeps private exit enabled and shows warning when policy check fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error("service unavailable"),
     );
@@ -259,13 +274,13 @@ describe("OfflineView move-to-online shield mode", () => {
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(false);
     expect(moveSection.text()).toContain(
       t(
-        "Shield policy check failed: {message}. Submission may still fail if shield mode is unsupported.",
+        "Unshield policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
         { message: "service unavailable" },
       ),
     );
   });
 
-  it("disables offline shield mode when the configured asset definition is missing", async () => {
+  it("disables private exit when the configured asset definition is missing", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error(
         "Confidential asset policy request failed with status 404 (Not Found)",
@@ -278,11 +293,11 @@ describe("OfflineView move-to-online shield mode", () => {
     const shieldCheckbox = moveSection.get('input[type="checkbox"]');
     expect((shieldCheckbox.element as HTMLInputElement).disabled).toBe(true);
     expect(moveSection.text()).toContain(
-      t("Shield mode is unavailable for the current asset definition."),
+      t("Unshield is unavailable for the current asset definition."),
     );
   });
 
-  it("disables online move submit for non-integer shield amount", async () => {
+  it("disables online move submit for non-integer unshield amount", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -297,7 +312,7 @@ describe("OfflineView move-to-online shield mode", () => {
     expect(submitButton.attributes("disabled")).toBeDefined();
   });
 
-  it("restores previous transparent receiver after turning shield mode off", async () => {
+  it("restores previous transparent receiver after turning private exit off", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -315,7 +330,7 @@ describe("OfflineView move-to-online shield mode", () => {
     expect((receiverInput.element as HTMLInputElement).disabled).toBe(false);
   });
 
-  it("restores empty receiver after turning shield mode off", async () => {
+  it("restores empty receiver after turning private exit off", async () => {
     const wrapper = mountView();
     await flushPromises();
 

@@ -85,10 +85,12 @@ import {
   collectWalletConfidentialLedger,
   CONFIDENTIAL_WALLET_METADATA_SCHEMA,
   createWalletConfidentialNote,
+  deriveWalletConfidentialNullifierHex,
   deriveWalletConfidentialOwnerTagHex,
   selectWalletConfidentialNotes,
   selectWalletConfidentialNotesForExactAmount,
   type WalletConfidentialTransactionLike,
+  type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
 
@@ -996,6 +998,10 @@ const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
 const CONFIDENTIAL_NOTE_INDEX_MAX_PAGES = 20;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
+const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID =
+  "halo2/pasta/ipa/anon-unshield-merkle16-poseidon";
+const CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID =
+  "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon";
 const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
 const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
   "iroha-demo:confidential-wallet:";
@@ -3287,10 +3293,15 @@ const submitConfidentialSelfConsolidation = async (input: {
     ],
     createdAtMs: output.note.created_at_ms,
   });
+  const latestRootHex = await fetchConfidentialAssetRoots(
+    input.toriiUrl,
+    materials.resolvedAssetId,
+  );
   return {
     hash: submission.hash,
     output,
     resolvedAssetId: materials.resolvedAssetId,
+    latestRootHex,
   };
 };
 
@@ -3817,7 +3828,14 @@ const api: IrohaBridge = {
         });
       const effectiveMode = policy.effective_mode || policy.current_mode;
       const resolvedAssetId = resolvedAssetDefinitionId;
-      if (!confidentialModeSupportsShield(effectiveMode)) {
+      const normalizedUnshieldMode = String(effectiveMode ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z]/g, "");
+      if (
+        normalizedUnshieldMode === "transparentonly" ||
+        normalizedUnshieldMode === "shieldedonly"
+      ) {
         throw new Error(
           `Confidential public exit is unavailable for ${resolvedAssetId}; effective mode is ${effectiveMode}.`,
         );
@@ -3843,55 +3861,176 @@ const api: IrohaBridge = {
           `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
         );
       }
-      const selection = selectWalletConfidentialNotesForExactAmount(
-        materials.ledger.notes,
-        normalizedAmount,
-      );
-      const verifyingKeyContext = readInlineVerifyingKeyRecord(
-        materials.verifyingKey,
-      );
-      const proofVerifyingKey = {
-        id: materials.verifyingKey.id,
-        record: verifyingKeyContext.record,
-        inline_key: verifyingKeyContext.inlineKey,
-      };
-      const proofEnvelope = buildConfidentialUnshieldProofV2({
-        chainId: input.chainId.trim(),
-        assetDefinitionId: materials.resolvedAssetId,
-        spendKey: privateKey,
-        treeCommitments: materials.ledger.treeCommitmentsHex,
-        inputs: selection.selected.map((note) => ({
-          amount: note.amount,
-          rhoHex: note.rho_hex,
-          leafIndex: note.leaf_index,
-        })),
-        publicAmount: normalizedAmount,
-        rootHintHex: materials.latestRootHex,
-        verifyingKey: proofVerifyingKey,
+      const senderOwnerTagHex = deriveWalletConfidentialOwnerTagHex({
+        privateKeyHex: input.privateKeyHex,
       });
+      let refreshedMaterials = materials;
+      let verifyingKeyContext = readConfidentialVerifyingKeyContext(
+        refreshedMaterials.verifyingKey,
+      );
+      while (
+        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID
+      ) {
+        const candidateSelection = selectWalletConfidentialNotes(
+          refreshedMaterials.ledger.notes,
+          normalizedAmount,
+        );
+        if (candidateSelection.selected.length <= 2) {
+          break;
+        }
+        const consolidation = await submitConfidentialSelfConsolidation({
+          toriiUrl: input.toriiUrl,
+          chainId: input.chainId,
+          accountId,
+          privateKeyHex: input.privateKeyHex,
+          assetDefinitionId: refreshedMaterials.resolvedAssetId,
+          notes: candidateSelection.selected.slice(
+            0,
+            2,
+          ) as WalletSpendableConfidentialNote[],
+        });
+        const leafIndex = refreshedMaterials.ledger.treeCommitmentsHex.length;
+        const nullifierHex = deriveWalletConfidentialNullifierHex({
+          privateKeyHex: input.privateKeyHex,
+          assetDefinitionId: consolidation.output.note.asset_definition_id,
+          chainId: input.chainId,
+          rhoHex: consolidation.output.note.rho_hex,
+        });
+        const selectedNullifiers = new Set(
+          candidateSelection.selected
+            .slice(0, 2)
+            .map((note) => note.nullifier_hex),
+        );
+        refreshedMaterials = {
+          ...refreshedMaterials,
+          resolvedAssetId: consolidation.resolvedAssetId,
+          latestRootHex: consolidation.latestRootHex,
+          ledger: {
+            ...refreshedMaterials.ledger,
+            notes: [
+              ...refreshedMaterials.ledger.notes.filter(
+                (note) => !selectedNullifiers.has(note.nullifier_hex),
+              ),
+              {
+                ...consolidation.output.note,
+                nullifier_hex: nullifierHex,
+                source_tx_hash: consolidation.hash,
+                leaf_index: leafIndex,
+              },
+            ],
+            treeCommitmentsHex: [
+              ...refreshedMaterials.ledger.treeCommitmentsHex,
+              consolidation.output.note.commitment_hex,
+            ],
+          },
+        };
+        verifyingKeyContext = readConfidentialVerifyingKeyContext(
+          refreshedMaterials.verifyingKey,
+        );
+      }
+      let selectedNotes: WalletSpendableConfidentialNote[];
+      let changeOutputs: Array<{
+        note: ReturnType<typeof createWalletConfidentialNote>;
+        recipientAccountId: string;
+      }> = [];
+      let proofEnvelope:
+        | ReturnType<typeof buildConfidentialUnshieldProofV2>
+        | ReturnType<typeof buildConfidentialUnshieldProofV3>;
+      if (verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_ID) {
+        const selection = selectWalletConfidentialNotesForExactAmount(
+          refreshedMaterials.ledger.notes,
+          normalizedAmount,
+        );
+        selectedNotes = selection.selected;
+        proofEnvelope = buildConfidentialUnshieldProofV2({
+          chainId: input.chainId.trim(),
+          assetDefinitionId: refreshedMaterials.resolvedAssetId,
+          spendKey: privateKey,
+          treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
+          inputs: selection.selected.map((note) => ({
+            amount: note.amount,
+            rhoHex: note.rho_hex,
+            leafIndex: note.leaf_index,
+          })),
+          publicAmount: normalizedAmount,
+          rootHintHex: refreshedMaterials.latestRootHex,
+          verifyingKey: verifyingKeyContext.proofVerifyingKey,
+        });
+      } else if (
+        verifyingKeyContext.circuitId === CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_ID
+      ) {
+        const selection = selectWalletConfidentialNotes(
+          refreshedMaterials.ledger.notes,
+          normalizedAmount,
+        );
+        if (selection.selected.length > 2) {
+          throw new Error(
+            "Unable to reduce the shielded spend to a one- or two-note unshield. Try again after consolidation commits.",
+          );
+        }
+        selectedNotes = selection.selected;
+        if (selection.change !== "0") {
+          changeOutputs = [
+            {
+              note: createWalletConfidentialNote({
+                assetDefinitionId: refreshedMaterials.resolvedAssetId,
+                amount: selection.change,
+                ownerTagHex: senderOwnerTagHex,
+              }),
+              recipientAccountId: accountId,
+            },
+          ];
+        }
+        proofEnvelope = buildConfidentialUnshieldProofV3({
+          chainId: input.chainId.trim(),
+          assetDefinitionId: refreshedMaterials.resolvedAssetId,
+          spendKey: privateKey,
+          treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
+          inputs: selection.selected.map((note) => ({
+            amount: note.amount,
+            rhoHex: note.rho_hex,
+            leafIndex: note.leaf_index,
+          })),
+          outputs: changeOutputs.map(({ note }) => ({
+            amount: note.amount,
+            rhoHex: note.rho_hex,
+          })),
+          publicAmount: normalizedAmount,
+          rootHintHex: refreshedMaterials.latestRootHex,
+          verifyingKey: verifyingKeyContext.proofVerifyingKey,
+        });
+      } else {
+        throw new Error(
+          `Unsupported confidential unshield verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
+        );
+      }
+      const metadata =
+        changeOutputs.length > 0
+          ? buildWalletConfidentialMetadata({
+              baseMetadata: input.metadata,
+              outputs: changeOutputs,
+            })
+          : (input.metadata ?? null);
       const tx = buildUnshieldTransaction({
         chainId: input.chainId,
         authority: accountId,
         unshield: {
-          assetDefinitionId: materials.resolvedAssetId,
+          assetDefinitionId: refreshedMaterials.resolvedAssetId,
           destinationAccountId,
           publicAmount: normalizedAmount,
           inputs: proofEnvelope.nullifiers,
+          outputs:
+            "outputCommitments" in proofEnvelope
+              ? proofEnvelope.outputCommitments
+              : [],
           proof: {
-            backend: String(
-              (materials.verifyingKey as { id?: { backend?: string } }).id
-                ?.backend ?? "halo2/ipa",
-            ),
+            backend: verifyingKeyContext.backend,
             proof: Buffer.from(proofEnvelope.proof),
-            verifyingKeyRef: (
-              materials.verifyingKey as {
-                id?: { backend: string; name: string };
-              }
-            ).id,
+            verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
           },
-          rootHint: Buffer.from(materials.latestRootHex, "hex"),
+          rootHint: Buffer.from(refreshedMaterials.latestRootHex, "hex"),
         },
-        metadata: input.metadata ?? null,
+        metadata,
         privateKey,
       });
       const submission = await submitSignedTransaction(
@@ -3906,22 +4045,29 @@ const api: IrohaBridge = {
         accountId,
         txHash: submission.hash,
         authority: accountId,
-        metadata: input.metadata ?? {},
+        metadata: isPlainRecord(metadata) ? metadata : {},
         instructions: [
           {
             zk: {
               Unshield: {
-                asset: materials.resolvedAssetId,
+                asset: refreshedMaterials.resolvedAssetId,
                 to: destinationAccountId,
                 public_amount: normalizedAmount,
                 inputs: proofEnvelope.nullifiers.map((entry) =>
                   entry.toString("hex"),
                 ),
+                outputs: changeOutputs.map(({ note }) => note.commitment_hex),
               },
             },
           },
         ],
-        createdAtMs: Date.now(),
+        createdAtMs: Math.min(
+          ...[
+            ...selectedNotes.map((note) => note.created_at_ms),
+            ...changeOutputs.map(({ note }) => note.created_at_ms),
+            Date.now(),
+          ],
+        ),
       });
       return { hash: submission.hash };
     }

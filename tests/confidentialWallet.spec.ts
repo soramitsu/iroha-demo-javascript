@@ -191,6 +191,86 @@ describe("confidential wallet helpers", () => {
     expect(bobLedger.notes[0]?.commitment_hex).toBe(bobNote.commitment_hex);
   });
 
+  it("recovers private change notes from unshield outputs", () => {
+    const alice = makeAccount();
+    const shieldNote = createWalletConfidentialNote({
+      assetDefinitionId: ASSET_ID,
+      amount: "10",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
+      createdAtMs: 1,
+    });
+    const changeNote = createWalletConfidentialNote({
+      assetDefinitionId: ASSET_ID,
+      amount: "4",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
+      createdAtMs: 2,
+    });
+    const inputNullifier = deriveWalletConfidentialNullifierHex({
+      privateKeyHex: alice.privateKeyHex,
+      assetDefinitionId: ASSET_ID,
+      chainId: CHAIN_ID,
+      rhoHex: shieldNote.rho_hex,
+    });
+    const ledger = collectWalletConfidentialLedger(
+      [
+        {
+          entrypoint_hash: "0xshield",
+          result_ok: true,
+          metadata: buildWalletConfidentialMetadata({
+            outputs: [{ note: shieldNote, recipientAccountId: alice.accountId }],
+          }),
+          instructions: [
+            {
+              zk: {
+                Shield: {
+                  asset: ASSET_ID,
+                  from: alice.accountId,
+                  amount: "10",
+                  note_commitment: shieldNote.commitment_hex,
+                },
+              },
+            },
+          ],
+        },
+        {
+          entrypoint_hash: "0xunshield",
+          result_ok: true,
+          metadata: buildWalletConfidentialMetadata({
+            outputs: [{ note: changeNote, recipientAccountId: alice.accountId }],
+          }),
+          instructions: [
+            {
+              zk: {
+                Unshield: {
+                  asset: ASSET_ID,
+                  to: alice.accountId,
+                  public_amount: "6",
+                  inputs: [Array.from(Buffer.from(inputNullifier, "hex"))],
+                  outputs: [
+                    Array.from(Buffer.from(changeNote.commitment_hex, "hex")),
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        privateKeyHex: alice.privateKeyHex,
+        chainId: CHAIN_ID,
+        assetDefinitionIds: [ASSET_ID],
+      },
+    );
+
+    expect(ledger).toMatchObject({
+      exact: true,
+      spendableQuantity: "4",
+      treeCommitmentsHex: [shieldNote.commitment_hex, changeNote.commitment_hex],
+    });
+    expect(ledger.notes).toHaveLength(1);
+    expect(ledger.notes[0]?.commitment_hex).toBe(changeNote.commitment_hex);
+  });
+
   it("marks the balance inexact when confidential activity cannot be decoded", () => {
     const alice = makeAccount();
     const ledger = collectWalletConfidentialLedger(

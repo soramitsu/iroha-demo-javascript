@@ -80,6 +80,12 @@ const mocks = vi.hoisted(() => ({
     root: Buffer.from("44".repeat(32), "hex"),
     proof: Buffer.from("unshield-proof", "utf8"),
   })),
+  buildConfidentialUnshieldProofV3Mock: vi.fn(() => ({
+    nullifiers: [Buffer.from("11".repeat(32), "hex")],
+    outputCommitments: [Buffer.from("22".repeat(32), "hex")],
+    root: Buffer.from("44".repeat(32), "hex"),
+    proof: Buffer.from("unshield-proof-v3", "utf8"),
+  })),
   buildCreateKaigiTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("create-transparent", "utf8"),
   })),
@@ -221,6 +227,8 @@ vi.mock("@iroha/iroha-js", async () => {
       mocks.buildConfidentialTransferProofV2Mock,
     buildConfidentialUnshieldProofV2:
       mocks.buildConfidentialUnshieldProofV2Mock,
+    buildConfidentialUnshieldProofV3:
+      mocks.buildConfidentialUnshieldProofV3Mock,
     buildShieldTransaction: mocks.buildShieldTransactionMock,
     buildUnshieldTransaction: mocks.buildUnshieldTransactionMock,
     buildZkTransferTransaction: mocks.buildZkTransferTransactionMock,
@@ -321,6 +329,7 @@ describe("preload Kaigi bridge", () => {
     mocks.buildUnshieldTransactionMock.mockClear();
     mocks.buildConfidentialTransferProofV2Mock.mockClear();
     mocks.buildConfidentialUnshieldProofV2Mock.mockClear();
+    mocks.buildConfidentialUnshieldProofV3Mock.mockClear();
     mocks.buildCreateKaigiTransactionMock.mockClear();
     mocks.buildJoinKaigiTransactionMock.mockClear();
     mocks.buildEndKaigiTransactionMock.mockClear();
@@ -402,23 +411,28 @@ describe("preload Kaigi bridge", () => {
         },
       },
     });
-    mocks.getVerifyingKeyTypedMock.mockResolvedValue({
-      id: {
-        backend: "halo2/ipa",
-        name: "vk_transfer",
-      },
-      record: {
-        circuit_id: "halo2/ipa:tiny-add",
+    mocks.getVerifyingKeyTypedMock.mockImplementation(
+      async (backend: string, name: string) => ({
+        id: {
+          backend,
+          name,
+        },
+        record: {
+          circuit_id:
+            name === "vk_unshield"
+              ? "halo2/pasta/anon-unshield-merkle16-poseidon"
+              : "halo2/ipa:tiny-add",
+          inline_key: {
+            backend,
+            bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
+          },
+        },
         inline_key: {
-          backend: "halo2/ipa",
+          backend,
           bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
         },
-      },
-      inline_key: {
-        backend: "halo2/ipa",
-        bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
-      },
-    });
+      }),
+    );
 
     mocks.nodeFetchMock.mockImplementation(
       async (input: unknown, init?: Record<string, unknown>) => {
@@ -1102,6 +1116,189 @@ describe("preload Kaigi bridge", () => {
       quantity: "0",
       onChainQuantity: "5",
       spendableQuantity: "0",
+      exact: true,
+    });
+  });
+
+  it("uses the v3 unshield circuit to preserve private change outputs", async () => {
+    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "7",
+      ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const inputNullifierHex = deriveWalletConfidentialNullifierHex({
+      privateKeyHex: "11".repeat(32),
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      rhoHex: note.rho_hex,
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    mocks.getVerifyingKeyTypedMock.mockImplementationOnce(
+      async (backend: string, name: string) => ({
+        id: {
+          backend,
+          name,
+        },
+        record: {
+          circuit_id:
+            name === "vk_unshield"
+              ? "halo2/pasta/anon-unshield-2in-1change-merkle16-poseidon"
+              : "halo2/ipa:tiny-add",
+          inline_key: {
+            backend,
+            bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
+          },
+        },
+        inline_key: {
+          backend,
+          bytes_b64: Buffer.from("fixture-vk", "utf8").toString("base64"),
+        },
+      }),
+    );
+    mocks.buildConfidentialUnshieldProofV3Mock.mockImplementationOnce(() => ({
+      nullifiers: [Buffer.from(inputNullifierHex, "hex")],
+      outputCommitments: [Buffer.from("55".repeat(32), "hex")],
+      root: Buffer.from("44".repeat(32), "hex"),
+      proof: Buffer.from("unshield-proof-v3", "utf8"),
+    }));
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "7",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          return jsonResponse({
+            latest: "44".repeat(32),
+            roots: ["44".repeat(32)],
+            height: 1,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: ALICE_ACCOUNT_ID,
+        quantity: "5",
+        privateKeyHex: "11".repeat(32),
+        unshield: true,
+      }),
+    ).resolves.toEqual({
+      hash: "hash-unshield",
+    });
+
+    expect(mocks.buildConfidentialUnshieldProofV3Mock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        publicAmount: "5",
+        inputs: [
+          expect.objectContaining({
+            amount: "7",
+            rhoHex: note.rho_hex,
+            leafIndex: 0,
+          }),
+        ],
+        outputs: [expect.objectContaining({ amount: "2" })],
+      }),
+    );
+    expect(mocks.buildUnshieldTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        unshield: expect.objectContaining({
+          assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+          destinationAccountId: ALICE_ACCOUNT_ID,
+          publicAmount: "5",
+          outputs: [Buffer.from("55".repeat(32), "hex")],
+        }),
+      }),
+    );
+
+    await expect(
+      bridge.getConfidentialAssetBalance({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        assetDefinitionId: "xor#universal",
+      }),
+    ).resolves.toMatchObject({
+      resolvedAssetId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      quantity: "2",
+      onChainQuantity: "7",
+      spendableQuantity: "2",
       exact: true,
     });
   });
