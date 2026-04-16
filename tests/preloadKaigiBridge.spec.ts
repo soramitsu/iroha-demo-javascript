@@ -4,6 +4,7 @@ import {
   createWalletConfidentialNote,
   deriveWalletConfidentialNullifierHex,
   deriveWalletConfidentialOwnerTagHex,
+  deriveWalletConfidentialReceiveAddress,
 } from "../electron/confidentialWallet";
 import {
   decryptKaigiPayload,
@@ -967,13 +968,14 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("builds a real unshield transaction and debits spendable balance immediately after commit", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+    const receiveAddress = deriveWalletConfidentialReceiveAddress({
       privateKeyHex: "11".repeat(32),
     });
     const note = createWalletConfidentialNote({
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
       amount: "5",
-      ownerTagHex,
+      ownerTagHex: receiveAddress.ownerTagHex,
+      diversifierHex: receiveAddress.diversifierHex,
       createdAtMs: Date.now(),
     });
     const nullifierHex = deriveWalletConfidentialNullifierHex({
@@ -1092,6 +1094,7 @@ describe("preload Kaigi bridge", () => {
           expect.objectContaining({
             amount: "5",
             rhoHex: note.rho_hex,
+            diversifierHex: note.diversifier_hex,
             leafIndex: 0,
           }),
         ],
@@ -1124,7 +1127,7 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
-  it("waits for committed unshield finality instead of returning on Applied", async () => {
+  it("accepts committed transaction detail when pipeline status lags at Applied", async () => {
     const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
       privateKeyHex: "11".repeat(32),
     });
@@ -1227,6 +1230,13 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
+        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+          return jsonResponse({
+            hash: "hash-unshield",
+            status: "Committed",
+            block: 1,
+          });
+        }
         throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
       },
     );
@@ -1243,21 +1253,160 @@ describe("preload Kaigi bridge", () => {
       unshield: true,
     });
 
-    const rejection = expect(transferPromise).rejects.toThrow(
-      "Transaction hash-unshield stayed in Applied and did not commit within 180 seconds.",
+    await expect(transferPromise).resolves.toEqual({
+      hash: "hash-unshield",
+    });
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v1/transactions/hash-unshield"),
+      expect.objectContaining({
+        method: "GET",
+        headers: expect.objectContaining({
+          Accept: "application/json",
+        }),
+      }),
     );
-    await vi.runAllTimersAsync();
-    await rejection;
   });
 
-  it("uses the v3 unshield circuit to preserve private change outputs", async () => {
+  it("accepts Applied unshield finality even when transaction detail also lags", async () => {
     const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
       privateKeyHex: "11".repeat(32),
     });
     const note = createWalletConfidentialNote({
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "7",
+      amount: "5",
       ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const nullifierHex = deriveWalletConfidentialNullifierHex({
+      privateKeyHex: "11".repeat(32),
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      rhoHex: note.rho_hex,
+    });
+    mocks.buildConfidentialUnshieldProofV2Mock.mockImplementationOnce(() => ({
+      nullifiers: [Buffer.from(nullifierHex, "hex")],
+      root: Buffer.from("44".repeat(32), "hex"),
+      proof: Buffer.from("unshield-proof", "utf8"),
+    }));
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Applied",
+      },
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "5",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          return jsonResponse({
+            latest: "44".repeat(32),
+            roots: ["44".repeat(32)],
+            height: 1,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+          return jsonResponse({
+            hash: "hash-unshield",
+            status: "Applied",
+            block: 1,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+
+    const transferPromise = bridge.transferAsset({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      assetDefinitionId: "xor#universal",
+      accountId: ALICE_ACCOUNT_ID,
+      destinationAccountId: ALICE_ACCOUNT_ID,
+      quantity: "5",
+      privateKeyHex: "11".repeat(32),
+      unshield: true,
+    });
+
+    await expect(transferPromise).resolves.toEqual({
+      hash: "hash-unshield",
+    });
+  });
+
+  it("uses the v3 unshield circuit to preserve private change outputs", async () => {
+    const receiveAddress = deriveWalletConfidentialReceiveAddress({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "7",
+      ownerTagHex: receiveAddress.ownerTagHex,
+      diversifierHex: receiveAddress.diversifierHex,
       createdAtMs: Date.now(),
     });
     const inputNullifierHex = deriveWalletConfidentialNullifierHex({
@@ -1399,6 +1548,7 @@ describe("preload Kaigi bridge", () => {
           expect.objectContaining({
             amount: "7",
             rhoHex: note.rho_hex,
+            diversifierHex: note.diversifier_hex,
             leafIndex: 0,
           }),
         ],
@@ -2097,6 +2247,147 @@ describe("preload Kaigi bridge", () => {
       }),
     );
     expect(rootsRequestCount).toBe(2);
+  });
+
+  it("treats relay transfers as committed once the confidential note index includes the relay hash", async () => {
+    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
+      privateKeyHex: "11".repeat(32),
+    });
+    const note = createWalletConfidentialNote({
+      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "5",
+      ownerTagHex,
+      createdAtMs: Date.now(),
+    });
+    const metadata = buildWalletConfidentialMetadata({
+      outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
+    });
+    let relaySubmitted = false;
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Applied",
+      },
+    });
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          (href.includes(
+            "/v1/confidential/assets/xor%23universal/transitions",
+          ) ||
+            href.includes(
+              `/v1/confidential/assets/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}/transitions`,
+            ))
+        ) {
+          return jsonResponse({
+            asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            block_height: 1,
+            current_mode: "Convertible",
+            effective_mode: "Convertible",
+            vk_set_hash: null,
+            poseidon_params_id: null,
+            pedersen_params_id: null,
+            pending_transition: null,
+          });
+        }
+        if (method === "GET" && href.includes("/v1/confidential/notes")) {
+          return jsonResponse({
+            items: [
+              {
+                entrypoint_hash: "aa".repeat(32),
+                result_ok: true,
+                authority: ALICE_ACCOUNT_ID,
+                block: 1,
+                metadata,
+                instructions: [
+                  {
+                    zk: {
+                      Shield: {
+                        asset: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+                        from: ALICE_ACCOUNT_ID,
+                        amount: "5",
+                        note_commitment: note.commitment_hex,
+                      },
+                    },
+                  },
+                ],
+              },
+              ...(relaySubmitted
+                ? [
+                    {
+                      entrypoint_hash: RELAY_TX_HASH,
+                      result_ok: true,
+                      authority: "relay-1",
+                      block: 2,
+                      metadata: {},
+                      instructions: [],
+                    },
+                  ]
+                : []),
+            ],
+            next_cursor: "",
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            `/v1/assets/definitions/${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}`,
+          )
+        ) {
+          return jsonResponse({
+            id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+            metadata: {
+              "zk.policy": {
+                allow_unshield: true,
+                vk_transfer: "halo2/ipa::vk_transfer",
+                vk_unshield: "halo2/ipa::vk_unshield",
+              },
+            },
+          });
+        }
+        if (method === "POST" && href.endsWith("/v1/zk/roots")) {
+          return jsonResponse({
+            latest: "44".repeat(32),
+            roots: ["44".repeat(32)],
+            height: 1,
+          });
+        }
+        if (
+          method === "POST" &&
+          href.endsWith("/v1/confidential/relay/submit")
+        ) {
+          relaySubmitted = true;
+          return jsonResponse({
+            tx_hash_hex: RELAY_TX_HASH,
+            relay_authority: "relay-1",
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    const bridge = await loadBridge();
+    const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+        shielded: true,
+        shieldedOwnerTagHex: recipient.ownerTagHex,
+        shieldedDiversifierHex: recipient.diversifierHex,
+      }),
+    ).resolves.toEqual({
+      hash: RELAY_TX_HASH,
+    });
+
+    expect(mocks.getTransactionStatusMock).toHaveBeenCalledWith(RELAY_TX_HASH);
   });
 
   it("reports shielded XOR state and self-shields through the preload helper", async () => {

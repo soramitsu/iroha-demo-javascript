@@ -197,13 +197,10 @@ describe("confidential wallet helpers", () => {
     expect(aliceLedger.notes[0]?.commitment_hex).toBe(
       changeNote.commitment_hex,
     );
-    const sortedTransferOutputs = [
-      bobNote.commitment_hex,
-      changeNote.commitment_hex,
-    ].sort();
     expect(aliceLedger.treeCommitmentsHex).toEqual([
       shieldNote.commitment_hex,
-      ...sortedTransferOutputs,
+      bobNote.commitment_hex,
+      changeNote.commitment_hex,
     ]);
 
     expect(bobLedger).toMatchObject({
@@ -301,7 +298,7 @@ describe("confidential wallet helpers", () => {
     expect(ledger.notes[0]?.commitment_hex).toBe(changeNote.commitment_hex);
   });
 
-  it("sorts multi-output transfer commitments to match on-chain tree order", () => {
+  it("preserves multi-output transfer commitments in serialized on-chain order", () => {
     const alice = makeAccount();
     const highCommitmentHex = "ff".repeat(32);
     const lowCommitmentHex = "00".repeat(32);
@@ -336,8 +333,8 @@ describe("confidential wallet helpers", () => {
     );
 
     expect(ledger.treeCommitmentsHex).toEqual([
-      lowCommitmentHex,
       highCommitmentHex,
+      lowCommitmentHex,
     ]);
   });
 

@@ -804,57 +804,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           privateKeyHex,
           assetDefinitionId: assetId,
         });
-      const fetchAccountTransactions = (accountId, privateKeyHex) =>
-        window.iroha.fetchAccountTransactions({
-          toriiUrl: torii,
-          accountId,
-          privateKeyHex,
-          limit: 50,
-        });
-      const waitForAccountTransaction = async ({
-        accountId,
-        privateKeyHex,
-        txHashHex,
-        timeoutMs = 90_000,
-      }) => {
-        const normalizedHash = String(txHashHex ?? "").trim().toLowerCase();
-        const deadline = Date.now() + timeoutMs;
-        let lastTransactions = null;
-        let lastError = "";
-        while (Date.now() < deadline) {
-          try {
-            lastTransactions = await fetchAccountTransactions(
-              accountId,
-              privateKeyHex,
-            );
-            const items = Array.isArray(lastTransactions?.items)
-              ? lastTransactions.items
-              : [];
-            if (
-              items.some(
-                (item) =>
-                  String(
-                    item?.entrypoint_hash ?? item?.entrypointHash ?? "",
-                  ).trim().toLowerCase() === normalizedHash,
-              )
-            ) {
-              return {
-                ok: true,
-                transactions: lastTransactions,
-                error: "",
-              };
-            }
-          } catch (error) {
-            lastError = String(error ?? "");
-          }
-          await waitForMs(1_500);
-        }
-        return {
-          ok: false,
-          transactions: lastTransactions,
-          error: lastError,
-        };
-      };
       const waitForConfidentialBalance = async ({
         accountId,
         privateKeyHex,
@@ -952,22 +901,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           },
         });
         selfShieldHash = selfShield.hash;
-        const selfShieldCommitted = await waitForAccountTransaction({
-          accountId: aliceAccountId,
-          privateKeyHex: alicePrivateKeyHex,
-          txHashHex: selfShield.hash,
-        });
-        if (!selfShieldCommitted.ok) {
-          return {
-            ok: false,
-            stage: "self-shield-transaction",
-            txHashHex: selfShield.hash,
-            selfShieldHash,
-            selfShieldQuantity: selfShieldQuantity.toString(),
-            initialAliceBalance,
-            selfShieldCommitted,
-          };
-        }
         aliceAfterSelfShield = await waitForConfidentialBalance({
           accountId: aliceAccountId,
           privateKeyHex: alicePrivateKeyHex,
@@ -1004,25 +937,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           source: "electron-live-recipient-shielded-send",
         },
       });
-      const recipientCommitted = await waitForAccountTransaction({
-        accountId: aliceAccountId,
-        privateKeyHex: alicePrivateKeyHex,
-        txHashHex: recipientTransfer.hash,
-      });
-      if (!recipientCommitted.ok) {
-        return {
-          ok: false,
-          stage: "recipient-transaction",
-          txHashHex: recipientTransfer.hash,
-          selfShieldHash,
-          recipientTransferHash: recipientTransfer.hash,
-          selfShieldQuantity: selfShieldQuantity.toString(),
-          initialAliceBalance,
-          initialBobBalance,
-          aliceAfterSelfShield,
-          recipientCommitted,
-        };
-      }
 
       const expectedAliceAfterRecipient =
         initialAliceSpendable + selfShieldQuantity - 1n;
@@ -1072,28 +986,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           source: "electron-live-unshield",
         },
       });
-      const unshieldCommitted = await waitForAccountTransaction({
-        accountId: aliceAccountId,
-        privateKeyHex: alicePrivateKeyHex,
-        txHashHex: unshield.hash,
-      });
-      if (!unshieldCommitted.ok) {
-        return {
-          ok: false,
-          stage: "unshield-transaction",
-          txHashHex: unshield.hash,
-          selfShieldHash,
-          recipientTransferHash: recipientTransfer.hash,
-          unshieldHash: unshield.hash,
-          selfShieldQuantity: selfShieldQuantity.toString(),
-          initialAliceBalance,
-          initialBobBalance,
-          aliceAfterSelfShield,
-          aliceAfterRecipient,
-          bobAfterRecipient,
-          unshieldCommitted,
-        };
-      }
       const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
       const aliceAfterUnshield = await waitForConfidentialBalance({
         accountId: aliceAccountId,

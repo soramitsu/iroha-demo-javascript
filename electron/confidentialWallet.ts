@@ -786,7 +786,7 @@ export const collectWalletConfidentialLedger = (
         }
       }
       let recognizedOutput = false;
-      for (const commitmentHex of [...transfer.outputs].sort()) {
+      for (const commitmentHex of transfer.outputs) {
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
@@ -834,7 +834,7 @@ export const collectWalletConfidentialLedger = (
         }
       }
       let recognizedOutput = false;
-      for (const commitmentHex of [...unshield.outputs].sort()) {
+      for (const commitmentHex of unshield.outputs) {
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
