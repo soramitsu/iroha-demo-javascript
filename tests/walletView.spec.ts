@@ -9,6 +9,7 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 const fetchAccountAssetsMock = vi.fn();
 const fetchAccountTransactionsMock = vi.fn();
 const getConfidentialAssetBalanceMock = vi.fn();
+const scanConfidentialWalletMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 const transferAssetMock = vi.fn();
@@ -28,6 +29,7 @@ vi.mock("@/services/iroha", () => ({
     fetchAccountTransactionsMock(input),
   getConfidentialAssetBalance: (input: unknown) =>
     getConfidentialAssetBalanceMock(input),
+  scanConfidentialWallet: (input: unknown) => scanConfidentialWalletMock(input),
   getConfidentialAssetPolicy: (input: unknown) =>
     getConfidentialAssetPolicyMock(input),
   requestFaucetFunds: (
@@ -40,11 +42,39 @@ vi.mock("@/services/iroha", () => ({
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
 
+const confidentialBalanceFixture = (
+  overrides: Partial<{
+    resolvedAssetId: string;
+    quantity: string | null;
+    onChainQuantity: string | null;
+    spendableQuantity: string;
+    exact: boolean;
+    scanSource: "global-note-index" | "account-transactions";
+    scanStatus: "complete" | "limited" | "incomplete";
+    scanWatermarkBlock: number | null;
+    recoveredNoteCount: number;
+    trackedAssetIds: string[];
+  }> = {},
+) => ({
+  resolvedAssetId: "xor#universal",
+  quantity: "0",
+  onChainQuantity: "0",
+  spendableQuantity: "0",
+  exact: true,
+  scanSource: "global-note-index" as const,
+  scanStatus: "complete" as const,
+  scanWatermarkBlock: null,
+  recoveredNoteCount: 0,
+  trackedAssetIds: ["xor#universal"],
+  ...overrides,
+});
+
 describe("WalletView", () => {
   beforeEach(() => {
     fetchAccountAssetsMock.mockReset();
     fetchAccountTransactionsMock.mockReset();
     getConfidentialAssetBalanceMock.mockReset();
+    scanConfidentialWalletMock.mockReset();
     requestFaucetFundsMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     transferAssetMock.mockReset();
@@ -56,13 +86,17 @@ describe("WalletView", () => {
       items: [],
       total: 0,
     });
-    getConfidentialAssetBalanceMock.mockResolvedValue({
-      resolvedAssetId: "xor#universal",
-      quantity: "0",
-      onChainQuantity: "0",
-      spendableQuantity: "0",
-      exact: true,
-    });
+    getConfidentialAssetBalanceMock.mockResolvedValue(
+      confidentialBalanceFixture(),
+    );
+    scanConfidentialWalletMock.mockResolvedValue(
+      confidentialBalanceFixture({
+        quantity: "7",
+        spendableQuantity: "7",
+        recoveredNoteCount: 1,
+        scanWatermarkBlock: 42,
+      }),
+    );
     getConfidentialAssetPolicyMock.mockImplementation(
       async (input: { assetDefinitionId?: string }) => ({
         asset_id: String(input?.assetDefinitionId ?? "xor#universal"),
@@ -353,6 +387,39 @@ describe("WalletView", () => {
         "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
       ),
     );
+  });
+
+  it("rescans recoverable shielded notes on demand", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "22",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView("xor#wonderland");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button.secondary")
+      .find((button) => button.text().includes(t("Rescan shielded notes")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(scanConfidentialWalletMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      privateKeyHex: "cd".repeat(32),
+      assetDefinitionId: "xor#universal",
+      force: true,
+    });
+    expect(wrapper.text()).toContain(t("Shielded note scan complete."));
+    expect(wrapper.text()).toContain("7");
+    expect(wrapper.text()).toContain("block 42");
   });
 
   it("creates shielded xor balance and refreshes the on-chain amount", async () => {

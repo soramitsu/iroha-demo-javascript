@@ -80,6 +80,11 @@ export const getConfidentialAssetBalance = (
 ): Promise<ConfidentialAssetBalanceView> =>
   bridge().getConfidentialAssetBalance(input);
 
+export const scanConfidentialWallet = (
+  input: Parameters<IrohaBridge["scanConfidentialWallet"]>[0],
+): Promise<ConfidentialAssetBalanceView> =>
+  bridge().scanConfidentialWallet(input);
+
 export const getPrivateKaigiConfidentialXorState = (
   input: Parameters<IrohaBridge["getPrivateKaigiConfidentialXorState"]>[0],
 ) => bridge().getPrivateKaigiConfidentialXorState(input);

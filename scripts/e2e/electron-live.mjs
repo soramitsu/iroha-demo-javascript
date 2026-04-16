@@ -83,7 +83,7 @@ async function main() {
         ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned HTTP 403)."
         : onboardingOutcome === "skipped_400"
           ? "Live Electron E2E passed (faucet + confidential transfer + explorer flows; optional alias registration skipped because TAIRA returned a reusable HTTP 400 on the deterministic onboarding probe)."
-        : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
+          : "Live Electron E2E passed (faucet + confidential transfer + explorer + optional alias-registration checks).",
     );
   } catch (error) {
     const publicFinalityDiagnostic = await collectPublicFinalityDiagnostic(
@@ -150,9 +150,7 @@ function writeCachedFundedWalletConfig(fundedAccount) {
       String(fundedAccount?.i105AccountId ?? "").trim() ||
       String(fundedAccount?.displayAccountId ?? "").trim(),
     assetId: String(fundedAccount?.assetId ?? "").trim(),
-    assetDefinitionId: String(
-      fundedAccount?.assetDefinitionId ?? "",
-    ).trim(),
+    assetDefinitionId: String(fundedAccount?.assetDefinitionId ?? "").trim(),
   };
 
   if (!payload.privateKeyHex) {
@@ -341,7 +339,8 @@ async function runFaucetFlow(page) {
       await configureConnection(page);
       const faucetBootstrap = await page.evaluate(
         ({ torii, chain, prefix, derivationLabel }) => {
-          const { publicKeyHex, privateKeyHex } = window.iroha.generateKeyPair();
+          const { publicKeyHex, privateKeyHex } =
+            window.iroha.generateKeyPair();
           const summary = window.iroha.deriveAccountAddress({
             domain: derivationLabel,
             publicKeyHex,
@@ -468,7 +467,9 @@ async function runFaucetFlow(page) {
                 accountId,
                 limit: 50,
               });
-              const items = Array.isArray(response?.items) ? response.items : [];
+              const items = Array.isArray(response?.items)
+                ? response.items
+                : [];
               const positiveAsset = items.find((asset) => {
                 const quantity = Number(String(asset?.quantity ?? ""));
                 return Number.isFinite(quantity) && quantity > 0;
@@ -544,10 +545,7 @@ async function runFaucetFlow(page) {
       };
     } catch (error) {
       lastError = error;
-      if (
-        attempt < 2 &&
-        isRetryableFaucetBadRequest(String(error ?? ""))
-      ) {
+      if (attempt < 2 && isRetryableFaucetBadRequest(String(error ?? ""))) {
         console.log(
           `Faucet probe attempt ${attempt + 1} hit a retryable TAIRA 400; retrying with a fresh account.`,
         );
@@ -817,7 +815,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
         txHashHex,
         timeoutMs = 90_000,
       }) => {
-        const normalizedHash = String(txHashHex ?? "").trim().toLowerCase();
+        const normalizedHash = String(txHashHex ?? "")
+          .trim()
+          .toLowerCase();
         const deadline = Date.now() + timeoutMs;
         let lastTransactions = null;
         let lastError = "";
@@ -833,9 +833,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
             if (
               items.some(
                 (item) =>
-                  String(
-                    item?.entrypoint_hash ?? item?.entrypointHash ?? "",
-                  ).trim().toLowerCase() === normalizedHash,
+                  String(item?.entrypoint_hash ?? item?.entrypointHash ?? "")
+                    .trim()
+                    .toLowerCase() === normalizedHash,
               )
             ) {
               return {
@@ -926,7 +926,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
         bobSummary.i105AccountId,
         bobKeyPair.privateKeyHex,
       );
-      const initialBobSpendable = BigInt(readSpendableQuantity(initialBobBalance));
+      const initialBobSpendable = BigInt(
+        readSpendableQuantity(initialBobBalance),
+      );
 
       const selfShieldQuantity =
         initialAliceSpendable >= 2n ? 0n : 2n - initialAliceSpendable;

@@ -217,6 +217,11 @@ export interface ConfidentialAssetBalanceView {
   onChainQuantity: string | null;
   spendableQuantity: string;
   exact: boolean;
+  scanSource: "global-note-index" | "account-transactions";
+  scanStatus: "complete" | "limited" | "incomplete";
+  scanWatermarkBlock: number | null;
+  recoveredNoteCount: number;
+  trackedAssetIds: string[];
 }
 
 export type FaucetRequestPhase =
@@ -540,6 +545,21 @@ export interface IrohaBridge {
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
   getConfidentialAssetBalance(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+  }): Promise<ConfidentialAssetBalanceView>;
+  scanConfidentialWallet(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex: string;
+    assetDefinitionId: string;
+    force?: boolean;
+  }): Promise<ConfidentialAssetBalanceView>;
+  getConfidentialWalletState(input: {
     toriiUrl: string;
     chainId: string;
     accountId: string;

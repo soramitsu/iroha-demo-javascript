@@ -1081,6 +1081,20 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Shield mode is unavailable for the current asset definition.",
   "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.":
     "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
+  "Rescan shielded notes": "Rescan shielded notes",
+  "Scanning shielded notes…": "Scanning shielded notes…",
+  "Shielded note scan complete.": "Shielded note scan complete.",
+  "Shielded note scan failed.": "Shielded note scan failed.",
+  "global note index": "global note index",
+  "account history fallback": "account history fallback",
+  "current available history": "current available history",
+  "block {block}": "block {block}",
+  "Recovered {count} shielded note(s) from {source} through {watermark}.":
+    "Recovered {count} shielded note(s) from {source} through {watermark}.",
+  "Global note index is unavailable, so recovery is limited to this account history through {watermark}.":
+    "Global note index is unavailable, so recovery is limited to this account history through {watermark}.",
+  "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.":
+    "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
   "Shield transaction committed: {hash}":
     "Shield transaction committed: {hash}",

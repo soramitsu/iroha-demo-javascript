@@ -173,10 +173,13 @@ describe("ReceiveView", () => {
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v2",
         accountId: ALICE_I105_ACCOUNT_ID,
+        chainId: "chain",
         assetDefinitionId: ASSET_DEFINITION_ID,
         amount: "0",
         shieldedOwnerTagHex: ALICE_OWNER_TAG_HEX,
         shieldedDiversifierHex: ALICE_DIVERSIFIER_HEX,
+        shieldedAddressIndex: 0,
+        recoveryHint: "encrypted-note-envelope-required",
       }),
       expect.objectContaining({
         type: "svg",

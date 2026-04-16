@@ -946,6 +946,14 @@ const downloadBackup = (target: "manual" | "icloud" | "google") => {
     target,
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
+    confidentialWallet: {
+      chainId: session.connection.chainId,
+      accountId: generatedAccountId.value,
+      addressCursor: 0,
+      scanWatermarkBlock: null,
+      encryptedNotes: [],
+      spentNullifiers: [],
+    },
   });
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: "application/json",

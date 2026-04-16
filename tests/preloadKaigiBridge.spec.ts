@@ -296,9 +296,10 @@ const loadBridge = async () => {
     transferAsset: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
-    deriveConfidentialReceiveAddress: (
-      privateKeyHex: string,
-    ) => { ownerTagHex: string; diversifierHex: string };
+    deriveConfidentialReceiveAddress: (privateKeyHex: string) => {
+      ownerTagHex: string;
+      diversifierHex: string;
+    };
     getConfidentialAssetPolicy: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -1902,9 +1903,7 @@ describe("preload Kaigi bridge", () => {
     );
     mocks.buildConfidentialTransferProofV2Mock
       .mockImplementationOnce(() => {
-        throw new Error(
-          "tree commitments do not match the supplied root_hint",
-        );
+        throw new Error("tree commitments do not match the supplied root_hint");
       })
       .mockImplementation((input?: { rootHintHex?: string }) => ({
         nullifiers: [Buffer.from("11".repeat(32), "hex")],
@@ -2053,9 +2052,7 @@ describe("preload Kaigi bridge", () => {
     );
     mocks.buildConfidentialTransferProofV2Mock
       .mockImplementationOnce(() => {
-        throw new Error(
-          "tree commitments do not match the supplied root_hint",
-        );
+        throw new Error("tree commitments do not match the supplied root_hint");
       })
       .mockImplementation((input?: { rootHintHex?: string }) => ({
         nullifiers: [Buffer.from("11".repeat(32), "hex")],

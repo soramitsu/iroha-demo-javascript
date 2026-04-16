@@ -462,16 +462,12 @@ describe("electron live e2e utils", () => {
       extractTransactionHashHex(
         "Transaction BB939A46A679E4D79B1533239D04CF43CB4B1F9A79ECC9AD7D0175CE697923ED did not reach a terminal status within 180000ms",
       ),
-    ).toBe(
-      "bb939a46a679e4d79b1533239d04cf43cb4b1f9a79ecc9ad7d0175ce697923ed",
-    );
+    ).toBe("bb939a46a679e4d79b1533239d04cf43cb4b1f9a79ecc9ad7d0175ce697923ed");
     expect(
       extractTransactionHashHex(
         "Faucet claim 92832455f5657312325370bce215055d9b7b4e894d2294de9d42c11f7c5715db stayed queued and did not finalize within 240 seconds.",
       ),
-    ).toBe(
-      "92832455f5657312325370bce215055d9b7b4e894d2294de9d42c11f7c5715db",
-    );
+    ).toBe("92832455f5657312325370bce215055d9b7b4e894d2294de9d42c11f7c5715db");
     expect(extractTransactionHashHex("no hash here")).toBeNull();
   });
 
