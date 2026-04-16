@@ -986,6 +986,10 @@ const normalizeRequestId = (value: string) => {
 const PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
 const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
+const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
+const CONFIDENTIAL_NOTE_INDEX_MAX_PAGES = 20;
+const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
+const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
 const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
 const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
   "iroha-demo:confidential-wallet:";
@@ -2298,6 +2302,53 @@ const buildNexusEndpoint = (
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
 };
 
+const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
+  const client = getClient(toriiUrl);
+  const waitableClient = client as ToriiClient & {
+    waitForTransactionStatus?: (
+      txHashHex: string,
+      options: {
+        intervalMs: number;
+        timeoutMs: number;
+      },
+    ) => Promise<unknown>;
+  };
+  if (typeof waitableClient.waitForTransactionStatus === "function") {
+    await waitableClient.waitForTransactionStatus(hashHex, {
+      intervalMs: CONFIDENTIAL_TX_FINALITY_INTERVAL_MS,
+      timeoutMs: CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS,
+    });
+    return;
+  }
+
+  const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
+  let lastStatusKind: string | null = null;
+  while (Date.now() <= deadline) {
+    const payload = await client.getTransactionStatus(hashHex);
+    const statusKind = extractPipelineStatusKind(payload);
+    lastStatusKind = statusKind;
+    if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
+      return;
+    }
+    if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
+      throw new Error(
+        `Transaction ${hashHex} ${statusKind.toLowerCase()} before it reached finality.`,
+      );
+    }
+    if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
+      break;
+    }
+    await waitForMs(CONFIDENTIAL_TX_FINALITY_INTERVAL_MS);
+  }
+
+  const timeoutSeconds = Math.trunc(CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS / 1000);
+  throw new Error(
+    lastStatusKind
+      ? `Transaction ${hashHex} stayed in ${lastStatusKind} and did not finalize within ${timeoutSeconds} seconds.`
+      : `Transaction ${hashHex} did not finalize within ${timeoutSeconds} seconds.`,
+  );
+};
+
 const fetchConfidentialAssetPolicy = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
@@ -2615,6 +2666,123 @@ const hydrateAccountTransactionsWithExplorerDetails = async (input: {
   );
 };
 
+const normalizeConfidentialNoteIndexItem = (
+  item: unknown,
+): WalletConfidentialTransactionLike | null => {
+  if (!isPlainRecord(item)) {
+    return null;
+  }
+  const hash = trimString(item.entrypoint_hash ?? item.transaction_hash);
+  if (!/^[0-9a-f]{64}$/i.test(hash)) {
+    return null;
+  }
+  return {
+    entrypoint_hash: hash,
+    result_ok: item.result_ok !== false,
+    authority: trimString(item.authority),
+    metadata: isPlainRecord(item.metadata)
+      ? (item.metadata as Record<string, unknown>)
+      : {},
+    instructions: Array.isArray(item.instructions)
+      ? (item.instructions.filter(isPlainRecord) as Array<
+          Record<string, unknown>
+        >)
+      : [],
+  };
+};
+
+const fetchConfidentialNoteIndexTransactions = async (input: {
+  toriiUrl: string;
+  assetDefinitionIds: string[];
+}): Promise<WalletConfidentialTransactionLike[] | null> => {
+  const byHash = new Map<string, WalletConfidentialTransactionLike>();
+  for (const assetDefinitionId of input.assetDefinitionIds) {
+    let cursor = "";
+    for (let page = 0; page < CONFIDENTIAL_NOTE_INDEX_MAX_PAGES; page += 1) {
+      const endpoint = buildNexusEndpoint(
+        input.toriiUrl,
+        "/v1/confidential/notes",
+        {
+          asset_definition_id: assetDefinitionId,
+          limit: CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE,
+          ...(cursor ? { cursor } : {}),
+        },
+      );
+      const response = await nodeFetch(endpoint, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      if (response.status === 404 || response.status === 405) {
+        return null;
+      }
+      if (!response.ok) {
+        const detail = await readApiErrorDetail(response);
+        throw new Error(
+          detail ||
+            `Confidential note index request failed with status ${response.status} (${response.statusText})`,
+        );
+      }
+      const payload = ensureObjectResponse(
+        (await response.json()) as unknown,
+        "Confidential note index",
+      );
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      for (const item of items) {
+        const normalized = normalizeConfidentialNoteIndexItem(item);
+        if (!normalized) {
+          continue;
+        }
+        byHash.set(normalized.entrypoint_hash ?? "", normalized);
+      }
+      cursor = trimString(payload.next_cursor);
+      if (!cursor) {
+        break;
+      }
+    }
+  }
+  return [...byHash.values()];
+};
+
+const submitConfidentialRelayTransfer = async (input: {
+  toriiUrl: string;
+  signedTransaction: Buffer | ArrayBuffer | ArrayBufferView;
+}): Promise<{ hash: string; relayAuthority: string }> => {
+  const endpoint = buildNexusEndpoint(
+    input.toriiUrl,
+    "/v1/confidential/relay/submit",
+  );
+  const response = await nodeFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      signed_tx_hex: binaryToBuffer(input.signedTransaction).toString("hex"),
+    }),
+  });
+  if (!response.ok) {
+    const detail = await readApiErrorDetail(response);
+    throw new Error(
+      detail ||
+        `Anonymous shielded relay request failed with status ${response.status} (${response.statusText})`,
+    );
+  }
+  const payload = ensureObjectResponse(
+    (await response.json()) as unknown,
+    "Anonymous shielded relay",
+  );
+  const hash = trimString(payload.tx_hash_hex);
+  if (!/^[0-9a-f]{64}$/i.test(hash)) {
+    throw new Error("Anonymous shielded relay returned an invalid hash.");
+  }
+  await waitForTransactionCommit(input.toriiUrl, hash);
+  return {
+    hash,
+    relayAuthority: trimString(payload.relay_authority),
+  };
+};
+
 const readPrivateKaigiVkTransferRef = (
   assetDefinition: Record<string, unknown>,
 ) => {
@@ -2685,23 +2853,21 @@ const resolveConfidentialAssetBalance = async (input: {
     requestedAssetDefinitionId,
     resolvedAssetId,
   });
-  const transactions = await hydrateAccountTransactionsWithExplorerDetails({
+  const noteIndexTransactions = await fetchConfidentialNoteIndexTransactions({
     toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
+    assetDefinitionIds: trackedAssetIds,
   });
+  const transactions =
+    noteIndexTransactions ??
+    (await hydrateAccountTransactionsWithExplorerDetails({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+    }));
   const effectiveTransactions = mergeConfidentialWalletShadowTransactions({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
     transactions,
-  });
-  const onChainBalance = deriveOnChainShieldedBalance(transactions, {
-    assetDefinitionIds: trackedAssetIds,
-    accountIds: [
-      input.accountId,
-      normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
-      normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
-    ],
   });
   const ledger = collectWalletConfidentialLedger(
     effectiveTransactions as WalletConfidentialTransactionLike[],
@@ -2709,8 +2875,23 @@ const resolveConfidentialAssetBalance = async (input: {
       privateKeyHex: input.privateKeyHex,
       chainId: input.chainId,
       assetDefinitionIds: trackedAssetIds,
+      markUnrecognizedTransfersInexact: noteIndexTransactions === null,
     },
   );
+  const onChainBalance =
+    noteIndexTransactions === null
+      ? deriveOnChainShieldedBalance(transactions, {
+          assetDefinitionIds: trackedAssetIds,
+          accountIds: [
+            input.accountId,
+            normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
+            normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
+          ],
+        })
+      : {
+          quantity: ledger.spendableQuantity,
+          exact: ledger.exact,
+        };
   return {
     resolvedAssetId,
     quantity: ledger.spendableQuantity,
@@ -2733,15 +2914,22 @@ const resolveConfidentialTransferMaterials = async (input: {
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId: balance.resolvedAssetId,
   });
-  const [transactions, assetDefinition, latestRootHex] = await Promise.all([
-    hydrateAccountTransactionsWithExplorerDetails({
+  const [noteIndexTransactions, assetDefinition, latestRootHex] =
+    await Promise.all([
+      fetchConfidentialNoteIndexTransactions({
+        toriiUrl: input.toriiUrl,
+        assetDefinitionIds: trackedAssetIds,
+      }),
+      fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
+      fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
+    ]);
+  const transactions =
+    noteIndexTransactions ??
+    (await hydrateAccountTransactionsWithExplorerDetails({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
-    }),
-    fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
-    fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
-  ]);
+    }));
   const effectiveTransactions = mergeConfidentialWalletShadowTransactions({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
@@ -2753,6 +2941,7 @@ const resolveConfidentialTransferMaterials = async (input: {
       privateKeyHex: input.privateKeyHex,
       chainId: input.chainId,
       assetDefinitionIds: trackedAssetIds,
+      markUnrecognizedTransfersInexact: noteIndexTransactions === null,
     },
   );
   const vkTransferRef = readConfidentialVkTransferRef(assetDefinition);
@@ -3362,10 +3551,8 @@ const api: IrohaBridge = {
         const submission = await submitSignedTransaction(
           getClient(input.toriiUrl),
           tx.signedTransaction,
-          {
-            waitForCommit: false,
-          },
         );
+        await waitForTransactionCommit(input.toriiUrl, submission.hash);
         upsertConfidentialWalletShadowTransaction({
           toriiUrl: input.toriiUrl,
           accountId,
@@ -3500,18 +3687,15 @@ const api: IrohaBridge = {
           },
         },
       ];
-      const submission = await submitSignedTransaction(
-        getClient(input.toriiUrl),
-        tx.signedTransaction,
-        {
-          waitForCommit: false,
-        },
-      );
+      const submission = await submitConfidentialRelayTransfer({
+        toriiUrl: input.toriiUrl,
+        signedTransaction: tx.signedTransaction,
+      });
       upsertConfidentialWalletShadowTransaction({
         toriiUrl: input.toriiUrl,
         accountId,
         txHash: submission.hash,
-        authority: accountId,
+        authority: submission.relayAuthority || "confidential-relay",
         metadata: shadowMetadata,
         instructions: shadowInstructions,
         createdAtMs: Math.min(
@@ -3524,7 +3708,7 @@ const api: IrohaBridge = {
           toriiUrl: input.toriiUrl,
           accountId: destinationAccountId,
           txHash: submission.hash,
-          authority: accountId,
+          authority: submission.relayAuthority || "confidential-relay",
           metadata: shadowMetadata,
           instructions: shadowInstructions,
           createdAtMs: Math.min(
@@ -3983,12 +4167,33 @@ const api: IrohaBridge = {
         return result;
       }
 
+      try {
+        await onStatus?.({
+          phase: "claimAccepted",
+          attempt,
+          attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+          txHashHex,
+        });
+      } catch {
+        // Renderer-side status hooks must not break the faucet request itself.
+      }
+      try {
+        await onStatus?.({
+          phase: "waitingForCommit",
+          attempt,
+          attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+          txHashHex,
+        });
+      } catch {
+        // Renderer-side status hooks must not break the faucet request itself.
+      }
+
       const { statusKind, timedOut, lastError } =
         await waitForFaucetClaimFinality(client, txHashHex);
       if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
         try {
           await onStatus?.({
-            phase: "claimAccepted",
+            phase: "claimCommitted",
             attempt,
             attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
             txHashHex,

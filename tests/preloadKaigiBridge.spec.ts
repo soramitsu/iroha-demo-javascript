@@ -538,8 +538,10 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.getTransactionStatusMock).toHaveBeenCalledWith("0xfaucet");
     expect(statusEvents).toEqual([
       "submittingClaim",
-      "statusChecked",
       "claimAccepted",
+      "waitingForCommit",
+      "statusChecked",
+      "claimCommitted",
     ]);
   });
 
@@ -624,9 +626,13 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.getStatusSnapshotMock).toHaveBeenCalledTimes(1);
     expect(statusEvents).toEqual([
       "submittingClaim",
+      "claimAccepted",
+      "waitingForCommit",
       "waitingForClaimRetry",
       "submittingClaim",
       "claimAccepted",
+      "waitingForCommit",
+      "claimCommitted",
     ]);
   });
 

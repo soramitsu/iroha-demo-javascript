@@ -286,9 +286,7 @@ const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(activeAccount.value, t("—")),
 );
 const configuredShieldAssetDefinitionId = computed(
-  () =>
-    extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
+  () => extractAssetDefinitionId(session.connection.assetDefinitionId).trim(),
 );
 const shieldForm = reactive({
   quantity: "0",
@@ -407,7 +405,11 @@ const faucetStatusMessage = computed(() => {
     case "waitingForClaimRetry":
       return t("Retrying faucet claim after queue expiry…");
     case "claimAccepted":
-      return t("Faucet claim accepted. Updating wallet…");
+      return t("Faucet claim accepted. Waiting for finality…");
+    case "waitingForCommit":
+      return t("Waiting for faucet transaction finality…");
+    case "claimCommitted":
+      return t("Faucet transaction committed. Updating wallet…");
     case "refreshingWallet":
       return t("Refreshing wallet balance…");
     default:
@@ -641,7 +643,7 @@ const requestStarterFunds = async () => {
       );
     }
     session.updateActiveAccount({ localOnly: false });
-    faucetStatusPhase.value = "claimAccepted";
+    faucetStatusPhase.value = "claimCommitted";
     faucetMessage.value = t("Testnet XOR requested: {hash}", {
       hash: result.tx_hash_hex,
     });
@@ -852,7 +854,7 @@ const createShieldedXor = async () => {
     });
     session.updateActiveAccount({ localOnly: false });
     shieldForm.quantity = "0";
-    shieldMessage.value = t("Shield transaction submitted: {hash}", {
+    shieldMessage.value = t("Shield transaction committed: {hash}", {
       hash: result.hash,
     });
     await refresh();

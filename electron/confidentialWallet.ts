@@ -21,6 +21,7 @@ type ConfidentialInstructionLike = Record<string, unknown>;
 export type WalletConfidentialTransactionLike = {
   entrypoint_hash?: string;
   result_ok?: boolean;
+  authority?: string;
   metadata?: unknown;
   transaction_metadata?: unknown;
   tx_metadata?: unknown;
@@ -409,6 +410,7 @@ export const collectWalletConfidentialLedger = (
     privateKeyHex: string;
     chainId: string;
     assetDefinitionIds: Array<string | null | undefined>;
+    markUnrecognizedTransfersInexact?: boolean;
   },
 ): WalletConfidentialLedger => {
   const assetDefinitionIds = new Set(
@@ -498,7 +500,7 @@ export const collectWalletConfidentialLedger = (
         recognized = true;
       }
     }
-    if (!recognized) {
+    if (input.markUnrecognizedTransfersInexact !== false && !recognized) {
       exact = false;
     }
   });

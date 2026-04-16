@@ -201,6 +201,45 @@ describe("confidential wallet helpers", () => {
     });
   });
 
+  it("can ignore unrelated global note-index transfers", () => {
+    const alice = makeAccount();
+    const ledger = collectWalletConfidentialLedger(
+      [
+        {
+          entrypoint_hash: "0xother",
+          result_ok: true,
+          metadata: {},
+          instructions: [
+            {
+              zk: {
+                ZkTransfer: {
+                  asset: ASSET_ID,
+                  inputs: [
+                    Array.from({ length: 32 }, (_entry, index) => index),
+                  ],
+                  outputs: [
+                    Array.from({ length: 32 }, (_entry, index) => 255 - index),
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        privateKeyHex: alice.privateKeyHex,
+        chainId: CHAIN_ID,
+        assetDefinitionIds: [ASSET_ID],
+        markUnrecognizedTransfersInexact: false,
+      },
+    );
+
+    expect(ledger).toMatchObject({
+      exact: true,
+      spendableQuantity: "0",
+    });
+  });
+
   it("selects enough notes and returns the expected change", () => {
     const alice = makeAccount();
     const firstNote = createWalletConfidentialNote({
