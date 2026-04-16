@@ -22,3 +22,4 @@ export const TAIRA_CHAIN_PRESET: ChainPreset = {
 export const CHAIN_PRESETS: ChainPreset[] = [TAIRA_CHAIN_PRESET];
 
 export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
+export const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";

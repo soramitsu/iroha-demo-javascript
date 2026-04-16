@@ -19,6 +19,8 @@ const VALID_24_WORD_MNEMONIC =
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
+const isSecureVaultAvailableMock = vi.fn();
+const storeAccountSecretMock = vi.fn();
 const onboardAccountMock = vi.fn();
 const routerPushMock = vi.fn();
 const qrToDataUrlMock = vi.fn();
@@ -42,6 +44,8 @@ vi.mock("@/services/iroha", () => ({
   deriveAccountAddress: (input: unknown) => deriveAccountAddressMock(input),
   derivePublicKey: (privateKeyHex: string) =>
     derivePublicKeyMock(privateKeyHex),
+  isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
+  storeAccountSecret: (input: unknown) => storeAccountSecretMock(input),
   onboardAccount: (input: unknown) => onboardAccountMock(input),
 }));
 
@@ -50,6 +54,8 @@ describe("AccountSetupView", () => {
     createConnectPreviewMock.mockReset();
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
+    isSecureVaultAvailableMock.mockReset();
+    storeAccountSecretMock.mockReset();
     onboardAccountMock.mockReset();
     routerPushMock.mockReset();
     qrToDataUrlMock.mockReset();
@@ -66,6 +72,8 @@ describe("AccountSetupView", () => {
     derivePublicKeyMock.mockResolvedValue({
       publicKeyHex: "ab".repeat(32),
     });
+    isSecureVaultAvailableMock.mockResolvedValue(true);
+    storeAccountSecretMock.mockResolvedValue(undefined);
     setActivePinia(createPinia());
   });
 
@@ -287,6 +295,7 @@ describe("AccountSetupView", () => {
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
     expect(session.activeAccount?.displayName).toBe("Alice");
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
@@ -313,6 +322,7 @@ describe("AccountSetupView", () => {
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
     expect(session.activeAccount?.displayName).toBe("");
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
@@ -343,9 +353,7 @@ describe("AccountSetupView", () => {
     expect(onboardAccountMock).not.toHaveBeenCalled();
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@default");
-    expect(session.activeAccount?.privateKeyHex).toBe(
-      VALID_MNEMONIC_PRIVATE_KEY_HEX,
-    );
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
@@ -481,7 +489,7 @@ describe("AccountSetupView", () => {
     await flushPromises();
 
     expect(derivePublicKeyMock).toHaveBeenCalledWith(expectedPrivateKeyHex);
-    expect(session.activeAccount?.privateKeyHex).toBe(expectedPrivateKeyHex);
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
   });
 
   it("surfaces bridge failures while deriving a restored wallet", async () => {
@@ -552,6 +560,7 @@ describe("AccountSetupView", () => {
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
     expect(session.activeAccountId).toBe("alice@flowers");
     expect(session.activeAccount?.localOnly).toBe(true);
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
   });
 
   it("restores from the saved-wallet layout and updates an existing account entry", async () => {
@@ -585,9 +594,7 @@ describe("AccountSetupView", () => {
     expect(session.accounts).toHaveLength(1);
     expect(session.activeAccountId).toBe("alice@default");
     expect(session.activeAccount?.displayName).toBe("");
-    expect(session.activeAccount?.privateKeyHex).toBe(
-      VALID_MNEMONIC_PRIVATE_KEY_HEX,
-    );
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 });

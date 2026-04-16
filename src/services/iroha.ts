@@ -24,6 +24,7 @@ import type {
   KaigiSignalKeyPair,
   NexusStakingPolicy,
   NexusSumeragiStatus,
+  NetworkStatsResponse,
   OfflineAllowanceResponse,
   PublicLaneRewardsResponseView,
   PublicLaneStakeResponseView,
@@ -53,6 +54,18 @@ export const generateKeyPair = () => bridge().generateKeyPair();
 export const generateKaigiSignalKeyPair = (): KaigiSignalKeyPair =>
   bridge().generateKaigiSignalKeyPair();
 
+export const isSecureVaultAvailable = (): Promise<boolean> =>
+  bridge().isSecureVaultAvailable();
+
+export const storeAccountSecret = (input: {
+  accountId: string;
+  privateKeyHex: string;
+}): Promise<void> => bridge().storeAccountSecret(input);
+
+export const listAccountSecretFlags = (input: {
+  accountIds: string[];
+}): Promise<Record<string, boolean>> => bridge().listAccountSecretFlags(input);
+
 export const deriveAccountAddress = (params: {
   domain: string;
   publicKeyHex: string;
@@ -61,6 +74,10 @@ export const deriveAccountAddress = (params: {
 
 export const derivePublicKey = (privateKeyHex: string) =>
   bridge().derivePublicKey(privateKeyHex);
+
+export const createConfidentialPaymentAddress = (
+  input: Parameters<IrohaBridge["createConfidentialPaymentAddress"]>[0],
+) => bridge().createConfidentialPaymentAddress(input);
 
 export const registerAccount = (
   input: Parameters<IrohaBridge["registerAccount"]>[0],
@@ -150,6 +167,11 @@ export const getExplorerMetrics = (
   toriiUrl: string,
 ): Promise<ExplorerMetricsResponse | null> =>
   bridge().getExplorerMetrics({ toriiUrl });
+
+export const getNetworkStats = (input: {
+  toriiUrl: string;
+  assetDefinitionId?: string;
+}): Promise<NetworkStatsResponse> => bridge().getNetworkStats(input);
 
 export const getExplorerAccountQr = (
   input: Parameters<IrohaBridge["getExplorerAccountQr"]>[0],

@@ -509,6 +509,8 @@ import {
   createConnectPreview,
   deriveAccountAddress,
   derivePublicKey,
+  isSecureVaultAvailable,
+  storeAccountSecret,
 } from "@/services/iroha";
 import {
   generateMnemonicWords,
@@ -882,10 +884,20 @@ const canSaveGenerated = computed(() => {
   );
 });
 
-const persistGeneratedIdentity = (localOnly: boolean) => {
+const persistGeneratedIdentity = async (localOnly: boolean) => {
   if (!generatedKeys.value || !generatedAccountId.value) {
     return;
   }
+  const vaultAvailable = await isSecureVaultAvailable().catch(() => false);
+  if (!vaultAvailable) {
+    throw new Error(
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+  }
+  await storeAccountSecret({
+    accountId: generatedAccountId.value,
+    privateKeyHex: generatedKeys.value.privateKeyHex,
+  });
   session.updateConnection({
     toriiUrl: connectionForm.toriiUrl,
     chainId: connectionForm.chainId,
@@ -898,7 +910,7 @@ const persistGeneratedIdentity = (localOnly: boolean) => {
     i105DefaultAccountId:
       generatedAccountSummary.value?.i105DefaultAccountId ?? "",
     publicKeyHex: generatedKeys.value.publicKeyHex,
-    privateKeyHex: generatedKeys.value.privateKeyHex,
+    hasStoredSecret: true,
     localOnly,
   });
   session.persistState();
@@ -925,7 +937,7 @@ const saveGeneratedIdentity = async () => {
     );
     return;
   }
-  persistGeneratedIdentity(true);
+  await persistGeneratedIdentity(true);
   onboardingStatus.value = isRestoreMode.value
     ? t("Wallet {accountId} restored locally.", {
         accountId: generatedVisibleAccountId.value || generatedAccountId.value,

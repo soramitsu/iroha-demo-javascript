@@ -85,6 +85,110 @@ export interface ExplorerMetricsResponse {
   averageBlockTimeMs: number | null;
 }
 
+export interface ExplorerEconometricsTopHolder {
+  accountId: string;
+  balance: string;
+}
+
+export interface ExplorerEconometricsLorenzPoint {
+  population: number;
+  share: number;
+}
+
+export interface ExplorerDistributionSnapshot {
+  gini: number;
+  hhi: number;
+  theil: number;
+  entropy: number;
+  entropyNormalized: number;
+  nakamoto33: number;
+  nakamoto51: number;
+  nakamoto67: number;
+  top1: number;
+  top5: number;
+  top10: number;
+  median: string | null;
+  p90: string | null;
+  p99: string | null;
+  lorenz: ExplorerEconometricsLorenzPoint[];
+}
+
+export interface ExplorerAssetDefinitionSnapshotResponse {
+  definitionId: string;
+  computedAtMs: number;
+  holdersTotal: number;
+  totalSupply: string;
+  topHolders: ExplorerEconometricsTopHolder[];
+  distribution: ExplorerDistributionSnapshot;
+}
+
+export interface ExplorerEconometricsVelocityWindow {
+  key: string;
+  startMs: number;
+  endMs: number;
+  transfers: number;
+  uniqueSenders: number;
+  uniqueReceivers: number;
+  amount: string;
+}
+
+export interface ExplorerEconometricsIssuanceWindow {
+  key: string;
+  startMs: number;
+  endMs: number;
+  mintCount: number;
+  burnCount: number;
+  minted: string;
+  burned: string;
+  net: string;
+}
+
+export interface ExplorerEconometricsIssuanceSeriesPoint {
+  bucketStartMs: number;
+  minted: string;
+  burned: string;
+  net: string;
+}
+
+export interface ExplorerAssetDefinitionEconometricsResponse {
+  definitionId: string;
+  computedAtMs: number;
+  velocityWindows: ExplorerEconometricsVelocityWindow[];
+  issuanceWindows: ExplorerEconometricsIssuanceWindow[];
+  issuanceSeries: ExplorerEconometricsIssuanceSeriesPoint[];
+}
+
+export interface NetworkRuntimeStats {
+  queueSize: number | null;
+  queueCapacity: number | null;
+  commitTimeMs: number | null;
+  effectiveBlockTimeMs: number | null;
+  txQueueSaturated: boolean | null;
+  highestQcHeight: number | null;
+  lockedQcHeight: number | null;
+  currentBlockHeight: number | null;
+  finalizedBlockHeight: number | null;
+  finalizationLag: number | null;
+}
+
+export interface NetworkGovernanceStats {
+  laneCount: number;
+  dataspaceCount: number;
+  validatorCount: number;
+}
+
+export interface NetworkStatsResponse {
+  collectedAtMs: number;
+  xorAssetDefinitionId: string;
+  explorer: ExplorerMetricsResponse | null;
+  supply: ExplorerAssetDefinitionSnapshotResponse | null;
+  econometrics: ExplorerAssetDefinitionEconometricsResponse | null;
+  runtime: NetworkRuntimeStats;
+  governance: NetworkGovernanceStats;
+  warnings: string[];
+  partial: boolean;
+}
+
 export interface ExplorerAccountQrResponse {
   canonicalId: string;
   literal: string;
@@ -93,6 +197,15 @@ export interface ExplorerAccountQrResponse {
   modules: number;
   qrVersion: number;
   svg: string;
+}
+
+export interface ConfidentialPaymentAddress {
+  schema: "iroha-confidential-payment-address/v3";
+  receiveKeyId: string;
+  receivePublicKeyBase64Url: string;
+  shieldedOwnerTagHex: string;
+  shieldedDiversifierHex: string;
+  recoveryHint: "one-time-receive-key";
 }
 
 export type VpnExitClass = "standard" | "low-latency" | "high-security";
@@ -505,6 +618,14 @@ export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
+  isSecureVaultAvailable(): Promise<boolean>;
+  storeAccountSecret(input: {
+    accountId: string;
+    privateKeyHex: string;
+  }): Promise<void>;
+  listAccountSecretFlags(input: {
+    accountIds: string[];
+  }): Promise<Record<string, boolean>>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
@@ -516,6 +637,10 @@ export interface IrohaBridge {
     ownerTagHex: string;
     diversifierHex: string;
   };
+  createConfidentialPaymentAddress(input: {
+    accountId: string;
+    privateKeyHex?: string;
+  }): Promise<ConfidentialPaymentAddress>;
   registerAccount(input: {
     toriiUrl: string;
     chainId: string;
@@ -530,12 +655,20 @@ export interface IrohaBridge {
     chainId: string;
     assetDefinitionId: string;
     accountId: string;
-    destinationAccountId: string;
+    destinationAccountId?: string;
     quantity: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     metadata?: Record<string, unknown>;
     shielded?: boolean;
     unshield?: boolean;
+    shieldedRecipient?: {
+      receiveKeyId?: string;
+      receivePublicKeyBase64Url?: string;
+      ownerTagHex?: string;
+      diversifierHex?: string;
+    };
+    shieldedReceiveKeyId?: string;
+    shieldedReceivePublicKeyBase64Url?: string;
     shieldedOwnerTagHex?: string;
     shieldedDiversifierHex?: string;
   }): Promise<{ hash: string }>;
@@ -548,14 +681,14 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceView>;
   scanConfidentialWallet(input: {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
     force?: boolean;
   }): Promise<ConfidentialAssetBalanceView>;
@@ -563,7 +696,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceView>;
   getPrivateKaigiConfidentialXorState(input: {
@@ -574,7 +707,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     amount: string;
   }): Promise<{ hash: string }>;
   fetchAccountAssets(input: {
@@ -601,7 +734,7 @@ export interface IrohaBridge {
     chainId: string;
     accountId: string;
     amount: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
   getGovernanceProposal(input: {
     toriiUrl: string;
@@ -630,7 +763,7 @@ export interface IrohaBridge {
     amount: string;
     durationBlocks: number;
     direction: GovernanceBallotDirection;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
   finalizeGovernanceReferendum(input: {
     toriiUrl: string;
@@ -644,6 +777,10 @@ export interface IrohaBridge {
   getExplorerMetrics(config: {
     toriiUrl: string;
   }): Promise<ExplorerMetricsResponse | null>;
+  getNetworkStats(input: {
+    toriiUrl: string;
+    assetDefinitionId?: string;
+  }): Promise<NetworkStatsResponse>;
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
@@ -654,13 +791,13 @@ export interface IrohaBridge {
   connectVpn(input: {
     toriiUrl: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     exitClass: VpnExitClass;
   }): Promise<VpnStatus>;
   disconnectVpn(input: {
     toriiUrl: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<VpnStatus>;
   repairVpn(input: Partial<VpnAuthContext>): Promise<VpnStatus>;
   listVpnReceipts(input?: Partial<VpnAuthContext>): Promise<VpnReceipt[]>;
@@ -700,7 +837,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     hostAccountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     callId: string;
     title?: string;
     scheduledStartMs: number;
@@ -722,7 +859,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     participantAccountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     callId: string;
     hostAccountId?: string;
     hostKaigiPublicKeyBase64Url: string;
@@ -755,7 +892,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     chainId: string;
     hostAccountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     callId: string;
     endedAtMs?: number;
   }): Promise<{ hash: string }>;
@@ -791,7 +928,7 @@ export interface IrohaBridge {
     stakeAccountId: string;
     validator: string;
     amount: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
   schedulePublicLaneUnbond(input: {
     toriiUrl: string;
@@ -801,7 +938,7 @@ export interface IrohaBridge {
     amount: string;
     requestId: string;
     releaseAtMs: number;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
   finalizePublicLaneUnbond(input: {
     toriiUrl: string;
@@ -809,14 +946,14 @@ export interface IrohaBridge {
     stakeAccountId: string;
     validator: string;
     requestId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
   claimPublicLaneRewards(input: {
     toriiUrl: string;
     chainId: string;
     stakeAccountId: string;
     validator: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
   }): Promise<{ hash: string }>;
 }
 

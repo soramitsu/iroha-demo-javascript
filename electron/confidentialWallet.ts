@@ -5,15 +5,22 @@ import {
   deriveConfidentialOwnerTagV2,
   deriveConfidentialReceiveAddressV2,
 } from "@iroha/iroha-js/crypto";
+import type { ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
   decryptPayloadForAccount,
   encryptPayloadForAccountId,
 } from "./accountSealedBox";
-import type { KaigiSealedBox } from "./kaigiCrypto";
+import {
+  decryptKaigiPayload,
+  encryptKaigiPayload,
+  type KaigiSealedBox,
+} from "./kaigiCrypto";
 
 export const CONFIDENTIAL_WALLET_METADATA_KEY =
   "iroha_demo_confidential_wallet";
 export const CONFIDENTIAL_WALLET_METADATA_SCHEMA =
+  "iroha-demo-confidential-wallet/v3";
+export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2 =
   "iroha-demo-confidential-wallet/v2";
 export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY =
   "iroha-demo-confidential-wallet/v1";
@@ -75,10 +82,13 @@ type WalletParsedNote =
 type WalletConfidentialMetadataRecord = {
   schema:
     | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA
+    | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
     | typeof CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY;
   outputs: Array<{
     commitment_hex: string;
     envelope: KaigiSealedBox;
+    receive_key_id?: string;
+    public_key_base64url?: string;
   }>;
 };
 
@@ -333,6 +343,7 @@ const parseWalletConfidentialMetadataRecord = (
   const schema = trimString(value.schema);
   if (
     schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA &&
+    schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2 &&
     schema !== CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY
   ) {
     return null;
@@ -352,18 +363,21 @@ const parseWalletConfidentialMetadataRecord = (
       return {
         commitment_hex: commitmentHex,
         envelope: entry.envelope as unknown as KaigiSealedBox,
+        receive_key_id: trimString(entry.receive_key_id ?? entry.receiveKeyId),
+        public_key_base64url: trimString(
+          entry.public_key_base64url ?? entry.publicKeyBase64Url,
+        ),
       };
     })
-    .filter(
-      (entry): entry is WalletConfidentialMetadataRecord["outputs"][number] =>
-        Boolean(entry),
-    );
+    .filter(Boolean) as WalletConfidentialMetadataRecord["outputs"];
 
   return {
     schema:
       schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA
         ? CONFIDENTIAL_WALLET_METADATA_SCHEMA
-        : CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY,
+        : schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
+          ? CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2
+          : CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY,
     outputs: normalizedOutputs,
   };
 };
@@ -488,7 +502,8 @@ const parseUnshieldInstruction = (
 const readWalletNotesForTransaction = (
   transaction: WalletConfidentialTransactionLike,
   input: {
-    privateKeyHex: string;
+    privateKeyHex?: string;
+    receiveKeys?: ConfidentialReceiveKeyRecord[];
     assetDefinitionIds: Set<string>;
   },
 ) => {
@@ -497,11 +512,34 @@ const readWalletNotesForTransaction = (
   if (!metadata) {
     return notesByCommitment;
   }
+  const receiveKeysById = new Map(
+    (input.receiveKeys ?? []).map((record) => [record.keyId, record]),
+  );
   for (const output of metadata.outputs) {
     try {
-      const parsed = parseWalletConfidentialNote(
-        decryptPayloadForAccount(output.envelope, input.privateKeyHex),
-      );
+      const parsed =
+        metadata.schema === CONFIDENTIAL_WALLET_METADATA_SCHEMA
+          ? (() => {
+              const receiveKeyId = trimString(output.receive_key_id);
+              if (!receiveKeyId) {
+                return null;
+              }
+              const receiveKey = receiveKeysById.get(receiveKeyId);
+              if (!receiveKey) {
+                return null;
+              }
+              return parseWalletConfidentialNote(
+                decryptKaigiPayload(output.envelope, {
+                  publicKeyBase64Url: receiveKey.publicKeyBase64Url,
+                  privateKeyBase64Url: receiveKey.privateKeyBase64Url,
+                }),
+              );
+            })()
+          : input.privateKeyHex
+            ? parseWalletConfidentialNote(
+                decryptPayloadForAccount(output.envelope, input.privateKeyHex),
+              )
+            : null;
       if (!parsed) {
         continue;
       }
@@ -680,19 +718,44 @@ export const buildWalletConfidentialMetadata = (input: {
   baseMetadata?: Record<string, unknown>;
   outputs: Array<{
     note: WalletConfidentialNote | WalletLegacyConfidentialNote;
-    recipientAccountId: string;
+    receiveKeyId?: string;
+    recipientPublicKeyBase64Url?: string;
+    recipientAccountId?: string;
   }>;
 }): Record<string, unknown> => {
   const nextMetadata = isPlainRecord(input.baseMetadata)
     ? { ...input.baseMetadata }
     : {};
-  nextMetadata[CONFIDENTIAL_WALLET_METADATA_KEY] = {
-    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-    outputs: input.outputs.map(({ note, recipientAccountId }) => ({
-      commitment_hex: note.commitment_hex,
-      envelope: encryptPayloadForAccountId(note, recipientAccountId),
-    })),
-  };
+  const useReceiveKeys = input.outputs.every(
+    (output) =>
+      trimString(output.receiveKeyId) &&
+      trimString(output.recipientPublicKeyBase64Url),
+  );
+  nextMetadata[CONFIDENTIAL_WALLET_METADATA_KEY] = useReceiveKeys
+    ? {
+        schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+        outputs: input.outputs.map(
+          ({ note, receiveKeyId, recipientPublicKeyBase64Url }) => ({
+            commitment_hex: note.commitment_hex,
+            receive_key_id: trimString(receiveKeyId),
+            public_key_base64url: trimString(recipientPublicKeyBase64Url),
+            envelope: encryptKaigiPayload(
+              note,
+              trimString(recipientPublicKeyBase64Url),
+            ),
+          }),
+        ),
+      }
+    : {
+        schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA_V2,
+        outputs: input.outputs.map(({ note, recipientAccountId }) => ({
+          commitment_hex: note.commitment_hex,
+          envelope: encryptPayloadForAccountId(
+            note,
+            trimString(recipientAccountId),
+          ),
+        })),
+      };
   return nextMetadata;
 };
 
@@ -702,6 +765,7 @@ export const collectWalletConfidentialLedger = (
     privateKeyHex: string;
     chainId: string;
     assetDefinitionIds: Array<string | null | undefined>;
+    receiveKeys?: ConfidentialReceiveKeyRecord[];
     markUnrecognizedTransfersInexact?: boolean;
   },
 ): WalletConfidentialLedger => {
@@ -743,6 +807,7 @@ export const collectWalletConfidentialLedger = (
       trimString(transaction.entrypoint_hash) || `tx-${transaction.__index}`;
     const notesByCommitment = readWalletNotesForTransaction(transaction, {
       privateKeyHex: input.privateKeyHex,
+      receiveKeys: input.receiveKeys,
       assetDefinitionIds,
     });
 

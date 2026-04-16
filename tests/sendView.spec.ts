@@ -144,7 +144,7 @@ describe("SendView", () => {
       }),
     );
     expect(wrapper.text()).toContain(
-      t("Anonymous shielded transaction committed: {hash}", { hash: "0xabc" }),
+      t("Private shielded transfer committed: {hash}", { hash: "0xabc" }),
     );
   });
 
@@ -221,7 +221,7 @@ describe("SendView", () => {
       BOB_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
-    expect(wrapper.find(".actions button").text()).toBe(t("Send anonymously"));
+    expect(wrapper.find(".actions button").text()).toBe(t("Send privately"));
   });
 
   it("switches amount input step when shield mode changes", async () => {

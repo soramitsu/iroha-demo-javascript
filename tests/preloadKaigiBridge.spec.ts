@@ -39,6 +39,8 @@ const mocks = vi.hoisted(() => ({
   requestFaucetFundsWithPuzzleMock: vi.fn(),
   getTransactionStatusMock: vi.fn(),
   getStatusSnapshotMock: vi.fn(),
+  getExplorerMetricsMock: vi.fn(),
+  getSumeragiStatusTypedMock: vi.fn(),
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
@@ -221,6 +223,14 @@ vi.mock("@iroha/iroha-js", async () => {
     getStatusSnapshot(...args: unknown[]) {
       return mocks.getStatusSnapshotMock(...args);
     }
+
+    getExplorerMetrics(...args: unknown[]) {
+      return mocks.getExplorerMetricsMock(...args);
+    }
+
+    getSumeragiStatusTyped(...args: unknown[]) {
+      return mocks.getSumeragiStatusTypedMock(...args);
+    }
   }
 
   return {
@@ -311,6 +321,9 @@ const loadBridge = async () => {
       input: Record<string, unknown>,
       onStatus?: (progress: unknown) => void,
     ) => Promise<Record<string, unknown>>;
+    getNetworkStats: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
   };
 };
 
@@ -324,6 +337,8 @@ describe("preload Kaigi bridge", () => {
     mocks.requestFaucetFundsWithPuzzleMock.mockReset();
     mocks.getTransactionStatusMock.mockReset();
     mocks.getStatusSnapshotMock.mockReset();
+    mocks.getExplorerMetricsMock.mockReset();
+    mocks.getSumeragiStatusTypedMock.mockReset();
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
@@ -365,10 +380,47 @@ describe("preload Kaigi bridge", () => {
       status: {
         queue_size: 0,
         commit_time_ms: 1_000,
+        raw: {
+          sumeragi: {
+            tx_queue_saturated: false,
+            tx_queue_capacity: 65_536,
+            effective_block_time_ms: 2_000,
+            highest_qc_height: 701,
+            locked_qc_height: 701,
+          },
+        },
         sumeragi: {
           tx_queue_saturated: false,
         },
       },
+    });
+    mocks.getExplorerMetricsMock.mockResolvedValue({
+      peers: 4,
+      domains: 3,
+      accounts: 12,
+      assets: 6,
+      transactionsAccepted: 200,
+      transactionsRejected: 5,
+      blockHeight: 701,
+      blockCreatedAt: "2026-03-29T12:00:00.000Z",
+      finalizedBlockHeight: 699,
+      averageCommitTimeMs: 1_500,
+      averageBlockTimeMs: 2_000,
+    });
+    mocks.getSumeragiStatusTypedMock.mockResolvedValue({
+      lane_governance: [
+        {
+          lane_id: 7,
+          dataspace_id: 2,
+          validator_ids: ["alice", "bob"],
+        },
+      ],
+      dataspace_commitments: [
+        {
+          lane_id: 7,
+          dataspace_id: 2,
+        },
+      ],
     });
 
     mocks.listKaigiRelaysMock.mockResolvedValue({
@@ -445,6 +497,88 @@ describe("preload Kaigi bridge", () => {
       async (input: unknown, init?: Record<string, unknown>) => {
         const href = String(input);
         const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/explorer/asset-definitions/6TEAJqbb8oEPmLncoNiMRbLEK6tw/snapshot",
+          )
+        ) {
+          return jsonResponse({
+            definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            computed_at_ms: 1711713600000,
+            holders_total: 3,
+            total_supply: "10000000000000000000000000",
+            top_holders: [
+              {
+                account_id: ALICE_ACCOUNT_ID,
+                balance: "9999999999999999999999999",
+              },
+              {
+                account_id: BOB_ACCOUNT_ID,
+                balance: "1",
+              },
+            ],
+            distribution: {
+              gini: 0.99,
+              hhi: 0.9,
+              theil: 10,
+              entropy: 0.1,
+              entropy_normalized: 0.05,
+              nakamoto_33: 1,
+              nakamoto_51: 1,
+              nakamoto_67: 1,
+              top1: 0.9999,
+              top5: 1,
+              top10: 1,
+              median: "1",
+              p90: "1",
+              p99: "9999999999999999999999999",
+              lorenz: [],
+            },
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/explorer/asset-definitions/6TEAJqbb8oEPmLncoNiMRbLEK6tw/econometrics",
+          )
+        ) {
+          return jsonResponse({
+            definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            computed_at_ms: 1711713600000,
+            velocity_windows: [
+              {
+                key: "1h",
+                start_ms: 1711710000000,
+                end_ms: 1711713600000,
+                transfers: 3,
+                unique_senders: 2,
+                unique_receivers: 2,
+                amount: "250",
+              },
+            ],
+            issuance_windows: [
+              {
+                key: "24h",
+                start_ms: 1711627200000,
+                end_ms: 1711713600000,
+                mint_count: 1,
+                burn_count: 0,
+                minted: "100",
+                burned: "0",
+                net: "100",
+              },
+            ],
+            issuance_series: [
+              {
+                bucket_start_ms: 1711627200000,
+                minted: "100",
+                burned: "0",
+                net: "100",
+              },
+            ],
+          });
+        }
         if (
           method === "GET" &&
           (href.includes(
@@ -543,6 +677,93 @@ describe("preload Kaigi bridge", () => {
     globalThis.localStorage?.clear();
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("aggregates network stats across explorer, status, and econometrics surfaces", async () => {
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getNetworkStats({
+        toriiUrl: "https://taira.sora.org",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    ).resolves.toMatchObject({
+      xorAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      partial: false,
+      warnings: [],
+      explorer: {
+        blockHeight: 701,
+        finalizedBlockHeight: 699,
+      },
+      supply: {
+        definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        holdersTotal: 3,
+        totalSupply: "10000000000000000000000000",
+      },
+      econometrics: {
+        velocityWindows: [
+          expect.objectContaining({
+            key: "1h",
+            transfers: 3,
+          }),
+        ],
+        issuanceWindows: [
+          expect.objectContaining({
+            key: "24h",
+            net: "100",
+          }),
+        ],
+      },
+      runtime: {
+        queueSize: 0,
+        queueCapacity: 65536,
+        txQueueSaturated: false,
+        finalizationLag: 2,
+      },
+      governance: {
+        laneCount: 1,
+        dataspaceCount: 1,
+        validatorCount: 2,
+      },
+    });
+  });
+
+  it("returns partial network stats when explorer endpoints fail", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes("/v1/explorer/asset-definitions/")
+        ) {
+          return jsonResponse({ message: "down" }, 502);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.getNetworkStats({
+        toriiUrl: "https://taira.sora.org",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    ).resolves.toMatchObject({
+      partial: true,
+      explorer: expect.objectContaining({
+        blockHeight: 701,
+      }),
+      supply: null,
+      econometrics: null,
+      runtime: expect.objectContaining({
+        queueCapacity: 65536,
+      }),
+      warnings: [
+        "XOR supply snapshot is unavailable.",
+        "XOR flow econometrics are unavailable.",
+      ],
+    });
   });
 
   it("routes faucet requests through canonical account-id normalization", async () => {
@@ -1231,7 +1452,10 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
-        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+        if (
+          method === "GET" &&
+          href.includes("/v1/transactions/hash-unshield")
+        ) {
           return jsonResponse({
             hash: "hash-unshield",
             status: "Committed",
@@ -1371,7 +1595,10 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
-        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+        if (
+          method === "GET" &&
+          href.includes("/v1/transactions/hash-unshield")
+        ) {
           return jsonResponse({
             hash: "hash-unshield",
             status: "Applied",

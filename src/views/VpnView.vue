@@ -343,25 +343,16 @@ const supportedExitClasses = computed<VpnExitClass[]>(() => {
 });
 
 const canOperate = computed(() =>
-  Boolean(
-    toriiUrl.value &&
-      requestAccountId.value &&
-      activeAccount.value?.privateKeyHex,
-  ),
+  Boolean(toriiUrl.value && requestAccountId.value),
 );
 
 const authContext = computed<Partial<VpnAuthContext> | undefined>(() => {
-  if (
-    !toriiUrl.value ||
-    !requestAccountId.value ||
-    !activeAccount.value?.privateKeyHex
-  ) {
+  if (!toriiUrl.value || !requestAccountId.value) {
     return undefined;
   }
   return {
     toriiUrl: toriiUrl.value,
     accountId: requestAccountId.value,
-    privateKeyHex: activeAccount.value.privateKeyHex,
   };
 });
 

@@ -6,12 +6,8 @@ import { useSessionStore } from "@/stores/session";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
-const ASSET_DEFINITION_ID = "norito:abcdef0123456789";
-const ALICE_OWNER_TAG_HEX = "11".repeat(32);
-const BOB_OWNER_TAG_HEX = "22".repeat(32);
-const ALICE_DIVERSIFIER_HEX = "33".repeat(32);
-const BOB_DIVERSIFIER_HEX = "44".repeat(32);
 const qrToStringMock = vi.fn();
+const createConfidentialPaymentAddressMock = vi.fn();
 
 vi.mock("qrcode", () => ({
   default: {
@@ -20,31 +16,15 @@ vi.mock("qrcode", () => ({
   },
 }));
 
+vi.mock("@/services/iroha", () => ({
+  createConfidentialPaymentAddress: (input: unknown) =>
+    createConfidentialPaymentAddressMock(input),
+}));
+
 describe("ReceiveView", () => {
   beforeEach(() => {
     qrToStringMock.mockReset();
-    window.iroha = {
-      deriveConfidentialOwnerTag: vi
-        .fn()
-        .mockImplementation((privateKeyHex: string) => ({
-          ownerTagHex:
-            privateKeyHex === "12".repeat(32)
-              ? BOB_OWNER_TAG_HEX
-              : ALICE_OWNER_TAG_HEX,
-        })),
-      deriveConfidentialReceiveAddress: vi
-        .fn()
-        .mockImplementation((privateKeyHex: string) => ({
-          ownerTagHex:
-            privateKeyHex === "12".repeat(32)
-              ? BOB_OWNER_TAG_HEX
-              : ALICE_OWNER_TAG_HEX,
-          diversifierHex:
-            privateKeyHex === "12".repeat(32)
-              ? BOB_DIVERSIFIER_HEX
-              : ALICE_DIVERSIFIER_HEX,
-        })),
-    } as unknown as typeof window.iroha;
+    createConfidentialPaymentAddressMock.mockReset();
     setActivePinia(createPinia());
   });
 
@@ -56,7 +36,7 @@ describe("ReceiveView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: ASSET_DEFINITION_ID,
+        assetDefinitionId: "norito:abcdef0123456789",
         networkPrefix: 369,
       },
       accounts: [
@@ -68,6 +48,8 @@ describe("ReceiveView", () => {
           i105DefaultAccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
+          hasStoredSecret: true,
+          localOnly: false,
         },
       ],
       activeAccountId: "alice@default",
@@ -92,6 +74,8 @@ describe("ReceiveView", () => {
           i105DefaultAccountId: BOB_I105_ACCOUNT_ID,
           publicKeyHex: "ef".repeat(32),
           privateKeyHex: "12".repeat(32),
+          hasStoredSecret: true,
+          localOnly: false,
         },
       ],
       activeAccountId: "bob@default",
@@ -99,43 +83,22 @@ describe("ReceiveView", () => {
     await flushPromises();
   };
 
-  it("ignores stale qr render after amount changes", async () => {
-    let resolveInitialQr: (value: string) => void = () => {};
-    const initialQrDeferred = new Promise<string>((resolve) => {
-      resolveInitialQr = resolve;
-    });
-    qrToStringMock.mockReturnValueOnce(initialQrDeferred);
-    qrToStringMock.mockImplementationOnce((payload: string) =>
-      Promise.resolve(`<svg><text>${payload}</text></svg>`),
-    );
-
-    const wrapper = mountView();
-
-    await wrapper.get("button").trigger("click");
-    await flushPromises();
-
-    await wrapper.get('input[type="number"]').setValue("5");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('"amount":5');
-
-    resolveInitialQr(
-      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
-    );
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('"amount":5');
-    expect(wrapper.text()).not.toContain('"amount":"0"');
-  });
-
   it("ignores stale qr render after active account switch", async () => {
-    let resolveAliceQr: (value: string) => void = () => {};
-    const aliceQrDeferred = new Promise<string>((resolve) => {
-      resolveAliceQr = resolve;
+    let resolveAliceAddress: (value: unknown) => void = () => {};
+    createConfidentialPaymentAddressMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAliceAddress = resolve;
+      }),
+    );
+    createConfidentialPaymentAddressMock.mockResolvedValueOnce({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "bob-key",
+      receivePublicKeyBase64Url: "bobPublicKey",
+      shieldedOwnerTagHex: "22".repeat(32),
+      shieldedDiversifierHex: "44".repeat(32),
+      recoveryHint: "one-time-receive-key",
     });
-    qrToStringMock.mockReturnValueOnce(aliceQrDeferred);
-    qrToStringMock.mockImplementationOnce((payload: string) =>
+    qrToStringMock.mockImplementation((payload: string) =>
       Promise.resolve(`<svg><text>${payload}</text></svg>`),
     );
 
@@ -147,21 +110,36 @@ describe("ReceiveView", () => {
     await switchToBob();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
+    expect(createConfidentialPaymentAddressMock).toHaveBeenLastCalledWith({
+      accountId: BOB_I105_ACCOUNT_ID,
+      privateKeyHex: "12".repeat(32),
+    });
+    expect(wrapper.text()).toContain('"receiveKeyId":"bob-key"');
 
-    resolveAliceQr(
-      `<svg><text>{"accountId":"${ALICE_I105_ACCOUNT_ID}","assetDefinitionId":"${ASSET_DEFINITION_ID}","amount":"0"}</text></svg>`,
-    );
+    resolveAliceAddress({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    });
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(`"accountId":"${BOB_I105_ACCOUNT_ID}"`);
-    expect(wrapper.text()).not.toContain(
-      `"accountId":"${ALICE_I105_ACCOUNT_ID}"`,
-    );
+    expect(wrapper.text()).toContain('"receiveKeyId":"bob-key"');
+    expect(wrapper.text()).not.toContain('"receiveKeyId":"alice-key"');
   });
 
   it("renders the receive qr with scan-friendly contrast colors", async () => {
+    createConfidentialPaymentAddressMock.mockResolvedValueOnce({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    });
     qrToStringMock.mockResolvedValueOnce("<svg></svg>");
 
     const wrapper = mountView();
@@ -171,15 +149,12 @@ describe("ReceiveView", () => {
 
     expect(qrToStringMock).toHaveBeenCalledWith(
       JSON.stringify({
-        schema: "iroha-confidential-payment-address/v2",
-        accountId: ALICE_I105_ACCOUNT_ID,
-        chainId: "chain",
-        assetDefinitionId: ASSET_DEFINITION_ID,
-        amount: "0",
-        shieldedOwnerTagHex: ALICE_OWNER_TAG_HEX,
-        shieldedDiversifierHex: ALICE_DIVERSIFIER_HEX,
-        shieldedAddressIndex: 0,
-        recoveryHint: "encrypted-note-envelope-required",
+        schema: "iroha-confidential-payment-address/v3",
+        receiveKeyId: "alice-key",
+        receivePublicKeyBase64Url: "alicePublicKey",
+        shieldedOwnerTagHex: "11".repeat(32),
+        shieldedDiversifierHex: "33".repeat(32),
+        recoveryHint: "one-time-receive-key",
       }),
       expect.objectContaining({
         type: "svg",
@@ -190,5 +165,27 @@ describe("ReceiveView", () => {
         },
       }),
     );
+  });
+
+  it("requests a fresh confidential payment address for the active account", async () => {
+    createConfidentialPaymentAddressMock.mockResolvedValue({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    });
+    qrToStringMock.mockResolvedValue("<svg></svg>");
+
+    const wrapper = mountView();
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+
+    expect(createConfidentialPaymentAddressMock).toHaveBeenCalledWith({
+      accountId: ALICE_I105_ACCOUNT_ID,
+      privateKeyHex: "cd".repeat(32),
+    });
   });
 });

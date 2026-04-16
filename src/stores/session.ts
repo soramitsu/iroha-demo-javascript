@@ -18,7 +18,8 @@ export type UserProfile = {
   i105AccountId?: string;
   i105DefaultAccountId?: string;
   publicKeyHex: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
+  hasStoredSecret?: boolean;
   localOnly: boolean;
 };
 
@@ -53,6 +54,7 @@ const defaultUser = (): UserProfile => ({
   i105DefaultAccountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
+  hasStoredSecret: false,
   localOnly: false,
 });
 
@@ -208,6 +210,9 @@ const normalizeUser = (
       trimString(normalized.i105DefaultAccountId),
     publicKeyHex: trimString(normalized.publicKeyHex),
     privateKeyHex: trimString(normalized.privateKeyHex),
+    hasStoredSecret:
+      Boolean(normalized.hasStoredSecret) ||
+      Boolean(trimString(normalized.privateKeyHex)),
     localOnly: Boolean(normalized.localOnly),
   };
 };
@@ -225,6 +230,19 @@ const normalizeConnection = (
       assetDefinitionId || TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
   };
 };
+
+const serializeSessionState = (state: SessionState) =>
+  JSON.stringify({
+    ...state,
+    authority: {
+      ...state.authority,
+      privateKeyHex: "",
+    },
+    accounts: state.accounts.map((account) => ({
+      ...account,
+      privateKeyHex: "",
+    })),
+  });
 
 const normalizeSessionNetworkPrefix = (value: unknown): number | null => {
   const normalized = Number(value);
@@ -319,7 +337,9 @@ export const useSessionStore = defineStore("session", {
         state.accounts.find(
           (account) => account.accountId === state.activeAccountId,
         ) ?? null;
-      return Boolean(active?.accountId && active?.privateKeyHex);
+      return Boolean(
+        active?.accountId && (active?.hasStoredSecret || active?.privateKeyHex),
+      );
     },
     activeAccount: (state) =>
       state.accounts.find(
@@ -327,7 +347,7 @@ export const useSessionStore = defineStore("session", {
       ) ?? null,
   },
   actions: {
-    hydrate() {
+    async hydrate() {
       if (this.hydrated) {
         return;
       }
@@ -358,6 +378,7 @@ export const useSessionStore = defineStore("session", {
           if (!this.activeAccountId && this.accounts[0]) {
             this.activeAccountId = this.accounts[0].accountId;
           }
+          await this.syncStoredSecrets();
           return;
         } catch (error) {
           console.warn("Failed to parse saved session", error);
@@ -365,9 +386,10 @@ export const useSessionStore = defineStore("session", {
         }
       }
       this.hydrated = true;
+      await this.syncStoredSecrets();
     },
     persistState(snapshot?: SessionState) {
-      const payload = JSON.stringify(snapshot ?? this.$state);
+      const payload = serializeSessionState(snapshot ?? this.$state);
       localStorage.setItem(SESSION_STORAGE_KEY, payload);
     },
     reset() {
@@ -433,6 +455,76 @@ export const useSessionStore = defineStore("session", {
         this.accounts.push(normalized);
       }
       this.activeAccountId = normalized.accountId;
+    },
+    async syncStoredSecrets() {
+      if (typeof window === "undefined" || !window.iroha) {
+        return;
+      }
+
+      let vaultAvailable = false;
+      try {
+        vaultAvailable = await window.iroha.isSecureVaultAvailable();
+      } catch (_error) {
+        vaultAvailable = false;
+      }
+
+      const accounts = [...this.accounts];
+      if (vaultAvailable) {
+        for (const account of accounts) {
+          const privateKeyHex = trimString(account.privateKeyHex);
+          if (!account.accountId || !privateKeyHex) {
+            continue;
+          }
+          try {
+            await window.iroha.storeAccountSecret({
+              accountId: account.accountId,
+              privateKeyHex,
+            });
+          } catch (error) {
+            console.warn(
+              "Failed to store wallet secret in secure vault",
+              error,
+            );
+          }
+        }
+        const authorityPrivateKeyHex = trimString(this.authority.privateKeyHex);
+        if (this.authority.accountId && authorityPrivateKeyHex) {
+          try {
+            await window.iroha.storeAccountSecret({
+              accountId: this.authority.accountId,
+              privateKeyHex: authorityPrivateKeyHex,
+            });
+          } catch (error) {
+            console.warn(
+              "Failed to store authority secret in secure vault",
+              error,
+            );
+          }
+        }
+      }
+
+      const flags = vaultAvailable
+        ? await window.iroha
+            .listAccountSecretFlags({
+              accountIds: accounts.map((account) => account.accountId),
+            })
+            .catch(() => ({}) as Record<string, boolean>)
+        : {};
+
+      this.$patch({
+        authority: {
+          ...this.authority,
+          privateKeyHex: "",
+        },
+        accounts: accounts.map((account) => ({
+          ...account,
+          privateKeyHex: "",
+          hasStoredSecret: vaultAvailable
+            ? Boolean(flags[account.accountId])
+            : false,
+        })),
+      });
+      this.persistState();
     },
     setActiveAccount(accountId: string) {
       const exists = this.accounts.some(

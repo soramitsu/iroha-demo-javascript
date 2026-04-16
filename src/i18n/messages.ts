@@ -1072,6 +1072,22 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Scan a shielded Receive QR for this destination before sending anonymously.",
   "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
     "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
+  "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.":
+    "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.",
+  "Optional for private recipient sends; enter your own account to self-shield.":
+    "Optional for private recipient sends; enter your own account to self-shield.",
+  "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
+    "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
+  "Private shielded transfer": "Private shielded transfer",
+  "Scan a private Receive QR before sending privately.":
+    "Scan a private Receive QR before sending privately.",
+  "Create private balance": "Create private balance",
+  "Send privately": "Send privately",
+  "Private balance created: {hash}": "Private balance created: {hash}",
+  "Private shielded transfer committed: {hash}":
+    "Private shielded transfer committed: {hash}",
+  "Secure OS-backed key storage is unavailable on this device.":
+    "Secure OS-backed key storage is unavailable on this device.",
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",
@@ -1112,6 +1128,89 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Self-shielding XOR for private Kaigi…",
   "Unable to self-shield XOR for private Kaigi.":
     "Unable to self-shield XOR for private Kaigi.",
+  Stats: "Stats",
+  "Stats HUD": "Stats HUD",
+  "XOR supply, holder concentration, and live chain telemetry":
+    "XOR supply, holder concentration, and live chain telemetry",
+  "XOR supply, flow, and consensus telemetry":
+    "XOR supply, flow, and consensus telemetry",
+  "XOR supply": "XOR supply",
+  "Live supply, holder concentration, and consensus telemetry for the TAIRA public lane.":
+    "Live supply, holder concentration, and consensus telemetry for the TAIRA public lane.",
+  Holders: "Holders",
+  Peers: "Peers",
+  Accounts: "Accounts",
+  Assets: "Assets",
+  Domains: "Domains",
+  "Top 10 share": "Top 10 share",
+  "Queue fill": "Queue fill",
+  "As of {time}": "As of {time}",
+  Signal: "Signal",
+  Consensus: "Consensus",
+  "Runtime pressure": "Runtime pressure",
+  "Live Torii status": "Live Torii status",
+  Flow: "Flow",
+  "Velocity and issuance": "Velocity and issuance",
+  "1h / 24h / 7d windows": "1h / 24h / 7d windows",
+  Velocity: "Velocity",
+  "{transfers} transfers · {senders} senders · {receivers} receivers":
+    "{transfers} transfers · {senders} senders · {receivers} receivers",
+  Issuance: "Issuance",
+  "Minted {minted} · burned {burned}": "Minted {minted} · burned {burned}",
+  "30 day issuance pulse": "30 day issuance pulse",
+  "Bars show the absolute net issuance per day so supply shocks are visible at a glance.":
+    "Bars show the absolute net issuance per day so supply shocks are visible at a glance.",
+  Distribution: "Distribution",
+  "Whale map": "Whale map",
+  Gini: "Gini",
+  "0 is even, 1 is extremely concentrated.":
+    "0 is even, 1 is extremely concentrated.",
+  HHI: "HHI",
+  "Higher values mean more supply concentration.":
+    "Higher values mean more supply concentration.",
+  "Nakamoto 51": "Nakamoto 51",
+  "Minimum holders needed to control 51% of supply.":
+    "Minimum holders needed to control 51% of supply.",
+  "Top 1 share": "Top 1 share",
+  "Share held by the single largest account.":
+    "Share held by the single largest account.",
+  "Median holder": "Median holder",
+  "Midpoint holder balance across the distribution.":
+    "Midpoint holder balance across the distribution.",
+  "P99 holder": "P99 holder",
+  "Balance threshold for the top 1% of holders.":
+    "Balance threshold for the top 1% of holders.",
+  "Booting telemetry": "Booting telemetry",
+  "Partial telemetry": "Partial telemetry",
+  "Live telemetry": "Live telemetry",
+  "Waiting for signal": "Waiting for signal",
+  "Queue saturation signal unavailable.":
+    "Queue saturation signal unavailable.",
+  "Ingress is at the saturation threshold.":
+    "Ingress is at the saturation threshold.",
+  "Ingress is below saturation.": "Ingress is below saturation.",
+  "Finality lag": "Finality lag",
+  "Current block height minus finalized height.":
+    "Current block height minus finalized height.",
+  "Commit time": "Commit time",
+  "Observed transaction commit latency.":
+    "Observed transaction commit latency.",
+  "Block cadence": "Block cadence",
+  "Effective block time after current pacing.":
+    "Effective block time after current pacing.",
+  "Accepted tx": "Accepted tx",
+  "Rejected tx": "Rejected tx",
+  Lanes: "Lanes",
+  Dataspaces: "Dataspaces",
+  Validators: "Validators",
+  "Block height": "Block height",
+  "Finalized height": "Finalized height",
+  "Highest QC": "Highest QC",
+  "TAIRA is publishing live explorer, supply, and consensus data for the XOR lane.":
+    "TAIRA is publishing live explorer, supply, and consensus data for the XOR lane.",
+  "Querying TAIRA explorer and status surfaces.":
+    "Querying TAIRA explorer and status surfaces.",
+  "Unable to load TAIRA stats.": "Unable to load TAIRA stats.",
   "Create and save your TAIRA wallet": "Create and save your TAIRA wallet",
   "Generate your account keys, store a recovery phrase, and save the wallet locally.":
     "Create keys, back up your phrase, and save the wallet.",
@@ -1697,6 +1796,8 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Account {accountId} saved locally.": "Wallet saved locally: {accountId}.",
   "Wallet {accountId} restored locally.":
     "Wallet restored locally: {accountId}.",
+  "Secure OS-backed key storage is unavailable on this device.":
+    "Secure OS-backed key storage is unavailable on this device.",
   "UAID onboarding is unavailable on this Torii endpoint. The wallet was saved locally instead.":
     "UAID alias registration is unavailable here. Wallet saved locally.",
   "Confirm that you stored the recovery phrase.": "Confirm you backed it up.",
