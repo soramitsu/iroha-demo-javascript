@@ -32,6 +32,36 @@ declare module "@iroha/iroha-js" {
     verifyingKey: Record<string, unknown>;
   }
 
+  export interface ConfidentialTransferProofInputV2 {
+    amount: string;
+    rhoHex?: string;
+    rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    leafIndex?: number;
+    leaf_index?: number;
+  }
+
+  export interface ConfidentialTransferProofOutputV2 {
+    amount: string;
+    rhoHex?: string;
+    rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    ownerTagHex?: string;
+    owner_tag_hex?: string;
+    ownerTag?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+  }
+
+  export interface ConfidentialTransferProofResultV2 {
+    nullifiers: ReadonlyArray<Buffer>;
+    outputCommitments: ReadonlyArray<Buffer>;
+    root: Buffer;
+    proof: Buffer;
+  }
+
+  export interface ConfidentialUnshieldProofResultV2 {
+    nullifiers: ReadonlyArray<Buffer>;
+    root: Buffer;
+    proof: Buffer;
+  }
+
   export interface PrivateCreateKaigiTransactionInput {
     chainId: string;
     call: Record<string, unknown>;
@@ -67,6 +97,32 @@ declare module "@iroha/iroha-js" {
     input: PrivateKaigiFeeSpendInput,
   ): PrivateKaigiFeeSpendResult;
 
+  export function buildConfidentialTransferProofV2(input: {
+    chainId: string;
+    assetDefinitionId: string;
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    treeCommitments: ReadonlyArray<
+      string | Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>
+    >;
+    inputs: ReadonlyArray<ConfidentialTransferProofInputV2>;
+    outputs: ReadonlyArray<ConfidentialTransferProofOutputV2>;
+    rootHintHex: string;
+    verifyingKey: Record<string, unknown>;
+  }): ConfidentialTransferProofResultV2;
+
+  export function buildConfidentialUnshieldProofV2(input: {
+    chainId: string;
+    assetDefinitionId: string;
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    treeCommitments: ReadonlyArray<
+      string | Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>
+    >;
+    inputs: ReadonlyArray<ConfidentialTransferProofInputV2>;
+    publicAmount: string;
+    rootHintHex: string;
+    verifyingKey: Record<string, unknown>;
+  }): ConfidentialUnshieldProofResultV2;
+
   export function buildPrivateCreateKaigiTransaction(
     input: PrivateCreateKaigiTransactionInput,
   ): PrivateKaigiEntrypointResult;
@@ -89,4 +145,27 @@ declare module "@iroha/iroha-js" {
       timeoutMs?: number;
     },
   ): Promise<{ hash: string; submission: unknown; status?: unknown }>;
+}
+
+declare module "@iroha/iroha-js/crypto" {
+  export function deriveConfidentialOwnerTagV2(
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>,
+  ): Buffer;
+
+  export function deriveConfidentialNoteV2(input: {
+    assetDefinitionId: string;
+    amount: string;
+    rhoHex?: string;
+    rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    ownerTagHex?: string;
+    ownerTag?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+  }): { commitment: Buffer; commitmentHex: string };
+
+  export function deriveConfidentialNullifierV2(input: {
+    chainId: string;
+    assetDefinitionId: string;
+    spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+    rhoHex?: string;
+    rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
+  }): { nullifier: Buffer; nullifierHex: string };
 }

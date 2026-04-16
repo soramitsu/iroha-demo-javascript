@@ -5,12 +5,13 @@ import {
   buildWalletConfidentialMetadata,
   collectWalletConfidentialLedger,
   createWalletConfidentialNote,
+  deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialNullifierHex,
   selectWalletConfidentialNotes,
 } from "../electron/confidentialWallet";
 
 const CHAIN_ID = "chain";
-const ASSET_ID = "xor#universal";
+const ASSET_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
 
 const makeAccount = () => {
   const keyPair = generateKeyPair();
@@ -22,12 +23,24 @@ const makeAccount = () => {
   };
 };
 
+const ownerTagHexFor = (privateKeyHex: string) =>
+  deriveWalletConfidentialOwnerTagHex({ privateKeyHex });
+
 describe("confidential wallet helpers", () => {
+  it("derives a stable confidential owner tag from the wallet private key", () => {
+    const alice = makeAccount();
+    const ownerTagHex = ownerTagHexFor(alice.privateKeyHex);
+
+    expect(ownerTagHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(ownerTagHexFor(alice.privateKeyHex)).toBe(ownerTagHex);
+  });
+
   it("decrypts self-shield notes into spendable wallet balance", () => {
     const alice = makeAccount();
     const note = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "5",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
       createdAtMs: 1,
     });
     const ledger = collectWalletConfidentialLedger(
@@ -45,6 +58,7 @@ describe("confidential wallet helpers", () => {
                   asset: ASSET_ID,
                   from: alice.accountId,
                   amount: "5",
+                  note_commitment: note.commitment_hex,
                 },
               },
             },
@@ -72,16 +86,19 @@ describe("confidential wallet helpers", () => {
     const shieldNote = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "10",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
       createdAtMs: 1,
     });
     const bobNote = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "7",
+      ownerTagHex: ownerTagHexFor(bob.privateKeyHex),
       createdAtMs: 2,
     });
     const changeNote = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "3",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
       createdAtMs: 3,
     });
     const inputNullifier = deriveWalletConfidentialNullifierHex({
@@ -104,10 +121,13 @@ describe("confidential wallet helpers", () => {
                 asset: ASSET_ID,
                 from: alice.accountId,
                 amount: "10",
+                note_commitment: shieldNote.commitment_hex,
               },
             },
           },
         ],
+        block: 1,
+        note_index_order: 0,
       },
       {
         entrypoint_hash: "0xtransfer",
@@ -132,6 +152,8 @@ describe("confidential wallet helpers", () => {
             },
           },
         ],
+        block: 2,
+        note_index_order: 1,
       },
     ];
 
@@ -154,6 +176,11 @@ describe("confidential wallet helpers", () => {
     expect(aliceLedger.notes[0]?.commitment_hex).toBe(
       changeNote.commitment_hex,
     );
+    expect(aliceLedger.treeCommitmentsHex).toEqual([
+      shieldNote.commitment_hex,
+      bobNote.commitment_hex,
+      changeNote.commitment_hex,
+    ]);
 
     expect(bobLedger).toMatchObject({
       exact: true,
@@ -245,11 +272,13 @@ describe("confidential wallet helpers", () => {
     const firstNote = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "4",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
       createdAtMs: 1,
     });
     const secondNote = createWalletConfidentialNote({
       assetDefinitionId: ASSET_ID,
       amount: "6",
+      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
       createdAtMs: 2,
     });
     const selected = selectWalletConfidentialNotes(
@@ -263,6 +292,7 @@ describe("confidential wallet helpers", () => {
             rhoHex: firstNote.rho_hex,
           }),
           source_tx_hash: "0x1",
+          leaf_index: 0,
         },
         {
           ...secondNote,
@@ -273,6 +303,7 @@ describe("confidential wallet helpers", () => {
             rhoHex: secondNote.rho_hex,
           }),
           source_tx_hash: "0x2",
+          leaf_index: 1,
         },
       ],
       "5",
