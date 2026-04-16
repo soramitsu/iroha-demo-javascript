@@ -123,7 +123,7 @@ export function resolveOptionalAliasRegistrationOutcome(status, detail) {
   );
 }
 
-const defaultOnboardingAlias = "E2E Onboarding Shared";
+const defaultOnboardingAlias = "e2e-onboarding-shared@universal";
 const defaultOnboardingPrivateKeyHex =
   "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7";
 const defaultOnboardingOfflineBalance = "100";

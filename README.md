@@ -99,7 +99,7 @@ Optional env vars:
 - `E2E_NETWORK_PREFIX` (default: `369`)
 - `E2E_FUNDED_PRIVATE_KEY_HEX` (optional; bypasses the faucet path and uses an already funded TAIRA wallet for live shield / shielded-send checks)
 - `E2E_FUNDED_DOMAIN` (default: `default`; used with `E2E_FUNDED_PRIVATE_KEY_HEX` when deriving the local wallet profile)
-- `E2E_ONBOARDING_ALIAS` (default: `E2E Onboarding Shared`)
+- `E2E_ONBOARDING_ALIAS` (default: `e2e-onboarding-shared@universal`)
 - `E2E_ONBOARDING_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable onboarding account reuse)
 - `E2E_ONBOARDING_OFFLINE_BALANCE` (default: `100`; seeded offline balance for onboarding shield submission checks)
 
@@ -113,7 +113,7 @@ Rename legacy vars as follows:
 Example migration command:
 
 ```bash
-E2E_ONBOARDING_ALIAS="E2E Onboarding Shared" \
+E2E_ONBOARDING_ALIAS="e2e-onboarding-shared@universal" \
 E2E_ONBOARDING_PRIVATE_KEY_HEX="<64-char-hex>" \
 E2E_ONBOARDING_OFFLINE_BALANCE="100" \
 E2E_FUNDED_PRIVATE_KEY_HEX="<64-char-funded-wallet-key>" \

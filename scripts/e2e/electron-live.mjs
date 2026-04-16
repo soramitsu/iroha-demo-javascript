@@ -1037,7 +1037,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
   const checks = [
     {
       hash: "#/setup",
-      heading: "Network",
+      heading: "Advanced",
       sectionText: "Network",
     },
     {
@@ -1314,9 +1314,10 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     }
 
     if (check.hash === "#/offline") {
+      const transparentMoveButton = "Send to wallet";
       const moveCard = page
         .locator("section.card")
-        .filter({ hasText: "Move funds to online wallet" })
+        .filter({ hasText: "Move to online wallet" })
         .first();
       const shieldToggle = moveCard.getByLabel("Private exit", {
         exact: true,
@@ -1324,7 +1325,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
       if (!(await shieldToggle.isEnabled())) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1356,13 +1357,13 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
       if (!offlineShieldCheckable) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!(await shieldToggle.isChecked().catch(() => false))) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1383,7 +1384,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .catch(() => false);
       if (!moveShieldButtonVisible) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1393,7 +1394,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .catch(() => null);
       if (moveDisabledForDecimal === null) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1408,7 +1409,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .catch(() => null);
       if (moveDisabledForWhole === null) {
         await moveCard
-          .getByRole("button", { name: "Send to online wallet", exact: true })
+          .getByRole("button", { name: transparentMoveButton, exact: true })
           .waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
@@ -1441,7 +1442,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         );
       }
       await moveCard
-        .getByRole("button", { name: "Send to online wallet", exact: true })
+        .getByRole("button", { name: transparentMoveButton, exact: true })
         .waitFor({ state: "visible", timeout: 30_000 });
     }
   }

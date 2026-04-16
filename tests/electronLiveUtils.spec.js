@@ -222,7 +222,7 @@ describe("electron live e2e utils", () => {
 
   it("parses onboarding env defaults when vars are absent", () => {
     expect(parseOnboardingEnvConfig({})).toEqual({
-      alias: "E2E Onboarding Shared",
+      alias: "e2e-onboarding-shared@universal",
       privateKeyHex:
         "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
       offlineBalance: "100",
@@ -292,7 +292,7 @@ describe("electron live e2e utils", () => {
         E2E_STATEFUL_ALIAS: "   ",
       }),
     ).toEqual({
-      alias: "E2E Onboarding Shared",
+      alias: "e2e-onboarding-shared@universal",
       privateKeyHex:
         "c1f4e0837b224bf67dd4bd8fb94f8f78e6d1856e6f6a2f89f5cb9184160a95c7",
       offlineBalance: "100",
