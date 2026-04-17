@@ -1081,6 +1081,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Private shielded transfer": "Private shielded transfer",
   "Scan a private Receive QR before sending privately.":
     "Scan a private Receive QR before sending privately.",
+  "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.":
+    "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
   "Create private balance": "Create private balance",
   "Send privately": "Send privately",
   "Private balance created: {hash}": "Private balance created: {hash}",
@@ -1088,6 +1090,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Private shielded transfer committed: {hash}",
   "Secure OS-backed key storage is unavailable on this device.":
     "Secure OS-backed key storage is unavailable on this device.",
+  "Enter an identity private key first.":
+    "Enter an identity private key first.",
+  "Identity saved to secure storage.":
+    "Identity saved to secure storage.",
+  "Enter an authority private key first.":
+    "Enter an authority private key first.",
+  "Authority saved to secure storage.":
+    "Authority saved to secure storage.",
   "Shielded balance": "Shielded balance",
   "Transparent balance": "Transparent balance",
   "Create shielded balance": "Create shielded balance",
@@ -1130,6 +1140,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Unable to self-shield XOR for private Kaigi.",
   Stats: "Stats",
   "Stats HUD": "Stats HUD",
+  Overview: "Overview",
+  "At a glance": "At a glance",
+  "Fast path": "Fast path",
+  "Quick find": "Quick find",
   "XOR supply, holder concentration, and live chain telemetry":
     "XOR supply, holder concentration, and live chain telemetry",
   "XOR supply, flow, and consensus telemetry":
@@ -1162,6 +1176,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Bars show the absolute net issuance per day so supply shocks are visible at a glance.",
   Distribution: "Distribution",
   "Whale map": "Whale map",
+  Concentration: "Concentration",
+  "Top holders": "Top holders",
   Gini: "Gini",
   "0 is even, 1 is extremely concentrated.":
     "0 is even, 1 is extremely concentrated.",
@@ -1198,8 +1214,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Block cadence": "Block cadence",
   "Effective block time after current pacing.":
     "Effective block time after current pacing.",
+  "Pressure gauges": "Pressure gauges",
   "Accepted tx": "Accepted tx",
   "Rejected tx": "Rejected tx",
+  "Activity totals": "Activity totals",
+  "Network shape": "Network shape",
+  "Validator posture": "Validator posture",
   Lanes: "Lanes",
   Dataspaces: "Dataspaces",
   Validators: "Validators",

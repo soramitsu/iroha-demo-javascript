@@ -36,15 +36,7 @@
           <span class="stats-chip" :class="telemetryChipClass">
             {{ telemetryLabel }}
           </span>
-          <span class="stats-chip">
-            {{ t("Holders") }} {{ holdersCountLabel }}
-          </span>
-          <span class="stats-chip">
-            {{ t("Top 10 share") }} {{ top10ShareLabel }}
-          </span>
-          <span class="stats-chip">
-            {{ t("Queue fill") }} {{ queueFillLabel }}
-          </span>
+          <span class="stats-chip">{{ definitionLabel }}</span>
           <span class="stats-chip">
             {{ t("As of {time}", { time: collectedAtLabel }) }}
           </span>
@@ -65,168 +57,278 @@
 
     <p v-if="loadError" class="message error">{{ loadError }}</p>
 
-    <div class="stats-grid">
-      <section class="hud-panel">
-        <header class="hud-panel-header">
+    <section class="stats-nav-shell">
+      <header class="stats-nav-header">
+        <p class="stats-kicker">{{ t("Quick find") }}</p>
+      </header>
+      <div class="stats-nav">
+        <a
+          v-for="section in statsSections"
+          :key="section.href"
+          class="stats-nav-card"
+          :href="section.href"
+        >
           <div>
-            <p class="hud-panel-kicker">{{ t("Consensus") }}</p>
-            <h3>{{ t("Runtime pressure") }}</h3>
+            <span class="stats-nav-label">{{ section.label }}</span>
+            <p class="stats-nav-helper">{{ section.helper }}</p>
           </div>
-          <span class="hud-panel-meta">{{
-            t("Live Torii status")
-          }}</span>
-        </header>
+          <span class="stats-nav-value">{{ section.value }}</span>
+        </a>
+      </div>
+    </section>
 
-        <div class="instrument-grid">
-          <article v-for="card in runtimeCards" :key="card.label" class="instrument">
-            <div class="instrument-topline">
-              <span class="instrument-label">{{ card.label }}</span>
-              <span class="instrument-value">{{ card.value }}</span>
-            </div>
-            <div class="instrument-meter">
-              <span
-                class="instrument-meter-fill"
-                :class="card.tone"
-                :style="{ width: `${card.fill}%` }"
-              ></span>
-            </div>
-            <p class="instrument-helper">{{ card.helper }}</p>
-          </article>
+    <section id="overview" class="hud-panel hud-section">
+      <header class="hud-panel-header">
+        <div>
+          <p class="hud-panel-kicker">{{ t("Overview") }}</p>
+          <h3>{{ t("At a glance") }}</h3>
         </div>
+        <span class="hud-panel-meta">{{ t("Fast path") }}</span>
+      </header>
 
-        <div class="signal-grid">
-          <article v-for="card in networkCards" :key="card.label" class="signal-card">
-            <span class="signal-label">{{ card.label }}</span>
-            <span class="signal-value">{{ card.value }}</span>
-          </article>
+      <div class="overview-grid">
+        <article
+          v-for="card in overviewCards"
+          :key="card.label"
+          class="overview-card"
+          :class="card.tone"
+        >
+          <span class="overview-label">{{ card.label }}</span>
+          <span class="overview-value">{{ card.value }}</span>
+        </article>
+      </div>
+    </section>
+
+    <section id="health" class="hud-panel hud-section">
+      <header class="hud-panel-header">
+        <div>
+          <p class="hud-panel-kicker">{{ t("Consensus") }}</p>
+          <h3>{{ t("Runtime pressure") }}</h3>
         </div>
-      </section>
+        <span class="hud-panel-meta">{{ t("Live Torii status") }}</span>
+      </header>
 
-      <section class="hud-panel">
-        <header class="hud-panel-header">
-          <div>
-            <p class="hud-panel-kicker">{{ t("Flow") }}</p>
-            <h3>{{ t("Velocity and issuance") }}</h3>
+      <div class="section-split">
+        <div class="section-column">
+          <div class="section-heading">
+            <p class="section-label">{{ t("Pressure gauges") }}</p>
           </div>
-          <span class="hud-panel-meta">{{ t("1h / 24h / 7d windows") }}</span>
-        </header>
-
-        <div class="window-grid">
-          <article
-            v-for="window in velocityCards"
-            :key="`velocity-${window.key}`"
-            class="window-card"
-          >
-            <span class="window-tag">{{ t("Velocity") }}</span>
-            <div class="window-header">
-              <h4>{{ window.key }}</h4>
-              <span class="window-value">{{ window.amount }}</span>
-            </div>
-            <p class="window-sub">
-              {{
-                t("{transfers} transfers · {senders} senders · {receivers} receivers", {
-                  transfers: window.transfers,
-                  senders: window.senders,
-                  receivers: window.receivers,
-                })
-              }}
-            </p>
-          </article>
-
-          <article
-            v-for="window in issuanceCards"
-            :key="`issuance-${window.key}`"
-            class="window-card issuance"
-          >
-            <span class="window-tag">{{ t("Issuance") }}</span>
-            <div class="window-header">
-              <h4>{{ window.key }}</h4>
-              <span class="window-value">{{ window.net }}</span>
-            </div>
-            <p class="window-sub">
-              {{
-                t("Minted {minted} · burned {burned}", {
-                  minted: window.minted,
-                  burned: window.burned,
-                })
-              }}
-            </p>
-          </article>
-        </div>
-
-        <div class="series-panel">
-          <div class="series-copy">
-            <p class="series-label">{{ t("30 day issuance pulse") }}</p>
-            <p class="series-helper">
-              {{
-                t(
-                  "Bars show the absolute net issuance per day so supply shocks are visible at a glance.",
-                )
-              }}
-            </p>
-          </div>
-          <div class="series-strip" aria-hidden="true">
-            <span
-              v-for="bar in issuanceSeriesBars"
-              :key="bar.key"
-              class="series-bar"
-              :class="bar.tone"
-              :style="{ height: `${bar.height}%` }"
-              :title="bar.title"
-            ></span>
-          </div>
-        </div>
-      </section>
-
-      <section class="hud-panel">
-        <header class="hud-panel-header">
-          <div>
-            <p class="hud-panel-kicker">{{ t("Distribution") }}</p>
-            <h3>{{ t("Whale map") }}</h3>
-          </div>
-          <span class="hud-panel-meta">{{ definitionLabel }}</span>
-        </header>
-
-        <div class="distribution-grid">
-          <article
-            v-for="metric in distributionCards"
-            :key="metric.label"
-            class="distribution-card"
-          >
-            <span class="signal-label">{{ metric.label }}</span>
-            <span class="signal-value">{{ metric.value }}</span>
-            <p class="instrument-helper">{{ metric.helper }}</p>
-          </article>
-        </div>
-
-        <div class="holder-list">
-          <article
-            v-for="holder in topHolderCards"
-            :key="holder.accountId"
-            class="holder-row"
-          >
-            <div class="holder-main">
-              <span class="holder-rank">{{ holder.rank }}</span>
-              <div>
-                <p class="holder-account mono">{{ holder.accountLabel }}</p>
-                <p class="holder-balance">
-                  {{ holder.balance }} {{ assetSymbol }}
-                </p>
+          <div class="instrument-grid">
+            <article v-for="card in runtimeCards" :key="card.label" class="instrument">
+              <div class="instrument-topline">
+                <span class="instrument-label">{{ card.label }}</span>
+                <span class="instrument-value">{{ card.value }}</span>
               </div>
-            </div>
-            <div class="holder-meter-wrap">
-              <span class="holder-share">{{ holder.share }}</span>
-              <div class="holder-meter">
+              <div class="instrument-meter">
                 <span
-                  class="holder-meter-fill"
-                  :style="{ width: `${holder.fill}%` }"
+                  class="instrument-meter-fill"
+                  :class="card.tone"
+                  :style="{ width: `${card.fill}%` }"
                 ></span>
               </div>
+              <p class="instrument-helper">{{ card.helper }}</p>
+            </article>
+          </div>
+        </div>
+
+        <div class="section-column cluster-stack">
+          <article class="signal-cluster">
+            <header class="cluster-header">
+              <p class="section-label">{{ t("Activity totals") }}</p>
+            </header>
+            <div class="signal-grid cluster-grid">
+              <article
+                v-for="card in networkActivityCards"
+                :key="card.label"
+                class="signal-card"
+              >
+                <span class="signal-label">{{ card.label }}</span>
+                <span class="signal-value">{{ card.value }}</span>
+              </article>
+            </div>
+          </article>
+
+          <article class="signal-cluster">
+            <header class="cluster-header">
+              <p class="section-label">{{ t("Network shape") }}</p>
+            </header>
+            <div class="signal-grid cluster-grid">
+              <article v-for="card in networkShapeCards" :key="card.label" class="signal-card">
+                <span class="signal-label">{{ card.label }}</span>
+                <span class="signal-value">{{ card.value }}</span>
+              </article>
+            </div>
+          </article>
+
+          <article class="signal-cluster">
+            <header class="cluster-header">
+              <p class="section-label">{{ t("Validator posture") }}</p>
+            </header>
+            <div class="signal-grid cluster-grid">
+              <article
+                v-for="card in validatorPostureCards"
+                :key="card.label"
+                class="signal-card"
+              >
+                <span class="signal-label">{{ card.label }}</span>
+                <span class="signal-value">{{ card.value }}</span>
+              </article>
             </div>
           </article>
         </div>
-      </section>
-    </div>
+      </div>
+    </section>
+
+    <section id="activity" class="hud-panel hud-section">
+      <header class="hud-panel-header">
+        <div>
+          <p class="hud-panel-kicker">{{ t("Flow") }}</p>
+          <h3>{{ t("Velocity and issuance") }}</h3>
+        </div>
+        <span class="hud-panel-meta">{{ t("1h / 24h / 7d windows") }}</span>
+      </header>
+
+      <div class="section-split">
+        <div class="section-column">
+          <div class="section-heading">
+            <p class="section-label">{{ t("Velocity") }}</p>
+          </div>
+          <div class="window-grid triple">
+            <article
+              v-for="window in velocityCards"
+              :key="`velocity-${window.key}`"
+              class="window-card"
+            >
+              <span class="window-tag">{{ t("Velocity") }}</span>
+              <div class="window-header">
+                <h4>{{ window.key }}</h4>
+                <span class="window-value">{{ window.amount }}</span>
+              </div>
+              <p class="window-sub">
+                {{
+                  t("{transfers} transfers · {senders} senders · {receivers} receivers", {
+                    transfers: window.transfers,
+                    senders: window.senders,
+                    receivers: window.receivers,
+                  })
+                }}
+              </p>
+            </article>
+          </div>
+        </div>
+
+        <div class="section-column">
+          <div class="section-heading">
+            <p class="section-label">{{ t("Issuance") }}</p>
+          </div>
+          <div class="window-grid triple">
+            <article
+              v-for="window in issuanceCards"
+              :key="`issuance-${window.key}`"
+              class="window-card issuance"
+            >
+              <span class="window-tag">{{ t("Issuance") }}</span>
+              <div class="window-header">
+                <h4>{{ window.key }}</h4>
+                <span class="window-value">{{ window.net }}</span>
+              </div>
+              <p class="window-sub">
+                {{
+                  t("Minted {minted} · burned {burned}", {
+                    minted: window.minted,
+                    burned: window.burned,
+                  })
+                }}
+              </p>
+            </article>
+          </div>
+
+          <div class="series-panel">
+            <div class="series-copy">
+              <p class="series-label">{{ t("30 day issuance pulse") }}</p>
+              <p class="series-helper">
+                {{
+                  t(
+                    "Bars show the absolute net issuance per day so supply shocks are visible at a glance.",
+                  )
+                }}
+              </p>
+            </div>
+            <div class="series-strip" aria-hidden="true">
+              <span
+                v-for="bar in issuanceSeriesBars"
+                :key="bar.key"
+                class="series-bar"
+                :class="bar.tone"
+                :style="{ height: `${bar.height}%` }"
+                :title="bar.title"
+              ></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="distribution" class="hud-panel hud-section">
+      <header class="hud-panel-header">
+        <div>
+          <p class="hud-panel-kicker">{{ t("Distribution") }}</p>
+          <h3>{{ t("Whale map") }}</h3>
+        </div>
+        <span class="hud-panel-meta">{{ definitionLabel }}</span>
+      </header>
+
+      <div class="section-split">
+        <div class="section-column">
+          <div class="section-heading">
+            <p class="section-label">{{ t("Concentration") }}</p>
+          </div>
+          <div class="distribution-grid">
+            <article
+              v-for="metric in distributionCards"
+              :key="metric.label"
+              class="distribution-card"
+            >
+              <span class="signal-label">{{ metric.label }}</span>
+              <span class="signal-value">{{ metric.value }}</span>
+              <p class="instrument-helper">{{ metric.helper }}</p>
+            </article>
+          </div>
+        </div>
+
+        <div class="section-column">
+          <div class="section-heading">
+            <p class="section-label">{{ t("Top holders") }}</p>
+          </div>
+          <div class="holder-list">
+            <article
+              v-for="holder in topHolderCards"
+              :key="holder.accountId"
+              class="holder-row"
+            >
+              <div class="holder-main">
+                <span class="holder-rank">{{ holder.rank }}</span>
+                <div>
+                  <p class="holder-account mono">{{ holder.accountLabel }}</p>
+                  <p class="holder-balance">
+                    {{ holder.balance }} {{ assetSymbol }}
+                  </p>
+                </div>
+              </div>
+              <div class="holder-meter-wrap">
+                <span class="holder-share">{{ holder.share }}</span>
+                <div class="holder-meter">
+                  <span
+                    class="holder-meter-fill"
+                    :style="{ width: `${holder.fill}%` }"
+                  ></span>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
@@ -382,6 +484,95 @@ const statusMessage = computed(() => {
   return "";
 });
 
+const statsSections = computed(() => {
+  const velocity24h = stats.value?.econometrics?.velocityWindows.find(
+    (window) => window.key === "24h",
+  );
+  const supplySummaryValue =
+    stats.value?.supply?.totalSupply == null
+      ? t("—")
+      : `${totalSupplyLabel.value} ${assetSymbol.value}`;
+  return [
+    {
+      href: "#overview",
+      label: t("Overview"),
+      helper: t("At a glance"),
+      value: supplySummaryValue,
+    },
+    {
+      href: "#health",
+      label: t("Consensus"),
+      helper: t("Runtime pressure"),
+      value: queueFillLabel.value,
+    },
+    {
+      href: "#activity",
+      label: t("Flow"),
+      helper: t("Velocity and issuance"),
+      value: velocity24h ? formatCompactAmount(velocity24h.amount) : t("—"),
+    },
+    {
+      href: "#distribution",
+      label: t("Distribution"),
+      helper: t("Whale map"),
+      value: top10ShareLabel.value,
+    },
+  ];
+});
+
+const overviewCards = computed(() => {
+  const runtime = stats.value?.runtime;
+  const queueFill = queueFillPercent.value ?? 0;
+  const finalityLag = runtime?.finalizationLag ?? 0;
+  const supplySummaryValue =
+    stats.value?.supply?.totalSupply == null
+      ? t("—")
+      : `${totalSupplyLabel.value} ${assetSymbol.value}`;
+  return [
+    {
+      label: t("XOR supply"),
+      value: supplySummaryValue,
+      tone: "accent",
+    },
+    {
+      label: t("Holders"),
+      value: holdersCountLabel.value,
+      tone: "neutral",
+    },
+    {
+      label: t("Top 10 share"),
+      value: top10ShareLabel.value,
+      tone: "neutral",
+    },
+    {
+      label: t("Queue fill"),
+      value: queueFillLabel.value,
+      tone:
+        runtime?.txQueueSaturated || queueFill >= 75
+          ? "danger"
+          : queueFill >= 40
+            ? "warning"
+            : "positive",
+    },
+    {
+      label: t("Commit time"),
+      value: formatMs(runtime?.commitTimeMs),
+      tone:
+        (runtime?.commitTimeMs ?? 0) >= 3500
+          ? "danger"
+          : (runtime?.commitTimeMs ?? 0) >= 1800
+            ? "warning"
+            : "positive",
+    },
+    {
+      label: t("Finality lag"),
+      value: numberOrDash(finalityLag),
+      tone:
+        finalityLag >= 6 ? "danger" : finalityLag >= 2 ? "warning" : "positive",
+    },
+  ];
+});
+
 const runtimeCards = computed(() => {
   const runtime = stats.value?.runtime;
   const queueFill = queueFillPercent.value;
@@ -450,15 +641,10 @@ const runtimeCards = computed(() => {
   ];
 });
 
-const networkCards = computed(() => {
+const networkActivityCards = computed(() => {
   const explorer = stats.value?.explorer;
-  const governance = stats.value?.governance;
   const runtime = stats.value?.runtime;
   return [
-    { label: t("Peers"), value: numberOrDash(explorer?.peers ?? null) },
-    { label: t("Accounts"), value: numberOrDash(explorer?.accounts ?? null) },
-    { label: t("Assets"), value: numberOrDash(explorer?.assets ?? null) },
-    { label: t("Domains"), value: numberOrDash(explorer?.domains ?? null) },
     {
       label: t("Accepted tx"),
       value: numberOrDash(explorer?.transactionsAccepted ?? null),
@@ -467,6 +653,31 @@ const networkCards = computed(() => {
       label: t("Rejected tx"),
       value: numberOrDash(explorer?.transactionsRejected ?? null),
     },
+    {
+      label: t("Block height"),
+      value: numberOrDash(runtime?.currentBlockHeight ?? null),
+    },
+    {
+      label: t("Finalized height"),
+      value: numberOrDash(runtime?.finalizedBlockHeight ?? null),
+    },
+  ];
+});
+
+const networkShapeCards = computed(() => {
+  const explorer = stats.value?.explorer;
+  return [
+    { label: t("Peers"), value: numberOrDash(explorer?.peers ?? null) },
+    { label: t("Accounts"), value: numberOrDash(explorer?.accounts ?? null) },
+    { label: t("Assets"), value: numberOrDash(explorer?.assets ?? null) },
+    { label: t("Domains"), value: numberOrDash(explorer?.domains ?? null) },
+  ];
+});
+
+const validatorPostureCards = computed(() => {
+  const governance = stats.value?.governance;
+  const runtime = stats.value?.runtime;
+  return [
     { label: t("Lanes"), value: numberOrDash(governance?.laneCount ?? null) },
     {
       label: t("Dataspaces"),
@@ -475,14 +686,6 @@ const networkCards = computed(() => {
     {
       label: t("Validators"),
       value: numberOrDash(governance?.validatorCount ?? null),
-    },
-    {
-      label: t("Block height"),
-      value: numberOrDash(runtime?.currentBlockHeight ?? null),
-    },
-    {
-      label: t("Finalized height"),
-      value: numberOrDash(runtime?.finalizedBlockHeight ?? null),
     },
     {
       label: t("Highest QC"),
@@ -650,7 +853,8 @@ watch(
 
 .stats-hero,
 .hud-panel,
-.stats-banner {
+.stats-banner,
+.stats-nav-shell {
   position: relative;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -666,7 +870,8 @@ watch(
 
 :root[data-theme="light"] .stats-hero,
 :root[data-theme="light"] .hud-panel,
-:root[data-theme="light"] .stats-banner {
+:root[data-theme="light"] .stats-banner,
+:root[data-theme="light"] .stats-nav-shell {
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.4)),
     linear-gradient(180deg, rgba(241, 246, 255, 0.94), rgba(230, 238, 253, 0.82));
@@ -681,7 +886,8 @@ watch(
 }
 
 .stats-hero::before,
-.hud-panel::before {
+.hud-panel::before,
+.stats-nav-shell::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -746,6 +952,71 @@ watch(
 
 .stats-link {
   text-decoration: none;
+}
+
+.stats-nav-shell {
+  padding: 18px 20px 20px;
+}
+
+.stats-nav-header {
+  margin-bottom: 14px;
+}
+
+.stats-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stats-nav-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    rgba(4, 9, 18, 0.62);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+:root[data-theme="light"] .stats-nav-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 255, 0.74)),
+    rgba(255, 255, 255, 0.8);
+  border-color: rgba(12, 20, 36, 0.08);
+}
+
+.stats-nav-card:hover,
+.stats-nav-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(110, 221, 255, 0.3);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.18);
+}
+
+.stats-nav-label,
+.section-label,
+.overview-label {
+  display: block;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--iroha-muted);
+}
+
+.stats-nav-helper {
+  margin: 6px 0 0;
+  color: var(--iroha-muted);
+}
+
+.stats-nav-value {
+  font-size: 1.2rem;
+  font-weight: 600;
 }
 
 .stats-supply-line {
@@ -869,15 +1140,13 @@ watch(
   font-size: 0.72rem;
 }
 
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-}
-
 .hud-panel {
   padding: 22px;
   min-height: 100%;
+}
+
+.hud-section {
+  scroll-margin-top: 84px;
 }
 
 .hud-panel-meta {
@@ -886,6 +1155,7 @@ watch(
   letter-spacing: 0.16em;
 }
 
+.overview-grid,
 .instrument-grid,
 .window-grid,
 .distribution-grid,
@@ -894,20 +1164,54 @@ watch(
   gap: 12px;
 }
 
+.overview-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .instrument-grid,
-.window-grid,
 .signal-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.window-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.window-grid.triple {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .distribution-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.section-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 18px;
+}
+
+.section-column,
+.cluster-stack {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.section-heading,
+.cluster-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
 .instrument,
+.overview-card,
 .window-card,
 .distribution-card,
-.signal-card {
+.signal-card,
+.signal-cluster {
   position: relative;
   border-radius: 18px;
   padding: 16px;
@@ -918,13 +1222,39 @@ watch(
 }
 
 :root[data-theme="light"] .instrument,
+:root[data-theme="light"] .overview-card,
 :root[data-theme="light"] .window-card,
 :root[data-theme="light"] .distribution-card,
-:root[data-theme="light"] .signal-card {
+:root[data-theme="light"] .signal-card,
+:root[data-theme="light"] .signal-cluster {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 255, 0.7)),
     rgba(255, 255, 255, 0.8);
   border-color: rgba(12, 20, 36, 0.08);
+}
+
+.overview-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  min-height: 130px;
+}
+
+.overview-card.accent {
+  border-color: rgba(110, 221, 255, 0.3);
+  box-shadow: inset 0 0 0 1px rgba(110, 221, 255, 0.08);
+}
+
+.overview-card.positive {
+  border-color: rgba(95, 230, 169, 0.22);
+}
+
+.overview-card.warning {
+  border-color: rgba(255, 193, 118, 0.24);
+}
+
+.overview-card.danger {
+  border-color: rgba(255, 122, 138, 0.24);
 }
 
 .instrument-topline,
@@ -948,6 +1278,13 @@ watch(
 .window-tag {
   display: inline-flex;
   margin-bottom: 12px;
+}
+
+.overview-value {
+  font-size: clamp(1.5rem, 2.4vw, 2.4rem);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
 }
 
 .instrument-value,
@@ -987,6 +1324,10 @@ watch(
 .signal-grid,
 .distribution-grid {
   margin-top: 14px;
+}
+
+.cluster-grid {
+  margin-top: 0;
 }
 
 .series-panel {
@@ -1104,7 +1445,10 @@ watch(
 }
 
 @media (max-width: 1220px) {
-  .stats-grid {
+  .stats-nav,
+  .overview-grid,
+  .window-grid.triple,
+  .section-split {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1115,7 +1459,9 @@ watch(
 
 @media (max-width: 960px) {
   .stats-hero,
-  .stats-grid,
+  .stats-nav,
+  .overview-grid,
+  .section-split,
   .holder-row {
     grid-template-columns: 1fr;
   }

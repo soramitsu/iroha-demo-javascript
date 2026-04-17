@@ -19,6 +19,8 @@ const VALID_24_WORD_MNEMONIC =
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
+const exportConfidentialWalletBackupMock = vi.fn();
+const importConfidentialWalletBackupMock = vi.fn();
 const isSecureVaultAvailableMock = vi.fn();
 const storeAccountSecretMock = vi.fn();
 const onboardAccountMock = vi.fn();
@@ -44,6 +46,10 @@ vi.mock("@/services/iroha", () => ({
   deriveAccountAddress: (input: unknown) => deriveAccountAddressMock(input),
   derivePublicKey: (privateKeyHex: string) =>
     derivePublicKeyMock(privateKeyHex),
+  exportConfidentialWalletBackup: (input: unknown) =>
+    exportConfidentialWalletBackupMock(input),
+  importConfidentialWalletBackup: (input: unknown) =>
+    importConfidentialWalletBackupMock(input),
   isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
   storeAccountSecret: (input: unknown) => storeAccountSecretMock(input),
   onboardAccount: (input: unknown) => onboardAccountMock(input),
@@ -54,6 +60,8 @@ describe("AccountSetupView", () => {
     createConnectPreviewMock.mockReset();
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
+    exportConfidentialWalletBackupMock.mockReset();
+    importConfidentialWalletBackupMock.mockReset();
     isSecureVaultAvailableMock.mockReset();
     storeAccountSecretMock.mockReset();
     onboardAccountMock.mockReset();
@@ -72,6 +80,21 @@ describe("AccountSetupView", () => {
     derivePublicKeyMock.mockResolvedValue({
       publicKeyHex: "ab".repeat(32),
     });
+    exportConfidentialWalletBackupMock.mockResolvedValue({
+      schema: "iroha-demo-confidential-wallet-backup/v2",
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      accountId: "alice@default",
+      scanWatermarkBlock: 12,
+      stateBox: {
+        kdf: "HKDF-SHA256",
+        cipher: "AES-256-GCM",
+        saltBase64Url: "salt",
+        ivBase64Url: "iv",
+        ciphertextBase64Url: "ciphertext",
+        authTagBase64Url: "tag",
+      },
+    });
+    importConfidentialWalletBackupMock.mockResolvedValue(undefined);
     isSecureVaultAvailableMock.mockResolvedValue(true);
     storeAccountSecretMock.mockResolvedValue(undefined);
     setActivePinia(createPinia());
@@ -368,6 +391,20 @@ describe("AccountSetupView", () => {
         createdAt: "2026-03-29T00:00:00.000Z",
         displayName: "Backup Alice",
         domain: "backup-domain",
+        confidentialWallet: {
+          schema: "iroha-demo-confidential-wallet-backup/v2",
+          chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+          accountId: "alice@backup-domain",
+          scanWatermarkBlock: 42,
+          stateBox: {
+            kdf: "HKDF-SHA256",
+            cipher: "AES-256-GCM",
+            saltBase64Url: "salt",
+            ivBase64Url: "iv",
+            ciphertextBase64Url: "ciphertext",
+            authTagBase64Url: "tag",
+          },
+        },
       }),
     );
     const backupFile = new File([backupPayload], "iroha-backup.json", {
@@ -399,6 +436,25 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.displayName).toBe("Backup Alice");
     expect(session.activeAccount?.domain).toBe("backup-domain");
     expect(session.activeAccount?.localOnly).toBe(true);
+    expect(importConfidentialWalletBackupMock).toHaveBeenCalledWith({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      accountId: "alice@backup-domain",
+      mnemonic: VALID_MNEMONIC,
+      confidentialWallet: {
+        schema: "iroha-demo-confidential-wallet-backup/v2",
+        chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+        accountId: "alice@backup-domain",
+        scanWatermarkBlock: 42,
+        stateBox: {
+          kdf: "HKDF-SHA256",
+          cipher: "AES-256-GCM",
+          saltBase64Url: "salt",
+          ivBase64Url: "iv",
+          ciphertextBase64Url: "ciphertext",
+          authTagBase64Url: "tag",
+        },
+      },
+    });
   });
 
   it("does not apply backup metadata when imported recovery data is invalid", async () => {

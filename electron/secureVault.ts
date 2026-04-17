@@ -50,7 +50,8 @@ type StoredReceiveKeyRecord = {
   accountId: string;
   ownerTagHex: string;
   diversifierHex: string;
-  publicKeyBase64Url: string;
+  publicKeyBase64Url?: string;
+  encryptedPublicKeyBase64?: string;
   encryptedPrivateKeyBase64: string;
   createdAtMs: number;
 };
@@ -138,9 +139,8 @@ export class SecureVault {
       accountId: normalizeAccountIdKey(input.accountId),
       ownerTagHex: normalizeHex32(input.ownerTagHex, "ownerTagHex"),
       diversifierHex: normalizeHex32(input.diversifierHex, "diversifierHex"),
-      publicKeyBase64Url: normalizeBase64Url(
-        input.publicKeyBase64Url,
-        "publicKeyBase64Url",
+      encryptedPublicKeyBase64: this.encrypt(
+        normalizeBase64Url(input.publicKeyBase64Url, "publicKeyBase64Url"),
       ),
       encryptedPrivateKeyBase64: this.encrypt(
         normalizeBase64Url(input.privateKeyBase64Url, "privateKeyBase64Url"),
@@ -157,7 +157,10 @@ export class SecureVault {
       accountId: record.accountId,
       ownerTagHex: record.ownerTagHex,
       diversifierHex: record.diversifierHex,
-      publicKeyBase64Url: record.publicKeyBase64Url,
+      publicKeyBase64Url: normalizeBase64Url(
+        input.publicKeyBase64Url,
+        "publicKeyBase64Url",
+      ),
       privateKeyBase64Url: normalizeBase64Url(
         input.privateKeyBase64Url,
         "privateKeyBase64Url",
@@ -180,7 +183,7 @@ export class SecureVault {
       accountId: record.accountId,
       ownerTagHex: record.ownerTagHex,
       diversifierHex: record.diversifierHex,
-      publicKeyBase64Url: record.publicKeyBase64Url,
+      publicKeyBase64Url: this.readReceiveKeyPublicKey(record),
       privateKeyBase64Url: normalizeBase64Url(
         this.decrypt(record.encryptedPrivateKeyBase64),
         "privateKeyBase64Url",
@@ -202,7 +205,7 @@ export class SecureVault {
         accountId: record.accountId,
         ownerTagHex: record.ownerTagHex,
         diversifierHex: record.diversifierHex,
-        publicKeyBase64Url: record.publicKeyBase64Url,
+        publicKeyBase64Url: this.readReceiveKeyPublicKey(record),
         privateKeyBase64Url: normalizeBase64Url(
           this.decrypt(record.encryptedPrivateKeyBase64),
           "privateKeyBase64Url",
@@ -224,6 +227,19 @@ export class SecureVault {
 
   private decrypt(value: string): string {
     return safeStorage.decryptString(Buffer.from(value, "base64"));
+  }
+
+  private readReceiveKeyPublicKey(record: StoredReceiveKeyRecord): string {
+    if (record.encryptedPublicKeyBase64) {
+      return normalizeBase64Url(
+        this.decrypt(record.encryptedPublicKeyBase64),
+        "publicKeyBase64Url",
+      );
+    }
+    return normalizeBase64Url(
+      record.publicKeyBase64Url ?? "",
+      "publicKeyBase64Url",
+    );
   }
 
   private async load(): Promise<SecureVaultFile> {

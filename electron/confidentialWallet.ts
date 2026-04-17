@@ -738,7 +738,6 @@ export const buildWalletConfidentialMetadata = (input: {
           ({ note, receiveKeyId, recipientPublicKeyBase64Url }) => ({
             commitment_hex: note.commitment_hex,
             receive_key_id: trimString(receiveKeyId),
-            public_key_base64url: trimString(recipientPublicKeyBase64Url),
             envelope: encryptKaigiPayload(
               note,
               trimString(recipientPublicKeyBase64Url),
@@ -756,6 +755,33 @@ export const buildWalletConfidentialMetadata = (input: {
           ),
         })),
       };
+  return nextMetadata;
+};
+
+export const buildWalletConfidentialMetadataV3 = (input: {
+  baseMetadata?: Record<string, unknown>;
+  outputs: Array<{
+    note: WalletConfidentialNote;
+    receiveKeyId: string;
+    recipientPublicKeyBase64Url: string;
+  }>;
+}): Record<string, unknown> => {
+  const nextMetadata = isPlainRecord(input.baseMetadata)
+    ? { ...input.baseMetadata }
+    : {};
+  nextMetadata[CONFIDENTIAL_WALLET_METADATA_KEY] = {
+    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+    outputs: input.outputs.map(
+      ({ note, receiveKeyId, recipientPublicKeyBase64Url }) => ({
+        commitment_hex: note.commitment_hex,
+        receive_key_id: trimString(receiveKeyId),
+        envelope: encryptKaigiPayload(
+          note,
+          trimString(recipientPublicKeyBase64Url),
+        ),
+      }),
+    ),
+  };
   return nextMetadata;
 };
 

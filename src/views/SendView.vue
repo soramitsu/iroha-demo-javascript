@@ -237,6 +237,13 @@ const {
   translate: t,
   onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
 });
+const resetShieldedRecipientFields = () => {
+  form.shieldedReceiveKeyId = "";
+  form.shieldedReceivePublicKeyBase64Url = "";
+  form.shieldedOwnerTagHex = "";
+  form.shieldedDiversifierHex = "";
+  form.shieldedAddressAccountId = "";
+};
 const scanner = useQrScanner(
   (payload) => {
     try {
@@ -244,49 +251,63 @@ const scanner = useQrScanner(
       const parsedAccountId = parsed.accountId
         ? String(parsed.accountId).trim()
         : "";
-      if (parsed.accountId) {
+      const receiveKeyId = String(
+        parsed.receiveKeyId ?? parsed.shieldedReceiveKeyId ?? "",
+      ).trim();
+      const receivePublicKeyBase64Url = String(
+        parsed.receivePublicKeyBase64Url ??
+          parsed.shieldedReceivePublicKeyBase64Url ??
+          "",
+      ).trim();
+      const ownerTagHex = String(
+        parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex ?? "",
+      ).trim();
+      const diversifierHex = String(
+        parsed.shieldedDiversifierHex ?? parsed.diversifierHex ?? "",
+      ).trim();
+      const looksLikeLegacyShieldedQr = Boolean(
+        parsed.schema === "iroha-confidential-payment-address/v2" ||
+          ((ownerTagHex || diversifierHex) &&
+            (!receiveKeyId || !receivePublicKeyBase64Url)),
+      );
+      if (looksLikeLegacyShieldedQr) {
+        resetShieldedRecipientFields();
+        form.shielded = false;
+        scanMessage.value = t(
+          "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
+        );
+        return;
+      }
+      if (parsedAccountId) {
         form.destination = parsedAccountId;
+      } else if (
+        parsed.schema === "iroha-confidential-payment-address/v3" ||
+        (receiveKeyId && receivePublicKeyBase64Url)
+      ) {
+        form.destination = "";
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
       }
-      if (parsed.shieldedOwnerTagHex || parsed.ownerTagHex) {
-        form.shieldedOwnerTagHex = String(
-          parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex,
-        ).trim();
-      }
-      if (parsed.shieldedDiversifierHex || parsed.diversifierHex) {
-        form.shieldedDiversifierHex = String(
-          parsed.shieldedDiversifierHex ?? parsed.diversifierHex,
-        ).trim();
-      }
-      if (parsed.receiveKeyId || parsed.shieldedReceiveKeyId) {
-        form.shieldedReceiveKeyId = String(
-          parsed.receiveKeyId ?? parsed.shieldedReceiveKeyId,
-        ).trim();
-      }
-      if (
-        parsed.receivePublicKeyBase64Url ||
-        parsed.shieldedReceivePublicKeyBase64Url
-      ) {
-        form.shieldedReceivePublicKeyBase64Url = String(
-          parsed.receivePublicKeyBase64Url ??
-            parsed.shieldedReceivePublicKeyBase64Url,
-        ).trim();
-      }
       if (
         parsed.schema === "iroha-confidential-payment-address/v3" ||
-        parsed.schema === "iroha-confidential-payment-address/v2" ||
-        parsed.shieldedOwnerTagHex ||
-        parsed.shieldedDiversifierHex ||
-        parsed.receiveKeyId ||
-        parsed.receivePublicKeyBase64Url
+        (receiveKeyId &&
+          receivePublicKeyBase64Url &&
+          ownerTagHex &&
+          diversifierHex)
       ) {
         form.shielded = true;
+        form.shieldedReceiveKeyId = receiveKeyId;
+        form.shieldedReceivePublicKeyBase64Url = receivePublicKeyBase64Url;
+        form.shieldedOwnerTagHex = ownerTagHex;
+        form.shieldedDiversifierHex = diversifierHex;
         form.shieldedAddressAccountId = parsedAccountId;
+      } else {
+        resetShieldedRecipientFields();
       }
       scanMessage.value = t("QR decoded successfully.");
     } catch (err) {
+      resetShieldedRecipientFields();
       scanMessage.value = t("QR payload is invalid.");
       console.warn("Invalid QR payload", err);
     }
@@ -332,11 +353,7 @@ const hasV3ShieldedPaymentAddress = computed(
     /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()),
 );
 const hasShieldedPaymentAddress = computed(
-  () =>
-    hasV3ShieldedPaymentAddress.value ||
-    (/^[0-9a-f]{64}$/i.test(form.shieldedOwnerTagHex.trim()) &&
-      /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()) &&
-      form.shieldedAddressAccountId === destinationValue.value),
+  () => hasV3ShieldedPaymentAddress.value,
 );
 
 const isValid = computed(() =>

@@ -141,6 +141,7 @@ describe("WalletView", () => {
       accountId: "alice@wonderland",
       publicKeyHex: "ab".repeat(32),
       privateKeyHex: "cd".repeat(32),
+      hasStoredSecret: true,
       localOnly: Boolean(options?.localOnly),
       ...options?.account,
     };
@@ -172,6 +173,7 @@ describe("WalletView", () => {
           accountId: "bob@wonderland",
           publicKeyHex: "ef".repeat(32),
           privateKeyHex: "12".repeat(32),
+          hasStoredSecret: true,
         },
       ],
       activeAccountId: "bob@wonderland",

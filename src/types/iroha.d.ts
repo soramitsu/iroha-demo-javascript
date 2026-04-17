@@ -1,3 +1,8 @@
+import type {
+  ConfidentialWalletBackupMetadata,
+  ConfidentialWalletBackupMetadataV2,
+} from "@/utils/walletBackup";
+
 export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
 export interface AccountAddressView {
@@ -641,6 +646,18 @@ export interface IrohaBridge {
     accountId: string;
     privateKeyHex?: string;
   }): Promise<ConfidentialPaymentAddress>;
+  exportConfidentialWalletBackup(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    mnemonic: string;
+  }): Promise<ConfidentialWalletBackupMetadataV2>;
+  importConfidentialWalletBackup(input: {
+    toriiUrl: string;
+    accountId: string;
+    mnemonic: string;
+    confidentialWallet: ConfidentialWalletBackupMetadata;
+  }): Promise<void>;
   registerAccount(input: {
     toriiUrl: string;
     chainId: string;
@@ -648,7 +665,7 @@ export interface IrohaBridge {
     domainId: string;
     metadata?: Record<string, unknown>;
     authorityAccountId: string;
-    authorityPrivateKeyHex: string;
+    authorityPrivateKeyHex?: string;
   }): Promise<{ hash: string }>;
   transferAsset(input: {
     toriiUrl: string;

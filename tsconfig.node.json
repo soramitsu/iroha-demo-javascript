@@ -6,10 +6,16 @@
     "src/utils/accountId.ts",
     "src/utils/assetId.ts",
     "src/utils/confidential.ts",
-    "src/utils/errorMessage.ts"
+    "src/utils/errorMessage.ts",
+    "src/utils/mnemonic.ts",
+    "src/utils/walletBackup.ts"
   ],
   "compilerOptions": {
     "composite": true,
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    }
   }
 }

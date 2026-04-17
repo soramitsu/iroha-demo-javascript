@@ -509,6 +509,8 @@ import {
   createConnectPreview,
   deriveAccountAddress,
   derivePublicKey,
+  exportConfidentialWalletBackup,
+  importConfidentialWalletBackup,
   isSecureVaultAvailable,
   storeAccountSecret,
 } from "@/services/iroha";
@@ -520,6 +522,7 @@ import {
 import {
   buildWalletBackupPayload,
   parseWalletBackupPayload,
+  type ConfidentialWalletBackupMetadata,
 } from "@/utils/walletBackup";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
@@ -566,6 +569,7 @@ const aliasInput = ref(session.activeAccount?.displayName || "");
 const domainInput = ref(session.activeAccount?.domain || DEFAULT_DOMAIN_LABEL);
 const wordCount = ref<12 | 24>(24);
 const mnemonicWords = ref<string[]>([]);
+const recoveryMnemonic = ref("");
 const backupFileInput = ref<HTMLInputElement | null>(null);
 const generatedKeys = ref<{
   privateKeyHex: string;
@@ -581,6 +585,8 @@ const generateError = ref("");
 const restoreError = ref("");
 const onboardingError = ref("");
 const onboardingStatus = ref("");
+const pendingConfidentialWalletBackup =
+  ref<ConfidentialWalletBackupMetadata | null>(null);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const isFirstLaunch = computed(() => !hasSavedAccounts.value);
 const isRestoreMode = computed(() => accountFlowMode.value === "restore");
@@ -702,6 +708,7 @@ const startNewRegistration = () => {
   domainInput.value = DEFAULT_DOMAIN_LABEL;
   wordCount.value = 24;
   mnemonicWords.value = [];
+  recoveryMnemonic.value = "";
   generatedKeys.value = null;
   restorePhraseInput.value = "";
   backupConfirmed.value = false;
@@ -713,11 +720,13 @@ const startNewRegistration = () => {
   restoreError.value = "";
   onboardingStatus.value = "";
   onboardingError.value = "";
+  pendingConfidentialWalletBackup.value = null;
 };
 
 const applyBackupMetadata = (payload: {
   displayName?: string;
   domain?: string;
+  confidentialWallet?: ConfidentialWalletBackupMetadata;
 }) => {
   if (typeof payload.displayName === "string") {
     aliasInput.value = payload.displayName;
@@ -725,6 +734,7 @@ const applyBackupMetadata = (payload: {
   if (typeof payload.domain === "string" && payload.domain.trim()) {
     domainInput.value = payload.domain;
   }
+  pendingConfidentialWalletBackup.value = payload.confidentialWallet ?? null;
 };
 
 const toggleRestorePanel = () => {
@@ -779,6 +789,7 @@ const generateRecovery = async () => {
     const words = generateMnemonicWords(wordCount.value);
     mnemonicWords.value = words;
     const mnemonic = normalizeMnemonicPhrase(words.join(" "));
+    recoveryMnemonic.value = mnemonic;
     const privateKeyHex = mnemonicToPrivateKeyHex(mnemonic);
     const { publicKeyHex } = await derivePublicKey(privateKeyHex);
     generatedKeys.value = {
@@ -809,6 +820,7 @@ const restoreFromPhrase = async (phrase: string) => {
   const privateKeyHex = mnemonicToPrivateKeyHex(normalizedPhrase);
   const { publicKeyHex } = await derivePublicKey(privateKeyHex);
   mnemonicWords.value = [];
+  recoveryMnemonic.value = normalizedPhrase;
   generatedKeys.value = {
     privateKeyHex,
     publicKeyHex,
@@ -898,6 +910,14 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
     accountId: generatedAccountId.value,
     privateKeyHex: generatedKeys.value.privateKeyHex,
   });
+  if (pendingConfidentialWalletBackup.value && recoveryMnemonic.value) {
+    await importConfidentialWalletBackup({
+      toriiUrl: connectionForm.toriiUrl,
+      accountId: generatedAccountId.value,
+      mnemonic: recoveryMnemonic.value,
+      confidentialWallet: pendingConfidentialWalletBackup.value,
+    });
+  }
   session.updateConnection({
     toriiUrl: connectionForm.toriiUrl,
     chainId: connectionForm.chainId,
@@ -914,6 +934,7 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
     localOnly,
   });
   session.persistState();
+  pendingConfidentialWalletBackup.value = null;
 };
 
 const saveGeneratedIdentity = async () => {
@@ -948,24 +969,30 @@ const saveGeneratedIdentity = async () => {
   await router.push("/wallet");
 };
 
-const downloadBackup = (target: "manual" | "icloud" | "google") => {
-  if (!mnemonicWords.value.length) {
+const downloadBackup = async (target: "manual" | "icloud" | "google") => {
+  if (!recoveryMnemonic.value) {
     return;
   }
+  onboardingError.value = "";
+  let confidentialWallet: ConfidentialWalletBackupMetadata | undefined;
+  if (generatedAccountId.value) {
+    confidentialWallet = await exportConfidentialWalletBackup({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      accountId: generatedAccountId.value,
+      mnemonic: recoveryMnemonic.value,
+    }).catch((error) => {
+      console.warn("Failed to export confidential wallet backup state", error);
+      return pendingConfidentialWalletBackup.value ?? undefined;
+    });
+  }
   const payload = buildWalletBackupPayload({
-    mnemonic: mnemonicWords.value.join(" "),
+    mnemonic: recoveryMnemonic.value,
     wordCount: wordCount.value,
     target,
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
-    confidentialWallet: {
-      chainId: session.connection.chainId,
-      accountId: generatedAccountId.value,
-      addressCursor: 0,
-      scanWatermarkBlock: null,
-      encryptedNotes: [],
-      spentNullifiers: [],
-    },
+    confidentialWallet,
   });
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: "application/json",

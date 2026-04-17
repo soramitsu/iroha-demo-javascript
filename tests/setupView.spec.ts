@@ -10,8 +10,10 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
 const generateKeyPairMock = vi.fn();
+const isSecureVaultAvailableMock = vi.fn();
 const pingToriiMock = vi.fn();
 const registerAccountMock = vi.fn();
+const storeAccountSecretMock = vi.fn();
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
@@ -21,8 +23,10 @@ vi.mock("@/services/iroha", () => ({
   derivePublicKey: (privateKeyHex: string) =>
     derivePublicKeyMock(privateKeyHex),
   generateKeyPair: () => generateKeyPairMock(),
+  isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
   pingTorii: (toriiUrl: string) => pingToriiMock(toriiUrl),
   registerAccount: (input: unknown) => registerAccountMock(input),
+  storeAccountSecret: (input: unknown) => storeAccountSecretMock(input),
 }));
 
 describe("SetupView", () => {
@@ -30,8 +34,10 @@ describe("SetupView", () => {
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
     generateKeyPairMock.mockReset();
+    isSecureVaultAvailableMock.mockReset();
     pingToriiMock.mockReset();
     registerAccountMock.mockReset();
+    storeAccountSecretMock.mockReset();
 
     deriveAccountAddressMock.mockReturnValue({
       accountId:
@@ -50,23 +56,64 @@ describe("SetupView", () => {
       privateKeyHex: "11".repeat(32),
       publicKeyHex: "ab".repeat(32),
     });
+    isSecureVaultAvailableMock.mockResolvedValue(true);
     pingToriiMock.mockResolvedValue({ status: "ok" });
     registerAccountMock.mockResolvedValue({ hash: "0xabc" });
+    storeAccountSecretMock.mockResolvedValue(undefined);
 
     setActivePinia(createPinia());
   });
 
   const mountView = (
-    assetDefinitionId = TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+    options?: {
+      assetDefinitionId?: string;
+      authority?: Record<string, unknown>;
+      activeAccount?: Record<string, unknown>;
+    },
   ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
-    useSessionStore().$patch({
+    const session = useSessionStore();
+    session.$patch({
       connection: {
         ...TAIRA_CHAIN_PRESET.connection,
-        assetDefinitionId,
+        assetDefinitionId:
+          options?.assetDefinitionId ??
+          TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
       },
     });
+    if (options?.authority) {
+      session.$patch({
+        authority: {
+          accountId: "",
+          privateKeyHex: "",
+          hasStoredSecret: false,
+          ...options.authority,
+        },
+      });
+    }
+    if (options?.activeAccount) {
+      session.$patch({
+        accounts: [
+          {
+            ...options.activeAccount,
+            displayName: "Alice",
+            domain: "default",
+            accountId:
+              "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+            i105AccountId:
+              "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+            i105DefaultAccountId:
+              "sorauロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+            publicKeyHex: "ab".repeat(32),
+            privateKeyHex: "",
+            hasStoredSecret: true,
+            localOnly: true,
+          },
+        ],
+        activeAccountId: String(options.activeAccount.accountId),
+      });
+    }
     return mount(SetupView, {
       global: {
         plugins: [pinia],
@@ -114,7 +161,7 @@ describe("SetupView", () => {
 
   it("shows a humanized asset label without echoing the raw literal", async () => {
     const rawAssetDefinitionId = "norito:abcdefghijklmnopqrstuvwxyz012345";
-    const wrapper = mountView(rawAssetDefinitionId);
+    const wrapper = mountView({ assetDefinitionId: rawAssetDefinitionId });
 
     const inputs = wrapper.findAll("input");
     expect(
@@ -136,5 +183,51 @@ describe("SetupView", () => {
 
     const rawInput = wrapper.get('input[data-testid="raw-asset-id-input"]');
     expect((rawInput.element as HTMLInputElement).value).toBe("");
+  });
+
+  it("stores generated identities in secure storage without persisting the private key", async () => {
+    const wrapper = mountView();
+    const session = useSessionStore();
+
+    await getButtonByText(wrapper, t("Generate pair")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId:
+        "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+      privateKeyHex: "11".repeat(32),
+    });
+    expect(session.activeAccount?.hasStoredSecret).toBe(true);
+    expect(session.activeAccount?.privateKeyHex).toBe("");
+  });
+
+  it("uses a saved authority secret when registering an on-chain account", async () => {
+    const wrapper = mountView({
+      authority: {
+        accountId: "testuAuthority",
+        privateKeyHex: "",
+        hasStoredSecret: true,
+      },
+      activeAccount: {
+        accountId:
+          "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+        publicKeyHex: "ab".repeat(32),
+        hasStoredSecret: true,
+      },
+    });
+
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    await flushPromises();
+    await getButtonByText(wrapper, t("Create on-chain account")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(registerAccountMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorityAccountId: "testuAuthority",
+        authorityPrivateKeyHex: undefined,
+      }),
+    );
   });
 });

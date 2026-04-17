@@ -79,6 +79,14 @@ export const createConfidentialPaymentAddress = (
   input: Parameters<IrohaBridge["createConfidentialPaymentAddress"]>[0],
 ) => bridge().createConfidentialPaymentAddress(input);
 
+export const exportConfidentialWalletBackup = (
+  input: Parameters<IrohaBridge["exportConfidentialWalletBackup"]>[0],
+) => bridge().exportConfidentialWalletBackup(input);
+
+export const importConfidentialWalletBackup = (
+  input: Parameters<IrohaBridge["importConfidentialWalletBackup"]>[0],
+) => bridge().importConfidentialWalletBackup(input);
+
 export const registerAccount = (
   input: Parameters<IrohaBridge["registerAccount"]>[0],
 ) => bridge().registerAccount(input);

@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { createHash, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  hkdfSync,
+  randomBytes,
+} from "crypto";
 import {
   ToriiClient,
   buildPrivateCreateKaigiTransaction,
@@ -88,7 +94,7 @@ import {
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
 import {
-  buildWalletConfidentialMetadata,
+  buildWalletConfidentialMetadataV3,
   collectWalletConfidentialLedger,
   CONFIDENTIAL_WALLET_METADATA_SCHEMA,
   createWalletConfidentialNote,
@@ -101,7 +107,17 @@ import {
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
-import type { ConfidentialReceiveKeyRecord } from "./secureVault";
+import {
+  type ConfidentialReceiveKeyRecord,
+} from "./secureVault";
+import {
+  CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
+  CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+  type ConfidentialWalletBackupMetadata,
+  type ConfidentialWalletBackupMetadataV2,
+  type ConfidentialWalletBackupStateBoxV2,
+} from "../src/utils/walletBackup";
+import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
 
 type HexString = string;
 
@@ -134,6 +150,15 @@ const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
 const isSecureVaultAvailable = async (): Promise<boolean> =>
   Boolean(await ipcRenderer.invoke("vault:isAvailable"));
+
+const assertSecureVaultAvailable = async (operationLabel: string) => {
+  if (await isSecureVaultAvailable()) {
+    return;
+  }
+  throw new Error(
+    `${operationLabel} requires secure OS-backed key storage on this device.`,
+  );
+};
 
 const storeAccountSecretInVault = async (input: {
   accountId: string;
@@ -175,25 +200,6 @@ const listConfidentialReceiveKeysForAccount = async (
     : [];
 };
 
-const ephemeralReceiveKeysByAccount = new Map<
-  string,
-  ConfidentialReceiveKeyRecord[]
->();
-
-const rememberEphemeralReceiveKey = (record: ConfidentialReceiveKeyRecord) => {
-  const accountId = normalizeCompatAccountIdLiteral(
-    record.accountId,
-    "accountId",
-  );
-  const existing = ephemeralReceiveKeysByAccount.get(accountId) ?? [];
-  ephemeralReceiveKeysByAccount.set(
-    accountId,
-    [...existing.filter((entry) => entry.keyId !== record.keyId), record].sort(
-      (left, right) => left.createdAtMs - right.createdAtMs,
-    ),
-  );
-};
-
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
 type StatusSnapshot = Awaited<ReturnType<ToriiClient["getStatusSnapshot"]>>;
 type RegisterAccountInput = {
@@ -203,7 +209,7 @@ type RegisterAccountInput = {
   domainId: string;
   metadata?: Record<string, unknown>;
   authorityAccountId: string;
-  authorityPrivateKeyHex: HexString;
+  authorityPrivateKeyHex?: HexString;
 };
 
 type TransferAssetInput = {
@@ -229,6 +235,20 @@ type TransferAssetInput = {
   shieldedDiversifierHex?: string;
 };
 
+type ExportConfidentialWalletBackupInput = {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  mnemonic: string;
+};
+
+type ImportConfidentialWalletBackupInput = {
+  toriiUrl: string;
+  accountId: string;
+  mnemonic: string;
+  confidentialWallet: ConfidentialWalletBackupMetadata;
+};
+
 type ConfidentialPaymentAddress = {
   schema: "iroha-confidential-payment-address/v3";
   receiveKeyId: string;
@@ -249,6 +269,18 @@ type ConfidentialAssetBalanceResponse = {
   scanWatermarkBlock: number | null;
   recoveredNoteCount: number;
   trackedAssetIds: string[];
+};
+
+type ConfidentialWalletBackupStatePayload = {
+  receiveKeys: Array<{
+    keyId: string;
+    ownerTagHex: string;
+    diversifierHex: string;
+    publicKeyBase64Url: string;
+    privateKeyBase64Url: string;
+    createdAtMs: number;
+  }>;
+  shadowTransactions: PendingConfidentialWalletShadowTransaction[];
 };
 
 type ExplorerMetricsResponse = Awaited<
@@ -718,6 +750,12 @@ type IrohaBridge = {
     accountId: string;
     privateKeyHex?: string;
   }): Promise<ConfidentialPaymentAddress>;
+  exportConfidentialWalletBackup(
+    input: ExportConfidentialWalletBackupInput,
+  ): Promise<ConfidentialWalletBackupMetadataV2>;
+  importConfidentialWalletBackup(
+    input: ImportConfidentialWalletBackupInput,
+  ): Promise<void>;
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
@@ -1127,16 +1165,10 @@ const resolveConfidentialWalletDecryptionContext = async (input: {
   } catch (_error) {
     receiveKeys = [];
   }
-  const ephemeralReceiveKeys =
-    ephemeralReceiveKeysByAccount.get(accountId) ?? [];
-  const receiveKeysById = new Map<string, ConfidentialReceiveKeyRecord>();
-  [...receiveKeys, ...ephemeralReceiveKeys].forEach((record) => {
-    receiveKeysById.set(record.keyId, record);
-  });
   return {
     accountId,
     privateKeyHex,
-    receiveKeys: [...receiveKeysById.values()],
+    receiveKeys,
   };
 };
 
@@ -1145,6 +1177,7 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
   privateKeyHex?: string;
   operationLabel: string;
 }) => {
+  await assertSecureVaultAvailable(input.operationLabel);
   const { accountId, privateKeyHex } =
     await resolveConfidentialWalletDecryptionContext({
       accountId: input.accountId,
@@ -1156,7 +1189,7 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
   });
   const receiveKeys = generateKaigiX25519KeyPair();
   const keyId = randomBytes(18).toString("base64url");
-  const storedKey = (await storeConfidentialReceiveKeyInVault({
+  const storedKey = await storeConfidentialReceiveKeyInVault({
     keyId,
     accountId,
     ownerTagHex: shieldedAddress.ownerTagHex,
@@ -1164,16 +1197,7 @@ const createStoredConfidentialReceiveDescriptor = async (input: {
     publicKeyBase64Url: receiveKeys.publicKeyBase64Url,
     privateKeyBase64Url: receiveKeys.privateKeyBase64Url,
     createdAtMs: Date.now(),
-  }).catch(() => null)) ?? {
-    keyId,
-    accountId,
-    ownerTagHex: shieldedAddress.ownerTagHex,
-    diversifierHex: shieldedAddress.diversifierHex,
-    publicKeyBase64Url: receiveKeys.publicKeyBase64Url,
-    privateKeyBase64Url: receiveKeys.privateKeyBase64Url,
-    createdAtMs: Date.now(),
-  };
-  rememberEphemeralReceiveKey(storedKey);
+  });
   return {
     receiveKeyId: storedKey.keyId,
     receivePublicKeyBase64Url: storedKey.publicKeyBase64Url,
@@ -1767,12 +1791,20 @@ const writeConfidentialWalletShadowState = (
   key: string,
   state: PendingConfidentialWalletShadowState,
 ) => {
+  const dedupedTransactions = new Map<
+    string,
+    PendingConfidentialWalletShadowTransaction
+  >();
+  state.transactions
+    .map(normalizePendingConfidentialWalletShadowTransaction)
+    .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
+      Boolean(entry),
+    )
+    .forEach((entry) => {
+      dedupedTransactions.set(entry.hash, entry);
+    });
   const normalized: PendingConfidentialWalletShadowState = {
-    transactions: state.transactions
-      .map(normalizePendingConfidentialWalletShadowTransaction)
-      .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
-        Boolean(entry),
-      )
+    transactions: [...dedupedTransactions.values()]
       .sort((left, right) => left.createdAtMs - right.createdAtMs)
       .slice(-128),
   };
@@ -1786,6 +1818,157 @@ const writeConfidentialWalletShadowState = (
   } catch {
     // Ignore storage write failures and keep the in-memory shadow state.
   }
+};
+
+const deriveConfidentialWalletBackupKey = (mnemonic: string, salt: Buffer) => {
+  const normalizedMnemonic = normalizeMnemonicPhrase(mnemonic);
+  if (!normalizedMnemonic) {
+    throw new Error("Backup file is missing a valid recovery phrase.");
+  }
+  return Buffer.from(
+    hkdfSync(
+      "sha256",
+      Buffer.from(normalizedMnemonic, "utf8"),
+      salt,
+      Buffer.from(CONFIDENTIAL_WALLET_BACKUP_KDF_INFO, "utf8"),
+      32,
+    ),
+  );
+};
+
+const encryptConfidentialWalletBackupState = (
+  state: ConfidentialWalletBackupStatePayload,
+  mnemonic: string,
+): ConfidentialWalletBackupStateBoxV2 => {
+  const salt = randomBytes(32);
+  const iv = randomBytes(12);
+  const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = Buffer.from(JSON.stringify(state), "utf8");
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext),
+    cipher.final(),
+  ]);
+  return {
+    kdf: "HKDF-SHA256",
+    cipher: "AES-256-GCM",
+    saltBase64Url: salt.toString("base64url"),
+    ivBase64Url: iv.toString("base64url"),
+    ciphertextBase64Url: ciphertext.toString("base64url"),
+    authTagBase64Url: cipher.getAuthTag().toString("base64url"),
+  };
+};
+
+const parseConfidentialWalletBackupStatePayload = (
+  value: unknown,
+): ConfidentialWalletBackupStatePayload => {
+  if (!isPlainRecord(value)) {
+    throw new Error("Confidential wallet backup state is invalid.");
+  }
+  return {
+    receiveKeys: Array.isArray(value.receiveKeys)
+      ? value.receiveKeys
+          .map((entry) => {
+            if (!isPlainRecord(entry)) {
+              return null;
+            }
+            const keyId = trimString(entry.keyId);
+            const ownerTagHex = trimString(entry.ownerTagHex).toLowerCase();
+            const diversifierHex = trimString(entry.diversifierHex).toLowerCase();
+            const publicKeyBase64Url = normalizeBase64UrlString(
+              entry.publicKeyBase64Url,
+              "confidentialWallet.receiveKeys.publicKeyBase64Url",
+            );
+            const privateKeyBase64Url = normalizeBase64UrlString(
+              entry.privateKeyBase64Url,
+              "confidentialWallet.receiveKeys.privateKeyBase64Url",
+            );
+            const createdAtMs = Number(entry.createdAtMs ?? Date.now());
+            if (
+              !/^[A-Za-z0-9_-]{8,128}$/.test(keyId) ||
+              !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
+              !/^[0-9a-f]{64}$/.test(diversifierHex)
+            ) {
+              return null;
+            }
+            return {
+              keyId,
+              ownerTagHex,
+              diversifierHex,
+              publicKeyBase64Url,
+              privateKeyBase64Url,
+              createdAtMs:
+                Number.isFinite(createdAtMs) && createdAtMs >= 0
+                  ? Math.trunc(createdAtMs)
+                  : Date.now(),
+            };
+          })
+          .filter(
+            (
+              entry,
+            ): entry is ConfidentialWalletBackupStatePayload["receiveKeys"][number] =>
+              Boolean(entry),
+          )
+      : [],
+    shadowTransactions: Array.isArray(value.shadowTransactions)
+      ? value.shadowTransactions
+          .map(normalizePendingConfidentialWalletShadowTransaction)
+          .filter(
+            (
+              entry,
+            ): entry is PendingConfidentialWalletShadowTransaction =>
+              Boolean(entry),
+          )
+      : [],
+  };
+};
+
+const decryptConfidentialWalletBackupState = (
+  stateBox: ConfidentialWalletBackupStateBoxV2,
+  mnemonic: string,
+): ConfidentialWalletBackupStatePayload => {
+  const salt = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.saltBase64Url,
+      "confidentialWallet.stateBox.saltBase64Url",
+    ),
+    "base64url",
+  );
+  const iv = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.ivBase64Url,
+      "confidentialWallet.stateBox.ivBase64Url",
+    ),
+    "base64url",
+  );
+  const ciphertext = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.ciphertextBase64Url,
+      "confidentialWallet.stateBox.ciphertextBase64Url",
+    ),
+    "base64url",
+  );
+  const authTag = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.authTagBase64Url,
+      "confidentialWallet.stateBox.authTagBase64Url",
+    ),
+    "base64url",
+  );
+  const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+  const plaintext = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]).toString("utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new Error("Confidential wallet backup could not be decrypted.");
+  }
+  return parseConfidentialWalletBackupStatePayload(parsed);
 };
 
 const upsertConfidentialWalletShadowTransaction = (input: {
@@ -3844,7 +4027,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     rootHintHex: materials.latestRootHex,
     verifyingKey: verifyingKeyContext.proofVerifyingKey,
   });
-  const metadata = buildWalletConfidentialMetadata({
+  const metadata = buildWalletConfidentialMetadataV3({
     outputs: [output],
   });
   const tx = buildZkTransferTransaction({
@@ -4350,9 +4533,8 @@ const readShieldedRecipientDescriptor = (
 ): {
   ownerTagHex: string;
   diversifierHex: string;
-  receiveKeyId?: string;
-  receivePublicKeyBase64Url?: string;
-  recipientAccountId?: string;
+  receiveKeyId: string;
+  receivePublicKeyBase64Url: string;
 } | null => {
   const nestedRecipient = isPlainRecord(input.shieldedRecipient)
     ? input.shieldedRecipient
@@ -4389,20 +4571,9 @@ const readShieldedRecipientDescriptor = (
     );
   }
   if (!receiveKeyId || !receivePublicKeyBase64Url) {
-    const recipientAccountId = trimString(input.destinationAccountId);
-    if (!recipientAccountId) {
-      throw new Error(
-        "Shielded recipient QR is missing its receive key id. Ask the recipient to refresh their Receive QR code.",
-      );
-    }
-    return {
-      ownerTagHex,
-      diversifierHex,
-      recipientAccountId: normalizeCompatAccountIdLiteral(
-        recipientAccountId,
-        "destinationAccountId",
-      ),
-    };
+    throw new Error(
+      "Shielded recipient QR is missing its receive key. Ask the recipient to refresh their Receive QR code.",
+    );
   }
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(receiveKeyId)) {
     throw new Error("Shielded recipient receive key id is invalid.");
@@ -4469,6 +4640,7 @@ const api: IrohaBridge = {
     return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
   },
   async createConfidentialPaymentAddress({ accountId, privateKeyHex }) {
+    await assertSecureVaultAvailable("Confidential payment address creation");
     const descriptor = await createStoredConfidentialReceiveDescriptor({
       accountId,
       privateKeyHex,
@@ -4483,17 +4655,135 @@ const api: IrohaBridge = {
       recoveryHint: "one-time-receive-key",
     };
   },
+  async exportConfidentialWalletBackup({
+    toriiUrl,
+    chainId,
+    accountId,
+    mnemonic,
+  }) {
+    await assertSecureVaultAvailable("Confidential wallet backup export");
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    const normalizedChainId = trimString(chainId);
+    if (!normalizedChainId) {
+      throw new Error("chainId is required.");
+    }
+    const receiveKeys = await listConfidentialReceiveKeysForAccount(
+      normalizedAccountId,
+    );
+    const shadowState = readConfidentialWalletShadowState(
+      getConfidentialWalletShadowKey({
+        toriiUrl,
+        accountId: normalizedAccountId,
+      }),
+    );
+    const accountTransactions = await listAllAccountTransactions({
+      toriiUrl,
+      accountId: normalizedAccountId,
+    }).catch(() => [] as Array<Record<string, unknown>>);
+    const scanWatermarkBlock = accountTransactions.reduce<number | null>(
+      (highest, transaction) => {
+        const block = Number(transaction.block);
+        if (!Number.isFinite(block) || block < 0) {
+          return highest;
+        }
+        const normalizedBlock = Math.trunc(block);
+        return highest === null || normalizedBlock > highest
+          ? normalizedBlock
+          : highest;
+      },
+      null,
+    );
+    return {
+      schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+      chainId: normalizedChainId,
+      accountId: normalizedAccountId,
+      scanWatermarkBlock,
+      stateBox: encryptConfidentialWalletBackupState(
+        {
+          receiveKeys: receiveKeys.map((record) => ({
+            keyId: record.keyId,
+            ownerTagHex: record.ownerTagHex,
+            diversifierHex: record.diversifierHex,
+            publicKeyBase64Url: record.publicKeyBase64Url,
+            privateKeyBase64Url: record.privateKeyBase64Url,
+            createdAtMs: record.createdAtMs,
+          })),
+          shadowTransactions: shadowState.transactions,
+        },
+        mnemonic,
+      ),
+    };
+  },
+  async importConfidentialWalletBackup({
+    toriiUrl,
+    accountId,
+    mnemonic,
+    confidentialWallet,
+  }) {
+    if (!confidentialWallet) {
+      return;
+    }
+    if (
+      confidentialWallet.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2
+    ) {
+      return;
+    }
+    await assertSecureVaultAvailable("Confidential wallet backup restore");
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    const backupAccountId = normalizeCompatAccountIdLiteral(
+      confidentialWallet.accountId,
+      "confidentialWallet.accountId",
+    );
+    if (backupAccountId !== normalizedAccountId) {
+      throw new Error(
+        "Confidential wallet backup does not match the restored account.",
+      );
+    }
+    const decryptedState = decryptConfidentialWalletBackupState(
+      confidentialWallet.stateBox,
+      mnemonic,
+    );
+    for (const receiveKey of decryptedState.receiveKeys) {
+      await storeConfidentialReceiveKeyInVault({
+        ...receiveKey,
+        accountId: normalizedAccountId,
+      });
+    }
+    const shadowKey = getConfidentialWalletShadowKey({
+      toriiUrl,
+      accountId: normalizedAccountId,
+    });
+    const existingShadowState = readConfidentialWalletShadowState(shadowKey);
+    writeConfidentialWalletShadowState(shadowKey, {
+      transactions: [
+        ...existingShadowState.transactions,
+        ...decryptedState.shadowTransactions,
+      ],
+    });
+  },
   async registerAccount(input) {
     const domainId = input.domainId.trim();
     if (!domainId) {
       throw new Error("domainId is required.");
     }
+    const authorityAccountId = normalizeCompatAccountIdLiteral(
+      input.authorityAccountId,
+      "authorityAccountId",
+    );
+    const authorityPrivateKeyHex = await resolvePrivateKeyHex({
+      accountId: authorityAccountId,
+      privateKeyHex: input.authorityPrivateKeyHex,
+      operationLabel: "Create on-chain account",
+    });
     const tx = buildRegisterAccountAndTransferTransaction({
       chainId: input.chainId,
-      authority: normalizeCompatAccountIdLiteral(
-        input.authorityAccountId,
-        "authorityAccountId",
-      ),
+      authority: authorityAccountId,
       account: {
         accountId: normalizeCompatAccountIdLiteral(
           input.accountId,
@@ -4502,10 +4792,7 @@ const api: IrohaBridge = {
         domainId,
         metadata: input.metadata ?? {},
       },
-      privateKey: hexToBuffer(
-        input.authorityPrivateKeyHex,
-        "authorityPrivateKeyHex",
-      ),
+      privateKey: hexToBuffer(authorityPrivateKeyHex, "authorityPrivateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       input.toriiUrl,
@@ -4536,6 +4823,7 @@ const api: IrohaBridge = {
     });
 
     if (input.unshield) {
+      await assertSecureVaultAvailable("Confidential public exit");
       if (!destinationAccountId) {
         throw new Error("destinationAccountId is required.");
       }
@@ -4732,7 +5020,7 @@ const api: IrohaBridge = {
       }
       const metadata =
         changeOutputs.length > 0
-          ? buildWalletConfidentialMetadata({
+          ? buildWalletConfidentialMetadataV3({
               baseMetadata: assertNoConfidentialPublicMetadata(
                 input.metadata,
                 "Confidential public exit",
@@ -4802,6 +5090,11 @@ const api: IrohaBridge = {
     }
 
     if (input.shielded) {
+      await assertSecureVaultAvailable(
+        destinationAccountId === accountId
+          ? "Private balance creation"
+          : "Shielded transfer",
+      );
       const { policy, resolvedAssetDefinitionId } =
         await fetchConfidentialAssetPolicyForAccount({
           toriiUrl: input.toriiUrl,
@@ -4843,7 +5136,7 @@ const api: IrohaBridge = {
           ownerTagHex: selfReceiveDescriptor.ownerTagHex,
           diversifierHex: selfReceiveDescriptor.diversifierHex,
         });
-        const metadata = buildWalletConfidentialMetadata({
+        const metadata = buildWalletConfidentialMetadataV3({
           baseMetadata: confidentialBaseMetadata,
           outputs: [
             {
@@ -4935,9 +5228,8 @@ const api: IrohaBridge = {
       }
       let orderedOutputs: Array<{
         note: ReturnType<typeof createWalletConfidentialNote>;
-        receiveKeyId?: string;
-        recipientPublicKeyBase64Url?: string;
-        recipientAccountId?: string;
+        receiveKeyId: string;
+        recipientPublicKeyBase64Url: string;
       }> = [];
       let proofEnvelope!: ReturnType<typeof buildConfidentialTransferProofV2>;
       let selectedRootHintHex = materials.latestRootHex;
@@ -4959,9 +5251,8 @@ const api: IrohaBridge = {
         );
         const outputs: Array<{
           note: ReturnType<typeof createWalletConfidentialNote>;
-          receiveKeyId?: string;
-          recipientPublicKeyBase64Url?: string;
-          recipientAccountId?: string;
+          receiveKeyId: string;
+          recipientPublicKeyBase64Url: string;
         }> = [
           {
             note: createWalletConfidentialNote({
@@ -4973,47 +5264,26 @@ const api: IrohaBridge = {
             receiveKeyId: recipientDescriptor.receiveKeyId,
             recipientPublicKeyBase64Url:
               recipientDescriptor.receivePublicKeyBase64Url,
-            recipientAccountId: recipientDescriptor.recipientAccountId,
           },
         ];
         if (selection.change !== "0") {
-          if (
-            recipientDescriptor.receiveKeyId &&
-            recipientDescriptor.receivePublicKeyBase64Url
-          ) {
-            const changeDescriptor =
-              await createStoredConfidentialReceiveDescriptor({
-                accountId,
-                privateKeyHex,
-                operationLabel: "Shielded transfer",
-              });
-            outputs.push({
-              note: createWalletConfidentialNote({
-                assetDefinitionId: materials.resolvedAssetId,
-                amount: selection.change,
-                ownerTagHex: changeDescriptor.ownerTagHex,
-                diversifierHex: changeDescriptor.diversifierHex,
-              }),
-              receiveKeyId: changeDescriptor.receiveKeyId,
-              recipientPublicKeyBase64Url:
-                changeDescriptor.receivePublicKeyBase64Url,
+          const changeDescriptor =
+            await createStoredConfidentialReceiveDescriptor({
+              accountId,
+              privateKeyHex,
+              operationLabel: "Shielded transfer",
             });
-          } else {
-            const changeReceiveAddress = deriveWalletConfidentialReceiveAddress(
-              {
-                privateKeyHex,
-              },
-            );
-            outputs.push({
-              note: createWalletConfidentialNote({
-                assetDefinitionId: materials.resolvedAssetId,
-                amount: selection.change,
-                ownerTagHex: changeReceiveAddress.ownerTagHex,
-                diversifierHex: changeReceiveAddress.diversifierHex,
-              }),
-              recipientAccountId: accountId,
-            });
-          }
+          outputs.push({
+            note: createWalletConfidentialNote({
+              assetDefinitionId: materials.resolvedAssetId,
+              amount: selection.change,
+              ownerTagHex: changeDescriptor.ownerTagHex,
+              diversifierHex: changeDescriptor.diversifierHex,
+            }),
+            receiveKeyId: changeDescriptor.receiveKeyId,
+            recipientPublicKeyBase64Url:
+              changeDescriptor.receivePublicKeyBase64Url,
+          });
         }
         orderedOutputs = [...outputs].sort((left, right) =>
           left.note.commitment_hex.localeCompare(right.note.commitment_hex),
@@ -5092,7 +5362,7 @@ const api: IrohaBridge = {
           }
         }
       }
-      const metadata = buildWalletConfidentialMetadata({
+      const metadata = buildWalletConfidentialMetadataV3({
         baseMetadata: confidentialBaseMetadata,
         outputs: orderedOutputs,
       });
