@@ -67,6 +67,13 @@
             <input
               v-model="form.destination"
               data-testid="destination-account-input"
+              :placeholder="
+                form.shielded
+                  ? t(
+                      'Optional for private recipient sends; enter your own account to self-shield.',
+                    )
+                  : ''
+              "
             />
           </label>
           <label>
@@ -85,7 +92,7 @@
           <p v-else class="helper send-note">
             {{
               t(
-                "Shielded sends do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
+                "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
               )
             }}
           </p>
@@ -95,7 +102,7 @@
               type="checkbox"
               :disabled="!shieldSupported"
             />
-            <span>{{ t("Anonymous shielded send") }}</span>
+            <span>{{ t("Private shielded transfer") }}</span>
           </label>
         </div>
         <div class="actions">
@@ -127,11 +134,7 @@
             "
             class="helper send-note"
           >
-            {{
-              t(
-                "Scan a shielded Receive QR for this destination before sending anonymously.",
-              )
-            }}
+            {{ t("Scan a private Receive QR before sending privately.") }}
           </p>
           <p
             v-if="
@@ -188,6 +191,8 @@ const form = reactive({
   quantity: "0",
   memo: "",
   shielded: false,
+  shieldedReceiveKeyId: "",
+  shieldedReceivePublicKeyBase64Url: "",
   shieldedOwnerTagHex: "",
   shieldedDiversifierHex: "",
   shieldedAddressAccountId: "",
@@ -232,6 +237,13 @@ const {
   translate: t,
   onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
 });
+const resetShieldedRecipientFields = () => {
+  form.shieldedReceiveKeyId = "";
+  form.shieldedReceivePublicKeyBase64Url = "";
+  form.shieldedOwnerTagHex = "";
+  form.shieldedDiversifierHex = "";
+  form.shieldedAddressAccountId = "";
+};
 const scanner = useQrScanner(
   (payload) => {
     try {
@@ -239,32 +251,63 @@ const scanner = useQrScanner(
       const parsedAccountId = parsed.accountId
         ? String(parsed.accountId).trim()
         : "";
-      if (parsed.accountId) {
+      const receiveKeyId = String(
+        parsed.receiveKeyId ?? parsed.shieldedReceiveKeyId ?? "",
+      ).trim();
+      const receivePublicKeyBase64Url = String(
+        parsed.receivePublicKeyBase64Url ??
+          parsed.shieldedReceivePublicKeyBase64Url ??
+          "",
+      ).trim();
+      const ownerTagHex = String(
+        parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex ?? "",
+      ).trim();
+      const diversifierHex = String(
+        parsed.shieldedDiversifierHex ?? parsed.diversifierHex ?? "",
+      ).trim();
+      const looksLikeLegacyShieldedQr = Boolean(
+        parsed.schema === "iroha-confidential-payment-address/v2" ||
+          ((ownerTagHex || diversifierHex) &&
+            (!receiveKeyId || !receivePublicKeyBase64Url)),
+      );
+      if (looksLikeLegacyShieldedQr) {
+        resetShieldedRecipientFields();
+        form.shielded = false;
+        scanMessage.value = t(
+          "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
+        );
+        return;
+      }
+      if (parsedAccountId) {
         form.destination = parsedAccountId;
+      } else if (
+        parsed.schema === "iroha-confidential-payment-address/v3" ||
+        (receiveKeyId && receivePublicKeyBase64Url)
+      ) {
+        form.destination = "";
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
       }
-      if (parsed.shieldedOwnerTagHex || parsed.ownerTagHex) {
-        form.shieldedOwnerTagHex = String(
-          parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex,
-        ).trim();
-      }
-      if (parsed.shieldedDiversifierHex || parsed.diversifierHex) {
-        form.shieldedDiversifierHex = String(
-          parsed.shieldedDiversifierHex ?? parsed.diversifierHex,
-        ).trim();
-      }
       if (
-        parsed.schema === "iroha-confidential-payment-address/v2" ||
-        parsed.shieldedOwnerTagHex ||
-        parsed.shieldedDiversifierHex
+        parsed.schema === "iroha-confidential-payment-address/v3" ||
+        (receiveKeyId &&
+          receivePublicKeyBase64Url &&
+          ownerTagHex &&
+          diversifierHex)
       ) {
         form.shielded = true;
+        form.shieldedReceiveKeyId = receiveKeyId;
+        form.shieldedReceivePublicKeyBase64Url = receivePublicKeyBase64Url;
+        form.shieldedOwnerTagHex = ownerTagHex;
+        form.shieldedDiversifierHex = diversifierHex;
         form.shieldedAddressAccountId = parsedAccountId;
+      } else {
+        resetShieldedRecipientFields();
       }
       scanMessage.value = t("QR decoded successfully.");
     } catch (err) {
+      resetShieldedRecipientFields();
       scanMessage.value = t("QR payload is invalid.");
       console.warn("Invalid QR payload", err);
     }
@@ -272,10 +315,6 @@ const scanner = useQrScanner(
   { translate: t },
 );
 const sendIcon = SendIcon;
-
-const submitActionLabel = computed(() =>
-  form.shielded ? t("Send anonymously") : t("Send"),
-);
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
@@ -299,11 +338,22 @@ const destinationIsSelf = computed(() => {
         destination === activeAccount.value?.i105AccountId),
   );
 });
-const hasShieldedPaymentAddress = computed(
+const submitActionLabel = computed(() =>
+  form.shielded
+    ? destinationIsSelf.value
+      ? t("Create private balance")
+      : t("Send privately")
+    : t("Send"),
+);
+const hasV3ShieldedPaymentAddress = computed(
   () =>
+    /^[A-Za-z0-9_-]{8,128}$/.test(form.shieldedReceiveKeyId.trim()) &&
+    /^[A-Za-z0-9_-]+$/.test(form.shieldedReceivePublicKeyBase64Url.trim()) &&
     /^[0-9a-f]{64}$/i.test(form.shieldedOwnerTagHex.trim()) &&
-    /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()) &&
-    form.shieldedAddressAccountId === destinationValue.value,
+    /^[0-9a-f]{64}$/i.test(form.shieldedDiversifierHex.trim()),
+);
+const hasShieldedPaymentAddress = computed(
+  () => hasV3ShieldedPaymentAddress.value,
 );
 
 const isValid = computed(() =>
@@ -314,10 +364,9 @@ const isValid = computed(() =>
       (form.shielded
         ? isShieldAmountValid.value
         : isTransparentAmountValid.value) &&
-      isDestinationValid.value &&
-      (!form.shielded ||
-        destinationIsSelf.value ||
-        hasShieldedPaymentAddress.value),
+      (form.shielded
+        ? destinationIsSelf.value || hasShieldedPaymentAddress.value
+        : isDestinationValid.value),
   ),
 );
 
@@ -342,7 +391,7 @@ const handleSend = async () => {
     }
     if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
       statusMessage.value = t(
-        "Scan a shielded Receive QR for this destination before sending anonymously.",
+        "Scan a private Receive QR before sending privately.",
       );
       return;
     }
@@ -356,22 +405,35 @@ const handleSend = async () => {
       chainId: session.connection.chainId,
       assetDefinitionId: resolvedAssetDefinitionId.value,
       accountId: account.accountId,
-      destinationAccountId: destinationValue.value,
+      destinationAccountId: destinationValue.value || undefined,
       quantity: normalizedQuantity.value,
       privateKeyHex: account.privateKeyHex,
       metadata: !form.shielded && form.memo ? { memo: form.memo } : undefined,
       shielded: form.shielded,
       shieldedOwnerTagHex: form.shieldedOwnerTagHex,
       shieldedDiversifierHex: form.shieldedDiversifierHex,
+      shieldedRecipient:
+        form.shielded && !destinationIsSelf.value
+          ? {
+              receiveKeyId: form.shieldedReceiveKeyId,
+              receivePublicKeyBase64Url: form.shieldedReceivePublicKeyBase64Url,
+              ownerTagHex: form.shieldedOwnerTagHex,
+              diversifierHex: form.shieldedDiversifierHex,
+            }
+          : undefined,
     });
     if (submitMode === "shield") {
       session.updateActiveAccount({ localOnly: false });
     }
     statusMessage.value =
       submitMode === "shield"
-        ? t("Anonymous shielded transaction committed: {hash}", {
-            hash: result.hash,
-          })
+        ? destinationIsSelf.value
+          ? t("Private balance created: {hash}", {
+              hash: result.hash,
+            })
+          : t("Private shielded transfer committed: {hash}", {
+              hash: result.hash,
+            })
         : t("Transaction submitted: {hash}", { hash: result.hash });
   } catch (error) {
     statusMessage.value = toUserFacingErrorMessage(

@@ -177,8 +177,10 @@ import {
   deriveAccountAddress,
   derivePublicKey,
   generateKeyPair,
+  isSecureVaultAvailable,
   pingTorii,
   registerAccount,
+  storeAccountSecret,
 } from "@/services/iroha";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
@@ -206,12 +208,22 @@ const emptyAccount = () => ({
   i105DefaultAccountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
+  hasStoredSecret: false,
 });
 const userForm = reactive({
   ...emptyAccount(),
   ...(session.activeAccount ?? {}),
 });
-const authorityForm = reactive({ ...session.authority });
+const authorityForm = reactive(
+  Object.assign(
+    {
+      accountId: "",
+      privateKeyHex: "",
+      hasStoredSecret: false,
+    },
+    session.authority,
+  ),
+);
 const metadataInput = ref(
   JSON.stringify(
     { nickname: session.activeAccount?.displayName || "" },
@@ -300,13 +312,22 @@ const pingIndicator = computed(() => {
   }
 });
 
+const authorityHasSavedSecret = computed(
+  () =>
+    Boolean(
+      authorityForm.accountId.trim() &&
+        authorityForm.accountId.trim() === session.authority.accountId.trim() &&
+        session.authority.hasStoredSecret,
+    ),
+);
+
 const canRegister = computed(() =>
   Boolean(
     connectionForm.toriiUrl &&
       connectionForm.chainId &&
       userForm.accountId &&
       authorityForm.accountId &&
-      authorityForm.privateKeyHex,
+      (authorityForm.privateKeyHex.trim() || authorityHasSavedSecret.value),
   ),
 );
 
@@ -329,14 +350,50 @@ const saveConnection = () => {
   session.persistState();
 };
 
-const saveUser = () => {
-  session.updateActiveAccount({ ...userForm });
+const saveUser = async () => {
+  if (!userForm.accountId || !userForm.privateKeyHex.trim()) {
+    registerMessage.value = t("Enter an identity private key first.");
+    return;
+  }
+  const vaultAvailable = await isSecureVaultAvailable().catch(() => false);
+  if (!vaultAvailable) {
+    registerMessage.value = t(
+      "Secure OS-backed key storage is unavailable on this device.",
+    );
+    return;
+  }
+  await storeAccountSecret({
+    accountId: userForm.accountId,
+    privateKeyHex: userForm.privateKeyHex,
+  });
+  userForm.privateKeyHex = "";
+  userForm.hasStoredSecret = true;
+  session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
   session.persistState();
+  registerMessage.value = t("Identity saved to secure storage.");
 };
 
-const saveAuthority = () => {
-  session.updateAuthority({ ...authorityForm });
+const saveAuthority = async () => {
+  if (!authorityForm.accountId.trim() || !authorityForm.privateKeyHex.trim()) {
+    registerMessage.value = t("Enter an authority private key first.");
+    return;
+  }
+  const vaultAvailable = await isSecureVaultAvailable().catch(() => false);
+  if (!vaultAvailable) {
+    registerMessage.value = t(
+      "Secure OS-backed key storage is unavailable on this device.",
+    );
+    return;
+  }
+  await storeAccountSecret({
+    accountId: authorityForm.accountId,
+    privateKeyHex: authorityForm.privateKeyHex,
+  });
+  authorityForm.privateKeyHex = "";
+  authorityForm.hasStoredSecret = true;
+  session.updateAuthority({ ...authorityForm, privateKeyHex: "" });
   session.persistState();
+  registerMessage.value = t("Authority saved to secure storage.");
 };
 
 const handlePing = async () => {
@@ -374,7 +431,7 @@ const handleGenerate = async () => {
       networkPrefix: connectionForm.networkPrefix,
     });
     Object.assign(userForm, summary);
-    saveUser();
+    await saveUser();
   } finally {
     generating.value = false;
   }
@@ -414,9 +471,9 @@ const handleRegister = async () => {
       domainId: userForm.domain,
       metadata,
       authorityAccountId: authorityForm.accountId,
-      authorityPrivateKeyHex: authorityForm.privateKeyHex,
+      authorityPrivateKeyHex: authorityForm.privateKeyHex.trim() || undefined,
     });
-    session.updateActiveAccount({ ...userForm });
+    session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
     session.persistState();
     registerMessage.value = t("Submitted transaction {hash}", {
       hash: result.hash,

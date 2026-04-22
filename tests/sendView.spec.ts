@@ -13,6 +13,10 @@ const BOB_OWNER_TAG_HEX = "11".repeat(32);
 const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
 const BOB_DIVERSIFIER_HEX = "33".repeat(32);
 const MALLORY_DIVERSIFIER_HEX = "44".repeat(32);
+const BOB_RECEIVE_KEY_ID = "bob-receive-key";
+const MALLORY_RECEIVE_KEY_ID = "mallory-receive-key";
+const BOB_RECEIVE_PUBLIC_KEY_BASE64_URL = "bobReceivePublicKey";
+const MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL = "malloryReceivePublicKey";
 const DESTINATION_ACCOUNT_SELECTOR =
   'input[data-testid="destination-account-input"]';
 
@@ -91,6 +95,7 @@ describe("SendView", () => {
           i105AccountId: ALICE_I105_ACCOUNT_ID,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
+          hasStoredSecret: true,
         },
       ],
       activeAccountId: "alice@default",
@@ -114,8 +119,10 @@ describe("SendView", () => {
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
       JSON.stringify({
-        accountId: BOB_I105_ACCOUNT_ID,
+        schema: "iroha-confidential-payment-address/v3",
         amount: "10",
+        receiveKeyId: BOB_RECEIVE_KEY_ID,
+        receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
         shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
       }),
@@ -136,15 +143,21 @@ describe("SendView", () => {
     });
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        destinationAccountId: BOB_I105_ACCOUNT_ID,
+        destinationAccountId: undefined,
         quantity: "10",
         shielded: true,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
         shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
+        shieldedRecipient: {
+          receiveKeyId: BOB_RECEIVE_KEY_ID,
+          receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
+          ownerTagHex: BOB_OWNER_TAG_HEX,
+          diversifierHex: BOB_DIVERSIFIER_HEX,
+        },
       }),
     );
     expect(wrapper.text()).toContain(
-      t("Anonymous shielded transaction committed: {hash}", { hash: "0xabc" }),
+      t("Private shielded transfer committed: {hash}", { hash: "0xabc" }),
     );
   });
 
@@ -221,7 +234,7 @@ describe("SendView", () => {
       BOB_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
-    expect(wrapper.find(".actions button").text()).toBe(t("Send anonymously"));
+    expect(wrapper.find(".actions button").text()).toBe(t("Send privately"));
   });
 
   it("switches amount input step when shield mode changes", async () => {
@@ -280,8 +293,10 @@ describe("SendView", () => {
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
       JSON.stringify({
-        accountId: BOB_I105_ACCOUNT_ID,
+        schema: "iroha-confidential-payment-address/v3",
         amount: "4",
+        receiveKeyId: BOB_RECEIVE_KEY_ID,
+        receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
         shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
       }),
@@ -293,7 +308,7 @@ describe("SendView", () => {
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
         assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-        destinationAccountId: BOB_I105_ACCOUNT_ID,
+        destinationAccountId: undefined,
         shielded: true,
       }),
     );
@@ -307,8 +322,11 @@ describe("SendView", () => {
     await wrapper.get('input[type="checkbox"]').setValue(true);
     qrDecodeHandler?.(
       JSON.stringify({
-        accountId: MALLORY_I105_ACCOUNT_ID,
+        schema: "iroha-confidential-payment-address/v3",
         amount: "7",
+        receiveKeyId: MALLORY_RECEIVE_KEY_ID,
+        receivePublicKeyBase64Url:
+          MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
       }),
@@ -317,9 +335,7 @@ describe("SendView", () => {
 
     const destinationInput = wrapper.get(DESTINATION_ACCOUNT_SELECTOR);
     const amountInput = wrapper.get('input[type="number"]');
-    expect((destinationInput.element as HTMLInputElement).value).toBe(
-      MALLORY_I105_ACCOUNT_ID,
-    );
+    expect((destinationInput.element as HTMLInputElement).value).toBe("");
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
     expect(wrapper.text()).toContain(t("QR decoded successfully."));
 
@@ -330,8 +346,43 @@ describe("SendView", () => {
       expect.objectContaining({
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
+        shieldedRecipient: {
+          receiveKeyId: MALLORY_RECEIVE_KEY_ID,
+          receivePublicKeyBase64Url:
+            MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
+          ownerTagHex: MALLORY_OWNER_TAG_HEX,
+          diversifierHex: MALLORY_DIVERSIFIER_HEX,
+        },
       }),
     );
+  });
+
+  it("rejects legacy private receive qr payloads", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    qrDecodeHandler?.(
+      JSON.stringify({
+        schema: "iroha-confidential-payment-address/v2",
+        accountId: BOB_I105_ACCOUNT_ID,
+        amount: "7",
+        shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+        shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
+      }),
+    );
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t(
+        "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
+      ),
+    );
+    expect(
+      (wrapper.get(DESTINATION_ACCOUNT_SELECTOR).element as HTMLInputElement)
+        .value,
+    ).toBe("");
+    expect(wrapper.get(".actions button").attributes("disabled")).toBeDefined();
   });
 
   it("applies qr destination payload when shield mode is disabled", async () => {

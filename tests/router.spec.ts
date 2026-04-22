@@ -11,6 +11,7 @@ const savedSession = {
   authority: {
     accountId: "",
     privateKeyHex: "",
+    hasStoredSecret: false,
   },
   accounts: [
     {
@@ -19,6 +20,7 @@ const savedSession = {
       accountId: "alice@wonderland",
       publicKeyHex: "ab".repeat(32),
       privateKeyHex: "cd".repeat(32),
+      hasStoredSecret: true,
     },
   ],
   activeAccountId: "alice@wonderland",

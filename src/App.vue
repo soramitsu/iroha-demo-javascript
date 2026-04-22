@@ -226,6 +226,13 @@ const navItems = [
     requiresAccount: true,
   },
   {
+    to: "/stats",
+    labelKey: "Stats",
+    descriptionKey: "XOR supply, holder concentration, and live chain telemetry",
+    icon: WalletIcon,
+    requiresAccount: true,
+  },
+  {
     to: "/send",
     labelKey: "Send",
     descriptionKey: "Transfer assets with camera or QR upload",

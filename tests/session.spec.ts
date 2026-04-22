@@ -37,6 +37,7 @@ describe("session store", () => {
       accountId: "ed0120@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "aa",
+      hasStoredSecret: true,
       localOnly: false,
     });
     store.addAccount({
@@ -45,6 +46,7 @@ describe("session store", () => {
       accountId: "ed0999@wonderland",
       publicKeyHex: "pub2",
       privateKeyHex: "bb",
+      hasStoredSecret: true,
       localOnly: false,
     });
     store.setActiveAccount("ed0999@wonderland");
@@ -79,6 +81,7 @@ describe("session store", () => {
           accountId: "abc@wonderland",
           publicKeyHex: "abc",
           privateKeyHex: "def",
+          hasStoredSecret: true,
           ih58: "IH58",
           compressed: "snx1x",
           compressedWarning: "",
@@ -132,6 +135,7 @@ describe("session store", () => {
         accountId: "legacy@wonderland",
         publicKeyHex: "pub",
         privateKeyHex: "priv",
+        hasStoredSecret: true,
         ih58: "ih58",
         compressed: "cmp",
         compressedWarning: "",
@@ -170,6 +174,7 @@ describe("session store", () => {
           accountId: "alice@wonderland",
           publicKeyHex: "pub",
           privateKeyHex: "priv",
+          hasStoredSecret: true,
           ih58: canonical,
           compressed: "",
           compressedWarning: "",
@@ -217,6 +222,7 @@ describe("session store", () => {
           accountId: "legacy@wonderland",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "priv",
+          hasStoredSecret: true,
           ih58: "",
           compressed: "",
           compressedWarning: "",
@@ -260,6 +266,7 @@ describe("session store", () => {
           accountId: "testuVisibleNativeAccountId1234567890",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "priv",
+          hasStoredSecret: true,
         },
       ],
       activeAccountId: "testuVisibleNativeAccountId1234567890",
@@ -306,6 +313,7 @@ describe("session store", () => {
           accountId: "n42uAliceCompat1234567890",
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
+          hasStoredSecret: true,
           localOnly: false,
         },
       ],
@@ -341,6 +349,7 @@ describe("session store", () => {
       accountId: "first@wonderland",
       publicKeyHex: "pub",
       privateKeyHex: "priv",
+      hasStoredSecret: true,
       localOnly: false,
     });
 

@@ -363,7 +363,6 @@ const canSubmit = computed(() =>
     session.connection.toriiUrl &&
       session.connection.chainId &&
       activeAccount.value?.accountId &&
-      activeAccount.value.privateKeyHex &&
       laneId.value !== null &&
       selectedValidator.value &&
       !loadingBootstrap.value &&

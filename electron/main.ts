@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { VpnRuntime } from "./vpnRuntime";
+import { SecureVault } from "./secureVault";
 import {
   extractKaigiDeepLinkFromArgv,
   parseKaigiDeepLinkToHashRoute,
@@ -132,6 +133,7 @@ const vpnRuntime = new VpnRuntime({
   userDataPath: app.getPath("userData"),
   helperVersion: `embedded-${app.getVersion()}`,
 });
+const secureVault = new SecureVault(app.getPath("userData"));
 
 let quittingForVpnShutdown = false;
 
@@ -155,8 +157,33 @@ const registerVpnHandlers = () => {
   );
 };
 
+const registerVaultHandlers = () => {
+  ipcMain.handle("vault:isAvailable", () => secureVault.isAvailable());
+  ipcMain.handle("vault:storeAccountSecret", (_event, input) =>
+    secureVault.storeAccountSecret(input),
+  );
+  ipcMain.handle("vault:getAccountSecret", (_event, input) =>
+    secureVault.getAccountSecret(input.accountId),
+  );
+  ipcMain.handle("vault:listAccountSecretFlags", (_event, input) =>
+    secureVault.listAccountSecretFlags(
+      Array.isArray(input?.accountIds) ? input.accountIds : [],
+    ),
+  );
+  ipcMain.handle("vault:storeReceiveKey", (_event, input) =>
+    secureVault.storeReceiveKey(input),
+  );
+  ipcMain.handle("vault:getReceiveKey", (_event, input) =>
+    secureVault.getReceiveKey(input.keyId),
+  );
+  ipcMain.handle("vault:listReceiveKeysForAccount", (_event, input) =>
+    secureVault.listReceiveKeysForAccount(input.accountId),
+  );
+};
+
 app.whenReady().then(() => {
   registerVpnHandlers();
+  registerVaultHandlers();
   registerKaigiProtocol();
   createWindow();
 

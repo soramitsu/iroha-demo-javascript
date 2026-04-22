@@ -1,6 +1,7 @@
 import { createRouter, createWebHashHistory } from "vue-router";
 import SetupView from "@/views/SetupView.vue";
 import WalletView from "@/views/WalletView.vue";
+import StatsView from "@/views/StatsView.vue";
 import StakingView from "@/views/StakingView.vue";
 import ParliamentView from "@/views/ParliamentView.vue";
 import SendView from "@/views/SendView.vue";
@@ -40,6 +41,14 @@ const routes = [
     meta: {
       titleKey: "Wallet Overview",
       subtitleKey: "Balances & activity",
+    },
+  },
+  {
+    path: "/stats",
+    component: StatsView,
+    meta: {
+      titleKey: "Stats HUD",
+      subtitleKey: "XOR supply, flow, and consensus telemetry",
     },
   },
   {

@@ -435,8 +435,7 @@ const canSubmit = computed(() =>
   Boolean(
     session.connection.toriiUrl &&
       session.connection.chainId &&
-      requestAccountId.value &&
-      activeAccount.value?.privateKeyHex,
+      requestAccountId.value,
   ),
 );
 

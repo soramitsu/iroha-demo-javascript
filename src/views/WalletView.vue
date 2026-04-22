@@ -499,7 +499,7 @@ const refresh = async () => {
   const accountId = requestAccountId.value;
   const privateKeyHex = activeAccount.value?.privateKeyHex;
   const accountWasLocalOnly = Boolean(activeAccount.value?.localOnly);
-  if (!session.hasAccount || !toriiUrl || !accountId || !privateKeyHex) {
+  if (!session.hasAccount || !toriiUrl || !accountId) {
     requestGeneration.value += 1;
     loading.value = false;
     resetWalletState();
@@ -809,7 +809,6 @@ const canScanShieldedXor = computed(() =>
   Boolean(
     session.hasAccount &&
       session.connection.toriiUrl &&
-      activeAccount.value?.privateKeyHex &&
       shieldedXorAssetId.value,
   ),
 );

@@ -20,21 +20,11 @@
             shareAccountId || t("Configure account first")
           }}</span>
         </div>
-        <label v-if="activeAccountId" class="receive-amount">
-          {{ t("Amount") }}
-          <input
-            v-model="amount"
-            type="number"
-            min="0"
-            step="0.01"
-            @input="handleAmountChange"
-          />
-        </label>
         <p class="helper">
           {{
             showQr
               ? t(
-                  "QR encodes account, amount, asset definition, and a fresh shielded payment address.",
+                  "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.",
                 )
               : t("Use the button above to render a QR that wallets can scan.")
           }}
@@ -58,6 +48,7 @@
 import { computed, ref, watch } from "vue";
 import QRCode from "qrcode";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { createConfidentialPaymentAddress } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
 import ReceiveIcon from "@/assets/receive.svg";
@@ -65,11 +56,9 @@ import ReceiveIcon from "@/assets/receive.svg";
 const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
-const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
 const shareAccountId = computed(() => getPublicAccountId(activeAccount.value));
 const qrMarkup = ref("");
 const qrMessage = ref(t("Tap the button to generate a QR."));
-const amount = ref("0");
 const showQr = ref(false);
 const qrGeneration = ref(0);
 const receiveIcon = ReceiveIcon;
@@ -78,9 +67,6 @@ const QR_LIGHT_COLOR = "#ffffff";
 
 const generateQr = async () => {
   const accountId = shareAccountId.value;
-  const assetDefinitionId = session.connection.assetDefinitionId;
-  const currentAmount = amount.value;
-  const privateKeyHex = activeAccount.value?.privateKeyHex ?? "";
   const currentGeneration = qrGeneration.value + 1;
   qrGeneration.value = currentGeneration;
 
@@ -90,33 +76,11 @@ const generateQr = async () => {
     return;
   }
   qrMessage.value = t("Generating QR...");
-  let shieldedOwnerTagHex = "";
-  let shieldedDiversifierHex = "";
-  if (privateKeyHex) {
-    try {
-      const shieldedAddress =
-        window.iroha.deriveConfidentialReceiveAddress(privateKeyHex);
-      shieldedOwnerTagHex = shieldedAddress.ownerTagHex;
-      shieldedDiversifierHex = shieldedAddress.diversifierHex;
-    } catch (error) {
-      console.warn(
-        "Failed to derive confidential receive address for QR",
-        error,
-      );
-    }
-  }
-  const payload = {
-    schema: "iroha-confidential-payment-address/v2",
-    accountId,
-    chainId: session.connection.chainId,
-    assetDefinitionId,
-    amount: currentAmount,
-    shieldedOwnerTagHex,
-    shieldedDiversifierHex,
-    shieldedAddressIndex: 0,
-    recoveryHint: "encrypted-note-envelope-required",
-  };
   try {
+    const payload = await createConfidentialPaymentAddress({
+      accountId,
+      privateKeyHex: activeAccount.value?.privateKeyHex,
+    });
     const nextQrMarkup = await QRCode.toString(JSON.stringify(payload), {
       type: "svg",
       width: 240,
@@ -128,10 +92,7 @@ const generateQr = async () => {
     if (
       currentGeneration !== qrGeneration.value ||
       !showQr.value ||
-      shareAccountId.value !== accountId ||
-      session.connection.assetDefinitionId !== assetDefinitionId ||
-      amount.value !== currentAmount ||
-      activeAccount.value?.privateKeyHex !== privateKeyHex
+      shareAccountId.value !== accountId
     ) {
       return;
     }
@@ -157,14 +118,8 @@ const toggleQr = () => {
   }
 };
 
-const handleAmountChange = () => {
-  if (showQr.value) {
-    generateQr();
-  }
-};
-
 watch(
-  () => [shareAccountId.value, session.connection.assetDefinitionId],
+  () => shareAccountId.value,
   () => {
     if (showQr.value) {
       generateQr();

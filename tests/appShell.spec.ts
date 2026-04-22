@@ -50,6 +50,7 @@ describe("App shell", () => {
             accountId: "alice@wonderland",
             publicKeyHex: "ab".repeat(32),
             privateKeyHex: "cd".repeat(32),
+            hasStoredSecret: true,
           },
         ],
         activeAccountId: "alice@wonderland",
@@ -101,6 +102,7 @@ describe("App shell", () => {
 
     expect(labels).toEqual([
       t("Wallet"),
+      t("Stats"),
       t("Send"),
       t("Receive"),
       t("Staking"),
@@ -114,7 +116,7 @@ describe("App shell", () => {
       t("Saved Wallets"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("12");
+    expect(steps.at(-1)).toBe("13");
   });
 
   it("renames the account route to wallets once an account exists", () => {

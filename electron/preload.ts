@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { createHash, randomBytes } from "crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  hkdfSync,
+  randomBytes,
+} from "crypto";
 import {
   ToriiClient,
   buildPrivateCreateKaigiTransaction,
@@ -50,9 +56,16 @@ import {
   type PublicLaneValidatorsResponseView,
 } from "./preload-utils";
 import {
+  extractGovernanceStats,
+  extractRuntimeStatsFromStatusSnapshot,
+  normalizeExplorerAssetDefinitionEconometricsPayload,
+  normalizeExplorerAssetDefinitionSnapshotPayload,
+} from "./networkStats";
+import {
   extractAssetDefinitionId,
   resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
+import type { NetworkStatsResponse } from "../src/types/iroha";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -81,7 +94,7 @@ import {
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
 import {
-  buildWalletConfidentialMetadata,
+  buildWalletConfidentialMetadataV3,
   collectWalletConfidentialLedger,
   CONFIDENTIAL_WALLET_METADATA_SCHEMA,
   createWalletConfidentialNote,
@@ -94,6 +107,17 @@ import {
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
+import {
+  type ConfidentialReceiveKeyRecord,
+} from "./secureVault";
+import {
+  CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
+  CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+  type ConfidentialWalletBackupMetadata,
+  type ConfidentialWalletBackupMetadataV2,
+  type ConfidentialWalletBackupStateBoxV2,
+} from "../src/utils/walletBackup";
+import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
 
 type HexString = string;
 
@@ -106,21 +130,75 @@ type ToriiConfig = {
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const stripConfidentialPublicMetadata = (
+const assertNoConfidentialPublicMetadata = (
   metadata: Record<string, unknown> | undefined,
-): Record<string, unknown> | undefined => {
+  operationLabel: string,
+): undefined => {
   if (!isPlainRecord(metadata)) {
     return undefined;
   }
-  const next = { ...metadata };
-  delete next.memo;
-  delete next.message;
-  delete next.note;
-  return Object.keys(next).length ? next : undefined;
+  if (Object.keys(metadata).length > 0) {
+    throw new Error(
+      `${operationLabel} does not allow public metadata or memos.`,
+    );
+  }
+  return undefined;
 };
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
+
+const isSecureVaultAvailable = async (): Promise<boolean> =>
+  Boolean(await ipcRenderer.invoke("vault:isAvailable"));
+
+const assertSecureVaultAvailable = async (operationLabel: string) => {
+  if (await isSecureVaultAvailable()) {
+    return;
+  }
+  throw new Error(
+    `${operationLabel} requires secure OS-backed key storage on this device.`,
+  );
+};
+
+const storeAccountSecretInVault = async (input: {
+  accountId: string;
+  privateKeyHex: string;
+}): Promise<void> => {
+  await ipcRenderer.invoke("vault:storeAccountSecret", input);
+};
+
+const getAccountSecretFromVault = async (
+  accountId: string,
+): Promise<string | null> =>
+  (await ipcRenderer.invoke("vault:getAccountSecret", {
+    accountId,
+  })) as string | null;
+
+const listAccountSecretFlagsFromVault = async (
+  accountIds: string[],
+): Promise<Record<string, boolean>> =>
+  (await ipcRenderer.invoke("vault:listAccountSecretFlags", {
+    accountIds,
+  })) as Record<string, boolean>;
+
+const storeConfidentialReceiveKeyInVault = async (
+  input: ConfidentialReceiveKeyRecord,
+): Promise<ConfidentialReceiveKeyRecord> =>
+  (await ipcRenderer.invoke(
+    "vault:storeReceiveKey",
+    input,
+  )) as ConfidentialReceiveKeyRecord;
+
+const listConfidentialReceiveKeysForAccount = async (
+  accountId: string,
+): Promise<ConfidentialReceiveKeyRecord[]> => {
+  const result = (await ipcRenderer.invoke("vault:listReceiveKeysForAccount", {
+    accountId,
+  })) as unknown;
+  return Array.isArray(result)
+    ? (result as ConfidentialReceiveKeyRecord[])
+    : [];
+};
 
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
 type StatusSnapshot = Awaited<ReturnType<ToriiClient["getStatusSnapshot"]>>;
@@ -131,7 +209,7 @@ type RegisterAccountInput = {
   domainId: string;
   metadata?: Record<string, unknown>;
   authorityAccountId: string;
-  authorityPrivateKeyHex: HexString;
+  authorityPrivateKeyHex?: HexString;
 };
 
 type TransferAssetInput = {
@@ -139,14 +217,45 @@ type TransferAssetInput = {
   chainId: string;
   assetDefinitionId: string;
   accountId: string;
-  destinationAccountId: string;
+  destinationAccountId?: string;
   quantity: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
   metadata?: Record<string, unknown>;
   shielded?: boolean;
   unshield?: boolean;
+  shieldedRecipient?: {
+    receiveKeyId?: string;
+    receivePublicKeyBase64Url?: string;
+    ownerTagHex?: string;
+    diversifierHex?: string;
+  };
+  shieldedReceiveKeyId?: string;
+  shieldedReceivePublicKeyBase64Url?: string;
   shieldedOwnerTagHex?: string;
   shieldedDiversifierHex?: string;
+};
+
+type ExportConfidentialWalletBackupInput = {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  mnemonic: string;
+};
+
+type ImportConfidentialWalletBackupInput = {
+  toriiUrl: string;
+  accountId: string;
+  mnemonic: string;
+  confidentialWallet: ConfidentialWalletBackupMetadata;
+};
+
+type ConfidentialPaymentAddress = {
+  schema: "iroha-confidential-payment-address/v3";
+  receiveKeyId: string;
+  receivePublicKeyBase64Url: string;
+  shieldedOwnerTagHex: string;
+  shieldedDiversifierHex: string;
+  recoveryHint: "one-time-receive-key";
 };
 
 type ConfidentialAssetBalanceResponse = {
@@ -160,6 +269,18 @@ type ConfidentialAssetBalanceResponse = {
   scanWatermarkBlock: number | null;
   recoveredNoteCount: number;
   trackedAssetIds: string[];
+};
+
+type ConfidentialWalletBackupStatePayload = {
+  receiveKeys: Array<{
+    keyId: string;
+    ownerTagHex: string;
+    diversifierHex: string;
+    publicKeyBase64Url: string;
+    privateKeyBase64Url: string;
+    createdAtMs: number;
+  }>;
+  shadowTransactions: PendingConfidentialWalletShadowTransaction[];
 };
 
 type ExplorerMetricsResponse = Awaited<
@@ -322,7 +443,7 @@ type KaigiCreateMeetingInput = {
   toriiUrl: string;
   chainId: string;
   hostAccountId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
   callId: string;
   title?: string;
   scheduledStartMs: number;
@@ -340,7 +461,7 @@ type KaigiJoinMeetingInput = {
   toriiUrl: string;
   chainId: string;
   participantAccountId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
   callId: string;
   hostAccountId?: string;
   hostKaigiPublicKeyBase64Url: string;
@@ -373,7 +494,7 @@ type KaigiEndMeetingInput = {
   toriiUrl: string;
   chainId: string;
   hostAccountId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
   callId: string;
   endedAtMs?: number;
 };
@@ -498,7 +619,7 @@ type BondPublicLaneStakeInput = {
   stakeAccountId: string;
   validator: string;
   amount: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type SchedulePublicLaneUnbondInput = {
@@ -509,7 +630,7 @@ type SchedulePublicLaneUnbondInput = {
   amount: string;
   requestId: string;
   releaseAtMs: number;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type FinalizePublicLaneUnbondInput = {
@@ -518,7 +639,7 @@ type FinalizePublicLaneUnbondInput = {
   stakeAccountId: string;
   validator: string;
   requestId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type ClaimPublicLaneRewardsInput = {
@@ -526,7 +647,7 @@ type ClaimPublicLaneRewardsInput = {
   chainId: string;
   stakeAccountId: string;
   validator: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type AccountPermissionsInput = {
@@ -543,14 +664,14 @@ type VpnAvailabilityInput = {
 type VpnConnectInput = {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
   exitClass: "standard" | "low-latency" | "high-security";
 };
 
 type VpnDisconnectInput = {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type VpnStatusInput = Partial<VpnDisconnectInput>;
@@ -560,7 +681,7 @@ type RegisterCitizenInput = {
   chainId: string;
   accountId: string;
   amount: string;
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type GovernanceLookupInput = {
@@ -581,7 +702,7 @@ type GovernancePlainBallotInput = {
   amount: string;
   durationBlocks: number;
   direction: "Aye" | "Nay" | "Abstain";
-  privateKeyHex: HexString;
+  privateKeyHex?: HexString;
 };
 
 type GovernanceFinalizeInput = {
@@ -599,6 +720,14 @@ type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
+  isSecureVaultAvailable(): Promise<boolean>;
+  storeAccountSecret(input: {
+    accountId: string;
+    privateKeyHex: string;
+  }): Promise<void>;
+  listAccountSecretFlags(input: {
+    accountIds: string[];
+  }): Promise<Record<string, boolean>>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
@@ -617,6 +746,16 @@ type IrohaBridge = {
     ownerTagHex: string;
     diversifierHex: string;
   };
+  createConfidentialPaymentAddress(input: {
+    accountId: string;
+    privateKeyHex?: string;
+  }): Promise<ConfidentialPaymentAddress>;
+  exportConfidentialWalletBackup(
+    input: ExportConfidentialWalletBackupInput,
+  ): Promise<ConfidentialWalletBackupMetadataV2>;
+  importConfidentialWalletBackup(
+    input: ImportConfidentialWalletBackupInput,
+  ): Promise<void>;
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
   getConfidentialAssetPolicy(input: {
@@ -628,14 +767,14 @@ type IrohaBridge = {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceResponse>;
   scanConfidentialWallet(input: {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
     force?: boolean;
   }): Promise<ConfidentialAssetBalanceResponse>;
@@ -643,7 +782,7 @@ type IrohaBridge = {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceResponse>;
   getPrivateKaigiConfidentialXorState(input: {
@@ -654,7 +793,7 @@ type IrohaBridge = {
     toriiUrl: string;
     chainId: string;
     accountId: string;
-    privateKeyHex: string;
+    privateKeyHex?: string;
     amount: string;
   }): Promise<{ hash: string }>;
   fetchAccountAssets(input: {
@@ -701,6 +840,10 @@ type IrohaBridge = {
   getExplorerMetrics(
     config: ToriiConfig,
   ): Promise<ExplorerMetricsResponse | null>;
+  getNetworkStats(input: {
+    toriiUrl: string;
+    assetDefinitionId?: string;
+  }): Promise<NetworkStatsResponse>;
   getExplorerAccountQr(input: {
     toriiUrl: string;
     accountId: string;
@@ -967,6 +1110,100 @@ const hexToBuffer = (hex: string, label: string) => {
     throw new Error(`${label} must contain only hexadecimal characters`);
   }
   return Buffer.from(normalized, "hex");
+};
+
+const normalizePrivateKeyHex = (privateKeyHex: string) =>
+  hexToBuffer(privateKeyHex, "privateKeyHex").toString("hex");
+
+const resolveOptionalPrivateKeyHex = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+}): Promise<string | null> => {
+  const inlinePrivateKeyHex = trimString(input.privateKeyHex);
+  if (inlinePrivateKeyHex) {
+    return normalizePrivateKeyHex(inlinePrivateKeyHex);
+  }
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const storedSecret = await getAccountSecretFromVault(accountId);
+  return storedSecret ? normalizePrivateKeyHex(storedSecret) : null;
+};
+
+const resolvePrivateKeyHex = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+  operationLabel: string;
+}): Promise<string> => {
+  const resolved = await resolveOptionalPrivateKeyHex(input);
+  if (resolved) {
+    return resolved;
+  }
+  throw new Error(
+    `${input.operationLabel} requires a stored wallet secret. Restore or save this wallet again.`,
+  );
+};
+
+const resolveConfidentialWalletDecryptionContext = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+  operationLabel: string;
+}) => {
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: input.operationLabel,
+  });
+  let receiveKeys: ConfidentialReceiveKeyRecord[] = [];
+  try {
+    receiveKeys = await listConfidentialReceiveKeysForAccount(accountId);
+  } catch (_error) {
+    receiveKeys = [];
+  }
+  return {
+    accountId,
+    privateKeyHex,
+    receiveKeys,
+  };
+};
+
+const createStoredConfidentialReceiveDescriptor = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+  operationLabel: string;
+}) => {
+  await assertSecureVaultAvailable(input.operationLabel);
+  const { accountId, privateKeyHex } =
+    await resolveConfidentialWalletDecryptionContext({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: input.operationLabel,
+    });
+  const shieldedAddress = deriveWalletConfidentialReceiveAddress({
+    privateKeyHex,
+  });
+  const receiveKeys = generateKaigiX25519KeyPair();
+  const keyId = randomBytes(18).toString("base64url");
+  const storedKey = await storeConfidentialReceiveKeyInVault({
+    keyId,
+    accountId,
+    ownerTagHex: shieldedAddress.ownerTagHex,
+    diversifierHex: shieldedAddress.diversifierHex,
+    publicKeyBase64Url: receiveKeys.publicKeyBase64Url,
+    privateKeyBase64Url: receiveKeys.privateKeyBase64Url,
+    createdAtMs: Date.now(),
+  });
+  return {
+    receiveKeyId: storedKey.keyId,
+    receivePublicKeyBase64Url: storedKey.publicKeyBase64Url,
+    ownerTagHex: storedKey.ownerTagHex,
+    diversifierHex: storedKey.diversifierHex,
+  };
 };
 
 const normalizeLaneId = (laneId: number) => {
@@ -1554,12 +1791,20 @@ const writeConfidentialWalletShadowState = (
   key: string,
   state: PendingConfidentialWalletShadowState,
 ) => {
+  const dedupedTransactions = new Map<
+    string,
+    PendingConfidentialWalletShadowTransaction
+  >();
+  state.transactions
+    .map(normalizePendingConfidentialWalletShadowTransaction)
+    .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
+      Boolean(entry),
+    )
+    .forEach((entry) => {
+      dedupedTransactions.set(entry.hash, entry);
+    });
   const normalized: PendingConfidentialWalletShadowState = {
-    transactions: state.transactions
-      .map(normalizePendingConfidentialWalletShadowTransaction)
-      .filter((entry): entry is PendingConfidentialWalletShadowTransaction =>
-        Boolean(entry),
-      )
+    transactions: [...dedupedTransactions.values()]
       .sort((left, right) => left.createdAtMs - right.createdAtMs)
       .slice(-128),
   };
@@ -1573,6 +1818,157 @@ const writeConfidentialWalletShadowState = (
   } catch {
     // Ignore storage write failures and keep the in-memory shadow state.
   }
+};
+
+const deriveConfidentialWalletBackupKey = (mnemonic: string, salt: Buffer) => {
+  const normalizedMnemonic = normalizeMnemonicPhrase(mnemonic);
+  if (!normalizedMnemonic) {
+    throw new Error("Backup file is missing a valid recovery phrase.");
+  }
+  return Buffer.from(
+    hkdfSync(
+      "sha256",
+      Buffer.from(normalizedMnemonic, "utf8"),
+      salt,
+      Buffer.from(CONFIDENTIAL_WALLET_BACKUP_KDF_INFO, "utf8"),
+      32,
+    ),
+  );
+};
+
+const encryptConfidentialWalletBackupState = (
+  state: ConfidentialWalletBackupStatePayload,
+  mnemonic: string,
+): ConfidentialWalletBackupStateBoxV2 => {
+  const salt = randomBytes(32);
+  const iv = randomBytes(12);
+  const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = Buffer.from(JSON.stringify(state), "utf8");
+  const ciphertext = Buffer.concat([
+    cipher.update(plaintext),
+    cipher.final(),
+  ]);
+  return {
+    kdf: "HKDF-SHA256",
+    cipher: "AES-256-GCM",
+    saltBase64Url: salt.toString("base64url"),
+    ivBase64Url: iv.toString("base64url"),
+    ciphertextBase64Url: ciphertext.toString("base64url"),
+    authTagBase64Url: cipher.getAuthTag().toString("base64url"),
+  };
+};
+
+const parseConfidentialWalletBackupStatePayload = (
+  value: unknown,
+): ConfidentialWalletBackupStatePayload => {
+  if (!isPlainRecord(value)) {
+    throw new Error("Confidential wallet backup state is invalid.");
+  }
+  return {
+    receiveKeys: Array.isArray(value.receiveKeys)
+      ? value.receiveKeys
+          .map((entry) => {
+            if (!isPlainRecord(entry)) {
+              return null;
+            }
+            const keyId = trimString(entry.keyId);
+            const ownerTagHex = trimString(entry.ownerTagHex).toLowerCase();
+            const diversifierHex = trimString(entry.diversifierHex).toLowerCase();
+            const publicKeyBase64Url = normalizeBase64UrlString(
+              entry.publicKeyBase64Url,
+              "confidentialWallet.receiveKeys.publicKeyBase64Url",
+            );
+            const privateKeyBase64Url = normalizeBase64UrlString(
+              entry.privateKeyBase64Url,
+              "confidentialWallet.receiveKeys.privateKeyBase64Url",
+            );
+            const createdAtMs = Number(entry.createdAtMs ?? Date.now());
+            if (
+              !/^[A-Za-z0-9_-]{8,128}$/.test(keyId) ||
+              !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
+              !/^[0-9a-f]{64}$/.test(diversifierHex)
+            ) {
+              return null;
+            }
+            return {
+              keyId,
+              ownerTagHex,
+              diversifierHex,
+              publicKeyBase64Url,
+              privateKeyBase64Url,
+              createdAtMs:
+                Number.isFinite(createdAtMs) && createdAtMs >= 0
+                  ? Math.trunc(createdAtMs)
+                  : Date.now(),
+            };
+          })
+          .filter(
+            (
+              entry,
+            ): entry is ConfidentialWalletBackupStatePayload["receiveKeys"][number] =>
+              Boolean(entry),
+          )
+      : [],
+    shadowTransactions: Array.isArray(value.shadowTransactions)
+      ? value.shadowTransactions
+          .map(normalizePendingConfidentialWalletShadowTransaction)
+          .filter(
+            (
+              entry,
+            ): entry is PendingConfidentialWalletShadowTransaction =>
+              Boolean(entry),
+          )
+      : [],
+  };
+};
+
+const decryptConfidentialWalletBackupState = (
+  stateBox: ConfidentialWalletBackupStateBoxV2,
+  mnemonic: string,
+): ConfidentialWalletBackupStatePayload => {
+  const salt = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.saltBase64Url,
+      "confidentialWallet.stateBox.saltBase64Url",
+    ),
+    "base64url",
+  );
+  const iv = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.ivBase64Url,
+      "confidentialWallet.stateBox.ivBase64Url",
+    ),
+    "base64url",
+  );
+  const ciphertext = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.ciphertextBase64Url,
+      "confidentialWallet.stateBox.ciphertextBase64Url",
+    ),
+    "base64url",
+  );
+  const authTag = Buffer.from(
+    normalizeBase64UrlString(
+      stateBox.authTagBase64Url,
+      "confidentialWallet.stateBox.authTagBase64Url",
+    ),
+    "base64url",
+  );
+  const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+  const plaintext = Buffer.concat([
+    decipher.update(ciphertext),
+    decipher.final(),
+  ]).toString("utf8");
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(plaintext);
+  } catch {
+    throw new Error("Confidential wallet backup could not be decrypted.");
+  }
+  return parseConfidentialWalletBackupStatePayload(parsed);
 };
 
 const upsertConfidentialWalletShadowTransaction = (input: {
@@ -2364,6 +2760,36 @@ const buildNexusEndpoint = (
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
 };
 
+const fetchExplorerAssetDefinitionSnapshot = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => {
+  const endpoint = buildNexusEndpoint(
+    toriiUrlRaw,
+    `/v1/explorer/asset-definitions/${encodeURIComponent(assetDefinitionId)}/snapshot`,
+  );
+  const payload = await fetchJson(
+    endpoint,
+    "Explorer asset definition snapshot",
+  );
+  return normalizeExplorerAssetDefinitionSnapshotPayload(payload);
+};
+
+const fetchExplorerAssetDefinitionEconometrics = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) => {
+  const endpoint = buildNexusEndpoint(
+    toriiUrlRaw,
+    `/v1/explorer/asset-definitions/${encodeURIComponent(assetDefinitionId)}/econometrics`,
+  );
+  const payload = await fetchJson(
+    endpoint,
+    "Explorer asset definition econometrics",
+  );
+  return normalizeExplorerAssetDefinitionEconometricsPayload(payload);
+};
+
 const extractTransactionRecordStatus = (payload: unknown): string | null => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return null;
@@ -2663,7 +3089,11 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
     input.accountId,
     "accountId",
   );
-  const normalizedPrivateKeyHex = trimString(input.privateKeyHex);
+  const normalizedPrivateKeyHex =
+    (await resolveOptionalPrivateKeyHex({
+      accountId: normalizedAccountId,
+      privateKeyHex: input.privateKeyHex,
+    })) ?? "";
   let canonicalAuth = normalizedPrivateKeyHex
     ? {
         accountId: normalizedAccountId,
@@ -3245,13 +3675,18 @@ const resolveConfidentialAssetBalance = async (input: {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
   assetDefinitionId: string;
 }): Promise<ConfidentialAssetBalanceResponse> => {
+  const decryptionContext = await resolveConfidentialWalletDecryptionContext({
+    accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Confidential balance lookup",
+  });
   const { requestedAssetDefinitionId, resolvedAssetDefinitionId } =
     await fetchConfidentialAssetPolicyForAccount({
       toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
+      accountId: decryptionContext.accountId,
       assetDefinitionId: input.assetDefinitionId,
     });
   const resolvedAssetId = resolvedAssetDefinitionId;
@@ -3267,8 +3702,8 @@ const resolveConfidentialAssetBalance = async (input: {
     noteIndexTransactions ??
     (await hydrateAccountTransactionsWithExplorerDetails({
       toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
+      accountId: decryptionContext.accountId,
+      privateKeyHex: decryptionContext.privateKeyHex,
     }));
   const scanSource =
     noteIndexTransactions === null
@@ -3276,13 +3711,14 @@ const resolveConfidentialAssetBalance = async (input: {
       : "global-note-index";
   const displayTransactions = mergeConfidentialWalletShadowTransactions({
     toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
+    accountId: decryptionContext.accountId,
     transactions: committedTransactions as WalletConfidentialTransactionLike[],
   });
   const ledger = collectWalletConfidentialLedger(displayTransactions, {
-    privateKeyHex: input.privateKeyHex,
+    privateKeyHex: decryptionContext.privateKeyHex,
     chainId: input.chainId,
     assetDefinitionIds: trackedAssetIds,
+    receiveKeys: decryptionContext.receiveKeys,
     markUnrecognizedTransfersInexact: noteIndexTransactions === null,
   });
   const scanWatermarkBlock = displayTransactions.reduce<number | null>(
@@ -3303,18 +3739,25 @@ const resolveConfidentialAssetBalance = async (input: {
       ? deriveOnChainShieldedBalance(committedTransactions, {
           assetDefinitionIds: trackedAssetIds,
           accountIds: [
-            input.accountId,
-            normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
-            normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
+            decryptionContext.accountId,
+            normalizeCanonicalAccountIdLiteral(
+              decryptionContext.accountId,
+              "accountId",
+            ),
+            normalizeCompatAccountIdLiteral(
+              decryptionContext.accountId,
+              "accountId",
+            ),
           ],
         })
       : (() => {
           const committedLedger = collectWalletConfidentialLedger(
             committedTransactions as WalletConfidentialTransactionLike[],
             {
-              privateKeyHex: input.privateKeyHex,
+              privateKeyHex: decryptionContext.privateKeyHex,
               chainId: input.chainId,
               assetDefinitionIds: trackedAssetIds,
+              receiveKeys: decryptionContext.receiveKeys,
               markUnrecognizedTransfersInexact: false,
             },
           );
@@ -3345,11 +3788,20 @@ const resolveConfidentialTransferMaterials = async (input: {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
   assetDefinitionId: string;
 }) => {
+  const decryptionContext = await resolveConfidentialWalletDecryptionContext({
+    accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Shielded transfer",
+  });
   const client = getClient(input.toriiUrl);
-  const balance = await resolveConfidentialAssetBalance(input);
+  const balance = await resolveConfidentialAssetBalance({
+    ...input,
+    accountId: decryptionContext.accountId,
+    privateKeyHex: decryptionContext.privateKeyHex,
+  });
   const trackedAssetIds = resolveTrackedConfidentialAssetIds({
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId: balance.resolvedAssetId,
@@ -3369,9 +3821,10 @@ const resolveConfidentialTransferMaterials = async (input: {
     );
   }
   const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
-    privateKeyHex: input.privateKeyHex,
+    privateKeyHex: decryptionContext.privateKeyHex,
     chainId: input.chainId,
     assetDefinitionIds: trackedAssetIds,
+    receiveKeys: decryptionContext.receiveKeys,
     markUnrecognizedTransfersInexact: false,
   });
   const vkTransferRef = readConfidentialVkTransferRef(assetDefinition);
@@ -3393,11 +3846,20 @@ const resolveConfidentialUnshieldMaterials = async (input: {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
   assetDefinitionId: string;
 }) => {
+  const decryptionContext = await resolveConfidentialWalletDecryptionContext({
+    accountId: input.accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Confidential public exit",
+  });
   const client = getClient(input.toriiUrl);
-  const balance = await resolveConfidentialAssetBalance(input);
+  const balance = await resolveConfidentialAssetBalance({
+    ...input,
+    accountId: decryptionContext.accountId,
+    privateKeyHex: decryptionContext.privateKeyHex,
+  });
   const trackedAssetIds = resolveTrackedConfidentialAssetIds({
     requestedAssetDefinitionId: input.assetDefinitionId,
     resolvedAssetId: balance.resolvedAssetId,
@@ -3420,9 +3882,10 @@ const resolveConfidentialUnshieldMaterials = async (input: {
     throw new Error("Confidential unshield is not enabled for this asset.");
   }
   const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
-    privateKeyHex: input.privateKeyHex,
+    privateKeyHex: decryptionContext.privateKeyHex,
     chainId: input.chainId,
     assetDefinitionIds: trackedAssetIds,
+    receiveKeys: decryptionContext.receiveKeys,
     markUnrecognizedTransfersInexact: false,
   });
   const vkUnshieldRef = readConfidentialVkUnshieldRef(assetDefinition);
@@ -3502,7 +3965,7 @@ const submitConfidentialSelfConsolidation = async (input: {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
   assetDefinitionId: string;
   notes: Array<WalletSpendableConfidentialNote>;
 }) => {
@@ -3516,9 +3979,16 @@ const submitConfidentialSelfConsolidation = async (input: {
     privateKeyHex: input.privateKeyHex,
     assetDefinitionId: input.assetDefinitionId,
   });
-  const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
-  const receiveAddress = deriveWalletConfidentialReceiveAddress({
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId: input.accountId,
     privateKeyHex: input.privateKeyHex,
+    operationLabel: "Confidential consolidation",
+  });
+  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
+  const receiveDescriptor = await createStoredConfidentialReceiveDescriptor({
+    accountId: input.accountId,
+    privateKeyHex,
+    operationLabel: "Confidential consolidation",
   });
   const totalAmount = input.notes
     .reduce((sum, note) => sum + BigInt(note.amount), 0n)
@@ -3527,10 +3997,11 @@ const submitConfidentialSelfConsolidation = async (input: {
     note: createWalletConfidentialNote({
       assetDefinitionId: materials.resolvedAssetId,
       amount: totalAmount,
-      ownerTagHex: receiveAddress.ownerTagHex,
-      diversifierHex: receiveAddress.diversifierHex,
+      ownerTagHex: receiveDescriptor.ownerTagHex,
+      diversifierHex: receiveDescriptor.diversifierHex,
     }),
-    recipientAccountId: input.accountId,
+    receiveKeyId: receiveDescriptor.receiveKeyId,
+    recipientPublicKeyBase64Url: receiveDescriptor.receivePublicKeyBase64Url,
   };
   const verifyingKeyContext = readConfidentialVerifyingKeyContext(
     materials.verifyingKey,
@@ -3556,7 +4027,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     rootHintHex: materials.latestRootHex,
     verifyingKey: verifyingKeyContext.proofVerifyingKey,
   });
-  const metadata = buildWalletConfidentialMetadata({
+  const metadata = buildWalletConfidentialMetadataV3({
     outputs: [output],
   });
   const tx = buildZkTransferTransaction({
@@ -3849,7 +4320,7 @@ const submitInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
   authorityAccountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
   instruction: Record<string, unknown>;
 }) => {
   const chainId = input.chainId.trim();
@@ -3860,11 +4331,16 @@ const submitInstructionTransaction = async (input: {
     input.authorityAccountId,
     "authorityAccountId",
   );
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId: authority,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Transaction submission",
+  });
   const tx = buildTransaction({
     chainId,
     authority,
     instructions: [input.instruction],
-    privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
+    privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
     input.toriiUrl,
@@ -4052,6 +4528,69 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
   };
 };
 
+const readShieldedRecipientDescriptor = (
+  input: TransferAssetInput,
+): {
+  ownerTagHex: string;
+  diversifierHex: string;
+  receiveKeyId: string;
+  receivePublicKeyBase64Url: string;
+} | null => {
+  const nestedRecipient = isPlainRecord(input.shieldedRecipient)
+    ? input.shieldedRecipient
+    : null;
+  const receiveKeyId = trimString(
+    nestedRecipient?.receiveKeyId ?? input.shieldedReceiveKeyId,
+  );
+  const receivePublicKeyBase64Url = trimString(
+    nestedRecipient?.receivePublicKeyBase64Url ??
+      input.shieldedReceivePublicKeyBase64Url,
+  );
+  const ownerTagHex = trimString(
+    nestedRecipient?.ownerTagHex ?? input.shieldedOwnerTagHex,
+  ).toLowerCase();
+  const diversifierHex = trimString(
+    nestedRecipient?.diversifierHex ?? input.shieldedDiversifierHex,
+  ).toLowerCase();
+  if (
+    !receiveKeyId &&
+    !receivePublicKeyBase64Url &&
+    !ownerTagHex &&
+    !diversifierHex
+  ) {
+    return null;
+  }
+  if (!/^[0-9a-f]{64}$/.test(ownerTagHex)) {
+    throw new Error(
+      "Shielded recipient QR is missing a valid owner tag. Ask the recipient to refresh their Receive QR code.",
+    );
+  }
+  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
+    throw new Error(
+      "Shielded recipient QR is missing a valid diversifier. Ask the recipient to refresh their Receive QR code.",
+    );
+  }
+  if (!receiveKeyId || !receivePublicKeyBase64Url) {
+    throw new Error(
+      "Shielded recipient QR is missing its receive key. Ask the recipient to refresh their Receive QR code.",
+    );
+  }
+  if (!/^[A-Za-z0-9_-]{8,128}$/.test(receiveKeyId)) {
+    throw new Error("Shielded recipient receive key id is invalid.");
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(receivePublicKeyBase64Url)) {
+    throw new Error(
+      "Shielded recipient QR is missing a valid receive public key.",
+    );
+  }
+  return {
+    receiveKeyId,
+    receivePublicKeyBase64Url,
+    ownerTagHex,
+    diversifierHex,
+  };
+};
+
 const api: IrohaBridge = {
   async ping(config) {
     const client = getClient(config.toriiUrl);
@@ -4066,6 +4605,22 @@ const api: IrohaBridge = {
   },
   generateKaigiSignalKeyPair() {
     return generateKaigiX25519KeyPair();
+  },
+  async isSecureVaultAvailable() {
+    return await isSecureVaultAvailable();
+  },
+  async storeAccountSecret({ accountId, privateKeyHex }) {
+    await storeAccountSecretInVault({
+      accountId: normalizeCompatAccountIdLiteral(accountId, "accountId"),
+      privateKeyHex,
+    });
+  },
+  async listAccountSecretFlags({ accountIds }) {
+    return await listAccountSecretFlagsFromVault(
+      (Array.isArray(accountIds) ? accountIds : []).map((accountId) =>
+        normalizeCompatAccountIdLiteral(accountId, "accountId"),
+      ),
+    );
   },
   deriveAccountAddress({ domain, publicKeyHex, networkPrefix }) {
     return deriveAccountAddressView({ domain, publicKeyHex, networkPrefix });
@@ -4084,17 +4639,151 @@ const api: IrohaBridge = {
   deriveConfidentialReceiveAddress(privateKeyHex) {
     return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
   },
+  async createConfidentialPaymentAddress({ accountId, privateKeyHex }) {
+    await assertSecureVaultAvailable("Confidential payment address creation");
+    const descriptor = await createStoredConfidentialReceiveDescriptor({
+      accountId,
+      privateKeyHex,
+      operationLabel: "Confidential payment address creation",
+    });
+    return {
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: descriptor.receiveKeyId,
+      receivePublicKeyBase64Url: descriptor.receivePublicKeyBase64Url,
+      shieldedOwnerTagHex: descriptor.ownerTagHex,
+      shieldedDiversifierHex: descriptor.diversifierHex,
+      recoveryHint: "one-time-receive-key",
+    };
+  },
+  async exportConfidentialWalletBackup({
+    toriiUrl,
+    chainId,
+    accountId,
+    mnemonic,
+  }) {
+    await assertSecureVaultAvailable("Confidential wallet backup export");
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    const normalizedChainId = trimString(chainId);
+    if (!normalizedChainId) {
+      throw new Error("chainId is required.");
+    }
+    const receiveKeys = await listConfidentialReceiveKeysForAccount(
+      normalizedAccountId,
+    );
+    const shadowState = readConfidentialWalletShadowState(
+      getConfidentialWalletShadowKey({
+        toriiUrl,
+        accountId: normalizedAccountId,
+      }),
+    );
+    const accountTransactions = await listAllAccountTransactions({
+      toriiUrl,
+      accountId: normalizedAccountId,
+    }).catch(() => [] as Array<Record<string, unknown>>);
+    const scanWatermarkBlock = accountTransactions.reduce<number | null>(
+      (highest, transaction) => {
+        const block = Number(transaction.block);
+        if (!Number.isFinite(block) || block < 0) {
+          return highest;
+        }
+        const normalizedBlock = Math.trunc(block);
+        return highest === null || normalizedBlock > highest
+          ? normalizedBlock
+          : highest;
+      },
+      null,
+    );
+    return {
+      schema: CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
+      chainId: normalizedChainId,
+      accountId: normalizedAccountId,
+      scanWatermarkBlock,
+      stateBox: encryptConfidentialWalletBackupState(
+        {
+          receiveKeys: receiveKeys.map((record) => ({
+            keyId: record.keyId,
+            ownerTagHex: record.ownerTagHex,
+            diversifierHex: record.diversifierHex,
+            publicKeyBase64Url: record.publicKeyBase64Url,
+            privateKeyBase64Url: record.privateKeyBase64Url,
+            createdAtMs: record.createdAtMs,
+          })),
+          shadowTransactions: shadowState.transactions,
+        },
+        mnemonic,
+      ),
+    };
+  },
+  async importConfidentialWalletBackup({
+    toriiUrl,
+    accountId,
+    mnemonic,
+    confidentialWallet,
+  }) {
+    if (!confidentialWallet) {
+      return;
+    }
+    if (
+      confidentialWallet.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2
+    ) {
+      return;
+    }
+    await assertSecureVaultAvailable("Confidential wallet backup restore");
+    const normalizedAccountId = normalizeCompatAccountIdLiteral(
+      accountId,
+      "accountId",
+    );
+    const backupAccountId = normalizeCompatAccountIdLiteral(
+      confidentialWallet.accountId,
+      "confidentialWallet.accountId",
+    );
+    if (backupAccountId !== normalizedAccountId) {
+      throw new Error(
+        "Confidential wallet backup does not match the restored account.",
+      );
+    }
+    const decryptedState = decryptConfidentialWalletBackupState(
+      confidentialWallet.stateBox,
+      mnemonic,
+    );
+    for (const receiveKey of decryptedState.receiveKeys) {
+      await storeConfidentialReceiveKeyInVault({
+        ...receiveKey,
+        accountId: normalizedAccountId,
+      });
+    }
+    const shadowKey = getConfidentialWalletShadowKey({
+      toriiUrl,
+      accountId: normalizedAccountId,
+    });
+    const existingShadowState = readConfidentialWalletShadowState(shadowKey);
+    writeConfidentialWalletShadowState(shadowKey, {
+      transactions: [
+        ...existingShadowState.transactions,
+        ...decryptedState.shadowTransactions,
+      ],
+    });
+  },
   async registerAccount(input) {
     const domainId = input.domainId.trim();
     if (!domainId) {
       throw new Error("domainId is required.");
     }
+    const authorityAccountId = normalizeCompatAccountIdLiteral(
+      input.authorityAccountId,
+      "authorityAccountId",
+    );
+    const authorityPrivateKeyHex = await resolvePrivateKeyHex({
+      accountId: authorityAccountId,
+      privateKeyHex: input.authorityPrivateKeyHex,
+      operationLabel: "Create on-chain account",
+    });
     const tx = buildRegisterAccountAndTransferTransaction({
       chainId: input.chainId,
-      authority: normalizeCompatAccountIdLiteral(
-        input.authorityAccountId,
-        "authorityAccountId",
-      ),
+      authority: authorityAccountId,
       account: {
         accountId: normalizeCompatAccountIdLiteral(
           input.accountId,
@@ -4103,10 +4792,7 @@ const api: IrohaBridge = {
         domainId,
         metadata: input.metadata ?? {},
       },
-      privateKey: hexToBuffer(
-        input.authorityPrivateKeyHex,
-        "authorityPrivateKeyHex",
-      ),
+      privateKey: hexToBuffer(authorityPrivateKeyHex, "authorityPrivateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       input.toriiUrl,
@@ -4119,12 +4805,28 @@ const api: IrohaBridge = {
       input.accountId,
       "accountId",
     );
-    const destinationAccountId = normalizeCompatAccountIdLiteral(
-      input.destinationAccountId,
-      "destinationAccountId",
-    );
+    const destinationAccountIdLiteral = trimString(input.destinationAccountId);
+    const destinationAccountId = destinationAccountIdLiteral
+      ? normalizeCompatAccountIdLiteral(
+          destinationAccountIdLiteral,
+          "destinationAccountId",
+        )
+      : "";
+    const privateKeyHex = await resolvePrivateKeyHex({
+      accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: input.unshield
+        ? "Confidential public exit"
+        : input.shielded
+          ? "Shielded transfer"
+          : "Transfer",
+    });
 
     if (input.unshield) {
+      await assertSecureVaultAvailable("Confidential public exit");
+      if (!destinationAccountId) {
+        throw new Error("destinationAccountId is required.");
+      }
       const { policy, resolvedAssetDefinitionId } =
         await fetchConfidentialAssetPolicyForAccount({
           toriiUrl: input.toriiUrl,
@@ -4151,12 +4853,12 @@ const api: IrohaBridge = {
           "Unshield amount must be a whole number greater than zero (base units).",
         );
       }
-      const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
+      const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
       const materials = await resolveConfidentialUnshieldMaterials({
         toriiUrl: input.toriiUrl,
         chainId: input.chainId,
         accountId,
-        privateKeyHex: input.privateKeyHex,
+        privateKeyHex,
         assetDefinitionId: resolvedAssetId,
       });
       if (
@@ -4166,9 +4868,6 @@ const api: IrohaBridge = {
           `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${normalizedAmount} is required. Create a fresh shielded balance with this wallet first.`,
         );
       }
-      const senderOwnerTagHex = deriveWalletConfidentialOwnerTagHex({
-        privateKeyHex: input.privateKeyHex,
-      });
       let refreshedMaterials = materials;
       let verifyingKeyContext = readConfidentialVerifyingKeyContext(
         refreshedMaterials.verifyingKey,
@@ -4185,7 +4884,7 @@ const api: IrohaBridge = {
           toriiUrl: input.toriiUrl,
           chainId: input.chainId,
           accountId,
-          privateKeyHex: input.privateKeyHex,
+          privateKeyHex,
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
           notes: candidateSelection.selected.slice(
             0,
@@ -4194,7 +4893,7 @@ const api: IrohaBridge = {
         });
         const leafIndex = refreshedMaterials.ledger.treeCommitmentsHex.length;
         const nullifierHex = deriveWalletConfidentialNullifierHex({
-          privateKeyHex: input.privateKeyHex,
+          privateKeyHex,
           assetDefinitionId: consolidation.output.note.asset_definition_id,
           chainId: input.chainId,
           rhoHex: consolidation.output.note.rho_hex,
@@ -4234,7 +4933,8 @@ const api: IrohaBridge = {
       let selectedNotes: WalletSpendableConfidentialNote[];
       let changeOutputs: Array<{
         note: ReturnType<typeof createWalletConfidentialNote>;
-        recipientAccountId: string;
+        receiveKeyId: string;
+        recipientPublicKeyBase64Url: string;
       }> = [];
       let proofEnvelope:
         | ReturnType<typeof buildConfidentialUnshieldProofV2>
@@ -4274,14 +4974,23 @@ const api: IrohaBridge = {
         }
         selectedNotes = selection.selected;
         if (selection.change !== "0") {
+          const changeDescriptor =
+            await createStoredConfidentialReceiveDescriptor({
+              accountId,
+              privateKeyHex,
+              operationLabel: "Confidential public exit",
+            });
           changeOutputs = [
             {
               note: createWalletConfidentialNote({
                 assetDefinitionId: refreshedMaterials.resolvedAssetId,
                 amount: selection.change,
-                ownerTagHex: senderOwnerTagHex,
+                ownerTagHex: changeDescriptor.ownerTagHex,
+                diversifierHex: changeDescriptor.diversifierHex,
               }),
-              recipientAccountId: accountId,
+              receiveKeyId: changeDescriptor.receiveKeyId,
+              recipientPublicKeyBase64Url:
+                changeDescriptor.receivePublicKeyBase64Url,
             },
           ];
         }
@@ -4311,11 +5020,17 @@ const api: IrohaBridge = {
       }
       const metadata =
         changeOutputs.length > 0
-          ? buildWalletConfidentialMetadata({
-              baseMetadata: input.metadata,
+          ? buildWalletConfidentialMetadataV3({
+              baseMetadata: assertNoConfidentialPublicMetadata(
+                input.metadata,
+                "Confidential public exit",
+              ),
               outputs: changeOutputs,
             })
-          : (input.metadata ?? null);
+          : assertNoConfidentialPublicMetadata(
+              input.metadata,
+              "Confidential public exit",
+            );
       const tx = buildUnshieldTransaction({
         chainId: input.chainId,
         authority: accountId,
@@ -4375,6 +5090,11 @@ const api: IrohaBridge = {
     }
 
     if (input.shielded) {
+      await assertSecureVaultAvailable(
+        destinationAccountId === accountId
+          ? "Private balance creation"
+          : "Shielded transfer",
+      );
       const { policy, resolvedAssetDefinitionId } =
         await fetchConfidentialAssetPolicyForAccount({
           toriiUrl: input.toriiUrl,
@@ -4395,24 +5115,37 @@ const api: IrohaBridge = {
         );
       }
 
-      const privateKey = hexToBuffer(input.privateKeyHex, "privateKeyHex");
-      const senderReceiveAddress = deriveWalletConfidentialReceiveAddress({
-        privateKeyHex: input.privateKeyHex,
-      });
-      const confidentialBaseMetadata = stripConfidentialPublicMetadata(
+      const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
+      const confidentialBaseMetadata = assertNoConfidentialPublicMetadata(
         input.metadata,
+        destinationAccountId === accountId
+          ? "Private balance creation"
+          : "Shielded transfer",
       );
 
       if (destinationAccountId === accountId) {
+        const selfReceiveDescriptor =
+          await createStoredConfidentialReceiveDescriptor({
+            accountId,
+            privateKeyHex,
+            operationLabel: "Private balance creation",
+          });
         const note = createWalletConfidentialNote({
           assetDefinitionId: resolvedAssetId,
           amount: normalizedAmount,
-          ownerTagHex: senderReceiveAddress.ownerTagHex,
-          diversifierHex: senderReceiveAddress.diversifierHex,
+          ownerTagHex: selfReceiveDescriptor.ownerTagHex,
+          diversifierHex: selfReceiveDescriptor.diversifierHex,
         });
-        const metadata = buildWalletConfidentialMetadata({
+        const metadata = buildWalletConfidentialMetadataV3({
           baseMetadata: confidentialBaseMetadata,
-          outputs: [{ note, recipientAccountId: accountId }],
+          outputs: [
+            {
+              note,
+              receiveKeyId: selfReceiveDescriptor.receiveKeyId,
+              recipientPublicKeyBase64Url:
+                selfReceiveDescriptor.receivePublicKeyBase64Url,
+            },
+          ],
         });
         const tx = buildShieldTransaction({
           chainId: input.chainId,
@@ -4484,28 +5217,19 @@ const api: IrohaBridge = {
         toriiUrl: input.toriiUrl,
         chainId: input.chainId,
         accountId,
-        privateKeyHex: input.privateKeyHex,
+        privateKeyHex,
         assetDefinitionId: resolvedAssetId,
       });
-      const recipientOwnerTagHex = trimString(
-        input.shieldedOwnerTagHex,
-      ).toLowerCase();
-      const recipientDiversifierHex = trimString(
-        input.shieldedDiversifierHex,
-      ).toLowerCase();
-      if (!/^[0-9a-f]{64}$/.test(recipientOwnerTagHex)) {
+      const recipientDescriptor = readShieldedRecipientDescriptor(input);
+      if (!recipientDescriptor) {
         throw new Error(
-          "Shielded recipient QR is missing a valid owner tag. Ask the recipient to refresh their Receive QR code.",
-        );
-      }
-      if (!/^[0-9a-f]{64}$/.test(recipientDiversifierHex)) {
-        throw new Error(
-          "Shielded recipient QR is missing a valid diversifier. Ask the recipient to refresh their Receive QR code.",
+          "Shielded recipient QR is required for private recipient sends.",
         );
       }
       let orderedOutputs: Array<{
         note: ReturnType<typeof createWalletConfidentialNote>;
-        recipientAccountId: string;
+        receiveKeyId: string;
+        recipientPublicKeyBase64Url: string;
       }> = [];
       let proofEnvelope!: ReturnType<typeof buildConfidentialTransferProofV2>;
       let selectedRootHintHex = materials.latestRootHex;
@@ -4525,29 +5249,40 @@ const api: IrohaBridge = {
           materials.ledger.notes,
           normalizedAmount,
         );
-        const outputs = [
+        const outputs: Array<{
+          note: ReturnType<typeof createWalletConfidentialNote>;
+          receiveKeyId: string;
+          recipientPublicKeyBase64Url: string;
+        }> = [
           {
             note: createWalletConfidentialNote({
               assetDefinitionId: materials.resolvedAssetId,
               amount: normalizedAmount,
-              ownerTagHex: recipientOwnerTagHex,
-              diversifierHex: recipientDiversifierHex,
+              ownerTagHex: recipientDescriptor.ownerTagHex,
+              diversifierHex: recipientDescriptor.diversifierHex,
             }),
-            recipientAccountId: destinationAccountId,
+            receiveKeyId: recipientDescriptor.receiveKeyId,
+            recipientPublicKeyBase64Url:
+              recipientDescriptor.receivePublicKeyBase64Url,
           },
         ];
         if (selection.change !== "0") {
-          const changeReceiveAddress = deriveWalletConfidentialReceiveAddress({
-            privateKeyHex: input.privateKeyHex,
-          });
+          const changeDescriptor =
+            await createStoredConfidentialReceiveDescriptor({
+              accountId,
+              privateKeyHex,
+              operationLabel: "Shielded transfer",
+            });
           outputs.push({
             note: createWalletConfidentialNote({
               assetDefinitionId: materials.resolvedAssetId,
               amount: selection.change,
-              ownerTagHex: changeReceiveAddress.ownerTagHex,
-              diversifierHex: changeReceiveAddress.diversifierHex,
+              ownerTagHex: changeDescriptor.ownerTagHex,
+              diversifierHex: changeDescriptor.diversifierHex,
             }),
-            recipientAccountId: accountId,
+            receiveKeyId: changeDescriptor.receiveKeyId,
+            recipientPublicKeyBase64Url:
+              changeDescriptor.receivePublicKeyBase64Url,
           });
         }
         orderedOutputs = [...outputs].sort((left, right) =>
@@ -4615,7 +5350,7 @@ const api: IrohaBridge = {
             toriiUrl: input.toriiUrl,
             chainId: input.chainId,
             accountId,
-            privateKeyHex: input.privateKeyHex,
+            privateKeyHex,
             assetDefinitionId: resolvedAssetId,
           });
         } catch (error) {
@@ -4627,7 +5362,7 @@ const api: IrohaBridge = {
           }
         }
       }
-      const metadata = buildWalletConfidentialMetadata({
+      const metadata = buildWalletConfidentialMetadataV3({
         baseMetadata: confidentialBaseMetadata,
         outputs: orderedOutputs,
       });
@@ -4686,7 +5421,7 @@ const api: IrohaBridge = {
           Date.now(),
         ),
       });
-      if (destinationAccountId !== accountId) {
+      if (destinationAccountId && destinationAccountId !== accountId) {
         upsertConfidentialWalletShadowTransaction({
           toriiUrl: input.toriiUrl,
           accountId: destinationAccountId,
@@ -4704,6 +5439,9 @@ const api: IrohaBridge = {
     }
 
     const client = getClient(input.toriiUrl);
+    if (!destinationAccountId) {
+      throw new Error("destinationAccountId is required.");
+    }
     const configuredAssetId = String(input.assetDefinitionId ?? "").trim();
     if (!configuredAssetId) {
       throw new Error("assetDefinitionId is required.");
@@ -4768,7 +5506,7 @@ const api: IrohaBridge = {
       quantity: input.quantity,
       destinationAccountId,
       metadata: input.metadata ?? null,
-      privateKey: hexToBuffer(input.privateKeyHex, "privateKeyHex"),
+      privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       input.toriiUrl,
@@ -4881,7 +5619,7 @@ const api: IrohaBridge = {
       offset,
     });
   },
-  fetchAccountTransactions({
+  async fetchAccountTransactions({
     toriiUrl,
     accountId,
     privateKeyHex,
@@ -4893,7 +5631,11 @@ const api: IrohaBridge = {
       accountId,
       "accountId",
     );
-    const normalizedPrivateKeyHex = trimString(privateKeyHex);
+    const normalizedPrivateKeyHex =
+      (await resolveOptionalPrivateKeyHex({
+        accountId: normalizedAccountId,
+        privateKeyHex,
+      })) ?? "";
     const canonicalAuth = normalizedPrivateKeyHex
       ? {
           accountId: normalizedAccountId,
@@ -5018,6 +5760,80 @@ const api: IrohaBridge = {
     const client = getClient(config.toriiUrl);
     return client.getExplorerMetrics().catch(() => null);
   },
+  async getNetworkStats({ toriiUrl, assetDefinitionId }) {
+    const client = getClient(toriiUrl);
+    const normalizedAssetDefinitionId =
+      extractAssetDefinitionId(assetDefinitionId).trim() ||
+      trimString(assetDefinitionId);
+    if (!normalizedAssetDefinitionId) {
+      throw new Error("assetDefinitionId is required.");
+    }
+
+    const warnings: string[] = [];
+    const [
+      explorerResult,
+      statusResult,
+      sumeragiResult,
+      supplyResult,
+      econometricsResult,
+    ] = await Promise.allSettled([
+      client.getExplorerMetrics(),
+      client.getStatusSnapshot(),
+      client.getSumeragiStatusTyped(),
+      fetchExplorerAssetDefinitionSnapshot(
+        toriiUrl,
+        normalizedAssetDefinitionId,
+      ),
+      fetchExplorerAssetDefinitionEconometrics(
+        toriiUrl,
+        normalizedAssetDefinitionId,
+      ),
+    ]);
+
+    const explorer =
+      explorerResult.status === "fulfilled" ? explorerResult.value : null;
+    if (explorerResult.status === "rejected") {
+      warnings.push("Explorer metrics are unavailable.");
+    }
+
+    const statusSnapshot =
+      statusResult.status === "fulfilled" ? statusResult.value : null;
+    if (statusResult.status === "rejected") {
+      warnings.push("Runtime status telemetry is unavailable.");
+    }
+
+    const sumeragiStatus =
+      sumeragiResult.status === "fulfilled" ? sumeragiResult.value : null;
+    if (sumeragiResult.status === "rejected") {
+      warnings.push("Lane governance telemetry is unavailable.");
+    }
+
+    const supply =
+      supplyResult.status === "fulfilled" ? supplyResult.value : null;
+    if (supplyResult.status === "rejected") {
+      warnings.push("XOR supply snapshot is unavailable.");
+    }
+
+    const econometrics =
+      econometricsResult.status === "fulfilled"
+        ? econometricsResult.value
+        : null;
+    if (econometricsResult.status === "rejected") {
+      warnings.push("XOR flow econometrics are unavailable.");
+    }
+
+    return {
+      collectedAtMs: Date.now(),
+      xorAssetDefinitionId: normalizedAssetDefinitionId,
+      explorer,
+      supply,
+      econometrics,
+      runtime: extractRuntimeStatsFromStatusSnapshot(statusSnapshot, explorer),
+      governance: extractGovernanceStats(sumeragiStatus),
+      warnings,
+      partial: warnings.length > 0,
+    };
+  },
   async getExplorerAccountQr({ toriiUrl, accountId }) {
     const client = getClient(toriiUrl);
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
@@ -5059,20 +5875,66 @@ const api: IrohaBridge = {
   getVpnProfile(input) {
     return ipcRenderer.invoke("vpn:getProfile", input);
   },
-  getVpnStatus(input) {
-    return ipcRenderer.invoke("vpn:getStatus", input);
+  async getVpnStatus(input) {
+    if (!input?.accountId) {
+      return await ipcRenderer.invoke("vpn:getStatus", input);
+    }
+    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+    });
+    return await ipcRenderer.invoke("vpn:getStatus", {
+      ...input,
+      ...(privateKeyHex ? { privateKeyHex } : {}),
+    });
   },
-  connectVpn(input) {
-    return ipcRenderer.invoke("vpn:connect", input);
+  async connectVpn(input) {
+    const privateKeyHex = await resolvePrivateKeyHex({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: "VPN connect",
+    });
+    return await ipcRenderer.invoke("vpn:connect", {
+      ...input,
+      privateKeyHex,
+    });
   },
-  disconnectVpn(input) {
-    return ipcRenderer.invoke("vpn:disconnect", input);
+  async disconnectVpn(input) {
+    const privateKeyHex = await resolvePrivateKeyHex({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: "VPN disconnect",
+    });
+    return await ipcRenderer.invoke("vpn:disconnect", {
+      ...input,
+      privateKeyHex,
+    });
   },
-  repairVpn(input) {
-    return ipcRenderer.invoke("vpn:repair", input);
+  async repairVpn(input) {
+    if (!input?.accountId) {
+      return await ipcRenderer.invoke("vpn:repair", input);
+    }
+    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+    });
+    return await ipcRenderer.invoke("vpn:repair", {
+      ...input,
+      ...(privateKeyHex ? { privateKeyHex } : {}),
+    });
   },
-  listVpnReceipts(input) {
-    return ipcRenderer.invoke("vpn:listReceipts", input);
+  async listVpnReceipts(input) {
+    if (!input?.accountId) {
+      return await ipcRenderer.invoke("vpn:listReceipts", input);
+    }
+    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+    });
+    return await ipcRenderer.invoke("vpn:listReceipts", {
+      ...input,
+      ...(privateKeyHex ? { privateKeyHex } : {}),
+    });
   },
   listOfflineAllowances({
     toriiUrl,
@@ -5284,6 +6146,11 @@ const api: IrohaBridge = {
       hostAccountId,
       "hostAccountId",
     );
+    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+      accountId: authority,
+      privateKeyHex,
+      operationLabel: "Kaigi meeting creation",
+    });
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const normalizedScheduledStartMs = normalizeTimestampMs(
       scheduledStartMs,
@@ -5328,7 +6195,7 @@ const api: IrohaBridge = {
             seed: deriveKaigiHostActionSeed({
               callId: normalizedCallId,
               hostAccountId: authority,
-              privateKeyHex,
+              privateKeyHex: resolvedPrivateKeyHex,
             }),
           })
         : null;
@@ -5423,7 +6290,7 @@ const api: IrohaBridge = {
         relayManifest: resolvedRelayManifest,
         metadata: callMetadata,
       },
-      privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+      privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,
@@ -5458,6 +6325,11 @@ const api: IrohaBridge = {
       participantAccountId,
       "participantAccountId",
     );
+    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+      accountId: authority,
+      privateKeyHex,
+      operationLabel: "Kaigi meeting join",
+    });
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
     const createdAtMs = Date.now();
@@ -5504,7 +6376,7 @@ const api: IrohaBridge = {
         seed: deriveKaigiRosterJoinSeed({
           callId: normalizedCallId,
           participantAccountId: authority,
-          privateKeyHex,
+          privateKeyHex: resolvedPrivateKeyHex,
         }),
         rosterRootHex: normalizeKaigiRosterRootHex(
           rosterRootHex,
@@ -5556,7 +6428,7 @@ const api: IrohaBridge = {
         participant: authority,
       },
       metadata,
-      privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+      privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,
@@ -5702,6 +6574,11 @@ const api: IrohaBridge = {
       hostAccountId,
       "hostAccountId",
     );
+    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+      accountId: authority,
+      privateKeyHex,
+      operationLabel: "Kaigi meeting end",
+    });
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const resolvedEndedAtMs =
       endedAtMs === undefined
@@ -5720,7 +6597,7 @@ const api: IrohaBridge = {
             seed: deriveKaigiHostActionSeed({
               callId: normalizedCallId,
               hostAccountId: authority,
-              privateKeyHex,
+              privateKeyHex: resolvedPrivateKeyHex,
             }),
             rosterRootHex: normalizeKaigiRosterRootHex(
               callPayload.roster_root_hex,
@@ -5774,7 +6651,7 @@ const api: IrohaBridge = {
         callId: normalizedCallId,
         endedAtMs: resolvedEndedAtMs,
       },
-      privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+      privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,

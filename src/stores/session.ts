@@ -18,13 +18,15 @@ export type UserProfile = {
   i105AccountId?: string;
   i105DefaultAccountId?: string;
   publicKeyHex: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
+  hasStoredSecret?: boolean;
   localOnly: boolean;
 };
 
 export type AuthorityProfile = {
   accountId: string;
-  privateKeyHex: string;
+  privateKeyHex?: string;
+  hasStoredSecret?: boolean;
 };
 
 export type SessionState = {
@@ -53,6 +55,7 @@ const defaultUser = (): UserProfile => ({
   i105DefaultAccountId: "",
   publicKeyHex: "",
   privateKeyHex: "",
+  hasStoredSecret: false,
   localOnly: false,
 });
 
@@ -62,6 +65,7 @@ const defaultState = (): SessionState => ({
   authority: {
     accountId: "",
     privateKeyHex: "",
+    hasStoredSecret: false,
   },
   accounts: [],
   activeAccountId: null,
@@ -208,9 +212,18 @@ const normalizeUser = (
       trimString(normalized.i105DefaultAccountId),
     publicKeyHex: trimString(normalized.publicKeyHex),
     privateKeyHex: trimString(normalized.privateKeyHex),
+    hasStoredSecret: Boolean(normalized.hasStoredSecret),
     localOnly: Boolean(normalized.localOnly),
   };
 };
+
+const normalizeAuthority = (
+  authority: Partial<AuthorityProfile> & Record<string, unknown>,
+): AuthorityProfile => ({
+  accountId: normalizeTairaAccountIdLiteral(authority.accountId),
+  privateKeyHex: trimString(authority.privateKeyHex),
+  hasStoredSecret: Boolean(authority.hasStoredSecret),
+});
 
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
@@ -225,6 +238,19 @@ const normalizeConnection = (
       assetDefinitionId || TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
   };
 };
+
+const serializeSessionState = (state: SessionState) =>
+  JSON.stringify({
+    ...state,
+    authority: {
+      ...state.authority,
+      privateKeyHex: "",
+    },
+    accounts: state.accounts.map((account) => ({
+      ...account,
+      privateKeyHex: "",
+    })),
+  });
 
 const normalizeSessionNetworkPrefix = (value: unknown): number | null => {
   const normalized = Number(value);
@@ -319,7 +345,9 @@ export const useSessionStore = defineStore("session", {
         state.accounts.find(
           (account) => account.accountId === state.activeAccountId,
         ) ?? null;
-      return Boolean(active?.accountId && active?.privateKeyHex);
+      return Boolean(
+        active?.accountId && active?.hasStoredSecret,
+      );
     },
     activeAccount: (state) =>
       state.accounts.find(
@@ -327,7 +355,7 @@ export const useSessionStore = defineStore("session", {
       ) ?? null,
   },
   actions: {
-    hydrate() {
+    async hydrate() {
       if (this.hydrated) {
         return;
       }
@@ -337,7 +365,10 @@ export const useSessionStore = defineStore("session", {
           const parsed = JSON.parse(raw);
           const normalizedAccounts = normalizeAccounts(parsed);
           const base = defaultState();
-          const authority = { ...base.authority, ...(parsed.authority ?? {}) };
+          const authority = normalizeAuthority({
+            ...base.authority,
+            ...(parsed.authority ?? {}),
+          });
           const rawAuthorityAccountId = trimString(authority.accountId);
           const migratedAuthorityAccountId = rawAuthorityAccountId
             ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
@@ -347,6 +378,7 @@ export const useSessionStore = defineStore("session", {
             ...base,
             connection: normalizeConnection(parsed.connection),
             authority: {
+              ...base.authority,
               ...authority,
               accountId: migratedAuthorityAccountId,
             },
@@ -358,6 +390,7 @@ export const useSessionStore = defineStore("session", {
           if (!this.activeAccountId && this.accounts[0]) {
             this.activeAccountId = this.accounts[0].accountId;
           }
+          await this.syncStoredSecrets();
           return;
         } catch (error) {
           console.warn("Failed to parse saved session", error);
@@ -365,9 +398,10 @@ export const useSessionStore = defineStore("session", {
         }
       }
       this.hydrated = true;
+      await this.syncStoredSecrets();
     },
     persistState(snapshot?: SessionState) {
-      const payload = JSON.stringify(snapshot ?? this.$state);
+      const payload = serializeSessionState(snapshot ?? this.$state);
       localStorage.setItem(SESSION_STORAGE_KEY, payload);
     },
     reset() {
@@ -415,7 +449,7 @@ export const useSessionStore = defineStore("session", {
       return true;
     },
     updateAuthority(partial: Partial<AuthorityProfile>) {
-      this.authority = { ...this.authority, ...partial };
+      this.authority = normalizeAuthority({ ...this.authority, ...partial });
     },
     addAccount(account: UserProfile) {
       const normalized = normalizeUser(account, {
@@ -433,6 +467,53 @@ export const useSessionStore = defineStore("session", {
         this.accounts.push(normalized);
       }
       this.activeAccountId = normalized.accountId;
+    },
+    async syncStoredSecrets() {
+      if (typeof window === "undefined" || !window.iroha) {
+        return;
+      }
+
+      let vaultAvailable = false;
+      try {
+        vaultAvailable = await window.iroha.isSecureVaultAvailable();
+      } catch (_error) {
+        vaultAvailable = false;
+      }
+
+      const accounts = [...this.accounts];
+      const flags = vaultAvailable
+        ? await window.iroha
+            .listAccountSecretFlags({
+              accountIds: accounts.map((account) => account.accountId),
+            })
+            .catch(() => ({}) as Record<string, boolean>)
+        : {};
+      const authorityFlags =
+        vaultAvailable && this.authority.accountId
+          ? await window.iroha
+              .listAccountSecretFlags({
+                accountIds: [this.authority.accountId],
+              })
+              .catch(() => ({}) as Record<string, boolean>)
+          : {};
+
+      this.$patch({
+        authority: {
+          ...this.authority,
+          privateKeyHex: "",
+          hasStoredSecret: this.authority.accountId
+            ? Boolean(authorityFlags[this.authority.accountId])
+            : false,
+        },
+        accounts: accounts.map((account) => ({
+          ...account,
+          privateKeyHex: "",
+          hasStoredSecret: vaultAvailable
+            ? Boolean(flags[account.accountId])
+            : false,
+        })),
+      });
+      this.persistState();
     },
     setActiveAccount(accountId: string) {
       const exists = this.accounts.some(

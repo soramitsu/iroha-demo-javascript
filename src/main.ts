@@ -20,21 +20,26 @@ const offline = useOfflineStore();
 const subscriptions = useSubscriptionStore();
 const locale = useLocaleStore();
 const kaigi = useKaigiStore();
-session.hydrate();
-theme.hydrate();
-offline.hydrate();
-subscriptions.hydrate();
-locale.hydrate();
-kaigi.hydrate();
 
-app.use(router);
+const bootstrap = async () => {
+  await session.hydrate();
+  theme.hydrate();
+  offline.hydrate();
+  subscriptions.hydrate();
+  locale.hydrate();
+  kaigi.hydrate();
 
-watch(
-  () => session.$state,
-  (state) => {
-    session.persistState(state);
-  },
-  { deep: true },
-);
+  app.use(router);
 
-app.mount("#app");
+  watch(
+    () => session.$state,
+    (state) => {
+      session.persistState(state);
+    },
+    { deep: true },
+  );
+
+  app.mount("#app");
+};
+
+void bootstrap();

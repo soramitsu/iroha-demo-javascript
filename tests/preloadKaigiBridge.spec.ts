@@ -34,11 +34,17 @@ const RELAY_TX_HASH = "ab".repeat(32);
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
+  ipcInvokeMock: vi.fn(),
+  vaultAvailable: true,
+  storedAccountSecrets: new Map<string, string>(),
+  storedReceiveKeys: new Map<string, Record<string, unknown>>(),
   normalizeCanonicalAccountIdLiteralMock: vi.fn(),
   normalizeCompatAccountIdLiteralMock: vi.fn(),
   requestFaucetFundsWithPuzzleMock: vi.fn(),
   getTransactionStatusMock: vi.fn(),
   getStatusSnapshotMock: vi.fn(),
+  getExplorerMetricsMock: vi.fn(),
+  getSumeragiStatusTypedMock: vi.fn(),
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
@@ -152,7 +158,7 @@ vi.mock("electron", () => ({
     },
   },
   ipcRenderer: {
-    invoke: vi.fn(),
+    invoke: (...args: unknown[]) => mocks.ipcInvokeMock(...args),
   },
 }));
 
@@ -220,6 +226,14 @@ vi.mock("@iroha/iroha-js", async () => {
 
     getStatusSnapshot(...args: unknown[]) {
       return mocks.getStatusSnapshotMock(...args);
+    }
+
+    getExplorerMetrics(...args: unknown[]) {
+      return mocks.getExplorerMetricsMock(...args);
+    }
+
+    getSumeragiStatusTyped(...args: unknown[]) {
+      return mocks.getSumeragiStatusTypedMock(...args);
     }
   }
 
@@ -301,6 +315,12 @@ const loadBridge = async () => {
       ownerTagHex: string;
       diversifierHex: string;
     };
+    exportConfidentialWalletBackup: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    importConfidentialWalletBackup: (
+      input: Record<string, unknown>,
+    ) => Promise<void>;
     getConfidentialAssetPolicy: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -311,6 +331,9 @@ const loadBridge = async () => {
       input: Record<string, unknown>,
       onStatus?: (progress: unknown) => void,
     ) => Promise<Record<string, unknown>>;
+    getNetworkStats: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
   };
 };
 
@@ -319,11 +342,17 @@ describe("preload Kaigi bridge", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-29T12:00:00.000Z"));
     globalThis.localStorage?.clear();
+    mocks.ipcInvokeMock.mockReset();
+    mocks.vaultAvailable = true;
+    mocks.storedAccountSecrets = new Map<string, string>();
+    mocks.storedReceiveKeys = new Map<string, Record<string, unknown>>();
     mocks.normalizeCanonicalAccountIdLiteralMock.mockReset();
     mocks.normalizeCompatAccountIdLiteralMock.mockReset();
     mocks.requestFaucetFundsWithPuzzleMock.mockReset();
     mocks.getTransactionStatusMock.mockReset();
     mocks.getStatusSnapshotMock.mockReset();
+    mocks.getExplorerMetricsMock.mockReset();
+    mocks.getSumeragiStatusTypedMock.mockReset();
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
@@ -365,10 +394,47 @@ describe("preload Kaigi bridge", () => {
       status: {
         queue_size: 0,
         commit_time_ms: 1_000,
+        raw: {
+          sumeragi: {
+            tx_queue_saturated: false,
+            tx_queue_capacity: 65_536,
+            effective_block_time_ms: 2_000,
+            highest_qc_height: 701,
+            locked_qc_height: 701,
+          },
+        },
         sumeragi: {
           tx_queue_saturated: false,
         },
       },
+    });
+    mocks.getExplorerMetricsMock.mockResolvedValue({
+      peers: 4,
+      domains: 3,
+      accounts: 12,
+      assets: 6,
+      transactionsAccepted: 200,
+      transactionsRejected: 5,
+      blockHeight: 701,
+      blockCreatedAt: "2026-03-29T12:00:00.000Z",
+      finalizedBlockHeight: 699,
+      averageCommitTimeMs: 1_500,
+      averageBlockTimeMs: 2_000,
+    });
+    mocks.getSumeragiStatusTypedMock.mockResolvedValue({
+      lane_governance: [
+        {
+          lane_id: 7,
+          dataspace_id: 2,
+          validator_ids: ["alice", "bob"],
+        },
+      ],
+      dataspace_commitments: [
+        {
+          lane_id: 7,
+          dataspace_id: 2,
+        },
+      ],
     });
 
     mocks.listKaigiRelaysMock.mockResolvedValue({
@@ -440,11 +506,157 @@ describe("preload Kaigi bridge", () => {
         },
       }),
     );
+    mocks.ipcInvokeMock.mockImplementation(
+      async (channel: string, input?: Record<string, unknown>) => {
+        if (channel === "vault:isAvailable") {
+          return mocks.vaultAvailable;
+        }
+        if (channel === "vault:storeAccountSecret") {
+          const accountId = String(input?.accountId ?? "").trim();
+          const privateKeyHex = String(input?.privateKeyHex ?? "").trim();
+          if (accountId && privateKeyHex) {
+            mocks.storedAccountSecrets.set(accountId, privateKeyHex);
+          }
+          return undefined;
+        }
+        if (channel === "vault:getAccountSecret") {
+          return (
+            mocks.storedAccountSecrets.get(
+              String(input?.accountId ?? "").trim(),
+            ) ?? null
+          );
+        }
+        if (channel === "vault:listAccountSecretFlags") {
+          const accountIds = Array.isArray(input?.accountIds)
+            ? input.accountIds.map((entry) => String(entry).trim())
+            : [];
+          return Object.fromEntries(
+            accountIds.map((accountId) => [
+              accountId,
+              mocks.storedAccountSecrets.has(accountId),
+            ]),
+          );
+        }
+        if (channel === "vault:storeReceiveKey") {
+          const record = {
+            keyId: String(input?.keyId ?? "").trim(),
+            accountId: String(input?.accountId ?? "").trim(),
+            ownerTagHex: String(input?.ownerTagHex ?? "").trim(),
+            diversifierHex: String(input?.diversifierHex ?? "").trim(),
+            publicKeyBase64Url: String(input?.publicKeyBase64Url ?? "").trim(),
+            privateKeyBase64Url: String(
+              input?.privateKeyBase64Url ?? "",
+            ).trim(),
+            createdAtMs: Number(input?.createdAtMs ?? Date.now()),
+          };
+          mocks.storedReceiveKeys.set(record.keyId, record);
+          return record;
+        }
+        if (channel === "vault:listReceiveKeysForAccount") {
+          const accountId = String(input?.accountId ?? "").trim();
+          return [...mocks.storedReceiveKeys.values()]
+            .filter((record) => record.accountId === accountId)
+            .sort(
+              (left, right) =>
+                Number(left.createdAtMs ?? 0) - Number(right.createdAtMs ?? 0),
+            );
+        }
+        if (channel === "vault:getReceiveKey") {
+          return (
+            mocks.storedReceiveKeys.get(String(input?.keyId ?? "").trim()) ??
+            null
+          );
+        }
+        return undefined;
+      },
+    );
 
     mocks.nodeFetchMock.mockImplementation(
       async (input: unknown, init?: Record<string, unknown>) => {
         const href = String(input);
         const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/explorer/asset-definitions/6TEAJqbb8oEPmLncoNiMRbLEK6tw/snapshot",
+          )
+        ) {
+          return jsonResponse({
+            definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            computed_at_ms: 1711713600000,
+            holders_total: 3,
+            total_supply: "10000000000000000000000000",
+            top_holders: [
+              {
+                account_id: ALICE_ACCOUNT_ID,
+                balance: "9999999999999999999999999",
+              },
+              {
+                account_id: BOB_ACCOUNT_ID,
+                balance: "1",
+              },
+            ],
+            distribution: {
+              gini: 0.99,
+              hhi: 0.9,
+              theil: 10,
+              entropy: 0.1,
+              entropy_normalized: 0.05,
+              nakamoto_33: 1,
+              nakamoto_51: 1,
+              nakamoto_67: 1,
+              top1: 0.9999,
+              top5: 1,
+              top10: 1,
+              median: "1",
+              p90: "1",
+              p99: "9999999999999999999999999",
+              lorenz: [],
+            },
+          });
+        }
+        if (
+          method === "GET" &&
+          href.includes(
+            "/v1/explorer/asset-definitions/6TEAJqbb8oEPmLncoNiMRbLEK6tw/econometrics",
+          )
+        ) {
+          return jsonResponse({
+            definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            computed_at_ms: 1711713600000,
+            velocity_windows: [
+              {
+                key: "1h",
+                start_ms: 1711710000000,
+                end_ms: 1711713600000,
+                transfers: 3,
+                unique_senders: 2,
+                unique_receivers: 2,
+                amount: "250",
+              },
+            ],
+            issuance_windows: [
+              {
+                key: "24h",
+                start_ms: 1711627200000,
+                end_ms: 1711713600000,
+                mint_count: 1,
+                burn_count: 0,
+                minted: "100",
+                burned: "0",
+                net: "100",
+              },
+            ],
+            issuance_series: [
+              {
+                bucket_start_ms: 1711627200000,
+                minted: "100",
+                burned: "0",
+                net: "100",
+              },
+            ],
+          });
+        }
         if (
           method === "GET" &&
           (href.includes(
@@ -543,6 +755,93 @@ describe("preload Kaigi bridge", () => {
     globalThis.localStorage?.clear();
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("aggregates network stats across explorer, status, and econometrics surfaces", async () => {
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getNetworkStats({
+        toriiUrl: "https://taira.sora.org",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    ).resolves.toMatchObject({
+      xorAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      partial: false,
+      warnings: [],
+      explorer: {
+        blockHeight: 701,
+        finalizedBlockHeight: 699,
+      },
+      supply: {
+        definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        holdersTotal: 3,
+        totalSupply: "10000000000000000000000000",
+      },
+      econometrics: {
+        velocityWindows: [
+          expect.objectContaining({
+            key: "1h",
+            transfers: 3,
+          }),
+        ],
+        issuanceWindows: [
+          expect.objectContaining({
+            key: "24h",
+            net: "100",
+          }),
+        ],
+      },
+      runtime: {
+        queueSize: 0,
+        queueCapacity: 65536,
+        txQueueSaturated: false,
+        finalizationLag: 2,
+      },
+      governance: {
+        laneCount: 1,
+        dataspaceCount: 1,
+        validatorCount: 2,
+      },
+    });
+  });
+
+  it("returns partial network stats when explorer endpoints fail", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes("/v1/explorer/asset-definitions/")
+        ) {
+          return jsonResponse({ message: "down" }, 502);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.getNetworkStats({
+        toriiUrl: "https://taira.sora.org",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    ).resolves.toMatchObject({
+      partial: true,
+      explorer: expect.objectContaining({
+        blockHeight: 701,
+      }),
+      supply: null,
+      econometrics: null,
+      runtime: expect.objectContaining({
+        queueCapacity: 65536,
+      }),
+      warnings: [
+        "XOR supply snapshot is unavailable.",
+        "XOR flow econometrics are unavailable.",
+      ],
+    });
   });
 
   it("routes faucet requests through canonical account-id normalization", async () => {
@@ -2069,6 +2368,7 @@ describe("preload Kaigi bridge", () => {
       }));
     const bridge = await loadBridge();
     const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+    const recipientSignal = generateKaigiX25519KeyPair();
 
     await expect(
       bridge.transferAsset({
@@ -2080,6 +2380,9 @@ describe("preload Kaigi bridge", () => {
         quantity: "3",
         privateKeyHex: "11".repeat(32),
         shielded: true,
+        shieldedReceiveKeyId: "recipient-receive-key",
+        shieldedReceivePublicKeyBase64Url:
+          recipientSignal.publicKeyBase64Url,
         shieldedOwnerTagHex: recipient.ownerTagHex,
         shieldedDiversifierHex: recipient.diversifierHex,
       }),
@@ -2218,6 +2521,7 @@ describe("preload Kaigi bridge", () => {
       }));
     const bridge = await loadBridge();
     const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+    const recipientSignal = generateKaigiX25519KeyPair();
 
     const transferPromise = bridge.transferAsset({
       toriiUrl: "https://taira.sora.org",
@@ -2228,6 +2532,8 @@ describe("preload Kaigi bridge", () => {
       quantity: "3",
       privateKeyHex: "11".repeat(32),
       shielded: true,
+      shieldedReceiveKeyId: "recipient-receive-key",
+      shieldedReceivePublicKeyBase64Url: recipientSignal.publicKeyBase64Url,
       shieldedOwnerTagHex: recipient.ownerTagHex,
       shieldedDiversifierHex: recipient.diversifierHex,
     });
@@ -2372,6 +2678,7 @@ describe("preload Kaigi bridge", () => {
     );
     const bridge = await loadBridge();
     const recipient = bridge.deriveConfidentialReceiveAddress("22".repeat(32));
+    const recipientSignal = generateKaigiX25519KeyPair();
 
     await expect(
       bridge.transferAsset({
@@ -2383,6 +2690,9 @@ describe("preload Kaigi bridge", () => {
         quantity: "3",
         privateKeyHex: "11".repeat(32),
         shielded: true,
+        shieldedReceiveKeyId: "recipient-receive-key",
+        shieldedReceivePublicKeyBase64Url:
+          recipientSignal.publicKeyBase64Url,
         shieldedOwnerTagHex: recipient.ownerTagHex,
         shieldedDiversifierHex: recipient.diversifierHex,
       }),
@@ -2431,5 +2741,90 @@ describe("preload Kaigi bridge", () => {
         }),
       }),
     );
+  });
+
+  it("exports and restores encrypted confidential wallet backup state", async () => {
+    mocks.listAccountTransactionsMock.mockResolvedValue({
+      items: [
+        {
+          entrypoint_hash: "tx-shadow",
+          result_ok: true,
+          authority: ALICE_ACCOUNT_ID,
+          block: 42,
+          instructions: [],
+        },
+      ],
+      total: 1,
+    });
+    const bridge = await loadBridge();
+    const shadowKey =
+      `iroha-demo:confidential-wallet:https://taira.sora.org` +
+      ALICE_ACCOUNT_ID.toLowerCase();
+    mocks.storedReceiveKeys.set("receive-key-1", {
+      keyId: "receive-key-1",
+      accountId: ALICE_ACCOUNT_ID,
+      ownerTagHex: "11".repeat(32),
+      diversifierHex: "22".repeat(32),
+      publicKeyBase64Url: "receivePublicKey",
+      privateKeyBase64Url: "receivePrivateKey",
+      createdAtMs: 1,
+    });
+    globalThis.localStorage?.setItem(
+      shadowKey,
+      JSON.stringify({
+        transactions: [
+          {
+            hash: "0xshadow",
+            createdAtMs: 1,
+            authority: ALICE_ACCOUNT_ID,
+            metadata: {
+              kept: true,
+            },
+            instructions: [],
+          },
+        ],
+      }),
+    );
+
+    const exported = await bridge.exportConfidentialWalletBackup({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      accountId: ALICE_ACCOUNT_ID,
+      mnemonic:
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+    });
+
+    expect(exported).toMatchObject({
+      schema: "iroha-demo-confidential-wallet-backup/v2",
+      accountId: ALICE_ACCOUNT_ID,
+      scanWatermarkBlock: 42,
+      stateBox: {
+        kdf: "HKDF-SHA256",
+        cipher: "AES-256-GCM",
+      },
+    });
+
+    mocks.storedReceiveKeys = new Map<string, Record<string, unknown>>();
+    globalThis.localStorage?.clear();
+
+    await bridge.importConfidentialWalletBackup({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+      mnemonic:
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+      confidentialWallet: exported,
+    });
+
+    expect([...mocks.storedReceiveKeys.values()]).toHaveLength(1);
+    expect(
+      JSON.parse(globalThis.localStorage?.getItem(shadowKey) ?? "{}"),
+    ).toMatchObject({
+      transactions: [
+        {
+          hash: "0xshadow",
+          authority: ALICE_ACCOUNT_ID,
+        },
+      ],
+    });
   });
 });
