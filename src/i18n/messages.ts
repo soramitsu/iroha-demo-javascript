@@ -1040,6 +1040,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unshield to wallet": "Unshield to wallet",
   "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.":
     "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
+  "Private exits do not publish memos. Leave memo blank when unshielding.":
+    "Private exits do not publish memos. Leave memo blank when unshielding.",
   "Private exit is unavailable for the current asset definition.":
     "Private exit is unavailable for the current asset definition.",
   "Private exit is unavailable.": "Private exit is unavailable.",

@@ -280,7 +280,7 @@
             :disabled="onlineDestinationLocked"
           />
         </label>
-        <label>
+        <label v-if="!onlineForm.shielded">
           {{ t("Memo (optional)") }}
           <input v-model="onlineForm.memo" />
         </label>
@@ -318,6 +318,16 @@
       >
         {{
           t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
+        }}
+      </p>
+      <p
+        v-if="onlineForm.shielded && onlineShieldSupported"
+        class="helper"
+      >
+        {{
+          t(
+            "Private exits do not publish memos. Leave memo blank when unshielding.",
+          )
         }}
       </p>
       <p
@@ -950,7 +960,10 @@ const moveToOnline = async () => {
       destinationAccountId: receiver,
       quantity: amount,
       privateKeyHex: activeAccount.value.privateKeyHex,
-      metadata: onlineForm.memo ? { memo: onlineForm.memo } : undefined,
+      metadata:
+        !onlineForm.shielded && onlineForm.memo
+          ? { memo: onlineForm.memo }
+          : undefined,
       ...(onlineForm.shielded ? { unshield: true } : {}),
     });
     if (onlineForm.shielded) {

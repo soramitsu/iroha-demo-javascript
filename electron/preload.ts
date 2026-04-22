@@ -144,6 +144,13 @@ const assertNoConfidentialPublicMetadata = (
   }
   return undefined;
 };
+const TAIRA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const withRequiredGasAssetMetadata = (
+  metadata: Record<string, unknown> | undefined,
+) => ({
+  ...(isPlainRecord(metadata) ? { ...metadata } : {}),
+  gas_asset_id: TAIRA_XOR_GAS_ASSET_DEFINITION_ID,
+});
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
@@ -4028,6 +4035,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     verifyingKey: verifyingKeyContext.proofVerifyingKey,
   });
   const metadata = buildWalletConfidentialMetadataV3({
+    baseMetadata: withRequiredGasAssetMetadata(undefined),
     outputs: [output],
   });
   const tx = buildZkTransferTransaction({
@@ -4340,6 +4348,7 @@ const submitInstructionTransaction = async (input: {
     chainId,
     authority,
     instructions: [input.instruction],
+    metadata: withRequiredGasAssetMetadata(undefined),
     privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
@@ -4789,9 +4798,9 @@ const api: IrohaBridge = {
           input.accountId,
           "accountId",
         ),
-        domainId,
         metadata: input.metadata ?? {},
       },
+      metadata: withRequiredGasAssetMetadata(undefined),
       privateKey: hexToBuffer(authorityPrivateKeyHex, "authorityPrivateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -5021,15 +5030,19 @@ const api: IrohaBridge = {
       const metadata =
         changeOutputs.length > 0
           ? buildWalletConfidentialMetadataV3({
-              baseMetadata: assertNoConfidentialPublicMetadata(
-                input.metadata,
-                "Confidential public exit",
+              baseMetadata: withRequiredGasAssetMetadata(
+                assertNoConfidentialPublicMetadata(
+                  input.metadata,
+                  "Confidential public exit",
+                ),
               ),
               outputs: changeOutputs,
             })
-          : assertNoConfidentialPublicMetadata(
-              input.metadata,
-              "Confidential public exit",
+          : withRequiredGasAssetMetadata(
+              assertNoConfidentialPublicMetadata(
+                input.metadata,
+                "Confidential public exit",
+              ),
             );
       const tx = buildUnshieldTransaction({
         chainId: input.chainId,
@@ -5122,6 +5135,9 @@ const api: IrohaBridge = {
           ? "Private balance creation"
           : "Shielded transfer",
       );
+      const confidentialTransactionMetadata = withRequiredGasAssetMetadata(
+        confidentialBaseMetadata,
+      );
 
       if (destinationAccountId === accountId) {
         const selfReceiveDescriptor =
@@ -5137,7 +5153,7 @@ const api: IrohaBridge = {
           diversifierHex: selfReceiveDescriptor.diversifierHex,
         });
         const metadata = buildWalletConfidentialMetadataV3({
-          baseMetadata: confidentialBaseMetadata,
+          baseMetadata: confidentialTransactionMetadata,
           outputs: [
             {
               note,
@@ -5363,7 +5379,7 @@ const api: IrohaBridge = {
         }
       }
       const metadata = buildWalletConfidentialMetadataV3({
-        baseMetadata: confidentialBaseMetadata,
+        baseMetadata: confidentialTransactionMetadata,
         outputs: orderedOutputs,
       });
       const tx = buildZkTransferTransaction({
@@ -5505,7 +5521,7 @@ const api: IrohaBridge = {
       sourceAssetHoldingId: sourceAssetId,
       quantity: input.quantity,
       destinationAccountId,
-      metadata: input.metadata ?? null,
+      metadata: withRequiredGasAssetMetadata(input.metadata),
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -6290,6 +6306,7 @@ const api: IrohaBridge = {
         relayManifest: resolvedRelayManifest,
         metadata: callMetadata,
       },
+      metadata: withRequiredGasAssetMetadata(undefined),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -6427,7 +6444,7 @@ const api: IrohaBridge = {
         callId: answerPayload.callId,
         participant: authority,
       },
-      metadata,
+      metadata: withRequiredGasAssetMetadata(metadata),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -6651,6 +6668,7 @@ const api: IrohaBridge = {
         callId: normalizedCallId,
         endedAtMs: resolvedEndedAtMs,
       },
+      metadata: withRequiredGasAssetMetadata(undefined),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(

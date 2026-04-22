@@ -5,9 +5,21 @@ import vue from "@vitejs/plugin-vue";
 const projectRoot = process.cwd();
 const resolveFromRoot = (...segments: string[]) =>
   resolve(projectRoot, ...segments);
+const sharedAliases = {
+  "@": resolveFromRoot("src"),
+  // electron-vite resolves preload with browser conditions by default;
+  // force the native-capable SDK crypto entry for proof/key helpers.
+  "@iroha/iroha-js/crypto": resolve(
+    projectRoot,
+    "../iroha/javascript/iroha_js/dist/crypto.js",
+  ),
+};
 
 export default defineConfig({
   main: {
+    resolve: {
+      alias: sharedAliases,
+    },
     build: {
       outDir: "dist/main",
       lib: {
@@ -24,14 +36,7 @@ export default defineConfig({
   },
   preload: {
     resolve: {
-      alias: {
-        // electron-vite resolves preload with browser conditions by default;
-        // force the native-capable SDK crypto entry for proof/key helpers.
-        "@iroha/iroha-js/crypto": resolve(
-          projectRoot,
-          "../iroha/javascript/iroha_js/dist/crypto.js",
-        ),
-      },
+      alias: sharedAliases,
     },
     build: {
       outDir: "dist/preload",
@@ -49,9 +54,7 @@ export default defineConfig({
       },
     },
     resolve: {
-      alias: {
-        "@": resolveFromRoot("src"),
-      },
+      alias: sharedAliases,
     },
     plugins: [vue()],
     server: {
