@@ -2416,11 +2416,17 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
     lastStatusKind = statusKind;
     if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
       if (statusKind === "Applied") {
-        const recordStatus = await fetchTransactionRecordStatus(toriiUrl, hashHex);
+        const recordStatus = await fetchTransactionRecordStatus(
+          toriiUrl,
+          hashHex,
+        );
         if (recordStatus) {
           lastStatusKind = recordStatus;
         }
-        if (recordStatus && CONFIDENTIAL_TX_FAILURE_STATUSES.has(recordStatus)) {
+        if (
+          recordStatus &&
+          CONFIDENTIAL_TX_FAILURE_STATUSES.has(recordStatus)
+        ) {
           throw new Error(
             `Transaction ${hashHex} ${recordStatus.toLowerCase()} before it committed.`,
           );

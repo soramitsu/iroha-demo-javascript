@@ -1231,7 +1231,10 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
-        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+        if (
+          method === "GET" &&
+          href.includes("/v1/transactions/hash-unshield")
+        ) {
           return jsonResponse({
             hash: "hash-unshield",
             status: "Committed",
@@ -1371,7 +1374,10 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
-        if (method === "GET" && href.includes("/v1/transactions/hash-unshield")) {
+        if (
+          method === "GET" &&
+          href.includes("/v1/transactions/hash-unshield")
+        ) {
           return jsonResponse({
             hash: "hash-unshield",
             status: "Applied",

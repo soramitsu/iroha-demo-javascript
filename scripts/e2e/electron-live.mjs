@@ -802,7 +802,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           privateKeyHex,
           assetDefinitionId: assetId,
         });
-<<<<<<< HEAD
       const scanConfidentialBalance = (accountId, privateKeyHex) =>
         window.iroha.scanConfidentialWallet({
           toriiUrl: torii,
@@ -812,61 +811,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           assetDefinitionId: assetId,
           force: true,
         });
-      const fetchAccountTransactions = (accountId, privateKeyHex) =>
-        window.iroha.fetchAccountTransactions({
-          toriiUrl: torii,
-          accountId,
-          privateKeyHex,
-          limit: 50,
-        });
-      const waitForAccountTransaction = async ({
-        accountId,
-        privateKeyHex,
-        txHashHex,
-        timeoutMs = 90_000,
-      }) => {
-        const normalizedHash = String(txHashHex ?? "")
-          .trim()
-          .toLowerCase();
-        const deadline = Date.now() + timeoutMs;
-        let lastTransactions = null;
-        let lastError = "";
-        while (Date.now() < deadline) {
-          try {
-            lastTransactions = await fetchAccountTransactions(
-              accountId,
-              privateKeyHex,
-            );
-            const items = Array.isArray(lastTransactions?.items)
-              ? lastTransactions.items
-              : [];
-            if (
-              items.some(
-                (item) =>
-                  String(item?.entrypoint_hash ?? item?.entrypointHash ?? "")
-                    .trim()
-                    .toLowerCase() === normalizedHash,
-              )
-            ) {
-              return {
-                ok: true,
-                transactions: lastTransactions,
-                error: "",
-              };
-            }
-          } catch (error) {
-            lastError = String(error ?? "");
-          }
-          await waitForMs(1_500);
-        }
-        return {
-          ok: false,
-          transactions: lastTransactions,
-          error: lastError,
-        };
-      };
-=======
->>>>>>> origin/master
       const waitForConfidentialBalance = async ({
         accountId,
         privateKeyHex,
@@ -1131,11 +1075,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           aliceAfterSelfShield,
           aliceAfterRecipient,
           bobAfterRecipient,
-<<<<<<< HEAD
           bobRecoveredAfterRecipient,
-          unshieldCommitted,
-=======
->>>>>>> origin/master
         };
       }
       const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
