@@ -1901,6 +1901,14 @@ button:not(.secondary):hover {
   grid-column: 1 / -1;
 }
 
+.subscription-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .subscriptions-form-card {
   grid-column: span 4;
 }
@@ -1959,6 +1967,16 @@ button:not(.secondary):hover {
   margin-top: 8px;
 }
 
+.subscription-stack.compact {
+  gap: 10px;
+}
+
+.subscription-plan-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .subscription-card {
   position: relative;
   display: grid;
@@ -1972,6 +1990,12 @@ button:not(.secondary):hover {
     var(--menu-glass);
   padding: 18px 20px;
   box-shadow: var(--shadow-soft);
+}
+
+.subscription-card.compact {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 14px 16px;
 }
 
 .subscription-card-main {

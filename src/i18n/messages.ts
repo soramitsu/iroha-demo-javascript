@@ -1073,6 +1073,51 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Choose a validator, enter an amount, and manage your stake.":
     "Choose a validator, enter an amount, and manage your stake.",
   "Recurring payments": "Recurring payments",
+  "Live subscription NFTs and plan metadata from TAIRA.":
+    "Live subscription NFTs and plan metadata from TAIRA.",
+  "Live Torii data": "Live Torii data",
+  "Past due": "Past due",
+  "Plan catalog": "Plan catalog",
+  "Refresh to sync real subscription state from Torii.":
+    "Refresh to sync real subscription state from Torii.",
+  "This wallet is local-only. Subscription records appear after the account exists on-chain.":
+    "This wallet is local-only. Subscription records appear after the account exists on-chain.",
+  "Subscribe to plan": "Subscribe to plan",
+  "Create a real subscription NFT for an existing on-chain plan.":
+    "Create a real subscription NFT for an existing on-chain plan.",
+  "Plan ID": "Plan ID",
+  "Select plan": "Select plan",
+  "Manual plan ID": "Manual plan ID",
+  "Subscription NFT ID": "Subscription NFT ID",
+  "First charge time": "First charge time",
+  "Create subscription": "Create subscription",
+  "Available plans": "Available plans",
+  "Provider: {value}": "Provider: {value}",
+  "No live plans found.": "No live plans found.",
+  "Owned subscription NFTs for the active wallet.":
+    "Owned subscription NFTs for the active wallet.",
+  "Period end: {date}": "Period end: {date}",
+  "Subscription details": "Subscription details",
+  Provider: "Provider",
+  "Billing trigger": "Billing trigger",
+  "Charge now": "Charge now",
+  "This account has no subscriptions on TAIRA.":
+    "This account has no subscriptions on TAIRA.",
+  "Loaded from TAIRA at {time}": "Loaded from TAIRA at {time}",
+  Suspended: "Suspended",
+  Unknown: "Unknown",
+  unknown: "unknown",
+  "Last invoice: {amount} {unit} ({status})":
+    "Last invoice: {amount} {unit} ({status})",
+  "First charge time is invalid.": "First charge time is invalid.",
+  "Enter a plan ID.": "Enter a plan ID.",
+  "Subscription submitted: {hash}": "Subscription submitted: {hash}",
+  "Subscription action submitted: {hash}":
+    "Subscription action submitted: {hash}",
+  "Price unavailable": "Price unavailable",
+  "{unit} {amount} per {usage}": "{unit} {amount} per {usage}",
+  "{count} day period": "{count} day period",
+  unit: "unit",
   "Secure backup": "Secure backup",
   "Wallet status": "Wallet status",
   "Recovery phrase ready": "Recovery phrase ready",

@@ -721,6 +721,81 @@ type GovernanceEnactInput = {
   proposalId: string;
 };
 
+type SubscriptionStatusView =
+  | "active"
+  | "paused"
+  | "past_due"
+  | "canceled"
+  | "suspended";
+
+type SubscriptionPlanListResponseView = {
+  items: Array<{
+    plan_id: string;
+    plan: Record<string, unknown>;
+  }>;
+  total: number;
+};
+
+type SubscriptionListItemView = {
+  subscription_id: string;
+  subscription: Record<string, unknown>;
+  invoice: Record<string, unknown> | null;
+  plan: Record<string, unknown> | null;
+};
+
+type SubscriptionListResponseView = {
+  items: SubscriptionListItemView[];
+  total: number;
+};
+
+type SubscriptionActionResponseView = {
+  ok: boolean;
+  subscription_id: string;
+  tx_hash_hex: string;
+  billing_trigger_id?: string;
+  usage_trigger_id?: string | null;
+  first_charge_ms?: number;
+};
+
+type SubscriptionListPlansInput = {
+  toriiUrl: string;
+  provider?: string;
+  limit?: number;
+  offset?: number;
+};
+
+type SubscriptionListInput = {
+  toriiUrl: string;
+  ownedBy?: string;
+  provider?: string;
+  status?: SubscriptionStatusView;
+  limit?: number;
+  offset?: number;
+};
+
+type SubscriptionGetInput = {
+  toriiUrl: string;
+  subscriptionId: string;
+};
+
+type SubscriptionCreateInput = {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+  subscriptionId: string;
+  planId: string;
+  firstChargeMs?: number;
+};
+
+type SubscriptionActionInput = {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+  subscriptionId: string;
+  chargeAtMs?: number;
+  cancelMode?: "immediate" | "period_end";
+};
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
@@ -925,6 +1000,31 @@ type IrohaBridge = {
   getNexusStakingPolicy(
     config: ToriiConfig,
   ): Promise<NexusStakingPolicyResponse>;
+  listSubscriptionPlans(
+    input: SubscriptionListPlansInput,
+  ): Promise<SubscriptionPlanListResponseView>;
+  listSubscriptions(
+    input: SubscriptionListInput,
+  ): Promise<SubscriptionListResponseView>;
+  getSubscription(input: SubscriptionGetInput): Promise<SubscriptionListItemView>;
+  createSubscription(
+    input: SubscriptionCreateInput,
+  ): Promise<SubscriptionActionResponseView>;
+  pauseSubscription(
+    input: SubscriptionActionInput,
+  ): Promise<SubscriptionActionResponseView>;
+  resumeSubscription(
+    input: SubscriptionActionInput,
+  ): Promise<SubscriptionActionResponseView>;
+  cancelSubscription(
+    input: SubscriptionActionInput,
+  ): Promise<SubscriptionActionResponseView>;
+  keepSubscription(
+    input: SubscriptionActionInput,
+  ): Promise<SubscriptionActionResponseView>;
+  chargeSubscriptionNow(
+    input: SubscriptionActionInput,
+  ): Promise<SubscriptionActionResponseView>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
   ): Promise<{ hash: string }>;
@@ -2686,6 +2786,26 @@ const fetchJson = async (
   return ensureObjectResponse(payload, label);
 };
 
+const postJson = async (
+  endpoint: string,
+  label: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  const response = await nodeFetch(endpoint, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw await createApiRequestError(response, label);
+  }
+  const payload = (await response.json()) as unknown;
+  return ensureObjectResponse(payload, label);
+};
+
 const fetchKaigiMeetingView = async (
   input: KaigiGetMeetingInput,
 ): Promise<KaigiMeetingView> => {
@@ -2769,6 +2889,236 @@ const buildNexusEndpoint = (
     }
   }
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
+};
+
+const normalizeSubscriptionPlanListPayload = (
+  payload: Record<string, unknown>,
+): SubscriptionPlanListResponseView => {
+  const items = Array.isArray(payload.items)
+    ? payload.items.filter(isPlainRecord).map((item) => ({
+        plan_id: trimString(item.plan_id ?? item.planId ?? item.id),
+        plan: isPlainRecord(item.plan) ? item.plan : {},
+      }))
+    : [];
+  return {
+    items: items.filter((item) => item.plan_id),
+    total: normalizeTotal(payload.total, items.length),
+  };
+};
+
+const normalizeSubscriptionListItem = (
+  item: Record<string, unknown>,
+): SubscriptionListItemView | null => {
+  const subscriptionId = trimString(
+    item.subscription_id ?? item.subscriptionId ?? item.id,
+  );
+  const subscription = isPlainRecord(item.subscription) ? item.subscription : {};
+  if (!subscriptionId || Object.keys(subscription).length === 0) {
+    return null;
+  }
+  return {
+    subscription_id: subscriptionId,
+    subscription,
+    invoice: isPlainRecord(item.invoice) ? item.invoice : null,
+    plan: isPlainRecord(item.plan) ? item.plan : null,
+  };
+};
+
+const normalizeSubscriptionListPayload = (
+  payload: Record<string, unknown>,
+): SubscriptionListResponseView => {
+  const items = Array.isArray(payload.items)
+    ? payload.items
+        .filter(isPlainRecord)
+        .map(normalizeSubscriptionListItem)
+        .filter((item): item is SubscriptionListItemView => item !== null)
+    : [];
+  return {
+    items,
+    total: normalizeTotal(payload.total, items.length),
+  };
+};
+
+const normalizeSubscriptionGetPayload = (
+  payload: Record<string, unknown>,
+): SubscriptionListItemView => {
+  const item = normalizeSubscriptionListItem(payload);
+  if (!item) {
+    throw new Error("Subscription response did not include subscription state.");
+  }
+  return item;
+};
+
+const normalizeSubscriptionActionPayload = (
+  payload: Record<string, unknown>,
+): SubscriptionActionResponseView => ({
+  ok: Boolean(payload.ok),
+  subscription_id: trimString(payload.subscription_id ?? payload.subscriptionId),
+  tx_hash_hex: trimString(payload.tx_hash_hex ?? payload.txHashHex),
+  ...(payload.billing_trigger_id !== undefined
+    ? { billing_trigger_id: trimString(payload.billing_trigger_id) }
+    : {}),
+  ...(payload.usage_trigger_id !== undefined
+    ? { usage_trigger_id: trimString(payload.usage_trigger_id) || null }
+    : {}),
+  ...(payload.first_charge_ms !== undefined
+    ? { first_charge_ms: Number(payload.first_charge_ms) }
+    : {}),
+});
+
+const normalizeTotal = (value: unknown, fallback: number): number => {
+  const total = Number(value);
+  return Number.isFinite(total) && total >= 0 ? Math.trunc(total) : fallback;
+};
+
+const normalizeOptionalPositiveInteger = (
+  value: unknown,
+  label: string,
+): number | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
+  return parsed;
+};
+
+const normalizeSubscriptionPrivateActionBody = async (
+  input: SubscriptionActionInput,
+  operationLabel: string,
+) => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel,
+  });
+  const body: Record<string, unknown> = {
+    authority: accountId,
+    private_key: privateKeyHex,
+  };
+  const chargeAtMs = normalizeOptionalPositiveInteger(
+    input.chargeAtMs,
+    "chargeAtMs",
+  );
+  if (chargeAtMs !== undefined) {
+    body.charge_at_ms = chargeAtMs;
+  }
+  if (input.cancelMode) {
+    body.cancel_mode = input.cancelMode;
+  }
+  return body;
+};
+
+const listSubscriptionPlansFromTorii = async (
+  input: SubscriptionListPlansInput,
+): Promise<SubscriptionPlanListResponseView> => {
+  const endpoint = buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions/plans", {
+    provider: trimString(input.provider) || undefined,
+    limit: input.limit,
+    offset: input.offset,
+  });
+  const payload = await fetchJson(endpoint, "Subscription plans");
+  return normalizeSubscriptionPlanListPayload(payload);
+};
+
+const listSubscriptionsFromTorii = async (
+  input: SubscriptionListInput,
+): Promise<SubscriptionListResponseView> => {
+  const endpoint = buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions", {
+    owned_by: trimString(input.ownedBy) || undefined,
+    provider: trimString(input.provider) || undefined,
+    status: trimString(input.status) || undefined,
+    limit: input.limit,
+    offset: input.offset,
+  });
+  const payload = await fetchJson(endpoint, "Subscriptions");
+  return normalizeSubscriptionListPayload(payload);
+};
+
+const getSubscriptionFromTorii = async (
+  input: SubscriptionGetInput,
+): Promise<SubscriptionListItemView> => {
+  const subscriptionId = trimString(input.subscriptionId);
+  if (!subscriptionId) {
+    throw new Error("subscriptionId is required.");
+  }
+  const endpoint = buildNexusEndpoint(
+    input.toriiUrl,
+    `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
+  );
+  const payload = await fetchJson(endpoint, "Subscription");
+  return normalizeSubscriptionGetPayload(payload);
+};
+
+const createSubscriptionOnTorii = async (
+  input: SubscriptionCreateInput,
+): Promise<SubscriptionActionResponseView> => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Create subscription",
+  });
+  const subscriptionId = trimString(input.subscriptionId);
+  const planId = trimString(input.planId);
+  if (!subscriptionId) {
+    throw new Error("subscriptionId is required.");
+  }
+  if (!planId) {
+    throw new Error("planId is required.");
+  }
+  const firstChargeMs = normalizeOptionalPositiveInteger(
+    input.firstChargeMs,
+    "firstChargeMs",
+  );
+  const body: Record<string, unknown> = {
+    authority: accountId,
+    private_key: privateKeyHex,
+    subscription_id: subscriptionId,
+    plan_id: planId,
+  };
+  if (firstChargeMs !== undefined) {
+    body.first_charge_ms = firstChargeMs;
+  }
+  const payload = await postJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions"),
+    "Create subscription",
+    body,
+  );
+  return normalizeSubscriptionActionPayload(payload);
+};
+
+const postSubscriptionActionToTorii = async (
+  input: SubscriptionActionInput,
+  action: "pause" | "resume" | "cancel" | "keep" | "charge-now",
+  operationLabel: string,
+): Promise<SubscriptionActionResponseView> => {
+  const subscriptionId = trimString(input.subscriptionId);
+  if (!subscriptionId) {
+    throw new Error("subscriptionId is required.");
+  }
+  const body = await normalizeSubscriptionPrivateActionBody(
+    input,
+    operationLabel,
+  );
+  const payload = await postJson(
+    buildNexusEndpoint(
+      input.toriiUrl,
+      `/v1/subscriptions/${encodeURIComponent(subscriptionId)}/${action}`,
+    ),
+    operationLabel,
+    body,
+  );
+  return normalizeSubscriptionActionPayload(payload);
 };
 
 const fetchExplorerAssetDefinitionSnapshot = async (
@@ -6766,6 +7116,52 @@ const api: IrohaBridge = {
     return {
       unbondingDelayMs: readNexusUnbondingDelayMs(configuration),
     };
+  },
+  listSubscriptionPlans(input) {
+    return listSubscriptionPlansFromTorii(input);
+  },
+  listSubscriptions(input) {
+    return listSubscriptionsFromTorii(input);
+  },
+  getSubscription(input) {
+    return getSubscriptionFromTorii(input);
+  },
+  createSubscription(input) {
+    return createSubscriptionOnTorii(input);
+  },
+  pauseSubscription(input) {
+    return postSubscriptionActionToTorii(
+      input,
+      "pause",
+      "Pause subscription",
+    );
+  },
+  resumeSubscription(input) {
+    return postSubscriptionActionToTorii(
+      input,
+      "resume",
+      "Resume subscription",
+    );
+  },
+  cancelSubscription(input) {
+    return postSubscriptionActionToTorii(
+      {
+        ...input,
+        cancelMode: input.cancelMode ?? "period_end",
+      },
+      "cancel",
+      "Cancel subscription",
+    );
+  },
+  keepSubscription(input) {
+    return postSubscriptionActionToTorii(input, "keep", "Keep subscription");
+  },
+  chargeSubscriptionNow(input) {
+    return postSubscriptionActionToTorii(
+      input,
+      "charge-now",
+      "Charge subscription",
+    );
   },
   bondPublicLaneStake({
     toriiUrl,

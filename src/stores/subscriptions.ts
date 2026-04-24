@@ -1,159 +1,139 @@
 import { defineStore } from "pinia";
 import {
-  advanceNextDate,
-  applyAutoDeductions,
-  type SubscriptionCadence,
-  type SubscriptionRecord,
-} from "@/utils/subscriptions";
+  cancelSubscription,
+  chargeSubscriptionNow,
+  createSubscription,
+  keepSubscription,
+  listSubscriptionPlans,
+  listSubscriptions,
+  pauseSubscription,
+  resumeSubscription,
+} from "@/services/iroha";
+import type {
+  SubscriptionListItemView,
+  SubscriptionPlanListItemView,
+} from "@/types/iroha";
 
 export const SUBSCRIPTION_STORAGE_KEY = "iroha-demo:subscriptions";
 
 type SubscriptionState = {
   hydrated: boolean;
-  records: SubscriptionRecord[];
+  loading: boolean;
+  records: SubscriptionListItemView[];
+  plans: SubscriptionPlanListItemView[];
+  total: number;
+  planTotal: number;
+  error: string;
+  lastUpdatedAtMs: number | null;
+};
+
+type RefreshInput = {
+  toriiUrl: string;
+  accountId?: string;
+};
+
+type SignedSubscriptionInput = {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+  subscriptionId: string;
+};
+
+type CreateSubscriptionInput = SignedSubscriptionInput & {
+  planId: string;
+  firstChargeMs?: number;
+};
+
+type CancelSubscriptionInput = SignedSubscriptionInput & {
+  cancelMode?: "immediate" | "period_end";
+};
+
+type ChargeSubscriptionInput = SignedSubscriptionInput & {
+  chargeAtMs?: number;
 };
 
 const defaultState = (): SubscriptionState => ({
   hydrated: false,
+  loading: false,
   records: [],
+  plans: [],
+  total: 0,
+  planTotal: 0,
+  error: "",
+  lastUpdatedAtMs: null,
 });
 
-const createId = () =>
-  `sub_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-
-const seedSubscriptions = (): SubscriptionRecord[] => {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: createId(),
-      merchant: "Netflix",
-      amount: 1500,
-      maxAmount: null,
-      amountType: "fixed",
-      cadence: "monthly",
-      nextChargeAt: advanceNextDate(now, "monthly"),
-      status: "active",
-      cancelAtPeriodEnd: false,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: "Streaming",
-    },
-    {
-      id: createId(),
-      merchant: "AWS",
-      amount: null,
-      maxAmount: 9000,
-      amountType: "variable",
-      cadence: "monthly",
-      nextChargeAt: advanceNextDate(now, "monthly"),
-      status: "active",
-      cancelAtPeriodEnd: false,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: "Usage based",
-    },
-    {
-      id: createId(),
-      merchant: "Duolingo",
-      amount: 1200,
-      maxAmount: null,
-      amountType: "fixed",
-      cadence: "yearly",
-      nextChargeAt: advanceNextDate(now, "yearly"),
-      status: "paused",
-      cancelAtPeriodEnd: false,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: null,
-    },
-  ];
-};
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error ?? "Unknown error");
 
 export const useSubscriptionStore = defineStore("subscriptions", {
   state: defaultState,
   actions: {
     hydrate() {
       if (this.hydrated) return;
-      const raw = localStorage.getItem(SUBSCRIPTION_STORAGE_KEY);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as Partial<SubscriptionState>;
-          this.records = Array.isArray(parsed.records) ? parsed.records : [];
-          this.hydrated = true;
-          this.syncAutoDeductions();
-          return;
-        } catch (error) {
-          console.warn("Failed to parse subscriptions", error);
-        }
-      }
-      this.records = seedSubscriptions();
+      localStorage.removeItem(SUBSCRIPTION_STORAGE_KEY);
       this.hydrated = true;
-      this.syncAutoDeductions();
     },
-    persist() {
-      const payload = JSON.stringify({ hydrated: true, records: this.records });
-      localStorage.setItem(SUBSCRIPTION_STORAGE_KEY, payload);
-    },
-    syncAutoDeductions() {
-      this.records = applyAutoDeductions(this.records);
-      this.persist();
-    },
-    addSubscription(payload: {
-      merchant: string;
-      amount: number | null;
-      maxAmount: number | null;
-      cadence: SubscriptionCadence;
-      note?: string | null;
-    }) {
-      const amountType = payload.amount != null ? "fixed" : "variable";
-      const nextChargeAt = advanceNextDate(
-        new Date().toISOString(),
-        payload.cadence,
-      );
-      const record: SubscriptionRecord = {
-        id: createId(),
-        merchant: payload.merchant,
-        amount: payload.amount,
-        maxAmount: payload.maxAmount,
-        amountType,
-        cadence: payload.cadence,
-        nextChargeAt,
-        status: "active",
-        cancelAtPeriodEnd: false,
-        lastChargeAt: null,
-        lastChargeAmount: null,
-        note: payload.note ?? null,
-      };
-      this.records = [record, ...this.records];
-      this.persist();
-    },
-    togglePause(id: string) {
-      this.records = this.records.map((record) => {
-        if (record.id !== id || record.status === "canceled") {
-          return record;
+    async refresh({ toriiUrl, accountId }: RefreshInput) {
+      this.loading = true;
+      this.error = "";
+      try {
+        const [subscriptionsResult, plansResult] = await Promise.allSettled([
+          accountId
+            ? listSubscriptions({
+                toriiUrl,
+                ownedBy: accountId,
+                limit: 100,
+              })
+            : Promise.resolve({ items: [], total: 0 }),
+          listSubscriptionPlans({
+            toriiUrl,
+            limit: 100,
+          }),
+        ]);
+
+        if (subscriptionsResult.status === "fulfilled") {
+          this.records = subscriptionsResult.value.items;
+          this.total = subscriptionsResult.value.total;
+        } else {
+          this.records = [];
+          this.total = 0;
+          this.error = errorMessage(subscriptionsResult.reason);
         }
-        return {
-          ...record,
-          status: record.status === "paused" ? "active" : "paused",
-        };
-      });
-      this.persist();
-    },
-    toggleCancelAtPeriodEnd(id: string) {
-      this.records = this.records.map((record) => {
-        if (record.id !== id || record.status === "canceled") {
-          return record;
+
+        if (plansResult.status === "fulfilled") {
+          this.plans = plansResult.value.items;
+          this.planTotal = plansResult.value.total;
+        } else {
+          this.plans = [];
+          this.planTotal = 0;
+          this.error = this.error
+            ? `${this.error} ${errorMessage(plansResult.reason)}`
+            : errorMessage(plansResult.reason);
         }
-        return {
-          ...record,
-          cancelAtPeriodEnd: !record.cancelAtPeriodEnd,
-        };
-      });
-      this.persist();
+
+        this.lastUpdatedAtMs = Date.now();
+      } finally {
+        this.loading = false;
+      }
     },
-    removeSubscription(id: string) {
-      this.records = this.records.filter((record) => record.id !== id);
-      this.persist();
+    create(input: CreateSubscriptionInput) {
+      return createSubscription(input);
+    },
+    pause(input: SignedSubscriptionInput) {
+      return pauseSubscription(input);
+    },
+    resume(input: ChargeSubscriptionInput) {
+      return resumeSubscription(input);
+    },
+    cancel(input: CancelSubscriptionInput) {
+      return cancelSubscription(input);
+    },
+    keep(input: SignedSubscriptionInput) {
+      return keepSubscription(input);
+    },
+    chargeNow(input: ChargeSubscriptionInput) {
+      return chargeSubscriptionNow(input);
     },
   },
 });

@@ -1,116 +1,111 @@
 import { describe, expect, it } from "vitest";
 import {
-  advanceNextDate,
-  applyAutoDeductions,
+  buildSubscriptionNftId,
   formatAmount,
-  type SubscriptionRecord,
+  formatPlanCadence,
+  formatPlanPricing,
+  normalizeSubscriptionStatus,
+  planChargeAssetDefinition,
+  subscriptionCancelAtPeriodEnd,
+  subscriptionNextChargeMs,
+  subscriptionPeriodEndMs,
+  subscriptionStatusFromItem,
 } from "@/utils/subscriptions";
 
+const localize = (key: string, params?: Record<string, string | number>) =>
+  params
+    ? key.replace(/\{([\w]+)\}/g, (_match, token: string) =>
+        params[token] === undefined ? `{${token}}` : String(params[token]),
+      )
+    : key;
+
+const formatNumber = (value: number) =>
+  new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+
 describe("subscription utilities", () => {
-  it("advances to the next cadence date", () => {
-    const base = "2025-01-15T12:00:00.000Z";
-    expect(advanceNextDate(base, "monthly")).toBe("2025-02-15T12:00:00.000Z");
-    expect(advanceNextDate(base, "quarterly")).toBe("2025-04-15T12:00:00.000Z");
-  });
-
-  it("formats fixed and variable amounts", () => {
-    expect(formatAmount("fixed", 1500, null, "IRH")).toBe("IRH 1,500");
-    expect(formatAmount("variable", null, 9000, "IRH")).toBe("Up to IRH 9,000");
-  });
-
-  it("supports localized amount formatting via formatter callback", () => {
-    const localize = (key: string, params?: Record<string, string | number>) =>
-      key.replace(/\{([\w]+)\}/g, (_m, token: string) =>
-        params?.[token] === undefined ? `{${token}}` : String(params[token]),
-      );
-    const formatNumber = (value: number) =>
-      new Intl.NumberFormat("de-DE", { maximumFractionDigits: 2 }).format(
-        value,
-      );
-
-    expect(
-      formatAmount(
-        "fixed",
-        1500,
-        null,
-        "IRH",
-        (_key, params) => localize("固定 {unit} {amount}", params),
-        formatNumber,
-      ),
-    ).toBe("固定 IRH 1.500");
-    expect(
-      formatAmount(
-        "variable",
-        null,
-        9000,
-        "IRH",
-        (_key, params) => localize("最大 {unit} {amount}", params),
-        formatNumber,
-      ),
-    ).toBe("最大 IRH 9.000");
-  });
-
-  it("auto-deducts and advances next charge", () => {
-    const record: SubscriptionRecord = {
-      id: "sub-1",
-      merchant: "Netflix",
-      amount: 1500,
-      maxAmount: null,
-      amountType: "fixed",
-      cadence: "monthly",
-      nextChargeAt: "2025-02-01T12:00:00.000Z",
-      status: "active",
-      cancelAtPeriodEnd: false,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: null,
-    };
-    const updated = applyAutoDeductions(
-      [record],
-      new Date("2025-02-15T12:00:00.000Z"),
+  it("normalizes status values from Torii enum payloads", () => {
+    expect(normalizeSubscriptionStatus("active")).toBe("active");
+    expect(normalizeSubscriptionStatus({ status: "past_due", value: null })).toBe(
+      "past_due",
     );
-    expect(updated[0].lastChargeAt).toBe("2025-02-01T12:00:00.000Z");
-    expect(updated[0].nextChargeAt).toBe("2025-03-01T12:00:00.000Z");
+    expect(normalizeSubscriptionStatus({ status: "archived" })).toBe("unknown");
   });
 
-  it("cancels at period end and keeps usage-based amounts within range", () => {
-    const canceling: SubscriptionRecord = {
-      id: "sub-2",
-      merchant: "News",
-      amount: 500,
-      maxAmount: null,
-      amountType: "fixed",
-      cadence: "monthly",
-      nextChargeAt: "2025-03-01T12:00:00.000Z",
-      status: "active",
-      cancelAtPeriodEnd: true,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: null,
+  it("reads subscription timing and cancel flags from list items", () => {
+    const item = {
+      subscription_id: "sub-1$subscriptions.universal",
+      subscription: {
+        status: { status: "paused", value: null },
+        next_charge_ms: 1_704_067_200_000,
+        current_period_end_ms: 1_706_745_600_000,
+        cancel_at_period_end: true,
+      },
     };
-    const variable: SubscriptionRecord = {
-      id: "sub-3",
-      merchant: "AWS",
-      amount: null,
-      maxAmount: 1000,
-      amountType: "variable",
-      cadence: "monthly",
-      nextChargeAt: "2025-04-01T12:00:00.000Z",
-      status: "active",
-      cancelAtPeriodEnd: false,
-      lastChargeAt: null,
-      lastChargeAmount: null,
-      note: null,
+
+    expect(subscriptionStatusFromItem(item)).toBe("paused");
+    expect(subscriptionNextChargeMs(item)).toBe(1_704_067_200_000);
+    expect(subscriptionPeriodEndMs(item)).toBe(1_706_745_600_000);
+    expect(subscriptionCancelAtPeriodEnd(item)).toBe(true);
+  });
+
+  it("formats fixed and usage plan pricing from real plan metadata", () => {
+    const fixedPlan = {
+      pricing: {
+        kind: "fixed",
+        detail: {
+          amount: "120",
+          asset_definition: "usd#pay",
+        },
+      },
     };
-    const updated = applyAutoDeductions(
-      [canceling, variable],
-      new Date("2025-04-10T12:00:00.000Z"),
+    const usagePlan = {
+      pricing: {
+        kind: "usage",
+        detail: {
+          unit_price: "0.024",
+          unit_key: "compute_ms",
+          asset_definition: "usd#pay",
+        },
+      },
+    };
+
+    expect(planChargeAssetDefinition(fixedPlan)).toBe("usd#pay");
+    expect(formatPlanPricing(fixedPlan, "XOR", localize, formatNumber)).toBe(
+      "USD 120",
     );
-    const updatedCanceling = updated[0];
-    const updatedVariable = updated[1];
-    expect(updatedCanceling.status).toBe("canceled");
-    expect(updatedCanceling.cancelAtPeriodEnd).toBe(false);
-    expect(updatedVariable.lastChargeAmount).toBeGreaterThanOrEqual(400);
-    expect(updatedVariable.lastChargeAmount).toBeLessThanOrEqual(990);
+    expect(formatPlanPricing(usagePlan, "XOR", localize, formatNumber)).toBe(
+      "USD 0.02 per compute_ms",
+    );
+  });
+
+  it("formats bare amount values and fixed-period cadences", () => {
+    const plan = {
+      billing: {
+        cadence: {
+          kind: "fixed_period",
+          detail: {
+            period_ms: 90 * 86_400_000,
+          },
+        },
+      },
+    };
+
+    expect(formatAmount("9000", "XOR", localize, formatNumber)).toBe(
+      "XOR 9,000",
+    );
+    expect(formatPlanCadence(plan, localize)).toBe("Quarterly");
+  });
+
+  it("builds deterministic TAIRA subscription NFT ids from a seed", () => {
+    expect(
+      buildSubscriptionNftId(
+        "testuAlice",
+        "aws_compute#commerce",
+        1_704_067_200_000,
+        0.5,
+      ),
+    ).toBe(
+      "sub_testualice_aws_compute_comm_loxgzkqo_7fffffff$subscriptions.universal",
+    );
   });
 });

@@ -29,6 +29,11 @@ import type {
   PublicLaneRewardsResponseView,
   PublicLaneStakeResponseView,
   PublicLaneValidatorsResponseView,
+  SubscriptionActionResponseView,
+  SubscriptionListResponseView,
+  SubscriptionPlanListResponseView,
+  SubscriptionListItemView,
+  SubscriptionStatusView,
   ToriiHealth,
   VpnAvailability,
   VpnAuthContext,
@@ -292,6 +297,49 @@ export const getNexusPublicLaneRewards = (
 export const getNexusStakingPolicy = (
   toriiUrl: string,
 ): Promise<NexusStakingPolicy> => bridge().getNexusStakingPolicy({ toriiUrl });
+
+export const listSubscriptionPlans = (
+  input: Parameters<IrohaBridge["listSubscriptionPlans"]>[0],
+): Promise<SubscriptionPlanListResponseView> =>
+  bridge().listSubscriptionPlans(input);
+
+export const listSubscriptions = (
+  input: Parameters<IrohaBridge["listSubscriptions"]>[0],
+): Promise<SubscriptionListResponseView> => bridge().listSubscriptions(input);
+
+export const getSubscription = (
+  input: Parameters<IrohaBridge["getSubscription"]>[0],
+): Promise<SubscriptionListItemView> => bridge().getSubscription(input);
+
+export const createSubscription = (
+  input: Parameters<IrohaBridge["createSubscription"]>[0],
+): Promise<SubscriptionActionResponseView> =>
+  bridge().createSubscription(input);
+
+export const pauseSubscription = (
+  input: Parameters<IrohaBridge["pauseSubscription"]>[0],
+): Promise<SubscriptionActionResponseView> => bridge().pauseSubscription(input);
+
+export const resumeSubscription = (
+  input: Parameters<IrohaBridge["resumeSubscription"]>[0],
+): Promise<SubscriptionActionResponseView> =>
+  bridge().resumeSubscription(input);
+
+export const cancelSubscription = (
+  input: Parameters<IrohaBridge["cancelSubscription"]>[0],
+): Promise<SubscriptionActionResponseView> =>
+  bridge().cancelSubscription(input);
+
+export const keepSubscription = (
+  input: Parameters<IrohaBridge["keepSubscription"]>[0],
+): Promise<SubscriptionActionResponseView> => bridge().keepSubscription(input);
+
+export const chargeSubscriptionNow = (
+  input: Parameters<IrohaBridge["chargeSubscriptionNow"]>[0],
+): Promise<SubscriptionActionResponseView> =>
+  bridge().chargeSubscriptionNow(input);
+
+export type { SubscriptionStatusView };
 
 export const bondPublicLaneStake = (
   input: Parameters<IrohaBridge["bondPublicLaneStake"]>[0],

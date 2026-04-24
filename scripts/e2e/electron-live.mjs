@@ -1490,7 +1490,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     {
       hash: "#/subscriptions",
       headingOptions: ["Subscriptions", "Subscription Hub"],
-      sectionText: "New subscription",
+      sectionText: "Subscribe to plan",
     },
     {
       hash: "#/send",

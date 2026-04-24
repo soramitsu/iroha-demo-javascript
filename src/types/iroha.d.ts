@@ -554,6 +554,44 @@ export interface PublicLaneRewardsResponseView {
   items: PublicLanePendingRewardView[];
 }
 
+export type SubscriptionStatusView =
+  | "active"
+  | "paused"
+  | "past_due"
+  | "canceled"
+  | "suspended";
+
+export interface SubscriptionPlanListItemView {
+  plan_id: string;
+  plan: Record<string, unknown>;
+}
+
+export interface SubscriptionPlanListResponseView {
+  items: SubscriptionPlanListItemView[];
+  total: number;
+}
+
+export interface SubscriptionListItemView {
+  subscription_id: string;
+  subscription: Record<string, unknown>;
+  invoice: Record<string, unknown> | null;
+  plan: Record<string, unknown> | null;
+}
+
+export interface SubscriptionListResponseView {
+  items: SubscriptionListItemView[];
+  total: number;
+}
+
+export interface SubscriptionActionResponseView {
+  ok: boolean;
+  subscription_id: string;
+  tx_hash_hex: string;
+  billing_trigger_id?: string;
+  usage_trigger_id?: string | null;
+  first_charge_ms?: number;
+}
+
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 
 export interface GovernanceProposalResult {
@@ -939,6 +977,65 @@ export interface IrohaBridge {
   getNexusStakingPolicy(config: {
     toriiUrl: string;
   }): Promise<NexusStakingPolicy>;
+  listSubscriptionPlans(input: {
+    toriiUrl: string;
+    provider?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<SubscriptionPlanListResponseView>;
+  listSubscriptions(input: {
+    toriiUrl: string;
+    ownedBy?: string;
+    provider?: string;
+    status?: SubscriptionStatusView;
+    limit?: number;
+    offset?: number;
+  }): Promise<SubscriptionListResponseView>;
+  getSubscription(input: {
+    toriiUrl: string;
+    subscriptionId: string;
+  }): Promise<SubscriptionListItemView>;
+  createSubscription(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+    planId: string;
+    firstChargeMs?: number;
+  }): Promise<SubscriptionActionResponseView>;
+  pauseSubscription(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+  }): Promise<SubscriptionActionResponseView>;
+  resumeSubscription(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+    chargeAtMs?: number;
+  }): Promise<SubscriptionActionResponseView>;
+  cancelSubscription(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+    cancelMode?: "immediate" | "period_end";
+  }): Promise<SubscriptionActionResponseView>;
+  keepSubscription(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+  }): Promise<SubscriptionActionResponseView>;
+  chargeSubscriptionNow(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    subscriptionId: string;
+    chargeAtMs?: number;
+  }): Promise<SubscriptionActionResponseView>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;
