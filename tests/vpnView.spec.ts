@@ -198,7 +198,7 @@ describe("VpnView", () => {
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
     });
-    expect(wrapper.text()).toContain("VPN status");
+    expect(wrapper.text()).toContain("Sora VPN");
     expect(wrapper.text()).toContain(defaultProfile.relayEndpoint);
     expect(wrapper.text()).toContain("Recent VPN receipts");
     expect(wrapper.text()).toContain("utun7");

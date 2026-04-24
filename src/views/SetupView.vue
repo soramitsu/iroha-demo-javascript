@@ -312,13 +312,12 @@ const pingIndicator = computed(() => {
   }
 });
 
-const authorityHasSavedSecret = computed(
-  () =>
-    Boolean(
-      authorityForm.accountId.trim() &&
-        authorityForm.accountId.trim() === session.authority.accountId.trim() &&
-        session.authority.hasStoredSecret,
-    ),
+const authorityHasSavedSecret = computed(() =>
+  Boolean(
+    authorityForm.accountId.trim() &&
+      authorityForm.accountId.trim() === session.authority.accountId.trim() &&
+      session.authority.hasStoredSecret,
+  ),
 );
 
 const canRegister = computed(() =>

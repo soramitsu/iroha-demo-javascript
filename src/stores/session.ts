@@ -345,9 +345,7 @@ export const useSessionStore = defineStore("session", {
         state.accounts.find(
           (account) => account.accountId === state.activeAccountId,
         ) ?? null;
-      return Boolean(
-        active?.accountId && active?.hasStoredSecret,
-      );
+      return Boolean(active?.accountId && active?.hasStoredSecret);
     },
     activeAccount: (state) =>
       state.accounts.find(

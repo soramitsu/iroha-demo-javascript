@@ -423,7 +423,7 @@ describe("KaigiView", () => {
     });
     expect(
       String(createKaigiMeetingMock.mock.calls[0]?.[0]?.callId ?? ""),
-    ).toMatch(/^kaigi:kaigi-[a-z0-9-]+$/);
+    ).toMatch(/^kaigi\.universal:kaigi-[a-z0-9-]+$/);
     expect(wrapper.text()).toContain("Meeting link ready");
     expect(wrapper.text()).toContain("Automatic join");
 
@@ -450,7 +450,9 @@ describe("KaigiView", () => {
     await flushPromises();
 
     expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
-    expect(wrapper.find("details").element.open).toBe(true);
+    expect(
+      (wrapper.find(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
   });
 
   it("falls back to a transparent manual invite when private live registration fails", async () => {

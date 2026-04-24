@@ -23,32 +23,32 @@ const routes = [
     path: "/account",
     component: AccountSetupView,
     meta: {
-      titleKey: "Account Setup",
-      subtitleKey: "Create and save your TAIRA wallet",
+      titleKey: "Create wallet",
+      subtitleKey: "Create or restore a wallet",
     },
   },
   {
     path: "/setup",
     component: SetupView,
     meta: {
-      titleKey: "Session Setup",
-      subtitleKey: "TAIRA connection, asset, and authority keys",
+      titleKey: "Advanced settings",
+      subtitleKey: "Network and developer settings",
     },
   },
   {
     path: "/wallet",
     component: WalletView,
     meta: {
-      titleKey: "Wallet Overview",
-      subtitleKey: "Balances & activity",
+      titleKey: "Wallet",
+      subtitleKey: "Balance, funding, and activity",
     },
   },
   {
     path: "/stats",
     component: StatsView,
     meta: {
-      titleKey: "Stats HUD",
-      subtitleKey: "XOR supply, flow, and consensus telemetry",
+      titleKey: "Network health",
+      subtitleKey: "Supply, activity, and explorer signals",
     },
   },
   {
@@ -56,15 +56,15 @@ const routes = [
     component: VpnView,
     meta: {
       titleKey: "Sora VPN",
-      subtitleKey: "Connect through the TAIRA privacy lane",
+      subtitleKey: "Private network connection",
     },
   },
   {
     path: "/staking",
     component: StakingView,
     meta: {
-      titleKey: "NPOS Staking",
-      subtitleKey: "Nominate validators and stake XOR",
+      titleKey: "Stake XOR",
+      subtitleKey: "Choose a validator and manage stake",
     },
   },
   {
@@ -72,39 +72,39 @@ const routes = [
     component: ParliamentView,
     meta: {
       titleKey: "SORA Parliament",
-      subtitleKey: "Citizenship bond and governance voting",
+      subtitleKey: "Register and vote",
     },
   },
   {
     path: "/subscriptions",
     component: SubscriptionHubView,
     meta: {
-      titleKey: "Subscription Hub",
-      subtitleKey: "Auto-deduct and manage services",
+      titleKey: "Subscriptions",
+      subtitleKey: "Recurring payments",
     },
   },
   {
     path: "/send",
     component: SendView,
     meta: {
-      titleKey: "Send Points",
-      subtitleKey: "Transfer assets via Torii",
+      titleKey: "Send",
+      subtitleKey: "Pay with a QR or account",
     },
   },
   {
     path: "/receive",
     component: ReceiveView,
     meta: {
-      titleKey: "Receive Points",
-      subtitleKey: "Share QR or Account ID",
+      titleKey: "Receive",
+      subtitleKey: "Show a payment QR",
     },
   },
   {
     path: "/kaigi",
     component: KaigiView,
     meta: {
-      titleKey: "Kaigi Calls",
-      subtitleKey: "Meeting links and direct audio/video room",
+      titleKey: "Kaigi",
+      subtitleKey: "Wallet-based meeting links",
     },
   },
   {
@@ -112,7 +112,7 @@ const routes = [
     component: ExploreView,
     meta: {
       titleKey: "Explorer",
-      subtitleKey: "Network & asset insights",
+      subtitleKey: "Explorer QR and network status",
     },
   },
   {
@@ -120,7 +120,7 @@ const routes = [
     component: OfflineView,
     meta: {
       titleKey: "Offline",
-      subtitleKey: "Offline wallets, invoices, and payments",
+      subtitleKey: "Device payments and invoices",
     },
   },
 ];

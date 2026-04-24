@@ -64,13 +64,11 @@ describe("SetupView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (
-    options?: {
-      assetDefinitionId?: string;
-      authority?: Record<string, unknown>;
-      activeAccount?: Record<string, unknown>;
-    },
-  ) => {
+  const mountView = (options?: {
+    assetDefinitionId?: string;
+    authority?: Record<string, unknown>;
+    activeAccount?: Record<string, unknown>;
+  }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();

@@ -2,42 +2,41 @@
   <section class="card receive-shell">
     <header class="card-header receive-header">
       <div>
-        <h2>{{ t("Share Payment QR") }}</h2>
+        <h2>{{ t("Receive") }}</h2>
         <p class="helper receive-account-copy">
-          {{ shareAccountId || t("Configure account first") }}
+          {{ t("Show a fresh QR for this wallet.") }}
         </p>
       </div>
-      <button class="icon-cta" @click="toggleQr">
+      <button class="icon-cta" :disabled="!qrDataUrl" @click="shareQr">
         <img :src="receiveIcon" alt="" />
-        <span>{{ showQr ? t("Hide QR Code") : t("Show QR Code") }}</span>
+        <span>{{ t("Share QR") }}</span>
       </button>
     </header>
     <div class="receive-layout">
       <div class="receive-context">
-        <div class="kv receive-account-card">
-          <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
-          <span class="kv-value">{{
-            shareAccountId || t("Configure account first")
-          }}</span>
-        </div>
         <p class="helper">
           {{
-            showQr
-              ? t(
-                  "QR encodes only a fresh private payment address. Account, asset, and amount stay off the QR by default.",
-                )
-              : t("Use the button above to render a QR that wallets can scan.")
+            t("This QR creates a private payment address for the next sender.")
           }}
         </p>
+        <details class="technical-details compact">
+          <summary>{{ t("Wallet details") }}</summary>
+          <div class="kv receive-account-card">
+            <span class="kv-label">{{ t("I105 Account ID") }}</span>
+            <span class="kv-value">{{
+              shareAccountId || t("Configure account first")
+            }}</span>
+          </div>
+        </details>
       </div>
-      <div
-        class="qr-panel"
-        :class="{ ready: Boolean(showQr && qrMarkup), dormant: !showQr }"
-      >
+      <div class="qr-panel" :class="{ ready: Boolean(qrMarkup) }">
         <!-- eslint-disable-next-line vue/no-v-html -->
-        <div v-if="showQr && qrMarkup" class="qr" v-html="qrMarkup"></div>
+        <div v-if="qrMarkup" class="qr" v-html="qrMarkup"></div>
+        <p v-if="qrMarkup && qrMessage" class="helper receive-qr-status">
+          {{ qrMessage }}
+        </p>
         <p v-else class="helper receive-empty-state">
-          {{ showQr ? qrMessage : t("Tap the button to generate a QR.") }}
+          {{ qrMessage }}
         </p>
       </div>
     </div>
@@ -58,8 +57,9 @@ const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const shareAccountId = computed(() => getPublicAccountId(activeAccount.value));
 const qrMarkup = ref("");
-const qrMessage = ref(t("Tap the button to generate a QR."));
-const showQr = ref(false);
+const qrDataUrl = ref("");
+const qrPayloadText = ref("");
+const qrMessage = ref(t("Generating QR..."));
 const qrGeneration = ref(0);
 const receiveIcon = ReceiveIcon;
 const QR_DARK_COLOR = "#14202b";
@@ -72,6 +72,8 @@ const generateQr = async () => {
 
   if (!accountId) {
     qrMarkup.value = "";
+    qrDataUrl.value = "";
+    qrPayloadText.value = "";
     qrMessage.value = t("Configure an account before generating QR codes.");
     return;
   }
@@ -81,50 +83,90 @@ const generateQr = async () => {
       accountId,
       privateKeyHex: activeAccount.value?.privateKeyHex,
     });
-    const nextQrMarkup = await QRCode.toString(JSON.stringify(payload), {
-      type: "svg",
+    const payloadText = JSON.stringify(payload);
+    const qrOptions = {
       width: 240,
       color: {
         dark: QR_DARK_COLOR,
         light: QR_LIGHT_COLOR,
       },
-    });
+    };
+    const [nextQrMarkup, nextQrDataUrl] = await Promise.all([
+      QRCode.toString(payloadText, {
+        ...qrOptions,
+        type: "svg",
+      }),
+      QRCode.toDataURL(payloadText, {
+        ...qrOptions,
+        type: "image/png",
+      }),
+    ]);
     if (
       currentGeneration !== qrGeneration.value ||
-      !showQr.value ||
       shareAccountId.value !== accountId
     ) {
       return;
     }
     qrMarkup.value = nextQrMarkup;
+    qrDataUrl.value = nextQrDataUrl;
+    qrPayloadText.value = payloadText;
     qrMessage.value = t("QR ready.");
   } catch (error) {
     if (currentGeneration !== qrGeneration.value) {
       return;
     }
+    qrMarkup.value = "";
+    qrDataUrl.value = "";
+    qrPayloadText.value = "";
     qrMessage.value = t("Failed to render QR.");
     console.warn("Failed to render QR", error);
   }
 };
 
-const toggleQr = () => {
-  showQr.value = !showQr.value;
-  if (showQr.value) {
-    generateQr();
-  } else {
-    qrGeneration.value += 1;
-    qrMarkup.value = "";
-    qrMessage.value = t("Tap the button to generate a QR.");
+const shareQr = async () => {
+  if (!qrDataUrl.value || !qrPayloadText.value) {
+    qrMessage.value = t("Generating QR...");
+    await generateQr();
+  }
+  if (!qrDataUrl.value || !qrPayloadText.value) {
+    return;
+  }
+  try {
+    const response = await fetch(qrDataUrl.value);
+    const blob = await response.blob();
+    const file = new File([blob], "iroha-receive-qr.png", {
+      type: blob.type || "image/png",
+    });
+    if (navigator.canShare?.({ files: [file] })) {
+      await navigator.share({
+        title: t("Receive"),
+        files: [file],
+      });
+      qrMessage.value = t("QR shared.");
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({
+        title: t("Receive"),
+        text: qrPayloadText.value,
+      });
+      qrMessage.value = t("QR shared.");
+      return;
+    }
+    await navigator.clipboard.writeText(qrPayloadText.value);
+    qrMessage.value = t("QR payload copied to clipboard.");
+  } catch (error) {
+    qrMessage.value = t("QR share failed.");
+    console.warn("Failed to share QR", error);
   }
 };
 
 watch(
   () => shareAccountId.value,
   () => {
-    if (showQr.value) {
-      generateQr();
-    }
+    void generateQr();
   },
+  { immediate: true },
 );
 </script>
 
@@ -169,17 +211,14 @@ watch(
     rgba(255, 255, 255, 0.03);
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 12px;
   padding: 20px;
 }
 
 .qr-panel.ready {
   border-color: rgba(255, 76, 102, 0.42);
   box-shadow: 0 18px 36px rgba(255, 76, 102, 0.14);
-}
-
-.qr-panel.dormant {
-  min-height: 176px;
-  border-style: dashed;
 }
 
 .qr {
@@ -203,6 +242,11 @@ watch(
 
 .receive-empty-state {
   max-width: 320px;
+  text-align: center;
+}
+
+.receive-qr-status {
+  margin: 0;
   text-align: center;
 }
 
@@ -233,10 +277,6 @@ watch(
   .qr-panel {
     min-height: 220px;
     padding: 16px;
-  }
-
-  .qr-panel.dormant {
-    min-height: 148px;
   }
 
   .receive-empty-state {

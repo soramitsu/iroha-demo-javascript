@@ -353,9 +353,7 @@ describe("AccountSetupView", () => {
     const wrapper = mountView();
     const session = useSessionStore();
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     const textarea = wrapper.find("textarea");
@@ -415,9 +413,7 @@ describe("AccountSetupView", () => {
       value: () => Promise.resolve(backupPayload),
     });
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     const fileInput = wrapper.find('input[type="file"]');
@@ -473,9 +469,7 @@ describe("AccountSetupView", () => {
       value: () => Promise.resolve(invalidBackupPayload),
     });
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     const fileInput = wrapper.find('input[type="file"]');
@@ -496,9 +490,7 @@ describe("AccountSetupView", () => {
   it("validates restore phrases before deriving or saving", async () => {
     const wrapper = mountView();
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
@@ -533,9 +525,7 @@ describe("AccountSetupView", () => {
       VALID_24_WORD_MNEMONIC,
     );
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     await wrapper.find("textarea").setValue(VALID_24_WORD_MNEMONIC);
@@ -553,9 +543,7 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView();
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     await wrapper.find("textarea").setValue(VALID_MNEMONIC);
@@ -585,7 +573,6 @@ describe("AccountSetupView", () => {
     await wrapper.find('input[type="checkbox"]').setValue(true);
     await flushPromises();
 
-    expect(wrapper.text()).not.toContain(t("Advanced"));
     expect(wrapper.text()).not.toContain(t("Register on-chain alias"));
     expect(onboardAccountMock).not.toHaveBeenCalled();
   });
@@ -634,9 +621,7 @@ describe("AccountSetupView", () => {
 
     expect(session.accounts).toHaveLength(1);
 
-    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
-      "click",
-    );
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
     await flushPromises();
 
     const textarea = wrapper.find("textarea");

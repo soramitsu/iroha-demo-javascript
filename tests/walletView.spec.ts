@@ -292,7 +292,7 @@ describe("WalletView", () => {
     const wrapper = mountView("xor#wonderland");
     await flushPromises();
 
-    expect(wrapper.text()).toContain(t("Shielded balance"));
+    expect(wrapper.text()).toContain(t("Private balance"));
     expect(wrapper.text()).toContain("xor#universal");
     expect(wrapper.text()).toContain("22");
     expect(wrapper.text()).toContain("9");
@@ -358,7 +358,7 @@ describe("WalletView", () => {
 
     const sendLink = wrapper
       .findAll("a.secondary")
-      .find((link) => link.text().includes(t("Send Points")))!;
+      .find((link) => link.text().includes(t("Send")))!;
     expect(sendLink.attributes("aria-disabled")).toBe("true");
     expect(sendLink.attributes("href")).toBeUndefined();
   });
@@ -407,7 +407,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Rescan shielded notes")))!
+      .find((button) => button.text().includes(t("Rescan private balance")))!
       .trigger("click");
     await flushPromises();
 
@@ -493,7 +493,7 @@ describe("WalletView", () => {
     await wrapper.get(".wallet-shield-input input").setValue("5");
     await wrapper
       .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Create shielded balance")))!
+      .find((button) => button.text().includes(t("Move to private balance")))!
       .trigger("click");
     await flushPromises();
 
@@ -575,7 +575,7 @@ describe("WalletView", () => {
     await wrapper.get(".wallet-shield-input input").setValue("2");
     await wrapper
       .findAll("button.secondary")
-      .find((button) => button.text().includes(t("Create shielded balance")))!
+      .find((button) => button.text().includes(t("Move to private balance")))!
       .trigger("click");
     await flushPromises();
 
@@ -1123,7 +1123,7 @@ describe("WalletView", () => {
       await wrapper.get(".wallet-shield-input input").setValue("5");
       await wrapper
         .findAll("button.secondary")
-        .find((button) => button.text().includes(t("Create shielded balance")))!
+        .find((button) => button.text().includes(t("Move to private balance")))!
         .trigger("click");
       await flushPromises();
 

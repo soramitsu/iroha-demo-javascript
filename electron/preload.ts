@@ -107,9 +107,7 @@ import {
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
-import {
-  type ConfidentialReceiveKeyRecord,
-} from "./secureVault";
+import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
   CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
   CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2,
@@ -1852,10 +1850,7 @@ const encryptConfidentialWalletBackupState = (
   const key = deriveConfidentialWalletBackupKey(mnemonic, salt);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const plaintext = Buffer.from(JSON.stringify(state), "utf8");
-  const ciphertext = Buffer.concat([
-    cipher.update(plaintext),
-    cipher.final(),
-  ]);
+  const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   return {
     kdf: "HKDF-SHA256",
     cipher: "AES-256-GCM",
@@ -1881,7 +1876,9 @@ const parseConfidentialWalletBackupStatePayload = (
             }
             const keyId = trimString(entry.keyId);
             const ownerTagHex = trimString(entry.ownerTagHex).toLowerCase();
-            const diversifierHex = trimString(entry.diversifierHex).toLowerCase();
+            const diversifierHex = trimString(
+              entry.diversifierHex,
+            ).toLowerCase();
             const publicKeyBase64Url = normalizeBase64UrlString(
               entry.publicKeyBase64Url,
               "confidentialWallet.receiveKeys.publicKeyBase64Url",
@@ -1921,9 +1918,7 @@ const parseConfidentialWalletBackupStatePayload = (
       ? value.shadowTransactions
           .map(normalizePendingConfidentialWalletShadowTransaction)
           .filter(
-            (
-              entry,
-            ): entry is PendingConfidentialWalletShadowTransaction =>
+            (entry): entry is PendingConfidentialWalletShadowTransaction =>
               Boolean(entry),
           )
       : [],
@@ -2177,9 +2172,18 @@ const normalizeKaigiCallId = (value: string, label: string) => {
     throw new Error(`${label} is required.`);
   }
   if (!callId.includes(":")) {
-    throw new Error(`${label} must be in domain:meeting format.`);
+    throw new Error(`${label} must be in domain.dataspace:meeting format.`);
   }
-  return callId;
+  const [domainIdRaw, ...callNameParts] = callId.split(":");
+  const domainId = domainIdRaw.trim();
+  const callName = callNameParts.join(":").trim();
+  if (!domainId || !callName) {
+    throw new Error(`${label} must be in domain.dataspace:meeting format.`);
+  }
+  const qualifiedDomainId = domainId.includes(".")
+    ? domainId
+    : `${domainId}.universal`;
+  return `${qualifiedDomainId}:${callName}`;
 };
 
 const normalizeKaigiParticipantId = (value: string) => {
@@ -4679,9 +4683,8 @@ const api: IrohaBridge = {
     if (!normalizedChainId) {
       throw new Error("chainId is required.");
     }
-    const receiveKeys = await listConfidentialReceiveKeysForAccount(
-      normalizedAccountId,
-    );
+    const receiveKeys =
+      await listConfidentialReceiveKeysForAccount(normalizedAccountId);
     const shadowState = readConfidentialWalletShadowState(
       getConfidentialWalletShadowKey({
         toriiUrl,
@@ -4735,9 +4738,7 @@ const api: IrohaBridge = {
     if (!confidentialWallet) {
       return;
     }
-    if (
-      confidentialWallet.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2
-    ) {
+    if (confidentialWallet.schema !== CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V2) {
       return;
     }
     await assertSecureVaultAvailable("Confidential wallet backup restore");

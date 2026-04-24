@@ -194,8 +194,10 @@ export const buildWalletBackupPayload = (input: {
     return payload;
   }
 
-  const confidentialWalletDraft = (input.confidentialWallet ??
-    {}) as Record<string, unknown>;
+  const confidentialWalletDraft = (input.confidentialWallet ?? {}) as Record<
+    string,
+    unknown
+  >;
   const confidentialChainId = trimString(confidentialWalletDraft.chainId);
   const confidentialAccountId = trimString(confidentialWalletDraft.accountId);
   if (confidentialChainId && confidentialAccountId) {
@@ -204,8 +206,7 @@ export const buildWalletBackupPayload = (input: {
       chainId: confidentialChainId,
       accountId: confidentialAccountId,
       addressCursor:
-        normalizeNonNegativeInteger(confidentialWalletDraft.addressCursor) ??
-        0,
+        normalizeNonNegativeInteger(confidentialWalletDraft.addressCursor) ?? 0,
       scanWatermarkBlock:
         confidentialWalletDraft.scanWatermarkBlock === null
           ? null

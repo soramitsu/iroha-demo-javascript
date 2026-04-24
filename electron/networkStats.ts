@@ -57,7 +57,10 @@ const requireArray = (value: unknown, label: string): unknown[] => {
   return value;
 };
 
-const requireRecord = (value: unknown, label: string): Record<string, unknown> => {
+const requireRecord = (
+  value: unknown,
+  label: string,
+): Record<string, unknown> => {
   const record = toRecord(value);
   if (!record) {
     throw new Error(`${label} must be an object.`);
@@ -182,21 +185,20 @@ export const normalizeExplorerAssetDefinitionEconometricsPayload = (
         net: requireString(windowRecord.net, "net"),
       };
     }),
-    issuanceSeries: requireArray(
-      record.issuance_series,
-      "issuance_series",
-    ).map((item, index) => {
-      const pointRecord = requireRecord(item, `issuance_series[${index}]`);
-      return {
-        bucketStartMs: requireNumber(
-          pointRecord.bucket_start_ms,
-          "bucket_start_ms",
-        ),
-        minted: requireString(pointRecord.minted, "minted"),
-        burned: requireString(pointRecord.burned, "burned"),
-        net: requireString(pointRecord.net, "net"),
-      };
-    }),
+    issuanceSeries: requireArray(record.issuance_series, "issuance_series").map(
+      (item, index) => {
+        const pointRecord = requireRecord(item, `issuance_series[${index}]`);
+        return {
+          bucketStartMs: requireNumber(
+            pointRecord.bucket_start_ms,
+            "bucket_start_ms",
+          ),
+          minted: requireString(pointRecord.minted, "minted"),
+          burned: requireString(pointRecord.burned, "burned"),
+          net: requireString(pointRecord.net, "net"),
+        };
+      },
+    ),
   };
 };
 
@@ -206,7 +208,9 @@ export const extractRuntimeStatsFromStatusSnapshot = (
 ): NetworkRuntimeStats => {
   const snapshotRecord = toRecord(snapshot);
   const statusRecord =
-    toRecord(snapshotRecord?.status) ?? snapshotRecord ?? ({} as Record<string, unknown>);
+    toRecord(snapshotRecord?.status) ??
+    snapshotRecord ??
+    ({} as Record<string, unknown>);
   const rawRecord = toRecord(statusRecord.raw);
   const rawSumeragiRecord =
     toRecord(rawRecord?.sumeragi) ??

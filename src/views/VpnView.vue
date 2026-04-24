@@ -3,7 +3,7 @@
     <section class="card vpn-hero-card">
       <header class="card-header vpn-hero-header">
         <div>
-          <h2>{{ t("VPN Status") }}</h2>
+          <h2>{{ t("Sora VPN") }}</h2>
           <p class="helper">
             {{ availabilityMessage }}
           </p>
@@ -40,14 +40,6 @@
 
       <div class="vpn-kpis">
         <div class="kv">
-          <span class="kv-label">{{ t("VPN Helper") }}</span>
-          <span class="kv-value">{{ helperLabel }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Controller") }}</span>
-          <span class="kv-value">{{ controllerLabel }}</span>
-        </div>
-        <div class="kv">
           <span class="kv-label">{{ t("Connection state") }}</span>
           <span class="kv-value">{{ t(connectionStateLabel) }}</span>
         </div>
@@ -60,6 +52,19 @@
           <span class="kv-value">{{ leaseLabel }}</span>
         </div>
       </div>
+      <details class="technical-details compact">
+        <summary>{{ t("VPN details") }}</summary>
+        <div class="vpn-kpis">
+          <div class="kv">
+            <span class="kv-label">{{ t("VPN Helper") }}</span>
+            <span class="kv-value">{{ helperLabel }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Controller") }}</span>
+            <span class="kv-value">{{ controllerLabel }}</span>
+          </div>
+        </div>
+      </details>
 
       <div class="vpn-controls">
         <label class="vpn-field">
@@ -106,141 +111,151 @@
     </section>
 
     <section class="card vpn-details-card">
-      <header class="card-header">
-        <h2>{{ t("Session Details") }}</h2>
-      </header>
-      <div class="vpn-details-grid">
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Session ID") }}</span>
-          <span class="mono">{{
-            status.sessionId || t("No VPN session yet.")
-          }}</span>
+      <details class="technical-details">
+        <summary>{{ t("Session details") }}</summary>
+        <div class="vpn-details-grid">
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Session ID") }}</span>
+            <span class="mono">{{
+              status.sessionId || t("No VPN session yet.")
+            }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Relay endpoint") }}</span>
+            <span class="mono">{{ status.relayEndpoint || relayLabel }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Connected at") }}</span>
+            <span>{{ formatTimestamp(status.connectedAtMs) }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Expires at") }}</span>
+            <span>{{ formatTimestamp(status.expiresAtMs) }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Traffic in") }}</span>
+            <span>{{ formatBytes(status.bytesIn) }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Traffic out") }}</span>
+            <span>{{ formatBytes(status.bytesOut) }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("System tunnel") }}</span>
+            <span>{{ systemTunnelStatusLabel }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Reconcile state") }}</span>
+            <span>{{ status.reconcileState || t("Steady") }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Tunnel interface") }}</span>
+            <span class="mono">{{ systemTunnelInterfaceLabel }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Primary network service") }}</span>
+            <span>{{ systemTunnelServiceLabel }}</span>
+          </div>
         </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Relay endpoint") }}</span>
-          <span class="mono">{{ status.relayEndpoint || relayLabel }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Connected at") }}</span>
-          <span>{{ formatTimestamp(status.connectedAtMs) }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Expires at") }}</span>
-          <span>{{ formatTimestamp(status.expiresAtMs) }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Traffic in") }}</span>
-          <span>{{ formatBytes(status.bytesIn) }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Traffic out") }}</span>
-          <span>{{ formatBytes(status.bytesOut) }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("System tunnel") }}</span>
-          <span>{{ systemTunnelStatusLabel }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Reconcile state") }}</span>
-          <span>{{ status.reconcileState || t("Steady") }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Tunnel interface") }}</span>
-          <span class="mono">{{ systemTunnelInterfaceLabel }}</span>
-        </div>
-        <div class="vpn-detail">
-          <span class="helper">{{ t("Primary network service") }}</span>
-          <span>{{ systemTunnelServiceLabel }}</span>
-        </div>
-      </div>
+      </details>
     </section>
 
     <section class="card vpn-profile-card">
-      <header class="card-header">
-        <h2>{{ t("VPN Profile") }}</h2>
-      </header>
-      <div class="vpn-profile-columns">
-        <div>
-          <p class="helper">{{ t("Server-pushed routes") }}</p>
-          <ul v-if="routePushes.length" class="vpn-list">
-            <li v-for="routeItem in routePushes" :key="routeItem" class="mono">
-              {{ routeItem }}
-            </li>
-          </ul>
-          <p v-else class="helper">{{ t("No pushed routes configured.") }}</p>
+      <details class="technical-details">
+        <summary>{{ t("Network profile") }}</summary>
+        <div class="vpn-profile-columns">
+          <div>
+            <p class="helper">{{ t("Server-pushed routes") }}</p>
+            <ul v-if="routePushes.length" class="vpn-list">
+              <li
+                v-for="routeItem in routePushes"
+                :key="routeItem"
+                class="mono"
+              >
+                {{ routeItem }}
+              </li>
+            </ul>
+            <p v-else class="helper">{{ t("No pushed routes configured.") }}</p>
+          </div>
+          <div>
+            <p class="helper">{{ t("DNS servers") }}</p>
+            <ul v-if="dnsServers.length" class="vpn-list">
+              <li v-for="dnsServer in dnsServers" :key="dnsServer" class="mono">
+                {{ dnsServer }}
+              </li>
+            </ul>
+            <p v-else class="helper">{{ t("No DNS servers configured.") }}</p>
+          </div>
+          <div>
+            <p class="helper">{{ t("Excluded routes") }}</p>
+            <ul v-if="excludedRoutes.length" class="vpn-list">
+              <li
+                v-for="routeItem in excludedRoutes"
+                :key="routeItem"
+                class="mono"
+              >
+                {{ routeItem }}
+              </li>
+            </ul>
+            <p v-else class="helper">
+              {{ t("No excluded routes configured.") }}
+            </p>
+          </div>
+          <div>
+            <p class="helper">{{ t("Tunnel addresses") }}</p>
+            <ul v-if="tunnelAddresses.length" class="vpn-list">
+              <li
+                v-for="address in tunnelAddresses"
+                :key="address"
+                class="mono"
+              >
+                {{ address }}
+              </li>
+            </ul>
+            <p v-else class="helper">
+              {{ t("No tunnel addresses configured.") }}
+            </p>
+            <p class="helper vpn-mtu-label">
+              {{ t("Tunnel MTU") }}: {{ mtuLabel }}
+            </p>
+          </div>
         </div>
-        <div>
-          <p class="helper">{{ t("DNS servers") }}</p>
-          <ul v-if="dnsServers.length" class="vpn-list">
-            <li v-for="dnsServer in dnsServers" :key="dnsServer" class="mono">
-              {{ dnsServer }}
-            </li>
-          </ul>
-          <p v-else class="helper">{{ t("No DNS servers configured.") }}</p>
-        </div>
-        <div>
-          <p class="helper">{{ t("Excluded routes") }}</p>
-          <ul v-if="excludedRoutes.length" class="vpn-list">
-            <li
-              v-for="routeItem in excludedRoutes"
-              :key="routeItem"
-              class="mono"
-            >
-              {{ routeItem }}
-            </li>
-          </ul>
-          <p v-else class="helper">{{ t("No excluded routes configured.") }}</p>
-        </div>
-        <div>
-          <p class="helper">{{ t("Tunnel addresses") }}</p>
-          <ul v-if="tunnelAddresses.length" class="vpn-list">
-            <li v-for="address in tunnelAddresses" :key="address" class="mono">
-              {{ address }}
-            </li>
-          </ul>
-          <p v-else class="helper">
-            {{ t("No tunnel addresses configured.") }}
-          </p>
-          <p class="helper vpn-mtu-label">
-            {{ t("Tunnel MTU") }}: {{ mtuLabel }}
-          </p>
-        </div>
-      </div>
+      </details>
     </section>
 
     <section class="card vpn-receipts-card">
-      <header class="card-header">
-        <h2>{{ t("Recent VPN receipts") }}</h2>
-      </header>
-      <div v-if="receipts.length" class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t("Session ID") }}</th>
-              <th>{{ t("Exit class") }}</th>
-              <th>{{ t("Duration") }}</th>
-              <th>{{ t("Traffic") }}</th>
-              <th>{{ t("Status") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="receipt in receipts" :key="receipt.sessionId">
-              <td class="mono">{{ receipt.sessionId }}</td>
-              <td>{{ t(exitClassLabel(receipt.exitClass)) }}</td>
-              <td>{{ formatDuration(receipt.durationMs) }}</td>
-              <td>
-                {{ formatBytes(receipt.bytesIn) }} /
-                {{ formatBytes(receipt.bytesOut) }}
-              </td>
-              <td>{{ receipt.status }} · {{ receipt.receiptSource }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div v-else class="wallet-empty">
-        <p class="wallet-empty-title">{{ t("No VPN receipts yet.") }}</p>
-        <p class="helper">{{ t("Connect VPN") }}</p>
-      </div>
+      <details class="technical-details">
+        <summary>{{ t("Recent VPN receipts") }}</summary>
+        <div v-if="receipts.length" class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ t("Session ID") }}</th>
+                <th>{{ t("Exit class") }}</th>
+                <th>{{ t("Duration") }}</th>
+                <th>{{ t("Traffic") }}</th>
+                <th>{{ t("Status") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="receipt in receipts" :key="receipt.sessionId">
+                <td class="mono">{{ receipt.sessionId }}</td>
+                <td>{{ t(exitClassLabel(receipt.exitClass)) }}</td>
+                <td>{{ formatDuration(receipt.durationMs) }}</td>
+                <td>
+                  {{ formatBytes(receipt.bytesIn) }} /
+                  {{ formatBytes(receipt.bytesOut) }}
+                </td>
+                <td>{{ receipt.status }} · {{ receipt.receiptSource }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-else class="wallet-empty">
+          <p class="wallet-empty-title">{{ t("No VPN receipts yet.") }}</p>
+          <p class="helper">{{ t("Connect VPN") }}</p>
+        </div>
+      </details>
     </section>
   </div>
 </template>

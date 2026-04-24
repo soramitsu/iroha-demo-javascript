@@ -8,7 +8,6 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
-const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
 const BOB_OWNER_TAG_HEX = "11".repeat(32);
 const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
 const BOB_DIVERSIFIER_HEX = "33".repeat(32);
@@ -128,9 +127,7 @@ describe("SendView", () => {
       }),
     );
     await flushPromises();
-    expect(wrapper.text()).toContain(
-      t("Shield policy mode: {mode}.", { mode: "Convertible" }),
-    );
+    expect(wrapper.text()).toContain(t("Private transfer"));
 
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
@@ -181,21 +178,19 @@ describe("SendView", () => {
     );
   });
 
-  it("shows an unshielded transparency note while shielding stays optional", async () => {
+  it("keeps private mode optional without showing policy copy", async () => {
     const wrapper = mountView();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
-      ),
-    );
+    expect(wrapper.text()).toContain(t("Standard"));
+    expect(wrapper.text()).toContain(t("Private"));
+    expect(wrapper.text()).not.toContain(t("Shield policy mode: {mode}."));
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
-    expect(wrapper.text()).not.toContain(
+    expect(wrapper.text()).toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private transfers use the recipient Receive QR and do not include memos.",
       ),
     );
   });
@@ -325,8 +320,7 @@ describe("SendView", () => {
         schema: "iroha-confidential-payment-address/v3",
         amount: "7",
         receiveKeyId: MALLORY_RECEIVE_KEY_ID,
-        receivePublicKeyBase64Url:
-          MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
+        receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
       }),
@@ -348,8 +342,7 @@ describe("SendView", () => {
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
         shieldedRecipient: {
           receiveKeyId: MALLORY_RECEIVE_KEY_ID,
-          receivePublicKeyBase64Url:
-            MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
+          receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
           ownerTagHex: MALLORY_OWNER_TAG_HEX,
           diversifierHex: MALLORY_DIVERSIFIER_HEX,
         },

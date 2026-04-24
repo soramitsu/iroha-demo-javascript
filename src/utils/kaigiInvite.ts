@@ -109,6 +109,11 @@ const sanitizeCallNamePart = (value: string): string => {
   return sanitized || "meeting";
 };
 
+const qualifyKaigiDomain = (domain: string): string => {
+  const normalized = requireNonEmptyString(domain, "domain");
+  return normalized.includes(".") ? normalized : `${normalized}.universal`;
+};
+
 const randomByte = (): number => Math.floor(Math.random() * 256);
 
 export const createKaigiInviteSecretBase64Url = (): string => {
@@ -127,7 +132,7 @@ export const createKaigiInviteSecretBase64Url = (): string => {
 };
 
 export const buildKaigiCallId = (domain: string, meetingCode: string): string =>
-  `${requireNonEmptyString(domain, "domain")}:${sanitizeCallNamePart(`kaigi-${meetingCode}`)}`;
+  `${qualifyKaigiDomain(domain)}:${sanitizeCallNamePart(`kaigi-${meetingCode}`)}`;
 
 export const deriveKaigiMeetingCode = (callId: string): string => {
   const normalized = requireNonEmptyString(callId, "callId");

@@ -2,21 +2,17 @@
   <div class="staking-shell">
     <section class="card staking-context-card">
       <header class="card-header">
-        <h2>{{ t("Nominate Validators") }}</h2>
+        <h2>{{ t("Stake XOR") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
           {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
       <p class="helper">
-        {{
-          t(
-            "Stake XOR by dataspace. Lane selection is automatic from live governance, then validators are loaded for that lane.",
-          )
-        }}
+        {{ t("Choose a validator, enter an amount, and manage your stake.") }}
       </p>
       <div class="form-grid staking-controls">
         <label>
-          {{ t("Dataspace") }}
+          {{ t("Staking group") }}
           <select
             v-model.number="selectedDataspaceId"
             :disabled="loadingBootstrap || !dataspaceOptions.length"
@@ -52,22 +48,6 @@
 
       <div class="grid-2 staking-metrics">
         <div class="kv">
-          <span class="kv-label">{{ t("Lane") }}</span>
-          <span class="kv-value">{{
-            laneContext ? `#${laneContext.laneId}` : t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Alias") }}</span>
-          <span class="kv-value">{{ laneContext?.alias || t("—") }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Signer") }}</span>
-          <span class="kv-value mono">{{
-            stakerAccountId || t("Not configured")
-          }}</span>
-        </div>
-        <div class="kv">
           <span class="kv-label">{{ t("Unbond Delay") }}</span>
           <span class="kv-value">
             {{ policy ? formatDuration(policy.unbondingDelayMs) : t("—") }}
@@ -80,6 +60,28 @@
           >
         </div>
       </div>
+
+      <details class="technical-details compact">
+        <summary>{{ t("Staking details") }}</summary>
+        <div class="grid-2">
+          <div class="kv">
+            <span class="kv-label">{{ t("Lane") }}</span>
+            <span class="kv-value">{{
+              laneContext ? `#${laneContext.laneId}` : t("—")
+            }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Alias") }}</span>
+            <span class="kv-value">{{ laneContext?.alias || t("—") }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Signer") }}</span>
+            <span class="kv-value mono">{{
+              stakerAccountId || t("Not configured")
+            }}</span>
+          </div>
+        </div>
+      </details>
 
       <p v-if="selectedValidatorRecord" class="helper">
         {{
@@ -99,7 +101,7 @@
 
     <section class="card staking-actions-card">
       <header class="card-header">
-        <h2>{{ t("Bond / Unbond") }}</h2>
+        <h2>{{ t("Stake / Unstake") }}</h2>
       </header>
       <div class="form-grid staking-action-grid">
         <label>

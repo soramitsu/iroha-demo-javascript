@@ -26,8 +26,7 @@ const jsonResponse = (body: unknown, status = 200) => ({
 
 const ALICE_ACCOUNT_ID =
   "testuﾛ1PｸCｶrﾑhyﾜｴﾄhｳﾔSqP2GFGﾗヱﾐｹﾇﾏzﾍｵﾐMﾇﾖﾄksJヱRRJXVB";
-const BOB_ACCOUNT_ID =
-  "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2Gｷ7gWeFzyﾁﾋﾁAHﾌTJQQ4L";
+const BOB_ACCOUNT_ID = "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2Gｷ7gWeFzyﾁﾋﾁAHﾌTJQQ4L";
 const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
@@ -1188,6 +1187,10 @@ describe("preload Kaigi bridge", () => {
     }
     expect(lastCreateInput.call.privacy_mode.mode).toBe("ZkRosterV1");
     expect(lastCreateInput.call.room_policy.policy).toBe("Authenticated");
+    expect(lastCreateInput.call.id).toEqual({
+      domain_id: "wonderland.universal",
+      call_name: "kaigi-private-room",
+    });
     expect(lastCreateInput.artifacts.commitment.commitment).toMatch(/^hash:/);
     expect(lastCreateInput.feeSpend.asset_definition_id).toBe("xor#universal");
     expect(lastCreateInput.feeSpend.proof).toBe(
@@ -1203,7 +1206,7 @@ describe("preload Kaigi bridge", () => {
       description: { type: string; sdp: string };
     }>(encryptedOffer, inviteSecretBase64Url);
     expect(decryptedOffer).toMatchObject({
-      callId: "wonderland:kaigi-private-room",
+      callId: "wonderland.universal:kaigi-private-room",
       hostDisplayName: "Alice",
       hostParticipantId: "alice",
       description: {
@@ -1257,7 +1260,9 @@ describe("preload Kaigi bridge", () => {
     if (!lastJoinInput) {
       throw new Error("private join input missing");
     }
-    expect(lastJoinInput.callId).toBe("wonderland:kaigi-private-room");
+    expect(lastJoinInput.callId).toBe(
+      "wonderland.universal:kaigi-private-room",
+    );
     expect(lastJoinInput.artifacts.roster_root).toMatch(/^hash:/);
     const decryptedAnswer = decryptKaigiPayload<{
       callId: string;
@@ -1267,7 +1272,7 @@ describe("preload Kaigi bridge", () => {
       description: { type: string; sdp: string };
     }>(lastJoinInput.metadata.kaigi_signal.encryptedSignal, hostKaigiKeys);
     expect(decryptedAnswer).toMatchObject({
-      callId: "wonderland:kaigi-private-room",
+      callId: "wonderland.universal:kaigi-private-room",
       participantId: "guest",
       participantName: "Guest",
       roomId: "wonderland:kaigi-private-room",
@@ -2471,8 +2476,7 @@ describe("preload Kaigi bridge", () => {
         privateKeyHex: "11".repeat(32),
         shielded: true,
         shieldedReceiveKeyId: "recipient-receive-key",
-        shieldedReceivePublicKeyBase64Url:
-          recipientSignal.publicKeyBase64Url,
+        shieldedReceivePublicKeyBase64Url: recipientSignal.publicKeyBase64Url,
         shieldedOwnerTagHex: recipient.ownerTagHex,
         shieldedDiversifierHex: recipient.diversifierHex,
       }),
@@ -2788,8 +2792,7 @@ describe("preload Kaigi bridge", () => {
         privateKeyHex: "11".repeat(32),
         shielded: true,
         shieldedReceiveKeyId: "recipient-receive-key",
-        shieldedReceivePublicKeyBase64Url:
-          recipientSignal.publicKeyBase64Url,
+        shieldedReceivePublicKeyBase64Url: recipientSignal.publicKeyBase64Url,
         shieldedOwnerTagHex: recipient.ownerTagHex,
         shieldedDiversifierHex: recipient.diversifierHex,
       }),
