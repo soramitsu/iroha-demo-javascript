@@ -5,6 +5,7 @@
     "src/**/*.d.ts",
     "src/utils/accountId.ts",
     "src/utils/assetId.ts",
+    "src/utils/chainMetadata.ts",
     "src/utils/confidential.ts",
     "src/utils/errorMessage.ts",
     "src/utils/mnemonic.ts",

@@ -14,6 +14,7 @@ import {
   isOnboardingDisabledError,
   isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
+  decimalQuantityEquals,
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
 } from "./electron-live-utils.mjs";
@@ -35,6 +36,12 @@ const assetDefinitionId = String(
 ).trim();
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
 const defaultDerivationLabel = "default";
+const expectedFaucetQuantity = readEnv("E2E_EXPECTED_FAUCET_QUANTITY", "25000");
+const reuseFundedWalletCache = ["1", "true", "yes"].includes(
+  String(process.env.E2E_REUSE_FUNDED_CACHE ?? "")
+    .trim()
+    .toLowerCase(),
+);
 const {
   alias: onboardingAlias,
   privateKeyHex: onboardingPrivateKeyHex,
@@ -249,7 +256,9 @@ async function resolveBootstrapFlow(page) {
     return fundedFlow;
   }
 
-  const cachedFundedWallet = readCachedFundedWalletConfig();
+  const cachedFundedWallet = reuseFundedWalletCache
+    ? readCachedFundedWalletConfig()
+    : null;
   if (cachedFundedWallet) {
     try {
       const fundedFlow = await runFundedFlow(page, cachedFundedWallet);
@@ -529,6 +538,15 @@ async function runFaucetFlow(page) {
       const assetDefinitionId =
         assetId.split("#", 1)[0]?.trim() ||
         String(faucetReceipt?.asset_definition_id ?? "");
+
+      if (
+        expectedFaucetQuantity &&
+        !decimalQuantityEquals(fundedBalance.quantity, expectedFaucetQuantity)
+      ) {
+        throw new Error(
+          `Fresh TAIRA faucet claim should fund ${expectedFaucetQuantity} XOR, observed ${fundedBalance.quantity} on ${assetId}.`,
+        );
+      }
 
       if (!assetDefinitionId) {
         throw new Error(
@@ -1093,7 +1111,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
             privateKeyHex: alicePrivateKeyHex,
             unshield: true,
           }),
-          waitForMs(120_000).then(() => {
+          waitForMs(300_000).then(() => {
             throw new Error("unshield submit timed out");
           }),
         ]);
@@ -1326,6 +1344,8 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
         displayName: alias,
         domain: derivationLabel,
         accountId: summary.accountId,
+        i105AccountId: summary.i105AccountId,
+        i105DefaultAccountId: summary.i105DefaultAccountId,
         publicKeyHex,
         privateKeyHex,
         hasStoredSecret: true,
@@ -1698,7 +1718,15 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         })
         .waitFor({ state: "visible", timeout: 5_000 });
       await destinationInput.fill(fundedAccount.accountId);
-      const shieldDisabledForSelf = await shieldSubmitButton
+      const selfShieldSubmitButton = page.getByRole("button", {
+        name: "Create private balance",
+        exact: true,
+      });
+      await selfShieldSubmitButton.waitFor({
+        state: "visible",
+        timeout: 5_000,
+      });
+      const shieldDisabledForSelf = await selfShieldSubmitButton
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (shieldDisabledForSelf === null) {

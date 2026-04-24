@@ -54,12 +54,8 @@ describe("session store", () => {
     store.persistState();
 
     const persisted = snapshot();
-    expect(persisted.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(persisted.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
+    expect(persisted.connection.toriiUrl).toBe("http://torii");
+    expect(persisted.connection.chainId).toBe("dev");
     expect(persisted.accounts[0].accountId).toBe("ed0120@wonderland");
     expect(persisted.activeAccountId).toBe("ed0999@wonderland");
     expect(store.hasAccount).toBe(true);
@@ -108,15 +104,9 @@ describe("session store", () => {
     const store = useSessionStore();
     store.hydrate();
 
-    expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    );
+    expect(store.connection.toriiUrl).toBe("https://torii");
+    expect(store.connection.chainId).toBe("chain");
+    expect(store.connection.networkPrefix).toBe(10);
     expect(store.connection.assetDefinitionId).toBe("norito:abcdef0123456789");
     expect(store.activeAccount?.displayName).toBe("Alice");
     expect(store.hasAccount).toBe(true);
@@ -152,12 +142,8 @@ describe("session store", () => {
 
     expect(store.activeAccount?.accountId).toBe("legacy@wonderland");
     expect(store.accounts).toHaveLength(1);
-    expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
+    expect(store.connection.chainId).toBe("legacy");
+    expect(store.connection.toriiUrl).toBe("https://legacy-torii");
   });
 
   it("upgrades legacy account ids from stored canonical literals", () => {
@@ -333,6 +319,56 @@ describe("session store", () => {
     expect(store.authority.accountId).toBe("testuAliceCompat1234567890");
   });
 
+  it("re-derives stored account literals when connection metadata changes", () => {
+    (window as any).iroha = {
+      deriveAccountAddress: ({ networkPrefix }: { networkPrefix: number }) => ({
+        accountId:
+          networkPrefix === 42
+            ? "n42uAliceCompat1234567890"
+            : "testuAliceCompat1234567890",
+        i105AccountId:
+          networkPrefix === 42
+            ? "n42uAliceCompat1234567890"
+            : "testuAliceCompat1234567890",
+        i105DefaultAccountId: "sorauAliceDefault1234567890",
+        publicKeyHex: "ab".repeat(32),
+        accountIdWarning: "",
+      }),
+    };
+
+    const store = useSessionStore();
+    store.$patch({
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "default",
+          accountId: "testuAliceCompat1234567890",
+          publicKeyHex: "ab".repeat(32),
+          privateKeyHex: "cd".repeat(32),
+          hasStoredSecret: true,
+          localOnly: false,
+        },
+      ],
+      activeAccountId: "testuAliceCompat1234567890",
+      authority: {
+        accountId: "testuAliceCompat1234567890",
+        privateKeyHex: "deadbeef",
+      },
+    });
+
+    store.updateConnection({
+      toriiUrl: "http://localhost:8080",
+      chainId: "local-chain",
+      networkPrefix: 42,
+    });
+
+    expect(store.connection.chainId).toBe("local-chain");
+    expect(store.connection.networkPrefix).toBe(42);
+    expect(store.accounts[0]?.accountId).toBe("n42uAliceCompat1234567890");
+    expect(store.activeAccountId).toBe("n42uAliceCompat1234567890");
+    expect(store.authority.accountId).toBe("n42uAliceCompat1234567890");
+  });
+
   it("ignores invalid chain-reported network prefixes", () => {
     const store = useSessionStore();
     const before = store.connection.networkPrefix;
@@ -397,25 +433,24 @@ describe("session store", () => {
     );
   });
 
-  it("ignores custom chain network overrides in TAIRA-only mode", () => {
+  it("keeps custom chain profiles disabled while preserving the active connection", () => {
     const store = useSessionStore();
-    store.addCustomChain({
-      label: "Local devnet",
-      chainId: "testus",
+    store.updateConnection({
       toriiUrl: "http://127.0.0.1:8080",
-      assetDefinitionId: "asset#local",
+      chainId: "testus",
       networkPrefix: 99,
     });
+    store.addCustomChain({
+      label: "Local devnet",
+      chainId: "ignored-chain",
+      toriiUrl: "http://127.0.0.1:9090",
+      assetDefinitionId: "asset#local",
+      networkPrefix: 123,
+    });
     expect(store.customChains).toHaveLength(0);
-    expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
-    );
+    expect(store.connection.chainId).toBe("testus");
+    expect(store.connection.toriiUrl).toBe("http://127.0.0.1:8080");
+    expect(store.connection.networkPrefix).toBe(99);
     expect(store.connection.assetDefinitionId).toBe("asset#local");
 
     store.persistState();
@@ -424,5 +459,45 @@ describe("session store", () => {
 
     store.removeCustomChain("local-devnet");
     expect(store.customChains).toHaveLength(0);
+  });
+
+  it("normalizes custom Torii endpoints and accepts loaded chain metadata", () => {
+    const store = useSessionStore();
+
+    store.updateConnection({
+      toriiUrl: " http://127.0.0.1:8080/ ",
+      chainId: "custom-chain",
+      networkPrefix: 99,
+    });
+
+    expect(store.connection.toriiUrl).toBe("http://127.0.0.1:8080");
+    expect(store.connection.chainId).toBe("custom-chain");
+    expect(store.connection.networkPrefix).toBe(99);
+  });
+
+  it("falls back to the default endpoint when a saved endpoint is invalid", () => {
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        connection: {
+          toriiUrl: "ftp://not-supported",
+          chainId: "custom-chain",
+          networkPrefix: 99,
+        },
+      }),
+    );
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
   });
 });

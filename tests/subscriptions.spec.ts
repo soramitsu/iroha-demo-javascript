@@ -25,9 +25,9 @@ const formatNumber = (value: number) =>
 describe("subscription utilities", () => {
   it("normalizes status values from Torii enum payloads", () => {
     expect(normalizeSubscriptionStatus("active")).toBe("active");
-    expect(normalizeSubscriptionStatus({ status: "past_due", value: null })).toBe(
-      "past_due",
-    );
+    expect(
+      normalizeSubscriptionStatus({ status: "past_due", value: null }),
+    ).toBe("past_due");
     expect(normalizeSubscriptionStatus({ status: "archived" })).toBe("unknown");
   });
 
@@ -105,7 +105,7 @@ describe("subscription utilities", () => {
         0.5,
       ),
     ).toBe(
-      "sub_testualice_aws_compute_comm_loxgzkqo_7fffffff$subscriptions.universal",
+      "sub_testualice_aws_compute_comme_lqu5m2o0_7fffffff$subscriptions.universal",
     );
   });
 });

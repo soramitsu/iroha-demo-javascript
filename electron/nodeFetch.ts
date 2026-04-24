@@ -99,7 +99,7 @@ const normalizeBodyBuffer = async (body: unknown): Promise<Buffer | null> => {
     return body;
   }
   if (typeof body === "string") {
-    return Buffer.from(body);
+    return Buffer.from(body, "utf8");
   }
   if (body instanceof ArrayBuffer) {
     return Buffer.from(body);
@@ -111,7 +111,7 @@ const normalizeBodyBuffer = async (body: unknown): Promise<Buffer | null> => {
     typeof URLSearchParams !== "undefined" &&
     body instanceof URLSearchParams
   ) {
-    return Buffer.from(body.toString());
+    return Buffer.from(body.toString(), "utf8");
   }
   if (typeof Blob !== "undefined" && body instanceof Blob) {
     return Buffer.from(await body.arrayBuffer());
@@ -121,7 +121,7 @@ const normalizeBodyBuffer = async (body: unknown): Promise<Buffer | null> => {
       "nodeFetch does not support ReadableStream request bodies.",
     );
   }
-  return Buffer.from(String(body));
+  return Buffer.from(String(body), "utf8");
 };
 
 const readRequestBody = async (

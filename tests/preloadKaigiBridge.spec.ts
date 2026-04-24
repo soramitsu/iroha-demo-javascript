@@ -175,17 +175,23 @@ vi.mock("../electron/nodeFetch", () => ({
     mocks.nodeFetchMock(input, init),
 }));
 
-vi.mock("../electron/accountAddress", () => ({
-  deriveAccountAddressView: vi.fn(),
-  normalizeCanonicalAccountIdLiteral: (
-    value: string,
-    label?: string,
-    networkPrefix?: number,
-  ) =>
-    mocks.normalizeCanonicalAccountIdLiteralMock(value, label, networkPrefix),
-  normalizeCompatAccountIdLiteral: (value: string, label?: string) =>
-    mocks.normalizeCompatAccountIdLiteralMock(value, label),
-}));
+vi.mock("../electron/accountAddress", async () => {
+  const actual = await vi.importActual<
+    typeof import("../electron/accountAddress")
+  >("../electron/accountAddress");
+  return {
+    ...actual,
+    deriveAccountAddressView: vi.fn(),
+    normalizeCanonicalAccountIdLiteral: (
+      value: string,
+      label?: string,
+      networkPrefix?: number,
+    ) =>
+      mocks.normalizeCanonicalAccountIdLiteralMock(value, label, networkPrefix),
+    normalizeCompatAccountIdLiteral: (value: string, label?: string) =>
+      mocks.normalizeCompatAccountIdLiteralMock(value, label),
+  };
+});
 
 vi.mock("../electron/faucetApi", () => ({
   requestFaucetFundsWithPuzzle: (input: unknown, onStatus?: unknown) =>
@@ -344,6 +350,9 @@ const loadBridge = async () => {
       onStatus?: (progress: unknown) => void,
     ) => Promise<Record<string, unknown>>;
     getNetworkStats: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getChainMetadata: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
   };
@@ -820,6 +829,36 @@ describe("preload Kaigi bridge", () => {
         validatorCount: 2,
       },
     });
+  });
+
+  it("loads chain metadata from Torii endpoint payloads", async () => {
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.endsWith("/v1/chain/metadata")) {
+        return jsonResponse({
+          chain_id: "chain-alpha",
+          network_prefix: 42,
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getChainMetadata({
+        toriiUrl: "http://localhost:8080",
+      }),
+    ).resolves.toEqual({
+      chainId: "chain-alpha",
+      networkPrefix: 42,
+    });
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/v1/chain/metadata",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
   });
 
   it("returns partial network stats when explorer endpoints fail", async () => {

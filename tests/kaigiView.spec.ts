@@ -355,6 +355,7 @@ describe("KaigiView", () => {
   afterEach(() => {
     activeWrapper?.unmount();
     activeWrapper = null;
+    document.body.innerHTML = "";
     window.location.hash = "";
     vi.restoreAllMocks();
   });
@@ -384,12 +385,23 @@ describe("KaigiView", () => {
       activeAccountId: "alice@wonderland",
     });
     activeWrapper = mount(KaigiView, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
     });
     return activeWrapper;
   };
+
+  it("keeps advanced signaling collapsed by default", () => {
+    const wrapper = mountView();
+    const advancedDetails = wrapper.get(".kaigi-advanced")
+      .element as HTMLDetailsElement;
+
+    expect(advancedDetails.open).toBe(false);
+    expect(wrapper.text()).toContain("Advanced signaling");
+    expect(wrapper.text()).toContain("Show raw packets");
+  });
 
   it("creates a live meeting link and copies the invite", async () => {
     const wrapper = mountView();
@@ -445,14 +457,42 @@ describe("KaigiView", () => {
     expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(true);
     expect(wrapper.text()).toContain("Host checklist");
     expect(wrapper.text()).toContain("Keep this host window open");
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(false);
 
     await getButtonByText(wrapper, "Show Advanced signaling").trigger("click");
     await flushPromises();
 
     expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
     expect(
-      (wrapper.find(".kaigi-advanced").element as HTMLDetailsElement).open,
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
     ).toBe(true);
+  });
+
+  it("focuses the host prompt primary action and restores focus on Escape", async () => {
+    const wrapper = mountView();
+    const createButton = getButtonByText(wrapper, "Create meeting link");
+
+    (createButton.element as HTMLButtonElement).focus();
+    expect(document.activeElement).toBe(createButton.element);
+
+    await createButton.trigger("click");
+    await flushPromises();
+
+    const primaryAction = getButtonByText(
+      wrapper,
+      "I will keep this window open",
+    );
+    expect(document.activeElement).toBe(primaryAction.element);
+
+    await wrapper
+      .get(".kaigi-host-modal-backdrop")
+      .trigger("keydown", { key: "Escape" });
+    await flushPromises();
+
+    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
+    expect(document.activeElement).toBe(createButton.element);
   });
 
   it("falls back to a transparent manual invite when private live registration fails", async () => {

@@ -1,7 +1,4 @@
-import {
-  normalizeMnemonicPhrase,
-  type MnemonicWordCount,
-} from "@/utils/mnemonic";
+import { normalizeMnemonicPhrase, type MnemonicWordCount } from "./mnemonic";
 
 export type WalletBackupTarget = "manual" | "icloud" | "google";
 export const CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1 =

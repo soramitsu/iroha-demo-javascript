@@ -188,7 +188,7 @@ describe("faucetApi", () => {
     ]);
   });
 
-  it("maps Norito faucet validation failures to a readable repeated-claim message", async () => {
+  it("maps Norito faucet validation failures to a readable stale-proof message", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -225,7 +225,7 @@ describe("faucetApi", () => {
         }),
       }),
     ).rejects.toThrow(
-      "Faucet request failed (400): TAIRA rejected this faucet claim. Repeated claims usually fail once the account already holds starter XOR, and stale faucet proof challenges can also trigger this response.",
+      "Faucet request failed (400): TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
     );
   });
 

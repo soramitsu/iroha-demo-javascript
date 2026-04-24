@@ -2,12 +2,67 @@ import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
 import {
   deriveAccountAddressView,
+  parseAccountAddressLiteral,
   normalizeCanonicalAccountIdLiteral,
   normalizeCompatAccountIdLiteral,
 } from "../electron/accountAddress";
 
 const SAMPLE_PUBLIC_KEY_HEX =
   "CE7FA46C9DCE7EA4B125E2E36BDB63EA33073E7590AC92816AE1E861B7048B03";
+
+const I105_CANONICAL_TO_FULLWIDTH_KANA: Record<string, string> = {
+  ｲ: "イ",
+  ﾛ: "ロ",
+  ﾊ: "ハ",
+  ﾆ: "ニ",
+  ﾎ: "ホ",
+  ﾍ: "ヘ",
+  ﾄ: "ト",
+  ﾁ: "チ",
+  ﾘ: "リ",
+  ﾇ: "ヌ",
+  ﾙ: "ル",
+  ｦ: "ヲ",
+  ﾜ: "ワ",
+  ｶ: "カ",
+  ﾖ: "ヨ",
+  ﾀ: "タ",
+  ﾚ: "レ",
+  ｿ: "ソ",
+  ﾂ: "ツ",
+  ﾈ: "ネ",
+  ﾅ: "ナ",
+  ﾗ: "ラ",
+  ﾑ: "ム",
+  ｳ: "ウ",
+  ﾉ: "ノ",
+  ｵ: "オ",
+  ｸ: "ク",
+  ﾔ: "ヤ",
+  ﾏ: "マ",
+  ｹ: "ケ",
+  ﾌ: "フ",
+  ｺ: "コ",
+  ｴ: "エ",
+  ﾃ: "テ",
+  ｱ: "ア",
+  ｻ: "サ",
+  ｷ: "キ",
+  ﾕ: "ユ",
+  ﾒ: "メ",
+  ﾐ: "ミ",
+  ｼ: "シ",
+  ﾋ: "ヒ",
+  ﾓ: "モ",
+  ｾ: "セ",
+  ｽ: "ス",
+};
+
+const toFullwidthKanaI105 = (literal: string): string =>
+  Array.from(
+    literal,
+    (character) => I105_CANONICAL_TO_FULLWIDTH_KANA[character] ?? character,
+  ).join("");
 
 describe("accountAddress helper", () => {
   it("derives both compatibility and native I105 account literals", () => {
@@ -77,6 +132,52 @@ describe("accountAddress helper", () => {
         369,
       ),
     ).toBe(canonicalAccountId);
+  });
+
+  it("accepts half-width katakana compatibility literals from Python tooling", () => {
+    const halfWidthLiteral =
+      "testuﾛ1NﾐヱﾇCﾍUovﾏﾊｺｸﾛJbｵVtﾍykRﾗﾊhﾄﾏKqTjUｺwﾒrym3GS93U";
+
+    expect(
+      normalizeCanonicalAccountIdLiteral(halfWidthLiteral, "accountId", 369),
+    ).toBe(halfWidthLiteral);
+  });
+
+  it("accepts full-width kana account literals as UTF-8 input", () => {
+    const derived = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 369,
+    });
+    const fullwidthLiteral = toFullwidthKanaI105(derived.i105AccountId);
+
+    expect(fullwidthLiteral).not.toBe(derived.i105AccountId);
+    expect(Buffer.from(fullwidthLiteral, "utf8").length).toBeGreaterThan(
+      fullwidthLiteral.length,
+    );
+    expect(
+      normalizeCanonicalAccountIdLiteral(fullwidthLiteral, "accountId", 369),
+    ).toBe(derived.i105AccountId);
+    expect(
+      normalizeCompatAccountIdLiteral(fullwidthLiteral, "accountId", 369),
+    ).toBe(derived.accountId);
+    expect(
+      Buffer.from(
+        parseAccountAddressLiteral(
+          fullwidthLiteral,
+          "accountId",
+          369,
+        ).canonicalBytes(),
+      ).toString("hex"),
+    ).toBe(
+      Buffer.from(
+        parseAccountAddressLiteral(
+          derived.i105AccountId,
+          "accountId",
+          369,
+        ).canonicalBytes(),
+      ).toString("hex"),
+    );
   });
 
   it("keeps the derived literal stable regardless of the stored domain label", () => {

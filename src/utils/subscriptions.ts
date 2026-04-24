@@ -63,71 +63,75 @@ export const normalizeSubscriptionStatus = (
 };
 
 export const subscriptionStatusFromItem = (
-  item: Record<string, unknown>,
+  item: unknown,
 ): SubscriptionStatus => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return normalizeSubscriptionStatus(subscription.status);
 };
 
-export const subscriptionIdFromItem = (item: Record<string, unknown>): string =>
-  String(item.subscription_id ?? item.subscriptionId ?? item.id ?? "").trim();
+export const subscriptionIdFromItem = (item: unknown): string => {
+  const record = isRecord(item) ? item : {};
+  return String(
+    record.subscription_id ?? record.subscriptionId ?? record.id ?? "",
+  ).trim();
+};
 
-export const subscriptionPlanIdFromItem = (
-  item: Record<string, unknown>,
-): string => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+export const subscriptionPlanIdFromItem = (item: unknown): string => {
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return String(subscription.plan_id ?? subscription.planId ?? "").trim();
 };
 
-export const subscriptionProviderFromItem = (
-  item: Record<string, unknown>,
-): string => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+export const subscriptionProviderFromItem = (item: unknown): string => {
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return String(subscription.provider ?? "").trim();
 };
 
-export const subscriptionNextChargeMs = (
-  item: Record<string, unknown>,
-): number | null => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+export const subscriptionNextChargeMs = (item: unknown): number | null => {
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return normalizeTimestampMs(
     subscription.next_charge_ms ?? subscription.nextChargeMs,
   );
 };
 
-export const subscriptionPeriodEndMs = (
-  item: Record<string, unknown>,
-): number | null => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+export const subscriptionPeriodEndMs = (item: unknown): number | null => {
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return normalizeTimestampMs(
     subscription.current_period_end_ms ?? subscription.currentPeriodEndMs,
   );
 };
 
-export const subscriptionCancelAtPeriodEnd = (
-  item: Record<string, unknown>,
-): boolean => {
-  const subscription = isRecord(item.subscription) ? item.subscription : {};
+export const subscriptionCancelAtPeriodEnd = (item: unknown): boolean => {
+  const record = isRecord(item) ? item : {};
+  const subscription = isRecord(record.subscription) ? record.subscription : {};
   return Boolean(
     subscription.cancel_at_period_end ?? subscription.cancelAtPeriodEnd,
   );
 };
 
 export const subscriptionLatestInvoice = (
-  item: Record<string, unknown>,
+  item: unknown,
 ): Record<string, unknown> | null =>
-  isRecord(item.invoice) ? item.invoice : null;
+  isRecord(item) && isRecord(item.invoice) ? item.invoice : null;
 
 export const planFromSubscriptionItem = (
-  item: Record<string, unknown>,
-): Record<string, unknown> | null => (isRecord(item.plan) ? item.plan : null);
+  item: unknown,
+): Record<string, unknown> | null =>
+  isRecord(item) && isRecord(item.plan) ? item.plan : null;
 
-export const planIdFromPlanItem = (item: Record<string, unknown>): string =>
-  String(item.plan_id ?? item.planId ?? item.id ?? "").trim();
+export const planIdFromPlanItem = (item: unknown): string => {
+  const record = isRecord(item) ? item : {};
+  return String(record.plan_id ?? record.planId ?? record.id ?? "").trim();
+};
 
 export const planPayloadFromPlanItem = (
-  item: Record<string, unknown>,
-): Record<string, unknown> | null => (isRecord(item.plan) ? item.plan : null);
+  item: unknown,
+): Record<string, unknown> | null =>
+  isRecord(item) && isRecord(item.plan) ? item.plan : null;
 
 export const pricingKindFromPlan = (
   plan: Record<string, unknown> | null | undefined,
@@ -146,9 +150,7 @@ export const planChargeAssetDefinition = (
   plan: Record<string, unknown> | null | undefined,
 ): string => {
   const detail = pricingDetail(plan);
-  return String(
-    detail.asset_definition ?? detail.assetDefinition ?? "",
-  ).trim();
+  return String(detail.asset_definition ?? detail.assetDefinition ?? "").trim();
 };
 
 export const formatAmount = (
@@ -245,7 +247,9 @@ export const buildSubscriptionNftId = (
     .replace(/[^a-z0-9_]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 28);
-  const suffix = Math.floor(Math.max(0, Math.min(0.999999999, entropy)) * 0xffffffff)
+  const suffix = Math.floor(
+    Math.max(0, Math.min(0.999999999, entropy)) * 0xffffffff,
+  )
     .toString(16)
     .padStart(8, "0");
   return `sub_${seed || "wallet"}_${Math.trunc(nowMs).toString(36)}_${suffix}$subscriptions.universal`;
@@ -274,10 +278,7 @@ const formatNumericValue = (
   }
   const raw = String(value).trim();
   const parsed = Number(raw);
-  if (
-    Number.isFinite(parsed) &&
-    Math.abs(parsed) <= Number.MAX_SAFE_INTEGER
-  ) {
+  if (Number.isFinite(parsed) && Math.abs(parsed) <= Number.MAX_SAFE_INTEGER) {
     return formatNumber(parsed);
   }
   return raw;

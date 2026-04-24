@@ -74,11 +74,11 @@ describe("App shell", () => {
     });
   };
 
-  it("shows onboarding as the only sidebar route before an account exists", () => {
+  it("shows onboarding and settings before an account exists", () => {
     const wrapper = mountApp();
     const labels = wrapper.findAll(".nav-label").map((node) => node.text());
 
-    expect(labels).toEqual([t("Account Setup")]);
+    expect(labels).toEqual([t("Account Setup"), t("Settings")]);
   });
 
   it("keeps the sidebar details open on desktop layouts", () => {
@@ -111,12 +111,13 @@ describe("App shell", () => {
       t("Explore"),
       t("Offline"),
       t("Kaigi"),
+      t("Settings"),
       t("VPN"),
       t("Session"),
       t("Saved Wallets"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("13");
+    expect(steps.at(-1)).toBe("14");
   });
 
   it("renames the account route to wallets once an account exists", () => {

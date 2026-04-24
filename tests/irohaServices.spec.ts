@@ -7,6 +7,7 @@ import {
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
+  getChainMetadata,
   getConfidentialAssetBalance,
   finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
@@ -26,11 +27,20 @@ import {
   getVpnProfile,
   getVpnStatus,
   listAccountPermissions,
+  listSubscriptionPlans,
+  listSubscriptions,
   listVpnReceipts,
   repairVpn,
   registerCitizen,
   requestFaucetFunds,
   schedulePublicLaneUnbond,
+  cancelSubscription,
+  chargeSubscriptionNow,
+  createSubscription,
+  getSubscription,
+  keepSubscription,
+  pauseSubscription,
+  resumeSubscription,
   submitGovernancePlainBallot,
   transferAsset,
 } from "@/services/iroha";
@@ -38,6 +48,25 @@ import {
 describe("iroha services bridge", () => {
   afterEach(() => {
     delete (window as any).iroha;
+  });
+
+  it("forwards chain metadata checks to the bridge", async () => {
+    const getChainMetadataMock = vi.fn().mockResolvedValue({
+      chainId: "chain-alpha",
+      networkPrefix: 42,
+    });
+
+    (window as any).iroha = {
+      getChainMetadata: getChainMetadataMock,
+    };
+
+    await expect(getChainMetadata("http://localhost:8080")).resolves.toEqual({
+      chainId: "chain-alpha",
+      networkPrefix: 42,
+    });
+    expect(getChainMetadataMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
   });
 
   it("forwards offset-based pagination to asset and transaction fetchers", async () => {
@@ -520,6 +549,99 @@ describe("iroha services bridge", () => {
     expect(schedulePublicLaneUnbondMock).toHaveBeenCalledWith(unbondInput);
     expect(finalizePublicLaneUnbondMock).toHaveBeenCalledWith(finalizeInput);
     expect(claimPublicLaneRewardsMock).toHaveBeenCalledWith(claimInput);
+  });
+
+  it("forwards subscription bridge methods", async () => {
+    const listSubscriptionPlansMock = vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0 });
+    const listSubscriptionsMock = vi
+      .fn()
+      .mockResolvedValue({ items: [], total: 0 });
+    const getSubscriptionMock = vi.fn().mockResolvedValue({
+      subscription_id: "sub_1$subscriptions.universal",
+      subscription: { status: "active" },
+      invoice: null,
+      plan: null,
+    });
+    const actionResult = {
+      ok: true,
+      subscription_id: "sub_1$subscriptions.universal",
+      tx_hash_hex: "0xabc",
+    };
+    const createSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
+    const pauseSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
+    const resumeSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
+    const cancelSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
+    const keepSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
+    const chargeSubscriptionNowMock = vi.fn().mockResolvedValue(actionResult);
+
+    (window as any).iroha = {
+      listSubscriptionPlans: listSubscriptionPlansMock,
+      listSubscriptions: listSubscriptionsMock,
+      getSubscription: getSubscriptionMock,
+      createSubscription: createSubscriptionMock,
+      pauseSubscription: pauseSubscriptionMock,
+      resumeSubscription: resumeSubscriptionMock,
+      cancelSubscription: cancelSubscriptionMock,
+      keepSubscription: keepSubscriptionMock,
+      chargeSubscriptionNow: chargeSubscriptionNowMock,
+    };
+
+    const plansInput = {
+      toriiUrl: "http://localhost:8080",
+      provider: "provider@commerce",
+      limit: 20,
+      offset: 0,
+    };
+    const listInput = {
+      toriiUrl: "http://localhost:8080",
+      ownedBy: "alice@wonderland",
+      status: "active" as const,
+      limit: 20,
+    };
+    const getInput = {
+      toriiUrl: "http://localhost:8080",
+      subscriptionId: "sub_1$subscriptions.universal",
+    };
+    const signedInput = {
+      ...getInput,
+      accountId: "alice@wonderland",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const createInput = {
+      ...signedInput,
+      planId: "plan_1$subscriptions.universal",
+      firstChargeMs: 1_704_067_200_000,
+    };
+    const cancelInput = {
+      ...signedInput,
+      cancelMode: "period_end" as const,
+    };
+    const chargeInput = {
+      ...signedInput,
+      chargeAtMs: 1_704_067_200_000,
+    };
+
+    await listSubscriptionPlans(plansInput);
+    await listSubscriptions(listInput);
+    await getSubscription(getInput);
+    await createSubscription(createInput);
+    await pauseSubscription(signedInput);
+    await resumeSubscription(chargeInput);
+    await cancelSubscription(cancelInput);
+    await keepSubscription(signedInput);
+    await chargeSubscriptionNow(chargeInput);
+
+    expect(listSubscriptionPlansMock).toHaveBeenCalledWith(plansInput);
+    expect(listSubscriptionsMock).toHaveBeenCalledWith(listInput);
+    expect(getSubscriptionMock).toHaveBeenCalledWith(getInput);
+    expect(createSubscriptionMock).toHaveBeenCalledWith(createInput);
+    expect(pauseSubscriptionMock).toHaveBeenCalledWith(signedInput);
+    expect(resumeSubscriptionMock).toHaveBeenCalledWith(chargeInput);
+    expect(cancelSubscriptionMock).toHaveBeenCalledWith(cancelInput);
+    expect(keepSubscriptionMock).toHaveBeenCalledWith(signedInput);
+    expect(chargeSubscriptionNowMock).toHaveBeenCalledWith(chargeInput);
   });
 
   it("forwards parliament governance bridge methods", async () => {

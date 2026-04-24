@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import {
   AccountAddress,
+  encodeI105AccountAddress,
   normalizeAccountId as normalizeSdkAccountId,
 } from "@iroha/iroha-js";
 
@@ -36,6 +37,64 @@ type NativeAccountAddressCodec = {
 };
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
+
+// TAIRA surfaces may hand back I105 account IDs as UTF-8 full-width kana,
+// while the current JS/native codec accepts the canonical half-width alphabet.
+const I105_FULLWIDTH_TO_CANONICAL_KANA: Record<string, string> = {
+  イ: "ｲ",
+  ロ: "ﾛ",
+  ハ: "ﾊ",
+  ニ: "ﾆ",
+  ホ: "ﾎ",
+  ヘ: "ﾍ",
+  ト: "ﾄ",
+  チ: "ﾁ",
+  リ: "ﾘ",
+  ヌ: "ﾇ",
+  ル: "ﾙ",
+  ヲ: "ｦ",
+  ワ: "ﾜ",
+  カ: "ｶ",
+  ヨ: "ﾖ",
+  タ: "ﾀ",
+  レ: "ﾚ",
+  ソ: "ｿ",
+  ツ: "ﾂ",
+  ネ: "ﾈ",
+  ナ: "ﾅ",
+  ラ: "ﾗ",
+  ム: "ﾑ",
+  ウ: "ｳ",
+  ノ: "ﾉ",
+  オ: "ｵ",
+  ク: "ｸ",
+  ヤ: "ﾔ",
+  マ: "ﾏ",
+  ケ: "ｹ",
+  フ: "ﾌ",
+  コ: "ｺ",
+  エ: "ｴ",
+  テ: "ﾃ",
+  ア: "ｱ",
+  サ: "ｻ",
+  キ: "ｷ",
+  ユ: "ﾕ",
+  メ: "ﾒ",
+  ミ: "ﾐ",
+  シ: "ｼ",
+  ヒ: "ﾋ",
+  モ: "ﾓ",
+  セ: "ｾ",
+  ス: "ｽ",
+};
+
+const normalizeI105KanaVariants = (literal: string): string =>
+  Array.from(literal, (character) => {
+    return I105_FULLWIDTH_TO_CANONICAL_KANA[character] ?? character;
+  }).join("");
+
+const normalizeAccountLiteralInput = (value: unknown): string =>
+  normalizeI105KanaVariants(trimString(value));
 
 const normalizeNetworkPrefix = (value?: number): number => {
   if (value === undefined) {
@@ -191,12 +250,15 @@ const renderNativeAccountLiteral = (
 const normalizeCompatLiteralFromAddress = (
   address: InstanceType<typeof AccountAddress>,
   networkPrefix: number,
-) => address.toI105(networkPrefix);
+) =>
+  encodeI105AccountAddress(address.canonicalBytes(), {
+    chainDiscriminant: networkPrefix,
+  });
 
 const normalizeCanonicalLiteralFromAddress = (
   address: InstanceType<typeof AccountAddress>,
   networkPrefix: number,
-) => address.toI105(networkPrefix);
+) => normalizeCompatLiteralFromAddress(address, networkPrefix);
 
 const fallbackCompatLiteral = (
   literal: string,
@@ -223,7 +285,7 @@ export const normalizeCompatAccountIdLiteral = (
   label: string,
   networkPrefix = DEFAULT_NETWORK_PREFIX,
 ) => {
-  const literal = trimString(value);
+  const literal = normalizeAccountLiteralInput(value);
   if (!literal) {
     throw new Error(`${label} must be a non-empty string.`);
   }
@@ -252,7 +314,7 @@ export const normalizeCanonicalAccountIdLiteral = (
   label: string,
   networkPrefix = DEFAULT_NETWORK_PREFIX,
 ) => {
-  const literal = trimString(value);
+  const literal = normalizeAccountLiteralInput(value);
   if (!literal) {
     throw new Error(`${label} must be a non-empty string.`);
   }
@@ -279,6 +341,32 @@ export const normalizeCanonicalAccountIdLiteral = (
   return fallbackCanonicalLiteral(literal, label, normalizedPrefix);
 };
 
+export const parseAccountAddressLiteral = (
+  value: string,
+  label: string,
+  networkPrefix = DEFAULT_NETWORK_PREFIX,
+) => {
+  const literal = normalizeAccountLiteralInput(value);
+  if (!literal) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
+
+  try {
+    return AccountAddress.parseEncoded(literal).address;
+  } catch {
+    // Fall through to native I105 parsing or legacy SDK normalization.
+  }
+
+  const nativeParsed = parseNativeAccountLiteral(literal, normalizedPrefix);
+  if (nativeParsed) {
+    return AccountAddress.fromCanonicalBytes(nativeParsed.canonicalBytes);
+  }
+
+  const normalizedLiteral = normalizeSdkAccountId(literal, label);
+  return AccountAddress.parseEncoded(normalizedLiteral).address;
+};
+
 export const deriveAccountAddressView = (input: {
   domain: string;
   publicKeyHex: string;
@@ -302,13 +390,15 @@ export const deriveAccountAddressView = (input: {
 
   return {
     accountId: compatAccountId,
-    i105AccountId: nativeRendering?.i105 ?? compatAccountId,
-    i105DefaultAccountId:
-      nativeRendering?.i105Default ?? address.toI105(SORA_NETWORK_PREFIX),
+    i105AccountId: normalizeCanonicalLiteralFromAddress(address, networkPrefix),
+    i105DefaultAccountId: normalizeCanonicalLiteralFromAddress(
+      address,
+      SORA_NETWORK_PREFIX,
+    ),
     i105DefaultFullwidthAccountId: nativeRendering?.i105DefaultFullwidth ?? "",
     publicKeyHex: publicKey.toString("hex").toUpperCase(),
     accountIdWarning: nativeRendering
       ? ""
-      : "Native I105 rendering is unavailable; using the JS compatibility literal.",
+      : "Native I105 rendering is unavailable; using canonical JS I105 rendering.",
   };
 };

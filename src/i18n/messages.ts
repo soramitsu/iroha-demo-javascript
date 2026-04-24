@@ -1105,7 +1105,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "This account has no subscriptions on TAIRA.",
   "Loaded from TAIRA at {time}": "Loaded from TAIRA at {time}",
   Suspended: "Suspended",
-  Unknown: "Unknown",
   unknown: "unknown",
   "Last invoice: {amount} {unit} ({status})":
     "Last invoice: {amount} {unit} ({status})",
@@ -1293,6 +1292,35 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Requires authority credentials to create the account on-chain.":
     "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
   "Set up network and wallet first.": "Set up network and wallet first.",
+  Settings: "Settings",
+  "Endpoint and app preferences": "Endpoint and app preferences",
+  "Torii endpoint": "Torii endpoint",
+  "Choose the Torii endpoint used for wallet, staking, governance, VPN, and explorer requests.":
+    "Choose the Torii endpoint used for wallet, staking, governance, VPN, and explorer requests.",
+  "Current endpoint": "Current endpoint",
+  "Default endpoint": "Default endpoint",
+  "Custom endpoint": "Custom endpoint",
+  "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.":
+    "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.",
+  "Check endpoint": "Check endpoint",
+  "Check & Save": "Check & Save",
+  "Checking…": "Checking…",
+  "Save endpoint": "Save endpoint",
+  "Save without checking": "Save without checking",
+  "Reset to default": "Reset to default",
+  "Endpoint saved.": "Endpoint saved.",
+  "Endpoint checked and saved.": "Endpoint checked and saved.",
+  "Endpoint checked and chain settings saved.":
+    "Endpoint checked and chain settings saved.",
+  "Default endpoint restored.": "Default endpoint restored.",
+  "Endpoint responded successfully.": "Endpoint responded successfully.",
+  "No response from endpoint.": "No response from endpoint.",
+  "Unable to load chain metadata from Torii.":
+    "Unable to load chain metadata from Torii.",
+  "Enter a Torii endpoint URL.": "Enter a Torii endpoint URL.",
+  "Enter a valid Torii endpoint URL.": "Enter a valid Torii endpoint URL.",
+  "Endpoint must start with http:// or https://.":
+    "Endpoint must start with http:// or https://.",
   "Private Kaigi needs shielded XOR before it can submit this action.":
     "Private Kaigi needs shielded XOR before it can submit this action.",
   "Transparent XOR balance": "Transparent XOR balance",
@@ -1464,6 +1492,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Faucet Request": "Faucet Request",
   "Top up a new TAIRA account once with starter XOR.":
     "Top up a new TAIRA account once with starter XOR.",
+  "Claim 25,000 TAIRA testnet XOR for governance and testing.":
+    "Claim 25,000 TAIRA testnet XOR for governance and testing.",
   "Claim Testnet XOR": "Claim Testnet XOR",
   "Requesting…": "Requesting…",
   "Faucet request in progress": "Faucet request in progress",
@@ -1859,6 +1889,11 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Iroha Points": "TAIRA Testnet",
   "Modern Torii-connected wallet": "TAIRA testnet wallet",
   Navigate: "Menu",
+  Settings: "Settings",
+  "Endpoint and app preferences": "Endpoint and app preferences",
+  "Torii endpoint": "Torii endpoint",
+  "Default endpoint": "Default endpoint",
+  "Custom endpoint": "Custom endpoint",
   "Asset not set": "No asset",
   "Switch to light": "Light mode",
   "Switch to dark": "Dark mode",
@@ -2017,8 +2052,10 @@ const EN_TRANSLATIONS: TranslationTable = {
   "No response from Torii.": "No response.",
   "Submitted transaction {hash}": "Submitted: {hash}",
   "Faucet Request": "Testnet faucet",
+  "Claim 25,000 TAIRA testnet XOR for governance and testing.":
+    "Claim 25,000 XOR for governance and testing.",
   "Top up a new TAIRA account once with starter XOR.":
-    "Fund a new wallet with starter XOR.",
+    "Claim 25,000 XOR for governance and testing.",
   "Claim Testnet XOR": "Claim XOR",
   "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
     "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",

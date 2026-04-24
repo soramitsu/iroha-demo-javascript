@@ -10,7 +10,11 @@
         </div>
         <div class="subscription-header-actions">
           <span class="pill positive">{{ t("Live Torii data") }}</span>
-          <button class="secondary" :disabled="subscriptions.loading" @click="refresh">
+          <button
+            class="secondary"
+            :disabled="subscriptions.loading"
+            @click="refresh"
+          >
             {{ subscriptions.loading ? t("Refreshing…") : t("Refresh") }}
           </button>
         </div>
@@ -63,14 +67,15 @@
           <h2>{{ t("Subscribe to plan") }}</h2>
           <p class="helper">
             {{
-              t(
-                "Create a real subscription NFT for an existing on-chain plan.",
-              )
+              t("Create a real subscription NFT for an existing on-chain plan.")
             }}
           </p>
         </div>
       </header>
-      <form class="form-grid subscription-form-grid" @submit.prevent="subscribe">
+      <form
+        class="form-grid subscription-form-grid"
+        @submit.prevent="subscribe"
+      >
         <label class="subscription-span-2">
           {{ t("Plan ID") }}
           <select v-if="subscriptions.plans.length" v-model="form.planId">
@@ -116,7 +121,10 @@
 
       <div class="subscription-plan-list">
         <p class="meta-label">{{ t("Available plans") }}</p>
-        <div v-if="subscriptions.plans.length" class="subscription-stack compact">
+        <div
+          v-if="subscriptions.plans.length"
+          class="subscription-stack compact"
+        >
           <article
             v-for="plan in subscriptions.plans"
             :key="plan.plan_id"
@@ -130,7 +138,9 @@
                 </div>
               </div>
               <div class="subscription-meta">
-                <span>{{ t("Provider: {value}", { value: planProvider(plan) }) }}</span>
+                <span>{{
+                  t("Provider: {value}", { value: planProvider(plan) })
+                }}</span>
                 <span>{{ planPricingLabel(plan) }}</span>
                 <span>{{ planCadenceLabel(plan) }}</span>
               </div>
@@ -177,7 +187,9 @@
             </div>
             <div class="subscription-meta">
               <span>{{
-                t("Next: {date}", { date: formatDateMs(recordNextCharge(record)) })
+                t("Next: {date}", {
+                  date: formatDateMs(recordNextCharge(record)),
+                })
               }}</span>
               <span>{{
                 t("Period end: {date}", {
@@ -188,7 +200,10 @@
                 {{ t("Canceling at period end") }}
               </span>
             </div>
-            <div v-if="subscriptionLatestInvoice(record)" class="subscription-meta">
+            <div
+              v-if="subscriptionLatestInvoice(record)"
+              class="subscription-meta"
+            >
               <span>{{ invoiceLabel(record) }}</span>
             </div>
             <details class="technical-details compact">
@@ -196,7 +211,9 @@
               <div class="grid-2">
                 <div class="kv">
                   <span class="kv-label">{{ t("Subscription NFT ID") }}</span>
-                  <span class="kv-value mono">{{ record.subscription_id }}</span>
+                  <span class="kv-value mono">{{
+                    record.subscription_id
+                  }}</span>
                 </div>
                 <div class="kv">
                   <span class="kv-label">{{ t("Plan ID") }}</span>
@@ -265,7 +282,6 @@ import {
   buildSubscriptionNftId,
   formatPlanCadence,
   formatPlanPricing,
-  planChargeAssetDefinition,
   planFromSubscriptionItem,
   planIdFromPlanItem,
   planPayloadFromPlanItem,
@@ -334,10 +350,6 @@ const generatedSubscriptionId = computed(() =>
     : "sub_...$subscriptions.universal",
 );
 
-const selectedPlan = computed(() =>
-  subscriptions.plans.find((plan) => plan.plan_id === form.planId),
-);
-
 const formatDateMs = (timestampMs: number | null) => {
   if (!timestampMs) return t("—");
   return new Intl.DateTimeFormat(localeStore.current, {
@@ -391,9 +403,6 @@ const refresh = async () => {
     accountId: activeAccountId.value || undefined,
   });
 };
-
-const selectedPlanPayload = () =>
-  selectedPlan.value ? planPayloadFromPlanItem(selectedPlan.value) : null;
 
 const planLabel = (plan: SubscriptionPlanListItemView) => {
   const planId = planIdFromPlanItem(plan);
@@ -553,8 +562,7 @@ const subscribe = async () => {
   actionBusy.value = "create";
   try {
     const subscriptionId =
-      form.subscriptionId.trim() ||
-      buildSubscriptionNftId(accountId, planId);
+      form.subscriptionId.trim() || buildSubscriptionNftId(accountId, planId);
     const result = await subscriptions.create({
       toriiUrl: session.connection.toriiUrl,
       accountId,

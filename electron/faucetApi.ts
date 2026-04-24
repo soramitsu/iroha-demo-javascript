@@ -89,7 +89,7 @@ const buildFaucetRequestErrorMessage = (
     return detail;
   }
   if (response.status === 400 && isNoritoResponse(response)) {
-    return "TAIRA rejected this faucet claim. Repeated claims usually fail once the account already holds starter XOR, and stale faucet proof challenges can also trigger this response.";
+    return "TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.";
   }
   return response.statusText || "Faucet request failed.";
 };

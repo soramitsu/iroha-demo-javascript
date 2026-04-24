@@ -49,6 +49,7 @@ import {
   normalizePublicLaneValidatorsPayload,
   readApiErrorDetail,
   readNexusUnbondingDelayMs,
+  stripConfidentialFeeSponsor,
   type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
   type PublicLaneRewardsResponseView,
@@ -65,6 +66,12 @@ import {
   extractAssetDefinitionId,
   resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
+import {
+  extractChainMetadataFromPayload,
+  normalizeChainMetadata,
+  type ChainMetadata,
+  type ChainMetadataDraft,
+} from "../src/utils/chainMetadata";
 import type { NetworkStatsResponse } from "../src/types/iroha";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
@@ -125,22 +132,49 @@ type ToriiConfig = {
   toriiUrl: string;
 };
 
+type ChainMetadataResponse = ChainMetadata;
+
+const TAIRA_CHAIN_METADATA_FALLBACK = {
+  toriiUrl: "https://taira.sora.org",
+  chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  networkPrefix: 369,
+} as const;
+
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const assertNoConfidentialPublicMetadata = (
+const extractConfidentialFeeMetadata = (
   metadata: Record<string, unknown> | undefined,
   operationLabel: string,
-): undefined => {
+): Record<string, unknown> | undefined => {
   if (!isPlainRecord(metadata)) {
     return undefined;
   }
-  if (Object.keys(metadata).length > 0) {
+  const allowedEntries = Object.entries(metadata).filter(([key]) =>
+    ["fee_sponsor", "gas_asset_id", "gas_limit"].includes(key),
+  );
+  if (allowedEntries.length !== Object.keys(metadata).length) {
     throw new Error(
       `${operationLabel} does not allow public metadata or memos.`,
     );
   }
-  return undefined;
+  return Object.fromEntries(allowedEntries);
+};
+const withConfidentialGasMetadata = (
+  _toriiUrl: string,
+  assetDefinitionId: string,
+  metadata?: Record<string, unknown>,
+): Record<string, unknown> => {
+  const gasAssetId = trimString(metadata?.gas_asset_id ?? assetDefinitionId);
+  if (!gasAssetId) {
+    throw new Error(
+      "Confidential transaction metadata requires a non-empty gas asset id.",
+    );
+  }
+  return {
+    ...(isPlainRecord(metadata) ? metadata : {}),
+    gas_asset_id: gasAssetId,
+  };
 };
 const TAIRA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const withRequiredGasAssetMetadata = (
@@ -798,6 +832,7 @@ type SubscriptionActionInput = {
 
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
+  getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
   isSecureVaultAvailable(): Promise<boolean>;
@@ -843,6 +878,18 @@ type IrohaBridge = {
     accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getConfidentialTransferExecutionContext(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex?: string;
+    assetDefinitionId: string;
+  }): Promise<{
+    resolvedAssetId: string;
+    effectiveMode: string;
+    backend: string;
+    circuitId: string;
+  }>;
   getConfidentialAssetBalance(input: {
     toriiUrl: string;
     chainId: string;
@@ -1006,7 +1053,9 @@ type IrohaBridge = {
   listSubscriptions(
     input: SubscriptionListInput,
   ): Promise<SubscriptionListResponseView>;
-  getSubscription(input: SubscriptionGetInput): Promise<SubscriptionListItemView>;
+  getSubscription(
+    input: SubscriptionGetInput,
+  ): Promise<SubscriptionListItemView>;
   createSubscription(
     input: SubscriptionCreateInput,
   ): Promise<SubscriptionActionResponseView>;
@@ -2806,6 +2855,125 @@ const postJson = async (
   return ensureObjectResponse(payload, label);
 };
 
+const CHAIN_METADATA_PATHS = [
+  "/v1/chain/metadata",
+  "/chain/metadata",
+  "/v1/network/metadata",
+  "/network/metadata",
+  "/v1/network",
+  "/network",
+  "/v1/explorer/network",
+  "/explorer/network",
+  "/v1/explorer/chain",
+  "/explorer/chain",
+  "/v1/configuration",
+  "/configuration",
+  "/v1/status",
+  "/status",
+  "/v1/explorer/accounts?limit=1",
+  "/v1/accounts?limit=1",
+] as const;
+
+const readChainMetadataHeaders = (
+  headers: Pick<Headers, "get">,
+): ChainMetadataDraft =>
+  extractChainMetadataFromPayload({
+    chain_id: headers.get("x-iroha-chain-id"),
+    chainId: headers.get("x-iroha-chain-id"),
+    network_prefix: headers.get("x-iroha-network-prefix"),
+    networkPrefix: headers.get("x-iroha-network-prefix"),
+  });
+
+const mergeChainMetadataDraft = (
+  current: ChainMetadataDraft,
+  next: ChainMetadataDraft,
+): ChainMetadataDraft => ({
+  chainId: current.chainId || next.chainId,
+  networkPrefix:
+    current.networkPrefix === undefined
+      ? next.networkPrefix
+      : current.networkPrefix,
+});
+
+const parseJsonIfAvailable = async (response: Response): Promise<unknown> => {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("json")) {
+    return null;
+  }
+  return await response.json();
+};
+
+const resolveKnownChainMetadataFallback = (
+  toriiUrlRaw: string,
+  draft: ChainMetadataDraft,
+): ChainMetadataDraft | undefined => {
+  const defaultOrigin = new URL(TAIRA_CHAIN_METADATA_FALLBACK.toriiUrl).origin;
+  const endpointOrigin = new URL(normalizeBaseUrl(toriiUrlRaw)).origin;
+  if (endpointOrigin === defaultOrigin) {
+    return {
+      chainId: TAIRA_CHAIN_METADATA_FALLBACK.chainId,
+      networkPrefix: TAIRA_CHAIN_METADATA_FALLBACK.networkPrefix,
+    };
+  }
+  if (draft.networkPrefix === TAIRA_CHAIN_METADATA_FALLBACK.networkPrefix) {
+    return {
+      chainId: TAIRA_CHAIN_METADATA_FALLBACK.chainId,
+    };
+  }
+  return undefined;
+};
+
+const fetchChainMetadata = async (
+  toriiUrlRaw: string,
+): Promise<ChainMetadataResponse> => {
+  const baseUrl = normalizeBaseUrl(toriiUrlRaw);
+  let draft: ChainMetadataDraft = {};
+  let reachedEndpoint = false;
+  let lastError: unknown = null;
+
+  for (const path of CHAIN_METADATA_PATHS) {
+    const endpoint = `${baseUrl}${path}`;
+    try {
+      const response = await nodeFetch(endpoint, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      });
+      reachedEndpoint = true;
+      const headerDraft = readChainMetadataHeaders(response.headers);
+      draft = mergeChainMetadataDraft(draft, headerDraft);
+
+      if ([401, 403, 404, 503].includes(response.status)) {
+        continue;
+      }
+      if (!response.ok) {
+        throw await createApiRequestError(response, "Chain metadata");
+      }
+
+      const payload = await parseJsonIfAvailable(response);
+      draft = mergeChainMetadataDraft(
+        draft,
+        extractChainMetadataFromPayload(payload),
+      );
+      if (draft.chainId && draft.networkPrefix !== undefined) {
+        return normalizeChainMetadata(draft);
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!reachedEndpoint && lastError) {
+    throw lastError;
+  }
+
+  return normalizeChainMetadata(
+    draft,
+    resolveKnownChainMetadataFallback(toriiUrlRaw, draft),
+  );
+};
+
 const fetchKaigiMeetingView = async (
   input: KaigiGetMeetingInput,
 ): Promise<KaigiMeetingView> => {
@@ -2912,7 +3080,9 @@ const normalizeSubscriptionListItem = (
   const subscriptionId = trimString(
     item.subscription_id ?? item.subscriptionId ?? item.id,
   );
-  const subscription = isPlainRecord(item.subscription) ? item.subscription : {};
+  const subscription = isPlainRecord(item.subscription)
+    ? item.subscription
+    : {};
   if (!subscriptionId || Object.keys(subscription).length === 0) {
     return null;
   }
@@ -2944,7 +3114,9 @@ const normalizeSubscriptionGetPayload = (
 ): SubscriptionListItemView => {
   const item = normalizeSubscriptionListItem(payload);
   if (!item) {
-    throw new Error("Subscription response did not include subscription state.");
+    throw new Error(
+      "Subscription response did not include subscription state.",
+    );
   }
   return item;
 };
@@ -2953,7 +3125,9 @@ const normalizeSubscriptionActionPayload = (
   payload: Record<string, unknown>,
 ): SubscriptionActionResponseView => ({
   ok: Boolean(payload.ok),
-  subscription_id: trimString(payload.subscription_id ?? payload.subscriptionId),
+  subscription_id: trimString(
+    payload.subscription_id ?? payload.subscriptionId,
+  ),
   tx_hash_hex: trimString(payload.tx_hash_hex ?? payload.txHashHex),
   ...(payload.billing_trigger_id !== undefined
     ? { billing_trigger_id: trimString(payload.billing_trigger_id) }
@@ -3018,11 +3192,15 @@ const normalizeSubscriptionPrivateActionBody = async (
 const listSubscriptionPlansFromTorii = async (
   input: SubscriptionListPlansInput,
 ): Promise<SubscriptionPlanListResponseView> => {
-  const endpoint = buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions/plans", {
-    provider: trimString(input.provider) || undefined,
-    limit: input.limit,
-    offset: input.offset,
-  });
+  const endpoint = buildNexusEndpoint(
+    input.toriiUrl,
+    "/v1/subscriptions/plans",
+    {
+      provider: trimString(input.provider) || undefined,
+      limit: input.limit,
+      offset: input.offset,
+    },
+  );
   const payload = await fetchJson(endpoint, "Subscription plans");
   return normalizeSubscriptionPlanListPayload(payload);
 };
@@ -4959,6 +5137,9 @@ const api: IrohaBridge = {
     const client = getClient(config.toriiUrl);
     return client.getHealth().catch(() => null);
   },
+  async getChainMetadata(config) {
+    return fetchChainMetadata(config.toriiUrl);
+  },
   generateKeyPair() {
     const { publicKey, privateKey } = generateKeyPair();
     return {
@@ -5378,23 +5559,19 @@ const api: IrohaBridge = {
           `Unsupported confidential unshield verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
         );
       }
+      const confidentialExitMetadata = withRequiredGasAssetMetadata(
+        extractConfidentialFeeMetadata(
+          input.metadata,
+          "Confidential public exit",
+        ),
+      );
       const metadata =
         changeOutputs.length > 0
           ? buildWalletConfidentialMetadataV3({
-              baseMetadata: withRequiredGasAssetMetadata(
-                assertNoConfidentialPublicMetadata(
-                  input.metadata,
-                  "Confidential public exit",
-                ),
-              ),
+              baseMetadata: confidentialExitMetadata,
               outputs: changeOutputs,
             })
-          : withRequiredGasAssetMetadata(
-              assertNoConfidentialPublicMetadata(
-                input.metadata,
-                "Confidential public exit",
-              ),
-            );
+          : confidentialExitMetadata;
       const tx = buildUnshieldTransaction({
         chainId: input.chainId,
         authority: accountId,
@@ -5480,11 +5657,15 @@ const api: IrohaBridge = {
       }
 
       const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
-      const confidentialBaseMetadata = assertNoConfidentialPublicMetadata(
-        input.metadata,
-        destinationAccountId === accountId
-          ? "Private balance creation"
-          : "Shielded transfer",
+      const confidentialBaseMetadata = withConfidentialGasMetadata(
+        input.toriiUrl,
+        resolvedAssetId,
+        extractConfidentialFeeMetadata(
+          input.metadata,
+          destinationAccountId === accountId
+            ? "Private balance creation"
+            : "Shielded transfer",
+        ),
       );
       const confidentialTransactionMetadata = withRequiredGasAssetMetadata(
         confidentialBaseMetadata,
@@ -5730,7 +5911,9 @@ const api: IrohaBridge = {
         }
       }
       const metadata = buildWalletConfidentialMetadataV3({
-        baseMetadata: confidentialTransactionMetadata,
+        baseMetadata: stripConfidentialFeeSponsor(
+          confidentialTransactionMetadata,
+        ),
         outputs: orderedOutputs,
       });
       const tx = buildZkTransferTransaction({
@@ -5900,6 +6083,37 @@ const api: IrohaBridge = {
     } catch {
       return policy;
     }
+  },
+  async getConfidentialTransferExecutionContext({
+    toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    assetDefinitionId,
+  }) {
+    const { policy, resolvedAssetDefinitionId } =
+      await fetchConfidentialAssetPolicyForAccount({
+        toriiUrl,
+        accountId,
+        assetDefinitionId,
+      });
+    const materials = await resolveConfidentialTransferMaterials({
+      toriiUrl,
+      chainId,
+      accountId,
+      privateKeyHex,
+      assetDefinitionId: resolvedAssetDefinitionId,
+    });
+    const verifyingKeyContext = readConfidentialVerifyingKeyContext(
+      materials.verifyingKey,
+    );
+    return {
+      resolvedAssetId: resolvedAssetDefinitionId,
+      effectiveMode:
+        trimString(policy.effective_mode) || trimString(policy.current_mode),
+      backend: verifyingKeyContext.backend,
+      circuitId: verifyingKeyContext.circuitId,
+    };
   },
   getConfidentialAssetBalance({
     toriiUrl,
@@ -7130,11 +7344,7 @@ const api: IrohaBridge = {
     return createSubscriptionOnTorii(input);
   },
   pauseSubscription(input) {
-    return postSubscriptionActionToTorii(
-      input,
-      "pause",
-      "Pause subscription",
-    );
+    return postSubscriptionActionToTorii(input, "pause", "Pause subscription");
   },
   resumeSubscription(input) {
     return postSubscriptionActionToTorii(

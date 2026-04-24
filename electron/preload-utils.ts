@@ -162,6 +162,18 @@ export const normalizeBaseUrl = (url: string) => {
   return trimmed;
 };
 
+export const stripConfidentialFeeSponsor = (
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return metadata;
+  }
+  const next = Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => key !== "fee_sponsor"),
+  );
+  return Object.keys(next).length > 0 ? next : undefined;
+};
+
 const BINARY_API_ERROR_CONTENT_TYPES = ["application/x-norito"];
 
 const readResponseHeader = (

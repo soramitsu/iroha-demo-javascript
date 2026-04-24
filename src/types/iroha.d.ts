@@ -5,6 +5,11 @@ import type {
 
 export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
+export interface ChainMetadataResponse {
+  chainId: string;
+  networkPrefix: number;
+}
+
 export interface AccountAddressView {
   accountId: string;
   i105AccountId: string;
@@ -659,6 +664,9 @@ export interface GovernanceDraftResponse {
 
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
+  getChainMetadata(config: {
+    toriiUrl: string;
+  }): Promise<ChainMetadataResponse>;
   generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
   isSecureVaultAvailable(): Promise<boolean>;
@@ -732,6 +740,18 @@ export interface IrohaBridge {
     accountId: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetPolicyView>;
+  getConfidentialTransferExecutionContext(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    privateKeyHex?: string;
+    assetDefinitionId: string;
+  }): Promise<{
+    resolvedAssetId: string;
+    effectiveMode: string;
+    backend: string;
+    circuitId: string;
+  }>;
   getConfidentialAssetBalance(input: {
     toriiUrl: string;
     chainId: string;

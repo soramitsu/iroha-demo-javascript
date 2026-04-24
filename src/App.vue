@@ -53,8 +53,8 @@
           </summary>
           <div class="status-chips">
             <div class="status-chip">
-              <span class="chip-label">{{ t("Network") }}</span>
-              <span class="chip-value">{{ t("TAIRA Testnet") }}</span>
+              <span class="chip-label">{{ t("Torii") }}</span>
+              <span class="chip-value">{{ endpointModeLabel }}</span>
               <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
             </div>
             <div class="status-chip">
@@ -246,6 +246,7 @@ import ReceiveIcon from "@/assets/receive.svg";
 import UserIcon from "@/assets/user.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
+import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel } from "@/utils/accountId";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
@@ -262,6 +263,15 @@ const navItems = [
     groupKey: "Advanced",
   },
   {
+    to: "/settings",
+    labelKey: "Settings",
+    descriptionKey: "Endpoint and app preferences",
+    icon: UserIcon,
+    requiresAccount: false,
+    utility: true,
+    groupKey: "Tools",
+  },
+  {
     to: "/wallet",
     labelKey: "Wallet",
     descriptionKey: "Balance, funding, and activity",
@@ -272,7 +282,8 @@ const navItems = [
   {
     to: "/stats",
     labelKey: "Stats",
-    descriptionKey: "Network health and activity",
+    descriptionKey:
+      "XOR supply, holder concentration, and live chain telemetry",
     icon: WalletIcon,
     requiresAccount: true,
     groupKey: "Wallet",
@@ -371,6 +382,11 @@ const activeAssetLabel = computed(() =>
     t("Asset not set"),
   ),
 );
+const endpointModeLabel = computed(() =>
+  session.connection.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl
+    ? t("Default endpoint")
+    : t("Custom endpoint"),
+);
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(session.activeAccount),
 );
@@ -409,8 +425,7 @@ const routeSubtitle = computed(() => {
   }
   return t((route.meta.subtitleKey as string) || "Balances & activity");
 });
-const onboardingNavItem =
-  navItems.find((item) => !item.requiresAccount) ?? null;
+const publicNavItems = navItems.filter((item) => !item.requiresAccount);
 const signedInNavItems = navItems.filter((item) => item.requiresAccount);
 const navGroupOrder = [
   "Wallet",
@@ -420,35 +435,37 @@ const navGroupOrder = [
   "Advanced",
 ];
 const sidebarNavItems = computed(() => {
-  if (!onboardingNavItem) {
+  if (!publicNavItems.length) {
     return [];
   }
 
   if (!session.hasAccount) {
-    return [
-      {
-        ...onboardingNavItem,
-        step: "01",
-      },
-    ];
+    return publicNavItems.map((item, index) => ({
+      ...item,
+      step: String(index + 1).padStart(2, "0"),
+    }));
   }
 
-  const signedInItems = [...signedInNavItems, onboardingNavItem].map(
-    (item) => ({
-      ...item,
-      labelKey:
-        !item.requiresAccount && item.signedInLabelKey
-          ? item.signedInLabelKey
-          : item.labelKey,
-      descriptionKey:
-        !item.requiresAccount && item.signedInDescriptionKey
-          ? item.signedInDescriptionKey
-          : item.descriptionKey,
-    }),
+  const primaryItems = signedInNavItems.filter((item) => !item.utility);
+  const publicUtilityItems = publicNavItems.filter(
+    (item) => item.to !== "/account",
   );
-  const orderedItems = navGroupOrder.flatMap((labelKey) =>
-    signedInItems.filter((item) => item.groupKey === labelKey),
-  );
+  const utilityItems = [
+    ...publicUtilityItems,
+    ...signedInNavItems.filter((item) => item.utility),
+    ...publicNavItems.filter((item) => item.to === "/account"),
+  ];
+  const orderedItems = [...primaryItems, ...utilityItems].map((item) => ({
+    ...item,
+    labelKey:
+      !item.requiresAccount && item.signedInLabelKey
+        ? item.signedInLabelKey
+        : item.labelKey,
+    descriptionKey:
+      !item.requiresAccount && item.signedInDescriptionKey
+        ? item.signedInDescriptionKey
+        : item.descriptionKey,
+  }));
 
   return orderedItems.map((item, index) => ({
     ...item,
