@@ -1,6 +1,11 @@
 import { defineStore } from "pinia";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import {
+  normalizeChainIdValue,
+  normalizeNetworkPrefixValue,
+} from "@/utils/chainMetadata";
 import { normalizeTairaAccountIdLiteral } from "@/utils/accountId";
+import { normalizeEndpointUrl } from "@/utils/endpoint";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
 
@@ -45,8 +50,6 @@ export type SavedChain = ConnectionConfig & {
 
 const DEFAULT_DOMAIN_LABEL = "default";
 const LEGACY_EXAMPLE_DOMAIN_LABEL = "wonderland";
-const MAX_NETWORK_PREFIX = 0x3fff;
-
 const defaultUser = (): UserProfile => ({
   displayName: "",
   domain: DEFAULT_DOMAIN_LABEL,
@@ -228,14 +231,35 @@ const normalizeAuthority = (
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
 ): ConnectionConfig => {
+  let toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
+  let endpointValid = true;
+  try {
+    toriiUrl = normalizeEndpointUrl(
+      String(partial?.toriiUrl ?? TAIRA_CHAIN_PRESET.connection.toriiUrl),
+    );
+  } catch (_error) {
+    endpointValid = false;
+  }
+  const fallbackConnection = TAIRA_CHAIN_PRESET.connection;
+  const chainId = endpointValid
+    ? (normalizeChainIdValue(partial?.chainId) ?? fallbackConnection.chainId)
+    : fallbackConnection.chainId;
+  const networkPrefix = endpointValid
+    ? (normalizeNetworkPrefixValue(partial?.networkPrefix) ??
+      fallbackConnection.networkPrefix)
+    : fallbackConnection.networkPrefix;
   const assetDefinitionId = String(
-    partial?.assetDefinitionId ??
-      TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+    endpointValid
+      ? (partial?.assetDefinitionId ?? fallbackConnection.assetDefinitionId)
+      : fallbackConnection.assetDefinitionId,
   ).trim();
   return {
-    ...TAIRA_CHAIN_PRESET.connection,
+    ...fallbackConnection,
+    toriiUrl,
+    chainId,
+    networkPrefix,
     assetDefinitionId:
-      assetDefinitionId || TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+      assetDefinitionId || fallbackConnection.assetDefinitionId,
   };
 };
 
@@ -253,15 +277,7 @@ const serializeSessionState = (state: SessionState) =>
   });
 
 const normalizeSessionNetworkPrefix = (value: unknown): number | null => {
-  const normalized = Number(value);
-  if (
-    !Number.isInteger(normalized) ||
-    normalized < 0 ||
-    normalized > MAX_NETWORK_PREFIX
-  ) {
-    return null;
-  }
-  return normalized;
+  return normalizeNetworkPrefixValue(value);
 };
 
 const normalizeAccounts = (
@@ -345,9 +361,7 @@ export const useSessionStore = defineStore("session", {
         state.accounts.find(
           (account) => account.accountId === state.activeAccountId,
         ) ?? null;
-      return Boolean(
-        active?.accountId && active?.hasStoredSecret,
-      );
+      return Boolean(active?.accountId && active?.hasStoredSecret);
     },
     activeAccount: (state) =>
       state.accounts.find(
@@ -410,7 +424,41 @@ export const useSessionStore = defineStore("session", {
       this.persistState();
     },
     updateConnection(partial: Partial<ConnectionConfig>) {
-      this.connection = normalizeConnection({ ...this.connection, ...partial });
+      const definedPartial = Object.fromEntries(
+        Object.entries(partial).filter(([, value]) => value !== undefined),
+      ) as Partial<ConnectionConfig>;
+      const nextConnection = normalizeConnection({
+        ...this.connection,
+        ...definedPartial,
+      });
+
+      if (nextConnection.networkPrefix === this.connection.networkPrefix) {
+        this.connection = nextConnection;
+        return;
+      }
+
+      const normalizedAccounts = normalizeAccounts(
+        {
+          accounts: this.accounts,
+          activeAccountId: this.activeAccountId,
+        },
+        { networkPrefix: nextConnection.networkPrefix },
+      );
+      const rawAuthorityAccountId = trimString(this.authority.accountId);
+      const migratedAuthorityAccountId = rawAuthorityAccountId
+        ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
+          rawAuthorityAccountId)
+        : "";
+
+      this.$patch({
+        connection: nextConnection,
+        authority: {
+          ...this.authority,
+          accountId: migratedAuthorityAccountId,
+        },
+        accounts: normalizedAccounts.accounts,
+        activeAccountId: normalizedAccounts.activeAccountId,
+      });
     },
     syncChainNetworkPrefix(networkPrefix: number) {
       const normalizedPrefix = normalizeSessionNetworkPrefix(networkPrefix);
@@ -550,8 +598,8 @@ export const useSessionStore = defineStore("session", {
       this.activeAccountId = normalized.accountId;
     },
     addCustomChain(chain: Partial<SavedChain> & Partial<ConnectionConfig>) {
-      // Custom chains are intentionally disabled in TAIRA-only builds.
-      this.connection = normalizeConnection({
+      // Saved chain profile management is disabled; Settings owns the active endpoint.
+      this.updateConnection({
         assetDefinitionId:
           chain.assetDefinitionId ?? this.connection.assetDefinitionId,
       });
@@ -560,10 +608,7 @@ export const useSessionStore = defineStore("session", {
       this.customChains = this.customChains.filter((chain) => chain.id !== id);
     },
     useChainProfile(connection: Partial<ConnectionConfig>) {
-      this.connection = normalizeConnection({
-        ...this.connection,
-        ...connection,
-      });
+      this.updateConnection(connection);
     },
   },
 });

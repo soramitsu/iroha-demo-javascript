@@ -517,85 +517,99 @@
     </section>
 
     <section class="card kaigi-signal-card">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Advanced signaling") }}</h2>
-          <p class="helper">
-            {{
-              t(
-                "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
-              )
-            }}
-          </p>
-        </div>
-      </header>
-
       <details
         class="kaigi-advanced"
         :open="advancedSignalsOpen"
         @toggle="handleAdvancedSignalsToggle"
       >
-        <summary>{{ t("Show raw packets") }}</summary>
-        <div class="actions-row kaigi-signal-actions">
-          <button
-            v-if="callMode === 'join'"
-            type="button"
-            :disabled="busy"
-            @click="createManualAnswerPacket"
-          >
-            {{
-              signalBusy
-                ? t("Creating manual answer…")
-                : t("Create manual answer packet")
-            }}
-          </button>
-          <button
-            v-if="callMode === 'start'"
-            type="button"
-            class="secondary"
-            :disabled="busy"
-            @click="applyAnswerPacket"
-          >
-            {{
-              signalBusy
-                ? t("Applying remote answer…")
-                : t("Apply answer packet")
-            }}
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!outgoingPacket"
-            @click="copyOutgoingPacket"
-          >
-            {{ t("Copy packet") }}
-          </button>
-          <button type="button" class="secondary" @click="pasteIncomingPacket">
-            {{ t("Paste from clipboard") }}
-          </button>
-          <button type="button" class="secondary" @click="clearPackets">
-            {{ t("Clear packets") }}
-          </button>
-        </div>
+        <summary class="kaigi-advanced-summary">
+          <span class="kaigi-advanced-copy">
+            <span class="section-label">{{ t("Advanced signaling") }}</span>
+            <span class="kaigi-advanced-title">{{
+              t("Show raw packets")
+            }}</span>
+            <span class="helper">
+              {{
+                t(
+                  "Use this only when a wallet is local-only or automatic Kaigi signaling is unavailable.",
+                )
+              }}
+            </span>
+          </span>
+          <span class="kaigi-advanced-caret" aria-hidden="true"></span>
+        </summary>
+        <div class="kaigi-advanced-body">
+          <div class="actions-row kaigi-signal-actions">
+            <button
+              v-if="callMode === 'join'"
+              type="button"
+              :disabled="busy"
+              @click="createManualAnswerPacket"
+            >
+              {{
+                signalBusy
+                  ? t("Creating manual answer…")
+                  : t("Create manual answer packet")
+              }}
+            </button>
+            <button
+              v-if="callMode === 'start'"
+              type="button"
+              class="secondary"
+              :disabled="busy"
+              @click="applyAnswerPacket"
+            >
+              {{
+                signalBusy
+                  ? t("Applying remote answer…")
+                  : t("Apply answer packet")
+              }}
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              :disabled="!outgoingPacket"
+              @click="copyOutgoingPacket"
+            >
+              {{ t("Copy packet") }}
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              @click="pasteIncomingPacket"
+            >
+              {{ t("Paste from clipboard") }}
+            </button>
+            <button type="button" class="secondary" @click="clearPackets">
+              {{ t("Clear packets") }}
+            </button>
+          </div>
 
-        <div class="kaigi-packet-grid">
-          <label class="kaigi-packet-field">
-            {{ t("Outgoing packet") }}
-            <textarea
-              :value="outgoingPacket"
-              readonly
-              rows="14"
-              spellcheck="false"
-            ></textarea>
-          </label>
-          <label class="kaigi-packet-field">
-            {{ t("Remote packet") }}
-            <textarea
-              v-model="incomingPacket"
-              rows="14"
-              spellcheck="false"
-            ></textarea>
-          </label>
+          <div class="kaigi-packet-grid">
+            <label class="kaigi-packet-field">
+              {{ t("Outgoing packet") }}
+              <textarea
+                :value="outgoingPacket"
+                name="kaigiOutgoingPacket"
+                autocomplete="off"
+                readonly
+                rows="14"
+                spellcheck="false"
+                translate="no"
+              ></textarea>
+            </label>
+            <label class="kaigi-packet-field">
+              {{ t("Remote packet") }}
+              <textarea
+                v-model="incomingPacket"
+                name="kaigiIncomingPacket"
+                autocomplete="off"
+                rows="14"
+                spellcheck="false"
+                translate="no"
+              ></textarea>
+            </label>
+          </div>
         </div>
       </details>
     </section>
@@ -604,6 +618,7 @@
       v-if="hostPromptVisible"
       class="kaigi-host-modal-backdrop"
       @click.self="dismissHostPrompt"
+      @keydown.esc.stop.prevent="dismissHostPrompt"
     >
       <div
         class="card kaigi-host-modal"
@@ -611,6 +626,7 @@
         aria-modal="true"
         aria-labelledby="kaigi-host-modal-title"
         aria-describedby="kaigi-host-modal-detail"
+        tabindex="-1"
       >
         <p class="kaigi-host-modal-label">{{ t("Host prompt") }}</p>
         <h2 id="kaigi-host-modal-title" class="kaigi-host-modal-title">
@@ -622,6 +638,7 @@
         <div class="actions-row kaigi-host-modal-actions">
           <button
             v-if="hostPromptKind === 'answerReady'"
+            ref="hostPromptPrimaryButton"
             type="button"
             :disabled="busy"
             @click="applyAnswerPacket"
@@ -634,6 +651,7 @@
           </button>
           <button
             v-else
+            ref="hostPromptPrimaryButton"
             type="button"
             :disabled="busy"
             @click="dismissHostPrompt"
@@ -661,6 +679,7 @@
 <script setup lang="ts">
 import {
   computed,
+  nextTick,
   onBeforeUnmount,
   onMounted,
   ref,
@@ -808,6 +827,7 @@ const parsedInvite = shallowRef<LoadedKaigiInvite | null>(null);
 const advancedSignalsOpen = ref(false);
 const hostPromptKind = ref<HostPromptKind | null>(null);
 const lastHostPromptedAnswerPacket = ref("");
+const hostPromptPrimaryButton = ref<HTMLButtonElement | null>(null);
 
 const localVideoRef = ref<HTMLVideoElement | null>(null);
 const remoteVideoRef = ref<HTMLVideoElement | null>(null);
@@ -840,6 +860,7 @@ const peerConnectionState = ref<RTCPeerConnectionState | "idle" | "closed">(
 
 let hostSignalPollBusy = false;
 let hostSignalWatchId: string | null = null;
+let hostPromptPreviousFocus: HTMLElement | null = null;
 const seenHostSignalHashes = new Set<string>();
 
 const participantName = computed({
@@ -945,6 +966,23 @@ const hostPromptDetail = computed(() => {
     : t(
         "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
       );
+});
+
+watch(hostPromptVisible, async (visible) => {
+  if (visible) {
+    hostPromptPreviousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    await nextTick();
+    hostPromptPrimaryButton.value?.focus();
+    return;
+  }
+
+  const previousFocus = hostPromptPreviousFocus;
+  hostPromptPreviousFocus = null;
+  await nextTick();
+  previousFocus?.focus();
 });
 
 watch([localVideoRef, localStream], ([videoElement, stream]) => {
@@ -1059,7 +1097,6 @@ const maybePromptHostForAnswerPacket = () => {
     return;
   }
   lastHostPromptedAnswerPacket.value = packet;
-  advancedSignalsOpen.value = true;
   hostPromptKind.value = "answerReady";
 };
 
@@ -2302,6 +2339,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  hostPromptPreviousFocus = null;
   window.removeEventListener("hashchange", loadInviteFromLocationHash);
   clearHostSignalPolling();
   resetSignalState();
@@ -2408,6 +2446,7 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--surface-base) 42%, transparent);
   backdrop-filter: blur(18px) saturate(145%);
   -webkit-backdrop-filter: blur(18px) saturate(145%);
+  overscroll-behavior: contain;
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--glass-border) 72%, transparent),
     0 22px 48px color-mix(in srgb, #000 24%, transparent);
@@ -2550,20 +2589,69 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
+.kaigi-signal-card {
+  overflow: hidden;
+  padding: 0;
+}
+
 .kaigi-advanced {
+  display: block;
+}
+
+.kaigi-advanced-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.kaigi-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.kaigi-advanced-copy {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.kaigi-advanced-title {
+  color: inherit;
+  font-weight: 700;
+}
+
+.kaigi-advanced-summary .helper {
+  margin: 0;
+}
+
+.kaigi-advanced-caret {
+  width: 0.6rem;
+  height: 0.6rem;
+  flex: 0 0 auto;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  color: var(--iroha-muted);
+  transform: rotate(45deg);
+  transition: transform 0.2s ease;
+}
+
+.kaigi-advanced[open] .kaigi-advanced-caret {
+  transform: rotate(225deg);
+}
+
+.kaigi-advanced-body {
   display: grid;
   gap: 1rem;
+  padding: 0 1.25rem 1.25rem;
+  border-top: 1px solid var(--panel-border);
 }
 
-.kaigi-advanced summary {
-  cursor: pointer;
-  user-select: none;
-  font-weight: 600;
-  color: var(--iroha-muted);
-}
-
-.kaigi-advanced[open] {
-  padding-top: 0.5rem;
+.kaigi-advanced[open] .kaigi-advanced-summary {
+  padding-bottom: 1rem;
 }
 
 @media (max-width: 1120px) {

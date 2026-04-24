@@ -8,7 +8,6 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
-const MALLORY_I105_ACCOUNT_ID = "testuMalloryRealI105AccountId";
 const BOB_OWNER_TAG_HEX = "11".repeat(32);
 const MALLORY_OWNER_TAG_HEX = "22".repeat(32);
 const BOB_DIVERSIFIER_HEX = "33".repeat(32);
@@ -325,8 +324,7 @@ describe("SendView", () => {
         schema: "iroha-confidential-payment-address/v3",
         amount: "7",
         receiveKeyId: MALLORY_RECEIVE_KEY_ID,
-        receivePublicKeyBase64Url:
-          MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
+        receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
       }),
@@ -348,8 +346,7 @@ describe("SendView", () => {
         shieldedDiversifierHex: MALLORY_DIVERSIFIER_HEX,
         shieldedRecipient: {
           receiveKeyId: MALLORY_RECEIVE_KEY_ID,
-          receivePublicKeyBase64Url:
-            MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
+          receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
           ownerTagHex: MALLORY_OWNER_TAG_HEX,
           diversifierHex: MALLORY_DIVERSIFIER_HEX,
         },

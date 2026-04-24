@@ -14,6 +14,7 @@ import {
   isOnboardingDisabledError,
   isRetryableFaucetBadRequest,
   isSupportedAccountIdLiteral,
+  decimalQuantityEquals,
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
 } from "./electron-live-utils.mjs";
@@ -35,6 +36,12 @@ const assetDefinitionId = String(
 ).trim();
 const networkPrefix = parseNetworkPrefix(process.env.E2E_NETWORK_PREFIX);
 const defaultDerivationLabel = "default";
+const expectedFaucetQuantity = readEnv("E2E_EXPECTED_FAUCET_QUANTITY", "25000");
+const reuseFundedWalletCache = ["1", "true", "yes"].includes(
+  String(process.env.E2E_REUSE_FUNDED_CACHE ?? "")
+    .trim()
+    .toLowerCase(),
+);
 const {
   alias: onboardingAlias,
   privateKeyHex: onboardingPrivateKeyHex,
@@ -249,7 +256,9 @@ async function resolveBootstrapFlow(page) {
     return fundedFlow;
   }
 
-  const cachedFundedWallet = readCachedFundedWalletConfig();
+  const cachedFundedWallet = reuseFundedWalletCache
+    ? readCachedFundedWalletConfig()
+    : null;
   if (cachedFundedWallet) {
     try {
       const fundedFlow = await runFundedFlow(page, cachedFundedWallet);
@@ -338,13 +347,17 @@ async function runFaucetFlow(page) {
       await waitForAccountView(page);
       await configureConnection(page);
       const faucetBootstrap = await page.evaluate(
-        ({ torii, chain, prefix, derivationLabel }) => {
+        async ({ torii, chain, prefix, derivationLabel }) => {
           const { publicKeyHex, privateKeyHex } =
             window.iroha.generateKeyPair();
           const summary = window.iroha.deriveAccountAddress({
             domain: derivationLabel,
             publicKeyHex,
             networkPrefix: prefix,
+          });
+          await window.iroha.storeAccountSecret({
+            accountId: summary.accountId,
+            privateKeyHex,
           });
 
           localStorage.setItem(
@@ -370,6 +383,7 @@ async function runFaucetFlow(page) {
                   i105DefaultAccountId: summary.i105DefaultAccountId,
                   publicKeyHex,
                   privateKeyHex,
+                  hasStoredSecret: true,
                   localOnly: true,
                 },
               ],
@@ -517,6 +531,15 @@ async function runFaucetFlow(page) {
         assetId.split("#", 1)[0]?.trim() ||
         String(faucetReceipt?.asset_definition_id ?? "");
 
+      if (
+        expectedFaucetQuantity &&
+        !decimalQuantityEquals(fundedBalance.quantity, expectedFaucetQuantity)
+      ) {
+        throw new Error(
+          `Fresh TAIRA faucet claim should fund ${expectedFaucetQuantity} XOR, observed ${fundedBalance.quantity} on ${assetId}.`,
+        );
+      }
+
       if (!assetDefinitionId) {
         throw new Error(
           `Faucet flow did not resolve an asset definition id. State: ${JSON.stringify(
@@ -616,6 +639,10 @@ async function runFundedFlow(page, fundedWallet) {
       const assetId = String(matchingAsset?.asset_id ?? "").trim();
       const resolvedAssetDefinitionId =
         requested || assetId.split("#", 1)[0]?.trim() || "";
+      await window.iroha.storeAccountSecret({
+        accountId: summary.accountId,
+        privateKeyHex,
+      });
 
       localStorage.setItem(
         "iroha-demo:session",
@@ -640,6 +667,7 @@ async function runFundedFlow(page, fundedWallet) {
               i105DefaultAccountId: summary.i105DefaultAccountId,
               publicKeyHex,
               privateKeyHex,
+              hasStoredSecret: true,
               localOnly: false,
             },
           ],
@@ -700,7 +728,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
   await configureConnection(page);
 
   await page.evaluate(
-    ({
+    async ({
       accountId,
       i105AccountId,
       i105DefaultAccountId,
@@ -712,6 +740,10 @@ async function runReadOnlyFlow(page, fundedAccount) {
       prefix,
       derivationLabel,
     }) => {
+      await window.iroha.storeAccountSecret({
+        accountId,
+        privateKeyHex,
+      });
       localStorage.setItem(
         "iroha-demo:session",
         JSON.stringify({
@@ -735,6 +767,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
               i105DefaultAccountId,
               publicKeyHex,
               privateKeyHex,
+              hasStoredSecret: true,
             },
           ],
           activeAccountId: accountId,
@@ -802,7 +835,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           privateKeyHex,
           assetDefinitionId: assetId,
         });
-<<<<<<< HEAD
       const scanConfidentialBalance = (accountId, privateKeyHex) =>
         window.iroha.scanConfidentialWallet({
           toriiUrl: torii,
@@ -812,61 +844,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           assetDefinitionId: assetId,
           force: true,
         });
-      const fetchAccountTransactions = (accountId, privateKeyHex) =>
-        window.iroha.fetchAccountTransactions({
-          toriiUrl: torii,
-          accountId,
-          privateKeyHex,
-          limit: 50,
-        });
-      const waitForAccountTransaction = async ({
-        accountId,
-        privateKeyHex,
-        txHashHex,
-        timeoutMs = 90_000,
-      }) => {
-        const normalizedHash = String(txHashHex ?? "")
-          .trim()
-          .toLowerCase();
-        const deadline = Date.now() + timeoutMs;
-        let lastTransactions = null;
-        let lastError = "";
-        while (Date.now() < deadline) {
-          try {
-            lastTransactions = await fetchAccountTransactions(
-              accountId,
-              privateKeyHex,
-            );
-            const items = Array.isArray(lastTransactions?.items)
-              ? lastTransactions.items
-              : [];
-            if (
-              items.some(
-                (item) =>
-                  String(item?.entrypoint_hash ?? item?.entrypointHash ?? "")
-                    .trim()
-                    .toLowerCase() === normalizedHash,
-              )
-            ) {
-              return {
-                ok: true,
-                transactions: lastTransactions,
-                error: "",
-              };
-            }
-          } catch (error) {
-            lastError = String(error ?? "");
-          }
-          await waitForMs(1_500);
-        }
-        return {
-          ok: false,
-          transactions: lastTransactions,
-          error: lastError,
-        };
-      };
-=======
->>>>>>> origin/master
       const waitForConfidentialBalance = async ({
         accountId,
         privateKeyHex,
@@ -929,11 +906,16 @@ async function runReadOnlyFlow(page, fundedAccount) {
         publicKeyHex: bobKeyPair.publicKeyHex,
         networkPrefix: prefix,
       });
-      const bobReceiveAddress = window.iroha.deriveConfidentialReceiveAddress(
-        bobKeyPair.privateKeyHex,
-      );
-      const bobOwnerTagHex = bobReceiveAddress.ownerTagHex;
-      const bobDiversifierHex = bobReceiveAddress.diversifierHex;
+      const bobReceiveAddress =
+        await window.iroha.createConfidentialPaymentAddress({
+          accountId: bobSummary.i105AccountId,
+          privateKeyHex: bobKeyPair.privateKeyHex,
+        });
+      const bobReceiveKeyId = bobReceiveAddress.receiveKeyId;
+      const bobReceivePublicKeyBase64Url =
+        bobReceiveAddress.receivePublicKeyBase64Url;
+      const bobOwnerTagHex = bobReceiveAddress.shieldedOwnerTagHex;
+      const bobDiversifierHex = bobReceiveAddress.shieldedDiversifierHex;
       const initialBobBalance = await readConfidentialBalance(
         bobSummary.i105AccountId,
         bobKeyPair.privateKeyHex,
@@ -964,9 +946,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
               quantity: selfShieldQuantity.toString(),
               privateKeyHex: alicePrivateKeyHex,
               shielded: true,
-              metadata: {
-                source: "electron-live-self-shield",
-              },
             }),
             waitForMs(120_000).then(() => {
               throw new Error("self-shield submit timed out");
@@ -1015,11 +994,10 @@ async function runReadOnlyFlow(page, fundedAccount) {
             quantity: "1",
             privateKeyHex: alicePrivateKeyHex,
             shielded: true,
+            shieldedReceiveKeyId: bobReceiveKeyId,
+            shieldedReceivePublicKeyBase64Url: bobReceivePublicKeyBase64Url,
             shieldedOwnerTagHex: bobOwnerTagHex,
             shieldedDiversifierHex: bobDiversifierHex,
-            metadata: {
-              source: "electron-live-recipient-shielded-send",
-            },
           }),
           waitForMs(120_000).then(() => {
             throw new Error("recipient shielded send timed out");
@@ -1110,11 +1088,8 @@ async function runReadOnlyFlow(page, fundedAccount) {
             quantity: "1",
             privateKeyHex: alicePrivateKeyHex,
             unshield: true,
-            metadata: {
-              source: "electron-live-unshield",
-            },
           }),
-          waitForMs(120_000).then(() => {
+          waitForMs(300_000).then(() => {
             throw new Error("unshield submit timed out");
           }),
         ]);
@@ -1131,11 +1106,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           aliceAfterSelfShield,
           aliceAfterRecipient,
           bobAfterRecipient,
-<<<<<<< HEAD
           bobRecoveredAfterRecipient,
-          unshieldCommitted,
-=======
->>>>>>> origin/master
         };
       }
       const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
@@ -1351,9 +1322,16 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
         displayName: alias,
         domain: derivationLabel,
         accountId: summary.accountId,
+        i105AccountId: summary.i105AccountId,
+        i105DefaultAccountId: summary.i105DefaultAccountId,
         publicKeyHex,
         privateKeyHex,
+        hasStoredSecret: true,
       };
+      await window.iroha.storeAccountSecret({
+        accountId: summary.accountId,
+        privateKeyHex,
+      });
 
       let onboarding = { status: "ok", detail: "" };
       try {
@@ -1603,7 +1581,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     }
 
     if (check.hash === "#/send") {
-      const shieldToggle = page.getByLabel("Anonymous shielded send", {
+      const shieldToggle = page.getByLabel("Private shielded transfer", {
         exact: true,
       });
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
@@ -1673,7 +1651,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         );
       }
       const shieldSubmitButton = page.getByRole("button", {
-        name: "Send anonymously",
+        name: "Send privately",
         exact: true,
       });
       const shieldButtonVisible = await shieldSubmitButton
@@ -1717,13 +1695,20 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         );
       }
       await page
-        .getByText(
-          "Scan a shielded Receive QR for this destination before sending anonymously.",
-          { exact: true },
-        )
+        .getByText("Scan a private Receive QR before sending privately.", {
+          exact: true,
+        })
         .waitFor({ state: "visible", timeout: 5_000 });
       await destinationInput.fill(fundedAccount.accountId);
-      const shieldDisabledForSelf = await shieldSubmitButton
+      const selfShieldSubmitButton = page.getByRole("button", {
+        name: "Create private balance",
+        exact: true,
+      });
+      await selfShieldSubmitButton.waitFor({
+        state: "visible",
+        timeout: 5_000,
+      });
+      const shieldDisabledForSelf = await selfShieldSubmitButton
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (shieldDisabledForSelf === null) {

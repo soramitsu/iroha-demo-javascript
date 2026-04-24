@@ -6,6 +6,7 @@ import type {
   AccountOnboardingResponse,
   AccountPermissionsResponse,
   AccountTransactionsResponse,
+  ChainMetadataResponse,
   ConfidentialAssetPolicyView,
   ConnectPreview,
   ExplorerAccountQrResponse,
@@ -48,6 +49,10 @@ const bridge = (): IrohaBridge => {
 
 export const pingTorii = (toriiUrl: string): Promise<ToriiHealth> =>
   bridge().ping({ toriiUrl });
+
+export const getChainMetadata = (
+  toriiUrl: string,
+): Promise<ChainMetadataResponse> => bridge().getChainMetadata({ toriiUrl });
 
 export const generateKeyPair = () => bridge().generateKeyPair();
 

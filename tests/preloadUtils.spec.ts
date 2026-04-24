@@ -15,6 +15,7 @@ import {
   readNexusUnbondingDelayMs,
   sanitizeFetchHeaders,
   sanitizeFetchInit,
+  stripConfidentialFeeSponsor,
 } from "../electron/preload-utils";
 
 describe("preload utils", () => {
@@ -28,6 +29,25 @@ describe("preload utils", () => {
     expect(() => normalizeBaseUrl("127.0.0.1:8080")).toThrow(
       "Torii URL must include http or https scheme",
     );
+  });
+
+  it("strips fee sponsorship from confidential relay metadata while preserving gas asset hints", () => {
+    expect(
+      stripConfidentialFeeSponsor({
+        fee_sponsor: "testu123",
+        gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        gas_limit: 123,
+      }),
+    ).toEqual({
+      gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      gas_limit: 123,
+    });
+    expect(stripConfidentialFeeSponsor(undefined)).toBeUndefined();
+    expect(
+      stripConfidentialFeeSponsor({
+        fee_sponsor: "testu123",
+      }),
+    ).toBeUndefined();
   });
 
   it("formats onboarding 403 errors with explicit UAID guidance", () => {

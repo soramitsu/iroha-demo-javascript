@@ -243,19 +243,18 @@ const showAdvancedRegistration = ref(false);
 watch(
   () => session.connection,
   (value) => {
-    const isTaira =
-      value.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl &&
-      value.chainId === TAIRA_CHAIN_PRESET.connection.chainId &&
-      value.networkPrefix === TAIRA_CHAIN_PRESET.connection.networkPrefix;
-    const nextConnection = isTaira
-      ? { ...value }
-      : { ...TAIRA_CHAIN_PRESET.connection };
+    const nextConnection = {
+      ...TAIRA_CHAIN_PRESET.connection,
+      toriiUrl: value.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: value.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+      networkPrefix:
+        value.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      assetDefinitionId:
+        value.assetDefinitionId ||
+        TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+    };
     Object.assign(connectionForm, nextConnection);
     assetDefinitionDraft.value = "";
-    if (!isTaira) {
-      session.updateConnection({ ...TAIRA_CHAIN_PRESET.connection });
-      session.persistState();
-    }
   },
   { deep: true, immediate: true },
 );
@@ -312,13 +311,12 @@ const pingIndicator = computed(() => {
   }
 });
 
-const authorityHasSavedSecret = computed(
-  () =>
-    Boolean(
-      authorityForm.accountId.trim() &&
-        authorityForm.accountId.trim() === session.authority.accountId.trim() &&
-        session.authority.hasStoredSecret,
-    ),
+const authorityHasSavedSecret = computed(() =>
+  Boolean(
+    authorityForm.accountId.trim() &&
+      authorityForm.accountId.trim() === session.authority.accountId.trim() &&
+      session.authority.hasStoredSecret,
+  ),
 );
 
 const canRegister = computed(() =>
@@ -339,9 +337,11 @@ const saveConnection = () => {
     connectionForm.assetDefinitionId ||
     TAIRA_CHAIN_PRESET.connection.assetDefinitionId;
   const nextConnection = {
-    toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-    networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    toriiUrl: connectionForm.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    chainId: connectionForm.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+    networkPrefix:
+      connectionForm.networkPrefix ??
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
     assetDefinitionId: nextAssetDefinitionId,
   };
   Object.assign(connectionForm, nextConnection);

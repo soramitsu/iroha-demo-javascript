@@ -25,7 +25,9 @@
             class="helper"
             :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
           >
-            {{ t("Top up a new TAIRA account once with starter XOR.") }}
+            {{
+              t("Claim 25,000 TAIRA testnet XOR for governance and testing.")
+            }}
           </p>
         </div>
         <button
@@ -703,34 +705,10 @@ const primaryAssetLabel = computed(() => {
 const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
 );
-const hasPositiveConfiguredFaucetBalance = computed(() => {
-  const configuredDefinitionId = extractAssetDefinitionId(
-    session.connection.assetDefinitionId,
-  )
-    .trim()
-    .toLowerCase();
-  if (!configuredDefinitionId) {
-    return false;
-  }
-  return assets.value.some((asset) => {
-    const assetDefinitionId = extractAssetDefinitionId(asset.asset_id)
-      .trim()
-      .toLowerCase();
-    const quantity = Number(String(asset.quantity ?? "").trim());
-    return (
-      assetDefinitionId === configuredDefinitionId &&
-      Number.isFinite(quantity) &&
-      quantity > 0
-    );
-  });
-});
-const canRequestFaucet = computed(
-  () =>
-    Boolean(
-      session.hasAccount &&
-        session.connection.toriiUrl &&
-        requestAccountId.value,
-    ) && !hasPositiveConfiguredFaucetBalance.value,
+const canRequestFaucet = computed(() =>
+  Boolean(
+    session.hasAccount && session.connection.toriiUrl && requestAccountId.value,
+  ),
 );
 const showFundingPriority = computed(() =>
   Boolean(activeAccount.value?.localOnly || !assets.value.length),

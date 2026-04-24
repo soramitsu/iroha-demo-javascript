@@ -5,7 +5,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 ## Features
 
 - 🔑 Modern onboarding workflow to configure Torii, generate/restore keys, and compute canonical account IDs (I105 literals).
-- 🌐 Network profile locked to TAIRA testnet (`https://taira.sora.org`) with explorer quick-link (`https://taira-explorer.sora.org`).
+- 🌐 Settings-driven Torii endpoint profile with automatic chain ID/network-prefix loading and a TAIRA explorer quick-link (`https://taira-explorer.sora.org`).
 - 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
 - 📊 Wallet dashboard with live balances + decoded transaction directions.
 - 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
@@ -97,6 +97,8 @@ Optional env vars:
 - `E2E_CHAIN_ID` (default: `809574f5-fee7-5e69-bfcf-52451e42d50f`)
 - `E2E_ASSET_DEFINITION_ID` (optional; when omitted, live E2E derives the funded asset bucket from the faucet response or funded wallet holdings)
 - `E2E_NETWORK_PREFIX` (default: `369`)
+- `E2E_EXPECTED_FAUCET_QUANTITY` (default: `25000`; fresh TAIRA faucet bootstraps fail if the observed funded balance differs)
+- `E2E_REUSE_FUNDED_CACHE=1` (optional; reuses `output/e2e/live-funded-wallet.json` instead of forcing a fresh faucet bootstrap)
 - `E2E_FUNDED_PRIVATE_KEY_HEX` (optional; bypasses the faucet path and uses an already funded TAIRA wallet for live shield / shielded-send checks)
 - `E2E_FUNDED_DOMAIN` (default: `default`; used with `E2E_FUNDED_PRIVATE_KEY_HEX` when deriving the local wallet profile)
 - `E2E_ONBOARDING_ALIAS` (default: `e2e-onboarding-shared@universal`)
@@ -138,15 +140,16 @@ If a test fails, screenshots are written under `output/playwright/`.
 
 ## Usage notes
 
-1. **Account setup** — first-run wizard for provisioning a TAIRA testnet account. Generate a recovery phrase, derive the canonical `accountId`, register it via `/v1/accounts/onboard`, and pair with IrohaConnect if you want to keep signing on mobile devices.
-2. **Setup tab** — TAIRA Torii URL + chain ID are locked; set your asset definition and key material. Generate or import a key pair to derive the canonical I105 `accountId` (for example `testu...`). Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
-3. **Wallet tab** — refresh balances and recent transactions. Transfers are decoded when the instructions include `Transfer::Asset` payloads.
-4. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
-5. **Parliament tab** — bond a fixed `10,000 XOR` amount via `RegisterCitizen`, inspect referendum/proposal/tally/locks payloads, submit plain ballots, and prepare finalize/enact draft calls for governance operations. Recent referendum/proposal chips are persisted per account and trigger lookup when clicked. If referendum ID is set, lookup continues even when proposal ID input is invalid (proposal lookup is skipped). Ballot submit requires a positive whole-number amount that does not exceed the current XOR balance.
-6. **Send tab** — create transfers signed with the local private key. Optional QR scanning populates destination + amount. Shield mode is available from the send form and currently supports self-shielding only (destination is locked to the active account and amount must be whole-number base units).
-7. **Receive tab** — share account IDs plus a QR encoding `{ accountId, assetDefinitionId, amount }`.
-8. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
-9. **Offline tab** — "Move funds to online wallet" mirrors shield behavior from Send: shield mode locks destination to the active account and requires whole-number base units.
+1. **Account setup** — first-run wizard for creating or restoring a local TAIRA wallet. Generate a recovery phrase, derive the canonical `accountId`, save it in the secure vault, and optionally pair with IrohaConnect; on-chain onboarding/registration is no longer required for local wallet creation.
+2. **Settings tab** — choose the Torii endpoint used by wallet, staking, governance, VPN, and explorer requests. Checking an endpoint loads its chain ID and network prefix before saving. The default remains `https://taira.sora.org`; custom endpoints can still be saved directly for local/dev nodes.
+3. **Setup tab** — chain ID and network prefix are read-only and mirror the active Settings connection; use this tab for advanced asset, authority, and registration helpers. Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
+4. **Wallet tab** — refresh balances and recent transactions, claim starter faucet funds, and manage transparent/self-shielded wallet state.
+5. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
+6. **Parliament tab** — bond a fixed `10,000 XOR` amount via `RegisterCitizen`, inspect referendum/proposal/tally/locks payloads, submit plain ballots, and prepare finalize/enact draft calls for governance operations. Recent referendum/proposal chips are persisted per account and trigger lookup when clicked. If referendum ID is set, lookup continues even when proposal ID input is invalid (proposal lookup is skipped). Ballot submit requires a positive whole-number amount that does not exceed the current XOR balance.
+7. **Send tab** — create transparent transfers, self-shield funds, or send shielded funds to another account when a recipient `v3` Receive QR is scanned. Shielded sends require whole-number base-unit amounts and wallet-recognizable confidential notes.
+8. **Receive tab** — share privacy-first `iroha-confidential-payment-address/v3` QRs. The default QR omits plaintext account, asset, and amount while carrying the one-time receive key needed for note recovery.
+9. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
+10. **Offline tab** — "Move funds to online wallet" remains same-account only and keeps the stricter self-only shield constraints even though Send supports recipient shielded transfers.
 
 ## Folder structure
 

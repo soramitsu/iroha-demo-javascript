@@ -7,6 +7,7 @@ import {
   findMissingToriiVpnMcpTools,
   findMissingToriiVpnOpenApiPaths,
   formatSurfaceProbeAttempt,
+  decimalQuantityEquals,
   extractTransactionHashHex,
   isOnboardingBadRequestError,
   isOnboardingConflictError,
@@ -246,7 +247,7 @@ describe("electron live e2e utils", () => {
   it("detects retryable faucet 400 responses", () => {
     expect(
       isRetryableFaucetBadRequest(
-        "Faucet request failed (400): TAIRA rejected this faucet claim. Repeated claims usually fail once the account already holds starter XOR, and stale faucet proof challenges can also trigger this response.",
+        "Faucet request failed (400): TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
       ),
     ).toBe(true);
     expect(
@@ -259,6 +260,15 @@ describe("electron live e2e utils", () => {
         "Faucet request failed (500): stale faucet proof challenges can also trigger this response.",
       ),
     ).toBe(false);
+  });
+
+  it("compares decimal faucet quantities after trimming insignificant zeros", () => {
+    expect(decimalQuantityEquals("25000", "25000")).toBe(true);
+    expect(decimalQuantityEquals("25000.00000", "25000")).toBe(true);
+    expect(decimalQuantityEquals("025000.0100", "25000.01")).toBe(true);
+    expect(decimalQuantityEquals("1000", "25000")).toBe(false);
+    expect(decimalQuantityEquals("", "25000")).toBe(false);
+    expect(decimalQuantityEquals("25000 XOR", "25000")).toBe(false);
   });
 
   it("parses onboarding env defaults when vars are absent", () => {

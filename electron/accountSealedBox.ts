@@ -7,6 +7,7 @@ import {
   type KaigiSealedBox,
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
+import { parseAccountAddressLiteral } from "./accountAddress";
 
 const HEX_RE = /^[0-9a-fA-F]+$/;
 const ED25519_KEY_BYTES = 32;
@@ -163,8 +164,11 @@ export const extractAccountPublicKeyHex = (accountId: string): string => {
   if (!literal) {
     throw new Error("accountId is required.");
   }
-  const { address } = AccountAddress.parseEncoded(literal);
-  return extractSingleKeyPublicKey(address).toString("hex").toUpperCase();
+  return extractSingleKeyPublicKey(
+    parseAccountAddressLiteral(literal, "accountId"),
+  )
+    .toString("hex")
+    .toUpperCase();
 };
 
 export const deriveAccountSealedBoxKeyPair = (

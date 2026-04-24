@@ -48,4 +48,11 @@ describe("router guard", () => {
     expect(router.currentRoute.value.path).toBe("/account");
     expect(useSessionStore().hasAccount).toBe(false);
   });
+
+  it("allows settings before a saved account exists", async () => {
+    await router.push("/settings");
+
+    expect(router.currentRoute.value.path).toBe("/settings");
+    expect(useSessionStore().hasAccount).toBe(false);
+  });
 });

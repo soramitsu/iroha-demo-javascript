@@ -169,6 +169,57 @@ describe("nodeFetch", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
+  it("encodes account IDs in JSON request bodies as UTF-8 bytes", async () => {
+    const request = createMockRequest();
+    httpRequestMock.mockImplementation(
+      (
+        _url: URL,
+        _options: unknown,
+        callback: (response: MockResponse) => void,
+      ) => {
+        const response = createMockResponse({
+          statusCode: 200,
+          statusMessage: "OK",
+          headers: {
+            "content-type": "application/json",
+          },
+        });
+        queueMicrotask(() => {
+          callback(response);
+          queueMicrotask(() => {
+            response.emit("data", Buffer.from(JSON.stringify({ ok: true })));
+            response.emit("end");
+            request.emit("close");
+          });
+        });
+        return request;
+      },
+    );
+
+    const accountId = "testuロ1NtルaFbdカ";
+    const body = JSON.stringify({ account_id: accountId });
+    const { nodeFetch } = await import("../electron/nodeFetch");
+    const response = await nodeFetch("http://taira.sora.org/onboard", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body,
+    });
+
+    expect(response.ok).toBe(true);
+    expect(request.end).toHaveBeenCalledWith(Buffer.from(body, "utf8"));
+    expect(httpRequestMock).toHaveBeenCalledWith(
+      expect.any(URL),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "content-length": String(Buffer.from(body, "utf8").length),
+        }),
+      }),
+      expect.any(Function),
+    );
+  });
+
   it("supports abort signals", async () => {
     const request = createMockRequest();
     httpRequestMock.mockReturnValue(request);

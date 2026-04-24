@@ -1,7 +1,4 @@
-import {
-  normalizeMnemonicPhrase,
-  type MnemonicWordCount,
-} from "@/utils/mnemonic";
+import { normalizeMnemonicPhrase, type MnemonicWordCount } from "./mnemonic";
 
 export type WalletBackupTarget = "manual" | "icloud" | "google";
 export const CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1 =
@@ -194,8 +191,10 @@ export const buildWalletBackupPayload = (input: {
     return payload;
   }
 
-  const confidentialWalletDraft = (input.confidentialWallet ??
-    {}) as Record<string, unknown>;
+  const confidentialWalletDraft = (input.confidentialWallet ?? {}) as Record<
+    string,
+    unknown
+  >;
   const confidentialChainId = trimString(confidentialWalletDraft.chainId);
   const confidentialAccountId = trimString(confidentialWalletDraft.accountId);
   if (confidentialChainId && confidentialAccountId) {
@@ -204,8 +203,7 @@ export const buildWalletBackupPayload = (input: {
       chainId: confidentialChainId,
       accountId: confidentialAccountId,
       addressCursor:
-        normalizeNonNegativeInteger(confidentialWalletDraft.addressCursor) ??
-        0,
+        normalizeNonNegativeInteger(confidentialWalletDraft.addressCursor) ?? 0,
       scanWatermarkBlock:
         confidentialWalletDraft.scanWatermarkBlock === null
           ? null

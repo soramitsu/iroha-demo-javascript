@@ -543,24 +543,17 @@ const connectionForm = reactive({
 watch(
   () => session.connection,
   (value) => {
-    const isTaira =
-      value.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl &&
-      value.chainId === TAIRA_CHAIN_PRESET.connection.chainId &&
-      value.networkPrefix === TAIRA_CHAIN_PRESET.connection.networkPrefix;
-    if (!isTaira) {
-      session.updateConnection({
-        ...TAIRA_CHAIN_PRESET.connection,
-        assetDefinitionId:
-          value.assetDefinitionId ||
-          TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
-      });
-      session.persistState();
-      connectionForm.toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
-      connectionForm.chainId = TAIRA_CHAIN_PRESET.connection.chainId;
-    } else {
-      connectionForm.toriiUrl = value.toriiUrl;
-      connectionForm.chainId = value.chainId;
-    }
+    const nextConnection = {
+      toriiUrl: value.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: value.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+      networkPrefix:
+        value.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      assetDefinitionId:
+        value.assetDefinitionId ||
+        TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+    };
+    connectionForm.toriiUrl = nextConnection.toriiUrl;
+    connectionForm.chainId = nextConnection.chainId;
   },
   { deep: true, immediate: true },
 );

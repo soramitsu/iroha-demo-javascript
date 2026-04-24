@@ -7,6 +7,7 @@ import {
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
+  getChainMetadata,
   getConfidentialAssetBalance,
   finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
@@ -38,6 +39,25 @@ import {
 describe("iroha services bridge", () => {
   afterEach(() => {
     delete (window as any).iroha;
+  });
+
+  it("forwards chain metadata checks to the bridge", async () => {
+    const getChainMetadataMock = vi.fn().mockResolvedValue({
+      chainId: "chain-alpha",
+      networkPrefix: 42,
+    });
+
+    (window as any).iroha = {
+      getChainMetadata: getChainMetadataMock,
+    };
+
+    await expect(getChainMetadata("http://localhost:8080")).resolves.toEqual({
+      chainId: "chain-alpha",
+      networkPrefix: 42,
+    });
+    expect(getChainMetadataMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
   });
 
   it("forwards offset-based pagination to asset and transaction fetchers", async () => {

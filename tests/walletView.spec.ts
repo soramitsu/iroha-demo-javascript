@@ -853,7 +853,7 @@ describe("WalletView", () => {
     );
   });
 
-  it("disables faucet claims after the configured faucet asset already has a positive balance", async () => {
+  it("keeps faucet claims enabled after the configured faucet asset already has a positive balance", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
@@ -871,7 +871,7 @@ describe("WalletView", () => {
       .findAll("button")
       .find((button) => button.text().includes(t("Claim Testnet XOR")))!;
 
-    expect(faucetButton.attributes("disabled")).toBeDefined();
+    expect(faucetButton.attributes("disabled")).toBeUndefined();
   });
 
   it("shows a blocking faucet status modal while a claim is in flight", async () => {

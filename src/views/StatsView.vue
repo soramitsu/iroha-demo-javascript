@@ -114,7 +114,11 @@
             <p class="section-label">{{ t("Pressure gauges") }}</p>
           </div>
           <div class="instrument-grid">
-            <article v-for="card in runtimeCards" :key="card.label" class="instrument">
+            <article
+              v-for="card in runtimeCards"
+              :key="card.label"
+              class="instrument"
+            >
               <div class="instrument-topline">
                 <span class="instrument-label">{{ card.label }}</span>
                 <span class="instrument-value">{{ card.value }}</span>
@@ -153,7 +157,11 @@
               <p class="section-label">{{ t("Network shape") }}</p>
             </header>
             <div class="signal-grid cluster-grid">
-              <article v-for="card in networkShapeCards" :key="card.label" class="signal-card">
+              <article
+                v-for="card in networkShapeCards"
+                :key="card.label"
+                class="signal-card"
+              >
                 <span class="signal-label">{{ card.label }}</span>
                 <span class="signal-value">{{ card.value }}</span>
               </article>
@@ -206,11 +214,14 @@
               </div>
               <p class="window-sub">
                 {{
-                  t("{transfers} transfers · {senders} senders · {receivers} receivers", {
-                    transfers: window.transfers,
-                    senders: window.senders,
-                    receivers: window.receivers,
-                  })
+                  t(
+                    "{transfers} transfers · {senders} senders · {receivers} receivers",
+                    {
+                      transfers: window.transfers,
+                      senders: window.senders,
+                      receivers: window.receivers,
+                    },
+                  )
                 }}
               </p>
             </article>
@@ -439,7 +450,9 @@ const top10ShareLabel = computed(() =>
   formatPercent(stats.value?.supply?.distribution.top10 ?? null),
 );
 const queueFillLabel = computed(() =>
-  queueFillPercent.value === null ? t("—") : formatPercent(queueFillPercent.value / 100),
+  queueFillPercent.value === null
+    ? t("—")
+    : formatPercent(queueFillPercent.value / 100),
 );
 const collectedAtLabel = computed(() =>
   stats.value?.collectedAtMs
@@ -634,9 +647,7 @@ const runtimeCards = computed(() => {
         ),
       ),
       tone:
-        (runtime?.effectiveBlockTimeMs ?? 0) >= 4000
-          ? "warning"
-          : "positive",
+        (runtime?.effectiveBlockTimeMs ?? 0) >= 4000 ? "warning" : "positive",
     },
   ];
 });
@@ -776,11 +787,15 @@ const topHolderCards = computed(() => {
   return topHolders.slice(0, 6).map((holder, index) => {
     const holderBalance = Number(holder.balance);
     const fill =
-      Number.isFinite(holderBalance) && Number.isFinite(topBalance) && topBalance > 0
+      Number.isFinite(holderBalance) &&
+      Number.isFinite(topBalance) &&
+      topBalance > 0
         ? Math.max(8, (holderBalance / topBalance) * 100)
         : 8;
     const share =
-      Number.isFinite(holderBalance) && Number.isFinite(totalSupply) && totalSupply > 0
+      Number.isFinite(holderBalance) &&
+      Number.isFinite(totalSupply) &&
+      totalSupply > 0
         ? formatPercent(holderBalance / totalSupply)
         : t("—");
     return {
@@ -873,8 +888,16 @@ watch(
 :root[data-theme="light"] .stats-banner,
 :root[data-theme="light"] .stats-nav-shell {
   background:
-    linear-gradient(160deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.4)),
-    linear-gradient(180deg, rgba(241, 246, 255, 0.94), rgba(230, 238, 253, 0.82));
+    linear-gradient(
+      160deg,
+      rgba(255, 255, 255, 0.72),
+      rgba(255, 255, 255, 0.4)
+    ),
+    linear-gradient(
+      180deg,
+      rgba(241, 246, 255, 0.94),
+      rgba(230, 238, 253, 0.82)
+    );
   border-color: rgba(12, 20, 36, 0.08);
 }
 
@@ -893,7 +916,12 @@ watch(
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(90deg, transparent 0, rgba(255, 255, 255, 0.04) 48%, transparent 100%),
+    linear-gradient(
+      90deg,
+      transparent 0,
+      rgba(255, 255, 255, 0.04) 48%,
+      transparent 100%
+    ),
     repeating-linear-gradient(
       180deg,
       rgba(255, 255, 255, 0.015) 0,
@@ -977,7 +1005,11 @@ watch(
   color: inherit;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0.02)
+    ),
     rgba(4, 9, 18, 0.62);
   transition:
     transform 180ms ease,
@@ -987,7 +1019,11 @@ watch(
 
 :root[data-theme="light"] .stats-nav-card {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 255, 0.74)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.94),
+      rgba(244, 247, 255, 0.74)
+    ),
     rgba(255, 255, 255, 0.8);
   border-color: rgba(12, 20, 36, 0.08);
 }
@@ -1087,8 +1123,16 @@ watch(
   height: 116px;
   border-radius: 50%;
   background:
-    radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.95), transparent 32%),
-    radial-gradient(circle at 50% 50%, rgba(53, 196, 255, 0.45), rgba(14, 18, 28, 0.1) 72%);
+    radial-gradient(
+      circle at 35% 35%,
+      rgba(255, 255, 255, 0.95),
+      transparent 32%
+    ),
+    radial-gradient(
+      circle at 50% 50%,
+      rgba(53, 196, 255, 0.45),
+      rgba(14, 18, 28, 0.1) 72%
+    );
   box-shadow:
     0 0 0 14px rgba(95, 230, 169, 0.06),
     0 0 70px rgba(53, 196, 255, 0.24);
@@ -1216,7 +1260,11 @@ watch(
   border-radius: 18px;
   padding: 16px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.06),
+      rgba(255, 255, 255, 0.02)
+    ),
     rgba(4, 9, 18, 0.62);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -1228,7 +1276,11 @@ watch(
 :root[data-theme="light"] .signal-card,
 :root[data-theme="light"] .signal-cluster {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 247, 255, 0.7)),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.94),
+      rgba(244, 247, 255, 0.7)
+    ),
     rgba(255, 255, 255, 0.8);
   border-color: rgba(12, 20, 36, 0.08);
 }

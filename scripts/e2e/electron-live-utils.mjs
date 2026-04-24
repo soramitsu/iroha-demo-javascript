@@ -112,9 +112,31 @@ export function isRetryableFaucetBadRequest(detail) {
   const normalizedDetail = String(detail ?? "");
   return (
     /\bFaucet request failed\s*\(400\)/i.test(normalizedDetail) &&
-    /(Repeated claims usually fail|stale faucet proof challenges)/i.test(
-      normalizedDetail,
-    )
+    /stale faucet proof challenges/i.test(normalizedDetail)
+  );
+}
+
+function normalizeDecimalQuantity(value) {
+  const normalizedValue = String(value ?? "").trim();
+  if (!/^\d+(?:\.\d+)?$/.test(normalizedValue)) {
+    return null;
+  }
+
+  const [wholePart, fractionalPart = ""] = normalizedValue.split(".");
+  const normalizedWholePart = wholePart.replace(/^0+(?=\d)/, "");
+  const normalizedFractionalPart = fractionalPart.replace(/0+$/, "");
+  return normalizedFractionalPart
+    ? `${normalizedWholePart}.${normalizedFractionalPart}`
+    : normalizedWholePart;
+}
+
+export function decimalQuantityEquals(actual, expected) {
+  const normalizedActual = normalizeDecimalQuantity(actual);
+  const normalizedExpected = normalizeDecimalQuantity(expected);
+  return (
+    normalizedActual !== null &&
+    normalizedExpected !== null &&
+    normalizedActual === normalizedExpected
   );
 }
 
