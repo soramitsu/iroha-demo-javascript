@@ -2,7 +2,7 @@
   <div class="explore-layout">
     <section class="card explore-metrics-card">
       <header class="card-header">
-        <h2>{{ t("Explorer Metrics") }}</h2>
+        <h2>{{ t("Network health") }}</h2>
         <button class="secondary" :disabled="loading" @click="refresh">
           {{ t("Refresh") }}
         </button>
@@ -65,11 +65,11 @@
     <section class="card explore-qr-card">
       <header class="card-header">
         <div>
-          <h2>{{ t("Shareable Explorer QR") }}</h2>
+          <h2>{{ t("Explorer QR") }}</h2>
           <p class="helper">
             {{
               t(
-                "Rendered straight from Torii so wallets can scan the exact payload.",
+                "Use this QR when another wallet or explorer needs this account.",
               )
             }}
           </p>
@@ -98,7 +98,7 @@
           />
           <div class="qr-meta">
             <div class="kv">
-              <span class="kv-label">{{ t("Canonical I105 Account ID") }}</span>
+              <span class="kv-label">{{ t("I105 Account ID") }}</span>
               <span class="kv-value">{{ accountQr.literal }}</span>
             </div>
             <div class="kv">
@@ -111,7 +111,10 @@
             </div>
           </div>
         </div>
-        <pre class="qr-payload">{{ formattedQr }}</pre>
+        <details class="technical-details compact">
+          <summary>{{ t("QR details") }}</summary>
+          <pre class="qr-payload">{{ formattedQr }}</pre>
+        </details>
       </div>
       <p v-else class="helper explore-empty">
         {{ t("No QR payload yet. Connect to Torii and pick an account.") }}
@@ -179,12 +182,14 @@ const refresh = async () => {
   loading.value = true;
   try {
     const [metricsResult, qrResult] = await Promise.allSettled([
-      getExplorerMetrics(toriiUrl),
+      Promise.resolve().then(() => getExplorerMetrics(toriiUrl)),
       accountId
-        ? getExplorerAccountQr({
-            toriiUrl,
-            accountId,
-          })
+        ? Promise.resolve().then(() =>
+            getExplorerAccountQr({
+              toriiUrl,
+              accountId,
+            }),
+          )
         : Promise.resolve(null),
     ]);
     if (

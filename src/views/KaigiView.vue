@@ -3,13 +3,9 @@
     <section class="card kaigi-overview-card">
       <header class="card-header kaigi-header">
         <div>
-          <h2>{{ t("Kaigi Room") }}</h2>
+          <h2>{{ t("Kaigi") }}</h2>
           <p class="helper">
-            {{
-              t(
-                "Share a Kaigi meeting link, then connect browser audio and video between two wallet users.",
-              )
-            }}
+            {{ t("Start or join a wallet-based meeting link.") }}
           </p>
         </div>
         <div class="kaigi-summary-pills">
@@ -324,22 +320,6 @@
               }}</span>
             </div>
             <div class="kv">
-              <span class="kv-label">{{ t("Peer connection") }}</span>
-              <span class="kv-value mono">{{ peerConnectionState }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("ICE connection") }}</span>
-              <span class="kv-value mono">{{ iceConnectionState }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("ICE gathering") }}</span>
-              <span class="kv-value mono">{{ iceGatheringState }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("Signaling") }}</span>
-              <span class="kv-value mono">{{ signalingState }}</span>
-            </div>
-            <div class="kv">
               <span class="kv-label">{{ t("Join path") }}</span>
               <span class="kv-value">{{ signalModeLabel }}</span>
             </div>
@@ -350,6 +330,27 @@
               }}</span>
             </div>
           </div>
+          <details class="technical-details compact">
+            <summary>{{ t("Connection details") }}</summary>
+            <div class="kaigi-kpis">
+              <div class="kv">
+                <span class="kv-label">{{ t("Peer connection") }}</span>
+                <span class="kv-value mono">{{ peerConnectionState }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("ICE connection") }}</span>
+                <span class="kv-value mono">{{ iceConnectionState }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("ICE gathering") }}</span>
+                <span class="kv-value mono">{{ iceGatheringState }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Signaling") }}</span>
+                <span class="kv-value mono">{{ signalingState }}</span>
+              </div>
+            </div>
+          </details>
 
           <div class="actions-row kaigi-primary-actions">
             <button
@@ -381,7 +382,7 @@
               {{
                 mediaBusy
                   ? t("Preparing local media…")
-                  : t("Prepare local media")
+                  : t("Turn on camera and mic")
               }}
             </button>
           </div>
@@ -742,7 +743,7 @@ import {
 
 const DEFAULT_ROOM_ID = "sakura-room";
 const ICE_GATHERING_TIMEOUT_MS = 7_000;
-const DEFAULT_KAIGI_CALL_DOMAIN = "kaigi";
+const DEFAULT_KAIGI_CALL_DOMAIN = "kaigi.universal";
 type HostPromptKind = "meetingReady" | "answerReady";
 type LoadedKaigiInvite = {
   source: "legacy" | "compact";

@@ -3,12 +3,12 @@
     <section class="account-wizard-intro">
       <div class="account-wizard-copy">
         <p class="section-label">{{ t("Account Setup") }}</p>
-        <h2>{{ t("TAIRA Testnet Account") }}</h2>
+        <h2>{{ t("Create wallet") }}</h2>
         <p class="helper">{{ accountSetupHelperText }}</p>
       </div>
       <div class="account-wizard-chips">
-        <span class="pill positive">{{ t("TAIRA locked") }}</span>
-        <span class="pill">{{ t("Account Setup") }}</span>
+        <span class="pill positive">{{ t("Network ready") }}</span>
+        <span class="pill">{{ t("Secure backup") }}</span>
       </div>
     </section>
 
@@ -29,22 +29,33 @@
         </section>
         <section class="account-wizard-panel account-wizard-summary">
           <div class="wizard-summary-row">
-            <p class="meta-label">{{ t("Connection") }}</p>
-            <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
-            <p class="helper meta-sub mono">{{ connectionForm.chainId }}</p>
+            <p class="meta-label">{{ t("Wallet status") }}</p>
+            <p class="meta-value">
+              {{
+                generatedKeys
+                  ? t("Recovery phrase ready")
+                  : t("Not created yet")
+              }}
+            </p>
           </div>
           <div class="wizard-summary-row">
-            <p class="meta-label">
-              {{ t("Display Name (local only, not on-chain)") }}
-            </p>
+            <p class="meta-label">{{ t("Wallet name") }}</p>
             <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
           </div>
-          <div class="wizard-summary-row">
-            <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
-            <p class="meta-value mono">
-              {{ generatedVisibleAccountId || t("Not created yet") }}
-            </p>
-          </div>
+          <details class="technical-details compact">
+            <summary>{{ t("Wallet details") }}</summary>
+            <div class="wizard-summary-row">
+              <p class="meta-label">{{ t("Connection") }}</p>
+              <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
+              <p class="helper meta-sub mono">{{ connectionForm.chainId }}</p>
+            </div>
+            <div class="wizard-summary-row">
+              <p class="meta-label">{{ t("I105 Account ID") }}</p>
+              <p class="meta-value mono">
+                {{ generatedVisibleAccountId || t("Not created yet") }}
+              </p>
+            </div>
+          </details>
         </section>
       </aside>
 
@@ -66,12 +77,8 @@
           </header>
           <div class="form-grid wizard-form-grid">
             <label>
-              {{ t("Display Name (local only, not on-chain)") }}
+              {{ t("Wallet name") }}
               <input v-model.trim="aliasInput" />
-            </label>
-            <label>
-              {{ t("Domain") }}
-              <input v-model.trim="domainInput" />
             </label>
             <label v-if="!isRestoreMode" class="wizard-field-compact">
               {{ t("Recovery Phrase Length") }}
@@ -81,16 +88,23 @@
               </select>
             </label>
           </div>
-          <p class="helper">
-            {{
-              t(
-                "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
-                {
-                  domain: t("default"),
-                },
-              )
-            }}
-          </p>
+          <details class="technical-details">
+            <summary>{{ t("Advanced wallet details") }}</summary>
+            <label>
+              {{ t("Domain") }}
+              <input v-model.trim="domainInput" />
+            </label>
+            <p class="helper">
+              {{
+                t(
+                  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+                  {
+                    domain: t("default"),
+                  },
+                )
+              }}
+            </p>
+          </details>
           <div class="actions">
             <button
               v-if="!isRestoreMode"
@@ -117,7 +131,9 @@
               {{
                 showRestorePanel
                   ? t("Hide restore")
-                  : t("Restore from recovery phrase")
+                  : generatedKeys && isRestoreMode
+                    ? t("Edit recovery phrase")
+                    : t("Restore wallet")
               }}
             </button>
             <button
@@ -160,7 +176,7 @@
         >
           <header class="card-header">
             <div>
-              <h2>{{ t("Download backup") }}</h2>
+              <h2>{{ t("Back up recovery phrase") }}</h2>
               <p class="helper">
                 {{
                   t(
@@ -204,22 +220,20 @@
           </header>
           <div class="wizard-review-grid">
             <div class="wizard-review-item">
-              <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
-              <p class="meta-value mono">{{ generatedVisibleAccountId }}</p>
+              <p class="meta-label">{{ t("Wallet name") }}</p>
+              <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
             </div>
             <div class="wizard-review-item">
-              <p class="meta-label">
-                {{ t("Display Name (local only, not on-chain)") }}
-              </p>
-              <p class="meta-value">{{ aliasInput || t("Not created yet") }}</p>
+              <p class="meta-label">{{ t("Connection") }}</p>
+              <p class="meta-value">{{ t("TAIRA Testnet") }}</p>
+            </div>
+            <div class="wizard-review-item">
+              <p class="meta-label">{{ t("I105 Account ID") }}</p>
+              <p class="meta-value mono">{{ generatedVisibleAccountId }}</p>
             </div>
             <div class="wizard-review-item">
               <p class="meta-label">{{ t("Domain") }}</p>
               <p class="meta-value">{{ normalizedDomain }}</p>
-            </div>
-            <div class="wizard-review-item">
-              <p class="meta-label">{{ t("Connection") }}</p>
-              <p class="meta-value">{{ connectionForm.toriiUrl }}</p>
             </div>
           </div>
           <div class="actions">
@@ -248,19 +262,15 @@
     <section class="card account-primary">
       <header class="card-header">
         <div>
-          <h2>{{ t("TAIRA Testnet Account") }}</h2>
+          <h2>{{ t("Create wallet") }}</h2>
           <p class="helper">{{ accountSetupHelperText }}</p>
         </div>
       </header>
 
       <div class="form-grid wizard-form-grid">
         <label>
-          {{ t("Display Name (local only, not on-chain)") }}
+          {{ t("Wallet name") }}
           <input v-model.trim="aliasInput" />
-        </label>
-        <label>
-          {{ t("Domain") }}
-          <input v-model.trim="domainInput" />
         </label>
         <label v-if="!isRestoreMode" class="wizard-field-compact">
           {{ t("Recovery Phrase Length") }}
@@ -270,10 +280,17 @@
           </select>
         </label>
       </div>
+      <details class="technical-details">
+        <summary>{{ t("Advanced wallet details") }}</summary>
+        <label>
+          {{ t("Domain") }}
+          <input v-model.trim="domainInput" />
+        </label>
+      </details>
 
       <div v-if="generatedKeys" class="wizard-review-grid account-review-grid">
         <div class="wizard-review-item">
-          <p class="meta-label">{{ t("Canonical I105 Account ID") }}</p>
+          <p class="meta-label">{{ t("I105 Account ID") }}</p>
           <p class="meta-value mono">{{ generatedVisibleAccountId }}</p>
         </div>
         <div class="wizard-review-item">
@@ -306,7 +323,9 @@
           {{
             showRestorePanel
               ? t("Hide restore")
-              : t("Restore from recovery phrase")
+              : generatedKeys && isRestoreMode
+                ? t("Edit recovery phrase")
+                : t("Restore wallet")
           }}
         </button>
         <button
@@ -350,6 +369,7 @@
       </p>
 
       <div v-if="showBackupPanel" class="backup-panel">
+        <p class="meta-label">{{ t("Back up recovery phrase") }}</p>
         <p class="helper">
           {{ t("Write these words down in order. They restore your wallet.") }}
         </p>
@@ -450,7 +470,7 @@
 
     <section class="card account-connect">
       <header class="card-header">
-        <h2>{{ t("IrohaConnect Pairing") }}</h2>
+        <h2>{{ t("Phone pairing") }}</h2>
       </header>
       <p class="helper">
         {{
@@ -466,14 +486,17 @@
           :alt="t('IrohaConnect pairing QR')"
           class="connect-qr"
         />
-        <div class="kv monospace">
-          <span class="kv-label">{{ t("Session ID") }}</span>
-          <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
-        </div>
-        <div v-if="connectPreview.tokenWallet" class="kv monospace">
-          <span class="kv-label">{{ t("Wallet Token") }}</span>
-          <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
-        </div>
+        <details class="technical-details compact">
+          <summary>{{ t("Pairing details") }}</summary>
+          <div class="kv monospace">
+            <span class="kv-label">{{ t("Session ID") }}</span>
+            <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
+          </div>
+          <div v-if="connectPreview.tokenWallet" class="kv monospace">
+            <span class="kv-label">{{ t("Wallet Token") }}</span>
+            <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
+          </div>
+        </details>
       </div>
       <div class="actions">
         <button :disabled="connectLoading" @click="startConnectPairing">

@@ -435,7 +435,7 @@ describe("KaigiView", () => {
     });
     expect(
       String(createKaigiMeetingMock.mock.calls[0]?.[0]?.callId ?? ""),
-    ).toMatch(/^kaigi:kaigi-[a-z0-9-]+$/);
+    ).toMatch(/^kaigi\.universal:kaigi-[a-z0-9-]+$/);
     expect(wrapper.text()).toContain("Meeting link ready");
     expect(wrapper.text()).toContain("Automatic join");
 

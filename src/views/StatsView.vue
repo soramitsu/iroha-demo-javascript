@@ -2,7 +2,7 @@
   <div class="stats-hud">
     <section class="stats-hero">
       <div class="stats-hero-copy">
-        <p class="stats-kicker">{{ t("Stats HUD") }}</p>
+        <p class="stats-kicker">{{ t("Network health") }}</p>
         <div class="stats-headline-row">
           <div>
             <h2>{{ t("XOR supply") }}</h2>
@@ -59,7 +59,7 @@
 
     <section class="stats-nav-shell">
       <header class="stats-nav-header">
-        <p class="stats-kicker">{{ t("Quick find") }}</p>
+        <p class="stats-kicker">{{ t("Sections") }}</p>
       </header>
       <div class="stats-nav">
         <a
@@ -103,9 +103,9 @@
       <header class="hud-panel-header">
         <div>
           <p class="hud-panel-kicker">{{ t("Consensus") }}</p>
-          <h3>{{ t("Runtime pressure") }}</h3>
+          <h3>{{ t("Network load") }}</h3>
         </div>
-        <span class="hud-panel-meta">{{ t("Live Torii status") }}</span>
+        <span class="hud-panel-meta">{{ t("Live network status") }}</span>
       </header>
 
       <div class="section-split">
@@ -284,7 +284,7 @@
       <header class="hud-panel-header">
         <div>
           <p class="hud-panel-kicker">{{ t("Distribution") }}</p>
-          <h3>{{ t("Whale map") }}</h3>
+          <h3>{{ t("Holder concentration") }}</h3>
         </div>
         <span class="hud-panel-meta">{{ definitionLabel }}</span>
       </header>
@@ -515,7 +515,7 @@ const statsSections = computed(() => {
     {
       href: "#health",
       label: t("Consensus"),
-      helper: t("Runtime pressure"),
+      helper: t("Network load"),
       value: queueFillLabel.value,
     },
     {
@@ -527,7 +527,7 @@ const statsSections = computed(() => {
     {
       href: "#distribution",
       label: t("Distribution"),
-      helper: t("Whale map"),
+      helper: t("Holder concentration"),
       value: top10ShareLabel.value,
     },
   ];

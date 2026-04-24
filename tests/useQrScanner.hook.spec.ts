@@ -8,12 +8,12 @@ const mockControls = { stop: vi.fn() };
 const decodeFromImageUrl = vi.fn(async () => ({
   getText: () => "img-payload",
 }));
-const decodeFromVideoDevice = vi.fn();
+const decodeFromConstraints = vi.fn();
 
 vi.mock("@zxing/browser", () => {
   class MockReader {
     decodeFromImageUrl = decodeFromImageUrl;
-    decodeFromVideoDevice = decodeFromVideoDevice;
+    decodeFromConstraints = decodeFromConstraints;
   }
   return { BrowserMultiFormatReader: MockReader };
 });
@@ -21,8 +21,8 @@ vi.mock("@zxing/browser", () => {
 describe("useQrScanner hook", () => {
   beforeEach(() => {
     decodeFromImageUrl.mockClear();
-    decodeFromVideoDevice.mockClear();
-    decodeFromVideoDevice.mockImplementation(
+    decodeFromConstraints.mockClear();
+    decodeFromConstraints.mockImplementation(
       async (_device: unknown, _video: unknown, cb: any) => {
         cb({ getText: () => "cam-payload" }, undefined);
         return mockControls;
@@ -31,14 +31,6 @@ describe("useQrScanner hook", () => {
     mockControls.stop.mockClear();
     global.URL.createObjectURL = vi.fn(() => "blob:qr");
     global.URL.revokeObjectURL = vi.fn();
-    Object.defineProperty(global.navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        getUserMedia: vi.fn(async () => ({
-          getTracks: () => [{ stop: vi.fn() }],
-        })),
-      },
-    });
   });
 
   it("mounts in a component and decodes from file and camera without warnings", async () => {
@@ -67,11 +59,23 @@ describe("useQrScanner hook", () => {
 
     await scanner.start();
     expect(onDecoded).toHaveBeenCalledWith("cam-payload");
+    expect(decodeFromConstraints).toHaveBeenCalledWith(
+      {
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      },
+      expect.any(HTMLVideoElement),
+      expect.any(Function),
+    );
   });
 
   it("stops the camera after an async decode callback fires", async () => {
     vi.useFakeTimers();
-    decodeFromVideoDevice.mockImplementationOnce(
+    decodeFromConstraints.mockImplementationOnce(
       async (_device: unknown, _video: unknown, cb: any) => {
         setTimeout(() => {
           cb({ getText: () => "late-payload" }, undefined);
@@ -106,6 +110,39 @@ describe("useQrScanner hook", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps scanning through transient ZXing frame errors", async () => {
+    decodeFromConstraints.mockImplementationOnce(
+      async (_device: unknown, _video: unknown, cb: any) => {
+        cb(undefined, { name: "ChecksumException" });
+        cb(undefined, { name: "FormatException" });
+        cb({ getText: () => "eventual-payload" }, undefined);
+        return mockControls;
+      },
+    );
+
+    const onDecoded = vi.fn();
+    const scannerRef = ref<ReturnType<typeof useQrScanner> | null>(null);
+
+    mount(
+      defineComponent({
+        setup() {
+          const scanner = useQrScanner(onDecoded);
+          scanner.videoRef.value = document.createElement("video");
+          scannerRef.value = scanner;
+          return () => null;
+        },
+      }),
+    );
+
+    const scanner = scannerRef.value;
+    if (!scanner) throw new Error("scanner not initialised");
+
+    await scanner.start();
+
+    expect(onDecoded).toHaveBeenCalledWith("eventual-payload");
+    expect(scanner.message).toBe("QR decoded successfully.");
   });
 
   it("uses optional translator for scanner status text", async () => {

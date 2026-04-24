@@ -25,9 +25,8 @@ const jsonResponse = (body: unknown, status = 200) => ({
 });
 
 const ALICE_ACCOUNT_ID =
-  "testuロ1PクCカrムhyワエトhウヤSqP2GFGラヱミケヌマzヘオミMヌヨトksJヱRRJXVB";
-const BOB_ACCOUNT_ID =
-  "testuロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
+  "testuﾛ1PｸCｶrﾑhyﾜｴﾄhｳﾔSqP2GFGﾗヱﾐｹﾇﾏzﾍｵﾐMﾇﾖﾄksJヱRRJXVB";
+const BOB_ACCOUNT_ID = "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2Gｷ7gWeFzyﾁﾋﾁAHﾌTJQQ4L";
 const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
@@ -103,6 +102,15 @@ const mocks = vi.hoisted(() => ({
   })),
   buildEndKaigiTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("end-transparent", "utf8"),
+  })),
+  buildTransactionMock: vi.fn(() => ({
+    signedTransaction: Buffer.from("instruction-tx", "utf8"),
+  })),
+  buildTransferAssetTransactionMock: vi.fn(() => ({
+    signedTransaction: Buffer.from("public-transfer", "utf8"),
+  })),
+  buildRegisterAccountAndTransferTransactionMock: vi.fn(() => ({
+    signedTransaction: Buffer.from("register-account", "utf8"),
   })),
   buildPrivateKaigiFeeSpendMock: vi.fn(() => ({
     asset_definition_id: "xor#universal",
@@ -264,9 +272,10 @@ vi.mock("@iroha/iroha-js", async () => {
     buildPrivateJoinKaigiTransaction:
       mocks.buildPrivateJoinKaigiTransactionMock,
     buildPrivateEndKaigiTransaction: mocks.buildPrivateEndKaigiTransactionMock,
-    buildRegisterAccountAndTransferTransaction: vi.fn(),
-    buildTransaction: vi.fn(),
-    buildTransferAssetTransaction: vi.fn(),
+    buildRegisterAccountAndTransferTransaction:
+      mocks.buildRegisterAccountAndTransferTransactionMock,
+    buildTransaction: mocks.buildTransactionMock,
+    buildTransferAssetTransaction: mocks.buildTransferAssetTransactionMock,
     submitSignedTransaction: mocks.submitSignedTransactionMock,
     submitTransactionEntrypoint: mocks.submitTransactionEntrypointMock,
     normalizeAssetId: (value: string) => String(value).trim(),
@@ -300,6 +309,9 @@ const loadBridge = async () => {
   expect(mocks.exposedApi).toBeTruthy();
   return mocks.exposedApi as {
     createKaigiMeeting: (
+      input: Record<string, unknown>,
+    ) => Promise<{ hash: string }>;
+    registerCitizen: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
     joinKaigiMeeting: (
@@ -372,12 +384,16 @@ describe("preload Kaigi bridge", () => {
     mocks.buildKaigiRosterJoinProofMock.mockClear();
     mocks.buildShieldTransactionMock.mockClear();
     mocks.buildUnshieldTransactionMock.mockClear();
+    mocks.buildZkTransferTransactionMock.mockClear();
     mocks.buildConfidentialTransferProofV2Mock.mockClear();
     mocks.buildConfidentialUnshieldProofV2Mock.mockClear();
     mocks.buildConfidentialUnshieldProofV3Mock.mockClear();
     mocks.buildCreateKaigiTransactionMock.mockClear();
     mocks.buildJoinKaigiTransactionMock.mockClear();
     mocks.buildEndKaigiTransactionMock.mockClear();
+    mocks.buildTransactionMock.mockClear();
+    mocks.buildTransferAssetTransactionMock.mockClear();
+    mocks.buildRegisterAccountAndTransferTransactionMock.mockClear();
     mocks.buildPrivateKaigiFeeSpendMock.mockClear();
     mocks.buildPrivateCreateKaigiTransactionMock.mockClear();
     mocks.buildPrivateJoinKaigiTransactionMock.mockClear();
@@ -1092,6 +1108,70 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.getStatusSnapshotMock).toHaveBeenCalledTimes(5);
   });
 
+  it("adds TAIRA gas metadata to generic instruction transactions", async () => {
+    const bridge = await loadBridge();
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Committed",
+      },
+    });
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).resolves.toEqual({
+      hash: "hash-instruction-tx",
+    });
+
+    expect(mocks.buildTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        },
+      }),
+    );
+  });
+
+  it("adds TAIRA gas metadata to public transfers without dropping memos", async () => {
+    const bridge = await loadBridge();
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Committed",
+      },
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+        metadata: {
+          memo: "hello from test",
+        },
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+    });
+
+    expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          memo: "hello from test",
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        },
+      }),
+    );
+  });
+
   it("creates a private Kaigi meeting through the authority-free entrypoint path", async () => {
     const bridge = await loadBridge();
     const hostKaigiKeys = generateKaigiX25519KeyPair();
@@ -1146,6 +1226,10 @@ describe("preload Kaigi bridge", () => {
     }
     expect(lastCreateInput.call.privacy_mode.mode).toBe("ZkRosterV1");
     expect(lastCreateInput.call.room_policy.policy).toBe("Authenticated");
+    expect(lastCreateInput.call.id).toEqual({
+      domain_id: "wonderland.universal",
+      call_name: "kaigi-private-room",
+    });
     expect(lastCreateInput.artifacts.commitment.commitment).toMatch(/^hash:/);
     expect(lastCreateInput.feeSpend.asset_definition_id).toBe("xor#universal");
     expect(lastCreateInput.feeSpend.proof).toBe(
@@ -1161,7 +1245,7 @@ describe("preload Kaigi bridge", () => {
       description: { type: string; sdp: string };
     }>(encryptedOffer, inviteSecretBase64Url);
     expect(decryptedOffer).toMatchObject({
-      callId: "wonderland:kaigi-private-room",
+      callId: "wonderland.universal:kaigi-private-room",
       hostDisplayName: "Alice",
       hostParticipantId: "alice",
       description: {
@@ -1215,7 +1299,9 @@ describe("preload Kaigi bridge", () => {
     if (!lastJoinInput) {
       throw new Error("private join input missing");
     }
-    expect(lastJoinInput.callId).toBe("wonderland:kaigi-private-room");
+    expect(lastJoinInput.callId).toBe(
+      "wonderland.universal:kaigi-private-room",
+    );
     expect(lastJoinInput.artifacts.roster_root).toMatch(/^hash:/);
     const decryptedAnswer = decryptKaigiPayload<{
       callId: string;
@@ -1225,7 +1311,7 @@ describe("preload Kaigi bridge", () => {
       description: { type: string; sdp: string };
     }>(lastJoinInput.metadata.kaigi_signal.encryptedSignal, hostKaigiKeys);
     expect(decryptedAnswer).toMatchObject({
-      callId: "wonderland:kaigi-private-room",
+      callId: "wonderland.universal:kaigi-private-room",
       participantId: "guest",
       participantName: "Guest",
       roomId: "wonderland:kaigi-private-room",
@@ -1441,6 +1527,9 @@ describe("preload Kaigi bridge", () => {
     );
     expect(mocks.buildUnshieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        }),
         unshield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
           destinationAccountId: ALICE_ACCOUNT_ID,
@@ -1902,6 +1991,9 @@ describe("preload Kaigi bridge", () => {
     );
     expect(mocks.buildUnshieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        }),
         unshield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
           destinationAccountId: ALICE_ACCOUNT_ID,
@@ -2067,6 +2159,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        }),
         shield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
         }),
@@ -2428,6 +2523,13 @@ describe("preload Kaigi bridge", () => {
       hash: RELAY_TX_HASH,
     });
 
+    expect(mocks.buildZkTransferTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        }),
+      }),
+    );
     expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenCalledTimes(2);
     expect(mocks.buildConfidentialTransferProofV2Mock).toHaveBeenNthCalledWith(
       1,
@@ -2772,6 +2874,9 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.buildShieldTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        }),
         shield: expect.objectContaining({
           assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
           amount: "2",

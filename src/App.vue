@@ -16,12 +16,32 @@
         </div>
       </div>
       <div class="header-rail">
-        <details class="status-panel">
+        <div class="header-quick-actions" :aria-label="t('Quick actions')">
+          <a
+            v-if="session.hasAccount"
+            class="header-action primary"
+            href="#/wallet"
+          >
+            {{ t("Open wallet") }}
+          </a>
+          <a v-if="session.hasAccount" class="header-action" href="#/receive">
+            {{ t("Receive") }}
+          </a>
+          <a v-if="session.hasAccount" class="header-action" href="#/send">
+            {{ t("Send") }}
+          </a>
+          <a v-else class="header-action primary" href="#/account">
+            {{ t("Start setup") }}
+          </a>
+        </div>
+        <details class="status-panel network-details">
           <summary class="mobile-status-toggle">
             <span class="mobile-status-toggle-copy">
-              <span class="mobile-status-toggle-label">{{ t("Torii") }}</span>
+              <span class="mobile-status-toggle-label">{{
+                t("Network details")
+              }}</span>
               <span class="mobile-status-toggle-current">{{
-                session.connection.toriiUrl
+                session.connection.toriiUrl ? t("TAIRA Testnet") : t("Offline")
               }}</span>
             </span>
             <span class="mobile-status-toggle-meta">{{
@@ -38,11 +58,25 @@
               <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
             </div>
             <div class="status-chip">
-              <span class="chip-label">{{ t("Chain") }}</span>
+              <span class="chip-label">{{ t("Chain ID") }}</span>
               <span class="chip-value mono chain-value">{{
                 session.connection.chainId
               }}</span>
-              <span class="chip-sub">{{ activeAssetLabel }}</span>
+              <span class="chip-sub">{{ t("Locked for this demo") }}</span>
+            </div>
+            <div class="status-chip">
+              <span class="chip-label">{{ t("Asset") }}</span>
+              <span class="chip-value">{{ activeAssetLabel }}</span>
+              <span class="chip-sub">{{
+                t("Used for balances and payments")
+              }}</span>
+            </div>
+            <div class="status-chip">
+              <span class="chip-label">{{ t("Network prefix") }}</span>
+              <span class="chip-value mono">{{
+                session.connection.networkPrefix
+              }}</span>
+              <span class="chip-sub">{{ t("Advanced routing detail") }}</span>
             </div>
           </div>
         </details>
@@ -111,40 +145,49 @@
             </span>
             <span class="mobile-nav-toggle-caret" aria-hidden="true">↗</span>
           </summary>
-          <nav>
-            <RouterLink
-              v-for="item in sidebarNavItems"
-              :key="item.to"
-              :to="item.to"
-              class="nav-link"
-              :class="{
-                active: route.path.startsWith(item.to),
-                locked: item.requiresAccount && !session.hasAccount,
-              }"
-              :title="
-                item.requiresAccount && !session.hasAccount
-                  ? t('Complete account setup first')
-                  : t(item.descriptionKey)
-              "
-              :aria-disabled="item.requiresAccount && !session.hasAccount"
-              :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
+          <nav class="nav-groups">
+            <div
+              v-for="group in sidebarNavGroups"
+              :key="group.labelKey"
+              class="nav-group"
             >
-              <span class="nav-step" aria-hidden="true">{{ item.step }}</span>
-              <span class="nav-icon-shell">
-                <img
-                  :src="item.icon"
-                  class="nav-icon"
-                  :alt="t(item.labelKey)"
-                />
-              </span>
-              <span class="nav-copy">
-                <span class="nav-label">{{ t(item.labelKey) }}</span>
-                <span class="nav-description">{{
-                  t(item.descriptionKey)
-                }}</span>
-              </span>
-              <span class="nav-caret" aria-hidden="true">↗</span>
-            </RouterLink>
+              <p v-if="group.labelKey" class="nav-group-label">
+                {{ t(group.labelKey) }}
+              </p>
+              <RouterLink
+                v-for="item in group.items"
+                :key="item.to"
+                :to="item.to"
+                class="nav-link"
+                :class="{
+                  active: route.path.startsWith(item.to),
+                  locked: item.requiresAccount && !session.hasAccount,
+                }"
+                :title="
+                  item.requiresAccount && !session.hasAccount
+                    ? t('Complete account setup first')
+                    : t(item.descriptionKey)
+                "
+                :aria-disabled="item.requiresAccount && !session.hasAccount"
+                :tabindex="item.requiresAccount && !session.hasAccount ? -1 : 0"
+              >
+                <span class="nav-step" aria-hidden="true">{{ item.step }}</span>
+                <span class="nav-icon-shell">
+                  <img
+                    :src="item.icon"
+                    class="nav-icon"
+                    :alt="t(item.labelKey)"
+                  />
+                </span>
+                <span class="nav-copy">
+                  <span class="nav-label">{{ t(item.labelKey) }}</span>
+                  <span class="nav-description">{{
+                    t(item.descriptionKey)
+                  }}</span>
+                </span>
+                <span class="nav-caret" aria-hidden="true">↗</span>
+              </RouterLink>
+            </div>
           </nav>
           <div v-if="session.hasAccount" class="sidebar-meta">
             <AccountSwitcher v-if="session.accounts.length" />
@@ -169,12 +212,12 @@
             >
               {{
                 session.connection.toriiUrl
-                  ? t("TAIRA Torii ready")
-                  : t("Torii unavailable")
+                  ? t("Network ready")
+                  : t("Network unavailable")
               }}
             </span>
             <span class="pill" :class="{ positive: session.hasAccount }">
-              {{ session.hasAccount ? t("Account saved") : t("Account Setup") }}
+              {{ session.hasAccount ? t("Wallet saved") : t("No wallet yet") }}
             </span>
             <span v-if="activeAccountLabel" class="pill workspace-account">
               {{ activeAccountLabel }}
@@ -211,13 +254,13 @@ const navItems = [
   {
     to: "/account",
     labelKey: "Account Setup",
-    descriptionKey: "Generate keys, recovery phrase, Connect pairing",
+    descriptionKey: "Create or restore a wallet",
     signedInLabelKey: "Saved Wallets",
-    signedInDescriptionKey:
-      "Switch between saved wallets or begin a fresh wallet setup.",
+    signedInDescriptionKey: "Switch wallets or create a new one.",
     icon: UserIcon,
     requiresAccount: false,
     utility: true,
+    groupKey: "Advanced",
   },
   {
     to: "/settings",
@@ -226,13 +269,15 @@ const navItems = [
     icon: UserIcon,
     requiresAccount: false,
     utility: true,
+    groupKey: "Tools",
   },
   {
     to: "/wallet",
     labelKey: "Wallet",
-    descriptionKey: "Balances, assets, and latest transactions",
+    descriptionKey: "Balance, funding, and activity",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Wallet",
   },
   {
     to: "/stats",
@@ -241,78 +286,89 @@ const navItems = [
       "XOR supply, holder concentration, and live chain telemetry",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Wallet",
   },
   {
     to: "/send",
     labelKey: "Send",
-    descriptionKey: "Transfer assets with camera or QR upload",
+    descriptionKey: "Pay with a QR or account",
     icon: SendIcon,
     requiresAccount: true,
+    groupKey: "Payments",
   },
   {
     to: "/receive",
     labelKey: "Receive",
-    descriptionKey: "Share QR codes or account IDs to request funds",
+    descriptionKey: "Show a payment QR",
     icon: ReceiveIcon,
     requiresAccount: true,
+    groupKey: "Payments",
   },
   {
     to: "/staking",
     labelKey: "Staking",
-    descriptionKey: "Nominate validators and stake XOR for NPOS",
+    descriptionKey: "Stake XOR with a validator",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Earn & Vote",
   },
   {
     to: "/parliament",
     labelKey: "Parliament",
-    descriptionKey: "Bond citizenship and vote in governance referenda",
+    descriptionKey: "Register and vote",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Earn & Vote",
   },
   {
     to: "/explore",
     labelKey: "Explore",
-    descriptionKey: "Network metrics and asset explorer",
+    descriptionKey: "Explorer QR and network status",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Tools",
   },
   {
     to: "/subscriptions",
     labelKey: "Subscriptions",
-    descriptionKey: "Auto-deduct and manage recurring services",
+    descriptionKey: "Manage recurring payments",
     icon: WalletIcon,
     requiresAccount: true,
+    groupKey: "Payments",
   },
   {
     to: "/offline",
     labelKey: "Offline",
-    descriptionKey: "Offline wallets, invoices, and QR exchanges",
+    descriptionKey: "Device payments and invoices",
     icon: SendIcon,
     requiresAccount: true,
+    groupKey: "Tools",
   },
   {
     to: "/kaigi",
     labelKey: "Kaigi",
-    descriptionKey: "Manual audio/video calls with another wallet user",
+    descriptionKey: "Wallet-based meeting links",
     icon: ReceiveIcon,
     requiresAccount: true,
+    groupKey: "Tools",
   },
   {
     to: "/vpn",
     labelKey: "VPN",
-    descriptionKey: "Connect, disconnect, and inspect Sora VPN sessions",
+    descriptionKey: "Private network connection",
     icon: WalletIcon,
     requiresAccount: true,
     utility: true,
+    groupKey: "Tools",
   },
   {
     to: "/setup",
     labelKey: "Session",
-    descriptionKey: "TAIRA connection, asset, and authority keys",
+    descriptionKey: "Network and developer settings",
     icon: UserIcon,
     requiresAccount: true,
     utility: true,
+    groupKey: "Advanced",
   },
 ];
 
@@ -371,6 +427,13 @@ const routeSubtitle = computed(() => {
 });
 const publicNavItems = navItems.filter((item) => !item.requiresAccount);
 const signedInNavItems = navItems.filter((item) => item.requiresAccount);
+const navGroupOrder = [
+  "Wallet",
+  "Payments",
+  "Earn & Vote",
+  "Tools",
+  "Advanced",
+];
 const sidebarNavItems = computed(() => {
   if (!publicNavItems.length) {
     return [];
@@ -392,29 +455,40 @@ const sidebarNavItems = computed(() => {
     ...signedInNavItems.filter((item) => item.utility),
     ...publicNavItems.filter((item) => item.to === "/account"),
   ];
-  const orderedItems = [...primaryItems, ...utilityItems];
-
-  return orderedItems.map((item, index) => ({
+  const orderedItems = [...primaryItems, ...utilityItems].map((item) => ({
     ...item,
     labelKey:
-      !item.requiresAccount && session.hasAccount && item.signedInLabelKey
+      !item.requiresAccount && item.signedInLabelKey
         ? item.signedInLabelKey
         : item.labelKey,
     descriptionKey:
-      !item.requiresAccount && session.hasAccount && item.signedInDescriptionKey
+      !item.requiresAccount && item.signedInDescriptionKey
         ? item.signedInDescriptionKey
         : item.descriptionKey,
+  }));
+
+  return orderedItems.map((item, index) => ({
+    ...item,
     step: String(index + 1).padStart(2, "0"),
   }));
+});
+const sidebarNavGroups = computed(() => {
+  const items = sidebarNavItems.value;
+  if (!session.hasAccount) {
+    return [{ labelKey: "", items }];
+  }
+
+  return navGroupOrder
+    .map((labelKey) => ({
+      labelKey,
+      items: items.filter((item) => item.groupKey === labelKey),
+    }))
+    .filter((group) => group.items.length > 0);
 });
 
 const syncSidebarLayout = (compact: boolean) => {
   isCompactLayout.value = compact;
-  if (!compact) {
-    sidebarPanelOpen.value = false;
-    return;
-  }
-  sidebarPanelOpen.value = sidebarPanel.value?.open ?? false;
+  sidebarPanelOpen.value = false;
 };
 
 const handleSidebarToggle = (event: Event) => {

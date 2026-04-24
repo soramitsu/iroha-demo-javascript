@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ReceiveView from "@/views/ReceiveView.vue";
@@ -7,12 +7,15 @@ import { useSessionStore } from "@/stores/session";
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
 const qrToStringMock = vi.fn();
+const qrToDataUrlMock = vi.fn();
 const createConfidentialPaymentAddressMock = vi.fn();
 
 vi.mock("qrcode", () => ({
   default: {
     toString: (payload: string, options: unknown) =>
       qrToStringMock(payload, options),
+    toDataURL: (payload: string, options: unknown) =>
+      qrToDataUrlMock(payload, options),
   },
 }));
 
@@ -24,8 +27,21 @@ vi.mock("@/services/iroha", () => ({
 describe("ReceiveView", () => {
   beforeEach(() => {
     qrToStringMock.mockReset();
+    qrToDataUrlMock.mockReset();
     createConfidentialPaymentAddressMock.mockReset();
+    qrToDataUrlMock.mockResolvedValue("data:image/png;base64,cXI=");
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    Object.defineProperty(navigator, "canShare", {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: undefined,
+    });
   });
 
   const mountView = () => {
@@ -104,7 +120,6 @@ describe("ReceiveView", () => {
 
     const wrapper = mountView();
 
-    await wrapper.get("button").trigger("click");
     await flushPromises();
 
     await switchToBob();
@@ -142,9 +157,8 @@ describe("ReceiveView", () => {
     });
     qrToStringMock.mockResolvedValueOnce("<svg></svg>");
 
-    const wrapper = mountView();
+    mountView();
 
-    await wrapper.get("button").trigger("click");
     await flushPromises();
 
     expect(qrToStringMock).toHaveBeenCalledWith(
@@ -165,6 +179,24 @@ describe("ReceiveView", () => {
         },
       }),
     );
+    expect(qrToDataUrlMock).toHaveBeenCalledWith(
+      JSON.stringify({
+        schema: "iroha-confidential-payment-address/v3",
+        receiveKeyId: "alice-key",
+        receivePublicKeyBase64Url: "alicePublicKey",
+        shieldedOwnerTagHex: "11".repeat(32),
+        shieldedDiversifierHex: "33".repeat(32),
+        recoveryHint: "one-time-receive-key",
+      }),
+      expect.objectContaining({
+        type: "image/png",
+        width: 240,
+        color: {
+          dark: "#14202b",
+          light: "#ffffff",
+        },
+      }),
+    );
   });
 
   it("requests a fresh confidential payment address for the active account", async () => {
@@ -178,14 +210,52 @@ describe("ReceiveView", () => {
     });
     qrToStringMock.mockResolvedValue("<svg></svg>");
 
-    const wrapper = mountView();
+    mountView();
 
-    await wrapper.get("button").trigger("click");
     await flushPromises();
 
     expect(createConfidentialPaymentAddressMock).toHaveBeenCalledWith({
       accountId: ALICE_I105_ACCOUNT_ID,
       privateKeyHex: "cd".repeat(32),
     });
+  });
+
+  it("shares the rendered QR image when native sharing supports files", async () => {
+    const shareMock = vi.fn();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      blob: async () => new Blob(["png"], { type: "image/png" }),
+    } as Response);
+    Object.defineProperty(navigator, "canShare", {
+      configurable: true,
+      value: vi.fn(() => true),
+    });
+    Object.defineProperty(navigator, "share", {
+      configurable: true,
+      value: shareMock,
+    });
+    createConfidentialPaymentAddressMock.mockResolvedValue({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    });
+    qrToStringMock.mockResolvedValue("<svg></svg>");
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get("button").trigger("click");
+    await flushPromises();
+
+    expect(fetchMock).toHaveBeenCalledWith("data:image/png;base64,cXI=");
+    expect(shareMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Receive",
+        files: [expect.any(File)],
+      }),
+    );
+    expect(wrapper.text()).toContain("QR shared.");
   });
 });

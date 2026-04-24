@@ -93,7 +93,7 @@ describe("Kaigi invite helpers", () => {
 
   it("builds call ids and derives meeting codes", () => {
     const callId = buildKaigiCallId("default", "Weekly Sync");
-    expect(callId).toBe("default:kaigi-weekly-sync");
+    expect(callId).toBe("default.universal:kaigi-weekly-sync");
     expect(deriveKaigiMeetingCode(callId)).toBe("weekly-sync");
   });
 

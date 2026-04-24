@@ -11,7 +11,7 @@
         </button>
       </header>
       <div class="wallet-balance-band">
-        <p class="wallet-balance-label">{{ t("Quantity") }}</p>
+        <p class="wallet-balance-label">{{ t("Available balance") }}</p>
         <p class="wallet-balance-value">{{ primaryAssetQuantity }}</p>
         <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
       </div>
@@ -20,7 +20,7 @@
         :class="{ 'wallet-faucet-panel-priority': showFundingPriority }"
       >
         <div>
-          <p class="wallet-faucet-label">{{ t("Faucet Request") }}</p>
+          <p class="wallet-faucet-label">{{ t("Starter funds") }}</p>
           <p
             class="helper"
             :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
@@ -44,7 +44,7 @@
       </div>
       <div class="wallet-quick-actions">
         <a class="secondary wallet-action-link" href="#/receive">
-          {{ t("Receive Points") }}
+          {{ t("Receive") }}
         </a>
         <a
           class="secondary wallet-action-link"
@@ -53,8 +53,96 @@
           :aria-disabled="!canSendAssets"
           :tabindex="canSendAssets ? undefined : -1"
         >
-          {{ t("Send Points") }}
+          {{ t("Send") }}
         </a>
+      </div>
+      <div v-if="showShieldSection" class="wallet-shield-panel">
+        <div class="wallet-shield-header">
+          <div>
+            <p class="wallet-faucet-label">{{ t("Private balance") }}</p>
+            <p class="wallet-shield-balance">
+              {{ shieldedXorBalanceDisplay }}
+            </p>
+            <p class="wallet-shield-asset">
+              {{ shieldedXorAssetLabel }}
+            </p>
+          </div>
+          <div class="wallet-shield-kpi">
+            <span class="kv-label">{{ t("Standard balance") }}</span>
+            <span class="kv-value">{{ transparentXorBalance }}</span>
+          </div>
+        </div>
+        <div class="wallet-shield-actions">
+          <label class="wallet-shield-input">
+            <span>{{ t("Amount") }}</span>
+            <input
+              v-model="shieldForm.quantity"
+              type="number"
+              min="0"
+              step="1"
+            />
+          </label>
+          <button
+            class="secondary"
+            :disabled="shieldLoading || !canCreateShieldedXor"
+            @click="createShieldedXor"
+          >
+            {{
+              shieldLoading ? t("Submitting…") : t("Move to private balance")
+            }}
+          </button>
+        </div>
+        <details class="technical-details compact wallet-shield-details">
+          <summary>{{ t("Private balance details") }}</summary>
+          <div class="wallet-shield-recovery-row">
+            <p class="helper wallet-shield-note">
+              {{ shieldedXorRecoveryMessage }}
+            </p>
+            <button
+              class="secondary"
+              :disabled="shieldScanLoading || !canScanShieldedXor"
+              @click="rescanShieldedXor"
+            >
+              {{
+                shieldScanLoading
+                  ? t("Scanning shielded notes…")
+                  : t("Rescan private balance")
+              }}
+            </button>
+          </div>
+          <p
+            v-if="shieldedXorCapabilityMessage"
+            class="helper wallet-shield-note"
+          >
+            {{ shieldedXorCapabilityMessage }}
+          </p>
+          <p
+            v-else-if="shieldedXorPolicyMode"
+            class="helper wallet-shield-note"
+          >
+            {{
+              t("Shield policy mode: {mode}.", {
+                mode: shieldedXorPolicyMode,
+              })
+            }}
+          </p>
+          <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
+            {{
+              t(
+                "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
+              )
+            }}
+          </p>
+        </details>
+        <p v-if="shieldMessage" class="wallet-faucet-message">
+          {{ shieldMessage }}
+        </p>
+        <p
+          v-else-if="shieldError"
+          class="wallet-faucet-message wallet-faucet-error"
+        >
+          {{ shieldError }}
+        </p>
       </div>
       <p v-if="faucetMessage" class="wallet-faucet-message">
         {{ faucetMessage }}
@@ -78,22 +166,34 @@
       <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
         {{ walletError }}
       </p>
-      <div v-if="assets.length" class="table-wrap wallet-table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t("Asset ID") }}</th>
-              <th>{{ t("Quantity") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="asset in assets" :key="asset.asset_id">
-              <td>{{ formatAssetReferenceLabel(asset.asset_id, t("—")) }}</td>
-              <td>{{ asset.quantity }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <details
+        v-if="assets.length || visibleAccountId"
+        class="technical-details wallet-details-section"
+      >
+        <summary>{{ t("Asset and account details") }}</summary>
+        <div v-if="assets.length" class="table-wrap wallet-table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ t("Asset ID") }}</th>
+                <th>{{ t("Quantity") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="asset in assets" :key="asset.asset_id">
+                <td>{{ formatAssetReferenceLabel(asset.asset_id, t("—")) }}</td>
+                <td>{{ asset.quantity }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-if="visibleAccountId" class="helper wallet-account-id-note">
+          <span class="wallet-account-id-label">
+            {{ t("I105 Account ID") }}
+          </span>
+          <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
+        </p>
+      </details>
       <div v-else class="wallet-empty">
         <p class="wallet-empty-title">
           {{ t("No assets found for this account.") }}
@@ -103,94 +203,6 @@
           {{ t("Transfer assets via Torii") }}
         </p>
       </div>
-      <div v-if="showShieldSection" class="wallet-shield-panel">
-        <div class="wallet-shield-header">
-          <div>
-            <p class="wallet-faucet-label">{{ t("Shielded balance") }}</p>
-            <p class="wallet-shield-balance">
-              {{ shieldedXorBalanceDisplay }}
-            </p>
-            <p class="wallet-shield-asset">
-              {{ shieldedXorAssetLabel }}
-            </p>
-          </div>
-          <div class="wallet-shield-kpi">
-            <span class="kv-label">{{ t("Transparent balance") }}</span>
-            <span class="kv-value">{{ transparentXorBalance }}</span>
-          </div>
-        </div>
-        <div class="wallet-shield-recovery-row">
-          <p class="helper wallet-shield-note">
-            {{ shieldedXorRecoveryMessage }}
-          </p>
-          <button
-            class="secondary"
-            :disabled="shieldScanLoading || !canScanShieldedXor"
-            @click="rescanShieldedXor"
-          >
-            {{
-              shieldScanLoading
-                ? t("Scanning shielded notes…")
-                : t("Rescan shielded notes")
-            }}
-          </button>
-        </div>
-        <div class="wallet-shield-actions">
-          <label class="wallet-shield-input">
-            <span>{{ t("Amount") }}</span>
-            <input
-              v-model="shieldForm.quantity"
-              type="number"
-              min="0"
-              step="1"
-            />
-          </label>
-          <button
-            class="secondary"
-            :disabled="shieldLoading || !canCreateShieldedXor"
-            @click="createShieldedXor"
-          >
-            {{
-              shieldLoading ? t("Submitting…") : t("Create shielded balance")
-            }}
-          </button>
-        </div>
-        <p
-          v-if="shieldedXorCapabilityMessage"
-          class="helper wallet-shield-note"
-        >
-          {{ shieldedXorCapabilityMessage }}
-        </p>
-        <p v-else-if="shieldedXorPolicyMode" class="helper wallet-shield-note">
-          {{
-            t("Shield policy mode: {mode}.", {
-              mode: shieldedXorPolicyMode,
-            })
-          }}
-        </p>
-        <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
-          {{
-            t(
-              "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
-            )
-          }}
-        </p>
-        <p v-if="shieldMessage" class="wallet-faucet-message">
-          {{ shieldMessage }}
-        </p>
-        <p
-          v-else-if="shieldError"
-          class="wallet-faucet-message wallet-faucet-error"
-        >
-          {{ shieldError }}
-        </p>
-      </div>
-      <p v-if="visibleAccountId" class="helper wallet-account-id-note">
-        <span class="wallet-account-id-label">
-          {{ t("Canonical I105 Account ID") }}
-        </span>
-        <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
-      </p>
       <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
         <div
           class="card wallet-faucet-modal"

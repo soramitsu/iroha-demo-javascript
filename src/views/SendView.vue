@@ -2,7 +2,7 @@
   <section class="card send-shell">
     <header class="card-header send-header">
       <div>
-        <h2>{{ t("Transfer Asset") }}</h2>
+        <h2>{{ t("Send") }}</h2>
         <p class="helper send-account-copy">
           {{
             activeAccount?.displayName ||
@@ -16,12 +16,12 @@
         <button class="icon-cta" @click="toggleScanner">
           <img :src="sendIcon" alt="" />
           <span>{{
-            scanner.scanning ? t("Stop Scanner") : t("Scan QR Code")
+            scanner.scanning ? t("Stop scanner") : t("Scan payment QR")
           }}</span>
         </button>
         <button class="icon-cta secondary" @click="scanner.openFilePicker">
           <img :src="sendIcon" alt="" />
-          <span>{{ t("Upload QR Image") }}</span>
+          <span>{{ t("Upload QR image") }}</span>
         </button>
         <input
           ref="scanner.fileInputRef"
@@ -36,13 +36,13 @@
       <div class="send-context">
         <div class="send-kpis">
           <div class="kv">
-            <span class="kv-label">{{ t("Active account") }}</span>
+            <span class="kv-label">{{ t("From") }}</span>
             <span class="kv-value">{{
               activeAccountDisplayId || t("Configure account first")
             }}</span>
           </div>
           <div class="kv">
-            <span class="kv-label">{{ t("Asset Definition ID") }}</span>
+            <span class="kv-label">{{ t("Asset") }}</span>
             <span class="kv-value">{{ activeAssetLabel }}</span>
           </div>
         </div>
@@ -54,23 +54,46 @@
             <video ref="scanner.videoRef" autoplay muted playsinline></video>
           </div>
           <div v-else class="scanner-idle">
-            <span class="scanner-title">{{ t("Scan QR Code") }}</span>
-            <span class="scanner-sub">{{ t("Upload QR Image") }}</span>
+            <span class="scanner-title">{{ t("Scan payment QR") }}</span>
+            <span class="scanner-sub">{{ t("or upload a QR image") }}</span>
           </div>
         </div>
       </div>
 
       <div class="send-form-pane">
+        <div
+          class="payment-mode-toggle"
+          role="group"
+          :aria-label="t('Send mode')"
+        >
+          <button
+            type="button"
+            class="secondary"
+            :class="{ active: !form.shielded }"
+            @click="form.shielded = false"
+          >
+            {{ t("Standard") }}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            :class="{ active: form.shielded }"
+            :disabled="!shieldSupported"
+            @click="form.shielded = true"
+          >
+            {{ t("Private") }}
+          </button>
+        </div>
         <div class="form-grid send-form">
           <label>
-            {{ t("Destination Account ID") }}
+            {{ t("Recipient") }}
             <input
               v-model="form.destination"
               data-testid="destination-account-input"
               :placeholder="
                 form.shielded
                   ? t(
-                      'Optional for private recipient sends; enter your own account to self-shield.',
+                      'Scan a private receive QR, or enter your own wallet to make funds private.',
                     )
                   : ''
               "
@@ -92,7 +115,7 @@
           <p v-else class="helper send-note">
             {{
               t(
-                "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
+                "Private transfers use the recipient Receive QR and do not include memos.",
               )
             }}
           </p>
@@ -102,7 +125,7 @@
               type="checkbox"
               :disabled="!shieldSupported"
             />
-            <span>{{ t("Private shielded transfer") }}</span>
+            <span>{{ t("Private transfer") }}</span>
           </label>
         </div>
         <div class="actions">
@@ -119,37 +142,11 @@
           </p>
           <p
             v-if="
-              form.shielded &&
-              shieldSupported &&
-              shieldPolicyMode &&
-              !shieldCapabilityMessage
-            "
-            class="helper send-note"
-          >
-            {{ t("Shield policy mode: {mode}.", { mode: shieldPolicyMode }) }}
-          </p>
-          <p
-            v-if="
               form.shielded && !destinationIsSelf && !hasShieldedPaymentAddress
             "
             class="helper send-note"
           >
             {{ t("Scan a private Receive QR before sending privately.") }}
-          </p>
-          <p
-            v-if="
-              !form.shielded &&
-              shieldSupported &&
-              shieldPolicyMode &&
-              !shieldCapabilityMessage
-            "
-            class="helper send-note"
-          >
-            {{
-              t(
-                "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
-              )
-            }}
           </p>
           <p v-if="statusMessage" class="helper send-note">
             {{ statusMessage }}
@@ -223,20 +220,16 @@ const persistResolvedShieldAssetDefinitionId = (
     },
   });
 };
-const {
-  shieldSupported,
-  shieldCapabilityMessage,
-  shieldPolicyMode,
-  shieldResolvedAssetId,
-} = useShieldCapability({
-  toriiUrl: toRef(session.connection, "toriiUrl"),
-  accountId: activeAccountDisplayId,
-  assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
-  shielded: toRef(form, "shielded"),
-  operation: "shieldedTransfer",
-  translate: t,
-  onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
-});
+const { shieldSupported, shieldCapabilityMessage, shieldResolvedAssetId } =
+  useShieldCapability({
+    toriiUrl: toRef(session.connection, "toriiUrl"),
+    accountId: activeAccountDisplayId,
+    assetDefinitionId: toRef(session.connection, "assetDefinitionId"),
+    shielded: toRef(form, "shielded"),
+    operation: "shieldedTransfer",
+    translate: t,
+    onResolvedAssetDefinitionId: persistResolvedShieldAssetDefinitionId,
+  });
 const resetShieldedRecipientFields = () => {
   form.shieldedReceiveKeyId = "";
   form.shieldedReceivePublicKeyBase64Url = "";
@@ -540,6 +533,31 @@ video {
 
 .send-form {
   gap: 14px;
+}
+
+.payment-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.payment-mode-toggle button {
+  box-shadow: none;
+}
+
+.payment-mode-toggle button.active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(
+    120deg,
+    rgba(255, 75, 75, 0.92),
+    rgba(255, 102, 139, 0.88)
+  );
+  box-shadow: 0 12px 22px rgba(255, 76, 102, 0.22);
 }
 
 .shield-option {

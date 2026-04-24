@@ -355,6 +355,14 @@ async function runFaucetFlow(page) {
             publicKeyHex,
             networkPrefix: prefix,
           });
+          const vaultAvailable = await window.iroha
+            .isSecureVaultAvailable()
+            .catch(() => false);
+          if (!vaultAvailable) {
+            throw new Error(
+              "Secure vault is unavailable for the live Electron faucet bootstrap.",
+            );
+          }
           await window.iroha.storeAccountSecret({
             accountId: summary.accountId,
             privateKeyHex,
@@ -639,6 +647,14 @@ async function runFundedFlow(page, fundedWallet) {
       const assetId = String(matchingAsset?.asset_id ?? "").trim();
       const resolvedAssetDefinitionId =
         requested || assetId.split("#", 1)[0]?.trim() || "";
+      const vaultAvailable = await window.iroha
+        .isSecureVaultAvailable()
+        .catch(() => false);
+      if (!vaultAvailable) {
+        throw new Error(
+          "Secure vault is unavailable for the live funded-account bootstrap.",
+        );
+      }
       await window.iroha.storeAccountSecret({
         accountId: summary.accountId,
         privateKeyHex,
@@ -740,6 +756,14 @@ async function runReadOnlyFlow(page, fundedAccount) {
       prefix,
       derivationLabel,
     }) => {
+      const vaultAvailable = await window.iroha
+        .isSecureVaultAvailable()
+        .catch(() => false);
+      if (!vaultAvailable) {
+        throw new Error(
+          "Secure vault is unavailable for the live read-only bootstrap.",
+        );
+      }
       await window.iroha.storeAccountSecret({
         accountId,
         privateKeyHex,
@@ -911,9 +935,6 @@ async function runReadOnlyFlow(page, fundedAccount) {
           accountId: bobSummary.i105AccountId,
           privateKeyHex: bobKeyPair.privateKeyHex,
         });
-      const bobReceiveKeyId = bobReceiveAddress.receiveKeyId;
-      const bobReceivePublicKeyBase64Url =
-        bobReceiveAddress.receivePublicKeyBase64Url;
       const bobOwnerTagHex = bobReceiveAddress.shieldedOwnerTagHex;
       const bobDiversifierHex = bobReceiveAddress.shieldedDiversifierHex;
       const initialBobBalance = await readConfidentialBalance(
@@ -994,8 +1015,9 @@ async function runReadOnlyFlow(page, fundedAccount) {
             quantity: "1",
             privateKeyHex: alicePrivateKeyHex,
             shielded: true,
-            shieldedReceiveKeyId: bobReceiveKeyId,
-            shieldedReceivePublicKeyBase64Url: bobReceivePublicKeyBase64Url,
+            shieldedReceiveKeyId: bobReceiveAddress.receiveKeyId,
+            shieldedReceivePublicKeyBase64Url:
+              bobReceiveAddress.receivePublicKeyBase64Url,
             shieldedOwnerTagHex: bobOwnerTagHex,
             shieldedDiversifierHex: bobDiversifierHex,
           }),
@@ -1328,8 +1350,16 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
         privateKeyHex,
         hasStoredSecret: true,
       };
+      const vaultAvailable = await window.iroha
+        .isSecureVaultAvailable()
+        .catch(() => false);
+      if (!vaultAvailable) {
+        throw new Error(
+          "Secure vault is unavailable for the live onboarding bootstrap.",
+        );
+      }
       await window.iroha.storeAccountSecret({
-        accountId: summary.accountId,
+        accountId: accountProfile.accountId,
         privateKeyHex,
       });
 
@@ -1459,7 +1489,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
   const checks = [
     {
       hash: "#/setup",
-      headingOptions: ["Advanced", "Session Setup"],
+      headingOptions: ["Advanced settings", "Advanced", "Session Setup"],
       sectionText: "Network",
     },
     {
@@ -1469,13 +1499,13 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     },
     {
       hash: "#/staking",
-      headingOptions: ["Stake", "NPOS Staking"],
-      sectionText: "Stake",
+      headingOptions: ["Stake XOR", "Stake", "NPOS Staking"],
+      sectionText: "Stake / Unstake",
     },
     {
       hash: "#/parliament",
       headingOptions: ["Governance", "SORA Parliament"],
-      sectionText: "Citizenship",
+      sectionText: "Voting eligibility",
     },
     {
       hash: "#/subscriptions",
@@ -1495,12 +1525,12 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     {
       hash: "#/offline",
       headingOptions: ["Offline"],
-      sectionText: "Offline wallet",
+      sectionText: "1. Set up device wallet",
     },
     {
       hash: "#/explore",
       headingOptions: ["Explore", "Explorer"],
-      sectionText: "Network metrics",
+      sectionText: "Network health",
     },
   ];
 
@@ -1581,17 +1611,18 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
     }
 
     if (check.hash === "#/send") {
-      const shieldToggle = page.getByLabel("Private shielded transfer", {
+      const shieldToggle = page.getByLabel("Private transfer", {
         exact: true,
       });
+      const sendSubmitButton = page
+        .locator(".send-form-pane .actions button")
+        .first();
       await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
       if (!(await shieldToggle.isEnabled())) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
-      const destinationInput = page.getByLabel("To", { exact: true });
+      const destinationInput = page.getByTestId("destination-account-input");
       const amountInput = page.locator('input[type="number"]').first();
       const transparentDestination = "testuRestoreSendAccount";
       await destinationInput.fill(transparentDestination);
@@ -1627,15 +1658,11 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         }
       }
       if (!sendShieldCheckable) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!(await shieldToggle.isChecked().catch(() => false))) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
 
@@ -1650,18 +1677,13 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
           `Expected send amount step to be 1 in shield mode, got ${String(shieldStep)}.`,
         );
       }
-      const shieldSubmitButton = page.getByRole("button", {
-        name: "Send privately",
-        exact: true,
-      });
+      const shieldSubmitButton = sendSubmitButton;
       const shieldButtonVisible = await shieldSubmitButton
         .waitFor({ state: "visible", timeout: 5_000 })
         .then(() => true)
         .catch(() => false);
       if (!shieldButtonVisible) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       await amountInput.fill("10.5");
@@ -1669,9 +1691,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (shieldDisabledForDecimal === null) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!shieldDisabledForDecimal) {
@@ -1684,9 +1704,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (shieldDisabledForWhole === null) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!shieldDisabledForWhole) {
@@ -1712,9 +1730,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (shieldDisabledForSelf === null) {
-        await page
-          .getByRole("button", { name: "Send", exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (shieldDisabledForSelf) {
@@ -1745,28 +1761,40 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
           `Expected send amount step to return to 0.01 after disabling shield mode, got ${String(restoredStep)}.`,
         );
       }
-      await page
-        .getByRole("button", { name: "Send", exact: true })
-        .waitFor({ state: "visible", timeout: 30_000 });
+      await sendSubmitButton.waitFor({ state: "visible", timeout: 30_000 });
     }
 
     if (check.hash === "#/offline") {
-      const transparentMoveButton = "Send to wallet";
       const moveCard = page
         .locator("section.card")
-        .filter({ hasText: "Move to online wallet" })
+        .filter({ hasText: "Move funds to online wallet" })
         .first();
+      const moveCardVisible = await moveCard
+        .waitFor({ state: "visible", timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!moveCardVisible) {
+        continue;
+      }
+      const moveActionButton = moveCard.locator(".actions button").first();
       const shieldToggle = moveCard.getByLabel("Private exit", {
         exact: true,
       });
-      await shieldToggle.waitFor({ state: "visible", timeout: 30_000 });
-      if (!(await shieldToggle.isEnabled())) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+      const shieldToggleVisible = await shieldToggle
+        .waitFor({ state: "visible", timeout: 30_000 })
+        .then(() => true)
+        .catch(() => false);
+      if (!shieldToggleVisible) {
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
-      const destinationInput = moveCard.getByLabel("To", { exact: true });
+      if (!(await shieldToggle.isEnabled())) {
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
+        continue;
+      }
+      const destinationInput = moveCard.getByLabel("Destination Account", {
+        exact: true,
+      });
       const transparentDestination = "testuRestoreOfflineAccount";
       await destinationInput.fill(transparentDestination);
       let offlineShieldCheckable = true;
@@ -1793,15 +1821,11 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         }
       }
       if (!offlineShieldCheckable) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!(await shieldToggle.isChecked().catch(() => false))) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
 
@@ -1811,18 +1835,13 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         );
       }
       const moveAmountInput = moveCard.locator('input[type="text"]').first();
-      const moveSubmitButton = moveCard.getByRole("button", {
-        name: "Unshield to wallet",
-        exact: true,
-      });
+      const moveSubmitButton = moveActionButton;
       const moveShieldButtonVisible = await moveSubmitButton
         .waitFor({ state: "visible", timeout: 5_000 })
         .then(() => true)
         .catch(() => false);
       if (!moveShieldButtonVisible) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       await moveAmountInput.fill("10.5");
@@ -1830,9 +1849,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (moveDisabledForDecimal === null) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (!moveDisabledForDecimal) {
@@ -1845,9 +1862,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
         .isDisabled({ timeout: 3_000 })
         .catch(() => null);
       if (moveDisabledForWhole === null) {
-        await moveCard
-          .getByRole("button", { name: transparentMoveButton, exact: true })
-          .waitFor({ state: "visible", timeout: 30_000 });
+        await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
         continue;
       }
       if (moveDisabledForWhole) {
@@ -1878,9 +1893,7 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
           'Expected offline "Move funds to online wallet" destination to restore the previous transparent value after disabling private exit.',
         );
       }
-      await moveCard
-        .getByRole("button", { name: transparentMoveButton, exact: true })
-        .waitFor({ state: "visible", timeout: 30_000 });
+      await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
     }
   }
 

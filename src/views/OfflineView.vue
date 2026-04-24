@@ -2,7 +2,7 @@
   <div class="offline-shell">
     <section class="card offline-hardware-card">
       <header class="card-header">
-        <h2>{{ t("Offline wallet & hardware") }}</h2>
+        <h2>{{ t("1. Set up device wallet") }}</h2>
         <span class="status-pill" :class="{ ok: hardwareStatus.ok }">
           {{ hardwareStatus.label }}
         </span>
@@ -49,7 +49,7 @@
 
     <section class="card offline-balance-card">
       <header class="card-header">
-        <h2>{{ t("Offline balance") }}</h2>
+        <h2>{{ t("2. Sync offline funds") }}</h2>
         <span
           class="pill"
           :class="{ positive: Number(offline.wallet.balance) > 0 }"
@@ -89,38 +89,40 @@
     </section>
 
     <section class="card offline-allowances-card">
-      <header class="card-header">
-        <h2>{{ t("Offline allowances") }}</h2>
-        <span class="pill">{{
-          t("{count} entries", { count: allowances.length })
-        }}</span>
-      </header>
-      <div v-if="allowances.length" class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>{{ t("Asset") }}</th>
-              <th>{{ t("Remaining") }}</th>
-              <th>{{ t("Policy expires") }}</th>
-              <th>{{ t("Refresh at") }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in allowances" :key="item.certificate_id_hex">
-              <td>{{ formatAssetReferenceLabel(item.asset_id, t("—")) }}</td>
-              <td>{{ item.remaining_amount }}</td>
-              <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
-              <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
+      <details class="technical-details">
+        <summary>{{ t("Offline limits") }}</summary>
+        <header class="card-header">
+          <span class="pill">{{
+            t("{count} entries", { count: allowances.length })
+          }}</span>
+        </header>
+        <div v-if="allowances.length" class="table-wrap">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>{{ t("Asset") }}</th>
+                <th>{{ t("Remaining") }}</th>
+                <th>{{ t("Policy expires") }}</th>
+                <th>{{ t("Refresh at") }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="item in allowances" :key="item.certificate_id_hex">
+                <td>{{ formatAssetReferenceLabel(item.asset_id, t("—")) }}</td>
+                <td>{{ item.remaining_amount }}</td>
+                <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
+                <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
+      </details>
     </section>
 
     <section class="card offline-request-card">
       <header class="card-header">
-        <h2>{{ t("Request offline payment") }}</h2>
+        <h2>{{ t("3. Request payment") }}</h2>
         <button
           class="secondary icon-cta"
           :disabled="!canGenerateInvoice"
@@ -156,14 +158,17 @@
             {{ t("Copy invoice JSON") }}
           </button>
         </div>
-        <pre class="qr-payload">{{ invoicePayloadPreview }}</pre>
+        <details class="technical-details compact">
+          <summary>{{ t("Invoice details") }}</summary>
+          <pre class="qr-payload">{{ invoicePayloadPreview }}</pre>
+        </details>
       </div>
       <p v-if="invoiceMessage" class="helper">{{ invoiceMessage }}</p>
     </section>
 
     <section class="card offline-send-card">
       <header class="card-header">
-        <h2>{{ t("Send offline payment") }}</h2>
+        <h2>{{ t("4. Pay an invoice") }}</h2>
         <div class="actions-row">
           <button class="icon-cta secondary" @click="toggleInvoiceScanner">
             <span>{{
@@ -215,13 +220,16 @@
             {{ t("Copy payment JSON") }}
           </button>
         </div>
-        <pre class="qr-payload">{{ paymentPayloadPreview }}</pre>
+        <details class="technical-details compact">
+          <summary>{{ t("Payment details") }}</summary>
+          <pre class="qr-payload">{{ paymentPayloadPreview }}</pre>
+        </details>
       </div>
     </section>
 
     <section class="card offline-accept-card">
       <header class="card-header">
-        <h2>{{ t("Accept offline payment") }}</h2>
+        <h2>{{ t("5. Accept payment") }}</h2>
         <div class="actions-row">
           <button class="icon-cta secondary" @click="togglePaymentScanner">
             <span>{{
@@ -265,7 +273,7 @@
 
     <section class="card offline-move-card">
       <header class="card-header">
-        <h2>{{ t("Move funds to online wallet") }}</h2>
+        <h2>{{ t("Move to online wallet") }}</h2>
       </header>
       <div class="form-grid">
         <label>
@@ -280,7 +288,7 @@
             :disabled="onlineDestinationLocked"
           />
         </label>
-        <label>
+        <label v-if="!onlineForm.shielded">
           {{ t("Memo (optional)") }}
           <input v-model="onlineForm.memo" />
         </label>
@@ -318,6 +326,13 @@
       >
         {{
           t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
+        }}
+      </p>
+      <p v-if="onlineForm.shielded && onlineShieldSupported" class="helper">
+        {{
+          t(
+            "Private exits do not publish memos. Leave memo blank when unshielding.",
+          )
         }}
       </p>
       <p
@@ -950,7 +965,10 @@ const moveToOnline = async () => {
       destinationAccountId: receiver,
       quantity: amount,
       privateKeyHex: activeAccount.value.privateKeyHex,
-      metadata: onlineForm.memo ? { memo: onlineForm.memo } : undefined,
+      metadata:
+        !onlineForm.shielded && onlineForm.memo
+          ? { memo: onlineForm.memo }
+          : undefined,
       ...(onlineForm.shielded ? { unshield: true } : {}),
     });
     if (onlineForm.shielded) {

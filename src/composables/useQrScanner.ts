@@ -2,7 +2,7 @@ import {
   BrowserMultiFormatReader,
   type IScannerControls,
 } from "@zxing/browser";
-import { onBeforeUnmount, ref } from "vue";
+import { nextTick, onBeforeUnmount, ref } from "vue";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 type Decoder = (payload: string) => void;
@@ -23,19 +23,28 @@ export const useQrScanner = (
   const videoRef = ref<HTMLVideoElement | null>(null);
   const fileInputRef = ref<HTMLInputElement | null>(null);
   let controls: IScannerControls | null = null;
+  let scannerRunId = 0;
 
-  const ensureCameraPermission = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error(t("Camera access is not supported on this device."));
-    }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-      audio: false,
-    });
-    stream.getTracks().forEach((track) => track.stop());
+  const cameraConstraints: MediaStreamConstraints = {
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+    audio: false,
+  };
+
+  const isTransientDecodeError = (error: unknown) => {
+    const name = String((error as Error | undefined)?.name ?? "");
+    return (
+      name === "NotFoundException" ||
+      name === "ChecksumException" ||
+      name === "FormatException"
+    );
   };
 
   const stop = () => {
+    scannerRunId += 1;
     scanning.value = false;
     controls?.stop();
     controls = null;
@@ -49,13 +58,19 @@ export const useQrScanner = (
       stop();
       return;
     }
+    scanning.value = true;
+    message.value = "";
+    const runId = ++scannerRunId;
+    await nextTick();
+    if (runId !== scannerRunId) {
+      return;
+    }
     const videoEl = videoRef.value;
     if (!videoEl) {
+      scanning.value = false;
       message.value = t("Camera preview is not ready.");
       return;
     }
-    scanning.value = true;
-    message.value = "";
     try {
       let shouldStop = false;
       let scannerControls: IScannerControls | null = null;
@@ -66,23 +81,26 @@ export const useQrScanner = (
           stop();
         }
       };
-      await ensureCameraPermission();
-      scannerControls = await reader.decodeFromVideoDevice(
-        undefined,
+      scannerControls = await reader.decodeFromConstraints(
+        cameraConstraints,
         videoEl,
         (result, error) => {
+          if (runId !== scannerRunId) {
+            requestStop();
+            return;
+          }
           if (result) {
             onDecoded(result.getText());
             message.value = t("QR decoded successfully.");
             requestStop();
-          } else if (error && error.name !== "NotFoundException") {
+          } else if (error && !isTransientDecodeError(error)) {
             message.value = toUserFacingErrorMessage(error, t("Camera error."));
             requestStop();
           }
         },
       );
       controls = scannerControls;
-      if (shouldStop) {
+      if (runId !== scannerRunId || shouldStop) {
         stop();
       }
     } catch (error) {

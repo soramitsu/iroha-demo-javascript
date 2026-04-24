@@ -127,9 +127,7 @@ describe("SendView", () => {
       }),
     );
     await flushPromises();
-    expect(wrapper.text()).toContain(
-      t("Shield policy mode: {mode}.", { mode: "Convertible" }),
-    );
+    expect(wrapper.text()).toContain(t("Private transfer"));
 
     await wrapper.get(".actions button").trigger("click");
     await flushPromises();
@@ -180,21 +178,19 @@ describe("SendView", () => {
     );
   });
 
-  it("shows an unshielded transparency note while shielding stays optional", async () => {
+  it("keeps private mode optional without showing policy copy", async () => {
     const wrapper = mountView();
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
-      ),
-    );
+    expect(wrapper.text()).toContain(t("Standard"));
+    expect(wrapper.text()).toContain(t("Private"));
+    expect(wrapper.text()).not.toContain(t("Shield policy mode: {mode}."));
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
 
-    expect(wrapper.text()).not.toContain(
+    expect(wrapper.text()).toContain(
       t(
-        "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
+        "Private transfers use the recipient Receive QR and do not include memos.",
       ),
     );
   });

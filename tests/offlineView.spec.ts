@@ -353,7 +353,7 @@ describe("OfflineView move-to-online shield mode", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const paymentSection = getSection(wrapper, t("Send offline payment"));
+    const paymentSection = getSection(wrapper, t("4. Pay an invoice"));
     await paymentSection.get("textarea").setValue(
       JSON.stringify({
         invoice_id: "inv-1",

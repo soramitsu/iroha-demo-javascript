@@ -199,6 +199,23 @@ describe("ExploreView", () => {
     );
   });
 
+  it("keeps the route stable when the explorer bridge throws synchronously", async () => {
+    getExplorerMetricsMock.mockImplementationOnce(() => {
+      throw new Error("bridge unavailable");
+    });
+    getExplorerAccountQrMock.mockImplementationOnce(() => {
+      throw new Error("bridge unavailable");
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Metrics unavailable");
+    expect(wrapper.text()).toContain(
+      "No QR yet. Connect to Torii and choose a wallet.",
+    );
+  });
+
   it("uses the TAIRA i105 literal for explorer qr requests when stored ids are stale", async () => {
     getExplorerAccountQrMock.mockResolvedValueOnce({
       canonicalId: "URpZvAliceCompat",

@@ -2,32 +2,19 @@
   <div class="parliament-shell">
     <section class="card parliament-status-card">
       <header class="card-header">
-        <h2>{{ t("Citizenship Bond") }}</h2>
+        <h2>{{ t("Voting eligibility") }}</h2>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
           {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
       <p v-if="!alreadyCitizen" class="helper">
         {{
-          t(
-            "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.",
-            { amount: CITIZEN_BOND_XOR },
-          )
+          t("Bond {amount} XOR once to enable voting for this wallet.", {
+            amount: CITIZEN_BOND_XOR,
+          })
         }}
       </p>
       <div class="grid-2 parliament-summary">
-        <div class="kv">
-          <span class="kv-label">{{ t("Account") }}</span>
-          <span class="kv-value mono">{{
-            activeAccountDisplayId || t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Chain") }}</span>
-          <span class="kv-value">{{
-            session.connection.chainId || t("—")
-          }}</span>
-        </div>
         <div class="kv">
           <span class="kv-label">{{ t("XOR Balance") }}</span>
           <span class="kv-value">{{ xorBalance }} XOR</span>
@@ -38,38 +25,55 @@
         </div>
       </div>
 
-      <div class="permission-stack">
-        <span
-          class="pill mini"
-          :class="hasBallotPermission ? 'positive' : 'muted'"
-        >
-          {{
-            t("Ballot: {state}", {
-              state: hasBallotPermission ? t("enabled") : t("missing"),
-            })
-          }}
-        </span>
-        <span
-          class="pill mini"
-          :class="hasParliamentPermission ? 'positive' : 'muted'"
-        >
-          {{
-            t("Parliament: {state}", {
-              state: hasParliamentPermission ? t("enabled") : t("missing"),
-            })
-          }}
-        </span>
-        <span
-          class="pill mini"
-          :class="hasEnactPermission ? 'positive' : 'muted'"
-        >
-          {{
-            t("Enact: {state}", {
-              state: hasEnactPermission ? t("enabled") : t("missing"),
-            })
-          }}
-        </span>
-      </div>
+      <details class="technical-details compact">
+        <summary>{{ t("Voting details") }}</summary>
+        <div class="grid-2">
+          <div class="kv">
+            <span class="kv-label">{{ t("Account") }}</span>
+            <span class="kv-value mono">{{
+              activeAccountDisplayId || t("—")
+            }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Chain") }}</span>
+            <span class="kv-value">{{
+              session.connection.chainId || t("—")
+            }}</span>
+          </div>
+        </div>
+        <div class="permission-stack">
+          <span
+            class="pill mini"
+            :class="hasBallotPermission ? 'positive' : 'muted'"
+          >
+            {{
+              t("Ballot: {state}", {
+                state: hasBallotPermission ? t("enabled") : t("missing"),
+              })
+            }}
+          </span>
+          <span
+            class="pill mini"
+            :class="hasParliamentPermission ? 'positive' : 'muted'"
+          >
+            {{
+              t("Parliament: {state}", {
+                state: hasParliamentPermission ? t("enabled") : t("missing"),
+              })
+            }}
+          </span>
+          <span
+            class="pill mini"
+            :class="hasEnactPermission ? 'positive' : 'muted'"
+          >
+            {{
+              t("Enact: {state}", {
+                state: hasEnactPermission ? t("enabled") : t("missing"),
+              })
+            }}
+          </span>
+        </div>
+      </details>
 
       <div class="actions">
         <button :disabled="!canBondCitizen" @click="handleBondCitizen">
@@ -99,7 +103,7 @@
 
     <section class="card parliament-lookup-card">
       <header class="card-header">
-        <h2>{{ t("Referendum Lookup") }}</h2>
+        <h2>{{ t("Load proposal") }}</h2>
         <button
           class="secondary"
           :disabled="!canLookupGovernance"
@@ -212,18 +216,21 @@
         v-if="referendum?.referendum || proposal?.proposal"
         class="payload-stack"
       >
-        <pre v-if="referendum?.referendum" class="payload mono">{{
-          JSON.stringify(referendum.referendum, null, 2)
-        }}</pre>
-        <pre v-if="proposal?.proposal" class="payload mono">{{
-          JSON.stringify(proposal.proposal, null, 2)
-        }}</pre>
+        <details class="technical-details">
+          <summary>{{ t("Raw proposal data") }}</summary>
+          <pre v-if="referendum?.referendum" class="payload mono">{{
+            JSON.stringify(referendum.referendum, null, 2)
+          }}</pre>
+          <pre v-if="proposal?.proposal" class="payload mono">{{
+            JSON.stringify(proposal.proposal, null, 2)
+          }}</pre>
+        </details>
       </div>
     </section>
 
     <section class="card parliament-ballot-card">
       <header class="card-header">
-        <h2>{{ t("Cast Plain Ballot") }}</h2>
+        <h2>{{ t("Vote") }}</h2>
       </header>
       <div class="form-grid">
         <label>
@@ -276,71 +283,71 @@
     </section>
 
     <section class="card parliament-council-card">
-      <header class="card-header">
-        <h2>{{ t("Council & Draft Ops") }}</h2>
-      </header>
-      <div class="grid-2">
-        <div class="kv">
-          <span class="kv-label">{{ t("Current Epoch") }}</span>
-          <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
+      <details class="technical-details">
+        <summary>{{ t("Advanced governance tools") }}</summary>
+        <div class="grid-2">
+          <div class="kv">
+            <span class="kv-label">{{ t("Current Epoch") }}</span>
+            <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Members") }}</span>
+            <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Alternates") }}</span>
+            <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Derived By") }}</span>
+            <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
+          </div>
         </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Members") }}</span>
-          <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Alternates") }}</span>
-          <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Derived By") }}</span>
-          <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
-        </div>
-      </div>
 
-      <div class="actions">
-        <button
-          class="secondary"
-          :disabled="!canFinalizeDraft"
-          @click="handleFinalize"
-        >
+        <div class="actions">
+          <button
+            class="secondary"
+            :disabled="!canFinalizeDraft"
+            @click="handleFinalize"
+          >
+            {{
+              actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
+            }}
+          </button>
+          <button
+            class="secondary"
+            :disabled="!canEnactDraft"
+            @click="handleEnact"
+          >
+            {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
+          </button>
+        </div>
+        <p v-if="missingParliamentPermission" class="message warning">
+          {{ t("Finalize requires CanManageParliament permission.") }}
+        </p>
+        <p v-if="missingEnactPermission" class="message warning">
+          {{ t("Enact requires CanEnactGovernance permission.") }}
+        </p>
+
+        <p v-if="finalizeDraft" class="helper">
           {{
-            actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
+            t("Finalize draft: {summary}", {
+              summary: summarizeDraft(finalizeDraft),
+            })
           }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="!canEnactDraft"
-          @click="handleEnact"
-        >
-          {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
-        </button>
-      </div>
-      <p v-if="missingParliamentPermission" class="message warning">
-        {{ t("Finalize requires CanManageParliament permission.") }}
-      </p>
-      <p v-if="missingEnactPermission" class="message warning">
-        {{ t("Enact requires CanEnactGovernance permission.") }}
-      </p>
+        </p>
+        <p v-if="enactDraft" class="helper">
+          {{
+            t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
+          }}
+        </p>
 
-      <p v-if="finalizeDraft" class="helper">
-        {{
-          t("Finalize draft: {summary}", {
-            summary: summarizeDraft(finalizeDraft),
-          })
-        }}
-      </p>
-      <p v-if="enactDraft" class="helper">
-        {{
-          t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
-        }}
-      </p>
-
-      <ul v-if="council?.members.length" class="member-list mono">
-        <li v-for="member in council.members" :key="member.account_id">
-          {{ member.account_id }}
-        </li>
-      </ul>
+        <ul v-if="council?.members.length" class="member-list mono">
+          <li v-for="member in council.members" :key="member.account_id">
+            {{ member.account_id }}
+          </li>
+        </ul>
+      </details>
     </section>
   </div>
 </template>
