@@ -1215,7 +1215,7 @@ describe("preload Kaigi bridge", () => {
       networkPrefix: 369,
     });
     const rejection = expect(requestPromise).rejects.toThrow(
-      "Faucet claim 0xexpired-6 expired before TAIRA committed it. Please retry once the faucet queue clears.",
+      "Faucet claim 0xexpired-6 expired before the network committed it. Please retry once the faucet queue clears.",
     );
     await vi.runAllTimersAsync();
     await rejection;

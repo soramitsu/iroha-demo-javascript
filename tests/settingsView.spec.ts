@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SettingsView from "@/views/SettingsView.vue";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
 import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
 
@@ -33,13 +33,13 @@ describe("SettingsView", () => {
     document.body.innerHTML = "";
   });
 
-  const mountView = (toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl) => {
+  const mountView = (toriiUrl = DEFAULT_CHAIN_PRESET.connection.toriiUrl) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
     session.$patch({
       connection: {
-        ...TAIRA_CHAIN_PRESET.connection,
+        ...DEFAULT_CHAIN_PRESET.connection,
         toriiUrl,
       },
     });
@@ -80,10 +80,10 @@ describe("SettingsView", () => {
       "settings-endpoint-status settings-endpoint-error",
     );
     expect(endpointInput.attributes("translate")).toBe("no");
-    expect(wrapper.text()).toContain(TAIRA_CHAIN_PRESET.connection.toriiUrl);
-    expect(inputs).toContain(TAIRA_CHAIN_PRESET.connection.chainId);
+    expect(wrapper.text()).toContain(DEFAULT_CHAIN_PRESET.connection.toriiUrl);
+    expect(inputs).toContain(DEFAULT_CHAIN_PRESET.connection.chainId);
     expect(inputs).toContain(
-      String(TAIRA_CHAIN_PRESET.connection.networkPrefix),
+      String(DEFAULT_CHAIN_PRESET.connection.networkPrefix),
     );
     expect(wrapper.text()).toContain(t("Default endpoint"));
   });
@@ -100,10 +100,10 @@ describe("SettingsView", () => {
 
     expect(session.connection.toriiUrl).toBe("http://127.0.0.1:8080");
     expect(session.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
+      DEFAULT_CHAIN_PRESET.connection.chainId,
     );
     expect(session.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     );
     expect(wrapper.text()).toContain(t("Endpoint saved."));
     expect(
@@ -123,7 +123,7 @@ describe("SettingsView", () => {
     await flushPromises();
 
     expect(session.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(wrapper.text()).toContain(
       t("Endpoint must start with http:// or https://."),
@@ -178,7 +178,7 @@ describe("SettingsView", () => {
 
     expect(getChainMetadataMock).toHaveBeenCalledWith("http://localhost:8080");
     expect(session.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(wrapper.text()).toContain("metadata unavailable");
     expect(wrapper.get('[role="alert"]').text()).toBe("metadata unavailable");
@@ -196,7 +196,7 @@ describe("SettingsView", () => {
 
     expect(getChainMetadataMock).not.toHaveBeenCalled();
     expect(session.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(wrapper.get('[role="alert"]').text()).toBe(
       t("Endpoint must start with http:// or https://."),
@@ -218,13 +218,13 @@ describe("SettingsView", () => {
     await flushPromises();
 
     expect(session.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(session.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
+      DEFAULT_CHAIN_PRESET.connection.chainId,
     );
     expect(session.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     );
     expect(wrapper.text()).toContain(t("Default endpoint restored."));
   });

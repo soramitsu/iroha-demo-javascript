@@ -25,9 +25,7 @@
             class="helper"
             :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
           >
-            {{
-              t("Claim 25,000 TAIRA testnet XOR for governance and testing.")
-            }}
+            {{ t("Request starter XOR from the active network faucet.") }}
           </p>
         </div>
         <button
@@ -39,7 +37,7 @@
           :disabled="faucetLoading || !canRequestFaucet"
           @click="requestStarterFunds"
         >
-          {{ faucetLoading ? t("Requesting…") : t("Claim Testnet XOR") }}
+          {{ faucetLoading ? t("Requesting…") : t("Request XOR") }}
         </button>
       </div>
       <div class="wallet-quick-actions">
@@ -467,17 +465,15 @@ const faucetStatusMessage = computed(() => {
 const faucetStatusDetail = computed(() => {
   if (faucetStatusPhase.value === "refreshingWallet") {
     return t(
-      "Waiting for TAIRA to expose the funded asset in account balances.",
+      "Waiting for the network to expose the funded asset in account balances.",
     );
   }
   if (faucetStatusPhase.value === "waitingForClaimRetry") {
     return t(
-      "TAIRA dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
+      "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
     );
   }
-  return t(
-    "Your TAIRA faucet request is in flight. This can take a few seconds.",
-  );
+  return t("Your faucet request is in flight. This can take a few seconds.");
 });
 
 const fetchAllAccountTransactions = async (input: {
@@ -677,7 +673,7 @@ const requestStarterFunds = async () => {
     }
     session.updateActiveAccount({ localOnly: false });
     faucetStatusPhase.value = "claimCommitted";
-    faucetMessage.value = t("Testnet XOR requested: {hash}", {
+    faucetMessage.value = t("XOR requested: {hash}", {
       hash: result.tx_hash_hex,
     });
     const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);

@@ -1038,6 +1038,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Network details": "Network details",
   Network: "Network",
   "Managed by network profile": "Managed by network profile",
+  "Settings-managed network profile.": "Settings-managed network profile.",
   Asset: "Asset",
   "Used for balances and payments": "Used for balances and payments",
   "Network prefix": "Network prefix",
@@ -1056,10 +1057,38 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Register and vote": "Register and vote",
   "Explorer QR and network status": "Explorer QR and network status",
   "Manage recurring payments": "Manage recurring payments",
+  "Live subscription NFTs and plan metadata from Torii.":
+    "Live subscription NFTs and plan metadata from Torii.",
+  "This account has no subscriptions on the active network.":
+    "This account has no subscriptions on the active network.",
+  "Loaded from Torii at {time}": "Loaded from Torii at {time}",
   "Device payments and invoices": "Device payments and invoices",
   "Wallet-based meeting links": "Wallet-based meeting links",
   "Private network connection": "Private network connection",
   "Network and developer settings": "Network and developer settings",
+  "Open explorer": "Open explorer",
+  "Live supply, holder concentration, and consensus telemetry for the active public lane.":
+    "Live supply, holder concentration, and consensus telemetry for the active public lane.",
+  "The active network is publishing live explorer, supply, and consensus data for the XOR lane.":
+    "The active network is publishing live explorer, supply, and consensus data for the XOR lane.",
+  "Querying explorer and status surfaces.":
+    "Querying explorer and status surfaces.",
+  "Unable to load network stats.": "Unable to load network stats.",
+  "Network connection ready": "Network connection ready",
+  "Network connection is unavailable. Reload and try again.":
+    "Network connection is unavailable. Reload and try again.",
+  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.":
+    "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
+  "Request starter XOR from the active network faucet.":
+    "Request starter XOR from the active network faucet.",
+  "Request XOR": "Request XOR",
+  "Waiting for the network to expose the funded asset in account balances.":
+    "Waiting for the network to expose the funded asset in account balances.",
+  "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.":
+    "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
+  "Your faucet request is in flight. This can take a few seconds.":
+    "Your faucet request is in flight. This can take a few seconds.",
+  "XOR requested: {hash}": "XOR requested: {hash}",
   "Launch live SoraCloud services": "Launch live SoraCloud services",
   "Launch and monitor live services": "Launch and monitor live services",
   "Live services": "Live services",
@@ -2021,8 +2050,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
   I105: "I105",
-  "Iroha Points": "TAIRA Testnet",
-  "Modern Torii-connected wallet": "TAIRA testnet wallet",
+  "Iroha Points": "MINAMOTO Mainnet",
+  "Modern Torii-connected wallet": "Mainnet Torii wallet",
   Navigate: "Menu",
   Settings: "Settings",
   "Endpoint and app preferences": "Endpoint and app preferences",
@@ -2039,7 +2068,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Complete account setup first": "Create a wallet first.",
   "TAIRA Torii ready": "Network ready",
   "Torii unavailable": "Network unavailable",
-  "TAIRA locked": "TAIRA only",
+  "TAIRA locked": "Network selected",
   "Open Taira Explorer": "Open explorer",
   "Explorer Metrics": "Network metrics",
   "Metrics unavailable. Check Torii status.":
@@ -2092,9 +2121,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Restore from recovery phrase": "Restore from phrase",
   "Paste a 12- or 24-word recovery phrase to derive the same wallet keys locally.":
     "Paste a 12- or 24-word phrase to derive this wallet locally.",
-  "TAIRA testnet connection is fixed in this build.": "TAIRA only.",
+  "TAIRA testnet connection is fixed in this build.": "Network managed.",
   "TAIRA testnet connection is fixed for onboarding in this build.":
-    "TAIRA only.",
+    "Network managed.",
   "Public TAIRA testnet profile.": "Public testnet.",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.":
     "{domain} is local only.",
@@ -2191,18 +2220,18 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Torii responded successfully.": "Connection OK.",
   "No response from Torii.": "No response.",
   "Submitted transaction {hash}": "Submitted: {hash}",
-  "Faucet Request": "Testnet faucet",
+  "Faucet Request": "Network faucet",
   "Claim 25,000 TAIRA testnet XOR for governance and testing.":
-    "Claim 25,000 XOR for governance and testing.",
+    "Request starter XOR from the active network faucet.",
   "Top up a new TAIRA account once with starter XOR.":
     "Claim 25,000 XOR for governance and testing.",
-  "Claim Testnet XOR": "Claim XOR",
+  "Claim Testnet XOR": "Request XOR",
   "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
     "This wallet is local only. Balances stay empty until it is funded or otherwise created on-chain.",
   "No assets found for this account.": "No assets yet.",
   "Latest Transactions": "Recent activity",
   "No transfers recorded yet.": "No activity yet.",
-  "Faucet request in progress": "Claiming testnet XOR",
+  "Faucet request in progress": "Requesting XOR",
   "Requesting faucet puzzle…": "Loading faucet challenge...",
   "Waiting for finalized faucet seed data…": "Waiting for faucet seed...",
   "Solving faucet proof-of-work…": "Solving faucet proof...",

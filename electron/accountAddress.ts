@@ -7,9 +7,8 @@ import {
   normalizeAccountId as normalizeSdkAccountId,
 } from "@iroha/iroha-js";
 
-// TAIRA display literals use the testnet chain discriminant.
-const DEFAULT_NETWORK_PREFIX = 369;
 const SORA_NETWORK_PREFIX = 753;
+const DEFAULT_NETWORK_PREFIX = SORA_NETWORK_PREFIX;
 const HEX_RE = /^[0-9a-fA-F]+$/;
 
 type NativeAccountAddressParseResult = {
@@ -38,7 +37,7 @@ type NativeAccountAddressCodec = {
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
-// TAIRA surfaces may hand back I105 account IDs as UTF-8 full-width kana,
+// Torii surfaces may hand back I105 account IDs as UTF-8 full-width kana,
 // while the current JS/native codec accepts the canonical half-width alphabet.
 const I105_FULLWIDTH_TO_CANONICAL_KANA: Record<string, string> = {
   イ: "ｲ",
@@ -165,6 +164,9 @@ const detectNativeLiteralPrefix = (literal: string): number | null => {
   if (literal.startsWith("sorau") || literal.startsWith("ｓｏｒａu")) {
     return SORA_NETWORK_PREFIX;
   }
+  if (literal.startsWith("testu")) {
+    return 369;
+  }
   const match = /^n(\d{1,4})u/.exec(literal);
   if (!match) {
     return null;
@@ -283,13 +285,16 @@ const fallbackCanonicalLiteral = (
 export const normalizeCompatAccountIdLiteral = (
   value: string,
   label: string,
-  networkPrefix = DEFAULT_NETWORK_PREFIX,
+  networkPrefix?: number,
 ) => {
   const literal = normalizeAccountLiteralInput(value);
   if (!literal) {
     throw new Error(`${label} must be a non-empty string.`);
   }
-  const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
+  const detectedPrefix = detectNativeLiteralPrefix(literal);
+  const normalizedPrefix = normalizeNetworkPrefix(
+    networkPrefix ?? detectedPrefix ?? DEFAULT_NETWORK_PREFIX,
+  );
 
   try {
     const parsed = AccountAddress.parseEncoded(literal);
@@ -312,13 +317,16 @@ export const normalizeCompatAccountIdLiteral = (
 export const normalizeCanonicalAccountIdLiteral = (
   value: string,
   label: string,
-  networkPrefix = DEFAULT_NETWORK_PREFIX,
+  networkPrefix?: number,
 ) => {
   const literal = normalizeAccountLiteralInput(value);
   if (!literal) {
     throw new Error(`${label} must be a non-empty string.`);
   }
-  const normalizedPrefix = normalizeNetworkPrefix(networkPrefix);
+  const detectedPrefix = detectNativeLiteralPrefix(literal);
+  const normalizedPrefix = normalizeNetworkPrefix(
+    networkPrefix ?? detectedPrefix ?? DEFAULT_NETWORK_PREFIX,
+  );
 
   try {
     const parsed = AccountAddress.parseEncoded(literal);

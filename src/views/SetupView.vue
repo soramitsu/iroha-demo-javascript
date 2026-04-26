@@ -10,10 +10,8 @@
       <div class="chain-picker">
         <div class="preset-row">
           <div class="preset-chip active fixed" role="status">
-            <span class="chip-title">{{ t("TAIRA Testnet") }}</span>
-            <span class="chip-sub">{{
-              t("Public TAIRA testnet profile.")
-            }}</span>
+            <span class="chip-title">{{ activeNetworkLabel }}</span>
+            <span class="chip-sub">{{ activeNetworkDescription }}</span>
           </div>
         </div>
       </div>
@@ -102,7 +100,7 @@
       <p class="helper">
         {{
           t(
-            "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+            "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
             {
               domain: t("default"),
             },
@@ -182,7 +180,7 @@ import {
   registerAccount,
   storeAccountSecret,
 } from "@/services/iroha";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
@@ -194,6 +192,22 @@ const DEFAULT_DOMAIN_LABEL = "default";
 
 const connectionForm = reactive({ ...session.connection });
 const assetDefinitionDraft = ref("");
+const activeNetworkPreset = computed(() =>
+  CHAIN_PRESETS.find(
+    (preset) =>
+      preset.connection.toriiUrl === connectionForm.toriiUrl &&
+      preset.connection.chainId === connectionForm.chainId &&
+      preset.connection.networkPrefix === connectionForm.networkPrefix,
+  ),
+);
+const activeNetworkLabel = computed(
+  () => activeNetworkPreset.value?.label ?? t("Custom endpoint"),
+);
+const activeNetworkDescription = computed(
+  () =>
+    activeNetworkPreset.value?.description ??
+    t("Settings-managed network profile."),
+);
 const displayAssetDefinitionId = computed(() =>
   formatAssetDefinitionLabel(
     connectionForm.assetDefinitionId,
@@ -244,14 +258,14 @@ watch(
   () => session.connection,
   (value) => {
     const nextConnection = {
-      ...TAIRA_CHAIN_PRESET.connection,
-      toriiUrl: value.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: value.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+      ...DEFAULT_CHAIN_PRESET.connection,
+      toriiUrl: value.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+      chainId: value.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
       networkPrefix:
-        value.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        value.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
       assetDefinitionId:
         value.assetDefinitionId ||
-        TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+        DEFAULT_CHAIN_PRESET.connection.assetDefinitionId,
     };
     Object.assign(connectionForm, nextConnection);
     assetDefinitionDraft.value = "";
@@ -335,13 +349,14 @@ const saveConnection = () => {
   const nextAssetDefinitionId =
     assetDefinitionDraft.value.trim() ||
     connectionForm.assetDefinitionId ||
-    TAIRA_CHAIN_PRESET.connection.assetDefinitionId;
+    DEFAULT_CHAIN_PRESET.connection.assetDefinitionId;
   const nextConnection = {
-    toriiUrl: connectionForm.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    chainId: connectionForm.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+    toriiUrl:
+      connectionForm.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+    chainId: connectionForm.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
     networkPrefix:
       connectionForm.networkPrefix ??
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     assetDefinitionId: nextAssetDefinitionId,
   };
   Object.assign(connectionForm, nextConnection);

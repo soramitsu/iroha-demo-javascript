@@ -126,7 +126,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { getChainMetadata } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
@@ -135,7 +135,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
 const { t } = useAppI18n();
-const defaultEndpoint = TAIRA_CHAIN_PRESET.connection.toriiUrl;
+const defaultEndpoint = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
 
 const endpointDraft = ref(session.connection.toriiUrl || defaultEndpoint);
 const endpointInputRef = ref<HTMLInputElement | null>(null);
@@ -207,8 +207,8 @@ const handleSaveEndpoint = () => {
 const handleResetEndpoint = () => {
   clearMessages();
   applyEndpoint(defaultEndpoint, {
-    chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-    networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    chainId: DEFAULT_CHAIN_PRESET.connection.chainId,
+    networkPrefix: DEFAULT_CHAIN_PRESET.connection.networkPrefix,
   });
   statusMessage.value = t("Default endpoint restored.");
 };

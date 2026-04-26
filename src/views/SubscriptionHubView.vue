@@ -5,7 +5,7 @@
         <div>
           <h2>{{ t("Subscription Hub") }}</h2>
           <p class="helper">
-            {{ t("Live subscription NFTs and plan metadata from TAIRA.") }}
+            {{ t("Live subscription NFTs and plan metadata from Torii.") }}
           </p>
         </div>
         <div class="subscription-header-actions">
@@ -262,7 +262,7 @@
         </article>
       </div>
       <p v-else class="helper subscription-empty">
-        {{ t("This account has no subscriptions on TAIRA.") }}
+        {{ t("This account has no subscriptions on the active network.") }}
       </p>
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
     </section>
@@ -363,7 +363,7 @@ const formatSubscriptionAmount = (value: number) =>
 
 const lastUpdatedLabel = computed(() => {
   if (!subscriptions.lastUpdatedAtMs) return "";
-  return t("Loaded from TAIRA at {time}", {
+  return t("Loaded from Torii at {time}", {
     time: formatDateMs(subscriptions.lastUpdatedAtMs),
   });
 });

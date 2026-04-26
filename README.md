@@ -5,7 +5,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 ## Features
 
 - 🔑 Modern onboarding workflow to configure Torii, generate/restore keys, and compute canonical account IDs (I105 literals).
-- 🌐 Settings-driven Torii endpoint profile with automatic chain ID/network-prefix loading and a TAIRA explorer quick-link (`https://taira-explorer.sora.org`).
+- 🌐 Settings-driven Torii endpoint profile with automatic chain ID/network-prefix loading and a Minamoto explorer quick-link (`https://minamoto-explorer.sora.org`).
 - 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
 - 📊 Wallet dashboard with live balances + decoded transaction directions.
 - 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
@@ -18,7 +18,7 @@ A refreshed version of the original 2016 point-system demo. The app now runs as 
 ## Prerequisites
 
 - Node.js 20+
-- TAIRA Torii endpoint access (`https://taira.sora.org`)
+- Minamoto Torii endpoint access (`https://minamoto.sora.org`)
 - Rust toolchain for compiling the `iroha_js_host` native module
 
 ## Install & Run
@@ -77,7 +77,7 @@ For local development checks without E2E:
 npm run verify
 ```
 
-For verification plus live TAIRA E2E (read-only + onboarding pass):
+For verification plus live E2E (read-only + onboarding pass; the faucet-backed harness still targets TAIRA by default):
 
 ```bash
 npm run verify:live
@@ -85,7 +85,7 @@ npm run verify:live
 
 ### Live Electron E2E
 
-Run the live Torii Electron E2E harness (defaults to TAIRA):
+Run the live Torii Electron E2E harness (defaults to TAIRA because it depends on testnet faucet bootstrapping):
 
 ```bash
 npm run e2e:live
@@ -122,7 +122,7 @@ E2E_FUNDED_PRIVATE_KEY_HEX="<64-char-funded-wallet-key>" \
 npm run e2e:live
 ```
 
-In this TAIRA-only wallet build, live E2E only supports TAIRA Torii + chain ID values.
+The desktop app defaults to Minamoto mainnet, but this live E2E harness remains TAIRA-faucet-oriented. Use `E2E_FUNDED_PRIVATE_KEY_HEX` and explicit endpoint settings before adapting it to non-faucet mainnet validation.
 
 The preflight checks `GET /v1/health` first, then falls back to `GET /health`.
 
@@ -140,8 +140,8 @@ If a test fails, screenshots are written under `output/playwright/`.
 
 ## Usage notes
 
-1. **Account setup** — first-run wizard for creating or restoring a local TAIRA wallet. Generate a recovery phrase, derive the canonical `accountId`, save it in the secure vault, and optionally pair with IrohaConnect; on-chain onboarding/registration is no longer required for local wallet creation.
-2. **Settings tab** — choose the Torii endpoint used by wallet, staking, governance, VPN, and explorer requests. Checking an endpoint loads its chain ID and network prefix before saving. The default remains `https://taira.sora.org`; custom endpoints can still be saved directly for local/dev nodes.
+1. **Account setup** — first-run wizard for creating or restoring a local SORA wallet. Generate a recovery phrase, derive the canonical `accountId`, save it in the secure vault, and optionally pair with IrohaConnect; on-chain onboarding/registration is no longer required for local wallet creation.
+2. **Settings tab** — choose the Torii endpoint used by wallet, staking, governance, VPN, and explorer requests. Checking an endpoint loads its chain ID and network prefix before saving. The default is Minamoto mainnet at `https://minamoto.sora.org` with chain ID `sora nexus main net`, network prefix `753`, XOR asset definition `6TEAJqbb8oEPmLncoNiMRbLEK6tw`, and explorer `https://minamoto-explorer.sora.org`; TAIRA testnet remains available as a selectable preset at `https://taira.sora.org`.
 3. **Setup tab** — chain ID and network prefix are read-only and mirror the active Settings connection; use this tab for advanced asset, authority, and registration helpers. Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
 4. **Wallet tab** — refresh balances and recent transactions, claim starter faucet funds, and manage transparent/self-shielded wallet state.
 5. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).

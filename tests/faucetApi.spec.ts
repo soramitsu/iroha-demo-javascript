@@ -225,7 +225,7 @@ describe("faucetApi", () => {
         }),
       }),
     ).rejects.toThrow(
-      "Faucet request failed (400): TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
+      "Faucet request failed (400): The network rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
     );
   });
 

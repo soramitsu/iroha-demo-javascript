@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useSessionStore, SESSION_STORAGE_KEY } from "@/stores/session";
-import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import {
+  DEFAULT_CHAIN_PRESET,
+  MINAMOTO_CHAIN_PRESET,
+  TAIRA_CHAIN_PRESET,
+} from "@/constants/chains";
 
 const snapshot = () =>
   JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
@@ -15,12 +19,14 @@ describe("session store", () => {
 
   it("initialises with defaults", () => {
     const store = useSessionStore();
-    expect(store.connection.networkPrefix).toBe(369);
+    expect(store.connection.networkPrefix).toBe(
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
+    );
     expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
+      DEFAULT_CHAIN_PRESET.connection.chainId,
     );
     expect(store.accounts.length).toBe(0);
     expect(store.activeAccount).toBeNull();
@@ -148,6 +154,7 @@ describe("session store", () => {
 
   it("upgrades legacy account ids from stored canonical literals", () => {
     const canonical = "testu1234567890abcdef1234567890";
+    const migratedCanonical = "sorau1234567890abcdef1234567890";
     const payload = {
       connection: {
         toriiUrl: "https://legacy-torii",
@@ -178,9 +185,9 @@ describe("session store", () => {
     store.hydrate();
 
     expect(store.accounts).toHaveLength(1);
-    expect(store.accounts[0]?.accountId).toBe(canonical);
-    expect(store.activeAccountId).toBe(canonical);
-    expect(store.authority.accountId).toBe(canonical);
+    expect(store.accounts[0]?.accountId).toBe(migratedCanonical);
+    expect(store.activeAccountId).toBe(migratedCanonical);
+    expect(store.authority.accountId).toBe(migratedCanonical);
   });
 
   it("derives canonical account ids from stored key material when bridge is available", () => {
@@ -411,6 +418,7 @@ describe("session store", () => {
 
   it("rewrites stored SORA-native account literals onto the TAIRA prefix", () => {
     const store = useSessionStore();
+    store.updateConnection(TAIRA_CHAIN_PRESET.connection);
     store.addAccount({
       displayName: "Alice",
       domain: "default",
@@ -436,6 +444,9 @@ describe("session store", () => {
   it("rewrites stored TAIRA-native account literals onto the mainnet prefix", () => {
     const store = useSessionStore();
     store.$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+      },
       accounts: [
         {
           displayName: "Alice",
@@ -528,13 +539,13 @@ describe("session store", () => {
     store.hydrate();
 
     expect(store.connection.toriiUrl).toBe(
-      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
     expect(store.connection.chainId).toBe(
-      TAIRA_CHAIN_PRESET.connection.chainId,
+      DEFAULT_CHAIN_PRESET.connection.chainId,
     );
     expect(store.connection.networkPrefix).toBe(
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     );
   });
 });

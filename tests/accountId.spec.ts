@@ -3,6 +3,7 @@ import {
   getAccountDisplayLabel,
   getPublicAccountId,
   normalizeAccountIdLiteralForNetwork,
+  normalizeMainnetAccountIdLiteral,
   normalizeTairaAccountIdLiteral,
 } from "@/utils/accountId";
 
@@ -17,6 +18,9 @@ describe("accountId utils", () => {
   });
 
   it("rewrites stale TAIRA-native literals onto the SORA mainnet prefix", () => {
+    expect(
+      normalizeMainnetAccountIdLiteral("testuCanonicalAccountId1234567890"),
+    ).toBe("sorauCanonicalAccountId1234567890");
     expect(
       normalizeAccountIdLiteralForNetwork(
         "testuCanonicalAccountId1234567890",
@@ -36,7 +40,7 @@ describe("accountId utils", () => {
     ).toBe("sorauVisibleAccountId");
   });
 
-  it("prefers the TAIRA-visible account id when present", () => {
+  it("defaults to the SORA mainnet-visible account id when present", () => {
     expect(
       getPublicAccountId({
         displayName: "",
@@ -44,7 +48,7 @@ describe("accountId utils", () => {
         i105AccountId: "testuVisibleAccountId",
         i105DefaultAccountId: "sorauCanonicalAccountId",
       }),
-    ).toBe("testuVisibleAccountId");
+    ).toBe("sorauVisibleAccountId");
   });
 
   it("falls back through normalized default and stored account ids", () => {
@@ -55,7 +59,7 @@ describe("accountId utils", () => {
         i105AccountId: "",
         i105DefaultAccountId: "sorauCanonicalAccountId",
       }),
-    ).toBe("testuCanonicalAccountId");
+    ).toBe("sorauCanonicalAccountId");
     expect(
       getPublicAccountId({
         displayName: "",
@@ -63,7 +67,7 @@ describe("accountId utils", () => {
         i105AccountId: "testuVisibleAccountId",
         i105DefaultAccountId: "",
       }),
-    ).toBe("testuVisibleAccountId");
+    ).toBe("sorauVisibleAccountId");
     expect(
       getPublicAccountId({
         displayName: "",
@@ -71,7 +75,7 @@ describe("accountId utils", () => {
         i105AccountId: "",
         i105DefaultAccountId: "",
       }),
-    ).toBe("testuCompatAccountId");
+    ).toBe("sorauCompatAccountId");
   });
 
   it("prefers display name over account ids for labels", () => {
@@ -99,6 +103,6 @@ describe("accountId utils", () => {
         },
         "fallback",
       ),
-    ).toBe("testuVisibleAccountId");
+    ).toBe("sorauVisibleAccountId");
   });
 });

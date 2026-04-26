@@ -112,6 +112,7 @@ describe("AccountSetupView", () => {
       accountId?: string;
       publicKeyHex?: string;
       privateKeyHex?: string;
+      hasStoredSecret?: boolean;
       localOnly?: boolean;
     };
   }) => {
@@ -130,6 +131,7 @@ describe("AccountSetupView", () => {
         accountId: "alice@wonderland",
         publicKeyHex: "ab".repeat(32),
         privateKeyHex: "cd".repeat(32),
+        hasStoredSecret: true,
         localOnly: false,
         ...options?.savedAccount,
       };
@@ -171,11 +173,11 @@ describe("AccountSetupView", () => {
   it("focuses first launch on the onboarding wizard", () => {
     const wrapper = mountView();
 
-    expect(wrapper.text()).toContain(t("TAIRA Testnet Account"));
+    expect(wrapper.text()).toContain(t("Create wallet"));
     expect(wrapper.text()).toContain("I105 Account ID");
     expect(wrapper.text()).toContain(
       t(
-        "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+        "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
         {
           domain: t("default"),
         },
@@ -209,6 +211,43 @@ describe("AccountSetupView", () => {
       "irohaconnect://connect?sid=preview-1",
     );
     expect(wrapper.text()).toContain("sid-1");
+  });
+
+  it("opens the wallet when the active saved wallet is selected", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await getButtonByText(wrapper, t("Open wallet")).trigger("click");
+    await flushPromises();
+
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
+  });
+
+  it("switches to another saved wallet and opens the wallet", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "bc".repeat(32),
+          privateKeyHex: "",
+          hasStoredSecret: true,
+          localOnly: false,
+        },
+      ],
+    });
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Switch to this account")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(session.activeAccountId).toBe("bob@wonderland");
+    expect(routerPushMock).toHaveBeenCalledWith("/wallet");
   });
 
   it("ignores stale pairing preview success after reset", async () => {

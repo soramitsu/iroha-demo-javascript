@@ -77,11 +77,11 @@
         <div class="explorer-actions">
           <a
             class="secondary explorer-link"
-            :href="TAIRA_EXPLORER_URL"
+            :href="DEFAULT_EXPLORER_URL"
             target="_blank"
             rel="noopener noreferrer"
           >
-            {{ t("Open Taira Explorer") }}
+            {{ t("Open explorer") }}
           </a>
           <button class="secondary" :disabled="!accountQr" @click="copyQr">
             {{ t("Copy JSON") }}
@@ -128,7 +128,7 @@ import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
-import { TAIRA_EXPLORER_URL } from "@/constants/chains";
+import { DEFAULT_EXPLORER_URL } from "@/constants/chains";
 import { getPublicAccountId } from "@/utils/accountId";
 import type {
   ExplorerAccountQrResponse,

@@ -368,6 +368,7 @@ const authContext = computed<Partial<VpnAuthContext> | undefined>(() => {
   return {
     toriiUrl: toriiUrl.value,
     accountId: requestAccountId.value,
+    networkPrefix: session.connection.networkPrefix,
   };
 });
 
@@ -617,6 +618,7 @@ const handleConnect = async () => {
     status.value = await connectVpn({
       toriiUrl: toriiUrl.value,
       accountId: requestAccountId.value,
+      networkPrefix: session.connection.networkPrefix,
       privateKeyHex: activeAccount.value.privateKeyHex,
       exitClass: selectedExitClass.value,
     });
@@ -643,6 +645,7 @@ const handleDisconnect = async () => {
     status.value = await disconnectVpn({
       toriiUrl: toriiUrl.value,
       accountId: requestAccountId.value,
+      networkPrefix: session.connection.networkPrefix,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     receipts.value = await listVpnReceipts(authContext.value);

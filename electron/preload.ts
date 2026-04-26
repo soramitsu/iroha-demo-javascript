@@ -141,11 +141,18 @@ type ToriiConfig = {
 
 type ChainMetadataResponse = ChainMetadata;
 
-const TAIRA_CHAIN_METADATA_FALLBACK = {
-  toriiUrl: "https://taira.sora.org",
-  chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-  networkPrefix: 369,
-} as const;
+const KNOWN_CHAIN_METADATA_FALLBACKS = [
+  {
+    toriiUrl: "https://minamoto.sora.org",
+    chainId: "sora nexus main net",
+    networkPrefix: 753,
+  },
+  {
+    toriiUrl: "https://taira.sora.org",
+    chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+    networkPrefix: 369,
+  },
+] as const;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
@@ -183,12 +190,12 @@ const withConfidentialGasMetadata = (
     gas_asset_id: gasAssetId,
   };
 };
-const TAIRA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const SORA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const withRequiredGasAssetMetadata = (
   metadata: Record<string, unknown> | undefined,
 ) => ({
   ...(isPlainRecord(metadata) ? { ...metadata } : {}),
-  gas_asset_id: TAIRA_XOR_GAS_ASSET_DEFINITION_ID,
+  gas_asset_id: SORA_XOR_GAS_ASSET_DEFINITION_ID,
 });
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
@@ -417,9 +424,34 @@ type TransactionsResponse = Awaited<
   ReturnType<ToriiClient["listAccountTransactions"]>
 >;
 
-type OfflineAllowanceResponse = Awaited<
-  ReturnType<ToriiClient["listOfflineAllowances"]>
->;
+type OfflineAllowanceQuery = {
+  controllerId: string;
+  limit?: number;
+  offset?: number;
+  filter?: string | Record<string, unknown>;
+  certificateExpiresBeforeMs?: number;
+  certificateExpiresAfterMs?: number;
+  policyExpiresBeforeMs?: number;
+  policyExpiresAfterMs?: number;
+  refreshBeforeMs?: number;
+  refreshAfterMs?: number;
+  verdictIdHex?: string;
+  attestationNonceHex?: string;
+  requireVerdict?: boolean;
+  onlyMissingVerdict?: boolean;
+  includeExpired?: boolean;
+};
+
+type OfflineAllowanceResponse = {
+  items: Array<Record<string, unknown>>;
+  total: number;
+};
+
+type ToriiClientWithOfflineAllowances = ToriiClient & {
+  listOfflineAllowances(
+    input: OfflineAllowanceQuery,
+  ): Promise<OfflineAllowanceResponse>;
+};
 
 type AccountPermissionsResponse = Awaited<
   ReturnType<ToriiClient["listAccountPermissions"]>
@@ -710,6 +742,7 @@ type VpnAvailabilityInput = {
 type VpnConnectInput = {
   toriiUrl: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex?: HexString;
   exitClass: "standard" | "low-latency" | "high-security";
 };
@@ -717,6 +750,7 @@ type VpnConnectInput = {
 type VpnDisconnectInput = {
   toriiUrl: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex?: HexString;
 };
 
@@ -1257,7 +1291,7 @@ const buildFaucetClaimFinalityError = (
 ) => {
   if (statusKind === "Expired") {
     return new Error(
-      `Faucet claim ${txHashHex} expired before TAIRA committed it. Please retry once the faucet queue clears.`,
+      `Faucet claim ${txHashHex} expired before the network committed it. Please retry once the faucet queue clears.`,
     );
   }
   if (statusKind === "Rejected") {
@@ -1279,7 +1313,7 @@ const buildFaucetClaimFinalityError = (
     );
   }
   return new Error(
-    `Faucet claim ${txHashHex} did not reach a committed state on TAIRA.`,
+    `Faucet claim ${txHashHex} did not reach a committed state on the network.`,
   );
 };
 
@@ -2959,18 +2993,20 @@ const resolveKnownChainMetadataFallback = (
   toriiUrlRaw: string,
   draft: ChainMetadataDraft,
 ): ChainMetadataDraft | undefined => {
-  const defaultOrigin = new URL(TAIRA_CHAIN_METADATA_FALLBACK.toriiUrl).origin;
   const endpointOrigin = new URL(normalizeBaseUrl(toriiUrlRaw)).origin;
-  if (endpointOrigin === defaultOrigin) {
-    return {
-      chainId: TAIRA_CHAIN_METADATA_FALLBACK.chainId,
-      networkPrefix: TAIRA_CHAIN_METADATA_FALLBACK.networkPrefix,
-    };
-  }
-  if (draft.networkPrefix === TAIRA_CHAIN_METADATA_FALLBACK.networkPrefix) {
-    return {
-      chainId: TAIRA_CHAIN_METADATA_FALLBACK.chainId,
-    };
+  for (const fallback of KNOWN_CHAIN_METADATA_FALLBACKS) {
+    const fallbackOrigin = new URL(fallback.toriiUrl).origin;
+    if (endpointOrigin === fallbackOrigin) {
+      return {
+        chainId: fallback.chainId,
+        networkPrefix: fallback.networkPrefix,
+      };
+    }
+    if (draft.networkPrefix === fallback.networkPrefix) {
+      return {
+        chainId: fallback.chainId,
+      };
+    }
   }
   return undefined;
 };
@@ -6254,7 +6290,7 @@ const api: IrohaBridge = {
           ? ` Available asset IDs: ${available.join(", ")}.`
           : "";
         throw new Error(
-          `Unable to resolve the source asset from configured value "${configuredAssetId}". Set Asset Definition ID to the canonical TAIRA asset literal for this account.${availableHint}`,
+          `Unable to resolve the source asset from configured value "${configuredAssetId}". Set Asset Definition ID to the canonical asset literal for this account.${availableHint}`,
         );
       }
       sourceAssetId = normalizeAssetId(selectedAssetId, "sourceAssetId");
@@ -6746,7 +6782,7 @@ const api: IrohaBridge = {
     onlyMissingVerdict,
     includeExpired,
   }) {
-    const client = getClient(toriiUrl);
+    const client = getClient(toriiUrl) as ToriiClientWithOfflineAllowances;
     return client.listOfflineAllowances({
       controllerId: normalizeCompatAccountIdLiteral(
         controllerId,
@@ -6914,7 +6950,7 @@ const api: IrohaBridge = {
     }
 
     throw new Error(
-      "TAIRA kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
+      "The network kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
     );
   },
   async createKaigiMeeting({

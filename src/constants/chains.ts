@@ -7,6 +7,8 @@ export type ChainPreset = {
   connection: ConnectionConfig;
 };
 
+export const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+
 export const TAIRA_CHAIN_PRESET: ChainPreset = {
   id: "taira-testnet",
   label: "TAIRA Testnet",
@@ -26,15 +28,17 @@ export const MINAMOTO_CHAIN_PRESET: ChainPreset = {
   connection: {
     toriiUrl: "https://minamoto.sora.org",
     chainId: "sora nexus main net",
-    assetDefinitionId: "",
+    assetDefinitionId: SORA_XOR_ASSET_DEFINITION_ID,
     networkPrefix: 753,
   },
 };
 
 export const CHAIN_PRESETS: ChainPreset[] = [
-  TAIRA_CHAIN_PRESET,
   MINAMOTO_CHAIN_PRESET,
+  TAIRA_CHAIN_PRESET,
 ];
 
+export const DEFAULT_CHAIN_PRESET = MINAMOTO_CHAIN_PRESET;
+export const MINAMOTO_EXPLORER_URL = "https://minamoto-explorer.sora.org";
 export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
-export const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+export const DEFAULT_EXPLORER_URL = MINAMOTO_EXPLORER_URL;

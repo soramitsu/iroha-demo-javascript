@@ -1,9 +1,11 @@
 import { chromium } from "playwright";
 
-const DEFAULT_EXPLORER_ROOT = "https://taira-explorer.sora.org";
+const DEFAULT_EXPLORER_ROOT = "https://minamoto-explorer.sora.org";
 
 const explorerRoot = String(
-  process.env.TAIRA_EXPLORER_URL ?? DEFAULT_EXPLORER_ROOT,
+  process.env.MINAMOTO_EXPLORER_URL ??
+    process.env.TAIRA_EXPLORER_URL ??
+    DEFAULT_EXPLORER_ROOT,
 ).replace(/\/+$/, "");
 const txHashes = String(process.env.EXPLORER_TX_HASHES ?? "")
   .split(/[,\s]+/)
@@ -25,7 +27,7 @@ try {
     }
     const url = `${explorerRoot}/transactions/${hash}`;
     const response = await page.goto(url, {
-      waitUntil: "networkidle",
+      waitUntil: "domcontentloaded",
       timeout: 45_000,
     });
     if (!response?.ok()) {

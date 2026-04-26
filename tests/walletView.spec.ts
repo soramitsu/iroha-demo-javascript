@@ -666,7 +666,7 @@ describe("WalletView", () => {
 
     const faucetButton = wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!;
+      .find((button) => button.text().includes(t("Request XOR")))!;
 
     expect(faucetButton.attributes("disabled")).toBeUndefined();
 
@@ -708,7 +708,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
 
@@ -726,7 +726,7 @@ describe("WalletView", () => {
     );
     expect(session.activeAccount?.localOnly).toBe(false);
     expect(wrapper.text()).toContain(
-      t("Testnet XOR requested: {hash}", { hash: "0xabc" }),
+      t("XOR requested: {hash}", { hash: "0xabc" }),
     );
     expect(wrapper.text()).toContain(
       formatAssetDefinitionLabel("61CtjvNd9T3THAR65GsMVHr82Bjc"),
@@ -765,7 +765,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
 
@@ -798,7 +798,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
 
@@ -839,7 +839,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
 
@@ -869,7 +869,7 @@ describe("WalletView", () => {
 
     const faucetButton = wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!;
+      .find((button) => button.text().includes(t("Request XOR")))!;
 
     expect(faucetButton.attributes("disabled")).toBeUndefined();
   });
@@ -911,7 +911,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
 
@@ -973,7 +973,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
     await vi.advanceTimersByTimeAsync(3_000);
@@ -1007,7 +1007,7 @@ describe("WalletView", () => {
 
     await wrapper
       .findAll("button")
-      .find((button) => button.text().includes(t("Claim Testnet XOR")))!
+      .find((button) => button.text().includes(t("Request XOR")))!
       .trigger("click");
     await flushPromises();
     await vi.advanceTimersByTimeAsync(4_500);

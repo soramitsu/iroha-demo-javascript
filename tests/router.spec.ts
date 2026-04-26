@@ -42,6 +42,15 @@ describe("router guard", () => {
     expect(useSessionStore().hasAccount).toBe(true);
   });
 
+  it("opens the wallet from the root route when a saved account is present", async () => {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(savedSession));
+
+    await router.push("/");
+
+    expect(router.currentRoute.value.path).toBe("/wallet");
+    expect(useSessionStore().hasAccount).toBe(true);
+  });
+
   it("allows the SoraCloud route when a saved account is present", async () => {
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(savedSession));
 
