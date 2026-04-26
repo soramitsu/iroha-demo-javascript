@@ -24,7 +24,6 @@ import {
   buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
-  buildSoraCloudHfDeployRequest,
   submitTransactionEntrypoint,
   submitSignedTransaction,
   extractPipelineStatusKind,
@@ -869,6 +868,25 @@ type SoraCloudHfDeployResponseView = {
   rollout_percent?: number | null;
   raw: Record<string, unknown>;
 };
+
+function buildSoraCloudHfDeployRequest(
+  input: Omit<SoraCloudHfDeployInput, "toriiUrl" | "apiToken" | "accountId"> & {
+    privateKeyHex: string;
+  },
+): Record<string, unknown> {
+  return {
+    repo_id: input.repoId,
+    revision: input.revision,
+    model_name: input.modelName,
+    service_name: input.serviceName,
+    apartment_name: input.apartmentName,
+    storage_class: input.storageClass,
+    lease_term_ms: input.leaseTermMs,
+    lease_asset_definition_id: input.leaseAssetDefinitionId,
+    base_fee_nanos: input.baseFeeNanos,
+    private_key_hex: input.privateKeyHex,
+  };
+}
 
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;

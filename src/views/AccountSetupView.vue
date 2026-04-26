@@ -564,7 +564,7 @@ import {
   parseWalletBackupPayload,
   type ConfidentialWalletBackupMetadata,
 } from "@/utils/walletBackup";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
 const session = useSessionStore();
@@ -588,13 +588,13 @@ watch(
   () => session.connection,
   (value) => {
     const nextConnection = {
-      toriiUrl: value.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: value.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+      toriiUrl: value.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+      chainId: value.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
       networkPrefix:
-        value.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        value.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
       assetDefinitionId:
         value.assetDefinitionId ||
-        TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+        DEFAULT_CHAIN_PRESET.connection.assetDefinitionId,
     };
     connectionForm.toriiUrl = nextConnection.toriiUrl;
     connectionForm.chainId = nextConnection.chainId;

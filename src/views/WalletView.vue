@@ -16,6 +16,7 @@
         <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
       </div>
       <div
+        v-if="!faucetDisabled"
         class="wallet-faucet-panel"
         :class="{ 'wallet-faucet-panel-priority': showFundingPriority }"
       >
@@ -721,9 +722,13 @@ const primaryAssetLabel = computed(() => {
 const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
 );
+const faucetDisabled = import.meta.env.VITE_DISABLE_FAUCET === "true";
 const canRequestFaucet = computed(() =>
   Boolean(
-    session.hasAccount && session.connection.toriiUrl && requestAccountId.value,
+    !faucetDisabled &&
+      session.hasAccount &&
+      session.connection.toriiUrl &&
+      requestAccountId.value,
   ),
 );
 const showFundingPriority = computed(() =>

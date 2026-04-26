@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import {
   normalizeChainIdValue,
   normalizeNetworkPrefixValue,
@@ -64,7 +64,7 @@ const defaultUser = (): UserProfile => ({
 
 const defaultState = (): SessionState => ({
   hydrated: false,
-  connection: { ...TAIRA_CHAIN_PRESET.connection },
+  connection: { ...DEFAULT_CHAIN_PRESET.connection },
   authority: {
     accountId: "",
     privateKeyHex: "",
@@ -201,7 +201,7 @@ const normalizeUser = (
 ): UserProfile => {
   const normalized = { ...defaultUser(), ...user };
   const networkPrefix =
-    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix;
+    options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix;
   const derivedAccountAddresses = deriveAccountAddressesFromProfile(
     normalized,
     networkPrefix,
@@ -237,7 +237,7 @@ const normalizeAuthority = (
 ): AuthorityProfile => ({
   accountId: normalizeAccountIdLiteralForNetwork(
     authority.accountId,
-    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
   ),
   privateKeyHex: trimString(authority.privateKeyHex),
   hasStoredSecret: Boolean(authority.hasStoredSecret),
@@ -246,16 +246,16 @@ const normalizeAuthority = (
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
 ): ConnectionConfig => {
-  let toriiUrl = TAIRA_CHAIN_PRESET.connection.toriiUrl;
+  let toriiUrl = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
   let endpointValid = true;
   try {
     toriiUrl = normalizeEndpointUrl(
-      String(partial?.toriiUrl ?? TAIRA_CHAIN_PRESET.connection.toriiUrl),
+      String(partial?.toriiUrl ?? DEFAULT_CHAIN_PRESET.connection.toriiUrl),
     );
   } catch (_error) {
     endpointValid = false;
   }
-  const fallbackConnection = TAIRA_CHAIN_PRESET.connection;
+  const fallbackConnection = DEFAULT_CHAIN_PRESET.connection;
   const chainId = endpointValid
     ? (normalizeChainIdValue(partial?.chainId) ?? fallbackConnection.chainId)
     : fallbackConnection.chainId;

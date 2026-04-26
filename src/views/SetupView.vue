@@ -182,7 +182,7 @@ import {
   registerAccount,
   storeAccountSecret,
 } from "@/services/iroha";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
@@ -244,14 +244,14 @@ watch(
   () => session.connection,
   (value) => {
     const nextConnection = {
-      ...TAIRA_CHAIN_PRESET.connection,
-      toriiUrl: value.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: value.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+      ...DEFAULT_CHAIN_PRESET.connection,
+      toriiUrl: value.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+      chainId: value.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
       networkPrefix:
-        value.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        value.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
       assetDefinitionId:
         value.assetDefinitionId ||
-        TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
+        DEFAULT_CHAIN_PRESET.connection.assetDefinitionId,
     };
     Object.assign(connectionForm, nextConnection);
     assetDefinitionDraft.value = "";
@@ -335,13 +335,13 @@ const saveConnection = () => {
   const nextAssetDefinitionId =
     assetDefinitionDraft.value.trim() ||
     connectionForm.assetDefinitionId ||
-    TAIRA_CHAIN_PRESET.connection.assetDefinitionId;
+    DEFAULT_CHAIN_PRESET.connection.assetDefinitionId;
   const nextConnection = {
-    toriiUrl: connectionForm.toriiUrl || TAIRA_CHAIN_PRESET.connection.toriiUrl,
-    chainId: connectionForm.chainId || TAIRA_CHAIN_PRESET.connection.chainId,
+    toriiUrl: connectionForm.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+    chainId: connectionForm.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
     networkPrefix:
       connectionForm.networkPrefix ??
-      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     assetDefinitionId: nextAssetDefinitionId,
   };
   Object.assign(connectionForm, nextConnection);

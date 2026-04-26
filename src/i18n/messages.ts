@@ -140,7 +140,7 @@ export const LOCALE_DIRECTIONS: Record<SupportedLocale, LocaleDirection> = {
 const JA_MANUAL_TRANSLATIONS: TranslationTable = {
   "Iroha Points": "Irohaポイント",
   "Torii control deck": "Toriiコントロールデッキ",
-  "Modern Torii-connected wallet": "TAIRAテストネット用ウォレット",
+  "Modern Torii-connected wallet": "SORA Nexusウォレット",
   Torii: "Torii",
   Chain: "チェーン",
   "Asset not set": "アセット未設定",
