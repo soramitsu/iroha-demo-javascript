@@ -19,7 +19,7 @@ const macPacketEngineExecutableName = "sora-vpn-packet-engine";
 const defaultMacHelperBundleId = "org.sora.wallet.demo.vpn-controller";
 const defaultMacPacketTunnelBundleId = "org.sora.wallet.demo.packet-tunnel";
 const defaultMacAppGroupId = "group.org.sora.wallet.demo.vpn";
-const defaultMacManagerDescription = "TAIRA Wallet VPN";
+const defaultMacManagerDescription = "SORA Wallet VPN";
 const defaultMacNetworkExtensionEntitlement = "packet-tunnel-provider";
 
 const parsePlatformArg = () => {

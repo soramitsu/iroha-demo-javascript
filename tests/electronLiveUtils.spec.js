@@ -79,7 +79,7 @@ describe("electron live e2e utils", () => {
   it("builds a JSON-RPC tools/list request for MCP discovery", () => {
     expect(buildToriiMcpToolsListRequest()).toEqual({
       jsonrpc: "2.0",
-      id: "taira-vpn-surface",
+      id: "torii-vpn-surface",
       method: "tools/list",
       params: {},
     });
@@ -247,7 +247,7 @@ describe("electron live e2e utils", () => {
   it("detects retryable faucet 400 responses", () => {
     expect(
       isRetryableFaucetBadRequest(
-        "Faucet request failed (400): TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
+        "Faucet request failed (400): The network rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
       ),
     ).toBe(true);
     expect(

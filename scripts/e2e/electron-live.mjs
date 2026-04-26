@@ -263,7 +263,7 @@ async function resolveBootstrapFlow(page) {
     try {
       const fundedFlow = await runFundedFlow(page, cachedFundedWallet);
       console.log(
-        `Reused cached TAIRA funded wallet ${fundedFlow.i105AccountId} with ${fundedFlow.quantity} units on ${fundedFlow.assetId}.`,
+        `Reused cached live E2E funded wallet ${fundedFlow.i105AccountId} with ${fundedFlow.quantity} units on ${fundedFlow.assetId}.`,
       );
       writeCachedFundedWalletConfig(fundedFlow);
       return fundedFlow;
@@ -296,8 +296,8 @@ function assertTairaTarget(baseUrl, chain) {
   if (!tairaToriiHosts.has(host) || chain !== tairaChainId) {
     throw new Error(
       [
-        "This wallet build is TAIRA-only.",
-        `Use Torii URL ${tairaToriiUrl} and chain ID ${tairaChainId}.`,
+        "This live E2E harness is TAIRA-faucet-oriented.",
+        `Use Torii URL ${tairaToriiUrl} and chain ID ${tairaChainId}, or adapt the harness with a funded mainnet account flow first.`,
         `Received Torii URL ${baseUrl} and chain ID ${chain}.`,
       ].join(" "),
     );
@@ -544,7 +544,7 @@ async function runFaucetFlow(page) {
         !decimalQuantityEquals(fundedBalance.quantity, expectedFaucetQuantity)
       ) {
         throw new Error(
-          `Fresh TAIRA faucet claim should fund ${expectedFaucetQuantity} XOR, observed ${fundedBalance.quantity} on ${assetId}.`,
+          `Fresh faucet claim should fund ${expectedFaucetQuantity} XOR, observed ${fundedBalance.quantity} on ${assetId}.`,
         );
       }
 
@@ -578,7 +578,7 @@ async function runFaucetFlow(page) {
       lastError = error;
       if (attempt < 2 && isRetryableFaucetBadRequest(String(error ?? ""))) {
         console.log(
-          `Faucet probe attempt ${attempt + 1} hit a retryable TAIRA 400; retrying with a fresh account.`,
+          `Faucet probe attempt ${attempt + 1} hit a retryable 400; retrying with a fresh account.`,
         );
         continue;
       }
@@ -726,7 +726,7 @@ async function runFundedFlow(page, fundedWallet) {
   }
 
   console.log(
-    `Using funded TAIRA account ${fundedBootstrap.i105AccountId} with ${fundedBootstrap.quantity} units on ${fundedBootstrap.assetId}.`,
+    `Using funded live E2E account ${fundedBootstrap.i105AccountId} with ${fundedBootstrap.quantity} units on ${fundedBootstrap.assetId}.`,
   );
 
   return fundedBootstrap;
@@ -1198,7 +1198,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
 
   if (!confidentialTransferProbe?.ok) {
     throw new Error(
-      `TAIRA confidential transfer probe failed at stage ${String(
+      `Live confidential transfer probe failed at stage ${String(
         confidentialTransferProbe?.stage ?? "unknown",
       )} (tx ${String(confidentialTransferProbe?.txHashHex ?? "unknown")}). Probe: ${JSON.stringify(
         confidentialTransferProbe,
@@ -1946,7 +1946,7 @@ async function waitForAccountView(page) {
 }
 
 async function configureConnection() {
-  // Connection fields are fixed in TAIRA-only builds; no UI input required here.
+  // Connection fields are fixed by the current live E2E target; no UI input required here.
 }
 
 async function clickButton(page, name) {

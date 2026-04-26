@@ -6,7 +6,7 @@ private let controllerKind = "macos-network-extension"
 private let controllerVersion = "1.0.0"
 private let defaultProviderBundleId = "org.sora.wallet.demo.packet-tunnel"
 private let defaultAppGroupId = "group.org.sora.wallet.demo.vpn"
-private let defaultManagerDescription = "TAIRA Wallet VPN"
+private let defaultManagerDescription = "SORA Wallet VPN"
 private let connectPollTimeoutNs: UInt64 = 15_000_000_000
 private let disconnectPollTimeoutNs: UInt64 = 10_000_000_000
 private let systemExtensionRequestTimeoutNs: UInt64 = 20_000_000_000
@@ -533,7 +533,7 @@ private final class SystemExtensionRequestBridge: NSObject, OSSystemExtensionReq
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
         finish(
             error: ControllerError.systemExtensionApprovalRequired(
-                "Approve the TAIRA Wallet VPN system extension in System Settings, then retry the connection."
+                "Approve the SORA Wallet VPN system extension in System Settings, then retry the connection."
             )
         )
     }

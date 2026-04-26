@@ -44,7 +44,7 @@ const requiredToriiVpnMcpToolNames = [
   "iroha.vpn.receipts.list",
 ];
 
-export function buildToriiMcpToolsListRequest(id = "taira-vpn-surface") {
+export function buildToriiMcpToolsListRequest(id = "torii-vpn-surface") {
   return {
     jsonrpc: "2.0",
     id,

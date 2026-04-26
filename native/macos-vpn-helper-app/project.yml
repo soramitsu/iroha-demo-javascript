@@ -54,7 +54,7 @@ targets:
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         OTHER_SWIFT_FLAGS: "$(inherited) -parse-as-library"
         VPN_APP_GROUP_ID: group.org.sora.wallet.demo.vpn
-        VPN_MANAGER_DESCRIPTION: TAIRA Wallet VPN
+        VPN_MANAGER_DESCRIPTION: SORA Wallet VPN
         VPN_NETWORK_EXTENSION_ENTITLEMENT: packet-tunnel-provider
         VPN_PACKET_TUNNEL_BUNDLE_ID: org.sora.wallet.demo.packet-tunnel
     dependencies:

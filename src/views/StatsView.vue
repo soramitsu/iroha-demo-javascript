@@ -9,7 +9,7 @@
             <p class="stats-subhead">
               {{
                 t(
-                  "Live supply, holder concentration, and consensus telemetry for the TAIRA public lane.",
+                  "Live supply, holder concentration, and consensus telemetry for the active public lane.",
                 )
               }}
             </p>
@@ -20,11 +20,11 @@
             </button>
             <a
               class="secondary stats-link"
-              :href="TAIRA_EXPLORER_URL"
+              :href="DEFAULT_EXPLORER_URL"
               target="_blank"
               rel="noopener noreferrer"
             >
-              {{ t("Open Taira Explorer") }}
+              {{ t("Open explorer") }}
             </a>
           </div>
         </div>
@@ -347,8 +347,8 @@
 import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
-  TAIRA_EXPLORER_URL,
-  TAIRA_XOR_ASSET_DEFINITION_ID,
+  DEFAULT_EXPLORER_URL,
+  SORA_XOR_ASSET_DEFINITION_ID,
 } from "@/constants/chains";
 import { getNetworkStats } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
@@ -363,7 +363,7 @@ const loading = ref(false);
 const loadError = ref("");
 const requestGeneration = ref(0);
 
-const assetDefinitionId = computed(() => TAIRA_XOR_ASSET_DEFINITION_ID);
+const assetDefinitionId = computed(() => SORA_XOR_ASSET_DEFINITION_ID);
 const definitionLabel = computed(() =>
   formatAssetDefinitionLabel(assetDefinitionId.value, "XOR"),
 );
@@ -488,11 +488,11 @@ const statusMessage = computed(() => {
   }
   if (stats.value) {
     return t(
-      "TAIRA is publishing live explorer, supply, and consensus data for the XOR lane.",
+      "The active network is publishing live explorer, supply, and consensus data for the XOR lane.",
     );
   }
   if (loading.value) {
-    return t("Querying TAIRA explorer and status surfaces.");
+    return t("Querying explorer and status surfaces.");
   }
   return "";
 });
@@ -842,7 +842,7 @@ const refresh = async () => {
     stats.value = null;
     loadError.value = toUserFacingErrorMessage(
       error,
-      t("Unable to load TAIRA stats."),
+      t("Unable to load network stats."),
     );
   } finally {
     if (generation === requestGeneration.value) {

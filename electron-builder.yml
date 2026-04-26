@@ -1,5 +1,5 @@
 appId: org.sora.wallet.demo
-productName: TAIRA Wallet
+productName: SORA Wallet
 directories:
   output: release
   buildResources: buildResources

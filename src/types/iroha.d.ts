@@ -225,6 +225,7 @@ export interface VpnAuthContext {
   toriiUrl: string;
   accountId: string;
   privateKeyHex: string;
+  networkPrefix?: number;
 }
 
 export interface VpnAvailability {
@@ -915,12 +916,14 @@ export interface IrohaBridge {
   connectVpn(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     privateKeyHex?: string;
     exitClass: VpnExitClass;
   }): Promise<VpnStatus>;
   disconnectVpn(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     privateKeyHex?: string;
   }): Promise<VpnStatus>;
   repairVpn(input: Partial<VpnAuthContext>): Promise<VpnStatus>;

@@ -486,6 +486,7 @@ describe("VpnRuntime", () => {
     await runtime.connect({
       toriiUrl: "https://taira.sora.org",
       accountId: "sorauLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",
     });
@@ -502,6 +503,7 @@ describe("VpnRuntime", () => {
     await runtime.getStatus({
       toriiUrl: "https://taira.sora.org",
       accountId: "sorauLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
     });
     expect(getVpnSessionMock).toHaveBeenCalledWith("sess_1", {
@@ -514,6 +516,7 @@ describe("VpnRuntime", () => {
     await runtime.disconnect({
       toriiUrl: "https://taira.sora.org",
       accountId: "sorauLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
     });
     expect(deleteVpnSessionMock).toHaveBeenCalledWith("sess_1", {
@@ -526,6 +529,7 @@ describe("VpnRuntime", () => {
     await runtime.listReceipts({
       toriiUrl: "https://taira.sora.org",
       accountId: "sorauLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
     });
     expect(listVpnReceiptsMock).toHaveBeenCalledWith({

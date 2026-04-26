@@ -89,7 +89,7 @@ const buildFaucetRequestErrorMessage = (
     return detail;
   }
   if (response.status === 400 && isNoritoResponse(response)) {
-    return "TAIRA rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.";
+    return "The network rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.";
   }
   return response.statusText || "Faucet request failed.";
 };

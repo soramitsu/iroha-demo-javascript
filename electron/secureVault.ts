@@ -10,6 +10,78 @@ const trimString = (value: unknown): string => String(value ?? "").trim();
 const normalizeAccountIdKey = (accountId: string): string =>
   trimString(accountId).toLowerCase();
 
+const SORA_I105_PREFIX = "sorau";
+const SORA_I105_FULLWIDTH_PREFIX = "\uff53\uff4f\uff52\uff41u";
+const TAIRA_I105_PREFIX = "testu";
+const GENERIC_I105_PREFIX_RE = /^n\d{1,4}u/;
+
+const unique = (values: string[]): string[] => {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    if (!value || seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    return true;
+  });
+};
+
+const parseI105AccountKeySuffix = (accountId: string): string | null => {
+  const normalized = normalizeAccountIdKey(accountId);
+  if (normalized.startsWith(SORA_I105_PREFIX)) {
+    return normalized.slice(SORA_I105_PREFIX.length);
+  }
+  if (normalized.startsWith(SORA_I105_FULLWIDTH_PREFIX)) {
+    return normalized.slice(SORA_I105_FULLWIDTH_PREFIX.length);
+  }
+  if (normalized.startsWith(TAIRA_I105_PREFIX)) {
+    return normalized.slice(TAIRA_I105_PREFIX.length);
+  }
+  const genericMatch = normalized.match(GENERIC_I105_PREFIX_RE);
+  if (genericMatch) {
+    return normalized.slice(genericMatch[0].length);
+  }
+  return null;
+};
+
+const accountSecretLookupKeys = (accountId: string): string[] => {
+  const normalized = normalizeAccountIdKey(accountId);
+  const suffix = parseI105AccountKeySuffix(normalized);
+  if (!suffix) {
+    return normalized ? [normalized] : [];
+  }
+  return unique([
+    `i105:${suffix}`,
+    normalized,
+    `${SORA_I105_PREFIX}${suffix}`,
+    `${SORA_I105_FULLWIDTH_PREFIX}${suffix}`,
+    `${TAIRA_I105_PREFIX}${suffix}`,
+  ]);
+};
+
+const normalizeAccountSecretStorageKey = (accountId: string): string =>
+  accountSecretLookupKeys(accountId)[0] ?? normalizeAccountIdKey(accountId);
+
+const findAccountSecret = (
+  accountSecrets: Record<string, string>,
+  accountId: string,
+): string | undefined => {
+  const directMatch = accountSecretLookupKeys(accountId)
+    .map((key) => accountSecrets[key])
+    .find(Boolean);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const suffix = parseI105AccountKeySuffix(accountId);
+  if (!suffix) {
+    return undefined;
+  }
+  return Object.entries(accountSecrets).find(
+    ([key]) => parseI105AccountKeySuffix(key) === suffix,
+  )?.[1];
+};
+
 const normalizeHex = (value: string, label: string): string => {
   const normalized = trimString(value).replace(/^0x/i, "");
   if (!/^[0-9a-f]+$/i.test(normalized) || normalized.length % 2 !== 0) {
@@ -99,16 +171,15 @@ export class SecureVault {
   }): Promise<void> {
     this.ensureAvailable();
     const vault = await this.load();
-    vault.accountSecrets[normalizeAccountIdKey(input.accountId)] = this.encrypt(
-      normalizeHex(input.privateKeyHex, "privateKeyHex"),
-    );
+    vault.accountSecrets[normalizeAccountSecretStorageKey(input.accountId)] =
+      this.encrypt(normalizeHex(input.privateKeyHex, "privateKeyHex"));
     await this.persist(vault);
   }
 
   async getAccountSecret(accountId: string): Promise<string | null> {
     this.ensureAvailable();
     const vault = await this.load();
-    const encrypted = vault.accountSecrets[normalizeAccountIdKey(accountId)];
+    const encrypted = findAccountSecret(vault.accountSecrets, accountId);
     if (!encrypted) {
       return null;
     }
@@ -119,11 +190,10 @@ export class SecureVault {
     accountIds: string[],
   ): Promise<Record<string, boolean>> {
     const vault = this.isAvailable() ? await this.load() : emptyVault();
-    const known = new Set(Object.keys(vault.accountSecrets));
     return Object.fromEntries(
       accountIds.map((accountId) => [
         accountId,
-        known.has(normalizeAccountIdKey(accountId)),
+        Boolean(findAccountSecret(vault.accountSecrets, accountId)),
       ]),
     );
   }

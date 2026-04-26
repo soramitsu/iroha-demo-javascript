@@ -8,9 +8,10 @@ import {
   formatSurfaceProbeAttempt,
 } from "./electron-live-utils.mjs";
 
-const tairaToriiUrl = "https://taira.sora.org";
+const defaultToriiUrl = "https://minamoto.sora.org";
 const toriiUrl =
-  String(process.env.E2E_TORII_URL ?? tairaToriiUrl).trim() || tairaToriiUrl;
+  String(process.env.E2E_TORII_URL ?? defaultToriiUrl).trim() ||
+  defaultToriiUrl;
 
 async function main() {
   const { healthUrls, mcpUrl, openApiUrl, vpnProfileUrl } =
@@ -20,17 +21,17 @@ async function main() {
 
   const mcpCapabilities = await probeJson(
     mcpUrl,
-    "TAIRA MCP surface",
+    "Torii MCP surface",
     failures,
   );
-  const openApi = await probeJson(openApiUrl, "TAIRA OpenAPI", failures);
+  const openApi = await probeJson(openApiUrl, "Torii OpenAPI", failures);
   const mcpToolList = await probeJsonPost(
     mcpUrl,
     buildToriiMcpToolsListRequest(),
-    "TAIRA MCP tool registry",
+    "Torii MCP tool registry",
     failures,
   );
-  await probeJson(vpnProfileUrl, "TAIRA VPN profile", failures);
+  await probeJson(vpnProfileUrl, "Torii VPN profile", failures);
 
   if (mcpCapabilities) {
     const protocolVersion = String(
@@ -38,7 +39,7 @@ async function main() {
     ).trim();
     if (!protocolVersion) {
       failures.push(
-        "TAIRA MCP surface is missing a `protocolVersion` in the capabilities response.",
+        "Torii MCP surface is missing a `protocolVersion` in the capabilities response.",
       );
     }
   }
@@ -47,7 +48,7 @@ async function main() {
     const missingPaths = findMissingToriiVpnOpenApiPaths(openApi);
     if (missingPaths.length) {
       failures.push(
-        `TAIRA OpenAPI is missing VPN paths: ${missingPaths.join(", ")}`,
+        `Torii OpenAPI is missing VPN paths: ${missingPaths.join(", ")}`,
       );
     }
   }
@@ -56,17 +57,17 @@ async function main() {
     const missingTools = findMissingToriiVpnMcpTools(mcpToolList);
     if (missingTools.length) {
       failures.push(
-        `TAIRA MCP tool registry is missing VPN tools: ${missingTools.join(", ")}`,
+        `Torii MCP tool registry is missing VPN tools: ${missingTools.join(", ")}`,
       );
     }
   }
 
   if (failures.length) {
-    throw new Error(`TAIRA VPN surface is incomplete. ${failures.join(" | ")}`);
+    throw new Error(`Torii VPN surface is incomplete. ${failures.join(" | ")}`);
   }
 
   console.log(
-    `TAIRA VPN surface verified: health ok, MCP ok, OpenAPI ok, tool registry ok, VPN profile ok at ${toriiUrl}.`,
+    `Torii VPN surface verified: health ok, MCP ok, OpenAPI ok, tool registry ok, VPN profile ok at ${toriiUrl}.`,
   );
 }
 
@@ -96,7 +97,7 @@ async function preflightHealth(healthUrls) {
     }
   }
   throw new Error(
-    `TAIRA health preflight failed. Attempts: ${attempts.join(" | ")}`,
+    `Torii health preflight failed. Attempts: ${attempts.join(" | ")}`,
   );
 }
 

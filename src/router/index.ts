@@ -19,7 +19,7 @@ import { useSessionStore } from "@/stores/session";
 const routes = [
   {
     path: "/",
-    redirect: "/account",
+    redirect: "/wallet",
   },
   {
     path: "/account",
@@ -148,10 +148,10 @@ const router = createRouter({
   routes,
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const session = useSessionStore();
   if (!session.hydrated) {
-    session.hydrate();
+    await session.hydrate();
   }
   const isPublicRoute = to.path === "/account" || to.path === "/settings";
   if (!session.hasAccount && !isPublicRoute) {

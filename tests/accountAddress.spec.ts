@@ -93,6 +93,26 @@ describe("accountAddress helper", () => {
     ).toBe(derived.accountId);
   });
 
+  it("preserves detected native account prefixes when no network override is supplied", () => {
+    const taira = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 369,
+    });
+    const mainnet = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex: SAMPLE_PUBLIC_KEY_HEX,
+      networkPrefix: 753,
+    });
+
+    expect(
+      normalizeCanonicalAccountIdLiteral(taira.i105AccountId, "accountId"),
+    ).toBe(taira.i105AccountId);
+    expect(
+      normalizeCanonicalAccountIdLiteral(mainnet.i105AccountId, "accountId"),
+    ).toBe(mainnet.i105AccountId);
+  });
+
   it("rewrites old SORA compatibility literals to the active network prefix", () => {
     const derived = deriveAccountAddressView({
       domain: "default",

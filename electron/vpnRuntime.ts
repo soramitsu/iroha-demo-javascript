@@ -17,7 +17,7 @@ import type {
   VpnReceipt,
   VpnStatus,
 } from "../src/types/iroha";
-import { normalizeTairaAccountIdLiteral } from "../src/utils/accountId";
+import { normalizeAccountIdLiteralForNetwork } from "../src/utils/accountId";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 
 type VpnAvailabilityInput = {
@@ -33,6 +33,7 @@ type VpnStatusInput = Partial<VpnAuthContext>;
 type ActiveVpnSession = {
   toriiUrl: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex: string;
   sessionId: string;
   exitClass: VpnExitClass;
@@ -103,8 +104,15 @@ const toPrivateKeyBuffer = (privateKeyHex: string) =>
 
 const nowMs = () => Date.now();
 
-const normalizeVpnAccountId = (value: string, label: string) => {
-  const normalized = normalizeTairaAccountIdLiteral(value).trim();
+const normalizeVpnAccountId = (
+  value: string,
+  label: string,
+  networkPrefix?: number,
+) => {
+  const normalized = normalizeAccountIdLiteralForNetwork(
+    value,
+    networkPrefix,
+  ).trim();
   if (!normalized) {
     throw new Error(`${label} is required.`);
   }
@@ -498,7 +506,11 @@ export class VpnRuntime {
     }
 
     const exitClass = normalizeProfileExitClass(profile, input.exitClass);
-    const accountId = normalizeVpnAccountId(input.accountId, "accountId");
+    const accountId = normalizeVpnAccountId(
+      input.accountId,
+      "accountId",
+      input.networkPrefix,
+    );
     let session: Awaited<ReturnType<ToriiClient["createVpnSession"]>> | null =
       null;
     try {
@@ -761,6 +773,7 @@ export class VpnRuntime {
     return {
       toriiUrl: auth.toriiUrl,
       accountId: auth.accountId,
+      networkPrefix: auth.networkPrefix,
       privateKeyHex: auth.privateKeyHex,
       sessionId: session.sessionId,
       exitClass: isVpnExitClass(session.exitClass)
@@ -809,13 +822,19 @@ export class VpnRuntime {
     const toriiUrl = input?.toriiUrl ?? session?.toriiUrl;
     const accountIdRaw = input?.accountId ?? session?.accountId;
     const privateKeyHex = input?.privateKeyHex ?? session?.privateKeyHex;
+    const networkPrefix = input?.networkPrefix ?? session?.networkPrefix;
     if (!toriiUrl || !accountIdRaw || !privateKeyHex) {
       return null;
     }
     return {
       toriiUrl,
-      accountId: normalizeVpnAccountId(accountIdRaw, "accountId"),
+      accountId: normalizeVpnAccountId(
+        accountIdRaw,
+        "accountId",
+        networkPrefix,
+      ),
       privateKeyHex,
+      networkPrefix,
     };
   }
 

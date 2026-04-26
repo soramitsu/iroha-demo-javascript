@@ -197,6 +197,7 @@ describe("VpnView", () => {
     expect(getVpnStatusMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
+      networkPrefix: 369,
     });
     expect(wrapper.text()).toContain("Sora VPN");
     expect(wrapper.text()).toContain(defaultProfile.relayEndpoint);
@@ -216,6 +217,7 @@ describe("VpnView", () => {
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
+      networkPrefix: 369,
       privateKeyHex: "cd".repeat(32),
       exitClass: "standard",
     });
@@ -234,10 +236,12 @@ describe("VpnView", () => {
     expect(getVpnStatusMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "testuLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
     });
     expect(listVpnReceiptsMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "testuLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
     });
 
     await wrapper.get("button:not(.secondary)").trigger("click");
@@ -246,6 +250,7 @@ describe("VpnView", () => {
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "testuLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       privateKeyHex: "cd".repeat(32),
       exitClass: "standard",
     });
@@ -275,6 +280,7 @@ describe("VpnView", () => {
     expect(disconnectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
+      networkPrefix: 369,
       privateKeyHex: "cd".repeat(32),
     });
     wrapper.unmount();
@@ -323,6 +329,7 @@ describe("VpnView", () => {
     expect(repairVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: "alice@wonderland",
+      networkPrefix: 369,
     });
     wrapper.unmount();
   });

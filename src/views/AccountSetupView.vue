@@ -97,7 +97,7 @@
             <p class="helper">
               {{
                 t(
-                  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not a TAIRA dataspace alias.",
+                  "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
                   {
                     domain: t("default"),
                   },
@@ -231,7 +231,7 @@
             </div>
             <div class="wizard-review-item">
               <p class="meta-label">{{ t("Connection") }}</p>
-              <p class="meta-value">{{ t("TAIRA Testnet") }}</p>
+              <p class="meta-value">{{ activeNetworkLabel }}</p>
             </div>
             <div class="wizard-review-item">
               <p class="meta-label">{{ t("I105 Account ID") }}</p>
@@ -456,12 +456,11 @@
             </span>
             <button
               class="secondary"
-              :disabled="account.accountId === session.activeAccountId"
               @click="setActiveAccount(account.accountId)"
             >
               {{
                 account.accountId === session.activeAccountId
-                  ? t("Selected")
+                  ? t("Open wallet")
                   : t("Switch to this account")
               }}
             </button>
@@ -564,7 +563,7 @@ import {
   parseWalletBackupPayload,
   type ConfidentialWalletBackupMetadata,
 } from "@/utils/walletBackup";
-import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
+import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 
 const session = useSessionStore();
@@ -583,6 +582,17 @@ const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
   chainId: session.connection.chainId,
 });
+const activeNetworkPreset = computed(() =>
+  CHAIN_PRESETS.find(
+    (preset) =>
+      preset.connection.toriiUrl === session.connection.toriiUrl &&
+      preset.connection.chainId === session.connection.chainId &&
+      preset.connection.networkPrefix === session.connection.networkPrefix,
+  ),
+);
+const activeNetworkLabel = computed(
+  () => activeNetworkPreset.value?.label ?? t("Custom endpoint"),
+);
 
 watch(
   () => session.connection,
@@ -727,7 +737,7 @@ const copyableRecoveryPhrase = computed(() =>
 );
 const registrationChecklist = computed(() => [
   {
-    label: t("TAIRA connection ready"),
+    label: t("Network connection ready"),
     done: Boolean(connectionForm.toriiUrl && connectionForm.chainId),
   },
   {
@@ -805,13 +815,16 @@ const openBackupImportPicker = () => {
   backupFileInput.value.click();
 };
 
-const setActiveAccount = (accountId: string) => {
+const setActiveAccount = async (accountId: string) => {
   session.setActiveAccount(accountId);
   session.persistState();
   const active = session.activeAccount;
   if (active) {
     aliasInput.value = active.displayName;
     domainInput.value = active.domain;
+  }
+  if (session.hasAccount) {
+    await router.push("/wallet");
   }
 };
 
@@ -1009,7 +1022,7 @@ const saveGeneratedIdentity = async () => {
   }
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
     onboardingError.value = t(
-      "TAIRA connection is unavailable. Reload and try again.",
+      "Network connection is unavailable. Reload and try again.",
     );
     return;
   }
@@ -1098,7 +1111,7 @@ const startConnectPairing = async () => {
   connectError.value = "";
   if (!connectionForm.toriiUrl || !connectionForm.chainId) {
     connectError.value = t(
-      "TAIRA connection is unavailable. Reload and try again.",
+      "Network connection is unavailable. Reload and try again.",
     );
     return;
   }

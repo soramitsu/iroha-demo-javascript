@@ -8,12 +8,13 @@ type AccountIdentity = {
 const trimString = (value: unknown) => String(value ?? "").trim();
 const TAIRA_NETWORK_PREFIX = 369;
 const SORA_NETWORK_PREFIX = 753;
+const DEFAULT_NETWORK_PREFIX = SORA_NETWORK_PREFIX;
 const SORA_I105_PREFIX = "sorau";
 const SORA_I105_FULLWIDTH_PREFIX = "ｓｏｒａu";
 const TAIRA_I105_PREFIX = "testu";
 const GENERIC_I105_PREFIX_RE = /^n\d{1,4}u/;
 
-const renderI105PrefixForNetwork = (networkPrefix = TAIRA_NETWORK_PREFIX) => {
+const renderI105PrefixForNetwork = (networkPrefix = DEFAULT_NETWORK_PREFIX) => {
   if (networkPrefix === SORA_NETWORK_PREFIX) {
     return SORA_I105_PREFIX;
   }
@@ -25,7 +26,7 @@ const renderI105PrefixForNetwork = (networkPrefix = TAIRA_NETWORK_PREFIX) => {
 
 export const normalizeAccountIdLiteralForNetwork = (
   value: unknown,
-  networkPrefix = TAIRA_NETWORK_PREFIX,
+  networkPrefix = DEFAULT_NETWORK_PREFIX,
 ) => {
   const literal = trimString(value);
   if (!literal) {
@@ -51,9 +52,12 @@ export const normalizeAccountIdLiteralForNetwork = (
 export const normalizeTairaAccountIdLiteral = (value: unknown) =>
   normalizeAccountIdLiteralForNetwork(value, TAIRA_NETWORK_PREFIX);
 
+export const normalizeMainnetAccountIdLiteral = (value: unknown) =>
+  normalizeAccountIdLiteralForNetwork(value, SORA_NETWORK_PREFIX);
+
 export const getPublicAccountId = (
   account: AccountIdentity | null | undefined,
-  networkPrefix = TAIRA_NETWORK_PREFIX,
+  networkPrefix = DEFAULT_NETWORK_PREFIX,
 ) => {
   return (
     [
@@ -73,7 +77,7 @@ export const getPublicAccountId = (
 export const getAccountDisplayLabel = (
   account: AccountIdentity | null | undefined,
   fallback = "",
-  networkPrefix = TAIRA_NETWORK_PREFIX,
+  networkPrefix = DEFAULT_NETWORK_PREFIX,
 ) => {
   return (
     trimString(account?.displayName) ||

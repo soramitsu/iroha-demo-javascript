@@ -7,6 +7,8 @@ export type ChainPreset = {
   connection: ConnectionConfig;
 };
 
+export const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+
 export const TAIRA_CHAIN_PRESET: ChainPreset = {
   id: "taira-testnet",
   label: "TAIRA Testnet",
@@ -25,15 +27,15 @@ export const MINAMOTO_CHAIN_PRESET: ChainPreset = {
   description: "SORA Nexus mainnet profile.",
   connection: {
     toriiUrl: "https://minamoto.sora.org",
-    chainId: "00000000-0000-0000-0000-000000000000",
-    assetDefinitionId: "",
+    chainId: "sora nexus main net",
+    assetDefinitionId: SORA_XOR_ASSET_DEFINITION_ID,
     networkPrefix: 753,
   },
 };
 
 export const CHAIN_PRESETS: ChainPreset[] = [
-  TAIRA_CHAIN_PRESET,
   MINAMOTO_CHAIN_PRESET,
+  TAIRA_CHAIN_PRESET,
 ];
 
 const envString = (key: string): string | null => {
@@ -53,7 +55,7 @@ const envNumber = (key: string): number | null => {
 const defaultPresetId = envString("VITE_DEFAULT_CHAIN_PRESET");
 const defaultPreset =
   CHAIN_PRESETS.find((preset) => preset.id === defaultPresetId) ??
-  TAIRA_CHAIN_PRESET;
+  MINAMOTO_CHAIN_PRESET;
 
 export const DEFAULT_CHAIN_PRESET: ChainPreset = {
   ...defaultPreset,
@@ -72,5 +74,6 @@ export const DEFAULT_CHAIN_PRESET: ChainPreset = {
   },
 };
 
+export const MINAMOTO_EXPLORER_URL = "https://minamoto-explorer.sora.org";
 export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
-export const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+export const DEFAULT_EXPLORER_URL = MINAMOTO_EXPLORER_URL;
