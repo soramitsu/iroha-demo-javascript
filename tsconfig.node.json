@@ -9,6 +9,7 @@
     "src/utils/confidential.ts",
     "src/utils/errorMessage.ts",
     "src/utils/mnemonic.ts",
+    "src/utils/soracloud.ts",
     "src/utils/walletBackup.ts"
   ],
   "compilerOptions": {

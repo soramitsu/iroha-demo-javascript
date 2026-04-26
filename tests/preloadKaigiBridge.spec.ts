@@ -33,6 +33,7 @@ const RELAY_TX_HASH = "ab".repeat(32);
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
+  clipboardWriteTextMock: vi.fn(),
   ipcInvokeMock: vi.fn(),
   vaultAvailable: true,
   storedAccountSecrets: new Map<string, string>(),
@@ -120,6 +121,34 @@ const mocks = vi.hoisted(() => ({
     encrypted_change_payloads: [Buffer.from([0xde, 0xad])],
     proof: Buffer.from("fee-proof", "utf8"),
   })),
+  buildSoraCloudHfDeployRequestMock: vi.fn(() => ({
+    payload: {
+      repo_id: "openai/demo-model",
+      revision: "main",
+      model_name: "demo-model",
+      service_name: "alice-demo-model",
+      apartment_name: "default",
+      storage_class: "Warm",
+      lease_term_ms: 3_600_000,
+      lease_asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      base_fee_nanos: "1",
+    },
+    provenance: {
+      signer: "test-signer",
+      signature_hex: "11".repeat(64),
+      payload_hash_hex: "22".repeat(32),
+    },
+    generated_service_provenance: {
+      signer: "test-signer",
+      signature_hex: "33".repeat(64),
+      payload_hash_hex: "44".repeat(32),
+    },
+    generated_apartment_provenance: {
+      signer: "test-signer",
+      signature_hex: "55".repeat(64),
+      payload_hash_hex: "66".repeat(32),
+    },
+  })),
   buildPrivateCreateKaigiTransactionMock: vi.fn(() => ({
     transactionEntrypoint: Buffer.from("private-create-entrypoint", "utf8"),
     hash: Buffer.from("aa".repeat(32), "hex"),
@@ -158,6 +187,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => ({
+  clipboard: {
+    writeText: (text: string) => mocks.clipboardWriteTextMock(text),
+  },
   contextBridge: {
     exposeInMainWorld: (name: string, api: unknown) => {
       if (name === "iroha") {
@@ -267,6 +299,7 @@ vi.mock("@iroha/iroha-js", async () => {
     buildJoinKaigiTransaction: mocks.buildJoinKaigiTransactionMock,
     buildEndKaigiTransaction: mocks.buildEndKaigiTransactionMock,
     buildPrivateKaigiFeeSpend: mocks.buildPrivateKaigiFeeSpendMock,
+    buildSoraCloudHfDeployRequest: mocks.buildSoraCloudHfDeployRequestMock,
     buildPrivateCreateKaigiTransaction:
       mocks.buildPrivateCreateKaigiTransactionMock,
     buildPrivateJoinKaigiTransaction:
@@ -355,6 +388,10 @@ const loadBridge = async () => {
     getChainMetadata: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    deploySoraCloudHf: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    copyTextToClipboard: (input: { text: string }) => Promise<void>;
   };
 };
 
@@ -363,6 +400,7 @@ describe("preload Kaigi bridge", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-29T12:00:00.000Z"));
     globalThis.localStorage?.clear();
+    mocks.clipboardWriteTextMock.mockReset();
     mocks.ipcInvokeMock.mockReset();
     mocks.vaultAvailable = true;
     mocks.storedAccountSecrets = new Map<string, string>();
@@ -395,6 +433,7 @@ describe("preload Kaigi bridge", () => {
     mocks.buildTransferAssetTransactionMock.mockClear();
     mocks.buildRegisterAccountAndTransferTransactionMock.mockClear();
     mocks.buildPrivateKaigiFeeSpendMock.mockClear();
+    mocks.buildSoraCloudHfDeployRequestMock.mockClear();
     mocks.buildPrivateCreateKaigiTransactionMock.mockClear();
     mocks.buildPrivateJoinKaigiTransactionMock.mockClear();
     mocks.buildPrivateEndKaigiTransactionMock.mockClear();
@@ -782,6 +821,16 @@ describe("preload Kaigi bridge", () => {
     vi.resetModules();
   });
 
+  it("copies text through the native Electron clipboard", async () => {
+    const bridge = await loadBridge();
+
+    await bridge.copyTextToClipboard({ text: "alpha beta gamma" });
+
+    expect(mocks.clipboardWriteTextMock).toHaveBeenCalledWith(
+      "alpha beta gamma",
+    );
+  });
+
   it("aggregates network stats across explorer, status, and econometrics surfaces", async () => {
     const bridge = await loadBridge();
 
@@ -859,6 +908,73 @@ describe("preload Kaigi bridge", () => {
         method: "GET",
       }),
     );
+  });
+
+  it("posts signed SoraCloud HF deploy provenance without forwarding the private key", async () => {
+    const bridge = await loadBridge();
+    const privateKeyHex = "12".repeat(32);
+    let requestBody: Record<string, unknown> | null = null;
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string) => `canonical:${String(value).trim()}`,
+    );
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "POST" && href.endsWith("/v1/soracloud/hf/deploy")) {
+          requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<
+            string,
+            unknown
+          >;
+          return jsonResponse({
+            ok: true,
+            action: "deploy",
+            service_name: "alice-demo-model",
+            tx_hash_hex: "ab".repeat(32),
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.deploySoraCloudHf({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "  testu-alice  ",
+        privateKeyHex,
+        repoId: "openai/demo-model",
+        revision: "main",
+        modelName: "demo-model",
+        serviceName: "alice-demo-model",
+        apartmentName: "default",
+        storageClass: "warm",
+        leaseTermMs: 3_600_000,
+        leaseAssetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        baseFeeNanos: "1",
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      action: "deploy",
+      service_name: "alice-demo-model",
+      tx_hash_hex: "ab".repeat(32),
+    });
+
+    expect(mocks.buildSoraCloudHfDeployRequestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        privateKeyHex,
+        storageClass: "warm",
+        leaseAssetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      }),
+    );
+    expect(requestBody).toMatchObject({
+      authority: "canonical:testu-alice",
+      payload: expect.any(Object),
+      provenance: expect.any(Object),
+      generated_service_provenance: expect.any(Object),
+      generated_apartment_provenance: expect.any(Object),
+    });
+    expect(requestBody).not.toHaveProperty("private_key");
+    expect(JSON.stringify(requestBody)).not.toContain(privateKeyHex);
   });
 
   it("returns partial network stats when explorer endpoints fail", async () => {

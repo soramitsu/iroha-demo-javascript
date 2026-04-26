@@ -192,8 +192,8 @@
             </span>
           </div>
           <div class="backup-actions">
-            <button class="secondary" @click="downloadBackup('manual')">
-              {{ t("Download backup") }}
+            <button class="secondary" @click="copyRecoveryPhrase">
+              {{ t("Copy phrase") }}
             </button>
             <button class="secondary" @click="downloadBackup('icloud')">
               {{ t("Store for iCloud Drive") }}
@@ -202,6 +202,12 @@
               {{ t("Store for Google Drive") }}
             </button>
           </div>
+          <p v-if="backupCopyMessage" class="helper success">
+            {{ backupCopyMessage }}
+          </p>
+          <p v-if="backupCopyError" class="helper error">
+            {{ backupCopyError }}
+          </p>
           <label class="backup-confirm">
             <input v-model="backupConfirmed" type="checkbox" />
             <span>{{ t("I stored my recovery phrase safely.") }}</span>
@@ -379,8 +385,8 @@
           </span>
         </div>
         <div class="backup-actions">
-          <button class="secondary" @click="downloadBackup('manual')">
-            {{ t("Download backup") }}
+          <button class="secondary" @click="copyRecoveryPhrase">
+            {{ t("Copy phrase") }}
           </button>
           <button class="secondary" @click="downloadBackup('icloud')">
             {{ t("Store for iCloud Drive") }}
@@ -389,6 +395,12 @@
             {{ t("Store for Google Drive") }}
           </button>
         </div>
+        <p v-if="backupCopyMessage" class="helper success">
+          {{ backupCopyMessage }}
+        </p>
+        <p v-if="backupCopyError" class="helper error">
+          {{ backupCopyError }}
+        </p>
         <label class="backup-confirm">
           <input v-model="backupConfirmed" type="checkbox" />
           <span>{{ t("I stored my recovery phrase safely.") }}</span>
@@ -423,7 +435,11 @@
             <p class="account-name">
               {{ getAccountLabel(account) }}
             </p>
-            <p class="helper monospace">{{ getPublicAccountId(account) }}</p>
+            <p class="helper monospace">
+              {{
+                getPublicAccountId(account, session.connection.networkPrefix)
+              }}
+            </p>
           </div>
           <div class="account-actions">
             <span
@@ -530,6 +546,7 @@ import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import {
   createConnectPreview,
+  copyTextToClipboard,
   deriveAccountAddress,
   derivePublicKey,
   exportConfidentialWalletBackup,
@@ -556,7 +573,11 @@ const { t } = useAppI18n();
 const CONNECT_LAUNCH_PROTOCOL = "irohaconnect";
 const DEFAULT_DOMAIN_LABEL = "default";
 const getAccountLabel = (account: (typeof session.accounts)[number]) =>
-  getAccountDisplayLabel(account, account.accountId);
+  getAccountDisplayLabel(
+    account,
+    account.accountId,
+    session.connection.networkPrefix,
+  );
 
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
@@ -601,6 +622,8 @@ const generateError = ref("");
 const restoreError = ref("");
 const onboardingError = ref("");
 const onboardingStatus = ref("");
+const backupCopyMessage = ref("");
+const backupCopyError = ref("");
 const pendingConfidentialWalletBackup =
   ref<ConfidentialWalletBackupMetadata | null>(null);
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
@@ -655,7 +678,10 @@ const generatedStoredI105AccountId = computed(
     "",
 );
 const generatedVisibleAccountId = computed(() =>
-  getPublicAccountId(generatedAccountSummary.value),
+  getPublicAccountId(
+    generatedAccountSummary.value,
+    session.connection.networkPrefix,
+  ),
 );
 const onboardingStage = computed<"identity" | "backup" | "register">(() => {
   if (!generatedKeys.value) {
@@ -693,6 +719,11 @@ const onboardingSteps = computed(() => [
 ]);
 const showBackupPanel = computed(
   () => mnemonicWords.value.length > 0 && !isRestoreMode.value,
+);
+const copyableRecoveryPhrase = computed(() =>
+  normalizeMnemonicPhrase(
+    mnemonicWords.value.join(" ") || recoveryMnemonic.value,
+  ),
 );
 const registrationChecklist = computed(() => [
   {
@@ -736,6 +767,8 @@ const startNewRegistration = () => {
   restoreError.value = "";
   onboardingStatus.value = "";
   onboardingError.value = "";
+  backupCopyMessage.value = "";
+  backupCopyError.value = "";
   pendingConfidentialWalletBackup.value = null;
 };
 
@@ -797,6 +830,8 @@ const generateRecovery = async () => {
   restoreError.value = "";
   onboardingError.value = "";
   onboardingStatus.value = "";
+  backupCopyMessage.value = "";
+  backupCopyError.value = "";
   accountFlowMode.value = "generate";
   showRestorePanel.value = false;
   restorePhraseInput.value = "";
@@ -852,6 +887,8 @@ const restoreRecovery = async () => {
   generateError.value = "";
   onboardingError.value = "";
   onboardingStatus.value = "";
+  backupCopyMessage.value = "";
+  backupCopyError.value = "";
   accountFlowMode.value = "restore";
 
   try {
@@ -880,6 +917,8 @@ const handleBackupFileSelection = async (event: Event) => {
   generateError.value = "";
   onboardingError.value = "";
   onboardingStatus.value = "";
+  backupCopyMessage.value = "";
+  backupCopyError.value = "";
   accountFlowMode.value = "restore";
 
   try {
@@ -1026,6 +1065,25 @@ const downloadBackup = async (target: "manual" | "icloud" | "google") => {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(link.href);
+};
+
+const copyRecoveryPhrase = async () => {
+  const phrase = copyableRecoveryPhrase.value;
+  if (!phrase) {
+    backupCopyMessage.value = "";
+    backupCopyError.value = t("Nothing to copy yet.");
+    return;
+  }
+  try {
+    await copyTextToClipboard(phrase);
+    backupCopyError.value = "";
+    backupCopyMessage.value = t("Recovery phrase copied to clipboard.");
+  } catch (_error) {
+    backupCopyMessage.value = "";
+    backupCopyError.value = t(
+      "Clipboard access failed. Copy the phrase manually.",
+    );
+  }
 };
 
 const connectPreview = ref<Awaited<

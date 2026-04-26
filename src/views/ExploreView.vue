@@ -139,7 +139,7 @@ const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const requestAccountId = computed(
   () =>
-    getPublicAccountId(activeAccount.value) ||
+    getPublicAccountId(activeAccount.value, session.connection.networkPrefix) ||
     activeAccount.value?.accountId ||
     "",
 );

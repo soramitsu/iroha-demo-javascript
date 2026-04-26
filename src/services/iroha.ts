@@ -35,6 +35,8 @@ import type {
   SubscriptionPlanListResponseView,
   SubscriptionListItemView,
   SubscriptionStatusView,
+  SoraCloudHfDeployResponseView,
+  SoraCloudStatusResponseView,
   ToriiHealth,
   VpnAvailability,
   VpnAuthContext,
@@ -75,6 +77,9 @@ export const storeAccountSecret = (input: {
 export const listAccountSecretFlags = (input: {
   accountIds: string[];
 }): Promise<Record<string, boolean>> => bridge().listAccountSecretFlags(input);
+
+export const copyTextToClipboard = (text: string): Promise<void> =>
+  bridge().copyTextToClipboard({ text });
 
 export const deriveAccountAddress = (params: {
   domain: string;
@@ -343,6 +348,18 @@ export const chargeSubscriptionNow = (
   input: Parameters<IrohaBridge["chargeSubscriptionNow"]>[0],
 ): Promise<SubscriptionActionResponseView> =>
   bridge().chargeSubscriptionNow(input);
+
+export const getSoraCloudStatus = (
+  input: Parameters<IrohaBridge["getSoraCloudStatus"]>[0],
+): Promise<SoraCloudStatusResponseView> => bridge().getSoraCloudStatus(input);
+
+export const deploySoraCloudHf = (
+  input: Parameters<IrohaBridge["deploySoraCloudHf"]>[0],
+): Promise<SoraCloudHfDeployResponseView> => bridge().deploySoraCloudHf(input);
+
+export const getSoraCloudHfStatus = (
+  input: Parameters<IrohaBridge["getSoraCloudHfStatus"]>[0],
+): Promise<Record<string, unknown>> => bridge().getSoraCloudHfStatus(input);
 
 export type { SubscriptionStatusView };
 

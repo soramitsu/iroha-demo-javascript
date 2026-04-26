@@ -16,6 +16,7 @@ const VALID_MNEMONIC_PRIVATE_KEY_HEX =
   "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1";
 const VALID_24_WORD_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+const copyTextToClipboardMock = vi.fn();
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
@@ -42,6 +43,7 @@ vi.mock("qrcode", () => ({
 }));
 
 vi.mock("@/services/iroha", () => ({
+  copyTextToClipboard: (text: string) => copyTextToClipboardMock(text),
   createConnectPreview: (input: unknown) => createConnectPreviewMock(input),
   deriveAccountAddress: (input: unknown) => deriveAccountAddressMock(input),
   derivePublicKey: (privateKeyHex: string) =>
@@ -58,6 +60,8 @@ vi.mock("@/services/iroha", () => ({
 describe("AccountSetupView", () => {
   beforeEach(() => {
     createConnectPreviewMock.mockReset();
+    copyTextToClipboardMock.mockReset();
+    copyTextToClipboardMock.mockResolvedValue(undefined);
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
     exportConfidentialWalletBackupMock.mockReset();
@@ -320,6 +324,43 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.displayName).toBe("Alice");
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("copies the generated recovery phrase instead of downloading the manual backup", async () => {
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(t("Copy phrase"));
+    expect(wrapper.text()).not.toContain(t("Download backup"));
+
+    await getButtonByText(wrapper, t("Copy phrase")).trigger("click");
+    await flushPromises();
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledTimes(1);
+    const copiedPhrase = String(
+      copyTextToClipboardMock.mock.calls[0]?.[0] ?? "",
+    );
+    expect(copiedPhrase.split(" ")).toHaveLength(24);
+    expect(copiedPhrase).not.toContain("\n");
+    expect(copiedPhrase).not.toContain("1.");
+    expect(wrapper.text()).toContain(t("Recovery phrase copied to clipboard."));
+
+    await getButtonByText(wrapper, "Reset").trigger("click");
+    await flushPromises();
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    await wrapper.find("textarea").setValue(copiedPhrase);
+    await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
+    await flushPromises();
+
+    expect(derivePublicKeyMock).toHaveBeenLastCalledWith(
+      mnemonicToPrivateKeyHex(copiedPhrase),
+    );
   });
 
   it("saves the first account locally without UAID onboarding", async () => {

@@ -399,7 +399,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
-  getPublicAccountId(activeAccount.value),
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const requestAccountId = computed(
   () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",

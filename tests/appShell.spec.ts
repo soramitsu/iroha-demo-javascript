@@ -3,9 +3,9 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import App from "@/App.vue";
-import { useSessionStore } from "@/stores/session";
+import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
 import { useLocaleStore } from "@/stores/locale";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
 
 const route = reactive({
@@ -24,6 +24,7 @@ const t = (key: string) => translate("en-US", key);
 
 describe("App shell", () => {
   beforeEach(() => {
+    localStorage.clear();
     route.path = "/account";
     route.meta = {
       titleKey: "Account Setup",
@@ -109,6 +110,7 @@ describe("App shell", () => {
       t("Staking"),
       t("Parliament"),
       t("Explore"),
+      t("SoraCloud"),
       t("Offline"),
       t("Kaigi"),
       t("Settings"),
@@ -117,7 +119,7 @@ describe("App shell", () => {
       t("Saved Wallets"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("14");
+    expect(steps.at(-1)).toBe("15");
   });
 
   it("renames the account route to wallets once an account exists", () => {
@@ -166,5 +168,22 @@ describe("App shell", () => {
     expect(localeMenu.open).toBe(false);
     expect(wrapper.get(".locale-switcher-current").text()).toBe("日本語");
     expect(wrapper.get(".header-controls").text()).toContain("日本語");
+  });
+
+  it("switches the active network profile from the header selector", async () => {
+    const wrapper = mountApp();
+    const session = useSessionStore();
+
+    await wrapper
+      .get('[data-testid="network-profile-select"]')
+      .setValue(MINAMOTO_CHAIN_PRESET.id);
+
+    expect(session.connection).toEqual(MINAMOTO_CHAIN_PRESET.connection);
+    expect(wrapper.get(".mobile-status-toggle-current").text()).toBe(
+      MINAMOTO_CHAIN_PRESET.label,
+    );
+    expect(
+      JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}").connection,
+    ).toEqual(MINAMOTO_CHAIN_PRESET.connection);
   });
 });

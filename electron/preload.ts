@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { clipboard, contextBridge, ipcRenderer } from "electron";
 import {
   createCipheriv,
   createDecipheriv,
@@ -24,6 +24,7 @@ import {
   buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
+  buildSoraCloudHfDeployRequest,
   submitTransactionEntrypoint,
   submitSignedTransaction,
   extractPipelineStatusKind,
@@ -66,6 +67,12 @@ import {
   extractAssetDefinitionId,
   resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
+import {
+  normalizeSoraCloudStatusPayload,
+  unavailableSoraCloudStatus,
+  type SoraCloudStatusView,
+  type SoraCloudStorageClass,
+} from "../src/utils/soracloud";
 import {
   extractChainMetadataFromPayload,
   normalizeChainMetadata,
@@ -830,6 +837,39 @@ type SubscriptionActionInput = {
   cancelMode?: "immediate" | "period_end";
 };
 
+type SoraCloudStatusInput = {
+  toriiUrl: string;
+  apiToken?: string;
+};
+
+type SoraCloudHfDeployInput = SoraCloudStatusInput & {
+  accountId: string;
+  privateKeyHex?: string;
+  repoId: string;
+  revision?: string;
+  modelName: string;
+  serviceName: string;
+  apartmentName?: string;
+  storageClass: SoraCloudStorageClass;
+  leaseTermMs: number;
+  leaseAssetDefinitionId: string;
+  baseFeeNanos: string;
+};
+
+type SoraCloudHfDeployResponseView = {
+  ok: boolean;
+  action: string;
+  service_name: string;
+  sequence: number | null;
+  current_version?: string | null;
+  revision_count?: number | null;
+  tx_hash_hex?: string | null;
+  rollout_handle?: string | null;
+  rollout_stage?: string | null;
+  rollout_percent?: number | null;
+  raw: Record<string, unknown>;
+};
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
@@ -843,6 +883,7 @@ type IrohaBridge = {
   listAccountSecretFlags(input: {
     accountIds: string[];
   }): Promise<Record<string, boolean>>;
+  copyTextToClipboard(input: { text: string }): Promise<void>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
@@ -1074,6 +1115,13 @@ type IrohaBridge = {
   chargeSubscriptionNow(
     input: SubscriptionActionInput,
   ): Promise<SubscriptionActionResponseView>;
+  getSoraCloudStatus(input: SoraCloudStatusInput): Promise<SoraCloudStatusView>;
+  deploySoraCloudHf(
+    input: SoraCloudHfDeployInput,
+  ): Promise<SoraCloudHfDeployResponseView>;
+  getSoraCloudHfStatus(
+    input: SoraCloudStatusInput,
+  ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
   ): Promise<{ hash: string }>;
@@ -2821,11 +2869,13 @@ const ensureObjectResponse = (
 const fetchJson = async (
   endpoint: string,
   label: string,
+  headers?: Record<string, string>,
 ): Promise<Record<string, unknown>> => {
   const response = await nodeFetch(endpoint, {
     method: "GET",
     headers: {
       Accept: "application/json",
+      ...(headers ?? {}),
     },
   });
   if (!response.ok) {
@@ -2839,12 +2889,14 @@ const postJson = async (
   endpoint: string,
   label: string,
   body: Record<string, unknown>,
+  headers?: Record<string, string>,
 ): Promise<Record<string, unknown>> => {
   const response = await nodeFetch(endpoint, {
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
+      ...(headers ?? {}),
     },
     body: JSON.stringify(body),
   });
@@ -3298,6 +3350,158 @@ const postSubscriptionActionToTorii = async (
   );
   return normalizeSubscriptionActionPayload(payload);
 };
+
+const buildSoraCloudHeaders = (apiToken?: string): Record<string, string> => {
+  const token = trimString(apiToken);
+  return token ? { "x-api-token": token } : {};
+};
+
+const normalizeSoraCloudStorageClass = (
+  value: unknown,
+): SoraCloudStorageClass => {
+  const normalized = trimString(value).toLowerCase();
+  if (normalized === "hot" || normalized === "warm" || normalized === "cold") {
+    return normalized;
+  }
+  throw new Error("storageClass must be hot, warm, or cold.");
+};
+
+const normalizePositiveU64Number = (value: unknown, label: string): number => {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return parsed;
+};
+
+const normalizePositiveU128String = (value: unknown, label: string): string => {
+  const literal = trimString(value);
+  if (!/^\d+$/u.test(literal) || BigInt(literal) <= 0n) {
+    throw new Error(`${label} must be a positive integer string.`);
+  }
+  return literal;
+};
+
+const normalizeSoraCloudMutationResponse = (
+  payload: Record<string, unknown>,
+): SoraCloudHfDeployResponseView => ({
+  ok: payload.ok === undefined ? true : Boolean(payload.ok),
+  action: trimString(payload.action),
+  service_name: trimString(payload.service_name ?? payload.serviceName),
+  sequence:
+    payload.sequence === undefined || payload.sequence === null
+      ? null
+      : Number(payload.sequence),
+  current_version:
+    payload.current_version !== undefined
+      ? trimString(payload.current_version)
+      : payload.currentVersion !== undefined
+        ? trimString(payload.currentVersion)
+        : null,
+  revision_count:
+    payload.revision_count !== undefined
+      ? Number(payload.revision_count)
+      : payload.revisionCount !== undefined
+        ? Number(payload.revisionCount)
+        : null,
+  tx_hash_hex:
+    payload.tx_hash_hex !== undefined
+      ? trimString(payload.tx_hash_hex)
+      : payload.txHashHex !== undefined
+        ? trimString(payload.txHashHex)
+        : null,
+  rollout_handle:
+    payload.rollout_handle !== undefined
+      ? trimString(payload.rollout_handle)
+      : payload.rolloutHandle !== undefined
+        ? trimString(payload.rolloutHandle)
+        : null,
+  rollout_stage:
+    payload.rollout_stage !== undefined
+      ? trimString(payload.rollout_stage)
+      : payload.rolloutStage !== undefined
+        ? trimString(payload.rolloutStage)
+        : null,
+  rollout_percent:
+    payload.rollout_percent !== undefined
+      ? Number(payload.rollout_percent)
+      : payload.rolloutPercent !== undefined
+        ? Number(payload.rolloutPercent)
+        : null,
+  raw: payload,
+});
+
+const getSoraCloudStatusFromTorii = async (
+  input: SoraCloudStatusInput,
+): Promise<SoraCloudStatusView> => {
+  try {
+    const payload = await fetchJson(
+      buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/status"),
+      "SoraCloud status",
+      buildSoraCloudHeaders(input.apiToken),
+    );
+    return normalizeSoraCloudStatusPayload(payload);
+  } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      [404, 405, 501].includes(error.status)
+    ) {
+      return unavailableSoraCloudStatus(
+        "This Torii endpoint does not expose the SoraCloud API yet.",
+        error.status,
+      );
+    }
+    throw error;
+  }
+};
+
+const deploySoraCloudHfOnTorii = async (
+  input: SoraCloudHfDeployInput,
+): Promise<SoraCloudHfDeployResponseView> => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Launch SoraCloud instance",
+  });
+  const request = buildSoraCloudHfDeployRequest({
+    repoId: trimString(input.repoId),
+    revision: trimString(input.revision) || undefined,
+    modelName: trimString(input.modelName),
+    serviceName: trimString(input.serviceName),
+    apartmentName: trimString(input.apartmentName) || undefined,
+    storageClass: normalizeSoraCloudStorageClass(input.storageClass),
+    leaseTermMs: normalizePositiveU64Number(input.leaseTermMs, "leaseTermMs"),
+    leaseAssetDefinitionId: trimString(input.leaseAssetDefinitionId),
+    baseFeeNanos: normalizePositiveU128String(
+      input.baseFeeNanos,
+      "baseFeeNanos",
+    ),
+    privateKeyHex,
+  });
+  const payload = await postJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/hf/deploy"),
+    "Launch SoraCloud instance",
+    {
+      ...request,
+      authority: accountId,
+    },
+    buildSoraCloudHeaders(input.apiToken),
+  );
+  return normalizeSoraCloudMutationResponse(payload);
+};
+
+const getSoraCloudHfStatusFromTorii = async (
+  input: SoraCloudStatusInput,
+): Promise<Record<string, unknown>> =>
+  fetchJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/hf/status"),
+    "SoraCloud HF status",
+    buildSoraCloudHeaders(input.apiToken),
+  );
 
 const fetchExplorerAssetDefinitionSnapshot = async (
   toriiUrlRaw: string,
@@ -5165,6 +5369,13 @@ const api: IrohaBridge = {
         normalizeCompatAccountIdLiteral(accountId, "accountId"),
       ),
     );
+  },
+  async copyTextToClipboard({ text }) {
+    const value = String(text ?? "");
+    if (!value) {
+      throw new Error("Clipboard text is required.");
+    }
+    clipboard.writeText(value);
   },
   deriveAccountAddress({ domain, publicKeyHex, networkPrefix }) {
     return deriveAccountAddressView({ domain, publicKeyHex, networkPrefix });
@@ -7372,6 +7583,15 @@ const api: IrohaBridge = {
       "charge-now",
       "Charge subscription",
     );
+  },
+  getSoraCloudStatus(input) {
+    return getSoraCloudStatusFromTorii(input);
+  },
+  deploySoraCloudHf(input) {
+    return deploySoraCloudHfOnTorii(input);
+  },
+  getSoraCloudHfStatus(input) {
+    return getSoraCloudHfStatusFromTorii(input);
   },
   bondPublicLaneStake({
     toriiUrl,

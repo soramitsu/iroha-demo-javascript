@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useSessionStore, SESSION_STORAGE_KEY } from "@/stores/session";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 
 const snapshot = () =>
   JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}");
@@ -429,6 +429,43 @@ describe("session store", () => {
       "testuLegacyVisibleAccount1234567890",
     );
     expect(store.activeAccount?.i105DefaultAccountId).toBe(
+      "sorauLegacyVisibleAccount1234567890",
+    );
+  });
+
+  it("rewrites stored TAIRA-native account literals onto the mainnet prefix", () => {
+    const store = useSessionStore();
+    store.$patch({
+      accounts: [
+        {
+          displayName: "Alice",
+          domain: "default",
+          accountId: "testuLegacyVisibleAccount1234567890",
+          i105AccountId: "testuLegacyVisibleAccount1234567890",
+          i105DefaultAccountId: "",
+          publicKeyHex: "",
+          privateKeyHex: "priv",
+          localOnly: true,
+        },
+      ],
+      activeAccountId: "testuLegacyVisibleAccount1234567890",
+      authority: {
+        accountId: "testuLegacyVisibleAccount1234567890",
+        privateKeyHex: "beef",
+      },
+    });
+
+    store.updateConnection(MINAMOTO_CHAIN_PRESET.connection);
+
+    expect(store.connection.networkPrefix).toBe(753);
+    expect(store.activeAccount?.accountId).toBe(
+      "sorauLegacyVisibleAccount1234567890",
+    );
+    expect(store.activeAccount?.i105AccountId).toBe(
+      "sorauLegacyVisibleAccount1234567890",
+    );
+    expect(store.activeAccountId).toBe("sorauLegacyVisibleAccount1234567890");
+    expect(store.authority.accountId).toBe(
       "sorauLegacyVisibleAccount1234567890",
     );
   });

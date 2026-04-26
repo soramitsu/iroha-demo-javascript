@@ -1513,6 +1513,11 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       sectionText: "Subscribe to plan",
     },
     {
+      hash: "#/soracloud",
+      headingOptions: ["SoraCloud"],
+      sectionText: "Launch instance",
+    },
+    {
       hash: "#/send",
       headingOptions: ["Send", "Send Points"],
       sectionText: "Send",

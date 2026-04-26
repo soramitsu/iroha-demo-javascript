@@ -518,6 +518,36 @@ body::before {
   display: grid;
 }
 
+.network-profile-control {
+  display: none;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background:
+    linear-gradient(125deg, var(--glass-veil), transparent 56%),
+    var(--menu-glass);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    0 14px 32px var(--gi-ambient);
+  backdrop-filter: blur(22px) saturate(170%);
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.network-details[open] > .network-profile-control {
+  display: grid;
+}
+
+.network-profile-control select {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  box-shadow: none;
+}
+
 .mobile-status-toggle {
   list-style: none;
   app-region: no-drag;
@@ -3006,6 +3036,314 @@ button:not(.secondary):hover {
   }
   .subscription-actions {
     flex-direction: column;
+  }
+}
+
+.soracloud-shell {
+  display: grid;
+  gap: 20px;
+}
+
+.soracloud-command-card,
+.soracloud-console > .card {
+  animation: soracloud-rise 0.34s ease both;
+}
+
+.soracloud-console > .card:nth-child(2) {
+  animation-delay: 0.04s;
+}
+
+.soracloud-console > .card:nth-child(3) {
+  animation-delay: 0.08s;
+}
+
+.soracloud-command-header,
+.soracloud-command-actions,
+.soracloud-state-actions,
+.soracloud-form-actions,
+.soracloud-launch-result {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.soracloud-command-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.soracloud-command-actions {
+  justify-content: flex-end;
+}
+
+.soracloud-command-actions .pill:first-child {
+  max-width: min(280px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: plaintext;
+}
+
+.soracloud-kpi-grid,
+.soracloud-inspector-grid,
+.soracloud-review-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.soracloud-state {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-soft);
+}
+
+.soracloud-state p {
+  margin: 0;
+}
+
+.soracloud-state-actions {
+  margin-top: 4px;
+}
+
+.soracloud-console {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.08fr) minmax(340px, 0.92fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.soracloud-form {
+  display: grid;
+  gap: 14px;
+}
+
+.soracloud-form fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.soracloud-step-panel {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.soracloud-span-2 {
+  grid-column: 1 / -1;
+}
+
+.soracloud-stepper {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.soracloud-stepper button {
+  justify-content: flex-start;
+  min-height: 44px;
+  border-color: var(--panel-border);
+  background: var(--surface-soft);
+  color: var(--iroha-text);
+}
+
+.soracloud-stepper button span {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.78rem;
+}
+
+.soracloud-stepper button.active {
+  border-color: var(--iroha-accent);
+  color: var(--iroha-accent);
+  background: rgba(255, 76, 102, 0.12);
+}
+
+.soracloud-form-actions {
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.soracloud-launch-result {
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(34, 197, 94, 0.26);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.soracloud-review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.soracloud-deployment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.soracloud-deployment-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(130deg, var(--glass-veil), transparent 68%),
+    var(--surface-soft);
+  color: inherit;
+  text-align: start;
+  box-shadow: none;
+}
+
+.soracloud-status-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--iroha-muted);
+  box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.04);
+}
+
+.soracloud-status-dot.positive {
+  background: #22c55e;
+  box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.13);
+}
+
+.soracloud-status-dot.warning {
+  background: #f59e0b;
+  box-shadow: 0 0 0 6px rgba(245, 158, 11, 0.13);
+}
+
+.soracloud-status-dot.error {
+  background: #ef4444;
+  box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.13);
+}
+
+.soracloud-row-main,
+.soracloud-row-side {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.soracloud-row-title {
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.soracloud-row-meta {
+  color: var(--iroha-muted);
+  font-size: 0.84rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.soracloud-row-side {
+  justify-items: end;
+}
+
+.soracloud-service-link {
+  color: var(--iroha-accent);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.soracloud-empty {
+  display: grid;
+  gap: 8px;
+  min-height: 148px;
+  align-content: center;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px dashed var(--panel-border);
+  background: var(--surface-soft);
+}
+
+.soracloud-empty p {
+  margin: 0;
+}
+
+.soracloud-inspector-card .helper.mono,
+.soracloud-review-grid .mono,
+.soracloud-inspector-grid .kv-value {
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+@keyframes soracloud-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1240px) {
+  .soracloud-console {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .soracloud-inspector-card {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 960px) {
+  .soracloud-span-2,
+  .soracloud-inspector-card {
+    grid-column: auto;
+  }
+
+  .soracloud-kpi-grid,
+  .soracloud-inspector-grid,
+  .soracloud-review-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .soracloud-command-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .soracloud-kpi-grid,
+  .soracloud-inspector-grid,
+  .soracloud-review-grid,
+  .soracloud-step-panel,
+  .soracloud-stepper,
+  .soracloud-deployment-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .soracloud-row-side {
+    justify-items: start;
+  }
+
+  .soracloud-form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .soracloud-form-actions button {
+    width: 100%;
   }
 }
 

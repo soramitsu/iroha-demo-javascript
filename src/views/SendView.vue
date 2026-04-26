@@ -178,7 +178,7 @@ const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const { t } = useAppI18n();
 const activeAccountDisplayId = computed(() =>
-  getPublicAccountId(activeAccount.value),
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const activeAssetLabel = computed(() =>
   formatAssetDefinitionLabel(session.connection.assetDefinitionId, t("—")),

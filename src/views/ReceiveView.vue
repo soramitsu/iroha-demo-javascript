@@ -55,7 +55,9 @@ import ReceiveIcon from "@/assets/receive.svg";
 const session = useSessionStore();
 const { t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
-const shareAccountId = computed(() => getPublicAccountId(activeAccount.value));
+const shareAccountId = computed(() =>
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
+);
 const qrMarkup = ref("");
 const qrDataUrl = ref("");
 const qrPayloadText = ref("");

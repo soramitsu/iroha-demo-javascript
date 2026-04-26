@@ -433,7 +433,7 @@ const session = useSessionStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
-  getPublicAccountId(activeAccount.value),
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const activeOfflineAssetId = computed(() =>
   session.connection.assetDefinitionId.trim(),

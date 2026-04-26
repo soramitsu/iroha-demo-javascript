@@ -4,7 +4,7 @@ import {
   normalizeChainIdValue,
   normalizeNetworkPrefixValue,
 } from "@/utils/chainMetadata";
-import { normalizeTairaAccountIdLiteral } from "@/utils/accountId";
+import { normalizeAccountIdLiteralForNetwork } from "@/utils/accountId";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
@@ -143,9 +143,13 @@ const deriveAccountAddressesFromProfile = (
 
 const resolveAccountIdLiteral = (
   user: Partial<UserProfile> & Record<string, unknown>,
+  networkPrefix: number,
   derivedAccountId?: string | null,
 ): string => {
-  const accountId = normalizeTairaAccountIdLiteral(user.accountId);
+  const accountId = normalizeAccountIdLiteralForNetwork(
+    user.accountId,
+    networkPrefix,
+  );
   if (derivedAccountId && accountId && !isLegacyAccountLiteral(accountId)) {
     return derivedAccountId;
   }
@@ -160,7 +164,7 @@ const resolveAccountIdLiteral = (
     readLegacyProfileField(user, "ih58"),
     readLegacyProfileField(user, "compressed"),
   ]
-    .map(normalizeTairaAccountIdLiteral)
+    .map((value) => normalizeAccountIdLiteralForNetwork(value, networkPrefix))
     .find(isCanonicalAccountCandidate);
   return migratedCandidate ?? accountId;
 };
@@ -168,24 +172,27 @@ const resolveAccountIdLiteral = (
 const resolveVisibleI105AccountId = (
   user: Partial<UserProfile> & Record<string, unknown>,
   accountId: string,
+  networkPrefix: number,
   derivedI105AccountId?: string | null,
 ): string => {
   if (derivedI105AccountId) {
     return derivedI105AccountId;
   }
-  const storedI105AccountId = normalizeTairaAccountIdLiteral(
+  const storedI105AccountId = normalizeAccountIdLiteralForNetwork(
     user.i105AccountId,
+    networkPrefix,
   );
   if (isCanonicalAccountCandidate(storedI105AccountId)) {
     return storedI105AccountId;
   }
-  const storedDefaultI105AccountId = normalizeTairaAccountIdLiteral(
+  const storedDefaultI105AccountId = normalizeAccountIdLiteralForNetwork(
     user.i105DefaultAccountId,
+    networkPrefix,
   );
   if (isCanonicalAccountCandidate(storedDefaultI105AccountId)) {
     return storedDefaultI105AccountId;
   }
-  return normalizeTairaAccountIdLiteral(accountId);
+  return normalizeAccountIdLiteralForNetwork(accountId, networkPrefix);
 };
 
 const normalizeUser = (
@@ -193,12 +200,15 @@ const normalizeUser = (
   options?: { networkPrefix?: number },
 ): UserProfile => {
   const normalized = { ...defaultUser(), ...user };
+  const networkPrefix =
+    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix;
   const derivedAccountAddresses = deriveAccountAddressesFromProfile(
     normalized,
-    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    networkPrefix,
   );
   const resolvedAccountId = resolveAccountIdLiteral(
     normalized,
+    networkPrefix,
     derivedAccountAddresses?.accountId,
   );
   return {
@@ -208,6 +218,7 @@ const normalizeUser = (
     i105AccountId: resolveVisibleI105AccountId(
       normalized,
       resolvedAccountId,
+      networkPrefix,
       derivedAccountAddresses?.i105AccountId,
     ),
     i105DefaultAccountId:
@@ -222,8 +233,12 @@ const normalizeUser = (
 
 const normalizeAuthority = (
   authority: Partial<AuthorityProfile> & Record<string, unknown>,
+  options?: { networkPrefix?: number },
 ): AuthorityProfile => ({
-  accountId: normalizeTairaAccountIdLiteral(authority.accountId),
+  accountId: normalizeAccountIdLiteralForNetwork(
+    authority.accountId,
+    options?.networkPrefix ?? TAIRA_CHAIN_PRESET.connection.networkPrefix,
+  ),
   privateKeyHex: trimString(authority.privateKeyHex),
   hasStoredSecret: Boolean(authority.hasStoredSecret),
 });
@@ -377,12 +392,20 @@ export const useSessionStore = defineStore("session", {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          const normalizedAccounts = normalizeAccounts(parsed);
-          const base = defaultState();
-          const authority = normalizeAuthority({
-            ...base.authority,
-            ...(parsed.authority ?? {}),
+          const normalizedConnection = normalizeConnection(parsed.connection);
+          const normalizedAccounts = normalizeAccounts(parsed, {
+            networkPrefix: normalizedConnection.networkPrefix,
           });
+          const base = defaultState();
+          const authority = normalizeAuthority(
+            {
+              ...base.authority,
+              ...(parsed.authority ?? {}),
+            },
+            {
+              networkPrefix: normalizedConnection.networkPrefix,
+            },
+          );
           const rawAuthorityAccountId = trimString(authority.accountId);
           const migratedAuthorityAccountId = rawAuthorityAccountId
             ? (normalizedAccounts.accountIdMap.get(rawAuthorityAccountId) ??
@@ -390,7 +413,7 @@ export const useSessionStore = defineStore("session", {
             : "";
           this.$patch({
             ...base,
-            connection: normalizeConnection(parsed.connection),
+            connection: normalizedConnection,
             authority: {
               ...base.authority,
               ...authority,
@@ -497,7 +520,10 @@ export const useSessionStore = defineStore("session", {
       return true;
     },
     updateAuthority(partial: Partial<AuthorityProfile>) {
-      this.authority = normalizeAuthority({ ...this.authority, ...partial });
+      this.authority = normalizeAuthority(
+        { ...this.authority, ...partial },
+        { networkPrefix: this.connection.networkPrefix },
+      );
     },
     addAccount(account: UserProfile) {
       const normalized = normalizeUser(account, {

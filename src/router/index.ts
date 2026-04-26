@@ -12,6 +12,7 @@ import OfflineView from "@/views/OfflineView.vue";
 import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
 import KaigiView from "@/views/KaigiView.vue";
 import VpnView from "@/views/VpnView.vue";
+import SoraCloudView from "@/views/SoraCloudView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import { useSessionStore } from "@/stores/session";
 
@@ -66,6 +67,14 @@ const routes = [
     meta: {
       titleKey: "Sora VPN",
       subtitleKey: "Private network connection",
+    },
+  },
+  {
+    path: "/soracloud",
+    component: SoraCloudView,
+    meta: {
+      titleKey: "SoraCloud",
+      subtitleKey: "Launch and monitor live services",
     },
   },
   {

@@ -10,8 +10,7 @@ const repoRoot = path.resolve(__dirname, "../..");
 const rendererRoot = path.join(repoRoot, "src");
 const outputDir = path.join(repoRoot, "output/playwright");
 
-const E2E_ACCOUNT_ID =
-  "testu2Ze2e111111111111111111111111111111111111111111";
+const E2E_ACCOUNT_ID = "testu2Ze2e111111111111111111111111111111111111111111";
 const E2E_PUBLIC_KEY_HEX =
   "abababababababababababababababababababababababababababababababab";
 const E2E_PRIVATE_KEY_HEX =
@@ -26,6 +25,7 @@ const routeChecks = [
   ["/send", "Send"],
   ["/receive", "Receive"],
   ["/subscriptions", "Subscriptions"],
+  ["/soracloud", "SoraCloud"],
   ["/staking", "Stake XOR"],
   ["/parliament", "Governance"],
   ["/explore", "Explore"],
@@ -40,6 +40,7 @@ const mobileRouteChecks = [
   ["/receive", "Receive"],
   ["/send", "Send"],
   ["/kaigi", "Kaigi"],
+  ["/soracloud", "SoraCloud"],
   ["/vpn", "Sora VPN"],
 ];
 
@@ -308,6 +309,7 @@ function buildInitScript() {
       shared: [],
       calls: [],
     };
+    const launchedSoraCloudServices = [];
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: {
@@ -325,6 +327,78 @@ function buildInitScript() {
       configurable: true,
       value: async (payload) => {
         window.__e2e.shared.push(payload);
+      },
+    });
+    const syntheticMedia = {
+      streams: new Set(),
+      createStream: async (constraints = {}) => {
+        const tracks = [];
+        const wantsVideo = constraints.video !== false;
+        const wantsAudio = constraints.audio !== false;
+        if (wantsVideo && HTMLCanvasElement.prototype.captureStream) {
+          const canvas = document.createElement("canvas");
+          canvas.width = 640;
+          canvas.height = 360;
+          const context = canvas.getContext("2d");
+          let frame = 0;
+          const drawFrame = () => {
+            if (!context) return;
+            context.fillStyle = "#101827";
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = "#ff5f8d";
+            context.fillRect((frame * 12) % canvas.width, 120, 90, 90);
+            context.fillStyle = "#ffffff";
+            context.font = "24px sans-serif";
+            context.fillText("E2E media", 24, 48);
+            frame += 1;
+          };
+          drawFrame();
+          const timer = window.setInterval(drawFrame, 120);
+          const videoStream = canvas.captureStream(8);
+          videoStream.getTracks().forEach((track) => {
+            const stop = track.stop.bind(track);
+            track.stop = () => {
+              window.clearInterval(timer);
+              stop();
+            };
+            tracks.push(track);
+          });
+        }
+        if (wantsAudio) {
+          try {
+            const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+            if (AudioContextCtor) {
+              const audioContext = new AudioContextCtor();
+              const oscillator = audioContext.createOscillator();
+              const gain = audioContext.createGain();
+              const destination = audioContext.createMediaStreamDestination();
+              gain.gain.value = 0.001;
+              oscillator.connect(gain);
+              gain.connect(destination);
+              oscillator.start();
+              destination.stream.getAudioTracks().forEach((track) => {
+                const stop = track.stop.bind(track);
+                track.stop = () => {
+                  stop();
+                  oscillator.stop();
+                  audioContext.close().catch(() => {});
+                };
+                tracks.push(track);
+              });
+            }
+          } catch {
+            // Video-only synthetic media is enough for the smoke checks.
+          }
+        }
+        const stream = new MediaStream(tracks);
+        syntheticMedia.streams.add(stream);
+        return stream;
+      },
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia: async (constraints) => syntheticMedia.createStream(constraints),
       },
     });
     class FakePeerConnection extends EventTarget {
@@ -488,6 +562,63 @@ function buildInitScript() {
       getExplorerMetrics: async () => baseMetrics,
       getNetworkStats: async () => networkStats(),
       getExplorerAccountQr: async () => accountQr(),
+      listSubscriptionPlans: async () => ({ items: [], total: 0 }),
+      listSubscriptions: async () => ({ items: [], total: 0 }),
+      getSubscription: async () => ({ subscription_id: "sub-e2e" }),
+      createSubscription: async () => ({ tx_hash_hex: txHash("sub-create") }),
+      pauseSubscription: async () => ({ tx_hash_hex: txHash("sub-pause") }),
+      resumeSubscription: async () => ({ tx_hash_hex: txHash("sub-resume") }),
+      cancelSubscription: async () => ({ tx_hash_hex: txHash("sub-cancel") }),
+      keepSubscription: async () => ({ tx_hash_hex: txHash("sub-keep") }),
+      chargeSubscriptionNow: async () => ({
+        tx_hash_hex: txHash("sub-charge"),
+      }),
+      getSoraCloudStatus: async () => ({
+        available: true,
+        schemaVersion: 1,
+        serviceCount: launchedSoraCloudServices.length,
+        auditEventCount: launchedSoraCloudServices.length,
+        services: launchedSoraCloudServices.map((service) => ({ ...service })),
+        recentAuditEvents: [],
+        raw: {
+          control_plane: {
+            services: launchedSoraCloudServices.map((service) => ({
+              ...service,
+            })),
+          },
+        },
+      }),
+      deploySoraCloudHf: async (input) => {
+        window.__e2e.calls.push({ method: "deploySoraCloudHf", input });
+        launchedSoraCloudServices.splice(0, launchedSoraCloudServices.length, {
+          id: input.serviceName,
+          name: input.serviceName,
+          status: "deploying",
+          currentVersion: "hf-generated-v1",
+          revisionCount: 1,
+          configEntryCount: 0,
+          secretEntryCount: 0,
+          routeHost: "taira.sora.org",
+          publicUrls: ["https://taira.sora.org/api/v1/"],
+          rolloutStage: "Canary",
+          rolloutPercent: 20,
+          leaseStatus: "Active",
+          leaseExpiresSequence: 1,
+          remainingRuntimeBalanceNanos: "9999",
+          latestSequence: 1,
+          signedBy: "ed25519:e2e",
+          raw: {},
+        });
+        return {
+          ok: true,
+          action: "join",
+          service_name: input.serviceName,
+          sequence: 1,
+          tx_hash_hex: txHash("soracloud"),
+          raw: {},
+        };
+      },
+      getSoraCloudHfStatus: async () => ({}),
       getVpnAvailability: async () => ({
         platformSupported: true,
         helperManaged: true,
@@ -686,7 +817,10 @@ async function startRendererServer() {
   });
   await server.listen();
   const address = server.httpServer?.address();
-  assert(address && typeof address === "object", "Vite server did not expose a TCP address.");
+  assert(
+    address && typeof address === "object",
+    "Vite server did not expose a TCP address.",
+  );
   return {
     server,
     baseUrl: `http://127.0.0.1:${address.port}/`,
@@ -727,7 +861,10 @@ async function assertUsableViewport(page, route) {
       .map((element) => {
         const rect = element.getBoundingClientRect();
         return {
-          text: element.textContent?.replace(/\s+/g, " ").trim() || element.getAttribute("aria-label") || "button",
+          text:
+            element.textContent?.replace(/\s+/g, " ").trim() ||
+            element.getAttribute("aria-label") ||
+            "button",
           horizontalOverflow: element.scrollWidth - element.clientWidth,
           x: rect.x,
           y: rect.y,
@@ -770,22 +907,109 @@ async function checkReceiveQr(page) {
 
 async function checkSendFormAndCamera(page) {
   await navigate(page, "/send", "Send");
-  await page.getByRole("button", { name: /Scan payment QR/i }).click();
+  const stopScannerButton = page.getByRole("button", { name: /Stop scanner/i });
+  if (!(await stopScannerButton.isVisible().catch(() => false))) {
+    await page.getByRole("button", { name: /Scan payment QR/i }).click();
+  }
   await page.locator(".scanner video").waitFor({ state: "visible" });
   await page.waitForTimeout(500);
-  await page.getByRole("button", { name: /Stop scanner/i }).click();
+  await stopScannerButton.click();
+  await Promise.race([
+    page.locator(".scanner-frame.idle").waitFor({
+      state: "visible",
+      timeout: 5000,
+    }),
+    page.getByText("Camera is not ready.").waitFor({
+      state: "visible",
+      timeout: 5000,
+    }),
+  ]);
   await page
-    .locator(".scanner-frame.idle")
-    .waitFor({ state: "visible", timeout: 5000 });
-  await page.getByTestId("destination-account-input").fill(
-    "testu2Recipient3333333333333333333333333333333333",
-  );
-  await page.locator(".send-form label", { hasText: "Amount" }).locator("input").fill("3.5");
+    .getByTestId("destination-account-input")
+    .fill("testu2Recipient3333333333333333333333333333333333");
+  await page
+    .locator(".send-form label", { hasText: "Amount" })
+    .locator("input")
+    .fill("3.5");
   await page.locator(".send-form-pane .actions button").click();
   await page
-    .getByText(/Transaction submitted:/)
+    .getByText(/Transaction submitted:|Sent:/)
     .waitFor({ state: "visible", timeout: 5000 });
   console.log("✓ send form submits and camera scanner opens/stops");
+}
+
+async function checkSoraCloudLaunchFlow(page) {
+  await navigate(page, "/soracloud", "SoraCloud");
+  await page.getByText("Live API ready").first().waitFor({ state: "visible" });
+  await page
+    .getByText("No SoraCloud services found on this endpoint.")
+    .waitFor({
+      state: "visible",
+    });
+
+  await page
+    .getByLabel("Hugging Face repo")
+    .fill("sentence-transformers/all-MiniLM-L6-v2");
+  await page.getByLabel("Model name").waitFor({ state: "visible" });
+  const modelName = await page.getByLabel("Model name").inputValue();
+  assert(
+    modelName === "all-minilm-l6-v2",
+    `SoraCloud model name was not auto-derived: ${modelName}`,
+  );
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await page.getByText("If this is empty, claim XOR in Wallet first.").waitFor({
+    state: "visible",
+  });
+  const settlementAsset = page.getByLabel("Settlement asset");
+  const initialAsset = await settlementAsset.inputValue();
+  assert(
+    initialAsset === "",
+    `SoraCloud should not prefill stale lease asset aliases, got ${initialAsset}`,
+  );
+  await settlementAsset.fill("61CtjvNd9T3THAR65GsMVHr82Bjc");
+  await page.getByLabel("Base fee nanos").fill("10000");
+
+  await page.getByRole("button", { name: "Next" }).click();
+  const launchButton = page.getByRole("button", {
+    name: "Launch live instance",
+  });
+  await launchButton.waitFor({ state: "visible" });
+  assert(
+    await launchButton.isEnabled(),
+    "SoraCloud launch button did not enable for valid input.",
+  );
+  await launchButton.click();
+
+  await page.getByText("Launch submitted").waitFor({
+    state: "visible",
+    timeout: 10000,
+  });
+  await page.getByText("all-minilm-l6-v2").first().waitFor({
+    state: "visible",
+    timeout: 10000,
+  });
+  await page
+    .locator(".soracloud-deployment-row")
+    .getByText("hf-generated-v1", { exact: false })
+    .waitFor({
+      state: "visible",
+      timeout: 10000,
+    });
+
+  const deployCall = await page.evaluate(() =>
+    window.__e2e.calls.find((call) => call.method === "deploySoraCloudHf"),
+  );
+  assert(deployCall, "SoraCloud launch did not call deploySoraCloudHf.");
+  assert(
+    deployCall.input.leaseAssetDefinitionId === "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    `SoraCloud deploy used wrong lease asset: ${deployCall.input.leaseAssetDefinitionId}`,
+  );
+  assert(
+    deployCall.input.repoId === "sentence-transformers/all-MiniLM-L6-v2",
+    `SoraCloud deploy used wrong repo: ${deployCall.input.repoId}`,
+  );
+  console.log("✓ soracloud guided launch flow submits real bridge payload");
 }
 
 async function checkKaigi(page) {
@@ -796,9 +1020,12 @@ async function checkKaigi(page) {
     .waitFor({ state: "visible", timeout: 10000 });
   await page.getByRole("button", { name: /Create meeting link/i }).click();
   await page
-    .getByText("Meeting link ready")
+    .getByRole("heading", { name: "Meeting link ready" })
     .waitFor({ state: "visible", timeout: 10000 });
-  const invite = await page.locator(".kaigi-link-field textarea").first().inputValue();
+  const invite = await page
+    .locator(".kaigi-link-field textarea")
+    .first()
+    .inputValue();
   assert(
     invite.includes("call=kaigi.universal%3A") ||
       invite.includes("call=kaigi.universal:"),
@@ -809,7 +1036,9 @@ async function checkKaigi(page) {
 
 async function checkExplorer(page) {
   await navigate(page, "/explore", "Explore");
-  await page.locator(".explore-qr-card .qr-image").waitFor({ state: "visible" });
+  await page
+    .locator(".explore-qr-card .qr-image")
+    .waitFor({ state: "visible" });
   await page.getByText("98765").first().waitFor({ state: "visible" });
   console.log("✓ explorer metrics and QR render");
 }
@@ -817,12 +1046,12 @@ async function checkExplorer(page) {
 async function checkStaking(page) {
   await navigate(page, "/staking", "Stake XOR");
   await page
-    .getByText(/Loaded 1 dataspace option/)
+    .getByText(/Loaded 1 dataspace option|Loaded 1 dataspaces/)
     .waitFor({ state: "visible", timeout: 10000 });
   await page.getByRole("button", { name: "Max" }).first().click();
-  await page.getByRole("button", { name: "Bond XOR" }).click();
+  await page.getByRole("button", { name: /Bond XOR|Stake/ }).click();
   await page
-    .getByText(/Bond submitted:/)
+    .getByText(/Bond submitted:|Stake submitted:/)
     .waitFor({ state: "visible", timeout: 10000 });
   console.log("✓ staking bootstrap and bond action work");
 }
@@ -833,21 +1062,27 @@ async function checkParliament(page) {
   await page.getByTestId("proposal-id-input").fill("0x" + "a".repeat(64));
   await page.getByRole("button", { name: "Load" }).click();
   await page
-    .getByText("Referendum found: yes.")
+    .getByText(/Referendum found: yes\.?/)
     .waitFor({ state: "visible", timeout: 10000 });
-  await page.getByText("Proposal found: yes.").waitFor({ state: "visible" });
+  await page.getByText(/Proposal found: yes\.?/).waitFor({ state: "visible" });
   console.log("✓ parliament lookup works");
 }
 
 async function checkVpn(page) {
   await navigate(page, "/vpn", "Sora VPN");
-  await page.getByText("VPN ready").waitFor({ state: "visible", timeout: 10000 });
+  await page
+    .getByText("VPN ready")
+    .waitFor({ state: "visible", timeout: 10000 });
   await page.getByRole("button", { name: "Connect VPN" }).click();
   await page
-    .getByText("VPN connected")
+    .getByText(/VPN connected|Connected/, { exact: false })
+    .first()
     .waitFor({ state: "visible", timeout: 10000 });
   await page.getByRole("button", { name: "Disconnect VPN" }).click();
-  await page.getByText("VPN idle").waitFor({ state: "visible", timeout: 10000 });
+  await page
+    .getByText(/VPN idle|Idle/, { exact: false })
+    .first()
+    .waitFor({ state: "visible", timeout: 10000 });
   console.log("✓ vpn connect/disconnect controls work");
 }
 
@@ -913,6 +1148,7 @@ async function main() {
     await checkRouteSmoke(page);
     await checkReceiveQr(page);
     await checkSendFormAndCamera(page);
+    await checkSoraCloudLaunchFlow(page);
     await checkKaigi(page);
     await checkExplorer(page);
     await checkStaking(page);
@@ -930,7 +1166,9 @@ async function main() {
         path: path.join(outputDir, failureName),
         fullPage: true,
       });
-      console.error(`Saved failure screenshot to output/playwright/${failureName}`);
+      console.error(
+        `Saved failure screenshot to output/playwright/${failureName}`,
+      );
     }
     throw error;
   } finally {

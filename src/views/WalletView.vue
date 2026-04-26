@@ -308,13 +308,17 @@ const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
 const { localeStore, t } = useAppI18n();
 const visibleAccountId = computed(() =>
-  getPublicAccountId(activeAccount.value),
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 const requestAccountId = computed(
   () => visibleAccountId.value || activeAccount.value?.accountId || "",
 );
 const activeAccountLabel = computed(() =>
-  getAccountDisplayLabel(activeAccount.value, t("—")),
+  getAccountDisplayLabel(
+    activeAccount.value,
+    t("—"),
+    session.connection.networkPrefix,
+  ),
 );
 const configuredShieldAssetDefinitionId = computed(() =>
   extractAssetDefinitionId(session.connection.assetDefinitionId).trim(),

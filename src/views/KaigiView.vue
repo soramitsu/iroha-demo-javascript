@@ -804,7 +804,7 @@ if (!kaigiStore.hydrated) {
 const { d, t } = useAppI18n();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
-  getPublicAccountId(activeAccount.value),
+  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
 
 const callMode = ref<"start" | "join">("start");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAccountDisplayLabel,
   getPublicAccountId,
+  normalizeAccountIdLiteralForNetwork,
   normalizeTairaAccountIdLiteral,
 } from "@/utils/accountId";
 
@@ -13,6 +14,26 @@ describe("accountId utils", () => {
     expect(normalizeTairaAccountIdLiteral("testuVisibleAccountId")).toBe(
       "testuVisibleAccountId",
     );
+  });
+
+  it("rewrites stale TAIRA-native literals onto the SORA mainnet prefix", () => {
+    expect(
+      normalizeAccountIdLiteralForNetwork(
+        "testuCanonicalAccountId1234567890",
+        753,
+      ),
+    ).toBe("sorauCanonicalAccountId1234567890");
+    expect(
+      getPublicAccountId(
+        {
+          displayName: "",
+          accountId: "testuCompatAccountId",
+          i105AccountId: "testuVisibleAccountId",
+          i105DefaultAccountId: "sorauCanonicalAccountId",
+        },
+        753,
+      ),
+    ).toBe("sorauVisibleAccountId");
   });
 
   it("prefers the TAIRA-visible account id when present", () => {

@@ -597,6 +597,54 @@ export interface SubscriptionActionResponseView {
   first_charge_ms?: number;
 }
 
+export type SoraCloudStorageClassView = "hot" | "warm" | "cold";
+
+export interface SoraCloudServiceSummaryView {
+  id: string;
+  name: string;
+  status: "healthy" | "deploying" | "warning" | "paused" | "failed" | "unknown";
+  currentVersion: string;
+  revisionCount: number;
+  configEntryCount: number;
+  secretEntryCount: number;
+  routeHost: string | null;
+  publicUrls: string[];
+  rolloutStage: string | null;
+  rolloutPercent: number | null;
+  leaseStatus: string | null;
+  leaseExpiresSequence: number | null;
+  remainingRuntimeBalanceNanos: string | null;
+  latestSequence: number | null;
+  signedBy: string | null;
+  raw: Record<string, unknown>;
+}
+
+export interface SoraCloudStatusResponseView {
+  available: boolean;
+  statusCode?: number;
+  message?: string;
+  schemaVersion: number | null;
+  serviceCount: number;
+  auditEventCount: number;
+  services: SoraCloudServiceSummaryView[];
+  recentAuditEvents: Record<string, unknown>[];
+  raw: Record<string, unknown> | null;
+}
+
+export interface SoraCloudHfDeployResponseView {
+  ok: boolean;
+  action: string;
+  service_name: string;
+  sequence: number | null;
+  current_version?: string | null;
+  revision_count?: number | null;
+  tx_hash_hex?: string | null;
+  rollout_handle?: string | null;
+  rollout_stage?: string | null;
+  rollout_percent?: number | null;
+  raw: Record<string, unknown>;
+}
+
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 
 export interface GovernanceProposalResult {
@@ -677,6 +725,7 @@ export interface IrohaBridge {
   listAccountSecretFlags(input: {
     accountIds: string[];
   }): Promise<Record<string, boolean>>;
+  copyTextToClipboard(input: { text: string }): Promise<void>;
   deriveAccountAddress(input: {
     domain: string;
     publicKeyHex: string;
@@ -1056,6 +1105,29 @@ export interface IrohaBridge {
     subscriptionId: string;
     chargeAtMs?: number;
   }): Promise<SubscriptionActionResponseView>;
+  getSoraCloudStatus(input: {
+    toriiUrl: string;
+    apiToken?: string;
+  }): Promise<SoraCloudStatusResponseView>;
+  deploySoraCloudHf(input: {
+    toriiUrl: string;
+    accountId: string;
+    privateKeyHex?: string;
+    repoId: string;
+    revision?: string;
+    modelName: string;
+    serviceName: string;
+    apartmentName?: string;
+    storageClass: SoraCloudStorageClassView;
+    leaseTermMs: number;
+    leaseAssetDefinitionId: string;
+    baseFeeNanos: string;
+    apiToken?: string;
+  }): Promise<SoraCloudHfDeployResponseView>;
+  getSoraCloudHfStatus(input: {
+    toriiUrl: string;
+    apiToken?: string;
+  }): Promise<Record<string, unknown>>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;

@@ -41,7 +41,7 @@
                 t("Network details")
               }}</span>
               <span class="mobile-status-toggle-current">{{
-                session.connection.toriiUrl ? t("TAIRA Testnet") : t("Offline")
+                activeNetworkLabel
               }}</span>
             </span>
             <span class="mobile-status-toggle-meta">{{
@@ -51,10 +51,32 @@
               >↗</span
             >
           </summary>
+          <label class="network-profile-control">
+            <span class="chip-label">{{ t("Network") }}</span>
+            <select
+              :value="activeNetworkProfileId"
+              data-testid="network-profile-select"
+              @change="handleNetworkProfileChange"
+            >
+              <option
+                v-if="!activeNetworkPreset"
+                :value="CUSTOM_NETWORK_PROFILE_ID"
+              >
+                {{ t("Custom endpoint") }}
+              </option>
+              <option
+                v-for="preset in networkProfileOptions"
+                :key="preset.id"
+                :value="preset.id"
+              >
+                {{ preset.label }}
+              </option>
+            </select>
+          </label>
           <div class="status-chips">
             <div class="status-chip">
               <span class="chip-label">{{ t("Torii") }}</span>
-              <span class="chip-value">{{ endpointModeLabel }}</span>
+              <span class="chip-value">{{ activeNetworkLabel }}</span>
               <span class="chip-sub">{{ session.connection.toriiUrl }}</span>
             </div>
             <div class="status-chip">
@@ -62,7 +84,9 @@
               <span class="chip-value mono chain-value">{{
                 session.connection.chainId
               }}</span>
-              <span class="chip-sub">{{ t("Locked for this demo") }}</span>
+              <span class="chip-sub">{{
+                t("Managed by network profile")
+              }}</span>
             </div>
             <div class="status-chip">
               <span class="chip-label">{{ t("Asset") }}</span>
@@ -246,9 +270,11 @@ import ReceiveIcon from "@/assets/receive.svg";
 import UserIcon from "@/assets/user.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
-import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
+import { CHAIN_PRESETS } from "@/constants/chains";
 import { getAccountDisplayLabel } from "@/utils/accountId";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
+
+const CUSTOM_NETWORK_PROFILE_ID = "__custom_network_profile__";
 
 const navItems = [
   {
@@ -329,6 +355,14 @@ const navItems = [
     groupKey: "Tools",
   },
   {
+    to: "/soracloud",
+    labelKey: "SoraCloud",
+    descriptionKey: "Launch live SoraCloud services",
+    icon: WalletIcon,
+    requiresAccount: true,
+    groupKey: "Tools",
+  },
+  {
     to: "/subscriptions",
     labelKey: "Subscriptions",
     descriptionKey: "Manage recurring payments",
@@ -376,19 +410,36 @@ const route = useRoute();
 const session = useSessionStore();
 const theme = useThemeStore();
 const { localeStore, localeOptions, t } = useAppI18n();
+const networkProfileOptions = CHAIN_PRESETS;
 const activeAssetLabel = computed(() =>
   formatAssetDefinitionLabel(
     session.connection.assetDefinitionId,
     t("Asset not set"),
   ),
 );
-const endpointModeLabel = computed(() =>
-  session.connection.toriiUrl === TAIRA_CHAIN_PRESET.connection.toriiUrl
-    ? t("Default endpoint")
-    : t("Custom endpoint"),
+const activeNetworkPreset = computed(() =>
+  CHAIN_PRESETS.find(
+    (preset) =>
+      preset.connection.toriiUrl === session.connection.toriiUrl &&
+      preset.connection.chainId === session.connection.chainId &&
+      preset.connection.networkPrefix === session.connection.networkPrefix,
+  ),
 );
+const activeNetworkProfileId = computed(
+  () => activeNetworkPreset.value?.id ?? CUSTOM_NETWORK_PROFILE_ID,
+);
+const activeNetworkLabel = computed(() => {
+  if (activeNetworkPreset.value) {
+    return activeNetworkPreset.value.label;
+  }
+  return session.connection.toriiUrl ? t("Custom endpoint") : t("Offline");
+});
 const activeAccountLabel = computed(() =>
-  getAccountDisplayLabel(session.activeAccount),
+  getAccountDisplayLabel(
+    session.activeAccount,
+    "",
+    session.connection.networkPrefix,
+  ),
 );
 const logo = IrohaLogo;
 const localeMenu = ref<HTMLDetailsElement | null>(null);
@@ -411,6 +462,17 @@ const selectLocale = (locale: SupportedLocale) => {
   if (localeMenu.value) {
     localeMenu.value.open = false;
   }
+};
+const selectNetworkProfile = (profileId: string) => {
+  const preset = CHAIN_PRESETS.find((item) => item.id === profileId);
+  if (!preset) {
+    return;
+  }
+  session.useChainProfile({ ...preset.connection });
+  session.persistState();
+};
+const handleNetworkProfileChange = (event: Event) => {
+  selectNetworkProfile((event.target as HTMLSelectElement).value);
 };
 
 const routeTitle = computed(() => {

@@ -19,7 +19,22 @@ export const TAIRA_CHAIN_PRESET: ChainPreset = {
   },
 };
 
-export const CHAIN_PRESETS: ChainPreset[] = [TAIRA_CHAIN_PRESET];
+export const MINAMOTO_CHAIN_PRESET: ChainPreset = {
+  id: "minamoto-mainnet",
+  label: "MINAMOTO Mainnet",
+  description: "SORA Nexus mainnet profile.",
+  connection: {
+    toriiUrl: "https://minamoto.sora.org",
+    chainId: "sora nexus main net",
+    assetDefinitionId: "",
+    networkPrefix: 753,
+  },
+};
+
+export const CHAIN_PRESETS: ChainPreset[] = [
+  TAIRA_CHAIN_PRESET,
+  MINAMOTO_CHAIN_PRESET,
+];
 
 export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
 export const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
