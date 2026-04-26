@@ -67,6 +67,8 @@ const defaultState = (): SoraCloudState => ({
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error ?? "Unknown error");
 
+let refreshRequestSerial = 0;
+
 const validateLaunchInput = (input: SoraCloudHfLaunchInput) => {
   if (!input.accountId.trim()) throw new Error("Active wallet is required.");
   if (!input.repoId.trim()) throw new Error("Hugging Face repo is required.");
@@ -100,23 +102,33 @@ export const useSoraCloudStore = defineStore("soracloud", {
       this.hydrated = true;
     },
     async refresh(input: RefreshInput) {
+      const requestSerial = ++refreshRequestSerial;
       this.loading = true;
       this.error = "";
+      this.availability = "unknown";
+      this.status = null;
+      this.hfStatus = null;
+      this.services = [];
+      this.lastUpdatedAtMs = null;
       try {
         const status = await getSoraCloudStatus(input);
+        if (requestSerial !== refreshRequestSerial) return;
         this.status = status;
         this.services = status.services;
         this.availability = status.available ? "available" : "unavailable";
         this.error = status.available ? "" : status.message || "";
         this.lastUpdatedAtMs = Date.now();
       } catch (error) {
+        if (requestSerial !== refreshRequestSerial) return;
         this.status = null;
         this.services = [];
         this.availability = "error";
         this.error = errorMessage(error);
         this.lastUpdatedAtMs = Date.now();
       } finally {
-        this.loading = false;
+        if (requestSerial === refreshRequestSerial) {
+          this.loading = false;
+        }
       }
     },
     async refreshHfStatus(input: RefreshInput) {

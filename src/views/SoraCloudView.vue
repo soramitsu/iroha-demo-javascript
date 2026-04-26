@@ -623,6 +623,13 @@ watch(
 );
 
 watch(
+  () => session.connection.toriiUrl,
+  () => {
+    void refresh();
+  },
+);
+
+watch(
   () => session.connection.assetDefinitionId,
   (assetDefinitionId) => {
     const canonicalAssetDefinitionId =

@@ -228,6 +228,34 @@ describe("SoraCloudView", () => {
     expect(wrapper.findAll(".soracloud-deployment-row")).toHaveLength(1);
   });
 
+  it("refreshes and clears live services when the Torii endpoint changes", async () => {
+    vi.mocked(getSoraCloudStatus)
+      .mockResolvedValueOnce(serviceStatus)
+      .mockImplementationOnce(() => new Promise<never>(() => {}));
+
+    const wrapper = await mountView();
+    expect(wrapper.findAll(".soracloud-deployment-row")).toHaveLength(1);
+    expect(wrapper.text()).toContain("demo-hf");
+
+    const session = useSessionStore();
+    session.$patch({
+      connection: {
+        ...session.connection,
+        toriiUrl: "https://minamoto.sora.org",
+      },
+    });
+    await flushPromises();
+
+    expect(getSoraCloudStatus).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://minamoto.sora.org",
+      }),
+    );
+    expect(wrapper.findAll(".soracloud-deployment-row")).toHaveLength(0);
+    expect(wrapper.text()).toContain("Checking SoraCloud...");
+    expect(wrapper.text()).toContain("https://minamoto.sora.org");
+  });
+
   it("does not persist SoraCloud services or transient launch secrets", async () => {
     localStorage.setItem(SORACLOUD_STORAGE_KEY, "stale");
     vi.mocked(getSoraCloudStatus).mockResolvedValue(availableStatus);
