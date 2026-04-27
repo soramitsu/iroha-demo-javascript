@@ -126,65 +126,13 @@ jobs:
           $supervisorPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/iroha_futures/src/supervisor.rs"
           $supervisor = Get-Content $supervisorPath -Raw
           $supervisor = $supervisor -replace "`r`n", "`n"
-          $supervisorFrom = @'
-              /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
-              /// # Errors
-              /// See [`tokio::signal::unix::signal`] errors.
-              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-                  use tokio::signal;
-
-                  let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-                      .map_err(|err| Report::new(Error::from(err)).expand())?;
-                  let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-                      .map_err(|err| Report::new(Error::from(err)).expand())?;
-
-                  let shutdown_signal = self.shutdown_signal();
-                  self.monitor(tokio::spawn(async move {
-                      tokio::select! {
-                          _ = sigint.recv() => {
-                              iroha_logger::info!("SIGINT received, shutting down...");
-                          },
-                          _ = sigterm.recv() => {
-                              iroha_logger::info!("SIGTERM received, shutting down...");
-                          },
-                      }
-
-                      shutdown_signal.send();
-                  }));
-
-                  Ok(())
-              }
-          '@
-          $supervisorTo = @'
-              /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
-              /// # Errors
-              /// See [`tokio::signal::unix::signal`] errors.
-              #[cfg(unix)]
-              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-                  use tokio::signal;
-
-                  let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-                      .map_err(|err| Report::new(Error::from(err)).expand())?;
-                  let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-                      .map_err(|err| Report::new(Error::from(err)).expand())?;
-
-                  let shutdown_signal = self.shutdown_signal();
-                  self.monitor(tokio::spawn(async move {
-                      tokio::select! {
-                          _ = sigint.recv() => {
-                              iroha_logger::info!("SIGINT received, shutting down...");
-                          },
-                          _ = sigterm.recv() => {
-                              iroha_logger::info!("SIGTERM received, shutting down...");
-                          },
-                      }
-
-                      shutdown_signal.send();
-                  }));
-
-                  Ok(())
-              }
-
+          $supervisorSignature = "    pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {"
+          if (-not $supervisor.Contains($supervisorSignature)) {
+            throw "Expected iroha_futures supervisor signal handler signature was not found in $supervisorPath"
+          }
+          $supervisor = $supervisor.Replace($supervisorSignature, "    #[cfg(unix)]`n$supervisorSignature")
+          $externalSignalDoc = "    /// Spawns a task that will shut down the supervisor once the external`n"
+          $windowsSignalHandler = @'
               /// Spawns a task that will initiate supervisor shutdown on Ctrl+C.
               /// # Errors
               /// See [`tokio::signal::ctrl_c`] errors.
@@ -202,10 +150,10 @@ jobs:
                   Ok(())
               }
           '@
-          if (-not $supervisor.Contains($supervisorFrom)) {
-            throw "Expected iroha_futures supervisor signal handler was not found in $supervisorPath"
+          if (-not $supervisor.Contains($externalSignalDoc)) {
+            throw "Expected iroha_futures external signal marker was not found in $supervisorPath"
           }
-          Set-Content -Path $supervisorPath -Value $supervisor.Replace($supervisorFrom, $supervisorTo) -NoNewline
+          Set-Content -Path $supervisorPath -Value $supervisor.Replace($externalSignalDoc, "$windowsSignalHandler`n`n$externalSignalDoc") -NoNewline
 
           "NORITO_SKIP_BINDINGS_SYNC=1" >> $env:GITHUB_ENV
 
