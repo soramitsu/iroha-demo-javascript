@@ -8,10 +8,8 @@ The Windows release jobs apply small CI-only patches to the checked-out Iroha SD
 
 - macOS x64: `dmg`, `zip`
 - macOS arm64: `dmg`, `zip`
-- Windows x64: NSIS `exe`, `zip`
+- Windows x64 and arm64: NSIS `exe`, `zip`
 - Linux x64: `AppImage`, `deb`, `rpm`
-
-Windows arm64 is intentionally excluded while the pinned Iroha SDK's `pqcrypto-*` transitive C sources fail under MSVC ARM64.
 
 ## Required GitHub Secrets
 
