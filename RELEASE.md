@@ -52,4 +52,6 @@ Optional repository variable:
 3. Wait for the `Release` workflow to finish.
 4. Inspect the draft release artifacts on GitHub, smoke test them, then publish the draft.
 
+If signing secrets are missing, the workflow still creates draft artifacts, but macOS and Windows builds are unsigned and should not be promoted as a production public release. Add the signing secrets above and rerun the workflow for signed/notarized artifacts.
+
 You can also run the workflow manually from GitHub Actions with an existing tag and an optional `iroha_ref`.

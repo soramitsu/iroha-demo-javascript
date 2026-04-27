@@ -25,6 +25,8 @@ env:
   SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
   SORANET_VPN_APP_GROUP_ID: ${{ vars.SORANET_VPN_APP_GROUP_ID }}
   SORANET_VPN_MANAGER_DESCRIPTION: ${{ vars.SORANET_VPN_MANAGER_DESCRIPTION }}
+  HAS_MAC_SIGNING: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 != '' && secrets.MAC_CERTIFICATE_PASSWORD != '' && secrets.APPLE_DEVELOPMENT_TEAM != '' && secrets.APPLE_API_KEY_P8_BASE64 != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' }}
+  HAS_WIN_SIGNING: ${{ secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' }}
 
 jobs:
   verify:
@@ -124,52 +126,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libopenjp2-tools rpm
 
-      - name: Validate macOS signing secrets
+      - name: Report macOS signing mode
         if: matrix.platform == 'mac'
         shell: bash
-        env:
-          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
-          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
-          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
-          missing=()
-          for name in \
-            MAC_CERTIFICATE_P12_BASE64 \
-            MAC_CERTIFICATE_PASSWORD \
-            APPLE_DEVELOPMENT_TEAM \
-            APPLE_API_KEY_P8_BASE64 \
-            APPLE_API_KEY_ID \
-            APPLE_API_ISSUER
-          do
-            if [[ -z "${!name}" ]]; then
-              missing+=("$name")
-            fi
-          done
-          if (( ${#missing[@]} )); then
-            printf 'Missing required macOS release secrets: %s\n' "${missing[*]}" >&2
-            exit 1
+          if [[ "$HAS_MAC_SIGNING" == "true" ]]; then
+            echo "Building signed and notarized macOS artifacts."
+          else
+            echo "::warning::macOS signing/notarization secrets are missing. Building unsigned draft artifacts."
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
           fi
 
-      - name: Validate Windows signing secrets
+      - name: Report Windows signing mode
         if: matrix.platform == 'win'
         shell: bash
-        env:
-          WIN_CSC_LINK_SECRET: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD_SECRET: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
-          missing=()
-          [[ -n "$WIN_CSC_LINK_SECRET" ]] || missing+=("WIN_CSC_LINK")
-          [[ -n "$WIN_CSC_KEY_PASSWORD_SECRET" ]] || missing+=("WIN_CSC_KEY_PASSWORD")
-          if (( ${#missing[@]} )); then
-            printf 'Missing required Windows signing secrets: %s\n' "${missing[*]}" >&2
-            exit 1
+          if [[ "$HAS_WIN_SIGNING" == "true" ]]; then
+            echo "Building signed Windows artifacts."
+          else
+            echo "::warning::Windows signing secrets are missing. Building unsigned draft artifacts."
+            echo "CSC_IDENTITY_AUTO_DISCOVERY=false" >> "$GITHUB_ENV"
           fi
 
       - name: Prepare Windows signing certificate
-        if: matrix.platform == 'win'
+        if: matrix.platform == 'win' && env.HAS_WIN_SIGNING == 'true'
         shell: pwsh
         env:
           WIN_CSC_LINK_SECRET: ${{ secrets.WIN_CSC_LINK }}
@@ -181,7 +161,7 @@ jobs:
           "WIN_CSC_KEY_PASSWORD=$env:WIN_CSC_KEY_PASSWORD_SECRET" >> $env:GITHUB_ENV
 
       - name: Prepare macOS signing and notarization
-        if: matrix.platform == 'mac'
+        if: matrix.platform == 'mac' && env.HAS_MAC_SIGNING == 'true'
         shell: bash
         env:
           MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
