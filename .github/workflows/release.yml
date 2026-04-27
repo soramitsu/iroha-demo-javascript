@@ -46,19 +46,6 @@ jobs:
           path: iroha
           ref: ${{ env.IROHA_REF }}
 
-      - name: Disable unsupported sha2 assembly on Windows MSVC
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/ivm/Cargo.toml"
-          $manifest = Get-Content $manifestPath -Raw
-          $from = "[target.'cfg(target_arch = `"x86_64`")'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
-          $to = "[target.'cfg(all(target_arch = `"x86_64`", not(target_env = `"msvc`")))'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
-          if (-not $manifest.Contains($from)) {
-            throw "Expected ivm sha2 asm target dependency block was not found in $manifestPath"
-          }
-          Set-Content -Path $manifestPath -Value $manifest.Replace($from, $to) -NoNewline
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -115,6 +102,19 @@ jobs:
           repository: hyperledger-iroha/iroha
           path: iroha
           ref: ${{ env.IROHA_REF }}
+
+      - name: Disable unsupported sha2 assembly on Windows MSVC
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/ivm/Cargo.toml"
+          $manifest = Get-Content $manifestPath -Raw
+          $from = "[target.'cfg(target_arch = `"x86_64`")'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
+          $to = "[target.'cfg(all(target_arch = `"x86_64`", not(target_env = `"msvc`")))'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
+          if (-not $manifest.Contains($from)) {
+            throw "Expected ivm sha2 asm target dependency block was not found in $manifestPath"
+          }
+          Set-Content -Path $manifestPath -Value $manifest.Replace($from, $to) -NoNewline
 
       - name: Set up Node
         uses: actions/setup-node@v4
