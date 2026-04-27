@@ -77,6 +77,7 @@ Modern Electron + Vue 3 wallet-demo that connects directly to Torii (Minamoto ma
 - Parliament proposal IDs are expected to be 32-byte hex values (with or without `0x` prefix); referendum IDs are free-form strings from governance storage.
 - The send view requires navigator media permissions. In headless test contexts, avoid invoking scanner logic.
 - If `@iroha/iroha-js` native binding fails to build, rerun `npm run build:native` inside `node_modules/@iroha/iroha-js`. `npm run build` now also refreshes the copied `dist/native` bundle when the SDK checksum manifest is stale, so runtime confidential v2 helpers do not regress after a linked-SDK rebuild.
+- The GitHub release workflow applies Windows-only CI patches to the checked-out sibling Iroha SDK before packaging: MSVC skips the `sha2` assembly backend, `gpu_zstd` uses `unsafe extern`, `iroha_futures` uses a Windows `ctrl_c` shutdown listener, and Norito's binding-sync guard is disabled after those patch edits.
 - Electron main window keeps `webSecurity: true`. Torii/Nexus requests must stay inside the preload bridge's Node-backed HTTP transport rather than renderer `fetch()`, or endpoint CORS failures will return.
 
 ## Pending Ideas
