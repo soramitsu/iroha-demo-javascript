@@ -126,6 +126,8 @@ jobs:
           }
           Set-Content -Path $gpuZstdPath -Value $gpuZstd.Replace($externFrom, $externTo) -NoNewline
 
+          "NORITO_SKIP_BINDINGS_SYNC=1" >> $env:GITHUB_ENV
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
