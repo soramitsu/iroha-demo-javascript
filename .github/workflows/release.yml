@@ -127,81 +127,81 @@ jobs:
           $supervisor = Get-Content $supervisorPath -Raw
           $supervisor = $supervisor -replace "`r`n", "`n"
           $supervisorFrom = @'
-    /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
-    /// # Errors
-    /// See [`tokio::signal::unix::signal`] errors.
-    pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-        use tokio::signal;
+              /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
+              /// # Errors
+              /// See [`tokio::signal::unix::signal`] errors.
+              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
+                  use tokio::signal;
 
-        let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-            .map_err(|err| Report::new(Error::from(err)).expand())?;
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .map_err(|err| Report::new(Error::from(err)).expand())?;
+                  let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+                      .map_err(|err| Report::new(Error::from(err)).expand())?;
+                  let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                      .map_err(|err| Report::new(Error::from(err)).expand())?;
 
-        let shutdown_signal = self.shutdown_signal();
-        self.monitor(tokio::spawn(async move {
-            tokio::select! {
-                _ = sigint.recv() => {
-                    iroha_logger::info!("SIGINT received, shutting down...");
-                },
-                _ = sigterm.recv() => {
-                    iroha_logger::info!("SIGTERM received, shutting down...");
-                },
-            }
+                  let shutdown_signal = self.shutdown_signal();
+                  self.monitor(tokio::spawn(async move {
+                      tokio::select! {
+                          _ = sigint.recv() => {
+                              iroha_logger::info!("SIGINT received, shutting down...");
+                          },
+                          _ = sigterm.recv() => {
+                              iroha_logger::info!("SIGTERM received, shutting down...");
+                          },
+                      }
 
-            shutdown_signal.send();
-        }));
+                      shutdown_signal.send();
+                  }));
 
-        Ok(())
-    }
-'@
+                  Ok(())
+              }
+          '@
           $supervisorTo = @'
-    /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
-    /// # Errors
-    /// See [`tokio::signal::unix::signal`] errors.
-    #[cfg(unix)]
-    pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-        use tokio::signal;
+              /// Spawns a task that will initiate supervisor shutdown on SIGINT/SIGTERM signals.
+              /// # Errors
+              /// See [`tokio::signal::unix::signal`] errors.
+              #[cfg(unix)]
+              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
+                  use tokio::signal;
 
-        let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
-            .map_err(|err| Report::new(Error::from(err)).expand())?;
-        let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
-            .map_err(|err| Report::new(Error::from(err)).expand())?;
+                  let mut sigint = signal::unix::signal(signal::unix::SignalKind::interrupt())
+                      .map_err(|err| Report::new(Error::from(err)).expand())?;
+                  let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
+                      .map_err(|err| Report::new(Error::from(err)).expand())?;
 
-        let shutdown_signal = self.shutdown_signal();
-        self.monitor(tokio::spawn(async move {
-            tokio::select! {
-                _ = sigint.recv() => {
-                    iroha_logger::info!("SIGINT received, shutting down...");
-                },
-                _ = sigterm.recv() => {
-                    iroha_logger::info!("SIGTERM received, shutting down...");
-                },
-            }
+                  let shutdown_signal = self.shutdown_signal();
+                  self.monitor(tokio::spawn(async move {
+                      tokio::select! {
+                          _ = sigint.recv() => {
+                              iroha_logger::info!("SIGINT received, shutting down...");
+                          },
+                          _ = sigterm.recv() => {
+                              iroha_logger::info!("SIGTERM received, shutting down...");
+                          },
+                      }
 
-            shutdown_signal.send();
-        }));
+                      shutdown_signal.send();
+                  }));
 
-        Ok(())
-    }
+                  Ok(())
+              }
 
-    /// Spawns a task that will initiate supervisor shutdown on Ctrl+C.
-    /// # Errors
-    /// See [`tokio::signal::ctrl_c`] errors.
-    #[cfg(windows)]
-    pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-        let shutdown_signal = self.shutdown_signal();
-        self.monitor(tokio::spawn(async move {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                iroha_logger::info!("Ctrl+C received, shutting down...");
-            }
+              /// Spawns a task that will initiate supervisor shutdown on Ctrl+C.
+              /// # Errors
+              /// See [`tokio::signal::ctrl_c`] errors.
+              #[cfg(windows)]
+              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
+                  let shutdown_signal = self.shutdown_signal();
+                  self.monitor(tokio::spawn(async move {
+                      if tokio::signal::ctrl_c().await.is_ok() {
+                          iroha_logger::info!("Ctrl+C received, shutting down...");
+                      }
 
-            shutdown_signal.send();
-        }));
+                      shutdown_signal.send();
+                  }));
 
-        Ok(())
-    }
-'@
+                  Ok(())
+              }
+          '@
           if (-not $supervisor.Contains($supervisorFrom)) {
             throw "Expected iroha_futures supervisor signal handler was not found in $supervisorPath"
           }
