@@ -61,23 +61,15 @@ export const readTransactionFee = (
       ? {
           amount: record.fee_amount ?? record.feeAmount,
           assetId:
-            record.feeAssetId ??
-            record.fee_asset_id ??
-            record.gas_asset_id ??
-            record.assetId ??
-            record.asset_id ??
-            record.asset,
+            record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id,
           source: record.source,
           estimated: record.estimated,
         }
       : null) ??
-    (trim(record.gas_asset_id) || trim(record.assetId ?? record.asset_id)
+    (trim(record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id)
       ? {
           assetId:
-            record.gas_asset_id ??
-            record.assetId ??
-            record.asset_id ??
-            record.asset,
+            record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id,
           source: record.source,
           estimated: record.estimated,
         }

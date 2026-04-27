@@ -779,6 +779,7 @@ const handleSend = async () => {
         : t("Transaction submitted: {hash}", { hash: result.hash });
     statusMessage.value = appendTransactionFee(successMessage, result, t);
     statusTone.value = "success";
+    void refreshSendAssets();
   } catch (error) {
     statusMessage.value = toUserFacingErrorMessage(
       error,

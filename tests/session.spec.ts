@@ -571,6 +571,22 @@ describe("session store", () => {
     );
   });
 
+  it("keeps checked metadata when a preset endpoint reports different values", () => {
+    const store = useSessionStore();
+
+    store.updateConnection({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: "checked-live-chain",
+      networkPrefix: 42,
+    });
+
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe("checked-live-chain");
+    expect(store.connection.networkPrefix).toBe(42);
+  });
+
   it("falls back to the default endpoint when a saved endpoint is invalid", () => {
     localStorage.setItem(
       SESSION_STORAGE_KEY,

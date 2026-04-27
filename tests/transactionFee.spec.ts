@@ -50,6 +50,14 @@ describe("transaction fee formatting", () => {
     );
   });
 
+  it("does not treat transferred assets as fee assets", () => {
+    expect(readTransactionFee({ asset_id: "xor#universal" })).toBeNull();
+    expect(readTransactionFee({ assetId: "xor#universal" })).toBeNull();
+    expect(formatTransactionFee({ asset_id: "xor#universal" }, t)).toBe(
+      "Network fee: charged on-chain (amount unavailable).",
+    );
+  });
+
   it("appends fee copy to submit messages", () => {
     expect(
       appendTransactionFee(

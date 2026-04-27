@@ -263,6 +263,7 @@ const resolvePresetConnectionForEndpoint = (
 
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
+  options?: { preferPresetMetadata?: boolean },
 ): ConnectionConfig => {
   let toriiUrl = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
   let endpointValid = true;
@@ -278,15 +279,21 @@ const normalizeConnection = (
     : null;
   const fallbackConnection =
     endpointPresetConnection ?? DEFAULT_CHAIN_PRESET.connection;
+  const normalizedChainId = normalizeChainIdValue(partial?.chainId);
+  const normalizedNetworkPrefix = normalizeNetworkPrefixValue(
+    partial?.networkPrefix,
+  );
+  const preferredChainId = options?.preferPresetMetadata
+    ? (endpointPresetConnection?.chainId ?? normalizedChainId)
+    : (normalizedChainId ?? endpointPresetConnection?.chainId);
+  const preferredNetworkPrefix = options?.preferPresetMetadata
+    ? (endpointPresetConnection?.networkPrefix ?? normalizedNetworkPrefix)
+    : (normalizedNetworkPrefix ?? endpointPresetConnection?.networkPrefix);
   const chainId = endpointValid
-    ? (endpointPresetConnection?.chainId ??
-      normalizeChainIdValue(partial?.chainId) ??
-      fallbackConnection.chainId)
+    ? (preferredChainId ?? fallbackConnection.chainId)
     : fallbackConnection.chainId;
   const networkPrefix = endpointValid
-    ? (endpointPresetConnection?.networkPrefix ??
-      normalizeNetworkPrefixValue(partial?.networkPrefix) ??
-      fallbackConnection.networkPrefix)
+    ? (preferredNetworkPrefix ?? fallbackConnection.networkPrefix)
     : fallbackConnection.networkPrefix;
   const assetDefinitionId = String(
     endpointValid
@@ -417,7 +424,9 @@ export const useSessionStore = defineStore("session", {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          const normalizedConnection = normalizeConnection(parsed.connection);
+          const normalizedConnection = normalizeConnection(parsed.connection, {
+            preferPresetMetadata: true,
+          });
           const normalizedAccounts = normalizeAccounts(parsed, {
             networkPrefix: normalizedConnection.networkPrefix,
           });

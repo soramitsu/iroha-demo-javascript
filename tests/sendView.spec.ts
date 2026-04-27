@@ -205,6 +205,43 @@ describe("SendView", () => {
     expect(wrapper.get(".send-status").attributes("role")).toBe("status");
   });
 
+  it("refreshes the displayed balance after successful transparent sends", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "norito:abcdef0123456789#alice@default",
+            quantity: "42",
+          },
+        ],
+        total: 1,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "norito:abcdef0123456789#alice@default",
+            quantity: "40",
+          },
+        ],
+        total: 1,
+      });
+    transferAssetMock.mockResolvedValue({ hash: "0xrefresh" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("42");
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("2");
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("40");
+  });
+
   it("marks rejected transactions as error feedback", async () => {
     const rejectedMessage =
       "Transaction 23479912c2cb8a929bb96246163cb95b30dd6e9766b209338e44d0fdf8e01c2b rejected before it committed.";
