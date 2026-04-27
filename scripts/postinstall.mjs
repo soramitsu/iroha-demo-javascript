@@ -6,6 +6,7 @@ import { resolveNativeBuildRequirement } from "./postinstallNativeCheck.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const projectRoot = dirname(ROOT);
+const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
 const irohaPackagePath = join(
   projectRoot,
   "node_modules",
@@ -29,12 +30,17 @@ if (!requirement.shouldBuild) {
 console.log(
   `[postinstall] Building @iroha/iroha-js native bindings (${requirement.reason})...`,
 );
-const result = spawnSync("npm", ["run", "build:native"], {
+const result = spawnSync(npmCommand, ["run", "build:native"], {
   cwd: irohaPackagePath,
   stdio: "inherit",
 });
 
 if (result.status !== 0) {
+  if (result.error) {
+    console.error(
+      `[postinstall] Unable to launch ${npmCommand}: ${result.error.message}`,
+    );
+  }
   console.error("[postinstall] Failed to build iroha_js_host.");
   process.exit(result.status ?? 1);
 }
