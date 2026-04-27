@@ -12,6 +12,7 @@ const ACCOUNT_REFERENCE_PATTERN =
 const OPAQUE_PREVIEW_HEAD = 8;
 const OPAQUE_PREVIEW_TAIL = 8;
 const OPAQUE_ASSET_LITERAL_PATTERN = /\bnorito:[A-Za-z0-9._:@#-]+/gi;
+const ASSET_HOLDING_DATASPACE_SUFFIX_PATTERN = /#dataspace:[^#\s]+$/i;
 const ASSET_DEFINITION_ADDRESS_VERSION = 1;
 const ASSET_DEFINITION_ADDRESS_LEN = 21;
 const BARE_ASSET_DEFINITION_LEN = 16;
@@ -47,6 +48,22 @@ export const splitAssetReference = (
   }
 
   if (hashParts.length >= 3) {
+    const [definitionId, accountId, ...suffixParts] = hashParts;
+    const normalizedAccountId = (accountId ?? "").trim();
+    const suffix = suffixParts.join("#").trim();
+    if (
+      (definitionId ?? "").trim() &&
+      ACCOUNT_REFERENCE_PATTERN.test(normalizedAccountId) &&
+      suffix.toLowerCase().startsWith("dataspace:")
+    ) {
+      return {
+        definitionId: (definitionId ?? "").trim(),
+        accountId: `${normalizedAccountId}#${suffix}`,
+      };
+    }
+  }
+
+  if (hashParts.length >= 3) {
     return {
       definitionId: hashParts.slice(0, 2).join("#"),
       accountId: hashParts.slice(2).join("#"),
@@ -59,6 +76,13 @@ export const splitAssetReference = (
 export const extractAssetDefinitionId = (
   value: string | null | undefined,
 ): string => splitAssetReference(value).definitionId;
+
+export const extractAssetHoldingDataspaceSuffix = (
+  value: string | null | undefined,
+): string => {
+  const literal = String(value ?? "").trim();
+  return literal.match(ASSET_HOLDING_DATASPACE_SUFFIX_PATTERN)?.[0] ?? "";
+};
 
 const parseHexBytes = (value: string) => {
   const literal = value.trim();
@@ -131,6 +155,34 @@ export const decodeNoritoAssetDefinitionId = (
   payload.set(bareBytes, 1);
   payload.set(blake3(payload.slice(0, 17)).slice(0, 4), 17);
   return encodeBase58(payload);
+};
+
+export const buildAssetHoldingIdLiteral = (input: {
+  assetDefinitionId: string | null | undefined;
+  accountId: string | null | undefined;
+  dataspaceSuffix?: string | null | undefined;
+}): string => {
+  const rawAssetDefinitionId = String(input.assetDefinitionId ?? "").trim();
+  const definitionId =
+    decodeNoritoAssetDefinitionId(rawAssetDefinitionId) ||
+    extractAssetDefinitionId(rawAssetDefinitionId).trim();
+  const accountId = String(input.accountId ?? "").trim();
+  const dataspaceSuffix = (
+    input.dataspaceSuffix ??
+    extractAssetHoldingDataspaceSuffix(rawAssetDefinitionId)
+  )
+    .trim()
+    .replace(/^#?/, "#");
+  const normalizedDataspaceSuffix =
+    dataspaceSuffix === "#" ||
+    !dataspaceSuffix.toLowerCase().startsWith("#dataspace:")
+      ? ""
+      : dataspaceSuffix;
+
+  if (!definitionId || !accountId) {
+    return "";
+  }
+  return `${definitionId}#${accountId}${normalizedDataspaceSuffix}`;
 };
 
 const normalizeComparableAssetDefinitionId = (

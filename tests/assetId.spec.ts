@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   areAssetDefinitionIdsEquivalent,
+  buildAssetHoldingIdLiteral,
   decodeNoritoAssetDefinitionId,
   deriveAssetSymbol,
+  extractAssetHoldingDataspaceSuffix,
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
@@ -50,6 +52,57 @@ describe("asset ID helpers", () => {
         "6TEAJqbb8oEPmLncoNiMRbLEK6tw#testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
       ),
     ).toBe("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
+  });
+
+  it("splits base58 asset holdings with a dataspace suffix", () => {
+    const holdingId =
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2";
+    expect(splitAssetReference(holdingId)).toEqual({
+      definitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      accountId:
+        "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
+    });
+    expect(extractAssetDefinitionId(holdingId)).toBe(
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    );
+    expect(extractAssetHoldingDataspaceSuffix(holdingId)).toBe("#dataspace:2");
+  });
+
+  it("builds source holding IDs from a definition and account literal", () => {
+    expect(
+      buildAssetHoldingIdLiteral({
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId:
+          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+      }),
+    ).toBe(
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+    );
+  });
+
+  it("preserves dataspace suffixes when building source holding IDs", () => {
+    expect(
+      buildAssetHoldingIdLiteral({
+        assetDefinitionId:
+          "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
+        accountId:
+          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+      }),
+    ).toBe(
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY#dataspace:2",
+    );
+  });
+
+  it("decodes norito definitions when building source holding IDs", () => {
+    expect(
+      buildAssetHoldingIdLiteral({
+        assetDefinitionId: "norito:00112233445566778899aabbccddeeff",
+        accountId:
+          "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+      }),
+    ).toBe(
+      "4Zust3cNxsgov3757wxRW7DtR8n6#sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY",
+    );
   });
 
   it("derives readable symbols for legacy IDs and XOR-like IDs", () => {

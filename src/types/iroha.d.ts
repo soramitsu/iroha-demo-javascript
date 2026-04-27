@@ -19,6 +19,13 @@ export interface AccountAddressView {
   accountIdWarning: string;
 }
 
+export interface AccountAliasResolutionResponse {
+  alias: string;
+  accountId: string;
+  resolved: boolean;
+  source?: string;
+}
+
 export interface AccountAssetsResponse {
   items: Array<{ asset_id: string; quantity: string }>;
   total: number;
@@ -738,6 +745,11 @@ export interface IrohaBridge {
     ownerTagHex: string;
     diversifierHex: string;
   };
+  resolveAccountAlias(input: {
+    toriiUrl: string;
+    alias: string;
+    networkPrefix?: number;
+  }): Promise<AccountAliasResolutionResponse>;
   createConfidentialPaymentAddress(input: {
     accountId: string;
     privateKeyHex?: string;
@@ -769,6 +781,7 @@ export interface IrohaBridge {
     assetDefinitionId: string;
     accountId: string;
     destinationAccountId?: string;
+    networkPrefix?: number;
     quantity: string;
     privateKeyHex?: string;
     metadata?: Record<string, unknown>;

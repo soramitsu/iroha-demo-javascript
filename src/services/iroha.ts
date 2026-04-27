@@ -1,4 +1,5 @@
 import type {
+  AccountAliasResolutionResponse,
   AccountAddressView,
   AccountAssetsResponse,
   ConfidentialAssetBalanceView,
@@ -89,6 +90,13 @@ export const deriveAccountAddress = (params: {
 
 export const derivePublicKey = (privateKeyHex: string) =>
   bridge().derivePublicKey(privateKeyHex);
+
+export const resolveAccountAlias = (input: {
+  toriiUrl: string;
+  alias: string;
+  networkPrefix?: number;
+}): Promise<AccountAliasResolutionResponse> =>
+  bridge().resolveAccountAlias(input);
 
 export const createConfidentialPaymentAddress = (
   input: Parameters<IrohaBridge["createConfidentialPaymentAddress"]>[0],

@@ -141,6 +141,13 @@
             {{ shieldCapabilityMessage }}
           </p>
           <p
+            v-if="destinationResolutionMessage"
+            class="helper send-note recipient-resolution"
+            :class="{ error: destinationResolution.error }"
+          >
+            {{ destinationResolutionMessage }}
+          </p>
+          <p
             v-if="
               form.shielded && !destinationIsSelf && !hasShieldedPaymentAddress
             "
@@ -158,9 +165,17 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, reactive, ref, computed, toRef } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  reactive,
+  ref,
+  toRef,
+  watch,
+} from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { transferAsset } from "@/services/iroha";
+import { resolveAccountAlias, transferAsset } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldCapability } from "@/composables/useShieldCapability";
@@ -197,6 +212,16 @@ const form = reactive({
 const sending = ref(false);
 const statusMessage = ref("");
 const scanMessage = ref("");
+const destinationResolution = reactive({
+  input: "",
+  accountId: "",
+  alias: "",
+  resolved: false,
+  resolving: false,
+  error: "",
+});
+let destinationResolveTimer: ReturnType<typeof setTimeout> | null = null;
+let destinationResolveSequence = 0;
 const persistResolvedShieldAssetDefinitionId = (
   resolvedAssetDefinitionId: string,
 ) => {
@@ -311,6 +336,43 @@ const sendIcon = SendIcon;
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
+const destinationResolutionMatchesInput = computed(
+  () => destinationResolution.input === destinationValue.value,
+);
+const resolvedDestinationAccountId = computed(() =>
+  destinationResolutionMatchesInput.value
+    ? destinationResolution.accountId
+    : "",
+);
+const destinationAccountIdForSubmit = computed(
+  () => resolvedDestinationAccountId.value || destinationValue.value,
+);
+const destinationResolutionMessage = computed(() => {
+  if (!destinationResolutionMatchesInput.value) {
+    return "";
+  }
+  if (destinationResolution.resolving) {
+    return t("Resolving recipient…");
+  }
+  if (destinationResolution.error) {
+    return destinationResolution.error;
+  }
+  if (destinationResolution.resolved && destinationResolution.accountId) {
+    return t("Alias {alias} resolves to {accountId}.", {
+      alias: destinationResolution.alias || destinationResolution.input,
+      accountId: destinationResolution.accountId,
+    });
+  }
+  if (
+    destinationResolution.accountId &&
+    destinationResolution.accountId !== destinationResolution.input
+  ) {
+    return t("Recipient normalized to {accountId}.", {
+      accountId: destinationResolution.accountId,
+    });
+  }
+  return "";
+});
 const resolvedAssetDefinitionId = computed(
   () =>
     extractAssetDefinitionId(shieldResolvedAssetId.value).trim() ||
@@ -321,9 +383,17 @@ const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
 const isShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedQuantity.value),
 );
-const isDestinationValid = computed(() => Boolean(destinationValue.value));
+const isDestinationValid = computed(() => {
+  if (!destinationValue.value) {
+    return false;
+  }
+  if (destinationResolutionMatchesInput.value && destinationResolution.error) {
+    return false;
+  }
+  return true;
+});
 const destinationIsSelf = computed(() => {
-  const destination = destinationValue.value;
+  const destination = destinationAccountIdForSubmit.value;
   return Boolean(
     destination &&
       (destination === activeAccountDisplayId.value ||
@@ -348,6 +418,99 @@ const hasV3ShieldedPaymentAddress = computed(
 const hasShieldedPaymentAddress = computed(
   () => hasV3ShieldedPaymentAddress.value,
 );
+
+const resetDestinationResolution = () => {
+  destinationResolution.input = "";
+  destinationResolution.accountId = "";
+  destinationResolution.alias = "";
+  destinationResolution.resolved = false;
+  destinationResolution.resolving = false;
+  destinationResolution.error = "";
+};
+
+const resolveDestinationNow = async (input = destinationValue.value) => {
+  const destination = input.trim();
+  destinationResolveSequence += 1;
+  const sequence = destinationResolveSequence;
+  if (destinationResolveTimer) {
+    clearTimeout(destinationResolveTimer);
+    destinationResolveTimer = null;
+  }
+  if (!destination) {
+    resetDestinationResolution();
+    return "";
+  }
+  destinationResolution.input = destination;
+  destinationResolution.resolving = true;
+  destinationResolution.error = "";
+  try {
+    const result = await resolveAccountAlias({
+      toriiUrl: session.connection.toriiUrl,
+      alias: destination,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    if (sequence !== destinationResolveSequence) {
+      return "";
+    }
+    destinationResolution.input = destination;
+    destinationResolution.accountId = result.accountId;
+    destinationResolution.alias = result.alias || destination;
+    destinationResolution.resolved = result.resolved;
+    destinationResolution.error = "";
+    return result.accountId;
+  } catch (error) {
+    if (sequence !== destinationResolveSequence) {
+      return "";
+    }
+    destinationResolution.input = destination;
+    destinationResolution.accountId = "";
+    destinationResolution.alias = destination;
+    destinationResolution.resolved = false;
+    destinationResolution.error = toUserFacingErrorMessage(
+      error,
+      t("Unable to resolve recipient."),
+    );
+    return "";
+  } finally {
+    if (sequence === destinationResolveSequence) {
+      destinationResolution.resolving = false;
+    }
+  }
+};
+
+const scheduleDestinationResolution = () => {
+  if (destinationResolveTimer) {
+    clearTimeout(destinationResolveTimer);
+    destinationResolveTimer = null;
+  }
+  destinationResolveSequence += 1;
+  const destination = destinationValue.value;
+  if (!destination) {
+    resetDestinationResolution();
+    return;
+  }
+  destinationResolution.input = destination;
+  destinationResolution.resolving = true;
+  destinationResolution.error = "";
+  destinationResolveTimer = setTimeout(() => {
+    void resolveDestinationNow(destination);
+  }, 350);
+};
+
+watch(
+  [
+    destinationValue,
+    () => session.connection.toriiUrl,
+    () => session.connection.networkPrefix,
+  ],
+  scheduleDestinationResolution,
+);
+
+onBeforeUnmount(() => {
+  if (destinationResolveTimer) {
+    clearTimeout(destinationResolveTimer);
+  }
+});
 
 const isValid = computed(() =>
   Boolean(
@@ -382,23 +545,34 @@ const handleSend = async () => {
       );
       return;
     }
-    if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
-      statusMessage.value = t(
-        "Scan a private Receive QR before sending privately.",
-      );
-      return;
-    }
   }
   const submitMode = form.shielded ? "shield" : "transfer";
   sending.value = true;
   statusMessage.value = "";
   try {
+    const resolvedDestination = destinationValue.value
+      ? await resolveDestinationNow()
+      : "";
+    if (destinationValue.value && !resolvedDestination) {
+      statusMessage.value =
+        destinationResolution.error || t("Unable to resolve recipient.");
+      return;
+    }
+    if (form.shielded) {
+      if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
+        statusMessage.value = t(
+          "Scan a private Receive QR before sending privately.",
+        );
+        return;
+      }
+    }
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       assetDefinitionId: resolvedAssetDefinitionId.value,
       accountId: account.accountId,
-      destinationAccountId: destinationValue.value || undefined,
+      destinationAccountId: destinationAccountIdForSubmit.value || undefined,
+      networkPrefix: session.connection.networkPrefix,
       quantity: normalizedQuantity.value,
       privateKeyHex: account.privateKeyHex,
       metadata: !form.shielded && form.memo ? { memo: form.memo } : undefined,
@@ -590,6 +764,15 @@ video {
   border-radius: 14px;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.recipient-resolution {
+  word-break: break-all;
+  unicode-bidi: plaintext;
+}
+
+.recipient-resolution.error {
+  border-color: rgba(255, 93, 113, 0.5);
 }
 
 @media (max-width: 1080px) {

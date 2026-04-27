@@ -63,6 +63,8 @@ import {
   normalizeExplorerAssetDefinitionSnapshotPayload,
 } from "./networkStats";
 import {
+  areAssetDefinitionIdsEquivalent,
+  buildAssetHoldingIdLiteral,
   extractAssetDefinitionId,
   resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
@@ -270,6 +272,7 @@ type TransferAssetInput = {
   assetDefinitionId: string;
   accountId: string;
   destinationAccountId?: string;
+  networkPrefix?: number;
   quantity: string;
   privateKeyHex?: HexString;
   metadata?: Record<string, unknown>;
@@ -285,6 +288,19 @@ type TransferAssetInput = {
   shieldedReceivePublicKeyBase64Url?: string;
   shieldedOwnerTagHex?: string;
   shieldedDiversifierHex?: string;
+};
+
+type ResolveAccountAliasInput = {
+  toriiUrl: string;
+  alias: string;
+  networkPrefix?: number;
+};
+
+type AccountAliasResolutionResponse = {
+  alias: string;
+  accountId: string;
+  resolved: boolean;
+  source?: string;
 };
 
 type ExportConfidentialWalletBackupInput = {
@@ -954,6 +970,9 @@ type IrohaBridge = {
     ownerTagHex: string;
     diversifierHex: string;
   };
+  resolveAccountAlias(
+    input: ResolveAccountAliasInput,
+  ): Promise<AccountAliasResolutionResponse>;
   createConfidentialPaymentAddress(input: {
     accountId: string;
     privateKeyHex?: string;
@@ -3078,6 +3097,135 @@ const fetchChainMetadata = async (
     draft,
     resolveKnownChainMetadataFallback(toriiUrlRaw, draft),
   );
+};
+
+const normalizeOptionalAccountNetworkPrefix = (value: unknown) => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const normalized = Number(value);
+  if (!Number.isInteger(normalized) || normalized < 0 || normalized > 0x3fff) {
+    throw new Error("networkPrefix must be an integer between 0 and 16383.");
+  }
+  return normalized;
+};
+
+const tryNormalizeCanonicalAccountIdLiteral = (
+  value: string,
+  label: string,
+  networkPrefix?: number,
+) => {
+  try {
+    return normalizeCanonicalAccountIdLiteral(value, label, networkPrefix);
+  } catch {
+    return "";
+  }
+};
+
+const normalizeFirstAccountIdCandidate = (
+  candidates: string[],
+  label: string,
+  networkPrefix?: number,
+) => {
+  let lastError: unknown = null;
+  for (const candidate of candidates) {
+    const literal = trimString(candidate);
+    if (!literal) {
+      continue;
+    }
+    try {
+      return normalizeCanonicalAccountIdLiteral(literal, label, networkPrefix);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
+  throw new Error(`${label} must be a non-empty string.`);
+};
+
+const resolveAccountAliasSelector = async (
+  input: ResolveAccountAliasInput,
+): Promise<AccountAliasResolutionResponse> => {
+  const selector = trimString(input.alias);
+  if (!selector) {
+    throw new Error("alias must be a non-empty string.");
+  }
+  const networkPrefix = normalizeOptionalAccountNetworkPrefix(
+    input.networkPrefix,
+  );
+  const literalAccountId = tryNormalizeCanonicalAccountIdLiteral(
+    selector,
+    "accountId",
+    networkPrefix,
+  );
+  if (literalAccountId) {
+    return {
+      alias: "",
+      accountId: literalAccountId,
+      resolved: false,
+    };
+  }
+
+  const client = getClient(input.toriiUrl);
+  let aliasResolveError: unknown = null;
+  try {
+    const resolved = await client.resolveAlias(selector);
+    const resolvedAccountId = trimString(resolved?.account_id);
+    if (resolvedAccountId) {
+      const accountId = normalizeFirstAccountIdCandidate(
+        [resolvedAccountId],
+        "alias account_id",
+        networkPrefix,
+      );
+      const source = trimString(resolved?.source);
+      return {
+        alias: trimString(resolved?.alias) || selector,
+        accountId,
+        resolved: true,
+        ...(source ? { source } : {}),
+      };
+    }
+  } catch (error) {
+    aliasResolveError = error;
+  }
+
+  try {
+    const snapshot = await client.getExplorerAccountQr(selector);
+    const accountId = normalizeFirstAccountIdCandidate(
+      [snapshot.literal, snapshot.canonicalId],
+      "explorer account alias",
+      networkPrefix ?? snapshot.networkPrefix,
+    );
+    return {
+      alias: selector,
+      accountId,
+      resolved: true,
+      source: "explorer_qr",
+    };
+  } catch (qrError) {
+    if (aliasResolveError) {
+      const detail =
+        aliasResolveError instanceof Error
+          ? trimString(aliasResolveError.message)
+          : trimString(aliasResolveError);
+      throw new Error(
+        detail
+          ? `Account alias "${selector}" could not be resolved. ${detail}`
+          : `Account alias "${selector}" could not be resolved.`,
+      );
+    }
+    const detail =
+      qrError instanceof Error
+        ? trimString(qrError.message)
+        : trimString(qrError);
+    throw new Error(
+      detail
+        ? `Account alias "${selector}" could not be resolved. ${detail}`
+        : `Account alias "${selector}" was not found.`,
+    );
+  }
 };
 
 const fetchKaigiMeetingView = async (
@@ -5448,6 +5596,9 @@ const api: IrohaBridge = {
   deriveConfidentialReceiveAddress(privateKeyHex) {
     return deriveWalletConfidentialReceiveAddress({ privateKeyHex });
   },
+  async resolveAccountAlias(input) {
+    return resolveAccountAliasSelector(input);
+  },
   async createConfidentialPaymentAddress({ accountId, privateKeyHex }) {
     await assertSecureVaultAvailable("Confidential payment address creation");
     const descriptor = await createStoredConfidentialReceiveDescriptor({
@@ -5613,10 +5764,13 @@ const api: IrohaBridge = {
     );
     const destinationAccountIdLiteral = trimString(input.destinationAccountId);
     const destinationAccountId = destinationAccountIdLiteral
-      ? normalizeCompatAccountIdLiteral(
-          destinationAccountIdLiteral,
-          "destinationAccountId",
-        )
+      ? (
+          await resolveAccountAliasSelector({
+            toriiUrl: input.toriiUrl,
+            alias: destinationAccountIdLiteral,
+            networkPrefix: input.networkPrefix,
+          })
+        ).accountId
       : "";
     const privateKeyHex = await resolvePrivateKeyHex({
       accountId,
@@ -6262,48 +6416,127 @@ const api: IrohaBridge = {
       throw new Error("assetDefinitionId is required.");
     }
 
-    let sourceAssetId: string | null = null;
-    try {
-      sourceAssetId = normalizeAssetId(configuredAssetId, "sourceAssetId");
-    } catch {
-      sourceAssetId = null;
-    }
-
-    if (!sourceAssetId) {
-      const assets = await client.listAccountAssets(accountId, {
-        limit: 200,
+    const configuredAssetDefinitionId =
+      extractAssetDefinitionId(configuredAssetId).trim() || configuredAssetId;
+    const buildSourceAssetHoldingId = (assetReference: string) => {
+      const sourceAssetHoldingLiteral = buildAssetHoldingIdLiteral({
+        assetDefinitionId: assetReference,
+        accountId,
       });
-      const items = Array.isArray(assets?.items) ? assets.items : [];
-      const exactMatch = items.find(
-        (asset) => String(asset.asset_id ?? "").trim() === configuredAssetId,
-      );
-      const legacyMatch = items.find((asset) =>
-        String(asset.asset_id ?? "").startsWith(`${configuredAssetId}##`),
-      );
-      const containsMatches = items.filter((asset) =>
-        String(asset.asset_id ?? "")
-          .toLowerCase()
-          .includes(configuredAssetId.toLowerCase()),
-      );
-      const positiveBalanceMatches = items.filter((asset) => {
-        const quantity = Number(String(asset.quantity ?? ""));
-        return Number.isFinite(quantity) && quantity > 0;
-      });
+      if (!sourceAssetHoldingLiteral) {
+        return null;
+      }
+      try {
+        return normalizeAssetId(
+          sourceAssetHoldingLiteral,
+          "sourceAssetHoldingId",
+        );
+      } catch {
+        return null;
+      }
+    };
+    const configuredSourceAssetHoldingId =
+      buildSourceAssetHoldingId(configuredAssetId);
+    const configuredLooksLegacy =
+      configuredAssetDefinitionId.includes("#") &&
+      !configuredAssetDefinitionId.startsWith("norito:");
+    let sourceAssetHoldingId = configuredLooksLegacy
+      ? null
+      : configuredSourceAssetHoldingId;
 
-      const selectedAssetId = String(
-        exactMatch?.asset_id ??
-          legacyMatch?.asset_id ??
-          (containsMatches.length === 1 ? containsMatches[0]?.asset_id : "") ??
-          (positiveBalanceMatches.length === 1
-            ? positiveBalanceMatches[0]?.asset_id
-            : ""),
-      ).trim();
-
-      if (!selectedAssetId) {
-        const available = items
-          .map((asset) => String(asset.asset_id ?? "").trim())
+    if (!sourceAssetHoldingId) {
+      let selectedAssetId = "";
+      let available: string[] = [];
+      try {
+        const assets = await client.listAccountAssets(accountId, {
+          limit: 200,
+        });
+        const items = (Array.isArray(assets?.items) ? assets.items : [])
+          .map((asset) => {
+            const assetRecord = isPlainRecord(asset) ? asset : {};
+            const legacyAssetId = trimString(assetRecord.asset_id);
+            const assetDefinitionId = trimString(
+              assetRecord.asset ??
+                assetRecord.asset_definition_id ??
+                assetRecord.assetDefinitionId,
+            );
+            const assetAccountId = trimString(
+              assetRecord.account_id ?? assetRecord.accountId,
+            );
+            const assetId =
+              legacyAssetId ||
+              (assetDefinitionId && assetAccountId
+                ? buildAssetHoldingIdLiteral({
+                    assetDefinitionId,
+                    accountId: assetAccountId,
+                  })
+                : assetDefinitionId);
+            const quantity = trimString(assetRecord.quantity);
+            return assetId && quantity ? { asset_id: assetId, quantity } : null;
+          })
+          .filter((asset): asset is { asset_id: string; quantity: string } =>
+            Boolean(asset),
+          );
+        available = items
+          .map((asset) => asset.asset_id.trim())
           .filter(Boolean)
           .slice(0, 5);
+        const resolvedDefinitionId = resolveUniqueLiveAssetDefinitionId(
+          items,
+          configuredAssetDefinitionId,
+        );
+        const hasPositiveQuantity = (asset: { quantity: string }) => {
+          const quantity = Number(asset.quantity);
+          return Number.isFinite(quantity) && quantity > 0;
+        };
+        const exactMatch = items.find(
+          (asset) => asset.asset_id.trim() === configuredAssetId,
+        );
+        const resolvedMatch = resolvedDefinitionId
+          ? (items.find(
+              (asset) =>
+                areAssetDefinitionIdsEquivalent(
+                  asset.asset_id,
+                  resolvedDefinitionId,
+                ) && hasPositiveQuantity(asset),
+            ) ??
+            items.find((asset) =>
+              areAssetDefinitionIdsEquivalent(
+                asset.asset_id,
+                resolvedDefinitionId,
+              ),
+            ))
+          : null;
+        const legacyMatch = items.find((asset) =>
+          asset.asset_id.startsWith(`${configuredAssetDefinitionId}##`),
+        );
+        const containsMatches = items.filter((asset) =>
+          asset.asset_id
+            .toLowerCase()
+            .includes(configuredAssetDefinitionId.toLowerCase()),
+        );
+        const positiveBalanceMatches = items.filter(hasPositiveQuantity);
+
+        selectedAssetId = String(
+          exactMatch?.asset_id ??
+            resolvedMatch?.asset_id ??
+            legacyMatch?.asset_id ??
+            (containsMatches.length === 1
+              ? containsMatches[0]?.asset_id
+              : "") ??
+            (positiveBalanceMatches.length === 1
+              ? positiveBalanceMatches[0]?.asset_id
+              : ""),
+        ).trim();
+      } catch {
+        selectedAssetId = "";
+      }
+
+      sourceAssetHoldingId = selectedAssetId
+        ? buildSourceAssetHoldingId(selectedAssetId)
+        : configuredSourceAssetHoldingId;
+
+      if (!sourceAssetHoldingId) {
         const availableHint = available.length
           ? ` Available asset IDs: ${available.join(", ")}.`
           : "";
@@ -6311,13 +6544,12 @@ const api: IrohaBridge = {
           `Unable to resolve the source asset from configured value "${configuredAssetId}". Set Asset Definition ID to the canonical asset literal for this account.${availableHint}`,
         );
       }
-      sourceAssetId = normalizeAssetId(selectedAssetId, "sourceAssetId");
     }
 
     const tx = buildTransferAssetTransaction({
       chainId: input.chainId,
       authority: accountId,
-      sourceAssetHoldingId: sourceAssetId,
+      sourceAssetHoldingId,
       quantity: input.quantity,
       destinationAccountId,
       metadata: withRequiredGasAssetMetadata(input.metadata),

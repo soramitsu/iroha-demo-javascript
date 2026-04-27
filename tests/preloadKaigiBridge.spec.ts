@@ -48,6 +48,9 @@ const mocks = vi.hoisted(() => ({
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
+  resolveAliasMock: vi.fn(),
+  getExplorerAccountQrMock: vi.fn(),
+  listAccountAssetsMock: vi.fn(),
   listAccountTransactionsMock: vi.fn(),
   getConfigurationMock: vi.fn(),
   getVerifyingKeyTypedMock: vi.fn(),
@@ -254,6 +257,18 @@ vi.mock("@iroha/iroha-js", async () => {
       return mocks.getKaigiCallMock(...args);
     }
 
+    resolveAlias(...args: unknown[]) {
+      return mocks.resolveAliasMock(...args);
+    }
+
+    getExplorerAccountQr(...args: unknown[]) {
+      return mocks.getExplorerAccountQrMock(...args);
+    }
+
+    listAccountAssets(...args: unknown[]) {
+      return mocks.listAccountAssetsMock(...args);
+    }
+
     listAccountTransactions(...args: unknown[]) {
       return mocks.listAccountTransactionsMock(...args);
     }
@@ -362,6 +377,9 @@ const loadBridge = async () => {
     transferAsset: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    resolveAccountAlias: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     deriveConfidentialReceiveAddress: (privateKeyHex: string) => {
       ownerTagHex: string;
       diversifierHex: string;
@@ -415,6 +433,9 @@ describe("preload Kaigi bridge", () => {
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
+    mocks.resolveAliasMock.mockReset();
+    mocks.getExplorerAccountQrMock.mockReset();
+    mocks.listAccountAssetsMock.mockReset();
     mocks.listAccountTransactionsMock.mockReset();
     mocks.getConfigurationMock.mockReset();
     mocks.getVerifyingKeyTypedMock.mockReset();
@@ -500,6 +521,10 @@ describe("preload Kaigi bridge", () => {
         },
       ],
     });
+    mocks.resolveAliasMock.mockResolvedValue(null);
+    mocks.getExplorerAccountQrMock.mockRejectedValue(
+      new Error("explorer account QR unavailable"),
+    );
 
     mocks.listKaigiRelaysMock.mockResolvedValue({
       items: [
@@ -515,6 +540,10 @@ describe("preload Kaigi bridge", () => {
         relay_id: "relay-1",
       },
       hpke_public_key_b64: "relay-hpke-key",
+    });
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [],
+      total: 0,
     });
     mocks.listAccountTransactionsMock.mockResolvedValue({
       items: [
@@ -1284,6 +1313,144 @@ describe("preload Kaigi bridge", () => {
           memo: "hello from test",
           gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         },
+      }),
+    );
+  });
+
+  it("uses a full Minamoto source asset holding id for public transfers", async () => {
+    const bridge = await loadBridge();
+    const sourceAccountId =
+      "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY";
+    const destinationAccountId =
+      "sorauロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: "sora nexus main net",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: sourceAccountId,
+        destinationAccountId,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+    });
+
+    expect(mocks.listAccountAssetsMock).not.toHaveBeenCalled();
+    expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authority: sourceAccountId,
+        sourceAssetHoldingId: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${sourceAccountId}`,
+        destinationAccountId,
+      }),
+    );
+  });
+
+  it("resolves account aliases to I105 literals through the bridge", async () => {
+    const bridge = await loadBridge();
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string, _label: string, networkPrefix?: number) => {
+        const literal = String(value).trim();
+        if (literal === "bob@universal") {
+          throw new Error("invalid account literal");
+        }
+        return networkPrefix ? `${literal}@n${networkPrefix}` : literal;
+      },
+    );
+    mocks.resolveAliasMock.mockResolvedValue({
+      alias: "bob@universal",
+      account_id: BOB_ACCOUNT_ID,
+      source: "on_chain",
+    });
+
+    await expect(
+      bridge.resolveAccountAlias({
+        toriiUrl: "https://taira.sora.org",
+        alias: " bob@universal ",
+        networkPrefix: 369,
+      }),
+    ).resolves.toEqual({
+      alias: "bob@universal",
+      accountId: `${BOB_ACCOUNT_ID}@n369`,
+      resolved: true,
+      source: "on_chain",
+    });
+    expect(mocks.resolveAliasMock).toHaveBeenCalledWith("bob@universal");
+  });
+
+  it("resolves public transfer destination aliases before building transactions", async () => {
+    const bridge = await loadBridge();
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string, _label: string, networkPrefix?: number) => {
+        const literal = String(value).trim();
+        if (literal === "bob@universal") {
+          throw new Error("invalid account literal");
+        }
+        return networkPrefix ? `${literal}@n${networkPrefix}` : literal;
+      },
+    );
+    mocks.resolveAliasMock.mockResolvedValue({
+      alias: "bob@universal",
+      account_id: BOB_ACCOUNT_ID,
+      source: "on_chain",
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: "bob@universal",
+        networkPrefix: 369,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+    });
+
+    expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAccountId: `${BOB_ACCOUNT_ID}@n369`,
+      }),
+    );
+  });
+
+  it("resolves stale public XOR aliases to live source holding ids", async () => {
+    const bridge = await loadBridge();
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${ALICE_ACCOUNT_ID}#dataspace:2`,
+          quantity: "25",
+        },
+      ],
+      total: 1,
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: "sora nexus main net",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+    });
+
+    expect(mocks.listAccountAssetsMock).toHaveBeenCalledWith(ALICE_ACCOUNT_ID, {
+      limit: 200,
+    });
+    expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceAssetHoldingId: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${ALICE_ACCOUNT_ID}#dataspace:2`,
       }),
     );
   });

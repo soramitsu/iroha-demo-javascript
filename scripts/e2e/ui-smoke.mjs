@@ -487,6 +487,11 @@ function buildInitScript() {
       exportConfidentialWalletBackup: async () => ({}),
       importConfidentialWalletBackup: async () => {},
       registerAccount: async () => ({ hash: txHash("register") }),
+      resolveAccountAlias: async ({ alias }) => ({
+        alias: "",
+        accountId: String(alias || "").trim(),
+        resolved: false,
+      }),
       transferAsset: async (input) => {
         window.__e2e.calls.push({ method: "transferAsset", input });
         return { hash: txHash("transfer") };

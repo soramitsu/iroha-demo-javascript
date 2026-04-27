@@ -21,12 +21,14 @@ const DESTINATION_ACCOUNT_SELECTOR =
 
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
+const resolveAccountAliasMock = vi.fn();
 type QrDecodeHandler = (payload: string) => void;
 let qrDecodeHandler: QrDecodeHandler | null = null;
 
 vi.mock("@/services/iroha", () => ({
   getConfidentialAssetPolicy: (input: unknown) =>
     getConfidentialAssetPolicyMock(input),
+  resolveAccountAlias: (input: unknown) => resolveAccountAliasMock(input),
   transferAsset: (input: unknown) => transferAssetMock(input),
 }));
 
@@ -56,7 +58,15 @@ describe("SendView", () => {
     localStorage.clear();
     transferAssetMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
+    resolveAccountAliasMock.mockReset();
     qrDecodeHandler = null;
+    resolveAccountAliasMock.mockImplementation(
+      async (input: { alias?: string }) => ({
+        alias: "",
+        accountId: String(input.alias ?? "").trim(),
+        resolved: false,
+      }),
+    );
     getConfidentialAssetPolicyMock.mockResolvedValue({
       asset_id: "norito:abcdef0123456789",
       block_height: 1,
@@ -212,6 +222,62 @@ describe("SendView", () => {
         destinationAccountId: BOB_I105_ACCOUNT_ID,
         shielded: false,
       }),
+    );
+  });
+
+  it("resolves recipient aliases before transparent sends", async () => {
+    resolveAccountAliasMock.mockResolvedValueOnce({
+      alias: "bob@universal",
+      accountId: BOB_I105_ACCOUNT_ID,
+      resolved: true,
+      source: "on_chain",
+    });
+    transferAssetMock.mockResolvedValue({ hash: "0xalias" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get(DESTINATION_ACCOUNT_SELECTOR).setValue("bob@universal");
+    await wrapper.get('input[type="number"]').setValue("2");
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(resolveAccountAliasMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      alias: "bob@universal",
+      networkPrefix: 369,
+    });
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAccountId: BOB_I105_ACCOUNT_ID,
+        networkPrefix: 369,
+        shielded: false,
+      }),
+    );
+    expect(wrapper.text()).toContain(
+      t("Alias {alias} resolves to {accountId}.", {
+        alias: "bob@universal",
+        accountId: BOB_I105_ACCOUNT_ID,
+      }),
+    );
+  });
+
+  it("blocks transparent sends when an alias cannot resolve", async () => {
+    resolveAccountAliasMock.mockRejectedValueOnce(
+      new Error('Account alias "missing@universal" was not found.'),
+    );
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue("missing@universal");
+    await wrapper.get('input[type="number"]').setValue("2");
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(transferAssetMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      'Account alias "missing@universal" was not found.',
     );
   });
 

@@ -32,6 +32,7 @@ import {
   listVpnReceipts,
   repairVpn,
   registerCitizen,
+  resolveAccountAlias,
   requestFaucetFunds,
   schedulePublicLaneUnbond,
   cancelSubscription,
@@ -153,6 +154,27 @@ describe("iroha services bridge", () => {
     expect(getExplorerAccountQrMock).toHaveBeenCalledWith(input);
     expect(result.svg).toBe(snapshot.svg);
     expect(result.qrVersion).toBe(snapshot.qrVersion);
+  });
+
+  it("forwards account alias resolution to the bridge", async () => {
+    const resolution = {
+      alias: "bob@universal",
+      accountId: "testuBobResolved",
+      resolved: true,
+      source: "on_chain",
+    };
+    const resolveAccountAliasMock = vi.fn().mockResolvedValue(resolution);
+    (window as any).iroha = {
+      resolveAccountAlias: resolveAccountAliasMock,
+    };
+
+    const input = {
+      toriiUrl: "http://localhost:8080",
+      alias: "bob@universal",
+      networkPrefix: 369,
+    };
+    await expect(resolveAccountAlias(input)).resolves.toEqual(resolution);
+    expect(resolveAccountAliasMock).toHaveBeenCalledWith(input);
   });
 
   it("forwards VPN bridge methods", async () => {

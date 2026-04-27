@@ -1264,6 +1264,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   Recipient: "Recipient",
   "Scan a private receive QR, or enter your own wallet to make funds private.":
     "Scan a private receive QR, or enter your own wallet to make funds private.",
+  "Resolving recipient…": "Resolving recipient…",
+  "Alias {alias} resolves to {accountId}.":
+    "Alias {alias} resolves to {accountId}.",
+  "Recipient normalized to {accountId}.":
+    "Recipient normalized to {accountId}.",
+  "Unable to resolve recipient.": "Unable to resolve recipient.",
   "Private transfers use the recipient Receive QR and do not include memos.":
     "Private transfers use the recipient Receive QR and do not include memos.",
   "Private transfer": "Private transfer",
