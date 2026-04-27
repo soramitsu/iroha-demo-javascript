@@ -11,7 +11,17 @@ const sdkEntry = fileURLToPath(import.meta.resolve("@iroha/iroha-js"));
 const sdkRoot = dirname(dirname(sdkEntry));
 const source = join(sdkRoot, "native");
 const target = join(projectRoot, "dist", "native");
-const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmExecPath = process.env.npm_execpath;
+const npmCommand = npmExecPath
+  ? process.execPath
+  : process.platform === "win32"
+    ? "cmd.exe"
+    : "npm";
+const npmBuildNativeArgs = npmExecPath
+  ? [npmExecPath, "run", "build:native"]
+  : process.platform === "win32"
+    ? ["/d", "/s", "/c", "npm run build:native"]
+    : ["run", "build:native"];
 
 const requirement = resolveNativeBuildRequirement(sdkRoot);
 
@@ -19,7 +29,7 @@ if (requirement.shouldBuild) {
   console.log(
     `Building @iroha/iroha-js native bindings before copy (${requirement.reason})...`,
   );
-  const result = spawnSync(npmCommand, ["run", "build:native"], {
+  const result = spawnSync(npmCommand, npmBuildNativeArgs, {
     cwd: sdkRoot,
     stdio: "inherit",
     env: process.env,
