@@ -105,6 +105,10 @@
           {{ t("First charge time") }}
           <input v-model="form.firstChargeAt" type="datetime-local" />
         </label>
+        <p class="transaction-fee-note subscription-span-2">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
+        </p>
         <button
           type="submit"
           class="subscription-submit"
@@ -236,6 +240,10 @@
               </div>
             </details>
           </div>
+          <p class="transaction-fee-note">
+            <span>{{ t("Fee") }}</span>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
+          </p>
           <div class="subscription-actions">
             <button
               class="secondary"
@@ -294,6 +302,10 @@ import {
   subscriptionStatusFromItem,
 } from "@/utils/subscriptions";
 import { deriveAssetSymbol } from "@/utils/assetId";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
 
 const subscriptions = useSubscriptionStore();
 const session = useSessionStore();
@@ -571,9 +583,13 @@ const subscribe = async () => {
       planId,
       firstChargeMs: parseFirstChargeMs(),
     });
-    actionMessage.value = t("Subscription submitted: {hash}", {
-      hash: shortenIdentifier(result.tx_hash_hex),
-    });
+    actionMessage.value = appendTransactionFee(
+      t("Subscription submitted: {hash}", {
+        hash: shortenIdentifier(result.tx_hash_hex),
+      }),
+      result,
+      t,
+    );
     resetForm();
     await refresh();
   } catch (error) {
@@ -614,9 +630,13 @@ const runRecordAction = async (
             : kind === "keep"
               ? await subscriptions.keep(input)
               : await subscriptions.chargeNow(input);
-    actionMessage.value = t("Subscription action submitted: {hash}", {
-      hash: shortenIdentifier(result.tx_hash_hex),
-    });
+    actionMessage.value = appendTransactionFee(
+      t("Subscription action submitted: {hash}", {
+        hash: shortenIdentifier(result.tx_hash_hex),
+      }),
+      result,
+      t,
+    );
     await refresh();
   } catch (error) {
     formError.value =

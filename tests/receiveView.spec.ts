@@ -3,6 +3,10 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ReceiveView from "@/views/ReceiveView.vue";
 import { useSessionStore } from "@/stores/session";
+import {
+  encodeConfidentialPaymentAddress,
+  type ConfidentialPaymentAddressPayload,
+} from "@/utils/confidentialPaymentAddress";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
@@ -147,17 +151,18 @@ describe("ReceiveView", () => {
   });
 
   it("renders the receive qr with scan-friendly contrast colors", async () => {
-    createConfidentialPaymentAddressMock.mockResolvedValueOnce({
+    const paymentAddress: ConfidentialPaymentAddressPayload = {
       schema: "iroha-confidential-payment-address/v3",
       receiveKeyId: "alice-key",
       receivePublicKeyBase64Url: "alicePublicKey",
       shieldedOwnerTagHex: "11".repeat(32),
       shieldedDiversifierHex: "33".repeat(32),
       recoveryHint: "one-time-receive-key",
-    });
+    };
+    createConfidentialPaymentAddressMock.mockResolvedValueOnce(paymentAddress);
     qrToStringMock.mockResolvedValueOnce("<svg></svg>");
 
-    mountView();
+    const wrapper = mountView();
 
     await flushPromises();
 
@@ -196,6 +201,9 @@ describe("ReceiveView", () => {
           light: "#ffffff",
         },
       }),
+    );
+    expect((wrapper.get("textarea").element as HTMLTextAreaElement).value).toBe(
+      encodeConfidentialPaymentAddress(paymentAddress),
     );
   });
 
@@ -246,7 +254,10 @@ describe("ReceiveView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get("button").trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "Share QR")
+      ?.trigger("click");
     await flushPromises();
 
     expect(fetchMock).toHaveBeenCalledWith("data:image/png;base64,cXI=");
@@ -257,5 +268,39 @@ describe("ReceiveView", () => {
       }),
     );
     expect(wrapper.text()).toContain("QR shared.");
+  });
+
+  it("copies the private payment address as text", async () => {
+    const writeTextMock = vi.fn();
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: writeTextMock,
+      },
+    });
+    const paymentAddress: ConfidentialPaymentAddressPayload = {
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    };
+    createConfidentialPaymentAddressMock.mockResolvedValue(paymentAddress);
+    qrToStringMock.mockResolvedValue("<svg></svg>");
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "Copy address")
+      ?.trigger("click");
+    await flushPromises();
+
+    expect(writeTextMock).toHaveBeenCalledWith(
+      encodeConfidentialPaymentAddress(paymentAddress),
+    );
+    expect(wrapper.text()).toContain("Private address copied.");
   });
 });

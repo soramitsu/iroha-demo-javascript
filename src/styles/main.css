@@ -310,6 +310,7 @@ body::before {
 .app-container {
   min-height: 100vh;
   display: flex;
+  flex-wrap: wrap;
   flex-direction: column;
   position: relative;
   z-index: 2;
@@ -3180,6 +3181,45 @@ button:not(.secondary):hover {
   border-radius: 14px;
   border: 1px solid rgba(34, 197, 94, 0.26);
   background: rgba(34, 197, 94, 0.08);
+}
+
+.soracloud-launch-result .mono,
+.soracloud-launch-fee {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transaction-fee-note {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--iroha-muted);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.transaction-fee-note span {
+  flex: 0 0 auto;
+  color: var(--iroha-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.transaction-fee-note strong {
+  min-width: 0;
+  color: var(--iroha-text);
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .soracloud-review-grid {

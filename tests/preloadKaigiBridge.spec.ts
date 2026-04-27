@@ -30,6 +30,28 @@ const BOB_ACCOUNT_ID = "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2G
 const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
+const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+
+const buildNrt0Frame = (payload: Buffer) => {
+  const header = Buffer.alloc(40);
+  header.write("NRT0", 0, "ascii");
+  header.writeBigUInt64LE(BigInt(payload.length), 23);
+  return Buffer.concat([header, payload]);
+};
+
+const unwrapNrt0Frame = (payload: Buffer) => {
+  if (
+    payload.length < 40 ||
+    payload.subarray(0, 4).toString("ascii") !== "NRT0"
+  ) {
+    return payload;
+  }
+  const payloadLength = payload.readBigUInt64LE(23);
+  return payload.subarray(payload.length - Number(payloadLength));
+};
+
+const versionedPayload = (payload: Buffer) =>
+  Buffer.concat([Buffer.from([0x01]), unwrapNrt0Frame(payload)]);
 
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
@@ -172,20 +194,28 @@ const mocks = vi.hoisted(() => ({
       hash: `hash-${signedTransaction.toString("utf8")}`,
     }),
   ),
+  submitTransactionMock: vi.fn(async (...args: unknown[]) => {
+    const payload = args[0] as Buffer;
+    return {
+      route: "pipeline",
+      payloadHex: payload.toString("hex"),
+    };
+  }),
   submitTransactionEntrypointMock: vi.fn(
     async (
-      _client: unknown,
+      client: { submitTransaction: (payload: Buffer) => Promise<unknown> },
       transactionEntrypoint: Buffer,
       options: { hashHex: string },
-    ) => ({
-      hash: options.hashHex,
-      submission: {
-        entrypoint: transactionEntrypoint.toString("utf8"),
-      },
-      status: {
-        status: "Committed",
-      },
-    }),
+    ) => {
+      const submission = await client.submitTransaction(transactionEntrypoint);
+      return {
+        hash: options.hashHex,
+        submission,
+        status: {
+          status: "Committed",
+        },
+      };
+    },
   ),
 }));
 
@@ -223,8 +253,11 @@ vi.mock("../electron/accountAddress", async () => {
       networkPrefix?: number,
     ) =>
       mocks.normalizeCanonicalAccountIdLiteralMock(value, label, networkPrefix),
-    normalizeCompatAccountIdLiteral: (value: string, label?: string) =>
-      mocks.normalizeCompatAccountIdLiteralMock(value, label),
+    normalizeCompatAccountIdLiteral: (
+      value: string,
+      label?: string,
+      networkPrefix?: number,
+    ) => mocks.normalizeCompatAccountIdLiteralMock(value, label, networkPrefix),
   };
 });
 
@@ -285,6 +318,14 @@ vi.mock("@iroha/iroha-js", async () => {
       return mocks.getTransactionStatusMock(...args);
     }
 
+    submitTransaction(...args: unknown[]) {
+      const [payload, ...rest] = args;
+      return mocks.submitTransactionMock(
+        versionedPayload(payload as Buffer),
+        ...rest,
+      );
+    }
+
     getStatusSnapshot(...args: unknown[]) {
       return mocks.getStatusSnapshotMock(...args);
     }
@@ -326,7 +367,44 @@ vi.mock("@iroha/iroha-js", async () => {
     buildTransferAssetTransaction: mocks.buildTransferAssetTransactionMock,
     submitSignedTransaction: mocks.submitSignedTransactionMock,
     submitTransactionEntrypoint: mocks.submitTransactionEntrypointMock,
-    normalizeAssetId: (value: string) => String(value).trim(),
+    hashSignedTransaction: (signedTransaction: Buffer) => {
+      const text = signedTransaction.toString("utf8");
+      return /^[\x20-\x7e]+$/.test(text)
+        ? `hash-${text}`
+        : `hash-${signedTransaction.toString("hex")}`;
+    },
+    extractPipelineRejectionReason: (payload: unknown) => {
+      const readReason = (value: unknown): string | null => {
+        if (typeof value === "string") {
+          return value.trim() || null;
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          return null;
+        }
+        const record = value as Record<string, unknown>;
+        for (const key of [
+          "message",
+          "rejection_reason",
+          "rejectionReason",
+          "reason",
+        ]) {
+          const reason = readReason(record[key]);
+          if (reason) {
+            return reason;
+          }
+        }
+        return null;
+      };
+      return readReason(payload);
+    },
+    normalizeAssetId: (value: string, name = "assetId") => {
+      const literal = String(value).trim();
+      if (literal.includes("#")) {
+        throw new Error(`${name} must be a canonical Base58 asset id`);
+      }
+      return literal;
+    },
+    normalizeAssetHoldingId: (value: string) => String(value).trim(),
     normalizeAccountId: (value: string) => String(value).trim(),
   };
 });
@@ -459,6 +537,7 @@ describe("preload Kaigi bridge", () => {
     mocks.buildPrivateJoinKaigiTransactionMock.mockClear();
     mocks.buildPrivateEndKaigiTransactionMock.mockClear();
     mocks.submitSignedTransactionMock.mockClear();
+    mocks.submitTransactionMock.mockClear();
     mocks.submitTransactionEntrypointMock.mockClear();
 
     mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
@@ -1327,7 +1406,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://minamoto.sora.org",
-        chainId: "sora nexus main net",
+        chainId: MINAMOTO_CHAIN_ID,
         assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         accountId: sourceAccountId,
         destinationAccountId,
@@ -1344,8 +1423,177 @@ describe("preload Kaigi bridge", () => {
         authority: sourceAccountId,
         sourceAssetHoldingId: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${sourceAccountId}`,
         destinationAccountId,
+        metadata: {},
       }),
     );
+  });
+
+  it("surfaces explorer rejection reasons when transaction finality fails", async () => {
+    const bridge = await loadBridge();
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Rejected",
+      },
+    });
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.includes("/v1/explorer/transactions/hash-public-transfer")) {
+        return jsonResponse({
+          hash: "hash-public-transfer",
+          status: "Rejected",
+          rejection_reason: {
+            message:
+              "Validation failed: Operation is not permitted: missing units_per_gas mapping for `6TEAJqbb8oEPmLncoNiMRbLEK6tw`",
+          },
+        });
+      }
+      throw new Error(`Unexpected nodeFetch request: ${href}`);
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).rejects.toThrow(
+      "Transaction hash-public-transfer rejected before it committed. Validation failed: Operation is not permitted: missing units_per_gas mapping for `6TEAJqbb8oEPmLncoNiMRbLEK6tw`",
+    );
+  });
+
+  it("submits public transfers as versioned Norito requests before Torii sees raw frames", async () => {
+    const bridge = await loadBridge();
+    const rawSignedTransaction = Buffer.from([0x01, 0x8a, 0x88, 0x01]);
+    const framedSignedTransaction = buildNrt0Frame(rawSignedTransaction);
+    const versionedSignedTransaction = versionedPayload(rawSignedTransaction);
+    mocks.buildTransferAssetTransactionMock.mockReturnValueOnce({
+      signedTransaction: framedSignedTransaction,
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: MINAMOTO_CHAIN_ID,
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: `hash-${framedSignedTransaction.toString("hex")}`,
+    });
+
+    expect(mocks.submitSignedTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.submitTransactionMock.mock.calls[0]?.[0]).toEqual(
+      versionedSignedTransaction,
+    );
+  });
+
+  it("does not mistake raw payloads starting with the version byte for versioned requests", async () => {
+    const bridge = await loadBridge();
+    const rawSignedTransaction = Buffer.from([0x01, 0x8a, 0x88, 0x01]);
+    mocks.buildTransferAssetTransactionMock.mockReturnValueOnce({
+      signedTransaction: rawSignedTransaction,
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: MINAMOTO_CHAIN_ID,
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: `hash-${rawSignedTransaction.toString("hex")}`,
+    });
+
+    expect(mocks.submitSignedTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.submitTransactionMock.mock.calls[0]?.[0]).toEqual(
+      versionedPayload(rawSignedTransaction),
+    );
+  });
+
+  it("normalizes public transfer sources onto the active network prefix", async () => {
+    const bridge = await loadBridge();
+    const sourceAccountId =
+      "testuロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY";
+    const minamotoSourceAccountId =
+      "sorauロ1Q4gマZJC8ナヰvLFヒヌムU2ナスpヲuT4eフPavルセNナgw54ムV9U4YY";
+    const destinationAccountId =
+      "sorauロ1Prヌuノノ4メdロムイトn5tニメrsR9ヒ2Gキ7gWeFzyチヒチAHフTJQQ4L";
+    mocks.normalizeCompatAccountIdLiteralMock.mockImplementation(
+      (value: string, _label: string, networkPrefix?: number) => {
+        const literal = String(value).trim();
+        return networkPrefix === 753 && literal.startsWith("testu")
+          ? `sorau${literal.slice("testu".length)}`
+          : literal;
+      },
+    );
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: MINAMOTO_CHAIN_ID,
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: sourceAccountId,
+        destinationAccountId,
+        networkPrefix: 753,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+    });
+
+    expect(mocks.buildTransferAssetTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authority: minamotoSourceAccountId,
+        sourceAssetHoldingId: `6TEAJqbb8oEPmLncoNiMRbLEK6tw#${minamotoSourceAccountId}`,
+        destinationAccountId,
+      }),
+    );
+  });
+
+  it("blocks transfers when endpoint metadata reports a different chain id", async () => {
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.endsWith("/v1/chain/metadata")) {
+        return jsonResponse({
+          chain_id: "00000000-0000-0000-0000-000000000000",
+          network_prefix: 753,
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "http://localhost:8080",
+        chainId: "sora nexus main net",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        networkPrefix: 753,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).rejects.toThrow(
+      'Torii endpoint chain id mismatch: endpoint expects "00000000-0000-0000-0000-000000000000", but the app is configured for "sora nexus main net". Open Settings and use Check & Save for this endpoint before sending.',
+    );
+
+    expect(mocks.buildTransferAssetTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).not.toHaveBeenCalled();
   });
 
   it("resolves account aliases to I105 literals through the bridge", async () => {
@@ -1434,7 +1682,7 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.transferAsset({
         toriiUrl: "https://minamoto.sora.org",
-        chainId: "sora nexus main net",
+        chainId: MINAMOTO_CHAIN_ID,
         assetDefinitionId: "xor#universal",
         accountId: ALICE_ACCOUNT_ID,
         destinationAccountId: BOB_ACCOUNT_ID,
@@ -1499,6 +1747,9 @@ describe("preload Kaigi bridge", () => {
         hashHex: "aa".repeat(32),
       }),
     );
+    expect(mocks.submitTransactionMock).toHaveBeenCalledWith(
+      versionedPayload(Buffer.from("private-create-entrypoint", "utf8")),
+    );
 
     const createCalls = mocks.buildPrivateCreateKaigiTransactionMock.mock
       .calls as unknown as Array<[Record<string, any>]>;
@@ -1538,6 +1789,62 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
+  it("submits private entrypoints as versioned Norito requests before Torii sees raw frames", async () => {
+    const bridge = await loadBridge();
+    const hostKaigiKeys = generateKaigiX25519KeyPair();
+    const inviteSecretBase64Url = Buffer.from(
+      "kaigi-create-secret",
+      "utf8",
+    ).toString("base64url");
+    const rawEntrypoint = Buffer.from([0x99, 0x01, 0x42]);
+    const framedEntrypoint = buildNrt0Frame(rawEntrypoint);
+    const versionedEntrypoint = versionedPayload(rawEntrypoint);
+    const hashHex = "aa".repeat(32);
+    const framedBuildResult = {
+      transactionEntrypoint: framedEntrypoint,
+      hash: Buffer.from(hashHex, "hex"),
+      actionHash: Buffer.from("bb".repeat(32), "hex"),
+    };
+    for (let index = 0; index < 10; index += 1) {
+      mocks.buildPrivateCreateKaigiTransactionMock.mockReturnValueOnce(
+        framedBuildResult,
+      );
+    }
+
+    await expect(
+      bridge.createKaigiMeeting({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        hostAccountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        callId: "wonderland:kaigi-private-room",
+        title: "Private Room",
+        scheduledStartMs: Date.now() + 60_000,
+        meetingCode: "private-room",
+        inviteSecretBase64Url,
+        hostDisplayName: "Alice",
+        hostParticipantId: "alice",
+        hostKaigiPublicKeyBase64Url: hostKaigiKeys.publicKeyBase64Url,
+        offerDescription: {
+          type: "offer",
+          sdp: "offer-sdp",
+        },
+        privacyMode: "private",
+        peerIdentityReveal: "Hidden",
+      }),
+    ).resolves.toEqual({
+      hash: hashHex,
+    });
+
+    expect(mocks.submitTransactionEntrypointMock).toHaveBeenCalledTimes(1);
+    expect(mocks.submitTransactionEntrypointMock.mock.calls[0]?.[1]).toEqual(
+      framedEntrypoint,
+    );
+    expect(mocks.submitTransactionMock).toHaveBeenCalledWith(
+      versionedEntrypoint,
+    );
+  });
+
   it("joins a private Kaigi meeting through the authority-free entrypoint path", async () => {
     const bridge = await loadBridge();
     const hostKaigiKeys = generateKaigiX25519KeyPair();
@@ -1573,6 +1880,9 @@ describe("preload Kaigi bridge", () => {
       expect.objectContaining({
         hashHex: "cc".repeat(32),
       }),
+    );
+    expect(mocks.submitTransactionMock).toHaveBeenCalledWith(
+      versionedPayload(Buffer.from("private-join-entrypoint", "utf8")),
     );
 
     const joinCalls = mocks.buildPrivateJoinKaigiTransactionMock.mock
@@ -1633,6 +1943,9 @@ describe("preload Kaigi bridge", () => {
       expect.objectContaining({
         hashHex: "ee".repeat(32),
       }),
+    );
+    expect(mocks.submitTransactionMock).toHaveBeenCalledWith(
+      versionedPayload(Buffer.from("private-end-entrypoint", "utf8")),
     );
   });
 

@@ -260,11 +260,18 @@
           <p v-if="cloud.launchError" class="helper error-text">
             {{ cloud.launchError }}
           </p>
+          <p class="transaction-fee-note">
+            <span>{{ t("Fee") }}</span>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
+          </p>
           <div v-if="cloud.launchResult" class="soracloud-launch-result">
             <span class="pill positive">{{ t("Launch submitted") }}</span>
             <span>{{ cloud.launchResult.service_name }}</span>
             <span v-if="cloud.launchResult.tx_hash_hex" class="mono">
               {{ cloud.launchResult.tx_hash_hex }}
+            </span>
+            <span class="soracloud-launch-fee">
+              {{ formatTransactionFee(cloud.launchResult, t) }}
             </span>
           </div>
 
@@ -440,6 +447,7 @@ import {
   type SoraCloudDeploymentStatus,
   type SoraCloudStorageClass,
 } from "@/utils/soracloud";
+import { formatTransactionFee } from "@/utils/transactionFee";
 
 type LaunchStep = "model" | "lease" | "review";
 

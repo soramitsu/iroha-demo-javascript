@@ -44,6 +44,14 @@
           <div class="kv">
             <span class="kv-label">{{ t("Asset") }}</span>
             <span class="kv-value">{{ activeAssetLabel }}</span>
+            <span v-if="activeAssetAlias" class="send-kpi-sub">
+              {{ activeAssetCanonicalLabel }}
+            </span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Balance") }}</span>
+            <span class="kv-value">{{ activeAssetBalance }}</span>
+            <span class="send-kpi-sub">{{ activeAssetLabel }}</span>
           </div>
         </div>
         <div
@@ -93,7 +101,7 @@
               :placeholder="
                 form.shielded
                   ? t(
-                      'Scan a private receive QR, or enter your own wallet to make funds private.',
+                      'Paste private address, scan a Receive QR, or enter your own wallet to make funds private.',
                     )
                   : ''
               "
@@ -115,7 +123,7 @@
           <p v-else class="helper send-note">
             {{
               t(
-                "Private transfers use the recipient Receive QR and do not include memos.",
+                "Private transfers use a recipient private address or Receive QR and do not include memos.",
               )
             }}
           </p>
@@ -128,6 +136,10 @@
             <span>{{ t("Private transfer") }}</span>
           </label>
         </div>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
+        </p>
         <div class="actions">
           <button :disabled="sending || !isValid" @click="handleSend">
             {{ sending ? t("Submitting…") : submitActionLabel }}
@@ -153,9 +165,19 @@
             "
             class="helper send-note"
           >
-            {{ t("Scan a private Receive QR before sending privately.") }}
+            {{
+              t(
+                "Paste a private address or scan a Receive QR before sending privately.",
+              )
+            }}
           </p>
-          <p v-if="statusMessage" class="helper send-note">
+          <p
+            v-if="statusMessage"
+            class="helper send-note send-status"
+            :class="`send-status-${statusTone}`"
+            :role="statusTone === 'error' ? 'alert' : 'status'"
+            :aria-live="statusTone === 'error' ? 'assertive' : 'polite'"
+          >
             {{ statusMessage }}
           </p>
         </div>
@@ -175,7 +197,11 @@ import {
   watch,
 } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { resolveAccountAlias, transferAsset } from "@/services/iroha";
+import {
+  fetchAccountAssets,
+  resolveAccountAlias,
+  transferAsset,
+} from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldCapability } from "@/composables/useShieldCapability";
@@ -184,9 +210,20 @@ import { getPublicAccountId } from "@/utils/accountId";
 import {
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
+  resolveToriiXorAsset,
   shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
+import {
+  CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX,
+  parseConfidentialPaymentAddressText,
+  type ConfidentialPaymentAddressPayload,
+} from "@/utils/confidentialPaymentAddress";
+import type { AccountAssetsResponse } from "@/types/iroha";
 import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
@@ -195,9 +232,12 @@ const { t } = useAppI18n();
 const activeAccountDisplayId = computed(() =>
   getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
 );
-const activeAssetLabel = computed(() =>
-  formatAssetDefinitionLabel(session.connection.assetDefinitionId, t("—")),
+const requestAccountId = computed(
+  () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
 );
+const sendAssets = ref<AccountAssetsResponse["items"]>([]);
+const sendAssetsLoading = ref(false);
+let sendAssetsRequestSequence = 0;
 const form = reactive({
   destination: "",
   quantity: "0",
@@ -211,6 +251,7 @@ const form = reactive({
 });
 const sending = ref(false);
 const statusMessage = ref("");
+const statusTone = ref<"neutral" | "success" | "error">("neutral");
 const scanMessage = ref("");
 const destinationResolution = reactive({
   input: "",
@@ -220,6 +261,8 @@ const destinationResolution = reactive({
   resolving: false,
   error: "",
 });
+const shieldedRecipientSource = ref<"none" | "qr" | "address-input">("none");
+const shieldedPaymentAddressText = ref("");
 let destinationResolveTimer: ReturnType<typeof setTimeout> | null = null;
 let destinationResolveSequence = 0;
 const persistResolvedShieldAssetDefinitionId = (
@@ -261,68 +304,68 @@ const resetShieldedRecipientFields = () => {
   form.shieldedOwnerTagHex = "";
   form.shieldedDiversifierHex = "";
   form.shieldedAddressAccountId = "";
+  shieldedRecipientSource.value = "none";
+  shieldedPaymentAddressText.value = "";
+};
+const applyShieldedPaymentAddress = (
+  payload: ConfidentialPaymentAddressPayload,
+  source: "qr" | "address-input",
+  rawAddressText = "",
+) => {
+  const parsedAccountId = payload.accountId?.trim() ?? "";
+  if (source === "qr") {
+    form.destination = parsedAccountId;
+  }
+  if (payload.amount) {
+    form.quantity = String(payload.amount);
+  }
+  form.shielded = true;
+  form.shieldedReceiveKeyId = payload.receiveKeyId;
+  form.shieldedReceivePublicKeyBase64Url = payload.receivePublicKeyBase64Url;
+  form.shieldedOwnerTagHex = payload.shieldedOwnerTagHex;
+  form.shieldedDiversifierHex = payload.shieldedDiversifierHex;
+  form.shieldedAddressAccountId = parsedAccountId;
+  shieldedRecipientSource.value = source;
+  shieldedPaymentAddressText.value =
+    source === "address-input" ? rawAddressText.trim() : "";
 };
 const scanner = useQrScanner(
   (payload) => {
-    try {
-      const parsed = JSON.parse(payload);
-      const parsedAccountId = parsed.accountId
-        ? String(parsed.accountId).trim()
-        : "";
-      const receiveKeyId = String(
-        parsed.receiveKeyId ?? parsed.shieldedReceiveKeyId ?? "",
-      ).trim();
-      const receivePublicKeyBase64Url = String(
-        parsed.receivePublicKeyBase64Url ??
-          parsed.shieldedReceivePublicKeyBase64Url ??
-          "",
-      ).trim();
-      const ownerTagHex = String(
-        parsed.shieldedOwnerTagHex ?? parsed.ownerTagHex ?? "",
-      ).trim();
-      const diversifierHex = String(
-        parsed.shieldedDiversifierHex ?? parsed.diversifierHex ?? "",
-      ).trim();
-      const looksLikeLegacyShieldedQr = Boolean(
-        parsed.schema === "iroha-confidential-payment-address/v2" ||
-          ((ownerTagHex || diversifierHex) &&
-            (!receiveKeyId || !receivePublicKeyBase64Url)),
-      );
-      if (looksLikeLegacyShieldedQr) {
-        resetShieldedRecipientFields();
+    const paymentAddress = parseConfidentialPaymentAddressText(payload);
+    if (paymentAddress.ok) {
+      applyShieldedPaymentAddress(paymentAddress.payload, "qr");
+      scanMessage.value = t("QR decoded successfully.");
+      return;
+    }
+    if (
+      paymentAddress.reason !== "none" &&
+      (paymentAddress.reason !== "invalid" ||
+        payload.trim().startsWith(CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX))
+    ) {
+      resetShieldedRecipientFields();
+      if (paymentAddress.reason === "legacy") {
         form.shielded = false;
         scanMessage.value = t(
           "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
         );
         return;
       }
+      scanMessage.value = t("Private payment address is invalid.");
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(payload);
+      const parsedAccountId = parsed.accountId
+        ? String(parsed.accountId).trim()
+        : "";
       if (parsedAccountId) {
         form.destination = parsedAccountId;
-      } else if (
-        parsed.schema === "iroha-confidential-payment-address/v3" ||
-        (receiveKeyId && receivePublicKeyBase64Url)
-      ) {
-        form.destination = "";
       }
       if (parsed.amount) {
         form.quantity = String(parsed.amount);
       }
-      if (
-        parsed.schema === "iroha-confidential-payment-address/v3" ||
-        (receiveKeyId &&
-          receivePublicKeyBase64Url &&
-          ownerTagHex &&
-          diversifierHex)
-      ) {
-        form.shielded = true;
-        form.shieldedReceiveKeyId = receiveKeyId;
-        form.shieldedReceivePublicKeyBase64Url = receivePublicKeyBase64Url;
-        form.shieldedOwnerTagHex = ownerTagHex;
-        form.shieldedDiversifierHex = diversifierHex;
-        form.shieldedAddressAccountId = parsedAccountId;
-      } else {
-        resetShieldedRecipientFields();
-      }
+      resetShieldedRecipientFields();
       scanMessage.value = t("QR decoded successfully.");
     } catch (err) {
       resetShieldedRecipientFields();
@@ -344,8 +387,17 @@ const resolvedDestinationAccountId = computed(() =>
     ? destinationResolution.accountId
     : "",
 );
-const destinationAccountIdForSubmit = computed(
-  () => resolvedDestinationAccountId.value || destinationValue.value,
+const destinationIsShieldedAddressInput = computed(
+  () =>
+    form.shielded &&
+    hasShieldedPaymentAddress.value &&
+    Boolean(shieldedPaymentAddressText.value) &&
+    destinationValue.value === shieldedPaymentAddressText.value,
+);
+const destinationAccountIdForSubmit = computed(() =>
+  destinationIsShieldedAddressInput.value
+    ? form.shieldedAddressAccountId.trim()
+    : resolvedDestinationAccountId.value || destinationValue.value,
 );
 const destinationResolutionMessage = computed(() => {
   if (!destinationResolutionMatchesInput.value) {
@@ -378,6 +430,29 @@ const resolvedAssetDefinitionId = computed(
     extractAssetDefinitionId(shieldResolvedAssetId.value).trim() ||
     extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
     session.connection.assetDefinitionId.trim(),
+);
+const activeAsset = computed(() =>
+  resolveToriiXorAsset(sendAssets.value, [
+    resolvedAssetDefinitionId.value,
+    session.connection.assetDefinitionId,
+  ]),
+);
+const activeAssetId = computed(
+  () => activeAsset.value?.asset_id || resolvedAssetDefinitionId.value,
+);
+const activeAssetAlias = computed(() =>
+  String(activeAsset.value?.asset_alias ?? activeAsset.value?.asset_name ?? "")
+    .trim()
+    .replace(/^@/, ""),
+);
+const activeAssetCanonicalLabel = computed(() =>
+  formatAssetDefinitionLabel(activeAssetId.value, t("—")),
+);
+const activeAssetLabel = computed(
+  () => activeAssetAlias.value || activeAssetCanonicalLabel.value,
+);
+const activeAssetBalance = computed(() =>
+  sendAssetsLoading.value ? t("—") : (activeAsset.value?.quantity ?? "0"),
 );
 const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
 const isShieldAmountValid = computed(() =>
@@ -419,6 +494,14 @@ const hasShieldedPaymentAddress = computed(
   () => hasV3ShieldedPaymentAddress.value,
 );
 
+const cancelDestinationResolution = () => {
+  if (destinationResolveTimer) {
+    clearTimeout(destinationResolveTimer);
+    destinationResolveTimer = null;
+  }
+  destinationResolveSequence += 1;
+};
+
 const resetDestinationResolution = () => {
   destinationResolution.input = "";
   destinationResolution.accountId = "";
@@ -430,12 +513,8 @@ const resetDestinationResolution = () => {
 
 const resolveDestinationNow = async (input = destinationValue.value) => {
   const destination = input.trim();
-  destinationResolveSequence += 1;
+  cancelDestinationResolution();
   const sequence = destinationResolveSequence;
-  if (destinationResolveTimer) {
-    clearTimeout(destinationResolveTimer);
-    destinationResolveTimer = null;
-  }
   if (!destination) {
     resetDestinationResolution();
     return "";
@@ -479,11 +558,7 @@ const resolveDestinationNow = async (input = destinationValue.value) => {
 };
 
 const scheduleDestinationResolution = () => {
-  if (destinationResolveTimer) {
-    clearTimeout(destinationResolveTimer);
-    destinationResolveTimer = null;
-  }
-  destinationResolveSequence += 1;
+  cancelDestinationResolution();
   const destination = destinationValue.value;
   if (!destination) {
     resetDestinationResolution();
@@ -497,13 +572,98 @@ const scheduleDestinationResolution = () => {
   }, 350);
 };
 
+const handleDestinationInputChange = () => {
+  const destination = destinationValue.value;
+  const parsedPaymentAddress = parseConfidentialPaymentAddressText(destination);
+  if (parsedPaymentAddress.ok) {
+    applyShieldedPaymentAddress(
+      parsedPaymentAddress.payload,
+      "address-input",
+      destination,
+    );
+    cancelDestinationResolution();
+    resetDestinationResolution();
+    scanMessage.value = t("Private payment address loaded.");
+    return;
+  }
+  if (parsedPaymentAddress.reason !== "none") {
+    resetShieldedRecipientFields();
+    cancelDestinationResolution();
+    resetDestinationResolution();
+    scanMessage.value =
+      parsedPaymentAddress.reason === "legacy"
+        ? t(
+            "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
+          )
+        : t("Private payment address is invalid.");
+    return;
+  }
+
+  const qrRecipientWasReplaced =
+    shieldedRecipientSource.value === "qr" &&
+    destination !== form.shieldedAddressAccountId.trim();
+  if (
+    shieldedRecipientSource.value === "address-input" ||
+    qrRecipientWasReplaced
+  ) {
+    resetShieldedRecipientFields();
+  }
+  scheduleDestinationResolution();
+};
+
 watch(
   [
     destinationValue,
     () => session.connection.toriiUrl,
     () => session.connection.networkPrefix,
   ],
-  scheduleDestinationResolution,
+  handleDestinationInputChange,
+);
+
+const refreshSendAssets = async () => {
+  const toriiUrl = session.connection.toriiUrl;
+  const accountId = requestAccountId.value;
+  const requestSequence = sendAssetsRequestSequence + 1;
+  sendAssetsRequestSequence = requestSequence;
+  if (!toriiUrl || !accountId) {
+    sendAssets.value = [];
+    sendAssetsLoading.value = false;
+    return;
+  }
+  sendAssetsLoading.value = true;
+  try {
+    const result = await fetchAccountAssets({
+      toriiUrl,
+      accountId,
+      limit: 200,
+    });
+    if (
+      requestSequence !== sendAssetsRequestSequence ||
+      session.connection.toriiUrl !== toriiUrl ||
+      requestAccountId.value !== accountId
+    ) {
+      return;
+    }
+    sendAssets.value = result.items;
+  } catch (error) {
+    if (requestSequence !== sendAssetsRequestSequence) {
+      return;
+    }
+    console.warn("Failed to load send asset balance", error);
+    sendAssets.value = [];
+  } finally {
+    if (requestSequence === sendAssetsRequestSequence) {
+      sendAssetsLoading.value = false;
+    }
+  }
+};
+
+watch(
+  [() => session.connection.toriiUrl, requestAccountId],
+  () => {
+    void refreshSendAssets();
+  },
+  { immediate: true },
 );
 
 onBeforeUnmount(() => {
@@ -529,12 +689,14 @@ const isValid = computed(() =>
 const handleSend = async () => {
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
     statusMessage.value = t("Configure Torii + account first.");
+    statusTone.value = "error";
     return;
   }
   const account = activeAccount.value;
   if (form.shielded && !shieldSupported.value) {
     statusMessage.value =
       shieldCapabilityMessage.value || t("Shield mode is unavailable.");
+    statusTone.value = "error";
     return;
   }
   if (form.shielded) {
@@ -543,35 +705,48 @@ const handleSend = async () => {
       statusMessage.value = t(
         "Shield amount must be a whole number greater than zero.",
       );
+      statusTone.value = "error";
       return;
     }
   }
   const submitMode = form.shielded ? "shield" : "transfer";
   sending.value = true;
   statusMessage.value = "";
+  statusTone.value = "neutral";
   try {
-    const resolvedDestination = destinationValue.value
+    const shouldResolveDestination =
+      Boolean(destinationValue.value) &&
+      !destinationIsShieldedAddressInput.value;
+    const resolvedDestination = shouldResolveDestination
       ? await resolveDestinationNow()
       : "";
-    if (destinationValue.value && !resolvedDestination) {
+    if (shouldResolveDestination && !resolvedDestination) {
       statusMessage.value =
         destinationResolution.error || t("Unable to resolve recipient.");
+      statusTone.value = "error";
       return;
     }
     if (form.shielded) {
       if (!destinationIsSelf.value && !hasShieldedPaymentAddress.value) {
         statusMessage.value = t(
-          "Scan a private Receive QR before sending privately.",
+          "Paste a private address or scan a Receive QR before sending privately.",
         );
+        statusTone.value = "error";
         return;
       }
     }
+    const destinationAccountId =
+      form.shielded &&
+      !destinationIsSelf.value &&
+      hasShieldedPaymentAddress.value
+        ? form.shieldedAddressAccountId.trim() || undefined
+        : destinationAccountIdForSubmit.value || undefined;
     const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       assetDefinitionId: resolvedAssetDefinitionId.value,
       accountId: account.accountId,
-      destinationAccountId: destinationAccountIdForSubmit.value || undefined,
+      destinationAccountId,
       networkPrefix: session.connection.networkPrefix,
       quantity: normalizedQuantity.value,
       privateKeyHex: account.privateKeyHex,
@@ -592,7 +767,7 @@ const handleSend = async () => {
     if (submitMode === "shield") {
       session.updateActiveAccount({ localOnly: false });
     }
-    statusMessage.value =
+    const successMessage =
       submitMode === "shield"
         ? destinationIsSelf.value
           ? t("Private balance created: {hash}", {
@@ -602,11 +777,14 @@ const handleSend = async () => {
               hash: result.hash,
             })
         : t("Transaction submitted: {hash}", { hash: result.hash });
+    statusMessage.value = appendTransactionFee(successMessage, result, t);
+    statusTone.value = "success";
   } catch (error) {
     statusMessage.value = toUserFacingErrorMessage(
       error,
       t("Transaction failed."),
     );
+    statusTone.value = "error";
   } finally {
     sending.value = false;
   }
@@ -630,6 +808,17 @@ const toggleScanner = async () => {
   justify-content: flex-end;
 }
 
+.send-tools .icon-cta {
+  min-width: 0;
+}
+
+.send-tools .icon-cta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .send-account-copy {
   margin-top: 4px;
   word-break: break-all;
@@ -638,9 +827,10 @@ const toggleScanner = async () => {
 
 .send-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.92fr) minmax(360px, 1.08fr);
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
   gap: 20px;
   align-items: start;
+  min-width: 0;
 }
 
 .send-context,
@@ -648,12 +838,21 @@ const toggleScanner = async () => {
   display: grid;
   gap: 16px;
   align-content: start;
+  min-width: 0;
 }
 
 .send-kpis {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
+}
+
+.send-kpi-sub {
+  min-width: 0;
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 .scanner-frame {
@@ -709,6 +908,15 @@ video {
   gap: 14px;
 }
 
+.send-form label,
+.send-form input {
+  min-width: 0;
+}
+
+.send-form input {
+  width: 100%;
+}
+
 .payment-mode-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -757,6 +965,7 @@ video {
 .send-feedback {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .send-note {
@@ -764,6 +973,47 @@ video {
   border-radius: 14px;
   border: 1px solid var(--panel-border);
   background: rgba(255, 255, 255, 0.03);
+  max-width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.send-status {
+  color: var(--iroha-muted);
+}
+
+.send-status-success {
+  color: #bbf7d0;
+  border-color: rgba(34, 197, 94, 0.46);
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.16), transparent 70%),
+    rgba(34, 197, 94, 0.08);
+  box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.72);
+}
+
+.send-status-error {
+  color: #fecdd3;
+  border-color: rgba(255, 93, 113, 0.62);
+  background:
+    linear-gradient(135deg, rgba(255, 76, 102, 0.2), transparent 70%),
+    rgba(255, 76, 102, 0.1);
+  box-shadow: inset 3px 0 0 rgba(255, 76, 102, 0.82);
+}
+
+:global(:root[data-theme="light"]) .send-status-success {
+  color: #166534;
+  background:
+    linear-gradient(135deg, rgba(22, 163, 74, 0.12), transparent 70%),
+    rgba(22, 163, 74, 0.08);
+}
+
+:global(:root[data-theme="light"]) .send-status-error {
+  color: #9f1239;
+  background:
+    linear-gradient(135deg, rgba(225, 29, 72, 0.12), transparent 70%),
+    rgba(225, 29, 72, 0.08);
 }
 
 .recipient-resolution {

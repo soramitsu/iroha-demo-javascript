@@ -4,6 +4,17 @@ const READABLE_ERROR_ANCHOR =
   /\b(invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown)\b/i;
 const ERROR_CODE_PREFIX = /^(ERR_[A-Z0-9_]+)\s*[—\-:]\s*(.+)$/i;
 const REPLACEMENT_CHARACTER = "\uFFFD";
+const CHAIN_ID_MISMATCH =
+  /Chain id doesn't correspond to the id of current blockchain:\s*Expected ChainId\("([^"]+)"\),\s*actual ChainId\("([^"]+)"\)/i;
+
+const formatChainIdMismatch = (value: string) => {
+  const match = CHAIN_ID_MISMATCH.exec(value);
+  if (!match) {
+    return "";
+  }
+  const [, expected, actual] = match;
+  return `Torii endpoint chain id mismatch: endpoint expects "${expected}", but the app signed for "${actual}". Open Settings and use Check & Save for this endpoint before sending.`;
+};
 
 const containsControlChars = (value: string) =>
   Array.from(value).some((character) => {
@@ -38,6 +49,11 @@ export const sanitizeErrorMessage = (value: unknown) => {
   text = stripControlChars(text).replace(/\s+/g, " ").trim();
   if (!text) {
     return "";
+  }
+
+  const chainIdMismatch = formatChainIdMismatch(text);
+  if (chainIdMismatch) {
+    return chainIdMismatch;
   }
 
   const prefixedMatch = ERROR_CODE_PREFIX.exec(text);

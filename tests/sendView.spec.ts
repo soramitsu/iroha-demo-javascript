@@ -5,6 +5,7 @@ import SendView from "@/views/SendView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
+import { encodeConfidentialPaymentAddress } from "@/utils/confidentialPaymentAddress";
 
 const ALICE_I105_ACCOUNT_ID = "testuAliceRealI105AccountId";
 const BOB_I105_ACCOUNT_ID = "testuBobRealI105AccountId";
@@ -19,6 +20,7 @@ const MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL = "malloryReceivePublicKey";
 const DESTINATION_ACCOUNT_SELECTOR =
   'input[data-testid="destination-account-input"]';
 
+const fetchAccountAssetsMock = vi.fn();
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 const resolveAccountAliasMock = vi.fn();
@@ -26,6 +28,7 @@ type QrDecodeHandler = (payload: string) => void;
 let qrDecodeHandler: QrDecodeHandler | null = null;
 
 vi.mock("@/services/iroha", () => ({
+  fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   getConfidentialAssetPolicy: (input: unknown) =>
     getConfidentialAssetPolicyMock(input),
   resolveAccountAlias: (input: unknown) => resolveAccountAliasMock(input),
@@ -56,6 +59,7 @@ const t = (key: string, params?: Record<string, string | number>) =>
 describe("SendView", () => {
   beforeEach(() => {
     localStorage.clear();
+    fetchAccountAssetsMock.mockReset();
     transferAssetMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     resolveAccountAliasMock.mockReset();
@@ -81,6 +85,15 @@ describe("SendView", () => {
       poseidon_params_id: null,
       pedersen_params_id: null,
       pending_transition: null,
+    });
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "norito:abcdef0123456789#alice@default",
+          quantity: "42",
+        },
+      ],
+      total: 1,
     });
     setActivePinia(createPinia());
   });
@@ -186,6 +199,30 @@ describe("SendView", () => {
     expect(wrapper.text()).not.toContain(
       t("Anonymous shielded transaction committed:"),
     );
+    expect(wrapper.get(".send-status").classes()).toContain(
+      "send-status-success",
+    );
+    expect(wrapper.get(".send-status").attributes("role")).toBe("status");
+  });
+
+  it("marks rejected transactions as error feedback", async () => {
+    const rejectedMessage =
+      "Transaction 23479912c2cb8a929bb96246163cb95b30dd6e9766b209338e44d0fdf8e01c2b rejected before it committed.";
+    transferAssetMock.mockRejectedValue(new Error(rejectedMessage));
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("2");
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    const status = wrapper.get(".send-status");
+    expect(status.text()).toContain(rejectedMessage);
+    expect(status.classes()).toContain("send-status-error");
+    expect(status.attributes("role")).toBe("alert");
   });
 
   it("keeps private mode optional without showing policy copy", async () => {
@@ -200,7 +237,7 @@ describe("SendView", () => {
 
     expect(wrapper.text()).toContain(
       t(
-        "Private transfers use the recipient Receive QR and do not include memos.",
+        "Private transfers use a recipient private address or Receive QR and do not include memos.",
       ),
     );
   });
@@ -322,6 +359,33 @@ describe("SendView", () => {
     expect(wrapper.text()).not.toContain("norito:abcdef0123456789");
   });
 
+  it("shows the send asset balance and alias when live assets include one", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw#alice@default",
+          quantity: "25000",
+          asset_alias: "XOR",
+        },
+      ],
+      total: 1,
+    });
+    const wrapper = mountView("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: ALICE_I105_ACCOUNT_ID,
+      limit: 200,
+    });
+    expect(wrapper.text()).toContain(t("Balance"));
+    expect(wrapper.text()).toContain("25000");
+    expect(wrapper.text()).toContain("XOR");
+    expect(wrapper.text()).toContain(
+      formatAssetDefinitionLabel("6TEAJqbb8oEPmLncoNiMRbLEK6tw#alice@default"),
+    );
+  });
+
   it("heals a stale configured asset bucket before the first shielded send", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
@@ -411,6 +475,51 @@ describe("SendView", () => {
           receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
           ownerTagHex: MALLORY_OWNER_TAG_HEX,
           diversifierHex: MALLORY_DIVERSIFIER_HEX,
+        },
+      }),
+    );
+  });
+
+  it("accepts a pasted private payment address without alias resolution", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const privateAddress = encodeConfidentialPaymentAddress({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: BOB_RECEIVE_KEY_ID,
+      receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
+      shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
+      shieldedDiversifierHex: BOB_DIVERSIFIER_HEX,
+      recoveryHint: "one-time-receive-key",
+    });
+
+    await wrapper.get(DESTINATION_ACCOUNT_SELECTOR).setValue(privateAddress);
+    await wrapper.get('input[type="number"]').setValue("8");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(t("Private payment address loaded."));
+    expect(wrapper.get(".actions button").attributes("disabled")).toBe(
+      undefined,
+    );
+
+    transferAssetMock.mockResolvedValue({ hash: "0xpasted" });
+    await wrapper.get(".actions button").trigger("click");
+    await flushPromises();
+
+    expect(resolveAccountAliasMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        alias: privateAddress,
+      }),
+    );
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAccountId: undefined,
+        quantity: "8",
+        shielded: true,
+        shieldedRecipient: {
+          receiveKeyId: BOB_RECEIVE_KEY_ID,
+          receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
+          ownerTagHex: BOB_OWNER_TAG_HEX,
+          diversifierHex: BOB_DIVERSIFIER_HEX,
         },
       }),
     );

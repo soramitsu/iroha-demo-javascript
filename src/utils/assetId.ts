@@ -308,8 +308,10 @@ export const formatAssetReferenceLabel = (
   return accountId ? `${definitionLabel} | ${accountId}` : definitionLabel;
 };
 
-export const resolveToriiXorAsset = (
-  assets: Array<{ asset_id: string; quantity: string }>,
+export const resolveToriiXorAsset = <
+  TAsset extends { asset_id: string; quantity: string },
+>(
+  assets: TAsset[],
   preferredAssetDefinitionIds: Array<string | null | undefined> = [],
 ) => {
   const normalizedPreferredDefinitionIds = new Set(

@@ -26,8 +26,16 @@ export interface AccountAliasResolutionResponse {
   source?: string;
 }
 
+export interface AccountAssetItem {
+  asset_id: string;
+  quantity: string;
+  asset_alias?: string | null;
+  asset_name?: string | null;
+  asset_definition_id?: string | null;
+}
+
 export interface AccountAssetsResponse {
-  items: Array<{ asset_id: string; quantity: string }>;
+  items: AccountAssetItem[];
   total: number;
 }
 
@@ -340,6 +348,25 @@ export interface AccountFaucetResponse {
   amount: string;
   tx_hash_hex: string;
   status: string;
+  fee?: TransactionFeeView | string | number | null;
+}
+
+export interface TransactionFeeView {
+  amount?: string | number | null;
+  quantity?: string | number | null;
+  assetId?: string | null;
+  asset_id?: string | null;
+  asset?: string | null;
+  feeAssetId?: string | null;
+  fee_asset_id?: string | null;
+  gas_asset_id?: string | null;
+  source?: string | null;
+  estimated?: boolean | null;
+}
+
+export interface TransactionSubmissionResult {
+  hash: string;
+  fee?: TransactionFeeView | string | number | null;
 }
 
 export interface ConfidentialAssetBalanceView {
@@ -600,6 +627,7 @@ export interface SubscriptionActionResponseView {
   ok: boolean;
   subscription_id: string;
   tx_hash_hex: string;
+  fee?: TransactionFeeView | string | number | null;
   billing_trigger_id?: string;
   usage_trigger_id?: string | null;
   first_charge_ms?: number;
@@ -647,6 +675,7 @@ export interface SoraCloudHfDeployResponseView {
   current_version?: string | null;
   revision_count?: number | null;
   tx_hash_hex?: string | null;
+  fee?: TransactionFeeView | string | number | null;
   rollout_handle?: string | null;
   rollout_stage?: string | null;
   rollout_percent?: number | null;
@@ -774,7 +803,7 @@ export interface IrohaBridge {
     metadata?: Record<string, unknown>;
     authorityAccountId: string;
     authorityPrivateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   transferAsset(input: {
     toriiUrl: string;
     chainId: string;
@@ -797,7 +826,7 @@ export interface IrohaBridge {
     shieldedReceivePublicKeyBase64Url?: string;
     shieldedOwnerTagHex?: string;
     shieldedDiversifierHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -847,7 +876,7 @@ export interface IrohaBridge {
     accountId: string;
     privateKeyHex?: string;
     amount: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
@@ -873,7 +902,7 @@ export interface IrohaBridge {
     accountId: string;
     amount: string;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   getGovernanceProposal(input: {
     toriiUrl: string;
     proposalId: string;
@@ -902,7 +931,7 @@ export interface IrohaBridge {
     durationBlocks: number;
     direction: GovernanceBallotDirection;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   finalizeGovernanceReferendum(input: {
     toriiUrl: string;
     referendumId: string;
@@ -989,7 +1018,7 @@ export interface IrohaBridge {
     offerDescription: KaigiOfferDescription;
     privacyMode?: KaigiMeetingPrivacy;
     peerIdentityReveal?: KaigiPeerIdentityReveal;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   getKaigiCall(input: {
     toriiUrl: string;
     callId: string;
@@ -1010,7 +1039,7 @@ export interface IrohaBridge {
     privacyMode?: KaigiMeetingPrivacy;
     rosterRootHex?: string;
     answerDescription: KaigiAnswerDescription;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   watchKaigiCallEvents(
     input: {
       toriiUrl: string;
@@ -1035,7 +1064,7 @@ export interface IrohaBridge {
     privateKeyHex?: string;
     callId: string;
     endedAtMs?: number;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;
@@ -1151,7 +1180,7 @@ export interface IrohaBridge {
     validator: string;
     amount: string;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   schedulePublicLaneUnbond(input: {
     toriiUrl: string;
     chainId: string;
@@ -1161,7 +1190,7 @@ export interface IrohaBridge {
     requestId: string;
     releaseAtMs: number;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   finalizePublicLaneUnbond(input: {
     toriiUrl: string;
     chainId: string;
@@ -1169,14 +1198,14 @@ export interface IrohaBridge {
     validator: string;
     requestId: string;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
   claimPublicLaneRewards(input: {
     toriiUrl: string;
     chainId: string;
     stakeAccountId: string;
     validator: string;
     privateKeyHex?: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResult>;
 }
 
 declare global {

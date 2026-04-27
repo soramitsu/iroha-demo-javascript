@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
+import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import {
   normalizeChainIdValue,
   normalizeNetworkPrefixValue,
@@ -243,6 +243,24 @@ const normalizeAuthority = (
   hasStoredSecret: Boolean(authority.hasStoredSecret),
 });
 
+const resolvePresetConnectionForEndpoint = (
+  toriiUrl: unknown,
+): ConnectionConfig | null => {
+  try {
+    const normalizedEndpoint = normalizeEndpointUrl(String(toriiUrl ?? ""));
+    const presets = [DEFAULT_CHAIN_PRESET, ...CHAIN_PRESETS];
+    return (
+      presets.find(
+        (preset) =>
+          normalizeEndpointUrl(preset.connection.toriiUrl) ===
+          normalizedEndpoint,
+      )?.connection ?? null
+    );
+  } catch (_error) {
+    return null;
+  }
+};
+
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
 ): ConnectionConfig => {
@@ -255,12 +273,19 @@ const normalizeConnection = (
   } catch (_error) {
     endpointValid = false;
   }
-  const fallbackConnection = DEFAULT_CHAIN_PRESET.connection;
+  const endpointPresetConnection = endpointValid
+    ? resolvePresetConnectionForEndpoint(toriiUrl)
+    : null;
+  const fallbackConnection =
+    endpointPresetConnection ?? DEFAULT_CHAIN_PRESET.connection;
   const chainId = endpointValid
-    ? (normalizeChainIdValue(partial?.chainId) ?? fallbackConnection.chainId)
+    ? (endpointPresetConnection?.chainId ??
+      normalizeChainIdValue(partial?.chainId) ??
+      fallbackConnection.chainId)
     : fallbackConnection.chainId;
   const networkPrefix = endpointValid
-    ? (normalizeNetworkPrefixValue(partial?.networkPrefix) ??
+    ? (endpointPresetConnection?.networkPrefix ??
+      normalizeNetworkPrefixValue(partial?.networkPrefix) ??
       fallbackConnection.networkPrefix)
     : fallbackConnection.networkPrefix;
   const assetDefinitionId = String(
@@ -450,8 +475,15 @@ export const useSessionStore = defineStore("session", {
       const definedPartial = Object.fromEntries(
         Object.entries(partial).filter(([, value]) => value !== undefined),
       ) as Partial<ConnectionConfig>;
+      const presetConnection =
+        definedPartial.toriiUrl !== undefined &&
+        definedPartial.chainId === undefined &&
+        definedPartial.networkPrefix === undefined
+          ? resolvePresetConnectionForEndpoint(definedPartial.toriiUrl)
+          : null;
       const nextConnection = normalizeConnection({
         ...this.connection,
+        ...(presetConnection ?? {}),
         ...definedPartial,
       });
 

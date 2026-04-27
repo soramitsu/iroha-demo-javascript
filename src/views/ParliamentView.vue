@@ -84,6 +84,10 @@
           }}
         </button>
       </div>
+      <p v-if="!alreadyCitizen" class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <p v-if="alreadyCitizen" class="message success">
         {{
           t(
@@ -264,6 +268,10 @@
           {{ actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot") }}
         </button>
       </div>
+      <p class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <p v-if="missingBallotPermission" class="message warning">
         {{
           t(
@@ -395,6 +403,10 @@ import {
   sanitizeReferendumId,
 } from "@/utils/parliament";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
@@ -889,7 +901,11 @@ const handleBondCitizen = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     await refresh();
-    return t("Citizenship bond submitted: {hash}", { hash: result.hash });
+    return appendTransactionFee(
+      t("Citizenship bond submitted: {hash}", { hash: result.hash }),
+      result,
+      t,
+    );
   });
 
 const handleBallot = () =>
@@ -935,7 +951,11 @@ const handleBallot = () =>
     });
     rememberHistory({ referendumId: referendumLiteral });
     await lookupGovernance();
-    return t("Ballot submitted: {hash}", { hash: result.hash });
+    return appendTransactionFee(
+      t("Ballot submitted: {hash}", { hash: result.hash }),
+      result,
+      t,
+    );
   });
 
 const handleFinalize = () =>

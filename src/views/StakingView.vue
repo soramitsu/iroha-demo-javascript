@@ -126,6 +126,10 @@
             {{ t("Max") }}
           </button>
         </div>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
+        </p>
         <div class="actions">
           <button
             :disabled="!canSubmit || !hasBondableBalance || isActionBusy"
@@ -155,6 +159,10 @@
               datetime: formatDateTime(releasePreviewMs),
             })
           }}
+        </p>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
         </p>
         <div class="actions">
           <button
@@ -214,6 +222,10 @@
           }}
         </button>
       </div>
+      <p class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <p v-if="!pendingUnbonds.length" class="helper">
         {{ t("No pending unbond requests for the selected validator.") }}
       </p>
@@ -255,6 +267,10 @@
           {{ actionBusy === "claim" ? t("Submitting…") : t("Claim Rewards") }}
         </button>
       </div>
+      <p class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
     </section>
   </div>
 </template>
@@ -294,6 +310,10 @@ import {
 } from "@/utils/staking";
 import { deriveAssetSymbol, resolveToriiXorAsset } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
@@ -681,7 +701,11 @@ const handleBond = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     bondAmount.value = "";
-    return t("Bond submitted: {hash}", { hash: result.hash });
+    return appendTransactionFee(
+      t("Bond submitted: {hash}", { hash: result.hash }),
+      result,
+      t,
+    );
   });
 
 const handleScheduleUnbond = () =>
@@ -713,11 +737,15 @@ const handleScheduleUnbond = () =>
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     unbondAmount.value = "";
-    return t("Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}", {
-      requestId,
-      datetime: formatDateTime(releaseAtMs),
-      hash: result.hash,
-    });
+    return appendTransactionFee(
+      t("Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}", {
+        requestId,
+        datetime: formatDateTime(releaseAtMs),
+        hash: result.hash,
+      }),
+      result,
+      t,
+    );
   });
 
 const handleFinalizeUnbond = () =>
@@ -737,7 +765,11 @@ const handleFinalizeUnbond = () =>
       requestId: selectedFinalizeRequestId.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
-    return t("Finalize submitted: {hash}", { hash: result.hash });
+    return appendTransactionFee(
+      t("Finalize submitted: {hash}", { hash: result.hash }),
+      result,
+      t,
+    );
   });
 
 const handleClaimRewards = () =>
@@ -755,7 +787,11 @@ const handleClaimRewards = () =>
       validator: selectedValidator.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
-    return t("Reward claim submitted: {hash}", { hash: result.hash });
+    return appendTransactionFee(
+      t("Reward claim submitted: {hash}", { hash: result.hash }),
+      result,
+      t,
+    );
   });
 
 watch(

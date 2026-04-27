@@ -7,10 +7,20 @@
           {{ t("Show a fresh QR for this wallet.") }}
         </p>
       </div>
-      <button class="icon-cta" :disabled="!qrDataUrl" @click="shareQr">
-        <img :src="receiveIcon" alt="" />
-        <span>{{ t("Share QR") }}</span>
-      </button>
+      <div class="actions-row receive-actions">
+        <button
+          class="icon-cta secondary"
+          :disabled="!privateAddressText"
+          @click="copyAddress"
+        >
+          <img :src="receiveIcon" alt="" />
+          <span>{{ t("Copy address") }}</span>
+        </button>
+        <button class="icon-cta" :disabled="!qrDataUrl" @click="shareQr">
+          <img :src="receiveIcon" alt="" />
+          <span>{{ t("Share QR") }}</span>
+        </button>
+      </div>
     </header>
     <div class="receive-layout">
       <div class="receive-context">
@@ -28,6 +38,15 @@
             }}</span>
           </div>
         </details>
+        <label class="private-address-field">
+          <span>{{ t("Private address") }}</span>
+          <textarea
+            readonly
+            rows="4"
+            :value="privateAddressText"
+            @focus="selectAddressText"
+          ></textarea>
+        </label>
       </div>
       <div class="qr-panel" :class="{ ready: Boolean(qrMarkup) }">
         <!-- eslint-disable-next-line vue/no-v-html -->
@@ -50,6 +69,7 @@ import { useAppI18n } from "@/composables/useAppI18n";
 import { createConfidentialPaymentAddress } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { getPublicAccountId } from "@/utils/accountId";
+import { encodeConfidentialPaymentAddress } from "@/utils/confidentialPaymentAddress";
 import ReceiveIcon from "@/assets/receive.svg";
 
 const session = useSessionStore();
@@ -61,6 +81,7 @@ const shareAccountId = computed(() =>
 const qrMarkup = ref("");
 const qrDataUrl = ref("");
 const qrPayloadText = ref("");
+const privateAddressText = ref("");
 const qrMessage = ref(t("Generating QR..."));
 const qrGeneration = ref(0);
 const receiveIcon = ReceiveIcon;
@@ -76,6 +97,7 @@ const generateQr = async () => {
     qrMarkup.value = "";
     qrDataUrl.value = "";
     qrPayloadText.value = "";
+    privateAddressText.value = "";
     qrMessage.value = t("Configure an account before generating QR codes.");
     return;
   }
@@ -86,6 +108,7 @@ const generateQr = async () => {
       privateKeyHex: activeAccount.value?.privateKeyHex,
     });
     const payloadText = JSON.stringify(payload);
+    const addressText = encodeConfidentialPaymentAddress(payload);
     const qrOptions = {
       width: 240,
       color: {
@@ -112,6 +135,7 @@ const generateQr = async () => {
     qrMarkup.value = nextQrMarkup;
     qrDataUrl.value = nextQrDataUrl;
     qrPayloadText.value = payloadText;
+    privateAddressText.value = addressText;
     qrMessage.value = t("QR ready.");
   } catch (error) {
     if (currentGeneration !== qrGeneration.value) {
@@ -120,17 +144,35 @@ const generateQr = async () => {
     qrMarkup.value = "";
     qrDataUrl.value = "";
     qrPayloadText.value = "";
+    privateAddressText.value = "";
     qrMessage.value = t("Failed to render QR.");
     console.warn("Failed to render QR", error);
   }
 };
 
-const shareQr = async () => {
-  if (!qrDataUrl.value || !qrPayloadText.value) {
+const copyAddress = async () => {
+  if (!privateAddressText.value) {
     qrMessage.value = t("Generating QR...");
     await generateQr();
   }
-  if (!qrDataUrl.value || !qrPayloadText.value) {
+  if (!privateAddressText.value) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(privateAddressText.value);
+    qrMessage.value = t("Private address copied.");
+  } catch (error) {
+    qrMessage.value = t("Private address copy failed.");
+    console.warn("Failed to copy private address", error);
+  }
+};
+
+const shareQr = async () => {
+  if (!qrDataUrl.value || !privateAddressText.value) {
+    qrMessage.value = t("Generating QR...");
+    await generateQr();
+  }
+  if (!qrDataUrl.value || !privateAddressText.value) {
     return;
   }
   try {
@@ -150,16 +192,23 @@ const shareQr = async () => {
     if (navigator.share) {
       await navigator.share({
         title: t("Receive"),
-        text: qrPayloadText.value,
+        text: privateAddressText.value,
       });
       qrMessage.value = t("QR shared.");
       return;
     }
-    await navigator.clipboard.writeText(qrPayloadText.value);
-    qrMessage.value = t("QR payload copied to clipboard.");
+    await navigator.clipboard.writeText(privateAddressText.value);
+    qrMessage.value = t("Private address copied.");
   } catch (error) {
     qrMessage.value = t("QR share failed.");
     console.warn("Failed to share QR", error);
+  }
+};
+
+const selectAddressText = (event: FocusEvent) => {
+  const target = event.target;
+  if (target instanceof HTMLTextAreaElement) {
+    target.select();
   }
 };
 
@@ -175,6 +224,11 @@ watch(
 <style scoped>
 .receive-header {
   align-items: flex-start;
+}
+
+.receive-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .receive-account-copy {
@@ -198,6 +252,28 @@ watch(
 
 .receive-account-card {
   margin: 0;
+}
+
+.private-address-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.private-address-field span {
+  color: var(--iroha-muted);
+  font-size: 0.84rem;
+}
+
+.private-address-field textarea {
+  min-width: 0;
+  width: 100%;
+  resize: vertical;
+  font-family: var(--mono-font, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 .receive-amount {

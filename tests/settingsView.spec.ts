@@ -112,6 +112,31 @@ describe("SettingsView", () => {
     ).toBe("http://127.0.0.1:8080");
   });
 
+  it("restores known endpoint metadata when saving a preset endpoint without checking", async () => {
+    const wrapper = mountView("http://127.0.0.1:8080");
+    const session = useSessionStore();
+    session.updateConnection({
+      chainId: "00000000-0000-0000-0000-000000000000",
+      networkPrefix: 1,
+    });
+
+    await wrapper
+      .get('[data-testid="settings-torii-url-input"]')
+      .setValue(DEFAULT_CHAIN_PRESET.connection.toriiUrl);
+    await getButtonByText(wrapper, t("Save without checking")).trigger("click");
+    await flushPromises();
+
+    expect(session.connection.toriiUrl).toBe(
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(session.connection.chainId).toBe(
+      DEFAULT_CHAIN_PRESET.connection.chainId,
+    );
+    expect(session.connection.networkPrefix).toBe(
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
+    );
+  });
+
   it("rejects unsupported endpoint schemes", async () => {
     const wrapper = mountView();
     const session = useSessionStore();

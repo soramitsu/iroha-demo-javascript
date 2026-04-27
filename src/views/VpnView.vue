@@ -99,6 +99,10 @@
         </div>
       </div>
 
+      <p v-if="canOperate" class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <p v-if="actionError" class="wallet-faucet-message wallet-faucet-error">
         {{ actionError }}
       </p>
@@ -284,6 +288,7 @@ import type {
 } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import { formatTransactionFee } from "@/utils/transactionFee";
 
 const session = useSessionStore();
 const vpnStore = useVpnStore();

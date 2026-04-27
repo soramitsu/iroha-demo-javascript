@@ -28,6 +28,10 @@
           >
             {{ t("Request starter XOR from the active network faucet.") }}
           </p>
+          <p class="transaction-fee-note">
+            <span>{{ t("Fee") }}</span>
+            <strong>{{ formatTransactionFee(null, t) }}</strong>
+          </p>
         </div>
         <button
           :class="
@@ -91,6 +95,10 @@
             }}
           </button>
         </div>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ formatTransactionFee(null, t) }}</strong>
+        </p>
         <details class="technical-details compact wallet-shield-details">
           <summary>{{ t("Private balance details") }}</summary>
           <div class="wallet-shield-recovery-row">
@@ -239,6 +247,7 @@
               <th>{{ t("Direction") }}</th>
               <th>{{ t("Amount") }}</th>
               <th>{{ t("Counterparty") }}</th>
+              <th>{{ t("Fee") }}</th>
               <th>{{ t("Status") }}</th>
             </tr>
           </thead>
@@ -248,6 +257,7 @@
               <td>{{ tx.direction }}</td>
               <td>{{ tx.amount ?? t("—") }}</td>
               <td>{{ tx.counterparty ?? t("—") }}</td>
+              <td>{{ formatTransactionFeeInline(tx, t) }}</td>
               <td
                 :class="tx.result_ok ? 'status-pill ok' : 'status-pill error'"
               >
@@ -298,6 +308,11 @@ import {
   shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+  formatTransactionFeeInline,
+} from "@/utils/transactionFee";
 
 const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const ACCOUNT_TRANSACTION_PAGE_SIZE = 200;
@@ -674,9 +689,13 @@ const requestStarterFunds = async () => {
     }
     session.updateActiveAccount({ localOnly: false });
     faucetStatusPhase.value = "claimCommitted";
-    faucetMessage.value = t("XOR requested: {hash}", {
-      hash: result.tx_hash_hex,
-    });
+    faucetMessage.value = appendTransactionFee(
+      t("XOR requested: {hash}", {
+        hash: result.tx_hash_hex,
+      }),
+      result,
+      t,
+    );
     const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);
     if (!balanceVisible) {
       faucetError.value = "";
@@ -930,9 +949,13 @@ const createShieldedXor = async () => {
     });
     session.updateActiveAccount({ localOnly: false });
     shieldForm.quantity = "0";
-    shieldMessage.value = t("Shield transaction committed: {hash}", {
-      hash: result.hash,
-    });
+    shieldMessage.value = appendTransactionFee(
+      t("Shield transaction committed: {hash}", {
+        hash: result.hash,
+      }),
+      result,
+      t,
+    );
     await refresh();
   } catch (error) {
     shieldError.value = toUserFacingErrorMessage(

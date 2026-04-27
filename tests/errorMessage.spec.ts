@@ -34,6 +34,16 @@ describe("sanitizeErrorMessage", () => {
       ),
     ).toBe("Shield policy check failed for 4Zust3cNxsgov3757wxRW7DtR8n6");
   });
+
+  it("turns binary transaction chain rejections into settings guidance", () => {
+    expect(
+      sanitizeErrorMessage(
+        'transaction_rejected — NRT0"\uFFFDF\uFFFDF transaction_rejected failed to accept transaction: Chain id doesn\'t correspond to the id of current blockchain: Expected ChainId("00000000-0000-0000-0000-000000000000"), actual ChainId("sora nexus main net")',
+      ),
+    ).toBe(
+      'Torii endpoint chain id mismatch: endpoint expects "00000000-0000-0000-0000-000000000000", but the app signed for "sora nexus main net". Open Settings and use Check & Save for this endpoint before sending.',
+    );
+  });
 });
 
 describe("toUserFacingErrorMessage", () => {

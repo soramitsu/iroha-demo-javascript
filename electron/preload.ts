@@ -26,9 +26,9 @@ import {
   buildTransferAssetTransaction,
   buildSoraCloudHfDeployRequest,
   submitTransactionEntrypoint,
-  submitSignedTransaction,
+  hashSignedTransaction,
   extractPipelineStatusKind,
-  normalizeAssetId,
+  normalizeAssetHoldingId,
   type KaigiCallView,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
@@ -146,7 +146,7 @@ type ChainMetadataResponse = ChainMetadata;
 const KNOWN_CHAIN_METADATA_FALLBACKS = [
   {
     toriiUrl: "https://minamoto.sora.org",
-    chainId: "sora nexus main net",
+    chainId: "00000000-0000-0000-0000-000000000000",
     networkPrefix: 753,
   },
   {
@@ -193,12 +193,35 @@ const withConfidentialGasMetadata = (
   };
 };
 const SORA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const DEFAULT_GAS_ASSET_DISABLED_ORIGINS = new Set([
+  "https://minamoto.sora.org",
+]);
+const shouldAttachDefaultGasAssetMetadata = (toriiUrlRaw?: string) => {
+  if (!toriiUrlRaw) {
+    return true;
+  }
+  try {
+    return !DEFAULT_GAS_ASSET_DISABLED_ORIGINS.has(
+      new URL(normalizeBaseUrl(toriiUrlRaw)).origin,
+    );
+  } catch {
+    return true;
+  }
+};
 const withRequiredGasAssetMetadata = (
   metadata: Record<string, unknown> | undefined,
-) => ({
-  ...(isPlainRecord(metadata) ? { ...metadata } : {}),
-  gas_asset_id: SORA_XOR_GAS_ASSET_DEFINITION_ID,
-});
+  toriiUrl?: string,
+) => {
+  const baseMetadata = isPlainRecord(metadata) ? { ...metadata } : {};
+  if (!shouldAttachDefaultGasAssetMetadata(toriiUrl)) {
+    delete baseMetadata.gas_asset_id;
+    return baseMetadata;
+  }
+  return {
+    ...baseMetadata,
+    gas_asset_id: SORA_XOR_GAS_ASSET_DEFINITION_ID,
+  };
+};
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
@@ -839,10 +862,27 @@ type SubscriptionListResponseView = {
   total: number;
 };
 
+type TransactionFeeView =
+  | {
+      amount?: string | number | null;
+      quantity?: string | number | null;
+      assetId?: string | null;
+      asset_id?: string | null;
+      asset?: string | null;
+      feeAssetId?: string | null;
+      fee_asset_id?: string | null;
+      gas_asset_id?: string | null;
+      source?: string | null;
+      estimated?: boolean | null;
+    }
+  | string
+  | number;
+
 type SubscriptionActionResponseView = {
   ok: boolean;
   subscription_id: string;
   tx_hash_hex: string;
+  fee?: TransactionFeeView | null;
   billing_trigger_id?: string;
   usage_trigger_id?: string | null;
   first_charge_ms?: number;
@@ -914,6 +954,7 @@ type SoraCloudHfDeployResponseView = {
   current_version?: string | null;
   revision_count?: number | null;
   tx_hash_hex?: string | null;
+  fee?: TransactionFeeView | null;
   rollout_handle?: string | null;
   rollout_stage?: string | null;
   rollout_percent?: number | null;
@@ -3092,6 +3133,68 @@ const normalizeOptionalAccountNetworkPrefix = (value: unknown) => {
   return normalized;
 };
 
+const createChainMetadataMismatchError = (input: {
+  expectedChainId: string;
+  configuredChainId: string;
+}) =>
+  new Error(
+    `Torii endpoint chain id mismatch: endpoint expects "${input.expectedChainId}", but the app is configured for "${input.configuredChainId}". Open Settings and use Check & Save for this endpoint before sending.`,
+  );
+
+const assertWriteConnectionMatchesEndpoint = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix?: number;
+}) => {
+  const configuredChainId = String(input.chainId ?? "").trim();
+  if (!configuredChainId) {
+    throw new Error("chainId is required.");
+  }
+  const configuredNetworkPrefix = normalizeOptionalAccountNetworkPrefix(
+    input.networkPrefix,
+  );
+  let metadata: ChainMetadataResponse | null = null;
+  const knownMetadata = resolveKnownChainMetadataFallback(input.toriiUrl, {});
+
+  if (knownMetadata?.chainId && knownMetadata.networkPrefix !== undefined) {
+    metadata = normalizeChainMetadata(knownMetadata);
+  } else {
+    try {
+      metadata = await fetchChainMetadata(input.toriiUrl);
+    } catch {
+      metadata = null;
+    }
+  }
+
+  if (!metadata) {
+    return {
+      chainId: configuredChainId,
+      networkPrefix: configuredNetworkPrefix,
+    };
+  }
+
+  if (metadata.chainId !== configuredChainId) {
+    throw createChainMetadataMismatchError({
+      expectedChainId: metadata.chainId,
+      configuredChainId,
+    });
+  }
+
+  if (
+    configuredNetworkPrefix !== undefined &&
+    metadata.networkPrefix !== configuredNetworkPrefix
+  ) {
+    throw new Error(
+      `Torii endpoint network prefix mismatch: endpoint reports "${metadata.networkPrefix}", but the app is configured for "${configuredNetworkPrefix}". Open Settings and use Check & Save for this endpoint before sending.`,
+    );
+  }
+
+  return {
+    chainId: configuredChainId,
+    networkPrefix: configuredNetworkPrefix ?? metadata.networkPrefix,
+  };
+};
+
 const tryNormalizeCanonicalAccountIdLiteral = (
   value: string,
   label: string,
@@ -3365,6 +3468,39 @@ const normalizeSubscriptionActionPayload = (
     payload.subscription_id ?? payload.subscriptionId,
   ),
   tx_hash_hex: trimString(payload.tx_hash_hex ?? payload.txHashHex),
+  ...(payload.fee !== undefined
+    ? { fee: payload.fee as TransactionFeeView }
+    : payload.tx_fee !== undefined || payload.txFee !== undefined
+      ? { fee: (payload.tx_fee ?? payload.txFee) as TransactionFeeView }
+      : payload.transaction_fee !== undefined ||
+          payload.transactionFee !== undefined
+        ? {
+            fee: (payload.transaction_fee ??
+              payload.transactionFee) as TransactionFeeView,
+          }
+        : payload.network_fee !== undefined || payload.networkFee !== undefined
+          ? {
+              fee: (payload.network_fee ??
+                payload.networkFee) as TransactionFeeView,
+            }
+          : payload.fee_amount !== undefined || payload.feeAmount !== undefined
+            ? {
+                fee: {
+                  amount: (payload.fee_amount ?? payload.feeAmount) as
+                    | string
+                    | number
+                    | null,
+                  assetId: trimString(
+                    payload.fee_asset_id ??
+                      payload.feeAssetId ??
+                      payload.gas_asset_id ??
+                      payload.gasAssetId ??
+                      payload.asset_id ??
+                      payload.assetId,
+                  ),
+                },
+              }
+            : {}),
   ...(payload.billing_trigger_id !== undefined
     ? { billing_trigger_id: trimString(payload.billing_trigger_id) }
     : {}),
@@ -3594,6 +3730,39 @@ const normalizeSoraCloudMutationResponse = (
       : payload.txHashHex !== undefined
         ? trimString(payload.txHashHex)
         : null,
+  ...(payload.fee !== undefined
+    ? { fee: payload.fee as TransactionFeeView }
+    : payload.tx_fee !== undefined || payload.txFee !== undefined
+      ? { fee: (payload.tx_fee ?? payload.txFee) as TransactionFeeView }
+      : payload.transaction_fee !== undefined ||
+          payload.transactionFee !== undefined
+        ? {
+            fee: (payload.transaction_fee ??
+              payload.transactionFee) as TransactionFeeView,
+          }
+        : payload.network_fee !== undefined || payload.networkFee !== undefined
+          ? {
+              fee: (payload.network_fee ??
+                payload.networkFee) as TransactionFeeView,
+            }
+          : payload.fee_amount !== undefined || payload.feeAmount !== undefined
+            ? {
+                fee: {
+                  amount: (payload.fee_amount ?? payload.feeAmount) as
+                    | string
+                    | number
+                    | null,
+                  assetId: trimString(
+                    payload.fee_asset_id ??
+                      payload.feeAssetId ??
+                      payload.gas_asset_id ??
+                      payload.gasAssetId ??
+                      payload.asset_id ??
+                      payload.assetId,
+                  ),
+                },
+              }
+            : {}),
   rollout_handle:
     payload.rollout_handle !== undefined
       ? trimString(payload.rollout_handle)
@@ -3759,6 +3928,93 @@ const fetchTransactionRecordStatus = async (
   }
 };
 
+const normalizeRejectionReasonValue = (value: unknown): string | null => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const normalized = trimString(value);
+    return normalized && normalized !== "[object Object]" ? normalized : null;
+  }
+  if (isPlainRecord(value)) {
+    for (const key of [
+      "message",
+      "detail",
+      "details",
+      "reason",
+      "code",
+      "reject_code",
+      "rejectCode",
+    ]) {
+      const normalized = normalizeRejectionReasonValue(value[key]);
+      if (normalized) {
+        return normalized;
+      }
+    }
+  }
+  return null;
+};
+
+const extractTransactionRejectionReason = (payload: unknown): string | null => {
+  if (!isPlainRecord(payload)) {
+    return null;
+  }
+  for (const key of [
+    "rejection_reason",
+    "rejectionReason",
+    "reason",
+    "reject_code",
+    "rejectCode",
+  ]) {
+    const normalized = normalizeRejectionReasonValue(payload[key]);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return (
+    extractTransactionRejectionReason(payload.content) ??
+    normalizeRejectionReasonValue(payload.status)
+  );
+};
+
+const fetchExplorerTransactionRejectionReason = async (
+  toriiUrl: string,
+  hashHex: string,
+) => {
+  const endpoint = buildNexusEndpoint(
+    toriiUrl,
+    `/v1/explorer/transactions/${encodeURIComponent(hashHex)}`,
+  );
+  try {
+    const payload = await fetchJson(
+      endpoint,
+      `Explorer transaction ${hashHex}`,
+    );
+    return extractTransactionRejectionReason(payload);
+  } catch (error) {
+    if (isApiRequestError(error) && error.status === 404) {
+      return null;
+    }
+    return null;
+  }
+};
+
+const buildTransactionFinalityFailureError = async (
+  toriiUrl: string,
+  hashHex: string,
+  statusKind: string,
+  payload?: unknown,
+) => {
+  const reason =
+    extractTransactionRejectionReason(payload) ??
+    (await fetchExplorerTransactionRejectionReason(toriiUrl, hashHex));
+  return new Error(
+    `Transaction ${hashHex} ${statusKind.toLowerCase()} before it committed.${
+      reason ? ` ${reason}` : ""
+    }`,
+  );
+};
+
 const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
   const client = getClient(toriiUrl);
   const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
@@ -3780,16 +4036,22 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
           recordStatus &&
           CONFIDENTIAL_TX_FAILURE_STATUSES.has(recordStatus)
         ) {
-          throw new Error(
-            `Transaction ${hashHex} ${recordStatus.toLowerCase()} before it committed.`,
+          throw await buildTransactionFinalityFailureError(
+            toriiUrl,
+            hashHex,
+            recordStatus,
+            payload,
           );
         }
       }
       return;
     }
     if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
-      throw new Error(
-        `Transaction ${hashHex} ${statusKind.toLowerCase()} before it committed.`,
+      throw await buildTransactionFinalityFailureError(
+        toriiUrl,
+        hashHex,
+        statusKind,
+        payload,
       );
     }
     if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
@@ -3810,12 +4072,30 @@ const submitSignedTransactionAndWaitForCommit = async (
   toriiUrl: string,
   signedTransaction: Buffer,
 ) => {
-  const submission = await submitSignedTransaction(
-    getClient(toriiUrl),
+  const submission = await submitSignedTransactionAsVersioned(
+    toriiUrl,
     signedTransaction,
   );
   await waitForTransactionCommit(toriiUrl, submission.hash);
   return submission;
+};
+
+const hashSignedTransactionHex = (signedTransaction: Buffer) => {
+  const hash = hashSignedTransaction(signedTransaction, { encoding: "hex" });
+  return Buffer.isBuffer(hash) ? hash.toString("hex") : hash;
+};
+
+const submitSignedTransactionAsVersioned = async (
+  toriiUrl: string,
+  signedTransaction: Buffer,
+) => {
+  const client = getClient(toriiUrl);
+  const signedTransactionBuffer = binaryToBuffer(signedTransaction);
+  const submission = await client.submitTransaction(signedTransactionBuffer);
+  return {
+    hash: hashSignedTransactionHex(signedTransactionBuffer),
+    submission,
+  };
 };
 
 const submitTransactionEntrypointAndWaitForCommit = async (
@@ -3823,9 +4103,11 @@ const submitTransactionEntrypointAndWaitForCommit = async (
   transactionEntrypoint: Buffer,
   hashHex: string,
 ) => {
+  const client = getClient(toriiUrl);
+  const transactionEntrypointBuffer = binaryToBuffer(transactionEntrypoint);
   const submission = await submitTransactionEntrypoint(
-    getClient(toriiUrl),
-    transactionEntrypoint,
+    client,
+    transactionEntrypointBuffer,
     {
       hashHex,
     },
@@ -4381,8 +4663,11 @@ const waitForConfidentialRelayCommit = async (input: {
       return;
     }
     if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
-      throw new Error(
-        `Transaction ${input.hashHex} ${statusKind.toLowerCase()} before it committed.`,
+      throw await buildTransactionFinalityFailureError(
+        input.toriiUrl,
+        input.hashHex,
+        statusKind,
+        payload,
       );
     }
     if (
@@ -4955,7 +5240,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     verifyingKey: verifyingKeyContext.proofVerifyingKey,
   });
   const metadata = buildWalletConfidentialMetadataV3({
-    baseMetadata: withRequiredGasAssetMetadata(undefined),
+    baseMetadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
     outputs: [output],
   });
   const tx = buildZkTransferTransaction({
@@ -5268,7 +5553,7 @@ const submitInstructionTransaction = async (input: {
     chainId,
     authority,
     instructions: [input.instruction],
-    metadata: withRequiredGasAssetMetadata(undefined),
+    metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
     privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
@@ -5730,7 +6015,7 @@ const api: IrohaBridge = {
         ),
         metadata: input.metadata ?? {},
       },
-      metadata: withRequiredGasAssetMetadata(undefined),
+      metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
       privateKey: hexToBuffer(authorityPrivateKeyHex, "authorityPrivateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -5740,9 +6025,17 @@ const api: IrohaBridge = {
     return { hash: submission.hash };
   },
   async transferAsset(input) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+    });
+    const chainId = writeConnection.chainId;
+    const networkPrefix = writeConnection.networkPrefix;
     const accountId = normalizeCompatAccountIdLiteral(
       input.accountId,
       "accountId",
+      networkPrefix,
     );
     const destinationAccountIdLiteral = trimString(input.destinationAccountId);
     const destinationAccountId = destinationAccountIdLiteral
@@ -5750,7 +6043,7 @@ const api: IrohaBridge = {
           await resolveAccountAliasSelector({
             toriiUrl: input.toriiUrl,
             alias: destinationAccountIdLiteral,
-            networkPrefix: input.networkPrefix,
+            networkPrefix,
           })
         ).accountId
       : "";
@@ -5798,7 +6091,7 @@ const api: IrohaBridge = {
       const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
       const materials = await resolveConfidentialUnshieldMaterials({
         toriiUrl: input.toriiUrl,
-        chainId: input.chainId,
+        chainId,
         accountId,
         privateKeyHex,
         assetDefinitionId: resolvedAssetId,
@@ -5824,7 +6117,7 @@ const api: IrohaBridge = {
         }
         const consolidation = await submitConfidentialSelfConsolidation({
           toriiUrl: input.toriiUrl,
-          chainId: input.chainId,
+          chainId,
           accountId,
           privateKeyHex,
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
@@ -5837,7 +6130,7 @@ const api: IrohaBridge = {
         const nullifierHex = deriveWalletConfidentialNullifierHex({
           privateKeyHex,
           assetDefinitionId: consolidation.output.note.asset_definition_id,
-          chainId: input.chainId,
+          chainId,
           rhoHex: consolidation.output.note.rho_hex,
         });
         const selectedNullifiers = new Set(
@@ -5888,7 +6181,7 @@ const api: IrohaBridge = {
         );
         selectedNotes = selection.selected;
         proofEnvelope = buildConfidentialUnshieldProofV2({
-          chainId: input.chainId.trim(),
+          chainId,
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
           spendKey: privateKey,
           treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
@@ -5937,7 +6230,7 @@ const api: IrohaBridge = {
           ];
         }
         proofEnvelope = buildConfidentialUnshieldProofV3({
-          chainId: input.chainId.trim(),
+          chainId,
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
           spendKey: privateKey,
           treeCommitments: refreshedMaterials.ledger.treeCommitmentsHex,
@@ -5965,6 +6258,7 @@ const api: IrohaBridge = {
           input.metadata,
           "Confidential public exit",
         ),
+        input.toriiUrl,
       );
       const metadata =
         changeOutputs.length > 0
@@ -5974,7 +6268,7 @@ const api: IrohaBridge = {
             })
           : confidentialExitMetadata;
       const tx = buildUnshieldTransaction({
-        chainId: input.chainId,
+        chainId,
         authority: accountId,
         unshield: {
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
@@ -6070,6 +6364,7 @@ const api: IrohaBridge = {
       );
       const confidentialTransactionMetadata = withRequiredGasAssetMetadata(
         confidentialBaseMetadata,
+        input.toriiUrl,
       );
 
       if (destinationAccountId === accountId) {
@@ -6097,7 +6392,7 @@ const api: IrohaBridge = {
           ],
         });
         const tx = buildShieldTransaction({
-          chainId: input.chainId,
+          chainId,
           authority: accountId,
           shield: {
             assetDefinitionId: resolvedAssetId,
@@ -6120,8 +6415,8 @@ const api: IrohaBridge = {
           metadata,
           privateKey,
         });
-        const submission = await submitSignedTransaction(
-          getClient(input.toriiUrl),
+        const submission = await submitSignedTransactionAsVersioned(
+          input.toriiUrl,
           tx.signedTransaction,
         );
         await waitForTransactionCommit(input.toriiUrl, submission.hash);
@@ -6164,7 +6459,7 @@ const api: IrohaBridge = {
 
       let materials = await resolveConfidentialTransferMaterials({
         toriiUrl: input.toriiUrl,
-        chainId: input.chainId,
+        chainId,
         accountId,
         privateKeyHex,
         assetDefinitionId: resolvedAssetId,
@@ -6256,7 +6551,7 @@ const api: IrohaBridge = {
         for (const candidateRootHintHex of candidateRootHintHexes) {
           try {
             proofEnvelope = buildConfidentialTransferProofV2({
-              chainId: input.chainId.trim(),
+              chainId,
               assetDefinitionId: materials.resolvedAssetId,
               spendKey: privateKey,
               treeCommitments: materials.ledger.treeCommitmentsHex,
@@ -6297,7 +6592,7 @@ const api: IrohaBridge = {
           await waitForMs(CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS);
           materials = await resolveConfidentialTransferMaterials({
             toriiUrl: input.toriiUrl,
-            chainId: input.chainId,
+            chainId,
             accountId,
             privateKeyHex,
             assetDefinitionId: resolvedAssetId,
@@ -6318,7 +6613,7 @@ const api: IrohaBridge = {
         outputs: orderedOutputs,
       });
       const tx = buildZkTransferTransaction({
-        chainId: input.chainId,
+        chainId,
         authority: accountId,
         transfer: {
           assetDefinitionId: materials.resolvedAssetId,
@@ -6409,7 +6704,7 @@ const api: IrohaBridge = {
         return null;
       }
       try {
-        return normalizeAssetId(
+        return normalizeAssetHoldingId(
           sourceAssetHoldingLiteral,
           "sourceAssetHoldingId",
         );
@@ -6529,12 +6824,12 @@ const api: IrohaBridge = {
     }
 
     const tx = buildTransferAssetTransaction({
-      chainId: input.chainId,
+      chainId,
       authority: accountId,
       sourceAssetHoldingId,
       quantity: input.quantity,
       destinationAccountId,
-      metadata: withRequiredGasAssetMetadata(input.metadata),
+      metadata: withRequiredGasAssetMetadata(input.metadata, input.toriiUrl),
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -7350,7 +7645,7 @@ const api: IrohaBridge = {
         relayManifest: resolvedRelayManifest,
         metadata: callMetadata,
       },
-      metadata: withRequiredGasAssetMetadata(undefined),
+      metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -7488,7 +7783,7 @@ const api: IrohaBridge = {
         callId: answerPayload.callId,
         participant: authority,
       },
-      metadata: withRequiredGasAssetMetadata(metadata),
+      metadata: withRequiredGasAssetMetadata(metadata, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
@@ -7712,7 +8007,7 @@ const api: IrohaBridge = {
         callId: normalizedCallId,
         endedAtMs: resolvedEndedAtMs,
       },
-      metadata: withRequiredGasAssetMetadata(undefined),
+      metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
     });
     const submission = await submitSignedTransactionAndWaitForCommit(

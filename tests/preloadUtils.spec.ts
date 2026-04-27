@@ -317,6 +317,33 @@ describe("preload utils", () => {
         {
           asset_id: "5PeSrQmLNwwKtruJvDZrbrm9RuMw#sorauAlice",
           quantity: "25000",
+          asset_name: "Localnet Fee",
+          asset_definition_id: "5PeSrQmLNwwKtruJvDZrbrm9RuMw",
+        },
+      ],
+      total: 1,
+    });
+  });
+
+  it("preserves account asset aliases for renderer labels", () => {
+    expect(
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            account_id: "sorauAlice",
+            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            asset_alias: "@xor",
+            quantity: "42",
+          },
+        ],
+      }),
+    ).toEqual({
+      items: [
+        {
+          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauAlice",
+          quantity: "42",
+          asset_alias: "xor",
+          asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         },
       ],
       total: 1,

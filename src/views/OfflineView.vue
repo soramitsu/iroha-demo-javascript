@@ -301,6 +301,10 @@
           <span>{{ t("Private exit") }}</span>
         </label>
       </div>
+      <p class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <div class="actions">
         <button
           :disabled="movingOnline || !canSubmitOnlineMove"
@@ -428,6 +432,10 @@ import {
   shouldReplaceConfiguredAssetDefinitionId,
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
 
 const session = useSessionStore();
 const offline = useOfflineStore();
@@ -957,7 +965,7 @@ const moveToOnline = async () => {
       amount,
       memo: onlineForm.memo,
     });
-    await transferAsset({
+    const result = await transferAsset({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       assetDefinitionId: resolvedOnlineShieldAssetDefinitionId.value,
@@ -974,9 +982,13 @@ const moveToOnline = async () => {
     if (onlineForm.shielded) {
       session.updateActiveAccount({ localOnly: false });
     }
-    moveMessage.value = onlineForm.shielded
-      ? t("Unshield submitted and offline balance updated.")
-      : t("Transfer submitted and offline balance updated.");
+    moveMessage.value = appendTransactionFee(
+      onlineForm.shielded
+        ? t("Unshield submitted and offline balance updated.")
+        : t("Transfer submitted and offline balance updated."),
+      result,
+      t,
+    );
   } catch (error) {
     offline.$patch({ wallet: snapshot });
     offline.persist();

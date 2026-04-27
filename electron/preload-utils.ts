@@ -102,6 +102,9 @@ export interface ConfidentialAssetPolicyView {
 export interface AccountAssetListItemView {
   asset_id: string;
   quantity: string;
+  asset_alias?: string | null;
+  asset_name?: string | null;
+  asset_definition_id?: string | null;
 }
 
 export interface AccountAssetListResponseView {
@@ -364,12 +367,23 @@ export const normalizeAccountAssetListPayload = (
           `account asset list response.items[${index}].asset_id must be a string`,
         );
       }
+      const assetAlias = String(entry.asset_alias ?? entry.assetAlias ?? "")
+        .trim()
+        .replace(/^@/, "");
+      const assetName = String(
+        entry.asset_name ?? entry.assetName ?? "",
+      ).trim();
       return {
         asset_id: assetId,
         quantity: toStringValue(
           entry.quantity,
           `account asset list response.items[${index}].quantity`,
         ),
+        ...(assetAlias ? { asset_alias: assetAlias } : {}),
+        ...(assetName ? { asset_name: assetName } : {}),
+        ...(assetDefinitionId
+          ? { asset_definition_id: assetDefinitionId }
+          : {}),
       };
     },
   );

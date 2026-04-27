@@ -8,6 +8,7 @@ export type ChainPreset = {
 };
 
 export const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+export const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
 
 export const TAIRA_CHAIN_PRESET: ChainPreset = {
   id: "taira-testnet",
@@ -27,7 +28,7 @@ export const MINAMOTO_CHAIN_PRESET: ChainPreset = {
   description: "SORA Nexus mainnet profile.",
   connection: {
     toriiUrl: "https://minamoto.sora.org",
-    chainId: "sora nexus main net",
+    chainId: MINAMOTO_CHAIN_ID,
     assetDefinitionId: SORA_XOR_ASSET_DEFINITION_ID,
     networkPrefix: 753,
   },

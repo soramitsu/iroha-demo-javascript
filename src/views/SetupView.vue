@@ -153,6 +153,10 @@
           <textarea v-model="metadataInput" rows="4"></textarea>
         </label>
       </div>
+      <p class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ formatTransactionFee(null, t) }}</strong>
+      </p>
       <div class="actions">
         <button :disabled="registering || !canRegister" @click="handleRegister">
           {{ registering ? t("Submitting…") : t("Create on-chain account") }}
@@ -183,6 +187,10 @@ import {
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  appendTransactionFee,
+  formatTransactionFee,
+} from "@/utils/transactionFee";
 
 type PingState = "idle" | "ok" | "error";
 
@@ -490,9 +498,13 @@ const handleRegister = async () => {
     });
     session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
     session.persistState();
-    registerMessage.value = t("Submitted transaction {hash}", {
-      hash: result.hash,
-    });
+    registerMessage.value = appendTransactionFee(
+      t("Submitted transaction {hash}", {
+        hash: result.hash,
+      }),
+      result,
+      t,
+    );
   } catch (error) {
     registerMessage.value = toUserFacingErrorMessage(
       error,

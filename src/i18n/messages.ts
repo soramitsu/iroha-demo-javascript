@@ -1066,6 +1066,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Wallet-based meeting links": "Wallet-based meeting links",
   "Private network connection": "Private network connection",
   "Network and developer settings": "Network and developer settings",
+  Fee: "Fee",
+  "Charged on-chain": "Charged on-chain",
+  "Network fee: {amount} {asset}.": "Network fee: {amount} {asset}.",
+  "Network fee: {amount} {asset} (estimated).":
+    "Network fee: {amount} {asset} (estimated).",
+  "Network fee: charged on-chain ({asset}).":
+    "Network fee: charged on-chain ({asset}).",
+  "Network fee: charged on-chain (amount unavailable).":
+    "Network fee: charged on-chain (amount unavailable).",
+  "Private Kaigi funding transaction submitted.":
+    "Private Kaigi funding transaction submitted.",
   "Open explorer": "Open explorer",
   "Live supply, holder concentration, and consensus telemetry for the active public lane.":
     "Live supply, holder concentration, and consensus telemetry for the active public lane.",
@@ -1257,22 +1268,25 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Stop scanner": "Stop scanner",
   "Scan payment QR": "Scan payment QR",
   "Upload QR image": "Upload QR image",
+  "Copy address": "Copy address",
   From: "From",
+  Balance: "Balance",
   "or upload a QR image": "or upload a QR image",
   "Send mode": "Send mode",
   Private: "Private",
   Recipient: "Recipient",
-  "Scan a private receive QR, or enter your own wallet to make funds private.":
-    "Scan a private receive QR, or enter your own wallet to make funds private.",
+  "Paste private address, scan a Receive QR, or enter your own wallet to make funds private.":
+    "Paste private address, scan a Receive QR, or enter your own wallet to make funds private.",
   "Resolving recipient…": "Resolving recipient…",
   "Alias {alias} resolves to {accountId}.":
     "Alias {alias} resolves to {accountId}.",
   "Recipient normalized to {accountId}.":
     "Recipient normalized to {accountId}.",
   "Unable to resolve recipient.": "Unable to resolve recipient.",
-  "Private transfers use the recipient Receive QR and do not include memos.":
-    "Private transfers use the recipient Receive QR and do not include memos.",
+  "Private transfers use a recipient private address or Receive QR and do not include memos.":
+    "Private transfers use a recipient private address or Receive QR and do not include memos.",
   "Private transfer": "Private transfer",
+  "Private address": "Private address",
   "Show a fresh QR for this wallet.": "Show a fresh QR for this wallet.",
   "Hide QR": "Hide QR",
   "Show QR": "Show QR",
@@ -1283,6 +1297,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Use the button above when someone is ready to pay you.",
   "QR shared.": "QR shared.",
   "QR payload copied to clipboard.": "QR payload copied to clipboard.",
+  "Private address copied.": "Private address copied.",
+  "Private address copy failed.": "Private address copy failed.",
   "QR share failed.": "QR share failed.",
   "Staking group": "Staking group",
   "Staking details": "Staking details",
@@ -1368,8 +1384,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.":
     "Private shielded transfers do not publish memos. Scan the recipient Receive QR so the encrypted note can be delivered.",
   "Private shielded transfer": "Private shielded transfer",
-  "Scan a private Receive QR before sending privately.":
-    "Scan a private Receive QR before sending privately.",
+  "Paste a private address or scan a Receive QR before sending privately.":
+    "Paste a private address or scan a Receive QR before sending privately.",
+  "Private payment address loaded.": "Private payment address loaded.",
+  "Private payment address is invalid.": "Private payment address is invalid.",
   "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.":
     "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
   "Create private balance": "Create private balance",

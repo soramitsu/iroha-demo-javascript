@@ -119,6 +119,31 @@ describe("session store", () => {
     expect(store.customChains).toHaveLength(0);
   });
 
+  it("migrates saved Minamoto sessions onto the deployed chain id", () => {
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        connection: {
+          ...MINAMOTO_CHAIN_PRESET.connection,
+          chainId: "sora nexus main net",
+        },
+      }),
+    );
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.connection.toriiUrl).toBe(
+      MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      MINAMOTO_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
+    );
+  });
+
   it("migrates legacy single-user snapshots", () => {
     const legacy = {
       connection: {
@@ -521,6 +546,29 @@ describe("session store", () => {
     expect(store.connection.toriiUrl).toBe("http://127.0.0.1:8080");
     expect(store.connection.chainId).toBe("custom-chain");
     expect(store.connection.networkPrefix).toBe(99);
+  });
+
+  it("applies known preset metadata when only the endpoint changes", () => {
+    const store = useSessionStore();
+    store.updateConnection({
+      toriiUrl: "http://127.0.0.1:8080",
+      chainId: "00000000-0000-0000-0000-000000000000",
+      networkPrefix: 1,
+    });
+
+    store.updateConnection({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    });
+
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
   });
 
   it("falls back to the default endpoint when a saved endpoint is invalid", () => {
