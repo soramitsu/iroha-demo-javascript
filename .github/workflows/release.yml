@@ -281,12 +281,10 @@ jobs:
           mkdir -p artifact-output
           find release -maxdepth 1 -type f \( \
             -name '*.AppImage' -o \
-            -name '*.blockmap' -o \
             -name '*.deb' -o \
             -name '*.dmg' -o \
             -name '*.exe' -o \
             -name '*.rpm' -o \
-            -name '*.yml' -o \
             -name '*.zip' \
           \) -print0 | xargs -0 -I{} cp "{}" artifact-output/
           find artifact-output -type f -maxdepth 1 -print
@@ -317,6 +315,17 @@ jobs:
       - name: Create or update draft release
         shell: bash
         run: |
+          find artifacts -maxdepth 1 -type f \( \
+            -name '*.AppImage' -o \
+            -name '*.deb' -o \
+            -name '*.dmg' -o \
+            -name '*.exe' -o \
+            -name '*.rpm' -o \
+            -name '*.zip' \
+          \) -print0 | sort -z | while IFS= read -r -d '' file; do
+            (cd "$(dirname "$file")" && shasum -a 256 "$(basename "$file")")
+          done > artifacts/SHA256SUMS.txt
+
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
           fi
