@@ -109,6 +109,7 @@ jobs:
         run: |
           $manifestPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/ivm/Cargo.toml"
           $manifest = Get-Content $manifestPath -Raw
+          $manifest = $manifest -replace "`r`n", "`n"
           $from = "[target.'cfg(target_arch = `"x86_64`")'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
           $to = "[target.'cfg(all(target_arch = `"x86_64`", not(target_env = `"msvc`")))'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
           if (-not $manifest.Contains($from)) {
