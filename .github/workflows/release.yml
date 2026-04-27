@@ -103,7 +103,7 @@ jobs:
           path: iroha
           ref: ${{ env.IROHA_REF }}
 
-      - name: Disable unsupported sha2 assembly on Windows MSVC
+      - name: Patch Iroha SDK for Windows MSVC build
         if: matrix.platform == 'win'
         shell: pwsh
         run: |
@@ -116,6 +116,15 @@ jobs:
             throw "Expected ivm sha2 asm target dependency block was not found in $manifestPath"
           }
           Set-Content -Path $manifestPath -Value $manifest.Replace($from, $to) -NoNewline
+
+          $gpuZstdPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/norito/src/core/gpu_zstd.rs"
+          $gpuZstd = Get-Content $gpuZstdPath -Raw
+          $externFrom = "extern `"system`" {"
+          $externTo = "unsafe extern `"system`" {"
+          if (-not $gpuZstd.Contains($externFrom)) {
+            throw "Expected Windows gpu_zstd extern block was not found in $gpuZstdPath"
+          }
+          Set-Content -Path $gpuZstdPath -Value $gpuZstd.Replace($externFrom, $externTo) -NoNewline
 
       - name: Set up Node
         uses: actions/setup-node@v4

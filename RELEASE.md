@@ -2,7 +2,7 @@
 
 This app releases through GitHub Actions from an existing `v*` tag. The workflow checks out this repo beside `hyperledger-iroha/iroha` because `@iroha/iroha-js` is a local `file:../iroha/javascript/iroha_js` dependency.
 
-The Windows release jobs apply a small CI-only patch to the checked-out Iroha SDK so the `ivm` crate does not enable the `sha2` assembly backend under the MSVC target. Without that patch the pinned SDK commit fails to build `sha2-asm` on Windows x64.
+The Windows release jobs apply small CI-only patches to the checked-out Iroha SDK so the pinned commit builds under MSVC: `ivm` does not enable the `sha2` assembly backend for MSVC, and the Windows `gpu_zstd` FFI block is marked as `unsafe extern`.
 
 ## Platforms
 
