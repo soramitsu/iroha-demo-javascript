@@ -1,5 +1,6 @@
 appId: org.sora.wallet.demo
 productName: SORA Wallet
+artifactName: SORA-Wallet-${version}-${os}-${arch}.${ext}
 directories:
   output: release
   buildResources: buildResources
@@ -7,22 +8,50 @@ afterPack: scripts/after-pack.mjs
 files:
   - dist/**
   - package.json
-extraResources:
-  - from: dist-native/vpn/${os}
-    to: vpn
-    filter:
-      - '**/*'
+protocols:
+  - name: Iroha
+    schemes:
+      - iroha
 mac:
   category: public.app-category.finance
   target:
     - dmg
     - zip
   hardenedRuntime: true
+  notarize: true
   entitlements: buildResources/entitlements.mac.plist
   entitlementsInherit: buildResources/entitlements.mac.plist
+  extendInfo:
+    NSCameraUsageDescription: SORA Wallet uses the camera for Kaigi video calls and QR scanning.
+    NSMicrophoneUsageDescription: SORA Wallet uses the microphone for Kaigi audio calls.
+  extraResources:
+    - from: dist-native/vpn/${os}
+      to: vpn
+      filter:
+        - '**/*'
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
 linux:
   target:
+    - AppImage
     - deb
     - rpm
   category: Utility
   maintainer: gucci-swallow <swallow965dev@gmail.com>
+  extraResources:
+    - from: dist-native/vpn/${os}
+      to: vpn
+      filter:
+        - '**/*'

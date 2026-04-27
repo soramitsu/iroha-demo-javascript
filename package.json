@@ -15,6 +15,7 @@
     "preview": "electron-vite preview",
     "dist": "npm run build && npm run build:vpn:controllers && electron-builder",
     "dist:mac": "npm run build && npm run build:vpn:macos-controller && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
     "dist:linux": "npm run build && npm run build:vpn:linux-controller && electron-builder --linux",
     "lint": "eslint . --ext .ts,.tsx,.js,.cjs,.mjs,.vue --max-warnings=0",
     "typecheck": "npm run typecheck:renderer && npm run typecheck:electron",

@@ -1,0 +1,288 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to package, for example v2.0.0"
+        required: true
+      iroha_ref:
+        description: "hyperledger-iroha/iroha ref to check out beside this repo"
+        required: false
+        default: "21e81d23beae46ff42344bfab771d3e311208e9d"
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: "20"
+  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || '21e81d23beae46ff42344bfab771d3e311208e9d' }}
+  APP_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+  SORANET_VPN_HELPER_BUNDLE_ID: ${{ vars.SORANET_VPN_HELPER_BUNDLE_ID }}
+  SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
+  SORANET_VPN_APP_GROUP_ID: ${{ vars.SORANET_VPN_APP_GROUP_ID }}
+  SORANET_VPN_MANAGER_DESCRIPTION: ${{ vars.SORANET_VPN_MANAGER_DESCRIPTION }}
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@v4
+        with:
+          path: iroha-demo-javascript
+          ref: ${{ env.APP_REF }}
+
+      - name: Checkout Iroha SDK
+        uses: actions/checkout@v4
+        with:
+          repository: hyperledger-iroha/iroha
+          path: iroha
+          ref: ${{ env.IROHA_REF }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: iroha-demo-javascript/package-lock.json
+
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install dependencies
+        working-directory: iroha-demo-javascript
+        run: npm ci
+
+      - name: Verify
+        working-directory: iroha-demo-javascript
+        run: npm run verify
+
+  build:
+    name: Build ${{ matrix.platform }} ${{ matrix.arch }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: mac
+            arch: x64
+            runner: macos-15-intel
+          - platform: mac
+            arch: arm64
+            runner: macos-15
+          - platform: win
+            arch: x64
+            runner: windows-latest
+          - platform: win
+            arch: arm64
+            runner: windows-11-arm
+          - platform: linux
+            arch: x64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@v4
+        with:
+          path: iroha-demo-javascript
+          ref: ${{ env.APP_REF }}
+
+      - name: Checkout Iroha SDK
+        uses: actions/checkout@v4
+        with:
+          repository: hyperledger-iroha/iroha
+          path: iroha
+          ref: ${{ env.IROHA_REF }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: iroha-demo-javascript/package-lock.json
+
+      - name: Set up Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install macOS packaging tools
+        if: matrix.platform == 'mac'
+        run: brew install xcodegen
+
+      - name: Install Linux packaging tools
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libopenjp2-tools rpm
+
+      - name: Validate macOS signing secrets
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          missing=()
+          for name in \
+            MAC_CERTIFICATE_P12_BASE64 \
+            MAC_CERTIFICATE_PASSWORD \
+            APPLE_DEVELOPMENT_TEAM \
+            APPLE_API_KEY_P8_BASE64 \
+            APPLE_API_KEY_ID \
+            APPLE_API_ISSUER
+          do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            printf 'Missing required macOS release secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Validate Windows signing secrets
+        if: matrix.platform == 'win'
+        shell: bash
+        env:
+          WIN_CSC_LINK_SECRET: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD_SECRET: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          missing=()
+          [[ -n "$WIN_CSC_LINK_SECRET" ]] || missing+=("WIN_CSC_LINK")
+          [[ -n "$WIN_CSC_KEY_PASSWORD_SECRET" ]] || missing+=("WIN_CSC_KEY_PASSWORD")
+          if (( ${#missing[@]} )); then
+            printf 'Missing required Windows signing secrets: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+
+      - name: Prepare Windows signing certificate
+        if: matrix.platform == 'win'
+        shell: pwsh
+        env:
+          WIN_CSC_LINK_SECRET: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD_SECRET: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          $certPath = Join-Path $env:RUNNER_TEMP "windows-codesign.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WIN_CSC_LINK_SECRET))
+          "WIN_CSC_LINK=$certPath" >> $env:GITHUB_ENV
+          "WIN_CSC_KEY_PASSWORD=$env:WIN_CSC_KEY_PASSWORD_SECRET" >> $env:GITHUB_ENV
+
+      - name: Prepare macOS signing and notarization
+        if: matrix.platform == 'mac'
+        shell: bash
+        env:
+          MAC_CERTIFICATE_P12_BASE64: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_CERTIFICATE_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_SIGN_IDENTITY_SECRET: ${{ secrets.APPLE_SIGN_IDENTITY }}
+          APPLE_XCODE_SIGN_IDENTITY_SECRET: ${{ secrets.APPLE_XCODE_SIGN_IDENTITY }}
+        run: |
+          cert_path="$RUNNER_TEMP/mac-codesign.p12"
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          keychain_path="$RUNNER_TEMP/release-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+
+          printf '%s' "$MAC_CERTIFICATE_P12_BASE64" | base64 -D > "$cert_path"
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 -D > "$api_key_path"
+
+          security create-keychain -p "$keychain_password" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$keychain_password" "$keychain_path"
+          security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$keychain_path"
+          security import "$cert_path" -k "$keychain_path" -P "$MAC_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain_path"
+
+          {
+            echo "CSC_LINK=$cert_path"
+            echo "CSC_KEY_PASSWORD=$MAC_CERTIFICATE_PASSWORD"
+            echo "APPLE_DEVELOPMENT_TEAM=$APPLE_DEVELOPMENT_TEAM"
+            echo "APPLE_API_KEY=$api_key_path"
+            echo "APPLE_API_KEY_ID=$APPLE_API_KEY_ID"
+            echo "APPLE_API_ISSUER=$APPLE_API_ISSUER"
+            echo "APPLE_SIGN_IDENTITY=${APPLE_SIGN_IDENTITY_SECRET:-Developer ID Application}"
+            echo "APPLE_XCODE_SIGN_IDENTITY=${APPLE_XCODE_SIGN_IDENTITY_SECRET:-Developer ID Application}"
+            echo "APPLE_CODESIGN_TIMESTAMP=true"
+          } >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        working-directory: iroha-demo-javascript
+        run: npm ci
+
+      - name: Build macOS artifacts
+        if: matrix.platform == 'mac'
+        working-directory: iroha-demo-javascript
+        run: npm run dist:mac -- --${{ matrix.arch }} --publish never
+
+      - name: Build Windows artifacts
+        if: matrix.platform == 'win'
+        working-directory: iroha-demo-javascript
+        run: npm run dist:win -- --${{ matrix.arch }} --publish never
+
+      - name: Build Linux artifacts
+        if: matrix.platform == 'linux'
+        working-directory: iroha-demo-javascript
+        run: npm run dist:linux -- --${{ matrix.arch }} --publish never
+
+      - name: Collect release artifacts
+        shell: bash
+        working-directory: iroha-demo-javascript
+        run: |
+          mkdir -p artifact-output
+          find release -maxdepth 1 -type f \( \
+            -name '*.AppImage' -o \
+            -name '*.blockmap' -o \
+            -name '*.deb' -o \
+            -name '*.dmg' -o \
+            -name '*.exe' -o \
+            -name '*.rpm' -o \
+            -name '*.yml' -o \
+            -name '*.zip' \
+          \) -print0 | xargs -0 -I{} cp "{}" artifact-output/
+          find artifact-output -type f -maxdepth 1 -print
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
+          path: iroha-demo-javascript/artifact-output/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish draft GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create or update draft release
+        shell: bash
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release upload "$RELEASE_TAG" artifacts/* --clobber

@@ -197,6 +197,19 @@ const buildSignedXcodeArgs = ({
       "CODE_SIGNING_ALLOWED=YES",
       `CODE_SIGN_IDENTITY=${signing.xcodeIdentity}`,
     );
+    const appleApiKey = process.env["APPLE_API_KEY"]?.trim();
+    const appleApiKeyId = process.env["APPLE_API_KEY_ID"]?.trim();
+    const appleApiIssuer = process.env["APPLE_API_ISSUER"]?.trim();
+    if (appleApiKey && appleApiKeyId && appleApiIssuer) {
+      args.push(
+        "-authenticationKeyPath",
+        appleApiKey,
+        "-authenticationKeyID",
+        appleApiKeyId,
+        "-authenticationKeyIssuerID",
+        appleApiIssuer,
+      );
+    }
   } else {
     args.push("CODE_SIGNING_ALLOWED=NO");
   }
@@ -222,9 +235,16 @@ const signMacPath = (targetPath, signing, options = {}) => {
     "--force",
     "--sign",
     signing.codesignIdentity,
-    "--timestamp=none",
     "--generate-entitlement-der",
   ];
+  const timestampMode = process.env["APPLE_CODESIGN_TIMESTAMP"]?.trim();
+  if (timestampMode === "1" || timestampMode === "true") {
+    args.push("--timestamp");
+  } else if (timestampMode) {
+    args.push(`--timestamp=${timestampMode}`);
+  } else {
+    args.push("--timestamp=none");
+  }
   if (identifier) {
     args.push("--identifier", identifier);
   }
