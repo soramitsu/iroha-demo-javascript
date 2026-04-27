@@ -82,9 +82,6 @@ jobs:
           - platform: win
             arch: x64
             runner: windows-latest
-          - platform: win
-            arch: arm64
-            runner: windows-11-arm
           - platform: linux
             arch: x64
             runner: ubuntu-24.04
