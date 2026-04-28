@@ -1364,6 +1364,22 @@ const formatDurationForError = (durationMs: number) => {
   return `${hours} hours`;
 };
 
+const buildFaucetFinalityUnavailableError = (
+  context: string,
+  status?: number,
+  statusText?: string,
+  detail?: string,
+) => {
+  const statusDetail =
+    status !== undefined
+      ? ` (${status}${statusText ? ` ${statusText}` : ""})`
+      : "";
+  const responseDetail = detail ? ` Detail: ${detail}` : "";
+  return new Error(
+    `The active Torii endpoint could not verify faucet finality via ${context}${statusDetail}.${responseDetail} Faucet requests cannot safely fund wallets until TAIRA/Torii status recovers.`,
+  );
+};
+
 const readFaucetLedgerFinalityState = async (baseUrl: string) => {
   const endpoint = new URL(
     "v1/ledger/headers?limit=1",
@@ -1376,6 +1392,14 @@ const readFaucetLedgerFinalityState = async (baseUrl: string) => {
     },
   });
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw buildFaucetFinalityUnavailableError(
+        "/v1/ledger/headers",
+        response.status,
+        response.statusText,
+        await readApiErrorDetail(response),
+      );
+    }
     return null;
   }
   const payload = (await response.json().catch(() => null)) as unknown;
@@ -1416,6 +1440,14 @@ const readFaucetSumeragiState = async (baseUrl: string) => {
     },
   });
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw buildFaucetFinalityUnavailableError(
+        "/v1/sumeragi/status",
+        response.status,
+        response.statusText,
+        await readApiErrorDetail(response),
+      );
+    }
     return null;
   }
   const payload = (await response.json().catch(() => null)) as unknown;
@@ -1446,10 +1478,15 @@ const assertFaucetEndpointFinalizing = async (baseUrl: string) => {
   > | null = null;
   try {
     ledgerState = await readFaucetLedgerFinalityState(baseUrl);
-  } catch {
-    return;
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : buildFaucetFinalityUnavailableError("/v1/ledger/headers");
   }
-  if (!ledgerState || ledgerState.ageMs <= FAUCET_FINALITY_STALE_MS) {
+  if (!ledgerState) {
+    throw buildFaucetFinalityUnavailableError("/v1/ledger/headers");
+  }
+  if (ledgerState.ageMs <= FAUCET_FINALITY_STALE_MS) {
     return;
   }
 

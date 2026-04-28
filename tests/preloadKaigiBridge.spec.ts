@@ -1268,6 +1268,37 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
   });
 
+  it("blocks faucet requests when TAIRA finality diagnostics are unavailable", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.includes("/v1/ledger/headers")) {
+          return jsonResponse(
+            {
+              error: "bad_gateway",
+              message: "Bad Gateway",
+            },
+            502,
+          );
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.requestFaucetFunds({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).rejects.toThrow(
+      "The active Torii endpoint could not verify faucet finality via /v1/ledger/headers",
+    );
+    expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
+  });
+
   it("treats a visible funded faucet asset as success when TAIRA pipeline status is missing", async () => {
     const bridge = await loadBridge();
     const statusEvents: string[] = [];
