@@ -224,6 +224,8 @@ const withRequiredGasAssetMetadata = (
 };
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
+const FAUCET_CLAIM_INVISIBLE_RETRY_MS = 20_000;
+const FAUCET_FINALITY_STALE_MS = 5 * 60_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
 const isSecureVaultAvailable = async (): Promise<boolean> =>
@@ -1300,13 +1302,201 @@ const isConfidentialRootHintMismatchError = (error: unknown) =>
     "tree commitments do not match the supplied root_hint",
   );
 
+const hasPositiveQuantity = (value: unknown): boolean => {
+  const normalized = Number(trimString(value));
+  return Number.isFinite(normalized) && normalized > 0;
+};
+
+const faucetClaimFundedAssetIsVisible = async (
+  client: ToriiClient,
+  accountId: string,
+  assetId: string,
+  assetDefinitionId: string,
+) => {
+  const normalizedAssetId = trimString(assetId).toLowerCase();
+  const normalizedAssetDefinitionId = extractAssetDefinitionId(
+    assetDefinitionId,
+  )
+    .trim()
+    .toLowerCase();
+  if (!normalizedAssetId && !normalizedAssetDefinitionId) {
+    return false;
+  }
+  const payload = await client.listAccountAssets(accountId, { limit: 200 });
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return items.some((item) => {
+    const record = isPlainRecord(item) ? item : {};
+    if (!hasPositiveQuantity(record.quantity)) {
+      return false;
+    }
+    const itemAssetId = trimString(record.asset_id).toLowerCase();
+    const itemAssetDefinitionId = extractAssetDefinitionId(
+      trimString(record.asset ?? record.asset_definition_id ?? itemAssetId),
+    )
+      .trim()
+      .toLowerCase();
+    return Boolean(
+      (normalizedAssetId && itemAssetId === normalizedAssetId) ||
+        (normalizedAssetDefinitionId &&
+          itemAssetDefinitionId === normalizedAssetDefinitionId),
+    );
+  });
+};
+
+const readNumericField = (value: unknown): number | null => {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+  return normalized;
+};
+
+const formatDurationForError = (durationMs: number) => {
+  const seconds = Math.max(0, Math.round(durationMs / 1000));
+  if (seconds < 90) {
+    return `${seconds} seconds`;
+  }
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 90) {
+    return `${minutes} minutes`;
+  }
+  const hours = Math.round(minutes / 60);
+  return `${hours} hours`;
+};
+
+const readFaucetLedgerFinalityState = async (baseUrl: string) => {
+  const endpoint = new URL(
+    "v1/ledger/headers?limit=1",
+    `${normalizeBaseUrl(baseUrl)}/`,
+  );
+  const response = await nodeFetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json().catch(() => null)) as unknown;
+  const headers = Array.isArray(payload)
+    ? payload
+    : isPlainRecord(payload) && Array.isArray(payload.items)
+      ? payload.items
+      : [];
+  const latestHeader = headers.find(isPlainRecord);
+  if (!latestHeader) {
+    return null;
+  }
+  const height = readNumericField(latestHeader.height);
+  const creationTimeMs = readNumericField(
+    latestHeader.creation_time_ms ?? latestHeader.creationTimeMs,
+  );
+  if (creationTimeMs === null) {
+    return null;
+  }
+  const responseDateMs = Date.parse(trimString(response.headers.get("date")));
+  const nowMs = Number.isFinite(responseDateMs) ? responseDateMs : Date.now();
+  const ageMs = Math.max(0, nowMs - creationTimeMs);
+  return {
+    ageMs,
+    height,
+  };
+};
+
+const readFaucetSumeragiState = async (baseUrl: string) => {
+  const endpoint = new URL(
+    "v1/sumeragi/status",
+    `${normalizeBaseUrl(baseUrl)}/`,
+  );
+  const response = await nodeFetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json().catch(() => null)) as unknown;
+  const record = isPlainRecord(payload) ? payload : {};
+  const txQueue = isPlainRecord(record.tx_queue) ? record.tx_queue : {};
+  const commitQc = isPlainRecord(record.commit_qc) ? record.commit_qc : {};
+  const queueDepth = readNumericField(txQueue.depth);
+  const queueSaturated = txQueue.saturated === true;
+  const committedHeight = readNumericField(commitQc.height);
+  const laneHeights = Array.isArray(record.lane_commitments)
+    ? record.lane_commitments
+        .map((value) =>
+          isPlainRecord(value) ? readNumericField(value.block_height) : null,
+        )
+        .filter((value): value is number => value !== null)
+    : [];
+  return {
+    committedHeight,
+    queuedHeight: laneHeights.length ? Math.max(...laneHeights) : null,
+    queueDepth,
+    queueSaturated,
+  };
+};
+
+const assertFaucetEndpointFinalizing = async (baseUrl: string) => {
+  let ledgerState: Awaited<
+    ReturnType<typeof readFaucetLedgerFinalityState>
+  > | null = null;
+  try {
+    ledgerState = await readFaucetLedgerFinalityState(baseUrl);
+  } catch {
+    return;
+  }
+  if (!ledgerState || ledgerState.ageMs <= FAUCET_FINALITY_STALE_MS) {
+    return;
+  }
+
+  let sumeragiState: Awaited<
+    ReturnType<typeof readFaucetSumeragiState>
+  > | null = null;
+  try {
+    sumeragiState = await readFaucetSumeragiState(baseUrl);
+  } catch {
+    sumeragiState = null;
+  }
+
+  const details = [
+    ledgerState.height !== null
+      ? `latest committed block ${ledgerState.height}`
+      : "latest committed block is stale",
+    `last block is ${formatDurationForError(ledgerState.ageMs)} old`,
+    sumeragiState?.queueDepth !== null &&
+    sumeragiState?.queueDepth !== undefined
+      ? `queue depth ${sumeragiState.queueDepth}`
+      : "",
+    sumeragiState?.queueSaturated ? "queue saturated" : "",
+    sumeragiState?.queuedHeight !== null &&
+    sumeragiState?.queuedHeight !== undefined
+      ? `pending block ${sumeragiState.queuedHeight}`
+      : "",
+  ].filter(Boolean);
+
+  throw new Error(
+    `The active Torii endpoint is not finalizing new blocks right now (${details.join(
+      "; ",
+    )}). Faucet requests cannot fund wallets until TAIRA finality resumes.`,
+  );
+};
+
 const waitForFaucetClaimFinality = async (
   client: ToriiClient,
   txHashHex: string,
+  accountId: string,
+  assetId: string,
+  assetDefinitionId: string,
 ) => {
   const deadline = Date.now() + FAUCET_CLAIM_STATUS_TIMEOUT_MS;
+  const invisibleDeadline = Date.now() + FAUCET_CLAIM_INVISIBLE_RETRY_MS;
   let lastStatusKind: string | null = null;
   let lastError: unknown = null;
+  let sawPipelineStatus = false;
 
   while (Date.now() <= deadline) {
     try {
@@ -1314,20 +1504,57 @@ const waitForFaucetClaimFinality = async (
       const statusKind = extractPipelineStatusKind(payload);
       lastStatusKind = statusKind;
       lastError = null;
+      if (statusKind) {
+        sawPipelineStatus = true;
+      }
       if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
         return {
           statusKind,
           timedOut: false,
+          fundedAssetVisible: false,
+          pipelineStatusInvisible: false,
         };
       }
       if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
         return {
           statusKind,
           timedOut: false,
+          fundedAssetVisible: false,
+          pipelineStatusInvisible: false,
         };
       }
     } catch (error) {
       lastError = error;
+    }
+
+    try {
+      if (
+        await faucetClaimFundedAssetIsVisible(
+          client,
+          accountId,
+          assetId,
+          assetDefinitionId,
+        )
+      ) {
+        return {
+          statusKind: lastStatusKind,
+          timedOut: false,
+          fundedAssetVisible: true,
+          pipelineStatusInvisible: !sawPipelineStatus,
+        };
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (!sawPipelineStatus && Date.now() >= invisibleDeadline) {
+      return {
+        statusKind: lastStatusKind,
+        timedOut: true,
+        lastError,
+        fundedAssetVisible: false,
+        pipelineStatusInvisible: true,
+      };
     }
 
     if (Date.now() + FAUCET_CLAIM_STATUS_INTERVAL_MS > deadline) {
@@ -1340,6 +1567,8 @@ const waitForFaucetClaimFinality = async (
     statusKind: lastStatusKind,
     timedOut: true,
     lastError,
+    fundedAssetVisible: false,
+    pipelineStatusInvisible: !sawPipelineStatus,
   };
 };
 
@@ -1347,6 +1576,7 @@ const buildFaucetClaimFinalityError = (
   txHashHex: string,
   statusKind: string | null,
   timedOut: boolean,
+  pipelineStatusInvisible: boolean,
   lastError?: unknown,
 ) => {
   if (statusKind === "Expired") {
@@ -1357,6 +1587,11 @@ const buildFaucetClaimFinalityError = (
   if (statusKind === "Rejected") {
     return new Error(
       `Faucet claim ${txHashHex} was rejected on-chain before funding the wallet.`,
+    );
+  }
+  if (pipelineStatusInvisible) {
+    return new Error(
+      `Faucet claim ${txHashHex} was accepted by TAIRA, but it never became visible in pipeline status and the funded asset did not appear in the wallet. The endpoint is likely not finalizing new blocks right now; retry after TAIRA recovers.`,
     );
   }
   if (timedOut) {
@@ -7393,6 +7628,7 @@ const api: IrohaBridge = {
     const client = getClient(baseUrl);
 
     for (let attempt = 1; attempt <= FAUCET_CLAIM_MAX_ATTEMPTS; attempt += 1) {
+      await assertFaucetEndpointFinalizing(baseUrl);
       const result = await requestFaucetFundsWithPuzzle({
         baseUrl,
         accountId: normalizedAccountId,
@@ -7426,8 +7662,35 @@ const api: IrohaBridge = {
         // Renderer-side status hooks must not break the faucet request itself.
       }
 
-      const { statusKind, timedOut, lastError } =
-        await waitForFaucetClaimFinality(client, txHashHex);
+      const {
+        statusKind,
+        timedOut,
+        lastError,
+        fundedAssetVisible,
+        pipelineStatusInvisible,
+      } = await waitForFaucetClaimFinality(
+        client,
+        txHashHex,
+        normalizedAccountId,
+        trimString(result.asset_id),
+        trimString(result.asset_definition_id),
+      );
+      if (fundedAssetVisible) {
+        try {
+          await onStatus?.({
+            phase: "claimCommitted",
+            attempt,
+            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+            txHashHex,
+          });
+        } catch {
+          // Renderer-side status hooks must not break the faucet request itself.
+        }
+        return {
+          ...result,
+          status: statusKind || "Funded",
+        };
+      }
       if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
         try {
           await onStatus?.({
@@ -7444,7 +7707,13 @@ const api: IrohaBridge = {
           status: statusKind,
         };
       }
-      if (statusKind === "Expired" && attempt < FAUCET_CLAIM_MAX_ATTEMPTS) {
+      if (
+        (statusKind === "Expired" || pipelineStatusInvisible) &&
+        attempt < FAUCET_CLAIM_MAX_ATTEMPTS
+      ) {
+        if (pipelineStatusInvisible) {
+          await assertFaucetEndpointFinalizing(baseUrl);
+        }
         let retryStatusSnapshot: StatusSnapshot | null = null;
         try {
           retryStatusSnapshot = await client.getStatusSnapshot();
@@ -7472,6 +7741,7 @@ const api: IrohaBridge = {
         txHashHex,
         statusKind,
         timedOut,
+        pipelineStatusInvisible,
         lastError,
       );
     }

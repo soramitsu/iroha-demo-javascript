@@ -747,6 +747,26 @@ describe("preload Kaigi bridge", () => {
       async (input: unknown, init?: Record<string, unknown>) => {
         const href = String(input);
         const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.includes("/v1/ledger/headers")) {
+          return jsonResponse([
+            {
+              height: 701,
+              creation_time_ms: Date.now(),
+            },
+          ]);
+        }
+        if (method === "GET" && href.includes("/v1/sumeragi/status")) {
+          return jsonResponse({
+            commit_qc: {
+              height: 701,
+            },
+            lane_commitments: [],
+            tx_queue: {
+              depth: 0,
+              saturated: false,
+            },
+          });
+        }
         if (
           method === "GET" &&
           href.includes(
@@ -1200,6 +1220,231 @@ describe("preload Kaigi bridge", () => {
       "statusChecked",
       "claimCommitted",
     ]);
+  });
+
+  it("blocks faucet requests when TAIRA is not finalizing new blocks", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.includes("/v1/ledger/headers")) {
+          return jsonResponse([
+            {
+              height: 741,
+              creation_time_ms: Date.now() - 10 * 60_000,
+            },
+          ]);
+        }
+        if (method === "GET" && href.includes("/v1/sumeragi/status")) {
+          return jsonResponse({
+            commit_qc: {
+              height: 741,
+            },
+            lane_commitments: [
+              {
+                block_height: 742,
+              },
+            ],
+            tx_queue: {
+              depth: 43,
+              saturated: true,
+            },
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.requestFaucetFunds({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).rejects.toThrow(
+      "The active Torii endpoint is not finalizing new blocks right now",
+    );
+    expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
+  });
+
+  it("treats a visible funded faucet asset as success when TAIRA pipeline status is missing", async () => {
+    const bridge = await loadBridge();
+    const statusEvents: string[] = [];
+    mocks.requestFaucetFundsWithPuzzleMock.mockResolvedValue({
+      account_id: "testu-faucet",
+      asset_definition_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}#testu-faucet`,
+      amount: "25000",
+      tx_hash_hex: "0xfaucet",
+      status: "QUEUED",
+    });
+    mocks.getTransactionStatusMock.mockResolvedValue(null);
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}#testu-faucet`,
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
+
+    await expect(
+      bridge.requestFaucetFunds(
+        {
+          toriiUrl: "https://taira.sora.org",
+          accountId: "testu-faucet",
+          networkPrefix: 369,
+        },
+        (progress: unknown) => {
+          const phase =
+            progress &&
+            typeof progress === "object" &&
+            "phase" in progress &&
+            typeof progress.phase === "string"
+              ? progress.phase
+              : "";
+          statusEvents.push(phase);
+        },
+      ),
+    ).resolves.toMatchObject({
+      tx_hash_hex: "0xfaucet",
+      status: "Funded",
+    });
+
+    expect(mocks.getTransactionStatusMock).toHaveBeenCalledWith("0xfaucet");
+    expect(mocks.listAccountAssetsMock).toHaveBeenCalledWith("testu-faucet", {
+      limit: 200,
+    });
+    expect(statusEvents).toEqual([
+      "claimAccepted",
+      "waitingForCommit",
+      "claimCommitted",
+    ]);
+  });
+
+  it("retries faucet claims when TAIRA accepts a claim that never appears in pipeline status", async () => {
+    const bridge = await loadBridge();
+    const statusEvents: string[] = [];
+    mocks.requestFaucetFundsWithPuzzleMock
+      .mockResolvedValueOnce({
+        asset_definition_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}#testu-faucet`,
+        tx_hash_hex: "0xinvisible",
+      })
+      .mockResolvedValueOnce({
+        asset_definition_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+        asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}#testu-faucet`,
+        tx_hash_hex: "0xcommitted",
+      });
+    mocks.getTransactionStatusMock.mockImplementation(async (hash: string) =>
+      hash === "0xcommitted"
+        ? {
+            status: {
+              kind: "Committed",
+            },
+          }
+        : null,
+    );
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    const requestPromise = bridge.requestFaucetFunds(
+      {
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      },
+      (progress: unknown) => {
+        const phase =
+          progress &&
+          typeof progress === "object" &&
+          "phase" in progress &&
+          typeof progress.phase === "string"
+            ? progress.phase
+            : "";
+        statusEvents.push(phase);
+      },
+    );
+    await vi.runAllTimersAsync();
+    await expect(requestPromise).resolves.toMatchObject({
+      tx_hash_hex: "0xcommitted",
+      status: "Committed",
+    });
+    expect(mocks.requestFaucetFundsWithPuzzleMock).toHaveBeenCalledTimes(2);
+    expect(statusEvents).toEqual([
+      "claimAccepted",
+      "waitingForCommit",
+      "waitingForClaimRetry",
+      "claimAccepted",
+      "waitingForCommit",
+      "claimCommitted",
+    ]);
+  });
+
+  it("stops retrying invisible accepted faucet claims when finality stalls", async () => {
+    const bridge = await loadBridge();
+    let ledgerChecks = 0;
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.includes("/v1/ledger/headers")) {
+          ledgerChecks += 1;
+          return jsonResponse([
+            {
+              height: 741,
+              creation_time_ms:
+                ledgerChecks === 1 ? Date.now() : Date.now() - 10 * 60_000,
+            },
+          ]);
+        }
+        if (method === "GET" && href.includes("/v1/sumeragi/status")) {
+          return jsonResponse({
+            commit_qc: {
+              height: 741,
+            },
+            lane_commitments: [
+              {
+                block_height: 742,
+              },
+            ],
+            tx_queue: {
+              depth: 43,
+              saturated: true,
+            },
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+    mocks.requestFaucetFundsWithPuzzleMock.mockResolvedValue({
+      asset_definition_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      asset_id: `${LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID}#testu-faucet`,
+      tx_hash_hex: "0xinvisible",
+    });
+    mocks.getTransactionStatusMock.mockResolvedValue(null);
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+
+    const requestPromise = bridge.requestFaucetFunds({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testu-faucet",
+      networkPrefix: 369,
+    });
+    const rejection = requestPromise.catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    const error = await rejection;
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "The active Torii endpoint is not finalizing new blocks right now",
+    );
+    expect(mocks.requestFaucetFundsWithPuzzleMock).toHaveBeenCalledTimes(1);
   });
 
   it("retries faucet claims when TAIRA expires the queued transaction", async () => {
