@@ -513,6 +513,69 @@
           </div>
         </details>
       </div>
+      <div class="connect-reader">
+        <div class="actions connect-reader-actions">
+          <button class="secondary" type="button" @click="toggleConnectScanner">
+            {{
+              connectScanner.scanning
+                ? t("Stop scan")
+                : "Scan IrohaConnect QR"
+            }}
+          </button>
+          <button
+            class="secondary"
+            type="button"
+            @click="connectScanner.openFilePicker"
+          >
+            {{ t("Upload QR image") }}
+          </button>
+          <input
+            ref="connectScanner.fileInputRef"
+            type="file"
+            accept="image/*"
+            class="sr-only"
+            @change="connectScanner.decodeFile"
+          />
+        </div>
+
+        <div v-if="connectScanner.scanning" class="connect-scanner">
+          <video ref="connectScanner.videoRef" autoplay muted playsinline />
+        </div>
+
+        <div v-if="scannedConnectSession" class="connect-scanned">
+          <div class="kv">
+            <span class="kv-label">{{ t("Approval") }}</span>
+            <span class="kv-value">
+              {{
+                connectApprovalLoading
+                  ? t("Approving…")
+                  : connectApprovalStatus || t("Ready")
+              }}
+            </span>
+          </div>
+          <div class="kv monospace">
+            <span class="kv-label">{{ t("Session ID") }}</span>
+            <span class="kv-value">{{ scannedConnectSession.sid }}</span>
+          </div>
+          <div v-if="scannedConnectSession.chainId" class="kv monospace">
+            <span class="kv-label">{{ t("Chain ID") }}</span>
+            <span class="kv-value">{{ scannedConnectSession.chainId }}</span>
+          </div>
+          <div v-if="scannedConnectSession.node" class="kv monospace">
+            <span class="kv-label">{{ t("Endpoint") }}</span>
+            <span class="kv-value">{{ scannedConnectSession.node }}</span>
+          </div>
+          <div class="actions">
+            <button class="secondary" type="button" @click="copyScannedConnectUri">
+              {{ scannedConnectCopied ? "Copied" : "Copy URI" }}
+            </button>
+          </div>
+        </div>
+
+        <p v-if="connectScanError || connectScanner.message" class="helper" :class="{ error: connectScanError }">
+          {{ connectScanError || connectScanner.message }}
+        </p>
+      </div>
       <div class="actions">
         <button :disabled="connectLoading" @click="startConnectPairing">
           {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
@@ -538,10 +601,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import QRCode from "qrcode";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { useQrScanner } from "@/composables/useQrScanner";
 import { useSessionStore } from "@/stores/session";
 import {
   createConnectPreview,
@@ -565,6 +629,13 @@ import {
 } from "@/utils/walletBackup";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
+import {
+  buildIrohaConnectTokenProtocol,
+  buildIrohaConnectWebSocketUrl,
+  encodeIrohaConnectApproveFrame,
+  parseIrohaConnectUri,
+  type ParsedIrohaConnectUri,
+} from "@/utils/irohaConnect";
 
 const session = useSessionStore();
 const router = useRouter();
@@ -1106,6 +1177,132 @@ const connectQr = ref("");
 const connectLoading = ref(false);
 const connectError = ref("");
 const connectGeneration = ref(0);
+const scannedConnectSession = ref<ParsedIrohaConnectUri | null>(null);
+const connectScanError = ref("");
+const scannedConnectCopied = ref(false);
+const connectApprovalLoading = ref(false);
+const connectApprovalStatus = ref("");
+let scannedConnectSocket: WebSocket | null = null;
+
+const closeScannedConnectSocket = () => {
+  if (scannedConnectSocket && scannedConnectSocket.readyState !== WebSocket.CLOSED) {
+    scannedConnectSocket.close(1000, "approval complete");
+  }
+  scannedConnectSocket = null;
+};
+
+const waitForConnectSocketOpen = (socket: WebSocket) =>
+  new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(new Error("IrohaConnect approval timed out."));
+    }, 10_000);
+    socket.addEventListener(
+      "open",
+      () => {
+        window.clearTimeout(timeout);
+        resolve();
+      },
+      { once: true },
+    );
+    socket.addEventListener(
+      "error",
+      () => {
+        window.clearTimeout(timeout);
+        reject(new Error("IrohaConnect relay connection failed."));
+      },
+      { once: true },
+    );
+  });
+
+const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
+  connectApprovalLoading.value = true;
+  connectApprovalStatus.value = "";
+  connectScanError.value = "";
+  closeScannedConnectSocket();
+
+  try {
+    if (!parsed.token) {
+      throw new Error("IrohaConnect wallet token is missing.");
+    }
+    const activeAccount = session.activeAccount;
+    const accountId = getPublicAccountId(
+      activeAccount,
+      session.connection.networkPrefix,
+    );
+    if (!activeAccount || !accountId) {
+      throw new Error("Choose an active wallet before approving IrohaConnect.");
+    }
+
+    const socket = new WebSocket(
+      buildIrohaConnectWebSocketUrl(parsed, session.connection.toriiUrl),
+      [buildIrohaConnectTokenProtocol(parsed.token)],
+    );
+    socket.binaryType = "arraybuffer";
+    scannedConnectSocket = socket;
+    await waitForConnectSocketOpen(socket);
+    socket.send(
+      encodeIrohaConnectApproveFrame({
+        sid: parsed.sid,
+        accountId,
+      }),
+    );
+    connectApprovalStatus.value = accountId;
+    connectScanner.message.value = t("IrohaConnect approved.");
+    window.setTimeout(closeScannedConnectSocket, 250);
+  } catch (error) {
+    connectApprovalStatus.value = "";
+    connectScanError.value =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    connectApprovalLoading.value = false;
+  }
+};
+
+const connectScanner = useQrScanner(
+  (payload) => {
+    connectScanError.value = "";
+    scannedConnectCopied.value = false;
+    connectApprovalStatus.value = "";
+    try {
+      const parsed = parseIrohaConnectUri(payload);
+      if (parsed.role !== "wallet") {
+        throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
+      }
+      scannedConnectSession.value = parsed;
+      connectScanner.stop();
+      void approveScannedConnectSession(parsed);
+    } catch (error) {
+      scannedConnectSession.value = null;
+      connectScanError.value =
+        error instanceof Error ? error.message : String(error);
+    }
+  },
+  { translate: t },
+);
+
+const toggleConnectScanner = async () => {
+  connectScanError.value = "";
+  scannedConnectCopied.value = false;
+  await nextTick();
+  connectScanner.message.value = "";
+  connectScanner.start();
+};
+
+const copyScannedConnectUri = async () => {
+  if (!scannedConnectSession.value) {
+    return;
+  }
+  try {
+    await copyTextToClipboard(scannedConnectSession.value.canonicalUri);
+    scannedConnectCopied.value = true;
+    connectScanError.value = "";
+  } catch (_error) {
+    scannedConnectCopied.value = false;
+    connectScanError.value = t(
+      "Clipboard access failed. Copy the phrase manually.",
+    );
+  }
+};
 
 const startConnectPairing = async () => {
   connectError.value = "";
@@ -1153,6 +1350,10 @@ const resetConnect = () => {
   connectQr.value = "";
   connectError.value = "";
 };
+
+onBeforeUnmount(() => {
+  closeScannedConnectSocket();
+});
 </script>
 
 <style scoped>
@@ -1251,6 +1452,46 @@ const resetConnect = () => {
   padding: 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+}
+
+.connect-reader {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(130deg, rgba(255, 255, 255, 0.08), transparent 70%),
+    rgba(255, 255, 255, 0.03);
+}
+
+.connect-reader-actions {
+  margin: 0;
+}
+
+.connect-scanner {
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.connect-scanner video {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  object-fit: cover;
+  background: #000;
+}
+
+.connect-scanned {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 118, 118, 0.42);
+  border-radius: 16px;
+  background: rgba(255, 76, 102, 0.08);
 }
 
 .monospace {
