@@ -10,7 +10,7 @@
       <p v-if="!alreadyCitizen" class="helper">
         {{
           t("Bond {amount} XOR once to enable voting for this wallet.", {
-            amount: CITIZEN_BOND_XOR,
+            amount: citizenshipBondAmount,
           })
         }}
       </p>
@@ -21,7 +21,7 @@
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Required Bond") }}</span>
-          <span class="kv-value">{{ CITIZEN_BOND_XOR }} XOR</span>
+          <span class="kv-value">{{ citizenshipBondAmount }} XOR</span>
         </div>
       </div>
 
@@ -38,6 +38,14 @@
             <span class="kv-label">{{ t("Chain") }}</span>
             <span class="kv-value">{{
               session.connection.chainId || t("—")
+            }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Asset") }}</span>
+            <span class="kv-value mono">{{
+              citizenshipAssetDefinitionId ||
+              session.connection.assetDefinitionId ||
+              t("—")
             }}</span>
           </div>
         </div>
@@ -80,7 +88,7 @@
           {{
             actionBusy === "bond"
               ? t("Submitting…")
-              : t("Bond {amount} XOR", { amount: CITIZEN_BOND_XOR })
+              : t("Bond {amount} XOR", { amount: citizenshipBondAmount })
           }}
         </button>
       </div>
@@ -104,6 +112,12 @@
         {{
           t("Available XOR balance is below the required citizen bond amount.")
         }}
+      </p>
+      <p
+        v-if="!alreadyCitizen && citizenshipAssetDefinitionMissingMessage"
+        class="message error"
+      >
+        {{ citizenshipAssetDefinitionMissingMessage }}
       </p>
       <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
@@ -380,6 +394,7 @@ import {
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
   getGovernanceProposal,
+  getGovernanceRegistrationPolicy,
   getGovernanceReferendum,
   getGovernanceTally,
   listAccountPermissions,
@@ -394,6 +409,7 @@ import type {
   GovernanceDraftResponse,
   GovernanceLocksResult,
   GovernanceProposalResult,
+  GovernanceRegistrationPolicyResponse,
   GovernanceReferendumResult,
   GovernanceTallyResult,
   GovernanceCouncilCurrentResponse,
@@ -409,7 +425,7 @@ import {
   isPositiveWholeNumberString,
   parseParliamentHistory,
   pushRecentValue,
-  resolveXorBalance,
+  resolveGovernanceBondBalance,
   sanitizeReferendumId,
 } from "@/utils/parliament";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
@@ -441,6 +457,8 @@ const errorMessage = ref("");
 const xorBalance = ref("0");
 const permissions = ref<AccountPermissionItem[]>([]);
 const council = ref<GovernanceCouncilCurrentResponse | null>(null);
+const governanceRegistrationPolicy =
+  ref<GovernanceRegistrationPolicyResponse | null>(null);
 
 const referendumId = ref("");
 const proposalId = ref("");
@@ -519,11 +537,30 @@ const missingParliamentPermission = computed(
 const missingEnactPermission = computed(
   () => permissionsLoaded.value && !hasEnactPermission.value,
 );
+const citizenshipAssetDefinitionId = computed(
+  () => governanceRegistrationPolicy.value?.citizenshipAssetDefinitionId ?? "",
+);
+const citizenshipBondAmount = computed(
+  () =>
+    governanceRegistrationPolicy.value?.citizenshipBondAmount ??
+    CITIZEN_BOND_XOR,
+);
+const citizenshipAssetDefinitionMissingMessage = computed(() => {
+  if (
+    !citizenshipAssetDefinitionId.value ||
+    governanceRegistrationPolicy.value?.citizenshipAssetDefinitionExists !==
+      false
+  ) {
+    return "";
+  }
+  return `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${citizenshipAssetDefinitionId.value}. Ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
+});
 const canBondCitizen = computed(
   () =>
     canSubmit.value &&
     hasXorForBond.value &&
     !alreadyCitizen.value &&
+    !citizenshipAssetDefinitionMissingMessage.value &&
     !isActionBusy.value,
 );
 const canSubmitBallot = computed(
@@ -561,7 +598,9 @@ const canLookupGovernance = computed(
 
 const hasXorForBond = computed(() => {
   try {
-    return compareDecimalStrings(xorBalance.value, CITIZEN_BOND_XOR) >= 0;
+    return (
+      compareDecimalStrings(xorBalance.value, citizenshipBondAmount.value) >= 0
+    );
   } catch (_error) {
     return false;
   }
@@ -683,6 +722,7 @@ const refresh = async () => {
     permissionsLoaded.value = false;
     permissions.value = [];
     council.value = null;
+    governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
     resetGovernanceLookup();
     return;
@@ -695,11 +735,12 @@ const refresh = async () => {
   errorMessage.value = "";
 
   try {
-    const [assetsPayload, permissionsPayload, councilPayload] =
-      await Promise.all([
+    const [assetsResult, permissionsResult, councilResult, policyResult] =
+      await Promise.allSettled([
         fetchAccountAssets({
           toriiUrl,
           accountId,
+          networkPrefix: session.connection.networkPrefix,
           limit: 200,
         }),
         listAccountPermissions({
@@ -708,7 +749,8 @@ const refresh = async () => {
           limit: 200,
         }),
         getGovernanceCouncilCurrent(toriiUrl),
-      ]);
+        getGovernanceRegistrationPolicy(toriiUrl),
+      ] as const);
 
     if (
       requestGeneration !== refreshGeneration.value ||
@@ -718,13 +760,48 @@ const refresh = async () => {
       return;
     }
 
-    xorBalance.value = resolveXorBalance(assetsPayload.items);
+    if (assetsResult.status === "rejected") {
+      throw assetsResult.reason;
+    }
+    if (permissionsResult.status === "rejected") {
+      throw permissionsResult.reason;
+    }
+
+    const nextPolicy =
+      policyResult.status === "fulfilled" ? policyResult.value : null;
+    xorBalance.value = resolveGovernanceBondBalance(
+      assetsResult.value.items,
+      nextPolicy?.citizenshipAssetDefinitionId,
+      [session.connection.assetDefinitionId],
+    );
     permissionsLoaded.value = true;
-    permissions.value = permissionsPayload.items;
-    council.value = councilPayload;
+    permissions.value = permissionsResult.value.items;
+    council.value =
+      councilResult.status === "fulfilled" ? councilResult.value : null;
+    governanceRegistrationPolicy.value = nextPolicy;
     statusMessage.value = t("Loaded {count} permission token(s).", {
-      count: permissionsPayload.total,
+      count: permissionsResult.value.total,
     });
+    const optionalErrors: string[] = [];
+    if (councilResult.status === "rejected") {
+      optionalErrors.push(
+        toUserFacingErrorMessage(
+          councilResult.reason,
+          t("Failed to load governance state."),
+        ),
+      );
+    }
+    if (policyResult.status === "rejected") {
+      optionalErrors.push(
+        toUserFacingErrorMessage(
+          policyResult.reason,
+          t("Failed to load governance state."),
+        ),
+      );
+    }
+    if (optionalErrors.length) {
+      errorMessage.value = optionalErrors.join("\n");
+    }
   } catch (error) {
     if (requestGeneration !== refreshGeneration.value) {
       return;
@@ -732,6 +809,7 @@ const refresh = async () => {
     permissionsLoaded.value = false;
     permissions.value = [];
     council.value = null;
+    governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
     resetGovernanceLookup();
     errorMessage.value = toUserFacingErrorMessage(
@@ -900,15 +978,18 @@ const handleBondCitizen = () =>
     if (!hasXorForBond.value) {
       throw new Error(
         t("A minimum of {amount} XOR is required to register citizenship.", {
-          amount: CITIZEN_BOND_XOR,
+          amount: citizenshipBondAmount.value,
         }),
       );
+    }
+    if (citizenshipAssetDefinitionMissingMessage.value) {
+      throw new Error(citizenshipAssetDefinitionMissingMessage.value);
     }
     const result = await registerCitizen({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
       accountId: requestAccountId.value,
-      amount: CITIZEN_BOND_XOR,
+      amount: citizenshipBondAmount.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
     await refresh();

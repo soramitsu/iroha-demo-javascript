@@ -112,6 +112,19 @@ export interface AccountAssetListResponseView {
   total: number;
 }
 
+export interface GovernanceCouncilMemberView {
+  account_id: string;
+}
+
+export interface GovernanceCouncilCurrentResponseView {
+  epoch: number;
+  members: GovernanceCouncilMemberView[];
+  alternates: GovernanceCouncilMemberView[];
+  candidate_count: number;
+  verified: number;
+  derived_by: string;
+}
+
 const toRecord = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -178,6 +191,8 @@ export const stripConfidentialFeeSponsor = (
 };
 
 const BINARY_API_ERROR_CONTENT_TYPES = ["application/x-norito"];
+const BINARY_API_ERROR_DETAIL_KEYWORDS =
+  /\b(account|faucet|invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown|ERR_[A-Z0-9_]+)\b/i;
 
 const readResponseHeader = (
   response: Pick<Response, "headers">,
@@ -197,6 +212,45 @@ const isBinaryApiErrorContentType = (contentType: string) => {
   return BINARY_API_ERROR_CONTENT_TYPES.some((candidate) =>
     normalized.includes(candidate),
   );
+};
+
+const isBinaryApiErrorSegmentSeparator = (character: string): boolean => {
+  const code = character.charCodeAt(0);
+  return (
+    character === "\ufffd" ||
+    (code >= 0 && code <= 8) ||
+    (code >= 14 && code <= 31) ||
+    (code >= 127 && code <= 159)
+  );
+};
+
+const splitBinaryApiErrorSegments = (text: string): string[] => {
+  const segments: string[] = [];
+  let current = "";
+  for (const character of text) {
+    if (isBinaryApiErrorSegmentSeparator(character)) {
+      if (current) {
+        segments.push(current);
+        current = "";
+      }
+      continue;
+    }
+    current += character;
+  }
+  if (current) {
+    segments.push(current);
+  }
+  return segments;
+};
+
+const extractBinaryApiErrorDetail = (text: string): string => {
+  const candidates = splitBinaryApiErrorSegments(text)
+    .map((segment) => sanitizeErrorMessage(segment))
+    .filter(
+      (segment) =>
+        segment.length >= 4 && BINARY_API_ERROR_DETAIL_KEYWORDS.test(segment),
+    );
+  return candidates.sort((left, right) => right.length - left.length)[0] ?? "";
 };
 
 const GENERIC_API_ERROR_DETAILS = new Set([
@@ -279,7 +333,7 @@ export const readApiErrorDetail = async (
 
   const contentType = readResponseHeader(response, "content-type");
   if (isBinaryApiErrorContentType(contentType)) {
-    return "";
+    return extractBinaryApiErrorDetail(await response.text().catch(() => ""));
   }
 
   const text = (await response.text().catch(() => "")).trim();
@@ -401,6 +455,64 @@ export const normalizeAccountAssetListPayload = (
     total: toPositiveInteger(
       record.total ?? items.length,
       "account asset list response.total",
+    ),
+  };
+};
+
+const normalizeGovernanceCouncilMember = (
+  value: unknown,
+  label: string,
+): GovernanceCouncilMemberView => {
+  if (typeof value === "string") {
+    return {
+      account_id: toStringValue(value, label),
+    };
+  }
+  const record = toRecord(value, label);
+  return {
+    account_id: toStringValue(
+      record.account_id ?? record.accountId ?? record.id,
+      `${label}.account_id`,
+    ),
+  };
+};
+
+const normalizeGovernanceCouncilMembers = (
+  value: unknown,
+  label: string,
+): GovernanceCouncilMemberView[] =>
+  toArray(value, label).map((entry, index) =>
+    normalizeGovernanceCouncilMember(entry, `${label}[${index}]`),
+  );
+
+export const normalizeGovernanceCouncilCurrentPayload = (
+  payload: unknown,
+): GovernanceCouncilCurrentResponseView => {
+  const record = toRecord(payload, "governance council current response");
+  return {
+    epoch: toPositiveInteger(
+      record.epoch,
+      "governance council current response.epoch",
+    ),
+    members: normalizeGovernanceCouncilMembers(
+      record.members,
+      "governance council current response.members",
+    ),
+    alternates: normalizeGovernanceCouncilMembers(
+      record.alternates ?? [],
+      "governance council current response.alternates",
+    ),
+    candidate_count: toPositiveInteger(
+      record.candidate_count ?? 0,
+      "governance council current response.candidate_count",
+    ),
+    verified: toPositiveInteger(
+      record.verified ?? 0,
+      "governance council current response.verified",
+    ),
+    derived_by: toStringValue(
+      record.derived_by ?? "Vrf",
+      "governance council current response.derived_by",
     ),
   };
 };

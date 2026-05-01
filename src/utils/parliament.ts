@@ -2,7 +2,11 @@ import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
 } from "@/types/iroha";
-import { resolveToriiXorAsset } from "@/utils/assetId";
+import {
+  areAssetDefinitionIdsEquivalent,
+  extractAssetDefinitionId,
+  resolveToriiXorAsset,
+} from "@/utils/assetId";
 
 export const CITIZEN_BOND_XOR = "10000";
 export const PARLIAMENT_HISTORY_LIMIT = 8;
@@ -25,6 +29,25 @@ export const resolveXorBalance = (
       : [preferredAssetDefinitionIds],
   );
   return resolvedAsset?.quantity ?? "0";
+};
+
+export const resolveGovernanceBondBalance = (
+  assets: Array<{ asset_id: string; quantity: string }>,
+  citizenshipAssetDefinitionId: string | null | undefined,
+  fallbackPreferredAssetDefinitionIds:
+    | string
+    | Array<string | null | undefined> = [],
+) => {
+  const expectedDefinitionId = extractAssetDefinitionId(
+    citizenshipAssetDefinitionId,
+  ).trim();
+  if (expectedDefinitionId) {
+    const exactAsset = assets.find((asset) =>
+      areAssetDefinitionIdsEquivalent(asset.asset_id, expectedDefinitionId),
+    );
+    return exactAsset?.quantity ?? "0";
+  }
+  return resolveXorBalance(assets, fallbackPreferredAssetDefinitionIds);
 };
 
 export const listGovernancePermissions = (

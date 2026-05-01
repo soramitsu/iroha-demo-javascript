@@ -14,6 +14,7 @@ import {
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
   getGovernanceProposal,
+  getGovernanceRegistrationPolicy,
   getGovernanceReferendum,
   getGovernanceTally,
   getConfidentialAssetPolicy,
@@ -693,6 +694,14 @@ describe("iroha services bridge", () => {
       .fn()
       .mockResolvedValue({ items: [], total: 0 });
     const registerCitizenMock = vi.fn().mockResolvedValue({ hash: "0x10" });
+    const getGovernanceRegistrationPolicyMock = vi.fn().mockResolvedValue({
+      citizenshipAssetDefinitionId: null,
+      citizenshipBondAmount: null,
+      citizenshipAssetDefinitionExists: null,
+      configurationLoaded: false,
+      configurationError: null,
+      assetDefinitionError: null,
+    });
     const getGovernanceProposalMock = vi
       .fn()
       .mockResolvedValue({ found: false, proposal: null });
@@ -730,6 +739,7 @@ describe("iroha services bridge", () => {
     (window as any).iroha = {
       listAccountPermissions: listAccountPermissionsMock,
       registerCitizen: registerCitizenMock,
+      getGovernanceRegistrationPolicy: getGovernanceRegistrationPolicyMock,
       getGovernanceProposal: getGovernanceProposalMock,
       getGovernanceReferendum: getGovernanceReferendumMock,
       getGovernanceTally: getGovernanceTallyMock,
@@ -782,6 +792,7 @@ describe("iroha services bridge", () => {
 
     await listAccountPermissions(permissionsInput);
     await registerCitizen(registerInput);
+    await getGovernanceRegistrationPolicy("http://localhost:8080");
     await getGovernanceProposal(proposalInput);
     await getGovernanceReferendum(referendumInput);
     await getGovernanceTally(referendumInput);
@@ -793,6 +804,9 @@ describe("iroha services bridge", () => {
 
     expect(listAccountPermissionsMock).toHaveBeenCalledWith(permissionsInput);
     expect(registerCitizenMock).toHaveBeenCalledWith(registerInput);
+    expect(getGovernanceRegistrationPolicyMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
     expect(getGovernanceProposalMock).toHaveBeenCalledWith(proposalInput);
     expect(getGovernanceReferendumMock).toHaveBeenCalledWith(referendumInput);
     expect(getGovernanceTallyMock).toHaveBeenCalledWith(referendumInput);

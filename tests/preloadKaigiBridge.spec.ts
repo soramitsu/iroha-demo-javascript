@@ -261,10 +261,16 @@ vi.mock("../electron/accountAddress", async () => {
   };
 });
 
-vi.mock("../electron/faucetApi", () => ({
-  requestFaucetFundsWithPuzzle: (input: unknown, onStatus?: unknown) =>
-    mocks.requestFaucetFundsWithPuzzleMock(input, onStatus),
-}));
+vi.mock("../electron/faucetApi", async () => {
+  const actual = await vi.importActual<typeof import("../electron/faucetApi")>(
+    "../electron/faucetApi",
+  );
+  return {
+    ...actual,
+    requestFaucetFundsWithPuzzle: (input: unknown, onStatus?: unknown) =>
+      mocks.requestFaucetFundsWithPuzzleMock(input, onStatus),
+  };
+});
 
 vi.mock("@iroha/iroha-js", async () => {
   const actual =
@@ -440,6 +446,9 @@ const loadBridge = async () => {
     registerCitizen: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    getGovernanceRegistrationPolicy: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     joinKaigiMeeting: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
@@ -491,6 +500,9 @@ const loadBridge = async () => {
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     getChainMetadata: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getGovernanceCouncilCurrent: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     deploySoraCloudHf: (
@@ -1047,6 +1059,44 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("loads current governance council payloads with non-Vrf derivation labels", async () => {
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.endsWith("/v1/gov/council/current")) {
+        return jsonResponse({
+          epoch: "3",
+          members: [{ account_id: ALICE_ACCOUNT_ID }],
+          alternates: [],
+          candidate_count: "1",
+          verified: "1",
+          derived_by: "Fallback",
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getGovernanceCouncilCurrent({
+        toriiUrl: "http://localhost:8080",
+      }),
+    ).resolves.toEqual({
+      epoch: 3,
+      members: [{ account_id: ALICE_ACCOUNT_ID }],
+      alternates: [],
+      candidate_count: 1,
+      verified: 1,
+      derived_by: "Fallback",
+    });
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "http://localhost:8080/v1/gov/council/current",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+  });
+
   it("uses the active network prefix for account asset and transaction refreshes", async () => {
     const bridge = await loadBridge();
     mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
@@ -1350,6 +1400,60 @@ describe("preload Kaigi bridge", () => {
       }),
     ).rejects.toThrow(
       "The active Torii endpoint is not finalizing new blocks right now",
+    );
+    expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
+  });
+
+  it("adds TAIRA faucet funding diagnostics when finality is stale", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.includes("/v1/ledger/headers")) {
+          return jsonResponse([
+            {
+              height: 741,
+              creation_time_ms: Date.now() - 10 * 60_000,
+            },
+          ]);
+        }
+        if (method === "GET" && href.includes("/v1/sumeragi/status")) {
+          return jsonResponse({
+            commit_qc: {
+              height: 741,
+            },
+            lane_commitments: [],
+            tx_queue: {
+              depth: 0,
+              saturated: false,
+            },
+          });
+        }
+        if (method === "GET" && href.includes("/v1/accounts/")) {
+          return jsonResponse({
+            items: [
+              {
+                account_id: "testu-faucet-authority",
+                asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+                quantity: "8427.65210",
+              },
+            ],
+            total: 1,
+          });
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.requestFaucetFunds({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).rejects.toThrow(
+      "TAIRA faucet is out of funds. The faucet authority has 8427.65210 XOR available, but each claim requires 25000 XOR.",
     );
     expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
   });
@@ -1755,6 +1859,86 @@ describe("preload Kaigi bridge", () => {
         },
       }),
     );
+  });
+
+  it("reports unavailable governance citizenship assets before bonding", async () => {
+    const bridge = await loadBridge();
+    mocks.getConfigurationMock.mockResolvedValueOnce({
+      gov: {
+        citizenship_asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+        citizenship_bond_amount: "10000",
+      },
+    });
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ error: "missing" }, 404),
+    );
+
+    await expect(
+      bridge.getGovernanceRegistrationPolicy({
+        toriiUrl: "https://taira.sora.org",
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        citizenshipAssetDefinitionId: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+        citizenshipBondAmount: "10000",
+        citizenshipAssetDefinitionExists: false,
+        configurationLoaded: true,
+      }),
+    );
+  });
+
+  it("does not submit RegisterCitizen when governance citizenship asset definition is missing", async () => {
+    const bridge = await loadBridge();
+    mocks.getConfigurationMock.mockResolvedValueOnce({
+      gov: {
+        citizenship_asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+        citizenship_bond_amount: "10000",
+      },
+    });
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ error: "missing" }, 404),
+    );
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).rejects.toThrow("GOV_CITIZENSHIP_ASSET_ID");
+
+    expect(mocks.buildTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("adds a governance citizenship hint when RegisterCitizen rejects with a missing asset definition", async () => {
+    const bridge = await loadBridge();
+    mocks.getConfigurationMock.mockRejectedValueOnce(
+      new Error("config private"),
+    );
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      status: {
+        kind: "Rejected",
+        reason:
+          "Validation failed: Instruction execution failed: Failed to find asset definition: `5PgFjEiWr1iqE2a7Wp1R2gB4eVEB`",
+      },
+    });
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).rejects.toThrow(
+      "configured to use missing governance citizenship asset definition 5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+    );
+
+    expect(mocks.buildTransactionMock).toHaveBeenCalled();
   });
 
   it("adds TAIRA gas metadata to public transfers without dropping memos", async () => {

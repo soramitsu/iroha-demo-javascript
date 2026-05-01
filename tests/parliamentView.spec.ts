@@ -13,6 +13,7 @@ const getGovernanceReferendumMock = vi.fn();
 const getGovernanceTallyMock = vi.fn();
 const getGovernanceLocksMock = vi.fn();
 const getGovernanceProposalMock = vi.fn();
+const getGovernanceRegistrationPolicyMock = vi.fn();
 const registerCitizenMock = vi.fn();
 const submitGovernancePlainBallotMock = vi.fn();
 const finalizeGovernanceReferendumMock = vi.fn();
@@ -28,6 +29,8 @@ vi.mock("@/services/iroha", () => ({
   getGovernanceTally: (input: unknown) => getGovernanceTallyMock(input),
   getGovernanceLocks: (input: unknown) => getGovernanceLocksMock(input),
   getGovernanceProposal: (input: unknown) => getGovernanceProposalMock(input),
+  getGovernanceRegistrationPolicy: (toriiUrl: string) =>
+    getGovernanceRegistrationPolicyMock(toriiUrl),
   registerCitizen: (input: unknown) => registerCitizenMock(input),
   submitGovernancePlainBallot: (input: unknown) =>
     submitGovernancePlainBallotMock(input),
@@ -53,6 +56,7 @@ describe("ParliamentView", () => {
     getGovernanceTallyMock.mockReset();
     getGovernanceLocksMock.mockReset();
     getGovernanceProposalMock.mockReset();
+    getGovernanceRegistrationPolicyMock.mockReset();
     registerCitizenMock.mockReset();
     submitGovernancePlainBallotMock.mockReset();
     finalizeGovernanceReferendumMock.mockReset();
@@ -97,6 +101,14 @@ describe("ParliamentView", () => {
       found: false,
       proposal: null,
     });
+    getGovernanceRegistrationPolicyMock.mockResolvedValue({
+      citizenshipAssetDefinitionId: null,
+      citizenshipBondAmount: null,
+      citizenshipAssetDefinitionExists: null,
+      configurationLoaded: false,
+      configurationError: null,
+      assetDefinitionError: null,
+    });
     registerCitizenMock.mockResolvedValue({ hash: "0xabc" });
     submitGovernancePlainBallotMock.mockResolvedValue({ hash: "0xballot" });
     finalizeGovernanceReferendumMock.mockResolvedValue({
@@ -123,6 +135,12 @@ describe("ParliamentView", () => {
       publicKeyHex: string;
       privateKeyHex: string;
     }>;
+    connection?: Partial<{
+      toriiUrl: string;
+      chainId: string;
+      assetDefinitionId: string;
+      networkPrefix: number;
+    }>;
   }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -141,6 +159,7 @@ describe("ParliamentView", () => {
         chainId: "chain",
         assetDefinitionId: "xor#wonderland",
         networkPrefix: 369,
+        ...options?.connection,
       },
       accounts: [account],
       activeAccountId: account.accountId,
@@ -200,6 +219,7 @@ describe("ParliamentView", () => {
     expect(fetchAccountAssetsMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       accountId: "testuLegacyVisibleAccount1234567890",
+      networkPrefix: 369,
       limit: 200,
     });
     expect(listAccountPermissionsMock).toHaveBeenCalledWith({
@@ -243,6 +263,127 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).toContain(
       t("Available XOR balance is below the required citizen bond amount."),
     );
+  });
+
+  it("keeps the voting balance when the optional council refresh fails", async () => {
+    getGovernanceCouncilCurrentMock.mockRejectedValueOnce(
+      new Error("governance council current response.derived_by must be Vrf"),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const xorBalanceRow = wrapper
+      .findAll(".kv")
+      .find((node) => node.text().includes(t("XOR Balance")));
+    expect(xorBalanceRow?.text()).toContain("15000 XOR");
+    expect(
+      findButtonByText(wrapper, `Bond ${CITIZEN_BOND_XOR} XOR`).attributes(
+        "disabled",
+      ),
+    ).toBeUndefined();
+    expect(wrapper.text()).toContain(
+      "governance council current response.derived_by must be Vrf",
+    );
+  });
+
+  it("uses the configured opaque XOR asset before stale zero XOR aliases", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "0",
+        },
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc#alice@wonderland",
+          quantity: "25000",
+        },
+      ],
+      total: 2,
+    });
+
+    const wrapper = mountView({
+      connection: {
+        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      },
+    });
+    await flushPromises();
+
+    const xorBalanceRow = wrapper
+      .findAll(".kv")
+      .find((node) => node.text().includes(t("XOR Balance")));
+    expect(xorBalanceRow?.text()).toContain("25000 XOR");
+    expect(wrapper.text()).not.toContain(
+      t("Available XOR balance is below the required citizen bond amount."),
+    );
+  });
+
+  it("uses the governance citizenship asset when policy is available", async () => {
+    getGovernanceRegistrationPolicyMock.mockResolvedValueOnce({
+      citizenshipAssetDefinitionId: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+      citizenshipBondAmount: "12000",
+      citizenshipAssetDefinitionExists: true,
+      configurationLoaded: true,
+      configurationError: null,
+      assetDefinitionError: null,
+    });
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "25000",
+        },
+        {
+          asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB#alice@wonderland",
+          quantity: "12000",
+        },
+      ],
+      total: 2,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("5PgFjEiWr1iqE2a7Wp1R2gB4eVEB");
+    expect(
+      findButtonByText(wrapper, "Bond 12000 XOR").attributes("disabled"),
+    ).toBeUndefined();
+
+    await findButtonByText(wrapper, "Bond 12000 XOR").trigger("click");
+    await flushPromises();
+
+    expect(registerCitizenMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      amount: "12000",
+      privateKeyHex: "cd".repeat(32),
+    });
+  });
+
+  it("blocks citizenship bond when the configured citizenship asset definition is missing", async () => {
+    getGovernanceRegistrationPolicyMock.mockResolvedValueOnce({
+      citizenshipAssetDefinitionId: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+      citizenshipBondAmount: "10000",
+      citizenshipAssetDefinitionExists: false,
+      configurationLoaded: true,
+      configurationError: null,
+      assetDefinitionError:
+        "Governance citizenship asset definition request failed with status 404 (ERR)",
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const bondButton = findButtonByText(
+      wrapper,
+      `Bond ${CITIZEN_BOND_XOR} XOR`,
+    );
+    expect(bondButton.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain(
+      "configured to use missing governance citizenship asset definition 5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+    );
+    expect(registerCitizenMock).not.toHaveBeenCalled();
   });
 
   it("disables citizenship bond when account already has ballot permission", async () => {

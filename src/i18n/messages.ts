@@ -1113,6 +1113,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
   "Request starter XOR from the active network faucet.":
     "Request starter XOR from the active network faucet.",
+  "Minamoto mainnet has no faucet. Use TAIRA testnet to request starter XOR.":
+    "Minamoto mainnet has no faucet. Use TAIRA testnet to request starter XOR.",
+  "Use TAIRA faucet": "Use TAIRA faucet",
   "Request XOR": "Request XOR",
   Cancel: "Cancel",
   "Canceling…": "Canceling…",

@@ -10,6 +10,7 @@ import {
   listGovernancePermissions,
   parseParliamentHistory,
   pushRecentValue,
+  resolveGovernanceBondBalance,
   resolveXorBalance,
 } from "@/utils/parliament";
 
@@ -63,6 +64,51 @@ describe("parliament utilities", () => {
     ).toBe("7");
 
     expect(resolveXorBalance([])).toBe("0");
+  });
+
+  it("resolves governance bond balance from the configured citizenship asset exactly", () => {
+    expect(
+      resolveGovernanceBondBalance(
+        [
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "0",
+          },
+          {
+            asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB#alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+        ["xor#universal"],
+      ),
+    ).toBe("25000");
+
+    expect(
+      resolveGovernanceBondBalance(
+        [
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
+        ["xor#universal"],
+      ),
+    ).toBe("0");
+
+    expect(
+      resolveGovernanceBondBalance(
+        [
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        null,
+        ["xor#universal"],
+      ),
+    ).toBe("25000");
   });
 
   it("deduplicates and sorts permission names", () => {

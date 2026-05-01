@@ -260,7 +260,7 @@ describe("faucetApi", () => {
         }),
       }),
     ).rejects.toThrow(
-      "Faucet request failed (400): The network rejected this faucet claim. This endpoint returned a generic validation error; possible causes include a depleted faucet, an ineligible account, or a stale proof challenge.",
+      "Faucet request failed (400): The network rejected this faucet claim but did not return a readable reason. The endpoint may not support this faucet, or the proof challenge may be stale.",
     );
   });
 
@@ -524,9 +524,45 @@ describe("faucetApi", () => {
         sleep,
         puzzleRetryAttempts: 3,
       }),
-    ).rejects.toThrow("Faucet puzzle failed (403): Account faucet disabled");
+    ).rejects.toThrow(
+      "Faucet puzzle failed (403): The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet.",
+    );
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it("preserves readable faucet details embedded in Norito puzzle failures", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        new Uint8Array([
+          ...Buffer.from("NRT0", "utf8"),
+          0x00,
+          0x00,
+          0xff,
+          0x18,
+          0x17,
+          ...Buffer.from("Account faucet disabled", "utf8"),
+        ]),
+        {
+          status: 403,
+          statusText: "Forbidden",
+          headers: {
+            "content-type": "application/x-norito",
+          },
+        },
+      ),
+    );
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://minamoto.sora.org",
+        accountId: soraAccountId,
+        networkPrefix: 753,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(
+      "Faucet puzzle failed (403): This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.",
+    );
   });
 
   it("prefers nested faucet puzzle details over generic wrapper messages", async () => {
@@ -555,7 +591,9 @@ describe("faucetApi", () => {
         networkPrefix: 369,
         fetchImpl,
       }),
-    ).rejects.toThrow("Faucet puzzle failed (403): Account faucet disabled");
+    ).rejects.toThrow(
+      "Faucet puzzle failed (403): The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet.",
+    );
   });
 
   it("identifies retryable faucet puzzle failures", () => {

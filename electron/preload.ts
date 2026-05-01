@@ -46,6 +46,7 @@ import {
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
+  normalizeGovernanceCouncilCurrentPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
@@ -90,6 +91,7 @@ import {
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
+  readKnownTairaFaucetFundingIssue,
   requestFaucetFundsWithPuzzle,
   type AccountFaucetResponse,
   type FaucetRequestProgress,
@@ -551,6 +553,15 @@ type GovernanceCouncilResponse = Awaited<
   ReturnType<ToriiClient["getGovernanceCouncilCurrent"]>
 >;
 
+type GovernanceRegistrationPolicyResponse = {
+  citizenshipAssetDefinitionId: string | null;
+  citizenshipBondAmount: string | null;
+  citizenshipAssetDefinitionExists: boolean | null;
+  configurationLoaded: boolean;
+  configurationError: string | null;
+  assetDefinitionError: string | null;
+};
+
 type GovernanceDraftResponse = Awaited<
   ReturnType<ToriiClient["governanceFinalizeReferendumTyped"]>
 >;
@@ -838,6 +849,10 @@ type RegisterCitizenInput = {
   privateKeyHex?: HexString;
 };
 
+type GovernanceRegistrationPolicyInput = {
+  toriiUrl: string;
+};
+
 type GovernanceLookupInput = {
   toriiUrl: string;
   proposalId: string;
@@ -1116,6 +1131,9 @@ type IrohaBridge = {
   registerCitizen(
     input: RegisterCitizenInput,
   ): Promise<TransactionSubmissionResultView>;
+  getGovernanceRegistrationPolicy(
+    input: GovernanceRegistrationPolicyInput,
+  ): Promise<GovernanceRegistrationPolicyResponse>;
   getGovernanceProposal(
     input: GovernanceLookupInput,
   ): Promise<GovernanceProposalResponse>;
@@ -1465,7 +1483,7 @@ const buildFaucetFinalityUnavailableError = (
       : "";
   const responseDetail = detail ? ` Detail: ${detail}` : "";
   return new Error(
-    `The active Torii endpoint could not verify faucet finality via ${context}${statusDetail}.${responseDetail} Faucet requests cannot safely fund wallets until TAIRA/Torii status recovers.`,
+    `The active Torii endpoint could not verify faucet finality via ${context}${statusDetail}.${responseDetail} Faucet requests are blocked before submission because the endpoint cannot prove claims will commit. This is a TAIRA/Torii health problem, not a wallet problem; retry after the operator restores finality.`,
   );
 };
 
@@ -1619,11 +1637,17 @@ const assertFaucetEndpointFinalizing = async (
       ? `pending block ${sumeragiState.queuedHeight}`
       : "",
   ].filter(Boolean);
+  const fundingIssue = await readKnownTairaFaucetFundingIssue(
+    baseUrl,
+    nodeFetch,
+    signal,
+  );
+  const fundingDetail = fundingIssue ? ` ${fundingIssue}` : "";
 
   throw new Error(
     `The active Torii endpoint is not finalizing new blocks right now (${details.join(
       "; ",
-    )}). Faucet requests cannot fund wallets until TAIRA finality resumes.`,
+    )}). Faucet requests are blocked before submission because claims cannot commit until TAIRA finality resumes. This is a TAIRA/Torii health problem, not a wallet problem.${fundingDetail}`,
   );
 };
 
@@ -4633,6 +4657,16 @@ const fetchAccountAssetsList = async (input: {
   return normalizeAccountAssetListPayload(payload);
 };
 
+const fetchGovernanceCouncilCurrent = async (
+  toriiUrlRaw: string,
+): Promise<GovernanceCouncilResponse> => {
+  const payload = await fetchJson(
+    buildNexusEndpoint(toriiUrlRaw, "/v1/gov/council/current"),
+    "Governance council current",
+  );
+  return normalizeGovernanceCouncilCurrentPayload(payload);
+};
+
 const confidentialPolicyLookupSupportsLiveAssetFallback = (
   error: unknown,
   requestedAssetDefinitionId: string,
@@ -4827,17 +4861,215 @@ const listAllAccountTransactions = async (input: {
     privateKeyHex: input.privateKeyHex,
   });
 
-const fetchPrivateKaigiAssetDefinition = async (
+const fetchAssetDefinition = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
+  label = "Asset definition",
 ) =>
   fetchJson(
     buildNexusEndpoint(
       toriiUrlRaw,
       `/v1/assets/definitions/${encodeURIComponent(assetDefinitionId.trim())}`,
     ),
+    label,
+  );
+
+const fetchPrivateKaigiAssetDefinition = async (
+  toriiUrlRaw: string,
+  assetDefinitionId: string,
+) =>
+  fetchAssetDefinition(
+    toriiUrlRaw,
+    assetDefinitionId,
     "Private Kaigi XOR asset definition",
   );
+
+const optionalTrimmedString = (value: unknown) => {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+  const literal = trimString(value);
+  return literal ? literal : null;
+};
+
+const errorMessageFromUnknown = (error: unknown) =>
+  error instanceof Error ? error.message : String(error ?? "");
+
+const readNestedRecord = (
+  record: Record<string, unknown>,
+  path: string[],
+): Record<string, unknown> | null => {
+  let cursor: unknown = record;
+  for (const key of path) {
+    if (!isPlainRecord(cursor)) {
+      return null;
+    }
+    cursor = cursor[key];
+  }
+  return isPlainRecord(cursor) ? cursor : null;
+};
+
+const readFirstConfigString = (
+  record: Record<string, unknown> | null,
+  keys: string[],
+) => {
+  if (!record) {
+    return null;
+  }
+  for (const key of keys) {
+    const value = optionalTrimmedString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const readGovernanceConfigRecord = (
+  configuration: unknown,
+): Record<string, unknown> | null => {
+  if (!isPlainRecord(configuration)) {
+    return null;
+  }
+  for (const path of [
+    ["gov"],
+    ["governance"],
+    ["actual", "gov"],
+    ["actual", "governance"],
+    ["parameters", "actual", "gov"],
+    ["parameters", "actual", "governance"],
+  ]) {
+    const record = readNestedRecord(configuration, path);
+    if (record) {
+      return record;
+    }
+  }
+  return null;
+};
+
+const fetchConfigurationSnapshot = async (toriiUrl: string) => {
+  const client = getClient(toriiUrl);
+  try {
+    return await client.getConfiguration();
+  } catch (primaryError) {
+    try {
+      return await fetchJson(
+        buildNexusEndpoint(toriiUrl, "/configuration"),
+        "Configuration",
+      );
+    } catch (fallbackError) {
+      throw fallbackError || primaryError;
+    }
+  }
+};
+
+const buildDefaultGovernanceRegistrationPolicy = (
+  configurationError: string | null,
+): GovernanceRegistrationPolicyResponse => ({
+  citizenshipAssetDefinitionId: null,
+  citizenshipBondAmount: null,
+  citizenshipAssetDefinitionExists: null,
+  configurationLoaded: false,
+  configurationError,
+  assetDefinitionError: null,
+});
+
+const missingGovernanceCitizenshipAssetMessage = (assetDefinitionId: string) =>
+  `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${assetDefinitionId}. RegisterCitizen cannot choose another asset from the wallet; ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
+
+const MISSING_ASSET_DEFINITION_PATTERN =
+  /Failed to find asset definition:\s*`([^`]+)`/i;
+
+const extractMissingAssetDefinitionFromError = (error: unknown) => {
+  const message = errorMessageFromUnknown(error);
+  const match = message.match(MISSING_ASSET_DEFINITION_PATTERN);
+  return match?.[1]?.trim() || null;
+};
+
+const decorateRegisterCitizenError = (error: unknown) => {
+  const missingAssetDefinitionId =
+    extractMissingAssetDefinitionFromError(error);
+  if (!missingAssetDefinitionId) {
+    return error;
+  }
+  const originalMessage = errorMessageFromUnknown(error);
+  return new Error(
+    `${missingGovernanceCitizenshipAssetMessage(missingAssetDefinitionId)} Original error: ${originalMessage}`,
+  );
+};
+
+const fetchGovernanceRegistrationPolicy = async (
+  toriiUrl: string,
+): Promise<GovernanceRegistrationPolicyResponse> => {
+  let configuration: unknown;
+  try {
+    configuration = await fetchConfigurationSnapshot(toriiUrl);
+  } catch (error) {
+    return buildDefaultGovernanceRegistrationPolicy(
+      errorMessageFromUnknown(error) || null,
+    );
+  }
+
+  const governanceConfig = readGovernanceConfigRecord(configuration);
+  const rawCitizenshipAssetDefinitionId = readFirstConfigString(
+    governanceConfig,
+    [
+      "citizenship_asset_id",
+      "citizenshipAssetId",
+      "citizenship_asset_definition_id",
+      "citizenshipAssetDefinitionId",
+      "voting_asset_id",
+      "votingAssetId",
+    ],
+  );
+  const citizenshipAssetDefinitionId = rawCitizenshipAssetDefinitionId
+    ? extractAssetDefinitionId(rawCitizenshipAssetDefinitionId).trim()
+    : null;
+  const rawBondAmount = readFirstConfigString(governanceConfig, [
+    "citizenship_bond_amount",
+    "citizenshipBondAmount",
+  ]);
+  const citizenshipBondAmount =
+    rawBondAmount && /^\d+$/.test(rawBondAmount) ? rawBondAmount : null;
+
+  if (!citizenshipAssetDefinitionId) {
+    return {
+      citizenshipAssetDefinitionId: null,
+      citizenshipBondAmount,
+      citizenshipAssetDefinitionExists: null,
+      configurationLoaded: true,
+      configurationError: null,
+      assetDefinitionError: null,
+    };
+  }
+
+  try {
+    await fetchAssetDefinition(
+      toriiUrl,
+      citizenshipAssetDefinitionId,
+      "Governance citizenship asset definition",
+    );
+    return {
+      citizenshipAssetDefinitionId,
+      citizenshipBondAmount,
+      citizenshipAssetDefinitionExists: true,
+      configurationLoaded: true,
+      configurationError: null,
+      assetDefinitionError: null,
+    };
+  } catch (error) {
+    const errorMessage = errorMessageFromUnknown(error) || null;
+    return {
+      citizenshipAssetDefinitionId,
+      citizenshipBondAmount,
+      citizenshipAssetDefinitionExists:
+        isApiRequestError(error) && error.status === 404 ? false : null,
+      configurationLoaded: true,
+      configurationError: null,
+      assetDefinitionError: errorMessage,
+    };
+  }
+};
 
 const fetchConfidentialAssetRootWindow = async (
   toriiUrlRaw: string,
@@ -7710,23 +7942,47 @@ const api: IrohaBridge = {
       },
     );
   },
-  registerCitizen({ toriiUrl, chainId, accountId, amount, privateKeyHex }) {
+  async registerCitizen({
+    toriiUrl,
+    chainId,
+    accountId,
+    amount,
+    privateKeyHex,
+  }) {
     const normalizedAccount = normalizeCompatAccountIdLiteral(
       accountId,
       "accountId",
     );
-    return submitInstructionTransaction({
-      toriiUrl,
-      chainId,
-      authorityAccountId: normalizedAccount,
-      privateKeyHex,
-      instruction: {
-        RegisterCitizen: {
-          owner: normalizedAccount,
-          amount: normalizeIntegerAmount(amount, "amount"),
+    const policy = await fetchGovernanceRegistrationPolicy(toriiUrl);
+    if (
+      policy.citizenshipAssetDefinitionId &&
+      policy.citizenshipAssetDefinitionExists === false
+    ) {
+      throw new Error(
+        missingGovernanceCitizenshipAssetMessage(
+          policy.citizenshipAssetDefinitionId,
+        ),
+      );
+    }
+    try {
+      return await submitInstructionTransaction({
+        toriiUrl,
+        chainId,
+        authorityAccountId: normalizedAccount,
+        privateKeyHex,
+        instruction: {
+          RegisterCitizen: {
+            owner: normalizedAccount,
+            amount: normalizeIntegerAmount(amount, "amount"),
+          },
         },
-      },
-    });
+      });
+    } catch (error) {
+      throw decorateRegisterCitizenError(error);
+    }
+  },
+  getGovernanceRegistrationPolicy({ toriiUrl }) {
+    return fetchGovernanceRegistrationPolicy(toriiUrl);
   },
   getGovernanceProposal({ toriiUrl, proposalId }) {
     const client = getClient(toriiUrl);
@@ -7745,8 +8001,7 @@ const api: IrohaBridge = {
     return client.getGovernanceLocksTyped(referendumId);
   },
   getGovernanceCouncilCurrent(config) {
-    const client = getClient(config.toriiUrl);
-    return client.getGovernanceCouncilCurrent();
+    return fetchGovernanceCouncilCurrent(config.toriiUrl);
   },
   submitGovernancePlainBallot({
     toriiUrl,

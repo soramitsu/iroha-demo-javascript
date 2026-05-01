@@ -8,6 +8,7 @@ import {
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
+  normalizeGovernanceCouncilCurrentPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
@@ -207,7 +208,7 @@ describe("preload utils", () => {
     );
   });
 
-  it("uses reject-code headers and skips unreadable Norito error bodies", async () => {
+  it("uses reject-code headers and extracts readable Norito error details", async () => {
     const noritoResponse = new Response(
       new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),
       {
@@ -227,9 +228,29 @@ describe("preload utils", () => {
         },
       },
     );
+    const noritoResponseWithDetail = new Response(
+      new Uint8Array([
+        ...Buffer.from("NRT0", "utf8"),
+        0x00,
+        0x00,
+        0xff,
+        0x18,
+        0x17,
+        ...Buffer.from("Account faucet disabled", "utf8"),
+      ]),
+      {
+        status: 403,
+        headers: {
+          "content-type": "application/x-norito",
+        },
+      },
+    );
 
     await expect(readApiErrorDetail(noritoResponse)).resolves.toBe(
       "ERR_INVALID_SINGULAR_PARAMETERS",
+    );
+    await expect(readApiErrorDetail(noritoResponseWithDetail)).resolves.toBe(
+      "Account faucet disabled",
     );
     await expect(readApiErrorDetail(noritoResponseWithoutHeader)).resolves.toBe(
       "",
@@ -370,6 +391,52 @@ describe("preload utils", () => {
       ],
       total: 1,
     });
+  });
+
+  it("normalizes current governance council payloads without forcing Vrf derivation", () => {
+    expect(
+      normalizeGovernanceCouncilCurrentPayload({
+        epoch: "77",
+        members: [{ account_id: "testuAlice" }, "testuBob"],
+        alternates: [{ accountId: "testuCarol" }],
+        candidate_count: "3",
+        verified: 2,
+        derived_by: "Fallback",
+      }),
+    ).toEqual({
+      epoch: 77,
+      members: [{ account_id: "testuAlice" }, { account_id: "testuBob" }],
+      alternates: [{ account_id: "testuCarol" }],
+      candidate_count: 3,
+      verified: 2,
+      derived_by: "Fallback",
+    });
+  });
+
+  it("defaults missing governance council derivation to Vrf but rejects empty values", () => {
+    expect(
+      normalizeGovernanceCouncilCurrentPayload({
+        epoch: 1,
+        members: [],
+      }),
+    ).toEqual({
+      epoch: 1,
+      members: [],
+      alternates: [],
+      candidate_count: 0,
+      verified: 0,
+      derived_by: "Vrf",
+    });
+
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        epoch: 1,
+        members: [],
+        derived_by: "",
+      }),
+    ).toThrow(
+      "governance council current response.derived_by must be a non-empty string",
+    );
   });
 
   it("normalizes public lane validators payloads", () => {

@@ -17,6 +17,7 @@ import type {
   GovernanceDraftResponse,
   GovernanceLocksResult,
   GovernanceProposalResult,
+  GovernanceRegistrationPolicyResponse,
   GovernanceReferendumResult,
   GovernanceTallyResult,
   IrohaBridge,
@@ -166,6 +167,11 @@ export const listAccountPermissions = (
 export const registerCitizen = (
   input: Parameters<IrohaBridge["registerCitizen"]>[0],
 ) => bridge().registerCitizen(input);
+
+export const getGovernanceRegistrationPolicy = (
+  toriiUrl: string,
+): Promise<GovernanceRegistrationPolicyResponse> =>
+  bridge().getGovernanceRegistrationPolicy({ toriiUrl });
 
 export const getGovernanceProposal = (
   input: Parameters<IrohaBridge["getGovernanceProposal"]>[0],

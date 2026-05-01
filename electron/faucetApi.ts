@@ -180,6 +180,16 @@ const isKnownTairaPublicEndpoint = (baseUrl: string): boolean => {
   }
 };
 
+const isFaucetDisabledDetail = (detail: string): boolean =>
+  /account faucet disabled|faucet disabled|account faucet is disabled/i.test(
+    detail,
+  );
+
+const buildFaucetDisabledMessage = (baseUrl: string): string =>
+  isKnownTairaPublicEndpoint(baseUrl)
+    ? "The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet."
+    : "This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.";
+
 const readKnownTairaFaucetBalance = async (
   baseUrl: string,
   fetchImpl: typeof fetch,
@@ -219,7 +229,7 @@ const readKnownTairaFaucetBalance = async (
   }
 };
 
-const readKnownFaucetRejectionDetail = async (
+export const readKnownTairaFaucetFundingIssue = async (
   baseUrl: string,
   fetchImpl: typeof fetch,
   signal?: AbortSignal,
@@ -234,14 +244,34 @@ const readKnownFaucetRejectionDetail = async (
 const buildFaucetRequestErrorMessage = (
   response: Pick<Response, "headers" | "status" | "statusText">,
   detail: string,
+  baseUrl: string,
 ) => {
   if (detail) {
-    return detail;
+    return isFaucetDisabledDetail(detail)
+      ? buildFaucetDisabledMessage(baseUrl)
+      : detail;
   }
   if (response.status === 400 && isNoritoResponse(response)) {
-    return "The network rejected this faucet claim. This endpoint returned a generic validation error; possible causes include a depleted faucet, an ineligible account, or a stale proof challenge.";
+    return isKnownTairaPublicEndpoint(baseUrl)
+      ? "TAIRA rejected this faucet claim but did not return a readable reason. Common operator-side causes are a depleted faucet authority, stale finality, or a stale proof challenge."
+      : "The network rejected this faucet claim but did not return a readable reason. The endpoint may not support this faucet, or the proof challenge may be stale.";
   }
   return response.statusText || "Faucet request failed.";
+};
+
+const buildFaucetPuzzleFailureMessage = (
+  baseUrl: string,
+  status: number,
+  statusText: string,
+  detail: string,
+): string => {
+  if (shouldRetryFaucetPuzzle(status, detail)) {
+    return "Faucet puzzle is not ready yet because finalized VRF seed data is unavailable on this Torii endpoint. Please retry in a few seconds.";
+  }
+  if (detail && isFaucetDisabledDetail(detail)) {
+    return buildFaucetDisabledMessage(baseUrl);
+  }
+  return detail || statusText || "Faucet puzzle failed.";
 };
 
 export const requestFaucetFundsWithPuzzle = async ({
@@ -346,10 +376,11 @@ export const requestFaucetFundsWithPuzzle = async ({
       const genericNoritoRejection =
         response.status === 400 && isNoritoResponse(response) && !detail;
       const diagnosticDetail = genericNoritoRejection
-        ? await readKnownFaucetRejectionDetail(baseUrl, fetchImpl, signal)
+        ? await readKnownTairaFaucetFundingIssue(baseUrl, fetchImpl, signal)
         : null;
       const message =
-        diagnosticDetail ?? buildFaucetRequestErrorMessage(response, detail);
+        diagnosticDetail ??
+        buildFaucetRequestErrorMessage(response, detail, baseUrl);
       if (
         response.status === 400 &&
         !diagnosticDetail &&
@@ -373,8 +404,11 @@ export const requestFaucetFundsWithPuzzle = async ({
     return payload;
   }
 
-  const message = shouldRetryFaucetPuzzle(puzzleStatus, puzzleDetail)
-    ? "Faucet puzzle is not ready yet because finalized VRF seed data is unavailable on this Torii endpoint. Please retry in a few seconds."
-    : puzzleDetail || puzzleStatusText || "Faucet puzzle failed.";
+  const message = buildFaucetPuzzleFailureMessage(
+    baseUrl,
+    puzzleStatus,
+    puzzleStatusText,
+    puzzleDetail,
+  );
   throw new Error(`Faucet puzzle failed (${puzzleStatus}): ${message}`);
 };

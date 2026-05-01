@@ -26,9 +26,22 @@
             class="helper"
             :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
           >
-            {{ t("Request starter XOR from the active network faucet.") }}
+            {{
+              faucetUnavailableOnActiveNetwork
+                ? t(
+                    "Minamoto mainnet has no faucet. Use TAIRA testnet to request starter XOR.",
+                  )
+                : t("Request starter XOR from the active network faucet.")
+            }}
           </p>
-          <p class="transaction-fee-note">
+          <p
+            v-if="faucetUnavailableOnActiveNetwork"
+            class="transaction-fee-note"
+          >
+            <span>{{ t("Network") }}</span>
+            <strong>{{ t("TAIRA Testnet") }}</strong>
+          </p>
+          <p v-else class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
             <strong>{{
               formatTransactionFee(
@@ -44,10 +57,16 @@
               ? 'wallet-faucet-button'
               : 'secondary wallet-faucet-button'
           "
-          :disabled="faucetLoading || !canRequestFaucet"
-          @click="requestStarterFunds"
+          :disabled="faucetLoading || !canUseFaucetAction"
+          @click="requestStarterFundsFromAvailableFaucet"
         >
-          {{ faucetLoading ? t("Requesting…") : t("Request XOR") }}
+          {{
+            faucetLoading
+              ? t("Requesting…")
+              : faucetUnavailableOnActiveNetwork
+                ? t("Use TAIRA faucet")
+                : t("Request XOR")
+          }}
         </button>
       </div>
       <div class="wallet-quick-actions">
@@ -299,6 +318,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, toRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import {
   cancelFaucetRequest,
   fetchAccountAssets,
@@ -337,9 +357,9 @@ import {
   formatTransactionFeeInline,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import { normalizeEndpointUrl } from "@/utils/endpoint";
 
 const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
-const ACCOUNT_TRANSACTION_PAGE_SIZE = 200;
 const WALLET_TRANSACTION_DISPLAY_LIMIT = 25;
 
 const session = useSessionStore();
@@ -439,6 +459,21 @@ const requestGeneration = ref(0);
 const faucetStatusPhase = ref<WalletFaucetPhase>("requestingPuzzle");
 let activeFaucetAbortController: AbortController | null = null;
 let faucetRequestSequence = 0;
+
+const readEndpointHost = (value: string) => {
+  try {
+    return new URL(normalizeEndpointUrl(value)).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+};
+
+const MINAMOTO_TORII_HOST = readEndpointHost(
+  MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+);
+const TAIRA_TORII_HOST = readEndpointHost(
+  TAIRA_CHAIN_PRESET.connection.toriiUrl,
+);
 
 const createFaucetCancelError = () => {
   const error = new Error("Faucet request canceled.");
@@ -551,42 +586,26 @@ const faucetStatusDetail = computed(() => {
   return t("Your faucet request is in flight. This can take a few seconds.");
 });
 
-const fetchAllAccountTransactions = async (input: {
+const fetchWalletTransactionPreview = async (input: {
   toriiUrl: string;
   accountId: string;
   networkPrefix?: number;
   privateKeyHex?: string;
 }): Promise<AccountTx[]> => {
-  const items: AccountTx[] = [];
-  let offset = 0;
-  let total = Number.POSITIVE_INFINITY;
-
-  while (offset < total) {
-    const response = await fetchAccountTransactions({
-      toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-      networkPrefix: input.networkPrefix,
-      privateKeyHex: input.privateKeyHex,
-      limit: ACCOUNT_TRANSACTION_PAGE_SIZE,
-      offset,
-    });
-    const pageItems = (response.items ?? []) as AccountTx[];
-    items.push(...pageItems);
-    total = Number(response.total ?? items.length);
-    offset += pageItems.length;
-    if (
-      pageItems.length === 0 ||
-      pageItems.length < ACCOUNT_TRANSACTION_PAGE_SIZE
-    ) {
-      break;
-    }
-  }
-
-  return items;
+  const response = await fetchAccountTransactions({
+    toriiUrl: input.toriiUrl,
+    accountId: input.accountId,
+    networkPrefix: input.networkPrefix,
+    privateKeyHex: input.privateKeyHex,
+    limit: WALLET_TRANSACTION_DISPLAY_LIMIT,
+    offset: 0,
+  });
+  return (response.items ?? []) as AccountTx[];
 };
 
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
+  const chainId = session.connection.chainId;
   const accountId = requestAccountId.value;
   const networkPrefix = session.connection.networkPrefix;
   const privateKeyHex = activeAccount.value?.privateKeyHex;
@@ -603,20 +622,12 @@ const refresh = async () => {
   loading.value = true;
   walletError.value = "";
   try {
-    const [{ items: assetItems }, txItems] = await Promise.all([
-      fetchAccountAssets({
-        toriiUrl,
-        accountId,
-        networkPrefix,
-        limit: 50,
-      }),
-      fetchAllAccountTransactions({
-        toriiUrl,
-        accountId,
-        networkPrefix,
-        privateKeyHex,
-      }),
-    ]);
+    const { items: assetItems } = await fetchAccountAssets({
+      toriiUrl,
+      accountId,
+      networkPrefix,
+      limit: 50,
+    });
     const configuredAssetDefinitionId = extractAssetDefinitionId(
       session.connection.assetDefinitionId,
     ).trim();
@@ -633,26 +644,6 @@ const refresh = async () => {
       confidentialAssetDefinitionId,
       assetItems.map((asset) => asset.asset_id),
     );
-    const shouldFetchConfidentialBalance = Boolean(
-      confidentialAssetDefinitionId &&
-        (!accountWasLocalOnly || assetItems.length || txItems.length),
-    );
-    let confidentialBalance = emptyConfidentialBalance(
-      confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
-    );
-    if (shouldFetchConfidentialBalance) {
-      try {
-        confidentialBalance = await getConfidentialAssetBalance({
-          toriiUrl,
-          chainId: session.connection.chainId,
-          accountId,
-          privateKeyHex,
-          assetDefinitionId: confidentialAssetDefinitionId,
-        });
-      } catch (error) {
-        console.warn("Failed to refresh confidential balance", error);
-      }
-    }
     if (
       currentGeneration !== requestGeneration.value ||
       session.connection.toriiUrl !== toriiUrl ||
@@ -661,11 +652,64 @@ const refresh = async () => {
       return;
     }
     assets.value = assetItems;
-    transactionsRaw.value = txItems as AccountTx[];
-    shieldedXorBalanceState.value = confidentialBalance;
+    transactionsRaw.value = [];
+    shieldedXorBalanceState.value = emptyConfidentialBalance(
+      confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
+    );
     if (activeAccount.value?.localOnly) {
       session.updateActiveAccount({ localOnly: false });
     }
+    void (async () => {
+      let txItems: AccountTx[] = [];
+      try {
+        txItems = await fetchWalletTransactionPreview({
+          toriiUrl,
+          accountId,
+          networkPrefix,
+          privateKeyHex,
+        });
+      } catch (error) {
+        console.warn("Failed to refresh wallet transactions", error);
+      }
+      if (
+        currentGeneration !== requestGeneration.value ||
+        session.connection.toriiUrl !== toriiUrl ||
+        requestAccountId.value !== accountId
+      ) {
+        return;
+      }
+      transactionsRaw.value = txItems;
+      const shouldFetchConfidentialBalance = Boolean(
+        confidentialAssetDefinitionId &&
+          (!accountWasLocalOnly || assetItems.length || txItems.length),
+      );
+      if (!shouldFetchConfidentialBalance) {
+        shieldedXorBalanceState.value = emptyConfidentialBalance(
+          confidentialAssetDefinitionId ||
+            configuredShieldAssetDefinitionId.value,
+        );
+        return;
+      }
+      try {
+        const confidentialBalance = await getConfidentialAssetBalance({
+          toriiUrl,
+          chainId,
+          accountId,
+          privateKeyHex,
+          assetDefinitionId: confidentialAssetDefinitionId,
+        });
+        if (
+          currentGeneration !== requestGeneration.value ||
+          session.connection.toriiUrl !== toriiUrl ||
+          requestAccountId.value !== accountId
+        ) {
+          return;
+        }
+        shieldedXorBalanceState.value = confidentialBalance;
+      } catch (error) {
+        console.warn("Failed to refresh confidential balance", error);
+      }
+    })();
   } catch (error) {
     if (
       currentGeneration !== requestGeneration.value ||
@@ -876,6 +920,16 @@ const requestStarterFunds = async () => {
   }
 };
 
+const requestStarterFundsFromAvailableFaucet = async () => {
+  if (!canUseFaucetAction.value) {
+    return;
+  }
+  if (faucetUnavailableOnActiveNetwork.value) {
+    session.useChainProfile(TAIRA_CHAIN_PRESET.connection);
+  }
+  await requestStarterFunds();
+};
+
 const primaryAsset = computed(() => {
   return resolveToriiXorAsset(assets.value, [
     shieldedXorResolvedAssetId.value,
@@ -901,12 +955,39 @@ const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
 );
 const faucetDisabled = import.meta.env.VITE_DISABLE_FAUCET === "true";
+const activeToriiHost = computed(() =>
+  readEndpointHost(session.connection.toriiUrl),
+);
+const activeNetworkIsKnownTaira = computed(
+  () => activeToriiHost.value === TAIRA_TORII_HOST,
+);
+const faucetUnavailableOnActiveNetwork = computed(() => {
+  if (activeNetworkIsKnownTaira.value) {
+    return false;
+  }
+  const chainId = session.connection.chainId.trim().toLowerCase();
+  return (
+    activeToriiHost.value === MINAMOTO_TORII_HOST ||
+    (chainId === MINAMOTO_CHAIN_PRESET.connection.chainId.toLowerCase() &&
+      session.connection.networkPrefix ===
+        MINAMOTO_CHAIN_PRESET.connection.networkPrefix)
+  );
+});
 const canRequestFaucet = computed(() =>
   Boolean(
     !faucetDisabled &&
       session.hasAccount &&
       session.connection.toriiUrl &&
-      requestAccountId.value,
+      requestAccountId.value &&
+      !faucetUnavailableOnActiveNetwork.value,
+  ),
+);
+const canUseFaucetAction = computed(() =>
+  Boolean(
+    !faucetDisabled &&
+      session.hasAccount &&
+      requestAccountId.value &&
+      (canRequestFaucet.value || faucetUnavailableOnActiveNetwork.value),
   ),
 );
 const showFundingPriority = computed(() =>

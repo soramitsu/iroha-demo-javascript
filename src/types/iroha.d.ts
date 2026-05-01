@@ -753,6 +753,15 @@ export interface GovernanceCouncilCurrentResponse {
   derived_by: string;
 }
 
+export interface GovernanceRegistrationPolicyResponse {
+  citizenshipAssetDefinitionId: string | null;
+  citizenshipBondAmount: string | null;
+  citizenshipAssetDefinitionExists: boolean | null;
+  configurationLoaded: boolean;
+  configurationError: string | null;
+  assetDefinitionError: string | null;
+}
+
 export interface GovernanceDraftInstruction {
   wire_id: string;
   payload_hex?: string | null;
@@ -939,6 +948,9 @@ export interface IrohaBridge {
     amount: string;
     privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
+  getGovernanceRegistrationPolicy(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceRegistrationPolicyResponse>;
   getGovernanceProposal(input: {
     toriiUrl: string;
     proposalId: string;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import WalletView from "@/views/WalletView.vue";
+import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
@@ -124,6 +125,12 @@ describe("WalletView", () => {
     assetDefinitionId = "xor#wonderland",
     options?: {
       localOnly?: boolean;
+      connection?: Partial<{
+        toriiUrl: string;
+        chainId: string;
+        assetDefinitionId: string;
+        networkPrefix: number;
+      }>;
       account?: Partial<{
         displayName: string;
         domain: string;
@@ -155,6 +162,7 @@ describe("WalletView", () => {
         chainId: "chain",
         assetDefinitionId,
         networkPrefix: 369,
+        ...options?.connection,
       },
       accounts: [account],
       activeAccountId: account.accountId,
@@ -241,8 +249,42 @@ describe("WalletView", () => {
         accountId: "alice@wonderland",
         networkPrefix: 369,
         privateKeyHex: "cd".repeat(32),
+        limit: 25,
+        offset: 0,
       }),
     );
+  });
+
+  it("updates the visible balance before transaction and private scans finish", async () => {
+    let resolveTransactions: (value: unknown) => void = () => {};
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "42",
+        },
+      ],
+      total: 1,
+    });
+    fetchAccountTransactionsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveTransactions = resolve;
+      }),
+    );
+
+    const wrapper = mountView("xor#wonderland");
+    await flushPromises();
+
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
+    expect(wrapper.get(".wallet-summary-header button").text()).toBe(
+      t("Refresh"),
+    );
+    expect(getConfidentialAssetBalanceMock).not.toHaveBeenCalled();
+
+    resolveTransactions({ items: [], total: 0 });
+    await flushPromises();
+
+    expect(getConfidentialAssetBalanceMock).toHaveBeenCalled();
   });
 
   it("shows on-chain shielded xor balance derived from committed history", async () => {
@@ -744,6 +786,64 @@ describe("WalletView", () => {
       formatAssetDefinitionLabel("61CtjvNd9T3THAR65GsMVHr82Bjc"),
     );
     expect(wrapper.text()).toContain("25000");
+  });
+
+  it("switches known Minamoto faucet clicks to TAIRA before claiming", async () => {
+    const fundedAssets = {
+      items: [
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    };
+    fetchAccountAssetsMock.mockResolvedValue(fundedAssets);
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "testuLegacyVisibleAccount1234567890",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "Committed",
+    });
+
+    const wrapper = mountView("", {
+      connection: MINAMOTO_CHAIN_PRESET.connection,
+      account: {
+        accountId: "sorauLegacyVisibleAccount1234567890",
+        i105AccountId: "",
+        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t(
+        "Minamoto mainnet has no faucet. Use TAIRA testnet to request starter XOR.",
+      ),
+    );
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Use TAIRA faucet")))!
+      .trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    const session = useSessionStore();
+    expect(session.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(requestFaucetFundsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+        accountId: "testuLegacyVisibleAccount1234567890",
+        networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        requestId: expect.stringMatching(/^wallet-faucet-/),
+      }),
+      expect.any(Function),
+    );
   });
 
   it("falls back to the funded asset reference when faucet omits the definition id", async () => {
