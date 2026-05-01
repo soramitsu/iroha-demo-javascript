@@ -1,5 +1,6 @@
-import { SORA_XOR_ASSET_DEFINITION_ID } from "@/constants/chains";
 import { deriveAssetSymbol, formatAssetDefinitionLabel } from "@/utils/assetId";
+
+const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 
 type Translate = (
   key: string,
@@ -17,15 +18,20 @@ export type TransactionFeeLike = {
   fee_amount?: string | number | null;
   feeAmount?: string | number | null;
   gas_asset_id?: string | null;
+  gasAssetId?: string | null;
   source?: string | null;
   estimated?: boolean | null;
 };
 
 type TransactionFeeContainer = TransactionFeeLike & {
   fee?: TransactionFeeLike | string | number | null;
+  fees?: TransactionFeeLike | TransactionFeeLike[] | string | number | null;
   tx_fee?: TransactionFeeLike | string | number | null;
+  txFee?: TransactionFeeLike | string | number | null;
   transaction_fee?: TransactionFeeLike | string | number | null;
+  transactionFee?: TransactionFeeLike | string | number | null;
   network_fee?: TransactionFeeLike | string | number | null;
+  networkFee?: TransactionFeeLike | string | number | null;
   fee_amount?: string | number | null;
   feeAmount?: string | number | null;
 };
@@ -66,36 +72,112 @@ const readNestedFee = (
   return null;
 };
 
+const readFeeCollection = (
+  value:
+    | TransactionFeeLike
+    | TransactionFeeLike[]
+    | string
+    | number
+    | null
+    | undefined,
+): TransactionFeeLike | null => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const fee = readNestedFee(item);
+      if (fee) {
+        return fee;
+      }
+    }
+    return null;
+  }
+  return readNestedFee(value);
+};
+
+const readDirectTransactionFee = (
+  record: TransactionFeeContainer,
+): TransactionFeeLike | null =>
+  readNestedFee(record.fee) ??
+  readFeeCollection(record.fees) ??
+  readNestedFee(record.tx_fee) ??
+  readNestedFee(record.txFee) ??
+  readNestedFee(record.transaction_fee) ??
+  readNestedFee(record.transactionFee) ??
+  readNestedFee(record.network_fee) ??
+  readNestedFee(record.networkFee) ??
+  (trim(record.fee_amount ?? record.feeAmount)
+    ? {
+        amount: record.fee_amount ?? record.feeAmount,
+        assetId:
+          record.feeAssetId ??
+          record.fee_asset_id ??
+          record.gasAssetId ??
+          record.gas_asset_id,
+        source: record.source,
+        estimated: record.estimated,
+      }
+    : null) ??
+  (trim(
+    record.feeAssetId ??
+      record.fee_asset_id ??
+      record.gasAssetId ??
+      record.gas_asset_id,
+  )
+    ? {
+        assetId:
+          record.feeAssetId ??
+          record.fee_asset_id ??
+          record.gasAssetId ??
+          record.gas_asset_id,
+        source: record.source,
+        estimated: record.estimated,
+      }
+    : null);
+
+const FEE_CONTAINER_KEYS = [
+  "status",
+  "content",
+  "result",
+  "execution_result",
+  "executionResult",
+  "receipt",
+  "committed",
+  "transaction",
+] as const;
+
+const readTransactionFeeFromContainer = (
+  value: unknown,
+  seen: WeakSet<object>,
+): TransactionFeeLike | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  if (seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+
+  const record = value as TransactionFeeContainer & Record<string, unknown>;
+  const direct = readDirectTransactionFee(record);
+  if (direct) {
+    return direct;
+  }
+
+  for (const key of FEE_CONTAINER_KEYS) {
+    const fee = readTransactionFeeFromContainer(record[key], seen);
+    if (fee) {
+      return fee;
+    }
+  }
+  return null;
+};
+
 export const readTransactionFee = (
   value: unknown,
 ): TransactionFeeLike | null => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  const record = value as TransactionFeeContainer;
-  return (
-    readNestedFee(record.fee) ??
-    readNestedFee(record.tx_fee) ??
-    readNestedFee(record.transaction_fee) ??
-    readNestedFee(record.network_fee) ??
-    (trim(record.fee_amount ?? record.feeAmount)
-      ? {
-          amount: record.fee_amount ?? record.feeAmount,
-          assetId:
-            record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id,
-          source: record.source,
-          estimated: record.estimated,
-        }
-      : null) ??
-    (trim(record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id)
-      ? {
-          assetId:
-            record.feeAssetId ?? record.fee_asset_id ?? record.gas_asset_id,
-          source: record.source,
-          estimated: record.estimated,
-        }
-      : null)
-  );
+  return readTransactionFeeFromContainer(value, new WeakSet());
 };
 
 const formatFeeAsset = (fee: TransactionFeeLike): string => {
@@ -104,6 +186,7 @@ const formatFeeAsset = (fee: TransactionFeeLike): string => {
       fee.asset_id ??
       fee.feeAssetId ??
       fee.fee_asset_id ??
+      fee.gasAssetId ??
       fee.gas_asset_id ??
       fee.asset,
   );
@@ -128,7 +211,9 @@ export const formatTransactionFeeInline = (
   if (!fee) {
     return t("Charged on-chain");
   }
-  const amount = trim(fee.amount ?? fee.quantity);
+  const amount = trim(
+    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
+  );
   if (amount) {
     return `${amount} ${formatFeeAsset(fee)}`;
   }
@@ -144,7 +229,9 @@ export const formatTransactionFee = (
   if (!fee) {
     return t("Network fee: charged on-chain (amount unavailable).");
   }
-  const amount = trim(fee.amount ?? fee.quantity);
+  const amount = trim(
+    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
+  );
   const asset = formatFeeAsset(fee);
   if (amount) {
     return t(

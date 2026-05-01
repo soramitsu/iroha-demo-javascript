@@ -12,6 +12,7 @@ export type AccountFaucetResponse = {
   amount: string;
   tx_hash_hex: string;
   status: string;
+  fee?: unknown;
 };
 
 export type FaucetRequestPhase =

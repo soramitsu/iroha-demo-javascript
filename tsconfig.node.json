@@ -10,6 +10,7 @@
     "src/utils/errorMessage.ts",
     "src/utils/mnemonic.ts",
     "src/utils/soracloud.ts",
+    "src/utils/transactionFee.ts",
     "src/utils/walletBackup.ts"
   ],
   "compilerOptions": {

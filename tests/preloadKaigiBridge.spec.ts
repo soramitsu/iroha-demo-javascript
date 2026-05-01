@@ -1792,6 +1792,140 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("returns the real TAIRA fee from committed pipeline status payloads", async () => {
+    const bridge = await loadBridge();
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      hash: "hash-public-transfer",
+      resolved_from: "state",
+      scope: "global",
+      status: {
+        block_height: 12682,
+        kind: "Applied",
+        content: {
+          block_height: 12682,
+          fee: {
+            amount: "0.01",
+            asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          },
+        },
+      },
+      kind: "Transaction",
+      content: {
+        hash: "hash-public-transfer",
+        status: {
+          block_height: 12682,
+          kind: "Applied",
+          content: {
+            block_height: 12682,
+            fee: {
+              amount: "0.01",
+              asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            },
+          },
+        },
+      },
+    });
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.includes("/v1/transactions/hash-public-transfer")) {
+        return jsonResponse(
+          {
+            code: "not_found",
+            message: "transaction not found",
+          },
+          404,
+        );
+      }
+      throw new Error(`Unexpected nodeFetch request: ${href}`);
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+      fee: {
+        amount: "0.01",
+        asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      },
+    });
+  });
+
+  it("returns the real TAIRA fee from explorer transaction details", async () => {
+    const bridge = await loadBridge();
+    mocks.getTransactionStatusMock.mockResolvedValue({
+      hash: "hash-public-transfer",
+      resolved_from: "state",
+      scope: "global",
+      status: {
+        block_height: 12673,
+        kind: "Committed",
+      },
+    });
+    mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
+      const href = String(input);
+      if (href.includes("/v1/transactions/hash-public-transfer")) {
+        return jsonResponse(
+          {
+            code: "not_found",
+            message: "transaction not found",
+          },
+          404,
+        );
+      }
+      if (href.includes("/v1/explorer/transactions/hash-public-transfer")) {
+        return jsonResponse({
+          authority: ALICE_ACCOUNT_ID,
+          hash: "hash-public-transfer",
+          block: 12673,
+          created_at: "2026-04-30T17:53:53.123Z",
+          executable: "Instructions",
+          status: "Committed",
+          rejection_reason: null,
+          executable_payload: {
+            instruction_count: 1,
+          },
+          metadata: {
+            gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          },
+          transaction_fee: {
+            quantity: "0.01",
+            gasAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          },
+          nonce: null,
+          signature: "9ff763df39e338a4cc3cac7c29bb14a29d0d10ae6125f5ef",
+          time_to_live: null,
+        });
+      }
+      throw new Error(`Unexpected nodeFetch request: ${href}`);
+    });
+
+    await expect(
+      bridge.transferAsset({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        assetDefinitionId: "xor#universal",
+        accountId: ALICE_ACCOUNT_ID,
+        destinationAccountId: BOB_ACCOUNT_ID,
+        quantity: "3",
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-public-transfer",
+      fee: {
+        quantity: "0.01",
+        gasAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      },
+    });
+  });
+
   it("uses a full Minamoto source asset holding id for public transfers", async () => {
     const bridge = await loadBridge();
     const sourceAccountId =

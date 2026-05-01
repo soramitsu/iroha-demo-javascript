@@ -83,6 +83,10 @@ import {
   type ChainMetadataDraft,
 } from "../src/utils/chainMetadata";
 import type { NetworkStatsResponse } from "../src/types/iroha";
+import {
+  readTransactionFee,
+  type TransactionFeeLike,
+} from "../src/utils/transactionFee";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -893,21 +897,12 @@ type SubscriptionListResponseView = {
   total: number;
 };
 
-type TransactionFeeView =
-  | {
-      amount?: string | number | null;
-      quantity?: string | number | null;
-      assetId?: string | null;
-      asset_id?: string | null;
-      asset?: string | null;
-      feeAssetId?: string | null;
-      fee_asset_id?: string | null;
-      gas_asset_id?: string | null;
-      source?: string | null;
-      estimated?: boolean | null;
-    }
-  | string
-  | number;
+type TransactionFeeView = TransactionFeeLike | string | number;
+
+type TransactionSubmissionResultView = {
+  hash: string;
+  fee?: TransactionFeeView | null;
+};
 
 type SubscriptionActionResponseView = {
   ok: boolean;
@@ -1037,8 +1032,12 @@ type IrohaBridge = {
   importConfidentialWalletBackup(
     input: ImportConfidentialWalletBackupInput,
   ): Promise<void>;
-  registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
-  transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
+  registerAccount(
+    input: RegisterAccountInput,
+  ): Promise<TransactionSubmissionResultView>;
+  transferAsset(
+    input: TransferAssetInput,
+  ): Promise<TransactionSubmissionResultView>;
   buildUranaiPrivateTradeProof(
     input: UranaiPrivateTradeProofInput,
   ): Promise<UranaiPrivateTradeProofResponse>;
@@ -1095,7 +1094,7 @@ type IrohaBridge = {
     accountId: string;
     privateKeyHex?: string;
     amount: string;
-  }): Promise<{ hash: string }>;
+  }): Promise<TransactionSubmissionResultView>;
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
@@ -1114,7 +1113,9 @@ type IrohaBridge = {
   listAccountPermissions(
     input: AccountPermissionsInput,
   ): Promise<AccountPermissionsResponse>;
-  registerCitizen(input: RegisterCitizenInput): Promise<{ hash: string }>;
+  registerCitizen(
+    input: RegisterCitizenInput,
+  ): Promise<TransactionSubmissionResultView>;
   getGovernanceProposal(
     input: GovernanceLookupInput,
   ): Promise<GovernanceProposalResponse>;
@@ -1132,7 +1133,7 @@ type IrohaBridge = {
   ): Promise<GovernanceCouncilResponse>;
   submitGovernancePlainBallot(
     input: GovernancePlainBallotInput,
-  ): Promise<{ hash: string }>;
+  ): Promise<TransactionSubmissionResultView>;
   finalizeGovernanceReferendum(
     input: GovernanceFinalizeInput,
   ): Promise<GovernanceDraftResponse>;
@@ -1195,9 +1196,13 @@ type IrohaBridge = {
   cancelFaucetRequest(input: { requestId: string }): Promise<{
     canceled: boolean;
   }>;
-  createKaigiMeeting(input: KaigiCreateMeetingInput): Promise<{ hash: string }>;
+  createKaigiMeeting(
+    input: KaigiCreateMeetingInput,
+  ): Promise<TransactionSubmissionResultView>;
   getKaigiCall(input: KaigiGetMeetingInput): Promise<KaigiMeetingView>;
-  joinKaigiMeeting(input: KaigiJoinMeetingInput): Promise<{ hash: string }>;
+  joinKaigiMeeting(
+    input: KaigiJoinMeetingInput,
+  ): Promise<TransactionSubmissionResultView>;
   watchKaigiCallEvents(
     input: KaigiWatchCallEventsInput,
     onEvent: KaigiCallEventCallback,
@@ -1206,7 +1211,9 @@ type IrohaBridge = {
   pollKaigiMeetingSignals(
     input: KaigiPollMeetingSignalsInput,
   ): Promise<KaigiMeetingSignalRecord[]>;
-  endKaigiMeeting(input: KaigiEndMeetingInput): Promise<{ hash: string }>;
+  endKaigiMeeting(
+    input: KaigiEndMeetingInput,
+  ): Promise<TransactionSubmissionResultView>;
   createConnectPreview(input: {
     toriiUrl: string;
     chainId: string;
@@ -1262,16 +1269,16 @@ type IrohaBridge = {
   ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
-  ): Promise<{ hash: string }>;
+  ): Promise<TransactionSubmissionResultView>;
   schedulePublicLaneUnbond(
     input: SchedulePublicLaneUnbondInput,
-  ): Promise<{ hash: string }>;
+  ): Promise<TransactionSubmissionResultView>;
   finalizePublicLaneUnbond(
     input: FinalizePublicLaneUnbondInput,
-  ): Promise<{ hash: string }>;
+  ): Promise<TransactionSubmissionResultView>;
   claimPublicLaneRewards(
     input: ClaimPublicLaneRewardsInput,
-  ): Promise<{ hash: string }>;
+  ): Promise<TransactionSubmissionResultView>;
 };
 
 class ApiRequestError extends Error {
@@ -1632,6 +1639,7 @@ const waitForFaucetClaimFinality = async (
   const invisibleDeadline = Date.now() + FAUCET_CLAIM_INVISIBLE_RETRY_MS;
   let lastStatusKind: string | null = null;
   let lastError: unknown = null;
+  let lastStatusPayload: unknown = null;
   let sawPipelineStatus = false;
 
   while (Date.now() <= deadline) {
@@ -1639,6 +1647,7 @@ const waitForFaucetClaimFinality = async (
     try {
       const payload = await client.getTransactionStatus(txHashHex);
       throwIfAborted(signal);
+      lastStatusPayload = payload;
       const statusKind = extractPipelineStatusKind(payload);
       lastStatusKind = statusKind;
       lastError = null;
@@ -1648,6 +1657,7 @@ const waitForFaucetClaimFinality = async (
       if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
         return {
           statusKind,
+          statusPayload: payload,
           timedOut: false,
           fundedAssetVisible: false,
           pipelineStatusInvisible: false,
@@ -1656,6 +1666,7 @@ const waitForFaucetClaimFinality = async (
       if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
         return {
           statusKind,
+          statusPayload: payload,
           timedOut: false,
           fundedAssetVisible: false,
           pipelineStatusInvisible: false,
@@ -1679,6 +1690,7 @@ const waitForFaucetClaimFinality = async (
         throwIfAborted(signal);
         return {
           statusKind: lastStatusKind,
+          statusPayload: lastStatusPayload,
           timedOut: false,
           fundedAssetVisible: true,
           pipelineStatusInvisible: !sawPipelineStatus,
@@ -1692,6 +1704,7 @@ const waitForFaucetClaimFinality = async (
     if (!sawPipelineStatus && Date.now() >= invisibleDeadline) {
       return {
         statusKind: lastStatusKind,
+        statusPayload: lastStatusPayload,
         timedOut: true,
         lastError,
         fundedAssetVisible: false,
@@ -1707,6 +1720,7 @@ const waitForFaucetClaimFinality = async (
 
   return {
     statusKind: lastStatusKind,
+    statusPayload: lastStatusPayload,
     timedOut: true,
     lastError,
     fundedAssetVisible: false,
@@ -4286,17 +4300,16 @@ const extractTransactionRecordStatus = (payload: unknown): string | null => {
   return null;
 };
 
-const fetchTransactionRecordStatus = async (
+const fetchTransactionRecordPayload = async (
   toriiUrl: string,
   hashHex: string,
-): Promise<string | null> => {
+): Promise<Record<string, unknown> | null> => {
   const endpoint = buildNexusEndpoint(
     toriiUrl,
     `/v1/transactions/${encodeURIComponent(hashHex)}`,
   );
   try {
-    const payload = await fetchJson(endpoint, `Transaction ${hashHex}`);
-    return extractTransactionRecordStatus(payload);
+    return await fetchJson(endpoint, `Transaction ${hashHex}`);
   } catch (error) {
     if (isApiRequestError(error) && error.status === 404) {
       return null;
@@ -4392,6 +4405,64 @@ const buildTransactionFinalityFailureError = async (
   );
 };
 
+const readCommittedTransactionFee = (
+  payload: unknown,
+): TransactionFeeLike | null => {
+  const fee = readTransactionFee(payload);
+  if (!fee) {
+    return null;
+  }
+  const amount = trimString(
+    fee.amount ?? fee.quantity ?? fee.fee_amount ?? fee.feeAmount,
+  );
+  return amount ? fee : null;
+};
+
+const fetchCommittedTransactionFee = async (
+  toriiUrl: string,
+  hashHex: string,
+  statusPayload: unknown,
+  transactionRecordPayload?: unknown,
+): Promise<TransactionFeeLike | null> => {
+  const statusFee = readCommittedTransactionFee(statusPayload);
+  if (statusFee) {
+    return statusFee;
+  }
+
+  const recordFee = readCommittedTransactionFee(transactionRecordPayload);
+  if (recordFee) {
+    return recordFee;
+  }
+
+  try {
+    const record = await fetchTransactionRecordPayload(toriiUrl, hashHex);
+    const fee = readCommittedTransactionFee(record);
+    if (fee) {
+      return fee;
+    }
+  } catch {
+    // Fee enrichment is best-effort; finality already succeeded.
+  }
+
+  try {
+    const explorerDetail = await fetchExplorerTransactionDetail(
+      toriiUrl,
+      hashHex,
+    );
+    return readCommittedTransactionFee(explorerDetail);
+  } catch {
+    return null;
+  }
+};
+
+const transactionSubmissionResult = (submission: {
+  hash: string;
+  fee?: TransactionFeeView | null;
+}): TransactionSubmissionResultView => ({
+  hash: submission.hash,
+  ...(submission.fee ? { fee: submission.fee } : {}),
+});
+
 const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
   const client = getClient(toriiUrl);
   const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
@@ -4401,10 +4472,14 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
     const statusKind = extractPipelineStatusKind(payload);
     lastStatusKind = statusKind;
     if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
+      let transactionRecordPayload: Record<string, unknown> | null = null;
       if (statusKind === "Applied") {
-        const recordStatus = await fetchTransactionRecordStatus(
+        transactionRecordPayload = await fetchTransactionRecordPayload(
           toriiUrl,
           hashHex,
+        );
+        const recordStatus = extractTransactionRecordStatus(
+          transactionRecordPayload,
         );
         if (recordStatus) {
           lastStatusKind = recordStatus;
@@ -4421,7 +4496,12 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
           );
         }
       }
-      return;
+      return await fetchCommittedTransactionFee(
+        toriiUrl,
+        hashHex,
+        payload,
+        transactionRecordPayload,
+      );
     }
     if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
       throw await buildTransactionFinalityFailureError(
@@ -4453,8 +4533,11 @@ const submitSignedTransactionAndWaitForCommit = async (
     toriiUrl,
     signedTransaction,
   );
-  await waitForTransactionCommit(toriiUrl, submission.hash);
-  return submission;
+  const fee = await waitForTransactionCommit(toriiUrl, submission.hash);
+  return {
+    ...submission,
+    ...(fee ? { fee } : {}),
+  };
 };
 
 const hashSignedTransactionHex = (signedTransaction: Buffer) => {
@@ -4489,8 +4572,11 @@ const submitTransactionEntrypointAndWaitForCommit = async (
       hashHex,
     },
   );
-  await waitForTransactionCommit(toriiUrl, submission.hash);
-  return submission;
+  const fee = await waitForTransactionCommit(toriiUrl, submission.hash);
+  return {
+    ...submission,
+    ...(fee ? { fee } : {}),
+  };
 };
 
 const fetchConfidentialAssetPolicy = async (
@@ -5579,14 +5665,20 @@ const buildUranaiPrivateTradeProofEnvelope = async (
   const collateralIn = trimString(input.collateralIn);
   const privacyFee = trimString(input.privacyFee || "0");
   if (!/^\d+$/.test(collateralIn) || BigInt(collateralIn) <= 0n) {
-    throw new Error("Uranai private trade collateral must be a positive whole-number amount.");
+    throw new Error(
+      "Uranai private trade collateral must be a positive whole-number amount.",
+    );
   }
   if (!/^\d+$/.test(privacyFee)) {
-    throw new Error("Uranai private trade privacy fee must be a whole-number amount.");
+    throw new Error(
+      "Uranai private trade privacy fee must be a whole-number amount.",
+    );
   }
   const spendAmount = (BigInt(collateralIn) + BigInt(privacyFee)).toString();
   if (!isPositiveWholeAmount(spendAmount)) {
-    throw new Error("Uranai private trade spend amount must be greater than zero.");
+    throw new Error(
+      "Uranai private trade spend amount must be greater than zero.",
+    );
   }
   const privateKeyHex = await resolvePrivateKeyHex({
     accountId,
@@ -6111,7 +6203,7 @@ const submitInstructionTransaction = async (input: {
     input.toriiUrl,
     tx.signedTransaction,
   );
-  return { hash: submission.hash };
+  return transactionSubmissionResult(submission);
 };
 
 const createPrivateKaigiNonce = () => {
@@ -6573,7 +6665,7 @@ const api: IrohaBridge = {
       input.toriiUrl,
       tx.signedTransaction,
     );
-    return { hash: submission.hash };
+    return transactionSubmissionResult(submission);
   },
   async transferAsset(input) {
     const writeConnection = await assertWriteConnectionMatchesEndpoint({
@@ -6873,7 +6965,7 @@ const api: IrohaBridge = {
           ],
         ),
       });
-      return { hash: submission.hash };
+      return transactionSubmissionResult(submission);
     }
 
     if (input.shielded) {
@@ -6970,7 +7062,14 @@ const api: IrohaBridge = {
           input.toriiUrl,
           tx.signedTransaction,
         );
-        await waitForTransactionCommit(input.toriiUrl, submission.hash);
+        const fee = await waitForTransactionCommit(
+          input.toriiUrl,
+          submission.hash,
+        );
+        const committedSubmission = {
+          ...submission,
+          ...(fee ? { fee } : {}),
+        };
         upsertConfidentialWalletShadowTransaction({
           toriiUrl: input.toriiUrl,
           accountId,
@@ -7005,7 +7104,7 @@ const api: IrohaBridge = {
             assetDefinitionId: resolvedAssetId,
           });
         }
-        return { hash: submission.hash };
+        return transactionSubmissionResult(committedSubmission);
       }
 
       let materials = await resolveConfidentialTransferMaterials({
@@ -7232,7 +7331,7 @@ const api: IrohaBridge = {
           ),
         });
       }
-      return { hash: submission.hash };
+      return transactionSubmissionResult(submission);
     }
 
     const client = getClient(input.toriiUrl);
@@ -7387,7 +7486,7 @@ const api: IrohaBridge = {
       input.toriiUrl,
       tx.signedTransaction,
     );
-    return { hash: submission.hash };
+    return transactionSubmissionResult(submission);
   },
   buildUranaiPrivateTradeProof(input) {
     return buildUranaiPrivateTradeProofEnvelope(input);
@@ -8034,6 +8133,7 @@ const api: IrohaBridge = {
 
         const {
           statusKind,
+          statusPayload,
           timedOut,
           lastError,
           fundedAssetVisible,
@@ -8058,9 +8158,15 @@ const api: IrohaBridge = {
           } catch {
             // Renderer-side status hooks must not break the faucet request itself.
           }
+          const fee = await fetchCommittedTransactionFee(
+            baseUrl,
+            txHashHex,
+            statusPayload,
+          );
           return {
             ...result,
             status: statusKind || "Funded",
+            ...(fee ? { fee } : {}),
           };
         }
         if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
@@ -8074,9 +8180,15 @@ const api: IrohaBridge = {
           } catch {
             // Renderer-side status hooks must not break the faucet request itself.
           }
+          const fee = await fetchCommittedTransactionFee(
+            baseUrl,
+            txHashHex,
+            statusPayload,
+          );
           return {
             ...result,
             status: statusKind,
+            ...(fee ? { fee } : {}),
           };
         }
         if (
@@ -8295,7 +8407,7 @@ const api: IrohaBridge = {
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
       });
-      return { hash: submission.hash };
+      return transactionSubmissionResult(submission);
     }
 
     const tx = buildCreateKaigiTransaction({
@@ -8318,7 +8430,7 @@ const api: IrohaBridge = {
       toriiUrl,
       tx.signedTransaction,
     );
-    return { hash: submission.hash };
+    return transactionSubmissionResult(submission);
   },
   async getKaigiCall({ toriiUrl, callId, inviteSecretBase64Url }) {
     return fetchKaigiMeetingView({
@@ -8439,7 +8551,7 @@ const api: IrohaBridge = {
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
       });
-      return { hash: submission.hash };
+      return transactionSubmissionResult(submission);
     }
 
     const tx = buildJoinKaigiTransaction({
@@ -8456,7 +8568,7 @@ const api: IrohaBridge = {
       toriiUrl,
       tx.signedTransaction,
     );
-    return { hash: submission.hash };
+    return transactionSubmissionResult(submission);
   },
   async watchKaigiCallEvents({ toriiUrl, callId }, onEvent) {
     const client = getClient(toriiUrl);
@@ -8663,7 +8775,7 @@ const api: IrohaBridge = {
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
       });
-      return { hash: submission.hash };
+      return transactionSubmissionResult(submission);
     }
 
     const tx = buildEndKaigiTransaction({
@@ -8680,7 +8792,7 @@ const api: IrohaBridge = {
       toriiUrl,
       tx.signedTransaction,
     );
-    return { hash: submission.hash };
+    return transactionSubmissionResult(submission);
   },
   async createConnectPreview({ toriiUrl, chainId, node, launchProtocol }) {
     const client = getClient(toriiUrl);

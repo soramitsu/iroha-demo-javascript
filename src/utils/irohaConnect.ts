@@ -180,7 +180,11 @@ const normalizeFramePayload = (
     return new Uint8Array(payload);
   }
   if (ArrayBuffer.isView(payload)) {
-    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+    return new Uint8Array(
+      payload.buffer,
+      payload.byteOffset,
+      payload.byteLength,
+    );
   }
   throw new TypeError("IrohaConnect payload must be bytes or text.");
 };
@@ -212,7 +216,11 @@ class FrameCursor {
 
   readBytes(length: number) {
     const end = this.offset + length;
-    if (!Number.isSafeInteger(length) || length < 0 || end > this.bytes.length) {
+    if (
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      end > this.bytes.length
+    ) {
       throw new Error("IrohaConnect frame is truncated.");
     }
     const out = this.bytes.slice(this.offset, end);
@@ -405,7 +413,9 @@ export const decodeIrohaConnectFrame = (
         : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
   const cursor = new FrameCursor(bytes);
   const sid = decodeFixedU8Array32(cursor.readField());
-  const direction = decodeDirectionTag(new FrameCursor(cursor.readField()).readU32());
+  const direction = decodeDirectionTag(
+    new FrameCursor(cursor.readField()).readU32(),
+  );
   const sequence = new FrameCursor(cursor.readField()).readU64();
   const kindCursor = new FrameCursor(cursor.readField());
   const frameKind = kindCursor.readU32();

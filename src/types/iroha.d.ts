@@ -359,7 +359,10 @@ export interface TransactionFeeView {
   asset?: string | null;
   feeAssetId?: string | null;
   fee_asset_id?: string | null;
+  fee_amount?: string | number | null;
+  feeAmount?: string | number | null;
   gas_asset_id?: string | null;
+  gasAssetId?: string | null;
   source?: string | null;
   estimated?: boolean | null;
 }

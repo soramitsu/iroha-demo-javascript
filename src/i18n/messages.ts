@@ -1071,6 +1071,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   Ready: "Ready",
   "Approving...": "Approving...",
   "Approving…": "Approving…",
+  "Preparing private trade proof...": "Preparing private trade proof...",
+  "Private trade proof sent.": "Private trade proof sent.",
   "IrohaConnect approved.": "IrohaConnect approved.",
   "Scan screen QR": "Scan screen QR",
   "Scanning screen...": "Scanning screen...",

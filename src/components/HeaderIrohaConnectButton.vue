@@ -119,8 +119,7 @@ import {
   type ParsedIrohaConnectUri,
 } from "@/utils/irohaConnect";
 
-const PRIVATE_TRADE_PROOF_SCHEMA =
-  "uranai.irohaconnect.private-trade-proof.v1";
+const PRIVATE_TRADE_PROOF_SCHEMA = "uranai.irohaconnect.private-trade-proof.v1";
 const CONTRACT_CALL_SIGN_SCHEMA =
   "uranai.irohaconnect.contract-call-signature.v1";
 const session = useSessionStore();
@@ -414,7 +413,8 @@ const handleScannedConnectMessage = async (
       await handleContractCallSignRequest(socket, parsed, signRequest);
     }
   } catch (error) {
-    connectScanError.value = error instanceof Error ? error.message : String(error);
+    connectScanError.value =
+      error instanceof Error ? error.message : String(error);
   }
 };
 

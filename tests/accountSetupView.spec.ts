@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import AccountSetupView from "@/views/AccountSetupView.vue";
@@ -7,6 +7,10 @@ import { useSessionStore } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { mnemonicToPrivateKeyHex } from "@/utils/mnemonic";
 import { buildWalletBackupPayload } from "@/utils/walletBackup";
+import {
+  buildIrohaConnectTokenProtocol,
+  decodeIrohaConnectFrame,
+} from "@/utils/irohaConnect";
 
 const EXAMPLE_REAL_I105_ACCOUNT_ID =
   "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
@@ -16,6 +20,9 @@ const VALID_MNEMONIC_PRIVATE_KEY_HEX =
   "5EB00BBDDCF069084889A8AB9155568165F5C453CCB85E70811AAED6F6DA5FC1";
 const VALID_24_WORD_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+const VALID_CONNECT_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
+  "base64url",
+);
 const copyTextToClipboardMock = vi.fn();
 const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
@@ -27,8 +34,76 @@ const storeAccountSecretMock = vi.fn();
 const onboardAccountMock = vi.fn();
 const routerPushMock = vi.fn();
 const qrToDataUrlMock = vi.fn();
+type QrDecodeHandler = (payload: string) => void;
+let connectQrDecodeHandler: QrDecodeHandler | null = null;
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
+
+type FakeWebSocketListener = {
+  callback: (event: Event | MessageEvent) => void;
+  once: boolean;
+};
+
+class FakeWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
+
+  readonly sent: unknown[] = [];
+  readonly listeners = new Map<string, FakeWebSocketListener[]>();
+  binaryType: BinaryType = "blob";
+  readyState = FakeWebSocket.CONNECTING;
+  closeCode: number | null = null;
+  closeReason = "";
+
+  constructor(
+    readonly url: string | URL,
+    readonly protocols?: string | string[],
+  ) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ) {
+    const callback =
+      typeof listener === "function"
+        ? listener
+        : (event: Event | MessageEvent) => listener.handleEvent(event);
+    const once = typeof options === "object" && Boolean(options.once);
+    const current = this.listeners.get(type) ?? [];
+    current.push({ callback, once });
+    this.listeners.set(type, current);
+  }
+
+  send(data: unknown) {
+    this.sent.push(data);
+  }
+
+  close(code?: number, reason?: string) {
+    this.readyState = FakeWebSocket.CLOSED;
+    this.closeCode = code ?? null;
+    this.closeReason = reason ?? "";
+  }
+
+  emit(type: string, event: Event | MessageEvent = new Event(type)) {
+    if (type === "open") {
+      this.readyState = FakeWebSocket.OPEN;
+    }
+    const current = this.listeners.get(type) ?? [];
+    for (const entry of current) {
+      entry.callback(event);
+    }
+    this.listeners.set(
+      type,
+      current.filter((entry) => !entry.once),
+    );
+  }
+}
 
 vi.mock("vue-router", () => ({
   useRouter: () => ({
@@ -57,8 +132,32 @@ vi.mock("@/services/iroha", () => ({
   onboardAccount: (input: unknown) => onboardAccountMock(input),
 }));
 
+vi.mock("@/composables/useQrScanner", async () => {
+  const { ref } = await vi.importActual<typeof import("vue")>("vue");
+  return {
+    useQrScanner: (onDecode: QrDecodeHandler) => {
+      connectQrDecodeHandler = onDecode;
+      return {
+        scanning: ref(false),
+        screenScanning: ref(false),
+        message: ref(""),
+        videoRef: ref<HTMLVideoElement | null>(null),
+        fileInputRef: ref<HTMLInputElement | null>(null),
+        start: vi.fn(),
+        stop: vi.fn(),
+        openFilePicker: vi.fn(),
+        decodeScreen: vi.fn(),
+        decodeFile: vi.fn(),
+      };
+    },
+  };
+});
+
 describe("AccountSetupView", () => {
   beforeEach(() => {
+    connectQrDecodeHandler = null;
+    FakeWebSocket.instances = [];
+    vi.stubGlobal("WebSocket", FakeWebSocket);
     createConnectPreviewMock.mockReset();
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
@@ -104,12 +203,19 @@ describe("AccountSetupView", () => {
     setActivePinia(createPinia());
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
   const mountView = (options?: {
     withSavedAccount?: boolean;
     savedAccount?: {
       displayName?: string;
       domain?: string;
       accountId?: string;
+      i105AccountId?: string;
+      i105DefaultAccountId?: string;
       publicKeyHex?: string;
       privateKeyHex?: string;
       hasStoredSecret?: boolean;
@@ -129,6 +235,7 @@ describe("AccountSetupView", () => {
         displayName: "Alice",
         domain: "wonderland",
         accountId: "alice@wonderland",
+        i105AccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
         publicKeyHex: "ab".repeat(32),
         privateKeyHex: "cd".repeat(32),
         hasStoredSecret: true,
@@ -168,6 +275,14 @@ describe("AccountSetupView", () => {
       configurable: true,
       value: files,
     });
+  };
+
+  const scanConnectQr = async (payload: string) => {
+    if (!connectQrDecodeHandler) {
+      throw new Error("IrohaConnect QR decode handler was not registered.");
+    }
+    connectQrDecodeHandler(payload);
+    await flushPromises();
   };
 
   it("focuses first launch on the onboarding wizard", () => {
@@ -329,6 +444,95 @@ describe("AccountSetupView", () => {
     expect(
       getButtonByText(wrapper, t("Generate pairing QR")).attributes("disabled"),
     ).toBeUndefined();
+  });
+
+  it("approves a scanned wallet-role IrohaConnect QR over the relay WebSocket", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+    const relayNode = "https://relay.example";
+    const walletToken = "wallet-token-1";
+    const payload = `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=chain-a&node=${encodeURIComponent(
+      relayNode,
+    )}&v=1&role=wallet&token=${encodeURIComponent(walletToken)}`;
+
+    await scanConnectQr(payload);
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const socket = FakeWebSocket.instances[0];
+    expect(String(socket.url)).toBe(
+      `wss://relay.example/v1/connect/ws?sid=${VALID_CONNECT_SID}&role=wallet`,
+    );
+    expect(socket.protocols).toEqual([
+      buildIrohaConnectTokenProtocol(walletToken),
+    ]);
+    expect(socket.binaryType).toBe("arraybuffer");
+    expect(wrapper.text()).toContain(VALID_CONNECT_SID);
+    expect(wrapper.text()).toContain("chain-a");
+    expect(wrapper.text()).toContain(relayNode);
+
+    socket.emit("open");
+    await flushPromises();
+
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toBeInstanceOf(Uint8Array);
+    expect((socket.sent[0] as Uint8Array).length).toBeGreaterThan(400);
+    const approvalFrame = decodeIrohaConnectFrame(socket.sent[0] as Uint8Array);
+    expect(approvalFrame.kind).toBe("other");
+    expect(approvalFrame.direction).toBe("wallet-to-app");
+    expect(approvalFrame.sequence).toBe(1);
+    expect(Array.from(approvalFrame.sid)).toEqual(
+      Array.from(new Uint8Array(32).fill(0xce)),
+    );
+    if (approvalFrame.kind !== "other") {
+      throw new Error("Expected IrohaConnect approval control frame.");
+    }
+    expect(approvalFrame.frameKind).toBe(0);
+    expect(wrapper.text()).toContain(EXAMPLE_REAL_I105_ACCOUNT_ID);
+    expect(wrapper.text()).toContain(t("IrohaConnect approved."));
+  });
+
+  it("rejects scanned wallet-role IrohaConnect QR approval when the token is missing", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&node=${encodeURIComponent(
+        "https://relay.example",
+      )}`,
+    );
+
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(wrapper.text()).toContain("IrohaConnect wallet token is missing.");
+  });
+
+  it("rejects scanned IrohaConnect QRs that are not for the wallet role", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=app&token=wallet-token-1`,
+    );
+
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(wrapper.text()).toContain(
+      "Scan the wallet-role IrohaConnect QR from the app.",
+    );
+    expect(wrapper.text()).not.toContain(VALID_CONNECT_SID);
+  });
+
+  it("surfaces relay open timeouts before sending an IrohaConnect approval frame", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+    );
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    const socket = FakeWebSocket.instances[0];
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await flushPromises();
+
+    expect(socket.sent).toHaveLength(0);
+    expect(wrapper.text()).toContain("IrohaConnect approval timed out.");
   });
 
   it("saves the first generated account locally and routes to the wallet", async () => {
