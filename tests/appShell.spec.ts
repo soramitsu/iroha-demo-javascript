@@ -80,6 +80,9 @@ describe("App shell", () => {
     const labels = wrapper.findAll(".nav-label").map((node) => node.text());
 
     expect(labels).toEqual([t("Account Setup"), t("Settings")]);
+    expect(
+      wrapper.find('[data-testid="header-irohaconnect-button"]').exists(),
+    ).toBe(false);
   });
 
   it("keeps the sidebar details open on desktop layouts", () => {
@@ -120,6 +123,18 @@ describe("App shell", () => {
     ]);
     expect(steps[0]).toBe("01");
     expect(steps.at(-1)).toBe("15");
+  });
+
+  it("shows the header IrohaConnect action only after a wallet is active", () => {
+    const wrapper = mountApp({ withAccount: true });
+
+    const connectButton = wrapper.get(
+      '[data-testid="header-irohaconnect-button"]',
+    );
+    expect(connectButton.text()).toContain("IrohaConnect");
+    expect(wrapper.get(".header-quick-actions").text()).toContain(
+      t("Open wallet"),
+    );
   });
 
   it("renames the account route to wallets once an account exists", () => {

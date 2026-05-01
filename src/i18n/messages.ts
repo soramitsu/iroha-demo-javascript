@@ -1066,6 +1066,25 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Wallet-based meeting links": "Wallet-based meeting links",
   "Private network connection": "Private network connection",
   "Network and developer settings": "Network and developer settings",
+  IrohaConnect: "IrohaConnect",
+  Approval: "Approval",
+  Ready: "Ready",
+  "Approving...": "Approving...",
+  "Approving…": "Approving…",
+  "IrohaConnect approved.": "IrohaConnect approved.",
+  "Scan screen QR": "Scan screen QR",
+  "Scanning screen...": "Scanning screen...",
+  "Choose the screen or window that contains the QR code.":
+    "Choose the screen or window that contains the QR code.",
+  "Scan a visible IrohaConnect QR from another app window, or upload a saved QR image.":
+    "Scan a visible IrohaConnect QR from another app window, or upload a saved QR image.",
+  "No QR code found on the selected screen.":
+    "No QR code found on the selected screen.",
+  "Screen capture is not supported in this environment.":
+    "Screen capture is not supported in this environment.",
+  "Screen QR scan cancelled.": "Screen QR scan cancelled.",
+  "Unable to capture a screen frame.": "Unable to capture a screen frame.",
+  "Unable to read QR from screen.": "Unable to read QR from screen.",
   Fee: "Fee",
   "Charged on-chain": "Charged on-chain",
   "Network fee: {amount} {asset}.": "Network fee: {amount} {asset}.",
@@ -1093,6 +1112,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Request starter XOR from the active network faucet.":
     "Request starter XOR from the active network faucet.",
   "Request XOR": "Request XOR",
+  Cancel: "Cancel",
+  "Canceling…": "Canceling…",
+  "Faucet request canceled.": "Faucet request canceled.",
   "Waiting for the network to expose the funded asset in account balances.":
     "Waiting for the network to expose the funded asset in account balances.",
   "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.":
@@ -1478,6 +1500,11 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "At a glance": "At a glance",
   "Fast path": "Fast path",
   "Quick find": "Quick find",
+  "Live telemetry panel": "Live telemetry panel",
+  "Consensus runway": "Consensus runway",
+  Finalized: "Finalized",
+  Pending: "Pending",
+  Current: "Current",
   "XOR supply, holder concentration, and live chain telemetry":
     "XOR supply, holder concentration, and live chain telemetry",
   "XOR supply, flow, and consensus telemetry":
@@ -1504,13 +1531,22 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "{transfers} transfers · {senders} senders · {receivers} receivers":
     "{transfers} transfers · {senders} senders · {receivers} receivers",
   Issuance: "Issuance",
+  "Minted {minted}": "Minted {minted}",
+  "Burned {burned}": "Burned {burned}",
   "Minted {minted} · burned {burned}": "Minted {minted} · burned {burned}",
   "30 day issuance pulse": "30 day issuance pulse",
   "Bars show the absolute net issuance per day so supply shocks are visible at a glance.":
     "Bars show the absolute net issuance per day so supply shocks are visible at a glance.",
+  "Daily net issuance chart for the visible econometrics window.":
+    "Daily net issuance chart for the visible econometrics window.",
   Distribution: "Distribution",
   "Whale map": "Whale map",
   Concentration: "Concentration",
+  "Lorenz curve": "Lorenz curve",
+  "Even distribution": "Even distribution",
+  "Observed supply": "Observed supply",
+  "Lorenz curve for observed XOR holder distribution.":
+    "Lorenz curve for observed XOR holder distribution.",
   "Top holders": "Top holders",
   Gini: "Gini",
   "0 is even, 1 is extremely concentrated.":
@@ -1534,6 +1570,15 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Partial telemetry": "Partial telemetry",
   "Live telemetry": "Live telemetry",
   "Waiting for signal": "Waiting for signal",
+  "Finality runway: {pending} blocks pending between finalized and current height.":
+    "Finality runway: {pending} blocks pending between finalized and current height.",
+  "Queue pressure": "Queue pressure",
+  "Queued transactions versus reported queue capacity.":
+    "Queued transactions versus reported queue capacity.",
+  "Finality gap": "Finality gap",
+  "Accepted share": "Accepted share",
+  "Accepted transactions as a share of accepted plus rejected totals.":
+    "Accepted transactions as a share of accepted plus rejected totals.",
   "Queue saturation signal unavailable.":
     "Queue saturation signal unavailable.",
   "Ingress is at the saturation threshold.":
@@ -2219,7 +2264,26 @@ const EN_TRANSLATIONS: TranslationTable = {
   Unnamed: "Wallet",
   "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.":
     "Pair from your phone. Keys stay there.",
+  IrohaConnect: "IrohaConnect",
   "IrohaConnect Pairing": "Connect pairing",
+  "Scan a visible IrohaConnect QR from another app window, or upload a saved QR image.":
+    "Scan a visible Connect QR or upload an image.",
+  "Scan screen QR": "Scan screen QR",
+  "Scanning screen...": "Scanning screen...",
+  "Screen capture is not supported in this environment.":
+    "Screen capture is not supported here.",
+  "Choose the screen or window that contains the QR code.":
+    "Choose the screen or window with the QR code.",
+  "Unable to capture a screen frame.": "Could not capture the screen.",
+  "No QR code found on the selected screen.":
+    "No QR found on the selected screen.",
+  "Screen QR scan cancelled.": "Screen scan cancelled.",
+  "Unable to read QR from screen.": "Could not read QR from the screen.",
+  Approval: "Approval",
+  "Approving...": "Approving...",
+  "Approving…": "Approving...",
+  Ready: "Ready",
+  "IrohaConnect approved.": "IrohaConnect approved.",
   "Generate pairing QR": "Show pairing QR",
   "TAIRA connection is unavailable. Reload and try again.":
     "TAIRA connection unavailable. Reload and try again.",

@@ -262,7 +262,12 @@
           </p>
           <p class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{ formatTransactionFee(null, t) }}</strong>
+            <strong>{{
+              formatTransactionFee(
+                transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                t,
+              )
+            }}</strong>
           </p>
           <div v-if="cloud.launchResult" class="soracloud-launch-result">
             <span class="pill positive">{{ t("Launch submitted") }}</span>
@@ -271,7 +276,13 @@
               {{ cloud.launchResult.tx_hash_hex }}
             </span>
             <span class="soracloud-launch-fee">
-              {{ formatTransactionFee(cloud.launchResult, t) }}
+              {{
+                formatTransactionFee(
+                  cloud.launchResult,
+                  t,
+                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                )
+              }}
             </span>
           </div>
 
@@ -447,7 +458,10 @@ import {
   type SoraCloudDeploymentStatus,
   type SoraCloudStorageClass,
 } from "@/utils/soracloud";
-import { formatTransactionFee } from "@/utils/transactionFee";
+import {
+  formatTransactionFee,
+  transactionFeeHintForEndpoint,
+} from "@/utils/transactionFee";
 
 type LaunchStep = "model" | "lease" | "review";
 

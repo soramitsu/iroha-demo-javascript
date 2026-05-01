@@ -42,6 +42,7 @@ import {
   keepSubscription,
   pauseSubscription,
   resumeSubscription,
+  signIrohaConnectMessage,
   submitGovernancePlainBallot,
   transferAsset,
 } from "@/services/iroha";
@@ -68,6 +69,27 @@ describe("iroha services bridge", () => {
     expect(getChainMetadataMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
     });
+  });
+
+  it("forwards IrohaConnect signing requests to the bridge", async () => {
+    const signIrohaConnectMessageMock = vi.fn().mockResolvedValue({
+      publicKeyHex: "ed0120public",
+      signatureB64: "signature",
+    });
+
+    (window as any).iroha = {
+      signIrohaConnectMessage: signIrohaConnectMessageMock,
+    };
+
+    const input = {
+      accountId: "alice@wonderland",
+      signingMessageB64: "bWVzc2FnZQ==",
+    };
+    await expect(signIrohaConnectMessage(input)).resolves.toEqual({
+      publicKeyHex: "ed0120public",
+      signatureB64: "signature",
+    });
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(input);
   });
 
   it("forwards offset-based pagination to asset and transaction fetchers", async () => {

@@ -1,4 +1,10 @@
-import { app, BrowserWindow, ipcMain, session } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  session,
+} from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
@@ -8,7 +14,10 @@ import {
   extractKaigiDeepLinkFromArgv,
   parseKaigiDeepLinkToHashRoute,
 } from "./deepLink";
-import { registerMediaPermissionHandlers } from "./mediaPermissions";
+import {
+  registerDisplayMediaRequestHandler,
+  registerMediaPermissionHandlers,
+} from "./mediaPermissions";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -186,6 +195,9 @@ app.whenReady().then(() => {
   registerVpnHandlers();
   registerVaultHandlers();
   registerMediaPermissionHandlers(session.defaultSession);
+  registerDisplayMediaRequestHandler(session.defaultSession, () =>
+    desktopCapturer.getSources({ types: ["screen", "window"] }),
+  );
   registerKaigiProtocol();
   createWindow();
 

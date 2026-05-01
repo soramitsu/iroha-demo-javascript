@@ -42,11 +42,58 @@
           </span>
         </div>
       </div>
-      <div class="stats-orbit" aria-hidden="true">
-        <div class="stats-orbit-core"></div>
-        <div class="stats-orbit-ring stats-orbit-ring-a"></div>
-        <div class="stats-orbit-ring stats-orbit-ring-b"></div>
-        <div class="stats-orbit-ring stats-orbit-ring-c"></div>
+      <div class="stats-live-panel" :aria-label="t('Live telemetry panel')">
+        <header class="stats-live-header">
+          <p class="stats-kicker">{{ t("Consensus runway") }}</p>
+          <span class="stats-live-state" :class="telemetryChipClass">
+            {{ telemetryLabel }}
+          </span>
+        </header>
+        <div class="runway-block">
+          <div class="runway-bar" :title="blockRunwayLabel">
+            <span
+              class="runway-fill finalized"
+              :style="{ width: `${blockRunway.finalizedPercent}%` }"
+            ></span>
+            <span
+              class="runway-fill pending"
+              :style="{ width: `${blockRunway.pendingPercent}%` }"
+            ></span>
+          </div>
+          <div class="runway-labels">
+            <span>
+              <strong>{{ blockRunway.finalizedHeight }}</strong>
+              {{ t("Finalized") }}
+            </span>
+            <span>
+              <strong>{{ blockRunway.pendingBlocks }}</strong>
+              {{ t("Pending") }}
+            </span>
+            <span>
+              <strong>{{ blockRunway.currentHeight }}</strong>
+              {{ t("Current") }}
+            </span>
+          </div>
+        </div>
+        <div class="stats-live-gauges">
+          <article
+            v-for="gauge in heroGauges"
+            :key="gauge.label"
+            class="stats-live-gauge"
+          >
+            <div class="stats-live-gauge-topline">
+              <span>{{ gauge.label }}</span>
+              <strong>{{ gauge.value }}</strong>
+            </div>
+            <div class="stats-live-gauge-track">
+              <span
+                :class="gauge.tone"
+                :style="{ width: `${gauge.fill}%` }"
+              ></span>
+            </div>
+            <p>{{ gauge.helper }}</p>
+          </article>
+        </div>
       </div>
     </section>
 
@@ -212,6 +259,12 @@
                 <h4>{{ window.key }}</h4>
                 <span class="window-value">{{ window.amount }}</span>
               </div>
+              <div class="window-meter">
+                <span
+                  class="window-meter-fill"
+                  :style="{ width: `${window.amountFill}%` }"
+                ></span>
+              </div>
               <p class="window-sub">
                 {{
                   t(
@@ -243,6 +296,18 @@
                 <h4>{{ window.key }}</h4>
                 <span class="window-value">{{ window.net }}</span>
               </div>
+              <div class="issuance-balance">
+                <span
+                  class="issuance-balance-fill mint"
+                  :style="{ width: `${window.mintedFill}%` }"
+                  :title="t('Minted {minted}', { minted: window.minted })"
+                ></span>
+                <span
+                  class="issuance-balance-fill burn"
+                  :style="{ width: `${window.burnedFill}%` }"
+                  :title="t('Burned {burned}', { burned: window.burned })"
+                ></span>
+              </div>
               <p class="window-sub">
                 {{
                   t("Minted {minted} · burned {burned}", {
@@ -265,15 +330,28 @@
                 }}
               </p>
             </div>
-            <div class="series-strip" aria-hidden="true">
+            <div
+              class="issuance-chart"
+              role="img"
+              :aria-label="issuanceSeriesLabel"
+            >
+              <span class="issuance-zero-line"></span>
               <span
                 v-for="bar in issuanceSeriesBars"
                 :key="bar.key"
-                class="series-bar"
+                class="issuance-day"
                 :class="bar.tone"
-                :style="{ height: `${bar.height}%` }"
                 :title="bar.title"
-              ></span>
+              >
+                <span
+                  class="issuance-day-bar mint"
+                  :style="{ height: `${bar.positiveHeight}%` }"
+                ></span>
+                <span
+                  class="issuance-day-bar burn"
+                  :style="{ height: `${bar.negativeHeight}%` }"
+                ></span>
+              </span>
             </div>
           </div>
         </div>
@@ -293,6 +371,30 @@
         <div class="section-column">
           <div class="section-heading">
             <p class="section-label">{{ t("Concentration") }}</p>
+          </div>
+          <div class="lorenz-panel">
+            <header class="lorenz-header">
+              <span class="section-label">{{ t("Lorenz curve") }}</span>
+              <span>{{ top10ShareLabel }}</span>
+            </header>
+            <svg
+              class="lorenz-chart"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              role="img"
+              :aria-label="lorenzCurveLabel"
+            >
+              <polyline class="lorenz-equality" points="0,100 100,0" />
+              <polyline
+                class="lorenz-line"
+                :class="{ muted: !lorenzCurve.hasData }"
+                :points="lorenzCurve.points"
+              />
+            </svg>
+            <div class="lorenz-legend">
+              <span>{{ t("Even distribution") }}</span>
+              <span>{{ t("Observed supply") }}</span>
+            </div>
           </div>
           <div class="distribution-grid">
             <article
@@ -354,6 +456,12 @@ import { getNetworkStats } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { deriveAssetSymbol, formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
+import {
+  buildDivergingSeriesBars,
+  buildLorenzCurve,
+  ratioPercent,
+  toneFromThresholds,
+} from "@/utils/networkStatsVisuals";
 
 const session = useSessionStore();
 const { d, n, t } = useAppI18n();
@@ -428,16 +536,7 @@ const shortenAccountId = (value: string) => {
 const queueFillPercent = computed(() => {
   const queueSize = stats.value?.runtime.queueSize;
   const queueCapacity = stats.value?.runtime.queueCapacity;
-  if (
-    queueSize === null ||
-    queueSize === undefined ||
-    queueCapacity === null ||
-    queueCapacity === undefined ||
-    queueCapacity <= 0
-  ) {
-    return null;
-  }
-  return Math.max(0, Math.min(100, (queueSize / queueCapacity) * 100));
+  return ratioPercent(queueSize, queueCapacity);
 });
 
 const totalSupplyLabel = computed(() =>
@@ -462,6 +561,90 @@ const collectedAtLabel = computed(() =>
       })
     : t("—"),
 );
+
+const blockRunway = computed(() => {
+  const runtime = stats.value?.runtime;
+  const pendingPercent = ratioPercent(runtime?.finalizationLag ?? 0, 12) ?? 0;
+  return {
+    finalizedPercent: Math.max(0, 100 - pendingPercent),
+    pendingPercent,
+    pendingBlocks: numberOrDash(runtime?.finalizationLag ?? null),
+    finalizedHeight: numberOrDash(runtime?.finalizedBlockHeight ?? null),
+    currentHeight: numberOrDash(runtime?.currentBlockHeight ?? null),
+  };
+});
+
+const blockRunwayLabel = computed(() =>
+  t(
+    "Finality runway: {pending} blocks pending between finalized and current height.",
+    {
+      pending: blockRunway.value.pendingBlocks,
+    },
+  ),
+);
+
+const acceptedSharePercent = computed(() => {
+  const accepted = stats.value?.explorer?.transactionsAccepted;
+  const rejected = stats.value?.explorer?.transactionsRejected;
+  if (
+    accepted === null ||
+    accepted === undefined ||
+    rejected === null ||
+    rejected === undefined
+  ) {
+    return null;
+  }
+  return ratioPercent(accepted, accepted + rejected);
+});
+
+const heroGauges = computed(() => {
+  const runtime = stats.value?.runtime;
+  const queueFill = queueFillPercent.value;
+  const finalityLag = runtime?.finalizationLag ?? null;
+  const commitTime = runtime?.commitTimeMs ?? null;
+  const rejectedShare =
+    acceptedSharePercent.value === null
+      ? null
+      : 100 - acceptedSharePercent.value;
+  return [
+    {
+      label: t("Queue pressure"),
+      value: queueFill === null ? t("—") : formatPercent(queueFill / 100),
+      helper: t("Queued transactions versus reported queue capacity."),
+      fill: queueFill ?? 0,
+      tone:
+        runtime?.txQueueSaturated === true
+          ? "danger"
+          : toneFromThresholds(queueFill, 40, 75),
+    },
+    {
+      label: t("Finality gap"),
+      value: numberOrDash(finalityLag),
+      helper: t("Current block height minus finalized height."),
+      fill: ratioPercent(finalityLag ?? 0, 12) ?? 0,
+      tone: toneFromThresholds(finalityLag, 2, 6),
+    },
+    {
+      label: t("Commit time"),
+      value: formatMs(commitTime),
+      helper: t("Observed transaction commit latency."),
+      fill: ratioPercent(commitTime ?? 0, 6000) ?? 0,
+      tone: toneFromThresholds(commitTime, 1800, 3500),
+    },
+    {
+      label: t("Accepted share"),
+      value:
+        acceptedSharePercent.value === null
+          ? t("—")
+          : formatPercent(acceptedSharePercent.value / 100),
+      helper: t(
+        "Accepted transactions as a share of accepted plus rejected totals.",
+      ),
+      fill: acceptedSharePercent.value ?? 0,
+      tone: toneFromThresholds(rejectedShare, 2, 10),
+    },
+  ];
+});
 
 const telemetryLabel = computed(() => {
   if (loading.value && !stats.value) {
@@ -590,6 +773,8 @@ const runtimeCards = computed(() => {
   const runtime = stats.value?.runtime;
   const queueFill = queueFillPercent.value;
   const finalityLag = runtime?.finalizationLag ?? null;
+  const commitTime = runtime?.commitTimeMs ?? null;
+  const blockCadence = runtime?.effectiveBlockTimeMs ?? null;
   return [
     {
       label: t("Queue fill"),
@@ -604,50 +789,28 @@ const runtimeCards = computed(() => {
       tone:
         runtime?.txQueueSaturated || (queueFill ?? 0) >= 75
           ? "danger"
-          : (queueFill ?? 0) >= 40
-            ? "warning"
-            : "positive",
+          : toneFromThresholds(queueFill, 40, 75),
     },
     {
       label: t("Finality lag"),
       value: numberOrDash(finalityLag),
       helper: t("Current block height minus finalized height."),
-      fill: Math.max(0, Math.min(100, ((finalityLag ?? 0) / 12) * 100)),
-      tone:
-        (finalityLag ?? 0) >= 6
-          ? "danger"
-          : (finalityLag ?? 0) >= 2
-            ? "warning"
-            : "positive",
+      fill: ratioPercent(finalityLag ?? 0, 12) ?? 0,
+      tone: toneFromThresholds(finalityLag, 2, 6),
     },
     {
       label: t("Commit time"),
-      value: formatMs(runtime?.commitTimeMs),
+      value: formatMs(commitTime),
       helper: t("Observed transaction commit latency."),
-      fill: Math.max(
-        0,
-        Math.min(100, (((runtime?.commitTimeMs ?? 0) as number) / 6000) * 100),
-      ),
-      tone:
-        (runtime?.commitTimeMs ?? 0) >= 3500
-          ? "danger"
-          : (runtime?.commitTimeMs ?? 0) >= 1800
-            ? "warning"
-            : "positive",
+      fill: ratioPercent(commitTime ?? 0, 6000) ?? 0,
+      tone: toneFromThresholds(commitTime, 1800, 3500),
     },
     {
       label: t("Block cadence"),
-      value: formatMs(runtime?.effectiveBlockTimeMs),
+      value: formatMs(blockCadence),
       helper: t("Effective block time after current pacing."),
-      fill: Math.max(
-        0,
-        Math.min(
-          100,
-          (((runtime?.effectiveBlockTimeMs ?? 0) as number) / 6000) * 100,
-        ),
-      ),
-      tone:
-        (runtime?.effectiveBlockTimeMs ?? 0) >= 4000 ? "warning" : "positive",
+      fill: ratioPercent(blockCadence ?? 0, 6000) ?? 0,
+      tone: toneFromThresholds(blockCadence, 4000, 6000),
     },
   ];
 });
@@ -705,44 +868,75 @@ const validatorPostureCards = computed(() => {
   ];
 });
 
-const velocityCards = computed(() =>
-  (stats.value?.econometrics?.velocityWindows ?? []).map((window) => ({
-    key: window.key.toUpperCase(),
-    amount: formatCompactAmount(window.amount),
-    transfers: numberOrDash(window.transfers),
-    senders: numberOrDash(window.uniqueSenders),
-    receivers: numberOrDash(window.uniqueReceivers),
-  })),
-);
-
-const issuanceCards = computed(() =>
-  (stats.value?.econometrics?.issuanceWindows ?? []).map((window) => ({
-    key: window.key.toUpperCase(),
-    net: formatCompactAmount(window.net),
-    minted: formatCompactAmount(window.minted),
-    burned: formatCompactAmount(window.burned),
-  })),
-);
-
-const issuanceSeriesBars = computed(() => {
-  const points = stats.value?.econometrics?.issuanceSeries ?? [];
-  const trailing = points.slice(-18);
-  const maxAbs = trailing.reduce((acc, point) => {
-    const magnitude = Math.abs(Number(point.net));
-    return Number.isFinite(magnitude) ? Math.max(acc, magnitude) : acc;
+const velocityCards = computed(() => {
+  const windows = stats.value?.econometrics?.velocityWindows ?? [];
+  const maxAmount = windows.reduce((max, window) => {
+    const amount = Number(window.amount);
+    return Number.isFinite(amount) ? Math.max(max, amount) : max;
   }, 0);
-  return trailing.map((point, index) => {
-    const netValue = Number(point.net);
-    const magnitude = Number.isFinite(netValue) ? Math.abs(netValue) : 0;
-    const height = maxAbs > 0 ? Math.max(10, (magnitude / maxAbs) * 100) : 10;
+  return windows.map((window) => {
+    const amount = Number(window.amount);
     return {
-      key: `${point.bucketStartMs}-${index}`,
-      height,
-      tone: netValue < 0 ? "burn" : netValue > 0 ? "mint" : "flat",
-      title: `${d(point.bucketStartMs, { dateStyle: "medium" })} · ${point.net}`,
+      key: window.key.toUpperCase(),
+      amount: formatCompactAmount(window.amount),
+      amountFill:
+        ratioPercent(Number.isFinite(amount) ? amount : 0, maxAmount) ?? 0,
+      transfers: numberOrDash(window.transfers),
+      senders: numberOrDash(window.uniqueSenders),
+      receivers: numberOrDash(window.uniqueReceivers),
     };
   });
 });
+
+const issuanceCards = computed(() => {
+  const windows = stats.value?.econometrics?.issuanceWindows ?? [];
+  const maxFlow = windows.reduce((max, window) => {
+    const minted = Number(window.minted);
+    const burned = Number(window.burned);
+    return Math.max(
+      max,
+      Number.isFinite(minted) ? Math.abs(minted) : 0,
+      Number.isFinite(burned) ? Math.abs(burned) : 0,
+    );
+  }, 0);
+  return windows.map((window) => {
+    const minted = Number(window.minted);
+    const burned = Number(window.burned);
+    return {
+      key: window.key.toUpperCase(),
+      net: formatCompactAmount(window.net),
+      minted: formatCompactAmount(window.minted),
+      burned: formatCompactAmount(window.burned),
+      mintedFill:
+        ratioPercent(Number.isFinite(minted) ? Math.abs(minted) : 0, maxFlow) ??
+        0,
+      burnedFill:
+        ratioPercent(Number.isFinite(burned) ? Math.abs(burned) : 0, maxFlow) ??
+        0,
+    };
+  });
+});
+
+const issuanceSeriesBars = computed(() => {
+  const points = stats.value?.econometrics?.issuanceSeries ?? [];
+  const bars = buildDivergingSeriesBars(points);
+  return bars.map((bar) => ({
+    ...bar,
+    title: `${d(bar.bucketStartMs, { dateStyle: "medium" })} · ${bar.netValue}`,
+  }));
+});
+
+const issuanceSeriesLabel = computed(() =>
+  t("Daily net issuance chart for the visible econometrics window."),
+);
+
+const lorenzCurve = computed(() =>
+  buildLorenzCurve(stats.value?.supply?.distribution.lorenz ?? []),
+);
+
+const lorenzCurveLabel = computed(() =>
+  t("Lorenz curve for observed XOR holder distribution."),
+);
 
 const distributionCards = computed(() => {
   const distribution = stats.value?.supply?.distribution;
@@ -908,29 +1102,9 @@ watch(
   padding: 28px;
 }
 
-.stats-hero::before,
-.hud-panel::before,
-.stats-nav-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(
-      90deg,
-      transparent 0,
-      rgba(255, 255, 255, 0.04) 48%,
-      transparent 100%
-    ),
-    repeating-linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.015) 0,
-      rgba(255, 255, 255, 0.015) 1px,
-      transparent 1px,
-      transparent 20px
-    );
-  mix-blend-mode: screen;
-  opacity: 0.65;
+.stats-hero-copy {
+  position: relative;
+  z-index: 1;
 }
 
 .stats-kicker,
@@ -1067,7 +1241,7 @@ watch(
   font-size: clamp(2.6rem, 6vw, 5rem);
   line-height: 0.92;
   font-weight: 700;
-  letter-spacing: -0.06em;
+  letter-spacing: 0;
   text-shadow: 0 0 35px rgba(110, 221, 255, 0.22);
 }
 
@@ -1111,57 +1285,175 @@ watch(
   color: var(--iroha-muted);
 }
 
-.stats-orbit {
+.stats-live-panel {
   position: relative;
-  min-height: 240px;
+  z-index: 1;
   display: grid;
-  place-items: center;
-}
-
-.stats-orbit-core {
-  width: 116px;
-  height: 116px;
-  border-radius: 50%;
+  align-content: start;
+  gap: 18px;
+  min-height: 100%;
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid rgba(110, 221, 255, 0.14);
   background:
-    radial-gradient(
-      circle at 35% 35%,
-      rgba(255, 255, 255, 0.95),
-      transparent 32%
+    linear-gradient(
+      180deg,
+      rgba(110, 221, 255, 0.1),
+      rgba(255, 255, 255, 0.025)
     ),
-    radial-gradient(
-      circle at 50% 50%,
-      rgba(53, 196, 255, 0.45),
-      rgba(14, 18, 28, 0.1) 72%
-    );
-  box-shadow:
-    0 0 0 14px rgba(95, 230, 169, 0.06),
-    0 0 70px rgba(53, 196, 255, 0.24);
+    rgba(4, 9, 18, 0.46);
 }
 
-.stats-orbit-ring {
-  position: absolute;
-  border-radius: 50%;
-  border: 1px solid rgba(110, 221, 255, 0.22);
+:root[data-theme="light"] .stats-live-panel {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(110, 221, 255, 0.16),
+      rgba(255, 255, 255, 0.72)
+    ),
+    rgba(255, 255, 255, 0.76);
+  border-color: rgba(9, 89, 124, 0.16);
 }
 
-.stats-orbit-ring-a {
-  width: 180px;
-  height: 180px;
-  animation: spin-slow 22s linear infinite;
+.stats-live-header,
+.stats-live-gauge-topline,
+.runway-labels,
+.lorenz-header,
+.lorenz-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.stats-orbit-ring-b {
-  width: 240px;
-  height: 240px;
-  border-style: dashed;
-  animation: spin-reverse 32s linear infinite;
+.stats-live-state {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
-.stats-orbit-ring-c {
-  width: 300px;
-  height: 300px;
-  border-color: rgba(255, 142, 170, 0.18);
-  animation: pulse 5s ease-in-out infinite;
+.stats-live-state.positive {
+  color: #8ef6c8;
+}
+
+.stats-live-state.warning {
+  color: #ffd58e;
+}
+
+.stats-live-state.danger {
+  color: #ff9daa;
+}
+
+.stats-live-state.muted {
+  color: var(--iroha-muted);
+}
+
+.runway-block {
+  display: grid;
+  gap: 12px;
+}
+
+.runway-bar {
+  display: flex;
+  overflow: hidden;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  outline: 1px solid rgba(255, 255, 255, 0.08);
+  outline-offset: -1px;
+}
+
+.runway-fill {
+  display: block;
+  min-width: 2px;
+  transition: width 260ms ease;
+}
+
+.runway-fill.finalized {
+  background: linear-gradient(90deg, #49e9b6, #6eddff);
+}
+
+.runway-fill.pending {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(255, 193, 118, 0.9) 0,
+    rgba(255, 193, 118, 0.9) 6px,
+    rgba(255, 122, 138, 0.86) 6px,
+    rgba(255, 122, 138, 0.86) 12px
+  );
+}
+
+.runway-labels {
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.runway-labels strong {
+  display: block;
+  color: var(--iroha-text);
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.stats-live-gauges {
+  display: grid;
+  gap: 12px;
+}
+
+.stats-live-gauge {
+  display: grid;
+  gap: 8px;
+}
+
+.stats-live-gauge-topline span {
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.stats-live-gauge-topline strong {
+  font-size: 0.96rem;
+}
+
+.stats-live-gauge-track,
+.window-meter,
+.issuance-balance {
+  overflow: hidden;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stats-live-gauge-track span,
+.window-meter-fill,
+.issuance-balance-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #49e9b6, #6eddff);
+  transition: width 260ms ease;
+}
+
+.stats-live-gauge-track span.warning {
+  background: linear-gradient(90deg, #ffca6f, #ff8f62);
+}
+
+.stats-live-gauge-track span.danger {
+  background: linear-gradient(90deg, #ff7a8a, #ff4c66);
+}
+
+.stats-live-gauge-track span.muted {
+  background: linear-gradient(90deg, #8e98ad, #b9c2d6);
+}
+
+.stats-live-gauge p {
+  margin: 0;
+  color: var(--iroha-muted);
+  font-size: 0.82rem;
 }
 
 .stats-banner {
@@ -1336,7 +1628,7 @@ watch(
   font-size: clamp(1.5rem, 2.4vw, 2.4rem);
   font-weight: 700;
   line-height: 1;
-  letter-spacing: -0.04em;
+  letter-spacing: 0;
 }
 
 .instrument-value,
@@ -1363,6 +1655,7 @@ watch(
   border-radius: inherit;
   background: linear-gradient(90deg, #49e9b6, #6eddff);
   box-shadow: 0 0 22px rgba(110, 221, 255, 0.3);
+  transition: width 260ms ease;
 }
 
 .instrument-meter-fill.warning {
@@ -1388,32 +1681,133 @@ watch(
   gap: 14px;
 }
 
-.series-strip {
+.window-meter {
+  margin: 12px 0 10px;
+}
+
+.issuance-balance {
+  display: flex;
+  gap: 3px;
+  margin: 12px 0 10px;
+}
+
+.issuance-balance-fill.mint {
+  background: linear-gradient(90deg, #49e9b6, #6eddff);
+}
+
+.issuance-balance-fill.burn {
+  background: linear-gradient(90deg, #ff9d6c, #ff7a8a);
+}
+
+.issuance-chart {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(18, minmax(0, 1fr));
-  align-items: end;
+  align-items: stretch;
   gap: 8px;
-  min-height: 112px;
+  min-height: 142px;
   padding: 12px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.series-bar {
-  display: block;
+.issuance-zero-line {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 50%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.issuance-day {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.issuance-day-bar {
   width: 100%;
-  min-height: 12px;
-  border-radius: 999px 999px 3px 3px;
+  min-height: 0;
+  border-radius: 999px;
+  transition: height 260ms ease;
+}
+
+.issuance-day-bar.mint {
+  align-self: end;
   background: linear-gradient(180deg, #6eddff, rgba(110, 221, 255, 0.32));
 }
 
-.series-bar.burn {
-  background: linear-gradient(180deg, #ff9d6c, rgba(255, 122, 138, 0.32));
+.issuance-day-bar.burn {
+  align-self: start;
+  background: linear-gradient(180deg, rgba(255, 122, 138, 0.34), #ff9d6c);
 }
 
-.series-bar.flat {
-  background: linear-gradient(180deg, #9ba6bf, rgba(155, 166, 191, 0.26));
+.issuance-day.flat::after {
+  content: "";
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  top: calc(50% - 1px);
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(155, 166, 191, 0.55);
+}
+
+.lorenz-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.lorenz-header span:last-child {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.lorenz-chart {
+  width: 100%;
+  min-height: 190px;
+  overflow: visible;
+}
+
+.lorenz-equality,
+.lorenz-line {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.lorenz-equality {
+  stroke: rgba(255, 255, 255, 0.26);
+  stroke-dasharray: 4 4;
+  stroke-width: 1;
+}
+
+.lorenz-line {
+  stroke: #6eddff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 8px rgba(110, 221, 255, 0.28));
+  transition: stroke 180ms ease;
+}
+
+.lorenz-line.muted {
+  stroke: rgba(155, 166, 191, 0.68);
+}
+
+.lorenz-legend {
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .holder-list {
@@ -1466,36 +1860,6 @@ watch(
   gap: 8px;
 }
 
-@keyframes spin-slow {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes spin-reverse {
-  from {
-    transform: rotate(360deg);
-  }
-  to {
-    transform: rotate(0deg);
-  }
-}
-
-@keyframes pulse {
-  0%,
-  100% {
-    transform: scale(0.98);
-    opacity: 0.72;
-  }
-  50% {
-    transform: scale(1.02);
-    opacity: 1;
-  }
-}
-
 @media (max-width: 1220px) {
   .stats-nav,
   .overview-grid,
@@ -1518,15 +1882,23 @@ watch(
     grid-template-columns: 1fr;
   }
 
-  .stats-orbit {
-    min-height: 200px;
-  }
-
   .instrument-grid,
   .window-grid,
   .distribution-grid,
   .signal-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .runway-fill,
+  .stats-live-gauge-track span,
+  .window-meter-fill,
+  .issuance-balance-fill,
+  .issuance-day-bar,
+  .instrument-meter-fill,
+  .holder-meter-fill {
+    transition: none;
   }
 }
 </style>

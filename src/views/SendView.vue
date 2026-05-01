@@ -138,7 +138,12 @@
         </div>
         <p class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{ formatTransactionFee(null, t) }}</strong>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
         </p>
         <div class="actions">
           <button :disabled="sending || !isValid" @click="handleSend">
@@ -217,6 +222,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import {
   CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX,
@@ -777,7 +783,12 @@ const handleSend = async () => {
               hash: result.hash,
             })
         : t("Transaction submitted: {hash}", { hash: result.hash });
-    statusMessage.value = appendTransactionFee(successMessage, result, t);
+    statusMessage.value = appendTransactionFee(
+      successMessage,
+      result,
+      t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
+    );
     statusTone.value = "success";
     void refreshSendAssets();
   } catch (error) {

@@ -24,6 +24,7 @@
           >
             {{ t("Open wallet") }}
           </a>
+          <HeaderIrohaConnectButton />
           <a v-if="session.hasAccount" class="header-action" href="#/receive">
             {{ t("Receive") }}
           </a>
@@ -270,6 +271,7 @@ import ReceiveIcon from "@/assets/receive.svg";
 import UserIcon from "@/assets/user.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
 import AccountSwitcher from "@/components/AccountSwitcher.vue";
+import HeaderIrohaConnectButton from "@/components/HeaderIrohaConnectButton.vue";
 import { CHAIN_PRESETS } from "@/constants/chains";
 import { getAccountDisplayLabel } from "@/utils/accountId";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";

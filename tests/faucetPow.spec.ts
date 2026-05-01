@@ -69,6 +69,19 @@ describe("faucetPow", () => {
     );
   });
 
+  it("stops solving when the request is canceled", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("Faucet request canceled."));
+
+    await expect(
+      solveFaucetPowPuzzle("alice@test", basePuzzle, {
+        maxAttempts: 512,
+        concurrency: 2,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("Faucet request canceled.");
+  });
+
   it("rejects unsupported puzzle algorithms", async () => {
     await expect(
       solveFaucetPowPuzzle("alice@test", {

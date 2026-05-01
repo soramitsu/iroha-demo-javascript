@@ -22,6 +22,7 @@ export type SolvedFaucetPow = {
 export type FaucetPowSolveOptions = {
   maxAttempts?: number;
   concurrency?: number;
+  signal?: AbortSignal;
 };
 
 type FaucetPowDigestOptions = {
@@ -46,6 +47,21 @@ const DEFAULT_CONCURRENCY = Math.max(
   1,
   Math.min(4, availableParallelism?.() ?? 1),
 );
+
+const createAbortError = () => {
+  const error = new Error("Faucet request canceled.");
+  error.name = "AbortError";
+  return error;
+};
+
+const readAbortReason = (signal: AbortSignal) =>
+  signal.reason instanceof Error ? signal.reason : createAbortError();
+
+const throwIfAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) {
+    throw readAbortReason(signal);
+  }
+};
 
 export function leadingZeroBits(bytes: Uint8Array): number {
   let total = 0;
@@ -190,6 +206,7 @@ export async function solveFaucetPowPuzzle(
   puzzle: FaucetPowPuzzle,
   options?: FaucetPowSolveOptions,
 ): Promise<SolvedFaucetPow> {
+  throwIfAborted(options?.signal);
   const difficultyBits = Math.trunc(puzzle.difficulty_bits);
   if (difficultyBits <= 0) {
     throw new Error("Faucet puzzle does not require proof-of-work.");
@@ -227,6 +244,7 @@ export async function solveFaucetPowPuzzle(
     batchStart < maxAttempts;
     batchStart += concurrency
   ) {
+    throwIfAborted(options?.signal);
     const batchSize = Math.min(concurrency, maxAttempts - batchStart);
     const batch = await Promise.all(
       Array.from({ length: batchSize }, (_, index) => {
@@ -244,6 +262,7 @@ export async function solveFaucetPowPuzzle(
         }));
       }),
     );
+    throwIfAborted(options?.signal);
 
     for (const result of batch) {
       if (leadingZeroBits(result.digest) >= difficultyBits) {

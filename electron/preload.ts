@@ -36,6 +36,7 @@ import {
   buildKaigiRosterJoinProof,
   generateKeyPair,
   publicKeyFromPrivate,
+  signEd25519,
 } from "@iroha/iroha-js/crypto";
 import {
   confidentialModeSupportsShield,
@@ -314,6 +315,34 @@ type TransferAssetInput = {
   shieldedReceivePublicKeyBase64Url?: string;
   shieldedOwnerTagHex?: string;
   shieldedDiversifierHex?: string;
+};
+
+type UranaiPrivateTradeProofInput = {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  assetDefinitionId: string;
+  collateralIn: string;
+  privacyFee?: string;
+  privateKeyHex?: HexString;
+  marketId?: string;
+  outcomeIndex?: number;
+};
+
+type UranaiPrivateTradeProofResponse = {
+  schema: "uranai.irohaconnect.private-trade-proof.v1";
+  accountId: string;
+  assetDefinitionId: string;
+  resolvedAssetId: string;
+  spendAmount: string;
+  inputNullifier: string;
+  outputNoteCommitment: string;
+  positionCommitment: string;
+  proofEnv: string;
+  proofEnvEncoding: "base64";
+  rootHintHex: string;
+  nullifiersHex: string[];
+  outputCommitmentsHex: string[];
 };
 
 type ResolveAccountAliasInput = {
@@ -1010,6 +1039,13 @@ type IrohaBridge = {
   ): Promise<void>;
   registerAccount(input: RegisterAccountInput): Promise<{ hash: string }>;
   transferAsset(input: TransferAssetInput): Promise<{ hash: string }>;
+  buildUranaiPrivateTradeProof(
+    input: UranaiPrivateTradeProofInput,
+  ): Promise<UranaiPrivateTradeProofResponse>;
+  signIrohaConnectMessage(input: {
+    accountId: string;
+    signingMessageB64: string;
+  }): Promise<{ publicKeyHex: string; signatureB64: string }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -1063,12 +1099,14 @@ type IrohaBridge = {
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     limit?: number;
     offset?: number;
   }): Promise<AssetsResponse>;
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     privateKeyHex?: string;
     limit?: number;
     offset?: number;
@@ -1150,9 +1188,13 @@ type IrohaBridge = {
       toriiUrl: string;
       accountId: string;
       networkPrefix?: number;
+      requestId?: string;
     },
     onStatus?: FaucetStatusCallback,
   ): Promise<AccountFaucetResponse>;
+  cancelFaucetRequest(input: { requestId: string }): Promise<{
+    canceled: boolean;
+  }>;
   createKaigiMeeting(input: KaigiCreateMeetingInput): Promise<{ hash: string }>;
   getKaigiCall(input: KaigiGetMeetingInput): Promise<KaigiMeetingView>;
   joinKaigiMeeting(input: KaigiJoinMeetingInput): Promise<{ hash: string }>;
@@ -1274,6 +1316,7 @@ const isApiRequestError = (error: unknown): error is ApiRequestError =>
 
 const clientCache = new Map<string, ToriiClient>();
 const kaigiCallWatchers = new Map<string, AbortController>();
+const faucetRequestControllers = new Map<string, AbortController>();
 
 const getClient = (toriiUrlRaw: string) => {
   const baseUrl = normalizeBaseUrl(toriiUrlRaw);
@@ -1288,9 +1331,47 @@ const getClient = (toriiUrlRaw: string) => {
   return client;
 };
 
-const waitForMs = (delayMs: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, delayMs);
+const createFaucetAbortError = () => {
+  const error = new Error("Faucet request canceled.");
+  error.name = "AbortError";
+  return error;
+};
+
+const readAbortReason = (signal: AbortSignal) =>
+  signal.reason instanceof Error ? signal.reason : createFaucetAbortError();
+
+const throwIfAborted = (signal?: AbortSignal) => {
+  if (signal?.aborted) {
+    throw readAbortReason(signal);
+  }
+};
+
+const waitForMs = (delayMs: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(readAbortReason(signal));
+      return;
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let onAbort: (() => void) | null = null;
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (onAbort) {
+        signal?.removeEventListener("abort", onAbort);
+      }
+    };
+    onAbort = () => {
+      cleanup();
+      reject(signal ? readAbortReason(signal) : createFaucetAbortError());
+    };
+    timeoutId = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
 const CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS = 3;
@@ -1313,9 +1394,10 @@ const faucetClaimFundedAssetIsVisible = async (
   assetId: string,
   assetDefinitionId: string,
 ) => {
-  const normalizedAssetId = trimString(assetId).toLowerCase();
+  const rawAssetId = trimString(assetId);
+  const normalizedAssetId = rawAssetId.toLowerCase();
   const normalizedAssetDefinitionId = extractAssetDefinitionId(
-    assetDefinitionId,
+    trimString(assetDefinitionId) || rawAssetId,
   )
     .trim()
     .toLowerCase();
@@ -1380,17 +1462,23 @@ const buildFaucetFinalityUnavailableError = (
   );
 };
 
-const readFaucetLedgerFinalityState = async (baseUrl: string) => {
+const readFaucetLedgerFinalityState = async (
+  baseUrl: string,
+  signal?: AbortSignal,
+) => {
+  throwIfAborted(signal);
   const endpoint = new URL(
     "v1/ledger/headers?limit=1",
     `${normalizeBaseUrl(baseUrl)}/`,
   );
   const response = await nodeFetch(endpoint.toString(), {
     method: "GET",
+    signal,
     headers: {
       Accept: "application/json",
     },
   });
+  throwIfAborted(signal);
   if (!response.ok) {
     if (response.status >= 500) {
       throw buildFaucetFinalityUnavailableError(
@@ -1428,17 +1516,23 @@ const readFaucetLedgerFinalityState = async (baseUrl: string) => {
   };
 };
 
-const readFaucetSumeragiState = async (baseUrl: string) => {
+const readFaucetSumeragiState = async (
+  baseUrl: string,
+  signal?: AbortSignal,
+) => {
+  throwIfAborted(signal);
   const endpoint = new URL(
     "v1/sumeragi/status",
     `${normalizeBaseUrl(baseUrl)}/`,
   );
   const response = await nodeFetch(endpoint.toString(), {
     method: "GET",
+    signal,
     headers: {
       Accept: "application/json",
     },
   });
+  throwIfAborted(signal);
   if (!response.ok) {
     if (response.status >= 500) {
       throw buildFaucetFinalityUnavailableError(
@@ -1472,12 +1566,15 @@ const readFaucetSumeragiState = async (baseUrl: string) => {
   };
 };
 
-const assertFaucetEndpointFinalizing = async (baseUrl: string) => {
+const assertFaucetEndpointFinalizing = async (
+  baseUrl: string,
+  signal?: AbortSignal,
+) => {
   let ledgerState: Awaited<
     ReturnType<typeof readFaucetLedgerFinalityState>
   > | null = null;
   try {
-    ledgerState = await readFaucetLedgerFinalityState(baseUrl);
+    ledgerState = await readFaucetLedgerFinalityState(baseUrl, signal);
   } catch (error) {
     throw error instanceof Error
       ? error
@@ -1494,8 +1591,9 @@ const assertFaucetEndpointFinalizing = async (baseUrl: string) => {
     ReturnType<typeof readFaucetSumeragiState>
   > | null = null;
   try {
-    sumeragiState = await readFaucetSumeragiState(baseUrl);
+    sumeragiState = await readFaucetSumeragiState(baseUrl, signal);
   } catch {
+    throwIfAborted(signal);
     sumeragiState = null;
   }
 
@@ -1528,6 +1626,7 @@ const waitForFaucetClaimFinality = async (
   accountId: string,
   assetId: string,
   assetDefinitionId: string,
+  signal?: AbortSignal,
 ) => {
   const deadline = Date.now() + FAUCET_CLAIM_STATUS_TIMEOUT_MS;
   const invisibleDeadline = Date.now() + FAUCET_CLAIM_INVISIBLE_RETRY_MS;
@@ -1536,8 +1635,10 @@ const waitForFaucetClaimFinality = async (
   let sawPipelineStatus = false;
 
   while (Date.now() <= deadline) {
+    throwIfAborted(signal);
     try {
       const payload = await client.getTransactionStatus(txHashHex);
+      throwIfAborted(signal);
       const statusKind = extractPipelineStatusKind(payload);
       lastStatusKind = statusKind;
       lastError = null;
@@ -1561,10 +1662,12 @@ const waitForFaucetClaimFinality = async (
         };
       }
     } catch (error) {
+      throwIfAborted(signal);
       lastError = error;
     }
 
     try {
+      throwIfAborted(signal);
       if (
         await faucetClaimFundedAssetIsVisible(
           client,
@@ -1573,6 +1676,7 @@ const waitForFaucetClaimFinality = async (
           assetDefinitionId,
         )
       ) {
+        throwIfAborted(signal);
         return {
           statusKind: lastStatusKind,
           timedOut: false,
@@ -1581,6 +1685,7 @@ const waitForFaucetClaimFinality = async (
         };
       }
     } catch (error) {
+      throwIfAborted(signal);
       lastError = error;
     }
 
@@ -1597,7 +1702,7 @@ const waitForFaucetClaimFinality = async (
     if (Date.now() + FAUCET_CLAIM_STATUS_INTERVAL_MS > deadline) {
       break;
     }
-    await waitForMs(FAUCET_CLAIM_STATUS_INTERVAL_MS);
+    await waitForMs(FAUCET_CLAIM_STATUS_INTERVAL_MS, signal);
   }
 
   return {
@@ -4409,12 +4514,17 @@ const fetchConfidentialAssetPolicy = async (
 const fetchAccountAssetsList = async (input: {
   toriiUrl: string;
   accountId: string;
+  networkPrefix?: number;
   limit?: number;
   offset?: number;
 }) => {
   const normalizedBaseUrl = `${normalizeBaseUrl(input.toriiUrl)}/`;
   const normalizedAccountId = encodeURIComponent(
-    normalizeCanonicalAccountIdLiteral(input.accountId, "accountId"),
+    normalizeCanonicalAccountIdLiteral(
+      input.accountId,
+      "accountId",
+      input.networkPrefix,
+    ),
   );
   const endpoint = new URL(
     `v1/accounts/${normalizedAccountId}/assets`,
@@ -5441,6 +5551,175 @@ const readConfidentialVerifyingKeyContext = (
       record,
       inline_key: inlineKey,
     },
+  };
+};
+
+const uranaiPrivateTradeProofSchema =
+  "uranai.irohaconnect.private-trade-proof.v1" as const;
+
+const privateTradeProofName = (prefix: string, parts: string[]) =>
+  `${prefix}-${createHash("sha256")
+    .update(parts.join("|"))
+    .digest("hex")
+    .slice(0, 48)}`;
+
+const buildUranaiPrivateTradeProofEnvelope = async (
+  input: UranaiPrivateTradeProofInput,
+): Promise<UranaiPrivateTradeProofResponse> => {
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+  });
+  const chainId = writeConnection.chainId;
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    writeConnection.networkPrefix,
+  );
+  const collateralIn = trimString(input.collateralIn);
+  const privacyFee = trimString(input.privacyFee || "0");
+  if (!/^\d+$/.test(collateralIn) || BigInt(collateralIn) <= 0n) {
+    throw new Error("Uranai private trade collateral must be a positive whole-number amount.");
+  }
+  if (!/^\d+$/.test(privacyFee)) {
+    throw new Error("Uranai private trade privacy fee must be a whole-number amount.");
+  }
+  const spendAmount = (BigInt(collateralIn) + BigInt(privacyFee)).toString();
+  if (!isPositiveWholeAmount(spendAmount)) {
+    throw new Error("Uranai private trade spend amount must be greater than zero.");
+  }
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Uranai private trade proof",
+  });
+  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
+  const materials = await resolveConfidentialUnshieldMaterials({
+    toriiUrl: input.toriiUrl,
+    chainId,
+    accountId,
+    privateKeyHex,
+    assetDefinitionId: input.assetDefinitionId,
+  });
+  if (BigInt(materials.ledger.spendableQuantity) < BigInt(spendAmount)) {
+    throw new Error(
+      `Shielded spendable balance is ${materials.ledger.spendableQuantity} in ${materials.resolvedAssetId}, but ${spendAmount} is required.`,
+    );
+  }
+
+  const verifyingKeyContext = readConfidentialVerifyingKeyContext(
+    materials.verifyingKey,
+  );
+  let proofEnvelope:
+    | ReturnType<typeof buildConfidentialUnshieldProofV2>
+    | ReturnType<typeof buildConfidentialUnshieldProofV3>;
+  let outputCommitments: ReadonlyArray<Buffer> = [];
+
+  if (isConfidentialUnshieldV2CircuitId(verifyingKeyContext.circuitId)) {
+    const selection = selectWalletConfidentialNotesForExactAmount(
+      materials.ledger.notes,
+      spendAmount,
+    );
+    proofEnvelope = buildConfidentialUnshieldProofV2({
+      chainId,
+      assetDefinitionId: materials.resolvedAssetId,
+      spendKey: privateKey,
+      treeCommitments: materials.ledger.treeCommitmentsHex,
+      inputs: selection.selected.map((note) => ({
+        amount: note.amount,
+        rhoHex: note.rho_hex,
+        diversifierHex: note.diversifier_hex,
+        leafIndex: note.leaf_index,
+      })),
+      publicAmount: spendAmount,
+      rootHintHex: materials.latestRootHex,
+      verifyingKey: verifyingKeyContext.proofVerifyingKey,
+    });
+  } else if (isConfidentialUnshieldV3CircuitId(verifyingKeyContext.circuitId)) {
+    const selection = selectWalletConfidentialNotes(
+      materials.ledger.notes,
+      spendAmount,
+    );
+    const changeOutputs: Array<{
+      note: ReturnType<typeof createWalletConfidentialNote>;
+    }> = [];
+    if (selection.change !== "0") {
+      const changeDescriptor = await createStoredConfidentialReceiveDescriptor({
+        accountId,
+        privateKeyHex,
+        operationLabel: "Uranai private trade proof",
+      });
+      changeOutputs.push({
+        note: createWalletConfidentialNote({
+          assetDefinitionId: materials.resolvedAssetId,
+          amount: selection.change,
+          ownerTagHex: changeDescriptor.ownerTagHex,
+          diversifierHex: changeDescriptor.diversifierHex,
+        }),
+      });
+    }
+    const unshieldV3Proof = buildConfidentialUnshieldProofV3({
+      chainId,
+      assetDefinitionId: materials.resolvedAssetId,
+      spendKey: privateKey,
+      treeCommitments: materials.ledger.treeCommitmentsHex,
+      inputs: selection.selected.map((note) => ({
+        amount: note.amount,
+        rhoHex: note.rho_hex,
+        diversifierHex: note.diversifier_hex,
+        leafIndex: note.leaf_index,
+      })),
+      outputs: changeOutputs.map(({ note }) => ({
+        amount: note.amount,
+        rhoHex: note.rho_hex,
+      })),
+      publicAmount: spendAmount,
+      rootHintHex: materials.latestRootHex,
+      verifyingKey: verifyingKeyContext.proofVerifyingKey,
+    });
+    proofEnvelope = unshieldV3Proof;
+    outputCommitments = unshieldV3Proof.outputCommitments;
+  } else {
+    throw new Error(
+      `Unsupported confidential verifier circuit ${verifyingKeyContext.circuitId || "(missing circuit id)"}.`,
+    );
+  }
+
+  const nullifiersHex = proofEnvelope.nullifiers.map((entry) => toHex(entry));
+  const outputCommitmentsHex = outputCommitments.map((entry) => toHex(entry));
+  const proofEnv = Buffer.from(proofEnvelope.proof).toString("base64");
+  const proofHash = createHash("sha256")
+    .update(Buffer.from(proofEnvelope.proof))
+    .digest("hex");
+  const contextParts = [
+    accountId,
+    materials.resolvedAssetId,
+    spendAmount,
+    trimString(input.marketId),
+    String(input.outcomeIndex ?? ""),
+    materials.latestRootHex,
+    proofHash,
+  ];
+
+  return {
+    schema: uranaiPrivateTradeProofSchema,
+    accountId,
+    assetDefinitionId: input.assetDefinitionId,
+    resolvedAssetId: materials.resolvedAssetId,
+    spendAmount,
+    inputNullifier: privateTradeProofName("nf", [
+      ...contextParts,
+      ...nullifiersHex,
+    ]),
+    outputNoteCommitment: outputCommitmentsHex[0]
+      ? privateTradeProofName("note", [outputCommitmentsHex[0]])
+      : privateTradeProofName("note", contextParts),
+    positionCommitment: privateTradeProofName("pos", contextParts),
+    proofEnv,
+    proofEnvEncoding: "base64",
+    rootHintHex: materials.latestRootHex,
+    nullifiersHex,
+    outputCommitmentsHex,
   };
 };
 
@@ -7110,6 +7389,31 @@ const api: IrohaBridge = {
     );
     return { hash: submission.hash };
   },
+  buildUranaiPrivateTradeProof(input) {
+    return buildUranaiPrivateTradeProofEnvelope(input);
+  },
+  async signIrohaConnectMessage({ accountId, signingMessageB64 }) {
+    const authority = normalizeCompatAccountIdLiteral(accountId, "accountId");
+    const privateKeyHex = await resolvePrivateKeyHex({
+      accountId: authority,
+      operationLabel: "IrohaConnect signing",
+    });
+    const normalizedMessage = trimString(signingMessageB64);
+    if (!normalizedMessage) {
+      throw new Error("IrohaConnect signing message is required.");
+    }
+    const message = Buffer.from(normalizedMessage, "base64");
+    if (message.length === 0) {
+      throw new Error("IrohaConnect signing message is empty.");
+    }
+    const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
+    return {
+      publicKeyHex: toHex(publicKeyFromPrivate(privateKey)),
+      signatureB64: Buffer.from(signEd25519(message, privateKey)).toString(
+        "base64",
+      ),
+    };
+  },
   async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
     const { policy, resolvedAssetDefinitionId } =
       await fetchConfidentialAssetPolicyForAccount({
@@ -7238,10 +7542,17 @@ const api: IrohaBridge = {
       shielded: true,
     });
   },
-  fetchAccountAssets({ toriiUrl, accountId, limit = 50, offset }) {
+  fetchAccountAssets({
+    toriiUrl,
+    accountId,
+    networkPrefix,
+    limit = 50,
+    offset,
+  }) {
     return fetchAccountAssetsList({
       toriiUrl,
       accountId,
+      networkPrefix,
       limit,
       offset,
     });
@@ -7249,6 +7560,7 @@ const api: IrohaBridge = {
   async fetchAccountTransactions({
     toriiUrl,
     accountId,
+    networkPrefix,
     privateKeyHex,
     limit = 20,
     offset,
@@ -7257,6 +7569,7 @@ const api: IrohaBridge = {
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
+      networkPrefix,
     );
     const normalizedPrivateKeyHex =
       (await resolveOptionalPrivateKeyHex({
@@ -7655,7 +7968,10 @@ const api: IrohaBridge = {
     }
     return (await response.json()) as AccountOnboardingResponse;
   },
-  async requestFaucetFunds({ toriiUrl, accountId, networkPrefix }, onStatus) {
+  async requestFaucetFunds(
+    { toriiUrl, accountId, networkPrefix, requestId },
+    onStatus,
+  ) {
     const baseUrl = normalizeBaseUrl(toriiUrl);
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
@@ -7663,129 +7979,172 @@ const api: IrohaBridge = {
       networkPrefix,
     );
     const client = getClient(baseUrl);
-
-    for (let attempt = 1; attempt <= FAUCET_CLAIM_MAX_ATTEMPTS; attempt += 1) {
-      await assertFaucetEndpointFinalizing(baseUrl);
-      const result = await requestFaucetFundsWithPuzzle({
-        baseUrl,
-        accountId: normalizedAccountId,
-        networkPrefix,
-        fetchImpl: nodeFetch,
-        onStatus,
-      });
-      const txHashHex = trimString(result.tx_hash_hex);
-      if (!txHashHex) {
-        return result;
-      }
-
-      try {
-        await onStatus?.({
-          phase: "claimAccepted",
-          attempt,
-          attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-          txHashHex,
-        });
-      } catch {
-        // Renderer-side status hooks must not break the faucet request itself.
-      }
-      try {
-        await onStatus?.({
-          phase: "waitingForCommit",
-          attempt,
-          attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-          txHashHex,
-        });
-      } catch {
-        // Renderer-side status hooks must not break the faucet request itself.
-      }
-
-      const {
-        statusKind,
-        timedOut,
-        lastError,
-        fundedAssetVisible,
-        pipelineStatusInvisible,
-      } = await waitForFaucetClaimFinality(
-        client,
-        txHashHex,
-        normalizedAccountId,
-        trimString(result.asset_id),
-        trimString(result.asset_definition_id),
-      );
-      if (fundedAssetVisible) {
-        try {
-          await onStatus?.({
-            phase: "claimCommitted",
-            attempt,
-            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-            txHashHex,
-          });
-        } catch {
-          // Renderer-side status hooks must not break the faucet request itself.
-        }
-        return {
-          ...result,
-          status: statusKind || "Funded",
-        };
-      }
-      if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
-        try {
-          await onStatus?.({
-            phase: "claimCommitted",
-            attempt,
-            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-            txHashHex,
-          });
-        } catch {
-          // Renderer-side status hooks must not break the faucet request itself.
-        }
-        return {
-          ...result,
-          status: statusKind,
-        };
-      }
-      if (
-        (statusKind === "Expired" || pipelineStatusInvisible) &&
-        attempt < FAUCET_CLAIM_MAX_ATTEMPTS
-      ) {
-        if (pipelineStatusInvisible) {
-          await assertFaucetEndpointFinalizing(baseUrl);
-        }
-        let retryStatusSnapshot: StatusSnapshot | null = null;
-        try {
-          retryStatusSnapshot = await client.getStatusSnapshot();
-        } catch {
-          retryStatusSnapshot = null;
-        }
-        const retryDelayMs = readFaucetClaimRetryDelayMs(
-          attempt,
-          retryStatusSnapshot,
-        );
-        try {
-          await onStatus?.({
-            phase: "waitingForClaimRetry",
-            attempt: attempt + 1,
-            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-            txHashHex,
-          });
-        } catch {
-          // Renderer-side status hooks must not break the faucet request itself.
-        }
-        await waitForMs(retryDelayMs);
-        continue;
-      }
-      throw buildFaucetClaimFinalityError(
-        txHashHex,
-        statusKind,
-        timedOut,
-        pipelineStatusInvisible,
-        lastError,
-      );
+    const normalizedRequestId = trimString(requestId);
+    const abortController = normalizedRequestId ? new AbortController() : null;
+    if (normalizedRequestId && abortController) {
+      faucetRequestControllers
+        .get(normalizedRequestId)
+        ?.abort(createFaucetAbortError());
+      faucetRequestControllers.set(normalizedRequestId, abortController);
     }
 
-    throw new Error(
-      "The network kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
-    );
+    try {
+      const signal = abortController?.signal;
+      for (
+        let attempt = 1;
+        attempt <= FAUCET_CLAIM_MAX_ATTEMPTS;
+        attempt += 1
+      ) {
+        throwIfAborted(signal);
+        await assertFaucetEndpointFinalizing(baseUrl, signal);
+        const result = await requestFaucetFundsWithPuzzle({
+          baseUrl,
+          accountId: normalizedAccountId,
+          networkPrefix,
+          fetchImpl: nodeFetch,
+          signal,
+          onStatus,
+        });
+        throwIfAborted(signal);
+        const txHashHex = trimString(result.tx_hash_hex);
+        if (!txHashHex) {
+          return result;
+        }
+
+        try {
+          await onStatus?.({
+            phase: "claimAccepted",
+            attempt,
+            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+            txHashHex,
+          });
+        } catch {
+          // Renderer-side status hooks must not break the faucet request itself.
+        }
+        try {
+          await onStatus?.({
+            phase: "waitingForCommit",
+            attempt,
+            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+            txHashHex,
+          });
+        } catch {
+          // Renderer-side status hooks must not break the faucet request itself.
+        }
+
+        const {
+          statusKind,
+          timedOut,
+          lastError,
+          fundedAssetVisible,
+          pipelineStatusInvisible,
+        } = await waitForFaucetClaimFinality(
+          client,
+          txHashHex,
+          normalizedAccountId,
+          trimString(result.asset_id),
+          trimString(result.asset_definition_id),
+          signal,
+        );
+        throwIfAborted(signal);
+        if (fundedAssetVisible) {
+          try {
+            await onStatus?.({
+              phase: "claimCommitted",
+              attempt,
+              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+              txHashHex,
+            });
+          } catch {
+            // Renderer-side status hooks must not break the faucet request itself.
+          }
+          return {
+            ...result,
+            status: statusKind || "Funded",
+          };
+        }
+        if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
+          try {
+            await onStatus?.({
+              phase: "claimCommitted",
+              attempt,
+              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+              txHashHex,
+            });
+          } catch {
+            // Renderer-side status hooks must not break the faucet request itself.
+          }
+          return {
+            ...result,
+            status: statusKind,
+          };
+        }
+        if (
+          (statusKind === "Expired" || pipelineStatusInvisible) &&
+          attempt < FAUCET_CLAIM_MAX_ATTEMPTS
+        ) {
+          if (pipelineStatusInvisible) {
+            await assertFaucetEndpointFinalizing(baseUrl, signal);
+          }
+          throwIfAborted(signal);
+          let retryStatusSnapshot: StatusSnapshot | null = null;
+          try {
+            retryStatusSnapshot = await client.getStatusSnapshot();
+            throwIfAborted(signal);
+          } catch {
+            throwIfAborted(signal);
+            retryStatusSnapshot = null;
+          }
+          const retryDelayMs = readFaucetClaimRetryDelayMs(
+            attempt,
+            retryStatusSnapshot,
+          );
+          try {
+            await onStatus?.({
+              phase: "waitingForClaimRetry",
+              attempt: attempt + 1,
+              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
+              txHashHex,
+            });
+          } catch {
+            // Renderer-side status hooks must not break the faucet request itself.
+          }
+          await waitForMs(retryDelayMs, signal);
+          continue;
+        }
+        throw buildFaucetClaimFinalityError(
+          txHashHex,
+          statusKind,
+          timedOut,
+          pipelineStatusInvisible,
+          lastError,
+        );
+      }
+
+      throw new Error(
+        "The network kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
+      );
+    } finally {
+      if (
+        normalizedRequestId &&
+        faucetRequestControllers.get(normalizedRequestId) === abortController
+      ) {
+        faucetRequestControllers.delete(normalizedRequestId);
+      }
+    }
+  },
+  async cancelFaucetRequest({ requestId }) {
+    const normalizedRequestId = trimString(requestId);
+    if (!normalizedRequestId) {
+      return { canceled: false };
+    }
+    const controller = faucetRequestControllers.get(normalizedRequestId);
+    if (!controller) {
+      return { canceled: false };
+    }
+    controller.abort(createFaucetAbortError());
+    faucetRequestControllers.delete(normalizedRequestId);
+    return { canceled: true };
   },
   async createKaigiMeeting({
     toriiUrl,

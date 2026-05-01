@@ -19,6 +19,7 @@ export const useQrScanner = (
   const t: Translate = options.translate ?? ((key) => key);
   const reader = new BrowserMultiFormatReader();
   const scanning = ref(false);
+  const screenScanning = ref(false);
   const message = ref("");
   const videoRef = ref<HTMLVideoElement | null>(null);
   const fileInputRef = ref<HTMLInputElement | null>(null);
@@ -114,6 +115,95 @@ export const useQrScanner = (
 
   const openFilePicker = () => fileInputRef.value?.click();
 
+  const waitForScreenVideoFrame = (videoEl: HTMLVideoElement) =>
+    new Promise<void>((resolve, reject) => {
+      if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        resolve();
+        return;
+      }
+
+      const cleanup = () => {
+        window.clearTimeout(timeout);
+        videoEl.removeEventListener("loadedmetadata", handleReady);
+        videoEl.removeEventListener("canplay", handleReady);
+        videoEl.removeEventListener("error", handleError);
+      };
+      const handleReady = () => {
+        if (videoEl.videoWidth <= 0 || videoEl.videoHeight <= 0) {
+          return;
+        }
+        cleanup();
+        resolve();
+      };
+      const handleError = () => {
+        cleanup();
+        reject(new Error(t("Unable to capture a screen frame.")));
+      };
+      const timeout = window.setTimeout(handleError, 2500);
+
+      videoEl.addEventListener("loadedmetadata", handleReady);
+      videoEl.addEventListener("canplay", handleReady);
+      videoEl.addEventListener("error", handleError);
+    });
+
+  const decodeScreen = async () => {
+    if (screenScanning.value) {
+      return;
+    }
+    if (!navigator.mediaDevices?.getDisplayMedia) {
+      message.value = t("Screen capture is not supported in this environment.");
+      return;
+    }
+
+    let stream: MediaStream | null = null;
+    const screenVideo = document.createElement("video");
+    screenScanning.value = true;
+    message.value = t("Choose the screen or window that contains the QR code.");
+
+    try {
+      stream = await navigator.mediaDevices.getDisplayMedia({
+        video: {
+          frameRate: { ideal: 1, max: 5 },
+        },
+        audio: false,
+      });
+      screenVideo.muted = true;
+      screenVideo.playsInline = true;
+      screenVideo.srcObject = stream;
+      await screenVideo.play().catch(() => undefined);
+      await waitForScreenVideoFrame(screenVideo);
+
+      const canvas = document.createElement("canvas");
+      canvas.width = screenVideo.videoWidth;
+      canvas.height = screenVideo.videoHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        throw new Error(t("Unable to capture a screen frame."));
+      }
+      context.drawImage(screenVideo, 0, 0, canvas.width, canvas.height);
+      const result = reader.decodeFromCanvas(canvas);
+      onDecoded(result.getText());
+      message.value = t("QR decoded successfully.");
+    } catch (error) {
+      const name = String((error as Error | undefined)?.name ?? "");
+      if (name === "NotFoundException") {
+        message.value = t("No QR code found on the selected screen.");
+      } else if (name === "NotAllowedError") {
+        message.value = t("Screen QR scan cancelled.");
+      } else {
+        message.value = toUserFacingErrorMessage(
+          error,
+          t("Unable to read QR from screen."),
+        );
+      }
+    } finally {
+      screenVideo.pause();
+      screenVideo.srcObject = null;
+      stream?.getTracks().forEach((track) => track.stop());
+      screenScanning.value = false;
+    }
+  };
+
   const decodeFile = async (event: Event) => {
     const target = event.target as HTMLInputElement;
     const file = target.files?.[0];
@@ -143,12 +233,14 @@ export const useQrScanner = (
 
   return {
     scanning,
+    screenScanning,
     message,
     videoRef,
     fileInputRef,
     start,
     stop,
     openFilePicker,
+    decodeScreen,
     decodeFile,
   };
 };

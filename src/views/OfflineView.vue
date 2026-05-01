@@ -303,7 +303,12 @@
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <div class="actions">
         <button
@@ -435,6 +440,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const session = useSessionStore();
@@ -988,6 +994,7 @@ const moveToOnline = async () => {
         : t("Transfer submitted and offline balance updated."),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   } catch (error) {
     offline.$patch({ wallet: snapshot });

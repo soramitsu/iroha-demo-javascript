@@ -517,9 +517,7 @@
         <div class="actions connect-reader-actions">
           <button class="secondary" type="button" @click="toggleConnectScanner">
             {{
-              connectScanner.scanning
-                ? t("Stop scan")
-                : "Scan IrohaConnect QR"
+              connectScanner.scanning ? t("Stop scan") : "Scan IrohaConnect QR"
             }}
           </button>
           <button
@@ -566,13 +564,21 @@
             <span class="kv-value">{{ scannedConnectSession.node }}</span>
           </div>
           <div class="actions">
-            <button class="secondary" type="button" @click="copyScannedConnectUri">
+            <button
+              class="secondary"
+              type="button"
+              @click="copyScannedConnectUri"
+            >
               {{ scannedConnectCopied ? "Copied" : "Copy URI" }}
             </button>
           </div>
         </div>
 
-        <p v-if="connectScanError || connectScanner.message" class="helper" :class="{ error: connectScanError }">
+        <p
+          v-if="connectScanError || connectScanner.message"
+          class="helper"
+          :class="{ error: connectScanError }"
+        >
           {{ connectScanError || connectScanner.message }}
         </p>
       </div>
@@ -1185,7 +1191,10 @@ const connectApprovalStatus = ref("");
 let scannedConnectSocket: WebSocket | null = null;
 
 const closeScannedConnectSocket = () => {
-  if (scannedConnectSocket && scannedConnectSocket.readyState !== WebSocket.CLOSED) {
+  if (
+    scannedConnectSocket &&
+    scannedConnectSocket.readyState !== WebSocket.CLOSED
+  ) {
     scannedConnectSocket.close(1000, "approval complete");
   }
   scannedConnectSocket = null;

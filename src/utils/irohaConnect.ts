@@ -1,4 +1,5 @@
 export type IrohaConnectRole = "app" | "wallet";
+export type IrohaConnectFrameDirection = "app-to-wallet" | "wallet-to-app";
 
 export interface ParsedIrohaConnectUri {
   raw: string;
@@ -20,16 +21,60 @@ export interface IrohaConnectApproveFrameInput {
   sequence?: number;
 }
 
+export interface IrohaConnectApprovalRequestInput {
+  session: ParsedIrohaConnectUri;
+  accountId: string;
+  fallbackToriiUrl: string;
+}
+
+export interface IrohaConnectApprovalRequest {
+  url: string;
+  protocols: string[];
+  frame: Uint8Array;
+}
+
+export interface IrohaConnectCiphertextFrameInput {
+  sid: string | Uint8Array;
+  sequence?: number;
+  direction?: IrohaConnectFrameDirection;
+  payload: string | Uint8Array | ArrayBuffer | ArrayBufferView;
+}
+
+export interface DecodedIrohaConnectCiphertextFrame {
+  kind: "ciphertext";
+  sid: Uint8Array;
+  direction: IrohaConnectFrameDirection;
+  sequence: number;
+  payload: Uint8Array;
+}
+
+export interface DecodedIrohaConnectOtherFrame {
+  kind: "other";
+  sid: Uint8Array;
+  direction: IrohaConnectFrameDirection;
+  sequence: number;
+  frameKind: number;
+}
+
+export type DecodedIrohaConnectFrame =
+  | DecodedIrohaConnectCiphertextFrame
+  | DecodedIrohaConnectOtherFrame;
+
 const CONNECT_PROTOCOLS = new Set(["iroha:", "irohaconnect:"]);
 const CONNECT_HOST = "connect";
 const CONNECT_LAUNCH_PROTOCOL = "irohaconnect:";
 const CONNECT_TOKEN_PROTOCOL_PREFIX = "iroha-connect.token.v1.";
 const CONNECT_FIXED_KEY_LENGTH = 32;
 const CONNECT_ED25519_SIGNATURE_LENGTH = 64;
+const CONNECT_FRAME_KIND_CIPHERTEXT = 1;
+const CONNECT_DIRECTION_APP_TO_WALLET = 0;
+const CONNECT_DIRECTION_WALLET_TO_APP = 1;
 const textEncoder = new TextEncoder();
 
 const concatBytes = (...chunks: Uint8Array[]) => {
-  const out = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0));
+  const out = new Uint8Array(
+    chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+  );
   let offset = 0;
   for (const chunk of chunks) {
     out.set(chunk, offset);
@@ -64,7 +109,9 @@ const encodeFixedU8Array32 = (bytes: Uint8Array) => {
       `IrohaConnect key material must be ${CONNECT_FIXED_KEY_LENGTH} bytes.`,
     );
   }
-  return concatBytes(...Array.from(bytes, (byte) => encodeLengthPrefixed(Uint8Array.of(byte))));
+  return concatBytes(
+    ...Array.from(bytes, (byte) => encodeLengthPrefixed(Uint8Array.of(byte))),
+  );
 };
 
 const encodeByteVec = (bytes: Uint8Array) =>
@@ -93,7 +140,10 @@ const base64UrlEncodeUtf8 = (value: string) => {
   for (const byte of textEncoder.encode(value)) {
     binary += String.fromCharCode(byte);
   }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
 };
 
 const decodeSidBytes = (sid: string | Uint8Array) => {
@@ -117,6 +167,96 @@ const decodeSidBytes = (sid: string | Uint8Array) => {
   return bytes;
 };
 
+const normalizeFramePayload = (
+  payload: IrohaConnectCiphertextFrameInput["payload"],
+) => {
+  if (typeof payload === "string") {
+    return textEncoder.encode(payload);
+  }
+  if (payload instanceof Uint8Array) {
+    return new Uint8Array(payload);
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new Uint8Array(payload);
+  }
+  if (ArrayBuffer.isView(payload)) {
+    return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  }
+  throw new TypeError("IrohaConnect payload must be bytes or text.");
+};
+
+const encodeDirectionTag = (direction: IrohaConnectFrameDirection) => {
+  if (direction === "app-to-wallet") {
+    return CONNECT_DIRECTION_APP_TO_WALLET;
+  }
+  if (direction === "wallet-to-app") {
+    return CONNECT_DIRECTION_WALLET_TO_APP;
+  }
+  throw new Error("IrohaConnect frame direction is invalid.");
+};
+
+const decodeDirectionTag = (tag: number): IrohaConnectFrameDirection => {
+  if (tag === CONNECT_DIRECTION_APP_TO_WALLET) {
+    return "app-to-wallet";
+  }
+  if (tag === CONNECT_DIRECTION_WALLET_TO_APP) {
+    return "wallet-to-app";
+  }
+  throw new Error(`Unsupported IrohaConnect frame direction: ${tag}.`);
+};
+
+class FrameCursor {
+  private offset = 0;
+
+  constructor(private readonly bytes: Uint8Array) {}
+
+  readBytes(length: number) {
+    const end = this.offset + length;
+    if (!Number.isSafeInteger(length) || length < 0 || end > this.bytes.length) {
+      throw new Error("IrohaConnect frame is truncated.");
+    }
+    const out = this.bytes.slice(this.offset, end);
+    this.offset = end;
+    return out;
+  }
+
+  readU32() {
+    return new DataView(this.readBytes(4).buffer).getUint32(0, true);
+  }
+
+  readU64() {
+    const value = new DataView(this.readBytes(8).buffer).getBigUint64(0, true);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("IrohaConnect frame length is too large.");
+    }
+    return Number(value);
+  }
+
+  readField() {
+    return this.readBytes(this.readU64());
+  }
+
+  expectDone(label: string) {
+    if (this.offset !== this.bytes.length) {
+      throw new Error(`${label} has trailing bytes.`);
+    }
+  }
+}
+
+const decodeFixedU8Array32 = (payload: Uint8Array) => {
+  const cursor = new FrameCursor(payload);
+  const out = new Uint8Array(CONNECT_FIXED_KEY_LENGTH);
+  for (let index = 0; index < CONNECT_FIXED_KEY_LENGTH; index += 1) {
+    const field = cursor.readField();
+    if (field.length !== 1) {
+      throw new Error("IrohaConnect fixed key field is invalid.");
+    }
+    out[index] = field[0] ?? 0;
+  }
+  cursor.expectDone("fixed key");
+  return out;
+};
+
 const requireConnectParam = (url: URL, name: string) => {
   const value = url.searchParams.get(name)?.trim() ?? "";
   if (!value) {
@@ -132,9 +272,7 @@ const normalizeRole = (value: string | null): IrohaConnectRole => {
   throw new Error("IrohaConnect URI role must be app or wallet.");
 };
 
-export const parseIrohaConnectUri = (
-  input: string,
-): ParsedIrohaConnectUri => {
+export const parseIrohaConnectUri = (input: string): ParsedIrohaConnectUri => {
   const raw = input.trim();
   if (!raw) {
     throw new Error("IrohaConnect URI is empty.");
@@ -232,4 +370,89 @@ export const encodeIrohaConnectApproveFrame = (
     encodeLengthPrefixed(encodeU64(input.sequence ?? 1)),
     encodeLengthPrefixed(kindPayload),
   );
+};
+
+export const encodeIrohaConnectCiphertextFrame = (
+  input: IrohaConnectCiphertextFrameInput,
+) => {
+  const sid = decodeSidBytes(input.sid);
+  const direction = encodeDirectionTag(input.direction ?? "wallet-to-app");
+  const payload = normalizeFramePayload(input.payload);
+  const ciphertextPayload = concatBytes(
+    encodeLengthPrefixed(encodeU32(direction)),
+    encodeLengthPrefixed(encodeLengthPrefixed(payload)),
+  );
+  const kindPayload = wrapTaggedPayload(
+    CONNECT_FRAME_KIND_CIPHERTEXT,
+    ciphertextPayload,
+  );
+  return concatBytes(
+    encodeLengthPrefixed(encodeFixedU8Array32(sid)),
+    encodeLengthPrefixed(encodeU32(direction)),
+    encodeLengthPrefixed(encodeU64(input.sequence ?? 1)),
+    encodeLengthPrefixed(kindPayload),
+  );
+};
+
+export const decodeIrohaConnectFrame = (
+  input: Uint8Array | ArrayBuffer | ArrayBufferView,
+): DecodedIrohaConnectFrame => {
+  const bytes =
+    input instanceof Uint8Array
+      ? input
+      : input instanceof ArrayBuffer
+        ? new Uint8Array(input)
+        : new Uint8Array(input.buffer, input.byteOffset, input.byteLength);
+  const cursor = new FrameCursor(bytes);
+  const sid = decodeFixedU8Array32(cursor.readField());
+  const direction = decodeDirectionTag(new FrameCursor(cursor.readField()).readU32());
+  const sequence = new FrameCursor(cursor.readField()).readU64();
+  const kindCursor = new FrameCursor(cursor.readField());
+  const frameKind = kindCursor.readU32();
+  const payload = kindCursor.readBytes(kindCursor.readU64());
+  kindCursor.expectDone("IrohaConnect frame kind");
+  cursor.expectDone("IrohaConnect frame");
+
+  if (frameKind !== CONNECT_FRAME_KIND_CIPHERTEXT) {
+    return { kind: "other", sid, direction, sequence, frameKind };
+  }
+
+  const payloadCursor = new FrameCursor(payload);
+  const payloadDirection = decodeDirectionTag(
+    new FrameCursor(payloadCursor.readField()).readU32(),
+  );
+  if (payloadDirection !== direction) {
+    throw new Error("IrohaConnect ciphertext direction mismatch.");
+  }
+  const bodyCursor = new FrameCursor(payloadCursor.readField());
+  const body = bodyCursor.readBytes(bodyCursor.readU64());
+  bodyCursor.expectDone("IrohaConnect ciphertext payload");
+  payloadCursor.expectDone("IrohaConnect ciphertext frame");
+  return { kind: "ciphertext", sid, direction, sequence, payload: body };
+};
+
+export const buildIrohaConnectApprovalRequest = ({
+  session,
+  accountId,
+  fallbackToriiUrl,
+}: IrohaConnectApprovalRequestInput): IrohaConnectApprovalRequest => {
+  if (session.role !== "wallet") {
+    throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
+  }
+  if (!session.token) {
+    throw new Error("IrohaConnect wallet token is missing.");
+  }
+  const normalizedAccountId = accountId.trim();
+  if (!normalizedAccountId) {
+    throw new Error("Choose an active wallet before approving IrohaConnect.");
+  }
+
+  return {
+    url: buildIrohaConnectWebSocketUrl(session, fallbackToriiUrl),
+    protocols: [buildIrohaConnectTokenProtocol(session.token)],
+    frame: encodeIrohaConnectApproveFrame({
+      sid: session.sid,
+      accountId: normalizedAccountId,
+    }),
+  };
 };

@@ -107,7 +107,12 @@
         </label>
         <p class="transaction-fee-note subscription-span-2">
           <span>{{ t("Fee") }}</span>
-          <strong>{{ formatTransactionFee(null, t) }}</strong>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
         </p>
         <button
           type="submit"
@@ -242,7 +247,12 @@
           </div>
           <p class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{ formatTransactionFee(null, t) }}</strong>
+            <strong>{{
+              formatTransactionFee(
+                transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                t,
+              )
+            }}</strong>
           </p>
           <div class="subscription-actions">
             <button
@@ -305,6 +315,7 @@ import { deriveAssetSymbol } from "@/utils/assetId";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const subscriptions = useSubscriptionStore();
@@ -589,6 +600,7 @@ const subscribe = async () => {
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     resetForm();
     await refresh();
@@ -636,6 +648,7 @@ const runRecordAction = async (
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     await refresh();
   } catch (error) {

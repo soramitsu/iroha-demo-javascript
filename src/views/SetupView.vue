@@ -155,7 +155,12 @@
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(connectionForm.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <div class="actions">
         <button :disabled="registering || !canRegister" @click="handleRegister">
@@ -190,6 +195,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 type PingState = "idle" | "ok" | "error";
@@ -504,6 +510,7 @@ const handleRegister = async () => {
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(connectionForm.toriiUrl),
     );
   } catch (error) {
     registerMessage.value = toUserFacingErrorMessage(

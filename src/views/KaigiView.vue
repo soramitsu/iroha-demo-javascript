@@ -389,7 +389,12 @@
 
           <p v-if="isLiveWallet" class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{ formatTransactionFee(null, t) }}</strong>
+            <strong>{{
+              formatTransactionFee(
+                transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                t,
+              )
+            }}</strong>
           </p>
           <p class="helper kaigi-status-copy">{{ statusMessage }}</p>
           <p v-if="errorMessage" class="helper kaigi-error">
@@ -421,7 +426,12 @@
             </p>
             <p class="transaction-fee-note">
               <span>{{ t("Fee") }}</span>
-              <strong>{{ formatTransactionFee(null, t) }}</strong>
+              <strong>{{
+                formatTransactionFee(
+                  transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                  t,
+                )
+              }}</strong>
             </p>
             <div class="actions-row kaigi-inline-actions">
               <button
@@ -486,7 +496,12 @@
         class="transaction-fee-note"
       >
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <div class="kaigi-media-grid">
         <div class="kaigi-video-shell">
@@ -758,6 +773,7 @@ import {
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const DEFAULT_ROOM_ID = "sakura-room";
@@ -2054,6 +2070,7 @@ const createMeetingLink = async () => {
           t("Meeting link ready. Share it with the other participant."),
           liveMeetingResult,
           t,
+          transactionFeeHintForEndpoint(session.connection.toriiUrl),
         ),
       );
     } else {
@@ -2159,6 +2176,7 @@ const joinLoadedMeeting = async () => {
             ),
             result,
             t,
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
           ),
         );
       } catch (error) {
@@ -2228,6 +2246,7 @@ const selfShieldPrivateKaigiAndRetry = async () => {
       t("Private Kaigi funding transaction submitted."),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     clearPrivateKaigiFundingPrompt();
     if (retryAction === "create") {
@@ -2326,7 +2345,14 @@ const hangUp = async () => {
         privateKeyHex: activeAccount.value.privateKeyHex,
         callId: hostMeetingCallId.value,
       });
-      setStatus(appendTransactionFee(t("Meeting ended."), result, t));
+      setStatus(
+        appendTransactionFee(
+          t("Meeting ended."),
+          result,
+          t,
+          transactionFeeHintForEndpoint(session.connection.toriiUrl),
+        ),
+      );
     } catch (error) {
       setStatus(t("Meeting ended locally."));
       errorMessage.value = t(

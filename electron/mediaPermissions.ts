@@ -1,4 +1,4 @@
-import type { Session } from "electron";
+import type { Session, Streams } from "electron";
 
 type MediaPermissionDetails = {
   isMainFrame?: boolean;
@@ -14,6 +14,20 @@ type MediaPermissionInput = {
   requestingOrigin?: string;
   rendererUrl?: string;
 };
+
+type DisplayMediaRequest = {
+  frame?: {
+    url?: string;
+  } | null;
+  securityOrigin?: string;
+  requestingUrl?: string;
+};
+
+type DisplayMediaRequestHandlerSession = Pick<
+  Session,
+  "setDisplayMediaRequestHandler"
+>;
+type DisplayMediaSource = NonNullable<Streams["video"]>;
 
 const isAllowedMediaType = (value: string | undefined): boolean =>
   value === undefined || value === "video" || value === "audio";
@@ -43,16 +57,19 @@ export const shouldGrantMediaPermission = ({
   requestingOrigin,
   rendererUrl,
 }: MediaPermissionInput): boolean => {
-  if (permission !== "media") {
+  const isMediaPermission = permission === "media";
+  const isDisplayCapturePermission = permission === "display-capture";
+  if (!isMediaPermission && !isDisplayCapturePermission) {
     return false;
   }
   if (details?.isMainFrame === false) {
     return false;
   }
-  if (!isAllowedMediaType(details?.mediaType)) {
+  if (isMediaPermission && !isAllowedMediaType(details?.mediaType)) {
     return false;
   }
   if (
+    isMediaPermission &&
     details?.mediaTypes &&
     !details.mediaTypes.every((mediaType) => isAllowedMediaType(mediaType))
   ) {
@@ -64,6 +81,14 @@ export const shouldGrantMediaPermission = ({
     requestingOrigin,
   ].some((candidate) => isTrustedAppUrl(candidate, rendererUrl));
 };
+
+export const shouldGrantDisplayCaptureRequest = (
+  request: DisplayMediaRequest,
+  rendererUrl?: string,
+): boolean =>
+  [request.frame?.url, request.securityOrigin, request.requestingUrl].some(
+    (candidate) => isTrustedAppUrl(candidate, rendererUrl),
+  );
 
 export const registerMediaPermissionHandlers = (
   electronSession: Pick<
@@ -92,5 +117,29 @@ export const registerMediaPermissionHandlers = (
         details,
         rendererUrl: getRendererUrl(),
       }),
+  );
+};
+
+export const registerDisplayMediaRequestHandler = (
+  electronSession: DisplayMediaRequestHandlerSession,
+  getSources: () => Promise<DisplayMediaSource[]>,
+  getRendererUrl: () => string | undefined = () =>
+    process.env["ELECTRON_RENDERER_URL"],
+) => {
+  electronSession.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      if (!shouldGrantDisplayCaptureRequest(request, getRendererUrl())) {
+        callback({});
+        return;
+      }
+      void getSources()
+        .then((sources) => {
+          callback(sources[0] ? { video: sources[0] } : {});
+        })
+        .catch(() => {
+          callback({});
+        });
+    },
+    { useSystemPicker: true },
   );
 };

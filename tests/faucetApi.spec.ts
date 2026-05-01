@@ -3,6 +3,7 @@ import { AccountAddress } from "@iroha/iroha-js";
 
 import {
   type FaucetRequestProgress,
+  isDecimalLessThan,
   requestFaucetFundsWithPuzzle,
   shouldRetryFaucetPuzzle,
 } from "../electron/faucetApi";
@@ -188,7 +189,40 @@ describe("faucetApi", () => {
     ]);
   });
 
-  it("maps Norito faucet validation failures to a readable stale-proof message", async () => {
+  it("aborts an in-flight faucet puzzle request when canceled", async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
+      async (_input: Parameters<typeof fetch>[0], init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        }),
+    );
+
+    const requestPromise = requestFaucetFundsWithPuzzle({
+      baseUrl: "https://taira.sora.org",
+      accountId: testnetAccountId,
+      networkPrefix: 369,
+      fetchImpl,
+      signal: controller.signal,
+    });
+    await Promise.resolve();
+
+    controller.abort(new Error("Faucet request canceled."));
+
+    await expect(requestPromise).rejects.toThrow("Faucet request canceled.");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "https://taira.sora.org/v1/accounts/faucet/puzzle",
+      expect.objectContaining({
+        signal: controller.signal,
+      }),
+    );
+  });
+
+  it("maps generic Norito faucet validation failures to a readable message", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
@@ -214,10 +248,11 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
-        baseUrl: "https://taira.sora.org",
+        baseUrl: "https://faucet.example",
         accountId: testnetAccountId,
         networkPrefix: 369,
         fetchImpl,
+        puzzleRetryAttempts: 1,
         solvePuzzle: vi.fn().mockResolvedValue({
           anchorHeight: basePuzzle.anchor_height,
           nonceHex: "0000000000000003",
@@ -225,8 +260,242 @@ describe("faucetApi", () => {
         }),
       }),
     ).rejects.toThrow(
-      "Faucet request failed (400): The network rejected this faucet claim. Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
+      "Faucet request failed (400): The network rejected this faucet claim. This endpoint returned a generic validation error; possible causes include a depleted faucet, an ineligible account, or a stale proof challenge.",
     );
+  });
+
+  it("reports the known TAIRA faucet as depleted when its authority balance cannot cover a claim", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(basePuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),
+          {
+            status: 400,
+            statusText: "Bad Request",
+            headers: {
+              "content-type": "application/x-norito",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                account_id: "faucet",
+                asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+                quantity: "8427.65210",
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://taira.sora.org",
+        accountId: testnetAccountId,
+        networkPrefix: 369,
+        fetchImpl,
+        puzzleRetryAttempts: 3,
+        solvePuzzle: vi.fn().mockResolvedValue({
+          anchorHeight: basePuzzle.anchor_height,
+          nonceHex: "0000000000000003",
+          attempts: 1,
+        }),
+      }),
+    ).rejects.toThrow(
+      "Faucet request failed (400): TAIRA faucet is out of funds. The faucet authority has 8427.65210 XOR available, but each claim requires 25000 XOR.",
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining("/v1/accounts/"),
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("requests a fresh puzzle when a solved faucet proof is rejected as stale", async () => {
+    const refreshedPuzzle = {
+      ...basePuzzle,
+      anchor_height: basePuzzle.anchor_height + 1,
+    };
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(basePuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),
+          {
+            status: 400,
+            statusText: "Bad Request",
+            headers: {
+              "content-type": "application/x-norito",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(refreshedPuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            account_id: testnetAccountId,
+            asset_definition_id: "xor#sora",
+            asset_id: `xor#sora#${testnetAccountId}`,
+            amount: "25000",
+            tx_hash_hex: "0xretry",
+            status: "QUEUED",
+          }),
+          {
+            status: 202,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const solvePuzzle = vi
+      .fn()
+      .mockResolvedValueOnce({
+        anchorHeight: basePuzzle.anchor_height,
+        nonceHex: "0000000000000004",
+        attempts: 1,
+      })
+      .mockResolvedValueOnce({
+        anchorHeight: refreshedPuzzle.anchor_height,
+        nonceHex: "0000000000000005",
+        attempts: 2,
+      });
+    const onStatus =
+      vi.fn<(progress: FaucetRequestProgress) => void | Promise<void>>();
+
+    const result = await requestFaucetFundsWithPuzzle({
+      baseUrl: "https://faucet.example",
+      accountId: testnetAccountId,
+      networkPrefix: 369,
+      fetchImpl,
+      sleep,
+      solvePuzzle,
+      puzzleRetryAttempts: 2,
+      puzzleRetryDelayMs: 250,
+      onStatus,
+    });
+
+    expect(result.tx_hash_hex).toBe("0xretry");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(solvePuzzle).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(250);
+    expect(onStatus.mock.calls.map(([progress]) => progress.phase)).toEqual([
+      "requestingPuzzle",
+      "solvingPuzzle",
+      "submittingClaim",
+      "waitingForPuzzleRetry",
+      "requestingPuzzle",
+      "solvingPuzzle",
+      "submittingClaim",
+    ]);
+  });
+
+  it("also retries stale-proof text returned as JSON", async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(basePuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            detail:
+              "Stale faucet proof challenges can trigger this response; request a fresh puzzle and try again.",
+          }),
+          {
+            status: 400,
+            statusText: "Bad Request",
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(basePuzzle), {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            account_id: testnetAccountId,
+            asset_definition_id: "xor#sora",
+            asset_id: `xor#sora#${testnetAccountId}`,
+            amount: "25000",
+            tx_hash_hex: "0xjson-retry",
+            status: "QUEUED",
+          }),
+          {
+            status: 202,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+
+    const result = await requestFaucetFundsWithPuzzle({
+      baseUrl: "https://taira.sora.org",
+      accountId: testnetAccountId,
+      networkPrefix: 369,
+      fetchImpl,
+      sleep: vi.fn().mockResolvedValue(undefined),
+      solvePuzzle: vi.fn().mockResolvedValue({
+        anchorHeight: basePuzzle.anchor_height,
+        nonceHex: "0000000000000006",
+        attempts: 1,
+      }),
+      puzzleRetryAttempts: 2,
+    });
+
+    expect(result.tx_hash_hex).toBe("0xjson-retry");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it("does not retry non-retryable faucet puzzle failures and preserves the detail", async () => {
@@ -297,5 +566,12 @@ describe("faucetApi", () => {
     expect(
       shouldRetryFaucetPuzzle(400, "faucet pow vrf seed unavailable"),
     ).toBe(false);
+  });
+
+  it("compares decimal faucet balances without losing precision", () => {
+    expect(isDecimalLessThan("8427.65210", "25000")).toBe(true);
+    expect(isDecimalLessThan("25000.00000", "25000")).toBe(false);
+    expect(isDecimalLessThan("25000.00001", "25000")).toBe(false);
+    expect(isDecimalLessThan("not a number", "25000")).toBe(false);
   });
 });

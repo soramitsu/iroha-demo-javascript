@@ -86,7 +86,12 @@
       </div>
       <p v-if="!alreadyCitizen" class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <p v-if="alreadyCitizen" class="message success">
         {{
@@ -270,7 +275,12 @@
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <p v-if="missingBallotPermission" class="message warning">
         {{
@@ -406,6 +416,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const session = useSessionStore();
@@ -905,6 +916,7 @@ const handleBondCitizen = () =>
       t("Citizenship bond submitted: {hash}", { hash: result.hash }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -955,6 +967,7 @@ const handleBallot = () =>
       t("Ballot submitted: {hash}", { hash: result.hash }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 

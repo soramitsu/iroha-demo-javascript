@@ -474,9 +474,18 @@ const loadBridge = async () => {
     getConfidentialAssetBalance: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    fetchAccountAssets: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    fetchAccountTransactions: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     requestFaucetFunds: (
       input: Record<string, unknown>,
       onStatus?: (progress: unknown) => void,
+    ) => Promise<Record<string, unknown>>;
+    cancelFaucetRequest: (
+      input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     getNetworkStats: (
       input: Record<string, unknown>,
@@ -1038,6 +1047,47 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("uses the active network prefix for account asset and transaction refreshes", async () => {
+    const bridge = await loadBridge();
+    mocks.normalizeCanonicalAccountIdLiteralMock.mockImplementation(
+      (value: string, _label: string, networkPrefix?: number) =>
+        `prefix-${networkPrefix}:${String(value).trim()}`,
+    );
+
+    await bridge.fetchAccountAssets({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorau-stale-id",
+      networkPrefix: 369,
+      limit: 25,
+    });
+    await bridge.fetchAccountTransactions({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "sorau-stale-id",
+      networkPrefix: 369,
+      limit: 25,
+    });
+
+    expect(mocks.normalizeCanonicalAccountIdLiteralMock).toHaveBeenCalledWith(
+      "sorau-stale-id",
+      "accountId",
+      369,
+    );
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "/v1/accounts/prefix-369%3Asorau-stale-id/assets",
+      ),
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(mocks.listAccountTransactionsMock).toHaveBeenCalledWith(
+      "prefix-369:sorau-stale-id",
+      expect.objectContaining({
+        limit: 25,
+      }),
+    );
+  });
+
   it("posts signed SoraCloud HF deploy provenance without forwarding the private key", async () => {
     const bridge = await loadBridge();
     const privateKeyHex = "12".repeat(32);
@@ -1208,6 +1258,7 @@ describe("preload Kaigi bridge", () => {
         accountId: "canonical:sorau-stale-id",
         networkPrefix: 369,
         fetchImpl: expect.any(Function),
+        signal: undefined,
         onStatus,
       },
       undefined,
@@ -1220,6 +1271,41 @@ describe("preload Kaigi bridge", () => {
       "statusChecked",
       "claimCommitted",
     ]);
+  });
+
+  it("cancels an in-flight faucet request by request id", async () => {
+    const bridge = await loadBridge();
+    let capturedSignal: AbortSignal | undefined;
+    mocks.requestFaucetFundsWithPuzzleMock.mockImplementation(
+      async (input: { signal?: AbortSignal }) => {
+        capturedSignal = input.signal;
+        return new Promise((_resolve, reject) => {
+          input.signal?.addEventListener(
+            "abort",
+            () => reject(input.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+    );
+
+    const requestPromise = bridge.requestFaucetFunds({
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testu-faucet",
+      networkPrefix: 369,
+      requestId: "faucet-request-1",
+    });
+    await vi.waitFor(() => expect(capturedSignal).toBeDefined());
+
+    expect(capturedSignal?.aborted).toBe(false);
+    await expect(
+      bridge.cancelFaucetRequest({ requestId: "faucet-request-1" }),
+    ).resolves.toEqual({ canceled: true });
+    expect(capturedSignal?.aborted).toBe(true);
+    await expect(requestPromise).rejects.toThrow("Faucet request canceled.");
+    await expect(
+      bridge.cancelFaucetRequest({ requestId: "faucet-request-1" }),
+    ).resolves.toEqual({ canceled: false });
   });
 
   it("blocks faucet requests when TAIRA is not finalizing new blocks", async () => {
@@ -1353,6 +1439,40 @@ describe("preload Kaigi bridge", () => {
       "waitingForCommit",
       "claimCommitted",
     ]);
+  });
+
+  it("matches split-field TAIRA faucet balances when the faucet returns only the asset definition", async () => {
+    const bridge = await loadBridge();
+    mocks.requestFaucetFundsWithPuzzleMock.mockResolvedValue({
+      account_id: "testu-faucet",
+      asset_definition_id: "",
+      asset_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+      amount: "25000",
+      tx_hash_hex: "0xfaucet",
+      status: "QUEUED",
+    });
+    mocks.getTransactionStatusMock.mockResolvedValue(null);
+    mocks.listAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          account_id: "testu-faucet",
+          asset_definition_id: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    });
+
+    await expect(
+      bridge.requestFaucetFunds({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).resolves.toMatchObject({
+      tx_hash_hex: "0xfaucet",
+      status: "Funded",
+    });
   });
 
   it("retries faucet claims when TAIRA accepts a claim that never appears in pipeline status", async () => {

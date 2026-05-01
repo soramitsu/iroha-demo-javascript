@@ -4,6 +4,7 @@ import {
   formatTransactionFee,
   formatTransactionFeeInline,
   readTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const t = (key: string, params?: Record<string, string | number>) =>
@@ -53,6 +54,9 @@ describe("transaction fee formatting", () => {
   it("does not treat transferred assets as fee assets", () => {
     expect(readTransactionFee({ asset_id: "xor#universal" })).toBeNull();
     expect(readTransactionFee({ assetId: "xor#universal" })).toBeNull();
+    expect(
+      readTransactionFee({ amount: "12", asset_id: "xor#universal" }),
+    ).toBeNull();
     expect(formatTransactionFee({ asset_id: "xor#universal" }, t)).toBe(
       "Network fee: charged on-chain (amount unavailable).",
     );
@@ -66,6 +70,29 @@ describe("transaction fee formatting", () => {
         t,
       ),
     ).toBe("Transaction submitted: 0xabc Network fee: 3 XOR.");
+  });
+
+  it("uses endpoint fee hints when submission results only include a hash", () => {
+    expect(transactionFeeHintForEndpoint("https://taira.sora.org")).toEqual({
+      fee_amount: "0.01",
+      fee_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      source: "estimated",
+    });
+    expect(
+      transactionFeeHintForEndpoint("https://minamoto.sora.org"),
+    ).toEqual({
+      fee_amount: "0.01",
+      fee_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      source: "estimated",
+    });
+    expect(
+      appendTransactionFee(
+        "Transaction submitted: 0xabc",
+        { hash: "0xabc" },
+        t,
+        transactionFeeHintForEndpoint("https://taira.sora.org"),
+      ),
+    ).toBe("Transaction submitted: 0xabc Network fee: 0.01 XOR (estimated).");
   });
 
   it("reads fee fields from common endpoint shapes", () => {

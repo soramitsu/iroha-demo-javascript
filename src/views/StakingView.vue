@@ -128,7 +128,12 @@
         </div>
         <p class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{ formatTransactionFee(null, t) }}</strong>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
         </p>
         <div class="actions">
           <button
@@ -162,7 +167,12 @@
         </p>
         <p class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{ formatTransactionFee(null, t) }}</strong>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
         </p>
         <div class="actions">
           <button
@@ -224,7 +234,12 @@
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
       <p v-if="!pendingUnbonds.length" class="helper">
         {{ t("No pending unbond requests for the selected validator.") }}
@@ -269,7 +284,12 @@
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{ formatTransactionFee(null, t) }}</strong>
+        <strong>{{
+          formatTransactionFee(
+            transactionFeeHintForEndpoint(session.connection.toriiUrl),
+            t,
+          )
+        }}</strong>
       </p>
     </section>
   </div>
@@ -313,6 +333,7 @@ import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const session = useSessionStore();
@@ -705,6 +726,7 @@ const handleBond = () =>
       t("Bond submitted: {hash}", { hash: result.hash }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -745,6 +767,7 @@ const handleScheduleUnbond = () =>
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -769,6 +792,7 @@ const handleFinalizeUnbond = () =>
       t("Finalize submitted: {hash}", { hash: result.hash }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 
@@ -791,6 +815,7 @@ const handleClaimRewards = () =>
       t("Reward claim submitted: {hash}", { hash: result.hash }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
   });
 

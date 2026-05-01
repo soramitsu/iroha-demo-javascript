@@ -413,6 +413,22 @@ export interface ConnectPreview {
   appPrivateKeyHex: string;
 }
 
+export interface UranaiPrivateTradeProof {
+  schema: "uranai.irohaconnect.private-trade-proof.v1";
+  accountId: string;
+  assetDefinitionId: string;
+  resolvedAssetId: string;
+  spendAmount: string;
+  inputNullifier: string;
+  outputNoteCommitment: string;
+  positionCommitment: string;
+  proofEnv: string;
+  proofEnvEncoding: "base64";
+  rootHintHex: string;
+  nullifiersHex: string[];
+  outputCommitmentsHex: string[];
+}
+
 export interface KaigiSignalKeyPair {
   publicKeyBase64Url: string;
   privateKeyBase64Url: string;
@@ -827,6 +843,21 @@ export interface IrohaBridge {
     shieldedOwnerTagHex?: string;
     shieldedDiversifierHex?: string;
   }): Promise<TransactionSubmissionResult>;
+  buildUranaiPrivateTradeProof(input: {
+    toriiUrl: string;
+    chainId: string;
+    accountId: string;
+    assetDefinitionId: string;
+    collateralIn: string;
+    privacyFee?: string;
+    privateKeyHex?: string;
+    marketId?: string;
+    outcomeIndex?: number;
+  }): Promise<UranaiPrivateTradeProof>;
+  signIrohaConnectMessage(input: {
+    accountId: string;
+    signingMessageB64: string;
+  }): Promise<{ publicKeyHex: string; signatureB64: string }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -880,12 +911,14 @@ export interface IrohaBridge {
   fetchAccountAssets(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     limit?: number;
     offset?: number;
   }): Promise<AccountAssetsResponse>;
   fetchAccountTransactions(input: {
     toriiUrl: string;
     accountId: string;
+    networkPrefix?: number;
     privateKeyHex?: string;
     limit?: number;
     offset?: number;
@@ -999,9 +1032,13 @@ export interface IrohaBridge {
       toriiUrl: string;
       accountId: string;
       networkPrefix?: number;
+      requestId?: string;
     },
     onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
   ): Promise<AccountFaucetResponse>;
+  cancelFaucetRequest(input: {
+    requestId: string;
+  }): Promise<{ canceled: boolean }>;
   createKaigiMeeting(input: {
     toriiUrl: string;
     chainId: string;

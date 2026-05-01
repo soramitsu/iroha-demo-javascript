@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildIrohaConnectApprovalRequest,
   buildIrohaConnectTokenProtocol,
   buildIrohaConnectWebSocketUrl,
+  decodeIrohaConnectFrame,
   encodeIrohaConnectApproveFrame,
+  encodeIrohaConnectCiphertextFrame,
   isIrohaConnectUri,
   parseIrohaConnectUri,
 } from "@/utils/irohaConnect";
@@ -56,6 +59,29 @@ describe("irohaConnect URI parsing", () => {
     );
   });
 
+  it("builds wallet approval socket requests from scanned sessions", () => {
+    const sid = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
+      "base64url",
+    );
+    const parsed = parseIrohaConnectUri(
+      `iroha://connect?sid=${sid}&node=https%3A%2F%2Ftaira.sora.org&role=wallet&token=wallet-token`,
+    );
+    const request = buildIrohaConnectApprovalRequest({
+      session: parsed,
+      accountId: " testu1connected ",
+      fallbackToriiUrl: "https://fallback.test",
+    });
+
+    expect(request.url).toBe(
+      `wss://taira.sora.org/v1/connect/ws?sid=${sid}&role=wallet`,
+    );
+    expect(request.protocols[0]).toMatch(
+      /^iroha-connect\.token\.v1\.[A-Za-z0-9_-]+$/u,
+    );
+    expect(request.frame).toBeInstanceOf(Uint8Array);
+    expect(request.frame.length).toBeGreaterThan(400);
+  });
+
   it("encodes wallet approval frames for Torii relay", () => {
     const sid = Buffer.from(new Uint8Array(32).fill(0xcd)).toString(
       "base64url",
@@ -70,5 +96,30 @@ describe("irohaConnect URI parsing", () => {
     expect(frame[0]).toBe(0x20);
     expect(frame[1]).toBe(0x01);
     expect(frame.length).toBeGreaterThan(400);
+  });
+
+  it("roundtrips app payload frames for proof transfers", () => {
+    const sid = Buffer.from(new Uint8Array(32).fill(0xac)).toString(
+      "base64url",
+    );
+    const frame = encodeIrohaConnectCiphertextFrame({
+      sid,
+      direction: "wallet-to-app",
+      sequence: 5,
+      payload: JSON.stringify({
+        schema: "uranai.irohaconnect.private-trade-proof.v1",
+        kind: "private_trade_proof_response",
+      }),
+    });
+    const decoded = decodeIrohaConnectFrame(frame);
+
+    expect(decoded.kind).toBe("ciphertext");
+    expect(decoded.direction).toBe("wallet-to-app");
+    expect(decoded.sequence).toBe(5);
+    if (decoded.kind === "ciphertext") {
+      expect(new TextDecoder().decode(decoded.payload)).toContain(
+        "private_trade_proof_response",
+      );
+    }
   });
 });

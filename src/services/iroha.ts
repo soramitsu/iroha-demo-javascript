@@ -118,6 +118,14 @@ export const transferAsset = (
   input: Parameters<IrohaBridge["transferAsset"]>[0],
 ) => bridge().transferAsset(input);
 
+export const buildUranaiPrivateTradeProof = (
+  input: Parameters<IrohaBridge["buildUranaiPrivateTradeProof"]>[0],
+) => bridge().buildUranaiPrivateTradeProof(input);
+
+export const signIrohaConnectMessage = (
+  input: Parameters<IrohaBridge["signIrohaConnectMessage"]>[0],
+) => bridge().signIrohaConnectMessage(input);
+
 export const getConfidentialAssetPolicy = (
   input: Parameters<IrohaBridge["getConfidentialAssetPolicy"]>[0],
 ): Promise<ConfidentialAssetPolicyView> =>
@@ -252,10 +260,15 @@ export const requestFaucetFunds = (
     toriiUrl: string;
     accountId: string;
     networkPrefix?: number;
+    requestId?: string;
   },
   onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
 ): Promise<AccountFaucetResponse> =>
   bridge().requestFaucetFunds(input, onProgress);
+
+export const cancelFaucetRequest = (input: {
+  requestId: string;
+}): Promise<{ canceled: boolean }> => bridge().cancelFaucetRequest(input);
 
 export const createKaigiMeeting = (
   input: Parameters<IrohaBridge["createKaigiMeeting"]>[0],

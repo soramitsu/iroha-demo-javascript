@@ -323,6 +323,28 @@ describe("preload utils", () => {
       ],
       total: 1,
     });
+
+    expect(
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            account_id: "testuAlice",
+            asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      }),
+    ).toEqual({
+      items: [
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc#testuAlice",
+          quantity: "25000",
+          asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+        },
+      ],
+      total: 1,
+    });
   });
 
   it("preserves account asset aliases for renderer labels", () => {

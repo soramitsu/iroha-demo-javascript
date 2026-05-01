@@ -354,9 +354,18 @@ export const normalizeAccountAssetListPayload = (
         value,
         `account asset list response.items[${index}]`,
       );
-      const legacyAssetId = String(entry.asset_id ?? "").trim();
-      const assetDefinitionId = String(entry.asset ?? "").trim();
-      const accountId = String(entry.account_id ?? "").trim();
+      const legacyAssetId = String(
+        entry.asset_id ?? entry.assetId ?? "",
+      ).trim();
+      const assetDefinitionId = String(
+        entry.asset ??
+          entry.asset_definition_id ??
+          entry.assetDefinitionId ??
+          "",
+      ).trim();
+      const accountId = String(
+        entry.account_id ?? entry.accountId ?? "",
+      ).trim();
       const assetId =
         legacyAssetId ||
         (assetDefinitionId && accountId

@@ -30,7 +30,12 @@
           </p>
           <p class="transaction-fee-note">
             <span>{{ t("Fee") }}</span>
-            <strong>{{ formatTransactionFee(null, t) }}</strong>
+            <strong>{{
+              formatTransactionFee(
+                transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                t,
+              )
+            }}</strong>
           </p>
         </div>
         <button
@@ -97,7 +102,12 @@
         </div>
         <p class="transaction-fee-note">
           <span>{{ t("Fee") }}</span>
-          <strong>{{ formatTransactionFee(null, t) }}</strong>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
         </p>
         <details class="technical-details compact wallet-shield-details">
           <summary>{{ t("Private balance details") }}</summary>
@@ -213,7 +223,8 @@
       <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
         <div
           class="card wallet-faucet-modal"
-          role="status"
+          role="dialog"
+          aria-modal="true"
           aria-live="polite"
           aria-atomic="true"
           aria-busy="true"
@@ -231,6 +242,16 @@
           >
             {{ faucetStatusDetail }}
           </p>
+          <div class="wallet-faucet-modal-actions">
+            <button
+              type="button"
+              class="secondary"
+              :disabled="faucetCanceling"
+              @click="cancelStarterFundsRequest"
+            >
+              {{ faucetCanceling ? t("Canceling…") : t("Cancel") }}
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -279,6 +300,7 @@
 import { computed, reactive, ref, toRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
+  cancelFaucetRequest,
   fetchAccountAssets,
   fetchAccountTransactions,
   getConfidentialAssetBalance,
@@ -301,6 +323,7 @@ import {
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 import {
+  areAssetDefinitionIdsEquivalent,
   extractAssetDefinitionId,
   formatAssetDefinitionLabel,
   formatAssetReferenceLabel,
@@ -312,6 +335,7 @@ import {
   appendTransactionFee,
   formatTransactionFee,
   formatTransactionFeeInline,
+  transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 
 const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
@@ -407,9 +431,44 @@ const loading = ref(false);
 const faucetLoading = ref(false);
 const faucetMessage = ref("");
 const faucetError = ref("");
+const faucetCanceling = ref(false);
+const faucetCancelRequested = ref(false);
+const faucetRequestId = ref("");
 const walletError = ref("");
 const requestGeneration = ref(0);
 const faucetStatusPhase = ref<WalletFaucetPhase>("requestingPuzzle");
+let activeFaucetAbortController: AbortController | null = null;
+let faucetRequestSequence = 0;
+
+const createFaucetCancelError = () => {
+  const error = new Error("Faucet request canceled.");
+  error.name = "AbortError";
+  return error;
+};
+
+const readFaucetAbortReason = (signal: AbortSignal) =>
+  signal.reason instanceof Error ? signal.reason : createFaucetCancelError();
+
+const throwIfFaucetCanceled = (signal?: AbortSignal) => {
+  if (signal?.aborted) {
+    throw readFaucetAbortReason(signal);
+  }
+};
+
+const isFaucetCanceledError = (error: unknown) => {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return (
+    error.name === "AbortError" ||
+    /faucet request canceled|operation was aborted/i.test(error.message)
+  );
+};
+
+const isLikelyMissingLiveAccountError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /\b404\b|not found|does not exist|missing account/i.test(message);
+};
 
 const formatDate = (timestamp?: number) => {
   if (!timestamp) return t("—");
@@ -495,6 +554,7 @@ const faucetStatusDetail = computed(() => {
 const fetchAllAccountTransactions = async (input: {
   toriiUrl: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex?: string;
 }): Promise<AccountTx[]> => {
   const items: AccountTx[] = [];
@@ -505,6 +565,7 @@ const fetchAllAccountTransactions = async (input: {
     const response = await fetchAccountTransactions({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
+      networkPrefix: input.networkPrefix,
       privateKeyHex: input.privateKeyHex,
       limit: ACCOUNT_TRANSACTION_PAGE_SIZE,
       offset,
@@ -527,6 +588,7 @@ const fetchAllAccountTransactions = async (input: {
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
+  const networkPrefix = session.connection.networkPrefix;
   const privateKeyHex = activeAccount.value?.privateKeyHex;
   const accountWasLocalOnly = Boolean(activeAccount.value?.localOnly);
   if (!session.hasAccount || !toriiUrl || !accountId) {
@@ -545,11 +607,13 @@ const refresh = async () => {
       fetchAccountAssets({
         toriiUrl,
         accountId,
+        networkPrefix,
         limit: 50,
       }),
       fetchAllAccountTransactions({
         toriiUrl,
         accountId,
+        networkPrefix,
         privateKeyHex,
       }),
     ]);
@@ -613,6 +677,10 @@ const refresh = async () => {
     assets.value = [];
     transactionsRaw.value = [];
     shieldedXorBalanceState.value = emptyConfidentialBalance();
+    if (accountWasLocalOnly && isLikelyMissingLiveAccountError(error)) {
+      walletError.value = "";
+      return;
+    }
     walletError.value = toUserFacingErrorMessage(
       error,
       t("Wallet data is unavailable until this account exists on-chain."),
@@ -624,28 +692,94 @@ const refresh = async () => {
   }
 };
 
-const waitFor = (delayMs: number) =>
-  new Promise<void>((resolve) => {
-    window.setTimeout(resolve, delayMs);
+const waitFor = (delayMs: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(readFaucetAbortReason(signal));
+      return;
+    }
+    let timeoutId: number | null = null;
+    let onAbort: (() => void) | null = null;
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (onAbort) {
+        signal?.removeEventListener("abort", onAbort);
+      }
+    };
+    onAbort = () => {
+      cleanup();
+      reject(
+        signal ? readFaucetAbortReason(signal) : createFaucetCancelError(),
+      );
+    };
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 
-const refreshAfterFaucetClaim = async (assetId: string) => {
-  const normalizedAssetId = assetId.trim().toLowerCase();
+const refreshAfterFaucetClaim = async (
+  input: {
+    assetId: string;
+    assetDefinitionId: string;
+  },
+  signal?: AbortSignal,
+) => {
+  const normalizedAssetId = input.assetId.trim().toLowerCase();
+  const normalizedAssetDefinitionId =
+    extractAssetDefinitionId(input.assetDefinitionId).trim() ||
+    extractAssetDefinitionId(input.assetId).trim();
   faucetStatusPhase.value = "refreshingWallet";
   for (let attempt = 1; attempt <= FAUCET_REFRESH_MAX_ATTEMPTS; attempt += 1) {
+    throwIfFaucetCanceled(signal);
     await refresh();
+    throwIfFaucetCanceled(signal);
     if (
-      assets.value.some(
-        (asset) => asset.asset_id.trim().toLowerCase() === normalizedAssetId,
-      )
+      assets.value.some((asset) => {
+        const assetId = asset.asset_id.trim();
+        const assetDefinitionId =
+          extractAssetDefinitionId(asset.asset_definition_id).trim() ||
+          extractAssetDefinitionId(assetId).trim();
+        return Boolean(
+          (normalizedAssetId && assetId.toLowerCase() === normalizedAssetId) ||
+            (normalizedAssetDefinitionId &&
+              areAssetDefinitionIdsEquivalent(
+                assetDefinitionId,
+                normalizedAssetDefinitionId,
+              )),
+        );
+      })
     ) {
       return true;
     }
     if (attempt < FAUCET_REFRESH_MAX_ATTEMPTS) {
-      await waitFor(FAUCET_REFRESH_DELAY_MS);
+      await waitFor(FAUCET_REFRESH_DELAY_MS, signal);
     }
   }
   return false;
+};
+
+const cancelStarterFundsRequest = async () => {
+  if (!faucetLoading.value) {
+    return;
+  }
+  faucetCancelRequested.value = true;
+  faucetCanceling.value = true;
+  activeFaucetAbortController?.abort(createFaucetCancelError());
+  const requestId = faucetRequestId.value;
+  if (requestId) {
+    try {
+      await cancelFaucetRequest({ requestId });
+    } catch {
+      // The local abort still stops UI-side waiting when bridge cancel fails.
+    }
+  }
+  faucetError.value = "";
+  faucetMessage.value = t("Faucet request canceled.");
 };
 
 const requestStarterFunds = async () => {
@@ -656,20 +790,29 @@ const requestStarterFunds = async () => {
   }
   const shouldConfigureAsset = !session.connection.assetDefinitionId.trim();
   faucetLoading.value = true;
+  faucetCanceling.value = false;
+  faucetCancelRequested.value = false;
   faucetMessage.value = "";
   faucetError.value = "";
   faucetStatusPhase.value = "requestingPuzzle";
+  faucetRequestSequence += 1;
+  const requestId = `wallet-faucet-${Date.now()}-${faucetRequestSequence}`;
+  const abortController = new AbortController();
+  faucetRequestId.value = requestId;
+  activeFaucetAbortController = abortController;
   try {
     const result = await requestFaucetFunds(
       {
         toriiUrl,
         accountId,
         networkPrefix: session.connection.networkPrefix,
+        requestId,
       },
       (progress) => {
         faucetStatusPhase.value = progress.phase;
       },
     );
+    throwIfFaucetCanceled(abortController.signal);
     const fundedAssetDefinitionId =
       result.asset_definition_id.trim() ||
       extractAssetDefinitionId(result.asset_id).trim() ||
@@ -695,8 +838,15 @@ const requestStarterFunds = async () => {
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
-    const balanceVisible = await refreshAfterFaucetClaim(result.asset_id);
+    const balanceVisible = await refreshAfterFaucetClaim(
+      {
+        assetId: result.asset_id,
+        assetDefinitionId: result.asset_definition_id,
+      },
+      abortController.signal,
+    );
     if (!balanceVisible) {
       faucetError.value = "";
       faucetMessage.value = t(
@@ -704,11 +854,24 @@ const requestStarterFunds = async () => {
       );
     }
   } catch (error) {
+    if (faucetCancelRequested.value || isFaucetCanceledError(error)) {
+      faucetError.value = "";
+      faucetMessage.value = t("Faucet request canceled.");
+      return;
+    }
     faucetError.value = toUserFacingErrorMessage(
       error,
       t("Failed to request faucet funds."),
     );
   } finally {
+    if (faucetRequestId.value === requestId) {
+      faucetRequestId.value = "";
+    }
+    if (activeFaucetAbortController === abortController) {
+      activeFaucetAbortController = null;
+    }
+    faucetCancelRequested.value = false;
+    faucetCanceling.value = false;
     faucetLoading.value = false;
   }
 };
@@ -955,6 +1118,7 @@ const createShieldedXor = async () => {
       }),
       result,
       t,
+      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     await refresh();
   } catch (error) {
@@ -1227,7 +1391,7 @@ watch(
   place-items: center;
   padding: 24px;
   border-radius: inherit;
-  pointer-events: none;
+  pointer-events: auto;
   background: color-mix(in srgb, var(--surface-base) 40%, transparent);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
@@ -1241,7 +1405,7 @@ watch(
   padding: 28px 24px;
   text-align: center;
   z-index: 1;
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .wallet-faucet-spinner {
@@ -1271,6 +1435,12 @@ watch(
 .wallet-faucet-modal-detail {
   margin: 0;
   max-width: 32ch;
+}
+
+.wallet-faucet-modal-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
 }
 
 .wallet-kpi-account .kv-value {

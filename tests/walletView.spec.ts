@@ -11,6 +11,7 @@ const fetchAccountTransactionsMock = vi.fn();
 const getConfidentialAssetBalanceMock = vi.fn();
 const scanConfidentialWalletMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
+const cancelFaucetRequestMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 const transferAssetMock = vi.fn();
 
@@ -36,6 +37,7 @@ vi.mock("@/services/iroha", () => ({
     input: unknown,
     onProgress?: (progress: unknown) => void,
   ) => requestFaucetFundsMock(input, onProgress),
+  cancelFaucetRequest: (input: unknown) => cancelFaucetRequestMock(input),
   transferAsset: (input: unknown) => transferAssetMock(input),
 }));
 
@@ -76,8 +78,10 @@ describe("WalletView", () => {
     getConfidentialAssetBalanceMock.mockReset();
     scanConfidentialWalletMock.mockReset();
     requestFaucetFundsMock.mockReset();
+    cancelFaucetRequestMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     transferAssetMock.mockReset();
+    cancelFaucetRequestMock.mockResolvedValue({ canceled: true });
     fetchAccountAssetsMock.mockResolvedValue({
       items: [],
       total: 0,
@@ -226,9 +230,16 @@ describe("WalletView", () => {
     mountView();
     await flushPromises();
 
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "alice@wonderland",
+        networkPrefix: 369,
+      }),
+    );
     expect(fetchAccountTransactionsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         accountId: "alice@wonderland",
+        networkPrefix: 369,
         privateKeyHex: "cd".repeat(32),
       }),
     );
@@ -714,11 +725,12 @@ describe("WalletView", () => {
 
     const session = useSessionStore();
     expect(requestFaucetFundsMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         toriiUrl: "http://localhost:8080",
         accountId: "alice@wonderland",
         networkPrefix: 369,
-      },
+        requestId: expect.stringMatching(/^wallet-faucet-/),
+      }),
       expect.any(Function),
     );
     expect(session.connection.assetDefinitionId).toBe(
@@ -771,6 +783,56 @@ describe("WalletView", () => {
 
     expect(useSessionStore().connection.assetDefinitionId).toBe(
       "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+  });
+
+  it("recognizes TAIRA split-field balances after faucet claim", async () => {
+    const fundedAssets = {
+      items: [
+        {
+          asset_id:
+            "61CtjvNd9T3THAR65GsMVHr82Bjc#testuLegacyVisibleAccount1234567890",
+          asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+          quantity: "25000",
+        },
+      ],
+      total: 1,
+    };
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce(fundedAssets)
+      .mockResolvedValue(fundedAssets);
+    requestFaucetFundsMock.mockResolvedValue({
+      account_id: "testuLegacyVisibleAccount1234567890",
+      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      amount: "25000",
+      tx_hash_hex: "0xabc",
+      status: "Committed",
+    });
+
+    const wrapper = mountView("", {
+      account: {
+        accountId: "testuLegacyVisibleAccount1234567890",
+        i105AccountId: "testuLegacyVisibleAccount1234567890",
+      },
+    });
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("25000");
+    expect(wrapper.text()).not.toContain(
+      t(
+        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+      ),
     );
   });
 
@@ -844,11 +906,12 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(requestFaucetFundsMock).toHaveBeenCalledWith(
-      {
+      expect.objectContaining({
         toriiUrl: "http://localhost:8080",
         accountId: "testuLegacyVisibleAccount1234567890",
         networkPrefix: 369,
-      },
+        requestId: expect.stringMatching(/^wallet-faucet-/),
+      }),
       expect.any(Function),
     );
   });
@@ -932,6 +995,48 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(false);
+  });
+
+  it("lets the user cancel an in-flight faucet request", async () => {
+    let rejectFaucet: (error: Error) => void = () => {};
+    requestFaucetFundsMock.mockImplementation(
+      async (_input: unknown, onProgress?: (progress: any) => void) => {
+        onProgress?.({ phase: "solvingPuzzle" });
+        return new Promise<FaucetResponseFixture>((_resolve, reject) => {
+          rejectFaucet = reject;
+        });
+      },
+    );
+    cancelFaucetRequestMock.mockImplementation(async () => {
+      const error = new Error("Faucet request canceled.");
+      error.name = "AbortError";
+      rejectFaucet(error);
+      return { canceled: true };
+    });
+
+    const wrapper = mountView("");
+    await flushPromises();
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    const requestId = requestFaucetFundsMock.mock.calls[0][0].requestId;
+    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(true);
+    expect(wrapper.text()).toContain(t("Cancel"));
+
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Cancel")))!
+      .trigger("click");
+    await flushPromises();
+
+    expect(cancelFaucetRequestMock).toHaveBeenCalledWith({ requestId });
+    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(false);
+    expect(wrapper.text()).toContain(t("Faucet request canceled."));
+    expect(wrapper.text()).not.toContain(t("Failed to request faucet funds."));
   });
 
   it("keeps polling wallet refresh until the funded faucet asset appears", async () => {
@@ -1021,7 +1126,7 @@ describe("WalletView", () => {
     );
   });
 
-  it("shows a wallet error when local-only accounts are not live on-chain yet", async () => {
+  it("keeps local-only missing accounts as an empty wallet instead of a failed refresh", async () => {
     fetchAccountAssetsMock.mockRejectedValueOnce(
       new Error("Account not found"),
     );
@@ -1034,7 +1139,10 @@ describe("WalletView", () => {
         "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or otherwise created on-chain.",
       ),
     );
-    expect(wrapper.text()).toContain("Account not found");
+    expect(wrapper.text()).not.toContain("Account not found");
+    expect(wrapper.text()).not.toContain(
+      t("Wallet data is unavailable until this account exists on-chain."),
+    );
   });
 
   it("keeps funded assets visible when confidential balance refresh fails", async () => {

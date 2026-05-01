@@ -14,6 +14,8 @@ export type TransactionFeeLike = {
   asset?: string | null;
   feeAssetId?: string | null;
   fee_asset_id?: string | null;
+  fee_amount?: string | number | null;
+  feeAmount?: string | number | null;
   gas_asset_id?: string | null;
   source?: string | null;
   estimated?: boolean | null;
@@ -29,6 +31,25 @@ type TransactionFeeContainer = TransactionFeeLike & {
 };
 
 const trim = (value: unknown) => String(value ?? "").trim();
+
+export const transactionFeeHintForEndpoint = (
+  toriiUrl: unknown,
+): TransactionFeeLike | null => {
+  const literal = trim(toriiUrl);
+  if (!literal) {
+    return null;
+  }
+  try {
+    new URL(literal);
+  } catch {
+    return null;
+  }
+  return {
+    fee_amount: "0.01",
+    fee_asset_id: SORA_XOR_ASSET_DEFINITION_ID,
+    source: "estimated",
+  };
+};
 
 const readNestedFee = (
   value: TransactionFeeLike | string | number | null | undefined,
@@ -114,8 +135,12 @@ export const formatTransactionFeeInline = (
   return t("Charged on-chain");
 };
 
-export const formatTransactionFee = (value: unknown, t: Translate): string => {
-  const fee = readTransactionFee(value);
+export const formatTransactionFee = (
+  value: unknown,
+  t: Translate,
+  fallbackFee?: unknown,
+): string => {
+  const fee = readTransactionFee(value) ?? readTransactionFee(fallbackFee);
   if (!fee) {
     return t("Network fee: charged on-chain (amount unavailable).");
   }
@@ -136,8 +161,9 @@ export const appendTransactionFee = (
   message: string,
   transactionResult: unknown,
   t: Translate,
+  fallbackFee?: unknown,
 ): string => {
   const base = trim(message);
-  const fee = formatTransactionFee(transactionResult, t);
+  const fee = formatTransactionFee(transactionResult, t, fallbackFee);
   return base ? `${base} ${fee}` : fee;
 };
