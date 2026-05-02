@@ -62,6 +62,16 @@
           </span>
           <span
             class="pill mini"
+            :class="hasCitizenRecord ? 'positive' : 'muted'"
+          >
+            {{
+              t("Citizenship: {state}", {
+                state: hasCitizenRecord ? t("registered") : t("missing"),
+              })
+            }}
+          </span>
+          <span
+            class="pill mini"
             :class="hasParliamentPermission ? 'positive' : 'muted'"
           >
             {{
@@ -391,6 +401,7 @@ import {
   enactGovernanceProposal,
   fetchAccountAssets,
   finalizeGovernanceReferendum,
+  getGovernanceCitizenStatus,
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
   getGovernanceProposal,
@@ -406,6 +417,7 @@ import { getPublicAccountId } from "@/utils/accountId";
 import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
+  GovernanceCitizenStatusResponse,
   GovernanceDraftResponse,
   GovernanceLocksResult,
   GovernanceProposalResult,
@@ -456,6 +468,7 @@ const errorMessage = ref("");
 
 const xorBalance = ref("0");
 const permissions = ref<AccountPermissionItem[]>([]);
+const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
 const council = ref<GovernanceCouncilCurrentResponse | null>(null);
 const governanceRegistrationPolicy =
   ref<GovernanceRegistrationPolicyResponse | null>(null);
@@ -488,8 +501,14 @@ const canSubmit = computed(() =>
 );
 
 const isActionBusy = computed(() => actionBusy.value !== null);
-const hasBallotPermission = computed(() =>
+const hasBallotPermissionToken = computed(() =>
   hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
+);
+const hasCitizenRecord = computed(
+  () => citizenshipStatus.value?.isCitizen === true,
+);
+const hasBallotPermission = computed(
+  () => hasBallotPermissionToken.value || hasCitizenRecord.value,
 );
 const hasParliamentPermission = computed(() =>
   hasGovernancePermission(permissions.value, "CanManageParliament"),
@@ -721,6 +740,7 @@ const refresh = async () => {
     statusMessage.value = t("Set up network and wallet first.");
     permissionsLoaded.value = false;
     permissions.value = [];
+    citizenshipStatus.value = null;
     council.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
@@ -735,8 +755,13 @@ const refresh = async () => {
   errorMessage.value = "";
 
   try {
-    const [assetsResult, permissionsResult, councilResult, policyResult] =
-      await Promise.allSettled([
+    const [
+      assetsResult,
+      permissionsResult,
+      councilResult,
+      policyResult,
+      citizenshipResult,
+    ] = await Promise.allSettled([
         fetchAccountAssets({
           toriiUrl,
           accountId,
@@ -750,6 +775,10 @@ const refresh = async () => {
         }),
         getGovernanceCouncilCurrent(toriiUrl),
         getGovernanceRegistrationPolicy(toriiUrl),
+        getGovernanceCitizenStatus({
+          toriiUrl,
+          accountId,
+        }),
       ] as const);
 
     if (
@@ -776,12 +805,17 @@ const refresh = async () => {
     );
     permissionsLoaded.value = true;
     permissions.value = permissionsResult.value.items;
+    citizenshipStatus.value =
+      citizenshipResult.status === "fulfilled" ? citizenshipResult.value : null;
     council.value =
       councilResult.status === "fulfilled" ? councilResult.value : null;
     governanceRegistrationPolicy.value = nextPolicy;
-    statusMessage.value = t("Loaded {count} permission token(s).", {
+    const loadedStatus = t("Loaded {count} permission token(s).", {
       count: permissionsResult.value.total,
     });
+    statusMessage.value = hasCitizenRecord.value
+      ? `${loadedStatus} ${t("Citizenship registered.")}`
+      : loadedStatus;
     const optionalErrors: string[] = [];
     if (councilResult.status === "rejected") {
       optionalErrors.push(
@@ -799,6 +833,14 @@ const refresh = async () => {
         ),
       );
     }
+    if (citizenshipResult.status === "rejected") {
+      optionalErrors.push(
+        toUserFacingErrorMessage(
+          citizenshipResult.reason,
+          t("Failed to load governance state."),
+        ),
+      );
+    }
     if (optionalErrors.length) {
       errorMessage.value = optionalErrors.join("\n");
     }
@@ -808,6 +850,7 @@ const refresh = async () => {
     }
     permissionsLoaded.value = false;
     permissions.value = [];
+    citizenshipStatus.value = null;
     council.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";

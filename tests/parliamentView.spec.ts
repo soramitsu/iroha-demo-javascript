@@ -8,6 +8,7 @@ import { CITIZEN_BOND_XOR } from "@/utils/parliament";
 
 const fetchAccountAssetsMock = vi.fn();
 const listAccountPermissionsMock = vi.fn();
+const getGovernanceCitizenStatusMock = vi.fn();
 const getGovernanceCouncilCurrentMock = vi.fn();
 const getGovernanceReferendumMock = vi.fn();
 const getGovernanceTallyMock = vi.fn();
@@ -22,6 +23,8 @@ const enactGovernanceProposalMock = vi.fn();
 vi.mock("@/services/iroha", () => ({
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   listAccountPermissions: (input: unknown) => listAccountPermissionsMock(input),
+  getGovernanceCitizenStatus: (input: unknown) =>
+    getGovernanceCitizenStatusMock(input),
   getGovernanceCouncilCurrent: (toriiUrl: string) =>
     getGovernanceCouncilCurrentMock(toriiUrl),
   getGovernanceReferendum: (input: unknown) =>
@@ -51,6 +54,7 @@ describe("ParliamentView", () => {
     localStorage.clear();
     fetchAccountAssetsMock.mockReset();
     listAccountPermissionsMock.mockReset();
+    getGovernanceCitizenStatusMock.mockReset();
     getGovernanceCouncilCurrentMock.mockReset();
     getGovernanceReferendumMock.mockReset();
     getGovernanceTallyMock.mockReset();
@@ -74,6 +78,16 @@ describe("ParliamentView", () => {
     listAccountPermissionsMock.mockResolvedValue({
       items: [],
       total: 0,
+    });
+    getGovernanceCitizenStatusMock.mockResolvedValue({
+      accountId: "alice@wonderland",
+      isCitizen: false,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+      endpointAvailable: true,
     });
     getGovernanceCouncilCurrentMock.mockResolvedValue({
       epoch: 1,
@@ -404,6 +418,29 @@ describe("ParliamentView", () => {
         "Citizenship voting permission detected. Bonding is no longer required.",
       ),
     );
+  });
+
+  it("disables citizenship bond when account already has a citizen record", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      accountId: "alice@wonderland",
+      isCitizen: true,
+      amount: "10000",
+      bondedHeight: 12731,
+      seatsInEpoch: 0,
+      lastEpochSeen: 0,
+      cooldownUntil: 0,
+      endpointAvailable: true,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const bondButton = findButtonByText(
+      wrapper,
+      `Bond ${CITIZEN_BOND_XOR} XOR`,
+    );
+    expect(bondButton.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain(t("Citizenship registered."));
+    expect(registerCitizenMock).not.toHaveBeenCalled();
   });
 
   it("hides low-balance bond warning when account is already a citizen", async () => {

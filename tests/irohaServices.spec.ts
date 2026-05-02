@@ -11,6 +11,7 @@ import {
   getConfidentialAssetBalance,
   finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
+  getGovernanceCitizenStatus,
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
   getGovernanceProposal,
@@ -693,6 +694,16 @@ describe("iroha services bridge", () => {
     const listAccountPermissionsMock = vi
       .fn()
       .mockResolvedValue({ items: [], total: 0 });
+    const getGovernanceCitizenStatusMock = vi.fn().mockResolvedValue({
+      accountId: "alice@wonderland",
+      isCitizen: true,
+      amount: "10000",
+      bondedHeight: 12,
+      seatsInEpoch: 0,
+      lastEpochSeen: 0,
+      cooldownUntil: 0,
+      endpointAvailable: true,
+    });
     const registerCitizenMock = vi.fn().mockResolvedValue({ hash: "0x10" });
     const getGovernanceRegistrationPolicyMock = vi.fn().mockResolvedValue({
       citizenshipAssetDefinitionId: null,
@@ -738,6 +749,7 @@ describe("iroha services bridge", () => {
 
     (window as any).iroha = {
       listAccountPermissions: listAccountPermissionsMock,
+      getGovernanceCitizenStatus: getGovernanceCitizenStatusMock,
       registerCitizen: registerCitizenMock,
       getGovernanceRegistrationPolicy: getGovernanceRegistrationPolicyMock,
       getGovernanceProposal: getGovernanceProposalMock,
@@ -791,6 +803,10 @@ describe("iroha services bridge", () => {
     };
 
     await listAccountPermissions(permissionsInput);
+    await getGovernanceCitizenStatus({
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    });
     await registerCitizen(registerInput);
     await getGovernanceRegistrationPolicy("http://localhost:8080");
     await getGovernanceProposal(proposalInput);
@@ -803,6 +819,10 @@ describe("iroha services bridge", () => {
     await enactGovernanceProposal(enactInput);
 
     expect(listAccountPermissionsMock).toHaveBeenCalledWith(permissionsInput);
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    });
     expect(registerCitizenMock).toHaveBeenCalledWith(registerInput);
     expect(getGovernanceRegistrationPolicyMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",

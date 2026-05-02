@@ -562,6 +562,17 @@ type GovernanceRegistrationPolicyResponse = {
   assetDefinitionError: string | null;
 };
 
+type GovernanceCitizenStatusResponse = {
+  accountId: string;
+  isCitizen: boolean;
+  amount: string | null;
+  bondedHeight: number | null;
+  seatsInEpoch: number | null;
+  lastEpochSeen: number | null;
+  cooldownUntil: number | null;
+  endpointAvailable: boolean;
+};
+
 type GovernanceDraftResponse = Awaited<
   ReturnType<ToriiClient["governanceFinalizeReferendumTyped"]>
 >;
@@ -853,6 +864,11 @@ type GovernanceRegistrationPolicyInput = {
   toriiUrl: string;
 };
 
+type GovernanceCitizenStatusInput = {
+  toriiUrl: string;
+  accountId: string;
+};
+
 type GovernanceLookupInput = {
   toriiUrl: string;
   proposalId: string;
@@ -1134,6 +1150,9 @@ type IrohaBridge = {
   getGovernanceRegistrationPolicy(
     input: GovernanceRegistrationPolicyInput,
   ): Promise<GovernanceRegistrationPolicyResponse>;
+  getGovernanceCitizenStatus(
+    input: GovernanceCitizenStatusInput,
+  ): Promise<GovernanceCitizenStatusResponse>;
   getGovernanceProposal(
     input: GovernanceLookupInput,
   ): Promise<GovernanceProposalResponse>;
@@ -4667,6 +4686,72 @@ const fetchGovernanceCouncilCurrent = async (
   return normalizeGovernanceCouncilCurrentPayload(payload);
 };
 
+const optionalNonNegativeNumber = (value: unknown): number | null => {
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized >= 0
+    ? Math.trunc(normalized)
+    : null;
+};
+
+const normalizeGovernanceCitizenStatusPayload = (
+  payload: unknown,
+  fallbackAccountId: string,
+  endpointAvailable: boolean,
+): GovernanceCitizenStatusResponse => {
+  const record = isPlainRecord(payload) ? payload : {};
+  const amount = trimString(record.amount);
+  return {
+    accountId:
+      trimString(record.account_id ?? record.accountId) || fallbackAccountId,
+    isCitizen: Boolean(record.is_citizen ?? record.isCitizen),
+    amount: amount || null,
+    bondedHeight: optionalNonNegativeNumber(
+      record.bonded_height ?? record.bondedHeight,
+    ),
+    seatsInEpoch: optionalNonNegativeNumber(
+      record.seats_in_epoch ?? record.seatsInEpoch,
+    ),
+    lastEpochSeen: optionalNonNegativeNumber(
+      record.last_epoch_seen ?? record.lastEpochSeen,
+    ),
+    cooldownUntil: optionalNonNegativeNumber(
+      record.cooldown_until ?? record.cooldownUntil,
+    ),
+    endpointAvailable,
+  };
+};
+
+const fetchGovernanceCitizenStatus = async (
+  toriiUrlRaw: string,
+  accountId: string,
+): Promise<GovernanceCitizenStatusResponse> => {
+  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+    accountId,
+    "accountId",
+  );
+  const endpoint = buildNexusEndpoint(
+    toriiUrlRaw,
+    `/v1/gov/citizens/${encodeURIComponent(normalizedAccountId)}`,
+  );
+  try {
+    const payload = await fetchJson(endpoint, "Governance citizenship status");
+    return normalizeGovernanceCitizenStatusPayload(
+      payload,
+      normalizedAccountId,
+      true,
+    );
+  } catch (error) {
+    if (isApiRequestError(error) && error.status === 404) {
+      return normalizeGovernanceCitizenStatusPayload(
+        null,
+        normalizedAccountId,
+        false,
+      );
+    }
+    throw error;
+  }
+};
+
 const confidentialPolicyLookupSupportsLiveAssetFallback = (
   error: unknown,
   requestedAssetDefinitionId: string,
@@ -7983,6 +8068,9 @@ const api: IrohaBridge = {
   },
   getGovernanceRegistrationPolicy({ toriiUrl }) {
     return fetchGovernanceRegistrationPolicy(toriiUrl);
+  },
+  getGovernanceCitizenStatus({ toriiUrl, accountId }) {
+    return fetchGovernanceCitizenStatus(toriiUrl, accountId);
   },
   getGovernanceProposal({ toriiUrl, proposalId }) {
     const client = getClient(toriiUrl);

@@ -62,6 +62,17 @@ export interface AccountPermissionsResponse {
   total: number;
 }
 
+export interface GovernanceCitizenStatusResponse {
+  accountId: string;
+  isCitizen: boolean;
+  amount: string | null;
+  bondedHeight: number | null;
+  seatsInEpoch: number | null;
+  lastEpochSeen: number | null;
+  cooldownUntil: number | null;
+  endpointAvailable: boolean;
+}
+
 export interface OfflineAllowanceItem {
   certificate_id_hex: string;
   controller_id: string;
@@ -951,6 +962,10 @@ export interface IrohaBridge {
   getGovernanceRegistrationPolicy(input: {
     toriiUrl: string;
   }): Promise<GovernanceRegistrationPolicyResponse>;
+  getGovernanceCitizenStatus(input: {
+    toriiUrl: string;
+    accountId: string;
+  }): Promise<GovernanceCitizenStatusResponse>;
   getGovernanceProposal(input: {
     toriiUrl: string;
     proposalId: string;
