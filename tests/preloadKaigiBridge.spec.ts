@@ -1029,6 +1029,99 @@ describe("preload Kaigi bridge", () => {
     });
   });
 
+  it("uses root runtime status telemetry for network stats", async () => {
+    const defaultNodeFetch = mocks.nodeFetchMock.getMockImplementation();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.endsWith("/status")) {
+          return jsonResponse({
+            blocks: 702,
+            commit_time_ms: 1200,
+            queue_size: 2,
+            sumeragi: {
+              effective_block_time_ms: 2100,
+              highest_qc_height: 702,
+              locked_qc_height: 701,
+              tx_queue_capacity: 64,
+              tx_queue_saturated: false,
+            },
+          });
+        }
+        if (defaultNodeFetch) {
+          return defaultNodeFetch(input, init);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getNetworkStats({
+        toriiUrl: "https://taira.sora.org",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    ).resolves.toMatchObject({
+      partial: false,
+      warnings: [],
+      runtime: {
+        queueSize: 2,
+        queueCapacity: 64,
+        commitTimeMs: 1200,
+        effectiveBlockTimeMs: 2100,
+        txQueueSaturated: false,
+        highestQcHeight: 702,
+        lockedQcHeight: 701,
+        currentBlockHeight: 701,
+        finalizedBlockHeight: 699,
+        finalizationLag: 2,
+      },
+    });
+    expect(mocks.getStatusSnapshotMock).not.toHaveBeenCalled();
+  });
+
+  it("returns partial network stats when runtime telemetry stalls", async () => {
+    const defaultNodeFetch = mocks.nodeFetchMock.getMockImplementation();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (method === "GET" && href.endsWith("/status")) {
+          return new Promise(() => {});
+        }
+        if (defaultNodeFetch) {
+          return defaultNodeFetch(input, init);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    const bridge = await loadBridge();
+    const statsPromise = bridge.getNetworkStats({
+      toriiUrl: "https://taira.sora.org",
+      assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    });
+
+    await vi.advanceTimersByTimeAsync(3_600);
+
+    await expect(statsPromise).resolves.toMatchObject({
+      partial: true,
+      explorer: expect.objectContaining({
+        blockHeight: 701,
+      }),
+      runtime: expect.objectContaining({
+        currentBlockHeight: 701,
+        finalizedBlockHeight: 699,
+        finalizationLag: 2,
+      }),
+      warnings: expect.arrayContaining([
+        "Runtime status telemetry is unavailable.",
+      ]),
+    });
+  });
+
   it("loads chain metadata from Torii endpoint payloads", async () => {
     mocks.nodeFetchMock.mockImplementation(async (input: unknown) => {
       const href = String(input);

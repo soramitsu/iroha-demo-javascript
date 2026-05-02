@@ -14,6 +14,7 @@ const scanConfidentialWalletMock = vi.fn();
 const requestFaucetFundsMock = vi.fn();
 const cancelFaucetRequestMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
+const getGovernanceCitizenStatusMock = vi.fn();
 const transferAssetMock = vi.fn();
 
 type FaucetResponseFixture = {
@@ -34,6 +35,8 @@ vi.mock("@/services/iroha", () => ({
   scanConfidentialWallet: (input: unknown) => scanConfidentialWalletMock(input),
   getConfidentialAssetPolicy: (input: unknown) =>
     getConfidentialAssetPolicyMock(input),
+  getGovernanceCitizenStatus: (input: unknown) =>
+    getGovernanceCitizenStatusMock(input),
   requestFaucetFunds: (
     input: unknown,
     onProgress?: (progress: unknown) => void,
@@ -81,6 +84,7 @@ describe("WalletView", () => {
     requestFaucetFundsMock.mockReset();
     cancelFaucetRequestMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
+    getGovernanceCitizenStatusMock.mockReset();
     transferAssetMock.mockReset();
     cancelFaucetRequestMock.mockResolvedValue({ canceled: true });
     fetchAccountAssetsMock.mockResolvedValue({
@@ -114,6 +118,16 @@ describe("WalletView", () => {
         pending_transition: null,
       }),
     );
+    getGovernanceCitizenStatusMock.mockResolvedValue({
+      accountId: "alice@wonderland",
+      isCitizen: false,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+      endpointAvailable: true,
+    });
     setActivePinia(createPinia());
   });
 
@@ -253,6 +267,34 @@ describe("WalletView", () => {
         offset: 0,
       }),
     );
+  });
+
+  it("shows citizenship status without a network citizen count on the wallet screen", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      accountId: "alice@wonderland",
+      isCitizen: true,
+      amount: "10000",
+      bondedHeight: 12,
+      seatsInEpoch: 0,
+      lastEpochSeen: 0,
+      cooldownUntil: null,
+      endpointAvailable: true,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const panel = wrapper.get(".wallet-citizenship-panel");
+    expect(panel.classes()).toContain("wallet-citizenship-panel-positive");
+    expect(panel.text()).toContain(t("You are a citizen"));
+    expect(panel.text()).toContain(
+      t("Bonded {amount} XOR", { amount: "10000" }),
+    );
+    expect(panel.find(".wallet-citizenship-count").exists()).toBe(false);
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: "alice@wonderland",
+    });
   });
 
   it("updates the visible balance before transaction and private scans finish", async () => {

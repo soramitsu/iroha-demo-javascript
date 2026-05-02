@@ -9,6 +9,7 @@ import { CITIZEN_BOND_XOR } from "@/utils/parliament";
 const fetchAccountAssetsMock = vi.fn();
 const listAccountPermissionsMock = vi.fn();
 const getGovernanceCitizenStatusMock = vi.fn();
+const getGovernanceCitizenCountMock = vi.fn();
 const getGovernanceCouncilCurrentMock = vi.fn();
 const getGovernanceReferendumMock = vi.fn();
 const getGovernanceTallyMock = vi.fn();
@@ -25,6 +26,8 @@ vi.mock("@/services/iroha", () => ({
   listAccountPermissions: (input: unknown) => listAccountPermissionsMock(input),
   getGovernanceCitizenStatus: (input: unknown) =>
     getGovernanceCitizenStatusMock(input),
+  getGovernanceCitizenCount: (toriiUrl: string) =>
+    getGovernanceCitizenCountMock(toriiUrl),
   getGovernanceCouncilCurrent: (toriiUrl: string) =>
     getGovernanceCouncilCurrentMock(toriiUrl),
   getGovernanceReferendum: (input: unknown) =>
@@ -55,6 +58,7 @@ describe("ParliamentView", () => {
     fetchAccountAssetsMock.mockReset();
     listAccountPermissionsMock.mockReset();
     getGovernanceCitizenStatusMock.mockReset();
+    getGovernanceCitizenCountMock.mockReset();
     getGovernanceCouncilCurrentMock.mockReset();
     getGovernanceReferendumMock.mockReset();
     getGovernanceTallyMock.mockReset();
@@ -96,6 +100,10 @@ describe("ParliamentView", () => {
       candidate_count: 0,
       verified: 0,
       derived_by: "Fallback",
+    });
+    getGovernanceCitizenCountMock.mockResolvedValue({
+      total: 0,
+      endpointAvailable: true,
     });
     getGovernanceReferendumMock.mockResolvedValue({
       found: false,
@@ -431,6 +439,18 @@ describe("ParliamentView", () => {
       cooldownUntil: 0,
       endpointAvailable: true,
     });
+    getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
+      epoch: 1,
+      members: [],
+      alternates: [],
+      candidate_count: 7,
+      verified: 7,
+      derived_by: "Fallback",
+    });
+    getGovernanceCitizenCountMock.mockResolvedValueOnce({
+      total: 7,
+      endpointAvailable: true,
+    });
     const wrapper = mountView();
     await flushPromises();
 
@@ -438,9 +458,46 @@ describe("ParliamentView", () => {
       wrapper,
       `Bond ${CITIZEN_BOND_XOR} XOR`,
     );
+    const citizenPanel = wrapper.get(".parliament-citizenship-panel");
     expect(bondButton.attributes("disabled")).toBeDefined();
+    expect(citizenPanel.classes()).toContain(
+      "parliament-citizenship-panel-positive",
+    );
+    expect(citizenPanel.text()).toContain(t("You are a citizen"));
+    expect(citizenPanel.text()).toContain(
+      t("Bonded {amount} XOR", { amount: "10000" }),
+    );
+    expect(citizenPanel.text()).toContain(t("Citizens"));
+    expect(citizenPanel.text()).toContain("7");
     expect(wrapper.text()).toContain(t("Citizenship registered."));
     expect(registerCitizenMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the exact citizen count without a lower-bound suffix", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      accountId: "alice@wonderland",
+      isCitizen: true,
+      amount: "10000",
+      bondedHeight: 12731,
+      seatsInEpoch: 0,
+      lastEpochSeen: 0,
+      cooldownUntil: 0,
+      endpointAvailable: true,
+    });
+    getGovernanceCitizenCountMock.mockResolvedValueOnce({
+      total: 1,
+      endpointAvailable: true,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const citizenPanel = wrapper.get(".parliament-citizenship-panel");
+    const citizenCount = citizenPanel.get(".parliament-citizen-count");
+    expect(citizenPanel.text()).toContain(t("You are a citizen"));
+    expect(citizenCount.text()).toContain("1");
+    expect(citizenCount.text()).not.toContain("1+");
+    expect(citizenCount.text()).not.toMatch(/\b0\b/);
   });
 
   it("hides low-balance bond warning when account is already a citizen", async () => {

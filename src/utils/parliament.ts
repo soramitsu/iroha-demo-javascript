@@ -1,6 +1,8 @@
 import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
+  GovernanceCitizenCountResponse,
+  GovernanceCitizenStatusResponse,
 } from "@/types/iroha";
 import {
   areAssetDefinitionIdsEquivalent,
@@ -59,6 +61,18 @@ export const hasGovernancePermission = (
   permissions: AccountPermissionItem[],
   expected: string,
 ) => listGovernancePermissions(permissions).includes(expected);
+
+export const isRegisteredGovernanceCitizen = (
+  status: Pick<GovernanceCitizenStatusResponse, "isCitizen"> | null | undefined,
+  hasBallotPermission = false,
+) => Boolean(hasBallotPermission || status?.isCitizen === true);
+
+export const resolveGovernanceCitizenCount = (
+  council: Pick<GovernanceCitizenCountResponse, "total"> | null | undefined,
+) => {
+  const count = Number(council?.total);
+  return Number.isFinite(count) && count >= 0 ? Math.trunc(count) : null;
+};
 
 export const ballotDirectionToCode = (
   direction: GovernanceBallotDirection,

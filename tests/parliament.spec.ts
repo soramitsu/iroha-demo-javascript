@@ -4,6 +4,7 @@ import {
   canonicalizeProposalId,
   extractProposalIdFromReferendum,
   hasGovernancePermission,
+  isRegisteredGovernanceCitizen,
   isPositiveInteger,
   isPositiveWholeNumberString,
   isValidProposalId,
@@ -11,6 +12,7 @@ import {
   parseParliamentHistory,
   pushRecentValue,
   resolveGovernanceBondBalance,
+  resolveGovernanceCitizenCount,
   resolveXorBalance,
 } from "@/utils/parliament";
 
@@ -128,6 +130,21 @@ describe("parliament utilities", () => {
     expect(hasGovernancePermission(permissions, "CanEnactGovernance")).toBe(
       false,
     );
+  });
+
+  it("resolves citizen state and count from governance payloads", () => {
+    expect(
+      isRegisteredGovernanceCitizen({
+        isCitizen: true,
+      }),
+    ).toBe(true);
+    expect(isRegisteredGovernanceCitizen(null, true)).toBe(true);
+    expect(isRegisteredGovernanceCitizen(null, false)).toBe(false);
+
+    expect(resolveGovernanceCitizenCount({ total: 12 })).toBe(12);
+    expect(resolveGovernanceCitizenCount({ total: 12.9 })).toBe(12);
+    expect(resolveGovernanceCitizenCount({ total: 0 })).toBe(0);
+    expect(resolveGovernanceCitizenCount(null)).toBeNull();
   });
 
   it("maps ballot directions to instruction codes", () => {

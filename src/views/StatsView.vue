@@ -452,7 +452,7 @@ import {
   DEFAULT_EXPLORER_URL,
   SORA_XOR_ASSET_DEFINITION_ID,
 } from "@/constants/chains";
-import { getNetworkStats } from "@/services/iroha";
+import { getGovernanceCitizenCount, getNetworkStats } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { deriveAssetSymbol, formatAssetDefinitionLabel } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
@@ -462,11 +462,15 @@ import {
   ratioPercent,
   toneFromThresholds,
 } from "@/utils/networkStatsVisuals";
+import { resolveGovernanceCitizenCount } from "@/utils/parliament";
 
 const session = useSessionStore();
 const { d, n, t } = useAppI18n();
 
 const stats = ref<Awaited<ReturnType<typeof getNetworkStats>> | null>(null);
+const governanceCitizenCount = ref<Awaited<
+  ReturnType<typeof getGovernanceCitizenCount>
+> | null>(null);
 const loading = ref(false);
 const loadError = ref("");
 const requestGeneration = ref(0);
@@ -545,6 +549,15 @@ const totalSupplyLabel = computed(() =>
 const holdersCountLabel = computed(() =>
   numberOrDash(stats.value?.supply?.holdersTotal ?? null),
 );
+const citizenCount = computed(() =>
+  resolveGovernanceCitizenCount(governanceCitizenCount.value),
+);
+const citizenCountLabel = computed(() => {
+  if (citizenCount.value === null) {
+    return t("—");
+  }
+  return numberOrDash(citizenCount.value);
+});
 const top10ShareLabel = computed(() =>
   formatPercent(stats.value?.supply?.distribution.top10 ?? null),
 );
@@ -736,6 +749,11 @@ const overviewCards = computed(() => {
       tone: "neutral",
     },
     {
+      label: t("Citizens"),
+      value: citizenCountLabel.value,
+      tone: "neutral",
+    },
+    {
       label: t("Top 10 share"),
       value: top10ShareLabel.value,
       tone: "neutral",
@@ -843,6 +861,7 @@ const networkShapeCards = computed(() => {
   return [
     { label: t("Peers"), value: numberOrDash(explorer?.peers ?? null) },
     { label: t("Accounts"), value: numberOrDash(explorer?.accounts ?? null) },
+    { label: t("Citizens"), value: citizenCountLabel.value },
     { label: t("Assets"), value: numberOrDash(explorer?.assets ?? null) },
     { label: t("Domains"), value: numberOrDash(explorer?.domains ?? null) },
   ];
@@ -1007,6 +1026,7 @@ const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   if (!toriiUrl) {
     stats.value = null;
+    governanceCitizenCount.value = null;
     loadError.value = t("Set up network and wallet first.");
     loading.value = false;
     return;
@@ -1018,22 +1038,39 @@ const refresh = async () => {
   loadError.value = "";
 
   try {
-    const nextStats = await getNetworkStats({
-      toriiUrl,
-      assetDefinitionId: assetDefinitionId.value,
-    });
+    const [statsResult, citizenCountResult] = await Promise.allSettled([
+      getNetworkStats({
+        toriiUrl,
+        assetDefinitionId: assetDefinitionId.value,
+      }),
+      getGovernanceCitizenCount(toriiUrl),
+    ] as const);
     if (
       generation !== requestGeneration.value ||
       toriiUrl !== session.connection.toriiUrl
     ) {
       return;
     }
-    stats.value = nextStats;
+    governanceCitizenCount.value =
+      citizenCountResult.status === "fulfilled"
+        ? citizenCountResult.value
+        : null;
+    if (citizenCountResult.status === "rejected") {
+      console.warn(
+        "Failed to refresh governance citizen count",
+        citizenCountResult.reason,
+      );
+    }
+    if (statsResult.status === "rejected") {
+      throw statsResult.reason;
+    }
+    stats.value = statsResult.value;
   } catch (error) {
     if (generation !== requestGeneration.value) {
       return;
     }
     stats.value = null;
+    governanceCitizenCount.value = null;
     loadError.value = toUserFacingErrorMessage(
       error,
       t("Unable to load network stats."),

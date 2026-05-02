@@ -125,6 +125,11 @@ export interface GovernanceCouncilCurrentResponseView {
   derived_by: string;
 }
 
+export interface GovernanceCitizenCountResponseView {
+  total: number | null;
+  endpointAvailable: boolean;
+}
+
 const toRecord = (value: unknown, label: string): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -514,6 +519,26 @@ export const normalizeGovernanceCouncilCurrentPayload = (
       record.derived_by ?? "Vrf",
       "governance council current response.derived_by",
     ),
+  };
+};
+
+export const normalizeGovernanceCitizenCountPayload = (
+  payload: unknown,
+  endpointAvailable = true,
+): GovernanceCitizenCountResponseView => {
+  const record = endpointAvailable
+    ? toRecord(payload, "governance citizen count response")
+    : {};
+  const total =
+    record.total === null || record.total === undefined
+      ? null
+      : toPositiveInteger(
+          record.total,
+          "governance citizen count response.total",
+        );
+  return {
+    total,
+    endpointAvailable,
   };
 };
 

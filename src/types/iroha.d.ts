@@ -73,6 +73,11 @@ export interface GovernanceCitizenStatusResponse {
   endpointAvailable: boolean;
 }
 
+export interface GovernanceCitizenCountResponse {
+  total: number | null;
+  endpointAvailable: boolean;
+}
+
 export interface OfflineAllowanceItem {
   certificate_id_hex: string;
   controller_id: string;
@@ -966,6 +971,9 @@ export interface IrohaBridge {
     toriiUrl: string;
     accountId: string;
   }): Promise<GovernanceCitizenStatusResponse>;
+  getGovernanceCitizenCount(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceCitizenCountResponse>;
   getGovernanceProposal(input: {
     toriiUrl: string;
     proposalId: string;

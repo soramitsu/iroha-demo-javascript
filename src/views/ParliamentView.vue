@@ -7,13 +7,20 @@
           {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
-      <p v-if="!alreadyCitizen" class="helper">
-        {{
-          t("Bond {amount} XOR once to enable voting for this wallet.", {
-            amount: citizenshipBondAmount,
-          })
-        }}
-      </p>
+      <div
+        class="parliament-citizenship-panel"
+        :class="{ 'parliament-citizenship-panel-positive': alreadyCitizen }"
+      >
+        <div>
+          <p class="kv-label">{{ t("Citizenship") }}</p>
+          <h3>{{ citizenshipHeadline }}</h3>
+          <p class="helper">{{ citizenshipPanelDetail }}</p>
+        </div>
+        <div class="parliament-citizen-count">
+          <span class="kv-label">{{ t("Citizens") }}</span>
+          <span class="kv-value">{{ citizenCountDisplay }}</span>
+        </div>
+      </div>
       <div class="grid-2 parliament-summary">
         <div class="kv">
           <span class="kv-label">{{ t("XOR Balance") }}</span>
@@ -401,6 +408,7 @@ import {
   enactGovernanceProposal,
   fetchAccountAssets,
   finalizeGovernanceReferendum,
+  getGovernanceCitizenCount,
   getGovernanceCitizenStatus,
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
@@ -418,6 +426,7 @@ import type {
   AccountPermissionItem,
   GovernanceBallotDirection,
   GovernanceCitizenStatusResponse,
+  GovernanceCitizenCountResponse,
   GovernanceDraftResponse,
   GovernanceLocksResult,
   GovernanceProposalResult,
@@ -430,6 +439,7 @@ import { compareDecimalStrings } from "@/utils/staking";
 import {
   CITIZEN_BOND_XOR,
   hasGovernancePermission,
+  isRegisteredGovernanceCitizen,
   canonicalizeProposalId,
   extractProposalIdFromReferendum,
   isValidProposalId,
@@ -438,6 +448,7 @@ import {
   parseParliamentHistory,
   pushRecentValue,
   resolveGovernanceBondBalance,
+  resolveGovernanceCitizenCount,
   sanitizeReferendumId,
 } from "@/utils/parliament";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
@@ -455,7 +466,7 @@ const activeAccountDisplayId = computed(() =>
 const requestAccountId = computed(
   () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
 );
-const { t } = useAppI18n();
+const { localeStore, t } = useAppI18n();
 
 const loadingBootstrap = ref(false);
 const permissionsLoaded = ref(false);
@@ -469,6 +480,7 @@ const errorMessage = ref("");
 const xorBalance = ref("0");
 const permissions = ref<AccountPermissionItem[]>([]);
 const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
+const citizenCountStatus = ref<GovernanceCitizenCountResponse | null>(null);
 const council = ref<GovernanceCouncilCurrentResponse | null>(null);
 const governanceRegistrationPolicy =
   ref<GovernanceRegistrationPolicyResponse | null>(null);
@@ -504,8 +516,8 @@ const isActionBusy = computed(() => actionBusy.value !== null);
 const hasBallotPermissionToken = computed(() =>
   hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
 );
-const hasCitizenRecord = computed(
-  () => citizenshipStatus.value?.isCitizen === true,
+const hasCitizenRecord = computed(() =>
+  isRegisteredGovernanceCitizen(citizenshipStatus.value),
 );
 const hasBallotPermission = computed(
   () => hasBallotPermissionToken.value || hasCitizenRecord.value,
@@ -624,6 +636,37 @@ const hasXorForBond = computed(() => {
     return false;
   }
 });
+const citizenCount = computed(() =>
+  resolveGovernanceCitizenCount(citizenCountStatus.value),
+);
+const citizenCountDisplay = computed(() => {
+  if (citizenCount.value === null) {
+    return t("—");
+  }
+  return new Intl.NumberFormat(localeStore.current).format(citizenCount.value);
+});
+const citizenshipHeadline = computed(() => {
+  if (loadingBootstrap.value && !permissionsLoaded.value) {
+    return t("Checking citizenship…");
+  }
+  return alreadyCitizen.value ? t("You are a citizen") : t("Not a citizen yet");
+});
+const citizenshipPanelDetail = computed(() => {
+  if (!canSubmit.value) {
+    return t("Set up network and wallet first.");
+  }
+  if (alreadyCitizen.value) {
+    const bondedAmount = citizenshipStatus.value?.amount?.trim();
+    return bondedAmount
+      ? t("Bonded {amount} XOR", { amount: bondedAmount })
+      : t(
+          "Citizenship voting permission detected. Bonding is no longer required.",
+        );
+  }
+  return t("Bond {amount} XOR once to enable voting for this wallet.", {
+    amount: citizenshipBondAmount.value,
+  });
+});
 const historyStorageKey = computed(() =>
   activeAccount.value?.accountId
     ? `iroha-demo:parliament-history:${activeAccount.value.accountId}`
@@ -741,6 +784,7 @@ const refresh = async () => {
     permissionsLoaded.value = false;
     permissions.value = [];
     citizenshipStatus.value = null;
+    citizenCountStatus.value = null;
     council.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
@@ -758,28 +802,30 @@ const refresh = async () => {
     const [
       assetsResult,
       permissionsResult,
+      citizenCountResult,
       councilResult,
       policyResult,
       citizenshipResult,
     ] = await Promise.allSettled([
-        fetchAccountAssets({
-          toriiUrl,
-          accountId,
-          networkPrefix: session.connection.networkPrefix,
-          limit: 200,
-        }),
-        listAccountPermissions({
-          toriiUrl,
-          accountId,
-          limit: 200,
-        }),
-        getGovernanceCouncilCurrent(toriiUrl),
-        getGovernanceRegistrationPolicy(toriiUrl),
-        getGovernanceCitizenStatus({
-          toriiUrl,
-          accountId,
-        }),
-      ] as const);
+      fetchAccountAssets({
+        toriiUrl,
+        accountId,
+        networkPrefix: session.connection.networkPrefix,
+        limit: 200,
+      }),
+      listAccountPermissions({
+        toriiUrl,
+        accountId,
+        limit: 200,
+      }),
+      getGovernanceCitizenCount(toriiUrl),
+      getGovernanceCouncilCurrent(toriiUrl),
+      getGovernanceRegistrationPolicy(toriiUrl),
+      getGovernanceCitizenStatus({
+        toriiUrl,
+        accountId,
+      }),
+    ] as const);
 
     if (
       requestGeneration !== refreshGeneration.value ||
@@ -807,6 +853,10 @@ const refresh = async () => {
     permissions.value = permissionsResult.value.items;
     citizenshipStatus.value =
       citizenshipResult.status === "fulfilled" ? citizenshipResult.value : null;
+    citizenCountStatus.value =
+      citizenCountResult.status === "fulfilled"
+        ? citizenCountResult.value
+        : null;
     council.value =
       councilResult.status === "fulfilled" ? councilResult.value : null;
     governanceRegistrationPolicy.value = nextPolicy;
@@ -817,6 +867,14 @@ const refresh = async () => {
       ? `${loadedStatus} ${t("Citizenship registered.")}`
       : loadedStatus;
     const optionalErrors: string[] = [];
+    if (citizenCountResult.status === "rejected") {
+      optionalErrors.push(
+        toUserFacingErrorMessage(
+          citizenCountResult.reason,
+          t("Failed to load governance state."),
+        ),
+      );
+    }
     if (councilResult.status === "rejected") {
       optionalErrors.push(
         toUserFacingErrorMessage(
@@ -851,6 +909,7 @@ const refresh = async () => {
     permissionsLoaded.value = false;
     permissions.value = [];
     citizenshipStatus.value = null;
+    citizenCountStatus.value = null;
     council.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
@@ -1259,6 +1318,57 @@ watch(
   margin-top: 6px;
 }
 
+.parliament-citizenship-panel {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0;
+  padding: 18px 20px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 70%),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-danger) 14%, transparent),
+      transparent 58%
+    ),
+    var(--surface-soft);
+  box-shadow:
+    inset 0 1px 0 var(--glass-highlight),
+    var(--shadow-soft);
+}
+
+.parliament-citizenship-panel-positive {
+  border-color: color-mix(in srgb, #22c55e 55%, var(--glass-border));
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 70%),
+    linear-gradient(135deg, rgba(34, 197, 94, 0.2), transparent 60%),
+    var(--surface-soft);
+}
+
+.parliament-citizenship-panel h3 {
+  margin: 6px 0 0;
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  line-height: 1.05;
+}
+
+.parliament-citizenship-panel .helper {
+  margin-top: 8px;
+  max-width: 62ch;
+}
+
+.parliament-citizen-count {
+  display: grid;
+  gap: 4px;
+  min-width: 150px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
+}
+
 .permission-stack {
   display: flex;
   flex-wrap: wrap;
@@ -1347,5 +1457,16 @@ watch(
   gap: 4px;
   max-height: 160px;
   overflow: auto;
+}
+
+@media (max-width: 720px) {
+  .parliament-citizenship-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .parliament-citizen-count {
+    min-width: 0;
+  }
 }
 </style>

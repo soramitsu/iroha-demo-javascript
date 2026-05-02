@@ -199,6 +199,50 @@ describe("network stats helpers", () => {
     });
   });
 
+  it("extracts runtime stats from root status with sumeragi enrichment", () => {
+    const runtime = extractRuntimeStatsFromStatusSnapshot(
+      {
+        blocks: 12732,
+        commit_time_ms: 1741607,
+        queue_size: 0,
+        sumeragi: {
+          tx_queue_capacity: 0,
+          tx_queue_saturated: false,
+          highest_qc_height: 12732,
+          locked_qc_height: 12731,
+          effective_block_time_ms: 3303181,
+        },
+      },
+      null,
+      {
+        tx_queue: {
+          depth: 0,
+          capacity: 20000,
+          saturated: false,
+        },
+        highest_qc: {
+          height: 12732,
+        },
+        locked_qc: {
+          height: 12731,
+        },
+      },
+    );
+
+    expect(runtime).toEqual({
+      queueSize: 0,
+      queueCapacity: 20000,
+      commitTimeMs: 1741607,
+      effectiveBlockTimeMs: 3303181,
+      txQueueSaturated: false,
+      highestQcHeight: 12732,
+      lockedQcHeight: 12731,
+      currentBlockHeight: 12732,
+      finalizedBlockHeight: 12732,
+      finalizationLag: 0,
+    });
+  });
+
   it("deduplicates lane, dataspace, and validator counts from governance status", () => {
     const governance = extractGovernanceStats({
       lane_governance: [

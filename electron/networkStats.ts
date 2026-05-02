@@ -34,6 +34,26 @@ const toStringOrNull = (value: unknown): string | null => {
 const toBooleanOrNull = (value: unknown): boolean | null =>
   typeof value === "boolean" ? value : null;
 
+const firstNonNull = <T>(...values: Array<T | null | undefined>): T | null => {
+  for (const value of values) {
+    if (value !== null && value !== undefined) {
+      return value;
+    }
+  }
+  return null;
+};
+
+const firstPositiveNumber = (
+  ...values: Array<number | null | undefined>
+): number | null => {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value > 0) {
+      return value;
+    }
+  }
+  return firstNonNull(...values);
+};
+
 const requireString = (value: unknown, label: string): string => {
   const normalized = toStringOrNull(value);
   if (!normalized) {
@@ -205,6 +225,7 @@ export const normalizeExplorerAssetDefinitionEconometricsPayload = (
 export const extractRuntimeStatsFromStatusSnapshot = (
   snapshot: unknown,
   explorerMetrics: ExplorerMetricsResponse | null,
+  sumeragiStatus?: unknown,
 ): NetworkRuntimeStats => {
   const snapshotRecord = toRecord(snapshot);
   const statusRecord =
@@ -216,36 +237,78 @@ export const extractRuntimeStatsFromStatusSnapshot = (
     toRecord(rawRecord?.sumeragi) ??
     toRecord(statusRecord.sumeragi) ??
     ({} as Record<string, unknown>);
+  const sumeragiRecord = toRecord(sumeragiStatus) ?? {};
+  const statusTxQueueRecord = toRecord(rawSumeragiRecord.tx_queue) ?? {};
+  const sumeragiTxQueueRecord = toRecord(sumeragiRecord.tx_queue) ?? {};
+  const statusHighestQcRecord = toRecord(rawSumeragiRecord.highest_qc) ?? {};
+  const sumeragiHighestQcRecord = toRecord(sumeragiRecord.highest_qc) ?? {};
+  const statusLockedQcRecord = toRecord(rawSumeragiRecord.locked_qc) ?? {};
+  const sumeragiLockedQcRecord = toRecord(sumeragiRecord.locked_qc) ?? {};
+  const statusCommitQcRecord = toRecord(rawSumeragiRecord.commit_qc) ?? {};
+  const sumeragiCommitQcRecord = toRecord(sumeragiRecord.commit_qc) ?? {};
 
   const currentBlockHeight =
     explorerMetrics?.blockHeight ??
-    toNonNegativeNumber(statusRecord.block_height) ??
-    toNonNegativeNumber(rawSumeragiRecord.block_height);
+    firstNonNull(
+      toNonNegativeNumber(statusRecord.block_height),
+      toNonNegativeNumber(statusRecord.blocks),
+      toNonNegativeNumber(rawSumeragiRecord.block_height),
+      toNonNegativeNumber(rawSumeragiRecord.blocks),
+      toNonNegativeNumber(statusHighestQcRecord.height),
+      toNonNegativeNumber(sumeragiHighestQcRecord.height),
+      toNonNegativeNumber(statusCommitQcRecord.height),
+      toNonNegativeNumber(sumeragiCommitQcRecord.height),
+    );
   const finalizedBlockHeight =
     explorerMetrics?.finalizedBlockHeight ??
-    toNonNegativeNumber(statusRecord.finalized_block_height) ??
-    toNonNegativeNumber(rawSumeragiRecord.finalized_block_height);
+    firstNonNull(
+      toNonNegativeNumber(statusRecord.finalized_block_height),
+      toNonNegativeNumber(statusRecord.finalized_blocks),
+      toNonNegativeNumber(rawSumeragiRecord.finalized_block_height),
+      toNonNegativeNumber(rawSumeragiRecord.highest_qc_height),
+      toNonNegativeNumber(statusHighestQcRecord.height),
+      toNonNegativeNumber(sumeragiHighestQcRecord.height),
+      toNonNegativeNumber(statusCommitQcRecord.height),
+      toNonNegativeNumber(sumeragiCommitQcRecord.height),
+    );
 
   return {
-    queueSize: toNonNegativeNumber(statusRecord.queue_size),
-    queueCapacity:
-      toNonNegativeNumber(rawSumeragiRecord.tx_queue_capacity) ??
+    queueSize: firstNonNull(
+      toNonNegativeNumber(statusRecord.queue_size),
+      toNonNegativeNumber(rawSumeragiRecord.tx_queue_depth),
+      toNonNegativeNumber(statusTxQueueRecord.depth),
+      toNonNegativeNumber(sumeragiTxQueueRecord.depth),
+    ),
+    queueCapacity: firstPositiveNumber(
+      toNonNegativeNumber(rawSumeragiRecord.tx_queue_capacity),
       toNonNegativeNumber(statusRecord.tx_queue_capacity),
+      toNonNegativeNumber(statusTxQueueRecord.capacity),
+      toNonNegativeNumber(sumeragiTxQueueRecord.capacity),
+    ),
     commitTimeMs:
       toNonNegativeNumber(statusRecord.commit_time_ms) ??
-      toNonNegativeNumber(rawSumeragiRecord.commit_time_ms),
+      toNonNegativeNumber(rawSumeragiRecord.commit_time_ms) ??
+      toNonNegativeNumber(rawSumeragiRecord.effective_commit_time_ms) ??
+      toNonNegativeNumber(sumeragiRecord.effective_commit_time_ms),
     effectiveBlockTimeMs:
       toNonNegativeNumber(rawSumeragiRecord.effective_block_time_ms) ??
-      toNonNegativeNumber(statusRecord.effective_block_time_ms),
+      toNonNegativeNumber(statusRecord.effective_block_time_ms) ??
+      toNonNegativeNumber(sumeragiRecord.effective_block_time_ms),
     txQueueSaturated:
       toBooleanOrNull(rawSumeragiRecord.tx_queue_saturated) ??
-      toBooleanOrNull(statusRecord.tx_queue_saturated),
+      toBooleanOrNull(statusRecord.tx_queue_saturated) ??
+      toBooleanOrNull(statusTxQueueRecord.saturated) ??
+      toBooleanOrNull(sumeragiTxQueueRecord.saturated),
     highestQcHeight:
       toNonNegativeNumber(rawSumeragiRecord.highest_qc_height) ??
-      toNonNegativeNumber(rawSumeragiRecord.highestQcHeight),
+      toNonNegativeNumber(rawSumeragiRecord.highestQcHeight) ??
+      toNonNegativeNumber(statusHighestQcRecord.height) ??
+      toNonNegativeNumber(sumeragiHighestQcRecord.height),
     lockedQcHeight:
       toNonNegativeNumber(rawSumeragiRecord.locked_qc_height) ??
-      toNonNegativeNumber(rawSumeragiRecord.lockedQcHeight),
+      toNonNegativeNumber(rawSumeragiRecord.lockedQcHeight) ??
+      toNonNegativeNumber(statusLockedQcRecord.height) ??
+      toNonNegativeNumber(sumeragiLockedQcRecord.height),
     currentBlockHeight,
     finalizedBlockHeight,
     finalizationLag:

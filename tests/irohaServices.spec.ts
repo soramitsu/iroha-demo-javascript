@@ -11,6 +11,7 @@ import {
   getConfidentialAssetBalance,
   finalizeGovernanceReferendum,
   finalizePublicLaneUnbond,
+  getGovernanceCitizenCount,
   getGovernanceCitizenStatus,
   getGovernanceCouncilCurrent,
   getGovernanceLocks,
@@ -704,6 +705,10 @@ describe("iroha services bridge", () => {
       cooldownUntil: 0,
       endpointAvailable: true,
     });
+    const getGovernanceCitizenCountMock = vi.fn().mockResolvedValue({
+      total: 1,
+      endpointAvailable: true,
+    });
     const registerCitizenMock = vi.fn().mockResolvedValue({ hash: "0x10" });
     const getGovernanceRegistrationPolicyMock = vi.fn().mockResolvedValue({
       citizenshipAssetDefinitionId: null,
@@ -750,6 +755,7 @@ describe("iroha services bridge", () => {
     (window as any).iroha = {
       listAccountPermissions: listAccountPermissionsMock,
       getGovernanceCitizenStatus: getGovernanceCitizenStatusMock,
+      getGovernanceCitizenCount: getGovernanceCitizenCountMock,
       registerCitizen: registerCitizenMock,
       getGovernanceRegistrationPolicy: getGovernanceRegistrationPolicyMock,
       getGovernanceProposal: getGovernanceProposalMock,
@@ -807,6 +813,7 @@ describe("iroha services bridge", () => {
       toriiUrl: "http://localhost:8080",
       accountId: "alice@wonderland",
     });
+    await getGovernanceCitizenCount("http://localhost:8080");
     await registerCitizen(registerInput);
     await getGovernanceRegistrationPolicy("http://localhost:8080");
     await getGovernanceProposal(proposalInput);
@@ -822,6 +829,9 @@ describe("iroha services bridge", () => {
     expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       accountId: "alice@wonderland",
+    });
+    expect(getGovernanceCitizenCountMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
     });
     expect(registerCitizenMock).toHaveBeenCalledWith(registerInput);
     expect(getGovernanceRegistrationPolicyMock).toHaveBeenCalledWith({

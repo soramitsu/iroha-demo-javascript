@@ -8,6 +8,7 @@ import {
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
+  normalizeGovernanceCitizenCountPayload,
   normalizeGovernanceCouncilCurrentPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
@@ -410,6 +411,21 @@ describe("preload utils", () => {
       candidate_count: 3,
       verified: 2,
       derived_by: "Fallback",
+    });
+  });
+
+  it("normalizes exact governance citizen count payloads", () => {
+    expect(
+      normalizeGovernanceCitizenCountPayload({
+        total: "12",
+      }),
+    ).toEqual({
+      total: 12,
+      endpointAvailable: true,
+    });
+    expect(normalizeGovernanceCitizenCountPayload(null, false)).toEqual({
+      total: null,
+      endpointAvailable: false,
     });
   });
 

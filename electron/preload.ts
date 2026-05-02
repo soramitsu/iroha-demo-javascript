@@ -46,6 +46,7 @@ import {
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
+  normalizeGovernanceCitizenCountPayload,
   normalizeGovernanceCouncilCurrentPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
@@ -552,6 +553,11 @@ type GovernanceLocksResponse = Awaited<
 type GovernanceCouncilResponse = Awaited<
   ReturnType<ToriiClient["getGovernanceCouncilCurrent"]>
 >;
+
+type GovernanceCitizenCountResponse = {
+  total: number | null;
+  endpointAvailable: boolean;
+};
 
 type GovernanceRegistrationPolicyResponse = {
   citizenshipAssetDefinitionId: string | null;
@@ -1153,6 +1159,9 @@ type IrohaBridge = {
   getGovernanceCitizenStatus(
     input: GovernanceCitizenStatusInput,
   ): Promise<GovernanceCitizenStatusResponse>;
+  getGovernanceCitizenCount(
+    config: ToriiConfig,
+  ): Promise<GovernanceCitizenCountResponse>;
   getGovernanceProposal(
     input: GovernanceLookupInput,
   ): Promise<GovernanceProposalResponse>;
@@ -3398,9 +3407,11 @@ const fetchJson = async (
   endpoint: string,
   label: string,
   headers?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> => {
   const response = await nodeFetch(endpoint, {
     method: "GET",
+    signal,
     headers: {
       Accept: "application/json",
       ...(headers ?? {}),
@@ -3411,6 +3422,51 @@ const fetchJson = async (
   }
   const payload = (await response.json()) as unknown;
   return ensureObjectResponse(payload, label);
+};
+
+const NETWORK_STATS_REQUEST_TIMEOUT_MS = 3_500;
+
+const withNetworkStatsTimeout = async <T>(
+  label: string,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`${label} request timed out.`);
+      controller.abort(error);
+      reject(error);
+    }, NETWORK_STATS_REQUEST_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([run(controller.signal), timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const fetchRuntimeStatusSnapshot = async (
+  client: ToriiClient,
+  toriiUrlRaw: string,
+  signal: AbortSignal,
+): Promise<unknown> => {
+  try {
+    return await fetchJson(
+      buildNexusEndpoint(toriiUrlRaw, "/status"),
+      "Runtime status telemetry",
+      undefined,
+      signal,
+    );
+  } catch (error) {
+    if (signal.aborted) {
+      throw error;
+    }
+    return client.getStatusSnapshot({ signal });
+  }
 };
 
 const postJson = async (
@@ -4293,6 +4349,7 @@ const getSoraCloudHfStatusFromTorii = async (
 const fetchExplorerAssetDefinitionSnapshot = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
+  signal?: AbortSignal,
 ) => {
   const endpoint = buildNexusEndpoint(
     toriiUrlRaw,
@@ -4301,6 +4358,8 @@ const fetchExplorerAssetDefinitionSnapshot = async (
   const payload = await fetchJson(
     endpoint,
     "Explorer asset definition snapshot",
+    undefined,
+    signal,
   );
   return normalizeExplorerAssetDefinitionSnapshotPayload(payload);
 };
@@ -4308,6 +4367,7 @@ const fetchExplorerAssetDefinitionSnapshot = async (
 const fetchExplorerAssetDefinitionEconometrics = async (
   toriiUrlRaw: string,
   assetDefinitionId: string,
+  signal?: AbortSignal,
 ) => {
   const endpoint = buildNexusEndpoint(
     toriiUrlRaw,
@@ -4316,6 +4376,8 @@ const fetchExplorerAssetDefinitionEconometrics = async (
   const payload = await fetchJson(
     endpoint,
     "Explorer asset definition econometrics",
+    undefined,
+    signal,
   );
   return normalizeExplorerAssetDefinitionEconometricsPayload(payload);
 };
@@ -4684,6 +4746,23 @@ const fetchGovernanceCouncilCurrent = async (
     "Governance council current",
   );
   return normalizeGovernanceCouncilCurrentPayload(payload);
+};
+
+const fetchGovernanceCitizenCount = async (
+  toriiUrlRaw: string,
+): Promise<GovernanceCitizenCountResponse> => {
+  try {
+    const payload = await fetchJson(
+      buildNexusEndpoint(toriiUrlRaw, "/v1/gov/citizens"),
+      "Governance citizen count",
+    );
+    return normalizeGovernanceCitizenCountPayload(payload, true);
+  } catch (error) {
+    if (isApiRequestError(error) && error.status === 404) {
+      return normalizeGovernanceCitizenCountPayload(null, false);
+    }
+    throw error;
+  }
 };
 
 const optionalNonNegativeNumber = (value: unknown): number | null => {
@@ -8072,6 +8151,9 @@ const api: IrohaBridge = {
   getGovernanceCitizenStatus({ toriiUrl, accountId }) {
     return fetchGovernanceCitizenStatus(toriiUrl, accountId);
   },
+  getGovernanceCitizenCount(config) {
+    return fetchGovernanceCitizenCount(config.toriiUrl);
+  },
   getGovernanceProposal({ toriiUrl, proposalId }) {
     const client = getClient(toriiUrl);
     return client.getGovernanceProposalTyped(proposalId);
@@ -8159,22 +8241,34 @@ const api: IrohaBridge = {
       supplyResult,
       econometricsResult,
     ] = await Promise.allSettled([
-      client.getExplorerMetrics(),
-      client.getStatusSnapshot(),
-      client.getSumeragiStatusTyped(),
-      fetchExplorerAssetDefinitionSnapshot(
-        toriiUrl,
-        normalizedAssetDefinitionId,
+      withNetworkStatsTimeout("Explorer metrics", (signal) =>
+        client.getExplorerMetrics({ signal }),
       ),
-      fetchExplorerAssetDefinitionEconometrics(
-        toriiUrl,
-        normalizedAssetDefinitionId,
+      withNetworkStatsTimeout("Runtime status telemetry", (signal) =>
+        fetchRuntimeStatusSnapshot(client, toriiUrl, signal),
+      ),
+      withNetworkStatsTimeout("Lane governance telemetry", (signal) =>
+        client.getSumeragiStatusTyped({ signal }),
+      ),
+      withNetworkStatsTimeout("XOR supply snapshot", (signal) =>
+        fetchExplorerAssetDefinitionSnapshot(
+          toriiUrl,
+          normalizedAssetDefinitionId,
+          signal,
+        ),
+      ),
+      withNetworkStatsTimeout("XOR flow econometrics", (signal) =>
+        fetchExplorerAssetDefinitionEconometrics(
+          toriiUrl,
+          normalizedAssetDefinitionId,
+          signal,
+        ),
       ),
     ]);
 
     const explorer =
       explorerResult.status === "fulfilled" ? explorerResult.value : null;
-    if (explorerResult.status === "rejected") {
+    if (explorerResult.status === "rejected" || explorer === null) {
       warnings.push("Explorer metrics are unavailable.");
     }
 
@@ -8210,7 +8304,11 @@ const api: IrohaBridge = {
       explorer,
       supply,
       econometrics,
-      runtime: extractRuntimeStatsFromStatusSnapshot(statusSnapshot, explorer),
+      runtime: extractRuntimeStatsFromStatusSnapshot(
+        statusSnapshot,
+        explorer,
+        sumeragiStatus,
+      ),
       governance: extractGovernanceStats(sumeragiStatus),
       warnings,
       partial: warnings.length > 0,

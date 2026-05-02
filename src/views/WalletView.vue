@@ -16,6 +16,23 @@
         <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
       </div>
       <div
+        class="wallet-citizenship-panel"
+        :class="{ 'wallet-citizenship-panel-positive': walletIsCitizen }"
+      >
+        <div>
+          <p class="wallet-faucet-label">{{ t("Citizenship") }}</p>
+          <p class="wallet-citizenship-title">
+            {{ walletCitizenshipHeadline }}
+          </p>
+          <p class="helper">{{ walletCitizenshipDetail }}</p>
+        </div>
+        <div class="wallet-citizenship-meta">
+          <a class="secondary wallet-citizenship-link" href="#/parliament">
+            {{ t("SORA Parliament") }}
+          </a>
+        </div>
+      </div>
+      <div
         v-if="!faucetDisabled"
         class="wallet-faucet-panel"
         :class="{ 'wallet-faucet-panel-priority': showFundingPriority }"
@@ -324,6 +341,7 @@ import {
   fetchAccountAssets,
   fetchAccountTransactions,
   getConfidentialAssetBalance,
+  getGovernanceCitizenStatus,
   requestFaucetFunds,
   scanConfidentialWallet,
   transferAsset,
@@ -335,6 +353,7 @@ import type {
   AccountTransactionsResponse,
   ConfidentialAssetBalanceView,
   FaucetRequestProgress,
+  GovernanceCitizenStatusResponse,
 } from "@/types/iroha";
 import {
   extractTransferInsight,
@@ -358,6 +377,7 @@ import {
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
+import { isRegisteredGovernanceCitizen } from "@/utils/parliament";
 
 const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const WALLET_TRANSACTION_DISPLAY_LIMIT = 25;
@@ -430,6 +450,9 @@ const FAUCET_REFRESH_DELAY_MS = 1_500;
 
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
+const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
+const citizenshipStatusLoaded = ref(false);
+const governanceStatusError = ref("");
 const emptyConfidentialBalance = (
   resolvedAssetId = configuredShieldAssetDefinitionId.value,
 ): ConfidentialAssetBalanceView => ({
@@ -542,6 +565,9 @@ function updateConfiguredAssetDefinitionIdFromLiveEvidence(
 const resetWalletState = () => {
   assets.value = [];
   transactionsRaw.value = [];
+  citizenshipStatus.value = null;
+  citizenshipStatusLoaded.value = false;
+  governanceStatusError.value = "";
   faucetMessage.value = "";
   faucetError.value = "";
   walletError.value = "";
@@ -621,13 +647,46 @@ const refresh = async () => {
   requestGeneration.value = currentGeneration;
   loading.value = true;
   walletError.value = "";
+  citizenshipStatus.value = null;
+  citizenshipStatusLoaded.value = false;
+  governanceStatusError.value = "";
   try {
-    const { items: assetItems } = await fetchAccountAssets({
-      toriiUrl,
-      accountId,
-      networkPrefix,
-      limit: 50,
-    });
+    const [assetsResult, citizenshipResult] = await Promise.allSettled([
+      fetchAccountAssets({
+        toriiUrl,
+        accountId,
+        networkPrefix,
+        limit: 50,
+      }),
+      getGovernanceCitizenStatus({
+        toriiUrl,
+        accountId,
+      }),
+    ] as const);
+    if (
+      currentGeneration !== requestGeneration.value ||
+      session.connection.toriiUrl !== toriiUrl ||
+      requestAccountId.value !== accountId
+    ) {
+      return;
+    }
+    citizenshipStatusLoaded.value = true;
+    citizenshipStatus.value =
+      citizenshipResult.status === "fulfilled" ? citizenshipResult.value : null;
+    const optionalGovernanceErrors: string[] = [];
+    if (citizenshipResult.status === "rejected") {
+      optionalGovernanceErrors.push(
+        toUserFacingErrorMessage(
+          citizenshipResult.reason,
+          t("Citizen status unavailable"),
+        ),
+      );
+    }
+    governanceStatusError.value = optionalGovernanceErrors.join("\n");
+    if (assetsResult.status === "rejected") {
+      throw assetsResult.reason;
+    }
+    const assetItems = assetsResult.value.items;
     const configuredAssetDefinitionId = extractAssetDefinitionId(
       session.connection.assetDefinitionId,
     ).trim();
@@ -990,6 +1049,44 @@ const canUseFaucetAction = computed(() =>
       (canRequestFaucet.value || faucetUnavailableOnActiveNetwork.value),
   ),
 );
+const walletIsCitizen = computed(() =>
+  isRegisteredGovernanceCitizen(citizenshipStatus.value),
+);
+const walletCitizenshipHeadline = computed(() => {
+  if (!session.hasAccount || !session.connection.toriiUrl) {
+    return t("Set up network and wallet first.");
+  }
+  if (loading.value && !citizenshipStatusLoaded.value) {
+    return t("Checking citizenship…");
+  }
+  if (walletIsCitizen.value) {
+    return t("You are a citizen");
+  }
+  if (
+    governanceStatusError.value ||
+    citizenshipStatus.value?.endpointAvailable === false
+  ) {
+    return t("Citizen status unavailable");
+  }
+  return t("Not a citizen yet");
+});
+const walletCitizenshipDetail = computed(() => {
+  if (!session.hasAccount || !session.connection.toriiUrl) {
+    return t("Set up network and wallet first.");
+  }
+  if (walletIsCitizen.value) {
+    const bondedAmount = citizenshipStatus.value?.amount?.trim();
+    return bondedAmount
+      ? t("Bonded {amount} XOR", { amount: bondedAmount })
+      : t(
+          "Citizenship voting permission detected. Bonding is no longer required.",
+        );
+  }
+  if (governanceStatusError.value) {
+    return governanceStatusError.value;
+  }
+  return t("Bond citizenship and vote in governance referenda");
+});
 const showFundingPriority = computed(() =>
   Boolean(activeAccount.value?.localOnly || !assets.value.length),
 );
@@ -1276,6 +1373,56 @@ watch(
   color: var(--iroha-muted);
   word-break: break-word;
   unicode-bidi: plaintext;
+}
+
+.wallet-citizenship-panel {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 70%),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-danger) 12%, transparent),
+      transparent 58%
+    ),
+    var(--surface-soft);
+  box-shadow: inset 0 1px 0 var(--glass-highlight);
+}
+
+.wallet-citizenship-panel-positive {
+  border-color: color-mix(in srgb, #22c55e 54%, var(--glass-border));
+  background:
+    linear-gradient(135deg, var(--glass-veil), transparent 72%),
+    linear-gradient(135deg, rgba(34, 197, 94, 0.18), transparent 60%),
+    var(--surface-soft);
+}
+
+.wallet-citizenship-title {
+  margin: 6px 0 0;
+  font-size: clamp(1.2rem, 3vw, 1.55rem);
+  font-weight: 700;
+  line-height: 1.05;
+}
+
+.wallet-citizenship-panel .helper {
+  margin-top: 8px;
+}
+
+.wallet-citizenship-meta {
+  display: grid;
+  gap: 10px;
+  min-width: 142px;
+}
+
+.wallet-citizenship-link {
+  min-height: 40px;
+  padding: 9px 12px;
 }
 
 .wallet-quick-actions {
@@ -1582,6 +1729,15 @@ watch(
 
   .wallet-faucet-panel {
     align-items: stretch;
+  }
+
+  .wallet-citizenship-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .wallet-citizenship-meta {
+    min-width: 0;
   }
 
   .wallet-faucet-button {

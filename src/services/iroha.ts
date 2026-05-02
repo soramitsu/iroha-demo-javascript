@@ -13,6 +13,7 @@ import type {
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
   FaucetRequestProgress,
+  GovernanceCitizenCountResponse,
   GovernanceCitizenStatusResponse,
   GovernanceCouncilCurrentResponse,
   GovernanceDraftResponse,
@@ -179,6 +180,11 @@ export const getGovernanceCitizenStatus = (input: {
   accountId: string;
 }): Promise<GovernanceCitizenStatusResponse> =>
   bridge().getGovernanceCitizenStatus(input);
+
+export const getGovernanceCitizenCount = (
+  toriiUrl: string,
+): Promise<GovernanceCitizenCountResponse> =>
+  bridge().getGovernanceCitizenCount({ toriiUrl });
 
 export const getGovernanceProposal = (
   input: Parameters<IrohaBridge["getGovernanceProposal"]>[0],
