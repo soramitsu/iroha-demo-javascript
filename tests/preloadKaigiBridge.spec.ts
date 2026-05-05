@@ -75,6 +75,8 @@ const mocks = vi.hoisted(() => ({
   listAccountAssetsMock: vi.fn(),
   listAccountTransactionsMock: vi.fn(),
   getConfigurationMock: vi.fn(),
+  getGovernanceUnlockStatsTypedMock: vi.fn(),
+  governanceProposeDeployContractMock: vi.fn(),
   getVerifyingKeyTypedMock: vi.fn(),
   nodeFetchMock: vi.fn(),
   buildKaigiRosterJoinProofMock: vi.fn(
@@ -316,6 +318,14 @@ vi.mock("@iroha/iroha-js", async () => {
       return mocks.getConfigurationMock(...args);
     }
 
+    getGovernanceUnlockStatsTyped(...args: unknown[]) {
+      return mocks.getGovernanceUnlockStatsTypedMock(...args);
+    }
+
+    governanceProposeDeployContract(...args: unknown[]) {
+      return mocks.governanceProposeDeployContractMock(...args);
+    }
+
     getVerifyingKeyTyped(...args: unknown[]) {
       return mocks.getVerifyingKeyTypedMock(...args);
     }
@@ -505,6 +515,12 @@ const loadBridge = async () => {
     getGovernanceCouncilCurrent: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    getGovernanceUnlockStats: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    proposeGovernanceDeployContract: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     deploySoraCloudHf: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -537,6 +553,8 @@ describe("preload Kaigi bridge", () => {
     mocks.listAccountAssetsMock.mockReset();
     mocks.listAccountTransactionsMock.mockReset();
     mocks.getConfigurationMock.mockReset();
+    mocks.getGovernanceUnlockStatsTypedMock.mockReset();
+    mocks.governanceProposeDeployContractMock.mockReset();
     mocks.getVerifyingKeyTypedMock.mockReset();
     mocks.nodeFetchMock.mockReset();
     mocks.buildKaigiRosterJoinProofMock.mockClear();
@@ -676,6 +694,17 @@ describe("preload Kaigi bridge", () => {
           per_gas_unit_fee: "0",
         },
       },
+    });
+    mocks.getGovernanceUnlockStatsTypedMock.mockResolvedValue({
+      height_current: 10,
+      expired_locks_now: 0,
+      referenda_with_expired: 0,
+      last_sweep_height: 8,
+    });
+    mocks.governanceProposeDeployContractMock.mockResolvedValue({
+      ok: true,
+      proposal_id: "0x".padEnd(66, "3"),
+      tx_instructions: [],
     });
     mocks.getVerifyingKeyTypedMock.mockImplementation(
       async (backend: string, name: string) => ({
@@ -1188,6 +1217,54 @@ describe("preload Kaigi bridge", () => {
         method: "GET",
       }),
     );
+  });
+
+  it("forwards governance unlock stats through the typed Torii helper", async () => {
+    mocks.getGovernanceUnlockStatsTypedMock.mockResolvedValueOnce({
+      height_current: 44,
+      expired_locks_now: 3,
+      referenda_with_expired: 2,
+      last_sweep_height: 40,
+    });
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.getGovernanceUnlockStats({
+        toriiUrl: "http://localhost:8080",
+      }),
+    ).resolves.toEqual({
+      height_current: 44,
+      expired_locks_now: 3,
+      referenda_with_expired: 2,
+      last_sweep_height: 40,
+    });
+    expect(mocks.getGovernanceUnlockStatsTypedMock).toHaveBeenCalledWith();
+  });
+
+  it("prepares deploy-contract governance proposal drafts through Torii", async () => {
+    const bridge = await loadBridge();
+
+    await bridge.proposeGovernanceDeployContract({
+      toriiUrl: "http://localhost:8080",
+      contractAddress: "tairac1contract",
+      contractAlias: null,
+      codeHash: "0x".padEnd(66, "1"),
+      abiHash: "0x".padEnd(66, "2"),
+      abiVersion: "1",
+      mode: "Plain",
+      window: { lower: 10, upper: 20 },
+      limits: { max_instructions: 4 },
+    });
+
+    expect(mocks.governanceProposeDeployContractMock).toHaveBeenCalledWith({
+      contractAddress: "tairac1contract",
+      codeHash: "0x".padEnd(66, "1"),
+      abiHash: "0x".padEnd(66, "2"),
+      abiVersion: "1",
+      mode: "Plain",
+      window: { lower: 10, upper: 20 },
+      limits: { max_instructions: 4 },
+    });
   });
 
   it("uses the active network prefix for account asset and transaction refreshes", async () => {

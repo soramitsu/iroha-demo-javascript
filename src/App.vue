@@ -341,8 +341,8 @@ const navItems = [
     groupKey: "Earn & Vote",
   },
   {
-    to: "/parliament",
-    labelKey: "Parliament",
+    to: "/governance",
+    labelKey: "Governance",
     descriptionKey: "Register and vote",
     icon: WalletIcon,
     requiresAccount: true,

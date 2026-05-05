@@ -86,12 +86,16 @@ const routes = [
     },
   },
   {
-    path: "/parliament",
+    path: "/governance",
     component: ParliamentView,
     meta: {
-      titleKey: "SORA Parliament",
-      subtitleKey: "Register and vote",
+      titleKey: "Governance",
+      subtitleKey: "Citizenship, referenda, ballots, and council status",
     },
+  },
+  {
+    path: "/parliament",
+    redirect: "/governance",
   },
   {
     path: "/subscriptions",

@@ -756,6 +756,13 @@ export interface GovernanceLocksResult {
   locks: Record<string, GovernanceLockRecord>;
 }
 
+export interface GovernanceUnlockStatsResponse {
+  height_current: number;
+  expired_locks_now: number;
+  referenda_with_expired: number;
+  last_sweep_height: number;
+}
+
 export interface GovernanceCouncilMember {
   account_id: string;
 }
@@ -789,6 +796,25 @@ export interface GovernanceDraftResponse {
   tx_instructions: GovernanceDraftInstruction[];
   accepted?: boolean;
   reason?: string | null;
+}
+
+export type GovernanceVotingMode = "Plain" | "Zk";
+
+export interface GovernanceWindowInput {
+  lower: number;
+  upper: number;
+}
+
+export interface GovernanceDeployContractProposalInput {
+  toriiUrl: string;
+  contractAddress?: string | null;
+  contractAlias?: string | null;
+  codeHash: string;
+  abiHash: string;
+  abiVersion?: string | null;
+  mode?: GovernanceVotingMode | null;
+  window?: GovernanceWindowInput | null;
+  limits?: Record<string, unknown> | null;
 }
 
 export interface IrohaBridge {
@@ -990,9 +1016,15 @@ export interface IrohaBridge {
     toriiUrl: string;
     referendumId: string;
   }): Promise<GovernanceLocksResult>;
+  getGovernanceUnlockStats(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceUnlockStatsResponse>;
   getGovernanceCouncilCurrent(input: {
     toriiUrl: string;
   }): Promise<GovernanceCouncilCurrentResponse>;
+  proposeGovernanceDeployContract(
+    input: GovernanceDeployContractProposalInput,
+  ): Promise<GovernanceDraftResponse>;
   submitGovernancePlainBallot(input: {
     toriiUrl: string;
     chainId: string;

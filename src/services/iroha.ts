@@ -22,6 +22,7 @@ import type {
   GovernanceRegistrationPolicyResponse,
   GovernanceReferendumResult,
   GovernanceTallyResult,
+  GovernanceUnlockStatsResponse,
   IrohaBridge,
   KaigiCallEvent,
   KaigiMeetingView,
@@ -203,10 +204,20 @@ export const getGovernanceLocks = (
   input: Parameters<IrohaBridge["getGovernanceLocks"]>[0],
 ): Promise<GovernanceLocksResult> => bridge().getGovernanceLocks(input);
 
+export const getGovernanceUnlockStats = (
+  toriiUrl: string,
+): Promise<GovernanceUnlockStatsResponse> =>
+  bridge().getGovernanceUnlockStats({ toriiUrl });
+
 export const getGovernanceCouncilCurrent = (
   toriiUrl: string,
 ): Promise<GovernanceCouncilCurrentResponse> =>
   bridge().getGovernanceCouncilCurrent({ toriiUrl });
+
+export const proposeGovernanceDeployContract = (
+  input: Parameters<IrohaBridge["proposeGovernanceDeployContract"]>[0],
+): Promise<GovernanceDraftResponse> =>
+  bridge().proposeGovernanceDeployContract(input);
 
 export const submitGovernancePlainBallot = (
   input: Parameters<IrohaBridge["submitGovernancePlainBallot"]>[0],

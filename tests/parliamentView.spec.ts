@@ -14,9 +14,11 @@ const getGovernanceCouncilCurrentMock = vi.fn();
 const getGovernanceReferendumMock = vi.fn();
 const getGovernanceTallyMock = vi.fn();
 const getGovernanceLocksMock = vi.fn();
+const getGovernanceUnlockStatsMock = vi.fn();
 const getGovernanceProposalMock = vi.fn();
 const getGovernanceRegistrationPolicyMock = vi.fn();
 const registerCitizenMock = vi.fn();
+const proposeGovernanceDeployContractMock = vi.fn();
 const submitGovernancePlainBallotMock = vi.fn();
 const finalizeGovernanceReferendumMock = vi.fn();
 const enactGovernanceProposalMock = vi.fn();
@@ -34,10 +36,14 @@ vi.mock("@/services/iroha", () => ({
     getGovernanceReferendumMock(input),
   getGovernanceTally: (input: unknown) => getGovernanceTallyMock(input),
   getGovernanceLocks: (input: unknown) => getGovernanceLocksMock(input),
+  getGovernanceUnlockStats: (toriiUrl: string) =>
+    getGovernanceUnlockStatsMock(toriiUrl),
   getGovernanceProposal: (input: unknown) => getGovernanceProposalMock(input),
   getGovernanceRegistrationPolicy: (toriiUrl: string) =>
     getGovernanceRegistrationPolicyMock(toriiUrl),
   registerCitizen: (input: unknown) => registerCitizenMock(input),
+  proposeGovernanceDeployContract: (input: unknown) =>
+    proposeGovernanceDeployContractMock(input),
   submitGovernancePlainBallot: (input: unknown) =>
     submitGovernancePlainBallotMock(input),
   finalizeGovernanceReferendum: (input: unknown) =>
@@ -51,6 +57,12 @@ const t = (key: string, params?: Record<string, string | number>) =>
 const REFERENDUM_INPUT_SELECTOR = 'input[data-testid="referendum-id-input"]';
 const PROPOSAL_INPUT_SELECTOR = 'input[data-testid="proposal-id-input"]';
 const BALLOT_AMOUNT_INPUT_SELECTOR = 'input[data-testid="ballot-amount-input"]';
+const PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR =
+  'input[data-testid="proposal-contract-target-input"]';
+const PROPOSAL_CODE_HASH_INPUT_SELECTOR =
+  'input[data-testid="proposal-code-hash-input"]';
+const PROPOSAL_ABI_HASH_INPUT_SELECTOR =
+  'input[data-testid="proposal-abi-hash-input"]';
 
 describe("ParliamentView", () => {
   beforeEach(() => {
@@ -63,9 +75,11 @@ describe("ParliamentView", () => {
     getGovernanceReferendumMock.mockReset();
     getGovernanceTallyMock.mockReset();
     getGovernanceLocksMock.mockReset();
+    getGovernanceUnlockStatsMock.mockReset();
     getGovernanceProposalMock.mockReset();
     getGovernanceRegistrationPolicyMock.mockReset();
     registerCitizenMock.mockReset();
+    proposeGovernanceDeployContractMock.mockReset();
     submitGovernancePlainBallotMock.mockReset();
     finalizeGovernanceReferendumMock.mockReset();
     enactGovernanceProposalMock.mockReset();
@@ -119,6 +133,12 @@ describe("ParliamentView", () => {
       referendum_id: "ref-1",
       locks: {},
     });
+    getGovernanceUnlockStatsMock.mockResolvedValue({
+      height_current: 100,
+      expired_locks_now: 0,
+      referenda_with_expired: 0,
+      last_sweep_height: 96,
+    });
     getGovernanceProposalMock.mockResolvedValue({
       found: false,
       proposal: null,
@@ -132,6 +152,11 @@ describe("ParliamentView", () => {
       assetDefinitionError: null,
     });
     registerCitizenMock.mockResolvedValue({ hash: "0xabc" });
+    proposeGovernanceDeployContractMock.mockResolvedValue({
+      ok: true,
+      proposal_id: null,
+      tx_instructions: [],
+    });
     submitGovernancePlainBallotMock.mockResolvedValue({ hash: "0xballot" });
     finalizeGovernanceReferendumMock.mockResolvedValue({
       ok: true,
@@ -498,6 +523,26 @@ describe("ParliamentView", () => {
     expect(citizenCount.text()).toContain("1");
     expect(citizenCount.text()).not.toContain("1+");
     expect(citizenCount.text()).not.toMatch(/\b0\b/);
+  });
+
+  it("shows governance unlock statistics from the citizen page refresh", async () => {
+    getGovernanceUnlockStatsMock.mockResolvedValueOnce({
+      height_current: 1234,
+      expired_locks_now: 2,
+      referenda_with_expired: 1,
+      last_sweep_height: 1200,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(getGovernanceUnlockStatsMock).toHaveBeenCalledWith(
+      "http://localhost:8080",
+    );
+    expect(wrapper.text()).toContain(t("Current Height"));
+    expect(wrapper.text()).toContain("1234");
+    expect(wrapper.text()).toContain(t("Expired Locks"));
+    expect(wrapper.text()).toContain("2");
   });
 
   it("hides low-balance bond warning when account is already a citizen", async () => {
@@ -924,6 +969,66 @@ describe("ParliamentView", () => {
     expect(
       (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
     ).toBe(`0x${"a".repeat(64)}`);
+  });
+
+  it("prepares a deploy-contract governance proposal draft", async () => {
+    const proposalId = `0x${"b".repeat(64)}`;
+    const codeHash = `0x${"1".repeat(64)}`;
+    const abiHash = `0x${"2".repeat(64)}`;
+    proposeGovernanceDeployContractMock.mockResolvedValueOnce({
+      ok: true,
+      proposal_id: proposalId,
+      tx_instructions: [{ wire_id: "deploy-contract" }],
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get(PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR)
+      .setValue("tairac1contract");
+    await wrapper.get(PROPOSAL_CODE_HASH_INPUT_SELECTOR).setValue(codeHash);
+    await wrapper.get(PROPOSAL_ABI_HASH_INPUT_SELECTOR).setValue(abiHash);
+    await findButtonByText(wrapper, "Prepare draft").trigger("click");
+    await flushPromises();
+
+    expect(proposeGovernanceDeployContractMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      contractAddress: "tairac1contract",
+      contractAlias: null,
+      codeHash,
+      abiHash,
+      abiVersion: "1",
+      mode: "Plain",
+      window: null,
+      limits: null,
+    });
+    expect(wrapper.text()).toContain(
+      t("Proposal draft prepared with {count} instruction(s).", { count: 1 }),
+    );
+    expect(
+      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
+    ).toBe(proposalId);
+  });
+
+  it("blocks deploy-contract proposal drafts when limits JSON is invalid", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get(PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR)
+      .setValue("tairac1contract");
+    await wrapper
+      .get(PROPOSAL_CODE_HASH_INPUT_SELECTOR)
+      .setValue(`0x${"1".repeat(64)}`);
+    await wrapper
+      .get(PROPOSAL_ABI_HASH_INPUT_SELECTOR)
+      .setValue(`0x${"2".repeat(64)}`);
+    await wrapper.get("textarea").setValue("{bad");
+
+    const proposalButton = findButtonByText(wrapper, "Prepare draft");
+    expect(proposalButton.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain(t("Invalid limits JSON."));
+    expect(proposeGovernanceDeployContractMock).not.toHaveBeenCalled();
   });
 
   it("keeps in-flight proposal lookup results after proposal id auto-normalizes", async () => {

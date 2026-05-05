@@ -30,6 +30,7 @@ import {
   extractPipelineStatusKind,
   normalizeAssetHoldingId,
   type KaigiCallView,
+  type ToriiGovernanceDeployContractProposalRequest,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
@@ -550,6 +551,10 @@ type GovernanceLocksResponse = Awaited<
   ReturnType<ToriiClient["getGovernanceLocksTyped"]>
 >;
 
+type GovernanceUnlockStatsResponse = Awaited<
+  ReturnType<ToriiClient["getGovernanceUnlockStatsTyped"]>
+>;
+
 type GovernanceCouncilResponse = Awaited<
   ReturnType<ToriiClient["getGovernanceCouncilCurrent"]>
 >;
@@ -896,6 +901,18 @@ type GovernancePlainBallotInput = {
   privateKeyHex?: HexString;
 };
 
+type GovernanceDeployContractProposalInput = {
+  toriiUrl: string;
+  contractAddress?: string | null;
+  contractAlias?: string | null;
+  codeHash: string;
+  abiHash: string;
+  abiVersion?: string | null;
+  mode?: "Plain" | "Zk" | null;
+  window?: { lower: number; upper: number } | null;
+  limits?: Record<string, unknown> | null;
+};
+
 type GovernanceFinalizeInput = {
   toriiUrl: string;
   referendumId: string;
@@ -1174,9 +1191,15 @@ type IrohaBridge = {
   getGovernanceLocks(
     input: GovernanceReferendumLookupInput,
   ): Promise<GovernanceLocksResponse>;
+  getGovernanceUnlockStats(
+    config: ToriiConfig,
+  ): Promise<GovernanceUnlockStatsResponse>;
   getGovernanceCouncilCurrent(
     config: ToriiConfig,
   ): Promise<GovernanceCouncilResponse>;
+  proposeGovernanceDeployContract(
+    input: GovernanceDeployContractProposalInput,
+  ): Promise<GovernanceDraftResponse>;
   submitGovernancePlainBallot(
     input: GovernancePlainBallotInput,
   ): Promise<TransactionSubmissionResultView>;
@@ -8170,8 +8193,61 @@ const api: IrohaBridge = {
     const client = getClient(toriiUrl);
     return client.getGovernanceLocksTyped(referendumId);
   },
+  getGovernanceUnlockStats({ toriiUrl }) {
+    const client = getClient(toriiUrl);
+    return client.getGovernanceUnlockStatsTyped();
+  },
   getGovernanceCouncilCurrent(config) {
     return fetchGovernanceCouncilCurrent(config.toriiUrl);
+  },
+  proposeGovernanceDeployContract({
+    toriiUrl,
+    contractAddress,
+    contractAlias,
+    codeHash,
+    abiHash,
+    abiVersion,
+    mode,
+    window,
+    limits,
+  }) {
+    const client = getClient(toriiUrl);
+    const normalizedContractAddress = contractAddress?.trim() ?? "";
+    const normalizedContractAlias = contractAlias?.trim() ?? "";
+    if (!normalizedContractAddress && !normalizedContractAlias) {
+      throw new Error("contractAddress or contractAlias is required.");
+    }
+    if (normalizedContractAddress && normalizedContractAlias) {
+      throw new Error(
+        "Provide either contractAddress or contractAlias, not both.",
+      );
+    }
+    const basePayload = {
+      codeHash: codeHash.trim(),
+      abiHash: abiHash.trim(),
+      abiVersion: abiVersion?.trim() || "1",
+    };
+    const payload: ToriiGovernanceDeployContractProposalRequest =
+      normalizedContractAddress
+        ? {
+            ...basePayload,
+            contractAddress: normalizedContractAddress,
+          }
+        : {
+            ...basePayload,
+            contractAlias: normalizedContractAlias,
+          };
+    if (mode) {
+      payload.mode = mode;
+    }
+    if (window) {
+      payload.window = window;
+    }
+    if (limits !== undefined && limits !== null) {
+      payload.limits =
+        limits as ToriiGovernanceDeployContractProposalRequest["limits"];
+    }
+    return client.governanceProposeDeployContract(payload);
   },
   submitGovernancePlainBallot({
     toriiUrl,

@@ -27,8 +27,8 @@
           <p class="helper">{{ walletCitizenshipDetail }}</p>
         </div>
         <div class="wallet-citizenship-meta">
-          <a class="secondary wallet-citizenship-link" href="#/parliament">
-            {{ t("SORA Parliament") }}
+          <a class="secondary wallet-citizenship-link" href="#/governance">
+            {{ t("Governance") }}
           </a>
         </div>
       </div>

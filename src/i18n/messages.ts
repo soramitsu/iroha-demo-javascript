@@ -1055,6 +1055,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Show a payment QR": "Show a payment QR",
   "Stake XOR with a validator": "Stake XOR with a validator",
   "Register and vote": "Register and vote",
+  Governance: "Governance",
+  "Citizenship, referenda, ballots, and council status":
+    "Citizenship, referenda, ballots, and council status",
   "Explorer QR and network status": "Explorer QR and network status",
   "Manage recurring payments": "Manage recurring payments",
   "Live subscription NFTs and plan metadata from Torii.":
@@ -1109,6 +1112,38 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Network connection ready": "Network connection ready",
   "Network connection is unavailable. Reload and try again.":
     "Network connection is unavailable. Reload and try again.",
+  "Prepare proposal": "Prepare proposal",
+  "Contract target": "Contract target",
+  "Contract address": "Contract address",
+  "Contract alias": "Contract alias",
+  "Code hash": "Code hash",
+  "ABI hash": "ABI hash",
+  "ABI version": "ABI version",
+  "Voting mode": "Voting mode",
+  Plain: "Plain",
+  ZK: "ZK",
+  "Window lower": "Window lower",
+  "Window upper": "Window upper",
+  "Limits JSON": "Limits JSON",
+  "Prepare draft": "Prepare draft",
+  "Set both window bounds or leave both empty.":
+    "Set both window bounds or leave both empty.",
+  "Voting window bounds must be positive whole numbers.":
+    "Voting window bounds must be positive whole numbers.",
+  "Voting window lower bound must be less than or equal to the upper bound.":
+    "Voting window lower bound must be less than or equal to the upper bound.",
+  "Limits JSON must be a JSON object.": "Limits JSON must be a JSON object.",
+  "Invalid limits JSON.": "Invalid limits JSON.",
+  "Enter a contract target, code hash, and ABI hash first.":
+    "Enter a contract target, code hash, and ABI hash first.",
+  "Proposal draft prepared with {count} instruction(s).":
+    "Proposal draft prepared with {count} instruction(s).",
+  "Proposal draft: {summary}": "Proposal draft: {summary}",
+  "Current Height": "Current Height",
+  "Expired Locks": "Expired Locks",
+  "Referenda With Expired Locks": "Referenda With Expired Locks",
+  "Last Sweep": "Last Sweep",
+  "Council members": "Council members",
   "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.":
     "The domain label defaults to {domain}. It is a neutral SDK label for local derivation, not an on-chain dataspace alias.",
   "Request starter XOR from the active network faucet.":

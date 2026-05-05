@@ -2618,7 +2618,6 @@ button:not(.secondary):hover {
 
 .setup-connection-card,
 .parliament-status-card,
-.parliament-council-card,
 .offline-allowances-card {
   grid-column: 1 / -1;
 }
@@ -2651,8 +2650,16 @@ button:not(.secondary):hover {
   grid-column: span 7;
 }
 
+.parliament-proposal-card {
+  grid-column: span 5;
+}
+
 .parliament-ballot-card {
   grid-column: span 5;
+}
+
+.parliament-council-card {
+  grid-column: span 7;
 }
 
 .offline-hardware-card,
@@ -2754,6 +2761,7 @@ button:not(.secondary):hover {
   .staking-rewards-card,
   .parliament-status-card,
   .parliament-lookup-card,
+  .parliament-proposal-card,
   .parliament-ballot-card,
   .parliament-council-card,
   .offline-allowances-card,

@@ -19,6 +19,7 @@ import {
   getGovernanceRegistrationPolicy,
   getGovernanceReferendum,
   getGovernanceTally,
+  getGovernanceUnlockStats,
   getConfidentialAssetPolicy,
   getExplorerAccountQr,
   getNexusPublicLaneRewards,
@@ -34,6 +35,7 @@ import {
   listSubscriptions,
   listVpnReceipts,
   repairVpn,
+  proposeGovernanceDeployContract,
   registerCitizen,
   resolveAccountAlias,
   requestFaucetFunds,
@@ -730,6 +732,12 @@ describe("iroha services bridge", () => {
     const getGovernanceLocksMock = vi
       .fn()
       .mockResolvedValue({ found: false, referendum_id: "r1", locks: {} });
+    const getGovernanceUnlockStatsMock = vi.fn().mockResolvedValue({
+      height_current: 10,
+      expired_locks_now: 0,
+      referenda_with_expired: 0,
+      last_sweep_height: 9,
+    });
     const getGovernanceCouncilCurrentMock = vi.fn().mockResolvedValue({
       epoch: 1,
       members: [],
@@ -751,6 +759,11 @@ describe("iroha services bridge", () => {
       proposal_id: "0x".padEnd(66, "2"),
       tx_instructions: [],
     });
+    const proposeGovernanceDeployContractMock = vi.fn().mockResolvedValue({
+      ok: true,
+      proposal_id: "0x".padEnd(66, "3"),
+      tx_instructions: [],
+    });
 
     (window as any).iroha = {
       listAccountPermissions: listAccountPermissionsMock,
@@ -762,7 +775,9 @@ describe("iroha services bridge", () => {
       getGovernanceReferendum: getGovernanceReferendumMock,
       getGovernanceTally: getGovernanceTallyMock,
       getGovernanceLocks: getGovernanceLocksMock,
+      getGovernanceUnlockStats: getGovernanceUnlockStatsMock,
       getGovernanceCouncilCurrent: getGovernanceCouncilCurrentMock,
+      proposeGovernanceDeployContract: proposeGovernanceDeployContractMock,
       submitGovernancePlainBallot: submitGovernancePlainBallotMock,
       finalizeGovernanceReferendum: finalizeGovernanceReferendumMock,
       enactGovernanceProposal: enactGovernanceProposalMock,
@@ -787,6 +802,17 @@ describe("iroha services bridge", () => {
     const proposalInput = {
       toriiUrl: "http://localhost:8080",
       proposalId: "0x".padEnd(66, "f"),
+    };
+    const deployProposalInput = {
+      toriiUrl: "http://localhost:8080",
+      contractAddress: "tairac1contract",
+      contractAlias: null,
+      codeHash: "0x".padEnd(66, "1"),
+      abiHash: "0x".padEnd(66, "2"),
+      abiVersion: "1",
+      mode: "Plain" as const,
+      window: null,
+      limits: null,
     };
     const ballotInput = {
       toriiUrl: "http://localhost:8080",
@@ -820,7 +846,9 @@ describe("iroha services bridge", () => {
     await getGovernanceReferendum(referendumInput);
     await getGovernanceTally(referendumInput);
     await getGovernanceLocks(referendumInput);
+    await getGovernanceUnlockStats("http://localhost:8080");
     await getGovernanceCouncilCurrent("http://localhost:8080");
+    await proposeGovernanceDeployContract(deployProposalInput);
     await submitGovernancePlainBallot(ballotInput);
     await finalizeGovernanceReferendum(finalizeInput);
     await enactGovernanceProposal(enactInput);
@@ -841,9 +869,15 @@ describe("iroha services bridge", () => {
     expect(getGovernanceReferendumMock).toHaveBeenCalledWith(referendumInput);
     expect(getGovernanceTallyMock).toHaveBeenCalledWith(referendumInput);
     expect(getGovernanceLocksMock).toHaveBeenCalledWith(referendumInput);
+    expect(getGovernanceUnlockStatsMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
     expect(getGovernanceCouncilCurrentMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
     });
+    expect(proposeGovernanceDeployContractMock).toHaveBeenCalledWith(
+      deployProposalInput,
+    );
     expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith(ballotInput);
     expect(finalizeGovernanceReferendumMock).toHaveBeenCalledWith(
       finalizeInput,

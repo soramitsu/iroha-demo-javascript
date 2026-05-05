@@ -268,6 +268,102 @@
       </div>
     </section>
 
+    <section class="card parliament-proposal-card">
+      <header class="card-header">
+        <h2>{{ t("Prepare proposal") }}</h2>
+      </header>
+      <div class="form-grid">
+        <label>
+          {{ t("Contract target") }}
+          <select v-model="deployTargetKind">
+            <option value="address">{{ t("Contract address") }}</option>
+            <option value="alias">{{ t("Contract alias") }}</option>
+          </select>
+        </label>
+        <label>
+          {{
+            deployTargetKind === "address"
+              ? t("Contract address")
+              : t("Contract alias")
+          }}
+          <input
+            v-model.trim="deployTargetValue"
+            type="text"
+            data-testid="proposal-contract-target-input"
+          />
+        </label>
+        <label>
+          {{ t("Code hash") }}
+          <input
+            v-model.trim="deployCodeHash"
+            type="text"
+            data-testid="proposal-code-hash-input"
+          />
+        </label>
+        <label>
+          {{ t("ABI hash") }}
+          <input
+            v-model.trim="deployAbiHash"
+            type="text"
+            data-testid="proposal-abi-hash-input"
+          />
+        </label>
+        <label>
+          {{ t("ABI version") }}
+          <input v-model.trim="deployAbiVersion" type="text" />
+        </label>
+        <label>
+          {{ t("Voting mode") }}
+          <select v-model="deployVotingMode">
+            <option value="Plain">{{ t("Plain") }}</option>
+            <option value="Zk">{{ t("ZK") }}</option>
+          </select>
+        </label>
+        <label>
+          {{ t("Window lower") }}
+          <input
+            v-model.trim="deployWindowLower"
+            type="text"
+            inputmode="numeric"
+          />
+        </label>
+        <label>
+          {{ t("Window upper") }}
+          <input
+            v-model.trim="deployWindowUpper"
+            type="text"
+            inputmode="numeric"
+          />
+        </label>
+        <label class="form-span-2">
+          {{ t("Limits JSON") }}
+          <textarea v-model.trim="deployLimitsJson" rows="3"></textarea>
+        </label>
+      </div>
+      <div class="actions">
+        <button
+          class="secondary"
+          :disabled="!canPrepareDeployProposal"
+          @click="handleDeployProposalDraft"
+        >
+          {{ actionBusy === "proposal" ? t("Preparing…") : t("Prepare draft") }}
+        </button>
+      </div>
+      <p v-if="deployWindowError" class="message warning">
+        {{ deployWindowError }}
+      </p>
+      <p v-if="deployLimitsError" class="message warning">
+        {{ deployLimitsError }}
+      </p>
+      <p v-if="deployProposalDraft" class="helper">
+        {{
+          t("Proposal draft: {summary}", {
+            summary: summarizeDraft(deployProposalDraft),
+          })
+        }}
+      </p>
+    </section>
+
     <section class="card parliament-ballot-card">
       <header class="card-header">
         <h2>{{ t("Vote") }}</h2>
@@ -332,66 +428,96 @@
     </section>
 
     <section class="card parliament-council-card">
-      <details class="technical-details">
-        <summary>{{ t("Advanced governance tools") }}</summary>
-        <div class="grid-2">
-          <div class="kv">
-            <span class="kv-label">{{ t("Current Epoch") }}</span>
-            <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Members") }}</span>
-            <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Alternates") }}</span>
-            <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Derived By") }}</span>
-            <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
-          </div>
+      <header class="card-header">
+        <h2>{{ t("Council & Draft Ops") }}</h2>
+      </header>
+      <div class="grid-2">
+        <div class="kv">
+          <span class="kv-label">{{ t("Current Epoch") }}</span>
+          <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
         </div>
-
-        <div class="actions">
-          <button
-            class="secondary"
-            :disabled="!canFinalizeDraft"
-            @click="handleFinalize"
-          >
-            {{
-              actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
-            }}
-          </button>
-          <button
-            class="secondary"
-            :disabled="!canEnactDraft"
-            @click="handleEnact"
-          >
-            {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
-          </button>
+        <div class="kv">
+          <span class="kv-label">{{ t("Members") }}</span>
+          <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
         </div>
-        <p v-if="missingParliamentPermission" class="message warning">
-          {{ t("Finalize requires CanManageParliament permission.") }}
-        </p>
-        <p v-if="missingEnactPermission" class="message warning">
-          {{ t("Enact requires CanEnactGovernance permission.") }}
-        </p>
+        <div class="kv">
+          <span class="kv-label">{{ t("Alternates") }}</span>
+          <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Derived By") }}</span>
+          <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
+        </div>
+      </div>
 
-        <p v-if="finalizeDraft" class="helper">
-          {{
-            t("Finalize draft: {summary}", {
-              summary: summarizeDraft(finalizeDraft),
-            })
-          }}
-        </p>
-        <p v-if="enactDraft" class="helper">
-          {{
-            t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
-          }}
-        </p>
+      <div class="grid-2 parliament-unlock-stats">
+        <div class="kv">
+          <span class="kv-label">{{ t("Current Height") }}</span>
+          <span class="kv-value">{{
+            unlockStats?.height_current ?? t("—")
+          }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Expired Locks") }}</span>
+          <span class="kv-value">{{
+            unlockStats?.expired_locks_now ?? t("—")
+          }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Referenda With Expired Locks") }}</span>
+          <span class="kv-value">{{
+            unlockStats?.referenda_with_expired ?? t("—")
+          }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Last Sweep") }}</span>
+          <span class="kv-value">{{
+            unlockStats?.last_sweep_height ?? t("—")
+          }}</span>
+        </div>
+      </div>
 
-        <ul v-if="council?.members.length" class="member-list mono">
+      <div class="actions">
+        <button
+          class="secondary"
+          :disabled="!canFinalizeDraft"
+          @click="handleFinalize"
+        >
+          {{
+            actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
+          }}
+        </button>
+        <button
+          class="secondary"
+          :disabled="!canEnactDraft"
+          @click="handleEnact"
+        >
+          {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
+        </button>
+      </div>
+      <p v-if="missingParliamentPermission" class="message warning">
+        {{ t("Finalize requires CanManageParliament permission.") }}
+      </p>
+      <p v-if="missingEnactPermission" class="message warning">
+        {{ t("Enact requires CanEnactGovernance permission.") }}
+      </p>
+
+      <p v-if="finalizeDraft" class="helper">
+        {{
+          t("Finalize draft: {summary}", {
+            summary: summarizeDraft(finalizeDraft),
+          })
+        }}
+      </p>
+      <p v-if="enactDraft" class="helper">
+        {{
+          t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
+        }}
+      </p>
+
+      <details v-if="council?.members.length" class="technical-details compact">
+        <summary>{{ t("Council members") }}</summary>
+        <ul class="member-list mono">
           <li v-for="member in council.members" :key="member.account_id">
             {{ member.account_id }}
           </li>
@@ -416,7 +542,9 @@ import {
   getGovernanceRegistrationPolicy,
   getGovernanceReferendum,
   getGovernanceTally,
+  getGovernanceUnlockStats,
   listAccountPermissions,
+  proposeGovernanceDeployContract,
   registerCitizen,
   submitGovernancePlainBallot,
 } from "@/services/iroha";
@@ -433,6 +561,7 @@ import type {
   GovernanceRegistrationPolicyResponse,
   GovernanceReferendumResult,
   GovernanceTallyResult,
+  GovernanceUnlockStatsResponse,
   GovernanceCouncilCurrentResponse,
 } from "@/types/iroha";
 import { compareDecimalStrings } from "@/utils/staking";
@@ -471,7 +600,9 @@ const { localeStore, t } = useAppI18n();
 const loadingBootstrap = ref(false);
 const permissionsLoaded = ref(false);
 const lookupLoading = ref(false);
-const actionBusy = ref<"bond" | "ballot" | "finalize" | "enact" | null>(null);
+const actionBusy = ref<
+  "bond" | "ballot" | "proposal" | "finalize" | "enact" | null
+>(null);
 
 const statusMessage = ref("");
 const actionMessage = ref("");
@@ -482,6 +613,7 @@ const permissions = ref<AccountPermissionItem[]>([]);
 const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
 const citizenCountStatus = ref<GovernanceCitizenCountResponse | null>(null);
 const council = ref<GovernanceCouncilCurrentResponse | null>(null);
+const unlockStats = ref<GovernanceUnlockStatsResponse | null>(null);
 const governanceRegistrationPolicy =
   ref<GovernanceRegistrationPolicyResponse | null>(null);
 
@@ -490,6 +622,15 @@ const proposalId = ref("");
 const ballotAmount = ref(CITIZEN_BOND_XOR);
 const durationBlocks = ref(7_200);
 const direction = ref<GovernanceBallotDirection>("Aye");
+const deployTargetKind = ref<"address" | "alias">("address");
+const deployTargetValue = ref("");
+const deployCodeHash = ref("");
+const deployAbiHash = ref("");
+const deployAbiVersion = ref("1");
+const deployVotingMode = ref<"Plain" | "Zk">("Plain");
+const deployWindowLower = ref("");
+const deployWindowUpper = ref("");
+const deployLimitsJson = ref("");
 const recentReferenda = ref<string[]>([]);
 const recentProposals = ref<string[]>([]);
 
@@ -497,6 +638,7 @@ const referendum = ref<GovernanceReferendumResult | null>(null);
 const proposal = ref<GovernanceProposalResult | null>(null);
 const tally = ref<GovernanceTallyResult | null>(null);
 const locks = ref<GovernanceLocksResult | null>(null);
+const deployProposalDraft = ref<GovernanceDraftResponse | null>(null);
 const finalizeDraft = ref<GovernanceDraftResponse | null>(null);
 const enactDraft = ref<GovernanceDraftResponse | null>(null);
 const loadedReferendumInput = ref<string | null>(null);
@@ -556,6 +698,76 @@ const hasXorForBallot = computed(() => {
 const hasValidDurationBlocks = computed(() =>
   isPositiveInteger(durationBlocks.value),
 );
+const deployTargetLiteral = computed(() => deployTargetValue.value.trim());
+const deployCodeHashLiteral = computed(() => deployCodeHash.value.trim());
+const deployAbiHashLiteral = computed(() => deployAbiHash.value.trim());
+const deployAbiVersionLiteral = computed(
+  () => deployAbiVersion.value.trim() || "1",
+);
+const deployWindowLowerLiteral = computed(() => deployWindowLower.value.trim());
+const deployWindowUpperLiteral = computed(() => deployWindowUpper.value.trim());
+const deployWindowHasLower = computed(() =>
+  Boolean(deployWindowLowerLiteral.value),
+);
+const deployWindowHasUpper = computed(() =>
+  Boolean(deployWindowUpperLiteral.value),
+);
+const deployWindowError = computed(() => {
+  if (deployWindowHasLower.value !== deployWindowHasUpper.value) {
+    return t("Set both window bounds or leave both empty.");
+  }
+  if (!deployWindowHasLower.value) {
+    return "";
+  }
+  if (
+    !isPositiveWholeNumberString(deployWindowLowerLiteral.value) ||
+    !isPositiveWholeNumberString(deployWindowUpperLiteral.value)
+  ) {
+    return t("Voting window bounds must be positive whole numbers.");
+  }
+  const lower = Number(deployWindowLowerLiteral.value);
+  const upper = Number(deployWindowUpperLiteral.value);
+  if (!Number.isSafeInteger(lower) || !Number.isSafeInteger(upper)) {
+    return t("Voting window bounds must be positive whole numbers.");
+  }
+  if (lower > upper) {
+    return t(
+      "Voting window lower bound must be less than or equal to the upper bound.",
+    );
+  }
+  return "";
+});
+const deployWindowPayload = computed(() => {
+  if (deployWindowError.value || !deployWindowHasLower.value) {
+    return null;
+  }
+  return {
+    lower: Number(deployWindowLowerLiteral.value),
+    upper: Number(deployWindowUpperLiteral.value),
+  };
+});
+const deployLimitsError = computed(() => {
+  const literal = deployLimitsJson.value.trim();
+  if (!literal) {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(literal);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return t("Limits JSON must be a JSON object.");
+    }
+  } catch (_error) {
+    return t("Invalid limits JSON.");
+  }
+  return "";
+});
+const deployLimitsPayload = computed(() => {
+  const literal = deployLimitsJson.value.trim();
+  if (!literal || deployLimitsError.value) {
+    return null;
+  }
+  return JSON.parse(literal) as Record<string, unknown>;
+});
 const missingBallotPermission = computed(
   () => permissionsLoaded.value && !hasBallotPermission.value,
 );
@@ -602,6 +814,16 @@ const canSubmitBallot = computed(
     hasXorForBallot.value &&
     hasValidDurationBlocks.value &&
     !missingBallotPermission.value &&
+    !isActionBusy.value,
+);
+const canPrepareDeployProposal = computed(
+  () =>
+    Boolean(session.connection.toriiUrl) &&
+    Boolean(deployTargetLiteral.value) &&
+    Boolean(deployCodeHashLiteral.value) &&
+    Boolean(deployAbiHashLiteral.value) &&
+    !deployWindowError.value &&
+    !deployLimitsError.value &&
     !isActionBusy.value,
 );
 const canFinalizeDraft = computed(
@@ -678,6 +900,7 @@ const resetGovernanceLookup = () => {
   proposal.value = null;
   tally.value = null;
   locks.value = null;
+  deployProposalDraft.value = null;
   finalizeDraft.value = null;
   enactDraft.value = null;
   loadedReferendumInput.value = null;
@@ -786,6 +1009,7 @@ const refresh = async () => {
     citizenshipStatus.value = null;
     citizenCountStatus.value = null;
     council.value = null;
+    unlockStats.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
     resetGovernanceLookup();
@@ -804,6 +1028,7 @@ const refresh = async () => {
       permissionsResult,
       citizenCountResult,
       councilResult,
+      unlockStatsResult,
       policyResult,
       citizenshipResult,
     ] = await Promise.allSettled([
@@ -820,6 +1045,7 @@ const refresh = async () => {
       }),
       getGovernanceCitizenCount(toriiUrl),
       getGovernanceCouncilCurrent(toriiUrl),
+      getGovernanceUnlockStats(toriiUrl),
       getGovernanceRegistrationPolicy(toriiUrl),
       getGovernanceCitizenStatus({
         toriiUrl,
@@ -859,6 +1085,8 @@ const refresh = async () => {
         : null;
     council.value =
       councilResult.status === "fulfilled" ? councilResult.value : null;
+    unlockStats.value =
+      unlockStatsResult.status === "fulfilled" ? unlockStatsResult.value : null;
     governanceRegistrationPolicy.value = nextPolicy;
     const loadedStatus = t("Loaded {count} permission token(s).", {
       count: permissionsResult.value.total,
@@ -879,6 +1107,14 @@ const refresh = async () => {
       optionalErrors.push(
         toUserFacingErrorMessage(
           councilResult.reason,
+          t("Failed to load governance state."),
+        ),
+      );
+    }
+    if (unlockStatsResult.status === "rejected") {
+      optionalErrors.push(
+        toUserFacingErrorMessage(
+          unlockStatsResult.reason,
           t("Failed to load governance state."),
         ),
       );
@@ -911,6 +1147,7 @@ const refresh = async () => {
     citizenshipStatus.value = null;
     citizenCountStatus.value = null;
     council.value = null;
+    unlockStats.value = null;
     governanceRegistrationPolicy.value = null;
     xorBalance.value = "0";
     resetGovernanceLookup();
@@ -1050,7 +1287,7 @@ const lookupGovernance = async () => {
 };
 
 const runAction = async (
-  mode: "bond" | "ballot" | "finalize" | "enact",
+  mode: "bond" | "ballot" | "proposal" | "finalize" | "enact",
   run: () => Promise<string>,
 ) => {
   actionBusy.value = mode;
@@ -1101,6 +1338,53 @@ const handleBondCitizen = () =>
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
+  });
+
+const handleDeployProposalDraft = () =>
+  runAction("proposal", async () => {
+    if (!session.connection.toriiUrl) {
+      throw new Error(t("Torii connection is required."));
+    }
+    if (
+      !deployTargetLiteral.value ||
+      !deployCodeHashLiteral.value ||
+      !deployAbiHashLiteral.value
+    ) {
+      throw new Error(
+        t("Enter a contract target, code hash, and ABI hash first."),
+      );
+    }
+    if (deployWindowError.value) {
+      throw new Error(deployWindowError.value);
+    }
+    if (deployLimitsError.value) {
+      throw new Error(deployLimitsError.value);
+    }
+    deployProposalDraft.value = await proposeGovernanceDeployContract({
+      toriiUrl: session.connection.toriiUrl,
+      contractAddress:
+        deployTargetKind.value === "address" ? deployTargetLiteral.value : null,
+      contractAlias:
+        deployTargetKind.value === "alias" ? deployTargetLiteral.value : null,
+      codeHash: deployCodeHashLiteral.value,
+      abiHash: deployAbiHashLiteral.value,
+      abiVersion: deployAbiVersionLiteral.value,
+      mode: deployVotingMode.value,
+      window: deployWindowPayload.value,
+      limits: deployLimitsPayload.value,
+    });
+    if (deployProposalDraft.value.proposal_id) {
+      const normalizedProposalId = canonicalizeProposalId(
+        deployProposalDraft.value.proposal_id,
+      );
+      if (normalizedProposalId) {
+        proposalId.value = normalizedProposalId;
+        rememberHistory({ proposalId: normalizedProposalId });
+      }
+    }
+    return t("Proposal draft prepared with {count} instruction(s).", {
+      count: deployProposalDraft.value.tx_instructions.length,
+    });
   });
 
 const handleBallot = () =>
@@ -1296,6 +1580,23 @@ watch(
 
 watch(
   () => [
+    deployTargetKind.value,
+    deployTargetLiteral.value,
+    deployCodeHashLiteral.value,
+    deployAbiHashLiteral.value,
+    deployAbiVersionLiteral.value,
+    deployVotingMode.value,
+    deployWindowLowerLiteral.value,
+    deployWindowUpperLiteral.value,
+    deployLimitsJson.value.trim(),
+  ],
+  () => {
+    deployProposalDraft.value = null;
+  },
+);
+
+watch(
+  () => [
     session.connection.toriiUrl,
     session.connection.chainId,
     requestAccountId.value,
@@ -1374,6 +1675,14 @@ watch(
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 14px;
+}
+
+.form-span-2 {
+  grid-column: 1 / -1;
+}
+
+.parliament-unlock-stats {
+  margin-top: 16px;
 }
 
 .history-stack {
