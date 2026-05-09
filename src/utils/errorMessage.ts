@@ -1,8 +1,10 @@
 import { formatOpaqueAssetLiteralsInText } from "./assetId";
 
 const READABLE_ERROR_ANCHOR =
-  /\b(invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown)\b/i;
+  /\b(invalid|missing|unsupported|expected|forbidden|bad request|internal server error|too many requests|not found|no authoritative peer binding|already|failed|failure|timed out|timeout|unavailable|disabled|denied|required|must|rejected|malformed|unknown)\b/i;
 const ERROR_CODE_PREFIX = /^(ERR_[A-Z0-9_]+)\s*[—\-:]\s*(.+)$/i;
+const GENERIC_ERROR_CODE_PREFIX =
+  /^([a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9])\s*[—\-:]\s*(.+)$/i;
 const REPLACEMENT_CHARACTER = "\uFFFD";
 const CHAIN_ID_MISMATCH =
   /Chain id doesn't correspond to the id of current blockchain:\s*Expected ChainId\("([^"]+)"\),\s*actual ChainId\("([^"]+)"\)/i;
@@ -59,6 +61,24 @@ export const sanitizeErrorMessage = (value: unknown) => {
   const prefixedMatch = ERROR_CODE_PREFIX.exec(text);
   if (prefixedMatch) {
     const [, code, remainderRaw] = prefixedMatch;
+    const remainder = remainderRaw.trim();
+    const anchorMatch = READABLE_ERROR_ANCHOR.exec(remainder);
+    if (
+      anchorMatch &&
+      typeof anchorMatch.index === "number" &&
+      anchorMatch.index > 0 &&
+      hasUnreadablePrefix(remainder.slice(0, anchorMatch.index))
+    ) {
+      return formatOpaqueAssetLiteralsInText(
+        `${code} — ${remainder.slice(anchorMatch.index).trim()}`,
+      );
+    }
+    return formatOpaqueAssetLiteralsInText(`${code} — ${remainder}`);
+  }
+
+  const genericPrefixedMatch = GENERIC_ERROR_CODE_PREFIX.exec(text);
+  if (genericPrefixedMatch) {
+    const [, code, remainderRaw] = genericPrefixedMatch;
     const remainder = remainderRaw.trim();
     const anchorMatch = READABLE_ERROR_ANCHOR.exec(remainder);
     if (

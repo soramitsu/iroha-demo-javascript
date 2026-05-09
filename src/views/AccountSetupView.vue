@@ -596,6 +596,55 @@
       </div>
       <p v-if="connectError" class="helper error">{{ connectError }}</p>
     </section>
+
+    <div v-if="pendingConnectSession" class="connect-modal-backdrop">
+      <section
+        class="card connect-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connect-approval-title"
+      >
+        <p class="connect-modal-label">{{ t("IrohaConnect connection") }}</p>
+        <h2 id="connect-approval-title">{{ t("Approve connection?") }}</h2>
+        <p class="helper">
+          {{
+            t(
+              "Review the requesting app details before allowing it to send wallet requests.",
+            )
+          }}
+        </p>
+        <div class="connect-modal-grid">
+          <div
+            v-for="detail in pendingConnectionDetails"
+            :key="detail.label"
+            class="kv"
+            :class="{ monospace: detail.monospace }"
+          >
+            <span class="kv-label">{{ detail.label }}</span>
+            <span class="kv-value">{{ detail.value }}</span>
+          </div>
+        </div>
+        <div class="actions-row connect-modal-actions">
+          <button
+            type="button"
+            class="secondary"
+            :disabled="connectApprovalLoading"
+            @click="rejectPendingConnection"
+          >
+            {{ t("Reject") }}
+          </button>
+          <button
+            type="button"
+            :disabled="connectApprovalLoading"
+            @click="approvePendingConnection"
+          >
+            {{
+              connectApprovalLoading ? t("Approving…") : t("Approve connection")
+            }}
+          </button>
+        </div>
+      </section>
+    </div>
   </div>
   <input
     ref="backupFileInput"
@@ -1184,11 +1233,62 @@ const connectLoading = ref(false);
 const connectError = ref("");
 const connectGeneration = ref(0);
 const scannedConnectSession = ref<ParsedIrohaConnectUri | null>(null);
+const pendingConnectSession = ref<ParsedIrohaConnectUri | null>(null);
 const connectScanError = ref("");
 const scannedConnectCopied = ref(false);
 const connectApprovalLoading = ref(false);
 const connectApprovalStatus = ref("");
 let scannedConnectSocket: WebSocket | null = null;
+
+interface IrohaConnectDetail {
+  label: string;
+  value: string;
+  monospace?: boolean;
+}
+
+const activeConnectAccountId = computed(
+  () =>
+    getPublicAccountId(
+      session.activeAccount,
+      session.connection.networkPrefix,
+    ) || "",
+);
+
+const displayOptional = (value: unknown) => {
+  if (value === undefined || value === null || value === "") {
+    return t("Not provided");
+  }
+  return String(value);
+};
+
+const pendingConnectionDetails = computed<IrohaConnectDetail[]>(() => {
+  const parsed = pendingConnectSession.value;
+  if (!parsed) {
+    return [];
+  }
+  return [
+    {
+      label: t("Active account"),
+      value: activeConnectAccountId.value || t("No active wallet"),
+      monospace: true,
+    },
+    { label: t("Session ID"), value: parsed.sid, monospace: true },
+    {
+      label: t("Chain ID"),
+      value: displayOptional(parsed.chainId),
+      monospace: true,
+    },
+    {
+      label: t("Endpoint"),
+      value: parsed.node || session.connection.toriiUrl,
+      monospace: true,
+    },
+    {
+      label: t("Wallet token"),
+      value: parsed.token ? t("Present") : t("Missing"),
+    },
+  ];
+});
 
 const closeScannedConnectSocket = () => {
   if (
@@ -1234,10 +1334,7 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
       throw new Error("IrohaConnect wallet token is missing.");
     }
     const activeAccount = session.activeAccount;
-    const accountId = getPublicAccountId(
-      activeAccount,
-      session.connection.networkPrefix,
-    );
+    const accountId = activeConnectAccountId.value;
     if (!activeAccount || !accountId) {
       throw new Error("Choose an active wallet before approving IrohaConnect.");
     }
@@ -1267,6 +1364,23 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
   }
 };
 
+const approvePendingConnection = async () => {
+  const parsed = pendingConnectSession.value;
+  if (!parsed) {
+    return;
+  }
+  await approveScannedConnectSession(parsed);
+  if (!connectScanError.value) {
+    pendingConnectSession.value = null;
+  }
+};
+
+const rejectPendingConnection = () => {
+  pendingConnectSession.value = null;
+  connectApprovalStatus.value = t("Rejected");
+  connectScanner.message.value = t("IrohaConnect connection rejected.");
+};
+
 const connectScanner = useQrScanner(
   (payload) => {
     connectScanError.value = "";
@@ -1279,9 +1393,13 @@ const connectScanner = useQrScanner(
       }
       scannedConnectSession.value = parsed;
       connectScanner.stop();
-      void approveScannedConnectSession(parsed);
+      pendingConnectSession.value = parsed;
+      connectScanner.message.value = t(
+        "Review connection details before approving.",
+      );
     } catch (error) {
       scannedConnectSession.value = null;
+      pendingConnectSession.value = null;
       connectScanError.value =
         error instanceof Error ? error.message : String(error);
     }
@@ -1358,6 +1476,7 @@ const resetConnect = () => {
   connectPreview.value = null;
   connectQr.value = "";
   connectError.value = "";
+  pendingConnectSession.value = null;
 };
 
 onBeforeUnmount(() => {
@@ -1503,6 +1622,65 @@ onBeforeUnmount(() => {
   background: rgba(255, 76, 102, 0.08);
 }
 
+.connect-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 18, 26, 0.58);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.connect-modal {
+  width: min(640px, 100%);
+  max-height: min(82vh, 720px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 18px;
+  box-shadow: var(--shadow-strong);
+}
+
+.connect-modal-label,
+.connect-modal h2 {
+  margin: 0;
+}
+
+.connect-modal-label {
+  color: var(--iroha-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.connect-modal h2 {
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+}
+
+.connect-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.connect-modal-grid .kv {
+  min-width: 0;
+}
+
+.connect-modal-grid .kv:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.connect-modal-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
 .monospace {
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   word-break: break-all;
@@ -1604,6 +1782,20 @@ onBeforeUnmount(() => {
 
   .account-actions {
     justify-content: flex-start;
+  }
+
+  .connect-modal-backdrop {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .connect-modal {
+    max-height: 88vh;
+    padding: 18px;
+  }
+
+  .connect-modal-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

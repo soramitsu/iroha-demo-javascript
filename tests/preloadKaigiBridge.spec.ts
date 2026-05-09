@@ -2031,6 +2031,111 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("falls back to the public transaction route when pipeline routing is unavailable", async () => {
+    const bridge = await loadBridge();
+    const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
+    mocks.buildTransactionMock.mockReturnValueOnce({
+      signedTransaction,
+    });
+    mocks.submitTransactionMock.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "Torii responded with HTTP 503 Service Unavailable (expected 200, 201, 202, 204): route_unavailable — NRT0\uFFFDF no authoritative peer binding is registered for lane 1 dataspace 1",
+        ),
+        {
+          status: 503,
+          code: "route_unavailable",
+        },
+      ),
+    );
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        if (href === "https://taira.sora.org/transaction") {
+          expect(init).toEqual(
+            expect.objectContaining({
+              method: "POST",
+              headers: {
+                "Content-Type": "application/x-norito",
+                Accept: "application/x-norito, application/json",
+              },
+            }),
+          );
+          expect(Buffer.isBuffer(init?.body)).toBe(true);
+          expect(init?.body).toEqual(versionedPayload(signedTransaction));
+          return jsonResponse({ ok: true, route: "public" }, 202);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).resolves.toEqual({
+      hash: `hash-${signedTransaction.toString("hex")}`,
+    });
+
+    const publicRouteCalls = mocks.nodeFetchMock.mock.calls.filter(
+      ([input]) => String(input) === "https://taira.sora.org/transaction",
+    );
+    expect(publicRouteCalls).toHaveLength(1);
+  });
+
+  it("explains citizenship route health when pipeline and public transaction routes are unavailable", async () => {
+    const bridge = await loadBridge();
+    const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
+    mocks.buildTransactionMock.mockReturnValueOnce({
+      signedTransaction,
+    });
+    mocks.submitTransactionMock.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "Torii responded with HTTP 503 Service Unavailable (expected 200, 201, 202, 204): route_unavailable — NRT0\uFFFDF no authoritative peer binding is registered for lane 1 dataspace 1",
+        ),
+        {
+          status: 503,
+          code: "route_unavailable",
+        },
+      ),
+    );
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        if (href === "https://taira.sora.org/transaction") {
+          expect(Buffer.isBuffer(init?.body)).toBe(true);
+          return jsonResponse({ error: "route_unavailable" }, 503);
+        }
+        throw new Error(`Unexpected nodeFetch request: ${href}`);
+      },
+    );
+
+    let caughtError: unknown;
+    try {
+      await bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      });
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeInstanceOf(Error);
+    const message = (caughtError as Error).message;
+    expect(message).toContain(
+      "Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for lane 1 / dataspace 1.",
+    );
+    expect(message).not.toContain("NRT0");
+  });
+
   it("reports unavailable governance citizenship assets before bonding", async () => {
     const bridge = await loadBridge();
     mocks.getConfigurationMock.mockResolvedValueOnce({

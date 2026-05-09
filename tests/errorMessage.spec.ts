@@ -27,6 +27,16 @@ describe("sanitizeErrorMessage", () => {
     ).toBe("invalid account_id `sorauExample`");
   });
 
+  it("strips unreadable binary fragments after generic error codes", () => {
+    expect(
+      sanitizeErrorMessage(
+        "route_unavailable — NRT0y?v\uFFFDv\uFFFD\uFFFDp\uFFFDz\uFFFDie no authoritative peer binding is registered for lane 1 dataspace 1",
+      ),
+    ).toBe(
+      "route_unavailable — no authoritative peer binding is registered for lane 1 dataspace 1",
+    );
+  });
+
   it("formats opaque norito literals inside readable errors", () => {
     expect(
       sanitizeErrorMessage(

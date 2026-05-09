@@ -456,6 +456,13 @@ describe("AccountSetupView", () => {
 
     await scanConnectQr(payload);
 
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
+    expect(wrapper.text()).toContain(t("Approve connection?"));
+    expect(wrapper.text()).toContain(EXAMPLE_REAL_I105_ACCOUNT_ID);
+    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    await flushPromises();
+
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0];
     expect(String(socket.url)).toBe(
@@ -499,8 +506,29 @@ describe("AccountSetupView", () => {
       )}`,
     );
 
+    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    await flushPromises();
+
     expect(FakeWebSocket.instances).toHaveLength(0);
     expect(wrapper.text()).toContain("IrohaConnect wallet token is missing.");
+  });
+
+  it("rejects a scanned wallet-role IrohaConnect QR without opening the relay", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+    );
+
+    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
+    await getButtonByText(wrapper, t("Reject")).trigger("click");
+    await flushPromises();
+
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(false);
+    expect(wrapper.text()).toContain(t("IrohaConnect connection rejected."));
   });
 
   it("rejects scanned IrohaConnect QRs that are not for the wallet role", async () => {
@@ -524,6 +552,9 @@ describe("AccountSetupView", () => {
     await scanConnectQr(
       `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
     );
+
+    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    await flushPromises();
 
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0];

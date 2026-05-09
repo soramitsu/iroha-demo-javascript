@@ -2118,6 +2118,36 @@ const binaryToBuffer = (
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 };
 
+const NORITO_FRAME_HEADER_LENGTH = 40;
+const VERSIONED_TRANSACTION_PAYLOAD_VERSION = 1;
+
+const unwrapNrt0NoritoFrame = (payload: Buffer) => {
+  if (
+    payload.length < NORITO_FRAME_HEADER_LENGTH ||
+    payload.subarray(0, 4).toString("ascii") !== "NRT0"
+  ) {
+    return payload;
+  }
+  if (payload[4] !== 0 || payload[5] !== 0) {
+    throw new Error("Unsupported NRT0 transaction frame version.");
+  }
+  const payloadLength = payload.readBigUInt64LE(23);
+  if (payloadLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("NRT0 transaction frame payload is too large.");
+  }
+  const payloadStart = payload.length - Number(payloadLength);
+  if (payloadStart < NORITO_FRAME_HEADER_LENGTH) {
+    throw new Error("Malformed NRT0 transaction frame payload length.");
+  }
+  return payload.subarray(payloadStart);
+};
+
+const toVersionedTransactionPayload = (payload: Buffer) =>
+  Buffer.concat([
+    Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
+    unwrapNrt0NoritoFrame(payload),
+  ]);
+
 const toJsonByteArray = (
   value: Buffer | ArrayBuffer | ArrayBufferView,
 ): number[] => {
@@ -4673,13 +4703,115 @@ const hashSignedTransactionHex = (signedTransaction: Buffer) => {
   return Buffer.isBuffer(hash) ? hash.toString("hex") : hash;
 };
 
+const ROUTE_UNAVAILABLE_PATTERN = /\broute_unavailable\b/i;
+const AUTHORITATIVE_BINDING_ROUTE_PATTERN =
+  /no authoritative peer binding is registered for lane\s+(\d+)\s+dataspace\s+(\d+)/i;
+const ROUTE_TARGET_PATTERN = /\blane\s+(\d+)\s*\/\s*dataspace\s+(\d+)\b/i;
+
+const stringifyErrorField = (value: unknown) => {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  if (isPlainRecord(value) || Array.isArray(value)) {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return "";
+};
+
+const routeUnavailableErrorText = (error: unknown) => {
+  const haystack = [
+    error instanceof Error ? error.message : null,
+    isPlainRecord(error) ? error.message : null,
+    isPlainRecord(error) ? error.code : null,
+    isPlainRecord(error) ? error.rejectCode : null,
+    isPlainRecord(error) ? error.reject_code : null,
+    isPlainRecord(error) ? error.errorMessage : null,
+    isPlainRecord(error) ? error.error : null,
+    isPlainRecord(error) ? error.detail : null,
+    isPlainRecord(error) ? error.bodyText : null,
+    isPlainRecord(error) ? error.bodyJson : null,
+  ];
+  return haystack.map(stringifyErrorField).join("\n");
+};
+
+const routeUnavailableTargetMessage = (error: unknown) => {
+  const text = routeUnavailableErrorText(error);
+  const match =
+    AUTHORITATIVE_BINDING_ROUTE_PATTERN.exec(text) ||
+    ROUTE_TARGET_PATTERN.exec(text);
+  if (!match) {
+    return "the requested lane/dataspace";
+  }
+  return `lane ${match[1]} / dataspace ${match[2]}`;
+};
+
+const isRouteUnavailableError = (error: unknown) =>
+  ROUTE_UNAVAILABLE_PATTERN.test(routeUnavailableErrorText(error));
+
+const isPipelineRouteUnavailableError = (error: unknown) => {
+  if (!isPlainRecord(error)) {
+    return false;
+  }
+  const status = Number(error.status);
+  return status === 503 && isRouteUnavailableError(error);
+};
+
+const submitSignedTransactionViaPublicRoute = async (
+  toriiUrl: string,
+  signedTransaction: Buffer,
+) => {
+  const response = await nodeFetch(
+    buildNexusEndpoint(toriiUrl, "/transaction"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-norito",
+        Accept: "application/x-norito, application/json",
+      },
+      body: toVersionedTransactionPayload(signedTransaction),
+    },
+  );
+  if (![200, 201, 202, 204].includes(response.status)) {
+    throw await createApiRequestError(response, "Public transaction submit");
+  }
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    return response.json().catch(() => null);
+  }
+  return null;
+};
+
 const submitSignedTransactionAsVersioned = async (
   toriiUrl: string,
   signedTransaction: Buffer,
 ) => {
   const client = getClient(toriiUrl);
   const signedTransactionBuffer = binaryToBuffer(signedTransaction);
-  const submission = await client.submitTransaction(signedTransactionBuffer);
+  let submission: unknown;
+  try {
+    submission = await client.submitTransaction(signedTransactionBuffer);
+  } catch (error) {
+    if (!isPipelineRouteUnavailableError(error)) {
+      throw error;
+    }
+    try {
+      submission = await submitSignedTransactionViaPublicRoute(
+        toriiUrl,
+        signedTransactionBuffer,
+      );
+    } catch (fallbackError) {
+      if (isRouteUnavailableError(fallbackError)) {
+        throw new Error(
+          `Public transaction submit route unavailable after pipeline fallback for ${routeUnavailableTargetMessage(error)}: route_unavailable`,
+        );
+      }
+      throw fallbackError;
+    }
+  }
   return {
     hash: hashSignedTransactionHex(signedTransactionBuffer),
     submission,
@@ -5164,6 +5296,11 @@ const buildDefaultGovernanceRegistrationPolicy = (
 const missingGovernanceCitizenshipAssetMessage = (assetDefinitionId: string) =>
   `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${assetDefinitionId}. RegisterCitizen cannot choose another asset from the wallet; ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
 
+const citizenshipRouteUnavailableMessage = (error: unknown) => {
+  const target = routeUnavailableTargetMessage(error);
+  return `Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for ${target}. This is endpoint lane-routing health, not a wallet or bond-amount problem. Try another healthy Torii endpoint or ask the endpoint operator to restore the authoritative peer binding for ${target}.`;
+};
+
 const MISSING_ASSET_DEFINITION_PATTERN =
   /Failed to find asset definition:\s*`([^`]+)`/i;
 
@@ -5174,6 +5311,9 @@ const extractMissingAssetDefinitionFromError = (error: unknown) => {
 };
 
 const decorateRegisterCitizenError = (error: unknown) => {
+  if (isRouteUnavailableError(error)) {
+    return new Error(citizenshipRouteUnavailableMessage(error));
+  }
   const missingAssetDefinitionId =
     extractMissingAssetDefinitionFromError(error);
   if (!missingAssetDefinitionId) {

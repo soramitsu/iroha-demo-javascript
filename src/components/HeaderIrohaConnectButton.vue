@@ -99,10 +99,121 @@
       </p>
     </div>
   </details>
+
+  <div v-if="pendingConnectSession" class="header-connect-modal-backdrop">
+    <section
+      class="card header-connect-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="header-connect-approval-title"
+    >
+      <p class="header-connect-modal-label">
+        {{ t("IrohaConnect connection") }}
+      </p>
+      <h2 id="header-connect-approval-title">
+        {{ t("Approve connection?") }}
+      </h2>
+      <p class="helper">
+        {{
+          t(
+            "Review the requesting app details before allowing it to send wallet requests.",
+          )
+        }}
+      </p>
+      <div class="header-connect-modal-grid">
+        <div
+          v-for="detail in pendingConnectionDetails"
+          :key="detail.label"
+          class="kv"
+          :class="{ monospace: detail.monospace }"
+        >
+          <span class="kv-label">{{ detail.label }}</span>
+          <span class="kv-value">{{ detail.value }}</span>
+        </div>
+      </div>
+      <div class="actions-row header-connect-modal-actions">
+        <button
+          type="button"
+          class="secondary"
+          :disabled="connectApprovalLoading"
+          @click="rejectPendingConnection"
+        >
+          {{ t("Reject") }}
+        </button>
+        <button
+          type="button"
+          :disabled="connectApprovalLoading"
+          @click="approvePendingConnection"
+        >
+          {{
+            connectApprovalLoading ? t("Approving...") : t("Approve connection")
+          }}
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <div v-if="pendingConnectRequest" class="header-connect-modal-backdrop">
+    <section
+      class="card header-connect-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="header-connect-request-title"
+    >
+      <p class="header-connect-modal-label">
+        {{ pendingConnectRequest.label }}
+      </p>
+      <h2 id="header-connect-request-title">
+        {{ pendingConnectRequest.title }}
+      </h2>
+      <p class="helper">
+        {{
+          t(
+            "This request will not be signed or answered unless you approve it here.",
+          )
+        }}
+      </p>
+      <div class="header-connect-modal-grid">
+        <div
+          v-for="detail in pendingConnectRequest.details"
+          :key="detail.label"
+          class="kv"
+          :class="{ monospace: detail.monospace }"
+        >
+          <span class="kv-label">{{ detail.label }}</span>
+          <span class="kv-value">{{ detail.value }}</span>
+        </div>
+      </div>
+      <p v-if="pendingRequestError" class="helper error">
+        {{ pendingRequestError }}
+      </p>
+      <div class="actions-row header-connect-modal-actions">
+        <button
+          type="button"
+          class="secondary"
+          :disabled="pendingRequestLoading"
+          @click="rejectPendingConnectRequest"
+        >
+          {{ t("Reject") }}
+        </button>
+        <button
+          type="button"
+          :disabled="pendingRequestLoading"
+          @click="approvePendingConnectRequest"
+        >
+          {{
+            pendingRequestLoading
+              ? t("Approving...")
+              : pendingConnectRequest.approveLabel
+          }}
+        </button>
+      </div>
+    </section>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useQrScanner } from "@/composables/useQrScanner";
 import {
@@ -126,11 +237,21 @@ const session = useSessionStore();
 const { t } = useAppI18n();
 const panelRef = ref<HTMLDetailsElement | null>(null);
 const scannedConnectSession = ref<ParsedIrohaConnectUri | null>(null);
+const pendingConnectSession = ref<ParsedIrohaConnectUri | null>(null);
 const connectScanError = ref("");
 const connectApprovalLoading = ref(false);
 const connectApprovalStatus = ref("");
+const pendingConnectRequest = shallowRef<PendingConnectRequest | null>(null);
+const pendingRequestLoading = ref(false);
+const pendingRequestError = ref("");
 let scannedConnectSocket: WebSocket | null = null;
 let scannedConnectSequence = 2;
+
+interface IrohaConnectDetail {
+  label: string;
+  value: string;
+  monospace?: boolean;
+}
 
 interface UranaiPrivateTradeProofRequest {
   schema: typeof PRIVATE_TRADE_PROOF_SCHEMA;
@@ -154,6 +275,208 @@ interface UranaiContractCallSignRequest {
   signingMessageB64: string;
 }
 
+type PendingConnectRequest =
+  | {
+      kind: "privateTradeProof";
+      socket: WebSocket;
+      parsed: ParsedIrohaConnectUri;
+      request: UranaiPrivateTradeProofRequest;
+      label: string;
+      title: string;
+      approveLabel: string;
+      details: IrohaConnectDetail[];
+    }
+  | {
+      kind: "contractSignature";
+      socket: WebSocket;
+      parsed: ParsedIrohaConnectUri;
+      request: UranaiContractCallSignRequest;
+      label: string;
+      title: string;
+      approveLabel: string;
+      details: IrohaConnectDetail[];
+    };
+
+const activeConnectAccountId = computed(
+  () =>
+    getPublicAccountId(
+      session.activeAccount,
+      session.connection.networkPrefix,
+    ) || "",
+);
+
+const displayOptional = (value: unknown) => {
+  if (value === undefined || value === null || value === "") {
+    return t("Not provided");
+  }
+  return String(value);
+};
+
+const pendingConnectionDetails = computed<IrohaConnectDetail[]>(() => {
+  const parsed = pendingConnectSession.value;
+  if (!parsed) {
+    return [];
+  }
+  return [
+    {
+      label: t("Active account"),
+      value: activeConnectAccountId.value || t("No active wallet"),
+      monospace: true,
+    },
+    { label: t("Session ID"), value: parsed.sid, monospace: true },
+    {
+      label: t("Chain ID"),
+      value: displayOptional(parsed.chainId),
+      monospace: true,
+    },
+    {
+      label: t("Endpoint"),
+      value: parsed.node || session.connection.toriiUrl,
+      monospace: true,
+    },
+    {
+      label: t("Wallet token"),
+      value: parsed.token ? t("Present") : t("Missing"),
+    },
+  ];
+});
+
+const decodeBase64Bytes = (value: string) => {
+  const normalized = value.trim().replace(/-/g, "+").replace(/_/g, "/");
+  const padded = `${normalized}${"=".repeat((4 - (normalized.length % 4)) % 4)}`;
+  return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
+};
+
+const bytesToHexPreview = (bytes: Uint8Array, limit = 48) => {
+  const preview = Array.from(bytes.slice(0, limit), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return bytes.length > limit ? `${preview}...` : preview;
+};
+
+const decodedSigningMessagePreview = (signingMessageB64: string) => {
+  try {
+    const bytes = decodeBase64Bytes(signingMessageB64);
+    const decodedText = new TextDecoder("utf-8", { fatal: false }).decode(
+      bytes,
+    );
+    const printable = decodedText.replace(/[\t\n\r]/gu, "").trim();
+    if (
+      printable &&
+      Array.from(printable).every((character) => character >= " ")
+    ) {
+      return {
+        byteLength: bytes.length,
+        preview:
+          decodedText.length > 220
+            ? `${decodedText.slice(0, 220)}...`
+            : decodedText,
+      };
+    }
+    return {
+      byteLength: bytes.length,
+      preview: `0x${bytesToHexPreview(bytes)}`,
+    };
+  } catch (_error) {
+    return {
+      byteLength: 0,
+      preview: t("Unable to decode signing payload."),
+    };
+  }
+};
+
+const buildPrivateProofDetails = (
+  parsed: ParsedIrohaConnectUri,
+  request: UranaiPrivateTradeProofRequest,
+): IrohaConnectDetail[] => [
+  { label: t("Request ID"), value: request.requestId, monospace: true },
+  {
+    label: t("Requested account"),
+    value: displayOptional(request.accountId),
+    monospace: true,
+  },
+  {
+    label: t("Active account"),
+    value: activeConnectAccountId.value || t("No active wallet"),
+    monospace: true,
+  },
+  {
+    label: t("Session ID"),
+    value: parsed.sid,
+    monospace: true,
+  },
+  {
+    label: t("Chain ID"),
+    value: request.chainId || parsed.chainId || session.connection.chainId,
+    monospace: true,
+  },
+  {
+    label: t("Endpoint"),
+    value: request.toriiUrl || parsed.node || session.connection.toriiUrl,
+    monospace: true,
+  },
+  {
+    label: t("Asset"),
+    value: request.assetDefinitionId || "xor#universal",
+    monospace: true,
+  },
+  { label: t("Collateral"), value: displayOptional(request.collateralIn) },
+  { label: t("Privacy fee"), value: displayOptional(request.privacyFee) },
+  { label: t("Market"), value: displayOptional(request.marketId) },
+  { label: t("Outcome"), value: displayOptional(request.outcomeIndex) },
+];
+
+const buildContractSignDetails = (
+  parsed: ParsedIrohaConnectUri,
+  request: UranaiContractCallSignRequest,
+): IrohaConnectDetail[] => {
+  const signingPreview = decodedSigningMessagePreview(
+    request.signingMessageB64,
+  );
+  return [
+    { label: t("Request ID"), value: request.requestId, monospace: true },
+    {
+      label: t("Requested account"),
+      value: displayOptional(request.accountId),
+      monospace: true,
+    },
+    {
+      label: t("Active account"),
+      value: activeConnectAccountId.value || t("No active wallet"),
+      monospace: true,
+    },
+    {
+      label: t("Session ID"),
+      value: parsed.sid,
+      monospace: true,
+    },
+    {
+      label: t("Chain ID"),
+      value: parsed.chainId || session.connection.chainId,
+      monospace: true,
+    },
+    {
+      label: t("Endpoint"),
+      value: parsed.node || session.connection.toriiUrl,
+      monospace: true,
+    },
+    {
+      label: t("Signing payload bytes"),
+      value: String(signingPreview.byteLength),
+    },
+    {
+      label: t("Signing payload preview"),
+      value: signingPreview.preview,
+      monospace: true,
+    },
+    {
+      label: t("Signing message"),
+      value: request.signingMessageB64,
+      monospace: true,
+    },
+  ];
+};
+
 const closeScannedConnectSocket = () => {
   if (
     scannedConnectSocket &&
@@ -163,6 +486,9 @@ const closeScannedConnectSocket = () => {
   }
   scannedConnectSocket = null;
   scannedConnectSequence = 2;
+  pendingConnectRequest.value = null;
+  pendingRequestLoading.value = false;
+  pendingRequestError.value = "";
 };
 
 const waitForConnectSocketOpen = (socket: WebSocket) =>
@@ -291,15 +617,68 @@ const rejectSignRequest = (
   });
 };
 
+const queuePrivateTradeProofRequest = (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  request: UranaiPrivateTradeProofRequest,
+) => {
+  if (pendingConnectRequest.value) {
+    rejectProofRequest(
+      socket,
+      parsed,
+      request.requestId,
+      "Finish the current IrohaConnect approval before sending another request.",
+    );
+    return;
+  }
+  pendingRequestError.value = "";
+  pendingConnectRequest.value = {
+    kind: "privateTradeProof",
+    socket,
+    parsed,
+    request,
+    label: t("IrohaConnect transaction"),
+    title: t("Approve private proof?"),
+    approveLabel: t("Approve proof"),
+    details: buildPrivateProofDetails(parsed, request),
+  };
+  connectApprovalStatus.value = t("Waiting for your approval...");
+};
+
+const queueContractCallSignRequest = (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  request: UranaiContractCallSignRequest,
+) => {
+  if (pendingConnectRequest.value) {
+    rejectSignRequest(
+      socket,
+      parsed,
+      request.requestId,
+      "Finish the current IrohaConnect approval before sending another request.",
+    );
+    return;
+  }
+  pendingRequestError.value = "";
+  pendingConnectRequest.value = {
+    kind: "contractSignature",
+    socket,
+    parsed,
+    request,
+    label: t("IrohaConnect transaction"),
+    title: t("Approve transaction signature?"),
+    approveLabel: t("Approve and sign"),
+    details: buildContractSignDetails(parsed, request),
+  };
+  connectApprovalStatus.value = t("Waiting for your approval...");
+};
+
 const handlePrivateTradeProofRequest = async (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   request: UranaiPrivateTradeProofRequest,
 ) => {
-  const accountId = getPublicAccountId(
-    session.activeAccount,
-    session.connection.networkPrefix,
-  );
+  const accountId = activeConnectAccountId.value;
   if (!accountId) {
     rejectProofRequest(
       socket,
@@ -349,10 +728,7 @@ const handleContractCallSignRequest = async (
   parsed: ParsedIrohaConnectUri,
   request: UranaiContractCallSignRequest,
 ) => {
-  const accountId = getPublicAccountId(
-    session.activeAccount,
-    session.connection.networkPrefix,
-  );
+  const accountId = activeConnectAccountId.value;
   if (!accountId) {
     rejectSignRequest(
       socket,
@@ -405,12 +781,12 @@ const handleScannedConnectMessage = async (
     }
     const request = parsePrivateTradeProofRequest(frame.payload);
     if (request) {
-      await handlePrivateTradeProofRequest(socket, parsed, request);
+      queuePrivateTradeProofRequest(socket, parsed, request);
       return;
     }
     const signRequest = parseContractCallSignRequest(frame.payload);
     if (signRequest) {
-      await handleContractCallSignRequest(socket, parsed, signRequest);
+      queueContractCallSignRequest(socket, parsed, signRequest);
     }
   } catch (error) {
     connectScanError.value =
@@ -453,6 +829,78 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
   }
 };
 
+const approvePendingConnection = async () => {
+  const parsed = pendingConnectSession.value;
+  if (!parsed) {
+    return;
+  }
+  await approveScannedConnectSession(parsed);
+  if (!connectScanError.value) {
+    pendingConnectSession.value = null;
+  }
+};
+
+const rejectPendingConnection = () => {
+  pendingConnectSession.value = null;
+  connectApprovalStatus.value = t("Rejected");
+  connectScanner.message.value = t("IrohaConnect connection rejected.");
+};
+
+const approvePendingConnectRequest = async () => {
+  const pending = pendingConnectRequest.value;
+  if (!pending || pendingRequestLoading.value) {
+    return;
+  }
+  pendingRequestLoading.value = true;
+  pendingRequestError.value = "";
+  try {
+    if (pending.kind === "privateTradeProof") {
+      await handlePrivateTradeProofRequest(
+        pending.socket,
+        pending.parsed,
+        pending.request,
+      );
+    } else {
+      await handleContractCallSignRequest(
+        pending.socket,
+        pending.parsed,
+        pending.request,
+      );
+    }
+    pendingConnectRequest.value = null;
+  } catch (error) {
+    pendingRequestError.value =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    pendingRequestLoading.value = false;
+  }
+};
+
+const rejectPendingConnectRequest = () => {
+  const pending = pendingConnectRequest.value;
+  if (!pending || pendingRequestLoading.value) {
+    return;
+  }
+  if (pending.kind === "privateTradeProof") {
+    rejectProofRequest(
+      pending.socket,
+      pending.parsed,
+      pending.request.requestId,
+      "Rejected by user.",
+    );
+  } else {
+    rejectSignRequest(
+      pending.socket,
+      pending.parsed,
+      pending.request.requestId,
+      "Rejected by user.",
+    );
+  }
+  pendingConnectRequest.value = null;
+  pendingRequestError.value = "";
+  connectApprovalStatus.value = t("Rejected");
+};
+
 const connectScanner = useQrScanner(
   (payload) => {
     connectScanError.value = "";
@@ -463,9 +911,13 @@ const connectScanner = useQrScanner(
         throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
       }
       scannedConnectSession.value = parsed;
-      void approveScannedConnectSession(parsed);
+      pendingConnectSession.value = parsed;
+      connectScanner.message.value = t(
+        "Review connection details before approving.",
+      );
     } catch (error) {
       scannedConnectSession.value = null;
+      pendingConnectSession.value = null;
       connectScanError.value =
         error instanceof Error ? error.message : String(error);
     }
@@ -502,3 +954,89 @@ onBeforeUnmount(() => {
   closeScannedConnectSocket();
 });
 </script>
+
+<style scoped>
+.header-connect-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(18, 18, 26, 0.58);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.header-connect-modal {
+  width: min(640px, 100%);
+  max-height: min(82vh, 720px);
+  overflow: auto;
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-radius: 18px;
+  box-shadow: var(--shadow-strong);
+}
+
+.header-connect-modal-label,
+.header-connect-modal h2 {
+  margin: 0;
+}
+
+.header-connect-modal-label {
+  color: var(--iroha-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.header-connect-modal h2 {
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+}
+
+.header-connect-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.header-connect-modal-grid .kv {
+  min-width: 0;
+}
+
+.header-connect-modal-grid .kv:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.header-connect-modal-actions {
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.monospace {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+@media (max-width: 640px) {
+  .header-connect-modal-backdrop {
+    align-items: end;
+    padding: 12px;
+  }
+
+  .header-connect-modal {
+    max-height: 88vh;
+    padding: 18px;
+  }
+
+  .header-connect-modal-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
