@@ -388,6 +388,7 @@ describe("iroha services bridge", () => {
     const availabilityInput = { toriiUrl: "https://taira.sora.org" };
     const connectInput = {
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       privateKeyHex: "aa".repeat(32),
       exitClass: "standard" as const,

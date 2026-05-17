@@ -655,7 +655,15 @@ body::before {
   height: 7px;
   inset-block-start: 3px;
   inset-inline-start: calc(50% - 3.5px);
-  clip-path: polygon(50% 0, 100% 55%, 68% 55%, 68% 100%, 32% 100%, 32% 55%, 0 55%);
+  clip-path: polygon(
+    50% 0,
+    100% 55%,
+    68% 55%,
+    68% 100%,
+    32% 100%,
+    32% 55%,
+    0 55%
+  );
 }
 
 .header-connect-session {
@@ -1444,6 +1452,40 @@ nav {
   overflow: hidden;
 }
 
+.workspace.kaigi-workspace {
+  background:
+    linear-gradient(145deg, rgba(255, 252, 241, 0.9), transparent 54%),
+    linear-gradient(160deg, rgba(226, 210, 177, 0.76), transparent 62%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(31, 52, 84, 0.035) 0 1px,
+      transparent 1px 12px
+    ),
+    rgba(244, 236, 217, 0.84);
+  border-color: rgba(174, 148, 98, 0.62);
+  box-shadow:
+    0 28px 58px rgba(37, 30, 20, 0.18),
+    0 14px 34px rgba(149, 34, 35, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.66);
+}
+
+:root[data-theme="dark"] .workspace.kaigi-workspace {
+  background:
+    linear-gradient(145deg, rgba(22, 31, 42, 0.9), transparent 54%),
+    linear-gradient(160deg, rgba(48, 40, 30, 0.48), transparent 62%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(224, 195, 132, 0.04) 0 1px,
+      transparent 1px 12px
+    ),
+    rgba(8, 12, 18, 0.84);
+  border-color: rgba(194, 169, 112, 0.2);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.34),
+    0 14px 34px rgba(217, 67, 50, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 .workspace-header {
   padding: 24px 30px 14px;
   display: flex;
@@ -1458,6 +1500,35 @@ nav {
   backdrop-filter: blur(20px) saturate(165%);
   -webkit-backdrop-filter: blur(20px) saturate(165%);
   box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.kaigi-workspace .workspace-header {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 253, 244, 0.72),
+      rgba(226, 211, 178, 0.36)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(31, 52, 84, 0.05) 0 1px,
+      transparent 1px 8px
+    );
+  border-bottom-color: rgba(174, 148, 98, 0.46);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    inset 0 -1px 0 rgba(85, 67, 38, 0.14);
+}
+
+:root[data-theme="dark"] .kaigi-workspace .workspace-header {
+  background:
+    linear-gradient(180deg, rgba(32, 41, 54, 0.72), rgba(17, 22, 30, 0.42)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(224, 195, 132, 0.05) 0 1px,
+      transparent 1px 8px
+    );
+  border-bottom-color: rgba(194, 169, 112, 0.18);
 }
 
 .workspace-header h1 {
@@ -1566,6 +1637,37 @@ main {
   opacity: 0.9;
   z-index: 0;
   pointer-events: none;
+}
+
+.kaigi-workspace .workspace-body::before {
+  background:
+    radial-gradient(
+      62% 45% at 20% 12%,
+      rgba(226, 210, 177, 0.46),
+      transparent 68%
+    ),
+    radial-gradient(
+      58% 46% at 82% 10%,
+      rgba(47, 75, 116, 0.16),
+      transparent 70%
+    );
+  filter: blur(30px);
+  opacity: 0.66;
+}
+
+:root[data-theme="dark"] .kaigi-workspace .workspace-body::before {
+  background:
+    radial-gradient(
+      58% 44% at 20% 12%,
+      rgba(194, 169, 112, 0.14),
+      transparent 68%
+    ),
+    radial-gradient(
+      58% 46% at 82% 10%,
+      rgba(90, 147, 255, 0.1),
+      transparent 70%
+    );
+  opacity: 0.82;
 }
 
 .workspace-body > * {

@@ -848,6 +848,7 @@ type VpnAvailabilityInput = {
 
 type VpnConnectInput = {
   toriiUrl: string;
+  chainId: string;
   accountId: string;
   networkPrefix?: number;
   privateKeyHex?: HexString;

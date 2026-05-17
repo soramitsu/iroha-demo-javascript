@@ -1431,6 +1431,56 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Start or join a wallet-based meeting link.",
   "Connection details": "Connection details",
   "Turn on camera and mic": "Turn on camera and mic",
+  "Camera and mic": "Camera and mic",
+  Camera: "Camera",
+  Microphone: "Microphone",
+  "Auto-select camera": "Auto-select camera",
+  "Default camera": "Default camera",
+  "Default microphone": "Default microphone",
+  "Refresh devices": "Refresh devices",
+  "Retry camera": "Retry camera",
+  "Find working camera": "Find working camera",
+  "Checking media": "Checking media",
+  "Finding camera": "Finding camera",
+  "Preview live": "Preview live",
+  "Permission needed": "Permission needed",
+  "No video frames": "No video frames",
+  "No devices": "No devices",
+  "Devices found": "Devices found",
+  "Not checked": "Not checked",
+  "Camera {number}": "Camera {number}",
+  "Microphone {number}": "Microphone {number}",
+  "Media devices refreshed.": "Media devices refreshed.",
+  "Media device selection updated.": "Media device selection updated.",
+  "Unable to refresh media devices: {message}":
+    "Unable to refresh media devices: {message}",
+  "Checking cameras and microphones.": "Checking cameras and microphones.",
+  "Allow Camera and Microphone for this app in System Settings, then retry.":
+    "Allow Camera and Microphone for this app in System Settings, then retry.",
+  "The camera opened but no video frames arrived. Choose another camera or close apps using it, then retry.":
+    "The camera opened but no video frames arrived. Choose another camera or close apps using it, then retry.",
+  "No working camera produced video. Close apps using the camera, then find a working camera again.":
+    "No working camera produced video. Close apps using the camera, then find a working camera again.",
+  "No camera or microphone device was found.":
+    "No camera or microphone device was found.",
+  "Preview is live. Create or join when ready.":
+    "Preview is live. Create or join when ready.",
+  "Using {camera}. Create or join when ready.":
+    "Using {camera}. Create or join when ready.",
+  "Choose a camera and microphone, then turn them on before creating or joining.":
+    "Choose a camera and microphone, then turn them on before creating or joining.",
+  "Kaigi will try each camera and use the first one with video.":
+    "Kaigi will try each camera and use the first one with video.",
+  "Camera opened but no video frames arrived. Choose another camera, close apps using the camera, then retry.":
+    "Camera opened but no video frames arrived. Choose another camera, close apps using the camera, then retry.",
+  "No working camera produced video frames. Close other camera apps, then retry.":
+    "No working camera produced video frames. Close other camera apps, then retry.",
+  "Local media is ready. Using {camera}.":
+    "Local media is ready. Using {camera}.",
+  "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.":
+    "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.",
+  "Selected camera or microphone is unavailable. Choose another device.":
+    "Selected camera or microphone is unavailable. Choose another device.",
   "Explorer QR": "Explorer QR",
   "Use this QR when another wallet or explorer needs this account.":
     "Use this QR when another wallet or explorer needs this account.",

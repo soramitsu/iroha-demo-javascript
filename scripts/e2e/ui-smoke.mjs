@@ -9,6 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const rendererRoot = path.join(repoRoot, "src");
 const outputDir = path.join(repoRoot, "output/playwright");
+const useRealMedia = process.env.E2E_REAL_MEDIA === "1";
+const browserChannel = process.env.E2E_BROWSER_CHANNEL?.trim() || undefined;
 
 const E2E_ACCOUNT_ID = "testu2Ze2e111111111111111111111111111111111111111111";
 const E2E_PUBLIC_KEY_HEX =
@@ -51,6 +53,7 @@ function assert(condition, message) {
 }
 
 function buildInitScript() {
+  const useSyntheticMedia = !useRealMedia;
   const sessionPayload = {
     hydrated: false,
     connection: {
@@ -89,6 +92,7 @@ function buildInitScript() {
     const chainId = ${JSON.stringify(TAIRA_CHAIN_ID)};
     const xorAssetId = ${JSON.stringify(XOR_ASSET_ID)};
     const sessionPayload = ${JSON.stringify(sessionPayload)};
+    const useSyntheticMedia = ${JSON.stringify(useSyntheticMedia)};
     const now = () => Date.now();
     const txHash = (label) => "0x" + Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
     const svgQr = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" fill="#fff"/><rect x="8" y="8" width="24" height="24" fill="#111"/><rect x="64" y="8" width="24" height="24" fill="#111"/><rect x="8" y="64" width="24" height="24" fill="#111"/><rect x="44" y="44" width="12" height="12" fill="#111"/><rect x="64" y="64" width="8" height="8" fill="#111"/><rect x="76" y="76" width="12" height="12" fill="#111"/></svg>';
@@ -308,6 +312,8 @@ function buildInitScript() {
       clipboard: "",
       shared: [],
       calls: [],
+      mediaRequests: [],
+      failDefaultKaigiCameraOnce: false,
     };
     const launchedSoraCloudServices = [];
     Object.defineProperty(navigator, "clipboard", {
@@ -329,13 +335,65 @@ function buildInitScript() {
         window.__e2e.shared.push(payload);
       },
     });
+    const mediaDevices = [
+      {
+        kind: "videoinput",
+        deviceId: "camera-eos",
+        label: "EOS Webcam Utility",
+        groupId: "camera-group-eos",
+      },
+      {
+        kind: "videoinput",
+        deviceId: "camera-facetime",
+        label: "FaceTime HD Camera",
+        groupId: "camera-group-built-in",
+      },
+      {
+        kind: "audioinput",
+        deviceId: "mic-built-in",
+        label: "Built-in Microphone",
+        groupId: "audio-group-built-in",
+      },
+    ];
+    const cloneMediaConstraints = (constraints) => {
+      try {
+        return JSON.parse(JSON.stringify(constraints ?? {}));
+      } catch {
+        return {};
+      }
+    };
+    const exactVideoDeviceId = (constraints = {}) => {
+      const video = constraints.video;
+      if (!video || typeof video !== "object") {
+        return "";
+      }
+      const deviceId = video.deviceId;
+      if (typeof deviceId === "string") {
+        return deviceId;
+      }
+      return typeof deviceId?.exact === "string" ? deviceId.exact : "";
+    };
     const syntheticMedia = {
       streams: new Set(),
       createStream: async (constraints = {}) => {
+        const request = cloneMediaConstraints(constraints);
+        window.__e2e.mediaRequests.push(request);
         const tracks = [];
         const wantsVideo = constraints.video !== false;
         const wantsAudio = constraints.audio !== false;
-        if (wantsVideo && HTMLCanvasElement.prototype.captureStream) {
+        const videoDeviceId = exactVideoDeviceId(constraints);
+        const forceDefaultCameraWithoutFrames =
+          wantsVideo &&
+          !videoDeviceId &&
+          window.__e2e.failDefaultKaigiCameraOnce;
+        if (forceDefaultCameraWithoutFrames) {
+          window.__e2e.failDefaultKaigiCameraOnce = false;
+        }
+        if (
+          wantsVideo &&
+          !forceDefaultCameraWithoutFrames &&
+          HTMLCanvasElement.prototype.captureStream
+        ) {
           const canvas = document.createElement("canvas");
           canvas.width = 640;
           canvas.height = 360;
@@ -395,12 +453,15 @@ function buildInitScript() {
         return stream;
       },
     };
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: {
-        getUserMedia: async (constraints) => syntheticMedia.createStream(constraints),
-      },
-    });
+    if (useSyntheticMedia) {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          getUserMedia: async (constraints) => syntheticMedia.createStream(constraints),
+          enumerateDevices: async () => mediaDevices.map((device) => ({ ...device })),
+        },
+      });
+    }
     class FakePeerConnection extends EventTarget {
       constructor() {
         super();
@@ -891,6 +952,15 @@ async function assertUsableViewport(page, route) {
   );
 }
 
+async function saveUiScreenshot(page, name) {
+  const fileName = `${name}.png`;
+  await page.screenshot({
+    path: path.join(outputDir, fileName),
+    fullPage: true,
+  });
+  console.log(`✓ saved screenshot output/playwright/${fileName}`);
+}
+
 async function checkRouteSmoke(page) {
   for (const [route, title] of routeChecks) {
     await navigate(page, route, title);
@@ -1019,14 +1089,133 @@ async function checkSoraCloudLaunchFlow(page) {
 
 async function checkKaigi(page) {
   await navigate(page, "/kaigi", "Kaigi");
-  await page.getByRole("button", { name: /Turn on camera and mic/i }).click();
   await page
-    .getByText("Local media is ready.")
+    .locator(".kaigi-media-setup")
+    .getByText("Camera and mic")
     .waitFor({ state: "visible", timeout: 10000 });
+  const mediaDeviceOptions = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".kaigi-device-grid select")).map(
+      (select) =>
+        Array.from(select.options).map((option) => option.textContent?.trim()),
+    ),
+  );
+  if (useRealMedia) {
+    assert(
+      mediaDeviceOptions[0]?.includes("Auto-select camera"),
+      `Kaigi camera selector did not expose auto camera selection: ${JSON.stringify(mediaDeviceOptions[0])}`,
+    );
+  } else {
+    assert(
+      mediaDeviceOptions[0]?.includes("Auto-select camera") &&
+        mediaDeviceOptions[0]?.includes("FaceTime HD Camera") &&
+        mediaDeviceOptions[0]?.includes("EOS Webcam Utility"),
+      `Kaigi camera selector did not list expected devices: ${JSON.stringify(mediaDeviceOptions[0])}`,
+    );
+    assert(
+      mediaDeviceOptions[1]?.includes("Built-in Microphone"),
+      `Kaigi microphone selector did not list expected devices: ${JSON.stringify(mediaDeviceOptions[1])}`,
+    );
+  }
+  await page.getByRole("button", { name: "Refresh devices" }).click();
+  await page
+    .getByText("Media devices refreshed.")
+    .waitFor({ state: "visible", timeout: 10000 });
+
+  if (useRealMedia) {
+    await page.getByRole("button", { name: "Find working camera" }).click();
+    await page
+      .getByText("Local media is ready.")
+      .waitFor({ state: "visible", timeout: 15000 });
+    await page.getByText("Preview live").waitFor({ state: "visible" });
+    const videoStateHandle = await page.waitForFunction(
+      () => {
+        const video = document.querySelector(".kaigi-local-video video");
+        if (
+          !video ||
+          video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
+          video.videoWidth <= 0 ||
+          video.videoHeight <= 0
+        ) {
+          return false;
+        }
+        const track = video.srcObject?.getVideoTracks?.()[0];
+        return {
+          width: video.videoWidth,
+          height: video.videoHeight,
+          label: track?.label || "",
+          readyState: video.readyState,
+        };
+      },
+      undefined,
+      { timeout: 15000 },
+    );
+    const videoState = await videoStateHandle.jsonValue();
+    assert(
+      videoState.width > 0 && videoState.height > 0,
+      `Real camera did not render video frames: ${JSON.stringify(videoState)}`,
+    );
+    console.log(
+      `✓ real camera preview rendered ${videoState.width}x${videoState.height}${
+        videoState.label ? ` from ${videoState.label}` : ""
+      }`,
+    );
+    await saveUiScreenshot(page, "kaigi-real-camera-e2e");
+  } else {
+    await page.evaluate(() => {
+      window.__e2e.mediaRequests = [];
+      window.__e2e.failDefaultKaigiCameraOnce = true;
+    });
+    await page.getByRole("button", { name: "Find working camera" }).click();
+    await page
+      .getByText("Local media is ready.")
+      .waitFor({ state: "visible", timeout: 10000 });
+    await page.getByText("Preview live").waitFor({ state: "visible" });
+    await page.waitForFunction(
+      () => window.__e2e.mediaRequests.length >= 2,
+      undefined,
+      { timeout: 10000 },
+    );
+    const cameraSelectValue = await page
+      .locator(".kaigi-device-grid label", { hasText: "Camera" })
+      .locator("select")
+      .inputValue();
+    assert(
+      cameraSelectValue === "camera-facetime",
+      `Kaigi did not fall back to FaceTime camera, selected ${cameraSelectValue}`,
+    );
+    const mediaRequests = await page.evaluate(() => window.__e2e.mediaRequests);
+    assert(
+      !mediaRequests[0]?.video?.deviceId,
+      `Kaigi first media request should try the default camera: ${JSON.stringify(mediaRequests[0])}`,
+    );
+    assert(
+      mediaRequests.some(
+        (request) => request?.video?.deviceId?.exact === "camera-facetime",
+      ),
+      `Kaigi did not request the FaceTime fallback camera: ${JSON.stringify(mediaRequests)}`,
+    );
+    await page
+      .locator(".kaigi-device-grid label", { hasText: "Microphone" })
+      .locator("select")
+      .selectOption("mic-built-in");
+    await page
+      .getByText("Local media is ready.")
+      .waitFor({ state: "visible", timeout: 10000 });
+    const latestMediaRequest = await page.evaluate(() =>
+      window.__e2e.mediaRequests.at(-1),
+    );
+    assert(
+      latestMediaRequest?.audio?.deviceId?.exact === "mic-built-in",
+      `Kaigi microphone selector did not drive getUserMedia: ${JSON.stringify(latestMediaRequest)}`,
+    );
+    await saveUiScreenshot(page, "kaigi-media-setup-e2e");
+  }
+
   await page.getByRole("button", { name: /Create meeting link/i }).click();
   await page
     .getByRole("heading", { name: "Meeting link ready" })
     .waitFor({ state: "visible", timeout: 10000 });
+  await saveUiScreenshot(page, "kaigi-meeting-link-e2e");
   const invite = await page
     .locator(".kaigi-link-field textarea")
     .first()
@@ -1036,7 +1225,18 @@ async function checkKaigi(page) {
       invite.includes("call=kaigi.universal:"),
     `Kaigi invite did not use qualified kaigi.universal call id: ${invite}`,
   );
-  console.log("✓ kaigi media and meeting-link flow work");
+  await page
+    .getByRole("button", { name: "I will keep this window open" })
+    .click();
+  await page.getByRole("button", { name: "Join meeting" }).click();
+  await page.locator("textarea").first().fill(invite);
+  await page.getByRole("button", { name: "Load invite" }).click();
+  await page
+    .getByRole("heading", { name: "Meeting summary" })
+    .waitFor({ state: "visible", timeout: 10000 });
+  await page.getByText("E2E Kaigi").waitFor({ state: "visible" });
+  await saveUiScreenshot(page, "kaigi-join-summary-e2e");
+  console.log("✓ kaigi media device UX, fallback, and meeting-link flow work");
 }
 
 async function checkExplorer(page) {
@@ -1129,17 +1329,21 @@ async function main() {
   await mkdir(outputDir, { recursive: true });
   const { server, baseUrl } = await startRendererServer();
   const browser = await chromium.launch({
-    headless: process.env.HEADED !== "1",
-    args: [
-      "--use-fake-device-for-media-stream",
-      "--use-fake-ui-for-media-stream",
-    ],
+    ...(browserChannel ? { channel: browserChannel } : {}),
+    headless: useRealMedia ? false : process.env.HEADED !== "1",
+    args: useRealMedia
+      ? ["--use-fake-ui-for-media-stream"]
+      : [
+          "--use-fake-device-for-media-stream",
+          "--use-fake-ui-for-media-stream",
+        ],
   });
 
   try {
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       baseURL: baseUrl,
+      locale: "en-US",
     });
     await context.grantPermissions(["camera", "microphone"], {
       origin: baseUrl.replace(/\/$/, ""),

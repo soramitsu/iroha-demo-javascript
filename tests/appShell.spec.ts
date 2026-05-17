@@ -125,6 +125,18 @@ describe("App shell", () => {
     expect(steps.at(-1)).toBe("15");
   });
 
+  it("uses the video-first workspace treatment on Kaigi", () => {
+    route.path = "/kaigi";
+    route.meta = {
+      titleKey: "Kaigi",
+      subtitleKey: "Wallet-based meeting links",
+    };
+
+    const wrapper = mountApp({ withAccount: true });
+
+    expect(wrapper.get(".workspace").classes()).toContain("kaigi-workspace");
+  });
+
   it("shows the header IrohaConnect action only after a wallet is active", () => {
     const wrapper = mountApp({ withAccount: true });
 

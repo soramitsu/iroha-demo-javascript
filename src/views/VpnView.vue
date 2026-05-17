@@ -630,6 +630,7 @@ const handleConnect = async () => {
   try {
     status.value = await connectVpn({
       toriiUrl: toriiUrl.value,
+      chainId: session.connection.chainId,
       accountId: requestAccountId.value,
       networkPrefix: session.connection.networkPrefix,
       privateKeyHex: activeAccount.value.privateKeyHex,

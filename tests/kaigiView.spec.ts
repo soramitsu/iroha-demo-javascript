@@ -28,8 +28,21 @@ const endKaigiMeetingMock = vi.fn();
 const getPrivateKaigiConfidentialXorStateMock = vi.fn();
 const selfShieldPrivateKaigiXorMock = vi.fn();
 const getUserMediaMock = vi.fn();
+const enumerateDevicesMock = vi.fn();
 const writeTextMock = vi.fn();
 const readTextMock = vi.fn();
+const originalReadyStateDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLMediaElement.prototype,
+  "readyState",
+);
+const originalVideoWidthDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLVideoElement.prototype,
+  "videoWidth",
+);
+const originalVideoHeightDescriptor = Object.getOwnPropertyDescriptor(
+  HTMLVideoElement.prototype,
+  "videoHeight",
+);
 
 vi.mock("@/services/iroha", () => ({
   createKaigiMeeting: (input: unknown) => createKaigiMeetingMock(input),
@@ -278,6 +291,7 @@ describe("KaigiView", () => {
     getPrivateKaigiConfidentialXorStateMock.mockReset();
     selfShieldPrivateKaigiXorMock.mockReset();
     getUserMediaMock.mockReset();
+    enumerateDevicesMock.mockReset();
     writeTextMock.mockReset();
     readTextMock.mockReset();
     FakePeerConnection.instances = [];
@@ -327,11 +341,24 @@ describe("KaigiView", () => {
     vi.stubGlobal("MediaStream", FakeMediaStream);
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    Object.defineProperty(HTMLMediaElement.prototype, "readyState", {
+      configurable: true,
+      get: () => HTMLMediaElement.HAVE_ENOUGH_DATA,
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", {
+      configurable: true,
+      get: () => 640,
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", {
+      configurable: true,
+      get: () => 360,
+    });
 
     Object.defineProperty(navigator, "mediaDevices", {
       configurable: true,
       value: {
         getUserMedia: getUserMediaMock,
+        enumerateDevices: enumerateDevicesMock,
       },
     });
     Object.defineProperty(navigator, "clipboard", {
@@ -348,6 +375,18 @@ describe("KaigiView", () => {
         new FakeMediaTrack("video", "local-video"),
       ]),
     );
+    enumerateDevicesMock.mockResolvedValue([
+      {
+        kind: "videoinput",
+        deviceId: "camera-1",
+        label: "FaceTime HD Camera",
+      },
+      {
+        kind: "audioinput",
+        deviceId: "mic-1",
+        label: "Built-in Microphone",
+      },
+    ]);
 
     setActivePinia(createPinia());
   });
@@ -358,6 +397,34 @@ describe("KaigiView", () => {
     document.body.innerHTML = "";
     window.location.hash = "";
     vi.restoreAllMocks();
+    if (originalReadyStateDescriptor) {
+      Object.defineProperty(
+        HTMLMediaElement.prototype,
+        "readyState",
+        originalReadyStateDescriptor,
+      );
+    } else {
+      delete (HTMLMediaElement.prototype as { readyState?: number }).readyState;
+    }
+    if (originalVideoWidthDescriptor) {
+      Object.defineProperty(
+        HTMLVideoElement.prototype,
+        "videoWidth",
+        originalVideoWidthDescriptor,
+      );
+    } else {
+      delete (HTMLVideoElement.prototype as { videoWidth?: number }).videoWidth;
+    }
+    if (originalVideoHeightDescriptor) {
+      Object.defineProperty(
+        HTMLVideoElement.prototype,
+        "videoHeight",
+        originalVideoHeightDescriptor,
+      );
+    } else {
+      delete (HTMLVideoElement.prototype as { videoHeight?: number })
+        .videoHeight;
+    }
   });
 
   const mountView = (options?: { localOnly?: boolean }) => {
@@ -403,6 +470,23 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain("Show raw packets");
   });
 
+  it("puts the call stage before meeting setup", () => {
+    const wrapper = mountView();
+    const layout = wrapper.get(".kaigi-layout").element;
+    const firstSection = layout.firstElementChild;
+
+    expect(firstSection?.classList.contains("kaigi-call-card")).toBe(true);
+    expect(wrapper.find(".kaigi-stage").exists()).toBe(true);
+    expect(
+      wrapper.get(".kaigi-call-card").find(".kaigi-control-row").exists(),
+    ).toBe(true);
+    expect(
+      wrapper
+        .get(".kaigi-stage")
+        .element.firstElementChild?.classList.contains("kaigi-remote-video"),
+    ).toBe(true);
+  });
+
   it("creates a live meeting link and copies the invite", async () => {
     const wrapper = mountView();
 
@@ -446,6 +530,189 @@ describe("KaigiView", () => {
         /^iroha:\/\/kaigi\/join\?call=.*&secret=[A-Za-z0-9_-]+$/,
       ),
     );
+  });
+
+  it("lets users choose camera and microphone devices before opening media", async () => {
+    enumerateDevicesMock.mockResolvedValue([
+      {
+        kind: "videoinput",
+        deviceId: "camera-default",
+        label: "Default Camera",
+      },
+      {
+        kind: "videoinput",
+        deviceId: "camera-facetime",
+        label: "FaceTime HD Camera",
+      },
+      {
+        kind: "audioinput",
+        deviceId: "mic-default",
+        label: "Default Microphone",
+      },
+      {
+        kind: "audioinput",
+        deviceId: "mic-built-in",
+        label: "Built-in Microphone",
+      },
+    ]);
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("FaceTime HD Camera");
+    expect(wrapper.text()).toContain("Built-in Microphone");
+
+    const [cameraSelect, microphoneSelect] = wrapper
+      .find(".kaigi-device-grid")
+      .findAll("select");
+    if (!cameraSelect || !microphoneSelect) {
+      throw new Error("Kaigi device selectors were not rendered.");
+    }
+    await cameraSelect.setValue("camera-facetime");
+    await microphoneSelect.setValue("mic-built-in");
+    await getButtonByText(wrapper, "Turn on camera and mic").trigger("click");
+    await flushPromises();
+
+    expect(getUserMediaMock).toHaveBeenCalledWith({
+      audio: {
+        deviceId: { exact: "mic-built-in" },
+      },
+      video: {
+        deviceId: { exact: "camera-facetime" },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 24, max: 30 },
+      },
+    });
+    expect(wrapper.text()).toContain("Preview live");
+    expect(wrapper.find(".kaigi-media-setup").text()).toContain(
+      "Using FaceTime HD Camera.",
+    );
+    expect(wrapper.find(".kaigi-call-status").text()).toBe(
+      "Local media is ready.",
+    );
+  });
+
+  it("shows direct recovery guidance when camera permission is denied", async () => {
+    getUserMediaMock.mockRejectedValueOnce(
+      Object.assign(new Error("denied"), { name: "NotAllowedError" }),
+    );
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Turn on camera and mic").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Permission needed");
+    expect(wrapper.text()).toContain(
+      "Allow Camera and Microphone for this app in System Settings, then retry.",
+    );
+    expect(wrapper.text()).toContain(
+      "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.",
+    );
+  });
+
+  it("warns when a camera opens but the preview never receives frames", async () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockImplementation(
+      () => new Promise(() => {}) as Promise<void>,
+    );
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", {
+      configurable: true,
+      get: () => 0,
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", {
+      configurable: true,
+      get: () => 0,
+    });
+    vi.useFakeTimers();
+    const wrapper = mountView();
+
+    try {
+      const mediaPromise = getButtonByText(
+        wrapper,
+        "Turn on camera and mic",
+      ).trigger("click");
+      await vi.advanceTimersByTimeAsync(4_900);
+      await mediaPromise;
+      await flushPromises();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(wrapper.text()).toContain("No video frames");
+    expect(wrapper.text()).toContain(
+      "No working camera produced video. Close apps using the camera, then find a working camera again.",
+    );
+    expect(wrapper.text()).toContain(
+      "Camera opened but no video frames arrived. Choose another camera, close apps using the camera, then retry.",
+    );
+  });
+
+  it("automatically tries the next camera when the default camera has no frames", async () => {
+    enumerateDevicesMock.mockResolvedValue([
+      {
+        kind: "videoinput",
+        deviceId: "camera-eos",
+        label: "EOS Webcam Utility",
+      },
+      {
+        kind: "videoinput",
+        deviceId: "camera-facetime",
+        label: "FaceTime HD Camera",
+      },
+      {
+        kind: "audioinput",
+        deviceId: "mic-built-in",
+        label: "Built-in Microphone",
+      },
+    ]);
+    let previewReady = false;
+    getUserMediaMock.mockImplementation(async () => {
+      if (getUserMediaMock.mock.calls.length >= 2) {
+        previewReady = true;
+      }
+      return new FakeMediaStream([
+        new FakeMediaTrack("audio", "local-audio"),
+        new FakeMediaTrack("video", "local-video"),
+      ]);
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoWidth", {
+      configurable: true,
+      get: () => (previewReady ? 640 : 0),
+    });
+    Object.defineProperty(HTMLVideoElement.prototype, "videoHeight", {
+      configurable: true,
+      get: () => (previewReady ? 360 : 0),
+    });
+    vi.useFakeTimers();
+    const wrapper = mountView();
+
+    try {
+      const mediaPromise = getButtonByText(
+        wrapper,
+        "Turn on camera and mic",
+      ).trigger("click");
+      await vi.advanceTimersByTimeAsync(4_100);
+      await mediaPromise;
+      await flushPromises();
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(getUserMediaMock).toHaveBeenCalledTimes(2);
+    expect(getUserMediaMock.mock.calls[0]?.[0]).toMatchObject({
+      video: expect.not.objectContaining({
+        deviceId: expect.anything(),
+      }),
+    });
+    expect(getUserMediaMock.mock.calls[1]?.[0]).toMatchObject({
+      video: {
+        deviceId: { exact: "camera-facetime" },
+      },
+    });
+    const cameraSelect = wrapper.find(".kaigi-device-grid").find("select");
+    expect((cameraSelect.element as HTMLSelectElement).value).toBe(
+      "camera-facetime",
+    );
+    expect(wrapper.text()).toContain("Preview live");
   });
 
   it("shows a host checklist dialog after creating a meeting link", async () => {

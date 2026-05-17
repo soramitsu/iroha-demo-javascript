@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  getSystemMediaAccessKinds,
   registerDisplayMediaRequestHandler,
   registerMediaPermissionHandlers,
+  resolveSystemMediaPermission,
   shouldGrantDisplayCaptureRequest,
   shouldGrantMediaPermission,
 } from "../electron/mediaPermissions";
@@ -94,7 +96,7 @@ describe("Electron media permissions", () => {
     ).toBe(false);
   });
 
-  it("registers matching request and check handlers", () => {
+  it("registers matching request and check handlers", async () => {
     const setPermissionRequestHandler = vi.fn();
     const setPermissionCheckHandler = vi.fn();
 
@@ -115,13 +117,94 @@ describe("Electron media permissions", () => {
       requestingUrl: "http://localhost:5173/#/kaigi",
     });
 
-    expect(callback).toHaveBeenCalledWith(true);
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
     expect(
       checkHandler(null, "media", "http://localhost:5173", {
         isMainFrame: true,
         mediaType: "video",
       }),
     ).toBe(true);
+  });
+
+  it("maps renderer media details to macOS media access kinds", () => {
+    expect(
+      getSystemMediaAccessKinds({
+        mediaTypes: ["video", "audio"],
+      }),
+    ).toEqual(["camera", "microphone"]);
+    expect(getSystemMediaAccessKinds({ mediaType: "video" })).toEqual([
+      "camera",
+    ]);
+    expect(getSystemMediaAccessKinds({ mediaType: "audio" })).toEqual([
+      "microphone",
+    ]);
+    expect(getSystemMediaAccessKinds({ mediaType: "unknown" })).toEqual([]);
+  });
+
+  it("requires every requested macOS media permission before granting media", async () => {
+    const requestSystemMediaAccess = vi.fn(async (kind: string) =>
+      kind === "microphone" ? false : true,
+    );
+
+    await expect(
+      resolveSystemMediaPermission(
+        "media",
+        { mediaTypes: ["video", "audio"] },
+        requestSystemMediaAccess,
+      ),
+    ).resolves.toBe(false);
+    expect(requestSystemMediaAccess).toHaveBeenCalledWith("camera");
+    expect(requestSystemMediaAccess).toHaveBeenCalledWith("microphone");
+  });
+
+  it("uses the macOS media permission result in the request handler", async () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const requestSystemMediaAccess = vi.fn(async () => true);
+
+    registerMediaPermissionHandlers(
+      {
+        setPermissionRequestHandler,
+        setPermissionCheckHandler,
+      },
+      () => "http://localhost:5173",
+      requestSystemMediaAccess,
+    );
+
+    const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
+    const callback = vi.fn();
+    requestHandler(null, "media", callback, {
+      isMainFrame: true,
+      mediaTypes: ["video"],
+      requestingUrl: "http://localhost:5173/#/kaigi",
+    });
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
+    expect(requestSystemMediaAccess).toHaveBeenCalledWith("camera");
+  });
+
+  it("denies renderer media when macOS media permission is denied", async () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const requestSystemMediaAccess = vi.fn(async () => false);
+
+    registerMediaPermissionHandlers(
+      {
+        setPermissionRequestHandler,
+        setPermissionCheckHandler,
+      },
+      () => "http://localhost:5173",
+      requestSystemMediaAccess,
+    );
+
+    const requestHandler = setPermissionRequestHandler.mock.calls[0]?.[0];
+    const callback = vi.fn();
+    requestHandler(null, "media", callback, {
+      isMainFrame: true,
+      mediaTypes: ["video"],
+      requestingUrl: "http://localhost:5173/#/kaigi",
+    });
+
+    await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(false));
   });
 
   it("registers a display media handler with system picker fallback", async () => {

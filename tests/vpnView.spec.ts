@@ -216,6 +216,7 @@ describe("VpnView", () => {
 
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       networkPrefix: 369,
       privateKeyHex: "cd".repeat(32),
@@ -249,6 +250,7 @@ describe("VpnView", () => {
 
     expect(connectVpnMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "testuLegacyVisibleAccount1234567890",
       networkPrefix: 369,
       privateKeyHex: "cd".repeat(32),

@@ -256,6 +256,7 @@ export interface VpnAuthContext {
   toriiUrl: string;
   accountId: string;
   privateKeyHex: string;
+  chainId?: string;
   networkPrefix?: number;
 }
 
@@ -1060,6 +1061,7 @@ export interface IrohaBridge {
   getVpnStatus(input?: Partial<VpnAuthContext>): Promise<VpnStatus>;
   connectVpn(input: {
     toriiUrl: string;
+    chainId: string;
     accountId: string;
     networkPrefix?: number;
     privateKeyHex?: string;

@@ -1,8 +1,9 @@
+import { randomBytes } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
-import { ToriiClient } from "@iroha/iroha-js";
+import { buildTransaction, ToriiClient } from "@iroha/iroha-js";
 import { nodeFetch } from "./nodeFetch";
 import {
   BundledVpnController,
@@ -25,6 +26,7 @@ type VpnAvailabilityInput = {
 };
 
 type VpnConnectInput = VpnAuthContext & {
+  chainId: string;
   exitClass: VpnExitClass;
 };
 
@@ -55,6 +57,8 @@ type ActiveVpnSession = {
 
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 const MAX_RECEIPTS = 24;
+const VPN_PAYMENT_WAIT_TIMEOUT_MS = 60_000;
+const VPN_PAYMENT_POLL_INTERVAL_MS = 1_000;
 
 const emptyStatus = (overrides?: Partial<VpnStatus>): VpnStatus => ({
   state: "idle",
@@ -101,6 +105,28 @@ const normalizeHex = (value: string, label: string) => {
 
 const toPrivateKeyBuffer = (privateKeyHex: string) =>
   Buffer.from(normalizeHex(privateKeyHex, "privateKeyHex"), "hex");
+
+const normalizeChainId = (value: string) => {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error("chainId is required.");
+  }
+  return normalized;
+};
+
+const generateVpnMeteringPublicKeyHex = () => randomBytes(32).toString("hex");
+
+const normalizeVpnTxInstructions = (
+  instructions: ReadonlyArray<{ wireId: string; payloadHex: string }>,
+) => {
+  if (!instructions.length) {
+    throw new Error("VPN quote did not include a lease-open transaction.");
+  }
+  return instructions.map((instruction) => ({
+    wire_id: instruction.wireId,
+    payload_hex: instruction.payloadHex,
+  }));
+};
 
 const nowMs = () => Date.now();
 
@@ -506,22 +532,52 @@ export class VpnRuntime {
     }
 
     const exitClass = normalizeProfileExitClass(profile, input.exitClass);
+    const chainId = normalizeChainId(input.chainId);
     const accountId = normalizeVpnAccountId(
       input.accountId,
       "accountId",
       input.networkPrefix,
     );
+    const privateKey = toPrivateKeyBuffer(input.privateKeyHex);
+    const canonicalAuth = {
+      accountId,
+      privateKey,
+    };
+    const client = this.getClient(input.toriiUrl);
     let session: Awaited<ReturnType<ToriiClient["createVpnSession"]>> | null =
       null;
     try {
-      session = await this.getClient(input.toriiUrl).createVpnSession(
-        { exitClass },
+      const meteringPublicKeyHex = generateVpnMeteringPublicKeyHex();
+      const quote = await client.createVpnQuote(
         {
-          canonicalAuth: {
-            accountId,
-            privateKey: toPrivateKeyBuffer(input.privateKeyHex),
-          },
+          exitClass,
+          meteringPublicKeyHex,
         },
+        { canonicalAuth },
+      );
+      const paymentTransaction = buildTransaction({
+        chainId,
+        authority: accountId,
+        instructions: normalizeVpnTxInstructions(quote.txInstructions),
+        privateKey,
+      });
+      const paymentTxHash = paymentTransaction.hash.toString("hex");
+      await client.submitTransactionAndWait(
+        paymentTransaction.signedTransaction,
+        {
+          hashHex: paymentTxHash,
+          timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
+          intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
+        },
+      );
+      session = await client.createVpnSession(
+        {
+          exitClass,
+          quoteId: quote.quoteId,
+          paymentTxHash,
+          meteringPublicKeyHex,
+        },
+        { canonicalAuth },
       );
       const normalizedSession = this.normalizeRemoteSession(session, {
         ...input,

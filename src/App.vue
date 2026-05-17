@@ -224,7 +224,10 @@
           </div>
         </details>
       </aside>
-      <section class="workspace">
+      <section
+        class="workspace"
+        :class="{ 'kaigi-workspace': route.path.startsWith('/kaigi') }"
+      >
         <header class="workspace-header">
           <div class="workspace-heading">
             <p class="section-label">{{ routeSubtitle }}</p>

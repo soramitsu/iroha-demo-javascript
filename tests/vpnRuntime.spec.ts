@@ -8,17 +8,24 @@ import type {
 } from "../electron/vpnController";
 
 const getVpnProfileMock = vi.fn();
+const createVpnQuoteMock = vi.fn();
 const createVpnSessionMock = vi.fn();
 const getVpnSessionMock = vi.fn();
 const deleteVpnSessionMock = vi.fn();
 const listVpnReceiptsMock = vi.fn();
+const submitTransactionAndWaitMock = vi.fn();
+const buildTransactionMock = vi.fn();
 const dnsLookupMock = vi.fn();
 
 vi.mock("@iroha/iroha-js", () => ({
+  buildTransaction: (...args: unknown[]) => buildTransactionMock(...args),
   ToriiClient: vi.fn(function MockToriiClient() {
     return {
       getVpnProfile: (...args: unknown[]) => getVpnProfileMock(...args),
+      createVpnQuote: (...args: unknown[]) => createVpnQuoteMock(...args),
       createVpnSession: (...args: unknown[]) => createVpnSessionMock(...args),
+      submitTransactionAndWait: (...args: unknown[]) =>
+        submitTransactionAndWaitMock(...args),
       getVpnSession: (...args: unknown[]) => getVpnSessionMock(...args),
       deleteVpnSession: (...args: unknown[]) => deleteVpnSessionMock(...args),
       listVpnReceipts: (...args: unknown[]) => listVpnReceiptsMock(...args),
@@ -118,6 +125,22 @@ describe("VpnRuntime", () => {
       tunnelAddresses: ["10.208.0.2/32"],
       mtuBytes: 1280,
       displayBillingLabel: "standard · soranet.vpn.standard",
+    });
+    createVpnQuoteMock.mockReset().mockResolvedValue({
+      quoteId: "11".repeat(32),
+      txInstructions: [
+        {
+          wireId: "OpenVpnLeaseEscrow",
+          payloadHex: "abcd",
+        },
+      ],
+    });
+    buildTransactionMock.mockReset().mockReturnValue({
+      signedTransaction: Buffer.from("signed-vpn-payment"),
+      hash: Buffer.from("cd".repeat(32), "hex"),
+    });
+    submitTransactionAndWaitMock.mockReset().mockResolvedValue({
+      status: "committed",
     });
     createVpnSessionMock.mockReset().mockResolvedValue({
       sessionId: "sess_1",
@@ -299,6 +322,7 @@ describe("VpnRuntime", () => {
 
     const connected = await runtime.connect({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",
@@ -391,6 +415,7 @@ describe("VpnRuntime", () => {
 
     const connected = await runtime.connect({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",
@@ -459,6 +484,7 @@ describe("VpnRuntime", () => {
 
     await runtime.connect({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",
@@ -485,13 +511,50 @@ describe("VpnRuntime", () => {
 
     await runtime.connect({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "sorauLegacyVisibleAccount1234567890",
       networkPrefix: 369,
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",
     });
+    expect(createVpnQuoteMock).toHaveBeenCalledWith(
+      {
+        exitClass: "standard",
+        meteringPublicKeyHex: expect.stringMatching(/^[\da-f]{64}$/),
+      },
+      {
+        canonicalAuth: {
+          accountId: "testuLegacyVisibleAccount1234567890",
+          privateKey,
+        },
+      },
+    );
+    expect(buildTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chainId: "chain",
+        authority: "testuLegacyVisibleAccount1234567890",
+        instructions: [
+          {
+            wire_id: "OpenVpnLeaseEscrow",
+            payload_hex: "abcd",
+          },
+        ],
+        privateKey,
+      }),
+    );
+    expect(submitTransactionAndWaitMock).toHaveBeenCalledWith(
+      Buffer.from("signed-vpn-payment"),
+      expect.objectContaining({
+        hashHex: "cd".repeat(32),
+      }),
+    );
     expect(createVpnSessionMock).toHaveBeenCalledWith(
-      { exitClass: "standard" },
+      {
+        exitClass: "standard",
+        quoteId: "11".repeat(32),
+        paymentTxHash: "cd".repeat(32),
+        meteringPublicKeyHex: expect.stringMatching(/^[\da-f]{64}$/),
+      },
       {
         canonicalAuth: {
           accountId: "testuLegacyVisibleAccount1234567890",
@@ -570,6 +633,7 @@ describe("VpnRuntime", () => {
 
     await runtime.connect({
       toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
       accountId: "alice@wonderland",
       privateKeyHex: "ab".repeat(32),
       exitClass: "standard",

@@ -1,12 +1,10 @@
 <template>
   <div class="kaigi-layout">
-    <section class="card kaigi-overview-card">
-      <header class="card-header kaigi-header">
+    <section class="card kaigi-call-card">
+      <header class="card-header kaigi-call-header">
         <div>
           <h2>{{ t("Kaigi") }}</h2>
-          <p class="helper">
-            {{ t("Start or join a wallet-based meeting link.") }}
-          </p>
+          <p class="helper kaigi-call-status">{{ statusMessage }}</p>
         </div>
         <div class="kaigi-summary-pills">
           <span class="pill" :class="{ positive: localStreamReady }">
@@ -28,6 +26,98 @@
           >
             {{ signalModeLabel }}
           </span>
+        </div>
+      </header>
+
+      <div class="kaigi-stage">
+        <div class="kaigi-video-shell kaigi-remote-video">
+          <div class="kaigi-video-meta">
+            <span>{{ t("Remote media") }}</span>
+            <span class="helper">{{
+              remoteParticipantName || t("Waiting for the other wallet user.")
+            }}</span>
+          </div>
+          <video ref="remoteVideoRef" autoplay playsinline></video>
+          <div v-if="!remoteStream" class="kaigi-video-empty">
+            <p>{{ t("Remote media") }}</p>
+            <p class="helper">
+              {{
+                t(
+                  "No remote media yet. The other user will appear here after the answer is applied and media starts flowing.",
+                )
+              }}
+            </p>
+          </div>
+        </div>
+
+        <div class="kaigi-video-shell kaigi-local-video">
+          <div class="kaigi-video-meta">
+            <span>{{ t("Local media") }}</span>
+            <span class="helper"
+              >{{ audioEnabled ? t("Microphone on") : t("Microphone off") }} ·
+              {{ videoEnabled ? t("Camera on") : t("Camera off") }}</span
+            >
+          </div>
+          <video ref="localVideoRef" autoplay muted playsinline></video>
+          <div v-if="!localStream" class="kaigi-video-empty">
+            <p>{{ t("Camera + microphone preview") }}</p>
+            <p class="helper">
+              {{
+                t(
+                  "Open local media before creating or joining a Kaigi meeting.",
+                )
+              }}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="kaigi-call-control-bar">
+        <div class="actions-row kaigi-control-row">
+          <button
+            type="button"
+            class="secondary"
+            :disabled="!localStream"
+            @click="toggleAudio"
+          >
+            {{ audioEnabled ? t("Mute mic") : t("Unmute mic") }}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            :disabled="!localStream"
+            @click="toggleVideo"
+          >
+            {{ videoEnabled ? t("Stop camera") : t("Start camera") }}
+          </button>
+          <button
+            type="button"
+            class="secondary"
+            :disabled="!localStream"
+            @click="stopPreview"
+          >
+            {{ t("Stop preview") }}
+          </button>
+          <button type="button" class="warn" :disabled="busy" @click="hangUp">
+            {{ t("Hang up") }}
+          </button>
+        </div>
+      </div>
+
+      <p v-if="errorMessage" class="helper kaigi-error">
+        {{ errorMessage }}
+      </p>
+    </section>
+
+    <section class="card kaigi-overview-card">
+      <header class="card-header kaigi-header">
+        <div>
+          <h2>
+            {{ callMode === "start" ? t("Start meeting") : t("Join meeting") }}
+          </h2>
+          <p class="helper">
+            {{ t("Start or join a wallet-based meeting link.") }}
+          </p>
         </div>
       </header>
 
@@ -352,6 +442,78 @@
             </div>
           </details>
 
+          <div class="kaigi-media-setup">
+            <div class="kaigi-link-box-header">
+              <div>
+                <h3>{{ t("Camera and mic") }}</h3>
+                <p class="helper">{{ mediaSetupHint }}</p>
+              </div>
+              <span
+                class="pill"
+                :class="{ positive: localStreamReady && !mediaPreviewWarning }"
+              >
+                {{ mediaSetupStatusLabel }}
+              </span>
+            </div>
+            <div class="kaigi-device-grid">
+              <label>
+                {{ t("Camera") }}
+                <select
+                  v-model="selectedVideoDeviceId"
+                  :disabled="busy"
+                  @change="handleMediaDeviceSelectionChange"
+                >
+                  <option :value="AUTO_VIDEO_DEVICE_ID">
+                    {{ t("Auto-select camera") }}
+                  </option>
+                  <option value="">{{ t("Default camera") }}</option>
+                  <option
+                    v-for="device in videoInputDevices"
+                    :key="device.deviceId || device.label"
+                    :value="device.deviceId"
+                  >
+                    {{ device.label }}
+                  </option>
+                </select>
+              </label>
+              <label>
+                {{ t("Microphone") }}
+                <select
+                  v-model="selectedAudioDeviceId"
+                  :disabled="busy"
+                  @change="handleMediaDeviceSelectionChange"
+                >
+                  <option value="">{{ t("Default microphone") }}</option>
+                  <option
+                    v-for="device in audioInputDevices"
+                    :key="device.deviceId || device.label"
+                    :value="device.deviceId"
+                  >
+                    {{ device.label }}
+                  </option>
+                </select>
+              </label>
+            </div>
+            <div class="actions-row kaigi-inline-actions">
+              <button
+                type="button"
+                class="secondary"
+                :disabled="busy"
+                @click="refreshMediaDevicesWithStatus"
+              >
+                {{ t("Refresh devices") }}
+              </button>
+              <button
+                type="button"
+                class="secondary"
+                :disabled="busy"
+                @click="findWorkingCamera"
+              >
+                {{ t("Find working camera") }}
+              </button>
+            </div>
+          </div>
+
           <div class="actions-row kaigi-primary-actions">
             <button
               v-if="callMode === 'start'"
@@ -395,10 +557,6 @@
                 t,
               )
             }}</strong>
-          </p>
-          <p class="helper kaigi-status-copy">{{ statusMessage }}</p>
-          <p v-if="errorMessage" class="helper kaigi-error">
-            {{ errorMessage }}
           </p>
           <div
             v-if="privateKaigiFundingPromptVisible"
@@ -449,99 +607,6 @@
                 }}
               </button>
             </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="card kaigi-media-card">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Call controls") }}</h2>
-          <p class="helper">{{ t("Local media") }} · {{ t("Remote media") }}</p>
-        </div>
-        <div class="actions-row kaigi-control-row">
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!localStream"
-            @click="toggleAudio"
-          >
-            {{ audioEnabled ? t("Mute mic") : t("Unmute mic") }}
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!localStream"
-            @click="toggleVideo"
-          >
-            {{ videoEnabled ? t("Stop camera") : t("Start camera") }}
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="!localStream"
-            @click="stopPreview"
-          >
-            {{ t("Stop preview") }}
-          </button>
-          <button type="button" class="warn" :disabled="busy" @click="hangUp">
-            {{ t("Hang up") }}
-          </button>
-        </div>
-      </header>
-
-      <p
-        v-if="callMode === 'start' && hostMeetingLive"
-        class="transaction-fee-note"
-      >
-        <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-            t,
-          )
-        }}</strong>
-      </p>
-      <div class="kaigi-media-grid">
-        <div class="kaigi-video-shell">
-          <div class="kaigi-video-meta">
-            <span>{{ t("Local media") }}</span>
-            <span class="helper"
-              >{{ audioEnabled ? t("Microphone on") : t("Microphone off") }} ·
-              {{ videoEnabled ? t("Camera on") : t("Camera off") }}</span
-            >
-          </div>
-          <video ref="localVideoRef" autoplay muted playsinline></video>
-          <div v-if="!localStream" class="kaigi-video-empty">
-            <p>{{ t("Camera + microphone preview") }}</p>
-            <p class="helper">
-              {{
-                t(
-                  "Open local media before creating or joining a Kaigi meeting.",
-                )
-              }}
-            </p>
-          </div>
-        </div>
-
-        <div class="kaigi-video-shell">
-          <div class="kaigi-video-meta">
-            <span>{{ t("Remote media") }}</span>
-            <span class="helper">{{
-              remoteParticipantName || t("Waiting for the other wallet user.")
-            }}</span>
-          </div>
-          <video ref="remoteVideoRef" autoplay playsinline></video>
-          <div v-if="!remoteStream" class="kaigi-video-empty">
-            <p>{{ t("Remote media") }}</p>
-            <p class="helper">
-              {{
-                t(
-                  "No remote media yet. The other user will appear here after the answer is applied and media starts flowing.",
-                )
-              }}
-            </p>
           </div>
         </div>
       </div>
@@ -808,6 +873,21 @@ const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
     urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"],
   },
 ];
+const LOCAL_PREVIEW_READY_TIMEOUT_MS = 4_000;
+const LOCAL_PREVIEW_PLAY_ATTEMPT_TIMEOUT_MS = 750;
+const AUTO_VIDEO_DEVICE_ID = "__kaigi_auto_camera__";
+const PREVIEW_NOT_READY_ERROR_NAME = "PreviewNotReadyError";
+
+type MediaDeviceChoice = {
+  deviceId: string;
+  label: string;
+};
+type MediaErrorKind =
+  | "permission"
+  | "no-device"
+  | "preview"
+  | "unavailable"
+  | "unknown";
 
 const padDateTimePart = (value: number) => String(value).padStart(2, "0");
 
@@ -881,8 +961,16 @@ const errorMessage = ref("");
 const audioEnabled = ref(true);
 const videoEnabled = ref(true);
 const mediaBusy = ref(false);
+const mediaDeviceRefreshBusy = ref(false);
 const signalBusy = ref(false);
 const privateKaigiShieldBusy = ref(false);
+const videoInputDevices = ref<MediaDeviceChoice[]>([]);
+const audioInputDevices = ref<MediaDeviceChoice[]>([]);
+const selectedVideoDeviceId = ref(AUTO_VIDEO_DEVICE_ID);
+const selectedAudioDeviceId = ref("");
+const lastMediaErrorKind = ref<MediaErrorKind | null>(null);
+const activeMediaVideoLabel = ref("");
+const activeMediaAudioLabel = ref("");
 const privateKaigiFundingState =
   shallowRef<PrivateKaigiConfidentialXorState | null>(null);
 const privateKaigiPendingAction = ref<"create" | "join" | null>(null);
@@ -916,9 +1004,16 @@ const participantId = computed(() =>
 );
 const walletIdentity = computed(() => activeAccountDisplayId.value);
 const busy = computed(
-  () => mediaBusy.value || signalBusy.value || privateKaigiShieldBusy.value,
+  () =>
+    mediaBusy.value ||
+    mediaDeviceRefreshBusy.value ||
+    signalBusy.value ||
+    privateKaigiShieldBusy.value,
 );
 const localStreamReady = computed(() => Boolean(localStream.value));
+const mediaPreviewWarning = computed(
+  () => lastMediaErrorKind.value === "preview",
+);
 const isLiveWallet = computed(() =>
   Boolean(activeAccount.value && !activeAccount.value.localOnly),
 );
@@ -983,6 +1078,53 @@ const modeHelperText = computed(() =>
         "Open or paste a Kaigi invite, create your answer locally, and let the app deliver it automatically when possible.",
       ),
 );
+const mediaSetupStatusLabel = computed(() => {
+  if (mediaBusy.value) {
+    return t("Finding camera");
+  }
+  if (localStreamReady.value && !mediaPreviewWarning.value) {
+    return t("Preview live");
+  }
+  if (lastMediaErrorKind.value === "permission") {
+    return t("Permission needed");
+  }
+  if (lastMediaErrorKind.value === "preview") {
+    return t("No video frames");
+  }
+  if (lastMediaErrorKind.value === "no-device") {
+    return t("No devices");
+  }
+  if (videoInputDevices.value.length || audioInputDevices.value.length) {
+    return t("Devices found");
+  }
+  return t("Not checked");
+});
+const mediaSetupHint = computed(() => {
+  if (mediaBusy.value) {
+    return t("Checking cameras and microphones.");
+  }
+  if (lastMediaErrorKind.value === "permission") {
+    return t(
+      "Allow Camera and Microphone for this app in System Settings, then retry.",
+    );
+  }
+  if (lastMediaErrorKind.value === "preview") {
+    return t(
+      "No working camera produced video. Close apps using the camera, then find a working camera again.",
+    );
+  }
+  if (lastMediaErrorKind.value === "no-device") {
+    return t("No camera or microphone device was found.");
+  }
+  if (localStreamReady.value) {
+    return activeMediaVideoLabel.value
+      ? t("Using {camera}. Create or join when ready.", {
+          camera: activeMediaVideoLabel.value,
+        })
+      : t("Preview is live. Create or join when ready.");
+  }
+  return t("Kaigi will try each camera and use the first one with video.");
+});
 const hostPromptVisible = computed(() => hostPromptKind.value !== null);
 const hostPromptTitle = computed(() =>
   hostPromptKind.value === "answerReady"
@@ -1154,6 +1296,303 @@ const stopStreamTracks = (stream: MediaStream | null) => {
   stream?.getTracks().forEach((track) => track.stop());
 };
 
+const toMediaDeviceChoice = (
+  device: MediaDeviceInfo,
+  index: number,
+  fallbackLabel: string,
+): MediaDeviceChoice => ({
+  deviceId: device.deviceId,
+  label: device.label || fallbackLabel,
+});
+
+const pruneSelectedMediaDevice = (
+  selectedDeviceId: typeof selectedVideoDeviceId,
+  devices: MediaDeviceChoice[],
+  fallbackValue = "",
+) => {
+  if (
+    selectedDeviceId.value !== AUTO_VIDEO_DEVICE_ID &&
+    selectedDeviceId.value &&
+    !devices.some((device) => device.deviceId === selectedDeviceId.value)
+  ) {
+    selectedDeviceId.value = fallbackValue;
+  }
+};
+
+const refreshMediaDevices = async (announce = false) => {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    if (announce) {
+      setError(t("Kaigi media is unavailable in this environment."));
+    }
+    return;
+  }
+
+  mediaDeviceRefreshBusy.value = true;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    videoInputDevices.value = devices
+      .filter((device) => device.kind === "videoinput")
+      .map((device, index) =>
+        toMediaDeviceChoice(
+          device,
+          index,
+          t("Camera {number}", { number: index + 1 }),
+        ),
+      );
+    audioInputDevices.value = devices
+      .filter((device) => device.kind === "audioinput")
+      .map((device, index) =>
+        toMediaDeviceChoice(
+          device,
+          index,
+          t("Microphone {number}", { number: index + 1 }),
+        ),
+      );
+    pruneSelectedMediaDevice(
+      selectedVideoDeviceId,
+      videoInputDevices.value,
+      AUTO_VIDEO_DEVICE_ID,
+    );
+    pruneSelectedMediaDevice(selectedAudioDeviceId, audioInputDevices.value);
+    if (announce) {
+      setStatus(t("Media devices refreshed."));
+    }
+  } catch (error) {
+    if (announce) {
+      setError(
+        t("Unable to refresh media devices: {message}", {
+          message:
+            error instanceof Error && error.message
+              ? error.message
+              : t("unknown"),
+        }),
+      );
+    }
+  } finally {
+    mediaDeviceRefreshBusy.value = false;
+  }
+};
+
+const refreshMediaDevicesWithStatus = async () => {
+  await refreshMediaDevices(true);
+};
+
+const buildAudioMediaConstraint = (): boolean | MediaTrackConstraints => {
+  if (!audioEnabled.value) {
+    return false;
+  }
+  return selectedAudioDeviceId.value
+    ? { deviceId: { exact: selectedAudioDeviceId.value } }
+    : true;
+};
+
+const normalizeVideoDeviceId = (deviceId: string) =>
+  deviceId === AUTO_VIDEO_DEVICE_ID ? "" : deviceId;
+
+const buildVideoMediaConstraint = (
+  deviceId = selectedVideoDeviceId.value,
+): false | MediaTrackConstraints => {
+  if (!videoEnabled.value) {
+    return false;
+  }
+  const normalizedDeviceId = normalizeVideoDeviceId(deviceId);
+  return {
+    ...(normalizedDeviceId ? { deviceId: { exact: normalizedDeviceId } } : {}),
+    width: { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 24, max: 30 },
+  };
+};
+
+const isLocalVideoPreviewReady = (videoElement: HTMLVideoElement) =>
+  videoElement.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+  videoElement.videoWidth > 0 &&
+  videoElement.videoHeight > 0;
+
+const waitForLocalVideoPreview = async () => {
+  if (!videoEnabled.value) {
+    return true;
+  }
+  await nextTick();
+  const videoElement = localVideoRef.value;
+  if (!videoElement) {
+    return true;
+  }
+  if (isLocalVideoPreviewReady(videoElement)) {
+    return true;
+  }
+
+  await Promise.race([
+    videoElement.play().catch(() => {}),
+    new Promise<void>((resolve) =>
+      window.setTimeout(resolve, LOCAL_PREVIEW_PLAY_ATTEMPT_TIMEOUT_MS),
+    ),
+  ]);
+  if (isLocalVideoPreviewReady(videoElement)) {
+    return true;
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    let settled = false;
+    const cleanup = () => {
+      window.clearTimeout(timeoutId);
+      eventNames.forEach((eventName) =>
+        videoElement.removeEventListener(eventName, checkReady),
+      );
+    };
+    const finish = (ready: boolean) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      resolve(ready);
+    };
+    const checkReady = () => {
+      if (isLocalVideoPreviewReady(videoElement)) {
+        finish(true);
+      }
+    };
+    const eventNames = [
+      "loadedmetadata",
+      "loadeddata",
+      "canplay",
+      "playing",
+      "resize",
+    ];
+    const timeoutId = window.setTimeout(
+      () => finish(isLocalVideoPreviewReady(videoElement)),
+      LOCAL_PREVIEW_READY_TIMEOUT_MS,
+    );
+    eventNames.forEach((eventName) =>
+      videoElement.addEventListener(eventName, checkReady),
+    );
+    videoElement.requestVideoFrameCallback?.(() => checkReady());
+    checkReady();
+  });
+};
+
+const createPreviewNotReadyError = () => {
+  const error = new Error(
+    t(
+      "Camera opened but no video frames arrived. Choose another camera, close apps using the camera, then retry.",
+    ),
+  );
+  error.name = PREVIEW_NOT_READY_ERROR_NAME;
+  return error;
+};
+
+const isRecoverableCameraFailure = (error: unknown) => {
+  const mediaError = error as DOMException | Error | undefined;
+  return (
+    mediaError?.name === PREVIEW_NOT_READY_ERROR_NAME ||
+    mediaError?.name === "NotFoundError" ||
+    mediaError?.name === "OverconstrainedError"
+  );
+};
+
+const getMediaTrackLabel = (stream: MediaStream, kind: "audio" | "video") => {
+  const track =
+    kind === "audio" ? stream.getAudioTracks()[0] : stream.getVideoTracks()[0];
+  return String(track?.label ?? "").trim();
+};
+
+const getVideoDeviceLabel = (deviceId: string) =>
+  videoInputDevices.value.find((device) => device.deviceId === deviceId)
+    ?.label || "";
+
+const getAudioDeviceLabel = (deviceId: string) =>
+  audioInputDevices.value.find((device) => device.deviceId === deviceId)
+    ?.label || "";
+
+const getCameraFallbackPriority = (device: MediaDeviceChoice) => {
+  const label = device.label.toLowerCase();
+  if (/facetime|built-?in|integrated/.test(label)) {
+    return 0;
+  }
+  if (/virtual|webcam utility|obs|continuity|snap camera/.test(label)) {
+    return 2;
+  }
+  return 1;
+};
+
+const buildAutoVideoDeviceCandidates = () => {
+  const candidates = [""];
+  if (videoInputDevices.value.length > 1) {
+    [...videoInputDevices.value]
+      .sort((left, right) => {
+        const priorityDelta =
+          getCameraFallbackPriority(left) - getCameraFallbackPriority(right);
+        return priorityDelta || left.label.localeCompare(right.label);
+      })
+      .forEach((device) => {
+        if (device.deviceId && !candidates.includes(device.deviceId)) {
+          candidates.push(device.deviceId);
+        }
+      });
+  }
+  return candidates;
+};
+
+const openLocalMediaAttempt = async (videoDeviceId: string) => {
+  let stream: MediaStream | null = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: buildAudioMediaConstraint(),
+      video: buildVideoMediaConstraint(videoDeviceId),
+    });
+    localStream.value = stream;
+    attachLocalTrackStates();
+    await refreshMediaDevices();
+    const videoPreviewReady = await waitForLocalVideoPreview();
+    if (!videoPreviewReady) {
+      throw createPreviewNotReadyError();
+    }
+    activeMediaVideoLabel.value =
+      getVideoDeviceLabel(videoDeviceId) ||
+      getMediaTrackLabel(stream, "video") ||
+      t("Camera");
+    activeMediaAudioLabel.value =
+      getAudioDeviceLabel(selectedAudioDeviceId.value) ||
+      getMediaTrackLabel(stream, "audio") ||
+      t("Microphone");
+    return stream;
+  } catch (error) {
+    stopStreamTracks(stream);
+    if (localStream.value === stream) {
+      localStream.value = null;
+    }
+    throw error;
+  }
+};
+
+const openLocalMediaWithAutoCamera = async () => {
+  const candidates = buildAutoVideoDeviceCandidates();
+  let lastRecoverableError: unknown = null;
+  for (const candidate of candidates) {
+    try {
+      const stream = await openLocalMediaAttempt(candidate);
+      selectedVideoDeviceId.value = candidate || AUTO_VIDEO_DEVICE_ID;
+      return stream;
+    } catch (error) {
+      if (!isRecoverableCameraFailure(error)) {
+        throw error;
+      }
+      lastRecoverableError = error;
+    }
+  }
+
+  lastMediaErrorKind.value = "preview";
+  throw (
+    lastRecoverableError ??
+    new Error(
+      t(
+        "No working camera produced video frames. Close other camera apps, then retry.",
+      ),
+    )
+  );
+};
+
 const clearRemoteStream = () => {
   stopStreamTracks(remoteStream.value);
   remoteStream.value = null;
@@ -1314,29 +1753,44 @@ const ensureLocalMedia = async () => {
     throw new Error(t("Enable at least audio or video before starting Kaigi."));
   }
   if (!navigator.mediaDevices?.getUserMedia) {
+    lastMediaErrorKind.value = "unavailable";
     throw new Error(t("Kaigi media is unavailable in this environment."));
   }
+  lastMediaErrorKind.value = null;
+  activeMediaVideoLabel.value = "";
+  activeMediaAudioLabel.value = "";
+  await refreshMediaDevices();
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: audioEnabled.value,
-      video: videoEnabled.value
-        ? {
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-            frameRate: { ideal: 24, max: 30 },
-          }
-        : false,
-    });
-    localStream.value = stream;
-    attachLocalTrackStates();
-    return stream;
+    return selectedVideoDeviceId.value === AUTO_VIDEO_DEVICE_ID &&
+      videoEnabled.value
+      ? await openLocalMediaWithAutoCamera()
+      : await openLocalMediaAttempt(selectedVideoDeviceId.value);
   } catch (error) {
     const mediaError = error as DOMException | Error;
     if (mediaError?.name === "NotAllowedError") {
-      throw new Error(t("Camera or microphone permission was denied."));
+      lastMediaErrorKind.value = "permission";
+      throw new Error(
+        t(
+          "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.",
+        ),
+      );
     }
     if (mediaError?.name === "NotFoundError") {
+      lastMediaErrorKind.value = "no-device";
       throw new Error(t("No camera or microphone device is available."));
+    }
+    if (mediaError?.name === "OverconstrainedError") {
+      lastMediaErrorKind.value = "no-device";
+      throw new Error(
+        t(
+          "Selected camera or microphone is unavailable. Choose another device.",
+        ),
+      );
+    }
+    if (mediaError?.name === PREVIEW_NOT_READY_ERROR_NAME) {
+      lastMediaErrorKind.value = "preview";
+    } else if (lastMediaErrorKind.value !== "preview") {
+      lastMediaErrorKind.value = "unknown";
     }
     throw new Error(
       t("Unable to start Kaigi media: {message}", {
@@ -1424,6 +1878,26 @@ const prepareLocalMedia = async () => {
   } finally {
     mediaBusy.value = false;
   }
+};
+
+const retryLocalMedia = async () => {
+  stopStreamTracks(localStream.value);
+  localStream.value = null;
+  await prepareLocalMedia();
+};
+
+const findWorkingCamera = async () => {
+  selectedVideoDeviceId.value = AUTO_VIDEO_DEVICE_ID;
+  await retryLocalMedia();
+};
+
+const handleMediaDeviceSelectionChange = async () => {
+  if (!localStream.value) {
+    lastMediaErrorKind.value = null;
+    setStatus(t("Media device selection updated."));
+    return;
+  }
+  await retryLocalMedia();
 };
 
 const buildOutgoingPacket = (input: {
@@ -2321,6 +2795,9 @@ const toggleVideo = () => {
 const stopPreview = () => {
   stopStreamTracks(localStream.value);
   localStream.value = null;
+  lastMediaErrorKind.value = null;
+  activeMediaVideoLabel.value = "";
+  activeMediaAudioLabel.value = "";
   setStatus(t("Local preview stopped."));
 };
 
@@ -2396,6 +2873,7 @@ watch(
 );
 
 onMounted(() => {
+  void refreshMediaDevices();
   loadInviteFromLocationHash();
   window.addEventListener("hashchange", loadInviteFromLocationHash);
   if (
@@ -2420,6 +2898,154 @@ onBeforeUnmount(() => {
 .kaigi-layout {
   display: grid;
   gap: 1.4rem;
+  --kaigi-ink: #151f2a;
+  --kaigi-indigo: #1f3454;
+  --kaigi-vermilion: #d94332;
+  --kaigi-brass: #b9a16d;
+  --kaigi-brass-dark: #816b45;
+  --kaigi-panel-bg:
+    linear-gradient(
+      135deg,
+      rgba(255, 254, 246, 0.95),
+      rgba(236, 222, 194, 0.84) 58%,
+      rgba(245, 240, 225, 0.9)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(31, 52, 84, 0.045) 0 1px,
+      transparent 1px 9px
+    ),
+    #f4ecda;
+  --kaigi-panel-border: rgba(169, 145, 98, 0.78);
+  --kaigi-panel-shadow:
+    0 26px 46px rgba(37, 30, 20, 0.18), 0 10px 24px rgba(149, 34, 35, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  --kaigi-control-bg:
+    linear-gradient(
+      180deg,
+      rgba(255, 252, 239, 0.94),
+      rgba(220, 204, 167, 0.86)
+    ),
+    #eadfca;
+  --kaigi-control-border: rgba(143, 119, 74, 0.68);
+  --kaigi-field-bg:
+    linear-gradient(
+      180deg,
+      rgba(255, 250, 238, 0.98),
+      rgba(233, 224, 205, 0.92)
+    ),
+    #f4ead7;
+  --kaigi-stage-bg:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.055) 0 1px,
+      transparent 1px 7px
+    ),
+    linear-gradient(135deg, #273243, #0b1018 64%, #05070d);
+}
+
+:global(:root[data-theme="dark"]) .kaigi-layout {
+  --kaigi-ink: #f3ead7;
+  --kaigi-indigo: #3f5f8f;
+  --kaigi-brass: #c4aa73;
+  --kaigi-brass-dark: #7b6742;
+  --kaigi-panel-bg:
+    linear-gradient(145deg, rgba(21, 28, 40, 0.96), rgba(23, 18, 23, 0.92)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(224, 195, 132, 0.06) 0 1px,
+      transparent 1px 9px
+    ),
+    rgba(10, 14, 22, 0.94);
+  --kaigi-panel-border: rgba(194, 169, 112, 0.24);
+  --kaigi-panel-shadow:
+    0 26px 52px rgba(0, 0, 0, 0.42), 0 10px 26px rgba(217, 67, 50, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --kaigi-control-bg:
+    linear-gradient(180deg, rgba(37, 45, 56, 0.94), rgba(22, 26, 34, 0.92)),
+    #1b222d;
+  --kaigi-control-border: rgba(194, 169, 112, 0.26);
+  --kaigi-field-bg:
+    linear-gradient(180deg, rgba(28, 35, 45, 0.96), rgba(13, 18, 26, 0.92)),
+    #151d29;
+  --kaigi-stage-bg:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 0 1px,
+      transparent 1px 7px
+    ),
+    linear-gradient(135deg, #1a2330, #070a10 64%, #030408);
+}
+
+.kaigi-call-card,
+.kaigi-overview-card,
+.kaigi-signal-card {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: var(--kaigi-panel-bg);
+  border-color: var(--kaigi-panel-border);
+  box-shadow: var(--kaigi-panel-shadow);
+}
+
+.kaigi-call-card::before,
+.kaigi-overview-card::before,
+.kaigi-signal-card::before {
+  content: "";
+  position: absolute;
+  inset: 0.55rem;
+  z-index: 0;
+  border-radius: 6px;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 0.7rem 0.7rem,
+      rgba(51, 43, 31, 0.82) 0 2px,
+      rgba(221, 202, 153, 0.92) 2px 5px,
+      transparent 5.5px
+    ),
+    radial-gradient(
+      circle at calc(100% - 0.7rem) 0.7rem,
+      rgba(51, 43, 31, 0.82) 0 2px,
+      rgba(221, 202, 153, 0.92) 2px 5px,
+      transparent 5.5px
+    ),
+    radial-gradient(
+      circle at 0.7rem calc(100% - 0.7rem),
+      rgba(51, 43, 31, 0.72) 0 2px,
+      rgba(221, 202, 153, 0.82) 2px 5px,
+      transparent 5.5px
+    ),
+    radial-gradient(
+      circle at calc(100% - 0.7rem) calc(100% - 0.7rem),
+      rgba(51, 43, 31, 0.72) 0 2px,
+      rgba(221, 202, 153, 0.82) 2px 5px,
+      transparent 5.5px
+    );
+  opacity: 0.78;
+}
+
+.kaigi-call-card > *,
+.kaigi-overview-card > *,
+.kaigi-signal-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.kaigi-call-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1.12rem;
+  border-width: 1px;
+}
+
+.kaigi-call-header {
+  padding: 0.35rem 0.5rem 0.8rem;
+  border-bottom: 1px solid rgba(143, 119, 74, 0.28);
+}
+
+.kaigi-call-status {
+  max-width: 72ch;
 }
 
 .kaigi-header {
@@ -2431,6 +3057,44 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.65rem;
+}
+
+.kaigi-summary-pills .pill {
+  border-radius: 6px;
+  border-color: rgba(22, 31, 42, 0.34);
+  background:
+    linear-gradient(180deg, rgba(15, 24, 34, 0.96), rgba(6, 10, 15, 0.94)),
+    #0d131b;
+  color: #f7dfaa;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 8px rgba(0, 0, 0, 0.5);
+}
+
+.kaigi-summary-pills .pill::before {
+  content: "";
+  width: 0.48rem;
+  height: 0.48rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #7d6b45;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.kaigi-summary-pills .pill.positive {
+  color: #ffd9b5;
+  border-color: rgba(217, 67, 50, 0.45);
+  background:
+    linear-gradient(180deg, rgba(41, 18, 17, 0.96), rgba(14, 8, 8, 0.96)),
+    #160b0b;
+}
+
+.kaigi-summary-pills .pill.positive::before {
+  background: #ff5a3f;
+  box-shadow:
+    0 0 10px rgba(255, 90, 63, 0.85),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
 }
 
 .kaigi-config-grid {
@@ -2446,13 +3110,55 @@ onBeforeUnmount(() => {
 }
 
 .kaigi-mode-toggle .secondary.active {
-  border-color: rgba(255, 255, 255, 0.34);
-  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(136, 46, 39, 0.72);
+  background:
+    linear-gradient(180deg, #ef7464, #d94332 70%, #a82d26),
+    var(--kaigi-vermilion);
+  color: #fffaf0;
+  text-shadow: 0 1px 0 rgba(55, 14, 12, 0.45);
+}
+
+.kaigi-mode-toggle {
+  width: fit-content;
+  padding: 0.28rem;
+  border: 1px solid var(--kaigi-control-border);
+  border-radius: 8px;
+  background: var(--kaigi-control-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    inset 0 -1px 0 rgba(92, 72, 45, 0.22),
+    0 10px 18px rgba(37, 30, 20, 0.08);
+}
+
+.kaigi-mode-toggle .secondary {
+  min-height: 2.25rem;
+  border-radius: 6px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }
 
 .kaigi-config-form input[readonly],
 .kaigi-config-form textarea[readonly] {
   opacity: 0.88;
+}
+
+.kaigi-config-form label,
+.kaigi-device-grid label {
+  font-weight: 700;
+}
+
+.kaigi-config-form input,
+.kaigi-config-form select,
+.kaigi-device-grid select {
+  width: 100%;
+  border-color: var(--kaigi-control-border);
+  border-radius: 8px;
+  background: var(--kaigi-field-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.46),
+    inset 0 2px 6px rgba(64, 45, 20, 0.08),
+    0 10px 22px rgba(39, 56, 96, 0.08);
 }
 
 .kaigi-wide-field,
@@ -2484,9 +3190,14 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 0.85rem;
   padding: 1rem 1.1rem;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  background: linear-gradient(135deg, var(--surface-soft), transparent 140%);
+  border: 1px solid var(--kaigi-control-border);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.24), transparent 52%),
+    var(--kaigi-control-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.4),
+    inset 0 -1px 0 rgba(82, 63, 37, 0.16);
 }
 
 .kaigi-link-box-header {
@@ -2558,9 +3269,9 @@ onBeforeUnmount(() => {
 .kaigi-packet-field textarea {
   width: 100%;
   resize: vertical;
-  border-radius: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(9, 13, 22, 0.7);
+  border-radius: 8px;
+  border: 1px solid var(--kaigi-control-border);
+  background: var(--kaigi-field-bg);
   color: inherit;
   padding: 0.9rem 1rem;
   font: inherit;
@@ -2572,6 +3283,43 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 0.85rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.kaigi-media-setup {
+  display: grid;
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--kaigi-control-border);
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(21, 31, 42, 0.035) 0 1px,
+      transparent 1px 8px
+    ),
+    var(--kaigi-control-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    inset 0 -1px 0 rgba(92, 72, 45, 0.18);
+}
+
+.kaigi-media-setup h3 {
+  margin: 0;
+}
+
+.kaigi-device-grid {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.kaigi-device-grid label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.kaigi-device-grid select {
+  min-width: 0;
 }
 
 .kaigi-status-copy,
@@ -2592,26 +3340,108 @@ onBeforeUnmount(() => {
   color: var(--accent-danger, #ff8a80);
 }
 
-.kaigi-media-grid,
 .kaigi-packet-grid {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.kaigi-stage {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: clamp(28rem, 62vh, 46rem);
+  padding: 1.08rem;
+  border-radius: 8px;
+  background: var(--kaigi-stage-bg);
+  border: 1px solid rgba(22, 31, 42, 0.72);
+  box-shadow:
+    inset 0 0 0 4px rgba(221, 202, 153, 0.28),
+    inset 0 0 0 7px rgba(7, 10, 15, 0.84),
+    inset 0 18px 22px rgba(255, 255, 255, 0.08),
+    inset 0 -20px 28px rgba(0, 0, 0, 0.52),
+    0 24px 44px rgba(20, 16, 10, 0.28);
+}
+
+.kaigi-stage::before {
+  content: "";
+  position: absolute;
+  inset: 1.08rem;
+  z-index: 4;
+  pointer-events: none;
+  border-radius: 6px;
+  background:
+    linear-gradient(
+      118deg,
+      rgba(255, 255, 255, 0.2),
+      transparent 18%,
+      transparent 68%,
+      rgba(255, 255, 255, 0.08)
+    ),
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.055) 0 1px,
+      transparent 1px 4px
+    ),
+    radial-gradient(circle at 50% 45%, transparent 56%, rgba(0, 0, 0, 0.34));
+  mix-blend-mode: screen;
+  opacity: 0.56;
+}
+
+.kaigi-stage::after {
+  content: "";
+  position: absolute;
+  top: 1.55rem;
+  bottom: 1.55rem;
+  left: 0.42rem;
+  z-index: 3;
+  width: 0.38rem;
+  border-radius: 999px;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(225, 207, 160, 0.72) 0 5px,
+    rgba(78, 63, 41, 0.52) 5px 9px
+  );
+}
+
 .kaigi-video-shell {
   position: relative;
   overflow: hidden;
-  min-height: 18rem;
+  min-height: 100%;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 1.25rem;
+  border-radius: 8px;
   background:
     radial-gradient(
       circle at top right,
-      rgba(255, 190, 217, 0.2),
+      rgba(255, 76, 102, 0.16),
       transparent 36%
     ),
-    linear-gradient(180deg, rgba(14, 18, 28, 0.72), rgba(7, 10, 16, 0.92));
+    linear-gradient(180deg, rgba(12, 18, 32, 0.86), rgba(5, 7, 13, 0.96));
+}
+
+.kaigi-remote-video {
+  position: absolute;
+  inset: 1.08rem;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 0 18px rgba(0, 0, 0, 0.68),
+    0 0 0 1px rgba(222, 203, 156, 0.18);
+}
+
+.kaigi-local-video {
+  position: absolute;
+  right: 2rem;
+  bottom: 2rem;
+  z-index: 6;
+  width: min(28%, 22rem);
+  min-width: 13rem;
+  min-height: 8.2rem;
+  aspect-ratio: 16 / 10;
+  border: 4px solid #121a26;
+  box-shadow:
+    0 0 0 2px rgba(222, 203, 156, 0.66),
+    0 18px 32px rgba(0, 0, 0, 0.38),
+    inset 0 0 18px rgba(0, 0, 0, 0.48);
 }
 
 .kaigi-video-meta {
@@ -2624,15 +3454,45 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.8rem;
   align-items: center;
+  color: #fff;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
+}
+
+.kaigi-video-meta > span {
+  max-width: min(28rem, 48%);
+  padding: 0.38rem 0.58rem;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    linear-gradient(180deg, rgba(20, 25, 32, 0.88), rgba(5, 8, 12, 0.78)),
+    rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.kaigi-video-meta .helper {
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .kaigi-video-shell video {
   width: 100%;
-  min-height: 18rem;
+  min-height: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
   background: rgba(4, 6, 12, 0.82);
+}
+
+.kaigi-local-video .kaigi-video-meta {
+  top: 0.65rem;
+  left: 0.7rem;
+  right: 0.7rem;
+  font-size: 0.78rem;
+}
+
+.kaigi-local-video .kaigi-video-meta .helper {
+  display: none;
 }
 
 .kaigi-video-empty {
@@ -2645,6 +3505,7 @@ onBeforeUnmount(() => {
   gap: 0.45rem;
   padding: 1.5rem;
   text-align: center;
+  color: #fff;
   background:
     radial-gradient(
       circle at center,
@@ -2654,8 +3515,69 @@ onBeforeUnmount(() => {
     linear-gradient(180deg, rgba(14, 18, 28, 0.88), rgba(7, 10, 16, 0.94));
 }
 
+.kaigi-video-empty .helper {
+  color: rgba(255, 255, 255, 0.7);
+}
+
 .kaigi-video-empty p {
   margin: 0;
+}
+
+.kaigi-local-video .kaigi-video-empty {
+  padding: 1rem;
+  font-size: 0.82rem;
+}
+
+.kaigi-local-video .kaigi-video-empty .helper {
+  display: none;
+}
+
+.kaigi-call-control-bar {
+  display: flex;
+  justify-content: center;
+  padding: 0.15rem 0.2rem 0.25rem;
+}
+
+.kaigi-call-control-bar .kaigi-control-row {
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.62rem;
+  border: 1px solid var(--kaigi-control-border);
+  border-radius: 8px;
+  background: var(--kaigi-control-bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.46),
+    inset 0 -2px 0 rgba(74, 57, 34, 0.22),
+    0 12px 26px rgba(16, 24, 44, 0.12);
+}
+
+.kaigi-control-row button {
+  border-radius: 6px;
+  border-color: rgba(123, 100, 64, 0.6);
+  background: linear-gradient(180deg, #fff8e7, #dac89f 68%, #ac9870), #dac89f;
+  color: #172230;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    inset 0 -1px 0 rgba(78, 61, 37, 0.22),
+    0 3px 0 rgba(107, 86, 55, 0.8),
+    0 8px 16px rgba(35, 28, 20, 0.16);
+}
+
+.kaigi-control-row button:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow:
+    inset 0 2px 5px rgba(73, 55, 30, 0.24),
+    0 1px 0 rgba(107, 86, 55, 0.8);
+}
+
+.kaigi-control-row .warn {
+  border-color: rgba(126, 32, 26, 0.88);
+  background:
+    linear-gradient(180deg, #ff806e, #d94332 68%, #98261f),
+    var(--kaigi-vermilion);
+  color: #fffaf0;
+  text-shadow: 0 1px 0 rgba(55, 14, 12, 0.45);
 }
 
 .kaigi-signal-card {
@@ -2716,7 +3638,7 @@ onBeforeUnmount(() => {
   display: grid;
   gap: 1rem;
   padding: 0 1.25rem 1.25rem;
-  border-top: 1px solid var(--panel-border);
+  border-top: 1px solid var(--kaigi-control-border);
 }
 
 .kaigi-advanced[open] .kaigi-advanced-summary {
@@ -2725,7 +3647,6 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1120px) {
   .kaigi-config-grid,
-  .kaigi-media-grid,
   .kaigi-packet-grid {
     grid-template-columns: 1fr;
   }
@@ -2733,6 +3654,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 720px) {
   .kaigi-kpis,
+  .kaigi-device-grid,
   .kaigi-input-with-action {
     grid-template-columns: 1fr;
   }
@@ -2743,7 +3665,42 @@ onBeforeUnmount(() => {
     align-items: flex-start;
   }
 
-  .kaigi-video-shell,
+  .kaigi-call-card {
+    padding: 0.85rem;
+  }
+
+  .kaigi-stage {
+    display: grid;
+    gap: 0.75rem;
+    min-height: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .kaigi-stage::before,
+  .kaigi-stage::after {
+    display: none;
+  }
+
+  .kaigi-remote-video,
+  .kaigi-local-video {
+    position: relative;
+    inset: auto;
+    right: auto;
+    bottom: auto;
+    width: 100%;
+    min-width: 0;
+    min-height: 14rem;
+  }
+
+  .kaigi-local-video {
+    aspect-ratio: 16 / 9;
+    right: auto;
+    bottom: auto;
+  }
+
   .kaigi-video-shell video {
     min-height: 14rem;
   }

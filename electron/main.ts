@@ -4,6 +4,7 @@ import {
   desktopCapturer,
   ipcMain,
   session,
+  systemPreferences,
 } from "electron";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -24,6 +25,9 @@ const __dirname = dirname(__filename);
 
 const isMac = process.platform === "darwin";
 const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
+const requestSystemMediaAccess = isMac
+  ? (kind: "camera" | "microphone") => systemPreferences.askForMediaAccess(kind)
+  : undefined;
 let mainWindow: BrowserWindow | null = null;
 let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
   process.argv,
@@ -194,7 +198,11 @@ const registerVaultHandlers = () => {
 app.whenReady().then(() => {
   registerVpnHandlers();
   registerVaultHandlers();
-  registerMediaPermissionHandlers(session.defaultSession);
+  registerMediaPermissionHandlers(
+    session.defaultSession,
+    () => process.env["ELECTRON_RENDERER_URL"],
+    requestSystemMediaAccess,
+  );
   registerDisplayMediaRequestHandler(session.defaultSession, () =>
     desktopCapturer.getSources({ types: ["screen", "window"] }),
   );
