@@ -697,12 +697,21 @@ const fetchWalletAssets = async (input: {
   }
 
   try {
-    return await fetchAccountAssets({
+    const filteredAssets = await fetchAccountAssets({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
       networkPrefix: input.networkPrefix,
       assetDefinitionId,
       limit: 8,
+    });
+    if (filteredAssets.items.length > 0) {
+      return filteredAssets;
+    }
+    return fetchAccountAssets({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      networkPrefix: input.networkPrefix,
+      limit: 50,
     });
   } catch (error) {
     if (!isLikelyMissingAssetSelectorError(error)) {

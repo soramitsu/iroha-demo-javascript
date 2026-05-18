@@ -295,15 +295,17 @@ const normalizeConnection = (
   const networkPrefix = endpointValid
     ? (preferredNetworkPrefix ?? fallbackConnection.networkPrefix)
     : fallbackConnection.networkPrefix;
+  const presetAssetDefinitionId = trimString(
+    endpointPresetConnection?.assetDefinitionId,
+  );
+  const partialAssetDefinitionId = trimString(partial?.assetDefinitionId);
   const preferredAssetDefinitionId =
     endpointValid && options?.preferPresetMetadata
-      ? (endpointPresetConnection?.assetDefinitionId ??
-        partial?.assetDefinitionId)
-      : (partial?.assetDefinitionId ??
-        endpointPresetConnection?.assetDefinitionId);
+      ? presetAssetDefinitionId || partialAssetDefinitionId
+      : partialAssetDefinitionId || presetAssetDefinitionId;
   const assetDefinitionId = String(
     endpointValid
-      ? (preferredAssetDefinitionId ?? fallbackConnection.assetDefinitionId)
+      ? preferredAssetDefinitionId || fallbackConnection.assetDefinitionId
       : fallbackConnection.assetDefinitionId,
   ).trim();
   return {
@@ -494,9 +496,23 @@ export const useSessionStore = defineStore("session", {
         definedPartial.toriiUrl !== undefined
           ? resolvePresetConnectionForEndpoint(definedPartial.toriiUrl)
           : null;
+      const presetConnectionOverlay = presetConnection
+        ? { ...presetConnection }
+        : null;
+      if (
+        presetConnectionOverlay &&
+        !trimString(presetConnectionOverlay.assetDefinitionId) &&
+        !Object.prototype.hasOwnProperty.call(
+          definedPartial,
+          "assetDefinitionId",
+        )
+      ) {
+        delete (presetConnectionOverlay as Partial<ConnectionConfig>)
+          .assetDefinitionId;
+      }
       const nextConnection = normalizeConnection({
         ...this.connection,
-        ...(presetConnection ?? {}),
+        ...(presetConnectionOverlay ?? {}),
         ...definedPartial,
       });
 

@@ -403,6 +403,37 @@ describe("WalletView", () => {
     expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
   });
 
+  it("falls back to a full asset refresh when the filtered asset page is empty", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [],
+        total: 0,
+      })
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      });
+
+    const wrapper = mountView("5OldBucket1111111111111111111");
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        assetDefinitionId: "5OldBucket1111111111111111111",
+        limit: 8,
+      }),
+    );
+    expect(fetchAccountAssetsMock.mock.calls[1]?.[0]).not.toHaveProperty(
+      "assetDefinitionId",
+    );
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+  });
+
   it("shows on-chain shielded xor balance derived from committed history", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [

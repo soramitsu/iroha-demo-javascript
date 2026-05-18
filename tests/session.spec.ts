@@ -148,6 +148,33 @@ describe("session store", () => {
     );
   });
 
+  it("preserves saved TAIRA faucet asset buckets on hydrate", () => {
+    const fundedAssetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        connection: {
+          ...TAIRA_CHAIN_PRESET.connection,
+          assetDefinitionId: fundedAssetDefinitionId,
+        },
+      }),
+    );
+
+    const store = useSessionStore();
+    store.hydrate();
+
+    expect(store.connection.toriiUrl).toBe(
+      TAIRA_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(store.connection.chainId).toBe(
+      TAIRA_CHAIN_PRESET.connection.chainId,
+    );
+    expect(store.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(store.connection.assetDefinitionId).toBe(fundedAssetDefinitionId);
+  });
+
   it("refreshes known preset asset metadata when endpoint metadata is saved", () => {
     const store = useSessionStore();
     store.$patch({
@@ -166,6 +193,39 @@ describe("session store", () => {
     expect(store.connection.assetDefinitionId).toBe(
       MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId,
     );
+  });
+
+  it("preserves saved TAIRA faucet asset buckets during checked endpoint saves", () => {
+    const fundedAssetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+    const store = useSessionStore();
+    store.$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        assetDefinitionId: fundedAssetDefinitionId,
+      },
+    });
+
+    store.updateConnection({
+      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    });
+
+    expect(store.connection.assetDefinitionId).toBe(fundedAssetDefinitionId);
+  });
+
+  it("clears saved TAIRA faucet assets when the endpoint preset is explicit", () => {
+    const store = useSessionStore();
+    store.$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      },
+    });
+
+    store.updateConnection(TAIRA_CHAIN_PRESET.connection);
+
+    expect(store.connection.assetDefinitionId).toBe("");
   });
 
   it("migrates legacy single-user snapshots", () => {
