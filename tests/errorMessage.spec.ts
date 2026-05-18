@@ -45,6 +45,14 @@ describe("sanitizeErrorMessage", () => {
     ).toBe("Shield policy check failed for 4Zust3cNxsgov3757wxRW7DtR8n6");
   });
 
+  it("collapses HTML gateway responses to readable text", () => {
+    expect(
+      sanitizeErrorMessage(
+        "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx/1.29.8</center></body></html>",
+      ),
+    ).toBe("502 Bad Gateway");
+  });
+
   it("turns binary transaction chain rejections into settings guidance", () => {
     expect(
       sanitizeErrorMessage(

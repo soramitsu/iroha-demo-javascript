@@ -295,9 +295,15 @@ const normalizeConnection = (
   const networkPrefix = endpointValid
     ? (preferredNetworkPrefix ?? fallbackConnection.networkPrefix)
     : fallbackConnection.networkPrefix;
+  const preferredAssetDefinitionId =
+    endpointValid && options?.preferPresetMetadata
+      ? (endpointPresetConnection?.assetDefinitionId ??
+        partial?.assetDefinitionId)
+      : (partial?.assetDefinitionId ??
+        endpointPresetConnection?.assetDefinitionId);
   const assetDefinitionId = String(
     endpointValid
-      ? (partial?.assetDefinitionId ?? fallbackConnection.assetDefinitionId)
+      ? (preferredAssetDefinitionId ?? fallbackConnection.assetDefinitionId)
       : fallbackConnection.assetDefinitionId,
   ).trim();
   return {
@@ -485,9 +491,7 @@ export const useSessionStore = defineStore("session", {
         Object.entries(partial).filter(([, value]) => value !== undefined),
       ) as Partial<ConnectionConfig>;
       const presetConnection =
-        definedPartial.toriiUrl !== undefined &&
-        definedPartial.chainId === undefined &&
-        definedPartial.networkPrefix === undefined
+        definedPartial.toriiUrl !== undefined
           ? resolvePresetConnectionForEndpoint(definedPartial.toriiUrl)
           : null;
       const nextConnection = normalizeConnection({

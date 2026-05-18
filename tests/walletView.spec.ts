@@ -329,6 +329,80 @@ describe("WalletView", () => {
     expect(getConfidentialAssetBalanceMock).toHaveBeenCalled();
   });
 
+  it("refreshes the primary balance with a narrow asset query before citizenship returns", async () => {
+    let resolveCitizenship: (value: unknown) => void = () => {};
+    getGovernanceCitizenStatusMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCitizenship = resolve;
+      }),
+    );
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#wonderland##alice@wonderland",
+          quantity: "42",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView("xor#wonderland");
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetDefinitionId: "xor#wonderland",
+        limit: 8,
+      }),
+    );
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
+    expect(wrapper.get(".wallet-summary-header button").text()).toBe(
+      t("Refresh"),
+    );
+
+    resolveCitizenship({
+      accountId: "alice@wonderland",
+      isCitizen: true,
+      amount: "10000",
+      bondedHeight: 12,
+      seatsInEpoch: 0,
+      lastEpochSeen: 0,
+      cooldownUntil: null,
+      endpointAvailable: true,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(t("You are a citizen"));
+  });
+
+  it("falls back to a full asset refresh when a stale filtered asset is missing", async () => {
+    fetchAccountAssetsMock
+      .mockRejectedValueOnce(new Error("Asset definition not found"))
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc##alice@wonderland",
+            quantity: "25000",
+          },
+        ],
+        total: 1,
+      });
+
+    const wrapper = mountView("5OldBucket1111111111111111111");
+    await flushPromises();
+
+    expect(fetchAccountAssetsMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        assetDefinitionId: "5OldBucket1111111111111111111",
+        limit: 8,
+      }),
+    );
+    expect(fetchAccountAssetsMock.mock.calls[1]?.[0]).not.toHaveProperty(
+      "assetDefinitionId",
+    );
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+  });
+
   it("shows on-chain shielded xor balance derived from committed history", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
@@ -722,6 +796,40 @@ describe("WalletView", () => {
 
     expect(useSessionStore().connection.assetDefinitionId).toBe(
       "61CtjvNd9T3THAR65GsMVHr82Bjc",
+    );
+  });
+
+  it("shows the positive Minamoto XOR bucket when a stale legacy XOR alias is empty", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "0",
+        },
+        {
+          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw#sorauAliceVisibleAccount",
+          asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          quantity: "125",
+        },
+      ],
+      total: 2,
+    });
+
+    const wrapper = mountView("xor#universal", {
+      connection: MINAMOTO_CHAIN_PRESET.connection,
+      account: {
+        accountId: "sorauAliceVisibleAccount",
+        i105AccountId: "sorauAliceVisibleAccount",
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("125");
+    expect(wrapper.get(".wallet-balance-asset").text()).toBe(
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    );
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
     );
   });
 

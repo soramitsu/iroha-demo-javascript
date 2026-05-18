@@ -59,6 +59,7 @@ const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 const MAX_RECEIPTS = 24;
 const VPN_PAYMENT_WAIT_TIMEOUT_MS = 60_000;
 const VPN_PAYMENT_POLL_INTERVAL_MS = 1_000;
+const VPN_PAYMENT_SUCCESS_STATUSES = ["Applied", "Committed"] as const;
 
 const emptyStatus = (overrides?: Partial<VpnStatus>): VpnStatus => ({
   state: "idle",
@@ -568,6 +569,7 @@ export class VpnRuntime {
           hashHex: paymentTxHash,
           timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
           intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
+          successStatuses: VPN_PAYMENT_SUCCESS_STATUSES,
         },
       );
       session = await client.createVpnSession(

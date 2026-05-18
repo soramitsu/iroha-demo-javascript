@@ -209,6 +209,23 @@ describe("preload utils", () => {
     );
   });
 
+  it("reads HTML gateway API errors without leaking markup", async () => {
+    const htmlResponse = new Response(
+      "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx/1.29.8</center></body></html>",
+      {
+        status: 502,
+        statusText: "Bad Gateway",
+        headers: {
+          "content-type": "text/html",
+        },
+      },
+    );
+
+    await expect(readApiErrorDetail(htmlResponse)).resolves.toBe(
+      "502 Bad Gateway",
+    );
+  });
+
   it("uses reject-code headers and extracts readable Norito error details", async () => {
     const noritoResponse = new Response(
       new Uint8Array([0x4e, 0x52, 0x54, 0x30, 0x00, 0x00, 0x00, 0x00]),

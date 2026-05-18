@@ -367,6 +367,49 @@ describe("VpnRuntime", () => {
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
 
+  it("waits for committed vpn payment finality before creating a session", async () => {
+    let resolvePayment!: (value: unknown) => void;
+    submitTransactionAndWaitMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePayment = resolve;
+      }),
+    );
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
+
+    const connect = runtime.connect({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      accountId: "alice@wonderland",
+      privateKeyHex: "ab".repeat(32),
+      exitClass: "standard",
+    });
+
+    await vi.waitFor(() =>
+      expect(submitTransactionAndWaitMock).toHaveBeenCalled(),
+    );
+    expect(submitTransactionAndWaitMock).toHaveBeenCalledWith(
+      Buffer.from("signed-vpn-payment"),
+      expect.objectContaining({
+        hashHex: "cd".repeat(32),
+        successStatuses: ["Applied", "Committed"],
+      }),
+    );
+    expect(
+      submitTransactionAndWaitMock.mock.calls[0]?.[1]?.successStatuses,
+    ).not.toContain("Approved");
+    expect(createVpnSessionMock).not.toHaveBeenCalled();
+
+    resolvePayment({ status: "Applied" });
+
+    await expect(connect).resolves.toMatchObject({ state: "connected" });
+    expect(createVpnSessionMock).toHaveBeenCalled();
+  });
+
   it("rewrites torii relay host markers before handing them to the controller", async () => {
     createVpnSessionMock.mockResolvedValueOnce({
       sessionId: "sess_torii_marker",
@@ -546,6 +589,7 @@ describe("VpnRuntime", () => {
       Buffer.from("signed-vpn-payment"),
       expect.objectContaining({
         hashHex: "cd".repeat(32),
+        successStatuses: ["Applied", "Committed"],
       }),
     );
     expect(createVpnSessionMock).toHaveBeenCalledWith(

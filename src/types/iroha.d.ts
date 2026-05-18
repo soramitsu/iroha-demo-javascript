@@ -967,6 +967,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     accountId: string;
     networkPrefix?: number;
+    assetDefinitionId?: string;
     limit?: number;
     offset?: number;
   }): Promise<AccountAssetsResponse>;

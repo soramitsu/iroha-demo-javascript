@@ -497,6 +497,43 @@ const MINAMOTO_TORII_HOST = readEndpointHost(
 const TAIRA_TORII_HOST = readEndpointHost(
   TAIRA_CHAIN_PRESET.connection.toriiUrl,
 );
+const activeToriiHost = computed(() =>
+  readEndpointHost(session.connection.toriiUrl),
+);
+const activeNetworkIsKnownTaira = computed(
+  () => activeToriiHost.value === TAIRA_TORII_HOST,
+);
+const activeNetworkIsKnownMinamoto = computed(() => {
+  const chainId = session.connection.chainId.trim().toLowerCase();
+  return (
+    activeToriiHost.value === MINAMOTO_TORII_HOST ||
+    (chainId === MINAMOTO_CHAIN_PRESET.connection.chainId.toLowerCase() &&
+      session.connection.networkPrefix ===
+        MINAMOTO_CHAIN_PRESET.connection.networkPrefix)
+  );
+});
+const activeNetworkXorAssetDefinitionIds = computed(() => [
+  shieldedXorResolvedAssetId.value,
+  configuredShieldAssetDefinitionId.value,
+  ...(activeNetworkIsKnownMinamoto.value
+    ? [MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId]
+    : []),
+  SHIELDED_XOR_ASSET_DEFINITION_ID,
+]);
+const fastBalanceAssetDefinitionId = computed(() => {
+  const candidate = activeNetworkIsKnownMinamoto.value
+    ? MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId
+    : shieldedXorResolvedAssetId.value ||
+      configuredShieldAssetDefinitionId.value;
+  const assetDefinitionId = extractAssetDefinitionId(candidate).trim();
+  if (
+    !assetDefinitionId ||
+    assetDefinitionId.toLowerCase().startsWith("norito:")
+  ) {
+    return "";
+  }
+  return assetDefinitionId;
+});
 
 const createFaucetCancelError = () => {
   const error = new Error("Faucet request canceled.");
@@ -526,6 +563,18 @@ const isFaucetCanceledError = (error: unknown) => {
 const isLikelyMissingLiveAccountError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /\b404\b|not found|does not exist|missing account/i.test(message);
+};
+
+const isLikelyMissingAssetSelectorError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const detail = message.replace(
+    /^account assets request failed(?: because)?[^:]*:?\s*/i,
+    "",
+  );
+  return (
+    isLikelyMissingLiveAccountError(error) &&
+    /\basset|definition|selector|bucket/i.test(detail)
+  );
 };
 
 const formatDate = (timestamp?: number) => {
@@ -629,6 +678,93 @@ const fetchWalletTransactionPreview = async (input: {
   return (response.items ?? []) as AccountTx[];
 };
 
+const fetchWalletAssets = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  networkPrefix?: number;
+  assetDefinitionId?: string;
+}): Promise<AccountAssetsResponse> => {
+  const assetDefinitionId = extractAssetDefinitionId(
+    input.assetDefinitionId,
+  ).trim();
+  if (!assetDefinitionId) {
+    return fetchAccountAssets({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      networkPrefix: input.networkPrefix,
+      limit: 50,
+    });
+  }
+
+  try {
+    return await fetchAccountAssets({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      networkPrefix: input.networkPrefix,
+      assetDefinitionId,
+      limit: 8,
+    });
+  } catch (error) {
+    if (!isLikelyMissingAssetSelectorError(error)) {
+      throw error;
+    }
+    return fetchAccountAssets({
+      toriiUrl: input.toriiUrl,
+      accountId: input.accountId,
+      networkPrefix: input.networkPrefix,
+      limit: 50,
+    });
+  }
+};
+
+const walletRefreshStillCurrent = (
+  currentGeneration: number,
+  toriiUrl: string,
+  accountId: string,
+) =>
+  currentGeneration === requestGeneration.value &&
+  session.connection.toriiUrl === toriiUrl &&
+  requestAccountId.value === accountId;
+
+const refreshCitizenshipStatus = async (input: {
+  currentGeneration: number;
+  toriiUrl: string;
+  accountId: string;
+  request: Promise<GovernanceCitizenStatusResponse>;
+}) => {
+  try {
+    const status = await input.request;
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+      )
+    ) {
+      return;
+    }
+    citizenshipStatusLoaded.value = true;
+    citizenshipStatus.value = status;
+    governanceStatusError.value = "";
+  } catch (error) {
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+      )
+    ) {
+      return;
+    }
+    citizenshipStatusLoaded.value = true;
+    citizenshipStatus.value = null;
+    governanceStatusError.value = toUserFacingErrorMessage(
+      error,
+      t("Citizen status unavailable"),
+    );
+  }
+};
+
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const chainId = session.connection.chainId;
@@ -636,6 +772,7 @@ const refresh = async () => {
   const networkPrefix = session.connection.networkPrefix;
   const privateKeyHex = activeAccount.value?.privateKeyHex;
   const accountWasLocalOnly = Boolean(activeAccount.value?.localOnly);
+  const assetDefinitionId = fastBalanceAssetDefinitionId.value;
   if (!session.hasAccount || !toriiUrl || !accountId) {
     requestGeneration.value += 1;
     loading.value = false;
@@ -650,51 +787,35 @@ const refresh = async () => {
   citizenshipStatus.value = null;
   citizenshipStatusLoaded.value = false;
   governanceStatusError.value = "";
+  const citizenshipRequest = Promise.resolve().then(() =>
+    getGovernanceCitizenStatus({
+      toriiUrl,
+      accountId,
+    }),
+  );
+  void refreshCitizenshipStatus({
+    currentGeneration,
+    toriiUrl,
+    accountId,
+    request: citizenshipRequest,
+  });
   try {
-    const [assetsResult, citizenshipResult] = await Promise.allSettled([
-      fetchAccountAssets({
-        toriiUrl,
-        accountId,
-        networkPrefix,
-        limit: 50,
-      }),
-      getGovernanceCitizenStatus({
-        toriiUrl,
-        accountId,
-      }),
-    ] as const);
-    if (
-      currentGeneration !== requestGeneration.value ||
-      session.connection.toriiUrl !== toriiUrl ||
-      requestAccountId.value !== accountId
-    ) {
+    const assetsResponse = await fetchWalletAssets({
+      toriiUrl,
+      accountId,
+      networkPrefix,
+      assetDefinitionId,
+    });
+    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
       return;
     }
-    citizenshipStatusLoaded.value = true;
-    citizenshipStatus.value =
-      citizenshipResult.status === "fulfilled" ? citizenshipResult.value : null;
-    const optionalGovernanceErrors: string[] = [];
-    if (citizenshipResult.status === "rejected") {
-      optionalGovernanceErrors.push(
-        toUserFacingErrorMessage(
-          citizenshipResult.reason,
-          t("Citizen status unavailable"),
-        ),
-      );
-    }
-    governanceStatusError.value = optionalGovernanceErrors.join("\n");
-    if (assetsResult.status === "rejected") {
-      throw assetsResult.reason;
-    }
-    const assetItems = assetsResult.value.items;
+    const assetItems = assetsResponse.items;
     const configuredAssetDefinitionId = extractAssetDefinitionId(
       session.connection.assetDefinitionId,
     ).trim();
     const detectedShieldAsset = resolveToriiXorAsset(assetItems, [
-      shieldedXorResolvedAssetId.value,
-      configuredShieldAssetDefinitionId.value,
+      ...activeNetworkXorAssetDefinitionIds.value,
       configuredAssetDefinitionId,
-      SHIELDED_XOR_ASSET_DEFINITION_ID,
     ]);
     const confidentialAssetDefinitionId = extractAssetDefinitionId(
       detectedShieldAsset?.asset_id ?? configuredAssetDefinitionId,
@@ -703,11 +824,7 @@ const refresh = async () => {
       confidentialAssetDefinitionId,
       assetItems.map((asset) => asset.asset_id),
     );
-    if (
-      currentGeneration !== requestGeneration.value ||
-      session.connection.toriiUrl !== toriiUrl ||
-      requestAccountId.value !== accountId
-    ) {
+    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
       return;
     }
     assets.value = assetItems;
@@ -730,11 +847,7 @@ const refresh = async () => {
       } catch (error) {
         console.warn("Failed to refresh wallet transactions", error);
       }
-      if (
-        currentGeneration !== requestGeneration.value ||
-        session.connection.toriiUrl !== toriiUrl ||
-        requestAccountId.value !== accountId
-      ) {
+      if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
         return;
       }
       transactionsRaw.value = txItems;
@@ -758,9 +871,7 @@ const refresh = async () => {
           assetDefinitionId: confidentialAssetDefinitionId,
         });
         if (
-          currentGeneration !== requestGeneration.value ||
-          session.connection.toriiUrl !== toriiUrl ||
-          requestAccountId.value !== accountId
+          !walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)
         ) {
           return;
         }
@@ -770,11 +881,7 @@ const refresh = async () => {
       }
     })();
   } catch (error) {
-    if (
-      currentGeneration !== requestGeneration.value ||
-      session.connection.toriiUrl !== toriiUrl ||
-      requestAccountId.value !== accountId
-    ) {
+    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
       return;
     }
     assets.value = [];
@@ -990,17 +1097,19 @@ const requestStarterFundsFromAvailableFaucet = async () => {
 };
 
 const primaryAsset = computed(() => {
-  return resolveToriiXorAsset(assets.value, [
-    shieldedXorResolvedAssetId.value,
-    configuredShieldAssetDefinitionId.value,
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
-  ]);
+  return resolveToriiXorAsset(
+    assets.value,
+    activeNetworkXorAssetDefinitionIds.value,
+  );
 });
 
 const primaryAssetFallback = computed(
   () =>
     shieldedXorResolvedAssetId.value ||
     configuredShieldAssetDefinitionId.value ||
+    (activeNetworkIsKnownMinamoto.value
+      ? MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId
+      : "") ||
     SHIELDED_XOR_ASSET_DEFINITION_ID,
 );
 
@@ -1014,23 +1123,11 @@ const primaryAssetQuantity = computed(
   () => primaryAsset.value?.quantity ?? "0",
 );
 const faucetDisabled = import.meta.env.VITE_DISABLE_FAUCET === "true";
-const activeToriiHost = computed(() =>
-  readEndpointHost(session.connection.toriiUrl),
-);
-const activeNetworkIsKnownTaira = computed(
-  () => activeToriiHost.value === TAIRA_TORII_HOST,
-);
 const faucetUnavailableOnActiveNetwork = computed(() => {
   if (activeNetworkIsKnownTaira.value) {
     return false;
   }
-  const chainId = session.connection.chainId.trim().toLowerCase();
-  return (
-    activeToriiHost.value === MINAMOTO_TORII_HOST ||
-    (chainId === MINAMOTO_CHAIN_PRESET.connection.chainId.toLowerCase() &&
-      session.connection.networkPrefix ===
-        MINAMOTO_CHAIN_PRESET.connection.networkPrefix)
-  );
+  return activeNetworkIsKnownMinamoto.value;
 });
 const canRequestFaucet = computed(() =>
   Boolean(
@@ -1104,10 +1201,8 @@ const showShieldSection = computed(() =>
 const shieldedXorTrackedAssetIds = computed(() => {
   const seen = new Set<string>();
   return [
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
-    configuredShieldAssetDefinitionId.value,
+    ...activeNetworkXorAssetDefinitionIds.value,
     shieldedXorBalanceState.value.resolvedAssetId,
-    shieldedXorResolvedAssetId.value,
   ]
     .map((value) => String(value ?? "").trim())
     .filter((value) => {

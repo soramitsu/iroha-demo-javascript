@@ -24,6 +24,20 @@ const jsonResponse = (body: unknown, status = 200) => ({
   text: async () => JSON.stringify(body),
 });
 
+const htmlResponse = (body: string, status: number, statusText = "ERR") => ({
+  ok: status >= 200 && status < 300,
+  status,
+  statusText,
+  headers: {
+    get: (name: string) =>
+      name.toLowerCase() === "content-type" ? "text/html" : null,
+  },
+  json: async () => {
+    throw new Error("Response is not JSON");
+  },
+  text: async () => body,
+});
+
 const ALICE_ACCOUNT_ID =
   "testuﾛ1PｸCｶrﾑhyﾜｴﾄhｳﾔSqP2GFGﾗヱﾐｹﾇﾏzﾍｵﾐMﾇﾖﾄksJヱRRJXVB";
 const BOB_ACCOUNT_ID = "testuﾛ1Prﾇuﾉﾉ4ﾒdﾛﾑｲﾄn5tﾆﾒrsR9ﾋ2Gｷ7gWeFzyﾁﾋﾁAHﾌTJQQ4L";
@@ -371,7 +385,6 @@ vi.mock("@iroha/iroha-js", async () => {
     buildJoinKaigiTransaction: mocks.buildJoinKaigiTransactionMock,
     buildEndKaigiTransaction: mocks.buildEndKaigiTransactionMock,
     buildPrivateKaigiFeeSpend: mocks.buildPrivateKaigiFeeSpendMock,
-    buildSoraCloudHfDeployRequest: mocks.buildSoraCloudHfDeployRequestMock,
     buildPrivateCreateKaigiTransaction:
       mocks.buildPrivateCreateKaigiTransactionMock,
     buildPrivateJoinKaigiTransaction:
@@ -424,6 +437,10 @@ vi.mock("@iroha/iroha-js", async () => {
     normalizeAccountId: (value: string) => String(value).trim(),
   };
 });
+
+vi.mock("../electron/soraCloudDeployRequest", () => ({
+  buildSoraCloudHfDeployRequest: mocks.buildSoraCloudHfDeployRequestMock,
+}));
 
 vi.mock("@iroha/iroha-js/crypto", async () => {
   const actual = await vi.importActual<typeof import("@iroha/iroha-js/crypto")>(
@@ -1278,6 +1295,7 @@ describe("preload Kaigi bridge", () => {
       toriiUrl: "https://taira.sora.org",
       accountId: "sorau-stale-id",
       networkPrefix: 369,
+      assetDefinitionId: "xor#universal",
       limit: 25,
     });
     await bridge.fetchAccountTransactions({
@@ -1300,12 +1318,59 @@ describe("preload Kaigi bridge", () => {
         method: "GET",
       }),
     );
+    const assetFetchUrl = String(
+      mocks.nodeFetchMock.mock.calls.find(([input]) =>
+        String(input).includes("/assets"),
+      )?.[0] ?? "",
+    );
+    expect(new URL(assetFetchUrl).searchParams.get("asset")).toBe(
+      "xor#universal",
+    );
     expect(mocks.listAccountTransactionsMock).toHaveBeenCalledWith(
       "prefix-369:sorau-stale-id",
       expect.objectContaining({
         limit: 25,
       }),
     );
+  });
+
+  it("reports account asset gateway outages without raw HTML", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockImplementation(
+      async (input: unknown, init?: Record<string, unknown>) => {
+        const href = String(input);
+        const method = String(init?.method ?? "GET").toUpperCase();
+        if (
+          method === "GET" &&
+          href.includes("/v1/accounts/") &&
+          href.includes("/assets")
+        ) {
+          return htmlResponse(
+            "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx/1.29.8</center></body></html>",
+            502,
+            "Bad Gateway",
+          );
+        }
+        throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
+      },
+    );
+
+    await expect(
+      bridge.fetchAccountAssets({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).rejects.toThrow(
+      "Account assets request failed because the Torii endpoint is unavailable (502 Bad Gateway).",
+    );
+    await expect(
+      bridge.fetchAccountAssets({
+        toriiUrl: "https://taira.sora.org",
+        accountId: "testu-faucet",
+        networkPrefix: 369,
+      }),
+    ).rejects.not.toThrow("<html>");
   });
 
   it("posts signed SoraCloud HF deploy provenance without forwarding the private key", async () => {
@@ -1635,12 +1700,10 @@ describe("preload Kaigi bridge", () => {
         const href = String(input);
         const method = String(init?.method ?? "GET").toUpperCase();
         if (method === "GET" && href.includes("/v1/ledger/headers")) {
-          return jsonResponse(
-            {
-              error: "bad_gateway",
-              message: "Bad Gateway",
-            },
+          return htmlResponse(
+            "<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx/1.29.8</center></body></html>",
             502,
+            "Bad Gateway",
           );
         }
         throw new Error(`Unexpected nodeFetch request: ${method} ${href}`);
@@ -1654,7 +1717,7 @@ describe("preload Kaigi bridge", () => {
         networkPrefix: 369,
       }),
     ).rejects.toThrow(
-      "The active Torii endpoint could not verify faucet finality via /v1/ledger/headers",
+      "The active Torii endpoint could not verify faucet finality via /v1/ledger/headers because Torii is unavailable (502 Bad Gateway).",
     );
     expect(mocks.requestFaucetFundsWithPuzzleMock).not.toHaveBeenCalled();
   });

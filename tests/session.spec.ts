@@ -126,6 +126,7 @@ describe("session store", () => {
         connection: {
           ...MINAMOTO_CHAIN_PRESET.connection,
           chainId: "sora nexus main net",
+          assetDefinitionId: "xor#universal",
         },
       }),
     );
@@ -141,6 +142,29 @@ describe("session store", () => {
     );
     expect(store.connection.networkPrefix).toBe(
       MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(store.connection.assetDefinitionId).toBe(
+      MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId,
+    );
+  });
+
+  it("refreshes known preset asset metadata when endpoint metadata is saved", () => {
+    const store = useSessionStore();
+    store.$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      },
+    });
+
+    store.updateConnection({
+      toriiUrl: MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+      chainId: MINAMOTO_CHAIN_PRESET.connection.chainId,
+      networkPrefix: MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
+    });
+
+    expect(store.connection.assetDefinitionId).toBe(
+      MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId,
     );
   });
 

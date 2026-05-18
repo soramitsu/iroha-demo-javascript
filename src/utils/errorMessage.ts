@@ -6,6 +6,10 @@ const ERROR_CODE_PREFIX = /^(ERR_[A-Z0-9_]+)\s*[—\-:]\s*(.+)$/i;
 const GENERIC_ERROR_CODE_PREFIX =
   /^([a-z][a-z0-9]*_[a-z0-9_]*[a-z0-9])\s*[—\-:]\s*(.+)$/i;
 const REPLACEMENT_CHARACTER = "\uFFFD";
+const HTML_ERROR_MARKUP =
+  /<!doctype\s+html\b|<html\b|<head\b|<body\b|<title\b|<h[1-6]\b/i;
+const HTML_ENTITY_PATTERN =
+  /&(#x[0-9a-f]+|#[0-9]+|amp|lt|gt|quot|apos|nbsp);/gi;
 const CHAIN_ID_MISMATCH =
   /Chain id doesn't correspond to the id of current blockchain:\s*Expected ChainId\("([^"]+)"\),\s*actual ChainId\("([^"]+)"\)/i;
 
@@ -32,6 +36,68 @@ const stripControlChars = (value: string) =>
     })
     .join("");
 
+const decodeBasicHtmlEntities = (value: string) =>
+  value.replace(HTML_ENTITY_PATTERN, (match, entity: string) => {
+    const normalized = entity.toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const code = Number.parseInt(normalized.slice(2), 16);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    if (normalized.startsWith("#")) {
+      const code = Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(code) && code >= 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : match;
+    }
+    switch (normalized) {
+      case "amp":
+        return "&";
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "quot":
+        return '"';
+      case "apos":
+        return "'";
+      case "nbsp":
+        return " ";
+      default:
+        return match;
+    }
+  });
+
+const stripHtmlTags = (value: string) =>
+  decodeBasicHtmlEntities(
+    value
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+const readHtmlElementText = (html: string, tagName: string) => {
+  const match = new RegExp(
+    `<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
+    "i",
+  ).exec(html);
+  return match ? stripHtmlTags(match[1] ?? "") : "";
+};
+
+const extractHtmlErrorMessage = (value: string) => {
+  if (!HTML_ERROR_MARKUP.test(value)) {
+    return "";
+  }
+  return (
+    readHtmlElementText(value, "title") ||
+    readHtmlElementText(value, "h1") ||
+    stripHtmlTags(value)
+  );
+};
+
 const hasUnreadablePrefix = (value: string) => {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -51,6 +117,11 @@ export const sanitizeErrorMessage = (value: unknown) => {
   text = stripControlChars(text).replace(/\s+/g, " ").trim();
   if (!text) {
     return "";
+  }
+
+  const htmlErrorMessage = extractHtmlErrorMessage(text);
+  if (htmlErrorMessage) {
+    text = htmlErrorMessage;
   }
 
   const chainIdMismatch = formatChainIdMismatch(text);

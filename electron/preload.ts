@@ -24,7 +24,6 @@ import {
   buildTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
-  buildSoraCloudHfDeployRequest,
   submitTransactionEntrypoint,
   hashSignedTransaction,
   extractPipelineStatusKind,
@@ -132,6 +131,7 @@ import {
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
 import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
+import { buildSoraCloudHfDeployRequest } from "./soraCloudDeployRequest";
 import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
   CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
@@ -1154,6 +1154,7 @@ type IrohaBridge = {
     toriiUrl: string;
     accountId: string;
     networkPrefix?: number;
+    assetDefinitionId?: string;
     limit?: number;
     offset?: number;
   }): Promise<AssetsResponse>;
@@ -1364,10 +1365,21 @@ class ApiRequestError extends Error {
     detail?: string;
   }) {
     const detail = String(input.detail ?? "").trim();
+    const statusSummary = formatHttpStatus(input.status, input.statusText);
+    const redundantDetail = isRedundantHttpErrorDetail(
+      detail,
+      input.status,
+      input.statusText,
+    );
+    const unavailableStatus = isToriiUnavailableStatus(input.status);
     super(
-      detail
-        ? `${input.label} request failed with status ${input.status} (${input.statusText}): ${detail}`
-        : `${input.label} request failed with status ${input.status} (${input.statusText})`,
+      unavailableStatus
+        ? redundantDetail
+          ? `${input.label} request failed because the Torii endpoint is unavailable (${statusSummary}).`
+          : `${input.label} request failed because the Torii endpoint is unavailable (${statusSummary}). Detail: ${detail}`
+        : detail
+          ? `${input.label} request failed with status ${input.status} (${input.statusText}): ${detail}`
+          : `${input.label} request failed with status ${input.status} (${input.statusText})`,
     );
     this.name = "ApiRequestError";
     this.status = input.status;
@@ -1390,6 +1402,37 @@ const createApiRequestError = async (
 
 const isApiRequestError = (error: unknown): error is ApiRequestError =>
   error instanceof ApiRequestError;
+
+const TORII_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+
+const isToriiUnavailableStatus = (status: number) =>
+  TORII_UNAVAILABLE_STATUSES.has(status);
+
+const formatHttpStatus = (status: number, statusText?: string) => {
+  const trimmedStatusText = String(statusText ?? "").trim();
+  return trimmedStatusText ? `${status} ${trimmedStatusText}` : String(status);
+};
+
+const normalizeHttpErrorDetail = (value: string) =>
+  value.trim().replace(/\.+$/, "").toLowerCase();
+
+const isRedundantHttpErrorDetail = (
+  detail: string,
+  status: number,
+  statusText?: string,
+) => {
+  const normalizedDetail = normalizeHttpErrorDetail(detail);
+  if (!normalizedDetail) {
+    return true;
+  }
+  const normalizedStatusText = normalizeHttpErrorDetail(statusText ?? "");
+  return (
+    normalizedDetail === normalizedStatusText ||
+    normalizedDetail === normalizeHttpErrorDetail(String(status)) ||
+    normalizedDetail ===
+      normalizeHttpErrorDetail(formatHttpStatus(status, statusText))
+  );
+};
 
 const clientCache = new Map<string, ToriiClient>();
 const kaigiCallWatchers = new Map<string, AbortController>();
@@ -1533,7 +1576,19 @@ const buildFaucetFinalityUnavailableError = (
     status !== undefined
       ? ` (${status}${statusText ? ` ${statusText}` : ""})`
       : "";
-  const responseDetail = detail ? ` Detail: ${detail}` : "";
+  const responseDetail =
+    detail &&
+    !(
+      status !== undefined &&
+      isRedundantHttpErrorDetail(detail, status, statusText)
+    )
+      ? ` Detail: ${detail.replace(/\.+$/, "")}.`
+      : "";
+  if (status !== undefined && isToriiUnavailableStatus(status)) {
+    return new Error(
+      `The active Torii endpoint could not verify faucet finality via ${context} because Torii is unavailable${statusDetail}.${responseDetail} Faucet requests are blocked before submission because the endpoint cannot prove claims will commit; retry after the endpoint recovers.`,
+    );
+  }
   return new Error(
     `The active Torii endpoint could not verify faucet finality via ${context}${statusDetail}.${responseDetail} Faucet requests are blocked before submission because the endpoint cannot prove claims will commit. This is a TAIRA/Torii health problem, not a wallet problem; retry after the operator restores finality.`,
   );
@@ -4862,6 +4917,7 @@ const fetchAccountAssetsList = async (input: {
   toriiUrl: string;
   accountId: string;
   networkPrefix?: number;
+  assetDefinitionId?: string;
   limit?: number;
   offset?: number;
 }) => {
@@ -4878,6 +4934,12 @@ const fetchAccountAssetsList = async (input: {
     normalizedBaseUrl,
   );
   endpoint.searchParams.set("limit", String(input.limit ?? 50));
+  const assetDefinitionId = extractAssetDefinitionId(
+    input.assetDefinitionId,
+  ).trim();
+  if (assetDefinitionId) {
+    endpoint.searchParams.set("asset", assetDefinitionId);
+  }
   if (input.offset !== undefined) {
     endpoint.searchParams.set("offset", String(input.offset));
   }
@@ -7687,6 +7749,9 @@ const api: IrohaBridge = {
       }> = [];
       let proofEnvelope!: ReturnType<typeof buildConfidentialTransferProofV2>;
       let selectedRootHintHex = materials.latestRootHex;
+      let transferVerifyingKeyContext: ReturnType<
+        typeof readConfidentialVerifyingKeyContext
+      > | null = null;
       for (
         let attempt = 1;
         attempt <= CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS;
@@ -7742,14 +7807,11 @@ const api: IrohaBridge = {
         orderedOutputs = [...outputs].sort((left, right) =>
           left.note.commitment_hex.localeCompare(right.note.commitment_hex),
         );
-        const verifyingKeyContext = readInlineVerifyingKeyRecord(
+        const verifyingKeyContext = readConfidentialVerifyingKeyContext(
           materials.verifyingKey,
         );
-        const proofVerifyingKey = {
-          id: materials.verifyingKey.id,
-          record: verifyingKeyContext.record,
-          inline_key: verifyingKeyContext.inlineKey,
-        };
+        transferVerifyingKeyContext = verifyingKeyContext;
+        const proofVerifyingKey = verifyingKeyContext.proofVerifyingKey;
         const candidateRootHintHexes = [
           ...new Set([
             materials.latestRootHex,
@@ -7816,6 +7878,9 @@ const api: IrohaBridge = {
           }
         }
       }
+      if (!transferVerifyingKeyContext) {
+        throw new Error("Confidential transfer verifier material is missing.");
+      }
       const metadata = buildWalletConfidentialMetadataV3({
         baseMetadata: stripConfidentialFeeSponsor(
           confidentialTransactionMetadata,
@@ -7830,16 +7895,9 @@ const api: IrohaBridge = {
           inputs: proofEnvelope.nullifiers,
           outputs: proofEnvelope.outputCommitments,
           proof: {
-            backend: String(
-              (materials.verifyingKey as { id?: { backend?: string } }).id
-                ?.backend ?? "halo2/ipa",
-            ),
+            backend: transferVerifyingKeyContext.backend,
             proof: Buffer.from(proofEnvelope.proof),
-            verifyingKeyRef: (
-              materials.verifyingKey as {
-                id?: { backend: string; name: string };
-              }
-            ).id,
+            verifyingKeyRef: transferVerifyingKeyContext.proofVerifyingKey.id,
           },
           rootHint: Buffer.from(selectedRootHintHex, "hex"),
         },
@@ -8205,6 +8263,7 @@ const api: IrohaBridge = {
     toriiUrl,
     accountId,
     networkPrefix,
+    assetDefinitionId,
     limit = 50,
     offset,
   }) {
@@ -8212,6 +8271,7 @@ const api: IrohaBridge = {
       toriiUrl,
       accountId,
       networkPrefix,
+      assetDefinitionId,
       limit,
       offset,
     });
