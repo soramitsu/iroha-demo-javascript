@@ -600,6 +600,33 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
+  it("shows secure storage errors when saving the generated account fails", async () => {
+    isSecureVaultAvailableMock.mockResolvedValue(false);
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+    expect(storeAccountSecretMock).not.toHaveBeenCalled();
+    expect(routerPushMock).not.toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBeNull();
+  });
+
   it("copies the generated recovery phrase instead of downloading the manual backup", async () => {
     const wrapper = mountView();
 

@@ -684,6 +684,7 @@ import {
 } from "@/utils/walletBackup";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
+import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   buildIrohaConnectTokenProtocol,
   buildIrohaConnectWebSocketUrl,
@@ -1152,7 +1153,15 @@ const saveGeneratedIdentity = async () => {
     );
     return;
   }
-  await persistGeneratedIdentity(true);
+  try {
+    await persistGeneratedIdentity(true);
+  } catch (error) {
+    onboardingError.value = toUserFacingErrorMessage(
+      error,
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+    return;
+  }
   onboardingStatus.value = isRestoreMode.value
     ? t("Wallet {accountId} restored locally.", {
         accountId: generatedVisibleAccountId.value || generatedAccountId.value,

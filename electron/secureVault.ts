@@ -1,9 +1,38 @@
 import { safeStorage } from "electron";
+import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 const SECURE_VAULT_FILENAME = "secure-vault.json";
 const SECURE_VAULT_VERSION = 1;
+const WINDOWS_DPAPI_ENVELOPE = "win-dpapi:";
+const WINDOWS_POWERSHELL_PATH = process.env["SystemRoot"]
+  ? join(
+      process.env["SystemRoot"],
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    )
+  : "powershell.exe";
+
+const WINDOWS_DPAPI_PROTECT_SCRIPT = `
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Security
+$plainText = [Console]::In.ReadToEnd()
+$plainBytes = [Text.Encoding]::UTF8.GetBytes($plainText)
+$protectedBytes = [Security.Cryptography.ProtectedData]::Protect($plainBytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+[Console]::Out.Write([Convert]::ToBase64String($protectedBytes))
+`;
+
+const WINDOWS_DPAPI_UNPROTECT_SCRIPT = `
+$ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.Security
+$protectedBase64 = [Console]::In.ReadToEnd().Trim()
+$protectedBytes = [Convert]::FromBase64String($protectedBase64)
+$plainBytes = [Security.Cryptography.ProtectedData]::Unprotect($protectedBytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+[Console]::Out.Write([Text.Encoding]::UTF8.GetString($plainBytes))
+`;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
@@ -144,6 +173,79 @@ export type ConfidentialReceiveKeyRecord = {
   createdAtMs: number;
 };
 
+type WindowsDpapi = {
+  protect(value: string): Promise<string>;
+  unprotect(value: string): Promise<string>;
+};
+
+type SecureVaultOptions = {
+  platform?: NodeJS.Platform;
+  windowsDpapi?: WindowsDpapi;
+};
+
+const encodePowerShellCommand = (script: string): string =>
+  Buffer.from(script, "utf16le").toString("base64");
+
+const runWindowsDpapiScript = (
+  script: string,
+  input: string,
+): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const child = spawn(
+      WINDOWS_POWERSHELL_PATH,
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-EncodedCommand",
+        encodePowerShellCommand(script),
+      ],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+      const detail = stderr.trim();
+      reject(
+        new Error(
+          detail
+            ? `Windows DPAPI command failed: ${detail}`
+            : `Windows DPAPI command failed with exit code ${code ?? "unknown"}.`,
+        ),
+      );
+    });
+    child.stdin.end(input, "utf8");
+  });
+
+const defaultWindowsDpapi: WindowsDpapi = {
+  protect(value) {
+    return runWindowsDpapiScript(WINDOWS_DPAPI_PROTECT_SCRIPT, value);
+  },
+  unprotect(value) {
+    return runWindowsDpapiScript(WINDOWS_DPAPI_UNPROTECT_SCRIPT, value);
+  },
+};
+
 const emptyVault = (): SecureVaultFile => ({
   version: SECURE_VAULT_VERSION,
   accountSecrets: {},
@@ -153,16 +255,22 @@ const emptyVault = (): SecureVaultFile => ({
 export class SecureVault {
   private readonly filePath: string;
 
+  private readonly platform: NodeJS.Platform;
+
+  private readonly windowsDpapi: WindowsDpapi;
+
   private cache: SecureVaultFile | null = null;
 
   private loadPromise: Promise<SecureVaultFile> | null = null;
 
-  constructor(userDataPath: string) {
+  constructor(userDataPath: string, options: SecureVaultOptions = {}) {
     this.filePath = join(userDataPath, SECURE_VAULT_FILENAME);
+    this.platform = options.platform ?? process.platform;
+    this.windowsDpapi = options.windowsDpapi ?? defaultWindowsDpapi;
   }
 
   isAvailable(): boolean {
-    return safeStorage.isEncryptionAvailable();
+    return this.isSafeStorageAvailable() || this.platform === "win32";
   }
 
   async storeAccountSecret(input: {
@@ -172,7 +280,7 @@ export class SecureVault {
     this.ensureAvailable();
     const vault = await this.load();
     vault.accountSecrets[normalizeAccountSecretStorageKey(input.accountId)] =
-      this.encrypt(normalizeHex(input.privateKeyHex, "privateKeyHex"));
+      await this.encrypt(normalizeHex(input.privateKeyHex, "privateKeyHex"));
     await this.persist(vault);
   }
 
@@ -183,7 +291,7 @@ export class SecureVault {
     if (!encrypted) {
       return null;
     }
-    return normalizeHex(this.decrypt(encrypted), "privateKeyHex");
+    return normalizeHex(await this.decrypt(encrypted), "privateKeyHex");
   }
 
   async listAccountSecretFlags(
@@ -209,10 +317,10 @@ export class SecureVault {
       accountId: normalizeAccountIdKey(input.accountId),
       ownerTagHex: normalizeHex32(input.ownerTagHex, "ownerTagHex"),
       diversifierHex: normalizeHex32(input.diversifierHex, "diversifierHex"),
-      encryptedPublicKeyBase64: this.encrypt(
+      encryptedPublicKeyBase64: await this.encrypt(
         normalizeBase64Url(input.publicKeyBase64Url, "publicKeyBase64Url"),
       ),
-      encryptedPrivateKeyBase64: this.encrypt(
+      encryptedPrivateKeyBase64: await this.encrypt(
         normalizeBase64Url(input.privateKeyBase64Url, "privateKeyBase64Url"),
       ),
       createdAtMs:
@@ -253,9 +361,9 @@ export class SecureVault {
       accountId: record.accountId,
       ownerTagHex: record.ownerTagHex,
       diversifierHex: record.diversifierHex,
-      publicKeyBase64Url: this.readReceiveKeyPublicKey(record),
+      publicKeyBase64Url: await this.readReceiveKeyPublicKey(record),
       privateKeyBase64Url: normalizeBase64Url(
-        this.decrypt(record.encryptedPrivateKeyBase64),
+        await this.decrypt(record.encryptedPrivateKeyBase64),
         "privateKeyBase64Url",
       ),
       createdAtMs: record.createdAtMs,
@@ -268,21 +376,23 @@ export class SecureVault {
     this.ensureAvailable();
     const vault = await this.load();
     const targetAccountId = normalizeAccountIdKey(accountId);
-    return Object.values(vault.receiveKeys)
-      .filter((record) => record.accountId === targetAccountId)
-      .map((record) => ({
-        keyId: record.keyId,
-        accountId: record.accountId,
-        ownerTagHex: record.ownerTagHex,
-        diversifierHex: record.diversifierHex,
-        publicKeyBase64Url: this.readReceiveKeyPublicKey(record),
-        privateKeyBase64Url: normalizeBase64Url(
-          this.decrypt(record.encryptedPrivateKeyBase64),
-          "privateKeyBase64Url",
-        ),
-        createdAtMs: record.createdAtMs,
-      }))
-      .sort((left, right) => left.createdAtMs - right.createdAtMs);
+    const records = await Promise.all(
+      Object.values(vault.receiveKeys)
+        .filter((record) => record.accountId === targetAccountId)
+        .map(async (record) => ({
+          keyId: record.keyId,
+          accountId: record.accountId,
+          ownerTagHex: record.ownerTagHex,
+          diversifierHex: record.diversifierHex,
+          publicKeyBase64Url: await this.readReceiveKeyPublicKey(record),
+          privateKeyBase64Url: normalizeBase64Url(
+            await this.decrypt(record.encryptedPrivateKeyBase64),
+            "privateKeyBase64Url",
+          ),
+          createdAtMs: record.createdAtMs,
+        })),
+    );
+    return records.sort((left, right) => left.createdAtMs - right.createdAtMs);
   }
 
   private ensureAvailable(): void {
@@ -291,18 +401,45 @@ export class SecureVault {
     }
   }
 
-  private encrypt(value: string): string {
-    return safeStorage.encryptString(value).toString("base64");
+  private isSafeStorageAvailable(): boolean {
+    try {
+      return safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
   }
 
-  private decrypt(value: string): string {
-    return safeStorage.decryptString(Buffer.from(value, "base64"));
+  private async encrypt(value: string): Promise<string> {
+    if (this.isSafeStorageAvailable()) {
+      return safeStorage.encryptString(value).toString("base64");
+    }
+    if (this.platform === "win32") {
+      return `${WINDOWS_DPAPI_ENVELOPE}${await this.windowsDpapi.protect(value)}`;
+    }
+    throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
   }
 
-  private readReceiveKeyPublicKey(record: StoredReceiveKeyRecord): string {
+  private async decrypt(value: string): Promise<string> {
+    if (value.startsWith(WINDOWS_DPAPI_ENVELOPE)) {
+      if (this.platform !== "win32") {
+        throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
+      }
+      return this.windowsDpapi.unprotect(
+        value.slice(WINDOWS_DPAPI_ENVELOPE.length),
+      );
+    }
+    if (this.isSafeStorageAvailable()) {
+      return safeStorage.decryptString(Buffer.from(value, "base64"));
+    }
+    throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
+  }
+
+  private async readReceiveKeyPublicKey(
+    record: StoredReceiveKeyRecord,
+  ): Promise<string> {
     if (record.encryptedPublicKeyBase64) {
       return normalizeBase64Url(
-        this.decrypt(record.encryptedPublicKeyBase64),
+        await this.decrypt(record.encryptedPublicKeyBase64),
         "publicKeyBase64Url",
       );
     }
