@@ -627,6 +627,68 @@ describe("AccountSetupView", () => {
     expect(session.activeAccountId).toBeNull();
   });
 
+  it("shows a secure storage error when the availability bridge rejects", async () => {
+    isSecureVaultAvailableMock.mockRejectedValueOnce(
+      new Error("IPC unavailable"),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+    expect(storeAccountSecretMock).not.toHaveBeenCalled();
+    expect(routerPushMock).not.toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBeNull();
+  });
+
+  it("keeps the wallet unsaved when the vault write rejects late", async () => {
+    storeAccountSecretMock.mockRejectedValueOnce(
+      new Error("Windows DPAPI command failed: access denied"),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[0].setValue("Alice");
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: "alice@flowers",
+        privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+      }),
+    );
+    expect(wrapper.text()).toContain(
+      "Windows DPAPI command failed: access denied",
+    );
+    expect(importConfidentialWalletBackupMock).not.toHaveBeenCalled();
+    expect(routerPushMock).not.toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBeNull();
+  });
+
   it("copies the generated recovery phrase instead of downloading the manual backup", async () => {
     const wrapper = mountView();
 
@@ -793,6 +855,66 @@ describe("AccountSetupView", () => {
         },
       },
     });
+  });
+
+  it("does not save restored backup metadata when confidential restore fails", async () => {
+    importConfidentialWalletBackupMock.mockRejectedValueOnce(
+      new Error("confidential bundle rejected"),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const backupPayload = JSON.stringify(
+      buildWalletBackupPayload({
+        mnemonic: VALID_MNEMONIC,
+        wordCount: 12,
+        target: "manual",
+        createdAt: "2026-03-29T00:00:00.000Z",
+        displayName: "Backup Alice",
+        domain: "backup-domain",
+        confidentialWallet: {
+          schema: "iroha-demo-confidential-wallet-backup/v2",
+          chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+          accountId: "alice@backup-domain",
+          scanWatermarkBlock: 42,
+          stateBox: {
+            kdf: "HKDF-SHA256",
+            cipher: "AES-256-GCM",
+            saltBase64Url: "salt",
+            ivBase64Url: "iv",
+            ciphertextBase64Url: "ciphertext",
+            authTagBase64Url: "tag",
+          },
+        },
+      }),
+    );
+    const backupFile = new File([backupPayload], "iroha-backup.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(backupFile, "text", {
+      configurable: true,
+      value: () => Promise.resolve(backupPayload),
+    });
+
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    const fileInput = wrapper.find('input[type="file"]');
+    setInputFiles(fileInput.element as HTMLInputElement, [backupFile]);
+    await fileInput.trigger("change");
+    await flushPromises();
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "alice@backup-domain",
+      privateKeyHex: VALID_MNEMONIC_PRIVATE_KEY_HEX,
+    });
+    expect(importConfidentialWalletBackupMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("confidential bundle rejected");
+    expect(routerPushMock).not.toHaveBeenCalledWith("/wallet");
+    expect(session.activeAccountId).toBeNull();
   });
 
   it("does not apply backup metadata when imported recovery data is invalid", async () => {
