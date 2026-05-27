@@ -1,20 +1,21 @@
 import { safeStorage } from "electron";
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 
 const SECURE_VAULT_FILENAME = "secure-vault.json";
 const SECURE_VAULT_VERSION = 1;
 const WINDOWS_DPAPI_ENVELOPE = "win-dpapi:";
-const WINDOWS_POWERSHELL_PATH = process.env["SystemRoot"]
-  ? join(
-      process.env["SystemRoot"],
-      "System32",
-      "WindowsPowerShell",
-      "v1.0",
-      "powershell.exe",
-    )
-  : "powershell.exe";
+const WSL_KERNEL_MARKER_RE = /microsoft|wsl/i;
+const WINDOWS_POWERSHELL_SUBPATH = [
+  "System32",
+  "WindowsPowerShell",
+  "v1.0",
+  "powershell.exe",
+];
+const WSL_WINDOWS_POWERSHELL_PATH =
+  "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
 
 const WINDOWS_DPAPI_PROTECT_SCRIPT = `
 $ErrorActionPreference = "Stop"
@@ -54,6 +55,43 @@ const unique = (values: string[]): string[] => {
     return true;
   });
 };
+
+const detectWsl = (platform: NodeJS.Platform): boolean => {
+  if (platform !== "linux") {
+    return false;
+  }
+  if (process.env["WSL_INTEROP"] || process.env["WSL_DISTRO_NAME"]) {
+    return true;
+  }
+  try {
+    return WSL_KERNEL_MARKER_RE.test(
+      readFileSync("/proc/sys/kernel/osrelease", "utf8"),
+    );
+  } catch {
+    return false;
+  }
+};
+
+const windowsPowerShellCandidates = (): string[] => {
+  const systemRoot = process.env["SystemRoot"] || process.env["SYSTEMROOT"];
+  const pathCandidates =
+    process.env["PATH"]
+      ?.split(delimiter)
+      .filter(Boolean)
+      .map((pathEntry) => join(pathEntry, "powershell.exe"))
+      .filter((candidate) => existsSync(candidate)) ?? [];
+  return unique([
+    ...(systemRoot ? [join(systemRoot, ...WINDOWS_POWERSHELL_SUBPATH)] : []),
+    ...pathCandidates,
+    WSL_WINDOWS_POWERSHELL_PATH,
+    "powershell.exe",
+  ]);
+};
+
+const hasWindowsPowerShellCommand = (): boolean =>
+  windowsPowerShellCandidates().some(
+    (candidate) => candidate !== "powershell.exe" && existsSync(candidate),
+  );
 
 const parseI105AccountKeySuffix = (accountId: string): string | null => {
   const normalized = normalizeAccountIdKey(accountId);
@@ -180,19 +218,29 @@ type WindowsDpapi = {
 
 type SecureVaultOptions = {
   platform?: NodeJS.Platform;
+  isWsl?: boolean;
   windowsDpapi?: WindowsDpapi;
 };
 
 const encodePowerShellCommand = (script: string): string =>
   Buffer.from(script, "utf16le").toString("base64");
 
-const runWindowsDpapiScript = (
+const isMissingExecutableError = (error: unknown): boolean =>
+  Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as NodeJS.ErrnoException).code === "ENOENT",
+  );
+
+const runWindowsDpapiScriptWithCommand = (
+  powerShellPath: string,
   script: string,
   input: string,
 ): Promise<string> =>
   new Promise((resolve, reject) => {
     const child = spawn(
-      WINDOWS_POWERSHELL_PATH,
+      powerShellPath,
       [
         "-NoProfile",
         "-NonInteractive",
@@ -237,6 +285,30 @@ const runWindowsDpapiScript = (
     child.stdin.end(input, "utf8");
   });
 
+const runWindowsDpapiScript = async (
+  script: string,
+  input: string,
+): Promise<string> => {
+  let lastError: unknown = null;
+  for (const powerShellPath of windowsPowerShellCandidates()) {
+    try {
+      return await runWindowsDpapiScriptWithCommand(
+        powerShellPath,
+        script,
+        input,
+      );
+    } catch (error) {
+      lastError = error;
+      if (!isMissingExecutableError(error)) {
+        throw error;
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Windows DPAPI command failed: powershell.exe was not found.");
+};
+
 const defaultWindowsDpapi: WindowsDpapi = {
   protect(value) {
     return runWindowsDpapiScript(WINDOWS_DPAPI_PROTECT_SCRIPT, value);
@@ -259,6 +331,10 @@ export class SecureVault {
 
   private readonly windowsDpapi: WindowsDpapi;
 
+  private readonly isWsl: boolean;
+
+  private readonly hasCustomWindowsDpapi: boolean;
+
   private cache: SecureVaultFile | null = null;
 
   private loadPromise: Promise<SecureVaultFile> | null = null;
@@ -267,10 +343,12 @@ export class SecureVault {
     this.filePath = join(userDataPath, SECURE_VAULT_FILENAME);
     this.platform = options.platform ?? process.platform;
     this.windowsDpapi = options.windowsDpapi ?? defaultWindowsDpapi;
+    this.isWsl = options.isWsl ?? detectWsl(this.platform);
+    this.hasCustomWindowsDpapi = Boolean(options.windowsDpapi);
   }
 
   isAvailable(): boolean {
-    return this.isSafeStorageAvailable() || this.platform === "win32";
+    return this.isSafeStorageAvailable() || this.canUseWindowsDpapi();
   }
 
   async storeAccountSecret(input: {
@@ -409,11 +487,21 @@ export class SecureVault {
     }
   }
 
+  private canUseWindowsDpapi(): boolean {
+    if (this.platform === "win32") {
+      return true;
+    }
+    return (
+      this.isWsl &&
+      (this.hasCustomWindowsDpapi || hasWindowsPowerShellCommand())
+    );
+  }
+
   private async encrypt(value: string): Promise<string> {
     if (this.isSafeStorageAvailable()) {
       return safeStorage.encryptString(value).toString("base64");
     }
-    if (this.platform === "win32") {
+    if (this.canUseWindowsDpapi()) {
       return `${WINDOWS_DPAPI_ENVELOPE}${await this.windowsDpapi.protect(value)}`;
     }
     throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
@@ -421,7 +509,7 @@ export class SecureVault {
 
   private async decrypt(value: string): Promise<string> {
     if (value.startsWith(WINDOWS_DPAPI_ENVELOPE)) {
-      if (this.platform !== "win32") {
+      if (!this.canUseWindowsDpapi()) {
         throw new Error(SECURE_VAULT_UNAVAILABLE_MESSAGE);
       }
       return this.windowsDpapi.unprotect(

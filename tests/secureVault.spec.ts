@@ -149,6 +149,36 @@ describe("SecureVault", () => {
     );
   });
 
+  it("uses Windows DPAPI when safeStorage is unavailable under WSL2", async () => {
+    const privateKeyHex = "ab".repeat(32);
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    const windowsDpapi = createWindowsDpapiMock();
+    const vault = new SecureVault(tempDir, {
+      platform: "linux",
+      isWsl: true,
+      windowsDpapi,
+    });
+
+    expect(vault.isAvailable()).toBe(true);
+
+    await vault.storeAccountSecret({
+      accountId: "sorauWslAccount1234567890",
+      privateKeyHex,
+    });
+
+    const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
+    expect(persisted.accountSecrets["i105:wslaccount1234567890"]).toBe(
+      `win-dpapi:${protectFixture(privateKeyHex)}`,
+    );
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+    await expect(
+      vault.getAccountSecret("testuWslAccount1234567890"),
+    ).resolves.toBe(privateKeyHex);
+    expect(windowsDpapi.unprotect).toHaveBeenCalledWith(
+      protectFixture(privateKeyHex),
+    );
+  });
+
   it("stores confidential receive keys with Windows DPAPI fallback", async () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
     const windowsDpapi = createWindowsDpapiMock();
@@ -185,7 +215,7 @@ describe("SecureVault", () => {
 
   it("does not report availability on non-Windows when safeStorage is unavailable", async () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
-    const vault = new SecureVault(tempDir, { platform: "linux" });
+    const vault = new SecureVault(tempDir, { platform: "linux", isWsl: false });
 
     expect(vault.isAvailable()).toBe(false);
     await expect(
