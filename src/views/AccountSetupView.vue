@@ -808,12 +808,6 @@ const generatedAccountSummary = computed(() => {
 const generatedAccountId = computed(
   () => generatedAccountSummary.value?.accountId ?? "",
 );
-const generatedStoredI105AccountId = computed(
-  () =>
-    generatedAccountSummary.value?.i105AccountId ??
-    generatedAccountSummary.value?.accountId ??
-    "",
-);
 const generatedVisibleAccountId = computed(() =>
   getPublicAccountId(
     generatedAccountSummary.value,
@@ -1092,9 +1086,13 @@ const canSaveGenerated = computed(() => {
 });
 
 const persistGeneratedIdentity = async (localOnly: boolean) => {
-  if (!generatedKeys.value || !generatedAccountId.value) {
+  const accountSummary = generatedAccountSummary.value;
+  if (!generatedKeys.value || !accountSummary?.accountId) {
     return;
   }
+  const accountId = accountSummary.accountId;
+  const i105AccountId = accountSummary.i105AccountId || accountId;
+  const i105DefaultAccountId = accountSummary.i105DefaultAccountId || "";
   const vaultAvailable = await isSecureVaultAvailable().catch(() => false);
   if (!vaultAvailable) {
     throw new Error(
@@ -1102,13 +1100,13 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
     );
   }
   await storeAccountSecret({
-    accountId: generatedAccountId.value,
+    accountId,
     privateKeyHex: generatedKeys.value.privateKeyHex,
   });
   if (pendingConfidentialWalletBackup.value && recoveryMnemonic.value) {
     await importConfidentialWalletBackup({
       toriiUrl: connectionForm.toriiUrl,
-      accountId: generatedAccountId.value,
+      accountId,
       mnemonic: recoveryMnemonic.value,
       confidentialWallet: pendingConfidentialWalletBackup.value,
     });
@@ -1116,14 +1114,15 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
   session.updateConnection({
     toriiUrl: connectionForm.toriiUrl,
     chainId: connectionForm.chainId,
+    networkPrefix: session.connection.networkPrefix,
+    assetDefinitionId: session.connection.assetDefinitionId,
   });
   session.addAccount({
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
-    accountId: generatedAccountId.value,
-    i105AccountId: generatedStoredI105AccountId.value,
-    i105DefaultAccountId:
-      generatedAccountSummary.value?.i105DefaultAccountId ?? "",
+    accountId,
+    i105AccountId,
+    i105DefaultAccountId,
     publicKeyHex: generatedKeys.value.publicKeyHex,
     hasStoredSecret: true,
     localOnly,

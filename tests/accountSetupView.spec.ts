@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import AccountSetupView from "@/views/AccountSetupView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import type { ConnectionConfig } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { mnemonicToPrivateKeyHex } from "@/utils/mnemonic";
 import { buildWalletBackupPayload } from "@/utils/walletBackup";
@@ -209,6 +210,7 @@ describe("AccountSetupView", () => {
   });
 
   const mountView = (options?: {
+    connection?: Partial<ConnectionConfig>;
     withSavedAccount?: boolean;
     savedAccount?: {
       displayName?: string;
@@ -228,6 +230,7 @@ describe("AccountSetupView", () => {
     session.$patch({
       connection: {
         ...TAIRA_CHAIN_PRESET.connection,
+        ...options?.connection,
       },
     });
     if (options?.withSavedAccount || options?.savedAccount) {
@@ -751,6 +754,55 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.displayName).toBe("");
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.localOnly).toBe(true);
+  });
+
+  it("preserves the previewed network prefix for vault storage and the saved account", async () => {
+    deriveAccountAddressMock.mockImplementation(
+      (input: { domain?: string; networkPrefix?: number }) => {
+        const prefix = input.networkPrefix === 369 ? "testu" : "n42u";
+        const suffix = `${input.domain || "default"}StableAccount1234567890`;
+        return {
+          accountId: `${prefix}${suffix}`,
+          i105AccountId: `${prefix}${suffix}`,
+          i105DefaultAccountId: `sorau${suffix}`,
+          i105DefaultFullwidthAccountId: "",
+          publicKeyHex: "ab".repeat(32),
+          accountIdWarning: "",
+        };
+      },
+    );
+    const wrapper = mountView({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        networkPrefix: 42,
+      },
+    });
+    const session = useSessionStore();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("n42uflowersStableAccount1234567890");
+    expect(wrapper.text()).not.toContain("testuflowersStableAccount1234567890");
+
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "n42uflowersStableAccount1234567890",
+      privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+    });
+    expect(session.connection.networkPrefix).toBe(42);
+    expect(session.activeAccountId).toBe("n42uflowersStableAccount1234567890");
+    expect(session.activeAccount?.i105AccountId).toBe(
+      "n42uflowersStableAccount1234567890",
+    );
   });
 
   it("restores a wallet from a recovery phrase without re-registering it", async () => {
