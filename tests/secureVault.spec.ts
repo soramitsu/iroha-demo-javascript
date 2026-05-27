@@ -285,6 +285,31 @@ describe("SecureVault", () => {
     await expect(readFile(vaultFile(tempDir), "utf8")).rejects.toThrow();
   });
 
+  it("does not persist account secrets when WSL DPAPI protection fails", async () => {
+    safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
+    const windowsDpapi = {
+      protect: vi.fn(async () => {
+        throw new Error("WSL DPAPI protect denied");
+      }),
+      unprotect: vi.fn(async (value: string) => unprotectFixture(value)),
+    };
+    const vault = new SecureVault(tempDir, {
+      platform: "linux",
+      isWsl: true,
+      windowsDpapi,
+    });
+
+    expect(vault.isAvailable()).toBe(true);
+    await expect(
+      vault.storeAccountSecret({
+        accountId: "sorauDeniedWslAccount1234567890",
+        privateKeyHex: "aa".repeat(32),
+      }),
+    ).rejects.toThrow("WSL DPAPI protect denied");
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+    await expect(readFile(vaultFile(tempDir), "utf8")).rejects.toThrow();
+  });
+
   it("does not call any encryption backend for malformed private keys", async () => {
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
     const windowsDpapi = createWindowsDpapiMock();

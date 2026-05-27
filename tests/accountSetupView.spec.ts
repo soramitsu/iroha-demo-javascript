@@ -805,6 +805,53 @@ describe("AccountSetupView", () => {
     );
   });
 
+  it("does not replace a previewed custom-prefix account with the default i105 id when bridge output is partial", async () => {
+    deriveAccountAddressMock.mockImplementation(
+      (input: { domain?: string; networkPrefix?: number }) => {
+        const prefix = input.networkPrefix === 369 ? "testu" : "n42u";
+        const suffix = `${input.domain || "default"}PartialAccount1234567890`;
+        return {
+          accountId: `${prefix}${suffix}`,
+          i105AccountId: "",
+          i105DefaultAccountId: `sorau${suffix}`,
+          i105DefaultFullwidthAccountId: "",
+          publicKeyHex: "ab".repeat(32),
+          accountIdWarning: "partial i105 output",
+        };
+      },
+    );
+    const wrapper = mountView({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        networkPrefix: 42,
+      },
+    });
+    const session = useSessionStore();
+    const inputs = getTextInputs(wrapper);
+
+    await inputs[1].setValue("flowers");
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "n42uflowersPartialAccount1234567890",
+      privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+    });
+    expect(session.activeAccountId).toBe("n42uflowersPartialAccount1234567890");
+    expect(session.activeAccount?.i105AccountId).toBe(
+      "n42uflowersPartialAccount1234567890",
+    );
+    expect(session.activeAccount?.i105DefaultAccountId).toBe(
+      "sorauflowersPartialAccount1234567890",
+    );
+  });
+
   it("restores a wallet from a recovery phrase without re-registering it", async () => {
     const wrapper = mountView();
     const session = useSessionStore();

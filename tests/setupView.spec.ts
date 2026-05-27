@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from "pinia";
 import SetupView from "@/views/SetupView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import type { ConnectionConfig } from "@/stores/session";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
@@ -66,6 +67,7 @@ describe("SetupView", () => {
 
   const mountView = (options?: {
     assetDefinitionId?: string;
+    connection?: Partial<ConnectionConfig>;
     authority?: Record<string, unknown>;
     activeAccount?: Record<string, unknown>;
   }) => {
@@ -75,8 +77,10 @@ describe("SetupView", () => {
     session.$patch({
       connection: {
         ...TAIRA_CHAIN_PRESET.connection,
+        ...options?.connection,
         assetDefinitionId:
           options?.assetDefinitionId ??
+          options?.connection?.assetDefinitionId ??
           TAIRA_CHAIN_PRESET.connection.assetDefinitionId,
       },
     });
@@ -199,6 +203,104 @@ describe("SetupView", () => {
     expect(session.activeAccount?.privateKeyHex).toBe("");
   });
 
+  it("saves generated identities with the same network prefix used for derivation", async () => {
+    deriveAccountAddressMock.mockImplementation(
+      (input: { networkPrefix?: number }) => {
+        const prefix = input.networkPrefix === 369 ? "testu" : "n42u";
+        return {
+          accountId: `${prefix}SetupStableAccount1234567890`,
+          i105AccountId: `${prefix}SetupStableAccount1234567890`,
+          i105DefaultAccountId: "sorauSetupStableAccount1234567890",
+          publicKeyHex: "ab".repeat(32),
+          accountIdWarning: "",
+        };
+      },
+    );
+    const wrapper = mountView({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        networkPrefix: 42,
+      },
+    });
+    const session = useSessionStore();
+
+    await getButtonByText(wrapper, t("Generate pair")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "n42uSetupStableAccount1234567890",
+      privateKeyHex: "11".repeat(32),
+    });
+    expect(session.connection.networkPrefix).toBe(42);
+    expect(session.activeAccountId).toBe("n42uSetupStableAccount1234567890");
+    expect(session.activeAccount?.i105AccountId).toBe(
+      "n42uSetupStableAccount1234567890",
+    );
+  });
+
+  it("does not mutate the saved session when secure storage rejects an adversarial form-prefix change", async () => {
+    storeAccountSecretMock.mockRejectedValueOnce(
+      new Error("DPAPI protect denied"),
+    );
+    deriveAccountAddressMock.mockImplementation(
+      (input: { networkPrefix?: number }) => {
+        const prefix = input.networkPrefix === 369 ? "testu" : "n42u";
+        return {
+          accountId: `${prefix}DeniedSetupAccount1234567890`,
+          i105AccountId: `${prefix}DeniedSetupAccount1234567890`,
+          i105DefaultAccountId: "sorauDeniedSetupAccount1234567890",
+          publicKeyHex: "ab".repeat(32),
+          accountIdWarning: "",
+        };
+      },
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    await wrapper.find('input[type="number"]').setValue(42);
+
+    await getButtonByText(wrapper, t("Generate pair")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "n42uDeniedSetupAccount1234567890",
+      privateKeyHex: "11".repeat(32),
+    });
+    expect(session.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(session.activeAccount).toBeNull();
+    expect(wrapper.text()).toContain("DPAPI protect denied");
+  });
+
+  it("does not persist authority state when secure storage rejects the authority key", async () => {
+    storeAccountSecretMock.mockRejectedValueOnce(
+      new Error("authority DPAPI denied"),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    await flushPromises();
+    const authorityAccountInput = wrapper.findAll("input").at(-1);
+    const authorityPrivateKeyInput = wrapper.findAll("textarea").at(2);
+    if (!authorityAccountInput || !authorityPrivateKeyInput) {
+      throw new Error("Authority fields were not rendered");
+    }
+    await authorityAccountInput.setValue("testuAuthority");
+    await authorityPrivateKeyInput.setValue("22".repeat(32));
+
+    await getButtonByText(wrapper, t("Save authority")).trigger("click");
+    await flushPromises();
+
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "testuAuthority",
+      privateKeyHex: "22".repeat(32),
+    });
+    expect(session.authority.accountId).toBe("");
+    expect(session.authority.hasStoredSecret).toBe(false);
+    expect(wrapper.text()).toContain("authority DPAPI denied");
+  });
+
   it("uses a saved authority secret when registering an on-chain account", async () => {
     const wrapper = mountView({
       authority: {
@@ -227,5 +329,39 @@ describe("SetupView", () => {
         authorityPrivateKeyHex: undefined,
       }),
     );
+  });
+
+  it("does not sync adversarial form connection changes when on-chain registration fails", async () => {
+    registerAccountMock.mockRejectedValueOnce(new Error("Torii rejected"));
+    const wrapper = mountView({
+      authority: {
+        accountId: "testuAuthority",
+        privateKeyHex: "",
+        hasStoredSecret: true,
+      },
+      activeAccount: {
+        accountId:
+          "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
+        publicKeyHex: "ab".repeat(32),
+        hasStoredSecret: true,
+      },
+    });
+    const session = useSessionStore();
+    const originalActiveAccountId = session.activeAccountId;
+    await wrapper.find('input[type="number"]').setValue(42);
+
+    await getButtonByText(wrapper, t("Advanced")).trigger("click");
+    await flushPromises();
+    await getButtonByText(wrapper, t("Create on-chain account")).trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(registerAccountMock).toHaveBeenCalled();
+    expect(session.connection.networkPrefix).toBe(
+      TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    );
+    expect(session.activeAccountId).toBe(originalActiveAccountId);
+    expect(wrapper.text()).toContain("Torii rejected");
   });
 });

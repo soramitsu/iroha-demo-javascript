@@ -128,6 +128,9 @@
           {{ showAdvancedRegistration ? t("Hide advanced") : t("Advanced") }}
         </button>
       </div>
+      <p v-if="registerMessage && !showAdvancedRegistration" class="helper">
+        {{ registerMessage }}
+      </p>
     </section>
 
     <section v-if="showAdvancedRegistration" class="card setup-register-card">
@@ -359,12 +362,12 @@ const canRegister = computed(() =>
 
 const metadataSchema = z.record(z.any()).catch(() => ({}));
 
-const saveConnection = () => {
+const buildConnectionFromForm = (includeAssetDraft = false) => {
   const nextAssetDefinitionId =
-    assetDefinitionDraft.value.trim() ||
+    (includeAssetDraft ? assetDefinitionDraft.value.trim() : "") ||
     connectionForm.assetDefinitionId ||
     DEFAULT_CHAIN_PRESET.connection.assetDefinitionId;
-  const nextConnection = {
+  return {
     toriiUrl:
       connectionForm.toriiUrl || DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     chainId: connectionForm.chainId || DEFAULT_CHAIN_PRESET.connection.chainId,
@@ -373,6 +376,16 @@ const saveConnection = () => {
       DEFAULT_CHAIN_PRESET.connection.networkPrefix,
     assetDefinitionId: nextAssetDefinitionId,
   };
+};
+
+const syncConnectionFormToSession = () => {
+  const nextConnection = buildConnectionFromForm();
+  Object.assign(connectionForm, nextConnection);
+  session.updateConnection(nextConnection);
+};
+
+const saveConnection = () => {
+  const nextConnection = buildConnectionFromForm(true);
   Object.assign(connectionForm, nextConnection);
   assetDefinitionDraft.value = "";
   session.updateConnection(nextConnection);
@@ -391,12 +404,21 @@ const saveUser = async () => {
     );
     return;
   }
-  await storeAccountSecret({
-    accountId: userForm.accountId,
-    privateKeyHex: userForm.privateKeyHex,
-  });
+  try {
+    await storeAccountSecret({
+      accountId: userForm.accountId,
+      privateKeyHex: userForm.privateKeyHex,
+    });
+  } catch (error) {
+    registerMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+    return;
+  }
   userForm.privateKeyHex = "";
   userForm.hasStoredSecret = true;
+  syncConnectionFormToSession();
   session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
   session.persistState();
   registerMessage.value = t("Identity saved to secure storage.");
@@ -414,10 +436,18 @@ const saveAuthority = async () => {
     );
     return;
   }
-  await storeAccountSecret({
-    accountId: authorityForm.accountId,
-    privateKeyHex: authorityForm.privateKeyHex,
-  });
+  try {
+    await storeAccountSecret({
+      accountId: authorityForm.accountId,
+      privateKeyHex: authorityForm.privateKeyHex,
+    });
+  } catch (error) {
+    registerMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Secure OS-backed key storage is unavailable on this device."),
+    );
+    return;
+  }
   authorityForm.privateKeyHex = "";
   authorityForm.hasStoredSecret = true;
   session.updateAuthority({ ...authorityForm, privateKeyHex: "" });
@@ -502,6 +532,7 @@ const handleRegister = async () => {
       authorityAccountId: authorityForm.accountId,
       authorityPrivateKeyHex: authorityForm.privateKeyHex.trim() || undefined,
     });
+    syncConnectionFormToSession();
     session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
     session.persistState();
     registerMessage.value = appendTransactionFee(
