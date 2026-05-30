@@ -8,6 +8,13 @@ import {
   shouldGrantMediaPermission,
 } from "../electron/mediaPermissions";
 
+type TestMediaAccessStatus =
+  | "not-determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unknown";
+
 describe("Electron media permissions", () => {
   it("grants camera and microphone to the app renderer only", () => {
     expect(
@@ -157,6 +164,52 @@ describe("Electron media permissions", () => {
     expect(requestSystemMediaAccess).toHaveBeenCalledWith("microphone");
   });
 
+  it("requests macOS media permissions sequentially when not determined", async () => {
+    const order: string[] = [];
+    const requestSystemMediaAccess = vi.fn(async (kind: string) => {
+      order.push(`request:${kind}`);
+      return true;
+    });
+    const getSystemMediaAccessStatus = vi.fn(
+      (kind: string): TestMediaAccessStatus => {
+        order.push(`status:${kind}`);
+        return "not-determined";
+      },
+    );
+
+    await expect(
+      resolveSystemMediaPermission(
+        "media",
+        { mediaTypes: ["video", "audio"] },
+        requestSystemMediaAccess,
+        getSystemMediaAccessStatus,
+      ),
+    ).resolves.toBe(true);
+
+    expect(order).toEqual([
+      "status:camera",
+      "request:camera",
+      "status:microphone",
+      "request:microphone",
+    ]);
+  });
+
+  it("does not request a macOS prompt when media is already denied", async () => {
+    const requestSystemMediaAccess = vi.fn(async () => true);
+    const getSystemMediaAccessStatus = vi.fn(() => "denied" as const);
+
+    await expect(
+      resolveSystemMediaPermission(
+        "media",
+        { mediaTypes: ["video"] },
+        requestSystemMediaAccess,
+        getSystemMediaAccessStatus,
+      ),
+    ).resolves.toBe(false);
+
+    expect(requestSystemMediaAccess).not.toHaveBeenCalled();
+  });
+
   it("uses the macOS media permission result in the request handler", async () => {
     const setPermissionRequestHandler = vi.fn();
     const setPermissionCheckHandler = vi.fn();
@@ -180,6 +233,40 @@ describe("Electron media permissions", () => {
     });
     await vi.waitFor(() => expect(callback).toHaveBeenCalledWith(true));
     expect(requestSystemMediaAccess).toHaveBeenCalledWith("camera");
+  });
+
+  it("does not report macOS media as already granted before system consent", () => {
+    const setPermissionRequestHandler = vi.fn();
+    const setPermissionCheckHandler = vi.fn();
+    const requestSystemMediaAccess = vi.fn(async () => true);
+    let mediaAccessStatus: TestMediaAccessStatus = "not-determined";
+    const getSystemMediaAccessStatus = vi.fn(() => mediaAccessStatus);
+
+    registerMediaPermissionHandlers(
+      {
+        setPermissionRequestHandler,
+        setPermissionCheckHandler,
+      },
+      () => "http://localhost:5173",
+      requestSystemMediaAccess,
+      getSystemMediaAccessStatus,
+    );
+
+    const checkHandler = setPermissionCheckHandler.mock.calls[0]?.[0];
+    expect(
+      checkHandler(null, "media", "http://localhost:5173", {
+        isMainFrame: true,
+        mediaType: "video",
+      }),
+    ).toBe(false);
+
+    mediaAccessStatus = "granted";
+    expect(
+      checkHandler(null, "media", "http://localhost:5173", {
+        isMainFrame: true,
+        mediaType: "video",
+      }),
+    ).toBe(true);
   });
 
   it("denies renderer media when macOS media permission is denied", async () => {

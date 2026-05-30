@@ -56,6 +56,10 @@ const DEFAULT_PUZZLE_RETRY_DELAY_MS = 750;
 const PUZZLE_VRF_UNAVAILABLE_DETAIL = "faucet pow vrf seed unavailable";
 const NORITO_CONTENT_TYPE = "application/x-norito";
 const TAIRA_PUBLIC_HOST = "taira.sora.org";
+const MINAMOTO_PUBLIC_HOST = "minamoto.sora.org";
+const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const TAIRA_NETWORK_PREFIX = 369;
+const MINAMOTO_NETWORK_PREFIX = 753;
 const TAIRA_FAUCET_AUTHORITY =
   "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV";
 const TAIRA_FAUCET_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
@@ -65,6 +69,18 @@ const createAbortError = () => {
   const error = new Error("Faucet request canceled.");
   error.name = "AbortError";
   return error;
+};
+
+const normalizeFaucetNetworkPrefix = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed =
+    typeof value === "string" ? Number(value.trim()) : Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 0x3fff) {
+    return undefined;
+  }
+  return parsed;
 };
 
 const readAbortReason = (signal: AbortSignal) =>
@@ -180,15 +196,77 @@ const isKnownTairaPublicEndpoint = (baseUrl: string): boolean => {
   }
 };
 
+const isKnownMinamotoPublicEndpoint = (baseUrl: string): boolean => {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === MINAMOTO_PUBLIC_HOST;
+  } catch {
+    return false;
+  }
+};
+
 const isFaucetDisabledDetail = (detail: string): boolean =>
   /account faucet disabled|faucet disabled|account faucet is disabled/i.test(
     detail,
   );
 
 const buildFaucetDisabledMessage = (baseUrl: string): string =>
-  isKnownTairaPublicEndpoint(baseUrl)
-    ? "The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet."
-    : "This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.";
+  isKnownMinamotoPublicEndpoint(baseUrl)
+    ? "Minamoto mainnet must not expose a faucet. Switch Settings to the TAIRA testnet preset to request starter XOR."
+    : isKnownTairaPublicEndpoint(baseUrl)
+      ? "The TAIRA endpoint has its account faucet disabled. This is an endpoint/operator configuration problem, not a wallet problem; ask a TAIRA operator to enable the faucet."
+      : "This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.";
+
+const readFaucetPuzzleNetworkPrefix = (
+  puzzle: FaucetPowPuzzle,
+): number | undefined =>
+  normalizeFaucetNetworkPrefix(
+    puzzle.chain_discriminant ??
+      puzzle.chainDiscriminant ??
+      puzzle.network_prefix ??
+      puzzle.networkPrefix,
+  );
+
+const readFaucetPuzzleChainId = (puzzle: FaucetPowPuzzle): string =>
+  String(puzzle.chain_id ?? puzzle.chainId ?? "")
+    .trim()
+    .toLowerCase();
+
+const assertFaucetPuzzleMatchesConfiguredNetwork = (
+  baseUrl: string,
+  puzzle: FaucetPowPuzzle,
+  configuredNetworkPrefix?: number,
+) => {
+  if (isKnownMinamotoPublicEndpoint(baseUrl)) {
+    throw new Error(buildFaucetDisabledMessage(baseUrl));
+  }
+
+  const expectedNetworkPrefix = isKnownTairaPublicEndpoint(baseUrl)
+    ? TAIRA_NETWORK_PREFIX
+    : normalizeFaucetNetworkPrefix(configuredNetworkPrefix);
+  const expectedChainId = isKnownTairaPublicEndpoint(baseUrl)
+    ? TAIRA_CHAIN_ID
+    : "";
+  const actualNetworkPrefix = readFaucetPuzzleNetworkPrefix(puzzle);
+  const actualChainId = readFaucetPuzzleChainId(puzzle);
+  if (
+    expectedNetworkPrefix !== undefined &&
+    actualNetworkPrefix !== undefined &&
+    actualNetworkPrefix !== expectedNetworkPrefix
+  ) {
+    throw new Error(
+      `Faucet endpoint network prefix mismatch: expected ${expectedNetworkPrefix}, got ${actualNetworkPrefix}. TAIRA must use ${TAIRA_NETWORK_PREFIX} and Minamoto must use ${MINAMOTO_NETWORK_PREFIX}; redeploy the faucet endpoint with the correct chain profile before claiming.`,
+    );
+  }
+  if (
+    expectedChainId &&
+    actualChainId &&
+    actualChainId !== expectedChainId.toLowerCase()
+  ) {
+    throw new Error(
+      `Faucet endpoint chain id mismatch: expected ${expectedChainId}, got ${actualChainId}. TAIRA must use ${TAIRA_NETWORK_PREFIX} and Minamoto must not expose a faucet; redeploy the faucet endpoint with the correct chain profile before claiming.`,
+    );
+  }
+};
 
 const readKnownTairaFaucetBalance = async (
   baseUrl: string,
@@ -286,11 +364,6 @@ export const requestFaucetFundsWithPuzzle = async ({
   puzzleRetryDelayMs = DEFAULT_PUZZLE_RETRY_DELAY_MS,
   onStatus,
 }: RequestFaucetFundsWithPowInput): Promise<AccountFaucetResponse> => {
-  const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
-    accountId,
-    "accountId",
-    networkPrefix,
-  );
   const retryAttempts = Math.max(1, Math.trunc(puzzleRetryAttempts));
   const retryDelayMs = Math.max(0, Math.trunc(puzzleRetryDelayMs));
   let puzzleStatus = 0;
@@ -336,6 +409,12 @@ export const requestFaucetFundsWithPuzzle = async ({
 
     const puzzle = (await puzzleResponse.json()) as FaucetPowPuzzle;
     throwIfAborted(signal);
+    assertFaucetPuzzleMatchesConfiguredNetwork(baseUrl, puzzle, networkPrefix);
+    const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
+      accountId,
+      "accountId",
+      networkPrefix,
+    );
     const powPayload =
       puzzle.difficulty_bits > 0
         ? (await emitStatus(onStatus, {

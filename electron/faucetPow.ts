@@ -3,6 +3,12 @@ import { availableParallelism } from "os";
 
 export type FaucetPowPuzzle = {
   algorithm: string;
+  chain_id?: string | null;
+  chainId?: string | null;
+  chain_discriminant?: number | string | null;
+  chainDiscriminant?: number | string | null;
+  network_prefix?: number | string | null;
+  networkPrefix?: number | string | null;
   difficulty_bits: number;
   anchor_height: number;
   anchor_block_hash_hex: string;

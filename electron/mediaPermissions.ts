@@ -20,6 +20,15 @@ type SystemMediaAccessKind = "camera" | "microphone";
 type RequestSystemMediaAccess = (
   kind: SystemMediaAccessKind,
 ) => Promise<boolean>;
+type SystemMediaAccessStatus =
+  | "not-determined"
+  | "granted"
+  | "denied"
+  | "restricted"
+  | "unknown";
+type GetSystemMediaAccessStatus = (
+  kind: SystemMediaAccessKind,
+) => SystemMediaAccessStatus;
 
 type DisplayMediaRequest = {
   frame?: {
@@ -123,6 +132,7 @@ export const resolveSystemMediaPermission = async (
   permission: string,
   details?: MediaPermissionDetails,
   requestSystemMediaAccess?: RequestSystemMediaAccess,
+  getSystemMediaAccessStatus?: GetSystemMediaAccessStatus,
 ): Promise<boolean> => {
   if (permission !== "media" || !requestSystemMediaAccess) {
     return true;
@@ -131,12 +141,35 @@ export const resolveSystemMediaPermission = async (
   if (!accessKinds.length) {
     return false;
   }
-  const grants = await Promise.all(
-    accessKinds.map((kind) =>
-      requestSystemMediaAccess(kind).catch(() => false),
-    ),
+  for (const kind of accessKinds) {
+    const currentStatus = getSystemMediaAccessStatus?.(kind);
+    if (currentStatus === "granted") {
+      continue;
+    }
+    if (currentStatus === "denied" || currentStatus === "restricted") {
+      return false;
+    }
+    const granted = await requestSystemMediaAccess(kind).catch(() => false);
+    if (!granted) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const shouldReportSystemMediaPermissionGranted = (
+  permission: string,
+  details?: MediaPermissionDetails,
+  getSystemMediaAccessStatus?: GetSystemMediaAccessStatus,
+): boolean => {
+  if (permission !== "media" || !getSystemMediaAccessStatus) {
+    return true;
+  }
+  const accessKinds = getSystemMediaAccessKinds(details);
+  return (
+    accessKinds.length > 0 &&
+    accessKinds.every((kind) => getSystemMediaAccessStatus(kind) === "granted")
   );
-  return grants.every(Boolean);
 };
 
 export const registerMediaPermissionHandlers = (
@@ -147,6 +180,7 @@ export const registerMediaPermissionHandlers = (
   getRendererUrl: () => string | undefined = () =>
     process.env["ELECTRON_RENDERER_URL"],
   requestSystemMediaAccess?: RequestSystemMediaAccess,
+  getSystemMediaAccessStatus?: GetSystemMediaAccessStatus,
 ) => {
   electronSession.setPermissionRequestHandler(
     (_webContents, permission, callback, details) => {
@@ -163,17 +197,27 @@ export const registerMediaPermissionHandlers = (
         permission,
         details,
         requestSystemMediaAccess,
+        getSystemMediaAccessStatus,
       ).then(callback, () => callback(false));
     },
   );
   electronSession.setPermissionCheckHandler(
-    (_webContents, permission, requestingOrigin, details) =>
-      shouldGrantMediaPermission({
+    (_webContents, permission, requestingOrigin, details) => {
+      const rendererPermissionGranted = shouldGrantMediaPermission({
         permission,
         requestingOrigin,
         details,
         rendererUrl: getRendererUrl(),
-      }),
+      });
+      return (
+        rendererPermissionGranted &&
+        shouldReportSystemMediaPermissionGranted(
+          permission,
+          details,
+          getSystemMediaAccessStatus,
+        )
+      );
+    },
   );
 };
 

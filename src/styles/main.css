@@ -1670,6 +1670,78 @@ main {
   opacity: 0.82;
 }
 
+.workspace.kaigi-workspace {
+  background:
+    linear-gradient(145deg, var(--glass-veil), transparent 58%),
+    linear-gradient(120deg, rgba(255, 76, 102, 0.08), transparent 46%),
+    linear-gradient(155deg, rgba(94, 148, 255, 0.12), transparent 62%),
+    var(--menu-glass-strong);
+  border-color: var(--glass-border);
+  box-shadow:
+    0 28px 72px var(--gi-ambient),
+    inset 0 1px 0 var(--glass-highlight);
+}
+
+:root[data-theme="dark"] .workspace.kaigi-workspace {
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.07), transparent 56%),
+    linear-gradient(120deg, rgba(255, 76, 102, 0.11), transparent 48%),
+    linear-gradient(155deg, rgba(94, 148, 255, 0.11), transparent 64%),
+    rgba(12, 14, 22, 0.82);
+  border-color: var(--glass-border);
+  box-shadow:
+    0 28px 72px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.kaigi-workspace .workspace-header {
+  background:
+    linear-gradient(135deg, var(--menu-highlight), transparent 54%),
+    linear-gradient(120deg, rgba(255, 76, 102, 0.08), transparent 60%),
+    rgba(255, 255, 255, 0.02);
+  border-bottom-color: var(--panel-border);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.03);
+}
+
+:root[data-theme="dark"] .kaigi-workspace .workspace-header {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 54%),
+    linear-gradient(120deg, rgba(255, 76, 102, 0.09), transparent 60%),
+    rgba(255, 255, 255, 0.02);
+  border-bottom-color: var(--panel-border);
+}
+
+.kaigi-workspace .workspace-body::before {
+  background:
+    radial-gradient(
+      52% 44% at 18% 12%,
+      rgba(255, 76, 102, 0.16),
+      transparent 66%
+    ),
+    radial-gradient(
+      50% 42% at 82% 8%,
+      rgba(94, 148, 255, 0.16),
+      transparent 68%
+    );
+  filter: blur(36px);
+  opacity: 0.78;
+}
+
+:root[data-theme="dark"] .kaigi-workspace .workspace-body::before {
+  background:
+    radial-gradient(
+      52% 44% at 18% 12%,
+      rgba(255, 76, 102, 0.13),
+      transparent 66%
+    ),
+    radial-gradient(
+      50% 42% at 82% 8%,
+      rgba(94, 148, 255, 0.13),
+      transparent 68%
+    );
+  opacity: 0.86;
+}
+
 .workspace-body > * {
   position: relative;
   z-index: 1;

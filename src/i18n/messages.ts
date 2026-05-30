@@ -1478,7 +1478,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Local media is ready. Using {camera}.":
     "Local media is ready. Using {camera}.",
   "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.":
-    "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.",
+    "Camera or microphone permission was denied. If no prompt appears, grant Camera and Microphone for this app in System Settings, then restart the app and retry.",
   "Selected camera or microphone is unavailable. Choose another device.":
     "Selected camera or microphone is unavailable. Choose another device.",
   "Explorer QR": "Explorer QR",

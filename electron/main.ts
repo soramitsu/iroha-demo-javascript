@@ -28,6 +28,10 @@ const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
 const requestSystemMediaAccess = isMac
   ? (kind: "camera" | "microphone") => systemPreferences.askForMediaAccess(kind)
   : undefined;
+const getSystemMediaAccessStatus = isMac
+  ? (kind: "camera" | "microphone") =>
+      systemPreferences.getMediaAccessStatus(kind)
+  : undefined;
 let mainWindow: BrowserWindow | null = null;
 let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
   process.argv,
@@ -202,6 +206,7 @@ app.whenReady().then(() => {
     session.defaultSession,
     () => process.env["ELECTRON_RENDERER_URL"],
     requestSystemMediaAccess,
+    getSystemMediaAccessStatus,
   );
   registerDisplayMediaRequestHandler(session.defaultSession, () =>
     desktopCapturer.getSources({ types: ["screen", "window"] }),

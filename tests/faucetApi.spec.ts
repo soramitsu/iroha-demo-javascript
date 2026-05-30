@@ -119,6 +119,75 @@ describe("faucetApi", () => {
     expect(result.tx_hash_hex).toBe("0xabc");
   });
 
+  it("rejects TAIRA faucet puzzle metadata that advertises the wrong network", async () => {
+    const puzzle = {
+      ...basePuzzle,
+      chain_discriminant: 753,
+    };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(JSON.stringify(puzzle), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+        },
+      }),
+    );
+    const solvePuzzle = vi.fn().mockResolvedValue({
+      anchorHeight: puzzle.anchor_height,
+      nonceHex: "0000000000000007",
+      attempts: 3,
+    });
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://taira.sora.org",
+        accountId: testnetAccountId,
+        networkPrefix: 369,
+        fetchImpl,
+        solvePuzzle,
+      }),
+    ).rejects.toThrow(
+      "Faucet endpoint network prefix mismatch: expected 369, got 753.",
+    );
+    expect(solvePuzzle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks Minamoto faucet use even if the endpoint exposes a puzzle", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ...basePuzzle,
+          chain_id: "00000000-0000-0000-0000-000000000000",
+          chain_discriminant: 753,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      ),
+    );
+    const solvePuzzle = vi.fn().mockResolvedValue({
+      anchorHeight: basePuzzle.anchor_height,
+      nonceHex: "0000000000000008",
+      attempts: 1,
+    });
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://minamoto.sora.org",
+        accountId: soraAccountId,
+        networkPrefix: 753,
+        fetchImpl,
+        solvePuzzle,
+      }),
+    ).rejects.toThrow("Minamoto mainnet must not expose a faucet.");
+    expect(solvePuzzle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("reports faucet progress while retrying, solving, and submitting", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()
@@ -561,7 +630,7 @@ describe("faucetApi", () => {
         fetchImpl,
       }),
     ).rejects.toThrow(
-      "Faucet puzzle failed (403): This endpoint does not provide starter funds. Minamoto mainnet has no faucet; switch Settings to the TAIRA testnet preset or use an already-funded account.",
+      "Faucet puzzle failed (403): Minamoto mainnet must not expose a faucet. Switch Settings to the TAIRA testnet preset to request starter XOR.",
     );
   });
 

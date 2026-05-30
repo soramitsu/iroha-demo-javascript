@@ -606,7 +606,7 @@ describe("KaigiView", () => {
       "Allow Camera and Microphone for this app in System Settings, then retry.",
     );
     expect(wrapper.text()).toContain(
-      "Camera or microphone permission was denied. Allow Camera and Microphone for this app in System Settings, then retry.",
+      "Camera or microphone permission was denied. If no prompt appears, grant Camera and Microphone for this app in System Settings, then restart the app and retry.",
     );
   });
 
