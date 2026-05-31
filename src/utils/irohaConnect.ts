@@ -1,3 +1,8 @@
+import {
+  buildConnectTokenProtocol as buildConnectTokenProtocolBase,
+  buildConnectWebSocketUrl as buildConnectWebSocketUrlBase,
+} from "@iroha/iroha-js/connect-browser";
+
 export type IrohaConnectRole = "app" | "wallet";
 export type IrohaConnectFrameDirection = "app-to-wallet" | "wallet-to-app";
 
@@ -63,7 +68,6 @@ export type DecodedIrohaConnectFrame =
 const CONNECT_PROTOCOLS = new Set(["iroha:", "irohaconnect:"]);
 const CONNECT_HOST = "connect";
 const CONNECT_LAUNCH_PROTOCOL = "irohaconnect:";
-const CONNECT_TOKEN_PROTOCOL_PREFIX = "iroha-connect.token.v1.";
 const CONNECT_FIXED_KEY_LENGTH = 32;
 const CONNECT_ED25519_SIGNATURE_LENGTH = 64;
 const CONNECT_FRAME_KIND_CIPHERTEXT = 1;
@@ -133,17 +137,6 @@ const randomBytes = (length: number) => {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
   return bytes;
-};
-
-const base64UrlEncodeUtf8 = (value: string) => {
-  let binary = "";
-  for (const byte of textEncoder.encode(value)) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/u, "");
 };
 
 const decodeSidBytes = (sid: string | Uint8Array) => {
@@ -331,7 +324,7 @@ export const buildIrohaConnectTokenProtocol = (token: string) => {
   if (!normalized) {
     throw new Error("IrohaConnect token is missing.");
   }
-  return `${CONNECT_TOKEN_PROTOCOL_PREFIX}${base64UrlEncodeUtf8(normalized)}`;
+  return buildConnectTokenProtocolBase(normalized);
 };
 
 export const buildIrohaConnectWebSocketUrl = (
@@ -339,15 +332,7 @@ export const buildIrohaConnectWebSocketUrl = (
   fallbackToriiUrl: string,
 ) => {
   const baseUrl = (session.node || fallbackToriiUrl).replace(/\/+$/u, "");
-  const url = new URL("/v1/connect/ws", `${baseUrl}/`);
-  if (url.protocol === "https:") {
-    url.protocol = "wss:";
-  } else if (url.protocol === "http:") {
-    url.protocol = "ws:";
-  }
-  url.searchParams.set("sid", session.sid);
-  url.searchParams.set("role", "wallet");
-  return url.toString();
+  return buildConnectWebSocketUrlBase(baseUrl, session.sid, "wallet");
 };
 
 export const encodeIrohaConnectApproveFrame = (
