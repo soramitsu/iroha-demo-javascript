@@ -4,7 +4,11 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AccountAddress, publicKeyFromPrivate, encodeI105AccountAddress } from "@iroha/iroha-js";
+import {
+  AccountAddress,
+  publicKeyFromPrivate,
+  encodeI105AccountAddress,
+} from "@iroha/iroha-js";
 import { _electron as electron, chromium } from "playwright";
 import QRCode from "qrcode";
 
@@ -16,12 +20,18 @@ const outputDir = join(projectRoot, "output", "e2e");
 const walletQrPath = join(outputDir, "soraswap-connect-wallet-qr.png");
 const walletScreenshotPath = join(outputDir, "soraswap-wallet-final.png");
 const dappScreenshotPath = join(outputDir, "soraswap-dapp-final.png");
-const testnetClientConfig = join(soraswapRoot, "config", "testnet", "taira.client.toml");
+const testnetClientConfig = join(
+  soraswapRoot,
+  "config",
+  "testnet",
+  "taira.client.toml",
+);
 
 const toriiUrl = "https://taira.sora.org";
 const chainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const networkPrefix = 369;
-const dappUrl = process.env.SORASWAP_UI_URL || "https://test.soraswap.org/#/launchpad";
+const dappUrl =
+  process.env.SORASWAP_UI_URL || "https://test.soraswap.org/#/launchpad";
 const safariUserAgent =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15";
 
@@ -69,7 +79,9 @@ const loadFundedTairaWallet = async () => {
     .toString("hex")
     .toUpperCase();
   if (publicKeyHex !== configuredPublicKeyHex) {
-    throw new Error("TAIRA client private key does not match configured public key.");
+    throw new Error(
+      "TAIRA client private key does not match configured public key.",
+    );
   }
   const address = AccountAddress.fromAccount({
     publicKey: Buffer.from(publicKeyHex, "hex"),
@@ -90,16 +102,24 @@ const loadFundedTairaWallet = async () => {
 };
 
 const assertFundedAssets = async (accountId) => {
-  const url = new URL(`/v1/accounts/${encodeURIComponent(accountId)}/assets`, `${toriiUrl}/`);
+  const url = new URL(
+    `/v1/accounts/${encodeURIComponent(accountId)}/assets`,
+    `${toriiUrl}/`,
+  );
   url.searchParams.set("limit", "100");
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`Unable to read TAIRA assets for E2E wallet: ${response.status} ${response.statusText}`);
+    throw new Error(
+      `Unable to read TAIRA assets for E2E wallet: ${response.status} ${response.statusText}`,
+    );
   }
   const payload = await response.json();
   const items = Array.isArray(payload.items) ? payload.items : [];
   const byAlias = new Map(
-    items.map((item) => [String(item.asset_alias ?? item.asset_name ?? "").toLowerCase(), item]),
+    items.map((item) => [
+      String(item.asset_alias ?? item.asset_name ?? "").toLowerCase(),
+      item,
+    ]),
   );
   for (const alias of ["n3x#soraswap.universal", "usdt#soraswap.universal"]) {
     const item = byAlias.get(alias);
@@ -115,8 +135,7 @@ const waitForWalletBridge = async (page) => {
   await page.waitForFunction(
     () =>
       Boolean(
-        window.iroha?.deriveAccountAddress &&
-          window.iroha?.storeAccountSecret,
+        window.iroha?.deriveAccountAddress && window.iroha?.storeAccountSecret,
       ),
     undefined,
     { timeout: 45_000 },
@@ -181,9 +200,12 @@ const approveWalletConnection = async (walletPage) => {
   const modalHeading = walletPage.getByRole("heading", {
     name: "Approve connection?",
   });
-  const errorMessage = walletPage.getByText("IrohaConnect relay connection failed.", {
-    exact: true,
-  });
+  const errorMessage = walletPage.getByText(
+    "IrohaConnect relay connection failed.",
+    {
+      exact: true,
+    },
+  );
   const result = await Promise.race([
     modalHeading
       .waitFor({ state: "hidden", timeout: 45_000 })
@@ -209,14 +231,19 @@ const approveWalletSignature = async (walletPage, label) => {
 };
 
 const pairWallet = async (dappPage, walletPage) => {
-  await dappPage.getByRole("button", { name: /^Connect$/ }).first().click();
+  await dappPage
+    .getByRole("button", { name: /^Connect$/ })
+    .first()
+    .click();
   const qr = dappPage.getByAltText("IrohaConnect wallet QR");
   await qr.waitFor({ state: "visible", timeout: 45_000 });
   let walletHref = await dappPage
     .getByRole("link", { name: /Open wallet link/i })
     .getAttribute("href");
   if (!walletHref || !new URL(walletHref).searchParams.get("token")) {
-    throw new Error("SoraSwap Connect wallet link did not include a wallet token.");
+    throw new Error(
+      "SoraSwap Connect wallet link did not include a wallet token.",
+    );
   }
   await dappPage.waitForTimeout(1500);
   walletHref = await dappPage
@@ -228,8 +255,8 @@ const pairWallet = async (dappPage, walletPage) => {
   console.log(`Connect sid: ${new URL(walletHref).searchParams.get("sid")}`);
   await QRCode.toFile(walletQrPath, walletHref, {
     errorCorrectionLevel: "M",
-    margin: 1,
-    width: 360,
+    margin: 4,
+    width: 720,
     color: {
       dark: "#000000",
       light: "#ffffff",
@@ -262,7 +289,6 @@ const waitForSuccessNotice = async (locator, label) => {
 };
 
 const runPreparedSubmit = async ({
-  dappPage,
   walletPage,
   label,
   prepareButton,
@@ -299,7 +325,11 @@ const createLaunchpadTokenSale = async (dappPage, walletPage, wallet) => {
   await fillInputByLabel(dappPage, "Sale id", saleId);
   await dappPage.getByLabel("Create sale token", { exact: true }).check();
   await fillInputByLabel(dappPage, "Token handle", tokenHandle);
-  await fillInputByLabel(dappPage, "Payment asset id or alias", "usdt#soraswap.universal");
+  await fillInputByLabel(
+    dappPage,
+    "Payment asset id or alias",
+    "usdt#soraswap.universal",
+  );
   await fillInputByLabel(dappPage, "Treasury account", wallet.accountId);
   await fillInputByLabel(dappPage, "Initial supply", "1000");
   await fillInputByLabel(dappPage, "Claim inventory", "500");
@@ -335,7 +365,9 @@ const runLiquidity = async (dappPage, walletPage) => {
   });
   const liquiditySection = dappPage
     .locator("section")
-    .filter({ has: dappPage.getByRole("heading", { name: "Add DLMM position" }) })
+    .filter({
+      has: dappPage.getByRole("heading", { name: "Add DLMM position" }),
+    })
     .first();
   const inputs = liquiditySection.locator("input");
   await inputs.nth(0).fill(`ui_lp_${Date.now().toString(36)}`);
@@ -360,7 +392,9 @@ const runLiquidity = async (dappPage, walletPage) => {
     dappPage,
     walletPage,
     label: "DLMM liquidity",
-    prepareButton: liquiditySection.getByRole("button", { name: "Prepare liquidity" }),
+    prepareButton: liquiditySection.getByRole("button", {
+      name: "Prepare liquidity",
+    }),
     submitButton: liquiditySection.getByRole("button", {
       name: "Sign and submit liquidity",
     }),
@@ -378,20 +412,26 @@ const runSwap = async (dappPage, walletPage) => {
     label: "spot swap",
     prepareButton: dappPage.getByRole("button", { name: "Prepare trade" }),
     submitButton: dappPage.getByRole("button", { name: "Sign and submit" }),
-    successNotice: dappPage.locator(".trade-sidebar .notice.is-success").filter({
-      hasText: /Pipeline confirmation reached/i,
-    }),
+    successNotice: dappPage
+      .locator(".trade-sidebar .notice.is-success")
+      .filter({
+        hasText: /Pipeline confirmation reached/i,
+      }),
   });
 };
 
 const main = async () => {
   if (!existsSync(mainEntry)) {
-    throw new Error(`Built Electron entrypoint not found: ${mainEntry}. Run npm run build first.`);
+    throw new Error(
+      `Built Electron entrypoint not found: ${mainEntry}. Run npm run build first.`,
+    );
   }
   await mkdir(outputDir, { recursive: true });
   const wallet = await loadFundedTairaWallet();
   const assets = await assertFundedAssets(wallet.accountId);
-  console.log(`Using TAIRA wallet ${wallet.accountId} with ${assets.length} visible assets.`);
+  console.log(
+    `Using TAIRA wallet ${wallet.accountId} with ${assets.length} visible assets.`,
+  );
 
   let walletApp;
   let browser;
@@ -437,7 +477,11 @@ const main = async () => {
       .waitFor({ state: "visible", timeout: 60_000 });
     await pairWallet(dappPage, walletPage);
 
-    const launchpad = await createLaunchpadTokenSale(dappPage, walletPage, wallet);
+    const launchpad = await createLaunchpadTokenSale(
+      dappPage,
+      walletPage,
+      wallet,
+    );
     await runLiquidity(dappPage, walletPage);
     await runSwap(dappPage, walletPage);
 
@@ -461,12 +505,18 @@ const main = async () => {
   } catch (error) {
     if (walletPage) {
       await walletPage
-        .screenshot({ path: join(outputDir, "soraswap-wallet-failure.png"), fullPage: true })
+        .screenshot({
+          path: join(outputDir, "soraswap-wallet-failure.png"),
+          fullPage: true,
+        })
         .catch(() => {});
     }
     if (dappPage) {
       await dappPage
-        .screenshot({ path: join(outputDir, "soraswap-dapp-failure.png"), fullPage: true })
+        .screenshot({
+          path: join(outputDir, "soraswap-dapp-failure.png"),
+          fullPage: true,
+        })
         .catch(() => {});
     }
     throw error;

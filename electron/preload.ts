@@ -4808,12 +4808,12 @@ const routeUnavailableTargetMessage = (error: unknown) => {
 const isRouteUnavailableError = (error: unknown) =>
   ROUTE_UNAVAILABLE_PATTERN.test(routeUnavailableErrorText(error));
 
-const isPipelineRouteUnavailableError = (error: unknown) => {
+const isPipelineSubmitFallbackError = (error: unknown) => {
   if (!isPlainRecord(error)) {
     return false;
   }
   const status = Number(error.status);
-  return status === 503 && isRouteUnavailableError(error);
+  return status === 405 || (status === 503 && isRouteUnavailableError(error));
 };
 
 const submitSignedTransactionViaPublicRoute = async (
@@ -4851,7 +4851,7 @@ const submitSignedTransactionAsVersioned = async (
   try {
     submission = await client.submitTransaction(signedTransactionBuffer);
   } catch (error) {
-    if (!isPipelineRouteUnavailableError(error)) {
+    if (!isPipelineSubmitFallbackError(error)) {
       throw error;
     }
     try {

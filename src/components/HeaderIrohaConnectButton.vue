@@ -262,8 +262,11 @@ let scannedConnectSocket: WebSocket | null = null;
 let scannedConnectSequence = 0;
 let scannedConnectKeys: { appKey: Uint8Array; walletKey: Uint8Array } | null =
   null;
-let scannedWalletKeyPair: { privateKeyHex: string; publicKeyHex: string } | null =
-  null;
+let scannedWalletKeyPair: {
+  privateKeyHex: string;
+  publicKeyHex: string;
+} | null = null;
+let scannedConnectApprovedAccountId = "";
 
 interface IrohaConnectDetail {
   label: string;
@@ -298,6 +301,7 @@ type PendingConnectRequest =
       kind: "privateTradeProof";
       socket: WebSocket;
       parsed: ParsedIrohaConnectUri;
+      approvedAccountId: string;
       request: UranaiPrivateTradeProofRequest;
       label: string;
       title: string;
@@ -308,6 +312,7 @@ type PendingConnectRequest =
       kind: "contractSignature";
       socket: WebSocket;
       parsed: ParsedIrohaConnectUri;
+      approvedAccountId: string;
       request: UranaiContractCallSignRequest;
       label: string;
       title: string;
@@ -414,6 +419,7 @@ const decodedSigningMessagePreview = (signingMessageB64: string) => {
 const buildPrivateProofDetails = (
   parsed: ParsedIrohaConnectUri,
   request: UranaiPrivateTradeProofRequest,
+  approvedAccountId: string,
 ): IrohaConnectDetail[] => [
   { label: t("Request ID"), value: request.requestId, monospace: true },
   {
@@ -423,7 +429,7 @@ const buildPrivateProofDetails = (
   },
   {
     label: t("Active account"),
-    value: activeConnectAccountId.value || t("No active wallet"),
+    value: approvedAccountId || t("No active wallet"),
     monospace: true,
   },
   {
@@ -455,6 +461,7 @@ const buildPrivateProofDetails = (
 const buildContractSignDetails = (
   parsed: ParsedIrohaConnectUri,
   request: UranaiContractCallSignRequest,
+  approvedAccountId: string,
 ): IrohaConnectDetail[] => {
   const signingPreview = decodedSigningMessagePreview(
     request.signingMessageB64,
@@ -468,7 +475,7 @@ const buildContractSignDetails = (
     },
     {
       label: t("Active account"),
-      value: activeConnectAccountId.value || t("No active wallet"),
+      value: approvedAccountId || t("No active wallet"),
       monospace: true,
     },
     {
@@ -514,6 +521,7 @@ const closeScannedConnectSocket = () => {
   scannedConnectSequence = 0;
   scannedConnectKeys = null;
   scannedWalletKeyPair = null;
+  scannedConnectApprovedAccountId = "";
   pendingConnectRequest.value = null;
   pendingRequestLoading.value = false;
   pendingRequestError.value = "";
@@ -655,6 +663,7 @@ const queuePrivateTradeProofRequest = (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   request: UranaiPrivateTradeProofRequest,
+  approvedAccountId: string,
 ) => {
   if (pendingConnectRequest.value) {
     rejectProofRequest(
@@ -670,11 +679,12 @@ const queuePrivateTradeProofRequest = (
     kind: "privateTradeProof",
     socket,
     parsed,
+    approvedAccountId,
     request,
     label: t("IrohaConnect transaction"),
     title: t("Approve private proof?"),
     approveLabel: t("Approve proof"),
-    details: buildPrivateProofDetails(parsed, request),
+    details: buildPrivateProofDetails(parsed, request, approvedAccountId),
   };
   connectApprovalStatus.value = t("Waiting for your approval...");
 };
@@ -683,6 +693,7 @@ const queueContractCallSignRequest = (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   request: UranaiContractCallSignRequest,
+  approvedAccountId: string,
 ) => {
   if (pendingConnectRequest.value) {
     rejectSignRequest(
@@ -698,11 +709,12 @@ const queueContractCallSignRequest = (
     kind: "contractSignature",
     socket,
     parsed,
+    approvedAccountId,
     request,
     label: t("IrohaConnect transaction"),
     title: t("Approve transaction signature?"),
     approveLabel: t("Approve and sign"),
-    details: buildContractSignDetails(parsed, request),
+    details: buildContractSignDetails(parsed, request, approvedAccountId),
   };
   connectApprovalStatus.value = t("Waiting for your approval...");
 };
@@ -711,8 +723,8 @@ const handlePrivateTradeProofRequest = async (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   request: UranaiPrivateTradeProofRequest,
+  accountId: string,
 ) => {
-  const accountId = activeConnectAccountId.value;
   if (!accountId) {
     rejectProofRequest(
       socket,
@@ -762,8 +774,8 @@ const handleContractCallSignRequest = async (
   socket: WebSocket,
   parsed: ParsedIrohaConnectUri,
   request: UranaiContractCallSignRequest,
+  accountId: string,
 ) => {
-  const accountId = activeConnectAccountId.value;
   if (!accountId) {
     rejectSignRequest(
       socket,
@@ -812,10 +824,12 @@ const approveOpenConnectFrame = async (
   appPublicKeyHex: string,
   permissions: ConnectPermissions | null,
 ) => {
-  const accountId = activeConnectAccountId.value;
+  const accountId =
+    scannedConnectApprovedAccountId || activeConnectAccountId.value;
   if (!accountId) {
     throw new Error("Choose an active wallet before approving IrohaConnect.");
   }
+  scannedConnectApprovedAccountId = accountId;
   scannedWalletKeyPair = generateWalletConnectKeyPair();
   scannedConnectKeys = deriveWalletConnectDirectionKeys({
     sid: parsed.sid,
@@ -874,17 +888,49 @@ const handleEncryptedConnectEnvelope = (
   ) {
     return;
   }
+  const approvedAccountId = scannedConnectApprovedAccountId;
+  if (envelope.payload.type === "sign_request_raw") {
+    const payloadBytes = decodeBase64Bytes(envelope.payload.bytesBase64);
+    const privateProofRequest = parsePrivateTradeProofRequest(payloadBytes);
+    if (privateProofRequest) {
+      queuePrivateTradeProofRequest(
+        socket,
+        parsed,
+        privateProofRequest,
+        approvedAccountId,
+      );
+      return;
+    }
+    const contractSignRequest = parseContractCallSignRequest(payloadBytes);
+    if (contractSignRequest) {
+      queueContractCallSignRequest(
+        socket,
+        parsed,
+        {
+          ...contractSignRequest,
+          accountId: contractSignRequest.accountId || approvedAccountId,
+        },
+        approvedAccountId,
+      );
+      return;
+    }
+  }
   const signingMessageB64 =
     envelope.payload.type === "sign_request_raw"
       ? envelope.payload.bytesBase64
       : envelope.payload.txBytesBase64;
-  queueContractCallSignRequest(socket, parsed, {
-    schema: CONTRACT_CALL_SIGN_SCHEMA,
-    kind: "contract_call_signature_request",
-    requestId: `connect_${frame.seq}`,
-    accountId: activeConnectAccountId.value,
-    signingMessageB64,
-  });
+  queueContractCallSignRequest(
+    socket,
+    parsed,
+    {
+      schema: CONTRACT_CALL_SIGN_SCHEMA,
+      kind: "contract_call_signature_request",
+      requestId: `connect_${frame.seq}`,
+      accountId: approvedAccountId,
+      signingMessageB64,
+    },
+    approvedAccountId,
+  );
 };
 
 const handleScannedConnectMessage = async (
@@ -934,13 +980,15 @@ const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
   closeScannedConnectSocket();
 
   try {
-    const accountId = getPublicAccountId(
-      session.activeAccount,
-      session.connection.networkPrefix,
-    );
+    const accountId =
+      getPublicAccountId(
+        session.activeAccount,
+        session.connection.networkPrefix,
+      ) || "";
+    scannedConnectApprovedAccountId = accountId;
     const approval = buildIrohaConnectApprovalRequest({
       session: parsed,
-      accountId: accountId ?? "",
+      accountId,
       fallbackToriiUrl: session.connection.toriiUrl,
     });
     const socket = new WebSocket(approval.url, approval.protocols);
@@ -993,12 +1041,14 @@ const approvePendingConnectRequest = async () => {
         pending.socket,
         pending.parsed,
         pending.request,
+        pending.approvedAccountId,
       );
     } else {
       await handleContractCallSignRequest(
         pending.socket,
         pending.parsed,
         pending.request,
+        pending.approvedAccountId,
       );
     }
     pendingConnectRequest.value = null;

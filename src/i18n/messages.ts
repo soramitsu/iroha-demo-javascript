@@ -1094,6 +1094,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "IrohaConnect transaction": "IrohaConnect transaction",
   "Approve private proof?": "Approve private proof?",
   "Approve proof": "Approve proof",
+  "Waiting for wallet request...": "Waiting for wallet request...",
   "Waiting for your approval...": "Waiting for your approval...",
   "Approve transaction signature?": "Approve transaction signature?",
   "Approve and sign": "Approve and sign",

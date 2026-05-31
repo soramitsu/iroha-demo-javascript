@@ -227,11 +227,11 @@ const encodeOption = <T>(value: T | null | undefined, encodeItem: (value: T) => 
   return concatBytes(Uint8Array.of(1), encodeU64(payload.length), payload);
 };
 
-const encodeFixedBytes = (bytes: Uint8Array, length: number, label: string) => {
+const encodeByteArray = (bytes: Uint8Array, length: number, label: string) => {
   if (bytes.length !== length) {
     throw new RangeError(`${label} must be ${length} bytes`);
   }
-  return new Uint8Array(bytes);
+  return concatBytes(...Array.from(bytes, (value) => encodeField(Uint8Array.of(value))));
 };
 
 const hexCharCode = (value: number) => (value < 10 ? 48 + value : 87 + value);
@@ -386,7 +386,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
   switch (payload.type) {
     case 'open': {
       const body = encodeStruct([
-        encodeFixedBytes(hexToBytes(payload.appPublicKeyHex), 32, 'open.app_pk'),
+        encodeByteArray(hexToBytes(payload.appPublicKeyHex), 32, 'open.app_pk'),
         encodeOption(
           payload.appMeta,
           (appMeta) => encodeAppMetaPayload(appMeta.name, appMeta.url, appMeta.iconHash)
@@ -398,7 +398,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
     }
     case 'approve': {
       const body = encodeStruct([
-        encodeFixedBytes(hexToBytes(payload.walletPublicKeyHex), 32, 'approve.wallet_pk'),
+        encodeByteArray(hexToBytes(payload.walletPublicKeyHex), 32, 'approve.wallet_pk'),
         encodeString(payload.accountId),
         encodeOption(payload.permissions, encodePermissionsPayload),
         encodeOption(payload.proof, encodeSignInProofPayload),
@@ -440,7 +440,7 @@ export const encodeControlConnectFrame = (input: {
 }) => {
   const controlPayload = encodeControlPayload(input.control);
   return encodeStruct([
-    encodeFixedBytes(base64UrlToBytes(input.sid), 32, 'frame.sid'),
+    encodeByteArray(base64UrlToBytes(input.sid), 32, 'frame.sid'),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(0), encodeU64(controlPayload.length), controlPayload)
@@ -1166,7 +1166,7 @@ export const encodeCiphertextConnectFrame = (input: {
     encodeByteVec(input.aead)
   ]);
   return encodeStruct([
-    encodeFixedBytes(base64UrlToBytes(input.sid), 32, 'frame.sid'),
+    encodeByteArray(base64UrlToBytes(input.sid), 32, 'frame.sid'),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(1), encodeU64(ciphertextBody.length), ciphertextBody)

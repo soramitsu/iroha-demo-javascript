@@ -5,15 +5,22 @@ import HeaderIrohaConnectButton from "@/components/HeaderIrohaConnectButton.vue"
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
+import { buildIrohaConnectTokenProtocol } from "@/utils/irohaConnect";
 import {
-  buildIrohaConnectTokenProtocol,
-  decodeIrohaConnectFrame,
-  encodeIrohaConnectCiphertextFrame,
-} from "@/utils/irohaConnect";
+  decodeConnectFrame,
+  decryptConnectEnvelope,
+  deriveConnectDirectionKeys,
+  encodeCiphertextConnectFrame,
+  encodeControlConnectFrame,
+  encryptConnectEnvelope,
+  generateWalletConnectKeyPair,
+  hexToBytes,
+} from "@/utils/soraswapConnectWire";
 
 const CONTRACT_CALL_SIGN_SCHEMA =
   "uranai.irohaconnect.contract-call-signature.v1";
 const EXAMPLE_ACCOUNT_ID = "testu1connected";
+const SECOND_ACCOUNT_ID = "testu1switched";
 const VALID_CONNECT_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
   "base64url",
 );
@@ -124,7 +131,7 @@ describe("HeaderIrohaConnectButton", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     signIrohaConnectMessageMock.mockReset().mockResolvedValue({
       publicKeyHex: "ab".repeat(32),
-      signatureB64: "signature",
+      signatureB64: Buffer.from("signature").toString("base64"),
     });
     buildUranaiPrivateTradeProofMock.mockReset();
     setActivePinia(createPinia());
@@ -179,9 +186,79 @@ describe("HeaderIrohaConnectButton", () => {
     return button;
   };
 
+  const emitBinaryMessage = (socket: FakeWebSocket, bytes: Uint8Array) => {
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength,
+        ),
+      }),
+    );
+  };
+
+  const encodeContractSignRequestFrame = (
+    appKey: Uint8Array,
+    input: {
+      sequence?: number;
+      requestId: string;
+      accountId?: string;
+      signingMessageB64: string;
+    },
+  ) => {
+    const sequence = input.sequence ?? 2;
+    const payload = JSON.stringify({
+      schema: CONTRACT_CALL_SIGN_SCHEMA,
+      kind: "contract_call_signature_request",
+      requestId: input.requestId,
+      accountId: input.accountId,
+      signingMessageB64: input.signingMessageB64,
+    });
+    const bytes = Buffer.from(payload, "utf8");
+    const aead = encryptConnectEnvelope(
+      appKey,
+      VALID_CONNECT_SID,
+      "app_to_wallet",
+      sequence,
+      {
+        type: "sign_request_raw",
+        domainTag: "uranai.irohaconnect.contract-call-signature",
+        bytesHex: bytes.toString("hex"),
+        bytesBase64: bytes.toString("base64"),
+        bytesLength: bytes.length,
+      },
+    );
+    return encodeCiphertextConnectFrame({
+      sid: VALID_CONNECT_SID,
+      direction: "app_to_wallet",
+      seq: sequence,
+      aead,
+    });
+  };
+
+  const decodeLatestWalletEnvelope = (
+    socket: FakeWebSocket,
+    walletKey: Uint8Array,
+  ) => {
+    const responseFrame = decodeConnectFrame(socket.sent.at(-1) as Uint8Array);
+    expect(responseFrame.kind).toBe("ciphertext");
+    if (!responseFrame.ciphertext) {
+      throw new Error("Expected response ciphertext frame.");
+    }
+    return decryptConnectEnvelope(
+      walletKey,
+      VALID_CONNECT_SID,
+      responseFrame.direction,
+      responseFrame.seq,
+      hexToBytes(responseFrame.ciphertext.aeadHex),
+    );
+  };
+
   const approveConnection = async (wrapper: ReturnType<typeof mount>) => {
     const relayNode = "https://relay.example";
     const walletToken = "wallet-token-1";
+    const appKeyPair = generateWalletConnectKeyPair();
     await scanConnectQr(
       `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=chain-a&node=${encodeURIComponent(
         relayNode,
@@ -202,43 +279,78 @@ describe("HeaderIrohaConnectButton", () => {
     ]);
     socket.emit("open");
     await flushPromises();
+    expect(socket.sent).toHaveLength(0);
+    emitBinaryMessage(
+      socket,
+      encodeControlConnectFrame({
+        sid: VALID_CONNECT_SID,
+        direction: "app_to_wallet",
+        seq: 1,
+        control: {
+          type: "open",
+          appPublicKeyHex: appKeyPair.publicKeyHex,
+          constraints: {
+            chainId: "chain-a",
+          },
+          appMeta: null,
+          permissions: {
+            methods: ["sign"],
+            events: [],
+            resources: null,
+          },
+        },
+      }),
+    );
+    await flushPromises();
     expect(socket.sent).toHaveLength(1);
-    return socket;
+    const approvalFrame = decodeConnectFrame(socket.sent[0] as Uint8Array);
+    if (approvalFrame.control?.type !== "approve") {
+      throw new Error("Expected IrohaConnect approval control frame.");
+    }
+    const keys = deriveConnectDirectionKeys(
+      {
+        sid: VALID_CONNECT_SID,
+        sidBytesHex: "",
+        nonceHex: "",
+        privateKeyHex: appKeyPair.privateKeyHex,
+        publicKeyHex: appKeyPair.publicKeyHex,
+        walletUri: "",
+        appUri: "",
+        wsUrl: "",
+        createdAt: 0,
+      },
+      approvalFrame.control.walletPublicKeyHex,
+    );
+    signIrohaConnectMessageMock.mockClear();
+    return { socket, approvalFrame, keys };
   };
 
   it("opens a connection approval modal before sending the approval frame", async () => {
     const wrapper = mountComponent();
 
-    const socket = await approveConnection(wrapper);
-    const approvalFrame = decodeIrohaConnectFrame(socket.sent[0] as Uint8Array);
+    const { approvalFrame } = await approveConnection(wrapper);
 
-    expect(approvalFrame.kind).toBe("other");
-    expect(approvalFrame.direction).toBe("wallet-to-app");
-    expect(approvalFrame.sequence).toBe(1);
+    expect(approvalFrame.kind).toBe("control");
+    expect(approvalFrame.direction).toBe("wallet_to_app");
+    expect(approvalFrame.seq).toBe(1);
+    expect(approvalFrame.control).toMatchObject({
+      type: "approve",
+      accountId: EXAMPLE_ACCOUNT_ID,
+    });
     expect(wrapper.text()).toContain(t("IrohaConnect approved."));
   });
 
   it("does not sign an IrohaConnect transaction request until the user approves it", async () => {
     const wrapper = mountComponent();
-    const socket = await approveConnection(wrapper);
+    const { socket, keys } = await approveConnection(wrapper);
     const signingMessageB64 = Buffer.from("transfer 10 XOR").toString("base64");
 
-    const requestFrame = encodeIrohaConnectCiphertextFrame({
-      sid: VALID_CONNECT_SID,
-      direction: "app-to-wallet",
-      sequence: 2,
-      payload: JSON.stringify({
-        schema: CONTRACT_CALL_SIGN_SCHEMA,
-        kind: "contract_call_signature_request",
+    emitBinaryMessage(
+      socket,
+      encodeContractSignRequestFrame(keys.appKey, {
         requestId: "request-1",
         accountId: EXAMPLE_ACCOUNT_ID,
         signingMessageB64,
-      }),
-    });
-    socket.emit(
-      "message",
-      new MessageEvent("message", {
-        data: requestFrame.buffer,
       }),
     );
     await flushPromises();
@@ -254,38 +366,21 @@ describe("HeaderIrohaConnectButton", () => {
       accountId: EXAMPLE_ACCOUNT_ID,
       signingMessageB64,
     });
-    const responseFrame = decodeIrohaConnectFrame(
-      socket.sent.at(-1) as Uint8Array,
-    );
-    expect(responseFrame.kind).toBe("ciphertext");
-    if (responseFrame.kind !== "ciphertext") {
-      throw new Error("Expected response ciphertext frame.");
-    }
-    expect(new TextDecoder().decode(responseFrame.payload)).toContain(
-      "contract_call_signature_response",
-    );
+    expect(
+      decodeLatestWalletEnvelope(socket, keys.walletKey).payload.type,
+    ).toBe("sign_result_ok");
   });
 
   it("rejects an IrohaConnect transaction request without signing", async () => {
     const wrapper = mountComponent();
-    const socket = await approveConnection(wrapper);
+    const { socket, keys } = await approveConnection(wrapper);
 
-    const requestFrame = encodeIrohaConnectCiphertextFrame({
-      sid: VALID_CONNECT_SID,
-      direction: "app-to-wallet",
-      sequence: 2,
-      payload: JSON.stringify({
-        schema: CONTRACT_CALL_SIGN_SCHEMA,
-        kind: "contract_call_signature_request",
+    emitBinaryMessage(
+      socket,
+      encodeContractSignRequestFrame(keys.appKey, {
         requestId: "request-2",
         accountId: EXAMPLE_ACCOUNT_ID,
         signingMessageB64: Buffer.from("stake 5 XOR").toString("base64"),
-      }),
-    });
-    socket.emit(
-      "message",
-      new MessageEvent("message", {
-        data: requestFrame.buffer,
       }),
     );
     await flushPromises();
@@ -294,15 +389,58 @@ describe("HeaderIrohaConnectButton", () => {
     await flushPromises();
 
     expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
-    const responseFrame = decodeIrohaConnectFrame(
-      socket.sent.at(-1) as Uint8Array,
+    const envelope = decodeLatestWalletEnvelope(socket, keys.walletKey);
+    expect(envelope.payload).toMatchObject({
+      type: "sign_result_err",
+      code: "signature_rejected",
+      message: "request-2: Rejected by user.",
+    });
+  });
+
+  it("signs encrypted IrohaConnect requests with the approved account after wallet switching", async () => {
+    const wrapper = mountComponent();
+    const { socket, keys } = await approveConnection(wrapper);
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: SECOND_ACCOUNT_ID,
+          publicKeyHex: "cd".repeat(32),
+          privateKeyHex: "",
+          hasStoredSecret: true,
+          localOnly: false,
+        },
+      ],
+      activeAccountId: SECOND_ACCOUNT_ID,
+    });
+    const signingMessageB64 = Buffer.from("transfer after switch").toString(
+      "base64",
     );
-    expect(responseFrame.kind).toBe("ciphertext");
-    if (responseFrame.kind !== "ciphertext") {
-      throw new Error("Expected rejection ciphertext frame.");
-    }
-    const payload = new TextDecoder().decode(responseFrame.payload);
-    expect(payload).toContain("contract_call_signature_reject");
-    expect(payload).toContain("Rejected by user.");
+
+    emitBinaryMessage(
+      socket,
+      encodeContractSignRequestFrame(keys.appKey, {
+        requestId: "request-3",
+        accountId: EXAMPLE_ACCOUNT_ID,
+        signingMessageB64,
+      }),
+    );
+    await flushPromises();
+
+    await getButtonByText(wrapper, t("Approve and sign")).trigger("click");
+    await flushPromises();
+
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledWith({
+      accountId: EXAMPLE_ACCOUNT_ID,
+      signingMessageB64,
+    });
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: SECOND_ACCOUNT_ID,
+      }),
+    );
   });
 });
