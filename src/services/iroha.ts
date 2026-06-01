@@ -418,6 +418,10 @@ export const bondPublicLaneStake = (
   input: Parameters<IrohaBridge["bondPublicLaneStake"]>[0],
 ) => bridge().bondPublicLaneStake(input);
 
+export const registerPublicLaneValidator = (
+  input: Parameters<IrohaBridge["registerPublicLaneValidator"]>[0],
+) => bridge().registerPublicLaneValidator(input);
+
 export const schedulePublicLaneUnbond = (
   input: Parameters<IrohaBridge["schedulePublicLaneUnbond"]>[0],
 ) => bridge().schedulePublicLaneUnbond(input);

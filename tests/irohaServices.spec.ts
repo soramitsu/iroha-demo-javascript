@@ -37,6 +37,7 @@ import {
   repairVpn,
   proposeGovernanceDeployContract,
   registerCitizen,
+  registerPublicLaneValidator,
   resolveAccountAlias,
   requestFaucetFunds,
   schedulePublicLaneUnbond,
@@ -508,6 +509,9 @@ describe("iroha services bridge", () => {
       .fn()
       .mockResolvedValue({ unbondingDelayMs: 60_000 });
     const bondPublicLaneStakeMock = vi.fn().mockResolvedValue({ hash: "0x1" });
+    const registerPublicLaneValidatorMock = vi
+      .fn()
+      .mockResolvedValue({ hash: "0x5" });
     const schedulePublicLaneUnbondMock = vi
       .fn()
       .mockResolvedValue({ hash: "0x2" });
@@ -525,6 +529,7 @@ describe("iroha services bridge", () => {
       getNexusPublicLaneRewards: getNexusPublicLaneRewardsMock,
       getNexusStakingPolicy: getNexusStakingPolicyMock,
       bondPublicLaneStake: bondPublicLaneStakeMock,
+      registerPublicLaneValidator: registerPublicLaneValidatorMock,
       schedulePublicLaneUnbond: schedulePublicLaneUnbondMock,
       finalizePublicLaneUnbond: finalizePublicLaneUnbondMock,
       claimPublicLaneRewards: claimPublicLaneRewardsMock,
@@ -550,6 +555,16 @@ describe("iroha services bridge", () => {
       stakeAccountId: "alice@wonderland",
       validator: "validator@wonderland",
       amount: "10",
+      privateKeyHex: "aa".repeat(32),
+    };
+    const registerValidatorInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      laneId: 1,
+      validatorAccountId: "alice@wonderland",
+      peerId: "peer:alice",
+      selfStake: "10",
+      metadata: { endpoint: "https://validator.example" },
       privateKeyHex: "aa".repeat(32),
     };
     const unbondInput = {
@@ -580,6 +595,7 @@ describe("iroha services bridge", () => {
     await getNexusPublicLaneRewards(rewardsInput);
     await getNexusStakingPolicy("http://localhost:8080");
     await bondPublicLaneStake(bondInput);
+    await registerPublicLaneValidator(registerValidatorInput);
     await schedulePublicLaneUnbond(unbondInput);
     await finalizePublicLaneUnbond(finalizeInput);
     await claimPublicLaneRewards(claimInput);
@@ -596,6 +612,9 @@ describe("iroha services bridge", () => {
       toriiUrl: "http://localhost:8080",
     });
     expect(bondPublicLaneStakeMock).toHaveBeenCalledWith(bondInput);
+    expect(registerPublicLaneValidatorMock).toHaveBeenCalledWith(
+      registerValidatorInput,
+    );
     expect(schedulePublicLaneUnbondMock).toHaveBeenCalledWith(unbondInput);
     expect(finalizePublicLaneUnbondMock).toHaveBeenCalledWith(finalizeInput);
     expect(claimPublicLaneRewardsMock).toHaveBeenCalledWith(claimInput);

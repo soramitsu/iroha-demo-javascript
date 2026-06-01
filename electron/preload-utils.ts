@@ -22,6 +22,7 @@ export interface PublicLaneValidatorStatusView {
 export interface PublicLaneValidatorRecordView {
   lane_id: number;
   validator: string;
+  peer_id: string;
   stake_account: string;
   total_stake: string;
   self_stake: string;
@@ -567,6 +568,10 @@ export const normalizePublicLaneValidatorsPayload = (
         validator: toStringValue(
           item.validator,
           `validators.items[${index}].validator`,
+        ),
+        peer_id: toStringValue(
+          item.peer_id ?? item.peerId ?? "",
+          `validators.items[${index}].peer_id`,
         ),
         stake_account: toStringValue(
           item.stake_account ?? item.stakeAccount,

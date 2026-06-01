@@ -480,6 +480,7 @@ describe("preload utils", () => {
         {
           lane_id: 7,
           validator: "validator@wonderland",
+          peer_id: "peer:validator",
           stake_account: "validator@wonderland",
           total_stake: "1000",
           self_stake: "250",
@@ -502,6 +503,7 @@ describe("preload utils", () => {
 
     expect(normalized.lane_id).toBe(7);
     expect(normalized.items[0].validator).toBe("validator@wonderland");
+    expect(normalized.items[0].peer_id).toBe("peer:validator");
     expect(normalized.items[0].status.type).toBe("Active");
     expect(normalized.items[0].activation_epoch).toBe(3);
   });

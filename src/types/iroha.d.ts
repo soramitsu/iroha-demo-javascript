@@ -578,6 +578,7 @@ export interface PublicLaneValidatorStatusView {
 export interface PublicLaneValidatorRecordView {
   lane_id: number;
   validator: string;
+  peer_id: string;
   stake_account: string;
   total_stake: string;
   self_stake: string;
@@ -1289,6 +1290,17 @@ export interface IrohaBridge {
     stakeAccountId: string;
     validator: string;
     amount: string;
+    privateKeyHex?: string;
+  }): Promise<TransactionSubmissionResult>;
+  registerPublicLaneValidator(input: {
+    toriiUrl: string;
+    chainId: string;
+    laneId: number;
+    validatorAccountId: string;
+    stakeAccountId?: string;
+    peerId: string;
+    selfStake: string;
+    metadata?: Record<string, unknown>;
     privateKeyHex?: string;
   }): Promise<TransactionSubmissionResult>;
   schedulePublicLaneUnbond(input: {

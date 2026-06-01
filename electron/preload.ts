@@ -807,6 +807,18 @@ type BondPublicLaneStakeInput = {
   privateKeyHex?: HexString;
 };
 
+type RegisterPublicLaneValidatorInput = {
+  toriiUrl: string;
+  chainId: string;
+  laneId: number;
+  validatorAccountId: string;
+  stakeAccountId?: string;
+  peerId: string;
+  selfStake: string;
+  metadata?: Record<string, unknown>;
+  privateKeyHex?: HexString;
+};
+
 type SchedulePublicLaneUnbondInput = {
   toriiUrl: string;
   chainId: string;
@@ -1340,6 +1352,9 @@ type IrohaBridge = {
   ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
+  ): Promise<TransactionSubmissionResultView>;
+  registerPublicLaneValidator(
+    input: RegisterPublicLaneValidatorInput,
   ): Promise<TransactionSubmissionResultView>;
   schedulePublicLaneUnbond(
     input: SchedulePublicLaneUnbondInput,
@@ -2047,6 +2062,14 @@ const normalizeAmount = (value: string, label: string) => {
     throw new Error(`${label} must be greater than zero.`);
   }
   return amount;
+};
+
+const normalizeNonEmptyString = (value: string, label: string) => {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  return normalized;
 };
 
 const normalizeIntegerAmount = (value: string, label: string) => {
@@ -9674,6 +9697,42 @@ const api: IrohaBridge = {
           stake_account: normalizedStakeAccount,
           validator: normalizeCompatAccountIdLiteral(validator, "validator"),
           amount: normalizeAmount(amount, "amount"),
+        },
+      },
+    });
+  },
+  registerPublicLaneValidator({
+    toriiUrl,
+    chainId,
+    laneId,
+    validatorAccountId,
+    stakeAccountId,
+    peerId,
+    selfStake,
+    metadata,
+    privateKeyHex,
+  }) {
+    const normalizedValidator = normalizeCompatAccountIdLiteral(
+      validatorAccountId,
+      "validatorAccountId",
+    );
+    const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
+      stakeAccountId || validatorAccountId,
+      "stakeAccountId",
+    );
+    return submitInstructionTransaction({
+      toriiUrl,
+      chainId,
+      authorityAccountId: normalizedValidator,
+      privateKeyHex,
+      instruction: {
+        RegisterPublicLaneValidator: {
+          lane_id: normalizeLaneId(laneId),
+          validator: normalizedValidator,
+          stake_account: normalizedStakeAccount,
+          peer_id: normalizeNonEmptyString(peerId, "peerId"),
+          self_stake: normalizeAmount(selfStake, "selfStake"),
+          metadata: isPlainRecord(metadata) ? metadata : {},
         },
       },
     });

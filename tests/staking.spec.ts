@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  calculateRewardApyEstimate,
   chooseDefaultDataspaceId,
   compareDecimalStrings,
   collectDataspaceOptions,
   computeUnbondReleaseAtMs,
   createUnbondRequestId,
+  extractValidatorCommissionBps,
   hasClaimableRewards,
   pickDefaultValidator,
+  readValidatorEndpoint,
   resolveLaneForDataspace,
+  resolveRewardEpochSpan,
+  sumRewardAmounts,
+  sumStakeShares,
 } from "@/utils/staking";
 
 describe("staking utilities", () => {
@@ -164,5 +170,96 @@ describe("staking utilities", () => {
         } as any,
       ]),
     ).toBe(false);
+  });
+
+  it("summarizes bonded stake, rewards, and epoch spans for APY estimates", () => {
+    const shares = [
+      { bonded: "10.5" },
+      { bonded: "2" },
+      { bonded: "not-a-number" },
+    ] as any;
+    const rewards = [
+      {
+        amount: "1.5",
+        last_claimed_epoch: 4,
+        pending_through_epoch: 6,
+      },
+      {
+        amount: "0.5",
+        last_claimed_epoch: 5,
+        pending_through_epoch: 7,
+      },
+    ] as any;
+
+    expect(sumStakeShares(shares)).toBe(12.5);
+    expect(sumRewardAmounts(rewards)).toBe(2);
+    expect(resolveRewardEpochSpan(rewards)).toBe(3);
+
+    expect(
+      calculateRewardApyEstimate({
+        rewards,
+        bondedAmount: "100",
+        epochDurationHours: 24,
+      })?.apyPercent,
+    ).toBeCloseTo(243.333, 3);
+  });
+
+  it("returns null APY estimates when observed reward data is incomplete", () => {
+    expect(
+      calculateRewardApyEstimate({
+        rewards: [],
+        bondedAmount: "100",
+        epochDurationHours: 24,
+      }),
+    ).toBeNull();
+    expect(
+      calculateRewardApyEstimate({
+        rewards: [
+          {
+            amount: "1",
+            last_claimed_epoch: 1,
+            pending_through_epoch: 2,
+          } as any,
+        ],
+        bondedAmount: "0",
+        epochDurationHours: 24,
+      }),
+    ).toBeNull();
+    expect(
+      calculateRewardApyEstimate({
+        rewards: [
+          {
+            amount: "1",
+            last_claimed_epoch: 1,
+            pending_through_epoch: 2,
+          } as any,
+        ],
+        bondedAmount: "100",
+        epochDurationHours: 0,
+      }),
+    ).toBeNull();
+  });
+
+  it("reads validator operator metadata for fee commission and endpoint", () => {
+    expect(
+      extractValidatorCommissionBps({
+        commission_bps: "250",
+      }),
+    ).toBe(250);
+    expect(
+      extractValidatorCommissionBps({
+        commission_percent: "3.75",
+      }),
+    ).toBe(375);
+    expect(
+      extractValidatorCommissionBps({
+        commission_bps: "10001",
+      }),
+    ).toBeNull();
+    expect(
+      readValidatorEndpoint({
+        p2p_endpoint: " https://validator.example ",
+      }),
+    ).toBe("https://validator.example");
   });
 });

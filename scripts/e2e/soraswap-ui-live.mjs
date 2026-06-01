@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -253,15 +253,24 @@ const pairWallet = async (dappPage, walletPage) => {
     throw new Error("SoraSwap Connect wallet link lost its wallet token.");
   }
   console.log(`Connect sid: ${new URL(walletHref).searchParams.get("sid")}`);
-  await QRCode.toFile(walletQrPath, walletHref, {
-    errorCorrectionLevel: "M",
-    margin: 4,
-    width: 720,
-    color: {
-      dark: "#000000",
-      light: "#ffffff",
-    },
-  });
+  const qrSrc = await qr.getAttribute("src");
+  if (qrSrc?.startsWith("data:image/")) {
+    const [, encoded] = qrSrc.split(",", 2);
+    if (!encoded) {
+      throw new Error("SoraSwap Connect QR image data was empty.");
+    }
+    await writeFile(walletQrPath, Buffer.from(encoded, "base64"));
+  } else {
+    await QRCode.toFile(walletQrPath, walletHref, {
+      errorCorrectionLevel: "L",
+      margin: 4,
+      width: 720,
+      color: {
+        dark: "#000000",
+        light: "#ffffff",
+      },
+    });
+  }
 
   await walletPage.getByTestId("header-irohaconnect-button").click();
   await walletPage

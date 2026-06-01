@@ -12,6 +12,7 @@ const getNexusPublicLaneValidatorsMock = vi.fn();
 const getNexusPublicLaneRewardsMock = vi.fn();
 const getNexusPublicLaneStakeMock = vi.fn();
 const bondPublicLaneStakeMock = vi.fn();
+const registerPublicLaneValidatorMock = vi.fn();
 const schedulePublicLaneUnbondMock = vi.fn();
 const finalizePublicLaneUnbondMock = vi.fn();
 const claimPublicLaneRewardsMock = vi.fn();
@@ -28,6 +29,8 @@ vi.mock("@/services/iroha", () => ({
   getNexusPublicLaneStake: (input: unknown) =>
     getNexusPublicLaneStakeMock(input),
   bondPublicLaneStake: (input: unknown) => bondPublicLaneStakeMock(input),
+  registerPublicLaneValidator: (input: unknown) =>
+    registerPublicLaneValidatorMock(input),
   schedulePublicLaneUnbond: (input: unknown) =>
     schedulePublicLaneUnbondMock(input),
   finalizePublicLaneUnbond: (input: unknown) =>
@@ -47,6 +50,7 @@ describe("StakingView", () => {
     getNexusPublicLaneRewardsMock.mockReset();
     getNexusPublicLaneStakeMock.mockReset();
     bondPublicLaneStakeMock.mockReset();
+    registerPublicLaneValidatorMock.mockReset();
     schedulePublicLaneUnbondMock.mockReset();
     finalizePublicLaneUnbondMock.mockReset();
     claimPublicLaneRewardsMock.mockReset();
@@ -79,6 +83,7 @@ describe("StakingView", () => {
         {
           lane_id: 7,
           validator: "validator@wonderland",
+          peer_id: "peer:validator",
           stake_account: "stake@wonderland",
           total_stake: "100",
           self_stake: "10",
@@ -168,8 +173,8 @@ describe("StakingView", () => {
   };
 
   const getRewardsAmountCell = (wrapper: ReturnType<typeof mount>) => {
-    const row = wrapper.findAll("tbody tr")[0];
-    if (!row) {
+    const row = wrapper.find(".staking-rewards-card tbody tr");
+    if (!row.exists()) {
       throw new Error("Rewards row not found");
     }
     return row.findAll("td")[1];
@@ -183,6 +188,23 @@ describe("StakingView", () => {
       throw new Error(`${t("Unbond Delay")} row not found`);
     }
     return row;
+  };
+
+  const getInputForLabel = (
+    wrapper: ReturnType<typeof mount>,
+    labelText: string,
+  ) => {
+    const label = wrapper
+      .findAll("label")
+      .find((node) => node.text().includes(labelText));
+    if (!label) {
+      throw new Error(`${labelText} label not found`);
+    }
+    const input = label.find("input");
+    if (!input.exists()) {
+      throw new Error(`${labelText} input not found`);
+    }
+    return input;
   };
 
   it("ignores stale refresh payload after active account switch", async () => {
@@ -361,5 +383,47 @@ describe("StakingView", () => {
     expect(getStakeBalanceRow(wrapper).text()).toContain("0 XOR");
     expect(getUnbondDelayRow(wrapper).text()).toContain("—");
     expect(wrapper.findAll("select")[0]?.attributes("disabled")).toBeDefined();
+  });
+
+  it("submits validator registration from the operator panel", async () => {
+    registerPublicLaneValidatorMock.mockResolvedValue({ hash: "0xvalidator" });
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    await getInputForLabel(wrapper, t("Consensus peer ID")).setValue(
+      "peer:alice",
+    );
+    await getInputForLabel(wrapper, t("Validator endpoint")).setValue(
+      "https://validator.example",
+    );
+    await getInputForLabel(wrapper, t("Commission (bps)")).setValue("250");
+    await getInputForLabel(wrapper, t("Self stake (XOR)")).setValue("3");
+
+    const joinButton = wrapper
+      .findAll("button")
+      .find((node) => node.text() === t("Join consensus"));
+    if (!joinButton) {
+      throw new Error("Join consensus button not found");
+    }
+    await joinButton.trigger("click");
+    await flushPromises();
+
+    expect(registerPublicLaneValidatorMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      laneId: 7,
+      validatorAccountId: "alice@wonderland",
+      stakeAccountId: "alice@wonderland",
+      peerId: "peer:alice",
+      selfStake: "3",
+      metadata: {
+        endpoint: "https://validator.example",
+        commission_bps: 250,
+      },
+      privateKeyHex: "cd".repeat(32),
+    });
+    expect(wrapper.text()).toContain("0xvalidator");
   });
 });
