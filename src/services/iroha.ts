@@ -17,6 +17,7 @@ import type {
   GovernanceCitizenStatusResponse,
   GovernanceCouncilCurrentResponse,
   GovernanceDraftResponse,
+  GovernanceLifecycleSnapshot,
   GovernanceLocksResult,
   GovernanceProposalResult,
   GovernanceRegistrationPolicyResponse,
@@ -42,6 +43,9 @@ import type {
   SubscriptionStatusView,
   SoraCloudHfDeployResponseView,
   SoraCloudStatusResponseView,
+  SccpCapabilitiesResponse,
+  SccpProofManifestSetResponse,
+  SccpRecentMessagesResponse,
   ToriiHealth,
   VpnAvailability,
   VpnAuthContext,
@@ -213,6 +217,20 @@ export const getGovernanceCouncilCurrent = (
   toriiUrl: string,
 ): Promise<GovernanceCouncilCurrentResponse> =>
   bridge().getGovernanceCouncilCurrent({ toriiUrl });
+
+export const getGovernanceLifecycle = (input: {
+  toriiUrl: string;
+  proposalId?: string | null;
+  referendumId?: string | null;
+}): Promise<GovernanceLifecycleSnapshot> => {
+  const lifecycleLoader = bridge().getGovernanceLifecycle;
+  if (!lifecycleLoader) {
+    return Promise.reject(
+      new Error("Governance lifecycle endpoint is unavailable."),
+    );
+  }
+  return lifecycleLoader(input);
+};
 
 export const proposeGovernanceDeployContract = (
   input: Parameters<IrohaBridge["proposeGovernanceDeployContract"]>[0],
@@ -411,6 +429,91 @@ export const deploySoraCloudHf = (
 export const getSoraCloudHfStatus = (
   input: Parameters<IrohaBridge["getSoraCloudHfStatus"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getSoraCloudHfStatus(input);
+
+export const getSccpCapabilities = (
+  input: Parameters<IrohaBridge["getSccpCapabilities"]>[0],
+): Promise<SccpCapabilitiesResponse> => bridge().getSccpCapabilities(input);
+
+export const getSccpProofManifests = (
+  input: Parameters<IrohaBridge["getSccpProofManifests"]>[0],
+): Promise<SccpProofManifestSetResponse> =>
+  bridge().getSccpProofManifests(input);
+
+export const listSccpRecentMessages = (
+  input: Parameters<IrohaBridge["listSccpRecentMessages"]>[0],
+): Promise<SccpRecentMessagesResponse> =>
+  bridge().listSccpRecentMessages(input);
+
+export const getSccpMessageProofArtifact = (
+  input: Parameters<IrohaBridge["getSccpMessageProofArtifact"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().getSccpMessageProofArtifact(input);
+
+export const getSccpMessageProofJob = (
+  input: Parameters<IrohaBridge["getSccpMessageProofJob"]>[0],
+): Promise<Record<string, unknown>> => bridge().getSccpMessageProofJob(input);
+
+export const submitSccpBridgeProof = (
+  input: Parameters<IrohaBridge["submitSccpBridgeProof"]>[0],
+): Promise<Record<string, unknown>> => bridge().submitSccpBridgeProof(input);
+
+export const submitSccpBridgeMessage = (
+  input: Parameters<IrohaBridge["submitSccpBridgeMessage"]>[0],
+): Promise<Record<string, unknown>> => bridge().submitSccpBridgeMessage(input);
+
+export const deriveZkIvmPayload = (
+  input: Parameters<IrohaBridge["deriveZkIvmPayload"]>[0],
+): Promise<Record<string, unknown>> => bridge().deriveZkIvmPayload(input);
+
+export const startZkIvmProveJob = (
+  input: Parameters<IrohaBridge["startZkIvmProveJob"]>[0],
+): Promise<Record<string, unknown>> => bridge().startZkIvmProveJob(input);
+
+export const getZkIvmProveJob = (
+  input: Parameters<IrohaBridge["getZkIvmProveJob"]>[0],
+): Promise<Record<string, unknown>> => bridge().getZkIvmProveJob(input);
+
+export const cancelZkIvmProveJob = (
+  input: Parameters<IrohaBridge["cancelZkIvmProveJob"]>[0],
+): Promise<Record<string, unknown>> => bridge().cancelZkIvmProveJob(input);
+
+export const submitZkIvmProvedTransaction = (
+  input: Parameters<IrohaBridge["submitZkIvmProvedTransaction"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().submitZkIvmProvedTransaction(input);
+
+export const getTronTransaction = (
+  input: Parameters<IrohaBridge["getTronTransaction"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronTransaction(input);
+
+export const getTronTransactionReceipt = (
+  input: Parameters<IrohaBridge["getTronTransactionReceipt"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().getTronTransactionReceipt(input);
+
+export const getTronTransactionEvents = (
+  input: Parameters<IrohaBridge["getTronTransactionEvents"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronTransactionEvents(input);
+
+export const getTronSolidBlock = (
+  input?: Parameters<IrohaBridge["getTronSolidBlock"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronSolidBlock(input);
+
+export const getTronWitnesses = (
+  input?: Parameters<IrohaBridge["getTronWitnesses"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronWitnesses(input);
+
+export const getTronFinalityData = (
+  input?: Parameters<IrohaBridge["getTronFinalityData"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronFinalityData(input);
+
+export const broadcastTronTransaction = (
+  input: Parameters<IrohaBridge["broadcastTronTransaction"]>[0],
+): Promise<Record<string, unknown>> => bridge().broadcastTronTransaction(input);
+
+export const triggerTronSmartContract = (
+  input: Parameters<IrohaBridge["triggerTronSmartContract"]>[0],
+): Promise<Record<string, unknown>> => bridge().triggerTronSmartContract(input);
 
 export type { SubscriptionStatusView };
 

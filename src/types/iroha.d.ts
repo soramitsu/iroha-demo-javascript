@@ -719,6 +719,240 @@ export interface SoraCloudHfDeployResponseView {
   raw: Record<string, unknown>;
 }
 
+export interface SccpCodecCapabilityView {
+  id: number;
+  key: string;
+  description: string;
+}
+
+export interface SccpCounterpartyCapabilityView {
+  domain: number;
+  chain: string;
+  verifierBackendKey: string;
+  messageBackend: string;
+  registryBackend: string;
+  counterpartyAccountCodec: number;
+  counterpartyAccountCodecKey: string;
+  destinationRollout: SccpDestinationRolloutView | null;
+  productionReady: boolean;
+  disabledReason: string | null;
+}
+
+export interface SccpCapabilitiesResponse {
+  localDomain: number;
+  localChain: string;
+  proofFamily: string;
+  burnBundlePath: string;
+  messageBundlePath: string;
+  messageProofPath: string;
+  messageJobPath: string;
+  recentMessagesPath: string;
+  proofManifestPath: string;
+  burnRegistryBackend: string;
+  proofSubmitPath: string | null;
+  messageSubmitPath: string | null;
+  messagePayloadKinds: readonly string[];
+  codecs: readonly SccpCodecCapabilityView[];
+  counterparties: readonly SccpCounterpartyCapabilityView[];
+}
+
+export interface SccpDestinationBindingView {
+  version: number;
+  key: string;
+  bindingHash: string;
+}
+
+export interface SccpDestinationRolloutView {
+  version: number;
+  verifierPlan: string;
+  immutableVerifierReady: boolean;
+  anchorsReady: boolean;
+  verifierIdentity: string | null;
+  verifierCodeHash: string | null;
+  verifierKeyHash: string | null;
+  destinationNetworkId: string | null;
+  destinationBridgeAddress: string | null;
+  destinationBindingKey: string | null;
+  destinationBindingHash: string | null;
+  anchorId: string | null;
+  blockers: readonly string[];
+}
+
+export interface SccpSubmissionArgumentView {
+  key: string;
+  description: string;
+}
+
+export interface SccpCounterpartySubmissionTemplateView {
+  version: number;
+  encoding: string;
+  submissionKind: string;
+  verifierEntrypoint: string;
+  requiredArguments: readonly SccpSubmissionArgumentView[];
+}
+
+export interface SccpTairaXorBurnRecordMaterialView {
+  settlementAssetDefinitionId: string;
+  contractArtifactB64: string;
+  vkRef: {
+    backend: string;
+    name: string;
+  };
+  gasLimit?: number;
+}
+
+export interface SccpProofManifestView {
+  version: number;
+  localDomain: number;
+  localChain: string;
+  counterpartyDomain: number;
+  chain: string;
+  proofFamily: string;
+  securityModel: string;
+  anchorGovernance: string;
+  destinationBinding: SccpDestinationBindingView;
+  verifierBackendKey: string;
+  messageBackend: string;
+  registryBackend: string;
+  counterpartyAccountCodec: number;
+  counterpartyAccountCodecKey: string;
+  finalityModel: string;
+  verifierTarget: string;
+  manifestSeed: string;
+  requiredPublicInputs: readonly string[];
+  messagePayloadKinds: readonly string[];
+  destinationRollout: SccpDestinationRolloutView | null;
+  productionReady: boolean;
+  disabledReason: string | null;
+  submissionTemplate: SccpCounterpartySubmissionTemplateView;
+  tairaXorBurnRecord: SccpTairaXorBurnRecordMaterialView | null;
+}
+
+export interface SccpProofManifestSetResponse {
+  localDomain: number;
+  localChain: string;
+  proofFamily: string;
+  manifests: readonly SccpProofManifestView[];
+}
+
+export interface SccpRecentMessagesResponse {
+  items: Record<string, unknown>[];
+  total: number;
+  raw: Record<string, unknown>;
+}
+
+export interface SccpDestinationProofMaterialInput {
+  networkIdHex?: string;
+  verifierAddressHex?: string;
+  bridgeAddressHex?: string;
+  verifierCodeHashHex?: string;
+  verifierKeyHashHex?: string;
+  expectedDestinationBindingHashHex?: string;
+  tronVerifierAddress?: string;
+  proofBytesHex?: string;
+}
+
+export interface SccpMessageProofInput
+  extends SccpDestinationProofMaterialInput {
+  toriiUrl: string;
+  messageId: string;
+}
+
+export interface SccpBridgeProofSubmitInput
+  extends SccpDestinationProofMaterialInput {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+  burnBundle?: Record<string, unknown>;
+  messageBundle?: Record<string, unknown>;
+  publicKeyHex?: string;
+  signatureB64?: string;
+  creationTimeMs?: number | string;
+}
+
+export interface SccpBridgeMessageSubmitInput
+  extends SccpDestinationProofMaterialInput {
+  toriiUrl: string;
+  accountId: string;
+  privateKeyHex?: string;
+  messageBundle: Record<string, unknown>;
+  publicKeyHex?: string;
+  signatureB64?: string;
+  receiptLane?: number | string;
+  settlement?: Record<string, unknown>;
+  creationTimeMs?: number | string;
+}
+
+export interface SccpRecentMessagesInput {
+  toriiUrl: string;
+  routeId?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ZkIvmVerifyingKeyRefInput {
+  backend: string;
+  name: string;
+}
+
+export interface ZkIvmRequestInput {
+  toriiUrl: string;
+  vkRef: ZkIvmVerifyingKeyRefInput;
+  authority: string;
+  metadata?: Record<string, unknown>;
+  bytecode: string | number[] | Record<string, unknown>;
+  proved?: Record<string, unknown>;
+}
+
+export interface ZkIvmProveJobInput {
+  toriiUrl: string;
+  jobId: string;
+}
+
+export interface ZkIvmProvedTransactionSubmitInput {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  privateKeyHex?: string;
+  proved: Record<string, unknown>;
+  attachment: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  creationTimeMs?: number;
+  ttlMs?: number;
+  nonce?: number;
+}
+
+export interface TronGatewayInput {
+  endpoint?: string;
+}
+
+export interface TronTransactionInput extends TronGatewayInput {
+  txId: string;
+}
+
+export interface TronBlockInput extends TronGatewayInput {
+  blockNumber?: number | string;
+}
+
+export interface TronEventsInput extends TronGatewayInput {
+  txId: string;
+}
+
+export interface TronBroadcastInput extends TronGatewayInput {
+  transaction: Record<string, unknown>;
+}
+
+export interface TronTriggerSmartContractInput extends TronGatewayInput {
+  ownerAddress: string;
+  contractAddress: string;
+  functionSelector: string;
+  parameter?: string;
+  callData?: string;
+  feeLimit?: number | string;
+  callValue?: number | string;
+  permissionId?: number | string;
+}
+
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 
 export interface GovernanceProposalResult {
@@ -817,6 +1051,96 @@ export interface GovernanceDeployContractProposalInput {
   mode?: GovernanceVotingMode | null;
   window?: GovernanceWindowInput | null;
   limits?: Record<string, unknown> | null;
+}
+
+export type GovernanceLifecycleStageId =
+  | "submitted"
+  | "briefs"
+  | "comment"
+  | "sortition"
+  | "vote"
+  | "tally"
+  | "challenge"
+  | "canary"
+  | "enact"
+  | "review";
+
+export type GovernanceStageStatus =
+  | "complete"
+  | "active"
+  | "pending"
+  | "unavailable"
+  | "blocked";
+
+export type GovernanceRole =
+  | "none"
+  | "citizen"
+  | "seated_member"
+  | "alternate"
+  | "operator";
+
+export type GovernanceActionGateCode =
+  | "ready"
+  | "busy"
+  | "endpoint-unavailable"
+  | "wallet-required"
+  | "insufficient-bond"
+  | "already-citizen"
+  | "missing-permission"
+  | "missing-referendum"
+  | "invalid-proposal"
+  | "invalid-amount"
+  | "invalid-duration"
+  | "missing-backend-capability"
+  | "not-seated"
+  | "closed-window";
+
+export interface GovernanceActionGate {
+  enabled: boolean;
+  code: GovernanceActionGateCode;
+  reason: string;
+}
+
+export interface GovernanceBriefStatus {
+  required: boolean;
+  submitted: number;
+  redTeamRequired: boolean;
+  redTeamSubmitted: number;
+  endpointAvailable: boolean;
+}
+
+export interface GovernanceChallengeStatus {
+  open: boolean;
+  bondRequired: string | null;
+  activeChallenges: number;
+  endpointAvailable: boolean;
+}
+
+export interface GovernanceRolloutStatus {
+  phase: "not-started" | "canary" | "active" | "rolled-back" | "unavailable";
+  endpointAvailable: boolean;
+  detail?: string | null;
+}
+
+export interface GovernanceLifecycleStage {
+  id: GovernanceLifecycleStageId;
+  labelKey: string;
+  status: GovernanceStageStatus;
+  detailKey: string;
+}
+
+export interface GovernanceLifecycleSnapshot {
+  source: "torii" | "client-fallback";
+  endpointAvailable: boolean;
+  referendumId: string | null;
+  proposalId: string | null;
+  currentStageId: GovernanceLifecycleStageId;
+  role: GovernanceRole;
+  stages: GovernanceLifecycleStage[];
+  briefStatus: GovernanceBriefStatus;
+  challengeStatus: GovernanceChallengeStatus;
+  rolloutStatus: GovernanceRolloutStatus;
+  futureStagesUnavailable: boolean;
 }
 
 export interface IrohaBridge {
@@ -1025,6 +1349,11 @@ export interface IrohaBridge {
   getGovernanceCouncilCurrent(input: {
     toriiUrl: string;
   }): Promise<GovernanceCouncilCurrentResponse>;
+  getGovernanceLifecycle?(input: {
+    toriiUrl: string;
+    proposalId?: string | null;
+    referendumId?: string | null;
+  }): Promise<GovernanceLifecycleSnapshot>;
   proposeGovernanceDeployContract(
     input: GovernanceDeployContractProposalInput,
   ): Promise<GovernanceDraftResponse>;
@@ -1284,6 +1613,60 @@ export interface IrohaBridge {
     toriiUrl: string;
     apiToken?: string;
   }): Promise<Record<string, unknown>>;
+  getSccpCapabilities(input: {
+    toriiUrl: string;
+  }): Promise<SccpCapabilitiesResponse>;
+  getSccpProofManifests(input: {
+    toriiUrl: string;
+  }): Promise<SccpProofManifestSetResponse>;
+  listSccpRecentMessages(
+    input: SccpRecentMessagesInput,
+  ): Promise<SccpRecentMessagesResponse>;
+  getSccpMessageProofArtifact(
+    input: SccpMessageProofInput,
+  ): Promise<Record<string, unknown>>;
+  getSccpMessageProofJob(
+    input: SccpMessageProofInput,
+  ): Promise<Record<string, unknown>>;
+  submitSccpBridgeProof(
+    input: SccpBridgeProofSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  submitSccpBridgeMessage(
+    input: SccpBridgeMessageSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  deriveZkIvmPayload(
+    input: ZkIvmRequestInput,
+  ): Promise<Record<string, unknown>>;
+  startZkIvmProveJob(
+    input: ZkIvmRequestInput,
+  ): Promise<Record<string, unknown>>;
+  getZkIvmProveJob(input: ZkIvmProveJobInput): Promise<Record<string, unknown>>;
+  cancelZkIvmProveJob(
+    input: ZkIvmProveJobInput,
+  ): Promise<Record<string, unknown>>;
+  submitZkIvmProvedTransaction(
+    input: ZkIvmProvedTransactionSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransaction(
+    input: TronTransactionInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransactionReceipt(
+    input: TronTransactionInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransactionEvents(
+    input: TronEventsInput,
+  ): Promise<Record<string, unknown>>;
+  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
+  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
+  getTronFinalityData(
+    input?: TronGatewayInput,
+  ): Promise<Record<string, unknown>>;
+  broadcastTronTransaction(
+    input: TronBroadcastInput,
+  ): Promise<Record<string, unknown>>;
+  triggerTronSmartContract(
+    input: TronTriggerSmartContractInput,
+  ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;

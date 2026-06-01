@@ -115,7 +115,7 @@ describe("StakingView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = () => {
+  const mountView = (accountId = "alice@wonderland") => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -130,12 +130,12 @@ describe("StakingView", () => {
         {
           displayName: "Alice",
           domain: "wonderland",
-          accountId: "alice@wonderland",
+          accountId,
           publicKeyHex: "ab".repeat(32),
           privateKeyHex: "cd".repeat(32),
         },
       ],
-      activeAccountId: "alice@wonderland",
+      activeAccountId: accountId,
     });
     return mount(StakingView, {
       global: {
@@ -385,6 +385,23 @@ describe("StakingView", () => {
     expect(wrapper.findAll("select")[0]?.attributes("disabled")).toBeDefined();
   });
 
+  it("does not treat a separate stake account as this wallet's validator authority", async () => {
+    const wrapper = mountView("stake@wonderland");
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.find(".validator-operator-card .status-pill").text()).toBe(
+      t("Not registered"),
+    );
+    const selectButton = wrapper
+      .findAll("button")
+      .find((node) => node.text() === t("Select my validator"));
+    if (!selectButton) {
+      throw new Error("Select my validator button not found");
+    }
+    expect(selectButton.attributes("disabled")).toBeDefined();
+  });
+
   it("submits validator registration from the operator panel", async () => {
     registerPublicLaneValidatorMock.mockResolvedValue({ hash: "0xvalidator" });
 
@@ -400,6 +417,10 @@ describe("StakingView", () => {
     );
     await getInputForLabel(wrapper, t("Commission (bps)")).setValue("250");
     await getInputForLabel(wrapper, t("Self stake (XOR)")).setValue("3");
+
+    const payloadPreview = wrapper.find(".staking-json-preview").text();
+    expect(payloadPreview).toContain('"initial_stake": "3"');
+    expect(payloadPreview).not.toContain("self_stake");
 
     const joinButton = wrapper
       .findAll("button")

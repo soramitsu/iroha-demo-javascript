@@ -110,6 +110,7 @@ describe("App shell", () => {
       t("Send"),
       t("Receive"),
       t("Subscriptions"),
+      t("SCCP Bridge"),
       t("Staking"),
       t("Parliament"),
       t("Explore"),
@@ -122,7 +123,7 @@ describe("App shell", () => {
       t("Saved Wallets"),
     ]);
     expect(steps[0]).toBe("01");
-    expect(steps.at(-1)).toBe("15");
+    expect(steps.at(-1)).toBe("16");
   });
 
   it("uses the video-first workspace treatment on Kaigi", () => {

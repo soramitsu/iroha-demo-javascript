@@ -17,6 +17,7 @@ const getGovernanceLocksMock = vi.fn();
 const getGovernanceUnlockStatsMock = vi.fn();
 const getGovernanceProposalMock = vi.fn();
 const getGovernanceRegistrationPolicyMock = vi.fn();
+const getGovernanceLifecycleMock = vi.fn();
 const registerCitizenMock = vi.fn();
 const proposeGovernanceDeployContractMock = vi.fn();
 const submitGovernancePlainBallotMock = vi.fn();
@@ -41,6 +42,7 @@ vi.mock("@/services/iroha", () => ({
   getGovernanceProposal: (input: unknown) => getGovernanceProposalMock(input),
   getGovernanceRegistrationPolicy: (toriiUrl: string) =>
     getGovernanceRegistrationPolicyMock(toriiUrl),
+  getGovernanceLifecycle: (input: unknown) => getGovernanceLifecycleMock(input),
   registerCitizen: (input: unknown) => registerCitizenMock(input),
   proposeGovernanceDeployContract: (input: unknown) =>
     proposeGovernanceDeployContractMock(input),
@@ -78,6 +80,7 @@ describe("ParliamentView", () => {
     getGovernanceUnlockStatsMock.mockReset();
     getGovernanceProposalMock.mockReset();
     getGovernanceRegistrationPolicyMock.mockReset();
+    getGovernanceLifecycleMock.mockReset();
     registerCitizenMock.mockReset();
     proposeGovernanceDeployContractMock.mockReset();
     submitGovernancePlainBallotMock.mockReset();
@@ -151,6 +154,9 @@ describe("ParliamentView", () => {
       configurationError: null,
       assetDefinitionError: null,
     });
+    getGovernanceLifecycleMock.mockRejectedValue(
+      new Error("Governance lifecycle endpoint is unavailable."),
+    );
     registerCitizenMock.mockResolvedValue({ hash: "0xabc" });
     proposeGovernanceDeployContractMock.mockResolvedValue({
       ok: true,
@@ -732,6 +738,190 @@ describe("ParliamentView", () => {
 
     await proposalInput.setValue(`0x${"a".repeat(64)}`);
     expect(loadButton.attributes("disabled")).toBeUndefined();
+  });
+
+  it("renders fallback lifecycle stages and keeps advanced tools secondary", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await findButtonByText(wrapper, "Load").trigger("click");
+    await flushPromises();
+
+    const stageButtons = wrapper.findAll(".parliament-stepper button");
+    expect(stageButtons.map((button) => button.text())).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(t("Submitted")),
+        expect.stringContaining(t("Briefs")),
+        expect.stringContaining(t("Challenge")),
+        expect.stringContaining(t("Canary")),
+        expect.stringContaining(t("Review")),
+      ]),
+    );
+    expect(
+      stageButtons
+        .find((button) => button.text().includes(t("Briefs")))
+        ?.classes(),
+    ).toContain("status-unavailable");
+    expect(wrapper.find(".parliament-mobile-tabs").exists()).toBe(true);
+    expect(wrapper.find(".parliament-advanced-card").exists()).toBe(true);
+    expect(
+      findButtonByText(wrapper, "Stage ballot").attributes("disabled"),
+    ).toBeDefined();
+    expect(wrapper.text()).toContain(
+      t("Parliament stage ballots are not available on this endpoint yet."),
+    );
+  });
+
+  it("uses a Torii lifecycle snapshot when available", async () => {
+    const proposalId = `0x${"b".repeat(64)}`;
+    getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
+      epoch: 4,
+      members: [{ account_id: "alice@wonderland" }],
+      alternates: [],
+      candidate_count: 1,
+      verified: 1,
+      derived_by: "Vrf",
+    });
+    getGovernanceLifecycleMock.mockResolvedValueOnce({
+      source: "torii",
+      endpointAvailable: true,
+      referendumId: "ref-1",
+      proposalId,
+      currentStageId: "challenge",
+      role: "seated_member",
+      stages: [
+        {
+          id: "submitted",
+          labelKey: "Submitted",
+          status: "complete",
+          detailKey:
+            "Proposal identity and referendum envelope are loaded from Torii.",
+        },
+        {
+          id: "briefs",
+          labelKey: "Briefs",
+          status: "complete",
+          detailKey:
+            "Expert and red-team brief endpoints are not available on this Torii endpoint yet.",
+        },
+        {
+          id: "comment",
+          labelKey: "Comment",
+          status: "complete",
+          detailKey:
+            "Public comment endpoints are not available on this Torii endpoint yet.",
+        },
+        {
+          id: "sortition",
+          labelKey: "Sortition",
+          status: "complete",
+          detailKey:
+            "Council data shows the active Parliament roster when Torii exposes it.",
+        },
+        {
+          id: "vote",
+          labelKey: "Vote",
+          status: "complete",
+          detailKey:
+            "Citizens can submit a ballot when eligibility and referendum data are ready.",
+        },
+        {
+          id: "tally",
+          labelKey: "Tally",
+          status: "complete",
+          detailKey:
+            "Vote totals and lock records come from the live referendum endpoints.",
+        },
+        {
+          id: "challenge",
+          labelKey: "Challenge",
+          status: "active",
+          detailKey:
+            "Challenge-window endpoints are not available on this Torii endpoint yet.",
+        },
+        {
+          id: "canary",
+          labelKey: "Canary",
+          status: "pending",
+          detailKey:
+            "Canary rollout endpoints are not available on this Torii endpoint yet.",
+        },
+        {
+          id: "enact",
+          labelKey: "Enact",
+          status: "pending",
+          detailKey:
+            "Privileged enactment tools stay in Advanced governance tools.",
+        },
+        {
+          id: "review",
+          labelKey: "Review",
+          status: "unavailable",
+          detailKey:
+            "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.",
+        },
+      ],
+      briefStatus: {
+        required: true,
+        submitted: 2,
+        redTeamRequired: true,
+        redTeamSubmitted: 1,
+        endpointAvailable: true,
+      },
+      challengeStatus: {
+        open: true,
+        bondRequired: "500",
+        activeChallenges: 1,
+        endpointAvailable: true,
+      },
+      rolloutStatus: {
+        phase: "canary",
+        endpointAvailable: true,
+        detail: "Canary guard active",
+      },
+      futureStagesUnavailable: false,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
+    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(proposalId);
+    await findButtonByText(wrapper, "Load").trigger("click");
+    await flushPromises();
+
+    expect(getGovernanceLifecycleMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      proposalId,
+      referendumId: "ref-1",
+    });
+    expect(wrapper.text()).toContain(t("Lifecycle endpoint"));
+    expect(wrapper.text()).not.toContain(t("Fallback lifecycle"));
+    expect(wrapper.text()).toContain(t("Challenge window"));
+    expect(wrapper.text()).toContain("500 XOR");
+    expect(wrapper.text()).toContain(t("Seated member"));
+  });
+
+  it("shows seated and operator governance roles from live account state", async () => {
+    getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
+      epoch: 4,
+      members: [{ account_id: "alice@wonderland" }],
+      alternates: [],
+      candidate_count: 1,
+      verified: 1,
+      derived_by: "Vrf",
+    });
+    const seatedWrapper = mountView();
+    await flushPromises();
+    expect(seatedWrapper.text()).toContain(t("Seated member"));
+
+    listAccountPermissionsMock.mockResolvedValueOnce({
+      items: [{ name: "CanManageParliament", payload: null }],
+      total: 1,
+    });
+    const operatorWrapper = mountView();
+    await flushPromises();
+    expect(operatorWrapper.text()).toContain(t("Operator"));
   });
 
   it("allows referendum lookup when proposal id is invalid and ignores proposal fetch", async () => {

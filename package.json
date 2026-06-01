@@ -39,6 +39,7 @@
     "@noble/ciphers": "^2.1.1",
     "@noble/curves": "^1.9.7",
     "@noble/hashes": "^1.8.0",
+    "@reown/appkit-universal-connector": "^1.8.20",
     "@scure/bip39": "^2.0.1",
     "@vueuse/core": "^10.11.0",
     "@zxing/browser": "^0.1.5",

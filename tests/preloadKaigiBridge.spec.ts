@@ -473,6 +473,9 @@ const loadBridge = async () => {
     registerCitizen: (
       input: Record<string, unknown>,
     ) => Promise<{ hash: string }>;
+    registerPublicLaneValidator: (
+      input: Record<string, unknown>,
+    ) => Promise<{ hash: string }>;
     getGovernanceRegistrationPolicy: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -2092,6 +2095,59 @@ describe("preload Kaigi bridge", () => {
         },
       }),
     );
+  });
+
+  it("serializes validator registration self stake as initial_stake", async () => {
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.registerPublicLaneValidator({
+        toriiUrl: "https://minamoto.sora.org",
+        chainId: MINAMOTO_CHAIN_ID,
+        laneId: 7,
+        validatorAccountId: ALICE_ACCOUNT_ID,
+        stakeAccountId: BOB_ACCOUNT_ID,
+        peerId: "peer:alice",
+        selfStake: "10.5",
+        metadata: {
+          endpoint: "https://validator.example",
+          commission_bps: 250,
+        },
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).resolves.toEqual({
+      hash: "hash-instruction-tx",
+    });
+
+    expect(mocks.buildTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chainId: MINAMOTO_CHAIN_ID,
+        authority: ALICE_ACCOUNT_ID,
+        instructions: [
+          {
+            RegisterPublicLaneValidator: expect.objectContaining({
+              lane_id: 7,
+              validator: ALICE_ACCOUNT_ID,
+              stake_account: BOB_ACCOUNT_ID,
+              peer_id: "peer:alice",
+              initial_stake: "10.5",
+              metadata: {
+                endpoint: "https://validator.example",
+                commission_bps: 250,
+              },
+            }),
+          },
+        ],
+      }),
+    );
+    const buildTransactionCalls = mocks.buildTransactionMock.mock
+      .calls as Array<unknown[]>;
+    const transactionInput = buildTransactionCalls.at(-1)?.[0] as
+      | { instructions?: Array<Record<string, Record<string, unknown>>> }
+      | undefined;
+    const instruction =
+      transactionInput?.instructions?.[0]?.RegisterPublicLaneValidator;
+    expect(instruction).not.toHaveProperty("self_stake");
   });
 
   it("falls back to the public transaction route when pipeline routing is unavailable", async () => {

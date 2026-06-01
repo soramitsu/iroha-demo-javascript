@@ -376,6 +376,14 @@ const navItems = [
     groupKey: "Payments",
   },
   {
+    to: "/sccp",
+    labelKey: "SCCP Bridge",
+    descriptionKey: "Bridge XOR with TRON",
+    icon: SendIcon,
+    requiresAccount: true,
+    groupKey: "Payments",
+  },
+  {
     to: "/offline",
     labelKey: "Offline",
     descriptionKey: "Device payments and invoices",

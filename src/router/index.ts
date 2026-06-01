@@ -13,6 +13,7 @@ import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
 import KaigiView from "@/views/KaigiView.vue";
 import VpnView from "@/views/VpnView.vue";
 import SoraCloudView from "@/views/SoraCloudView.vue";
+import SccpView from "@/views/SccpView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import { useSessionStore } from "@/stores/session";
 
@@ -103,6 +104,14 @@ const routes = [
     meta: {
       titleKey: "Subscriptions",
       subtitleKey: "Recurring payments",
+    },
+  },
+  {
+    path: "/sccp",
+    component: SccpView,
+    meta: {
+      titleKey: "SCCP Bridge",
+      subtitleKey: "TAIRA and TRON XOR bridge",
     },
   },
   {

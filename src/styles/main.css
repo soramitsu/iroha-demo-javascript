@@ -3882,3 +3882,183 @@ button:not(.secondary):hover {
     justify-content: flex-start;
   }
 }
+
+.sccp-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.sccp-command-header,
+.sccp-command-actions,
+.sccp-route-strip,
+.sccp-form-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sccp-command-header {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sccp-command-actions {
+  justify-content: flex-end;
+}
+
+.sccp-status-grid,
+.sccp-lower-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sccp-lower-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+}
+
+.sccp-route-strip {
+  margin-top: 14px;
+}
+
+.sccp-reasons {
+  display: grid;
+  gap: 4px;
+  margin-top: 12px;
+}
+
+.sccp-direction-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+
+.sccp-direction-tabs button {
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+  min-height: 44px;
+}
+
+.sccp-direction-tabs button.active {
+  background: var(--surface-strong);
+  border-color: var(--panel-border);
+  color: var(--iroha-accent);
+}
+
+.sccp-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.sccp-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.sccp-form label > span {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--iroha-muted);
+}
+
+.sccp-form input {
+  min-width: 0;
+}
+
+.sccp-form-actions {
+  grid-column: 1 / -1;
+  align-items: center;
+}
+
+.sccp-progress-list,
+.sccp-activity-list,
+.sccp-link-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sccp-progress-list {
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sccp-progress-list li,
+.sccp-activity-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--surface-soft);
+}
+
+.sccp-progress-list li::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.9);
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
+.sccp-progress-list li {
+  grid-template-columns: 10px minmax(0, 1fr);
+}
+
+.sccp-progress-list li.complete::before {
+  background: #3ddc97;
+}
+
+.sccp-progress-list li.active::before {
+  background: var(--iroha-accent);
+}
+
+.sccp-progress-list span,
+.sccp-activity-item span {
+  font-weight: 700;
+}
+
+.sccp-progress-list small,
+.sccp-activity-item small {
+  color: var(--iroha-muted);
+}
+
+.sccp-link-list a {
+  color: var(--iroha-accent);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1080px) {
+  .sccp-status-grid,
+  .sccp-lower-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .sccp-command-header,
+  .sccp-command-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sccp-status-grid,
+  .sccp-lower-grid,
+  .sccp-form,
+  .sccp-direction-tabs {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sccp-form-actions button {
+    width: 100%;
+  }
+}

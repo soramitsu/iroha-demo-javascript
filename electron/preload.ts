@@ -22,6 +22,7 @@ import {
   buildUnshieldTransaction,
   buildZkTransferTransaction,
   buildTransaction,
+  buildIvmProvedTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
   submitTransactionEntrypoint,
@@ -29,7 +30,10 @@ import {
   extractPipelineStatusKind,
   normalizeAssetHoldingId,
   type KaigiCallView,
+  type ToriiBridgeMessageSubmitPayload,
+  type ToriiBridgeProofSubmitPayload,
   type ToriiGovernanceDeployContractProposalRequest,
+  type ToriiSccpEvmDestinationQueryOptions,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
 import {
@@ -1054,6 +1058,89 @@ type SoraCloudHfDeployResponseView = {
   raw: Record<string, unknown>;
 };
 
+type SccpCapabilitiesResponse = Awaited<
+  ReturnType<ToriiClient["getSccpCapabilities"]>
+>;
+type SccpProofManifestSetResponse = Awaited<
+  ReturnType<ToriiClient["getSccpProofManifests"]>
+>;
+type SccpMessageProofArtifactResponse = Awaited<
+  ReturnType<ToriiClient["getSccpMessageProofArtifact"]>
+>;
+type SccpMessageProofJobResponse = Awaited<
+  ReturnType<ToriiClient["getSccpMessageProofJob"]>
+>;
+type SccpRecentMessagesInput = ToriiConfig & {
+  routeId?: string;
+  limit?: number;
+  offset?: number;
+};
+type SccpRecentMessagesResponse = {
+  items: Record<string, unknown>[];
+  total: number;
+  raw: Record<string, unknown>;
+};
+type SccpDestinationProofMaterialInput = {
+  networkIdHex?: string;
+  verifierAddressHex?: string;
+  bridgeAddressHex?: string;
+  verifierCodeHashHex?: string;
+  verifierKeyHashHex?: string;
+  expectedDestinationBindingHashHex?: string;
+  tronVerifierAddress?: string;
+  proofBytesHex?: string;
+};
+type SccpMessageProofInput = ToriiConfig &
+  SccpDestinationProofMaterialInput & {
+    messageId: string;
+  };
+type SccpBridgeProofSubmitInput = ToriiConfig &
+  SccpDestinationProofMaterialInput & {
+    accountId: string;
+    privateKeyHex?: string;
+    burnBundle?: Record<string, unknown>;
+    messageBundle?: Record<string, unknown>;
+    publicKeyHex?: string;
+    signatureB64?: string;
+    creationTimeMs?: number | string;
+  };
+type SccpBridgeMessageSubmitInput = ToriiConfig &
+  SccpDestinationProofMaterialInput & {
+    accountId: string;
+    privateKeyHex?: string;
+    messageBundle: Record<string, unknown>;
+    publicKeyHex?: string;
+    signatureB64?: string;
+    receiptLane?: number | string;
+    settlement?: Record<string, unknown>;
+    creationTimeMs?: number | string;
+  };
+type TronGatewayInput = {
+  endpoint?: string;
+};
+type TronTransactionInput = TronGatewayInput & {
+  txId: string;
+};
+type TronBlockInput = TronGatewayInput & {
+  blockNumber?: number | string;
+};
+type TronBroadcastInput = TronGatewayInput & {
+  transaction: Record<string, unknown>;
+};
+type TronTriggerSmartContractInput = TronGatewayInput & {
+  ownerAddress: string;
+  contractAddress: string;
+  functionSelector: string;
+  parameter?: string;
+  callData?: string;
+  feeLimit?: number | string;
+  callValue?: number | string;
+  permissionId?: number | string;
+};
+type TronEventsInput = TronGatewayInput & {
+  txId: string;
+};
+
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
@@ -1349,6 +1436,58 @@ type IrohaBridge = {
   ): Promise<SoraCloudHfDeployResponseView>;
   getSoraCloudHfStatus(
     input: SoraCloudStatusInput,
+  ): Promise<Record<string, unknown>>;
+  getSccpCapabilities(input: ToriiConfig): Promise<SccpCapabilitiesResponse>;
+  getSccpProofManifests(
+    input: ToriiConfig,
+  ): Promise<SccpProofManifestSetResponse>;
+  listSccpRecentMessages(
+    input: SccpRecentMessagesInput,
+  ): Promise<SccpRecentMessagesResponse>;
+  getSccpMessageProofArtifact(
+    input: SccpMessageProofInput,
+  ): Promise<SccpMessageProofArtifactResponse>;
+  getSccpMessageProofJob(
+    input: SccpMessageProofInput,
+  ): Promise<SccpMessageProofJobResponse>;
+  submitSccpBridgeProof(
+    input: SccpBridgeProofSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  submitSccpBridgeMessage(
+    input: SccpBridgeMessageSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  deriveZkIvmPayload(
+    input: ZkIvmRequestInput,
+  ): Promise<Record<string, unknown>>;
+  startZkIvmProveJob(
+    input: ZkIvmRequestInput,
+  ): Promise<Record<string, unknown>>;
+  getZkIvmProveJob(input: ZkIvmProveJobInput): Promise<Record<string, unknown>>;
+  cancelZkIvmProveJob(
+    input: ZkIvmProveJobInput,
+  ): Promise<Record<string, unknown>>;
+  submitZkIvmProvedTransaction(
+    input: ZkIvmProvedTransactionSubmitInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransaction(
+    input: TronTransactionInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransactionReceipt(
+    input: TronTransactionInput,
+  ): Promise<Record<string, unknown>>;
+  getTronTransactionEvents(
+    input: TronEventsInput,
+  ): Promise<Record<string, unknown>>;
+  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
+  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
+  getTronFinalityData(
+    input?: TronGatewayInput,
+  ): Promise<Record<string, unknown>>;
+  broadcastTronTransaction(
+    input: TronBroadcastInput,
+  ): Promise<Record<string, unknown>>;
+  triggerTronSmartContract(
+    input: TronTriggerSmartContractInput,
   ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
@@ -4477,6 +4616,549 @@ const getSoraCloudHfStatusFromTorii = async (
     "SoraCloud HF status",
     buildSoraCloudHeaders(input.apiToken),
   );
+
+const DEFAULT_TRON_GATEWAY_URL = "https://api.trongrid.io";
+
+const buildSccpDestinationProofOptions = (
+  input: SccpDestinationProofMaterialInput,
+): ToriiSccpEvmDestinationQueryOptions => {
+  const options: ToriiSccpEvmDestinationQueryOptions = {};
+  if (trimString(input.networkIdHex)) {
+    options.networkIdHex = trimString(input.networkIdHex);
+  }
+  if (trimString(input.verifierAddressHex)) {
+    options.verifierAddressHex = trimString(input.verifierAddressHex);
+  }
+  if (trimString(input.bridgeAddressHex)) {
+    options.bridgeAddressHex = trimString(input.bridgeAddressHex);
+  }
+  if (trimString(input.verifierCodeHashHex)) {
+    options.verifierCodeHashHex = trimString(input.verifierCodeHashHex);
+  }
+  if (trimString(input.verifierKeyHashHex)) {
+    options.verifierKeyHashHex = trimString(input.verifierKeyHashHex);
+  }
+  if (trimString(input.expectedDestinationBindingHashHex)) {
+    options.expectedDestinationBindingHashHex = trimString(
+      input.expectedDestinationBindingHashHex,
+    );
+  }
+  if (trimString(input.tronVerifierAddress)) {
+    options.tronVerifierAddress = trimString(input.tronVerifierAddress);
+  }
+  if (trimString(input.proofBytesHex)) {
+    options.proofBytesHex = trimString(input.proofBytesHex);
+  }
+  return options;
+};
+
+const listSccpRecentMessagesFromTorii = async (
+  input: SccpRecentMessagesInput,
+): Promise<SccpRecentMessagesResponse> => {
+  const payload = await fetchJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/sccp/messages/recent", {
+      route_id: trimString(input.routeId) || undefined,
+      limit: input.limit,
+      offset: input.offset,
+    }),
+    "SCCP recent messages",
+  );
+  const rawItems = Array.isArray(payload.items)
+    ? payload.items
+    : Array.isArray(payload.messages)
+      ? payload.messages
+      : [];
+  const items = rawItems.filter(
+    (entry): entry is Record<string, unknown> =>
+      isPlainRecord(entry) && !Array.isArray(entry),
+  );
+  return {
+    items,
+    total: normalizeTotal(payload.total, items.length),
+    raw: payload,
+  };
+};
+
+const buildSccpBridgeAuthorityPayload = async (
+  input: {
+    accountId: string;
+    privateKeyHex?: string;
+    publicKeyHex?: string;
+    signatureB64?: string;
+  },
+  operationLabel: string,
+) => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const publicKeyHex = trimString(input.publicKeyHex);
+  const signatureB64 = trimString(input.signatureB64);
+  const hasDetachedSignature = Boolean(publicKeyHex && signatureB64);
+  return {
+    authority: accountId,
+    ...(hasDetachedSignature
+      ? { publicKeyHex, signatureB64 }
+      : {
+          privateKey: await resolvePrivateKeyHex({
+            accountId,
+            privateKeyHex: input.privateKeyHex,
+            operationLabel,
+          }),
+        }),
+  };
+};
+
+const submitSccpBridgeProofToTorii = async (
+  input: SccpBridgeProofSubmitInput,
+): Promise<Record<string, unknown>> => {
+  const auth = await buildSccpBridgeAuthorityPayload(
+    input,
+    "Submit SCCP bridge proof",
+  );
+  const payload: ToriiBridgeProofSubmitPayload = {
+    ...auth,
+    ...(input.burnBundle ? { burnBundle: input.burnBundle } : {}),
+    ...(input.messageBundle ? { messageBundle: input.messageBundle } : {}),
+    ...buildSccpDestinationProofOptions(input),
+    ...(input.creationTimeMs !== undefined
+      ? { creationTimeMs: input.creationTimeMs }
+      : {}),
+  };
+  const client = getClient(input.toriiUrl);
+  return client.submitBridgeProof(payload);
+};
+
+const submitSccpBridgeMessageToTorii = async (
+  input: SccpBridgeMessageSubmitInput,
+): Promise<Record<string, unknown>> => {
+  const auth = await buildSccpBridgeAuthorityPayload(
+    input,
+    "Submit SCCP bridge message",
+  );
+  const payload: ToriiBridgeMessageSubmitPayload = {
+    ...auth,
+    messageBundle: input.messageBundle,
+    ...buildSccpDestinationProofOptions(input),
+    ...(input.receiptLane !== undefined
+      ? { receiptLane: input.receiptLane }
+      : {}),
+    ...(input.settlement ? { settlement: input.settlement } : {}),
+    ...(input.creationTimeMs !== undefined
+      ? { creationTimeMs: input.creationTimeMs }
+      : {}),
+  };
+  const client = getClient(input.toriiUrl);
+  return client.submitBridgeMessage(payload);
+};
+
+type ZkIvmRequestInput = {
+  toriiUrl: string;
+  vkRef?: unknown;
+  vk_ref?: unknown;
+  authority?: unknown;
+  metadata?: unknown;
+  bytecode?: unknown;
+  proved?: unknown;
+};
+
+type ZkIvmProveJobInput = {
+  toriiUrl: string;
+  jobId?: unknown;
+  job_id?: unknown;
+};
+type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
+  chainId: string;
+  accountId: string;
+  privateKeyHex?: string;
+  proved: Record<string, unknown>;
+  attachment: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  creationTimeMs?: number;
+  ttlMs?: number;
+  nonce?: number;
+};
+
+const normalizeZkIvmVkRef = (
+  input: unknown,
+): { backend: string; name: string } => {
+  if (!isPlainRecord(input)) {
+    throw new Error("ZK IVM verifying key reference must be an object.");
+  }
+  const backend = trimString(input.backend);
+  const name = trimString(input.name);
+  if (!backend || !name) {
+    throw new Error(
+      "ZK IVM verifying key reference requires backend and name.",
+    );
+  }
+  return { backend, name };
+};
+
+const buildZkIvmRequestPayload = (
+  input: ZkIvmRequestInput,
+): Record<string, unknown> => {
+  const metadata =
+    input.metadata === undefined
+      ? {}
+      : isPlainRecord(input.metadata)
+        ? input.metadata
+        : null;
+  if (metadata === null) {
+    throw new Error("ZK IVM metadata must be an object when provided.");
+  }
+  if (input.bytecode === undefined || input.bytecode === null) {
+    throw new Error("ZK IVM bytecode is required.");
+  }
+  if (typeof input.bytecode === "string" && !input.bytecode.trim()) {
+    throw new Error("ZK IVM bytecode must not be empty.");
+  }
+  if (input.proved !== undefined && !isPlainRecord(input.proved)) {
+    throw new Error("ZK IVM proved payload must be an object when provided.");
+  }
+  return {
+    vk_ref: normalizeZkIvmVkRef(input.vkRef ?? input.vk_ref),
+    authority: normalizeCanonicalAccountIdLiteral(
+      trimString(input.authority),
+      "authority",
+    ),
+    metadata,
+    bytecode: input.bytecode,
+    ...(input.proved !== undefined ? { proved: input.proved } : {}),
+  };
+};
+
+const normalizeZkIvmJobId = (input: ZkIvmProveJobInput): string => {
+  const jobId = trimString(input.jobId ?? input.job_id).toLowerCase();
+  if (!/^[0-9a-f]{32}$/u.test(jobId)) {
+    throw new Error("ZK IVM prove job id must be a 16-byte hex string.");
+  }
+  return jobId;
+};
+
+const deriveZkIvmPayloadOnTorii = (
+  input: ZkIvmRequestInput,
+): Promise<Record<string, unknown>> =>
+  postJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/derive"),
+    "ZK IVM derive",
+    buildZkIvmRequestPayload(input),
+  );
+
+const startZkIvmProveJobOnTorii = (
+  input: ZkIvmRequestInput,
+): Promise<Record<string, unknown>> =>
+  postJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/prove"),
+    "ZK IVM prove",
+    buildZkIvmRequestPayload(input),
+  );
+
+const getZkIvmProveJobFromTorii = (
+  input: ZkIvmProveJobInput,
+): Promise<Record<string, unknown>> =>
+  fetchJson(
+    buildNexusEndpoint(
+      input.toriiUrl,
+      `/v1/zk/ivm/prove/${normalizeZkIvmJobId(input)}`,
+    ),
+    "ZK IVM prove job",
+  );
+
+const cancelZkIvmProveJobOnTorii = async (
+  input: ZkIvmProveJobInput,
+): Promise<Record<string, unknown>> => {
+  const response = await nodeFetch(
+    buildNexusEndpoint(
+      input.toriiUrl,
+      `/v1/zk/ivm/prove/${normalizeZkIvmJobId(input)}`,
+    ),
+    {
+      method: "DELETE",
+      headers: {
+        Accept: "application/json",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "ZK IVM prove job cancel");
+  }
+  const payload = (await response.json()) as unknown;
+  return ensureObjectResponse(payload, "ZK IVM prove job cancel");
+};
+
+const submitZkIvmProvedTransactionToTorii = async (
+  input: ZkIvmProvedTransactionSubmitInput,
+): Promise<Record<string, unknown>> => {
+  const chainId = trimString(input.chainId);
+  if (!chainId) {
+    throw new Error("chainId is required.");
+  }
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  if (!isPlainRecord(input.proved)) {
+    throw new Error("ZK IVM proved payload must be an object.");
+  }
+  if (!isPlainRecord(input.attachment)) {
+    throw new Error("ZK IVM proof attachment must be an object.");
+  }
+  if (input.metadata !== undefined && !isPlainRecord(input.metadata)) {
+    throw new Error(
+      "ZK IVM transaction metadata must be an object when provided.",
+    );
+  }
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    privateKeyHex: input.privateKeyHex,
+    operationLabel: "Submit ZK IVM proved transaction",
+  });
+  const tx = buildIvmProvedTransaction({
+    chainId,
+    authority: accountId,
+    proved: input.proved,
+    attachment: input.attachment,
+    metadata: input.metadata,
+    creationTimeMs: input.creationTimeMs,
+    ttlMs: input.ttlMs,
+    nonce: input.nonce,
+    privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+  });
+  const submission = await submitSignedTransactionAndWaitForCommit(
+    input.toriiUrl,
+    tx.signedTransaction,
+  );
+  return transactionSubmissionResult(submission);
+};
+
+const normalizeTronGatewayUrl = (endpoint?: string): string =>
+  normalizeBaseUrl(trimString(endpoint) || DEFAULT_TRON_GATEWAY_URL);
+
+const normalizeTronTxId = (txId: string): string => {
+  const normalized = trimString(txId).replace(/^0x/iu, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error("TRON transaction id must be a 32-byte hex string.");
+  }
+  return normalized;
+};
+
+const postTronJson = async (
+  input: TronGatewayInput | undefined,
+  path: string,
+  body: Record<string, unknown>,
+  label: string,
+): Promise<Record<string, unknown>> =>
+  postJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label, body);
+
+const getTronJson = async (
+  input: TronGatewayInput | undefined,
+  path: string,
+  label: string,
+): Promise<Record<string, unknown>> =>
+  fetchJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label);
+
+const getTronTransactionFromGateway = (
+  input: TronTransactionInput,
+): Promise<Record<string, unknown>> =>
+  postTronJson(
+    input,
+    "/wallet/gettransactionbyid",
+    { value: normalizeTronTxId(input.txId) },
+    "TRON transaction",
+  );
+
+const getTronTransactionReceiptFromGateway = (
+  input: TronTransactionInput,
+): Promise<Record<string, unknown>> =>
+  postTronJson(
+    input,
+    "/wallet/gettransactioninfobyid",
+    { value: normalizeTronTxId(input.txId) },
+    "TRON transaction receipt",
+  );
+
+const getTronTransactionEventsFromGateway = (
+  input: TronEventsInput,
+): Promise<Record<string, unknown>> =>
+  getTronJson(
+    input,
+    `/v1/transactions/${encodeURIComponent(normalizeTronTxId(input.txId))}/events`,
+    "TRON transaction events",
+  );
+
+const getTronSolidBlockFromGateway = (
+  input?: TronBlockInput,
+): Promise<Record<string, unknown>> => {
+  if (input?.blockNumber !== undefined && input.blockNumber !== "") {
+    const parsed = Number(input.blockNumber);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new Error("TRON block number must be a non-negative safe integer.");
+    }
+    return postTronJson(
+      input,
+      "/walletsolidity/getblockbynum",
+      { num: parsed },
+      "TRON solid block",
+    );
+  }
+  return postTronJson(
+    input,
+    "/walletsolidity/getnowblock",
+    {},
+    "TRON solid block",
+  );
+};
+
+const getTronWitnessesFromGateway = (
+  input?: TronGatewayInput,
+): Promise<Record<string, unknown>> =>
+  postTronJson(input, "/wallet/listwitnesses", {}, "TRON witnesses");
+
+const getTronFinalityDataFromGateway = async (
+  input?: TronGatewayInput,
+): Promise<Record<string, unknown>> => {
+  const [solidBlock, witnesses, nodeInfo] = await Promise.all([
+    getTronSolidBlockFromGateway(input),
+    getTronWitnessesFromGateway(input),
+    getTronJson(input, "/wallet/getnodeinfo", "TRON node info").catch(
+      (error) => ({
+        unavailable: true,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    ),
+  ]);
+  return {
+    solidBlock,
+    witnesses,
+    nodeInfo,
+    collectedAtMs: Date.now(),
+  };
+};
+
+const normalizeTronGatewayAddress = (value: string, label: string): string => {
+  const normalized = trimString(value);
+  if (!normalized) {
+    throw new Error(`${label} is required.`);
+  }
+  if (
+    !/^(?:T[1-9A-HJ-NP-Za-km-z]{33}|(?:0x)?41[0-9a-fA-F]{40})$/u.test(
+      normalized,
+    )
+  ) {
+    throw new Error(
+      `${label} must be a TRON Base58Check or 0x41-prefixed hex address.`,
+    );
+  }
+  return normalized;
+};
+
+const normalizeTronFunctionSelector = (value: string): string => {
+  const normalized = trimString(value);
+  if (!/^[A-Za-z_$][A-Za-z0-9_$]*\([^)]*\)$/u.test(normalized)) {
+    throw new Error(
+      "TRON function selector must be a Solidity function signature.",
+    );
+  }
+  return normalized;
+};
+
+const normalizeTronHexParameter = (
+  value: string | undefined,
+  label: string,
+): string => {
+  const normalized = trimString(value ?? "").replace(/^0x/iu, "");
+  if (!normalized) {
+    return "";
+  }
+  if (!/^[0-9a-fA-F]+$/u.test(normalized) || normalized.length % 2 !== 0) {
+    throw new Error(`${label} must be canonical hex.`);
+  }
+  return normalized.toLowerCase();
+};
+
+const normalizeTronSafeInteger = (
+  value: number | string | undefined,
+  label: string,
+  fallback: number,
+): number => {
+  if (value === undefined || value === "") {
+    return fallback;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return parsed;
+};
+
+const broadcastTronTransactionToGateway = (
+  input: TronBroadcastInput,
+): Promise<Record<string, unknown>> =>
+  postTronJson(
+    input,
+    "/wallet/broadcasttransaction",
+    input.transaction,
+    "Broadcast TRON transaction",
+  );
+
+const triggerTronSmartContractFromGateway = (
+  input: TronTriggerSmartContractInput,
+): Promise<Record<string, unknown>> => {
+  const callData = normalizeTronHexParameter(
+    input.callData,
+    "TRON smart-contract call data",
+  );
+  if (input.parameter === undefined && callData && callData.length < 8) {
+    throw new Error(
+      "TRON smart-contract call data must include a 4-byte selector.",
+    );
+  }
+  const parameter =
+    input.parameter !== undefined
+      ? normalizeTronHexParameter(
+          input.parameter,
+          "TRON smart-contract parameter",
+        )
+      : callData.slice(8);
+  return postTronJson(
+    input,
+    "/wallet/triggersmartcontract",
+    {
+      owner_address: normalizeTronGatewayAddress(
+        input.ownerAddress,
+        "TRON owner address",
+      ),
+      contract_address: normalizeTronGatewayAddress(
+        input.contractAddress,
+        "TRON contract address",
+      ),
+      function_selector: normalizeTronFunctionSelector(input.functionSelector),
+      parameter,
+      fee_limit: normalizeTronSafeInteger(
+        input.feeLimit,
+        "TRON fee limit",
+        100_000_000,
+      ),
+      call_value: normalizeTronSafeInteger(
+        input.callValue,
+        "TRON call value",
+        0,
+      ),
+      visible: true,
+      ...(input.permissionId !== undefined && input.permissionId !== ""
+        ? {
+            permission_id: normalizeTronSafeInteger(
+              input.permissionId,
+              "TRON permission id",
+              0,
+            ),
+          }
+        : {}),
+    },
+    "Trigger TRON smart contract",
+  );
+};
 
 const fetchExplorerAssetDefinitionSnapshot = async (
   toriiUrlRaw: string,
@@ -9675,6 +10357,76 @@ const api: IrohaBridge = {
   getSoraCloudHfStatus(input) {
     return getSoraCloudHfStatusFromTorii(input);
   },
+  getSccpCapabilities({ toriiUrl }) {
+    const client = getClient(toriiUrl);
+    return client.getSccpCapabilities();
+  },
+  getSccpProofManifests({ toriiUrl }) {
+    const client = getClient(toriiUrl);
+    return client.getSccpProofManifests();
+  },
+  listSccpRecentMessages(input) {
+    return listSccpRecentMessagesFromTorii(input);
+  },
+  getSccpMessageProofArtifact(input) {
+    const client = getClient(input.toriiUrl);
+    return client.getSccpMessageProofArtifact(
+      input.messageId,
+      buildSccpDestinationProofOptions(input),
+    );
+  },
+  getSccpMessageProofJob(input) {
+    const client = getClient(input.toriiUrl);
+    return client.getSccpMessageProofJob(
+      input.messageId,
+      buildSccpDestinationProofOptions(input),
+    );
+  },
+  submitSccpBridgeProof(input) {
+    return submitSccpBridgeProofToTorii(input);
+  },
+  submitSccpBridgeMessage(input) {
+    return submitSccpBridgeMessageToTorii(input);
+  },
+  deriveZkIvmPayload(input) {
+    return deriveZkIvmPayloadOnTorii(input);
+  },
+  startZkIvmProveJob(input) {
+    return startZkIvmProveJobOnTorii(input);
+  },
+  getZkIvmProveJob(input) {
+    return getZkIvmProveJobFromTorii(input);
+  },
+  cancelZkIvmProveJob(input) {
+    return cancelZkIvmProveJobOnTorii(input);
+  },
+  submitZkIvmProvedTransaction(input) {
+    return submitZkIvmProvedTransactionToTorii(input);
+  },
+  getTronTransaction(input) {
+    return getTronTransactionFromGateway(input);
+  },
+  getTronTransactionReceipt(input) {
+    return getTronTransactionReceiptFromGateway(input);
+  },
+  getTronTransactionEvents(input) {
+    return getTronTransactionEventsFromGateway(input);
+  },
+  getTronSolidBlock(input) {
+    return getTronSolidBlockFromGateway(input);
+  },
+  getTronWitnesses(input) {
+    return getTronWitnessesFromGateway(input);
+  },
+  getTronFinalityData(input) {
+    return getTronFinalityDataFromGateway(input);
+  },
+  broadcastTronTransaction(input) {
+    return broadcastTronTransactionToGateway(input);
+  },
+  triggerTronSmartContract(input) {
+    return triggerTronSmartContractFromGateway(input);
+  },
   bondPublicLaneStake({
     toriiUrl,
     chainId,
@@ -9731,7 +10483,7 @@ const api: IrohaBridge = {
           validator: normalizedValidator,
           stake_account: normalizedStakeAccount,
           peer_id: normalizeNonEmptyString(peerId, "peerId"),
-          self_stake: normalizeAmount(selfStake, "selfStake"),
+          initial_stake: normalizeAmount(selfStake, "selfStake"),
           metadata: isPlainRecord(metadata) ? metadata : {},
         },
       },

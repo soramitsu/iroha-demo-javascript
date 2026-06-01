@@ -1,17 +1,21 @@
 <template>
-  <div class="parliament-shell">
-    <section class="card parliament-status-card">
-      <header class="card-header">
-        <h2>{{ t("Voting eligibility") }}</h2>
+  <div class="parliament-shell parliament-workbench">
+    <section class="card parliament-status-card parliament-readiness-card">
+      <header class="card-header parliament-readiness-header">
+        <div>
+          <p class="parliament-kicker">{{ t("SORA Parliament") }}</p>
+          <h2>{{ t("Voting eligibility") }}</h2>
+        </div>
         <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
           {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
         </button>
       </header>
+
       <div
         class="parliament-citizenship-panel"
         :class="{ 'parliament-citizenship-panel-positive': alreadyCitizen }"
       >
-        <div>
+        <div class="parliament-citizenship-copy">
           <p class="kv-label">{{ t("Citizenship") }}</p>
           <h3>{{ citizenshipHeadline }}</h3>
           <p class="helper">{{ citizenshipPanelDetail }}</p>
@@ -21,7 +25,8 @@
           <span class="kv-value">{{ citizenCountDisplay }}</span>
         </div>
       </div>
-      <div class="grid-2 parliament-summary">
+
+      <div class="parliament-readiness-grid">
         <div class="kv">
           <span class="kv-label">{{ t("XOR Balance") }}</span>
           <span class="kv-value">{{ xorBalance }} XOR</span>
@@ -30,7 +35,50 @@
           <span class="kv-label">{{ t("Required Bond") }}</span>
           <span class="kv-value">{{ citizenshipBondAmount }} XOR</span>
         </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Role") }}</span>
+          <span class="kv-value">{{ governanceRoleLabel }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Endpoint") }}</span>
+          <span class="kv-value mono">{{ toriiUrl || t("—") }}</span>
+        </div>
       </div>
+
+      <div class="parliament-next-action">
+        <div>
+          <span class="kv-label">{{ t("Next action") }}</span>
+          <strong>{{ nextActionLabel }}</strong>
+          <p v-if="nextActionReason" class="helper tight">
+            {{ nextActionReason }}
+          </p>
+        </div>
+        <button :disabled="!canBondCitizen" @click="handleBondCitizen">
+          {{
+            actionBusy === "bond"
+              ? t("Submitting…")
+              : t("Bond {amount} XOR", { amount: citizenshipBondAmount })
+          }}
+        </button>
+      </div>
+
+      <p v-if="!alreadyCitizen" class="transaction-fee-note">
+        <span>{{ t("Fee") }}</span>
+        <strong>{{ bondFeeLabel }}</strong>
+      </p>
+      <p v-if="alreadyCitizen" class="message success">
+        {{
+          t(
+            "Citizenship voting permission detected. Bonding is no longer required.",
+          )
+        }}
+      </p>
+      <p v-if="!alreadyCitizen && bondGate.reason" class="message warning">
+        {{ bondGate.reason }}
+      </p>
+      <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
+      <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
+      <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
 
       <details class="technical-details compact">
         <summary>{{ t("Voting details") }}</summary>
@@ -43,16 +91,12 @@
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Chain") }}</span>
-            <span class="kv-value">{{
-              session.connection.chainId || t("—")
-            }}</span>
+            <span class="kv-value">{{ chainId || t("—") }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Asset") }}</span>
             <span class="kv-value mono">{{
-              citizenshipAssetDefinitionId ||
-              session.connection.assetDefinitionId ||
-              t("—")
+              citizenshipAssetDefinitionId || assetDefinitionId || t("—")
             }}</span>
           </div>
         </div>
@@ -99,51 +143,14 @@
           </span>
         </div>
       </details>
-
-      <div class="actions">
-        <button :disabled="!canBondCitizen" @click="handleBondCitizen">
-          {{
-            actionBusy === "bond"
-              ? t("Submitting…")
-              : t("Bond {amount} XOR", { amount: citizenshipBondAmount })
-          }}
-        </button>
-      </div>
-      <p v-if="!alreadyCitizen" class="transaction-fee-note">
-        <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-            t,
-          )
-        }}</strong>
-      </p>
-      <p v-if="alreadyCitizen" class="message success">
-        {{
-          t(
-            "Citizenship voting permission detected. Bonding is no longer required.",
-          )
-        }}
-      </p>
-      <p v-if="!alreadyCitizen && !hasXorForBond" class="message warning">
-        {{
-          t("Available XOR balance is below the required citizen bond amount.")
-        }}
-      </p>
-      <p
-        v-if="!alreadyCitizen && citizenshipAssetDefinitionMissingMessage"
-        class="message error"
-      >
-        {{ citizenshipAssetDefinitionMissingMessage }}
-      </p>
-      <p v-if="statusMessage" class="helper">{{ statusMessage }}</p>
-      <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
-      <p v-if="errorMessage" class="message error">{{ errorMessage }}</p>
     </section>
 
-    <section class="card parliament-lookup-card">
+    <section class="card parliament-lookup-card parliament-proposal-workspace">
       <header class="card-header">
-        <h2>{{ t("Load proposal") }}</h2>
+        <div>
+          <h2>{{ t("Active proposal") }}</h2>
+          <p class="helper tight">{{ proposalSummaryDetail }}</p>
+        </div>
         <button
           class="secondary"
           :disabled="!canLookupGovernance"
@@ -152,6 +159,7 @@
           {{ lookupLoading ? t("Loading…") : t("Load") }}
         </button>
       </header>
+
       <div class="form-grid">
         <label>
           {{ t("Referendum ID") }}
@@ -173,6 +181,63 @@
       <p v-if="proposalIdFormatError" class="message warning">
         {{ t("Proposal ID must be 32-byte hex (with or without 0x prefix).") }}
       </p>
+
+      <div class="parliament-selected-record">
+        <div>
+          <span class="kv-label">{{ t("Selection") }}</span>
+          <h3>{{ proposalSummaryTitle }}</h3>
+        </div>
+        <span
+          class="pill mini"
+          :class="lifecycleSnapshot.source === 'torii' ? 'positive' : 'muted'"
+        >
+          {{
+            lifecycleSnapshot.source === "torii"
+              ? t("Lifecycle endpoint")
+              : t("Fallback lifecycle")
+          }}
+        </span>
+      </div>
+
+      <div v-if="tally?.tally" class="grid-2 parliament-tally">
+        <div class="kv">
+          <span class="kv-label">{{ t("Aye") }}</span>
+          <span class="kv-value">{{ tally.tally.approve }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Nay") }}</span>
+          <span class="kv-value">{{ tally.tally.reject }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Abstain") }}</span>
+          <span class="kv-value">{{ tally.tally.abstain }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Lock Records") }}</span>
+          <span class="kv-value">{{ lockCount }}</span>
+        </div>
+      </div>
+
+      <div class="parliament-lookup-status">
+        <p v-if="referendum" class="helper">
+          {{
+            t("Referendum found: {value}.", {
+              value: referendum.found ? t("yes") : t("no"),
+            })
+          }}
+        </p>
+        <p v-if="proposal" class="helper">
+          {{
+            t("Proposal found: {value}.", {
+              value: proposal.found ? t("yes") : t("no"),
+            })
+          }}
+        </p>
+        <p v-if="lifecycleCapabilityMessage" class="helper">
+          {{ lifecycleCapabilityMessage }}
+        </p>
+      </div>
+
       <div
         v-if="recentReferenda.length || recentProposals.length"
         class="history-stack"
@@ -217,156 +282,150 @@
           </button>
         </div>
       </div>
-
-      <div v-if="tally?.tally" class="grid-2 parliament-tally">
-        <div class="kv">
-          <span class="kv-label">{{ t("Aye") }}</span>
-          <span class="kv-value">{{ tally.tally.approve }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Nay") }}</span>
-          <span class="kv-value">{{ tally.tally.reject }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Abstain") }}</span>
-          <span class="kv-value">{{ tally.tally.abstain }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Lock Records") }}</span>
-          <span class="kv-value">{{ lockCount }}</span>
-        </div>
-      </div>
-
-      <p v-if="referendum" class="helper">
-        {{
-          t("Referendum found: {value}.", {
-            value: referendum.found ? t("yes") : t("no"),
-          })
-        }}
-      </p>
-      <p v-if="proposal" class="helper">
-        {{
-          t("Proposal found: {value}.", {
-            value: proposal.found ? t("yes") : t("no"),
-          })
-        }}
-      </p>
-
-      <div
-        v-if="referendum?.referendum || proposal?.proposal"
-        class="payload-stack"
-      >
-        <details class="technical-details">
-          <summary>{{ t("Raw proposal data") }}</summary>
-          <pre v-if="referendum?.referendum" class="payload mono">{{
-            JSON.stringify(referendum.referendum, null, 2)
-          }}</pre>
-          <pre v-if="proposal?.proposal" class="payload mono">{{
-            JSON.stringify(proposal.proposal, null, 2)
-          }}</pre>
-        </details>
-      </div>
     </section>
 
-    <section class="card parliament-proposal-card">
+    <section class="card parliament-lifecycle-card">
       <header class="card-header">
-        <h2>{{ t("Prepare proposal") }}</h2>
+        <div>
+          <h2>{{ t("Lifecycle") }}</h2>
+          <p class="helper tight">
+            {{ t("Select a stage to inspect only the relevant evidence.") }}
+          </p>
+        </div>
       </header>
-      <div class="form-grid">
-        <label>
-          {{ t("Contract target") }}
-          <select v-model="deployTargetKind">
-            <option value="address">{{ t("Contract address") }}</option>
-            <option value="alias">{{ t("Contract alias") }}</option>
-          </select>
-        </label>
-        <label>
-          {{
-            deployTargetKind === "address"
-              ? t("Contract address")
-              : t("Contract alias")
-          }}
-          <input
-            v-model.trim="deployTargetValue"
-            type="text"
-            data-testid="proposal-contract-target-input"
-          />
-        </label>
-        <label>
-          {{ t("Code hash") }}
-          <input
-            v-model.trim="deployCodeHash"
-            type="text"
-            data-testid="proposal-code-hash-input"
-          />
-        </label>
-        <label>
-          {{ t("ABI hash") }}
-          <input
-            v-model.trim="deployAbiHash"
-            type="text"
-            data-testid="proposal-abi-hash-input"
-          />
-        </label>
-        <label>
-          {{ t("ABI version") }}
-          <input v-model.trim="deployAbiVersion" type="text" />
-        </label>
-        <label>
-          {{ t("Voting mode") }}
-          <select v-model="deployVotingMode">
-            <option value="Plain">{{ t("Plain") }}</option>
-            <option value="Zk">{{ t("ZK") }}</option>
-          </select>
-        </label>
-        <label>
-          {{ t("Window lower") }}
-          <input
-            v-model.trim="deployWindowLower"
-            type="text"
-            inputmode="numeric"
-          />
-        </label>
-        <label>
-          {{ t("Window upper") }}
-          <input
-            v-model.trim="deployWindowUpper"
-            type="text"
-            inputmode="numeric"
-          />
-        </label>
-        <label class="form-span-2">
-          {{ t("Limits JSON") }}
-          <textarea v-model.trim="deployLimitsJson" rows="3"></textarea>
-        </label>
-      </div>
-      <div class="actions">
+
+      <div class="parliament-mobile-tabs" role="tablist">
         <button
-          class="secondary"
-          :disabled="!canPrepareDeployProposal"
-          @click="handleDeployProposalDraft"
+          type="button"
+          :class="{ active: activePanel === 'summary' }"
+          @click="activePanel = 'summary'"
         >
-          {{ actionBusy === "proposal" ? t("Preparing…") : t("Prepare draft") }}
+          {{ t("Summary") }}
+        </button>
+        <button
+          type="button"
+          :class="{ active: activePanel === 'stage' }"
+          @click="activePanel = 'stage'"
+        >
+          {{ t("Stage") }}
+        </button>
+        <button
+          type="button"
+          :class="{ active: activePanel === 'actions' }"
+          @click="activePanel = 'actions'"
+        >
+          {{ t("Actions") }}
         </button>
       </div>
-      <p v-if="deployWindowError" class="message warning">
-        {{ deployWindowError }}
-      </p>
-      <p v-if="deployLimitsError" class="message warning">
-        {{ deployLimitsError }}
-      </p>
-      <p v-if="deployProposalDraft" class="helper">
-        {{
-          t("Proposal draft: {summary}", {
-            summary: summarizeDraft(deployProposalDraft),
-          })
-        }}
-      </p>
+
+      <div class="parliament-lifecycle-layout">
+        <nav class="parliament-stepper" aria-label="Governance lifecycle">
+          <button
+            v-for="stage in lifecycleStages"
+            :key="stage.id"
+            type="button"
+            :class="[
+              `status-${stage.status}`,
+              { active: selectedStageId === stage.id },
+            ]"
+            @click="selectedStageId = stage.id"
+          >
+            <span>{{ t(stage.labelKey) }}</span>
+            <small>{{ t(stage.status) }}</small>
+          </button>
+        </nav>
+
+        <div
+          class="parliament-stage-detail"
+          :class="{ active: activePanel === 'stage' }"
+        >
+          <span class="kv-label">{{ t("Selected stage") }}</span>
+          <h3>{{ t(activeLifecycleStage.labelKey) }}</h3>
+          <p class="helper">{{ selectedStageDetail }}</p>
+
+          <div
+            v-if="activeLifecycleStage.id === 'briefs'"
+            class="parliament-evidence-grid"
+          >
+            <div class="kv">
+              <span class="kv-label">{{ t("Expert briefs") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.briefStatus.endpointAvailable
+                  ? lifecycleSnapshot.briefStatus.submitted
+                  : t("Unavailable")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Red-team briefs") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.briefStatus.endpointAvailable
+                  ? lifecycleSnapshot.briefStatus.redTeamSubmitted
+                  : t("Unavailable")
+              }}</span>
+            </div>
+          </div>
+
+          <div
+            v-else-if="activeLifecycleStage.id === 'challenge'"
+            class="parliament-evidence-grid"
+          >
+            <div class="kv">
+              <span class="kv-label">{{ t("Challenge window") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.challengeStatus.endpointAvailable
+                  ? t(
+                      lifecycleSnapshot.challengeStatus.open
+                        ? "open"
+                        : "closed",
+                    )
+                  : t("Unavailable")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Active challenges") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.challengeStatus.endpointAvailable
+                  ? lifecycleSnapshot.challengeStatus.activeChallenges
+                  : t("Unavailable")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Challenge bond") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.challengeStatus.endpointAvailable
+                  ? lifecycleSnapshot.challengeStatus.bondRequired
+                    ? `${lifecycleSnapshot.challengeStatus.bondRequired} XOR`
+                    : t("Unavailable")
+                  : t("Unavailable")
+              }}</span>
+            </div>
+          </div>
+
+          <div
+            v-else-if="activeLifecycleStage.id === 'canary'"
+            class="parliament-evidence-grid"
+          >
+            <div class="kv">
+              <span class="kv-label">{{ t("Rollout") }}</span>
+              <span class="kv-value">{{
+                lifecycleSnapshot.rolloutStatus.endpointAvailable
+                  ? t(lifecycleSnapshot.rolloutStatus.phase)
+                  : t("Unavailable")
+              }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <section class="card parliament-ballot-card">
+    <section class="card parliament-ballot-card parliament-action-card">
       <header class="card-header">
-        <h2>{{ t("Vote") }}</h2>
+        <div>
+          <h2>{{ t("Vote") }}</h2>
+          <p class="helper tight">
+            {{ t("Plain ballots use the current referendum and wallet.") }}
+          </p>
+        </div>
       </header>
       <div class="form-grid">
         <label>
@@ -399,1213 +458,358 @@
         <button :disabled="!canSubmitBallot" @click="handleBallot">
           {{ actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot") }}
         </button>
+        <button class="secondary" type="button" disabled>
+          {{ t("Stage ballot") }}
+        </button>
       </div>
       <p class="transaction-fee-note">
         <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-            t,
-          )
-        }}</strong>
+        <strong>{{ ballotFeeLabel }}</strong>
       </p>
-      <p v-if="missingBallotPermission" class="message warning">
-        {{
-          t(
-            "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
-          )
-        }}
+      <p v-if="ballotGate.reason" class="message warning">
+        {{ ballotGate.reason }}
       </p>
-      <p v-if="!hasValidBallotAmount" class="message warning">
-        {{ t("Ballot amount must be a whole number greater than zero.") }}
-      </p>
-      <p v-else-if="!hasXorForBallot" class="message warning">
-        {{ t("Ballot amount exceeds the available XOR balance.") }}
-      </p>
-      <p v-if="!hasValidDurationBlocks" class="message warning">
-        {{ t("Lock duration must be a positive integer number of blocks.") }}
+      <p v-if="stageBallotGate.reason" class="message warning">
+        {{ stageBallotGate.reason }}
       </p>
     </section>
 
-    <section class="card parliament-council-card">
-      <header class="card-header">
-        <h2>{{ t("Council & Draft Ops") }}</h2>
-      </header>
-      <div class="grid-2">
-        <div class="kv">
-          <span class="kv-label">{{ t("Current Epoch") }}</span>
-          <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Members") }}</span>
-          <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Alternates") }}</span>
-          <span class="kv-value">{{ council?.alternates.length ?? 0 }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Derived By") }}</span>
-          <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
-        </div>
+    <details
+      class="card parliament-advanced-card"
+      data-testid="parliament-advanced-drawer"
+    >
+      <summary>
+        <span>{{ t("Advanced governance tools") }}</span>
+        <small>{{
+          t("Proposal drafts, council state, finalize, enact")
+        }}</small>
+      </summary>
+
+      <div class="parliament-advanced-grid">
+        <section class="parliament-proposal-card">
+          <header class="card-header">
+            <h2>{{ t("Prepare proposal") }}</h2>
+          </header>
+          <div class="form-grid">
+            <label>
+              {{ t("Contract target") }}
+              <select v-model="deployTargetKind">
+                <option value="address">{{ t("Contract address") }}</option>
+                <option value="alias">{{ t("Contract alias") }}</option>
+              </select>
+            </label>
+            <label>
+              {{
+                deployTargetKind === "address"
+                  ? t("Contract address")
+                  : t("Contract alias")
+              }}
+              <input
+                v-model.trim="deployTargetValue"
+                type="text"
+                data-testid="proposal-contract-target-input"
+              />
+            </label>
+            <label>
+              {{ t("Code hash") }}
+              <input
+                v-model.trim="deployCodeHash"
+                type="text"
+                data-testid="proposal-code-hash-input"
+              />
+            </label>
+            <label>
+              {{ t("ABI hash") }}
+              <input
+                v-model.trim="deployAbiHash"
+                type="text"
+                data-testid="proposal-abi-hash-input"
+              />
+            </label>
+            <label>
+              {{ t("ABI version") }}
+              <input v-model.trim="deployAbiVersion" type="text" />
+            </label>
+            <label>
+              {{ t("Voting mode") }}
+              <select v-model="deployVotingMode">
+                <option value="Plain">{{ t("Plain") }}</option>
+                <option value="Zk">{{ t("ZK") }}</option>
+              </select>
+            </label>
+            <label>
+              {{ t("Window lower") }}
+              <input
+                v-model.trim="deployWindowLower"
+                type="text"
+                inputmode="numeric"
+              />
+            </label>
+            <label>
+              {{ t("Window upper") }}
+              <input
+                v-model.trim="deployWindowUpper"
+                type="text"
+                inputmode="numeric"
+              />
+            </label>
+            <label class="form-span-2">
+              {{ t("Limits JSON") }}
+              <textarea v-model.trim="deployLimitsJson" rows="3"></textarea>
+            </label>
+          </div>
+          <div class="actions">
+            <button
+              class="secondary"
+              :disabled="!canPrepareDeployProposal"
+              @click="handleDeployProposalDraft"
+            >
+              {{
+                actionBusy === "proposal" ? t("Preparing…") : t("Prepare draft")
+              }}
+            </button>
+          </div>
+          <p v-if="deployWindowError" class="message warning">
+            {{ deployWindowError }}
+          </p>
+          <p v-if="deployLimitsError" class="message warning">
+            {{ deployLimitsError }}
+          </p>
+          <p v-if="deployProposalDraft" class="helper">
+            {{
+              t("Proposal draft: {summary}", {
+                summary: summarizeDraft(deployProposalDraft),
+              })
+            }}
+          </p>
+        </section>
+
+        <section class="parliament-council-card">
+          <header class="card-header">
+            <h2>{{ t("Council & Draft Ops") }}</h2>
+          </header>
+          <div class="grid-2">
+            <div class="kv">
+              <span class="kv-label">{{ t("Current Epoch") }}</span>
+              <span class="kv-value">{{ council?.epoch ?? t("—") }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Members") }}</span>
+              <span class="kv-value">{{ council?.members.length ?? 0 }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Alternates") }}</span>
+              <span class="kv-value">{{
+                council?.alternates.length ?? 0
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Derived By") }}</span>
+              <span class="kv-value">{{ council?.derived_by ?? t("—") }}</span>
+            </div>
+          </div>
+
+          <div class="grid-2 parliament-unlock-stats">
+            <div class="kv">
+              <span class="kv-label">{{ t("Current Height") }}</span>
+              <span class="kv-value">{{
+                unlockStats?.height_current ?? t("—")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Expired Locks") }}</span>
+              <span class="kv-value">{{
+                unlockStats?.expired_locks_now ?? t("—")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{
+                t("Referenda With Expired Locks")
+              }}</span>
+              <span class="kv-value">{{
+                unlockStats?.referenda_with_expired ?? t("—")
+              }}</span>
+            </div>
+            <div class="kv">
+              <span class="kv-label">{{ t("Last Sweep") }}</span>
+              <span class="kv-value">{{
+                unlockStats?.last_sweep_height ?? t("—")
+              }}</span>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button
+              class="secondary"
+              :disabled="!canFinalizeDraft"
+              @click="handleFinalize"
+            >
+              {{
+                actionBusy === "finalize"
+                  ? t("Preparing…")
+                  : t("Finalize draft")
+              }}
+            </button>
+            <button
+              class="secondary"
+              :disabled="!canEnactDraft"
+              @click="handleEnact"
+            >
+              {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
+            </button>
+          </div>
+          <p v-if="finalizeGate.reason" class="message warning">
+            {{ finalizeGate.reason }}
+          </p>
+          <p v-if="enactGate.reason" class="message warning">
+            {{ enactGate.reason }}
+          </p>
+
+          <p v-if="finalizeDraft" class="helper">
+            {{
+              t("Finalize draft: {summary}", {
+                summary: summarizeDraft(finalizeDraft),
+              })
+            }}
+          </p>
+          <p v-if="enactDraft" class="helper">
+            {{
+              t("Enact draft: {summary}", {
+                summary: summarizeDraft(enactDraft),
+              })
+            }}
+          </p>
+
+          <details
+            v-if="council?.members.length"
+            class="technical-details compact"
+          >
+            <summary>{{ t("Council members") }}</summary>
+            <ul class="member-list mono">
+              <li v-for="member in council.members" :key="member.account_id">
+                {{ member.account_id }}
+              </li>
+            </ul>
+          </details>
+
+          <div
+            v-if="referendum?.referendum || proposal?.proposal"
+            class="payload-stack"
+          >
+            <details class="technical-details">
+              <summary>{{ t("Raw proposal data") }}</summary>
+              <pre v-if="referendum?.referendum" class="payload mono">{{
+                JSON.stringify(referendum.referendum, null, 2)
+              }}</pre>
+              <pre v-if="proposal?.proposal" class="payload mono">{{
+                JSON.stringify(proposal.proposal, null, 2)
+              }}</pre>
+            </details>
+          </div>
+        </section>
       </div>
-
-      <div class="grid-2 parliament-unlock-stats">
-        <div class="kv">
-          <span class="kv-label">{{ t("Current Height") }}</span>
-          <span class="kv-value">{{
-            unlockStats?.height_current ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Expired Locks") }}</span>
-          <span class="kv-value">{{
-            unlockStats?.expired_locks_now ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Referenda With Expired Locks") }}</span>
-          <span class="kv-value">{{
-            unlockStats?.referenda_with_expired ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Last Sweep") }}</span>
-          <span class="kv-value">{{
-            unlockStats?.last_sweep_height ?? t("—")
-          }}</span>
-        </div>
-      </div>
-
-      <div class="actions">
-        <button
-          class="secondary"
-          :disabled="!canFinalizeDraft"
-          @click="handleFinalize"
-        >
-          {{
-            actionBusy === "finalize" ? t("Preparing…") : t("Finalize draft")
-          }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="!canEnactDraft"
-          @click="handleEnact"
-        >
-          {{ actionBusy === "enact" ? t("Preparing…") : t("Enact draft") }}
-        </button>
-      </div>
-      <p v-if="missingParliamentPermission" class="message warning">
-        {{ t("Finalize requires CanManageParliament permission.") }}
-      </p>
-      <p v-if="missingEnactPermission" class="message warning">
-        {{ t("Enact requires CanEnactGovernance permission.") }}
-      </p>
-
-      <p v-if="finalizeDraft" class="helper">
-        {{
-          t("Finalize draft: {summary}", {
-            summary: summarizeDraft(finalizeDraft),
-          })
-        }}
-      </p>
-      <p v-if="enactDraft" class="helper">
-        {{
-          t("Enact draft: {summary}", { summary: summarizeDraft(enactDraft) })
-        }}
-      </p>
-
-      <details v-if="council?.members.length" class="technical-details compact">
-        <summary>{{ t("Council members") }}</summary>
-        <ul class="member-list mono">
-          <li v-for="member in council.members" :key="member.account_id">
-            {{ member.account_id }}
-          </li>
-        </ul>
-      </details>
-    </section>
+    </details>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { useAppI18n } from "@/composables/useAppI18n";
-import {
-  enactGovernanceProposal,
-  fetchAccountAssets,
-  finalizeGovernanceReferendum,
-  getGovernanceCitizenCount,
-  getGovernanceCitizenStatus,
-  getGovernanceCouncilCurrent,
-  getGovernanceLocks,
-  getGovernanceProposal,
-  getGovernanceRegistrationPolicy,
-  getGovernanceReferendum,
-  getGovernanceTally,
-  getGovernanceUnlockStats,
-  listAccountPermissions,
-  proposeGovernanceDeployContract,
-  registerCitizen,
-  submitGovernancePlainBallot,
-} from "@/services/iroha";
-import { useSessionStore } from "@/stores/session";
-import { getPublicAccountId } from "@/utils/accountId";
-import type {
-  AccountPermissionItem,
-  GovernanceBallotDirection,
-  GovernanceCitizenStatusResponse,
-  GovernanceCitizenCountResponse,
-  GovernanceDraftResponse,
-  GovernanceLocksResult,
-  GovernanceProposalResult,
-  GovernanceRegistrationPolicyResponse,
-  GovernanceReferendumResult,
-  GovernanceTallyResult,
-  GovernanceUnlockStatsResponse,
-  GovernanceCouncilCurrentResponse,
-} from "@/types/iroha";
-import { compareDecimalStrings } from "@/utils/staking";
-import {
-  CITIZEN_BOND_XOR,
-  hasGovernancePermission,
-  isRegisteredGovernanceCitizen,
-  canonicalizeProposalId,
-  extractProposalIdFromReferendum,
-  isValidProposalId,
-  isPositiveInteger,
-  isPositiveWholeNumberString,
-  parseParliamentHistory,
-  pushRecentValue,
-  resolveGovernanceBondBalance,
-  resolveGovernanceCitizenCount,
-  sanitizeReferendumId,
-} from "@/utils/parliament";
-import { toUserFacingErrorMessage } from "@/utils/errorMessage";
-import {
-  appendTransactionFee,
-  formatTransactionFee,
-  transactionFeeHintForEndpoint,
-} from "@/utils/transactionFee";
+import { useParliamentStore } from "@/stores/parliament";
 
-const session = useSessionStore();
-const activeAccount = computed(() => session.activeAccount);
-const activeAccountDisplayId = computed(() =>
-  getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
-);
-const requestAccountId = computed(
-  () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
-);
-const { localeStore, t } = useAppI18n();
-
-const loadingBootstrap = ref(false);
-const permissionsLoaded = ref(false);
-const lookupLoading = ref(false);
-const actionBusy = ref<
-  "bond" | "ballot" | "proposal" | "finalize" | "enact" | null
->(null);
-
-const statusMessage = ref("");
-const actionMessage = ref("");
-const errorMessage = ref("");
-
-const xorBalance = ref("0");
-const permissions = ref<AccountPermissionItem[]>([]);
-const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
-const citizenCountStatus = ref<GovernanceCitizenCountResponse | null>(null);
-const council = ref<GovernanceCouncilCurrentResponse | null>(null);
-const unlockStats = ref<GovernanceUnlockStatsResponse | null>(null);
-const governanceRegistrationPolicy =
-  ref<GovernanceRegistrationPolicyResponse | null>(null);
-
-const referendumId = ref("");
-const proposalId = ref("");
-const ballotAmount = ref(CITIZEN_BOND_XOR);
-const durationBlocks = ref(7_200);
-const direction = ref<GovernanceBallotDirection>("Aye");
-const deployTargetKind = ref<"address" | "alias">("address");
-const deployTargetValue = ref("");
-const deployCodeHash = ref("");
-const deployAbiHash = ref("");
-const deployAbiVersion = ref("1");
-const deployVotingMode = ref<"Plain" | "Zk">("Plain");
-const deployWindowLower = ref("");
-const deployWindowUpper = ref("");
-const deployLimitsJson = ref("");
-const recentReferenda = ref<string[]>([]);
-const recentProposals = ref<string[]>([]);
-
-const referendum = ref<GovernanceReferendumResult | null>(null);
-const proposal = ref<GovernanceProposalResult | null>(null);
-const tally = ref<GovernanceTallyResult | null>(null);
-const locks = ref<GovernanceLocksResult | null>(null);
-const deployProposalDraft = ref<GovernanceDraftResponse | null>(null);
-const finalizeDraft = ref<GovernanceDraftResponse | null>(null);
-const enactDraft = ref<GovernanceDraftResponse | null>(null);
-const loadedReferendumInput = ref<string | null>(null);
-const loadedProposalInput = ref<string | null>(null);
-const lookupGeneration = ref(0);
-const refreshGeneration = ref(0);
-
-const canSubmit = computed(() =>
-  Boolean(
-    session.connection.toriiUrl &&
-      session.connection.chainId &&
-      requestAccountId.value,
-  ),
-);
-
-const isActionBusy = computed(() => actionBusy.value !== null);
-const hasBallotPermissionToken = computed(() =>
-  hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
-);
-const hasCitizenRecord = computed(() =>
-  isRegisteredGovernanceCitizen(citizenshipStatus.value),
-);
-const hasBallotPermission = computed(
-  () => hasBallotPermissionToken.value || hasCitizenRecord.value,
-);
-const hasParliamentPermission = computed(() =>
-  hasGovernancePermission(permissions.value, "CanManageParliament"),
-);
-const hasEnactPermission = computed(() =>
-  hasGovernancePermission(permissions.value, "CanEnactGovernance"),
-);
-const lockCount = computed(() => Object.keys(locks.value?.locks ?? {}).length);
-const trimmedReferendumId = computed(() => referendumId.value.trim());
-const proposalLiteral = computed(() => proposalId.value.trim());
-const canonicalProposalId = computed(() =>
-  proposalLiteral.value ? canonicalizeProposalId(proposalLiteral.value) : null,
-);
-const proposalIdFormatError = computed(
-  () => Boolean(proposalLiteral.value) && !canonicalProposalId.value,
-);
-const ballotAmountLiteral = computed(() => ballotAmount.value.trim());
-const hasValidBallotAmount = computed(() =>
-  isPositiveWholeNumberString(ballotAmountLiteral.value),
-);
-const hasXorForBallot = computed(() => {
-  if (!hasValidBallotAmount.value) {
-    return false;
-  }
-  try {
-    return (
-      compareDecimalStrings(xorBalance.value, ballotAmountLiteral.value) >= 0
-    );
-  } catch (_error) {
-    return false;
-  }
-});
-const hasValidDurationBlocks = computed(() =>
-  isPositiveInteger(durationBlocks.value),
-);
-const deployTargetLiteral = computed(() => deployTargetValue.value.trim());
-const deployCodeHashLiteral = computed(() => deployCodeHash.value.trim());
-const deployAbiHashLiteral = computed(() => deployAbiHash.value.trim());
-const deployAbiVersionLiteral = computed(
-  () => deployAbiVersion.value.trim() || "1",
-);
-const deployWindowLowerLiteral = computed(() => deployWindowLower.value.trim());
-const deployWindowUpperLiteral = computed(() => deployWindowUpper.value.trim());
-const deployWindowHasLower = computed(() =>
-  Boolean(deployWindowLowerLiteral.value),
-);
-const deployWindowHasUpper = computed(() =>
-  Boolean(deployWindowUpperLiteral.value),
-);
-const deployWindowError = computed(() => {
-  if (deployWindowHasLower.value !== deployWindowHasUpper.value) {
-    return t("Set both window bounds or leave both empty.");
-  }
-  if (!deployWindowHasLower.value) {
-    return "";
-  }
-  if (
-    !isPositiveWholeNumberString(deployWindowLowerLiteral.value) ||
-    !isPositiveWholeNumberString(deployWindowUpperLiteral.value)
-  ) {
-    return t("Voting window bounds must be positive whole numbers.");
-  }
-  const lower = Number(deployWindowLowerLiteral.value);
-  const upper = Number(deployWindowUpperLiteral.value);
-  if (!Number.isSafeInteger(lower) || !Number.isSafeInteger(upper)) {
-    return t("Voting window bounds must be positive whole numbers.");
-  }
-  if (lower > upper) {
-    return t(
-      "Voting window lower bound must be less than or equal to the upper bound.",
-    );
-  }
-  return "";
-});
-const deployWindowPayload = computed(() => {
-  if (deployWindowError.value || !deployWindowHasLower.value) {
-    return null;
-  }
-  return {
-    lower: Number(deployWindowLowerLiteral.value),
-    upper: Number(deployWindowUpperLiteral.value),
-  };
-});
-const deployLimitsError = computed(() => {
-  const literal = deployLimitsJson.value.trim();
-  if (!literal) {
-    return "";
-  }
-  try {
-    const parsed = JSON.parse(literal);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return t("Limits JSON must be a JSON object.");
-    }
-  } catch (_error) {
-    return t("Invalid limits JSON.");
-  }
-  return "";
-});
-const deployLimitsPayload = computed(() => {
-  const literal = deployLimitsJson.value.trim();
-  if (!literal || deployLimitsError.value) {
-    return null;
-  }
-  return JSON.parse(literal) as Record<string, unknown>;
-});
-const missingBallotPermission = computed(
-  () => permissionsLoaded.value && !hasBallotPermission.value,
-);
-const alreadyCitizen = computed(
-  () => permissionsLoaded.value && hasBallotPermission.value,
-);
-const missingParliamentPermission = computed(
-  () => permissionsLoaded.value && !hasParliamentPermission.value,
-);
-const missingEnactPermission = computed(
-  () => permissionsLoaded.value && !hasEnactPermission.value,
-);
-const citizenshipAssetDefinitionId = computed(
-  () => governanceRegistrationPolicy.value?.citizenshipAssetDefinitionId ?? "",
-);
-const citizenshipBondAmount = computed(
-  () =>
-    governanceRegistrationPolicy.value?.citizenshipBondAmount ??
-    CITIZEN_BOND_XOR,
-);
-const citizenshipAssetDefinitionMissingMessage = computed(() => {
-  if (
-    !citizenshipAssetDefinitionId.value ||
-    governanceRegistrationPolicy.value?.citizenshipAssetDefinitionExists !==
-      false
-  ) {
-    return "";
-  }
-  return `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${citizenshipAssetDefinitionId.value}. Ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
-});
-const canBondCitizen = computed(
-  () =>
-    canSubmit.value &&
-    hasXorForBond.value &&
-    !alreadyCitizen.value &&
-    !citizenshipAssetDefinitionMissingMessage.value &&
-    !isActionBusy.value,
-);
-const canSubmitBallot = computed(
-  () =>
-    canSubmit.value &&
-    Boolean(trimmedReferendumId.value) &&
-    hasValidBallotAmount.value &&
-    hasXorForBallot.value &&
-    hasValidDurationBlocks.value &&
-    !missingBallotPermission.value &&
-    !isActionBusy.value,
-);
-const canPrepareDeployProposal = computed(
-  () =>
-    Boolean(session.connection.toriiUrl) &&
-    Boolean(deployTargetLiteral.value) &&
-    Boolean(deployCodeHashLiteral.value) &&
-    Boolean(deployAbiHashLiteral.value) &&
-    !deployWindowError.value &&
-    !deployLimitsError.value &&
-    !isActionBusy.value,
-);
-const canFinalizeDraft = computed(
-  () =>
-    Boolean(session.connection.toriiUrl) &&
-    Boolean(trimmedReferendumId.value) &&
-    Boolean(canonicalProposalId.value) &&
-    !missingParliamentPermission.value &&
-    !isActionBusy.value,
-);
-const canEnactDraft = computed(
-  () =>
-    Boolean(session.connection.toriiUrl) &&
-    Boolean(canonicalProposalId.value) &&
-    !missingEnactPermission.value &&
-    !isActionBusy.value,
-);
-const canLookupGovernance = computed(
-  () =>
-    Boolean(session.connection.toriiUrl) &&
-    (Boolean(trimmedReferendumId.value) || Boolean(proposalLiteral.value)) &&
-    (Boolean(trimmedReferendumId.value) || !proposalIdFormatError.value) &&
-    !lookupLoading.value,
-);
-
-const hasXorForBond = computed(() => {
-  try {
-    return (
-      compareDecimalStrings(xorBalance.value, citizenshipBondAmount.value) >= 0
-    );
-  } catch (_error) {
-    return false;
-  }
-});
-const citizenCount = computed(() =>
-  resolveGovernanceCitizenCount(citizenCountStatus.value),
-);
-const citizenCountDisplay = computed(() => {
-  if (citizenCount.value === null) {
-    return t("—");
-  }
-  return new Intl.NumberFormat(localeStore.current).format(citizenCount.value);
-});
-const citizenshipHeadline = computed(() => {
-  if (loadingBootstrap.value && !permissionsLoaded.value) {
-    return t("Checking citizenship…");
-  }
-  return alreadyCitizen.value ? t("You are a citizen") : t("Not a citizen yet");
-});
-const citizenshipPanelDetail = computed(() => {
-  if (!canSubmit.value) {
-    return t("Set up network and wallet first.");
-  }
-  if (alreadyCitizen.value) {
-    const bondedAmount = citizenshipStatus.value?.amount?.trim();
-    return bondedAmount
-      ? t("Bonded {amount} XOR", { amount: bondedAmount })
-      : t(
-          "Citizenship voting permission detected. Bonding is no longer required.",
-        );
-  }
-  return t("Bond {amount} XOR once to enable voting for this wallet.", {
-    amount: citizenshipBondAmount.value,
-  });
-});
-const historyStorageKey = computed(() =>
-  activeAccount.value?.accountId
-    ? `iroha-demo:parliament-history:${activeAccount.value.accountId}`
-    : null,
-);
-
-const resetGovernanceLookup = () => {
-  referendum.value = null;
-  proposal.value = null;
-  tally.value = null;
-  locks.value = null;
-  deployProposalDraft.value = null;
-  finalizeDraft.value = null;
-  enactDraft.value = null;
-  loadedReferendumInput.value = null;
-  loadedProposalInput.value = null;
-  lookupLoading.value = false;
-  lookupGeneration.value += 1;
-};
-
-const loadHistory = () => {
-  if (!historyStorageKey.value) {
-    recentReferenda.value = [];
-    recentProposals.value = [];
-    return;
-  }
-  const raw = localStorage.getItem(historyStorageKey.value);
-  if (!raw) {
-    recentReferenda.value = [];
-    recentProposals.value = [];
-    return;
-  }
-  try {
-    const parsed = parseParliamentHistory(JSON.parse(raw));
-    recentReferenda.value = parsed.referenda;
-    recentProposals.value = parsed.proposals;
-  } catch (_error) {
-    recentReferenda.value = [];
-    recentProposals.value = [];
-    localStorage.removeItem(historyStorageKey.value);
-  }
-};
-
-const saveHistory = () => {
-  if (!historyStorageKey.value) {
-    return;
-  }
-  localStorage.setItem(
-    historyStorageKey.value,
-    JSON.stringify({
-      referenda: recentReferenda.value,
-      proposals: recentProposals.value,
-    }),
-  );
-};
-
-const rememberHistory = (input: {
-  referendumId?: string | null;
-  proposalId?: string | null;
-}) => {
-  if (input.referendumId) {
-    recentReferenda.value = pushRecentValue(
-      recentReferenda.value,
-      sanitizeReferendumId(input.referendumId),
-    );
-  }
-  if (input.proposalId) {
-    const normalizedProposalId = canonicalizeProposalId(input.proposalId);
-    if (normalizedProposalId) {
-      recentProposals.value = pushRecentValue(
-        recentProposals.value,
-        normalizedProposalId,
-      );
-    }
-  }
-  saveHistory();
-};
-
-const clearHistory = () => {
-  recentReferenda.value = [];
-  recentProposals.value = [];
-  if (historyStorageKey.value) {
-    localStorage.removeItem(historyStorageKey.value);
-  }
-};
-
-const applyRecentReferendum = async (value: string) => {
-  referendumId.value = value;
-  if (canLookupGovernance.value) {
-    await lookupGovernance();
-  }
-};
-
-const applyRecentProposal = async (value: string) => {
-  proposalId.value = value;
-  if (canLookupGovernance.value) {
-    await lookupGovernance();
-  }
-};
-
-const shortenIdentifier = (value: string) => {
-  if (value.length <= 22) {
-    return value;
-  }
-  return `${value.slice(0, 10)}…${value.slice(-10)}`;
-};
-
-const refresh = async () => {
-  const toriiUrl = session.connection.toriiUrl;
-  const accountId = requestAccountId.value;
-  if (!toriiUrl || !accountId) {
-    refreshGeneration.value += 1;
-    loadingBootstrap.value = false;
-    errorMessage.value = "";
-    statusMessage.value = t("Set up network and wallet first.");
-    permissionsLoaded.value = false;
-    permissions.value = [];
-    citizenshipStatus.value = null;
-    citizenCountStatus.value = null;
-    council.value = null;
-    unlockStats.value = null;
-    governanceRegistrationPolicy.value = null;
-    xorBalance.value = "0";
-    resetGovernanceLookup();
-    return;
-  }
-
-  const requestGeneration = refreshGeneration.value + 1;
-  refreshGeneration.value = requestGeneration;
-  loadingBootstrap.value = true;
-  statusMessage.value = "";
-  errorMessage.value = "";
-
-  try {
-    const [
-      assetsResult,
-      permissionsResult,
-      citizenCountResult,
-      councilResult,
-      unlockStatsResult,
-      policyResult,
-      citizenshipResult,
-    ] = await Promise.allSettled([
-      fetchAccountAssets({
-        toriiUrl,
-        accountId,
-        networkPrefix: session.connection.networkPrefix,
-        limit: 200,
-      }),
-      listAccountPermissions({
-        toriiUrl,
-        accountId,
-        limit: 200,
-      }),
-      getGovernanceCitizenCount(toriiUrl),
-      getGovernanceCouncilCurrent(toriiUrl),
-      getGovernanceUnlockStats(toriiUrl),
-      getGovernanceRegistrationPolicy(toriiUrl),
-      getGovernanceCitizenStatus({
-        toriiUrl,
-        accountId,
-      }),
-    ] as const);
-
-    if (
-      requestGeneration !== refreshGeneration.value ||
-      session.connection.toriiUrl !== toriiUrl ||
-      requestAccountId.value !== accountId
-    ) {
-      return;
-    }
-
-    if (assetsResult.status === "rejected") {
-      throw assetsResult.reason;
-    }
-    if (permissionsResult.status === "rejected") {
-      throw permissionsResult.reason;
-    }
-
-    const nextPolicy =
-      policyResult.status === "fulfilled" ? policyResult.value : null;
-    xorBalance.value = resolveGovernanceBondBalance(
-      assetsResult.value.items,
-      nextPolicy?.citizenshipAssetDefinitionId,
-      [session.connection.assetDefinitionId],
-    );
-    permissionsLoaded.value = true;
-    permissions.value = permissionsResult.value.items;
-    citizenshipStatus.value =
-      citizenshipResult.status === "fulfilled" ? citizenshipResult.value : null;
-    citizenCountStatus.value =
-      citizenCountResult.status === "fulfilled"
-        ? citizenCountResult.value
-        : null;
-    council.value =
-      councilResult.status === "fulfilled" ? councilResult.value : null;
-    unlockStats.value =
-      unlockStatsResult.status === "fulfilled" ? unlockStatsResult.value : null;
-    governanceRegistrationPolicy.value = nextPolicy;
-    const loadedStatus = t("Loaded {count} permission token(s).", {
-      count: permissionsResult.value.total,
-    });
-    statusMessage.value = hasCitizenRecord.value
-      ? `${loadedStatus} ${t("Citizenship registered.")}`
-      : loadedStatus;
-    const optionalErrors: string[] = [];
-    if (citizenCountResult.status === "rejected") {
-      optionalErrors.push(
-        toUserFacingErrorMessage(
-          citizenCountResult.reason,
-          t("Failed to load governance state."),
-        ),
-      );
-    }
-    if (councilResult.status === "rejected") {
-      optionalErrors.push(
-        toUserFacingErrorMessage(
-          councilResult.reason,
-          t("Failed to load governance state."),
-        ),
-      );
-    }
-    if (unlockStatsResult.status === "rejected") {
-      optionalErrors.push(
-        toUserFacingErrorMessage(
-          unlockStatsResult.reason,
-          t("Failed to load governance state."),
-        ),
-      );
-    }
-    if (policyResult.status === "rejected") {
-      optionalErrors.push(
-        toUserFacingErrorMessage(
-          policyResult.reason,
-          t("Failed to load governance state."),
-        ),
-      );
-    }
-    if (citizenshipResult.status === "rejected") {
-      optionalErrors.push(
-        toUserFacingErrorMessage(
-          citizenshipResult.reason,
-          t("Failed to load governance state."),
-        ),
-      );
-    }
-    if (optionalErrors.length) {
-      errorMessage.value = optionalErrors.join("\n");
-    }
-  } catch (error) {
-    if (requestGeneration !== refreshGeneration.value) {
-      return;
-    }
-    permissionsLoaded.value = false;
-    permissions.value = [];
-    citizenshipStatus.value = null;
-    citizenCountStatus.value = null;
-    council.value = null;
-    unlockStats.value = null;
-    governanceRegistrationPolicy.value = null;
-    xorBalance.value = "0";
-    resetGovernanceLookup();
-    errorMessage.value = toUserFacingErrorMessage(
-      error,
-      t("Failed to load governance state."),
-    );
-  } finally {
-    if (requestGeneration === refreshGeneration.value) {
-      loadingBootstrap.value = false;
-    }
-  }
-};
-
-const lookupGovernance = async () => {
-  if (!session.connection.toriiUrl) {
-    errorMessage.value = t("Torii connection is required.");
-    return;
-  }
-  if (!trimmedReferendumId.value && !proposalLiteral.value) {
-    errorMessage.value = t("Provide a referendum id or proposal id first.");
-    return;
-  }
-  if (!trimmedReferendumId.value && proposalIdFormatError.value) {
-    errorMessage.value = t(
-      "Proposal ID must be 32-byte hex (with or without 0x prefix).",
-    );
-    return;
-  }
-
-  const requestGeneration = lookupGeneration.value + 1;
-  lookupGeneration.value = requestGeneration;
-  lookupLoading.value = true;
-  statusMessage.value = "";
-  errorMessage.value = "";
-
-  try {
-    const referendumLiteral = trimmedReferendumId.value;
-    const proposalLiteralInput = proposalLiteral.value;
-    const proposalInputWasInvalid = proposalIdFormatError.value;
-    const proposalLiteralNormalized = proposalInputWasInvalid
-      ? null
-      : canonicalProposalId.value;
-    let inferredProposalId: string | null = null;
-    let nextReferendum: GovernanceReferendumResult | null = null;
-    let nextTally: GovernanceTallyResult | null = null;
-    let nextLocks: GovernanceLocksResult | null = null;
-    let nextProposal: GovernanceProposalResult | null = null;
-    let nextProposalField = proposalLiteralInput;
-
-    if (referendumLiteral) {
-      const [referendumPayload, tallyPayload, lockPayload] = await Promise.all([
-        getGovernanceReferendum({
-          toriiUrl: session.connection.toriiUrl,
-          referendumId: referendumLiteral,
-        }),
-        getGovernanceTally({
-          toriiUrl: session.connection.toriiUrl,
-          referendumId: referendumLiteral,
-        }),
-        getGovernanceLocks({
-          toriiUrl: session.connection.toriiUrl,
-          referendumId: referendumLiteral,
-        }),
-      ]);
-      nextReferendum = referendumPayload;
-      nextTally = tallyPayload;
-      nextLocks = lockPayload;
-      inferredProposalId = extractProposalIdFromReferendum(
-        referendumPayload.referendum,
-      );
-    }
-
-    const lookupProposalId = proposalLiteralNormalized ?? inferredProposalId;
-    if (lookupProposalId) {
-      nextProposal = await getGovernanceProposal({
-        toriiUrl: session.connection.toriiUrl,
-        proposalId: lookupProposalId,
-      });
-      if (!proposalLiteralNormalized) {
-        nextProposalField = lookupProposalId;
-      }
-    }
-
-    // Ignore stale async results if user changed lookup ids while request was in flight.
-    if (
-      requestGeneration !== lookupGeneration.value ||
-      trimmedReferendumId.value !== referendumLiteral ||
-      proposalLiteral.value !== proposalLiteralInput
-    ) {
-      return;
-    }
-
-    const finalReferendumInput = referendumLiteral || null;
-    const finalProposalInput =
-      (canonicalizeProposalId(nextProposalField) ?? nextProposalField) || null;
-    loadedReferendumInput.value = finalReferendumInput;
-    loadedProposalInput.value = finalProposalInput;
-
-    referendum.value = nextReferendum;
-    tally.value = nextTally;
-    locks.value = nextLocks;
-    proposal.value = nextProposal;
-    if (nextProposalField !== proposalLiteralInput) {
-      proposalId.value = nextProposalField;
-    }
-
-    rememberHistory({
-      referendumId: referendumLiteral || null,
-      proposalId: lookupProposalId,
-    });
-    statusMessage.value =
-      referendumLiteral && proposalInputWasInvalid
-        ? t("Governance records refreshed. Invalid proposal ID was ignored.")
-        : t("Governance records refreshed.");
-  } catch (error) {
-    if (requestGeneration !== lookupGeneration.value) {
-      return;
-    }
-    referendum.value = null;
-    proposal.value = null;
-    tally.value = null;
-    locks.value = null;
-    finalizeDraft.value = null;
-    enactDraft.value = null;
-    loadedReferendumInput.value = null;
-    loadedProposalInput.value = null;
-    errorMessage.value = toUserFacingErrorMessage(
-      error,
-      t("Failed to refresh governance records."),
-    );
-  } finally {
-    if (requestGeneration === lookupGeneration.value) {
-      lookupLoading.value = false;
-    }
-  }
-};
-
-const runAction = async (
-  mode: "bond" | "ballot" | "proposal" | "finalize" | "enact",
-  run: () => Promise<string>,
-) => {
-  actionBusy.value = mode;
-  errorMessage.value = "";
-  actionMessage.value = "";
-  try {
-    actionMessage.value = await run();
-  } catch (error) {
-    errorMessage.value = toUserFacingErrorMessage(error, t("Action failed."));
-  } finally {
-    actionBusy.value = null;
-  }
-};
-
-const handleBondCitizen = () =>
-  runAction("bond", async () => {
-    if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
-      throw new Error(t("Connection, chain, and active account are required."));
-    }
-    if (alreadyCitizen.value) {
-      throw new Error(
-        t(
-          "This account already has governance ballot permission and does not need another citizenship bond.",
-        ),
-      );
-    }
-    if (!hasXorForBond.value) {
-      throw new Error(
-        t("A minimum of {amount} XOR is required to register citizenship.", {
-          amount: citizenshipBondAmount.value,
-        }),
-      );
-    }
-    if (citizenshipAssetDefinitionMissingMessage.value) {
-      throw new Error(citizenshipAssetDefinitionMissingMessage.value);
-    }
-    const result = await registerCitizen({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      accountId: requestAccountId.value,
-      amount: citizenshipBondAmount.value,
-      privateKeyHex: activeAccount.value.privateKeyHex,
-    });
-    await refresh();
-    return appendTransactionFee(
-      t("Citizenship bond submitted: {hash}", { hash: result.hash }),
-      result,
-      t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
-    );
-  });
-
-const handleDeployProposalDraft = () =>
-  runAction("proposal", async () => {
-    if (!session.connection.toriiUrl) {
-      throw new Error(t("Torii connection is required."));
-    }
-    if (
-      !deployTargetLiteral.value ||
-      !deployCodeHashLiteral.value ||
-      !deployAbiHashLiteral.value
-    ) {
-      throw new Error(
-        t("Enter a contract target, code hash, and ABI hash first."),
-      );
-    }
-    if (deployWindowError.value) {
-      throw new Error(deployWindowError.value);
-    }
-    if (deployLimitsError.value) {
-      throw new Error(deployLimitsError.value);
-    }
-    deployProposalDraft.value = await proposeGovernanceDeployContract({
-      toriiUrl: session.connection.toriiUrl,
-      contractAddress:
-        deployTargetKind.value === "address" ? deployTargetLiteral.value : null,
-      contractAlias:
-        deployTargetKind.value === "alias" ? deployTargetLiteral.value : null,
-      codeHash: deployCodeHashLiteral.value,
-      abiHash: deployAbiHashLiteral.value,
-      abiVersion: deployAbiVersionLiteral.value,
-      mode: deployVotingMode.value,
-      window: deployWindowPayload.value,
-      limits: deployLimitsPayload.value,
-    });
-    if (deployProposalDraft.value.proposal_id) {
-      const normalizedProposalId = canonicalizeProposalId(
-        deployProposalDraft.value.proposal_id,
-      );
-      if (normalizedProposalId) {
-        proposalId.value = normalizedProposalId;
-        rememberHistory({ proposalId: normalizedProposalId });
-      }
-    }
-    return t("Proposal draft prepared with {count} instruction(s).", {
-      count: deployProposalDraft.value.tx_instructions.length,
-    });
-  });
-
-const handleBallot = () =>
-  runAction("ballot", async () => {
-    if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
-      throw new Error(t("Connection, chain, and active account are required."));
-    }
-    if (missingBallotPermission.value) {
-      throw new Error(
-        t(
-          "CanSubmitGovernanceBallot permission is missing on the active account.",
-        ),
-      );
-    }
-    const referendumLiteral = trimmedReferendumId.value;
-    if (!referendumLiteral) {
-      throw new Error(
-        t("referendumId is required before submitting a ballot."),
-      );
-    }
-    if (!hasValidBallotAmount.value) {
-      throw new Error(
-        t("Ballot amount must be a whole number greater than zero."),
-      );
-    }
-    if (!hasXorForBallot.value) {
-      throw new Error(t("Ballot amount exceeds the available XOR balance."));
-    }
-    if (!hasValidDurationBlocks.value) {
-      throw new Error(
-        t("Lock duration must be a positive integer number of blocks."),
-      );
-    }
-    const result = await submitGovernancePlainBallot({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      accountId: requestAccountId.value,
-      referendumId: referendumLiteral,
-      amount: ballotAmountLiteral.value,
-      durationBlocks: durationBlocks.value,
-      direction: direction.value,
-      privateKeyHex: activeAccount.value.privateKeyHex,
-    });
-    rememberHistory({ referendumId: referendumLiteral });
-    await lookupGovernance();
-    return appendTransactionFee(
-      t("Ballot submitted: {hash}", { hash: result.hash }),
-      result,
-      t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
-    );
-  });
-
-const handleFinalize = () =>
-  runAction("finalize", async () => {
-    if (!session.connection.toriiUrl) {
-      throw new Error(t("Torii connection is required."));
-    }
-    if (missingParliamentPermission.value) {
-      throw new Error(
-        t("CanManageParliament permission is required for finalize."),
-      );
-    }
-    const referendumLiteral = trimmedReferendumId.value;
-    const proposalLiteral = proposalId.value.trim();
-    const proposalLiteralNormalized = canonicalProposalId.value;
-    if (!referendumLiteral || !proposalLiteral) {
-      throw new Error(
-        t("referendumId and proposalId are required for finalize."),
-      );
-    }
-    if (!proposalLiteralNormalized) {
-      throw new Error(
-        t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
-      );
-    }
-    finalizeDraft.value = await finalizeGovernanceReferendum({
-      toriiUrl: session.connection.toriiUrl,
-      referendumId: referendumLiteral,
-      proposalId: proposalLiteralNormalized,
-    });
-    proposalId.value = proposalLiteralNormalized;
-    rememberHistory({
-      referendumId: referendumLiteral,
-      proposalId: proposalLiteralNormalized,
-    });
-    return t("Finalize draft prepared with {count} instruction(s).", {
-      count: finalizeDraft.value.tx_instructions.length,
-    });
-  });
-
-const handleEnact = () =>
-  runAction("enact", async () => {
-    if (!session.connection.toriiUrl) {
-      throw new Error(t("Torii connection is required."));
-    }
-    if (missingEnactPermission.value) {
-      throw new Error(
-        t("CanEnactGovernance permission is required for enact."),
-      );
-    }
-    const proposalLiteral = proposalId.value.trim();
-    const proposalLiteralNormalized = canonicalProposalId.value;
-    if (!proposalLiteral) {
-      throw new Error(t("proposalId is required for enact."));
-    }
-    if (!proposalLiteralNormalized) {
-      throw new Error(
-        t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
-      );
-    }
-    enactDraft.value = await enactGovernanceProposal({
-      toriiUrl: session.connection.toriiUrl,
-      proposalId: proposalLiteralNormalized,
-    });
-    proposalId.value = proposalLiteralNormalized;
-    rememberHistory({ proposalId: proposalLiteralNormalized });
-    return t("Enact draft prepared with {count} instruction(s).", {
-      count: enactDraft.value.tx_instructions.length,
-    });
-  });
-
-const summarizeDraft = (draft: GovernanceDraftResponse) => {
-  const accepted =
-    draft.accepted === undefined ? t("n/a") : String(draft.accepted);
-  const reason = draft.reason
-    ? ` ${t("reason: {reason}", { reason: draft.reason })}`
-    : "";
-  return t("accepted={accepted}, instructions={count}.{reason}", {
-    accepted,
-    count: draft.tx_instructions.length,
-    reason,
-  });
-};
-
-watch(
-  () => requestAccountId.value,
-  (nextAccountId, previousAccountId) => {
-    loadHistory();
-    if (
-      previousAccountId !== undefined &&
-      nextAccountId !== previousAccountId
-    ) {
-      resetGovernanceLookup();
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  () => [trimmedReferendumId.value, proposalLiteral.value],
-  ([nextReferendumId, nextProposalId]) => {
-    const nextReferendumLiteral = nextReferendumId || null;
-    const nextCanonicalProposalId = nextProposalId
-      ? canonicalizeProposalId(nextProposalId)
-      : null;
-    const nextProposalLiteral =
-      (nextCanonicalProposalId ?? nextProposalId) || null;
-    if (
-      loadedReferendumInput.value === null &&
-      loadedProposalInput.value === null
-    ) {
-      return;
-    }
-    if (
-      nextReferendumLiteral !== loadedReferendumInput.value ||
-      nextProposalLiteral !== loadedProposalInput.value
-    ) {
-      referendum.value = null;
-      proposal.value = null;
-      tally.value = null;
-      locks.value = null;
-      finalizeDraft.value = null;
-      enactDraft.value = null;
-      statusMessage.value = "";
-    }
-  },
-);
-
-watch(
+const { t } = useAppI18n();
+const parliament = useParliamentStore();
+const {
+  activeAccountDisplayId,
+  activeLifecycleStage,
+  activePanel,
+  alreadyCitizen,
+  assetDefinitionId,
+  ballotAmount,
+  ballotFeeLabel,
+  ballotGate,
+  bondFeeLabel,
+  bondGate,
+  canBondCitizen,
+  canEnactDraft,
+  canFinalizeDraft,
+  canLookupGovernance,
+  canPrepareDeployProposal,
+  canSubmitBallot,
+  chainId,
+  citizenCountDisplay,
+  citizenshipAssetDefinitionId,
+  citizenshipBondAmount,
+  citizenshipHeadline,
+  citizenshipPanelDetail,
+  council,
+  deployAbiHash,
+  deployAbiVersion,
+  deployCodeHash,
+  deployLimitsError,
+  deployLimitsJson,
+  deployProposalDraft,
+  deployTargetKind,
+  deployTargetValue,
+  deployVotingMode,
+  deployWindowError,
+  deployWindowLower,
+  deployWindowUpper,
+  direction,
+  durationBlocks,
+  enactDraft,
+  enactGate,
+  errorMessage,
+  finalizeDraft,
+  finalizeGate,
+  governanceRoleLabel,
+  hasBallotPermission,
+  hasCitizenRecord,
+  hasEnactPermission,
+  hasParliamentPermission,
+  lifecycleCapabilityMessage,
+  lifecycleSnapshot,
+  lifecycleStages,
+  loadingBootstrap,
+  lockCount,
+  lookupLoading,
+  nextActionLabel,
+  nextActionReason,
+  proposal,
   proposalId,
-  (next) => {
-    if (!next.trim()) return;
-    if (isValidProposalId(next)) {
-      const normalized = canonicalizeProposalId(next);
-      if (normalized && normalized !== next) {
-        proposalId.value = normalized;
-      }
-    }
-  },
-  { flush: "post" },
-);
+  proposalIdFormatError,
+  proposalSummaryDetail,
+  proposalSummaryTitle,
+  recentProposals,
+  recentReferenda,
+  referendum,
+  referendumId,
+  selectedStageDetail,
+  selectedStageId,
+  stageBallotGate,
+  statusMessage,
+  actionBusy,
+  actionMessage,
+  tally,
+  toriiUrl,
+  unlockStats,
+  xorBalance,
+} = storeToRefs(parliament);
 
-watch(
-  () => [
-    deployTargetKind.value,
-    deployTargetLiteral.value,
-    deployCodeHashLiteral.value,
-    deployAbiHashLiteral.value,
-    deployAbiVersionLiteral.value,
-    deployVotingMode.value,
-    deployWindowLowerLiteral.value,
-    deployWindowUpperLiteral.value,
-    deployLimitsJson.value.trim(),
-  ],
-  () => {
-    deployProposalDraft.value = null;
-  },
-);
-
-watch(
-  () => [
-    session.connection.toriiUrl,
-    session.connection.chainId,
-    requestAccountId.value,
-  ],
-  () => {
-    refresh();
-  },
-  { immediate: true },
-);
+const {
+  applyRecentProposal,
+  applyRecentReferendum,
+  clearHistory,
+  handleBallot,
+  handleBondCitizen,
+  handleDeployProposalDraft,
+  handleEnact,
+  handleFinalize,
+  lookupGovernance,
+  refresh,
+  shortenIdentifier,
+  summarizeDraft,
+} = parliament;
 </script>
 
 <style scoped>
@@ -1617,6 +821,32 @@ watch(
 
 .helper.tight {
   margin-top: 6px;
+}
+
+.parliament-workbench {
+  gap: 20px;
+}
+
+.parliament-readiness-card,
+.parliament-proposal-workspace,
+.parliament-lifecycle-card,
+.parliament-action-card,
+.parliament-advanced-card {
+  position: relative;
+  z-index: 1;
+}
+
+.parliament-kicker {
+  margin: 0 0 6px;
+  color: var(--iroha-muted);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.parliament-readiness-header {
+  align-items: flex-start;
 }
 
 .parliament-citizenship-panel {
@@ -1649,10 +879,16 @@ watch(
     var(--surface-soft);
 }
 
-.parliament-citizenship-panel h3 {
+.parliament-citizenship-copy {
+  min-width: 0;
+}
+
+.parliament-citizenship-panel h3,
+.parliament-selected-record h3,
+.parliament-stage-detail h3 {
   margin: 6px 0 0;
-  font-size: clamp(1.35rem, 3vw, 1.85rem);
-  line-height: 1.05;
+  font-size: clamp(1.2rem, 2.2vw, 1.65rem);
+  line-height: 1.08;
 }
 
 .parliament-citizenship-panel .helper {
@@ -1670,6 +906,176 @@ watch(
   background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
 }
 
+.parliament-readiness-grid,
+.parliament-evidence-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.parliament-next-action {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 84%, transparent);
+}
+
+.parliament-next-action strong {
+  display: block;
+  margin-top: 4px;
+}
+
+.parliament-selected-record {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 80%, transparent);
+}
+
+.parliament-lookup-status {
+  margin-top: 8px;
+}
+
+.parliament-mobile-tabs {
+  display: none;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-soft) 80%, transparent);
+}
+
+.parliament-mobile-tabs button {
+  flex: 1 1 0;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--iroha-muted);
+  box-shadow: none;
+}
+
+.parliament-mobile-tabs button.active {
+  background: var(--surface-soft);
+  color: var(--iroha-text);
+}
+
+.parliament-lifecycle-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.parliament-stepper {
+  display: grid;
+  gap: 8px;
+}
+
+.parliament-stepper button {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  color: var(--iroha-text);
+  box-shadow: none;
+  text-align: start;
+}
+
+.parliament-stepper button.active {
+  border-color: color-mix(
+    in srgb,
+    var(--accent-primary) 54%,
+    var(--glass-border)
+  );
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent-primary) 12%, transparent),
+      transparent 70%
+    ),
+    var(--surface-soft);
+}
+
+.parliament-stepper small {
+  color: var(--iroha-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.parliament-stepper .status-unavailable,
+.parliament-stepper .status-blocked {
+  opacity: 0.72;
+}
+
+.parliament-stage-detail {
+  min-height: 240px;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
+}
+
+.parliament-action-card {
+  grid-column: span 5;
+}
+
+.parliament-advanced-card {
+  grid-column: 1 / -1;
+  padding: 0;
+  overflow: hidden;
+}
+
+.parliament-advanced-card > summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  cursor: pointer;
+}
+
+.parliament-advanced-card > summary small {
+  color: var(--iroha-muted);
+}
+
+.parliament-advanced-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.parliament-advanced-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  padding: 0 20px 20px;
+}
+
+.parliament-proposal-card,
+.parliament-council-card {
+  min-width: 0;
+  padding: 18px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  background: color-mix(in srgb, var(--surface-soft) 70%, transparent);
+}
+
 .permission-stack {
   display: flex;
   flex-wrap: wrap;
@@ -1681,12 +1087,13 @@ watch(
   grid-column: 1 / -1;
 }
 
-.parliament-unlock-stats {
+.parliament-unlock-stats,
+.parliament-tally {
   margin-top: 16px;
 }
 
 .history-stack {
-  margin-top: 12px;
+  margin-top: 14px;
   display: grid;
   gap: 8px;
 }
@@ -1719,6 +1126,7 @@ watch(
   padding: 10px 12px;
   border-radius: 12px;
   font-size: 0.85rem;
+  white-space: pre-line;
 }
 
 .message.success {
@@ -1768,14 +1176,61 @@ watch(
   overflow: auto;
 }
 
+@media (max-width: 1240px) {
+  .parliament-readiness-grid,
+  .parliament-evidence-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .parliament-advanced-grid,
+  .parliament-lifecycle-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 720px) {
-  .parliament-citizenship-panel {
+  .parliament-citizenship-panel,
+  .parliament-next-action,
+  .parliament-selected-record {
     align-items: stretch;
     flex-direction: column;
   }
 
   .parliament-citizen-count {
     min-width: 0;
+  }
+
+  .parliament-readiness-grid,
+  .parliament-evidence-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .parliament-mobile-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    display: flex;
+  }
+
+  .parliament-stepper {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(132px, 46vw);
+    overflow-x: auto;
+    padding-bottom: 8px;
+    scroll-snap-type: x proximity;
+  }
+
+  .parliament-stepper button {
+    scroll-snap-align: start;
+  }
+
+  .parliament-stage-detail {
+    display: none;
+  }
+
+  .parliament-stage-detail.active {
+    display: block;
   }
 }
 </style>

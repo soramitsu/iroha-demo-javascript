@@ -28,6 +28,7 @@ const routeChecks = [
   ["/receive", "Receive"],
   ["/subscriptions", "Subscriptions"],
   ["/soracloud", "SoraCloud"],
+  ["/sccp", "SCCP Bridge"],
   ["/staking", "Stake XOR"],
   ["/parliament", "Governance"],
   ["/explore", "Explore"],
@@ -43,6 +44,7 @@ const mobileRouteChecks = [
   ["/send", "Send"],
   ["/kaigi", "Kaigi"],
   ["/soracloud", "SoraCloud"],
+  ["/sccp", "SCCP Bridge"],
   ["/vpn", "Sora VPN"],
 ];
 

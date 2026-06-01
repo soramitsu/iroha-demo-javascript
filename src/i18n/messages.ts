@@ -1113,6 +1113,149 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Validator registration submitted: {hash}":
     "Validator registration submitted: {hash}",
   "Register and vote": "Register and vote",
+  "SCCP Bridge": "SCCP Bridge",
+  "TAIRA and TRON XOR bridge": "TAIRA and TRON XOR bridge",
+  "Bridge XOR with TRON": "Bridge XOR with TRON",
+  "Bridge XOR between TAIRA and TRON mainnet.":
+    "Bridge XOR between TAIRA and TRON mainnet.",
+  "Refresh route": "Refresh route",
+  "Disconnect TRON": "Disconnect TRON",
+  Connecting: "Connecting",
+  Disconnecting: "Disconnecting",
+  "Connect TRON wallet": "Connect TRON wallet",
+  "TAIRA account": "TAIRA account",
+  "TRON wallet": "TRON wallet",
+  Route: "Route",
+  "XOR balance": "XOR balance",
+  "WalletConnect ready": "WalletConnect ready",
+  "WalletConnect not configured": "WalletConnect not configured",
+  "TAIRA enabled": "TAIRA enabled",
+  "TAIRA only": "TAIRA only",
+  "Bridge direction": "Bridge direction",
+  "TAIRA -> TRON": "TAIRA -> TRON",
+  "TRON -> TAIRA": "TRON -> TAIRA",
+  "TRON recipient": "TRON recipient",
+  "TRON Base58Check address": "TRON Base58Check address",
+  "TAIRA recipient": "TAIRA recipient",
+  "testu... account": "testu... account",
+  "Message ID": "Message ID",
+  "Optional 32-byte SCCP message id": "Optional 32-byte SCCP message id",
+  "TRON transaction ID": "TRON transaction ID",
+  "Optional TRON burn transaction id": "Optional TRON burn transaction id",
+  "Prepare TAIRA -> TRON": "Prepare TAIRA -> TRON",
+  "Prepare TRON -> TAIRA": "Prepare TRON -> TAIRA",
+  "Loading proof job": "Loading proof job",
+  "Fetch proof job": "Fetch proof job",
+  "Proof progress": "Proof progress",
+  "Frontend proof orchestration status": "Frontend proof orchestration status",
+  "Proof package ready": "Proof package ready",
+  "Route activity": "Route activity",
+  "Recent SCCP messages from Torii": "Recent SCCP messages from Torii",
+  Message: "Message",
+  "No recent SCCP messages found.": "No recent SCCP messages found.",
+  "Transaction links": "Transaction links",
+  "Links appear after a bridge leg is submitted.":
+    "Links appear after a bridge leg is submitted.",
+  "No transaction links yet.": "No transaction links yet.",
+  "Unavailable on this network": "Unavailable on this network",
+  "Route ready": "Route ready",
+  "Checking route": "Checking route",
+  "Route not ready": "Route not ready",
+  "SCCP bridging is enabled only on TAIRA testnet.":
+    "SCCP bridging is enabled only on TAIRA testnet.",
+  "Switch to the TAIRA testnet profile.":
+    "Switch to the TAIRA testnet profile.",
+  "Set VITE_WALLETCONNECT_PROJECT_ID to enable TRON wallet connection.":
+    "Set VITE_WALLETCONNECT_PROJECT_ID to enable TRON wallet connection.",
+  "SCCP capabilities have not been loaded.":
+    "SCCP capabilities have not been loaded.",
+  "This Torii endpoint is missing SCCP submit endpoints.":
+    "This Torii endpoint is missing SCCP submit endpoints.",
+  "SCCP proof manifests have not been loaded.":
+    "SCCP proof manifests have not been loaded.",
+  "No TRON SCCP manifest is advertised by this endpoint.":
+    "No TRON SCCP manifest is advertised by this endpoint.",
+  "The TRON SCCP route is not production-ready.":
+    "The TRON SCCP route is not production-ready.",
+  "The TAIRA burn-record ZK contract material is missing.":
+    "The TAIRA burn-record ZK contract material is missing.",
+  "Not loaded": "Not loaded",
+  "Switch to the TAIRA testnet profile to use this bridge.":
+    "Switch to the TAIRA testnet profile to use this bridge.",
+  "WalletConnect project ID is missing, so TRON wallet connection is disabled.":
+    "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
+  "Connect a TRON wallet to continue.": "Connect a TRON wallet to continue.",
+  "Route readiness must be true before bridge actions are enabled.":
+    "Route readiness must be true before bridge actions are enabled.",
+  "Bridge actions will request explicit wallet approval before signing.":
+    "Bridge actions will request explicit wallet approval before signing.",
+  "Enter a valid TRON Base58Check recipient.":
+    "Enter a valid TRON Base58Check recipient.",
+  "Enter a TAIRA testnet account.": "Enter a TAIRA testnet account.",
+  "Enter a SCCP message ID before fetching proof data.":
+    "Enter a SCCP message ID before fetching proof data.",
+  "Enter a TRON transaction ID before fetching proof data.":
+    "Enter a TRON transaction ID before fetching proof data.",
+  "Validate route": "Validate route",
+  "Waiting for route readiness": "Waiting for route readiness",
+  "Gather chain data": "Gather chain data",
+  "Waiting for source transaction data": "Waiting for source transaction data",
+  "Generate proof": "Generate proof",
+  "Worker idle": "Worker idle",
+  "Submit target leg": "Submit target leg",
+  "Waiting for wallet approval": "Waiting for wallet approval",
+  "Route and wallet are ready": "Route and wallet are ready",
+  "Deriving TAIRA burn-record payload": "Deriving TAIRA burn-record payload",
+  "Canonical TAIRA burn-record payload derived":
+    "Canonical TAIRA burn-record payload derived",
+  "Generating TAIRA burn-record proof": "Generating TAIRA burn-record proof",
+  "TAIRA burn-record proof is ready": "TAIRA burn-record proof is ready",
+  "Submitting TAIRA source transaction": "Submitting TAIRA source transaction",
+  "TAIRA source transaction submitted; fetch the SCCP proof job after indexing":
+    "TAIRA source transaction submitted; fetch the SCCP proof job after indexing",
+  "Canonical TAIRA outbound payload preview prepared":
+    "Canonical TAIRA outbound payload preview prepared",
+  "Canonical TAIRA burn-record request prepared":
+    "Canonical TAIRA burn-record request prepared",
+  "Collecting current finality data": "Collecting current finality data",
+  "Source chain data checked": "Source chain data checked",
+  "Waiting for SCCP source artifact and browser-safe prover":
+    "Waiting for SCCP source artifact and browser-safe prover",
+  "No signing request has been sent": "No signing request has been sent",
+  "No signing request has been sent yet":
+    "No signing request has been sent yet",
+  "SCCP route is ready; deployment-specific proof-gated lock/burn paths are still required before live submission.":
+    "SCCP route is ready; deployment-specific proof-gated lock/burn paths are still required before live submission.",
+  "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.":
+    "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.",
+  "TAIRA source transaction": "TAIRA source transaction",
+  "TRON transaction": "TRON transaction",
+  "Route and message id accepted": "Route and message id accepted",
+  "Route and TRON transaction id accepted":
+    "Route and TRON transaction id accepted",
+  "Torii returned an SCCP proof job": "Torii returned an SCCP proof job",
+  "Collecting TRON transaction and finality data":
+    "Collecting TRON transaction and finality data",
+  "TRON source transaction data collected":
+    "TRON source transaction data collected",
+  "Generating TRON source proof package":
+    "Generating TRON source proof package",
+  "TRON source proof package is ready": "TRON source proof package is ready",
+  "Submitting TAIRA settlement": "Submitting TAIRA settlement",
+  "TAIRA settlement submitted": "TAIRA settlement submitted",
+  "TAIRA settlement transaction": "TAIRA settlement transaction",
+  "Proof job metadata is available": "Proof job metadata is available",
+  "Target-chain signing is not requested automatically":
+    "Target-chain signing is not requested automatically",
+  "Generating TRON finalize proof": "Generating TRON finalize proof",
+  "TRON finalize proof package is ready":
+    "TRON finalize proof package is ready",
+  "TRON finalize transaction": "TRON finalize transaction",
+  "Signed TRON finalize transaction broadcast":
+    "Signed TRON finalize transaction broadcast",
+  "Waiting for TRON finality before TAIRA proof submission":
+    "Waiting for TRON finality before TAIRA proof submission",
+  "0.0001": "0.0001",
   Governance: "Governance",
   "Citizenship, referenda, ballots, and council status":
     "Citizenship, referenda, ballots, and council status",
@@ -1299,7 +1442,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "API token": "API token",
   "Optional. Used only for this request and never saved.":
     "Optional. Used only for this request and never saved.",
-  Endpoint: "Endpoint",
   Repo: "Repo",
   Required: "Required",
   Service: "Service",
@@ -2086,7 +2228,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Add SoraCloud bridge endpoints before enabling launch, scale, pause, or rollout controls.",
   "Bridge status": "Bridge status",
   "Deployment source": "Deployment source",
-  Unavailable: "Unavailable",
   Controls: "Controls",
   Disabled: "Disabled",
   "Disabled actions": "Disabled actions",
@@ -2307,6 +2448,93 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unable to publish the meeting end signal: {message}":
     "Unable to publish the meeting end signal: {message}",
   "Unknown Kaigi end error": "Unknown Kaigi end error",
+  "Action in progress.": "Action in progress.",
+  Actions: "Actions",
+  "Active challenges": "Active challenges",
+  "Active proposal": "Active proposal",
+  "Bond citizenship": "Bond citizenship",
+  "Bonding is unavailable.": "Bonding is unavailable.",
+  "Challenge bond": "Challenge bond",
+  "Challenge window": "Challenge window",
+  "Choose a referendum or proposal": "Choose a referendum or proposal",
+  Endpoint: "Endpoint",
+  "Expert briefs": "Expert briefs",
+  "Fallback lifecycle": "Fallback lifecycle",
+  Lifecycle: "Lifecycle",
+  "Lifecycle endpoint": "Lifecycle endpoint",
+  "Load a referendum or proposal to assemble the available lifecycle data.":
+    "Load a referendum or proposal to assemble the available lifecycle data.",
+  "Load or enter a referendum before voting.":
+    "Load or enter a referendum before voting.",
+  "Next action": "Next action",
+  "No governance record loaded": "No governance record loaded",
+  "Parliament stage ballots are not available on this endpoint yet.":
+    "Parliament stage ballots are not available on this endpoint yet.",
+  "Plain ballots use the current referendum and wallet.":
+    "Plain ballots use the current referendum and wallet.",
+  "Proposal loaded": "Proposal loaded",
+  "Proposal drafts, council state, finalize, enact":
+    "Proposal drafts, council state, finalize, enact",
+  "Ready for governance actions.": "Ready for governance actions.",
+  "Referendum loaded": "Referendum loaded",
+  "Red-team briefs": "Red-team briefs",
+  "Review the active stage, then vote or open advanced tools.":
+    "Review the active stage, then vote or open advanced tools.",
+  "Review voting requirements": "Review voting requirements",
+  Role: "Role",
+  Rollout: "Rollout",
+  "Select a stage to inspect only the relevant evidence.":
+    "Select a stage to inspect only the relevant evidence.",
+  "Selected stage": "Selected stage",
+  Selection: "Selection",
+  Stage: "Stage",
+  "Stage ballot": "Stage ballot",
+  Summary: "Summary",
+  Unavailable: "Unavailable",
+  "Voting is unavailable.": "Voting is unavailable.",
+  "Full adversarial lifecycle data is not available on this endpoint yet.":
+    "Full adversarial lifecycle data is not available on this endpoint yet.",
+  Submitted: "Submitted",
+  Briefs: "Briefs",
+  Comment: "Comment",
+  Sortition: "Sortition",
+  Tally: "Tally",
+  Challenge: "Challenge",
+  Canary: "Canary",
+  Enact: "Enact",
+  Review: "Review",
+  complete: "complete",
+  active: "active",
+  pending: "pending",
+  unavailable: "unavailable",
+  blocked: "blocked",
+  open: "open",
+  closed: "closed",
+  "Proposal identity and referendum envelope are loaded from Torii.":
+    "Proposal identity and referendum envelope are loaded from Torii.",
+  "Expert and red-team brief endpoints are not available on this Torii endpoint yet.":
+    "Expert and red-team brief endpoints are not available on this Torii endpoint yet.",
+  "Public comment endpoints are not available on this Torii endpoint yet.":
+    "Public comment endpoints are not available on this Torii endpoint yet.",
+  "Council data shows the active Parliament roster when Torii exposes it.":
+    "Council data shows the active Parliament roster when Torii exposes it.",
+  "Citizens can submit a ballot when eligibility and referendum data are ready.":
+    "Citizens can submit a ballot when eligibility and referendum data are ready.",
+  "Vote totals and lock records come from the live referendum endpoints.":
+    "Vote totals and lock records come from the live referendum endpoints.",
+  "Challenge-window endpoints are not available on this Torii endpoint yet.":
+    "Challenge-window endpoints are not available on this Torii endpoint yet.",
+  "Canary rollout endpoints are not available on this Torii endpoint yet.":
+    "Canary rollout endpoints are not available on this Torii endpoint yet.",
+  "Privileged enactment tools stay in Advanced governance tools.":
+    "Privileged enactment tools stay in Advanced governance tools.",
+  "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.":
+    "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.",
+  Operator: "Operator",
+  "Seated member": "Seated member",
+  Alternate: "Alternate",
+  Citizen: "Citizen",
+  "No governance role": "No governance role",
 };
 const EN_TRANSLATIONS: TranslationTable = {
   IH58: "I105",
@@ -2879,6 +3107,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Payment JSON copied.": "Payment JSON copied.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
+  "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.":
+    "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.",
+  "TRON transaction": "TRON transaction",
 };
 
 const TABLES: Record<SupportedLocale, TranslationTable> = {

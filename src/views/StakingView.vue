@@ -624,11 +624,7 @@ const laneContext = computed(() =>
 const laneId = computed(() => laneContext.value?.laneId ?? null);
 
 const selfValidatorRecord = computed(() =>
-  validators.value.find(
-    (entry) =>
-      entry.validator === stakerAccountId.value ||
-      entry.stake_account === stakerAccountId.value,
-  ),
+  validators.value.find((entry) => entry.validator === stakerAccountId.value),
 );
 
 const selectedStakeShare = computed(() => {
@@ -899,7 +895,7 @@ const operatorPayloadPreview = computed(() =>
       validator: stakerAccountId.value || null,
       stake_account: stakerAccountId.value || null,
       peer_id: operatorPeerId.value.trim() || null,
-      self_stake: operatorSelfStake.value.trim() || null,
+      initial_stake: operatorSelfStake.value.trim() || null,
       metadata: operatorMetadata.value,
     },
     null,
