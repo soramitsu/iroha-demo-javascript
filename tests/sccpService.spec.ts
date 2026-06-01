@@ -1,16 +1,26 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  broadcastTronTransaction,
   cancelZkIvmProveJob,
   deriveZkIvmPayload,
+  getTronAccount,
   getZkIvmProveJob,
   getSccpCapabilities,
+  getSccpMessageProofArtifact,
+  getSccpMessageProofJob,
   getSccpProofManifests,
+  getTronFinalityData,
+  getTronSolidBlock,
   getTronTransaction,
   getTronTransactionEvents,
   getTronTransactionReceipt,
+  getTronWitnesses,
+  listSccpRecentMessages,
   startZkIvmProveJob,
+  submitSccpBridgeProof,
   submitZkIvmProvedTransaction,
   submitSccpBridgeMessage,
+  triggerTronConstantContract,
   triggerTronSmartContract,
 } from "@/services/iroha";
 
@@ -28,9 +38,29 @@ describe("SCCP service wrappers", () => {
         bridgeCalls.push(["getSccpProofManifests", input]);
         return Promise.resolve({ manifests: [] });
       },
+      listSccpRecentMessages: (input: unknown) => {
+        bridgeCalls.push(["listSccpRecentMessages", input]);
+        return Promise.resolve({ items: [], total: 0 });
+      },
+      getSccpMessageProofArtifact: (input: unknown) => {
+        bridgeCalls.push(["getSccpMessageProofArtifact", input]);
+        return Promise.resolve({ bundle: {} });
+      },
+      getSccpMessageProofJob: (input: unknown) => {
+        bridgeCalls.push(["getSccpMessageProofJob", input]);
+        return Promise.resolve({ publicInputs: {} });
+      },
+      submitSccpBridgeProof: (input: unknown) => {
+        bridgeCalls.push(["submitSccpBridgeProof", input]);
+        return Promise.resolve({ ok: true });
+      },
       getTronTransaction: (input: unknown) => {
         bridgeCalls.push(["getTronTransaction", input]);
         return Promise.resolve({ txID: "11" });
+      },
+      getTronAccount: (input: unknown) => {
+        bridgeCalls.push(["getTronAccount", input]);
+        return Promise.resolve({ balance: 1000 });
       },
       getTronTransactionReceipt: (input: unknown) => {
         bridgeCalls.push(["getTronTransactionReceipt", input]);
@@ -39,6 +69,22 @@ describe("SCCP service wrappers", () => {
       getTronTransactionEvents: (input: unknown) => {
         bridgeCalls.push(["getTronTransactionEvents", input]);
         return Promise.resolve({ data: [] });
+      },
+      getTronSolidBlock: (input: unknown) => {
+        bridgeCalls.push(["getTronSolidBlock", input]);
+        return Promise.resolve({ blockID: "11" });
+      },
+      getTronWitnesses: (input: unknown) => {
+        bridgeCalls.push(["getTronWitnesses", input]);
+        return Promise.resolve({ witnesses: [] });
+      },
+      getTronFinalityData: (input: unknown) => {
+        bridgeCalls.push(["getTronFinalityData", input]);
+        return Promise.resolve({ solidBlock: {}, witnesses: {} });
+      },
+      broadcastTronTransaction: (input: unknown) => {
+        bridgeCalls.push(["broadcastTronTransaction", input]);
+        return Promise.resolve({ result: true });
       },
       submitSccpBridgeMessage: (input: unknown) => {
         bridgeCalls.push(["submitSccpBridgeMessage", input]);
@@ -68,23 +114,74 @@ describe("SCCP service wrappers", () => {
         bridgeCalls.push(["triggerTronSmartContract", input]);
         return Promise.resolve({ transaction: { txID: "22" } });
       },
+      triggerTronConstantContract: (input: unknown) => {
+        bridgeCalls.push(["triggerTronConstantContract", input]);
+        return Promise.resolve({ constant_result: ["0".repeat(64)] });
+      },
     } as unknown as typeof window.iroha;
   });
 
   it("passes SCCP read calls through the preload bridge", async () => {
     await getSccpCapabilities({ toriiUrl: "https://taira.sora.org" });
     await getSccpProofManifests({ toriiUrl: "https://taira.sora.org" });
+    await listSccpRecentMessages({
+      toriiUrl: "https://taira.sora.org",
+      routeId: "taira_tron_xor",
+      limit: 8,
+    });
 
     expect(bridgeCalls).toEqual([
       ["getSccpCapabilities", { toriiUrl: "https://taira.sora.org" }],
       ["getSccpProofManifests", { toriiUrl: "https://taira.sora.org" }],
+      [
+        "listSccpRecentMessages",
+        {
+          toriiUrl: "https://taira.sora.org",
+          routeId: "taira_tron_xor",
+          limit: 8,
+        },
+      ],
+    ]);
+  });
+
+  it("passes SCCP proof artifact and submission calls through preload", async () => {
+    const proofArtifactInput = {
+      toriiUrl: "https://taira.sora.org",
+      messageId: "0x" + "11".repeat(32),
+      networkIdHex: "0x" + "22".repeat(32),
+      tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+    };
+    const proofSubmitInput = {
+      toriiUrl: "https://taira.sora.org",
+      networkIdHex: "0x" + "22".repeat(32),
+      tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      accountId: "testu1234567890abcdef",
+      messageBundle: { commitment: { message_id: "11".repeat(32) } },
+    };
+    await getSccpMessageProofArtifact(proofArtifactInput);
+    await getSccpMessageProofJob(proofArtifactInput);
+    await submitSccpBridgeProof({
+      ...proofSubmitInput,
+    });
+
+    expect(bridgeCalls).toEqual([
+      ["getSccpMessageProofArtifact", proofArtifactInput],
+      ["getSccpMessageProofJob", proofArtifactInput],
+      ["submitSccpBridgeProof", proofSubmitInput],
     ]);
   });
 
   it("passes TRON reads and TAIRA message submissions through preload", async () => {
     await getTronTransaction({ txId: "11".repeat(32) });
+    await getTronAccount({ address: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8" });
     await getTronTransactionReceipt({ txId: "11".repeat(32) });
     await getTronTransactionEvents({ txId: "11".repeat(32) });
+    await getTronSolidBlock({ blockNumber: 123 });
+    await getTronWitnesses();
+    await getTronFinalityData();
+    await broadcastTronTransaction({
+      transaction: { txID: "11".repeat(32), signature: ["12".repeat(65)] },
+    });
     await submitSccpBridgeMessage({
       toriiUrl: "https://taira.sora.org",
       accountId: "testu1234567890abcdef",
@@ -94,8 +191,21 @@ describe("SCCP service wrappers", () => {
 
     expect(bridgeCalls).toEqual([
       ["getTronTransaction", { txId: "11".repeat(32) }],
+      ["getTronAccount", { address: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8" }],
       ["getTronTransactionReceipt", { txId: "11".repeat(32) }],
       ["getTronTransactionEvents", { txId: "11".repeat(32) }],
+      ["getTronSolidBlock", { blockNumber: 123 }],
+      ["getTronWitnesses", undefined],
+      ["getTronFinalityData", undefined],
+      [
+        "broadcastTronTransaction",
+        {
+          transaction: {
+            txID: "11".repeat(32),
+            signature: ["12".repeat(65)],
+          },
+        },
+      ],
       [
         "submitSccpBridgeMessage",
         {
@@ -170,6 +280,12 @@ describe("SCCP service wrappers", () => {
       callData: `0x${"12".repeat(4)}${"34".repeat(64)}`,
       feeLimit: 100_000_000,
     });
+    await triggerTronConstantContract({
+      ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      contractAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      functionSelector: "balanceOf(address)",
+      parameter: "00".repeat(32),
+    });
 
     expect(bridgeCalls).toEqual([
       [
@@ -180,6 +296,15 @@ describe("SCCP service wrappers", () => {
           functionSelector: "burnToTaira(bytes32,bytes32,bytes,uint256)",
           callData: `0x${"12".repeat(4)}${"34".repeat(64)}`,
           feeLimit: 100_000_000,
+        },
+      ],
+      [
+        "triggerTronConstantContract",
+        {
+          ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+          contractAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+          functionSelector: "balanceOf(address)",
+          parameter: "00".repeat(32),
         },
       ],
     ]);

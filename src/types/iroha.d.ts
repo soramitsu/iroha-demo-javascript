@@ -930,6 +930,10 @@ export interface TronTransactionInput extends TronGatewayInput {
   txId: string;
 }
 
+export interface TronAccountInput extends TronGatewayInput {
+  address: string;
+}
+
 export interface TronBlockInput extends TronGatewayInput {
   blockNumber?: number | string;
 }
@@ -951,6 +955,14 @@ export interface TronTriggerSmartContractInput extends TronGatewayInput {
   feeLimit?: number | string;
   callValue?: number | string;
   permissionId?: number | string;
+}
+
+export interface TronConstantContractInput extends TronGatewayInput {
+  ownerAddress: string;
+  contractAddress: string;
+  functionSelector: string;
+  parameter?: string;
+  callData?: string;
 }
 
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
@@ -1650,6 +1662,7 @@ export interface IrohaBridge {
   getTronTransaction(
     input: TronTransactionInput,
   ): Promise<Record<string, unknown>>;
+  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
   getTronTransactionReceipt(
     input: TronTransactionInput,
   ): Promise<Record<string, unknown>>;
@@ -1666,6 +1679,9 @@ export interface IrohaBridge {
   ): Promise<Record<string, unknown>>;
   triggerTronSmartContract(
     input: TronTriggerSmartContractInput,
+  ): Promise<Record<string, unknown>>;
+  triggerTronConstantContract(
+    input: TronConstantContractInput,
   ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(input: {
     toriiUrl: string;

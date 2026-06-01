@@ -21,11 +21,11 @@ type WalletConnectSessionLike = {
   sessionProperties?: Record<string, unknown>;
 };
 
-const projectId = String(
-  import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "",
-).trim();
+const getConfiguredProjectId = (): string =>
+  String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "").trim();
 
 let connectorPromise: Promise<UniversalConnector> | null = null;
+let connectorProjectId = "";
 
 const tronMainnet = {
   id: Number.parseInt(TRON_MAINNET_CHAIN_ID_HEX.slice(2), 16),
@@ -44,15 +44,20 @@ const tronMainnet = {
   },
 } satisfies CustomCaipNetwork<typeof WALLETCONNECT_TRON_NAMESPACE>;
 
-export const walletConnectProjectId = projectId;
+export const walletConnectProjectId = getConfiguredProjectId();
 
 export const extractTronAddressFromSession = (
   session: WalletConnectSessionLike | null | undefined,
 ): string | null => {
   const accounts =
     session?.namespaces?.[WALLETCONNECT_TRON_NAMESPACE]?.accounts ?? [];
-  const account = accounts.find((item) =>
-    item.startsWith(`${TRON_MAINNET_CAIP_CHAIN_ID}:`),
+  if (!Array.isArray(accounts)) {
+    return null;
+  }
+  const account = accounts.find(
+    (item) =>
+      typeof item === "string" &&
+      item.startsWith(`${TRON_MAINNET_CAIP_CHAIN_ID}:`),
   );
   if (!account) {
     return null;
@@ -66,13 +71,40 @@ export const tronWalletConnectSessionSupportsRequiredSigning = (
 ): boolean => {
   const methods =
     session?.namespaces?.[WALLETCONNECT_TRON_NAMESPACE]?.methods ?? [];
-  const methodVersion = String(
-    session?.sessionProperties?.tron_method_version ?? "",
-  ).trim();
+  const methodVersion = session?.sessionProperties?.tron_method_version;
   return (
+    Array.isArray(methods) &&
     methods.includes(WALLETCONNECT_TRON_SIGN_METHOD) &&
+    typeof methodVersion === "string" &&
     methodVersion === WALLETCONNECT_TRON_METHOD_VERSION
   );
+};
+
+export const tronWalletConnectSessionMatchesSnapshot = (
+  session: WalletConnectSessionLike | null | undefined,
+  snapshot: WalletConnectSessionSnapshot | null | undefined,
+): boolean => {
+  if (!snapshot?.address) {
+    return false;
+  }
+  let sessionAddress: string | null;
+  let snapshotAddress: string;
+  try {
+    sessionAddress = extractTronAddressFromSession(session);
+    snapshotAddress = normalizeTronAddress(snapshot.address);
+  } catch (_error) {
+    return false;
+  }
+  if (!sessionAddress || sessionAddress !== snapshotAddress) {
+    return false;
+  }
+  if (!tronWalletConnectSessionSupportsRequiredSigning(session)) {
+    return false;
+  }
+  if (snapshot.topic && snapshot.topic !== session?.topic) {
+    return false;
+  }
+  return true;
 };
 
 export const readStoredTronWalletConnectSession =
@@ -139,12 +171,17 @@ export const writeStoredTronWalletConnectSession = (
 };
 
 const getConnector = async (): Promise<UniversalConnector> => {
+  const projectId = getConfiguredProjectId();
   if (!projectId) {
     throw new Error("WalletConnect project ID is not configured.");
   }
+  if (connectorProjectId !== projectId) {
+    connectorPromise = null;
+    connectorProjectId = projectId;
+  }
   if (!connectorPromise) {
-    connectorPromise = import("@reown/appkit-universal-connector").then(
-      ({ UniversalConnector }) =>
+    connectorPromise = import("@reown/appkit-universal-connector")
+      .then(({ UniversalConnector }) =>
         UniversalConnector.init({
           projectId,
           metadata: {
@@ -169,7 +206,14 @@ const getConnector = async (): Promise<UniversalConnector> => {
             },
           },
         }),
-    );
+      )
+      .catch((error) => {
+        if (connectorProjectId === projectId) {
+          connectorPromise = null;
+          connectorProjectId = "";
+        }
+        throw error;
+      });
   }
   return connectorPromise;
 };
@@ -183,7 +227,8 @@ export const useTronWalletConnect = () => {
   const error = ref("");
 
   const connected = computed(() => Boolean(address.value));
-  const projectConfigured = computed(() => Boolean(projectId));
+  const projectConfigured = computed(() => Boolean(getConfiguredProjectId()));
+  const projectId = computed(() => getConfiguredProjectId());
   const shortAddress = computed(() =>
     address.value
       ? `${address.value.slice(0, 6)}...${address.value.slice(-6)}`
@@ -260,6 +305,20 @@ export const useTronWalletConnect = () => {
       throw new Error("Connect a TRON wallet before signing.");
     }
     const connector = await getConnector();
+    const activeSession = connector.provider.session as
+      | WalletConnectSessionLike
+      | null
+      | undefined;
+    const snapshot = walletConnectSessionFromAddress(
+      address.value,
+      sessionTopic.value || null,
+    );
+    if (!tronWalletConnectSessionMatchesSnapshot(activeSession, snapshot)) {
+      address.value = "";
+      sessionTopic.value = "";
+      writeStoredTronWalletConnectSession(null);
+      throw new Error("Reconnect your TRON wallet before signing.");
+    }
     return connector.request(
       {
         method: WALLETCONNECT_TRON_SIGN_METHOD,

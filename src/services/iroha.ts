@@ -486,6 +486,10 @@ export const getTronTransaction = (
   input: Parameters<IrohaBridge["getTronTransaction"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getTronTransaction(input);
 
+export const getTronAccount = (
+  input: Parameters<IrohaBridge["getTronAccount"]>[0],
+): Promise<Record<string, unknown>> => bridge().getTronAccount(input);
+
 export const getTronTransactionReceipt = (
   input: Parameters<IrohaBridge["getTronTransactionReceipt"]>[0],
 ): Promise<Record<string, unknown>> =>
@@ -514,6 +518,11 @@ export const broadcastTronTransaction = (
 export const triggerTronSmartContract = (
   input: Parameters<IrohaBridge["triggerTronSmartContract"]>[0],
 ): Promise<Record<string, unknown>> => bridge().triggerTronSmartContract(input);
+
+export const triggerTronConstantContract = (
+  input: Parameters<IrohaBridge["triggerTronConstantContract"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().triggerTronConstantContract(input);
 
 export type { SubscriptionStatusView };
 

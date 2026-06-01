@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "crypto";
 import {
   buildWalletConfidentialMetadata,
   createWalletConfidentialNote,
@@ -45,6 +46,21 @@ const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+
+const signedTronBroadcastTransaction = (
+  rawDataHex = "0a020102220408102040",
+) => ({
+  txID: createHash("sha256")
+    .update(Buffer.from(rawDataHex, "hex"))
+    .digest("hex"),
+  raw_data: {
+    contract: [],
+    timestamp: 1,
+    expiration: 2,
+  },
+  raw_data_hex: rawDataHex,
+  signature: ["12".repeat(65)],
+});
 
 const buildNrt0Frame = (payload: Buffer) => {
   const header = Buffer.alloc(40);
@@ -544,6 +560,18 @@ const loadBridge = async () => {
     deploySoraCloudHf: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    getTronAccount: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    broadcastTronTransaction: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    triggerTronSmartContract: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    triggerTronConstantContract: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     copyTextToClipboard: (input: { text: string }) => Promise<void>;
   };
 };
@@ -1027,6 +1055,296 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.clipboardWriteTextMock).toHaveBeenCalledWith(
       "alpha beta gamma",
     );
+  });
+
+  it("passes through successful TRON broadcast responses", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ result: true, txid: transaction.txID }),
+    );
+
+    await expect(
+      bridge.broadcastTronTransaction({ transaction }),
+    ).resolves.toMatchObject({
+      result: true,
+      txid: transaction.txID,
+    });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/broadcasttransaction",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(transaction),
+      }),
+    );
+  });
+
+  it("rejects malformed or secret-bearing TRON broadcasts before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    mocks.nodeFetchMock.mockClear();
+
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          txID: transaction.txID,
+          raw_data_hex: transaction.raw_data_hex,
+        },
+      }),
+    ).rejects.toThrow(/signature/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          signature: ["12"],
+        },
+      }),
+    ).rejects.toThrow(/65-byte/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          txID: "aa".repeat(32),
+        },
+      }),
+    ).rejects.toThrow(/match raw_data_hex/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          txID: transaction.txID,
+          signature: transaction.signature,
+        },
+      }),
+    ).rejects.toThrow(/raw_data/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          privateKeyHex: "11".repeat(32),
+        },
+      }),
+    ).rejects.toThrow(/must not be sent/);
+
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("loads TRON account balance with Base58Check gateway addresses", async () => {
+    const bridge = await loadBridge();
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ balance: 1234567 }),
+    );
+
+    await expect(
+      bridge.getTronAccount({
+        address: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      }),
+    ).resolves.toMatchObject({ balance: 1234567 });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/getaccount",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          address: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+          visible: true,
+        }),
+      }),
+    );
+
+    mocks.nodeFetchMock.mockClear();
+    expect(() =>
+      bridge.getTronAccount({
+        address: "411111111111111111111111111111111111111111",
+      }),
+    ).toThrow(/Base58Check/);
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe TRON gateway overrides before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    mocks.nodeFetchMock.mockClear();
+
+    await expect(
+      bridge.broadcastTronTransaction({
+        endpoint: "http://api.trongrid.io",
+        transaction,
+      }),
+    ).rejects.toThrow(/HTTPS/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        endpoint: "https://user:pass@api.trongrid.io",
+        transaction,
+      }),
+    ).rejects.toThrow(/credentials/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        endpoint: "https://127.0.0.1:9090",
+        transaction,
+      }),
+    ).rejects.toThrow(/local network/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        endpoint: "https://api.trongrid.io?redirect=http://127.0.0.1",
+        transaction,
+      }),
+    ).rejects.toThrow(/query or hash/);
+    for (const endpoint of [
+      "https://0.0.0.0",
+      "https://100.64.0.1",
+      "https://[::1]",
+      "https://[fd00::1]",
+      "https://[fe80::1]",
+      "https://[::ffff:127.0.0.1]",
+      "https://node.localhost",
+    ]) {
+      await expect(
+        bridge.broadcastTronTransaction({
+          endpoint,
+          transaction,
+        }),
+      ).rejects.toThrow(/local network/);
+    }
+
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes TRON constant-contract balance calls", async () => {
+    const bridge = await loadBridge();
+    const input = {
+      ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      contractAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      functionSelector: "balanceOf(address)",
+      parameter: "00".repeat(32),
+    };
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: { result: true },
+        constant_result: ["0".repeat(63) + "7"],
+      }),
+    );
+
+    await expect(
+      bridge.triggerTronConstantContract(input),
+    ).resolves.toMatchObject({
+      constant_result: ["0".repeat(63) + "7"],
+    });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/triggerconstantcontract",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          owner_address: input.ownerAddress,
+          contract_address: input.contractAddress,
+          function_selector: input.functionSelector,
+          parameter: "00".repeat(32),
+          visible: true,
+        }),
+      }),
+    );
+
+    mocks.nodeFetchMock.mockClear();
+    expect(() =>
+      bridge.triggerTronConstantContract({
+        ...input,
+        callData: "0x1234",
+        parameter: undefined,
+      }),
+    ).toThrow(/4-byte selector/);
+    expect(() =>
+      bridge.triggerTronConstantContract({
+        ...input,
+        contractAddress: "410000000000000000000000000000000000000000",
+      }),
+    ).toThrow(/Base58Check/);
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects failed TRON broadcast responses returned with HTTP 200", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: false,
+        code: "SIGERROR",
+        message: "signature validation failed",
+      }),
+    );
+
+    await expect(
+      bridge.broadcastTronTransaction({ transaction }),
+    ).rejects.toThrow(/SIGERROR: signature validation failed/);
+  });
+
+  it("rejects TRON broadcast responses without explicit acceptance", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ txid: "aa".repeat(32) }),
+    );
+
+    await expect(
+      bridge.broadcastTronTransaction({ transaction }),
+    ).rejects.toThrow(/rejected by the TRON node|not accepted/);
+  });
+
+  it("normalizes TRON smart-contract triggers and validates gateway addresses", async () => {
+    const bridge = await loadBridge();
+    const trigger = {
+      ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      contractAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      functionSelector: "burnToTaira(bytes,uint256)",
+      callData: `0x${"12".repeat(4)}${"34".repeat(32)}`,
+      feeLimit: 100_000_000,
+    };
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ transaction: { txID: "aa".repeat(32) } }),
+    );
+
+    await expect(
+      bridge.triggerTronSmartContract(trigger),
+    ).resolves.toMatchObject({
+      transaction: { txID: "aa".repeat(32) },
+    });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/triggersmartcontract",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          owner_address: trigger.ownerAddress,
+          contract_address: trigger.contractAddress,
+          function_selector: trigger.functionSelector,
+          parameter: "34".repeat(32),
+          fee_limit: 100_000_000,
+          call_value: 0,
+          visible: true,
+        }),
+      }),
+    );
+
+    mocks.nodeFetchMock.mockClear();
+    expect(() =>
+      bridge.triggerTronSmartContract({
+        ...trigger,
+        ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv9",
+      }),
+    ).toThrow(/checksum|Base58Check/);
+    expect(() =>
+      bridge.triggerTronSmartContract({
+        ...trigger,
+        ownerAddress: "411111111111111111111111111111111111111111",
+      }),
+    ).toThrow(/Base58Check/);
+    expect(() =>
+      bridge.triggerTronSmartContract({
+        ...trigger,
+        contractAddress: "410000000000000000000000000000000000000000",
+      }),
+    ).toThrow(/Base58Check/);
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
   });
 
   it("aggregates network stats across explorer, status, and econometrics surfaces", async () => {

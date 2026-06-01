@@ -38,6 +38,27 @@ export const useSccpBridge = () => {
   const loading = ref(false);
   const balanceLoading = ref(false);
   const error = ref("");
+  let routeRefreshSerial = 0;
+  let balanceRefreshSerial = 0;
+
+  const currentConnectionKey = () =>
+    [
+      session.connection.toriiUrl,
+      session.connection.chainId,
+      session.connection.networkPrefix,
+    ].join("\n");
+
+  const resetState = () => {
+    routeRefreshSerial += 1;
+    balanceRefreshSerial += 1;
+    capabilities.value = null;
+    manifestSet.value = null;
+    recentMessages.value = [];
+    balances.value = [];
+    loading.value = false;
+    balanceLoading.value = false;
+    error.value = "";
+  };
 
   const readiness = computed(() =>
     resolveSccpRouteReadiness({
@@ -60,27 +81,50 @@ export const useSccpBridge = () => {
   }));
 
   const refreshRoute = async () => {
+    const refreshSerial = (routeRefreshSerial += 1);
+    const connectionKey = currentConnectionKey();
+    const toriiUrl = session.connection.toriiUrl;
     error.value = "";
     loading.value = true;
     try {
       const [nextCapabilities, nextManifestSet, nextRecentMessages] =
         await Promise.all([
-          getSccpCapabilities({ toriiUrl: session.connection.toriiUrl }),
-          getSccpProofManifests({ toriiUrl: session.connection.toriiUrl }),
+          getSccpCapabilities({ toriiUrl }),
+          getSccpProofManifests({ toriiUrl }),
           listSccpRecentMessages({
-            toriiUrl: session.connection.toriiUrl,
+            toriiUrl,
             routeId: SCCP_XOR_ROUTE.id,
             limit: 8,
           }).catch(() => ({ items: [], total: 0 })),
         ]);
+      if (
+        refreshSerial !== routeRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
       capabilities.value = nextCapabilities;
       manifestSet.value = nextManifestSet;
       recentMessages.value = nextRecentMessages.items;
     } catch (routeError) {
+      if (
+        refreshSerial !== routeRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
+      capabilities.value = null;
+      manifestSet.value = null;
+      recentMessages.value = [];
       error.value =
         routeError instanceof Error ? routeError.message : String(routeError);
     } finally {
-      loading.value = false;
+      if (
+        refreshSerial === routeRefreshSerial &&
+        connectionKey === currentConnectionKey()
+      ) {
+        loading.value = false;
+      }
     }
   };
 
@@ -90,23 +134,44 @@ export const useSccpBridge = () => {
       balances.value = [];
       return;
     }
+    const refreshSerial = (balanceRefreshSerial += 1);
+    const connectionKey = currentConnectionKey();
+    const toriiUrl = session.connection.toriiUrl;
+    const networkPrefix = session.connection.networkPrefix;
     balanceLoading.value = true;
     try {
       const response = await fetchAccountAssets({
-        toriiUrl: session.connection.toriiUrl,
+        toriiUrl,
         accountId,
-        networkPrefix: session.connection.networkPrefix,
+        networkPrefix,
         limit: 50,
       });
+      if (
+        refreshSerial !== balanceRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
       balances.value = response.items;
     } catch (balanceError) {
+      if (
+        refreshSerial !== balanceRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
       balances.value = [];
       error.value =
         balanceError instanceof Error
           ? balanceError.message
           : String(balanceError);
     } finally {
-      balanceLoading.value = false;
+      if (
+        refreshSerial === balanceRefreshSerial &&
+        connectionKey === currentConnectionKey()
+      ) {
+        balanceLoading.value = false;
+      }
     }
   };
 
@@ -120,6 +185,7 @@ export const useSccpBridge = () => {
     error,
     readiness,
     snapshot,
+    resetState,
     refreshRoute,
     refreshBalances,
   };

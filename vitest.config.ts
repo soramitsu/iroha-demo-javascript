@@ -16,11 +16,10 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     fileParallelism: false,
-    globalSetup: ["./vitest.global-setup.ts"],
     globals: true,
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
-      clean: false,
+      clean: true,
       enabled: true,
       provider: "v8",
       reporter: ["text", "html", "lcov"],

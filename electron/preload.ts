@@ -1121,6 +1121,9 @@ type TronGatewayInput = {
 type TronTransactionInput = TronGatewayInput & {
   txId: string;
 };
+type TronAccountInput = TronGatewayInput & {
+  address: string;
+};
 type TronBlockInput = TronGatewayInput & {
   blockNumber?: number | string;
 };
@@ -1136,6 +1139,13 @@ type TronTriggerSmartContractInput = TronGatewayInput & {
   feeLimit?: number | string;
   callValue?: number | string;
   permissionId?: number | string;
+};
+type TronConstantContractInput = TronGatewayInput & {
+  ownerAddress: string;
+  contractAddress: string;
+  functionSelector: string;
+  parameter?: string;
+  callData?: string;
 };
 type TronEventsInput = TronGatewayInput & {
   txId: string;
@@ -1472,6 +1482,7 @@ type IrohaBridge = {
   getTronTransaction(
     input: TronTransactionInput,
   ): Promise<Record<string, unknown>>;
+  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
   getTronTransactionReceipt(
     input: TronTransactionInput,
   ): Promise<Record<string, unknown>>;
@@ -1488,6 +1499,9 @@ type IrohaBridge = {
   ): Promise<Record<string, unknown>>;
   triggerTronSmartContract(
     input: TronTriggerSmartContractInput,
+  ): Promise<Record<string, unknown>>;
+  triggerTronConstantContract(
+    input: TronConstantContractInput,
   ): Promise<Record<string, unknown>>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
@@ -4932,8 +4946,103 @@ const submitZkIvmProvedTransactionToTorii = async (
   return transactionSubmissionResult(submission);
 };
 
-const normalizeTronGatewayUrl = (endpoint?: string): string =>
-  normalizeBaseUrl(trimString(endpoint) || DEFAULT_TRON_GATEWAY_URL);
+const parseIpv4Octets = (hostname: string): number[] | null => {
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(hostname)) {
+    return null;
+  }
+  const octets = hostname.split(".").map((part) => Number(part));
+  return octets.every(
+    (octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255,
+  )
+    ? octets
+    : null;
+};
+
+const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) {
+    return false;
+  }
+  const [first, second] = octets;
+  return (
+    first === 0 ||
+    first === 10 ||
+    first === 127 ||
+    (first === 100 && second >= 64 && second <= 127) ||
+    (first === 169 && second === 254) ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 0) ||
+    (first === 192 && second === 168) ||
+    (first === 198 && (second === 18 || second === 19)) ||
+    first >= 224
+  );
+};
+
+const isPrivateTronGatewayHost = (hostname: string): boolean => {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/u, "")
+    .replace(/\]$/u, "")
+    .replace(/\.$/u, "");
+  if (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "local" ||
+    normalized === "::1" ||
+    normalized === "::"
+  ) {
+    return true;
+  }
+  if (isPrivateOrReservedIpv4(normalized)) {
+    return true;
+  }
+  const ipv4Mapped = normalized.match(
+    /(?::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/iu,
+  );
+  if (ipv4Mapped?.[1] && isPrivateOrReservedIpv4(ipv4Mapped[1])) {
+    return true;
+  }
+  if (!normalized.includes(":")) {
+    return false;
+  }
+  const firstHextetText = normalized.split(":").find(Boolean) ?? "0";
+  const firstHextet = Number.parseInt(firstHextetText, 16);
+  if (!Number.isFinite(firstHextet)) {
+    return true;
+  }
+  return (
+    (firstHextet & 0xfe00) === 0xfc00 ||
+    (firstHextet & 0xffc0) === 0xfe80 ||
+    (firstHextet & 0xff00) === 0xff00 ||
+    normalized.startsWith("2001:db8:")
+  );
+};
+
+const normalizeTronGatewayUrl = (endpoint?: string): string => {
+  const normalized = normalizeBaseUrl(
+    trimString(endpoint) || DEFAULT_TRON_GATEWAY_URL,
+  );
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error("TRON gateway endpoint must be a valid HTTPS URL.");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("TRON gateway endpoint must use HTTPS.");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("TRON gateway endpoint must not include credentials.");
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error("TRON gateway endpoint must not include query or hash.");
+  }
+  if (isPrivateTronGatewayHost(parsed.hostname)) {
+    throw new Error("TRON gateway endpoint must not target a local network.");
+  }
+  return normalized;
+};
 
 const normalizeTronTxId = (txId: string): string => {
   const normalized = trimString(txId).replace(/^0x/iu, "").toLowerCase();
@@ -5036,22 +5145,76 @@ const getTronFinalityDataFromGateway = async (
   };
 };
 
+const TRON_BASE58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+const decodeTronBase58CheckPayload = (value: string, label: string): Buffer => {
+  let decodedValue = 0n;
+  for (const char of value) {
+    const index = TRON_BASE58_ALPHABET.indexOf(char);
+    if (index < 0) {
+      throw new Error(`${label} must be a valid TRON Base58Check address.`);
+    }
+    decodedValue = decodedValue * 58n + BigInt(index);
+  }
+  const hexValue =
+    decodedValue === 0n
+      ? ""
+      : decodedValue
+          .toString(16)
+          .padStart(
+            decodedValue.toString(16).length +
+              (decodedValue.toString(16).length % 2),
+            "0",
+          );
+  const body = hexValue ? Buffer.from(hexValue, "hex") : Buffer.alloc(0);
+  const leadingZeros = value.match(/^1*/u)?.[0].length ?? 0;
+  const decoded = Buffer.concat([Buffer.alloc(leadingZeros), body]);
+  if (decoded.length !== 25) {
+    throw new Error(`${label} must be a valid TRON Base58Check address.`);
+  }
+  const payload = decoded.subarray(0, 21);
+  const checksum = decoded.subarray(21);
+  const expected = createHash("sha256")
+    .update(createHash("sha256").update(payload).digest())
+    .digest()
+    .subarray(0, 4);
+  if (!checksum.equals(expected)) {
+    throw new Error(`${label} has an invalid TRON Base58Check checksum.`);
+  }
+  if (payload[0] !== 0x41 || payload.subarray(1).every((byte) => byte === 0)) {
+    throw new Error(`${label} must be a non-zero TRON mainnet address.`);
+  }
+  return payload;
+};
+
 const normalizeTronGatewayAddress = (value: string, label: string): string => {
   const normalized = trimString(value);
   if (!normalized) {
     throw new Error(`${label} is required.`);
   }
-  if (
-    !/^(?:T[1-9A-HJ-NP-Za-km-z]{33}|(?:0x)?41[0-9a-fA-F]{40})$/u.test(
-      normalized,
-    )
-  ) {
-    throw new Error(
-      `${label} must be a TRON Base58Check or 0x41-prefixed hex address.`,
-    );
+  if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(normalized)) {
+    throw new Error(`${label} must be a TRON Base58Check address.`);
   }
+  decodeTronBase58CheckPayload(normalized, label);
   return normalized;
 };
+
+const getTronAccountFromGateway = (
+  input: TronAccountInput,
+): Promise<Record<string, unknown>> =>
+  postTronJson(
+    input,
+    "/wallet/getaccount",
+    {
+      address: normalizeTronGatewayAddress(
+        input.address,
+        "TRON account address",
+      ),
+      visible: true,
+    },
+    "TRON account",
+  );
 
 const normalizeTronFunctionSelector = (value: string): string => {
   const normalized = trimString(value);
@@ -5092,15 +5255,117 @@ const normalizeTronSafeInteger = (
   return parsed;
 };
 
-const broadcastTronTransactionToGateway = (
+const TRON_BROADCAST_SECRET_KEY_PATTERN =
+  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
+
+const assertNoSecretLikeTransactionFields = (
+  value: unknown,
+  path = "TRON transaction",
+  seen = new WeakSet<object>(),
+): void => {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    value.forEach((entry, index) => {
+      assertNoSecretLikeTransactionFields(entry, `${path}[${index}]`, seen);
+    });
+    return;
+  }
+  if (!isPlainRecord(value)) {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    if (TRON_BROADCAST_SECRET_KEY_PATTERN.test(key)) {
+      throw new Error(`${path}.${key} must not be sent to the TRON gateway.`);
+    }
+    assertNoSecretLikeTransactionFields(child, `${path}.${key}`, seen);
+  }
+};
+
+const normalizeTronSignatureHex = (value: unknown, label: string): string => {
+  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
+  if (!/^[0-9a-f]{130}$/u.test(normalized)) {
+    throw new Error(`${label} must be a 65-byte secp256k1 signature.`);
+  }
+  return normalized;
+};
+
+const normalizeTronBroadcastTransaction = (
+  transaction: unknown,
+): Record<string, unknown> => {
+  if (!isPlainRecord(transaction)) {
+    throw new Error("TRON broadcast transaction must be an object.");
+  }
+  assertNoSecretLikeTransactionFields(transaction);
+  const txId = normalizeTronTxId(
+    trimString(transaction.txID ?? transaction.txid),
+  );
+  const signatures = transaction.signature;
+  if (!Array.isArray(signatures) || signatures.length === 0) {
+    throw new Error("TRON broadcast transaction must include a signature.");
+  }
+  signatures.forEach((signature, index) => {
+    normalizeTronSignatureHex(signature, `TRON signature[${index}]`);
+  });
+
+  const rawData = transaction.raw_data;
+  const rawDataHex = trimString(transaction.raw_data_hex);
+  if (!isPlainRecord(rawData) && !rawDataHex) {
+    throw new Error(
+      "TRON broadcast transaction must include raw_data or raw_data_hex.",
+    );
+  }
+  const normalized: Record<string, unknown> = {
+    ...transaction,
+    txID: txId,
+  };
+  if (rawDataHex) {
+    const canonicalRawDataHex = normalizeTronHexParameter(
+      rawDataHex,
+      "TRON raw_data_hex",
+    );
+    if (!canonicalRawDataHex) {
+      throw new Error("TRON raw_data_hex is required when provided.");
+    }
+    const expectedTxId = createHash("sha256")
+      .update(Buffer.from(canonicalRawDataHex, "hex"))
+      .digest("hex");
+    if (expectedTxId !== txId) {
+      throw new Error("TRON txID must match raw_data_hex.");
+    }
+    normalized.raw_data_hex = canonicalRawDataHex;
+  }
+  return normalized;
+};
+
+const broadcastTronTransactionToGateway = async (
   input: TronBroadcastInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
+): Promise<Record<string, unknown>> => {
+  const transaction = normalizeTronBroadcastTransaction(input.transaction);
+  const payload = await postTronJson(
     input,
     "/wallet/broadcasttransaction",
-    input.transaction,
+    transaction,
     "Broadcast TRON transaction",
   );
+  if (payload.result !== true) {
+    const code = trimString(payload.code);
+    const message = trimString(payload.message);
+    const detail = [code, message].filter(Boolean).join(": ");
+    throw new Error(
+      detail
+        ? `Broadcast TRON transaction was rejected by the TRON node: ${detail}`
+        : "Broadcast TRON transaction was rejected by the TRON node.",
+    );
+  }
+  return payload;
+};
 
 const triggerTronSmartContractFromGateway = (
   input: TronTriggerSmartContractInput,
@@ -5157,6 +5422,45 @@ const triggerTronSmartContractFromGateway = (
         : {}),
     },
     "Trigger TRON smart contract",
+  );
+};
+
+const triggerTronConstantContractFromGateway = (
+  input: TronConstantContractInput,
+): Promise<Record<string, unknown>> => {
+  const callData = normalizeTronHexParameter(
+    input.callData,
+    "TRON constant-contract call data",
+  );
+  if (input.parameter === undefined && callData && callData.length < 8) {
+    throw new Error(
+      "TRON constant-contract call data must include a 4-byte selector.",
+    );
+  }
+  const parameter =
+    input.parameter !== undefined
+      ? normalizeTronHexParameter(
+          input.parameter,
+          "TRON constant-contract parameter",
+        )
+      : callData.slice(8);
+  return postTronJson(
+    input,
+    "/wallet/triggerconstantcontract",
+    {
+      owner_address: normalizeTronGatewayAddress(
+        input.ownerAddress,
+        "TRON owner address",
+      ),
+      contract_address: normalizeTronGatewayAddress(
+        input.contractAddress,
+        "TRON contract address",
+      ),
+      function_selector: normalizeTronFunctionSelector(input.functionSelector),
+      parameter,
+      visible: true,
+    },
+    "Trigger TRON constant contract",
   );
 };
 
@@ -10406,6 +10710,9 @@ const api: IrohaBridge = {
   getTronTransaction(input) {
     return getTronTransactionFromGateway(input);
   },
+  getTronAccount(input) {
+    return getTronAccountFromGateway(input);
+  },
   getTronTransactionReceipt(input) {
     return getTronTransactionReceiptFromGateway(input);
   },
@@ -10426,6 +10733,9 @@ const api: IrohaBridge = {
   },
   triggerTronSmartContract(input) {
     return triggerTronSmartContractFromGateway(input);
+  },
+  triggerTronConstantContract(input) {
+    return triggerTronConstantContractFromGateway(input);
   },
   bondPublicLaneStake({
     toriiUrl,

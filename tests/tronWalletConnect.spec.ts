@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractTronAddressFromSession,
   readStoredTronWalletConnectSession,
+  tronWalletConnectSessionMatchesSnapshot,
   tronWalletConnectSessionSupportsRequiredSigning,
   writeStoredTronWalletConnectSession,
 } from "@/composables/useTronWalletConnect";
@@ -39,6 +40,16 @@ describe("TRON WalletConnect state", () => {
         namespaces: {
           tron: {
             accounts: [`tron:0x00000000:${VALID_TRON_ADDRESS}`],
+          },
+        },
+      }),
+    ).toBeNull();
+    expect(
+      extractTronAddressFromSession({
+        namespaces: {
+          tron: {
+            accounts:
+              `${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}` as unknown as string[],
           },
         },
       }),
@@ -123,6 +134,97 @@ describe("TRON WalletConnect state", () => {
         },
       }),
     ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            methods: WALLETCONNECT_TRON_SIGN_METHOD as unknown as string[],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        sessionProperties: {
+          tron_method_version: [
+            WALLETCONNECT_TRON_METHOD_VERSION,
+          ] as unknown as string,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  it("matches active WalletConnect sessions to stored non-secret snapshots", () => {
+    const session = {
+      topic: "topic",
+      namespaces: {
+        tron: {
+          accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+          methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+        },
+      },
+      sessionProperties: {
+        tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+      },
+    };
+    const snapshot = walletConnectSessionFromAddress(
+      VALID_TRON_ADDRESS,
+      "topic",
+    );
+
+    expect(tronWalletConnectSessionMatchesSnapshot(session, snapshot)).toBe(
+      true,
+    );
+    expect(
+      tronWalletConnectSessionMatchesSnapshot(
+        {
+          ...session,
+          topic: "other-topic",
+        },
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionMatchesSnapshot(
+        {
+          ...session,
+          namespaces: {
+            tron: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              methods: ["tron_signMessage"],
+            },
+          },
+        },
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionMatchesSnapshot(
+        {
+          ...session,
+          namespaces: {
+            tron: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:not-a-tron-address`],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+            },
+          },
+        },
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionMatchesSnapshot(
+        {
+          ...session,
+          topic: undefined,
+        },
+        snapshot,
+      ),
+    ).toBe(false);
+    expect(tronWalletConnectSessionMatchesSnapshot(null, snapshot)).toBe(false);
   });
 
   it("drops stale or mismatched persisted WalletConnect metadata", () => {

@@ -22,7 +22,7 @@
             type="button"
             class="secondary"
             :disabled="tron.disconnecting.value"
-            @click="tron.disconnect"
+            @click="disconnectTron"
           >
             {{
               tron.disconnecting.value
@@ -62,6 +62,14 @@
           <span class="kv-label">{{ t("XOR balance") }}</span>
           <span class="kv-value">{{ xorBalanceLabel }}</span>
         </div>
+        <div class="kv">
+          <span class="kv-label">TRX</span>
+          <span class="kv-value">{{ tronTrxBalanceLabel }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ SCCP_TRON_TOKEN_SYMBOL }}</span>
+          <span class="kv-value">{{ tronXorBalanceLabel }}</span>
+        </div>
       </div>
 
       <div class="sccp-route-strip">
@@ -88,6 +96,9 @@
       </p>
       <p v-if="bridge.error.value" class="helper error-text">
         {{ bridge.error.value }}
+      </p>
+      <p v-if="tronBalanceError" class="helper error-text">
+        {{ tronBalanceError }}
       </p>
     </section>
 
@@ -270,6 +281,7 @@ import {
   broadcastTronTransaction,
   deriveZkIvmPayload,
   getSccpMessageProofJob,
+  getTronAccount,
   getTronFinalityData,
   getTronTransaction,
   getTronTransactionEvents,
@@ -278,6 +290,7 @@ import {
   startZkIvmProveJob,
   submitSccpBridgeMessage,
   submitZkIvmProvedTransaction,
+  triggerTronConstantContract,
   triggerTronSmartContract,
 } from "@/services/iroha";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
@@ -286,16 +299,28 @@ import {
   isLikelyTairaAccount,
   isTairaSccpNetwork,
   isValidTronBase58CheckAddress,
+  bindTronFinalitySnapshot,
+  bindSignedTronTransactionForBroadcast,
+  bindTronBroadcastResult,
+  bindTronSourceDataForProof,
+  bindTronToTairaSourceProofPackage,
   buildTairaXorBurnTriggerRequest,
   buildTairaXorOutboundBurnRecordRequest,
+  buildTairaXorTokenBalanceRequest,
   buildTairaXorFinalizeProofBinding,
   buildTairaXorFinalizeTriggerRequest,
+  formatBaseUnitAmount,
+  formatTronSunBalance,
   normalizeBridgeAmount,
   normalizeSccpMessageId,
   normalizeTronTransactionId,
+  readTronAccountBalanceSun,
+  readTronConstantUint256,
+  readSccpTronBridgeAddress,
   readSccpTronProofMaterial,
   TRON_MAINNET_TRONSCAN_URL,
   SCCP_XOR_ASSET_KEY,
+  SCCP_TRON_TOKEN_SYMBOL,
   type SccpBridgeDirection,
   type TronToTairaSourceProofPackage,
   type TronToTairaSourceProofPackageInput,
@@ -319,6 +344,10 @@ const tronTxId = ref("");
 const formError = ref("");
 const proofLoading = ref(false);
 const proofReady = ref(false);
+const tronBalanceLoading = ref(false);
+const tronTrxBalanceSun = ref<string | null>(null);
+const tronXorBalanceBaseUnits = ref<string | null>(null);
+const tronBalanceError = ref("");
 const transactionLinks = ref<Array<{ label: string; href: string }>>([]);
 const proofPhases = ref([
   {
@@ -342,6 +371,7 @@ const proofPhases = ref([
     state: "pending",
   },
 ]);
+const SCCP_PROOF_WORKER_TIMEOUT_MS = 120_000;
 
 const isTairaRoute = computed(() => isTairaSccpNetwork(session.connection));
 const activeAccountLabel = computed(() =>
@@ -394,6 +424,24 @@ const xorBalanceLabel = computed(() => {
     "XOR",
   )}`;
 });
+const tronTrxBalanceLabel = computed(() => {
+  if (!tron.connected.value) {
+    return t("Not connected");
+  }
+  if (tronTrxBalanceSun.value === null || tronBalanceLoading.value) {
+    return t("Not loaded");
+  }
+  return `${formatTronSunBalance(tronTrxBalanceSun.value)} TRX`;
+});
+const tronXorBalanceLabel = computed(() => {
+  if (!tron.connected.value) {
+    return t("Not connected");
+  }
+  if (tronXorBalanceBaseUnits.value === null || tronBalanceLoading.value) {
+    return t("Not loaded");
+  }
+  return `${formatBaseUnitAmount(tronXorBalanceBaseUnits.value)} ${SCCP_TRON_TOKEN_SYMBOL}`;
+});
 const amountValid = computed(() => {
   try {
     return Boolean(normalizeBridgeAmount(amount.value));
@@ -409,6 +457,7 @@ const destinationValid = computed(() =>
 const submitDisabled = computed(
   () =>
     !bridge.readiness.value.ready ||
+    !tron.projectConfigured.value ||
     !tron.connected.value ||
     !amountValid.value ||
     !destinationValid.value ||
@@ -426,6 +475,7 @@ const proofFetchDisabled = computed(
       ? !messageId.value
       : !tronTxId.value) ||
     !bridge.readiness.value.ready ||
+    !tron.projectConfigured.value ||
     !tron.connected.value ||
     !amountValid.value ||
     !destinationValid.value ||
@@ -477,88 +527,93 @@ const readJobId = (value: Record<string, unknown>): string => {
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
+type SccpProofWorkerRequest =
+  | {
+      kind: "build-tron-proof-package" | "prove-tron-proof-package";
+      input: TronSccpProofPackageInput;
+    }
+  | {
+      kind: "prove-tron-source-package";
+      input: TronToTairaSourceProofPackageInput;
+    };
+
+function runSccpProofWorker<Result>(
+  request: SccpProofWorkerRequest,
+): Promise<Result> {
+  if (typeof Worker === "undefined") {
+    throw new Error("Browser proof worker is unavailable in this environment.");
+  }
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(
+      new URL("../workers/sccpProver.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(
+        new Error(
+          "SCCP proof worker timed out before returning a bound proof package.",
+        ),
+      );
+    }, SCCP_PROOF_WORKER_TIMEOUT_MS);
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      worker.terminate();
+    };
+    worker.onmessage = (
+      event: MessageEvent<{
+        id: string;
+        ok: boolean;
+        result?: Result;
+        error?: string;
+      }>,
+    ) => {
+      if (event.data.id !== id) {
+        return;
+      }
+      cleanup();
+      if (event.data.ok) {
+        if (
+          event.data.result &&
+          typeof event.data.result === "object" &&
+          !Array.isArray(event.data.result)
+        ) {
+          resolve(event.data.result);
+          return;
+        }
+        reject(
+          new Error("SCCP proof worker returned an invalid proof package."),
+        );
+        return;
+      }
+      reject(new Error(event.data.error || "SCCP proof worker failed."));
+    };
+    worker.onerror = (event) => {
+      cleanup();
+      reject(new Error(event.message || "SCCP proof worker failed."));
+    };
+    worker.onmessageerror = () => {
+      cleanup();
+      reject(new Error("SCCP proof worker returned an unreadable response."));
+    };
+    worker.postMessage({ id, ...request });
+  });
+}
+
 const runTronProofWorker = (
   kind: "build-tron-proof-package" | "prove-tron-proof-package",
   input: TronSccpProofPackageInput,
-): Promise<TronSccpProofPackage> => {
-  if (typeof Worker === "undefined") {
-    throw new Error("Browser proof worker is unavailable in this environment.");
-  }
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(
-      new URL("../workers/sccpProver.worker.ts", import.meta.url),
-      { type: "module" },
-    );
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const cleanup = () => {
-      worker.terminate();
-    };
-    worker.onmessage = (
-      event: MessageEvent<{
-        id: string;
-        ok: boolean;
-        result?: TronSccpProofPackage;
-        error?: string;
-      }>,
-    ) => {
-      if (event.data.id !== id) {
-        return;
-      }
-      cleanup();
-      if (event.data.ok && event.data.result) {
-        resolve(event.data.result);
-        return;
-      }
-      reject(new Error(event.data.error || "SCCP proof worker failed."));
-    };
-    worker.onerror = (event) => {
-      cleanup();
-      reject(new Error(event.message || "SCCP proof worker failed."));
-    };
-    worker.postMessage({ id, kind, input });
-  });
-};
+): Promise<TronSccpProofPackage> =>
+  runSccpProofWorker<TronSccpProofPackage>({ kind, input });
 
 const runTronSourceProofWorker = (
   input: TronToTairaSourceProofPackageInput,
-): Promise<TronToTairaSourceProofPackage> => {
-  if (typeof Worker === "undefined") {
-    throw new Error("Browser proof worker is unavailable in this environment.");
-  }
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(
-      new URL("../workers/sccpProver.worker.ts", import.meta.url),
-      { type: "module" },
-    );
-    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const cleanup = () => {
-      worker.terminate();
-    };
-    worker.onmessage = (
-      event: MessageEvent<{
-        id: string;
-        ok: boolean;
-        result?: TronToTairaSourceProofPackage;
-        error?: string;
-      }>,
-    ) => {
-      if (event.data.id !== id) {
-        return;
-      }
-      cleanup();
-      if (event.data.ok && event.data.result) {
-        resolve(event.data.result);
-        return;
-      }
-      reject(new Error(event.data.error || "SCCP proof worker failed."));
-    };
-    worker.onerror = (event) => {
-      cleanup();
-      reject(new Error(event.message || "SCCP proof worker failed."));
-    };
-    worker.postMessage({ id, kind: "prove-tron-source-package", input });
+): Promise<TronToTairaSourceProofPackage> =>
+  runSccpProofWorker<TronToTairaSourceProofPackage>({
+    kind: "prove-tron-source-package",
+    input,
   });
-};
 
 const sccpDestinationProofParams = (): Record<string, string> => {
   const material = readSccpTronProofMaterial(
@@ -608,11 +663,52 @@ const waitForZkIvmProof = async (
   throw new Error("Timed out waiting for the ZK IVM proof job.");
 };
 
+const clearTronBalances = () => {
+  tronTrxBalanceSun.value = null;
+  tronXorBalanceBaseUnits.value = null;
+  tronBalanceError.value = "";
+};
+
+const refreshTronBalances = async () => {
+  clearTronBalances();
+  if (!tron.connected.value) {
+    return;
+  }
+  tronBalanceLoading.value = true;
+  try {
+    const [account, tokenBalance] = await Promise.all([
+      getTronAccount({ address: tron.address.value }),
+      bridge.readiness.value.ready
+        ? triggerTronConstantContract(
+            buildTairaXorTokenBalanceRequest({
+              manifest: bridge.readiness.value.tronManifest,
+              ownerAddress: tron.address.value,
+            }),
+          )
+        : Promise.resolve(null),
+    ]);
+    tronTrxBalanceSun.value = readTronAccountBalanceSun(account);
+    tronXorBalanceBaseUnits.value = tokenBalance
+      ? readTronConstantUint256(tokenBalance, "TRON TairaXOR balance response")
+      : null;
+  } catch (error) {
+    tronTrxBalanceSun.value = null;
+    tronXorBalanceBaseUnits.value = null;
+    tronBalanceError.value =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    tronBalanceLoading.value = false;
+  }
+};
+
 const refreshAll = async () => {
   if (!isTairaRoute.value) {
+    bridge.resetState();
+    clearTronBalances();
     return;
   }
   await Promise.all([bridge.refreshRoute(), bridge.refreshBalances()]);
+  await refreshTronBalances();
 };
 
 const connectTron = async () => {
@@ -621,6 +717,12 @@ const connectTron = async () => {
     return;
   }
   await tron.connect();
+  await refreshTronBalances();
+};
+
+const disconnectTron = async () => {
+  await tron.disconnect();
+  await refreshTronBalances();
 };
 
 const resetProofPhases = () => {
@@ -644,6 +746,13 @@ const validateForm = () => {
     throw new Error(
       routeMessages.value[0] ||
         t("Route readiness must be true before bridge actions are enabled."),
+    );
+  }
+  if (!tron.projectConfigured.value) {
+    throw new Error(
+      t(
+        "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
+      ),
     );
   }
   if (!tron.connected.value) {
@@ -725,7 +834,7 @@ const prepareBridge = async () => {
     }
 
     markPhase(1, "active", "Collecting TRON finality data");
-    await getTronFinalityData();
+    bindTronFinalitySnapshot(await getTronFinalityData());
     const triggerRequest = buildTairaXorBurnTriggerRequest({
       manifest: bridge.readiness.value.tronManifest,
       ownerAddress: tron.address.value,
@@ -749,24 +858,18 @@ const prepareBridge = async () => {
       "TRON-source proof data collection can begin after broadcast",
     );
     markPhase(3, "active", "Requesting TRON wallet approval");
-    const signedTransaction = await tron.signTransaction(unsignedTransaction);
-    if (
-      !signedTransaction ||
-      typeof signedTransaction !== "object" ||
-      Array.isArray(signedTransaction)
-    ) {
-      throw new Error("TRON wallet did not return a signed transaction.");
-    }
-    const broadcastResponse = await broadcastTronTransaction({
-      transaction: signedTransaction as Record<string, unknown>,
+    const signedTransaction = bindSignedTronTransactionForBroadcast({
+      unsignedTransaction,
+      signedTransaction: await tron.signTransaction(unsignedTransaction),
+      ownerAddress: tron.address.value,
     });
-    const nextTxId =
-      String(broadcastResponse.txid ?? broadcastResponse.txID ?? "").trim() ||
-      String(
-        (signedTransaction as Record<string, unknown>).txID ??
-          (signedTransaction as Record<string, unknown>).txid ??
-          "",
-      ).trim();
+    const broadcast = bindTronBroadcastResult({
+      response: await broadcastTronTransaction({
+        transaction: signedTransaction.transaction,
+      }),
+      expectedTxId: signedTransaction.txId,
+    });
+    const nextTxId = broadcast.txId;
     if (nextTxId) {
       tronTxId.value = nextTxId;
       transactionLinks.value = [
@@ -819,27 +922,49 @@ const fetchMessageJob = async () => {
         getTronTransactionEvents({ txId: tronTxId.value }),
         getTronFinalityData(),
       ]);
-      markPhase(1, "complete", "TRON source transaction data collected");
-      markPhase(2, "active", "Generating TRON source proof package");
-      const proofPackage = await runTronSourceProofWorker({
-        manifest: bridge.readiness.value.tronManifest,
+      const sourceData = bindTronSourceDataForProof({
         txId: tronTxId.value,
         transaction,
         receipt,
         events,
         finality,
+        bridgeAddress: readSccpTronBridgeAddress(
+          bridge.readiness.value.tronManifest,
+        ),
         tronSender: tron.address.value,
         tairaRecipient: tairaRecipient.value,
         amountDecimal: amount.value,
       });
-      messageId.value = proofPackage.messageId;
+      markPhase(1, "complete", "TRON source transaction data collected");
+      markPhase(2, "active", "Generating TRON source proof package");
+      const proofPackage = await runTronSourceProofWorker({
+        manifest: bridge.readiness.value.tronManifest,
+        txId: sourceData.txId,
+        transaction: sourceData.transaction,
+        receipt: sourceData.receipt,
+        events: sourceData.events,
+        finality: sourceData.finality,
+        tronSender: tron.address.value,
+        tairaRecipient: tairaRecipient.value,
+        amountDecimal: amount.value,
+      });
+      const boundProofPackage = bindTronToTairaSourceProofPackage({
+        manifest: bridge.readiness.value.tronManifest,
+        proofPackage,
+        txId: sourceData.txId,
+        events: sourceData.events,
+        tronSender: tron.address.value,
+        tairaRecipient: tairaRecipient.value,
+        amountDecimal: amount.value,
+      });
+      messageId.value = boundProofPackage.messageId;
       markPhase(2, "complete", "TRON source proof package is ready");
       markPhase(3, "active", "Submitting TAIRA settlement");
       const response = await submitSccpBridgeMessage({
         toriiUrl: session.connection.toriiUrl,
         accountId: session.activeAccount?.accountId ?? "",
-        messageBundle: proofPackage.messageBundle,
-        settlement: proofPackage.settlement,
+        messageBundle: boundProofPackage.messageBundle,
+        settlement: boundProofPackage.settlement,
       });
       const tairaTxHash = String(
         response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
@@ -884,6 +1009,7 @@ const fetchMessageJob = async () => {
       tronRecipient: tronRecipient.value,
       amountBaseUnits: binding.amountBaseUnits,
       messageId: binding.messageId,
+      canonicalPayloadHex: binding.canonicalPayloadHex,
     });
     markPhase(2, "complete", "TRON finalize proof package is ready");
     markPhase(3, "active", "Requesting TRON wallet approval");
@@ -899,24 +1025,18 @@ const fetchMessageJob = async () => {
     if (!unsignedTransaction) {
       throw new Error("TRON gateway did not return an unsigned transaction.");
     }
-    const signedTransaction = await tron.signTransaction(unsignedTransaction);
-    if (
-      !signedTransaction ||
-      typeof signedTransaction !== "object" ||
-      Array.isArray(signedTransaction)
-    ) {
-      throw new Error("TRON wallet did not return a signed transaction.");
-    }
-    const broadcastResponse = await broadcastTronTransaction({
-      transaction: signedTransaction as Record<string, unknown>,
+    const signedTransaction = bindSignedTronTransactionForBroadcast({
+      unsignedTransaction,
+      signedTransaction: await tron.signTransaction(unsignedTransaction),
+      ownerAddress: tron.address.value,
     });
-    const txId =
-      String(broadcastResponse.txid ?? broadcastResponse.txID ?? "").trim() ||
-      String(
-        (signedTransaction as Record<string, unknown>).txID ??
-          (signedTransaction as Record<string, unknown>).txid ??
-          "",
-      ).trim();
+    const broadcast = bindTronBroadcastResult({
+      response: await broadcastTronTransaction({
+        transaction: signedTransaction.transaction,
+      }),
+      expectedTxId: signedTransaction.txId,
+    });
+    const txId = broadcast.txId;
     if (txId) {
       transactionLinks.value = [
         {
@@ -948,9 +1068,15 @@ watch(
 );
 
 watch(
-  () => [session.connection.chainId, session.connection.networkPrefix] as const,
+  () =>
+    [
+      session.connection.toriiUrl,
+      session.connection.chainId,
+      session.connection.networkPrefix,
+    ] as const,
   () => {
     resetProofPhases();
+    bridge.resetState();
     void refreshAll();
   },
 );

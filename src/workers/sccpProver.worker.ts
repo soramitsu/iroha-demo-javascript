@@ -14,6 +14,11 @@ import {
   type TronSccpProverGlobal,
 } from "@/utils/sccpProverLink";
 
+type SccpProverWorkerRequestKind =
+  | "build-tron-proof-package"
+  | "prove-tron-proof-package"
+  | "prove-tron-source-package";
+
 type SccpProverWorkerRequest =
   | {
       id: string;
@@ -45,10 +50,55 @@ type SccpProverWorkerResponse =
       error: string;
     };
 
-self.onmessage = (event: MessageEvent<SccpProverWorkerRequest>) => {
-  const { id, kind, input } = event.data;
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isSccpProverWorkerRequestKind = (
+  value: unknown,
+): value is SccpProverWorkerRequestKind =>
+  value === "build-tron-proof-package" ||
+  value === "prove-tron-proof-package" ||
+  value === "prove-tron-source-package";
+
+const readSccpProverWorkerRequestId = (data: unknown): string =>
+  isRecord(data) && typeof data.id === "string" ? data.id : "";
+
+export const normalizeSccpProverWorkerRequest = (
+  data: unknown,
+): SccpProverWorkerRequest => {
+  if (!isRecord(data)) {
+    throw new Error("SCCP worker request must be an object.");
+  }
+  if (typeof data.id !== "string" || data.id.trim().length === 0) {
+    throw new Error("SCCP worker request id must be a non-empty string.");
+  }
+  if (!isSccpProverWorkerRequestKind(data.kind)) {
+    throw new Error(`Unsupported SCCP worker request: ${String(data.kind)}`);
+  }
+  if (!isRecord(data.input)) {
+    throw new Error("SCCP worker request input must be an object.");
+  }
+
+  if (data.kind === "prove-tron-source-package") {
+    return {
+      id: data.id,
+      kind: data.kind,
+      input: data.input as unknown as TronToTairaSourceProofPackageInput,
+    };
+  }
+
+  return {
+    id: data.id,
+    kind: data.kind,
+    input: data.input as unknown as TronSccpProofPackageInput,
+  };
+};
+
+self.onmessage = (event: MessageEvent<unknown>) => {
+  const requestId = readSccpProverWorkerRequestId(event.data);
   void (async () => {
     try {
+      const { id, kind, input } = normalizeSccpProverWorkerRequest(event.data);
       if (kind !== "build-tron-proof-package") {
         if (kind === "prove-tron-source-package") {
           const proveSource = await loadTronSccpSourceProveFn({
@@ -69,6 +119,7 @@ self.onmessage = (event: MessageEvent<SccpProverWorkerRequest>) => {
             manifest: input.manifest,
             proofPackage: await proveSource(input),
             txId: input.txId,
+            events: input.events,
             tronSender: input.tronSender,
             tairaRecipient: input.tairaRecipient,
             amountDecimal: input.amountDecimal,
@@ -106,7 +157,7 @@ self.onmessage = (event: MessageEvent<SccpProverWorkerRequest>) => {
       } satisfies SccpProverWorkerResponse);
     } catch (error) {
       self.postMessage({
-        id,
+        id: requestId,
         ok: false,
         error: error instanceof Error ? error.message : String(error),
       } satisfies SccpProverWorkerResponse);
