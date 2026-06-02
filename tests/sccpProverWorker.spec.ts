@@ -73,6 +73,9 @@ const sourceInput = {
   amountDecimal: "1",
 } as unknown as TronToTairaSourceProofPackageInput;
 
+const VALID_MNEMONIC =
+  "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
 describe("SCCP prover worker", () => {
   beforeEach(() => {
     mocks.bindSource.mockReset();
@@ -106,6 +109,15 @@ describe("SCCP prover worker", () => {
         input: destinationInput,
       }),
     ).toThrow("SCCP worker request id must be a non-empty string.");
+    for (const id of ["req 1", "req\n1", "req/1", "x".repeat(129)]) {
+      expect(() =>
+        workerModule.normalizeSccpProverWorkerRequest({
+          id,
+          kind: "build-tron-proof-package",
+          input: destinationInput,
+        }),
+      ).toThrow("SCCP worker request id must use 1-128 safe ASCII characters.");
+    }
     expect(() =>
       workerModule.normalizeSccpProverWorkerRequest({
         id: "req-1",
@@ -120,6 +132,28 @@ describe("SCCP prover worker", () => {
         input: "not-an-object",
       }),
     ).toThrow("SCCP worker request input must be an object.");
+    expect(() =>
+      workerModule.normalizeSccpProverWorkerRequest({
+        id: "req-1",
+        kind: "build-tron-proof-package",
+        input: {
+          ...destinationInput,
+          manifest: {
+            privateKeyHex: "00".repeat(32),
+          },
+        },
+      }),
+    ).toThrow(/privateKeyHex.*SCCP prover/);
+    expect(() =>
+      workerModule.assertNoUnsafeSccpWorkerOutputFields({
+        messageBundle: {
+          finalityProof: {
+            signatureSha256: `0x${"11".repeat(32)}`,
+            signatures: ["0x01"],
+          },
+        },
+      }),
+    ).not.toThrow();
   });
 
   it("returns a request-bound error response for malformed posted messages", async () => {
@@ -132,6 +166,17 @@ describe("SCCP prover worker", () => {
     });
     await expect(
       worker.post({
+        id: "req\n2",
+        kind: "build-tron-proof-package",
+        input: {},
+      }),
+    ).resolves.toEqual({
+      id: "",
+      ok: false,
+      error: "SCCP worker request id must use 1-128 safe ASCII characters.",
+    });
+    await expect(
+      worker.post({
         id: "req-2",
         kind: "prove-solana-proof-package",
         input: {},
@@ -141,6 +186,282 @@ describe("SCCP prover worker", () => {
       ok: false,
       error: "Unsupported SCCP worker request: prove-solana-proof-package",
     });
+  });
+
+  it("rejects secret-like worker inputs before loading provers or building packages", async () => {
+    const worker = await createWorkerHarness();
+
+    await expect(
+      worker.post({
+        id: "secret-build",
+        kind: "build-tron-proof-package",
+        input: {
+          ...destinationInput,
+          messageBundle: {
+            private_key: "00".repeat(32),
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "secret-build",
+      ok: false,
+      error:
+        "SCCP worker request input.messageBundle.private_key must not be sent to the SCCP prover.",
+    });
+    expect(mocks.buildProofPackage).not.toHaveBeenCalled();
+
+    await expect(
+      worker.post({
+        id: "secret-destination",
+        kind: "prove-tron-proof-package",
+        input: {
+          ...destinationInput,
+          witness: {
+            publicInputs: {
+              mnemonic: "test test test test",
+            },
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "secret-destination",
+      ok: false,
+      error:
+        "SCCP worker request input.witness.publicInputs.mnemonic must not be sent to the SCCP prover.",
+    });
+    expect(mocks.loadDestinationProver).not.toHaveBeenCalled();
+    expect(mocks.generateProofPackage).not.toHaveBeenCalled();
+
+    await expect(
+      worker.post({
+        id: "secret-source",
+        kind: "prove-tron-source-package",
+        input: {
+          ...sourceInput,
+          finality: {
+            witnesses: [{ recoveryPhrase: "test test test test" }],
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "secret-source",
+      ok: false,
+      error:
+        "SCCP worker request input.finality.witnesses[0].recoveryPhrase must not be sent to the SCCP prover.",
+    });
+    expect(mocks.loadSourceProver).not.toHaveBeenCalled();
+    expect(mocks.bindSource).not.toHaveBeenCalled();
+
+    await expect(
+      worker.post({
+        id: "secret-value",
+        kind: "prove-tron-proof-package",
+        input: {
+          ...destinationInput,
+          witness: {
+            publicInputs: {
+              note: VALID_MNEMONIC,
+            },
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "secret-value",
+      ok: false,
+      error:
+        "SCCP worker request input.witness.publicInputs.note must not contain recovery phrases or private key material before SCCP proof generation.",
+    });
+    expect(mocks.loadDestinationProver).not.toHaveBeenCalled();
+    expect(mocks.generateProofPackage).not.toHaveBeenCalled();
+  });
+
+  it("rejects signing-helper worker inputs before proof generation", async () => {
+    const worker = await createWorkerHarness();
+
+    await expect(
+      worker.post({
+        id: "signed-helper-destination",
+        kind: "prove-tron-proof-package",
+        input: {
+          ...destinationInput,
+          messageBundle: {
+            signature_b64: "detached-wallet-signature",
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "signed-helper-destination",
+      ok: false,
+      error:
+        "SCCP worker request input.messageBundle.signature_b64 must not be sent to the SCCP prover; TRON signing must happen through WalletConnect approval.",
+    });
+    expect(mocks.loadDestinationProver).not.toHaveBeenCalled();
+    expect(mocks.generateProofPackage).not.toHaveBeenCalled();
+
+    await expect(
+      worker.post({
+        id: "signed-helper-source",
+        kind: "prove-tron-source-package",
+        input: {
+          ...sourceInput,
+          transaction: {
+            signedTransaction: {
+              txID: "22".repeat(32),
+            },
+          },
+        },
+      }),
+    ).resolves.toEqual({
+      id: "signed-helper-source",
+      ok: false,
+      error:
+        "SCCP worker request input.transaction.signedTransaction must not be sent to the SCCP prover; TRON signing must happen through WalletConnect approval.",
+    });
+    expect(mocks.loadSourceProver).not.toHaveBeenCalled();
+    expect(mocks.bindSource).not.toHaveBeenCalled();
+  });
+
+  it("allows public TRON signature evidence in worker inputs", async () => {
+    const proveSource = vi.fn().mockResolvedValue({ proof: true });
+    mocks.loadSourceProver.mockResolvedValue(proveSource);
+    mocks.bindSource.mockReturnValue({
+      messageBundle: { commitment: { message_id: "11".repeat(32) } },
+      settlement: {
+        entrypoint: "finalize_inbound",
+        route: "taira_tron_xor",
+      },
+    });
+    const worker = await createWorkerHarness();
+    const sourceWithPublicSignature = {
+      ...sourceInput,
+      transaction: {
+        txID: "22".repeat(32),
+        signature: ["aa".repeat(65)],
+      },
+      finality: {
+        witnesses: [
+          {
+            signature: "bb".repeat(65),
+          },
+        ],
+      },
+    };
+
+    await expect(
+      worker.post({
+        id: "public-signature-source",
+        kind: "prove-tron-source-package",
+        input: sourceWithPublicSignature,
+      }),
+    ).resolves.toMatchObject({
+      id: "public-signature-source",
+      ok: true,
+    });
+    expect(proveSource).toHaveBeenCalledWith(sourceWithPublicSignature);
+    expect(mocks.bindSource).toHaveBeenCalledWith({
+      manifest: sourceWithPublicSignature.manifest,
+      proofPackage: { proof: true },
+      txId: sourceWithPublicSignature.txId,
+      events: sourceWithPublicSignature.events,
+      tronSender: sourceWithPublicSignature.tronSender,
+      tairaRecipient: sourceWithPublicSignature.tairaRecipient,
+      amountDecimal: sourceWithPublicSignature.amountDecimal,
+    });
+  });
+
+  it("rejects secret-like or signing-helper worker outputs before posting success", async () => {
+    const worker = await createWorkerHarness();
+
+    mocks.buildProofPackage.mockReturnValue({
+      bridgePayload: {
+        privateKeyHex: "00".repeat(32),
+      },
+    });
+    await expect(
+      worker.post({
+        id: "unsafe-build",
+        kind: "build-tron-proof-package",
+        input: destinationInput,
+      }),
+    ).resolves.toEqual({
+      id: "unsafe-build",
+      ok: false,
+      error:
+        "SCCP worker result.bridgePayload.privateKeyHex must not be returned by the SCCP prover.",
+    });
+    expect(mocks.buildProofPackage).toHaveBeenCalledWith(destinationInput);
+
+    const prove = vi.fn();
+    mocks.loadDestinationProver.mockResolvedValue(prove);
+    mocks.generateProofPackage.mockResolvedValue({
+      bridgePayload: {
+        signature_b64: "wallet-approved-signature-should-not-exist-here",
+      },
+    });
+    await expect(
+      worker.post({
+        id: "unsafe-destination",
+        kind: "prove-tron-proof-package",
+        input: destinationInput,
+      }),
+    ).resolves.toEqual({
+      id: "unsafe-destination",
+      ok: false,
+      error:
+        "SCCP worker result.bridgePayload.signature_b64 must not be returned by the SCCP prover; TRON signing must happen through WalletConnect approval.",
+    });
+    expect(mocks.loadDestinationProver).toHaveBeenCalledTimes(1);
+    expect(mocks.generateProofPackage).toHaveBeenCalledWith({
+      ...destinationInput,
+      prove,
+    });
+
+    const proveSource = vi.fn().mockResolvedValue({ proof: true });
+    mocks.loadSourceProver.mockResolvedValue(proveSource);
+    mocks.bindSource.mockReturnValue({
+      messageBundle: {
+        note: VALID_MNEMONIC,
+      },
+      settlement: {
+        entrypoint: "finalize_inbound",
+        route: "taira_tron_xor",
+      },
+    });
+    await expect(
+      worker.post({
+        id: "unsafe-source-secret",
+        kind: "prove-tron-source-package",
+        input: sourceInput,
+      }),
+    ).resolves.toEqual({
+      id: "unsafe-source-secret",
+      ok: false,
+      error:
+        "SCCP worker result.messageBundle.note must not contain recovery phrases or private key material after SCCP proof generation.",
+    });
+
+    mocks.bindSource.mockReturnValue({
+      messageBundle: { commitment: { message_id: "11".repeat(32) } },
+      settlement: {
+        entrypoint: "finalize_inbound",
+        route: "taira_tron_xor",
+        signedTransaction: { txID: "22".repeat(32) },
+      },
+    });
+    await expect(
+      worker.post({
+        id: "unsafe-source-signed",
+        kind: "prove-tron-source-package",
+        input: sourceInput,
+      }),
+    ).resolves.toEqual({
+      id: "unsafe-source-signed",
+      ok: false,
+      error:
+        "SCCP worker result.settlement.signedTransaction must not be returned by the SCCP prover; TRON signing must happen through WalletConnect approval.",
+    });
+    expect(proveSource).toHaveBeenCalledTimes(2);
+    expect(mocks.bindSource).toHaveBeenCalledTimes(2);
   });
 
   it("builds a destination proof package without loading a prover", async () => {
@@ -224,6 +545,55 @@ describe("SCCP prover worker", () => {
       result: boundProofPackage,
     });
     expect(proveSource).toHaveBeenCalledWith(sourceInput);
+    expect(mocks.bindSource).toHaveBeenCalledWith({
+      manifest: sourceInput.manifest,
+      proofPackage: rawProofPackage,
+      txId: sourceInput.txId,
+      events: sourceInput.events,
+      tronSender: sourceInput.tronSender,
+      tairaRecipient: sourceInput.tairaRecipient,
+      amountDecimal: sourceInput.amountDecimal,
+    });
+  });
+
+  it("binds TRON source proofs against a snapshot when the prover mutates input", async () => {
+    const rawProofPackage = { raw: true, txId: "mutated" };
+    const boundProofPackage = { submissionPayload: { proof: "0x04" } };
+    let preMutationProverInput: unknown;
+    const proveSource = vi.fn().mockImplementation(async (input) => {
+      preMutationProverInput = structuredClone(input);
+      const mutableInput = input as Record<string, unknown>;
+      mutableInput.txId = "ff".repeat(32);
+      mutableInput.events = [];
+      mutableInput.tairaRecipient = "alice@taira";
+      mutableInput.amountDecimal = "999";
+      mutableInput.manifest = { route_id: "mutated_route" };
+      return rawProofPackage;
+    });
+    mocks.loadSourceProver.mockResolvedValue(proveSource);
+    mocks.bindSource.mockReturnValue(boundProofPackage);
+    const worker = await createWorkerHarness();
+
+    await expect(
+      worker.post({
+        id: "source-snapshot-1",
+        kind: "prove-tron-source-package",
+        input: sourceInput,
+      }),
+    ).resolves.toEqual({
+      id: "source-snapshot-1",
+      ok: true,
+      result: boundProofPackage,
+    });
+    expect(preMutationProverInput).toMatchObject(
+      expect.objectContaining({
+        txId: sourceInput.txId,
+        events: sourceInput.events,
+        tairaRecipient: sourceInput.tairaRecipient,
+        amountDecimal: sourceInput.amountDecimal,
+      }),
+    );
+    expect(proveSource.mock.calls[0][0]).not.toBe(sourceInput);
     expect(mocks.bindSource).toHaveBeenCalledWith({
       manifest: sourceInput.manifest,
       proofPackage: rawProofPackage,

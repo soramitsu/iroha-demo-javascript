@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "crypto";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { keccak_256 } from "@noble/hashes/sha3";
 import {
   buildWalletConfidentialMetadata,
   createWalletConfidentialNote,
@@ -46,20 +48,155 @@ const LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID =
   "61CtjvNd9T3THAR65GsMVHr82Bjc";
 const RELAY_TX_HASH = "ab".repeat(32);
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+const TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(7);
+const OTHER_TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(8);
+const VALID_MNEMONIC =
+  "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+const hexToBytes = (hex: string): Uint8Array =>
+  Uint8Array.from(
+    hex
+      .trim()
+      .replace(/^0x/iu, "")
+      .match(/.{2}/gu)
+      ?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+  );
+
+const tronPayloadHexFromPrivateKey = (
+  privateKey = TRON_BROADCAST_PRIVATE_KEY,
+): string => {
+  const publicKey = secp256k1.getPublicKey(privateKey, false);
+  const addressHash = keccak_256(publicKey.slice(1));
+  return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
+};
+
+const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+};
+
+const protobufVarint = (value: bigint): Uint8Array => {
+  const out: number[] = [];
+  let remaining = value;
+  do {
+    let byte = Number(remaining & 0x7fn);
+    remaining >>= 7n;
+    if (remaining) {
+      byte |= 0x80;
+    }
+    out.push(byte);
+  } while (remaining);
+  return Uint8Array.from(out);
+};
+
+const protobufKey = (field: number, wireType: number): Uint8Array =>
+  protobufVarint((BigInt(field) << 3n) | BigInt(wireType));
+
+const protobufBytesField = (field: number, value: Uint8Array): Uint8Array =>
+  concatBytes(
+    protobufKey(field, 2),
+    protobufVarint(BigInt(value.length)),
+    value,
+  );
+
+const protobufU64Field = (field: number, value: bigint): Uint8Array =>
+  concatBytes(protobufKey(field, 0), protobufVarint(value));
+
+const buildTronBroadcastTriggerRawDataHex = (
+  input: {
+    ownerPayload?: string;
+    contractPayload?: string;
+    dataHex?: string;
+    feeLimit?: bigint;
+  } = {},
+): string => {
+  const owner = hexToBytes(
+    input.ownerPayload ?? tronPayloadHexFromPrivateKey(),
+  );
+  const contract = hexToBytes(
+    input.contractPayload ?? tronPayloadHexFromPrivateKey(),
+  );
+  const data = hexToBytes(input.dataHex ?? "abcdef01");
+  const trigger = concatBytes(
+    protobufBytesField(1, owner),
+    protobufBytesField(2, contract),
+    protobufBytesField(4, data),
+  );
+  const any = concatBytes(
+    protobufBytesField(
+      1,
+      new TextEncoder().encode(
+        "type.googleapis.com/protocol.TriggerSmartContract",
+      ),
+    ),
+    protobufBytesField(2, trigger),
+  );
+  const contractEntry = concatBytes(
+    protobufU64Field(1, 31n),
+    protobufBytesField(2, any),
+  );
+  return Buffer.from(
+    concatBytes(
+      protobufBytesField(1, Uint8Array.from([0x12, 0x34])),
+      protobufBytesField(4, Uint8Array.from(Array(8).fill(0x56))),
+      protobufU64Field(8, 123_456_789n),
+      protobufBytesField(11, contractEntry),
+      protobufU64Field(14, 123_450_000n),
+      protobufU64Field(18, input.feeLimit ?? 50_000_000n),
+    ),
+  ).toString("hex");
+};
+
+const signTronRawDataHex = (
+  rawDataHex: string,
+  privateKey = TRON_BROADCAST_PRIVATE_KEY,
+): string => {
+  const signature = secp256k1.sign(
+    Uint8Array.from(
+      createHash("sha256").update(Buffer.from(rawDataHex, "hex")).digest(),
+    ),
+    privateKey,
+    {
+      prehash: false,
+      lowS: true,
+    },
+  );
+  const out = new Uint8Array(65);
+  out.set(signature.toCompactRawBytes());
+  out[64] = signature.recovery;
+  return Buffer.from(out).toString("hex");
+};
 
 const signedTronBroadcastTransaction = (
-  rawDataHex = "0a020102220408102040",
+  rawDataHex = buildTronBroadcastTriggerRawDataHex(),
 ) => ({
   txID: createHash("sha256")
     .update(Buffer.from(rawDataHex, "hex"))
     .digest("hex"),
   raw_data: {
-    contract: [],
+    contract: [
+      {
+        type: "TriggerSmartContract",
+        parameter: {
+          type_url: "type.googleapis.com/protocol.TriggerSmartContract",
+          value: {
+            owner_address: tronPayloadHexFromPrivateKey(),
+            contract_address: tronPayloadHexFromPrivateKey(),
+            data: "abcdef01",
+          },
+        },
+      },
+    ],
     timestamp: 1,
     expiration: 2,
   },
   raw_data_hex: rawDataHex,
-  signature: ["12".repeat(65)],
+  signature: [signTronRawDataHex(rawDataHex)],
 });
 
 const buildNrt0Frame = (payload: Buffer) => {
@@ -97,6 +234,12 @@ const mocks = vi.hoisted(() => ({
   getStatusSnapshotMock: vi.fn(),
   getExplorerMetricsMock: vi.fn(),
   getSumeragiStatusTypedMock: vi.fn(),
+  getSccpCapabilitiesMock: vi.fn(),
+  getSccpProofManifestsMock: vi.fn(),
+  getSccpMessageProofArtifactMock: vi.fn(),
+  getSccpMessageProofJobMock: vi.fn(),
+  submitBridgeProofMock: vi.fn(),
+  submitBridgeMessageMock: vi.fn(),
   listKaigiRelaysMock: vi.fn(),
   getKaigiRelayMock: vi.fn(),
   getKaigiCallMock: vi.fn(),
@@ -383,6 +526,30 @@ vi.mock("@iroha/iroha-js", async () => {
     getSumeragiStatusTyped(...args: unknown[]) {
       return mocks.getSumeragiStatusTypedMock(...args);
     }
+
+    getSccpCapabilities(...args: unknown[]) {
+      return mocks.getSccpCapabilitiesMock(...args);
+    }
+
+    getSccpProofManifests(...args: unknown[]) {
+      return mocks.getSccpProofManifestsMock(...args);
+    }
+
+    getSccpMessageProofArtifact(...args: unknown[]) {
+      return mocks.getSccpMessageProofArtifactMock(...args);
+    }
+
+    getSccpMessageProofJob(...args: unknown[]) {
+      return mocks.getSccpMessageProofJobMock(...args);
+    }
+
+    submitBridgeProof(...args: unknown[]) {
+      return mocks.submitBridgeProofMock(...args);
+    }
+
+    submitBridgeMessage(...args: unknown[]) {
+      return mocks.submitBridgeMessageMock(...args);
+    }
   }
 
   return {
@@ -545,6 +712,24 @@ const loadBridge = async () => {
     getNetworkStats: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    getSccpCapabilities: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getSccpProofManifests: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getSccpMessageProofArtifact: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getSccpMessageProofJob: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    submitSccpBridgeProof: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    submitSccpBridgeMessage: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     getChainMetadata: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -593,6 +778,12 @@ describe("preload Kaigi bridge", () => {
     mocks.getStatusSnapshotMock.mockReset();
     mocks.getExplorerMetricsMock.mockReset();
     mocks.getSumeragiStatusTypedMock.mockReset();
+    mocks.getSccpCapabilitiesMock.mockReset();
+    mocks.getSccpProofManifestsMock.mockReset();
+    mocks.getSccpMessageProofArtifactMock.mockReset();
+    mocks.getSccpMessageProofJobMock.mockReset();
+    mocks.submitBridgeProofMock.mockReset();
+    mocks.submitBridgeMessageMock.mockReset();
     mocks.listKaigiRelaysMock.mockReset();
     mocks.getKaigiRelayMock.mockReset();
     mocks.getKaigiCallMock.mockReset();
@@ -687,6 +878,19 @@ describe("preload Kaigi bridge", () => {
         },
       ],
     });
+    mocks.getSccpCapabilitiesMock.mockResolvedValue({
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      bridgeMessageSubmitPath: "/v1/bridge/messages",
+    });
+    mocks.getSccpProofManifestsMock.mockResolvedValue({ manifests: [] });
+    mocks.getSccpMessageProofArtifactMock.mockResolvedValue({
+      bundle: { commitment: { message_id: "11".repeat(32) } },
+    });
+    mocks.getSccpMessageProofJobMock.mockResolvedValue({
+      publicInputs: { messageId: "11".repeat(32) },
+    });
+    mocks.submitBridgeProofMock.mockResolvedValue({ ok: true });
+    mocks.submitBridgeMessageMock.mockResolvedValue({ ok: true });
     mocks.resolveAliasMock.mockResolvedValue(null);
     mocks.getExplorerAccountQrMock.mockRejectedValue(
       new Error("explorer account QR unavailable"),
@@ -1057,9 +1261,182 @@ describe("preload Kaigi bridge", () => {
     );
   });
 
+  it("submits SCCP bridge payloads with stored vault authority only", async () => {
+    const bridge = await loadBridge();
+    const privateKeyHex = "11".repeat(32);
+    const messageBundle = {
+      commitment: {
+        message_id: "22".repeat(32),
+        payload_hash: "33".repeat(32),
+      },
+      payload: {
+        kind: "Transfer",
+      },
+    };
+    mocks.storedAccountSecrets.set(ALICE_ACCOUNT_ID, privateKeyHex);
+
+    await expect(
+      bridge.submitSccpBridgeProof({
+        toriiUrl: "https://taira.sora.org",
+        accountId: ALICE_ACCOUNT_ID,
+        networkIdHex: "0x" + "44".repeat(32),
+        tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+        messageBundle,
+      }),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      bridge.submitSccpBridgeMessage({
+        toriiUrl: "https://taira.sora.org",
+        accountId: ALICE_ACCOUNT_ID,
+        messageBundle,
+        settlement: { finalize_inbound: true },
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(mocks.submitBridgeProofMock).toHaveBeenCalledWith({
+      authority: ALICE_ACCOUNT_ID,
+      privateKey: privateKeyHex,
+      messageBundle,
+      networkIdHex: "0x" + "44".repeat(32),
+      tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+    });
+    expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
+      authority: ALICE_ACCOUNT_ID,
+      privateKey: privateKeyHex,
+      messageBundle,
+      settlement: { finalize_inbound: true },
+    });
+  });
+
+  it("rejects inline keys and secret-bearing SCCP submission payloads before Torii", async () => {
+    const bridge = await loadBridge();
+    const baseInput = {
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+      messageBundle: {
+        commitment: {
+          message_id: "22".repeat(32),
+        },
+      },
+    };
+
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        privateKeyHex: "11".repeat(32),
+      }),
+    ).rejects.toThrow(/inline private keys are not accepted/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        publicKeyHex: "11".repeat(32),
+      }),
+    ).rejects.toThrow(/both publicKeyHex and signatureB64/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        signatureB64: Buffer.from("signature").toString("base64"),
+      }),
+    ).rejects.toThrow(/both publicKeyHex and signatureB64/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        messageBundle: {
+          ...baseInput.messageBundle,
+          privateKeyHex: "11".repeat(32),
+        },
+      }),
+    ).rejects.toThrow(/SCCP messageBundle\.privateKeyHex/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        burnBundle: {
+          records: [{ seedPhrase: "do not submit this" }],
+        },
+      }),
+    ).rejects.toThrow(/SCCP burnBundle\.records\[0\]\.seedPhrase/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        messageBundle: {
+          ...baseInput.messageBundle,
+          note: VALID_MNEMONIC,
+        },
+      }),
+    ).rejects.toThrow(/SCCP messageBundle\.note.*Torii submission/);
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        messageBundle: {
+          ...baseInput.messageBundle,
+          signature_b64: Buffer.from("detached").toString("base64"),
+        },
+      }),
+    ).rejects.toThrow(/SCCP messageBundle\.signature_b64.*helper payloads/);
+    await expect(
+      bridge.submitSccpBridgeMessage({
+        ...baseInput,
+        settlement: {
+          finalize_inbound: {
+            recoveryPhrase: "do not submit this",
+          },
+        },
+      }),
+    ).rejects.toThrow(/SCCP settlement\.finalize_inbound\.recoveryPhrase/);
+    await expect(
+      bridge.submitSccpBridgeMessage({
+        ...baseInput,
+        messageBundle: null,
+      }),
+    ).rejects.toThrow(/SCCP messageBundle must be an object/);
+
+    expect(mocks.submitBridgeProofMock).not.toHaveBeenCalled();
+    expect(mocks.submitBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("snapshots SCCP submission bundles before resolving wallet authority", async () => {
+    const bridge = await loadBridge();
+    const privateKeyHex = "11".repeat(32);
+    const messageBundle: Record<string, unknown> = {
+      commitment: {
+        message_id: "22".repeat(32),
+      },
+    };
+    const settlement: Record<string, unknown> = {
+      finalize_inbound: true,
+    };
+    mocks.storedAccountSecrets.set(ALICE_ACCOUNT_ID, privateKeyHex);
+
+    const submitPromise = bridge.submitSccpBridgeMessage({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+      messageBundle,
+      settlement,
+    });
+    messageBundle.privateKeyHex = "ff".repeat(32);
+    settlement.finalize_inbound = { seedPhrase: "mutated after validation" };
+
+    await expect(submitPromise).resolves.toEqual({ ok: true });
+    expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
+      authority: ALICE_ACCOUNT_ID,
+      privateKey: privateKeyHex,
+      messageBundle: {
+        commitment: {
+          message_id: "22".repeat(32),
+        },
+      },
+      settlement: {
+        finalize_inbound: true,
+      },
+    });
+  });
+
   it("passes through successful TRON broadcast responses", async () => {
     const bridge = await loadBridge();
     const transaction = signedTronBroadcastTransaction();
+    transaction.raw_data_hex = transaction.raw_data_hex.toUpperCase();
+    const signature = signTronRawDataHex(transaction.raw_data_hex);
+    transaction.signature = [`0x${signature.toUpperCase()}`];
     mocks.nodeFetchMock.mockResolvedValueOnce(
       jsonResponse({ result: true, txid: transaction.txID }),
     );
@@ -1075,7 +1452,11 @@ describe("preload Kaigi bridge", () => {
       "https://api.trongrid.io/wallet/broadcasttransaction",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify(transaction),
+        body: JSON.stringify({
+          ...transaction,
+          raw_data_hex: transaction.raw_data_hex.toLowerCase(),
+          signature: [signature],
+        }),
       }),
     );
   });
@@ -1105,6 +1486,41 @@ describe("preload Kaigi bridge", () => {
       bridge.broadcastTronTransaction({
         transaction: {
           ...transaction,
+          signature: [transaction.signature[0], transaction.signature[0]],
+        },
+      }),
+    ).rejects.toThrow(/exactly one signature/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          signature: [
+            signTronRawDataHex(
+              transaction.raw_data_hex,
+              OTHER_TRON_BROADCAST_PRIVATE_KEY,
+            ),
+          ],
+        },
+      }),
+    ).rejects.toThrow(/signature.*transaction owner/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          signature: [
+            (() => {
+              const nonCanonical = hexToBytes(transaction.signature[0]);
+              nonCanonical[64] = 31;
+              return Buffer.from(nonCanonical).toString("hex");
+            })(),
+          ],
+        },
+      }),
+    ).rejects.toThrow(/canonical recoverable signature/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
           txID: "aa".repeat(32),
         },
       }),
@@ -1120,11 +1536,166 @@ describe("preload Kaigi bridge", () => {
     await expect(
       bridge.broadcastTronTransaction({
         transaction: {
+          txID: transaction.txID,
+          raw_data_hex: transaction.raw_data_hex,
+          signature: transaction.signature,
+        },
+      }),
+    ).rejects.toThrow(/decoded raw_data/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          txID: transaction.txID,
+          raw_data: transaction.raw_data,
+          signature: transaction.signature,
+        },
+      }),
+    ).rejects.toThrow(/raw_data_hex/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            contract: [],
+          },
+        },
+      }),
+    ).rejects.toThrow(/exactly one contract/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            contract: [
+              {
+                type: "TransferContract",
+                parameter: {
+                  value: {
+                    owner_address: tronPayloadHexFromPrivateKey(),
+                    to_address: tronPayloadHexFromPrivateKey(
+                      OTHER_TRON_BROADCAST_PRIVATE_KEY,
+                    ),
+                    amount: 1,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).rejects.toThrow(/TriggerSmartContract/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            contract: [
+              ...(transaction.raw_data.contract as Array<
+                Record<string, unknown>
+              >),
+              {
+                type: "TransferContract",
+                parameter: {
+                  value: {
+                    owner_address: tronPayloadHexFromPrivateKey(),
+                    to_address: tronPayloadHexFromPrivateKey(
+                      OTHER_TRON_BROADCAST_PRIVATE_KEY,
+                    ),
+                    amount: 1,
+                  },
+                },
+              },
+            ],
+          },
+        },
+      }),
+    ).rejects.toThrow(/exactly one contract/);
+    const mismatchedOwnerRawDataHex = buildTronBroadcastTriggerRawDataHex({
+      ownerPayload: tronPayloadHexFromPrivateKey(
+        OTHER_TRON_BROADCAST_PRIVATE_KEY,
+      ),
+    });
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          txID: createHash("sha256")
+            .update(Buffer.from(mismatchedOwnerRawDataHex, "hex"))
+            .digest("hex"),
+          raw_data_hex: mismatchedOwnerRawDataHex,
+          signature: [
+            signTronRawDataHex(
+              mismatchedOwnerRawDataHex,
+              OTHER_TRON_BROADCAST_PRIVATE_KEY,
+            ),
+          ],
+        },
+      }),
+    ).rejects.toThrow(/raw_data_hex.*decoded TriggerSmartContract/i);
+    const mismatchedCallDataRawDataHex = buildTronBroadcastTriggerRawDataHex({
+      dataHex: "feedface",
+    });
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          txID: createHash("sha256")
+            .update(Buffer.from(mismatchedCallDataRawDataHex, "hex"))
+            .digest("hex"),
+          raw_data_hex: mismatchedCallDataRawDataHex,
+          signature: [signTronRawDataHex(mismatchedCallDataRawDataHex)],
+        },
+      }),
+    ).rejects.toThrow(/raw_data_hex.*decoded TriggerSmartContract/i);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
           ...transaction,
           privateKeyHex: "11".repeat(32),
         },
       }),
     ).rejects.toThrow(/must not be sent/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          signature_b64: "already-signed",
+        },
+      }),
+    ).rejects.toThrow(/signature_b64.*signing helper/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            walletSignature: "11".repeat(65),
+          },
+        },
+      }),
+    ).rejects.toThrow(/walletSignature.*signing helper/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            memo: VALID_MNEMONIC,
+          },
+        },
+      }),
+    ).rejects.toThrow(/memo.*TRON gateway submission/);
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: {
+          ...transaction,
+          debug: () => "not cloneable",
+        },
+      }),
+    ).rejects.toThrow(/structured-cloneable/);
 
     expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
   });
@@ -1197,6 +1768,10 @@ describe("preload Kaigi bridge", () => {
       "https://[fd00::1]",
       "https://[fe80::1]",
       "https://[::ffff:127.0.0.1]",
+      "https://[::7f00:1]",
+      "https://[64:ff9b::7f00:1]",
+      "https://[2002:7f00:0001::1]",
+      "https://[2001:0000:7f00:0001::1]",
       "https://node.localhost",
     ]) {
       await expect(
@@ -1256,10 +1831,55 @@ describe("preload Kaigi bridge", () => {
     expect(() =>
       bridge.triggerTronConstantContract({
         ...input,
+        callData: `0x${"12".repeat(4)}${"34".repeat(32)}`,
+        parameter: "00".repeat(32),
+      }),
+    ).toThrow(/either callData or parameter/);
+    expect(() =>
+      bridge.triggerTronConstantContract({
+        ...input,
         contractAddress: "410000000000000000000000000000000000000000",
       }),
     ).toThrow(/Base58Check/);
     expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects failed TRON contract trigger responses returned with HTTP 200", async () => {
+    const bridge = await loadBridge();
+    const input = {
+      ownerAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      contractAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
+      functionSelector: "balanceOf(address)",
+      parameter: "00".repeat(32),
+    };
+
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: { result: false, code: "CONTRACT_VALIDATE_ERROR" },
+      }),
+    );
+    await expect(bridge.triggerTronConstantContract(input)).rejects.toThrow(
+      /Trigger TRON constant contract.*CONTRACT_VALIDATE_ERROR/,
+    );
+
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: {
+          result: false,
+          message: Buffer.from("contract validate error", "utf8").toString(
+            "hex",
+          ),
+        },
+      }),
+    );
+    await expect(
+      bridge.triggerTronSmartContract({
+        ...input,
+        functionSelector: "burnToTaira(bytes,uint256)",
+        callData: `0x${"12".repeat(4)}${"34".repeat(32)}`,
+        parameter: undefined,
+      }),
+    ).rejects.toThrow(/contract validate error/);
   });
 
   it("rejects failed TRON broadcast responses returned with HTTP 200", async () => {
@@ -1326,6 +1946,12 @@ describe("preload Kaigi bridge", () => {
     );
 
     mocks.nodeFetchMock.mockClear();
+    expect(() =>
+      bridge.triggerTronSmartContract({
+        ...trigger,
+        parameter: "34".repeat(32),
+      }),
+    ).toThrow(/either callData or parameter/);
     expect(() =>
       bridge.triggerTronSmartContract({
         ...trigger,
@@ -2468,7 +3094,7 @@ describe("preload Kaigi bridge", () => {
     expect(instruction).not.toHaveProperty("self_stake");
   });
 
-  it("falls back to the public transaction route when pipeline routing is unavailable", async () => {
+  it("explains citizenship route health without falling back to the removed public transaction route", async () => {
     const bridge = await loadBridge();
     const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
     mocks.buildTransactionMock.mockReturnValueOnce({
@@ -2484,128 +3110,6 @@ describe("preload Kaigi bridge", () => {
           code: "route_unavailable",
         },
       ),
-    );
-    mocks.nodeFetchMock.mockImplementation(
-      async (input: unknown, init?: Record<string, unknown>) => {
-        const href = String(input);
-        if (href === "https://taira.sora.org/transaction") {
-          expect(init).toEqual(
-            expect.objectContaining({
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-norito",
-                Accept: "application/x-norito, application/json",
-              },
-            }),
-          );
-          expect(Buffer.isBuffer(init?.body)).toBe(true);
-          expect(init?.body).toEqual(versionedPayload(signedTransaction));
-          return jsonResponse({ ok: true, route: "public" }, 202);
-        }
-        throw new Error(`Unexpected nodeFetch request: ${href}`);
-      },
-    );
-
-    await expect(
-      bridge.registerCitizen({
-        toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        accountId: ALICE_ACCOUNT_ID,
-        privateKeyHex: "11".repeat(32),
-        amount: "10000",
-      }),
-    ).resolves.toEqual({
-      hash: `hash-${signedTransaction.toString("hex")}`,
-    });
-
-    const publicRouteCalls = mocks.nodeFetchMock.mock.calls.filter(
-      ([input]) => String(input) === "https://taira.sora.org/transaction",
-    );
-    expect(publicRouteCalls).toHaveLength(1);
-  });
-
-  it("falls back to the public transaction route when the pipeline submit route is read-only", async () => {
-    const bridge = await loadBridge();
-    const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
-    mocks.buildTransactionMock.mockReturnValueOnce({
-      signedTransaction,
-    });
-    mocks.submitTransactionMock.mockRejectedValueOnce(
-      Object.assign(
-        new Error(
-          "Torii responded with HTTP 405 Method Not Allowed (expected 200, 201, 202, 204)",
-        ),
-        {
-          status: 405,
-          statusText: "Method Not Allowed",
-        },
-      ),
-    );
-    mocks.nodeFetchMock.mockImplementation(
-      async (input: unknown, init?: Record<string, unknown>) => {
-        const href = String(input);
-        if (href === "https://taira.sora.org/transaction") {
-          expect(init).toEqual(
-            expect.objectContaining({
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-norito",
-                Accept: "application/x-norito, application/json",
-              },
-            }),
-          );
-          expect(Buffer.isBuffer(init?.body)).toBe(true);
-          expect(init?.body).toEqual(versionedPayload(signedTransaction));
-          return jsonResponse({ ok: true, route: "public" }, 202);
-        }
-        throw new Error(`Unexpected nodeFetch request: ${href}`);
-      },
-    );
-
-    await expect(
-      bridge.registerCitizen({
-        toriiUrl: "https://taira.sora.org",
-        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
-        accountId: ALICE_ACCOUNT_ID,
-        privateKeyHex: "11".repeat(32),
-        amount: "10000",
-      }),
-    ).resolves.toEqual({
-      hash: `hash-${signedTransaction.toString("hex")}`,
-    });
-
-    const publicRouteCalls = mocks.nodeFetchMock.mock.calls.filter(
-      ([input]) => String(input) === "https://taira.sora.org/transaction",
-    );
-    expect(publicRouteCalls).toHaveLength(1);
-  });
-
-  it("explains citizenship route health when pipeline and public transaction routes are unavailable", async () => {
-    const bridge = await loadBridge();
-    const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
-    mocks.buildTransactionMock.mockReturnValueOnce({
-      signedTransaction,
-    });
-    mocks.submitTransactionMock.mockRejectedValueOnce(
-      Object.assign(
-        new Error(
-          "Torii responded with HTTP 503 Service Unavailable (expected 200, 201, 202, 204): route_unavailable — NRT0\uFFFDF no authoritative peer binding is registered for lane 1 dataspace 1",
-        ),
-        {
-          status: 503,
-          code: "route_unavailable",
-        },
-      ),
-    );
-    mocks.nodeFetchMock.mockImplementation(
-      async (input: unknown, init?: Record<string, unknown>) => {
-        const href = String(input);
-        if (href === "https://taira.sora.org/transaction") {
-          expect(Buffer.isBuffer(init?.body)).toBe(true);
-          return jsonResponse({ error: "route_unavailable" }, 503);
-        }
-        throw new Error(`Unexpected nodeFetch request: ${href}`);
-      },
     );
 
     let caughtError: unknown;
@@ -2627,6 +3131,77 @@ describe("preload Kaigi bridge", () => {
       "Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for lane 1 / dataspace 1.",
     );
     expect(message).not.toContain("NRT0");
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not post signed transactions to the removed public transaction route when the pipeline route is read-only", async () => {
+    const bridge = await loadBridge();
+    const signedTransaction = buildNrt0Frame(Buffer.from("instruction-tx"));
+    mocks.buildTransactionMock.mockReturnValueOnce({
+      signedTransaction,
+    });
+    mocks.submitTransactionMock.mockRejectedValueOnce(
+      Object.assign(
+        new Error(
+          "Torii responded with HTTP 405 Method Not Allowed (expected 200, 201, 202, 204)",
+        ),
+        {
+          status: 405,
+          statusText: "Method Not Allowed",
+        },
+      ),
+    );
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).rejects.toThrow("HTTP 405 Method Not Allowed");
+
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not sign RegisterCitizen when live telemetry shows no governance lane validators", async () => {
+    const bridge = await loadBridge();
+    mocks.getConfigurationMock.mockRejectedValueOnce(
+      new Error("configuration endpoint unavailable"),
+    );
+    mocks.getSumeragiStatusTypedMock.mockResolvedValueOnce({
+      lane_governance: [
+        {
+          alias: "core",
+          lane_id: 0,
+          validator_ids: ["alice"],
+        },
+        {
+          alias: "governance",
+          lane_id: 1,
+          validator_ids: [],
+        },
+      ],
+    });
+
+    await expect(
+      bridge.registerCitizen({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "11".repeat(32),
+        amount: "10000",
+      }),
+    ).rejects.toThrow(/no validator ids for lane 1 \/ dataspace 1/);
+
+    expect(mocks.buildTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).not.toHaveBeenCalled();
+    expect(
+      mocks.nodeFetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/v1/pipeline/transactions"),
+      ),
+    ).toBe(false);
   });
 
   it("reports unavailable governance citizenship assets before bonding", async () => {

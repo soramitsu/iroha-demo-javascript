@@ -416,6 +416,65 @@ const manifestMatchesRoute = (manifest) => {
   return routeId === SCCP_XOR_ROUTE_ID && assetKey === SCCP_XOR_ASSET_KEY;
 };
 
+const safeManifestDiagnosticValue = (value) => {
+  const normalized = trimString(value);
+  if (!normalized) {
+    return "<missing>";
+  }
+  if (!/^[A-Za-z0-9_.:#-]{1,64}$/u.test(normalized)) {
+    return "<redacted>";
+  }
+  return normalized;
+};
+
+const readManifestTargetDiagnostic = (manifest) => {
+  const counterpartyDomain =
+    readNumber(manifest, "counterpartyDomain") ??
+    readNumber(manifest, "counterparty_domain");
+  if (counterpartyDomain !== null) {
+    return String(counterpartyDomain);
+  }
+  return (
+    readFirstString(manifest, "verifierTarget", "verifier_target") ||
+    readString(manifest, "chain")
+  );
+};
+
+const describeTronManifestCandidates = (manifestSet) => {
+  const tronManifests =
+    manifestRecords(manifestSet).filter(manifestTargetsTron);
+  if (tronManifests.length === 0) {
+    return "";
+  }
+  const shown = tronManifests.slice(0, 5).map((manifest, index) => {
+    const routeId = readFirstString(
+      manifest,
+      "routeId",
+      "route_id",
+      "route",
+      "id",
+    );
+    const assetKey = readFirstString(
+      manifest,
+      "assetKey",
+      "asset_key",
+      "assetId",
+      "asset_id",
+    );
+    return `#${index + 1} route=${safeManifestDiagnosticValue(
+      routeId,
+    )} asset=${safeManifestDiagnosticValue(
+      assetKey,
+    )} target=${safeManifestDiagnosticValue(
+      readManifestTargetDiagnostic(manifest),
+    )}`;
+  });
+  const remaining = tronManifests.length - shown.length;
+  return ` Observed TRON candidates: ${shown.join("; ")}${
+    remaining > 0 ? `; +${remaining} more` : ""
+  }.`;
+};
+
 export const pickTairaTronXorManifest = (manifestSet) =>
   manifestRecords(manifestSet).find(
     (manifest) =>
@@ -470,6 +529,78 @@ const readCapabilityPath = (capabilities, pathKind) => {
   );
 };
 
+const hasUnsafeSccpCapabilityPathCharacter = (path) => {
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    if (
+      code <= 0x20 ||
+      code === 0x7f ||
+      character === "\\" ||
+      character === "?" ||
+      character === "#"
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const normalizeSccpCapabilitySubmitPath = (value, label, kind) => {
+  const path = trimString(value);
+  if (!path) {
+    throw new Error(`${label} is missing.`);
+  }
+  if (hasUnsafeSccpCapabilityPathCharacter(path)) {
+    throw new Error(
+      `${label} must be a same-endpoint absolute path without whitespace, query strings, fragments, or backslashes.`,
+    );
+  }
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new Error(`${label} must be a same-endpoint absolute path.`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(path, "https://taira.sora.org");
+  } catch (error) {
+    throw new Error(`${label} is not a valid endpoint path: ${error.message}`);
+  }
+  if (parsed.origin !== "https://taira.sora.org" || parsed.pathname !== path) {
+    throw new Error(`${label} must not escape the active Torii endpoint.`);
+  }
+  const decodedSegments = path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment).toLowerCase();
+      } catch (_error) {
+        throw new Error(`${label} contains invalid percent encoding.`);
+      }
+    });
+  if (decodedSegments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error(`${label} must not contain path traversal segments.`);
+  }
+  if (decodedSegments.some((segment) => /[\\/]/u.test(segment))) {
+    throw new Error(`${label} must not contain encoded path separators.`);
+  }
+  const normalizedPath = decodedSegments.join("/");
+  if (!/(?:^|\/)(?:bridge|sccp)(?:\/|$)/u.test(normalizedPath)) {
+    throw new Error(`${label} must target an SCCP or bridge endpoint.`);
+  }
+  if (kind === "proof" && !/(?:^|\/)proofs?(?:\/|$)/u.test(normalizedPath)) {
+    throw new Error(`${label} must target a proof submission endpoint.`);
+  }
+  if (
+    kind === "message" &&
+    !/(?:^|\/)messages?(?:\/|$)/u.test(normalizedPath)
+  ) {
+    throw new Error(
+      `${label} must target a bridge-message submission endpoint.`,
+    );
+  }
+  return path;
+};
+
 const readProductionReadyFlag = (manifest) => {
   const hasCamel = Object.prototype.hasOwnProperty.call(
     manifest,
@@ -488,17 +619,22 @@ const readProductionReadyFlag = (manifest) => {
 const isCanonicalTairaAssetDefinitionId = (value) =>
   /^[1-9A-HJ-NP-Za-km-z]{16,80}$/u.test(value);
 
-const isStrictBase64 = (value) => {
+export const SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES = 32;
+export const SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024;
+
+const strictBase64DecodedLength = (value) => {
   const normalized = value.trim();
   if (
     normalized.length < 8 ||
     normalized.length % 4 !== 0 ||
     !/^[A-Za-z0-9+/]+={0,2}$/u.test(normalized)
   ) {
-    return false;
+    return null;
   }
   const decoded = Buffer.from(normalized, "base64");
-  return decoded.length > 0 && decoded.toString("base64") === normalized;
+  return decoded.length > 0 && decoded.toString("base64") === normalized
+    ? decoded.length
+    : null;
 };
 
 const addCheck = (checks, status, id, label, detail) => {
@@ -533,6 +669,41 @@ const validateAddressCheck = (checks, id, label, address) => {
       id,
       label,
       error instanceof Error ? error.message : "Invalid TRON address.",
+    );
+  }
+};
+
+const validateDistinctTronContractAddresses = (checks, manifest) => {
+  const label =
+    "TRON token, bridge, source bridge, and verifier addresses are distinct.";
+  const addresses = [
+    readSccpTronTokenAddress(manifest),
+    readSccpTronBridgeAddress(manifest),
+    readSccpTronSourceBridgeAddress(manifest),
+    readSccpTronVerifierAddress(manifest),
+  ];
+  try {
+    const normalized = addresses.map((address) =>
+      normalizeTronAddress(address),
+    );
+    if (new Set(normalized).size !== normalized.length) {
+      fail(
+        checks,
+        "tron-contract-addresses-distinct",
+        label,
+        "Deployment evidence reuses a TRON contract address.",
+      );
+      return;
+    }
+    pass(checks, "tron-contract-addresses-distinct", label);
+  } catch (error) {
+    fail(
+      checks,
+      "tron-contract-addresses-distinct",
+      label,
+      error instanceof Error
+        ? error.message
+        : "TRON contract addresses are incomplete or invalid.",
     );
   }
 };
@@ -669,9 +840,20 @@ const validateBurnRecordMaterial = (material) => {
       "The TAIRA settlement asset definition ID must be a canonical Base58 asset definition ID, not an alias.",
     );
   }
-  if (!isStrictBase64(material.contractArtifactB64)) {
+  const contractArtifactBytes = strictBase64DecodedLength(
+    material.contractArtifactB64,
+  );
+  if (contractArtifactBytes === null) {
     throw new Error(
       "The TAIRA burn-record contract artifact must be strict base64.",
+    );
+  }
+  if (
+    contractArtifactBytes < SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES ||
+    contractArtifactBytes > SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES
+  ) {
+    throw new Error(
+      `The TAIRA burn-record contract artifact must decode to ${SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES}-${SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES} bytes.`,
     );
   }
   if (!material.vkRef.backend || !material.vkRef.name) {
@@ -743,19 +925,31 @@ export const evaluateSccpRoutePreflight = ({
   } else {
     const proofSubmitPath = readCapabilityPath(capabilities, "proof");
     const messageSubmitPath = readCapabilityPath(capabilities, "message");
-    if (proofSubmitPath && messageSubmitPath) {
+    try {
+      const normalizedProofPath = normalizeSccpCapabilitySubmitPath(
+        proofSubmitPath,
+        "SCCP proof submit path",
+        "proof",
+      );
+      const normalizedMessagePath = normalizeSccpCapabilitySubmitPath(
+        messageSubmitPath,
+        "SCCP bridge-message submit path",
+        "message",
+      );
       pass(
         checks,
         "sccp-capabilities",
         "SCCP capabilities expose proof and bridge-message submit endpoints.",
-        `${proofSubmitPath} / ${messageSubmitPath}`,
+        `${normalizedProofPath} / ${normalizedMessagePath}`,
       );
-    } else {
+    } catch (error) {
       fail(
         checks,
         "sccp-capabilities",
         "SCCP capabilities expose proof and bridge-message submit endpoints.",
-        "Missing proofSubmitPath or messageSubmitPath.",
+        error instanceof Error
+          ? error.message
+          : "Missing proofSubmitPath or messageSubmitPath.",
       );
     }
   }
@@ -774,7 +968,9 @@ export const evaluateSccpRoutePreflight = ({
       "route-manifest",
       "TAIRA advertises the taira_tron_xor TRON manifest.",
       hasAnyTronManifest(manifestSet)
-        ? "TRON manifests are present, but none match route taira_tron_xor with asset key xor."
+        ? `TRON manifests are present, but none match route taira_tron_xor with asset key xor.${describeTronManifestCandidates(
+            manifestSet,
+          )}`
         : "No TRON SCCP manifest is advertised.",
     );
   } else {
@@ -833,6 +1029,7 @@ export const evaluateSccpRoutePreflight = ({
       "TRON verifier identity is a valid mainnet Base58Check address.",
       readSccpTronVerifierAddress(manifest),
     );
+    validateDistinctTronContractAddresses(checks, manifest);
 
     const proofMaterial = readSccpTronProofMaterial(manifest);
     if (!proofMaterial) {
@@ -1060,10 +1257,10 @@ export const normalizeToriiEndpoint = (value, { allowLocal = false } = {}) => {
 };
 
 const parseIpv4Octets = (hostname) => {
-  const parts = hostname.split(".");
-  if (parts.length !== 4) {
+  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(hostname)) {
     return null;
   }
+  const parts = hostname.split(".");
   const octets = parts.map((part) => Number(part));
   return octets.every(
     (part) => Number.isInteger(part) && part >= 0 && part <= 255,
@@ -1072,11 +1269,7 @@ const parseIpv4Octets = (hostname) => {
     : null;
 };
 
-const isPrivateOrReservedIpv4 = (hostname) => {
-  const octets = parseIpv4Octets(hostname);
-  if (!octets) {
-    return false;
-  }
+const isPrivateOrReservedIpv4Octets = (octets) => {
   const [first, second] = octets;
   return (
     first === 0 ||
@@ -1092,6 +1285,80 @@ const isPrivateOrReservedIpv4 = (hostname) => {
   );
 };
 
+const isPrivateOrReservedIpv4 = (hostname) => {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) {
+    return false;
+  }
+  return isPrivateOrReservedIpv4Octets(octets);
+};
+
+const parseIpv6Hextets = (hostname) => {
+  if (!hostname.includes(":")) {
+    return null;
+  }
+  const parts = hostname.split("::");
+  if (parts.length > 2) {
+    return null;
+  }
+  const parseSide = (side) =>
+    side
+      ? side.split(":").map((part) => {
+          if (!/^[0-9a-f]{1,4}$/iu.test(part)) {
+            return Number.NaN;
+          }
+          return Number.parseInt(part, 16);
+        })
+      : [];
+  const left = parseSide(parts[0]);
+  const right = parseSide(parts[1] ?? "");
+  if (
+    [...left, ...right].some((hextet) => !Number.isInteger(hextet)) ||
+    (parts.length === 1 && left.length !== 8) ||
+    left.length + right.length > 8
+  ) {
+    return null;
+  }
+  const zeroFill =
+    parts.length === 2 ? Array(8 - left.length - right.length).fill(0) : [];
+  return [...left, ...zeroFill, ...right];
+};
+
+const hextetsToIpv4Octets = (high, low) => [
+  (high >> 8) & 0xff,
+  high & 0xff,
+  (low >> 8) & 0xff,
+  low & 0xff,
+];
+
+const hasPrivateOrReservedEmbeddedIpv4 = (hextets) => {
+  if (hextets.length !== 8) {
+    return false;
+  }
+  const lastIpv4 = hextetsToIpv4Octets(hextets[6], hextets[7]);
+  const leadingCompatibleZeros = hextets
+    .slice(0, 6)
+    .every((part) => part === 0);
+  const leadingMappedZeros =
+    hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
+  const nat64WellKnownPrefix =
+    hextets[0] === 0x64 &&
+    hextets[1] === 0xff9b &&
+    hextets.slice(2, 6).every((part) => part === 0);
+  if (
+    (leadingCompatibleZeros || leadingMappedZeros || nat64WellKnownPrefix) &&
+    isPrivateOrReservedIpv4Octets(lastIpv4)
+  ) {
+    return true;
+  }
+  if (hextets[0] === 0x2002) {
+    return isPrivateOrReservedIpv4Octets(
+      hextetsToIpv4Octets(hextets[1], hextets[2]),
+    );
+  }
+  return false;
+};
+
 export const normalizeTronGatewayEndpoint = (
   value = DEFAULT_TRON_GATEWAY_URL,
 ) => {
@@ -1103,13 +1370,17 @@ export const normalizeTronGatewayEndpoint = (
     .replace(/^\[/u, "")
     .replace(/\]$/u, "")
     .replace(/\.$/u, "");
+  const hextets = hostname.includes(":") ? parseIpv6Hextets(hostname) : null;
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
     hostname === "local" ||
     hostname === "::1" ||
     hostname === "::" ||
-    isPrivateOrReservedIpv4(hostname)
+    isPrivateOrReservedIpv4(hostname) ||
+    (hextets &&
+      (hasPrivateOrReservedEmbeddedIpv4(hextets) ||
+        (hextets[0] === 0x2001 && hextets[1] === 0)))
   ) {
     throw new Error("TRON gateway endpoint must not target a local network.");
   }

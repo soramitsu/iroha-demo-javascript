@@ -862,7 +862,6 @@ export interface SccpBridgeProofSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex?: string;
   burnBundle?: Record<string, unknown>;
   messageBundle?: Record<string, unknown>;
   publicKeyHex?: string;
@@ -874,7 +873,6 @@ export interface SccpBridgeMessageSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
   accountId: string;
-  privateKeyHex?: string;
   messageBundle: Record<string, unknown>;
   publicKeyHex?: string;
   signatureB64?: string;
@@ -946,24 +944,36 @@ export interface TronBroadcastInput extends TronGatewayInput {
   transaction: Record<string, unknown>;
 }
 
-export interface TronTriggerSmartContractInput extends TronGatewayInput {
-  ownerAddress: string;
-  contractAddress: string;
-  functionSelector: string;
-  parameter?: string;
-  callData?: string;
-  feeLimit?: number | string;
-  callValue?: number | string;
-  permissionId?: number | string;
-}
+export type TronContractParameterInput =
+  | {
+      parameter: string;
+      callData?: never;
+    }
+  | {
+      callData: string;
+      parameter?: never;
+    }
+  | {
+      parameter?: undefined;
+      callData?: undefined;
+    };
 
-export interface TronConstantContractInput extends TronGatewayInput {
-  ownerAddress: string;
-  contractAddress: string;
-  functionSelector: string;
-  parameter?: string;
-  callData?: string;
-}
+export type TronTriggerSmartContractInput = TronGatewayInput &
+  TronContractParameterInput & {
+    ownerAddress: string;
+    contractAddress: string;
+    functionSelector: string;
+    feeLimit?: number | string;
+    callValue?: number | string;
+    permissionId?: number | string;
+  };
+
+export type TronConstantContractInput = TronGatewayInput &
+  TronContractParameterInput & {
+    ownerAddress: string;
+    contractAddress: string;
+    functionSelector: string;
+  };
 
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 

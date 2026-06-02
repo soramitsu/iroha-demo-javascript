@@ -1129,6 +1129,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "XOR balance": "XOR balance",
   "WalletConnect ready": "WalletConnect ready",
   "WalletConnect not configured": "WalletConnect not configured",
+  "WalletConnect misconfigured": "WalletConnect misconfigured",
   "TAIRA enabled": "TAIRA enabled",
   "TAIRA only": "TAIRA only",
   "Bridge direction": "Bridge direction",
@@ -1184,6 +1185,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Switch to the TAIRA testnet profile to use this bridge.",
   "WalletConnect project ID is missing, so TRON wallet connection is disabled.":
     "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
+  "WalletConnect project ID is invalid, so TRON wallet connection is disabled.":
+    "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
   "Connect a TRON wallet to continue.": "Connect a TRON wallet to continue.",
   "Route readiness must be true before bridge actions are enabled.":
     "Route readiness must be true before bridge actions are enabled.",
@@ -1213,6 +1216,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Submitting TAIRA source transaction": "Submitting TAIRA source transaction",
   "TAIRA source transaction submitted; fetch the SCCP proof job after indexing":
     "TAIRA source transaction submitted; fetch the SCCP proof job after indexing",
+  "Waiting for SCCP proof job indexing": "Waiting for SCCP proof job indexing",
   "Canonical TAIRA outbound payload preview prepared":
     "Canonical TAIRA outbound payload preview prepared",
   "Canonical TAIRA burn-record request prepared":
@@ -1224,10 +1228,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "No signing request has been sent": "No signing request has been sent",
   "No signing request has been sent yet":
     "No signing request has been sent yet",
-  "SCCP route is ready; deployment-specific proof-gated lock/burn paths are still required before live submission.":
-    "SCCP route is ready; deployment-specific proof-gated lock/burn paths are still required before live submission.",
-  "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.":
-    "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.",
   "TAIRA source transaction": "TAIRA source transaction",
   "TRON transaction": "TRON transaction",
   "Route and message id accepted": "Route and message id accepted",
@@ -1236,6 +1236,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Torii returned an SCCP proof job": "Torii returned an SCCP proof job",
   "Collecting TRON transaction and finality data":
     "Collecting TRON transaction and finality data",
+  "Waiting for TRON finality and event indexing":
+    "Waiting for TRON finality and event indexing",
   "TRON source transaction data collected":
     "TRON source transaction data collected",
   "Generating TRON source proof package":
@@ -3107,8 +3109,6 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Payment JSON copied.": "Payment JSON copied.",
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
-  "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.":
-    "TAIRA -> TRON still requires deployed TAIRA burn-record evidence and a browser-safe TRON prover before live submission.",
   "TRON transaction": "TRON transaction",
 };
 

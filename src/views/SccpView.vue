@@ -76,9 +76,11 @@
         <span class="pill" :class="routeTone">{{ routeStatusLabel }}</span>
         <span class="pill" :class="{ positive: tron.projectConfigured.value }">
           {{
-            tron.projectConfigured.value
-              ? t("WalletConnect ready")
-              : t("WalletConnect not configured")
+            tron.projectConfigurationError.value
+              ? t("WalletConnect misconfigured")
+              : tron.projectConfigured.value
+                ? t("WalletConnect ready")
+                : t("WalletConnect not configured")
           }}
         </span>
         <span class="pill" :class="{ positive: isTairaRoute }">
@@ -298,12 +300,15 @@ import { getAccountDisplayLabel } from "@/utils/accountId";
 import {
   isLikelyTairaAccount,
   isTairaSccpNetwork,
+  normalizeTronAddress,
   isValidTronBase58CheckAddress,
   bindTronFinalitySnapshot,
   bindSignedTronTransactionForBroadcast,
   bindTronBroadcastResult,
   bindTronSourceDataForProof,
   bindTronToTairaSourceProofPackage,
+  bindUnsignedTronSmartContractTransaction,
+  buildTairaExplorerTransactionUrl,
   buildTairaXorBurnTriggerRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
@@ -372,6 +377,10 @@ const proofPhases = ref([
   },
 ]);
 const SCCP_PROOF_WORKER_TIMEOUT_MS = 120_000;
+const SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS = 10;
+const SCCP_PROOF_JOB_INDEXING_POLL_MS = 3_000;
+const SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS = 40;
+const SCCP_TRON_SOURCE_DATA_POLL_MS = 3_000;
 
 const isTairaRoute = computed(() => isTairaSccpNetwork(session.connection));
 const activeAccountLabel = computed(() =>
@@ -490,6 +499,11 @@ const actionHint = computed(() => {
   if (!isTairaRoute.value) {
     return t("Switch to the TAIRA testnet profile to use this bridge.");
   }
+  if (tron.projectConfigurationError.value) {
+    return t(
+      "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+    );
+  }
   if (!tron.projectConfigured.value) {
     return t(
       "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
@@ -527,6 +541,24 @@ const readJobId = (value: Record<string, unknown>): string => {
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const isRetryableSccpProofJobError = (error: unknown): boolean => {
+  const message = (error instanceof Error ? error.message : String(error))
+    .trim()
+    .toLowerCase();
+  return /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
+    message,
+  );
+};
+
+const isRetryableTronSourceDataError = (error: unknown): boolean => {
+  const message = (error instanceof Error ? error.message : String(error))
+    .trim()
+    .toLowerCase();
+  return /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable|solid block has not finalized|must include at least one event)/u.test(
+    message,
+  );
+};
+
 type SccpProofWorkerRequest =
   | {
       kind: "build-tron-proof-package" | "prove-tron-proof-package";
@@ -536,6 +568,25 @@ type SccpProofWorkerRequest =
       kind: "prove-tron-source-package";
       input: TronToTairaSourceProofPackageInput;
     };
+
+type SccpOperationContext = {
+  direction: SccpBridgeDirection;
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  tronAddress: string;
+  amountDecimal: string;
+  tronRecipient: string;
+  tairaRecipient: string;
+  manifest: Record<string, unknown>;
+  manifestFingerprint: string;
+  messageId?: string;
+  tronTxId?: string;
+};
+
+const SCCP_CONTEXT_CHANGED_ERROR =
+  "SCCP bridge context changed; restart the bridge action after route, wallet, account, or form changes.";
 
 function runSccpProofWorker<Result>(
   request: SccpProofWorkerRequest,
@@ -615,10 +666,65 @@ const runTronSourceProofWorker = (
     input,
   });
 
-const sccpDestinationProofParams = (): Record<string, string> => {
-  const material = readSccpTronProofMaterial(
-    bridge.readiness.value.tronManifest,
-  );
+const fingerprintSccpManifest = (manifest: Record<string, unknown>): string =>
+  JSON.stringify(manifest);
+
+const createSccpOperationContext = (
+  ids: Pick<SccpOperationContext, "messageId" | "tronTxId"> = {},
+): SccpOperationContext => {
+  const manifest = bridge.readiness.value.tronManifest;
+  if (!bridge.readiness.value.ready || !manifest) {
+    throw new Error(
+      routeMessages.value[0] ||
+        "Route readiness must be true before bridge actions are enabled.",
+    );
+  }
+  return {
+    direction: direction.value,
+    toriiUrl: session.connection.toriiUrl,
+    chainId: session.connection.chainId,
+    networkPrefix: session.connection.networkPrefix,
+    accountId: session.activeAccount?.accountId ?? "",
+    tronAddress: normalizeTronAddress(tron.address.value),
+    amountDecimal: normalizeBridgeAmount(amount.value),
+    tronRecipient: tronRecipient.value.trim(),
+    tairaRecipient: tairaRecipient.value.trim(),
+    manifest,
+    manifestFingerprint: fingerprintSccpManifest(manifest),
+    ...ids,
+  };
+};
+
+const assertSccpOperationContextCurrent = (
+  context: SccpOperationContext,
+): void => {
+  const currentManifest = bridge.readiness.value.tronManifest;
+  if (
+    !bridge.readiness.value.ready ||
+    !currentManifest ||
+    context.direction !== direction.value ||
+    context.toriiUrl !== session.connection.toriiUrl ||
+    context.chainId !== session.connection.chainId ||
+    context.networkPrefix !== session.connection.networkPrefix ||
+    context.accountId !== (session.activeAccount?.accountId ?? "") ||
+    context.tronAddress !== tron.address.value ||
+    context.amountDecimal !== normalizeBridgeAmount(amount.value) ||
+    context.tronRecipient !== tronRecipient.value.trim() ||
+    context.tairaRecipient !== tairaRecipient.value.trim() ||
+    context.manifestFingerprint !== fingerprintSccpManifest(currentManifest) ||
+    (context.messageId !== undefined &&
+      context.messageId !== messageId.value.trim().toLowerCase()) ||
+    (context.tronTxId !== undefined &&
+      context.tronTxId !== tronTxId.value.trim().toLowerCase())
+  ) {
+    throw new Error(SCCP_CONTEXT_CHANGED_ERROR);
+  }
+};
+
+const sccpDestinationProofParams = (
+  context: SccpOperationContext,
+): Record<string, string> => {
+  const material = readSccpTronProofMaterial(context.manifest);
   if (!material) {
     return {};
   }
@@ -632,7 +738,104 @@ const sccpDestinationProofParams = (): Record<string, string> => {
   };
 };
 
+const loadTairaMessageProofJob = async (
+  context: SccpOperationContext,
+  input: { pollForIndexing?: boolean } = {},
+): Promise<Record<string, unknown>> => {
+  const request = {
+    toriiUrl: context.toriiUrl,
+    messageId: context.messageId ?? messageId.value,
+    ...sccpDestinationProofParams(context),
+  };
+  if (!input.pollForIndexing) {
+    assertSccpOperationContextCurrent(context);
+    return getSccpMessageProofJob(request);
+  }
+  let lastError: unknown = null;
+  for (
+    let attempt = 0;
+    attempt < SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      assertSccpOperationContextCurrent(context);
+      return await getSccpMessageProofJob(request);
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableSccpProofJobError(error) ||
+        attempt >= SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS - 1
+      ) {
+        break;
+      }
+      markPhase(1, "active", "Waiting for SCCP proof job indexing");
+      await wait(SCCP_PROOF_JOB_INDEXING_POLL_MS);
+    }
+  }
+  if (lastError && !isRetryableSccpProofJobError(lastError)) {
+    throw lastError;
+  }
+  throw new Error("Timed out waiting for Torii to index the SCCP proof job.");
+};
+
+const loadTronSourceDataForProof = async (input: {
+  context: SccpOperationContext;
+  txId: string;
+  pollForFinality?: boolean;
+}) => {
+  const readSourceData = async () => {
+    assertSccpOperationContextCurrent(input.context);
+    const [transaction, receipt, events, finality] = await Promise.all([
+      getTronTransaction({ txId: input.txId }),
+      getTronTransactionReceipt({ txId: input.txId }),
+      getTronTransactionEvents({ txId: input.txId }),
+      getTronFinalityData(),
+    ]);
+    return bindTronSourceDataForProof({
+      txId: input.txId,
+      transaction,
+      receipt,
+      events,
+      finality,
+      bridgeAddress: readSccpTronBridgeAddress(input.context.manifest),
+      tronSender: input.context.tronAddress,
+      tairaRecipient: input.context.tairaRecipient,
+      amountDecimal: input.context.amountDecimal,
+    });
+  };
+  if (!input.pollForFinality) {
+    return readSourceData();
+  }
+  let lastError: unknown = null;
+  for (
+    let attempt = 0;
+    attempt < SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      return await readSourceData();
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableTronSourceDataError(error) ||
+        attempt >= SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS - 1
+      ) {
+        break;
+      }
+      markPhase(1, "active", "Waiting for TRON finality and event indexing");
+      await wait(SCCP_TRON_SOURCE_DATA_POLL_MS);
+    }
+  }
+  if (lastError && !isRetryableTronSourceDataError(lastError)) {
+    throw lastError;
+  }
+  throw new Error(
+    "Timed out waiting for TRON finality and bridge event indexing.",
+  );
+};
+
 const waitForZkIvmProof = async (
+  context: SccpOperationContext,
   jobId: string,
 ): Promise<{
   proved: Record<string, unknown>;
@@ -640,8 +843,9 @@ const waitForZkIvmProof = async (
 }> => {
   const maxAttempts = 30;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    assertSccpOperationContextCurrent(context);
     const job = await getZkIvmProveJob({
-      toriiUrl: session.connection.toriiUrl,
+      toriiUrl: context.toriiUrl,
       jobId,
     });
     const status = String(job.status ?? "").toLowerCase();
@@ -748,6 +952,13 @@ const validateForm = () => {
         t("Route readiness must be true before bridge actions are enabled."),
     );
   }
+  if (tron.projectConfigurationError.value) {
+    throw new Error(
+      t(
+        "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+      ),
+    );
+  }
   if (!tron.projectConfigured.value) {
     throw new Error(
       t(
@@ -772,85 +983,256 @@ const validateForm = () => {
   }
 };
 
+const finalizeTairaMessageToTron = async (
+  context: SccpOperationContext,
+  input: { pollForIndexing?: boolean } = {},
+) => {
+  const job = await loadTairaMessageProofJob(context, input);
+  markPhase(0, "complete", "Route and message id accepted");
+  markPhase(1, "complete", "Torii returned an SCCP proof job");
+  const binding = buildTairaXorFinalizeProofBinding({
+    manifest: context.manifest,
+    job,
+    messageId: context.messageId ?? messageId.value,
+    tairaSender: context.accountId,
+    tronRecipient: context.tronRecipient,
+    amountDecimal: context.amountDecimal,
+  });
+  markPhase(2, "active", "Generating TRON finalize proof");
+  assertSccpOperationContextCurrent(context);
+  const proofPackage = await runTronProofWorker("prove-tron-proof-package", {
+    witness: binding.witness,
+  });
+  assertSccpOperationContextCurrent(context);
+  const finalizeRequest = buildTairaXorFinalizeTriggerRequest({
+    manifest: context.manifest,
+    proofPackage: proofPackage as unknown as Record<string, unknown>,
+    ownerAddress: context.tronAddress,
+    tronRecipient: context.tronRecipient,
+    amountBaseUnits: binding.amountBaseUnits,
+    messageId: binding.messageId,
+    canonicalPayloadHex: binding.canonicalPayloadHex,
+  });
+  markPhase(2, "complete", "TRON finalize proof package is ready");
+  markPhase(3, "active", "Requesting TRON wallet approval");
+  assertSccpOperationContextCurrent(context);
+  const triggerResponse = await triggerTronSmartContract(
+    finalizeRequest.trigger,
+  );
+  assertSccpOperationContextCurrent(context);
+  const gatewayUnsignedTransaction =
+    typeof triggerResponse.transaction === "object" &&
+    triggerResponse.transaction !== null &&
+    !Array.isArray(triggerResponse.transaction)
+      ? (triggerResponse.transaction as Record<string, unknown>)
+      : null;
+  if (!gatewayUnsignedTransaction) {
+    throw new Error("TRON gateway did not return an unsigned transaction.");
+  }
+  const unsignedTransaction = bindUnsignedTronSmartContractTransaction({
+    transaction: gatewayUnsignedTransaction,
+    trigger: finalizeRequest.trigger,
+  }).transaction;
+  assertSccpOperationContextCurrent(context);
+  const signedTransaction = bindSignedTronTransactionForBroadcast({
+    unsignedTransaction,
+    signedTransaction: await tron.signTransaction(unsignedTransaction),
+    ownerAddress: context.tronAddress,
+  });
+  assertSccpOperationContextCurrent(context);
+  const broadcast = bindTronBroadcastResult({
+    response: await broadcastTronTransaction({
+      transaction: signedTransaction.transaction,
+    }),
+    expectedTxId: signedTransaction.txId,
+  });
+  const txId = broadcast.txId;
+  if (txId) {
+    const finalizeLink = {
+      label: t("TRON finalize transaction"),
+      href: `${TRON_MAINNET_TRONSCAN_URL}/#/transaction/${txId}`,
+    };
+    transactionLinks.value = [
+      ...transactionLinks.value.filter(
+        (link) => link.href !== finalizeLink.href,
+      ),
+      finalizeLink,
+    ];
+  }
+  proofReady.value = true;
+  markPhase(3, "complete", "Signed TRON finalize transaction broadcast");
+};
+
+const finalizeTronBurnToTaira = async (
+  context: SccpOperationContext,
+  input: { pollForFinality?: boolean } = {},
+) => {
+  markPhase(
+    1,
+    "active",
+    input.pollForFinality
+      ? "Waiting for TRON finality and event indexing"
+      : "Collecting TRON transaction and finality data",
+  );
+  const sourceData = await loadTronSourceDataForProof({
+    context,
+    txId: context.tronTxId ?? tronTxId.value,
+    pollForFinality: input.pollForFinality,
+  });
+  markPhase(1, "complete", "TRON source transaction data collected");
+  markPhase(2, "active", "Generating TRON source proof package");
+  assertSccpOperationContextCurrent(context);
+  const proofPackage = await runTronSourceProofWorker({
+    manifest: context.manifest,
+    txId: sourceData.txId,
+    transaction: sourceData.transaction,
+    receipt: sourceData.receipt,
+    events: sourceData.events,
+    finality: sourceData.finality,
+    tronSender: context.tronAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+  });
+  assertSccpOperationContextCurrent(context);
+  const boundProofPackage = bindTronToTairaSourceProofPackage({
+    manifest: context.manifest,
+    proofPackage,
+    txId: sourceData.txId,
+    events: sourceData.events,
+    tronSender: context.tronAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+  });
+  messageId.value = boundProofPackage.messageId;
+  markPhase(2, "complete", "TRON source proof package is ready");
+  markPhase(3, "active", "Submitting TAIRA settlement");
+  assertSccpOperationContextCurrent(context);
+  const response = await submitSccpBridgeMessage({
+    toriiUrl: context.toriiUrl,
+    accountId: context.accountId,
+    messageBundle: boundProofPackage.messageBundle,
+    settlement: boundProofPackage.settlement,
+  });
+  const tairaTxHash = String(
+    response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
+  ).trim();
+  const tairaTxHref = buildTairaExplorerTransactionUrl(
+    TAIRA_EXPLORER_URL,
+    tairaTxHash,
+  );
+  if (tairaTxHref) {
+    transactionLinks.value = [
+      ...transactionLinks.value,
+      {
+        label: t("TAIRA settlement transaction"),
+        href: tairaTxHref,
+      },
+    ];
+  }
+  proofReady.value = true;
+  markPhase(3, "complete", "TAIRA settlement submitted");
+};
+
 const prepareBridge = async () => {
   formError.value = "";
   resetProofPhases();
   proofLoading.value = true;
   try {
     validateForm();
+    const operationContext = createSccpOperationContext();
     markPhase(0, "complete", "Route and wallet are ready");
     if (direction.value === "taira-to-tron") {
       const request = buildTairaXorOutboundBurnRecordRequest({
-        manifest: bridge.readiness.value.tronManifest,
-        tairaSender: session.activeAccount?.accountId ?? "",
-        tronRecipient: tronRecipient.value,
-        amountDecimal: amount.value,
+        manifest: operationContext.manifest,
+        tairaSender: operationContext.accountId,
+        tronRecipient: operationContext.tronRecipient,
+        amountDecimal: operationContext.amountDecimal,
         nonce: Date.now().toString(),
       });
       messageId.value = request.outbound.messageId;
+      const tairaSourceContext = {
+        ...operationContext,
+        messageId: request.outbound.messageId,
+      };
       markPhase(1, "active", "Deriving TAIRA burn-record payload");
       const derived = await deriveZkIvmPayload({
-        toriiUrl: session.connection.toriiUrl,
+        toriiUrl: operationContext.toriiUrl,
         ...request.zkIvmRequest.request,
       });
+      assertSccpOperationContextCurrent(tairaSourceContext);
       const proved = asRecord(derived.proved, "Derived ZK IVM proved payload");
       markPhase(1, "complete", "Canonical TAIRA burn-record payload derived");
       markPhase(2, "active", "Generating TAIRA burn-record proof");
       const proveJob = await startZkIvmProveJob({
-        toriiUrl: session.connection.toriiUrl,
+        toriiUrl: operationContext.toriiUrl,
         ...request.zkIvmRequest.request,
         proved,
       });
+      assertSccpOperationContextCurrent(tairaSourceContext);
       const jobId = readJobId(proveJob);
-      const proof = await waitForZkIvmProof(jobId);
+      const proof = await waitForZkIvmProof(tairaSourceContext, jobId);
+      assertSccpOperationContextCurrent(tairaSourceContext);
       markPhase(2, "complete", "TAIRA burn-record proof is ready");
       markPhase(3, "active", "Submitting TAIRA source transaction");
       const submission = await submitZkIvmProvedTransaction({
-        toriiUrl: session.connection.toriiUrl,
-        chainId: session.connection.chainId,
-        accountId: session.activeAccount?.accountId ?? "",
+        toriiUrl: operationContext.toriiUrl,
+        chainId: operationContext.chainId,
+        accountId: operationContext.accountId,
         proved: proof.proved,
         attachment: proof.attachment,
         metadata: { ...request.zkIvmRequest.request.metadata },
       });
+      assertSccpOperationContextCurrent(tairaSourceContext);
       const tairaTxHash = String(
         submission.tx_hash_hex ?? submission.txHashHex ?? submission.hash ?? "",
       ).trim();
-      transactionLinks.value = tairaTxHash
+      const tairaTxHref = buildTairaExplorerTransactionUrl(
+        TAIRA_EXPLORER_URL,
+        tairaTxHash,
+      );
+      transactionLinks.value = tairaTxHref
         ? [
             {
               label: t("TAIRA source transaction"),
-              href: TAIRA_EXPLORER_URL,
+              href: tairaTxHref,
             },
           ]
         : [];
       markPhase(
         3,
         "complete",
-        "TAIRA source transaction submitted; fetch the SCCP proof job after indexing",
+        "TAIRA source transaction submitted; fetching SCCP proof job",
       );
-      proofReady.value = false;
+      await finalizeTairaMessageToTron(tairaSourceContext, {
+        pollForIndexing: true,
+      });
       return;
     }
 
     markPhase(1, "active", "Collecting TRON finality data");
     bindTronFinalitySnapshot(await getTronFinalityData());
+    assertSccpOperationContextCurrent(operationContext);
     const triggerRequest = buildTairaXorBurnTriggerRequest({
-      manifest: bridge.readiness.value.tronManifest,
-      ownerAddress: tron.address.value,
-      tairaRecipient: tairaRecipient.value,
-      amountDecimal: amount.value,
+      manifest: operationContext.manifest,
+      ownerAddress: operationContext.tronAddress,
+      tairaRecipient: operationContext.tairaRecipient,
+      amountDecimal: operationContext.amountDecimal,
     });
     const triggerResponse = await triggerTronSmartContract(triggerRequest);
-    const unsignedTransaction =
+    assertSccpOperationContextCurrent(operationContext);
+    const gatewayUnsignedTransaction =
       typeof triggerResponse.transaction === "object" &&
       triggerResponse.transaction !== null &&
       !Array.isArray(triggerResponse.transaction)
         ? (triggerResponse.transaction as Record<string, unknown>)
         : null;
-    if (!unsignedTransaction) {
+    if (!gatewayUnsignedTransaction) {
       throw new Error("TRON gateway did not return an unsigned transaction.");
     }
+    const unsignedTransaction = bindUnsignedTronSmartContractTransaction({
+      transaction: gatewayUnsignedTransaction,
+      trigger: triggerRequest,
+    }).transaction;
     markPhase(1, "complete", "Unsigned TRON burn transaction created");
     markPhase(
       2,
@@ -858,11 +1240,13 @@ const prepareBridge = async () => {
       "TRON-source proof data collection can begin after broadcast",
     );
     markPhase(3, "active", "Requesting TRON wallet approval");
+    assertSccpOperationContextCurrent(operationContext);
     const signedTransaction = bindSignedTronTransactionForBroadcast({
       unsignedTransaction,
       signedTransaction: await tron.signTransaction(unsignedTransaction),
-      ownerAddress: tron.address.value,
+      ownerAddress: operationContext.tronAddress,
     });
+    assertSccpOperationContextCurrent(operationContext);
     const broadcast = bindTronBroadcastResult({
       response: await broadcastTronTransaction({
         transaction: signedTransaction.transaction,
@@ -870,6 +1254,10 @@ const prepareBridge = async () => {
       expectedTxId: signedTransaction.txId,
     });
     const nextTxId = broadcast.txId;
+    const tronSourceContext = {
+      ...operationContext,
+      tronTxId: nextTxId ?? undefined,
+    };
     if (nextTxId) {
       tronTxId.value = nextTxId;
       transactionLinks.value = [
@@ -880,12 +1268,9 @@ const prepareBridge = async () => {
       ];
     }
     markPhase(3, "complete", "Signed TRON burn transaction broadcast");
-    markPhase(
-      2,
-      "pending",
-      "Waiting for TRON finality before TAIRA proof submission",
-    );
-    proofReady.value = false;
+    await finalizeTronBurnToTaira(tronSourceContext, {
+      pollForFinality: true,
+    });
   } catch (error) {
     formError.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -913,140 +1298,18 @@ const fetchMessageJob = async () => {
       }
       tronTxId.value = normalizeTronTransactionId(tronTxId.value);
     }
+    const operationContext = createSccpOperationContext({
+      ...(direction.value === "taira-to-tron"
+        ? { messageId: messageId.value }
+        : { tronTxId: tronTxId.value }),
+    });
     if (direction.value === "tron-to-taira") {
       markPhase(0, "complete", "Route and TRON transaction id accepted");
-      markPhase(1, "active", "Collecting TRON transaction and finality data");
-      const [transaction, receipt, events, finality] = await Promise.all([
-        getTronTransaction({ txId: tronTxId.value }),
-        getTronTransactionReceipt({ txId: tronTxId.value }),
-        getTronTransactionEvents({ txId: tronTxId.value }),
-        getTronFinalityData(),
-      ]);
-      const sourceData = bindTronSourceDataForProof({
-        txId: tronTxId.value,
-        transaction,
-        receipt,
-        events,
-        finality,
-        bridgeAddress: readSccpTronBridgeAddress(
-          bridge.readiness.value.tronManifest,
-        ),
-        tronSender: tron.address.value,
-        tairaRecipient: tairaRecipient.value,
-        amountDecimal: amount.value,
-      });
-      markPhase(1, "complete", "TRON source transaction data collected");
-      markPhase(2, "active", "Generating TRON source proof package");
-      const proofPackage = await runTronSourceProofWorker({
-        manifest: bridge.readiness.value.tronManifest,
-        txId: sourceData.txId,
-        transaction: sourceData.transaction,
-        receipt: sourceData.receipt,
-        events: sourceData.events,
-        finality: sourceData.finality,
-        tronSender: tron.address.value,
-        tairaRecipient: tairaRecipient.value,
-        amountDecimal: amount.value,
-      });
-      const boundProofPackage = bindTronToTairaSourceProofPackage({
-        manifest: bridge.readiness.value.tronManifest,
-        proofPackage,
-        txId: sourceData.txId,
-        events: sourceData.events,
-        tronSender: tron.address.value,
-        tairaRecipient: tairaRecipient.value,
-        amountDecimal: amount.value,
-      });
-      messageId.value = boundProofPackage.messageId;
-      markPhase(2, "complete", "TRON source proof package is ready");
-      markPhase(3, "active", "Submitting TAIRA settlement");
-      const response = await submitSccpBridgeMessage({
-        toriiUrl: session.connection.toriiUrl,
-        accountId: session.activeAccount?.accountId ?? "",
-        messageBundle: boundProofPackage.messageBundle,
-        settlement: boundProofPackage.settlement,
-      });
-      const tairaTxHash = String(
-        response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
-      ).trim();
-      if (tairaTxHash) {
-        transactionLinks.value = [
-          ...transactionLinks.value,
-          {
-            label: t("TAIRA settlement transaction"),
-            href: TAIRA_EXPLORER_URL,
-          },
-        ];
-      }
-      proofReady.value = true;
-      markPhase(3, "complete", "TAIRA settlement submitted");
+      await finalizeTronBurnToTaira(operationContext);
       return;
     }
 
-    const job = await getSccpMessageProofJob({
-      toriiUrl: session.connection.toriiUrl,
-      messageId: messageId.value,
-      ...sccpDestinationProofParams(),
-    });
-    markPhase(0, "complete", "Route and message id accepted");
-    markPhase(1, "complete", "Torii returned an SCCP proof job");
-    const binding = buildTairaXorFinalizeProofBinding({
-      manifest: bridge.readiness.value.tronManifest,
-      job,
-      messageId: messageId.value,
-      tairaSender: session.activeAccount?.accountId ?? "",
-      tronRecipient: tronRecipient.value,
-      amountDecimal: amount.value,
-    });
-    markPhase(2, "active", "Generating TRON finalize proof");
-    const proofPackage = await runTronProofWorker("prove-tron-proof-package", {
-      witness: binding.witness,
-    });
-    const finalizeRequest = buildTairaXorFinalizeTriggerRequest({
-      manifest: bridge.readiness.value.tronManifest,
-      proofPackage: proofPackage as unknown as Record<string, unknown>,
-      ownerAddress: tron.address.value,
-      tronRecipient: tronRecipient.value,
-      amountBaseUnits: binding.amountBaseUnits,
-      messageId: binding.messageId,
-      canonicalPayloadHex: binding.canonicalPayloadHex,
-    });
-    markPhase(2, "complete", "TRON finalize proof package is ready");
-    markPhase(3, "active", "Requesting TRON wallet approval");
-    const triggerResponse = await triggerTronSmartContract(
-      finalizeRequest.trigger,
-    );
-    const unsignedTransaction =
-      typeof triggerResponse.transaction === "object" &&
-      triggerResponse.transaction !== null &&
-      !Array.isArray(triggerResponse.transaction)
-        ? (triggerResponse.transaction as Record<string, unknown>)
-        : null;
-    if (!unsignedTransaction) {
-      throw new Error("TRON gateway did not return an unsigned transaction.");
-    }
-    const signedTransaction = bindSignedTronTransactionForBroadcast({
-      unsignedTransaction,
-      signedTransaction: await tron.signTransaction(unsignedTransaction),
-      ownerAddress: tron.address.value,
-    });
-    const broadcast = bindTronBroadcastResult({
-      response: await broadcastTronTransaction({
-        transaction: signedTransaction.transaction,
-      }),
-      expectedTxId: signedTransaction.txId,
-    });
-    const txId = broadcast.txId;
-    if (txId) {
-      transactionLinks.value = [
-        {
-          label: t("TRON finalize transaction"),
-          href: `${TRON_MAINNET_TRONSCAN_URL}/#/transaction/${txId}`,
-        },
-      ];
-    }
-    proofReady.value = true;
-    markPhase(3, "complete", "Signed TRON finalize transaction broadcast");
+    await finalizeTairaMessageToTron(operationContext);
   } catch (error) {
     formError.value = error instanceof Error ? error.message : String(error);
   } finally {

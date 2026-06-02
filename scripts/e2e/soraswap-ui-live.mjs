@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -27,18 +27,88 @@ const testnetClientConfig = join(
   "taira.client.toml",
 );
 
-const toriiUrl = "https://taira.sora.org";
 const chainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const networkPrefix = 369;
+const toriiUrl = process.env.SORASWAP_TORII_URL || "https://taira.sora.org";
+const nodeToriiUrl = process.env.SORASWAP_NODE_TORII_URL || toriiUrl;
 const dappUrl =
   process.env.SORASWAP_UI_URL || "https://test.soraswap.org/#/launchpad";
+const disableBrowserCors =
+  process.env.SORASWAP_UI_DISABLE_BROWSER_CORS === "1";
+const blockServiceWorkers =
+  process.env.SORASWAP_UI_BLOCK_SERVICE_WORKERS === "1";
+const hostResolverRules = process.env.SORASWAP_UI_HOST_RESOLVER_RULES || "";
+const ignoreCertificateErrors =
+  process.env.SORASWAP_UI_IGNORE_CERTIFICATE_ERRORS === "1";
 const safariUserAgent =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15";
+
+const readConnectStatus = async (session) => {
+  const token = session?.token_management;
+  const sid = session?.sid;
+  if (!token || !sid) return null;
+  const url = new URL(
+    `/v1/connect/status?sid=${encodeURIComponent(sid)}`,
+    `${nodeToriiUrl}/`,
+  );
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    return {
+      sid,
+      error: `${response.status} ${response.statusText}`,
+    };
+  }
+  const status = await response.json();
+  return {
+    sid,
+    app_attached: status.app_attached,
+    wallet_attached: status.wallet_attached,
+    approved: status.approved,
+    buffered_frames: status.buffered_frames,
+    last_seq_app_to_wallet: status.last_seq_app_to_wallet,
+    last_seq_wallet_to_app: status.last_seq_wallet_to_app,
+    origin: status.origin,
+  };
+};
+
+const chromiumNetworkArgs = () => [
+  ...(hostResolverRules ? [`--host-resolver-rules=${hostResolverRules}`] : []),
+  ...(ignoreCertificateErrors ? ["--ignore-certificate-errors"] : []),
+];
+
+const dappChromiumArgs = () => [
+  ...chromiumNetworkArgs(),
+  ...(disableBrowserCors
+    ? ["--disable-web-security", "--disable-features=IsolateOrigins,site-per-process"]
+    : []),
+];
 
 const routeUrl = (path) => {
   const url = new URL(dappUrl);
   url.hash = path;
   return url.toString();
+};
+
+const summarizeDappState = async (page, label) => {
+  const state = await page
+    .evaluate(() => ({
+      href: globalThis.location.href,
+      title: document.title,
+      body: document.body?.innerText?.slice(0, 1000) ?? "",
+      scripts: [...document.scripts].map(
+        (script) => script.src || script.textContent?.slice(0, 80) || "",
+      ),
+      appHtml: document.querySelector("#app")?.innerHTML.slice(0, 500) ?? "",
+    }))
+    .catch((error) => ({
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  console.log(`${label}: ${JSON.stringify(state)}`);
 };
 
 const readTomlString = (content, key) => {
@@ -104,7 +174,7 @@ const loadFundedTairaWallet = async () => {
 const assertFundedAssets = async (accountId) => {
   const url = new URL(
     `/v1/accounts/${encodeURIComponent(accountId)}/assets`,
-    `${toriiUrl}/`,
+    `${nodeToriiUrl}/`,
   );
   url.searchParams.set("limit", "100");
   const response = await fetch(url);
@@ -192,10 +262,7 @@ const seedWalletSession = async (page, wallet) => {
   });
 };
 
-const approveWalletConnection = async (walletPage) => {
-  await walletPage
-    .getByRole("heading", { name: "Approve connection?" })
-    .waitFor({ state: "visible", timeout: 45_000 });
+const finishWalletConnectionApproval = async (walletPage) => {
   await walletPage.getByRole("button", { name: "Approve connection" }).click();
   const modalHeading = walletPage.getByRole("heading", {
     name: "Approve connection?",
@@ -219,10 +286,106 @@ const approveWalletConnection = async (walletPage) => {
   }
 };
 
-const approveWalletSignature = async (walletPage, label) => {
+const approveWalletConnection = async (walletPage) => {
   await walletPage
-    .getByRole("heading", { name: "Approve transaction signature?" })
-    .waitFor({ state: "visible", timeout: 90_000 });
+    .getByRole("heading", { name: "Approve connection?" })
+    .waitFor({ state: "visible", timeout: 45_000 });
+  await finishWalletConnectionApproval(walletPage);
+};
+
+const writeWalletQr = async (walletHref) => {
+  await QRCode.toFile(walletQrPath, walletHref, {
+    errorCorrectionLevel: "M",
+    margin: 8,
+    width: 1024,
+    color: {
+      dark: "#000000",
+      light: "#ffffff",
+    },
+  });
+};
+
+const uploadWalletQr = async (walletPage) => {
+  const panel = walletPage.locator("details.header-connect");
+  const isOpen = await panel
+    .evaluate((element) => element.open)
+    .catch(() => false);
+  if (!isOpen) {
+    await walletPage.getByTestId("header-irohaconnect-button").click();
+  }
+  await walletPage
+    .getByText(/^(?:IrohaConnect Pairing|Connect pairing)$/)
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await walletPage
+    .getByRole("button", { name: "Upload QR image" })
+    .waitFor({ state: "visible", timeout: 15_000 });
+  await walletPage
+    .locator(".header-connect input[type='file']")
+    .setInputFiles(walletQrPath);
+};
+
+const logConnectDiagnostics = async (dappPage, walletPage, label) => {
+  const dapp = dappPage
+    ? await dappPage
+        .evaluate(() => ({
+          href: globalThis.location.href,
+          session: globalThis.__soraswapLastConnectSession ?? null,
+          body: document.body?.innerText?.slice(0, 700) ?? "",
+        }))
+        .catch((error) => ({
+          error: error instanceof Error ? error.message : String(error),
+        }))
+    : null;
+  const status = dapp?.session
+    ? await readConnectStatus(dapp.session).catch((error) => ({
+        error: error instanceof Error ? error.message : String(error),
+      }))
+    : null;
+  const wallet = await walletPage
+    .evaluate(() => ({
+      dialogHeading:
+        document.querySelector('[role="dialog"] h2')?.textContent?.trim() ??
+        null,
+      pendingSignature:
+        document.body?.innerText?.includes("Approve transaction signature?") ??
+        false,
+      connectMenuOpen:
+        document.querySelector("details.header-connect")?.open ?? null,
+      body: document.body?.innerText?.slice(0, 700) ?? "",
+    }))
+    .catch((error) => ({
+      error: error instanceof Error ? error.message : String(error),
+    }));
+  console.log(
+    `${label} connect diagnostics: ${JSON.stringify({ status, dapp, wallet })}`,
+  );
+};
+
+const approveWalletSignature = async (walletPage, label, dappPage) => {
+  const heading = walletPage.getByRole("heading", {
+    name: "Approve transaction signature?",
+  });
+  const deadline = Date.now() + 90_000;
+  let nextLog = Date.now() + 10_000;
+  while (!(await heading.isVisible().catch(() => false))) {
+    if (Date.now() >= deadline) {
+      await logConnectDiagnostics(
+        dappPage,
+        walletPage,
+        `${label} signature timeout`,
+      );
+      throw new Error(`${label} wallet signature dialog did not appear.`);
+    }
+    if (Date.now() >= nextLog) {
+      await logConnectDiagnostics(
+        dappPage,
+        walletPage,
+        `${label} waiting for signature`,
+      );
+      nextLog += 15_000;
+    }
+    await walletPage.waitForTimeout(500);
+  }
   await walletPage.getByRole("button", { name: "Approve and sign" }).click();
   await walletPage
     .getByRole("heading", { name: "Approve transaction signature?" })
@@ -253,51 +416,108 @@ const pairWallet = async (dappPage, walletPage) => {
     throw new Error("SoraSwap Connect wallet link lost its wallet token.");
   }
   console.log(`Connect sid: ${new URL(walletHref).searchParams.get("sid")}`);
-  const qrSrc = await qr.getAttribute("src");
-  if (qrSrc?.startsWith("data:image/")) {
-    const [, encoded] = qrSrc.split(",", 2);
-    if (!encoded) {
-      throw new Error("SoraSwap Connect QR image data was empty.");
-    }
-    await writeFile(walletQrPath, Buffer.from(encoded, "base64"));
+  await writeWalletQr(walletHref);
+
+  await uploadWalletQr(walletPage);
+  const decodeError = walletPage.getByText(
+    "No MultiFormat Readers were able to detect the code.",
+    { exact: true },
+  );
+  const uploadResult = await Promise.race([
+    walletPage
+      .getByRole("heading", { name: "Approve connection?" })
+      .waitFor({ state: "visible", timeout: 45_000 })
+      .then(() => "approval"),
+    decodeError.waitFor({ state: "visible", timeout: 45_000 }).then(
+      () => "decode-error",
+    ),
+  ]);
+  if (uploadResult === "decode-error") {
+    await walletPage.keyboard.press("Escape");
+    await writeWalletQr(walletHref);
+    await uploadWalletQr(walletPage);
+    await approveWalletConnection(walletPage);
   } else {
-    await QRCode.toFile(walletQrPath, walletHref, {
-      errorCorrectionLevel: "L",
-      margin: 4,
-      width: 720,
-      color: {
-        dark: "#000000",
-        light: "#ffffff",
-      },
-    });
+    await finishWalletConnectionApproval(walletPage);
   }
 
-  await walletPage.getByTestId("header-irohaconnect-button").click();
-  await walletPage
-    .locator(".header-connect input[type='file']")
-    .setInputFiles(walletQrPath);
-  await approveWalletConnection(walletPage);
+  const connectSession = await dappPage.evaluate(
+    () => globalThis.__soraswapLastConnectSession ?? null,
+  );
+  const connectStatus = await readConnectStatus(connectSession).catch(
+    (error) => ({
+      sid: connectSession?.sid ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  console.log(
+    `Connect status after wallet approval: ${JSON.stringify(connectStatus)}`,
+  );
 
-  await dappPage
-    .getByText("Wallet connected", { exact: true })
-    .waitFor({ state: "visible", timeout: 60_000 });
-  await dappPage.getByRole("button", { name: "Use approved wallet" }).click();
-  await dappPage
-    .getByText("Connected account", { exact: true })
-    .waitFor({ state: "visible", timeout: 30_000 });
+  const useApprovedWallet = dappPage.getByRole("button", {
+    name: "Use approved wallet",
+  });
+  const connectedState = () =>
+    document.body.innerText.includes("WALLET SESSION\nReady") ||
+    document.body.innerText.includes("Connected account");
+  const state = await Promise.race([
+    useApprovedWallet
+      .waitFor({ state: "visible", timeout: 60_000 })
+      .then(() => "confirmation"),
+    dappPage.waitForFunction(connectedState, undefined, {
+      timeout: 60_000,
+    }).then(() => "ready"),
+  ]);
+  if (state === "confirmation") {
+    const nextAction = await dappPage
+      .waitForFunction(
+        () => {
+          if (
+            document.body.innerText.includes("WALLET SESSION\nReady") ||
+            document.body.innerText.includes("Connected account")
+          ) {
+            return "ready";
+          }
+          const button = Array.from(document.querySelectorAll("button")).find(
+            (candidate) =>
+              candidate.textContent?.trim() === "Use approved wallet",
+          );
+          return button && !button.disabled ? "click" : false;
+        },
+        undefined,
+        { timeout: 30_000 },
+      )
+      .then((handle) => handle.jsonValue());
+    if (nextAction === "click") {
+      await dappPage.evaluate(() => {
+        const button = Array.from(document.querySelectorAll("button")).find(
+          (candidate) =>
+            candidate.textContent?.trim() === "Use approved wallet",
+        );
+        button?.click();
+      });
+    }
+  }
+  await dappPage.waitForFunction(connectedState, undefined, {
+    timeout: 30_000,
+  });
 };
 
 const waitForSuccessNotice = async (locator, label) => {
-  await locator.waitFor({ state: "visible", timeout: 120_000 });
+  await locator.waitFor({ state: "visible", timeout: 300_000 });
   const text = (await locator.innerText()).trim();
-  if (!/Pipeline confirmation reached/i.test(text)) {
-    throw new Error(`${label} did not reach pipeline confirmation: ${text}`);
+  if (
+    !/Pipeline confirmation reached/i.test(text) &&
+    !/Live launchpad state includes sale/i.test(text)
+  ) {
+    throw new Error(`${label} did not reach live confirmation: ${text}`);
   }
   console.log(`${label}: ${text}`);
   return text;
 };
 
 const runPreparedSubmit = async ({
+  dappPage,
   walletPage,
   label,
   prepareButton,
@@ -308,7 +528,9 @@ const runPreparedSubmit = async ({
   await prepareButton.click();
   await submitButton.waitFor({ state: "visible", timeout: 60_000 });
   await submitButton.click();
-  await approveWalletSignature(walletPage, label);
+  await walletPage.waitForTimeout(2_000);
+  await logConnectDiagnostics(dappPage, walletPage, `${label} after submit`);
+  await approveWalletSignature(walletPage, label, dappPage);
   return waitForSuccessNotice(successNotice, label);
 };
 
@@ -340,11 +562,11 @@ const createLaunchpadTokenSale = async (dappPage, walletPage, wallet) => {
     "usdt#soraswap.universal",
   );
   await fillInputByLabel(dappPage, "Treasury account", wallet.accountId);
-  await fillInputByLabel(dappPage, "Initial supply", "1000");
-  await fillInputByLabel(dappPage, "Claim inventory", "500");
+  await fillInputByLabel(dappPage, "Initial supply", "1500");
+  await fillInputByLabel(dappPage, "Claim inventory", "1000");
   await fillInputByLabel(dappPage, "Seed inventory", "100");
   await fillInputByLabel(dappPage, "Unit price", "1");
-  await fillInputByLabel(dappPage, "Soft cap", "0");
+  await fillInputByLabel(dappPage, "Soft cap", "1");
   await fillInputByLabel(dappPage, "Hard cap", "1000");
   await fillInputByLabel(dappPage, "Claim start slot", "0");
   await fillInputByLabel(dappPage, "Claim end slot", "0");
@@ -355,10 +577,10 @@ const createLaunchpadTokenSale = async (dappPage, walletPage, wallet) => {
     label: "launchpad token sale",
     prepareButton: dappPage.getByRole("button", { name: "Prepare draft" }),
     submitButton: dappPage.getByRole("button", { name: "Sign and submit" }),
-    successNotice: dappPage.locator(".notice.is-success").filter({
-      hasText: /Pipeline confirmation reached/i,
-    }),
-  });
+      successNotice: dappPage.locator(".notice.is-success").filter({
+        hasText: /Live launchpad state includes sale/i,
+      }),
+    });
 
   return { saleId, tokenHandle };
 };
@@ -448,7 +670,7 @@ const main = async () => {
   let dappPage;
   try {
     walletApp = await electron.launch({
-      args: [mainEntry],
+      args: [...chromiumNetworkArgs(), mainEntry],
       env: process.env,
     });
     walletPage = await walletApp.firstWindow();
@@ -463,12 +685,113 @@ const main = async () => {
 
     browser = await chromium.launch({
       headless: process.env.HEADLESS === "1",
+      args: dappChromiumArgs(),
     });
     const context = await browser.newContext({
       viewport: { width: 1440, height: 1000 },
       userAgent: safariUserAgent,
       ignoreHTTPSErrors: true,
+      serviceWorkers: blockServiceWorkers ? "block" : "allow",
     });
+    await context.addInitScript(
+      ({ toriiUrl, chainId, shouldOverrideRuntime }) => {
+        const originalFetch = globalThis.fetch.bind(globalThis);
+        globalThis.__soraswapLastConnectSession = null;
+        globalThis.fetch = async (...args) => {
+          const response = await originalFetch(...args);
+          try {
+            const requestUrl =
+              typeof args[0] === "string"
+                ? args[0]
+                : args[0] instanceof URL
+                  ? args[0].toString()
+                  : args[0]?.url;
+            const method =
+              args[1]?.method ??
+              (typeof args[0] === "object" && args[0]?.method) ??
+              "GET";
+            if (
+              String(method).toUpperCase() === "POST" &&
+              requestUrl &&
+              new URL(requestUrl, globalThis.location.href).pathname ===
+                "/v1/connect/session"
+            ) {
+              globalThis.__soraswapLastConnectSession = await response
+                .clone()
+                .json();
+            }
+            if (requestUrl) {
+              const parsedUrl = new URL(requestUrl, globalThis.location.href);
+              if (
+                parsedUrl.pathname === "/v1/contracts/call" ||
+                /\/v1\/accounts\/.+\/transactions$/u.test(parsedUrl.pathname)
+              ) {
+                response
+                  .clone()
+                  .json()
+                  .then((body) => {
+                    if (parsedUrl.pathname === "/v1/contracts/call") {
+                      const summary = {
+                        ok: body?.ok,
+                        submitted: body?.submitted,
+                        tx_hash_hex: body?.tx_hash_hex ?? null,
+                        entrypoint_hash_hex: body?.entrypoint_hash_hex ?? null,
+                        pipeline_status:
+                          body?.pipeline_status?.content?.status?.kind ?? null,
+                        creation_time_ms: body?.creation_time_ms ?? null,
+                        entrypoint: body?.entrypoint ?? null,
+                      };
+                      console.log(
+                        `[soraswap-contract-call] ${response.status} ${JSON.stringify(summary)}`,
+                      );
+                      return;
+                    }
+                    const first = Array.isArray(body?.items)
+                      ? body.items[0] ?? null
+                      : null;
+                    console.log(
+                      `[soraswap-account-transactions] ${response.status} ${JSON.stringify(
+                        {
+                          total: body?.total ?? null,
+                          first: first
+                            ? {
+                                entrypoint_hash: first.entrypoint_hash,
+                                result_ok: first.result_ok,
+                                timestamp_ms: first.timestamp_ms,
+                              }
+                            : null,
+                        },
+                      )}`,
+                    );
+                  })
+                  .catch(() => {});
+              }
+            }
+          } catch {
+            // Diagnostic only.
+          }
+          return response;
+        };
+        if (shouldOverrideRuntime) {
+          localStorage.setItem(
+            "soraswap.runtime-config.v2",
+            JSON.stringify({
+              toriiUrl,
+              dataspace: "universal",
+              connectChainId: chainId,
+              connectAppName: "SoraSwap",
+              connectAppUrl: "https://test.soraswap.org/",
+              refreshMs: 15000,
+            }),
+          );
+        }
+      },
+      {
+        toriiUrl,
+        chainId,
+        shouldOverrideRuntime: Boolean(process.env.SORASWAP_TORII_URL),
+      },
+    );
     dappPage = await context.newPage();
     dappPage.on("console", (message) =>
       console.log(`[dapp:${message.type()}] ${message.text()}`),
@@ -476,11 +799,30 @@ const main = async () => {
     dappPage.on("pageerror", (error) =>
       console.log(`[dapp:pageerror] ${error.message}`),
     );
+    dappPage.on("response", (response) => {
+      const url = response.url();
+      const status = response.status();
+      const relevant =
+        url.includes("test.soraswap.org") ||
+        url.includes("/v1/connect/session") ||
+        url.includes("/v1/connect/status") ||
+        status >= 400;
+      if (relevant) {
+        console.log(`[dapp:response] ${response.status()} ${url}`);
+      }
+    });
+    dappPage.on("requestfailed", (request) => {
+      console.log(
+        `[dapp:requestfailed] ${request.failure()?.errorText ?? "unknown"} ${request.url()}`,
+      );
+    });
     dappPage.setDefaultTimeout(45_000);
     await dappPage.goto(dappUrl, {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
+    await dappPage.waitForTimeout(12_000);
+    await summarizeDappState(dappPage, "Dapp state after initial launchpad load");
     await dappPage
       .getByText("genesis_sale_usdt")
       .waitFor({ state: "visible", timeout: 60_000 });
@@ -521,6 +863,7 @@ const main = async () => {
         .catch(() => {});
     }
     if (dappPage) {
+      await summarizeDappState(dappPage, "Dapp state at failure");
       await dappPage
         .screenshot({
           path: join(outputDir, "soraswap-dapp-failure.png"),

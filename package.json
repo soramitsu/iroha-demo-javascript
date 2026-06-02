@@ -30,6 +30,7 @@
     "e2e:live": "npm run build && node scripts/e2e/electron-live.mjs",
     "e2e:explorer": "node scripts/e2e/taira-explorer-smoke.mjs",
     "e2e:sccp:preflight": "node scripts/e2e/sccp-route-preflight.mjs",
+    "e2e:sccp:smoke-readiness": "node scripts/e2e/sccp-live-smoke-readiness.mjs",
     "trade:soraswap:live": "node scripts/connect-soraswap-live-trade.mjs",
     "trade:soraswap:perps": "SORASWAP_MODE=perps_open node scripts/connect-soraswap-live-trade.mjs",
     "trade:soraswap:n3x": "SORASWAP_MODE=n3x_mint node scripts/connect-soraswap-live-trade.mjs",

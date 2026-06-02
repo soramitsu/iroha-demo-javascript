@@ -40,6 +40,14 @@ export type TronSccpProofPackage = {
   bridgePayload: SerializedSccpValue | null;
 };
 
+const snapshotProofPackageInput = <T>(input: T, label: string): T => {
+  try {
+    return structuredClone(input);
+  } catch (_error) {
+    throw new Error(`${label} must be structured-cloneable.`);
+  }
+};
+
 const bytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
@@ -133,7 +141,8 @@ export const buildTronSccpProofPackage = (
 export const generateTronSccpProofPackage = async (
   input: TronSccpProofGenerationInput,
 ): Promise<TronSccpProofPackage> => {
-  if (typeof input.prove !== "function") {
+  const { prove, ...packageInput } = input;
+  if (typeof prove !== "function") {
     const error = new Error(
       "TRON SCCP Groth16 prover is not linked; provide a browser-safe prove function before generating production proofs.",
     );
@@ -141,10 +150,18 @@ export const generateTronSccpProofPackage = async (
       "ERR_SCCP_TRON_PROVER_UNAVAILABLE";
     throw error;
   }
-  const prover = new TronSccpProver({ prove: input.prove });
-  const proofResult = await prover.prove(input.witness);
+  const packageInputSnapshot = snapshotProofPackageInput(
+    packageInput,
+    "TRON SCCP proof package input",
+  );
+  const proverWitnessSnapshot = snapshotProofPackageInput(
+    packageInputSnapshot.witness,
+    "TRON SCCP proof witness",
+  );
+  const prover = new TronSccpProver({ prove });
+  const proofResult = await prover.prove(proverWitnessSnapshot);
   return buildTronSccpProofPackage({
-    ...input,
+    ...packageInputSnapshot,
     proofResult,
   });
 };

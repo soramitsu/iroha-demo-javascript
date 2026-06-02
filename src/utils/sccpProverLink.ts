@@ -23,6 +23,74 @@ export type TronSccpSourceProveFn = (
   input: TronToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
 
+const isLoopbackHost = (hostname: string): boolean => {
+  const normalized = hostname.toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]" ||
+    /^127(?:\.\d{1,3}){3}$/u.test(normalized)
+  );
+};
+
+const hasUnsafeModuleUrlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const normalizeTronSccpProverModuleUrl = (
+  value?: string | null,
+): string | undefined => {
+  const moduleUrl = value?.trim();
+  if (!moduleUrl) {
+    return undefined;
+  }
+  if (hasUnsafeModuleUrlCharacter(moduleUrl)) {
+    throw new Error(
+      "SCCP prover module URL must not contain whitespace or control characters.",
+    );
+  }
+  if (/[?#]/u.test(moduleUrl)) {
+    throw new Error(
+      "SCCP prover module URL must not include query strings or fragments.",
+    );
+  }
+  if (/^(?:\/(?!\/)|\.{1,2}\/)/u.test(moduleUrl)) {
+    return moduleUrl;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(moduleUrl);
+  } catch (_error) {
+    throw new Error(
+      "SCCP prover module URL must be a relative path, HTTPS URL, or loopback HTTP URL.",
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("SCCP prover module URL must not include credentials.");
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error(
+      "SCCP prover module URL must not include query strings or fragments.",
+    );
+  }
+  if (parsed.protocol === "https:") {
+    return parsed.toString();
+  }
+  if (parsed.protocol === "http:" && isLoopbackHost(parsed.hostname)) {
+    return parsed.toString();
+  }
+  throw new Error(
+    "SCCP prover module URL must be a relative path, HTTPS URL, or loopback HTTP URL.",
+  );
+};
+
 export const pickTronSccpProveFn = (
   globalScope: TronSccpProverGlobal,
   moduleExports?: TronSccpProverModule | null,
@@ -47,7 +115,7 @@ export const loadTronSccpProveFn = async (input: {
   moduleUrl?: string | null;
   importer?: (moduleUrl: string) => Promise<TronSccpProverModule>;
 }): Promise<TronSccpProveFn | undefined> => {
-  const moduleUrl = input.moduleUrl?.trim();
+  const moduleUrl = normalizeTronSccpProverModuleUrl(input.moduleUrl);
   if (!moduleUrl) {
     return pickTronSccpProveFn(input.globalScope);
   }
@@ -81,7 +149,7 @@ export const loadTronSccpSourceProveFn = async (input: {
   moduleUrl?: string | null;
   importer?: (moduleUrl: string) => Promise<TronSccpProverModule>;
 }): Promise<TronSccpSourceProveFn | undefined> => {
-  const moduleUrl = input.moduleUrl?.trim();
+  const moduleUrl = normalizeTronSccpProverModuleUrl(input.moduleUrl);
   if (!moduleUrl) {
     return pickTronSccpSourceProveFn(input.globalScope);
   }

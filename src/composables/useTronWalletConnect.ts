@@ -12,8 +12,18 @@ import {
   walletConnectSessionFromAddress,
   type WalletConnectSessionSnapshot,
 } from "@/utils/sccp";
+import { isSecretLikeTextValue } from "@/utils/secretLike";
 
 const STORAGE_KEY = "iroha-demo:sccp:tron-walletconnect";
+export const TRON_WALLETCONNECT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const TRON_WALLETCONNECT_SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
+const MAX_WALLETCONNECT_TOPIC_LENGTH = 256;
+const TRON_WALLETCONNECT_SECRET_KEY_PATTERN =
+  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
+const TRON_WALLETCONNECT_SIGNING_HELPER_KEY_PATTERN =
+  /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
+const WALLETCONNECT_PROJECT_ID_ERROR =
+  "WalletConnect project ID must be a non-empty opaque identifier without URL syntax.";
 
 type WalletConnectSessionLike = {
   topic?: string;
@@ -21,8 +31,65 @@ type WalletConnectSessionLike = {
   sessionProperties?: Record<string, unknown>;
 };
 
+type WalletConnectNamespaceRequest = {
+  chains: string[];
+  methods: string[];
+  events: string[];
+};
+
+type WalletConnectConnectParams = {
+  namespaces: Record<string, WalletConnectNamespaceRequest>;
+  sessionProperties: {
+    tron_method_version: string;
+  };
+};
+
 const getConfiguredProjectId = (): string =>
-  String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ?? "").trim();
+  readConfiguredProjectId().projectId;
+
+const hasUnsafeWalletConnectProjectIdCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const normalizeTronWalletConnectProjectId = (
+  value: unknown,
+): string | null => {
+  const projectId = String(value ?? "").trim();
+  if (!projectId) {
+    return null;
+  }
+  if (
+    projectId.length > 128 ||
+    hasUnsafeWalletConnectProjectIdCharacter(projectId) ||
+    /[/:?#@\\]/u.test(projectId)
+  ) {
+    throw new Error(WALLETCONNECT_PROJECT_ID_ERROR);
+  }
+  return projectId;
+};
+
+const readConfiguredProjectId = (): { projectId: string; error: string } => {
+  try {
+    return {
+      projectId:
+        normalizeTronWalletConnectProjectId(
+          import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,
+        ) ?? "",
+      error: "",
+    };
+  } catch (error) {
+    return {
+      projectId: "",
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
 
 let connectorPromise: Promise<UniversalConnector> | null = null;
 let connectorProjectId = "";
@@ -46,24 +113,55 @@ const tronMainnet = {
 
 export const walletConnectProjectId = getConfiguredProjectId();
 
-export const extractTronAddressFromSession = (
+export const createTronWalletConnectConnectParams =
+  (): WalletConnectConnectParams => ({
+    namespaces: {
+      [WALLETCONNECT_TRON_NAMESPACE]: {
+        chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+        methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+        events: ["accountsChanged", "chainChanged"],
+      },
+    },
+    sessionProperties: {
+      tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+    },
+  });
+
+const listTronMainnetSessionAddresses = (
   session: WalletConnectSessionLike | null | undefined,
-): string | null => {
+): string[] => {
   const accounts =
     session?.namespaces?.[WALLETCONNECT_TRON_NAMESPACE]?.accounts ?? [];
   if (!Array.isArray(accounts)) {
+    return [];
+  }
+  const addresses = accounts
+    .filter(
+      (item) =>
+        typeof item === "string" &&
+        item.startsWith(`${TRON_MAINNET_CAIP_CHAIN_ID}:`),
+    )
+    .map((account) =>
+      normalizeTronAddress(
+        account.slice(`${TRON_MAINNET_CAIP_CHAIN_ID}:`.length),
+      ),
+    );
+  return Array.from(new Set(addresses));
+};
+
+export const extractTronAddressFromSession = (
+  session: WalletConnectSessionLike | null | undefined,
+): string | null => {
+  const addresses = listTronMainnetSessionAddresses(session);
+  if (addresses.length === 0) {
     return null;
   }
-  const account = accounts.find(
-    (item) =>
-      typeof item === "string" &&
-      item.startsWith(`${TRON_MAINNET_CAIP_CHAIN_ID}:`),
-  );
-  if (!account) {
-    return null;
+  if (addresses.length > 1) {
+    throw new Error(
+      "Connected wallet exposed multiple TRON mainnet accounts; select one account and reconnect.",
+    );
   }
-  const address = account.slice(`${TRON_MAINNET_CAIP_CHAIN_ID}:`.length);
-  return normalizeTronAddress(address);
+  return addresses[0];
 };
 
 export const tronWalletConnectSessionSupportsRequiredSigning = (
@@ -101,10 +199,119 @@ export const tronWalletConnectSessionMatchesSnapshot = (
   if (!tronWalletConnectSessionSupportsRequiredSigning(session)) {
     return false;
   }
-  if (snapshot.topic && snapshot.topic !== session?.topic) {
+  if (!snapshot.topic || snapshot.topic !== session?.topic) {
+    return false;
+  }
+  if (!isFreshTronWalletConnectSessionTimestamp(snapshot.connectedAtMs)) {
     return false;
   }
   return true;
+};
+
+const hasUnsafeStoredTextCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x20 || code === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const isRecordLike = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const assertNoSecretLikeTransactionRequestFields = (
+  value: unknown,
+  path = "TRON transaction request",
+  seen = new WeakSet<object>(),
+): void => {
+  if (isSecretLikeTextValue(value)) {
+    throw new Error(
+      `${path} must not contain recovery phrases or private key material before WalletConnect signing.`,
+    );
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    value.forEach((entry, index) => {
+      assertNoSecretLikeTransactionRequestFields(
+        entry,
+        `${path}[${index}]`,
+        seen,
+      );
+    });
+    return;
+  }
+  if (!isRecordLike(value)) {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    if (TRON_WALLETCONNECT_SECRET_KEY_PATTERN.test(key)) {
+      throw new Error(
+        `${path}.${key} must not be sent to the connected wallet.`,
+      );
+    }
+    if (TRON_WALLETCONNECT_SIGNING_HELPER_KEY_PATTERN.test(key)) {
+      throw new Error(
+        "TRON transaction request must not already contain signatures or signing helper payloads before WalletConnect signing.",
+      );
+    }
+    assertNoSecretLikeTransactionRequestFields(child, `${path}.${key}`, seen);
+  }
+};
+
+const normalizeStoredWalletConnectTopic = (value: unknown): string | null => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    throw new Error("Stored WalletConnect topic must be text.");
+  }
+  const topic = value.trim();
+  if (
+    topic.length === 0 ||
+    topic.length > MAX_WALLETCONNECT_TOPIC_LENGTH ||
+    hasUnsafeStoredTextCharacter(topic) ||
+    isSecretLikeTextValue(topic)
+  ) {
+    throw new Error("Stored WalletConnect topic is invalid.");
+  }
+  return topic;
+};
+
+const requireStoredWalletConnectTopic = (
+  value: unknown,
+  label = "WalletConnect topic",
+): string => {
+  const topic = normalizeStoredWalletConnectTopic(value);
+  if (!topic) {
+    throw new Error(`${label} is required.`);
+  }
+  return topic;
+};
+
+export const isFreshTronWalletConnectSessionTimestamp = (
+  connectedAtMs: unknown,
+  nowMs = Date.now(),
+): connectedAtMs is number => {
+  if (
+    typeof connectedAtMs !== "number" ||
+    !Number.isSafeInteger(connectedAtMs) ||
+    connectedAtMs <= 0
+  ) {
+    return false;
+  }
+  if (connectedAtMs > nowMs + TRON_WALLETCONNECT_SESSION_FUTURE_SKEW_MS) {
+    return false;
+  }
+  return nowMs - connectedAtMs <= TRON_WALLETCONNECT_SESSION_MAX_AGE_MS;
 };
 
 export const readStoredTronWalletConnectSession =
@@ -124,14 +331,19 @@ export const readStoredTronWalletConnectSession =
         localStorage.removeItem(STORAGE_KEY);
         return null;
       }
+      const connectedAtMs = Number(parsed.connectedAtMs);
+      if (!isFreshTronWalletConnectSessionTimestamp(connectedAtMs)) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
       const snapshot = walletConnectSessionFromAddress(
         parsed.address,
-        parsed.topic,
+        requireStoredWalletConnectTopic(
+          parsed.topic,
+          "Stored WalletConnect topic",
+        ),
       );
-      const connectedAtMs = Number(parsed.connectedAtMs);
-      if (Number.isSafeInteger(connectedAtMs) && connectedAtMs > 0) {
-        snapshot.connectedAtMs = connectedAtMs;
-      }
+      snapshot.connectedAtMs = connectedAtMs;
       localStorage.setItem(
         STORAGE_KEY,
         JSON.stringify({
@@ -157,11 +369,40 @@ export const writeStoredTronWalletConnectSession = (
     localStorage.removeItem(STORAGE_KEY);
     return;
   }
+  if (!isFreshTronWalletConnectSessionTimestamp(snapshot.connectedAtMs)) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  if (
+    snapshot.chainId !== TRON_MAINNET_CAIP_CHAIN_ID ||
+    snapshot.namespace !== WALLETCONNECT_TRON_NAMESPACE ||
+    snapshot.methodVersion !== WALLETCONNECT_TRON_METHOD_VERSION
+  ) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  let normalizedTopic: string;
+  try {
+    normalizedTopic = requireStoredWalletConnectTopic(
+      snapshot.topic,
+      "Stored WalletConnect topic",
+    );
+  } catch (_error) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  let normalizedAddress: string;
+  try {
+    normalizedAddress = normalizeTronAddress(snapshot.address ?? "");
+  } catch (_error) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      topic: snapshot.topic,
-      address: snapshot.address,
+      topic: normalizedTopic,
+      address: normalizedAddress,
       chainId: snapshot.chainId,
       namespace: snapshot.namespace,
       methodVersion: snapshot.methodVersion,
@@ -171,7 +412,10 @@ export const writeStoredTronWalletConnectSession = (
 };
 
 const getConnector = async (): Promise<UniversalConnector> => {
-  const projectId = getConfiguredProjectId();
+  const { projectId, error } = readConfiguredProjectId();
+  if (error) {
+    throw new Error(error);
+  }
   if (!projectId) {
     throw new Error("WalletConnect project ID is not configured.");
   }
@@ -218,6 +462,45 @@ const getConnector = async (): Promise<UniversalConnector> => {
   return connectorPromise;
 };
 
+export const cloneTronWalletConnectTransactionRequest = (
+  transaction: Record<string, unknown>,
+): Record<string, unknown> => {
+  try {
+    const cloned = structuredClone(transaction);
+    if (
+      typeof cloned !== "object" ||
+      cloned === null ||
+      Array.isArray(cloned)
+    ) {
+      throw new Error("TRON transaction request must be an object.");
+    }
+    if (Object.prototype.hasOwnProperty.call(cloned, "signature")) {
+      throw new Error(
+        "TRON transaction request must not already contain signatures before WalletConnect signing.",
+      );
+    }
+    assertNoSecretLikeTransactionRequestFields(cloned);
+    return cloned as Record<string, unknown>;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "TRON transaction request must be an object." ||
+        error.message.startsWith(
+          "TRON transaction request must not already contain signatures",
+        ) ||
+        error.message.endsWith("must not be sent to the connected wallet.") ||
+        error.message.endsWith(
+          "must not contain recovery phrases or private key material before WalletConnect signing.",
+        ))
+    ) {
+      throw error;
+    }
+    throw new Error(
+      "TRON transaction request must be structured-cloneable before WalletConnect signing.",
+    );
+  }
+};
+
 export const useTronWalletConnect = () => {
   const stored = readStoredTronWalletConnectSession();
   const address = ref(stored?.address ?? "");
@@ -225,9 +508,15 @@ export const useTronWalletConnect = () => {
   const connecting = ref(false);
   const disconnecting = ref(false);
   const error = ref("");
+  const sessionConnectedAtMs = ref(stored?.connectedAtMs ?? 0);
 
   const connected = computed(() => Boolean(address.value));
-  const projectConfigured = computed(() => Boolean(getConfiguredProjectId()));
+  const projectConfigurationError = computed(
+    () => readConfiguredProjectId().error,
+  );
+  const projectConfigured = computed(
+    () => !projectConfigurationError.value && Boolean(getConfiguredProjectId()),
+  );
   const projectId = computed(() => getConfiguredProjectId());
   const shortAddress = computed(() =>
     address.value
@@ -235,27 +524,42 @@ export const useTronWalletConnect = () => {
       : "",
   );
 
-  const persist = () => {
-    writeStoredTronWalletConnectSession(
-      address.value
-        ? walletConnectSessionFromAddress(
-            address.value,
-            sessionTopic.value || null,
-          )
-        : null,
+  const clearSession = () => {
+    address.value = "";
+    sessionTopic.value = "";
+    sessionConnectedAtMs.value = 0;
+    writeStoredTronWalletConnectSession(null);
+  };
+
+  const currentSnapshot = (): WalletConnectSessionSnapshot | null => {
+    if (!address.value) {
+      return null;
+    }
+    if (!sessionTopic.value) {
+      return null;
+    }
+    const snapshot = walletConnectSessionFromAddress(
+      address.value,
+      sessionTopic.value,
     );
+    snapshot.connectedAtMs = sessionConnectedAtMs.value;
+    return snapshot;
+  };
+
+  const persist = () => {
+    writeStoredTronWalletConnectSession(currentSnapshot());
   };
 
   const connect = async () => {
     error.value = "";
     connecting.value = true;
+    let shouldClearRejectedSession = false;
     try {
       const connector = await getConnector();
-      const { session } = await connector.connect({
-        sessionProperties: {
-          tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
-        },
-      });
+      const { session } = await connector.connect(
+        createTronWalletConnectConnectParams(),
+      );
+      shouldClearRejectedSession = true;
       const nextAddress = extractTronAddressFromSession(session);
       if (!nextAddress) {
         throw new Error(
@@ -267,10 +571,21 @@ export const useTronWalletConnect = () => {
           "Connected wallet did not approve TRON v1 transaction signing.",
         );
       }
-      address.value = nextAddress;
-      sessionTopic.value = session.topic ?? "";
+      const snapshot = walletConnectSessionFromAddress(
+        nextAddress,
+        requireStoredWalletConnectTopic(
+          session.topic,
+          "Connected WalletConnect topic",
+        ),
+      );
+      address.value = snapshot.address ?? "";
+      sessionTopic.value = snapshot.topic ?? "";
+      sessionConnectedAtMs.value = snapshot.connectedAtMs;
       persist();
     } catch (connectError) {
+      if (shouldClearRejectedSession) {
+        clearSession();
+      }
       error.value =
         connectError instanceof Error
           ? connectError.message
@@ -293,9 +608,7 @@ export const useTronWalletConnect = () => {
           ? disconnectError.message
           : String(disconnectError);
     } finally {
-      address.value = "";
-      sessionTopic.value = "";
-      writeStoredTronWalletConnectSession(null);
+      clearSession();
       disconnecting.value = false;
     }
   };
@@ -304,27 +617,31 @@ export const useTronWalletConnect = () => {
     if (!address.value) {
       throw new Error("Connect a TRON wallet before signing.");
     }
+    const snapshot = currentSnapshot();
+    if (
+      !snapshot ||
+      !isFreshTronWalletConnectSessionTimestamp(snapshot.connectedAtMs)
+    ) {
+      clearSession();
+      throw new Error("Reconnect your TRON wallet before signing.");
+    }
     const connector = await getConnector();
     const activeSession = connector.provider.session as
       | WalletConnectSessionLike
       | null
       | undefined;
-    const snapshot = walletConnectSessionFromAddress(
-      address.value,
-      sessionTopic.value || null,
-    );
     if (!tronWalletConnectSessionMatchesSnapshot(activeSession, snapshot)) {
-      address.value = "";
-      sessionTopic.value = "";
-      writeStoredTronWalletConnectSession(null);
+      clearSession();
       throw new Error("Reconnect your TRON wallet before signing.");
     }
+    const transactionForWallet =
+      cloneTronWalletConnectTransactionRequest(transaction);
     return connector.request(
       {
         method: WALLETCONNECT_TRON_SIGN_METHOD,
         params: {
           address: address.value,
-          transaction,
+          transaction: transactionForWallet,
         },
       },
       TRON_MAINNET_CAIP_CHAIN_ID,
@@ -339,6 +656,7 @@ export const useTronWalletConnect = () => {
     disconnecting,
     error,
     projectConfigured,
+    projectConfigurationError,
     projectId,
     shortAddress,
     connect,

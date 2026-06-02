@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   loadTronSccpProveFn,
   loadTronSccpSourceProveFn,
+  normalizeTronSccpProverModuleUrl,
   pickTronSccpProveFn,
   pickTronSccpSourceProveFn,
   type TronSccpProverModule,
@@ -112,6 +113,66 @@ describe("SCCP TRON prover linker", () => {
     );
   });
 
+  it("normalizes only production-safe or local-development prover module URLs", () => {
+    expect(
+      normalizeTronSccpProverModuleUrl(
+        " https://cdn.example.invalid/sccp-tron-prover.js ",
+      ),
+    ).toBe("https://cdn.example.invalid/sccp-tron-prover.js");
+    expect(normalizeTronSccpProverModuleUrl("/sccp-tron-prover.js")).toBe(
+      "/sccp-tron-prover.js",
+    );
+    expect(normalizeTronSccpProverModuleUrl("./sccp-tron-prover.js")).toBe(
+      "./sccp-tron-prover.js",
+    );
+    expect(
+      normalizeTronSccpProverModuleUrl(
+        "http://127.0.0.1:5173/sccp-tron-prover.js",
+      ),
+    ).toBe("http://127.0.0.1:5173/sccp-tron-prover.js");
+
+    for (const unsafeUrl of [
+      "data:text/javascript,export default ()=>{}",
+      "javascript:alert(1)",
+      "file:///tmp/sccp-tron-prover.js",
+      "http://cdn.example.invalid/sccp-tron-prover.js",
+      "//cdn.example.invalid/sccp-tron-prover.js",
+      "https://user:pass@cdn.example.invalid/sccp-tron-prover.js",
+      "https://cdn.example.invalid/sccp-tron-prover.js?token=secret",
+      "https://cdn.example.invalid/sccp-tron-prover.js#debug",
+      "/sccp-tron-prover.js?token=secret",
+      "./sccp-tron-prover.js#debug",
+      "https://cdn.example.invalid/sccp tron prover.js",
+      "cdn.example.invalid/sccp-tron-prover.js",
+    ]) {
+      expect(() => normalizeTronSccpProverModuleUrl(unsafeUrl)).toThrow(
+        /SCCP prover module URL/u,
+      );
+    }
+  });
+
+  it("rejects unsafe destination prover module URLs before importing", async () => {
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadTronSccpProveFn({
+        globalScope: {},
+        moduleUrl: "data:text/javascript,export default ()=>{}",
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module URL/u);
+    expect(importer).not.toHaveBeenCalled();
+
+    await expect(
+      loadTronSccpProveFn({
+        globalScope: {},
+        moduleUrl: "/sccp-tron-prover.js?token=secret",
+        importer,
+      }),
+    ).rejects.toThrow(/query strings or fragments/u);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
   it("propagates prover module import failures", async () => {
     const importer = vi
       .fn<(moduleUrl: string) => Promise<TronSccpProverModule>>()
@@ -186,6 +247,19 @@ describe("SCCP TRON prover linker", () => {
         importer,
       }),
     ).resolves.toBe(prove);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe TRON source prover module URLs before importing", async () => {
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadTronSccpSourceProveFn({
+        globalScope: {},
+        moduleUrl: "http://cdn.example.invalid/sccp-tron-source-prover.js",
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module URL/u);
     expect(importer).not.toHaveBeenCalled();
   });
 });

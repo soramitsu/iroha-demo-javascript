@@ -222,6 +222,9 @@ const encodeVec = <T>(values: T[], encodeItem: (value: T) => Uint8Array) => {
 const encodeByteVec = (bytes: Uint8Array) =>
   concatBytes(encodeU64(bytes.length), bytes);
 
+const encodeLegacyByteVec = (bytes: Uint8Array) =>
+  encodeVec(Array.from(bytes), (byte) => Uint8Array.of(byte));
+
 const encodeOption = <T>(
   value: T | null | undefined,
   encodeItem: (value: T) => Uint8Array,
@@ -408,8 +411,8 @@ const encodeWalletSignaturePayload = (payload: {
 }) => {
   const signatureBytes = base64ToBytes(payload.signatureBase64);
   return encodeStruct([
-    Uint8Array.of(payload.algorithmCode),
-    encodeByteVec(signatureBytes),
+    encodeU32(payload.algorithmCode),
+    encodeLegacyByteVec(signatureBytes),
   ]);
 };
 

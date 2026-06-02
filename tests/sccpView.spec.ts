@@ -3,10 +3,22 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { nextTick } from "vue";
 import { AccountAddress } from "@iroha/iroha-js";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { sha256 } from "@noble/hashes/sha256";
+import { keccak_256 } from "@noble/hashes/sha3";
 import SccpView from "@/views/SccpView.vue";
 import { useSessionStore } from "@/stores/session";
-import { TAIRA_CHAIN_ID, TAIRA_NETWORK_PREFIX } from "@/constants/chains";
-import { TRON_MAINNET_NETWORK_ID_HEX } from "@/utils/sccp";
+import {
+  TAIRA_CHAIN_ID,
+  TAIRA_EXPLORER_URL,
+  TAIRA_NETWORK_PREFIX,
+} from "@/constants/chains";
+import {
+  decodeTronBase58CheckAddress,
+  tairaXorBurnToTairaCallData,
+  TRON_MAINNET_NETWORK_ID_HEX,
+  TRON_MAINNET_TRONSCAN_URL,
+} from "@/utils/sccp";
 import {
   canonicalSccpTransferPayloadBytes,
   SCCP_CODEC_TEXT_UTF8,
@@ -14,10 +26,15 @@ import {
   sccpPayloadHash,
   sccpTransferMessageId,
   tairaXorBurnSourceEventDigest,
+  tairaXorRouteIdHash,
+  tairaXorAssetKeyHash,
   tronSccpDestinationBinding,
 } from "@iroha/iroha-js/sccp";
 
-const VALID_TRON_ADDRESS = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8";
+const VALID_TRON_ADDRESS = "TGkWdpawVNfeset3P6uTBbLaPY7nZVZvXY";
+const TRON_TOKEN_ADDRESS = "TD5gsCwxykWsLN9aPrq2TAfNjByuZKYp4E";
+const TRON_SOURCE_BRIDGE_ADDRESS = "TEdvoHEatmDKvTh3o9vBRB9Vdtbhn4QFhy";
+const TRON_VERIFIER_ADDRESS = "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv";
 const TAIRA_ACCOUNT_PUBLIC_KEY_HEX = "12".repeat(32);
 const TAIRA_ACCOUNT_ID = AccountAddress.fromAccount({
   publicKey: Uint8Array.from({ length: 32 }, () => 0x12),
@@ -25,14 +42,33 @@ const TAIRA_ACCOUNT_ID = AccountAddress.fromAccount({
 const SORA_ACCOUNT_ID = AccountAddress.fromAccount({
   publicKey: Uint8Array.from({ length: 32 }, () => 0x12),
 }).toI105(753);
-const MESSAGE_ID = `0x${"11".repeat(32)}`;
-const PAYLOAD_HASH = `0x${"22".repeat(32)}`;
+const BRIDGE_AMOUNT_BASE_UNITS = "100000000000000";
+const TAIRA_TO_TRON_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: 0,
+  dest_domain: 5,
+  nonce: "7",
+  asset_home_domain: 0,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: TAIRA_ACCOUNT_ID,
+  recipient_codec: SCCP_CODEC_TRON_BASE58CHECK,
+  recipient: VALID_TRON_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: "taira_tron_xor",
+};
+const MESSAGE_ID = sccpTransferMessageId(TAIRA_TO_TRON_TRANSFER_PAYLOAD);
+const PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpTransferPayloadBytes(TAIRA_TO_TRON_TRANSFER_PAYLOAD),
+);
 const COMMITMENT_ROOT = `0x${"33".repeat(32)}`;
 const FINALITY_BLOCK_HASH = `0x${"44".repeat(32)}`;
+const TRON_SOLID_BLOCK_NUMBER = 12;
 const VERIFIER_CODE_HASH = `0x${"66".repeat(32)}`;
 const VERIFIER_KEY_HASH = `0x${"77".repeat(32)}`;
-const TRON_TX_ID = "aa".repeat(32);
-const BRIDGE_AMOUNT_BASE_UNITS = "100000000000000";
+const TRON_SIGNING_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const TRON_TO_TAIRA_NONCE = "9";
 const TRON_SOURCE_EVENT_DIGEST = tairaXorBurnSourceEventDigest({
   bridgeAddress: VALID_TRON_ADDRESS,
@@ -41,20 +77,158 @@ const TRON_SOURCE_EVENT_DIGEST = tairaXorBurnSourceEventDigest({
   amount: BRIDGE_AMOUNT_BASE_UNITS,
   nonce: TRON_TO_TAIRA_NONCE,
 });
+const TRON_BURN_CALL_DATA = tairaXorBurnToTairaCallData({
+  tairaRecipient: TAIRA_ACCOUNT_ID,
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+});
 const NETWORK_ID = TRON_MAINNET_NETWORK_ID_HEX;
 const BINDING_KEY = `tron:0:5:${NETWORK_ID.slice(
   2,
-)}:${VALID_TRON_ADDRESS}:${VERIFIER_CODE_HASH}:${VERIFIER_KEY_HASH}`;
+)}:${TRON_VERIFIER_ADDRESS}:${VERIFIER_CODE_HASH}:${VERIFIER_KEY_HASH}`;
 const BINDING_HASH = tronSccpDestinationBinding({
   version: 1,
   key: BINDING_KEY,
   sourceDomain: 0,
   targetDomain: 5,
   networkId: NETWORK_ID,
-  verifierAddress: VALID_TRON_ADDRESS,
+  verifierAddress: TRON_VERIFIER_ADDRESS,
   verifierCodeHash: VERIFIER_CODE_HASH,
   verifierKeyHash: VERIFIER_KEY_HASH,
 }).bindingHash;
+
+const bytesToHex = (bytes: Uint8Array): string =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+const tronBlockIdForHeight = (height: number, suffixByte = "44"): string =>
+  `0x${height.toString(16).padStart(16, "0")}${suffixByte.repeat(24)}`;
+
+const hexToBytes = (hex: string): Uint8Array =>
+  Uint8Array.from(
+    hex
+      .trim()
+      .replace(/^0x/u, "")
+      .match(/.{2}/gu)
+      ?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+  );
+
+const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
+  const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+};
+
+const protobufVarint = (value: number | bigint): Uint8Array => {
+  let remaining = BigInt(value);
+  const out: number[] = [];
+  do {
+    let byte = Number(remaining & 0x7fn);
+    remaining >>= 7n;
+    if (remaining > 0n) {
+      byte |= 0x80;
+    }
+    out.push(byte);
+  } while (remaining > 0n);
+  return Uint8Array.from(out);
+};
+
+const protobufFieldKey = (fieldNumber: number, wireType: number): Uint8Array =>
+  protobufVarint((BigInt(fieldNumber) << 3n) | BigInt(wireType));
+
+const protobufBytesField = (
+  fieldNumber: number,
+  value: Uint8Array,
+): Uint8Array =>
+  concatBytes(
+    protobufFieldKey(fieldNumber, 2),
+    protobufVarint(value.length),
+    value,
+  );
+
+const protobufU64Field = (
+  fieldNumber: number,
+  value: number | bigint,
+): Uint8Array =>
+  concatBytes(protobufFieldKey(fieldNumber, 0), protobufVarint(value));
+
+const buildTronTriggerRawDataHex = (input: {
+  ownerAddress?: string;
+  contractAddress?: string;
+  dataHex: string;
+}): string => {
+  const owner = decodeTronBase58CheckAddress(
+    input.ownerAddress ?? VALID_TRON_ADDRESS,
+  );
+  const contract = decodeTronBase58CheckAddress(
+    input.contractAddress ?? VALID_TRON_ADDRESS,
+  );
+  const trigger = concatBytes(
+    protobufBytesField(1, owner),
+    protobufBytesField(2, contract),
+    protobufBytesField(4, hexToBytes(input.dataHex)),
+  );
+  const any = concatBytes(
+    protobufBytesField(
+      1,
+      new TextEncoder().encode(
+        "type.googleapis.com/protocol.TriggerSmartContract",
+      ),
+    ),
+    protobufBytesField(2, trigger),
+  );
+  const contractEntry = concatBytes(
+    protobufU64Field(1, 31n),
+    protobufBytesField(2, any),
+  );
+  return bytesToHex(
+    concatBytes(
+      protobufBytesField(1, Uint8Array.from([0x12, 0x34])),
+      protobufBytesField(
+        4,
+        Uint8Array.from({ length: 8 }, () => 0x56),
+      ),
+      protobufU64Field(8, 123_456_789n),
+      protobufBytesField(11, contractEntry),
+      protobufU64Field(14, 123_450_000n),
+      protobufU64Field(18, 50_000_000n),
+    ),
+  ).slice(2);
+};
+
+const tronTxIdFromRawDataHex = (rawDataHex: string): string =>
+  bytesToHex(sha256(hexToBytes(rawDataHex))).slice(2);
+
+const DEFAULT_TRON_RAW_DATA_HEX = buildTronTriggerRawDataHex({
+  dataHex: TRON_BURN_CALL_DATA,
+});
+const TRON_TX_ID = tronTxIdFromRawDataHex(DEFAULT_TRON_RAW_DATA_HEX);
+
+const signTronRawDataHex = (rawDataHex: string): string => {
+  const signature = secp256k1.sign(
+    sha256(hexToBytes(rawDataHex)),
+    TRON_SIGNING_PRIVATE_KEY,
+    {
+      prehash: false,
+      lowS: true,
+    },
+  );
+  const out = new Uint8Array(65);
+  out.set(signature.toCompactRawBytes());
+  out[64] = signature.recovery;
+  return Array.from(out, (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const tronAbiAddressWord = (address: string): string =>
+  `${"0".repeat(24)}${bytesToHex(decodeTronBase58CheckAddress(address)).slice(
+    4,
+  )}`;
+
+const TRON_TO_TAIRA_RECIPIENT_HASH = bytesToHex(
+  keccak_256(new TextEncoder().encode(TAIRA_ACCOUNT_ID)),
+);
 
 const getSccpCapabilitiesMock = vi.fn();
 const getSccpProofManifestsMock = vi.fn();
@@ -175,7 +349,7 @@ const sampleMessageProofJob = (): Record<string, unknown> => ({
       sender: { kind: "TextUtf8", value: TAIRA_ACCOUNT_ID },
       recipient: {
         kind: "TronBase58Check",
-        payload: "0x415cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb",
+        payload: bytesToHex(decodeTronBase58CheckAddress(VALID_TRON_ADDRESS)),
       },
     },
   },
@@ -192,46 +366,112 @@ const sampleMessageProofJob = (): Record<string, unknown> => ({
     merkleProof: { steps: [] },
     payload: {
       kind: "Transfer",
-      value: {
-        version: 1,
-        source_domain: 0,
-        dest_domain: 5,
-        nonce: "7",
-        asset_home_domain: 0,
-        asset_id_codec: 1,
-        asset_id: "xor",
-        amount: "100000000000000",
-        sender_codec: 1,
-        sender: TAIRA_ACCOUNT_ID,
-        recipient_codec: 5,
-        recipient: VALID_TRON_ADDRESS,
-        route_id_codec: 1,
-        route_id: "taira_tron_xor",
-      },
+      value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
     },
     finalityProof: "0x010203",
   },
 });
 
-const sampleTronFinalityData = (): Record<string, unknown> => ({
-  solidBlock: {
-    blockID: FINALITY_BLOCK_HASH,
-    block_header: {
-      raw_data: {
-        number: 12,
+const sampleTronFinalityData = (
+  mutate?: (finality: Record<string, unknown>) => void,
+): Record<string, unknown> => {
+  const finality = {
+    solidBlock: {
+      blockID: tronBlockIdForHeight(TRON_SOLID_BLOCK_NUMBER),
+      block_header: {
+        raw_data: {
+          number: TRON_SOLID_BLOCK_NUMBER,
+        },
       },
     },
-  },
-  witnesses: {
-    witnesses: [{ address: VALID_TRON_ADDRESS }],
-  },
-});
+    witnesses: {
+      witnesses: [{ address: VALID_TRON_ADDRESS }],
+    },
+  };
+  mutate?.(finality);
+  return finality;
+};
+
+const sampleUnfinalizedTronSourceData = (): Record<string, unknown> =>
+  sampleTronFinalityData((finality) => {
+    const solidBlock = finality.solidBlock as Record<string, unknown>;
+    const blockHeader = solidBlock.block_header as Record<string, unknown>;
+    const rawData = blockHeader.raw_data as Record<string, unknown>;
+    rawData.number = 1;
+    solidBlock.blockID = tronBlockIdForHeight(1);
+  });
 
 const sampleTronTransaction = (): Record<string, unknown> => ({
   txID: TRON_TX_ID,
-  raw_data_hex: "12",
-  signature: ["12".repeat(65)],
+  raw_data_hex: DEFAULT_TRON_RAW_DATA_HEX,
+  raw_data: {
+    contract: [
+      {
+        type: "TriggerSmartContract",
+        parameter: {
+          type_url: "type.googleapis.com/protocol.TriggerSmartContract",
+          value: {
+            owner_address: bytesToHex(
+              decodeTronBase58CheckAddress(VALID_TRON_ADDRESS),
+            ),
+            contract_address: bytesToHex(
+              decodeTronBase58CheckAddress(VALID_TRON_ADDRESS),
+            ),
+            data: TRON_BURN_CALL_DATA,
+          },
+        },
+      },
+    ],
+  },
+  signature: [signTronRawDataHex(DEFAULT_TRON_RAW_DATA_HEX)],
 });
+
+const sampleUnsignedTronTransaction = (): Record<string, unknown> => {
+  const transaction = { ...sampleTronTransaction() };
+  delete transaction.signature;
+  return transaction;
+};
+
+const sampleUnsignedTronTransactionForTrigger = (
+  trigger: Record<string, unknown>,
+): Record<string, unknown> => {
+  const transaction = sampleUnsignedTronTransaction();
+  const ownerAddress = String(trigger.ownerAddress ?? "");
+  const contractAddress = String(trigger.contractAddress ?? "");
+  const callData = String(trigger.callData ?? "")
+    .trim()
+    .replace(/^0x/iu, "")
+    .toLowerCase();
+  transaction.raw_data_hex = buildTronTriggerRawDataHex({
+    ownerAddress,
+    contractAddress,
+    dataHex: callData,
+  });
+  transaction.txID = tronTxIdFromRawDataHex(String(transaction.raw_data_hex));
+  const value = (
+    (
+      (transaction.raw_data as Record<string, unknown>).contract as Array<
+        Record<string, unknown>
+      >
+    )[0].parameter as Record<string, unknown>
+  ).value as Record<string, unknown>;
+  value.owner_address = bytesToHex(decodeTronBase58CheckAddress(ownerAddress));
+  value.contract_address = bytesToHex(
+    decodeTronBase58CheckAddress(contractAddress),
+  );
+  value.data = callData;
+  return transaction;
+};
+
+const mockSuccessfulTronBroadcast = (): void => {
+  broadcastTronTransactionMock.mockImplementation(
+    (input: { transaction?: { txID?: unknown; txid?: unknown } }) =>
+      Promise.resolve({
+        result: true,
+        txid: String(input.transaction?.txID ?? input.transaction?.txid ?? ""),
+      }),
+  );
+};
 
 const sampleTronReceipt = (): Record<string, unknown> => ({
   id: TRON_TX_ID,
@@ -248,12 +488,16 @@ const sampleTronEvents = (
     data: [
       {
         transaction_id: TRON_TX_ID,
-        event_name: "BurnToTaira",
+        event_name: "TairaXorBurnStarted",
         contract_address: VALID_TRON_ADDRESS,
         result: {
           sourceEventDigest: TRON_SOURCE_EVENT_DIGEST,
           burner: VALID_TRON_ADDRESS,
+          tairaRecipientHash: TRON_TO_TAIRA_RECIPIENT_HASH,
           amount: BRIDGE_AMOUNT_BASE_UNITS,
+          nonce: TRON_TO_TAIRA_NONCE,
+          routeIdHash: tairaXorRouteIdHash(),
+          assetKeyHash: tairaXorAssetKeyHash(),
           tairaRecipient: `0x${Array.from(
             new TextEncoder().encode(TAIRA_ACCOUNT_ID),
             (byte) => byte.toString(16).padStart(2, "0"),
@@ -320,6 +564,30 @@ const sampleTronToTairaSourceProofPackage = (
   return proofPackage;
 };
 
+const sampleTairaToTronProofPackage = (): Record<string, unknown> => {
+  const canonicalPayloadHex = bytesToHex(
+    canonicalSccpTransferPayloadBytes(TAIRA_TO_TRON_TRANSFER_PAYLOAD),
+  );
+  return {
+    canonicalPayloadHex,
+    submission: {
+      proofBytes: "0x010203",
+      statementHash: `0x${"55".repeat(32)}`,
+      canonicalPayloadHex,
+      publicInputs: {
+        version: 1,
+        messageId: MESSAGE_ID,
+        payloadHash: PAYLOAD_HASH,
+        targetDomain: 5,
+        commitmentRoot: COMMITMENT_ROOT,
+        finalityHeight: 10,
+        finalityBlockHash: FINALITY_BLOCK_HASH,
+        destinationBindingHash: BINDING_HASH,
+      },
+    },
+  };
+};
+
 const storeConnectedTronWallet = (
   options: { projectConfigured?: boolean } = {},
 ) => {
@@ -348,14 +616,15 @@ const sampleReadyManifestSet = () => ({
       routeId: "taira_tron_xor",
       assetKey: "xor",
       tronBridgeAddress: VALID_TRON_ADDRESS,
-      tronTokenAddress: VALID_TRON_ADDRESS,
+      tronTokenAddress: TRON_TOKEN_ADDRESS,
+      sccpTronSourceBridgeAddress: TRON_SOURCE_BRIDGE_ADDRESS,
       destinationBinding: {
         version: 1,
         key: BINDING_KEY,
         bindingHash: BINDING_HASH,
       },
       destinationRollout: {
-        verifierIdentity: VALID_TRON_ADDRESS,
+        verifierIdentity: TRON_VERIFIER_ADDRESS,
         verifierCodeHash: VERIFIER_CODE_HASH,
         verifierKeyHash: VERIFIER_KEY_HASH,
         destinationNetworkId: NETWORK_ID,
@@ -364,15 +633,185 @@ const sampleReadyManifestSet = () => ({
       },
       tairaXorBurnRecord: {
         settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-        contractArtifactB64: "TnJ0MA==",
+        contractArtifactB64: "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==",
         vkRef: {
           backend: "halo2/ipa",
           name: "taira-xor-burn-record-v1",
         },
+        gasLimit: 123456,
       },
     },
   ],
 });
+
+const mockSuccessfulTairaToTronTargetStack = () => {
+  let unsignedTransaction = sampleUnsignedTronTransaction();
+  const requestMock = vi
+    .fn()
+    .mockImplementation(
+      async (request: {
+        method: string;
+        params: { transaction: Record<string, unknown> };
+      }) => ({
+        ...request.params.transaction,
+        signature: [
+          signTronRawDataHex(String(request.params.transaction.raw_data_hex)),
+        ],
+      }),
+    );
+  vi.doMock("@reown/appkit-universal-connector", () => ({
+    UniversalConnector: {
+      init: vi.fn().mockResolvedValue({
+        disconnect: vi.fn(),
+        provider: {
+          session: {
+            topic: "topic",
+            namespaces: {
+              tron: {
+                accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                methods: ["tron_signTransaction"],
+              },
+            },
+            sessionProperties: {
+              tron_method_version: "v1",
+            },
+          },
+        },
+        request: requestMock,
+      }),
+    },
+  }));
+  deriveZkIvmPayloadMock.mockResolvedValue({ proved: { overlay: [] } });
+  startZkIvmProveJobMock.mockResolvedValue({
+    job_id: "11".repeat(16),
+  });
+  getZkIvmProveJobMock.mockResolvedValue({
+    status: "done",
+    proved: { overlay: [] },
+    attachment: {
+      backend: "halo2/ipa",
+      proof: {
+        backend: "halo2/ipa",
+        bytes: "0x01",
+      },
+      vk_ref: {
+        backend: "halo2/ipa",
+        name: "taira-xor-burn-record-v1",
+      },
+    },
+  });
+  submitZkIvmProvedTransactionMock.mockResolvedValue({
+    tx_hash_hex: "88".repeat(32),
+  });
+  triggerTronSmartContractMock.mockImplementation((trigger) => {
+    unsignedTransaction = sampleUnsignedTronTransactionForTrigger(
+      trigger as Record<string, unknown>,
+    );
+    return Promise.resolve({
+      transaction: unsignedTransaction,
+    });
+  });
+  mockSuccessfulTronBroadcast();
+  vi.stubGlobal(
+    "Worker",
+    vi.fn().mockImplementation(function WorkerMock(this: {
+      onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+      onerror: null;
+      terminate: () => void;
+      postMessage: (message: { id: string; kind: string }) => void;
+    }) {
+      this.onmessage = null;
+      this.onerror = null;
+      this.terminate = vi.fn();
+      this.postMessage = (message: { id: string; kind: string }) => {
+        expect(message.kind).toBe("prove-tron-proof-package");
+        this.onmessage?.({
+          data: {
+            id: message.id,
+            ok: true,
+            result: sampleTairaToTronProofPackage(),
+          },
+        });
+      };
+    }),
+  );
+  return {
+    requestMock,
+    get unsignedTransaction() {
+      return unsignedTransaction;
+    },
+  };
+};
+
+const mockSuccessfulTronToTairaBridgeStack = (
+  proofPackage: Record<string, unknown> = sampleTronToTairaSourceProofPackage(),
+) => {
+  const requestMock = vi
+    .fn()
+    .mockImplementation(
+      async (request: {
+        method: string;
+        params: { transaction: Record<string, unknown> };
+      }) => ({
+        ...request.params.transaction,
+        signature: [
+          signTronRawDataHex(String(request.params.transaction.raw_data_hex)),
+        ],
+      }),
+    );
+  vi.doMock("@reown/appkit-universal-connector", () => ({
+    UniversalConnector: {
+      init: vi.fn().mockResolvedValue({
+        disconnect: vi.fn(),
+        provider: {
+          session: {
+            topic: "topic",
+            namespaces: {
+              tron: {
+                accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                methods: ["tron_signTransaction"],
+              },
+            },
+            sessionProperties: {
+              tron_method_version: "v1",
+            },
+          },
+        },
+        request: requestMock,
+      }),
+    },
+  }));
+  triggerTronSmartContractMock.mockImplementation((trigger) =>
+    Promise.resolve({
+      transaction: sampleUnsignedTronTransactionForTrigger(
+        trigger as Record<string, unknown>,
+      ),
+    }),
+  );
+  mockSuccessfulTronBroadcast();
+  const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+    onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+    onerror: null;
+    terminate: () => void;
+    postMessage: (message: { id: string; kind: string }) => void;
+  }) {
+    this.onmessage = null;
+    this.onerror = null;
+    this.terminate = vi.fn();
+    this.postMessage = (message: { id: string; kind: string }) => {
+      expect(message.kind).toBe("prove-tron-source-package");
+      this.onmessage?.({
+        data: {
+          id: message.id,
+          ok: true,
+          result: proofPackage,
+        },
+      });
+    };
+  });
+  vi.stubGlobal("Worker", workerCtor);
+  return { requestMock, proofPackage, workerCtor };
+};
 
 describe("SccpView", () => {
   beforeEach(() => {
@@ -430,6 +869,7 @@ describe("SccpView", () => {
   });
 
   afterEach(() => {
+    vi.doUnmock("@reown/appkit-universal-connector");
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -509,10 +949,9 @@ describe("SccpView", () => {
     });
     expect(triggerTronConstantContractMock).toHaveBeenCalledWith({
       ownerAddress: VALID_TRON_ADDRESS,
-      contractAddress: VALID_TRON_ADDRESS,
+      contractAddress: TRON_TOKEN_ADDRESS,
       functionSelector: "balanceOf(address)",
-      parameter:
-        "0000000000000000000000005cbdd86a2fa8dc4bddd8a8f69dba48572eec07fb",
+      parameter: tronAbiAddressWord(VALID_TRON_ADDRESS),
     });
   });
 
@@ -554,6 +993,44 @@ describe("SccpView", () => {
     expect(startZkIvmProveJobMock).not.toHaveBeenCalled();
     expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
     expect(submitZkIvmProvedTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps bridge actions disabled when WalletConnect config is invalid", async () => {
+    storeConnectedTronWallet();
+    vi.stubEnv(
+      "VITE_WALLETCONNECT_PROJECT_ID",
+      "https://walletconnect.example/project",
+    );
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("WalletConnect misconfigured");
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await inputs[2].setValue(MESSAGE_ID);
+
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> TRON"));
+    expect(prepareButton).toBeTruthy();
+    expect(prepareButton!.attributes("disabled")).toBeDefined();
+
+    await prepareButton!.trigger("click");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+    );
+    expect(getSccpMessageProofJobMock).not.toHaveBeenCalled();
+    expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
   });
 
   it("reloads SCCP route data when only the Torii URL changes", async () => {
@@ -786,7 +1263,7 @@ describe("SccpView", () => {
         verifierCodeHashHex: VERIFIER_CODE_HASH,
         verifierKeyHashHex: VERIFIER_KEY_HASH,
         expectedDestinationBindingHashHex: BINDING_HASH,
-        tronVerifierAddress: VALID_TRON_ADDRESS,
+        tronVerifierAddress: TRON_VERIFIER_ADDRESS,
       }),
     );
     expect(wrapper.text()).toContain("TRON SCCP Groth16 prover is not linked");
@@ -841,6 +1318,155 @@ describe("SccpView", () => {
 
     expect(wrapper.text()).toContain("SCCP proof worker timed out");
     expect(terminateMock).toHaveBeenCalledOnce();
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not request TRON wallet approval when the gateway returns a mismatched finalize transaction", async () => {
+    storeConnectedTronWallet();
+    const { requestMock } = mockSuccessfulTairaToTronTargetStack();
+    getSccpMessageProofJobMock.mockResolvedValue(sampleMessageProofJob());
+    triggerTronSmartContractMock.mockImplementationOnce((trigger) =>
+      Promise.resolve({
+        transaction: sampleUnsignedTronTransactionForTrigger({
+          ...(trigger as Record<string, unknown>),
+          contractAddress: TRON_TOKEN_ADDRESS,
+        }),
+      }),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await inputs[2].setValue(MESSAGE_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Unsigned TRON bridge transaction contract does not match the requested bridge contract.",
+    );
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not request TRON wallet approval if the route context changes during TAIRA finalization", async () => {
+    storeConnectedTronWallet();
+    getSccpMessageProofJobMock.mockResolvedValue(sampleMessageProofJob());
+    const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+      onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+      onerror: null;
+      terminate: () => void;
+      postMessage: (message: { id: string; kind: string }) => void;
+    }) {
+      this.onmessage = null;
+      this.onerror = null;
+      this.terminate = vi.fn();
+      this.postMessage = (message: { id: string; kind: string }) => {
+        expect(message.kind).toBe("prove-tron-proof-package");
+        const session = useSessionStore();
+        session.$patch({
+          connection: {
+            ...session.connection,
+            toriiUrl: "https://rotated-taira.sora.org",
+          },
+        });
+        this.onmessage?.({
+          data: {
+            id: message.id,
+            ok: true,
+            result: sampleTairaToTronProofPackage(),
+          },
+        });
+      };
+    });
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await inputs[2].setValue(MESSAGE_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("SCCP bridge context changed");
+    expect(workerCtor).toHaveBeenCalledOnce();
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not submit the TAIRA source transaction if route context changes during ZK proof polling", async () => {
+    storeConnectedTronWallet();
+    deriveZkIvmPayloadMock.mockResolvedValue({ proved: { overlay: [] } });
+    startZkIvmProveJobMock.mockResolvedValue({
+      job_id: "11".repeat(16),
+    });
+    getZkIvmProveJobMock.mockImplementationOnce(() => {
+      const session = useSessionStore();
+      session.$patch({
+        connection: {
+          ...session.connection,
+          toriiUrl: "https://rotated-taira.sora.org",
+        },
+      });
+      return Promise.resolve({
+        status: "done",
+        proved: { overlay: [] },
+        attachment: {
+          backend: "halo2/ipa",
+          proof: {
+            backend: "halo2/ipa",
+            bytes: "0x01",
+          },
+          vk_ref: {
+            backend: "halo2/ipa",
+            name: "taira-xor-burn-record-v1",
+          },
+        },
+      });
+    });
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(getZkIvmProveJobMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      jobId: "11".repeat(16),
+    });
+    expect(wrapper.text()).toContain("SCCP bridge context changed");
+    expect(submitZkIvmProvedTransactionMock).not.toHaveBeenCalled();
     expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
     expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
   });
@@ -928,6 +1554,48 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 
+  it("does not request TRON wallet approval when the gateway returns a mismatched burn transaction", async () => {
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "tron-mismatched-burn");
+    const { requestMock, workerCtor } = mockSuccessfulTronToTairaBridgeStack();
+    triggerTronSmartContractMock.mockImplementationOnce((trigger) =>
+      Promise.resolve({
+        transaction: sampleUnsignedTronTransactionForTrigger({
+          ...(trigger as Record<string, unknown>),
+          callData: "0xfeedface",
+        }),
+      }),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "Unsigned TRON bridge transaction call data does not match the requested bridge action.",
+    );
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
+    expect(getTronTransactionMock).not.toHaveBeenCalled();
+    expect(workerCtor).not.toHaveBeenCalled();
+  });
+
   it("collects TRON source data before failing closed without a source prover", async () => {
     storeConnectedTronWallet();
     vi.stubGlobal(
@@ -972,7 +1640,7 @@ describe("SccpView", () => {
     const inputs = wrapper.findAll("input");
     await inputs[0].setValue("0.0001");
     await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue("aa".repeat(32));
+    await inputs[3].setValue(TRON_TX_ID);
     const fetchButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Fetch proof job"));
@@ -981,13 +1649,13 @@ describe("SccpView", () => {
     await flushPromises();
 
     expect(getTronTransactionMock).toHaveBeenCalledWith({
-      txId: "aa".repeat(32),
+      txId: TRON_TX_ID,
     });
     expect(getTronTransactionReceiptMock).toHaveBeenCalledWith({
-      txId: "aa".repeat(32),
+      txId: TRON_TX_ID,
     });
     expect(getTronTransactionEventsMock).toHaveBeenCalledWith({
-      txId: "aa".repeat(32),
+      txId: TRON_TX_ID,
     });
     expect(getTronFinalityDataMock).toHaveBeenCalled();
     expect(wrapper.text()).toContain("source prover is not linked");
@@ -1034,7 +1702,7 @@ describe("SccpView", () => {
     const inputs = wrapper.findAll("input");
     await inputs[0].setValue("0.0001");
     await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue("aa".repeat(32));
+    await inputs[3].setValue(TRON_TX_ID);
     const fetchButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Fetch proof job"));
@@ -1105,13 +1773,81 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 
+  it("does not submit TAIRA settlement if the route context changes during TRON source proofing", async () => {
+    storeConnectedTronWallet();
+    const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+      onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+      onerror: null;
+      terminate: () => void;
+      postMessage: (message: { id: string; kind: string }) => void;
+    }) {
+      this.onmessage = null;
+      this.onerror = null;
+      this.terminate = vi.fn();
+      this.postMessage = (message: { id: string; kind: string }) => {
+        expect(message.kind).toBe("prove-tron-source-package");
+        const session = useSessionStore();
+        session.$patch({
+          connection: {
+            ...session.connection,
+            toriiUrl: "https://rotated-taira.sora.org",
+          },
+        });
+        this.onmessage?.({
+          data: {
+            id: message.id,
+            ok: true,
+            result: sampleTronToTairaSourceProofPackage(),
+          },
+        });
+      };
+    });
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(TRON_TX_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("SCCP bridge context changed");
+    expect(workerCtor).toHaveBeenCalledOnce();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
   it("rebinds source worker packages to the original TRON source event", async () => {
     storeConnectedTronWallet();
     getTronTransactionEventsMock.mockResolvedValue(
       sampleTronEvents((events) => {
         const event = (events.data as Record<string, unknown>[])[0];
+        (event.result as Record<string, unknown>).nonce = "10";
         (event.result as Record<string, unknown>).sourceEventDigest =
-          `0x${"55".repeat(32)}`;
+          tairaXorBurnSourceEventDigest({
+            bridgeAddress: VALID_TRON_ADDRESS,
+            burnerAddress: VALID_TRON_ADDRESS,
+            tairaRecipient: TAIRA_ACCOUNT_ID,
+            amount: BRIDGE_AMOUNT_BASE_UNITS,
+            nonce: "10",
+          });
       }),
     );
     vi.stubGlobal(
@@ -1213,7 +1949,7 @@ describe("SccpView", () => {
     const inputs = wrapper.findAll("input");
     await inputs[0].setValue("0.0001");
     await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue("aa".repeat(32));
+    await inputs[3].setValue(TRON_TX_ID);
     const fetchButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Fetch proof job"));
@@ -1229,5 +1965,515 @@ describe("SccpView", () => {
     });
     expect(wrapper.text()).toContain("TAIRA settlement submitted");
     expect(wrapper.text()).toContain("TAIRA settlement transaction");
+    const settlementLink = wrapper
+      .findAll("a")
+      .find((link) => link.text() === "TAIRA settlement transaction");
+    expect(settlementLink?.attributes("href")).toBe(
+      `${TAIRA_EXPLORER_URL}/transactions/${"99".repeat(32)}`,
+    );
+  });
+
+  it("does not render a generic TAIRA settlement link when the response hash is invalid", async () => {
+    storeConnectedTronWallet();
+    submitSccpBridgeMessageMock.mockResolvedValue({
+      tx_hash_hex: "not-a-transaction-hash",
+    });
+    mockSuccessfulTronToTairaBridgeStack();
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(TRON_TX_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("TAIRA settlement submitted");
+    expect(
+      wrapper
+        .findAll("a")
+        .some((link) => link.text() === "TAIRA settlement transaction"),
+    ).toBe(false);
+  });
+
+  it("continues TRON burn broadcast through automatic TAIRA settlement after finality indexing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "tron-auto-settle-project");
+    const { requestMock, proofPackage } =
+      mockSuccessfulTronToTairaBridgeStack();
+    getTronFinalityDataMock
+      .mockResolvedValueOnce(sampleTronFinalityData())
+      .mockResolvedValueOnce(sampleUnfinalizedTronSourceData())
+      .mockResolvedValue(sampleTronFinalityData());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).toHaveBeenCalled();
+    expect(getTronTransactionMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain(
+      "Waiting for TRON finality and event indexing",
+    );
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await submitPromise;
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getTronTransactionMock).toHaveBeenCalledTimes(2);
+    expect(getTronFinalityDataMock).toHaveBeenCalledTimes(3);
+    expect(submitSccpBridgeMessageMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      accountId: TAIRA_ACCOUNT_ID,
+      messageBundle: proofPackage.messageBundle,
+      settlement: proofPackage.settlement,
+    });
+    expect(wrapper.text()).toContain("TAIRA settlement submitted");
+    expect(wrapper.text()).toContain("TAIRA settlement transaction");
+    const settlementLink = wrapper
+      .findAll("a")
+      .find((link) => link.text() === "TAIRA settlement transaction");
+    expect(settlementLink?.attributes("href")).toBe(
+      `${TAIRA_EXPLORER_URL}/transactions/${"99".repeat(32)}`,
+    );
+  });
+
+  it("does not submit TAIRA settlement when automatic TRON source finality times out", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "tron-auto-timeout-project");
+    const { requestMock, workerCtor } = mockSuccessfulTronToTairaBridgeStack();
+    getTronFinalityDataMock
+      .mockResolvedValueOnce(sampleTronFinalityData())
+      .mockResolvedValue(sampleUnfinalizedTronSourceData());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).toHaveBeenCalled();
+    for (let attempt = 1; attempt < 40; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(3_000);
+      await flushPromises();
+    }
+    await submitPromise;
+    await flushPromises();
+
+    expect(getTronTransactionMock).toHaveBeenCalledTimes(40);
+    expect(wrapper.text()).toContain(
+      "Timed out waiting for TRON finality and bridge event indexing.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("fails automatic TRON settlement immediately on adversarial burn-event bindings", async () => {
+    storeConnectedTronWallet();
+    vi.stubEnv(
+      "VITE_WALLETCONNECT_PROJECT_ID",
+      "tron-auto-adversarial-project",
+    );
+    const { requestMock, workerCtor } = mockSuccessfulTronToTairaBridgeStack();
+    getTronTransactionEventsMock.mockResolvedValue(
+      sampleTronEvents((events) => {
+        const event = (events.data as Record<string, unknown>[])[0];
+        (event.result as Record<string, unknown>).amount = "999";
+      }),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await submitPromise;
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).toHaveBeenCalled();
+    expect(getTronTransactionMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain(
+      "TRON burn event amount does not match this bridge request.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("does not retry automatic TRON settlement when the bridge event digest is missing", async () => {
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "tron-auto-missing-digest");
+    const { requestMock, workerCtor } = mockSuccessfulTronToTairaBridgeStack();
+    getTronTransactionEventsMock.mockResolvedValue(
+      sampleTronEvents((events) => {
+        const event = (events.data as Record<string, unknown>[])[0];
+        delete (event.result as Record<string, unknown>).sourceEventDigest;
+      }),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await submitPromise;
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).toHaveBeenCalled();
+    expect(getTronTransactionMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain(
+      "TRON transaction events must include the bridge source event digest.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("polls TAIRA proof job indexing after source submission before TRON finalize", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "polling-success-project");
+    const { requestMock } = mockSuccessfulTairaToTronTargetStack();
+    getSccpMessageProofJobMock
+      .mockRejectedValueOnce(new Error("404 message not found"))
+      .mockRejectedValueOnce(new Error("message is still indexing"))
+      .mockResolvedValue(sampleMessageProofJob());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("Waiting for SCCP proof job indexing");
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await flushPromises();
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await submitPromise;
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(3);
+    expect(triggerTronSmartContractMock).toHaveBeenCalled();
+    expect(requestMock).toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Signed TRON finalize transaction broadcast",
+    );
+  });
+
+  it("does not request TRON wallet approval when TAIRA proof job indexing times out", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedTronWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "polling-timeout-project");
+    const { requestMock } = mockSuccessfulTairaToTronTargetStack();
+    getSccpMessageProofJobMock.mockRejectedValue(
+      new Error("404 message not found"),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    for (let attempt = 1; attempt < 10; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(3_000);
+      await flushPromises();
+    }
+    await submitPromise;
+    await flushPromises();
+
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(10);
+    expect(wrapper.text()).toContain(
+      "Timed out waiting for Torii to index the SCCP proof job.",
+    );
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(broadcastTronTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("continues TAIRA source submission through TRON finalize broadcast", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedTronWallet();
+    let unsignedTransaction = sampleUnsignedTronTransaction();
+    const requestMock = vi
+      .fn()
+      .mockImplementation(
+        async (request: {
+          method: string;
+          params: { transaction: Record<string, unknown> };
+        }) => ({
+          ...request.params.transaction,
+          signature: [
+            signTronRawDataHex(String(request.params.transaction.raw_data_hex)),
+          ],
+        }),
+      );
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: vi.fn().mockResolvedValue({
+          disconnect: vi.fn(),
+          provider: {
+            session: {
+              topic: "topic",
+              namespaces: {
+                tron: {
+                  accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                  methods: ["tron_signTransaction"],
+                },
+              },
+              sessionProperties: {
+                tron_method_version: "v1",
+              },
+            },
+          },
+          request: requestMock,
+        }),
+      },
+    }));
+    deriveZkIvmPayloadMock.mockResolvedValue({ proved: { overlay: [] } });
+    startZkIvmProveJobMock.mockResolvedValue({
+      job_id: "11".repeat(16),
+    });
+    getZkIvmProveJobMock.mockResolvedValue({
+      status: "done",
+      proved: { overlay: [] },
+      attachment: {
+        backend: "halo2/ipa",
+        proof: {
+          backend: "halo2/ipa",
+          bytes: "0x01",
+        },
+        vk_ref: {
+          backend: "halo2/ipa",
+          name: "taira-xor-burn-record-v1",
+        },
+      },
+    });
+    submitZkIvmProvedTransactionMock.mockResolvedValue({
+      tx_hash_hex: "88".repeat(32),
+    });
+    getSccpMessageProofJobMock.mockResolvedValue(sampleMessageProofJob());
+    triggerTronSmartContractMock.mockImplementation((trigger) => {
+      unsignedTransaction = sampleUnsignedTronTransactionForTrigger(
+        trigger as Record<string, unknown>,
+      );
+      return Promise.resolve({
+        transaction: unsignedTransaction,
+      });
+    });
+    mockSuccessfulTronBroadcast();
+    vi.stubGlobal(
+      "Worker",
+      vi.fn().mockImplementation(function WorkerMock(this: {
+        onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+        onerror: null;
+        terminate: () => void;
+        postMessage: (message: { id: string; kind: string }) => void;
+      }) {
+        this.onmessage = null;
+        this.onerror = null;
+        this.terminate = vi.fn();
+        this.postMessage = (message: { id: string; kind: string }) => {
+          expect(message.kind).toBe("prove-tron-proof-package");
+          this.onmessage?.({
+            data: {
+              id: message.id,
+              ok: true,
+              result: sampleTairaToTronProofPackage(),
+            },
+          });
+        };
+      }),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> TRON"));
+    expect(prepareButton).toBeTruthy();
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(submitZkIvmProvedTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        accountId: TAIRA_ACCOUNT_ID,
+      }),
+    );
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        messageId: MESSAGE_ID,
+        expectedDestinationBindingHashHex: BINDING_HASH,
+      }),
+    );
+    expect(triggerTronSmartContractMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerAddress: VALID_TRON_ADDRESS,
+        contractAddress: VALID_TRON_ADDRESS,
+        functionSelector: expect.stringContaining("finalizeFromTaira"),
+      }),
+    );
+    expect(requestMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "tron_signTransaction",
+        params: expect.objectContaining({
+          address: VALID_TRON_ADDRESS,
+          transaction: unsignedTransaction,
+        }),
+      }),
+      "tron:0x2b6653dc",
+    );
+    expect(broadcastTronTransactionMock).toHaveBeenCalledWith({
+      transaction: {
+        ...unsignedTransaction,
+        signature: [
+          signTronRawDataHex(String(unsignedTransaction.raw_data_hex)),
+        ],
+      },
+    });
+    expect(wrapper.text()).toContain(
+      "Signed TRON finalize transaction broadcast",
+    );
+    expect(wrapper.text()).toContain("TAIRA source transaction");
+    expect(wrapper.text()).toContain("TRON finalize transaction");
+    const sourceLink = wrapper
+      .findAll("a")
+      .find((link) => link.text() === "TAIRA source transaction");
+    const finalizeLink = wrapper
+      .findAll("a")
+      .find((link) => link.text() === "TRON finalize transaction");
+    expect(sourceLink?.attributes("href")).toBe(
+      `${TAIRA_EXPLORER_URL}/transactions/${"88".repeat(32)}`,
+    );
+    expect(finalizeLink?.attributes("href")).toBe(
+      `${TRON_MAINNET_TRONSCAN_URL}/#/transaction/${String(
+        unsignedTransaction.txID,
+      )}`,
+    );
   });
 });

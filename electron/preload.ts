@@ -1,4 +1,6 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { keccak_256 } from "@noble/hashes/sha3";
 import {
   createCipheriv,
   createDecipheriv,
@@ -36,6 +38,7 @@ import {
   type ToriiSccpEvmDestinationQueryOptions,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
+import { parseTronTriggerSmartContractRawData } from "@iroha/iroha-js/sccp";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair,
@@ -93,6 +96,7 @@ import {
   readTransactionFee,
   type TransactionFeeLike,
 } from "../src/utils/transactionFee";
+import { isSecretLikeTextValue } from "../src/utils/secretLike";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -172,6 +176,52 @@ const KNOWN_CHAIN_METADATA_FALLBACKS = [
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const SECRET_LIKE_PAYLOAD_KEY_PATTERN =
+  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
+const SIGNING_HELPER_PAYLOAD_KEY_PATTERN =
+  /^(?:privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
+
+const assertNoSecretLikePayloadFields = (
+  value: unknown,
+  path: string,
+  seen = new WeakSet<object>(),
+): void => {
+  if (isSecretLikeTextValue(value)) {
+    throw new Error(
+      `${path} must not contain recovery phrases or private key material before Torii submission.`,
+    );
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    value.forEach((entry, index) => {
+      assertNoSecretLikePayloadFields(entry, `${path}[${index}]`, seen);
+    });
+    return;
+  }
+  if (!isPlainRecord(value)) {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    if (SECRET_LIKE_PAYLOAD_KEY_PATTERN.test(key)) {
+      throw new Error(`${path}.${key} must not be submitted to Torii.`);
+    }
+    if (SIGNING_HELPER_PAYLOAD_KEY_PATTERN.test(key)) {
+      throw new Error(
+        `${path}.${key} must not include detached signature helper payloads inside SCCP material.`,
+      );
+    }
+    assertNoSecretLikePayloadFields(child, `${path}.${key}`, seen);
+  }
+};
+
 const extractConfidentialFeeMetadata = (
   metadata: Record<string, unknown> | undefined,
   operationLabel: string,
@@ -1097,7 +1147,6 @@ type SccpMessageProofInput = ToriiConfig &
 type SccpBridgeProofSubmitInput = ToriiConfig &
   SccpDestinationProofMaterialInput & {
     accountId: string;
-    privateKeyHex?: string;
     burnBundle?: Record<string, unknown>;
     messageBundle?: Record<string, unknown>;
     publicKeyHex?: string;
@@ -1107,7 +1156,6 @@ type SccpBridgeProofSubmitInput = ToriiConfig &
 type SccpBridgeMessageSubmitInput = ToriiConfig &
   SccpDestinationProofMaterialInput & {
     accountId: string;
-    privateKeyHex?: string;
     messageBundle: Record<string, unknown>;
     publicKeyHex?: string;
     signatureB64?: string;
@@ -1130,23 +1178,34 @@ type TronBlockInput = TronGatewayInput & {
 type TronBroadcastInput = TronGatewayInput & {
   transaction: Record<string, unknown>;
 };
-type TronTriggerSmartContractInput = TronGatewayInput & {
-  ownerAddress: string;
-  contractAddress: string;
-  functionSelector: string;
-  parameter?: string;
-  callData?: string;
-  feeLimit?: number | string;
-  callValue?: number | string;
-  permissionId?: number | string;
-};
-type TronConstantContractInput = TronGatewayInput & {
-  ownerAddress: string;
-  contractAddress: string;
-  functionSelector: string;
-  parameter?: string;
-  callData?: string;
-};
+type TronContractParameterInput =
+  | {
+      parameter: string;
+      callData?: never;
+    }
+  | {
+      callData: string;
+      parameter?: never;
+    }
+  | {
+      parameter?: undefined;
+      callData?: undefined;
+    };
+type TronTriggerSmartContractInput = TronGatewayInput &
+  TronContractParameterInput & {
+    ownerAddress: string;
+    contractAddress: string;
+    functionSelector: string;
+    feeLimit?: number | string;
+    callValue?: number | string;
+    permissionId?: number | string;
+  };
+type TronConstantContractInput = TronGatewayInput &
+  TronContractParameterInput & {
+    ownerAddress: string;
+    contractAddress: string;
+    functionSelector: string;
+  };
 type TronEventsInput = TronGatewayInput & {
   txId: string;
 };
@@ -2349,36 +2408,6 @@ const binaryToBuffer = (
   }
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
 };
-
-const NORITO_FRAME_HEADER_LENGTH = 40;
-const VERSIONED_TRANSACTION_PAYLOAD_VERSION = 1;
-
-const unwrapNrt0NoritoFrame = (payload: Buffer) => {
-  if (
-    payload.length < NORITO_FRAME_HEADER_LENGTH ||
-    payload.subarray(0, 4).toString("ascii") !== "NRT0"
-  ) {
-    return payload;
-  }
-  if (payload[4] !== 0 || payload[5] !== 0) {
-    throw new Error("Unsupported NRT0 transaction frame version.");
-  }
-  const payloadLength = payload.readBigUInt64LE(23);
-  if (payloadLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error("NRT0 transaction frame payload is too large.");
-  }
-  const payloadStart = payload.length - Number(payloadLength);
-  if (payloadStart < NORITO_FRAME_HEADER_LENGTH) {
-    throw new Error("Malformed NRT0 transaction frame payload length.");
-  }
-  return payload.subarray(payloadStart);
-};
-
-const toVersionedTransactionPayload = (payload: Buffer) =>
-  Buffer.concat([
-    Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
-    unwrapNrt0NoritoFrame(payload),
-  ]);
 
 const toJsonByteArray = (
   value: Buffer | ArrayBuffer | ArrayBufferView,
@@ -4693,10 +4722,41 @@ const listSccpRecentMessagesFromTorii = async (
   };
 };
 
+const normalizeSccpSubmissionRecord = (
+  value: unknown,
+  label: string,
+): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  assertNoSecretLikePayloadFields(value, label);
+  let normalized: Record<string, unknown>;
+  try {
+    normalized = structuredClone(value) as Record<string, unknown>;
+  } catch (_error) {
+    throw new Error(`${label} must be structured-cloneable.`);
+  }
+  if (!isPlainRecord(normalized)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  assertNoSecretLikePayloadFields(normalized, label);
+  return normalized;
+};
+
+const normalizeOptionalSccpSubmissionRecord = (
+  value: unknown,
+  label: string,
+): Record<string, unknown> | undefined => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return normalizeSccpSubmissionRecord(value, label);
+};
+
 const buildSccpBridgeAuthorityPayload = async (
   input: {
     accountId: string;
-    privateKeyHex?: string;
+    privateKeyHex?: unknown;
     publicKeyHex?: string;
     signatureB64?: string;
   },
@@ -4706,8 +4766,18 @@ const buildSccpBridgeAuthorityPayload = async (
     input.accountId,
     "accountId",
   );
+  if (trimString(input.privateKeyHex)) {
+    throw new Error(
+      "SCCP bridge submissions must use stored wallet secrets or detached signatures; inline private keys are not accepted.",
+    );
+  }
   const publicKeyHex = trimString(input.publicKeyHex);
   const signatureB64 = trimString(input.signatureB64);
+  if (Boolean(publicKeyHex) !== Boolean(signatureB64)) {
+    throw new Error(
+      "SCCP detached signature submissions require both publicKeyHex and signatureB64.",
+    );
+  }
   const hasDetachedSignature = Boolean(publicKeyHex && signatureB64);
   return {
     authority: accountId,
@@ -4716,7 +4786,6 @@ const buildSccpBridgeAuthorityPayload = async (
       : {
           privateKey: await resolvePrivateKeyHex({
             accountId,
-            privateKeyHex: input.privateKeyHex,
             operationLabel,
           }),
         }),
@@ -4726,14 +4795,22 @@ const buildSccpBridgeAuthorityPayload = async (
 const submitSccpBridgeProofToTorii = async (
   input: SccpBridgeProofSubmitInput,
 ): Promise<Record<string, unknown>> => {
+  const burnBundle = normalizeOptionalSccpSubmissionRecord(
+    input.burnBundle,
+    "SCCP burnBundle",
+  );
+  const messageBundle = normalizeOptionalSccpSubmissionRecord(
+    input.messageBundle,
+    "SCCP messageBundle",
+  );
   const auth = await buildSccpBridgeAuthorityPayload(
     input,
     "Submit SCCP bridge proof",
   );
   const payload: ToriiBridgeProofSubmitPayload = {
     ...auth,
-    ...(input.burnBundle ? { burnBundle: input.burnBundle } : {}),
-    ...(input.messageBundle ? { messageBundle: input.messageBundle } : {}),
+    ...(burnBundle ? { burnBundle } : {}),
+    ...(messageBundle ? { messageBundle } : {}),
     ...buildSccpDestinationProofOptions(input),
     ...(input.creationTimeMs !== undefined
       ? { creationTimeMs: input.creationTimeMs }
@@ -4746,18 +4823,26 @@ const submitSccpBridgeProofToTorii = async (
 const submitSccpBridgeMessageToTorii = async (
   input: SccpBridgeMessageSubmitInput,
 ): Promise<Record<string, unknown>> => {
+  const messageBundle = normalizeSccpSubmissionRecord(
+    input.messageBundle,
+    "SCCP messageBundle",
+  );
+  const settlement = normalizeOptionalSccpSubmissionRecord(
+    input.settlement,
+    "SCCP settlement",
+  );
   const auth = await buildSccpBridgeAuthorityPayload(
     input,
     "Submit SCCP bridge message",
   );
   const payload: ToriiBridgeMessageSubmitPayload = {
     ...auth,
-    messageBundle: input.messageBundle,
+    messageBundle,
     ...buildSccpDestinationProofOptions(input),
     ...(input.receiptLane !== undefined
       ? { receiptLane: input.receiptLane }
       : {}),
-    ...(input.settlement ? { settlement: input.settlement } : {}),
+    ...(settlement ? { settlement } : {}),
     ...(input.creationTimeMs !== undefined
       ? { creationTimeMs: input.creationTimeMs }
       : {}),
@@ -4958,11 +5043,7 @@ const parseIpv4Octets = (hostname: string): number[] | null => {
     : null;
 };
 
-const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
-  const octets = parseIpv4Octets(hostname);
-  if (!octets) {
-    return false;
-  }
+const isPrivateOrReservedIpv4Octets = (octets: number[]): boolean => {
   const [first, second] = octets;
   return (
     first === 0 ||
@@ -4976,6 +5057,80 @@ const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
     (first === 198 && (second === 18 || second === 19)) ||
     first >= 224
   );
+};
+
+const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
+  const octets = parseIpv4Octets(hostname);
+  if (!octets) {
+    return false;
+  }
+  return isPrivateOrReservedIpv4Octets(octets);
+};
+
+const parseIpv6Hextets = (hostname: string): number[] | null => {
+  if (!hostname.includes(":")) {
+    return null;
+  }
+  const parts = hostname.split("::");
+  if (parts.length > 2) {
+    return null;
+  }
+  const parseSide = (side: string): number[] =>
+    side
+      ? side.split(":").map((part) => {
+          if (!/^[0-9a-f]{1,4}$/iu.test(part)) {
+            return Number.NaN;
+          }
+          return Number.parseInt(part, 16);
+        })
+      : [];
+  const left = parseSide(parts[0]);
+  const right = parseSide(parts[1] ?? "");
+  if (
+    [...left, ...right].some((hextet) => !Number.isInteger(hextet)) ||
+    (parts.length === 1 && left.length !== 8) ||
+    left.length + right.length > 8
+  ) {
+    return null;
+  }
+  const zeroFill =
+    parts.length === 2 ? Array(8 - left.length - right.length).fill(0) : [];
+  return [...left, ...zeroFill, ...right];
+};
+
+const hextetsToIpv4Octets = (high: number, low: number): number[] => [
+  (high >> 8) & 0xff,
+  high & 0xff,
+  (low >> 8) & 0xff,
+  low & 0xff,
+];
+
+const hasPrivateOrReservedEmbeddedIpv4 = (hextets: number[]): boolean => {
+  if (hextets.length !== 8) {
+    return false;
+  }
+  const lastIpv4 = hextetsToIpv4Octets(hextets[6], hextets[7]);
+  const leadingCompatibleZeros = hextets
+    .slice(0, 6)
+    .every((part) => part === 0);
+  const leadingMappedZeros =
+    hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
+  const nat64WellKnownPrefix =
+    hextets[0] === 0x64 &&
+    hextets[1] === 0xff9b &&
+    hextets.slice(2, 6).every((part) => part === 0);
+  if (
+    (leadingCompatibleZeros || leadingMappedZeros || nat64WellKnownPrefix) &&
+    isPrivateOrReservedIpv4Octets(lastIpv4)
+  ) {
+    return true;
+  }
+  if (hextets[0] === 0x2002) {
+    return isPrivateOrReservedIpv4Octets(
+      hextetsToIpv4Octets(hextets[1], hextets[2]),
+    );
+  }
+  return false;
 };
 
 const isPrivateTronGatewayHost = (hostname: string): boolean => {
@@ -5006,11 +5161,17 @@ const isPrivateTronGatewayHost = (hostname: string): boolean => {
   if (!normalized.includes(":")) {
     return false;
   }
-  const firstHextetText = normalized.split(":").find(Boolean) ?? "0";
-  const firstHextet = Number.parseInt(firstHextetText, 16);
-  if (!Number.isFinite(firstHextet)) {
+  const hextets = parseIpv6Hextets(normalized);
+  if (!hextets) {
     return true;
   }
+  if (
+    hasPrivateOrReservedEmbeddedIpv4(hextets) ||
+    (hextets[0] === 0x2001 && hextets[1] === 0)
+  ) {
+    return true;
+  }
+  const firstHextet = hextets[0];
   return (
     (firstHextet & 0xfe00) === 0xfc00 ||
     (firstHextet & 0xffc0) === 0xfe80 ||
@@ -5059,6 +5220,46 @@ const postTronJson = async (
   label: string,
 ): Promise<Record<string, unknown>> =>
   postJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label, body);
+
+const decodeTronGatewayMessage = (value: unknown): string => {
+  const text = trimString(value);
+  const hex = text.replace(/^0x/iu, "");
+  if (hex && hex.length % 2 === 0 && /^[0-9a-f]+$/iu.test(hex)) {
+    try {
+      return Buffer.from(hex, "hex").toString("utf8");
+    } catch {
+      return text;
+    }
+  }
+  return text;
+};
+
+const assertTronGatewayAccepted = (
+  payload: Record<string, unknown>,
+  label: string,
+): void => {
+  const result = payload.result;
+  const rejected =
+    result === false ||
+    (isPlainRecord(result) && result.result === false) ||
+    Boolean(payload.Error);
+  if (!rejected) {
+    return;
+  }
+  const detail = [
+    isPlainRecord(result) ? result.code : payload.code,
+    isPlainRecord(result) ? result.message : payload.message,
+    payload.Error,
+  ]
+    .map(decodeTronGatewayMessage)
+    .filter(Boolean)
+    .join(": ");
+  throw new Error(
+    detail
+      ? `${label} was rejected by the TRON node: ${detail}`
+      : `${label} was rejected by the TRON node.`,
+  );
+};
 
 const getTronJson = async (
   input: TronGatewayInput | undefined,
@@ -5255,21 +5456,64 @@ const normalizeTronSafeInteger = (
   return parsed;
 };
 
+const normalizeTronContractParameter = (
+  input: {
+    callData?: string;
+    parameter?: string;
+  },
+  label: string,
+): string => {
+  const callData = normalizeTronHexParameter(
+    input.callData,
+    `${label} call data`,
+  );
+  const parameter = normalizeTronHexParameter(
+    input.parameter,
+    `${label} parameter`,
+  );
+  if (callData && parameter) {
+    throw new Error(`${label} must provide either callData or parameter.`);
+  }
+  if (parameter) {
+    return parameter;
+  }
+  if (callData && callData.length < 8) {
+    throw new Error(`${label} call data must include a 4-byte selector.`);
+  }
+  return callData ? callData.slice(8) : "";
+};
+
 const TRON_BROADCAST_SECRET_KEY_PATTERN =
   /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
+const TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN =
+  /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
+const SECP256K1_ORDER =
+  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
 
 const assertNoSecretLikeTransactionFields = (
   value: unknown,
   path = "TRON transaction",
+  options: { allowTopLevelSignature?: boolean } = {},
   seen = new WeakSet<object>(),
 ): void => {
+  if (isSecretLikeTextValue(value)) {
+    throw new Error(
+      `${path} must not contain recovery phrases or private key material before TRON gateway submission.`,
+    );
+  }
   if (Array.isArray(value)) {
     if (seen.has(value)) {
       return;
     }
     seen.add(value);
     value.forEach((entry, index) => {
-      assertNoSecretLikeTransactionFields(entry, `${path}[${index}]`, seen);
+      assertNoSecretLikeTransactionFields(
+        entry,
+        `${path}[${index}]`,
+        options,
+        seen,
+      );
     });
     return;
   }
@@ -5284,7 +5528,19 @@ const assertNoSecretLikeTransactionFields = (
     if (TRON_BROADCAST_SECRET_KEY_PATTERN.test(key)) {
       throw new Error(`${path}.${key} must not be sent to the TRON gateway.`);
     }
-    assertNoSecretLikeTransactionFields(child, `${path}.${key}`, seen);
+    const allowedTopLevelSignature =
+      options.allowTopLevelSignature &&
+      path === "TRON broadcast transaction" &&
+      key === "signature";
+    if (
+      !allowedTopLevelSignature &&
+      TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN.test(key)
+    ) {
+      throw new Error(
+        `${path}.${key} must not include nested signatures or signing helper payloads before TRON gateway submission.`,
+      );
+    }
+    assertNoSecretLikeTransactionFields(child, `${path}.${key}`, options, seen);
   }
 };
 
@@ -5296,51 +5552,214 @@ const normalizeTronSignatureHex = (value: unknown, label: string): string => {
   return normalized;
 };
 
+const normalizeTronPayloadHex = (value: unknown, label: string): string => {
+  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
+  if (!/^41[0-9a-f]{40}$/u.test(normalized)) {
+    throw new Error(`${label} must be a TRON mainnet address payload.`);
+  }
+  if (/^410{40}$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
+const bytesToBigInt = (bytes: Uint8Array): bigint =>
+  BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
+
+const recoverTronSignatureOwnerPayload = (
+  signatureHex: string,
+  rawDataHex: string,
+): string => {
+  const signature = Buffer.from(signatureHex, "hex");
+  const recoveryId = signature[64];
+  if (
+    !(
+      (recoveryId >= 0 && recoveryId <= 3) ||
+      (recoveryId >= 27 && recoveryId <= 30)
+    )
+  ) {
+    throw new Error(
+      "TRON broadcast signature must be a canonical recoverable signature.",
+    );
+  }
+  const r = bytesToBigInt(signature.subarray(0, 32));
+  const s = bytesToBigInt(signature.subarray(32, 64));
+  if (r <= 0n || r >= SECP256K1_ORDER || s <= 0n || s > SECP256K1_HALF_ORDER) {
+    throw new Error("TRON broadcast signature must be canonical.");
+  }
+  const normalizedRecoveryId = recoveryId >= 27 ? recoveryId - 27 : recoveryId;
+  try {
+    const rawDataHash = createHash("sha256")
+      .update(Buffer.from(rawDataHex, "hex"))
+      .digest();
+    const publicKey = secp256k1.Signature.fromCompact(
+      Uint8Array.from(signature.subarray(0, 64)),
+    )
+      .addRecoveryBit(normalizedRecoveryId)
+      .recoverPublicKey(Uint8Array.from(rawDataHash))
+      .toRawBytes(false);
+    const addressHash = keccak_256(publicKey.slice(1));
+    return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
+  } catch (error) {
+    throw new Error(
+      `TRON broadcast signature could not recover the transaction owner: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+};
+
+type TronBroadcastTriggerBinding = {
+  ownerPayload: string;
+  contractPayload: string;
+  dataHex: string;
+};
+
+const normalizeTronContractType = (value: unknown): string =>
+  trimString(value)
+    .replace(/[^a-z0-9]/giu, "")
+    .toLowerCase();
+
+const readTronRawDataTriggerBinding = (
+  rawData: Record<string, unknown>,
+): TronBroadcastTriggerBinding => {
+  const contracts = rawData.contract;
+  if (!Array.isArray(contracts) || contracts.length !== 1) {
+    throw new Error(
+      "TRON broadcast transaction raw_data must include exactly one contract.",
+    );
+  }
+  const [contract] = contracts;
+  if (!isPlainRecord(contract)) {
+    throw new Error(
+      "TRON broadcast transaction raw_data.contract[0] must be an object.",
+    );
+  }
+  const parameter = contract.parameter;
+  if (!isPlainRecord(parameter)) {
+    throw new Error(
+      "TRON broadcast transaction raw_data.contract[0] must include parameter.",
+    );
+  }
+  const value = parameter.value;
+  if (!isPlainRecord(value)) {
+    throw new Error(
+      "TRON broadcast transaction raw_data.contract[0] must include parameter.value.",
+    );
+  }
+  const type = normalizeTronContractType(
+    contract.type ?? contract.contractType,
+  );
+  const typeUrl = normalizeTronContractType(
+    parameter.type_url ?? parameter.typeUrl,
+  );
+  if (
+    type !== "triggersmartcontract" &&
+    !typeUrl.endsWith("triggersmartcontract")
+  ) {
+    throw new Error(
+      "TRON broadcast transaction raw_data.contract[0] must be a TriggerSmartContract call.",
+    );
+  }
+  const ownerPayload = normalizeTronPayloadHex(
+    value.owner_address ?? value.ownerAddress,
+    "TRON broadcast transaction raw_data.contract[0].owner_address",
+  );
+  const contractPayload = normalizeTronPayloadHex(
+    value.contract_address ?? value.contractAddress,
+    "TRON broadcast transaction raw_data.contract[0].contract_address",
+  );
+  const dataHex = normalizeTronHexParameter(
+    trimString(value.data ?? value.call_data ?? value.callData),
+    "TRON broadcast transaction raw_data.contract[0].data",
+  );
+  if (!dataHex) {
+    throw new Error(
+      "TRON broadcast transaction raw_data.contract[0] must include smart-contract call data.",
+    );
+  }
+  return { ownerPayload, contractPayload, dataHex };
+};
+
 const normalizeTronBroadcastTransaction = (
   transaction: unknown,
 ): Record<string, unknown> => {
   if (!isPlainRecord(transaction)) {
     throw new Error("TRON broadcast transaction must be an object.");
   }
-  assertNoSecretLikeTransactionFields(transaction);
-  const txId = normalizeTronTxId(
-    trimString(transaction.txID ?? transaction.txid),
+  assertNoSecretLikeTransactionFields(
+    transaction,
+    "TRON broadcast transaction",
+    {
+      allowTopLevelSignature: true,
+    },
   );
-  const signatures = transaction.signature;
-  if (!Array.isArray(signatures) || signatures.length === 0) {
-    throw new Error("TRON broadcast transaction must include a signature.");
+  let normalized: Record<string, unknown>;
+  try {
+    normalized = structuredClone(transaction) as Record<string, unknown>;
+  } catch (_error) {
+    throw new Error("TRON broadcast transaction must be structured-cloneable.");
   }
-  signatures.forEach((signature, index) => {
-    normalizeTronSignatureHex(signature, `TRON signature[${index}]`);
-  });
-
-  const rawData = transaction.raw_data;
-  const rawDataHex = trimString(transaction.raw_data_hex);
-  if (!isPlainRecord(rawData) && !rawDataHex) {
+  const txId = normalizeTronTxId(
+    trimString(normalized.txID ?? normalized.txid),
+  );
+  const signatures = normalized.signature;
+  if (!Array.isArray(signatures) || signatures.length !== 1) {
     throw new Error(
-      "TRON broadcast transaction must include raw_data or raw_data_hex.",
+      "TRON broadcast transaction must include exactly one signature.",
     );
   }
-  const normalized: Record<string, unknown> = {
-    ...transaction,
-    txID: txId,
-  };
-  if (rawDataHex) {
-    const canonicalRawDataHex = normalizeTronHexParameter(
-      rawDataHex,
-      "TRON raw_data_hex",
+  const signature = normalizeTronSignatureHex(signatures[0], "TRON signature");
+  normalized.signature = [signature];
+
+  const rawData = normalized.raw_data;
+  const rawDataHex = trimString(normalized.raw_data_hex);
+  if (!isPlainRecord(rawData)) {
+    throw new Error(
+      "TRON broadcast transaction must include decoded raw_data.",
     );
-    if (!canonicalRawDataHex) {
-      throw new Error("TRON raw_data_hex is required when provided.");
-    }
-    const expectedTxId = createHash("sha256")
-      .update(Buffer.from(canonicalRawDataHex, "hex"))
-      .digest("hex");
-    if (expectedTxId !== txId) {
-      throw new Error("TRON txID must match raw_data_hex.");
-    }
-    normalized.raw_data_hex = canonicalRawDataHex;
   }
+  if (!rawDataHex) {
+    throw new Error("TRON broadcast transaction must include raw_data_hex.");
+  }
+  normalized.txID = txId;
+  const canonicalRawDataHex = normalizeTronHexParameter(
+    rawDataHex,
+    "TRON raw_data_hex",
+  );
+  if (!canonicalRawDataHex) {
+    throw new Error("TRON raw_data_hex is required when provided.");
+  }
+  const expectedTxId = createHash("sha256")
+    .update(Buffer.from(canonicalRawDataHex, "hex"))
+    .digest("hex");
+  if (expectedTxId !== txId) {
+    throw new Error("TRON txID must match raw_data_hex.");
+  }
+  const triggerBinding = readTronRawDataTriggerBinding(rawData);
+  try {
+    parseTronTriggerSmartContractRawData(canonicalRawDataHex, {
+      expectedOwnerAddress: triggerBinding.ownerPayload,
+      expectedContractAddress: triggerBinding.contractPayload,
+      expectedCallData: triggerBinding.dataHex,
+    });
+  } catch (error) {
+    throw new Error(
+      `TRON broadcast raw_data_hex does not match decoded TriggerSmartContract: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const recoveredOwnerPayload = recoverTronSignatureOwnerPayload(
+    signature,
+    canonicalRawDataHex,
+  );
+  if (recoveredOwnerPayload !== triggerBinding.ownerPayload) {
+    throw new Error(
+      "TRON broadcast signature does not recover to the transaction owner.",
+    );
+  }
+  normalized.raw_data_hex = canonicalRawDataHex;
   return normalized;
 };
 
@@ -5370,22 +5789,10 @@ const broadcastTronTransactionToGateway = async (
 const triggerTronSmartContractFromGateway = (
   input: TronTriggerSmartContractInput,
 ): Promise<Record<string, unknown>> => {
-  const callData = normalizeTronHexParameter(
-    input.callData,
-    "TRON smart-contract call data",
+  const parameter = normalizeTronContractParameter(
+    input,
+    "TRON smart-contract",
   );
-  if (input.parameter === undefined && callData && callData.length < 8) {
-    throw new Error(
-      "TRON smart-contract call data must include a 4-byte selector.",
-    );
-  }
-  const parameter =
-    input.parameter !== undefined
-      ? normalizeTronHexParameter(
-          input.parameter,
-          "TRON smart-contract parameter",
-        )
-      : callData.slice(8);
   return postTronJson(
     input,
     "/wallet/triggersmartcontract",
@@ -5422,28 +5829,19 @@ const triggerTronSmartContractFromGateway = (
         : {}),
     },
     "Trigger TRON smart contract",
-  );
+  ).then((payload) => {
+    assertTronGatewayAccepted(payload, "Trigger TRON smart contract");
+    return payload;
+  });
 };
 
 const triggerTronConstantContractFromGateway = (
   input: TronConstantContractInput,
 ): Promise<Record<string, unknown>> => {
-  const callData = normalizeTronHexParameter(
-    input.callData,
-    "TRON constant-contract call data",
+  const parameter = normalizeTronContractParameter(
+    input,
+    "TRON constant-contract",
   );
-  if (input.parameter === undefined && callData && callData.length < 8) {
-    throw new Error(
-      "TRON constant-contract call data must include a 4-byte selector.",
-    );
-  }
-  const parameter =
-    input.parameter !== undefined
-      ? normalizeTronHexParameter(
-          input.parameter,
-          "TRON constant-contract parameter",
-        )
-      : callData.slice(8);
   return postTronJson(
     input,
     "/wallet/triggerconstantcontract",
@@ -5461,7 +5859,10 @@ const triggerTronConstantContractFromGateway = (
       visible: true,
     },
     "Trigger TRON constant contract",
-  );
+  ).then((payload) => {
+    assertTronGatewayAccepted(payload, "Trigger TRON constant contract");
+    return payload;
+  });
 };
 
 const fetchExplorerAssetDefinitionSnapshot = async (
@@ -5817,66 +6218,13 @@ const routeUnavailableTargetMessage = (error: unknown) => {
 const isRouteUnavailableError = (error: unknown) =>
   ROUTE_UNAVAILABLE_PATTERN.test(routeUnavailableErrorText(error));
 
-const isPipelineSubmitFallbackError = (error: unknown) => {
-  if (!isPlainRecord(error)) {
-    return false;
-  }
-  const status = Number(error.status);
-  return status === 405 || (status === 503 && isRouteUnavailableError(error));
-};
-
-const submitSignedTransactionViaPublicRoute = async (
-  toriiUrl: string,
-  signedTransaction: Buffer,
-) => {
-  const response = await nodeFetch(
-    buildNexusEndpoint(toriiUrl, "/transaction"),
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-norito",
-        Accept: "application/x-norito, application/json",
-      },
-      body: toVersionedTransactionPayload(signedTransaction),
-    },
-  );
-  if (![200, 201, 202, 204].includes(response.status)) {
-    throw await createApiRequestError(response, "Public transaction submit");
-  }
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  if (contentType.includes("application/json")) {
-    return response.json().catch(() => null);
-  }
-  return null;
-};
-
 const submitSignedTransactionAsVersioned = async (
   toriiUrl: string,
   signedTransaction: Buffer,
 ) => {
   const client = getClient(toriiUrl);
   const signedTransactionBuffer = binaryToBuffer(signedTransaction);
-  let submission: unknown;
-  try {
-    submission = await client.submitTransaction(signedTransactionBuffer);
-  } catch (error) {
-    if (!isPipelineSubmitFallbackError(error)) {
-      throw error;
-    }
-    try {
-      submission = await submitSignedTransactionViaPublicRoute(
-        toriiUrl,
-        signedTransactionBuffer,
-      );
-    } catch (fallbackError) {
-      if (isRouteUnavailableError(fallbackError)) {
-        throw new Error(
-          `Public transaction submit route unavailable after pipeline fallback for ${routeUnavailableTargetMessage(error)}: route_unavailable`,
-        );
-      }
-      throw fallbackError;
-    }
-  }
+  const submission = await client.submitTransaction(signedTransactionBuffer);
   return {
     hash: hashSignedTransactionHex(signedTransactionBuffer),
     submission,
@@ -6368,9 +6716,78 @@ const buildDefaultGovernanceRegistrationPolicy = (
 const missingGovernanceCitizenshipAssetMessage = (assetDefinitionId: string) =>
   `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${assetDefinitionId}. RegisterCitizen cannot choose another asset from the wallet; ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
 
+const GOVERNANCE_CITIZENSHIP_LANE_ID = 1;
+const GOVERNANCE_CITIZENSHIP_DATASPACE_ID = 1;
+const GOVERNANCE_ROUTE_OPERATOR_HINT =
+  "For TAIRA public rollout, run configs/soranexus/taira/check_mcp_rollout.sh --public-root https://taira.sora.org --write-config <runtime-only taira-canary-client.toml> and re-render validator configs from configs/soranexus/taira/validator_roster.example.toml if route_unavailable persists.";
+
 const citizenshipRouteUnavailableMessage = (error: unknown) => {
   const target = routeUnavailableTargetMessage(error);
-  return `Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for ${target}. This is endpoint lane-routing health, not a wallet or bond-amount problem. Try another healthy Torii endpoint or ask the endpoint operator to restore the authoritative peer binding for ${target}.`;
+  return `Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for ${target}. This is endpoint lane-routing health, not a wallet or bond-amount problem. Try another healthy Torii endpoint or ask the endpoint operator to restore the authoritative peer binding for ${target}. ${GOVERNANCE_ROUTE_OPERATOR_HINT}`;
+};
+
+const readLaneGovernanceRouteNumber = (
+  lane: Record<string, unknown>,
+  keys: string[],
+) => {
+  for (const key of keys) {
+    const raw = lane[key];
+    if (typeof raw === "number" && Number.isInteger(raw)) {
+      return raw;
+    }
+    if (typeof raw === "string" && /^\d+$/u.test(raw.trim())) {
+      return Number.parseInt(raw.trim(), 10);
+    }
+  }
+  return null;
+};
+
+const assertGovernanceCitizenshipRouteReady = async (toriiUrl: string) => {
+  let status: unknown;
+  try {
+    status = await getClient(toriiUrl).getSumeragiStatusTyped();
+  } catch {
+    return;
+  }
+  if (!isPlainRecord(status) || !Array.isArray(status.lane_governance)) {
+    return;
+  }
+  const governanceLane = status.lane_governance.find((entry) => {
+    if (!isPlainRecord(entry)) {
+      return false;
+    }
+    const laneId = readLaneGovernanceRouteNumber(entry, [
+      "lane_id",
+      "laneId",
+      "lane",
+    ]);
+    const alias = trimString(entry.alias).toLowerCase();
+    return laneId === GOVERNANCE_CITIZENSHIP_LANE_ID || alias === "governance";
+  });
+  if (!isPlainRecord(governanceLane)) {
+    return;
+  }
+  const validators = Array.isArray(governanceLane.validator_ids)
+    ? governanceLane.validator_ids.map(trimString).filter(Boolean)
+    : [];
+  if (validators.length > 0) {
+    return;
+  }
+  const laneId =
+    readLaneGovernanceRouteNumber(governanceLane, [
+      "lane_id",
+      "laneId",
+      "lane",
+    ]) ?? GOVERNANCE_CITIZENSHIP_LANE_ID;
+  const dataspaceId =
+    readLaneGovernanceRouteNumber(governanceLane, [
+      "dataspace_id",
+      "dataspaceId",
+      "dataspace",
+    ]) ?? GOVERNANCE_CITIZENSHIP_DATASPACE_ID;
+  throw new Error(
+    `Citizenship bonding is blocked because this Torii endpoint currently reports no validator ids for lane ${laneId} / dataspace ${dataspaceId}. This endpoint cannot route RegisterCitizen transactions until its governance lane has authoritative peers. ${GOVERNANCE_ROUTE_OPERATOR_HINT}`,
+  );
 };
 
 const MISSING_ASSET_DEFINITION_PATTERN =
@@ -9361,6 +9778,7 @@ const api: IrohaBridge = {
         ),
       );
     }
+    await assertGovernanceCitizenshipRouteReady(toriiUrl);
     try {
       return await submitInstructionTransaction({
         toriiUrl,

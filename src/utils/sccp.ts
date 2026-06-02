@@ -1,4 +1,6 @@
 import { sha256 } from "@noble/hashes/sha256";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { keccak_256 } from "@noble/hashes/sha3";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   buildTairaXorSccpRecordDescriptor,
@@ -6,13 +8,17 @@ import {
   canonicalSccpTransferPayloadBytes,
   canonicalSccpMessageProofBundleBytes,
   sccpPayloadHash,
+  sccpTransferMessageId,
   tronSccpDestinationBinding,
   SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1,
   SCCP_TAIRA_XOR_ASSET_KEY_V1,
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
+  bindTairaXorTronBurnStartedEvent,
   bindTairaXorTronToTairaSourceProofPackage,
+  parseTronTriggerSmartContractRawData,
   tairaXorBurnSourceEventDigest,
+  tairaXorBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   tairaXorFinalizeFromTairaCallData,
   tairaXorTransferPayloadHash,
@@ -25,6 +31,7 @@ import type {
   TronSccpProofRequestInput,
 } from "@iroha/iroha-js/sccp";
 import { TAIRA_CHAIN_ID, TAIRA_NETWORK_PREFIX } from "@/constants/chains";
+import { isSecretLikeTextValue } from "@/utils/secretLike";
 
 export const TRON_MAINNET_CAIP_CHAIN_ID = "tron:0x2b6653dc";
 export const TRON_MAINNET_CHAIN_ID_HEX = "0x2b6653dc";
@@ -47,6 +54,7 @@ export {
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
   tairaXorBurnSourceEventDigest,
+  tairaXorBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   tairaXorFinalizeFromTairaCallData,
   tairaXorTransferPayloadHash,
@@ -57,6 +65,13 @@ const TRON_BASE58_ALPHABET =
 const TRON_BASE58_INDEX = new Map(
   Array.from(TRON_BASE58_ALPHABET, (character, index) => [character, index]),
 );
+const SECP256K1_ORDER =
+  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
+const SCCP_TRON_TRANSACTION_SECRET_KEY_PATTERN =
+  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
+const SCCP_TRON_TRANSACTION_SIGNING_HELPER_KEY_PATTERN =
+  /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
 
 export type SccpBridgeDirection = "taira-to-tron" | "tron-to-taira";
 
@@ -121,6 +136,11 @@ export type BoundTronSignedTransaction = {
   txId: string;
 };
 
+export type BoundTronUnsignedSmartContractTransaction = {
+  transaction: Record<string, unknown>;
+  txId: string;
+};
+
 export type BoundTronBroadcastResult = {
   response: Record<string, unknown>;
   txId: string;
@@ -172,6 +192,11 @@ export type TairaXorBurnRecordMaterial = {
     name: string;
   };
   gasLimit?: number;
+};
+
+type TairaXorBurnRecordMaterialResult = {
+  material: TairaXorBurnRecordMaterial | null;
+  reason: string | null;
 };
 
 export type TairaXorOutboundBurnRecordRequest = {
@@ -251,6 +276,32 @@ export const isLikelyTairaAccount = (accountId: string): boolean => {
     return true;
   } catch (_error) {
     return false;
+  }
+};
+
+export const normalizeTairaTransactionHash = (hash: unknown): string => {
+  const normalized = String(hash ?? "")
+    .trim()
+    .replace(/^0x/iu, "")
+    .toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error("TAIRA transaction hash must be a 32-byte hex value.");
+  }
+  return normalized;
+};
+
+export const buildTairaExplorerTransactionUrl = (
+  explorerBaseUrl: string,
+  hash: unknown,
+): string | null => {
+  const baseUrl = explorerBaseUrl.trim().replace(/\/+$/u, "");
+  if (!baseUrl) {
+    throw new Error("TAIRA explorer URL is required.");
+  }
+  try {
+    return `${baseUrl}/transactions/${normalizeTairaTransactionHash(hash)}`;
+  } catch (_error) {
+    return null;
   }
 };
 
@@ -425,6 +476,23 @@ export const readSccpTronTokenAddress = (
     readString(manifest, "token_address") ||
     readString(manifest, "token_contract_address") ||
     readString(manifest, "token_address_base58")
+  );
+};
+
+export const readSccpTronSourceBridgeAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  return (
+    readString(manifest, "sccpTronSourceBridgeAddress") ||
+    readString(manifest, "sccp_tron_source_bridge_address") ||
+    readString(manifest, "tronSourceBridgeAddress") ||
+    readString(manifest, "tron_source_bridge_address") ||
+    readString(manifest, "sourceBridgeAddress") ||
+    readString(manifest, "source_bridge_address") ||
+    readString(manifest, "source_bridge_address_base58")
   );
 };
 
@@ -637,11 +705,39 @@ const readBurnRecordVkRef = (
   return backend && name ? { backend, name } : null;
 };
 
-export const readSccpTairaBurnRecordMaterial = (
-  manifest: Record<string, unknown> | null | undefined,
-): TairaXorBurnRecordMaterial | null => {
-  if (!manifest) {
+const isCanonicalTairaAssetDefinitionId = (value: string): boolean =>
+  /^[1-9A-HJ-NP-Za-km-z]{16,80}$/u.test(value);
+
+const SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES = 32;
+const SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024;
+
+const strictBase64DecodedLength = (value: string): number | null => {
+  const normalized = value.trim();
+  if (
+    normalized.length < 8 ||
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]+={0,2}$/u.test(normalized)
+  ) {
     return null;
+  }
+  try {
+    const decoded = atob(normalized);
+    return decoded.length > 0 && btoa(decoded) === normalized
+      ? decoded.length
+      : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readSccpTairaBurnRecordMaterialResult = (
+  manifest: Record<string, unknown> | null | undefined,
+): TairaXorBurnRecordMaterialResult => {
+  if (!manifest) {
+    return {
+      material: null,
+      reason: "The TAIRA burn-record ZK contract material is missing.",
+    };
   }
   const burnRecord = readFirstRecord(
     manifest,
@@ -687,7 +783,33 @@ export const readSccpTairaBurnRecordMaterial = (
     );
   const vkRef = readBurnRecordVkRef(manifest, burnRecord);
   if (!settlementAssetDefinitionId || !contractArtifactB64 || !vkRef) {
-    return null;
+    return {
+      material: null,
+      reason: "The TAIRA burn-record ZK contract material is missing.",
+    };
+  }
+  if (!isCanonicalTairaAssetDefinitionId(settlementAssetDefinitionId)) {
+    return {
+      material: null,
+      reason:
+        "The TAIRA settlement asset must be a canonical asset definition id, not an alias.",
+    };
+  }
+  const contractArtifactBytes = strictBase64DecodedLength(contractArtifactB64);
+  if (contractArtifactBytes === null) {
+    return {
+      material: null,
+      reason: "The TAIRA burn-record contract artifact must be strict base64.",
+    };
+  }
+  if (
+    contractArtifactBytes < SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES ||
+    contractArtifactBytes > SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES
+  ) {
+    return {
+      material: null,
+      reason: `The TAIRA burn-record contract artifact must decode to ${SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES}-${SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES} bytes.`,
+    };
   }
   const gasLimit =
     readNumber(burnRecord ?? manifest, "gasLimit") ??
@@ -697,15 +819,26 @@ export const readSccpTairaBurnRecordMaterial = (
     gasLimit !== undefined &&
     (!Number.isSafeInteger(gasLimit) || gasLimit <= 0)
   ) {
-    return null;
+    return {
+      material: null,
+      reason: "The TAIRA burn-record gas limit must be positive.",
+    };
   }
   return {
-    settlementAssetDefinitionId,
-    contractArtifactB64,
-    vkRef,
-    gasLimit,
+    material: {
+      settlementAssetDefinitionId,
+      contractArtifactB64,
+      vkRef,
+      gasLimit,
+    },
+    reason: null,
   };
 };
+
+export const readSccpTairaBurnRecordMaterial = (
+  manifest: Record<string, unknown> | null | undefined,
+): TairaXorBurnRecordMaterial | null =>
+  readSccpTairaBurnRecordMaterialResult(manifest).material;
 
 const normalizeTronFeeLimit = (
   value: number | undefined,
@@ -742,7 +875,7 @@ export const buildTairaXorBurnTriggerRequest = (input: {
     ownerAddress,
     contractAddress: normalizedContractAddress,
     functionSelector: TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
-    callData: tairaXorBurnToTairaCallData({
+    callData: tairaXorBurnToTairaAccountCallData({
       tairaRecipient,
       amount,
     }),
@@ -804,9 +937,13 @@ export const buildTairaXorOutboundBurnRecordRequest = (input: {
   nonce: string | number | bigint;
   authority?: string;
 }): TairaXorOutboundBurnRecordRequest => {
-  const material = readSccpTairaBurnRecordMaterial(input.manifest);
+  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
+  const material = materialResult.material;
   if (!material) {
-    throw new Error("The TAIRA burn-record ZK contract material is missing.");
+    throw new Error(
+      materialResult.reason ??
+        "The TAIRA burn-record ZK contract material is missing.",
+    );
   }
   const outbound = buildTairaXorOutboundPreview(input);
   const tairaSender = normalizeTairaAccountId(input.tairaSender);
@@ -938,6 +1075,58 @@ export const isValidTronTransactionId = (value: string): boolean => {
 const bytesToLowerHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
+const bytesToBigInt = (bytes: Uint8Array): bigint =>
+  BigInt(bytesToLowerHex(bytes));
+
+const recoverTronSignatureOwnerPayload = (
+  signatureHex: string,
+  rawDataHex: string,
+): string => {
+  const signature = hexDataToBytes(signatureHex, "Signed TRON signature");
+  if (signature.length !== 65) {
+    throw new Error("Signed TRON signature must be 65 bytes.");
+  }
+  const recoveryId = signature[64];
+  if (
+    !(
+      (recoveryId >= 0 && recoveryId <= 3) ||
+      (recoveryId >= 27 && recoveryId <= 30)
+    )
+  ) {
+    throw new Error(
+      "Signed TRON signature must be a canonical recoverable signature.",
+    );
+  }
+  const r = bytesToBigInt(signature.slice(0, 32));
+  const s = bytesToBigInt(signature.slice(32, 64));
+  if (r <= 0n || r >= SECP256K1_ORDER || s <= 0n || s > SECP256K1_HALF_ORDER) {
+    throw new Error("Signed TRON signature must be canonical.");
+  }
+  const normalizedRecoveryId = recoveryId >= 27 ? recoveryId - 27 : recoveryId;
+  try {
+    const rawDataHash = sha256(
+      hexDataToBytes(rawDataHex, "Signed TRON raw data hex"),
+    );
+    const signatureObject = secp256k1.Signature.fromCompact(
+      signature.slice(0, 64),
+    ).addRecoveryBit(normalizedRecoveryId);
+    const publicKey = signatureObject
+      .recoverPublicKey(rawDataHash)
+      .toRawBytes(false);
+    const addressHash = keccak_256(publicKey.slice(1));
+    const payload = new Uint8Array(21);
+    payload[0] = 0x41;
+    payload.set(addressHash.slice(-20), 1);
+    return bytesToLowerHex(payload);
+  } catch (error) {
+    throw new Error(
+      `Signed TRON signature could not recover the transaction owner: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+};
+
 const requireRecord = (
   value: unknown,
   label: string,
@@ -1015,11 +1204,237 @@ const readTronTransactionOwnerPayload = (
   throw new Error(`${label} must include a TRON owner address.`);
 };
 
+type TronSmartContractCall = {
+  index: number;
+  ownerPayload: string;
+  contractPayload: string;
+  dataHex: string;
+};
+
+type TronSourceBridgeBindingInput = {
+  bridgeAddress: string;
+  tronSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+};
+
+const readRequiredText = (value: unknown, label: string): string => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} is required.`);
+  }
+  return value.trim();
+};
+
+const normalizeTronSourceBridgeBindingInput = (input: {
+  bridgeAddress?: unknown;
+  tronSender?: unknown;
+  tairaRecipient?: unknown;
+  amountDecimal?: unknown;
+}): TronSourceBridgeBindingInput => ({
+  bridgeAddress: normalizeTronAddress(
+    readRequiredText(input.bridgeAddress, "TRON bridge address"),
+  ),
+  tronSender: normalizeTronAddress(
+    readRequiredText(input.tronSender, "TRON sender address"),
+  ),
+  tairaRecipient: normalizeTairaAccountId(
+    readRequiredText(input.tairaRecipient, "TAIRA recipient account"),
+  ),
+  amountDecimal: normalizeBridgeAmount(
+    readRequiredText(input.amountDecimal, "Bridge amount"),
+  ),
+});
+
+const readTronTransactionSmartContractCalls = (
+  transaction: Record<string, unknown>,
+  label: string,
+): TronSmartContractCall[] => {
+  const rawData = readFirstRecord(transaction, "raw_data", "rawData");
+  if (!rawData) {
+    throw new Error(
+      `${label} must include decoded raw_data for bridge call binding.`,
+    );
+  }
+  const contracts = rawData.contract;
+  if (!Array.isArray(contracts) || contracts.length === 0) {
+    throw new Error(`${label} must include at least one raw_data contract.`);
+  }
+  return contracts.flatMap((contract, index) => {
+    if (typeof contract !== "object" || contract === null) {
+      return [];
+    }
+    const contractRecord = contract as Record<string, unknown>;
+    const parameter = readRecord(contractRecord, "parameter");
+    const value = parameter ? readRecord(parameter, "value") : null;
+    if (!value) {
+      return [];
+    }
+    const type = readFirstString(contractRecord, "type", "contractType")
+      .replace(/[^a-z0-9]/giu, "")
+      .toLowerCase();
+    const typeUrl = readFirstString(parameter, "type_url", "typeUrl")
+      .replace(/[^a-z0-9]/giu, "")
+      .toLowerCase();
+    const ownerAddress = readFirstString(
+      value,
+      "owner_address",
+      "ownerAddress",
+    );
+    const contractAddress = readFirstString(
+      value,
+      "contract_address",
+      "contractAddress",
+    );
+    const data = readFirstString(value, "data", "call_data", "callData");
+    const isTrigger =
+      type === "triggersmartcontract" ||
+      typeUrl.endsWith("triggersmartcontract");
+    if (!isTrigger) {
+      if (contractAddress && data) {
+        throw new Error(
+          `${label}.raw_data.contract[${index}] must be a TriggerSmartContract call.`,
+        );
+      }
+      return [];
+    }
+    if (!ownerAddress) {
+      throw new Error(
+        `${label}.raw_data.contract[${index}] is missing owner_address.`,
+      );
+    }
+    if (!contractAddress) {
+      throw new Error(
+        `${label}.raw_data.contract[${index}] is missing contract_address.`,
+      );
+    }
+    if (!data) {
+      throw new Error(
+        `${label}.raw_data.contract[${index}] is missing smart-contract call data.`,
+      );
+    }
+    return [
+      {
+        index,
+        ownerPayload: normalizeTronAddressPayloadHex(
+          ownerAddress,
+          `${label}.raw_data.contract[${index}].owner_address`,
+        ),
+        contractPayload: normalizeTronAddressPayloadHex(
+          contractAddress,
+          `${label}.raw_data.contract[${index}].contract_address`,
+        ),
+        dataHex: normalizeHexData(
+          data,
+          `${label}.raw_data.contract[${index}].data`,
+        ).slice(2),
+      },
+    ];
+  });
+};
+
+const requireTronSourceTransactionRequestBinding = (
+  transaction: Record<string, unknown>,
+  input: TronSourceBridgeBindingInput,
+): void => {
+  const calls = readTronTransactionSmartContractCalls(
+    transaction,
+    "TRON source transaction",
+  );
+  if (calls.length !== 1) {
+    throw new Error(
+      "TRON source transaction must include exactly one smart-contract call.",
+    );
+  }
+  const [call] = calls;
+  const expectedOwnerPayload = bytesToLowerHex(
+    decodeTronBase58CheckAddress(input.tronSender),
+  );
+  if (call.ownerPayload !== expectedOwnerPayload) {
+    throw new Error(
+      "TRON source transaction owner does not match the connected wallet.",
+    );
+  }
+  const expectedContractPayload = normalizeTronAddressToPayloadHex(
+    input.bridgeAddress,
+    "TRON bridge contract address",
+  );
+  if (call.contractPayload !== expectedContractPayload) {
+    throw new Error(
+      "TRON source transaction contract does not match the bridge contract.",
+    );
+  }
+  const expectedCallData = normalizeHexData(
+    tairaXorBurnToTairaAccountCallData({
+      tairaRecipient: input.tairaRecipient,
+      amount: bridgeDecimalToBaseUnits(input.amountDecimal),
+    }),
+    "Expected TRON burnToTaira call data",
+  ).slice(2);
+  if (call.dataHex !== expectedCallData) {
+    throw new Error(
+      "TRON source transaction call data does not match this bridge request.",
+    );
+  }
+  requireTronRawDataHexSmartContractBinding(
+    transaction,
+    "TRON source transaction",
+    call,
+  );
+};
+
 const normalizeTronRawDataHex = (value: string, label: string): string => {
   try {
     return normalizeHexData(value, label).slice(2);
   } catch (_error) {
     throw new Error(`${label} must be hex-encoded TRON raw transaction data.`);
+  }
+};
+
+const readRequiredTronRawDataHex = (
+  transaction: Record<string, unknown>,
+  label: string,
+): string => {
+  const rawDataHex = readFirstString(transaction, "raw_data_hex", "rawDataHex");
+  if (!rawDataHex) {
+    throw new Error(`${label} must include raw_data_hex.`);
+  }
+  return normalizeTronRawDataHex(rawDataHex, `${label} raw_data_hex`);
+};
+
+const requireTronRawDataHexMatchesTransactionId = (
+  transaction: Record<string, unknown>,
+  label: string,
+): void => {
+  const txId = readTronTransactionIdFromRecord(transaction, label);
+  const normalizedRawDataHex = readRequiredTronRawDataHex(transaction, label);
+  const computedTxId = bytesToLowerHex(
+    sha256(hexDataToBytes(normalizedRawDataHex, `${label} raw_data_hex`)),
+  ).slice(2);
+  if (computedTxId !== txId) {
+    throw new Error(
+      `${label} raw_data_hex does not hash to its transaction id.`,
+    );
+  }
+};
+
+const requireTronRawDataHexSmartContractBinding = (
+  transaction: Record<string, unknown>,
+  label: string,
+  call: TronSmartContractCall,
+): void => {
+  const rawDataHex = readRequiredTronRawDataHex(transaction, label);
+  try {
+    parseTronTriggerSmartContractRawData(`0x${rawDataHex}`, {
+      expectedOwnerAddress: call.ownerPayload,
+      expectedContractAddress: call.contractPayload,
+      expectedCallData: `0x${call.dataHex}`,
+    });
+  } catch (error) {
+    throw new Error(
+      `${label} raw_data_hex does not match decoded raw_data bridge call: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 };
 
@@ -1041,33 +1456,105 @@ const stableJsonValue = (value: unknown): unknown => {
 const stableRawDataJson = (rawData: Record<string, unknown>): string =>
   JSON.stringify(stableJsonValue(rawData));
 
+const snapshotTronTransactionRecord = (
+  value: unknown,
+  label: string,
+): Record<string, unknown> => {
+  const record = requireRecord(value, label);
+  try {
+    return requireRecord(structuredClone(record), label);
+  } catch (_error) {
+    throw new Error(`${label} must be structured-cloneable.`);
+  }
+};
+
+const isBinaryLikeSccpTransactionValue = (value: unknown): boolean =>
+  value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+
+const isPlainSccpTransactionRecord = (
+  value: unknown,
+): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const assertNoUnsafeTronTransactionPayloadFields = (
+  value: unknown,
+  path: string,
+  options: { allowTopLevelSignature?: boolean } = {},
+  seen = new WeakSet<object>(),
+): void => {
+  if (isSecretLikeTextValue(value)) {
+    throw new Error(
+      `${path} must not contain recovery phrases or private key material before TRON broadcast.`,
+    );
+  }
+  if (isBinaryLikeSccpTransactionValue(value)) {
+    return;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    value.forEach((entry, index) => {
+      assertNoUnsafeTronTransactionPayloadFields(
+        entry,
+        `${path}[${index}]`,
+        options,
+        seen,
+      );
+    });
+    return;
+  }
+  if (!isPlainSccpTransactionRecord(value)) {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  for (const [key, child] of Object.entries(value)) {
+    if (SCCP_TRON_TRANSACTION_SECRET_KEY_PATTERN.test(key)) {
+      throw new Error(
+        `${path}.${key} must not contain private key material before TRON broadcast.`,
+      );
+    }
+    const allowedTopLevelSignature =
+      options.allowTopLevelSignature &&
+      path === "Signed TRON transaction" &&
+      key === "signature";
+    if (
+      !allowedTopLevelSignature &&
+      SCCP_TRON_TRANSACTION_SIGNING_HELPER_KEY_PATTERN.test(key)
+    ) {
+      throw new Error(
+        `${path}.${key} must not include nested signatures or signing helper payloads before TRON broadcast.`,
+      );
+    }
+    assertNoUnsafeTronTransactionPayloadFields(
+      child,
+      `${path}.${key}`,
+      options,
+      seen,
+    );
+  }
+};
+
 const requireSignedTronRawDataMatch = (
   unsignedTransaction: Record<string, unknown>,
   signedTransaction: Record<string, unknown>,
 ): void => {
-  const unsignedRawDataHex = readFirstString(
+  const unsignedRawDataHex = readRequiredTronRawDataHex(
     unsignedTransaction,
-    "raw_data_hex",
-    "rawDataHex",
+    "Unsigned TRON transaction",
   );
-  const signedRawDataHex = readFirstString(
+  const signedRawDataHex = readRequiredTronRawDataHex(
     signedTransaction,
-    "raw_data_hex",
-    "rawDataHex",
+    "Signed TRON transaction",
   );
-  if (unsignedRawDataHex && signedRawDataHex) {
-    if (
-      normalizeTronRawDataHex(
-        unsignedRawDataHex,
-        "Unsigned TRON raw data hex",
-      ) !==
-      normalizeTronRawDataHex(signedRawDataHex, "Signed TRON raw data hex")
-    ) {
-      throw new Error(
-        "Signed TRON transaction raw data does not match the unsigned bridge transaction.",
-      );
-    }
-    return;
+  if (unsignedRawDataHex !== signedRawDataHex) {
+    throw new Error(
+      "Signed TRON transaction raw data does not match the unsigned bridge transaction.",
+    );
   }
 
   const unsignedRawData = readFirstRecord(
@@ -1098,7 +1585,7 @@ const hasValidTronSignatureSet = (
   const signatures = transaction.signature;
   return (
     Array.isArray(signatures) &&
-    signatures.length > 0 &&
+    signatures.length === 1 &&
     signatures.every(
       (signature) =>
         typeof signature === "string" &&
@@ -1107,17 +1594,136 @@ const hasValidTronSignatureSet = (
   );
 };
 
+const requireSignedTronSignatureOwnerMatch = (
+  signedTransaction: Record<string, unknown>,
+  expectedOwnerPayload: string,
+): void => {
+  const rawDataHex = readRequiredTronRawDataHex(
+    signedTransaction,
+    "Signed TRON transaction",
+  );
+  const signatures = signedTransaction.signature;
+  if (!Array.isArray(signatures) || signatures.length !== 1) {
+    throw new Error(
+      "Signed TRON transaction must include exactly one wallet signature.",
+    );
+  }
+  const signature = signatures[0];
+  if (typeof signature !== "string") {
+    throw new Error("Signed TRON transaction signature must be hex text.");
+  }
+  const recoveredOwnerPayload = recoverTronSignatureOwnerPayload(
+    signature,
+    rawDataHex,
+  );
+  if (recoveredOwnerPayload !== expectedOwnerPayload) {
+    throw new Error(
+      "Signed TRON transaction signature does not recover to the connected wallet.",
+    );
+  }
+};
+
+export const bindUnsignedTronSmartContractTransaction = (input: {
+  transaction: unknown;
+  trigger: TronSmartContractTriggerRequest;
+}): BoundTronUnsignedSmartContractTransaction => {
+  const transaction = snapshotTronTransactionRecord(
+    input.transaction,
+    "Unsigned TRON transaction",
+  );
+  if (Object.prototype.hasOwnProperty.call(transaction, "signature")) {
+    throw new Error(
+      "Unsigned TRON bridge transaction must not already contain signatures.",
+    );
+  }
+  assertNoUnsafeTronTransactionPayloadFields(
+    transaction,
+    "Unsigned TRON transaction",
+  );
+  const txId = readTronTransactionIdFromRecord(
+    transaction,
+    "Unsigned TRON transaction",
+  );
+  const calls = readTronTransactionSmartContractCalls(
+    transaction,
+    "Unsigned TRON transaction",
+  );
+  if (calls.length !== 1) {
+    throw new Error(
+      "Unsigned TRON bridge transaction must include exactly one smart-contract call.",
+    );
+  }
+  const [call] = calls;
+  const expectedOwnerPayload = bytesToLowerHex(
+    decodeTronBase58CheckAddress(input.trigger.ownerAddress),
+  );
+  if (call.ownerPayload !== expectedOwnerPayload) {
+    throw new Error(
+      "Unsigned TRON bridge transaction owner does not match the connected wallet.",
+    );
+  }
+  const expectedContractPayload = normalizeTronAddressToPayloadHex(
+    input.trigger.contractAddress,
+    "TRON bridge contract address",
+  );
+  if (call.contractPayload !== expectedContractPayload) {
+    throw new Error(
+      "Unsigned TRON bridge transaction contract does not match the requested bridge contract.",
+    );
+  }
+  const expectedCallData = normalizeHexData(
+    input.trigger.callData,
+    "Requested TRON smart-contract call data",
+  ).slice(2);
+  if (call.dataHex !== expectedCallData) {
+    throw new Error(
+      "Unsigned TRON bridge transaction call data does not match the requested bridge action.",
+    );
+  }
+  requireTronRawDataHexMatchesTransactionId(
+    transaction,
+    "Unsigned TRON transaction",
+  );
+  requireTronRawDataHexSmartContractBinding(
+    transaction,
+    "Unsigned TRON transaction",
+    call,
+  );
+  return Object.freeze({
+    transaction,
+    txId,
+  });
+};
+
 export const bindSignedTronTransactionForBroadcast = (input: {
   unsignedTransaction: Record<string, unknown>;
   signedTransaction: unknown;
   ownerAddress: string;
 }): BoundTronSignedTransaction => {
-  const signedTransaction = requireRecord(
+  const unsignedTransaction = snapshotTronTransactionRecord(
+    input.unsignedTransaction,
+    "Unsigned TRON transaction",
+  );
+  const signedTransaction = snapshotTronTransactionRecord(
     input.signedTransaction,
     "Signed TRON transaction",
   );
+  if (Object.prototype.hasOwnProperty.call(unsignedTransaction, "signature")) {
+    throw new Error(
+      "Unsigned TRON bridge transaction must not already contain signatures.",
+    );
+  }
+  assertNoUnsafeTronTransactionPayloadFields(
+    unsignedTransaction,
+    "Unsigned TRON transaction",
+  );
+  assertNoUnsafeTronTransactionPayloadFields(
+    signedTransaction,
+    "Signed TRON transaction",
+    { allowTopLevelSignature: true },
+  );
   const unsignedTxId = readTronTransactionIdFromRecord(
-    input.unsignedTransaction,
+    unsignedTransaction,
     "Unsigned TRON transaction",
   );
   const signedTxId = readTronTransactionIdFromRecord(
@@ -1142,10 +1748,33 @@ export const bindSignedTronTransactionForBroadcast = (input: {
       "Signed TRON transaction owner does not match the connected wallet.",
     );
   }
-  requireSignedTronRawDataMatch(input.unsignedTransaction, signedTransaction);
+  requireSignedTronRawDataMatch(unsignedTransaction, signedTransaction);
+  requireTronRawDataHexMatchesTransactionId(
+    unsignedTransaction,
+    "Unsigned TRON transaction",
+  );
+  requireTronRawDataHexMatchesTransactionId(
+    signedTransaction,
+    "Signed TRON transaction",
+  );
+  const signedCalls = readTronTransactionSmartContractCalls(
+    signedTransaction,
+    "Signed TRON transaction",
+  );
+  if (signedCalls.length !== 1) {
+    throw new Error(
+      "Signed TRON transaction must include exactly one smart-contract call.",
+    );
+  }
+  requireTronRawDataHexSmartContractBinding(
+    signedTransaction,
+    "Signed TRON transaction",
+    signedCalls[0],
+  );
   if (!hasValidTronSignatureSet(signedTransaction)) {
     throw new Error("Signed TRON transaction must include wallet signatures.");
   }
+  requireSignedTronSignatureOwnerMatch(signedTransaction, expectedOwnerPayload);
   return {
     transaction: signedTransaction,
     txId: signedTxId,
@@ -1313,10 +1942,45 @@ const readTronFinalityWitnesses = (
   return listRecordArray(witnessRecord?.witnesses ?? witnessRecord?.items);
 };
 
+const readTronSolidBlockHashCandidate = (
+  solidBlock: Record<string, unknown>,
+): { key: string; value: string } => {
+  for (const key of [
+    "blockID",
+    "blockId",
+    "block_id",
+    "hash",
+    "blockHash",
+    "block_hash",
+  ]) {
+    const value = readString(solidBlock, key);
+    if (value) {
+      return { key, value };
+    }
+  }
+  return { key: "", value: "" };
+};
+
+const requireTronBlockIdHeightBinding = (
+  blockId: string,
+  solidBlockNumber: number,
+): void => {
+  const expectedPrefix = solidBlockNumber.toString(16).padStart(16, "0");
+  const actualPrefix = blockId.slice(2, 18);
+  if (actualPrefix !== expectedPrefix) {
+    throw new Error(
+      "TRON solid block ID does not encode the reported solid block number.",
+    );
+  }
+};
+
 export const bindTronFinalitySnapshot = (
   finalityInput: unknown,
 ): BoundTronFinalitySnapshot => {
-  const finality = requireRecord(finalityInput, "TRON finality data");
+  const finality = snapshotTronTransactionRecord(
+    finalityInput,
+    "TRON finality data",
+  );
   const solidBlock = readTronFinalityBlock(finality);
   const header = readFirstRecord(solidBlock, "block_header", "blockHeader");
   const rawData = readFirstRecord(header, "raw_data", "rawData");
@@ -1327,18 +1991,14 @@ export const bindTronFinalitySnapshot = (
     "blockNumber",
     "block_number",
   );
+  const blockHashCandidate = readTronSolidBlockHashCandidate(solidBlock);
   const solidBlockHash = normalizeTronBlockHash(
-    readFirstString(
-      solidBlock,
-      "blockID",
-      "blockId",
-      "block_id",
-      "hash",
-      "blockHash",
-      "block_hash",
-    ),
+    blockHashCandidate.value,
     "TRON solid block hash",
   );
+  if (/^block_?id$/iu.test(blockHashCandidate.key)) {
+    requireTronBlockIdHeightBinding(solidBlockHash, solidBlockNumber);
+  }
   const witnessCount = readTronFinalityWitnesses(finality).length;
   if (witnessCount === 0) {
     throw new Error("TRON finality data must include active witnesses.");
@@ -1476,9 +2136,11 @@ const readTronEventName = (event: Record<string, unknown>): string => {
 };
 
 const isTairaXorBurnToTairaEvent = (event: Record<string, unknown>): boolean =>
-  readTronEventName(event)
-    .replace(/[^a-z0-9]/giu, "")
-    .toLowerCase() === "burntotaira";
+  ["burntotaira", "tairaxorburnstarted"].includes(
+    readTronEventName(event)
+      .replace(/[^a-z0-9]/giu, "")
+      .toLowerCase(),
+  );
 
 const readMatchingTronEventRecords = (
   events: Record<string, unknown>,
@@ -1525,7 +2187,7 @@ const readMatchingTronEventRecords = (
   });
   if (sawSourceContractEvent && matchingEvents.length === 0) {
     throw new Error(
-      "TRON transaction events must include a BurnToTaira bridge event.",
+      "TRON transaction events must include a TAIRA XOR burn bridge event.",
     );
   }
   return matchingEvents;
@@ -1643,23 +2305,31 @@ const requireTronSourceEventTairaRecipient = (
   }
 };
 
+const requireTronSourceEventDigestBinding = (
+  event: Record<string, unknown>,
+  sourceEventDigest: string,
+  input: TronSourceBridgeBindingInput,
+): void => {
+  bindTairaXorTronBurnStartedEvent({
+    event,
+    bridgeAddress: input.bridgeAddress,
+    tronSender: input.tronSender,
+    tairaRecipient: input.tairaRecipient,
+    amount: bridgeDecimalToBaseUnits(input.amountDecimal),
+    sourceEventDigest,
+  });
+};
+
 const requireTronSourceEventRequestBinding = (
   event: Record<string, unknown>,
-  input: {
-    tronSender?: string;
-    tairaRecipient?: string;
-    amountDecimal?: string;
-  },
+  input: Pick<
+    TronSourceBridgeBindingInput,
+    "tronSender" | "tairaRecipient" | "amountDecimal"
+  >,
 ): void => {
-  if (input.tronSender) {
-    requireTronSourceEventSender(event, input.tronSender);
-  }
-  if (input.amountDecimal) {
-    requireTronSourceEventAmount(event, input.amountDecimal);
-  }
-  if (input.tairaRecipient) {
-    requireTronSourceEventTairaRecipient(event, input.tairaRecipient);
-  }
+  requireTronSourceEventSender(event, input.tronSender);
+  requireTronSourceEventAmount(event, input.amountDecimal);
+  requireTronSourceEventTairaRecipient(event, input.tairaRecipient);
 };
 
 const requireTronSourceEventReceiptBlockBinding = (
@@ -1719,13 +2389,17 @@ export const bindTronSourceDataForProof = (input: {
   receipt: unknown;
   events: unknown;
   finality: unknown;
-  bridgeAddress?: string;
-  tronSender?: string;
-  tairaRecipient?: string;
-  amountDecimal?: string;
+  bridgeAddress: string;
+  tronSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
 }): BoundTronSourceData => {
-  const txId = normalizeTronTxId(input.txId, "txId");
-  const transaction = requireRecord(input.transaction, "TRON transaction");
+  const txId = normalizeTronTxId(readRequiredText(input.txId, "txId"), "txId");
+  const bindingInput = normalizeTronSourceBridgeBindingInput(input);
+  const transaction = snapshotTronTransactionRecord(
+    input.transaction,
+    "TRON transaction",
+  );
   const transactionTxId = readTronTransactionIdFromRecord(
     transaction,
     "TRON transaction",
@@ -1743,7 +2417,10 @@ export const bindTronSourceDataForProof = (input: {
     throw new Error("TRON transaction must include wallet signatures.");
   }
 
-  const receipt = requireRecord(input.receipt, "TRON transaction receipt");
+  const receipt = snapshotTronTransactionRecord(
+    input.receipt,
+    "TRON transaction receipt",
+  );
   const receiptTxId = readTronReceiptTransactionIdFromRecord(
     receipt,
     "TRON transaction receipt",
@@ -1764,17 +2441,27 @@ export const bindTronSourceDataForProof = (input: {
     "block_number",
   );
 
-  const events = requireRecord(input.events, "TRON transaction events");
+  const events = snapshotTronTransactionRecord(
+    input.events,
+    "TRON transaction events",
+  );
   const sourceEvent = readTronSourceEventDigestFromEvents(
     events,
     txId,
-    input.bridgeAddress,
+    bindingInput.bridgeAddress,
   );
   requireTronSourceEventReceiptBlockBinding(
     sourceEvent.event,
     receiptBlockNumber,
   );
-  requireTronSourceEventRequestBinding(sourceEvent.event, input);
+  requireTronSourceEventRequestBinding(sourceEvent.event, bindingInput);
+  requireTronSourceEventDigestBinding(
+    sourceEvent.event,
+    sourceEvent.digest,
+    bindingInput,
+  );
+  requireTronRawDataHexMatchesTransactionId(transaction, "TRON transaction");
+  requireTronSourceTransactionRequestBinding(transaction, bindingInput);
 
   const finality = bindTronFinalitySnapshot(input.finality);
   if (finality.solidBlockNumber < receiptBlockNumber) {
@@ -1948,6 +2635,31 @@ const compareOptionalText = (
   }
 };
 
+const requireOptionalDestinationBindingHashMatch = (
+  record: Record<string, unknown>,
+  expectedBindingHash: string,
+  label: string,
+): void => {
+  const actualBindingHash = readFirstString(
+    record,
+    "destinationBindingHash",
+    "destination_binding_hash",
+    "destinationBindingHashHex",
+    "destination_binding_hash_hex",
+  );
+  if (!actualBindingHash) {
+    return;
+  }
+  if (
+    normalizeHex32(actualBindingHash, `${label} destination binding hash`) !==
+    expectedBindingHash
+  ) {
+    throw new Error(
+      `${label} destination binding hash does not match the TRON route manifest.`,
+    );
+  }
+};
+
 const readDestinationBindingInput = (
   manifest: Record<string, unknown>,
 ): TronSccpDestinationBindingInput => {
@@ -1977,6 +2689,26 @@ const readDestinationBindingInput = (
     1;
   if (version !== 1) {
     throw new Error("The TRON SCCP destination binding version must be 1.");
+  }
+  const sourceDomain =
+    readNumber(manifestBinding ?? {}, "sourceDomain") ??
+    readNumber(manifestBinding ?? {}, "source_domain") ??
+    readNumber(rollout ?? {}, "sourceDomain") ??
+    readNumber(rollout ?? {}, "source_domain");
+  const targetDomain =
+    readNumber(manifestBinding ?? {}, "targetDomain") ??
+    readNumber(manifestBinding ?? {}, "target_domain") ??
+    readNumber(rollout ?? {}, "targetDomain") ??
+    readNumber(rollout ?? {}, "target_domain");
+  if (sourceDomain !== null && sourceDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error(
+      "The TRON SCCP destination binding source domain is wrong.",
+    );
+  }
+  if (targetDomain !== null && targetDomain !== SCCP_TRON_DOMAIN) {
+    throw new Error(
+      "The TRON SCCP destination binding target domain is wrong.",
+    );
   }
   const input: TronSccpDestinationBindingInput = {
     version: 1 as const,
@@ -2013,6 +2745,10 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   );
   const destinationBinding = readDestinationBindingInput(manifest);
   const publicInputs = requireRecord(job.publicInputs, "SCCP job publicInputs");
+  const destinationBindingHash = normalizeHex32(
+    destinationBinding.bindingHash ?? "",
+    "TRON destination binding hash",
+  );
   const publicInputMessageId = normalizeHex32(
     readFirstString(publicInputs, "messageId", "message_id"),
     "publicInputs.messageId",
@@ -2028,6 +2764,11 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   ) {
     throw new Error("SCCP proof job must target TRON.");
   }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    destinationBindingHash,
+    "SCCP proof job public inputs",
+  );
 
   const bundle = requireRecord(job.bundle, "SCCP proof job bundle");
   const commitment = requireRecord(
@@ -2141,11 +2882,23 @@ export const buildTairaXorFinalizeProofBinding = (input: {
     input.tronRecipient.trim(),
     "Bundle recipient",
   );
-  const canonicalPayloadHex = bytesToLowerHex(
-    canonicalSccpTransferPayloadBytes(
-      bundleTransfer as unknown as SccpTransferPayload,
-    ),
+  const canonicalPayloadBytes = canonicalSccpTransferPayloadBytes(
+    bundleTransfer as unknown as SccpTransferPayload,
   );
+  const canonicalPayloadHex = bytesToLowerHex(canonicalPayloadBytes);
+  if (
+    sccpTransferMessageId(bundleTransfer as unknown as SccpTransferPayload) !==
+    expectedMessageId
+  ) {
+    throw new Error(
+      "SCCP message id does not match the canonical transfer payload.",
+    );
+  }
+  if (sccpPayloadHash(canonicalPayloadBytes) !== payloadHash) {
+    throw new Error(
+      "SCCP proof job payload hash does not match the canonical transfer payload.",
+    );
+  }
 
   const jobDestinationBinding =
     readRecord(job, "destinationBinding") ??
@@ -2198,6 +2951,7 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
     throw new Error("The TRON bridge deployment address is missing.");
   }
   const normalizedContractAddress = normalizeTronAddress(contractAddress);
+  const destinationBinding = readDestinationBindingInput(manifest);
   const proofPackage = requireRecord(
     input.proofPackage,
     "TRON SCCP proof package",
@@ -2223,12 +2977,21 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
   if (!publicInputs) {
     throw new Error("TRON SCCP proof package is missing public inputs.");
   }
+  const destinationBindingHash = normalizeHex32(
+    destinationBinding.bindingHash ?? "",
+    "TRON destination binding hash",
+  );
   if (
     Number(publicInputs.targetDomain ?? publicInputs.target_domain) !==
     SCCP_TRON_DOMAIN
   ) {
     throw new Error("TRON SCCP proof package must target TRON.");
   }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    destinationBindingHash,
+    "TRON SCCP proof package public inputs",
+  );
   const messageId = normalizeHex32(
     readFirstString(publicInputs, "messageId", "message_id"),
     "proofPackage.publicInputs.messageId",
@@ -2561,6 +3324,86 @@ const readCapabilityPath = (
   );
 };
 
+const hasUnsafeSccpCapabilityPathCharacter = (path: string): boolean => {
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    if (
+      code <= 0x20 ||
+      code === 0x7f ||
+      character === "\\" ||
+      character === "?" ||
+      character === "#"
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const normalizeSccpCapabilitySubmitPath = (
+  value: string,
+  label: string,
+  kind: "proof" | "message",
+): string => {
+  const path = value.trim();
+  if (!path) {
+    throw new Error(`${label} is missing.`);
+  }
+  if (hasUnsafeSccpCapabilityPathCharacter(path)) {
+    throw new Error(
+      `${label} must be a same-endpoint absolute path without whitespace, query strings, fragments, or backslashes.`,
+    );
+  }
+  if (!path.startsWith("/") || path.startsWith("//")) {
+    throw new Error(`${label} must be a same-endpoint absolute path.`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(path, "https://taira.sora.org");
+  } catch (error) {
+    throw new Error(
+      `${label} is not a valid endpoint path: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (parsed.origin !== "https://taira.sora.org" || parsed.pathname !== path) {
+    throw new Error(`${label} must not escape the active Torii endpoint.`);
+  }
+  const decodedSegments = path
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => {
+      try {
+        return decodeURIComponent(segment).toLowerCase();
+      } catch (_error) {
+        throw new Error(`${label} contains invalid percent encoding.`);
+      }
+    });
+  if (decodedSegments.some((segment) => segment === "." || segment === "..")) {
+    throw new Error(`${label} must not contain path traversal segments.`);
+  }
+  if (decodedSegments.some((segment) => /[\\/]/u.test(segment))) {
+    throw new Error(`${label} must not contain encoded path separators.`);
+  }
+  const normalizedPath = decodedSegments.join("/");
+  if (!/(?:^|\/)(?:bridge|sccp)(?:\/|$)/u.test(normalizedPath)) {
+    throw new Error(`${label} must target an SCCP or bridge endpoint.`);
+  }
+  if (kind === "proof" && !/(?:^|\/)proofs?(?:\/|$)/u.test(normalizedPath)) {
+    throw new Error(`${label} must target a proof submission endpoint.`);
+  }
+  if (
+    kind === "message" &&
+    !/(?:^|\/)messages?(?:\/|$)/u.test(normalizedPath)
+  ) {
+    throw new Error(
+      `${label} must target a bridge-message submission endpoint.`,
+    );
+  }
+  return path;
+};
+
 const readProductionReadyFlag = (
   manifest: Record<string, unknown>,
 ): { ready: boolean; invalid: boolean } => {
@@ -2595,6 +3438,25 @@ export const resolveSccpRouteReadiness = (input: {
     reasons.push("SCCP capabilities have not been loaded.");
   } else if (!proofSubmitPath || !messageSubmitPath) {
     reasons.push("This Torii endpoint is missing SCCP submit endpoints.");
+  } else {
+    for (const [path, label, kind] of [
+      [proofSubmitPath, "SCCP proof submit path", "proof"] as const,
+      [
+        messageSubmitPath,
+        "SCCP bridge-message submit path",
+        "message",
+      ] as const,
+    ]) {
+      try {
+        normalizeSccpCapabilitySubmitPath(path, label, kind);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message
+            : "This Torii endpoint exposes unsafe SCCP submit endpoints.",
+        );
+      }
+    }
   }
 
   const tronManifest = pickTronSccpManifest(input.manifestSet);
@@ -2646,6 +3508,34 @@ export const resolveSccpRouteReadiness = (input: {
         );
       }
     }
+    const sourceBridgeAddress = readSccpTronSourceBridgeAddress(tronManifest);
+    if (!sourceBridgeAddress) {
+      reasons.push("The TRON source bridge deployment address is missing.");
+    } else {
+      try {
+        normalizeTronAddress(sourceBridgeAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TRON source bridge deployment address is invalid: ${error.message}`
+            : "The TRON source bridge deployment address is invalid.",
+        );
+      }
+    }
+    const verifierAddress = readSccpTronVerifierAddress(tronManifest);
+    if (!verifierAddress) {
+      reasons.push("The TRON verifier deployment address is missing.");
+    } else {
+      try {
+        normalizeTronAddress(verifierAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TRON verifier deployment address is invalid: ${error.message}`
+            : "The TRON verifier deployment address is invalid.",
+        );
+      }
+    }
     try {
       readDestinationBindingInput(tronManifest);
     } catch (error) {
@@ -2655,8 +3545,33 @@ export const resolveSccpRouteReadiness = (input: {
           : "The TRON SCCP verifier rollout proof material is incomplete.",
       );
     }
-    if (!readSccpTairaBurnRecordMaterial(tronManifest)) {
-      reasons.push("The TAIRA burn-record ZK contract material is missing.");
+    const burnRecordMaterial =
+      readSccpTairaBurnRecordMaterialResult(tronManifest);
+    if (!burnRecordMaterial.material) {
+      reasons.push(
+        burnRecordMaterial.reason ??
+          "The TAIRA burn-record ZK contract material is missing.",
+      );
+    }
+    const distinctDeploymentAddresses = [
+      bridgeAddress,
+      tokenAddress,
+      sourceBridgeAddress,
+      readSccpTronVerifierAddress(tronManifest),
+    ]
+      .map((address) => {
+        try {
+          return address ? normalizeTronAddress(address) : "";
+        } catch (_error) {
+          return "";
+        }
+      })
+      .filter(Boolean);
+    if (
+      distinctDeploymentAddresses.length === 4 &&
+      new Set(distinctDeploymentAddresses).size !== 4
+    ) {
+      reasons.push("TRON deployment contract addresses must be distinct.");
     }
   }
 

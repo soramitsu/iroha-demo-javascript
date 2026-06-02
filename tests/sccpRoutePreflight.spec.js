@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_TAIRA_TORII_URL,
+  SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES,
   SCCP_XOR_ASSET_KEY,
   SCCP_XOR_ROUTE_ID,
   TAIRA_CHAIN_ID,
@@ -129,8 +130,54 @@ describe("SCCP route preflight", () => {
 
     expect(report.ready).toBe(false);
     expect(failedCheck(report, "sccp-capabilities")?.detail).toContain(
-      "Missing proofSubmitPath or messageSubmitPath",
+      "SCCP bridge-message submit path is missing",
     );
+  });
+
+  it("rejects unsafe SCCP capability submit paths", () => {
+    for (const [capabilities, detail] of [
+      [
+        {
+          proofSubmitPath: "https://evil.example/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        "same-endpoint absolute path",
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit?token=secret",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        "query strings",
+      ],
+      [
+        {
+          proofSubmitPath: "/wallet/broadcasttransaction",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        "SCCP or bridge endpoint",
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs%2fsubmit",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        "encoded path separators",
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/proofs/submit",
+        },
+        "bridge-message submission endpoint",
+      ],
+    ]) {
+      const report = evaluate({ capabilities });
+      expect(report.ready).toBe(false);
+      expect(failedCheck(report, "sccp-capabilities")?.detail).toContain(
+        detail,
+      );
+    }
   });
 
   it("rejects TRON manifests that do not exactly match the route and asset key", () => {
@@ -149,6 +196,27 @@ describe("SCCP route preflight", () => {
     expect(failedCheck(report, "route-manifest")?.detail).toContain(
       "none match route taira_tron_xor",
     );
+    expect(failedCheck(report, "route-manifest")?.detail).toContain(
+      "route=taira_tron_other asset=xor target=5",
+    );
+  });
+
+  it("redacts unsafe route manifest mismatch diagnostics", () => {
+    const report = evaluate({
+      manifestSet: {
+        manifests: [
+          readyManifest({
+            routeId: "seed phrase should not appear",
+            assetKey: "xor",
+          }),
+        ],
+      },
+    });
+
+    expect(report.ready).toBe(false);
+    const detail = failedCheck(report, "route-manifest")?.detail ?? "";
+    expect(detail).toContain("route=<redacted> asset=xor target=5");
+    expect(detail).not.toContain("seed phrase");
   });
 
   it("requires an explicit boolean productionReady true flag", () => {
@@ -177,6 +245,23 @@ describe("SCCP route preflight", () => {
     expect(failedCheck(report, "tron-token-address")?.detail).toContain(
       "checksum",
     );
+  });
+
+  it("rejects duplicate TRON deployment contract addresses", () => {
+    const report = evaluate({
+      manifestSet: {
+        manifests: [
+          readyManifest({
+            tairaXorTokenAddress: BRIDGE_ADDRESS,
+          }),
+        ],
+      },
+    });
+
+    expect(report.ready).toBe(false);
+    expect(
+      failedCheck(report, "tron-contract-addresses-distinct")?.detail,
+    ).toContain("reuses a TRON contract address");
   });
 
   it("rejects verifier rollout material for anything other than TRON mainnet", () => {
@@ -260,6 +345,46 @@ describe("SCCP route preflight", () => {
     );
   });
 
+  it("rejects placeholder-sized and oversized burn-record artifacts", () => {
+    const tinyArtifactReport = evaluate({
+      manifestSet: {
+        manifests: [
+          readyManifest({
+            tairaXorBurnRecord: {
+              ...readyManifest().tairaXorBurnRecord,
+              contractArtifactB64: Buffer.from("Nrt0").toString("base64"),
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(tinyArtifactReport.ready).toBe(false);
+    expect(
+      failedCheck(tinyArtifactReport, "taira-burn-record")?.detail,
+    ).toContain("decode to 32-");
+
+    const oversizedArtifactReport = evaluate({
+      manifestSet: {
+        manifests: [
+          readyManifest({
+            tairaXorBurnRecord: {
+              ...readyManifest().tairaXorBurnRecord,
+              contractArtifactB64: Buffer.alloc(
+                SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES + 1,
+              ).toString("base64"),
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(oversizedArtifactReport.ready).toBe(false);
+    expect(
+      failedCheck(oversizedArtifactReport, "taira-burn-record")?.detail,
+    ).toContain(`-${SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES} bytes`);
+  });
+
   it("normalizes safe endpoints and rejects unsafe live preflight targets", () => {
     expect(normalizeToriiEndpoint("https://taira.sora.org/")).toBe(
       DEFAULT_TAIRA_TORII_URL,
@@ -282,6 +407,16 @@ describe("SCCP route preflight", () => {
     expect(() => normalizeTronGatewayEndpoint("https://127.0.0.1")).toThrow(
       "local network",
     );
+    for (const endpoint of [
+      "https://[::7f00:1]",
+      "https://[64:ff9b::7f00:1]",
+      "https://[2002:7f00:0001::1]",
+      "https://[2001:0000:7f00:0001::1]",
+    ]) {
+      expect(() => normalizeTronGatewayEndpoint(endpoint)).toThrow(
+        "local network",
+      );
+    }
   });
 
   it("validates TRON Base58Check addresses with checksum and mainnet prefix", () => {
