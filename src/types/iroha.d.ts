@@ -801,8 +801,19 @@ export interface SccpTairaXorBurnRecordMaterialView {
   gasLimit?: number;
 }
 
+export interface SccpPostDeployLiveEvidenceView {
+  fullTomlReady: boolean;
+  sourceBridgeConfigHash: string;
+  sourceEventTransactionId: string;
+  routeCanaryEvidenceHash: string;
+  routeCanaryTransactionId: string;
+  offlineFullTomlSha256?: string;
+}
+
 export interface SccpProofManifestView {
   version: number;
+  routeId?: string;
+  assetKey?: string;
   localDomain: number;
   localChain: string;
   counterpartyDomain: number;
@@ -824,6 +835,13 @@ export interface SccpProofManifestView {
   destinationRollout: SccpDestinationRolloutView | null;
   productionReady: boolean;
   disabledReason: string | null;
+  tronBridgeAddress?: string;
+  tairaXorBridgeAddress?: string;
+  tairaXorTokenAddress?: string;
+  sccpTronSourceBridgeAddress?: string;
+  tronSourceBridgeAddress?: string;
+  tronVerifierAddress?: string;
+  postDeployLiveEvidence?: SccpPostDeployLiveEvidenceView;
   submissionTemplate: SccpCounterpartySubmissionTemplateView;
   tairaXorBurnRecord: SccpTairaXorBurnRecordMaterialView | null;
 }
@@ -911,7 +929,7 @@ export interface ZkIvmProvedTransactionSubmitInput {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  privateKeyHex?: string;
+  privateKeyHex?: never;
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
   metadata?: Record<string, unknown>;

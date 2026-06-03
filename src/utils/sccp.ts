@@ -3421,6 +3421,73 @@ const readProductionReadyFlag = (
   return { ready: false, invalid: true };
 };
 
+const validatePostDeployLiveEvidence = (
+  manifest: Record<string, unknown>,
+): void => {
+  const evidence = readFirstRecord(
+    manifest,
+    "postDeployLiveEvidence",
+    "post_deploy_live_evidence",
+  );
+  if (!evidence) {
+    throw new Error("The TRON SCCP post-deploy live evidence is missing.");
+  }
+  const fullTomlReady =
+    evidence.fullTomlReady ?? evidence.full_toml_ready ?? false;
+  if (fullTomlReady !== true) {
+    throw new Error("postDeployLiveEvidence.fullTomlReady must be true.");
+  }
+
+  for (const [value, label] of [
+    [
+      readFirstString(
+        evidence,
+        "sourceBridgeConfigHash",
+        "source_bridge_config_hash",
+      ),
+      "postDeployLiveEvidence.sourceBridgeConfigHash",
+    ],
+    [
+      readFirstString(
+        evidence,
+        "sourceEventTransactionId",
+        "source_event_transaction_id",
+      ),
+      "postDeployLiveEvidence.sourceEventTransactionId",
+    ],
+    [
+      readFirstString(
+        evidence,
+        "routeCanaryEvidenceHash",
+        "route_canary_evidence_hash",
+      ),
+      "postDeployLiveEvidence.routeCanaryEvidenceHash",
+    ],
+    [
+      readFirstString(
+        evidence,
+        "routeCanaryTransactionId",
+        "route_canary_transaction_id",
+      ),
+      "postDeployLiveEvidence.routeCanaryTransactionId",
+    ],
+  ] as const) {
+    normalizeNonZeroHex32Loose(value, label);
+  }
+
+  const offlineFullTomlSha256 = readFirstString(
+    evidence,
+    "offlineFullTomlSha256",
+    "offline_full_toml_sha256",
+  );
+  if (offlineFullTomlSha256) {
+    normalizeNonZeroHex32Loose(
+      offlineFullTomlSha256,
+      "postDeployLiveEvidence.offlineFullTomlSha256",
+    );
+  }
+};
+
 export const resolveSccpRouteReadiness = (input: {
   connection: SccpNetworkSnapshot;
   capabilities?: Record<string, unknown> | null;
@@ -3543,6 +3610,15 @@ export const resolveSccpRouteReadiness = (input: {
         error instanceof Error
           ? error.message
           : "The TRON SCCP verifier rollout proof material is incomplete.",
+      );
+    }
+    try {
+      validatePostDeployLiveEvidence(tronManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The TRON SCCP post-deploy live evidence is incomplete.",
       );
     }
     const burnRecordMaterial =

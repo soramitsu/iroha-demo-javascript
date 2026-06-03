@@ -4869,7 +4869,7 @@ type ZkIvmProveJobInput = {
 type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
   chainId: string;
   accountId: string;
-  privateKeyHex?: string;
+  privateKeyHex?: unknown;
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
   metadata?: Record<string, unknown>;
@@ -5008,9 +5008,13 @@ const submitZkIvmProvedTransactionToTorii = async (
       "ZK IVM transaction metadata must be an object when provided.",
     );
   }
+  if (trimString(input.privateKeyHex)) {
+    throw new Error(
+      "ZK IVM proved transaction submissions must use stored wallet secrets; inline private keys are not accepted.",
+    );
+  }
   const privateKeyHex = await resolvePrivateKeyHex({
     accountId,
-    privateKeyHex: input.privateKeyHex,
     operationLabel: "Submit ZK IVM proved transaction",
   });
   const tx = buildIvmProvedTransaction({

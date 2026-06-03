@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global globalThis */
 
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -33,8 +34,7 @@ const toriiUrl = process.env.SORASWAP_TORII_URL || "https://taira.sora.org";
 const nodeToriiUrl = process.env.SORASWAP_NODE_TORII_URL || toriiUrl;
 const dappUrl =
   process.env.SORASWAP_UI_URL || "https://test.soraswap.org/#/launchpad";
-const disableBrowserCors =
-  process.env.SORASWAP_UI_DISABLE_BROWSER_CORS === "1";
+const disableBrowserCors = process.env.SORASWAP_UI_DISABLE_BROWSER_CORS === "1";
 const blockServiceWorkers =
   process.env.SORASWAP_UI_BLOCK_SERVICE_WORKERS === "1";
 const hostResolverRules = process.env.SORASWAP_UI_HOST_RESOLVER_RULES || "";
@@ -84,7 +84,10 @@ const chromiumNetworkArgs = () => [
 const dappChromiumArgs = () => [
   ...chromiumNetworkArgs(),
   ...(disableBrowserCors
-    ? ["--disable-web-security", "--disable-features=IsolateOrigins,site-per-process"]
+    ? [
+        "--disable-web-security",
+        "--disable-features=IsolateOrigins,site-per-process",
+      ]
     : []),
 ];
 
@@ -428,9 +431,9 @@ const pairWallet = async (dappPage, walletPage) => {
       .getByRole("heading", { name: "Approve connection?" })
       .waitFor({ state: "visible", timeout: 45_000 })
       .then(() => "approval"),
-    decodeError.waitFor({ state: "visible", timeout: 45_000 }).then(
-      () => "decode-error",
-    ),
+    decodeError
+      .waitFor({ state: "visible", timeout: 45_000 })
+      .then(() => "decode-error"),
   ]);
   if (uploadResult === "decode-error") {
     await walletPage.keyboard.press("Escape");
@@ -464,9 +467,11 @@ const pairWallet = async (dappPage, walletPage) => {
     useApprovedWallet
       .waitFor({ state: "visible", timeout: 60_000 })
       .then(() => "confirmation"),
-    dappPage.waitForFunction(connectedState, undefined, {
-      timeout: 60_000,
-    }).then(() => "ready"),
+    dappPage
+      .waitForFunction(connectedState, undefined, {
+        timeout: 60_000,
+      })
+      .then(() => "ready"),
   ]);
   if (state === "confirmation") {
     const nextAction = await dappPage
@@ -577,10 +582,10 @@ const createLaunchpadTokenSale = async (dappPage, walletPage, wallet) => {
     label: "launchpad token sale",
     prepareButton: dappPage.getByRole("button", { name: "Prepare draft" }),
     submitButton: dappPage.getByRole("button", { name: "Sign and submit" }),
-      successNotice: dappPage.locator(".notice.is-success").filter({
-        hasText: /Live launchpad state includes sale/i,
-      }),
-    });
+    successNotice: dappPage.locator(".notice.is-success").filter({
+      hasText: /Live launchpad state includes sale/i,
+    }),
+  });
 
   return { saleId, tokenHandle };
 };
@@ -747,7 +752,7 @@ const main = async () => {
                       return;
                     }
                     const first = Array.isArray(body?.items)
-                      ? body.items[0] ?? null
+                      ? (body.items[0] ?? null)
                       : null;
                     console.log(
                       `[soraswap-account-transactions] ${response.status} ${JSON.stringify(
@@ -822,7 +827,10 @@ const main = async () => {
       timeout: 60_000,
     });
     await dappPage.waitForTimeout(12_000);
-    await summarizeDappState(dappPage, "Dapp state after initial launchpad load");
+    await summarizeDappState(
+      dappPage,
+      "Dapp state after initial launchpad load",
+    );
     await dappPage
       .getByText("genesis_sale_usdt")
       .waitFor({ state: "visible", timeout: 60_000 });

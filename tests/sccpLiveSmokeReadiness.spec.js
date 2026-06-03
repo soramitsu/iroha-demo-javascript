@@ -22,6 +22,9 @@ const VERIFIER_ADDRESS = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy";
 const HASH_11 = `0x${"11".repeat(32)}`;
 const HASH_22 = `0x${"22".repeat(32)}`;
 const HASH_33 = `0x${"33".repeat(32)}`;
+const HASH_44 = `0x${"44".repeat(32)}`;
+const HASH_55 = `0x${"55".repeat(32)}`;
+const HASH_66 = `0x${"66".repeat(32)}`;
 
 const readyRouteReport = (overrides = {}) => ({
   ready: true,
@@ -36,7 +39,20 @@ const readyRouteReport = (overrides = {}) => ({
     networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
     settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
   },
-  checks: [],
+  checks: [
+    {
+      id: "post-deploy-live-evidence",
+      label: "TRON source-event and route-canary live evidence are complete.",
+      status: "pass",
+    },
+  ],
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    sourceBridgeConfigHash: HASH_44,
+    sourceEventTransactionId: HASH_55,
+    routeCanaryEvidenceHash: HASH_66,
+    routeCanaryTransactionId: `0x${"77".repeat(32)}`,
+  },
   reasons: [],
   nextSteps: [],
   ...overrides,
@@ -76,6 +92,13 @@ const readyManifest = () => ({
       name: "taira-xor-sccp-burn-record-v1",
     },
     gasLimit: 500000,
+  },
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    sourceBridgeConfigHash: HASH_44,
+    sourceEventTransactionId: HASH_55,
+    routeCanaryEvidenceHash: HASH_66,
+    routeCanaryTransactionId: `0x${"77".repeat(32)}`,
   },
 });
 
@@ -183,6 +206,142 @@ describe("SCCP live smoke readiness", () => {
         "module",
       ),
     ).toThrow(/whitespace/);
+  });
+
+  it("rejects ready route reports that are not bound to TAIRA/TRON XOR", () => {
+    const cases = [
+      {
+        name: "missing post-deploy live evidence check",
+        routeReport: readyRouteReport({ checks: [] }),
+        detail: "post-deploy live evidence preflight check has not passed",
+      },
+      {
+        name: "missing post-deploy live evidence ids",
+        routeReport: readyRouteReport({ postDeployLiveEvidence: null }),
+        detail: "postDeployLiveEvidence is missing",
+      },
+      {
+        name: "forged source event transaction id",
+        routeReport: readyRouteReport({
+          postDeployLiveEvidence: {
+            ...readyRouteReport().postDeployLiveEvidence,
+            sourceEventTransactionId: `0x${"00".repeat(32)}`,
+          },
+        }),
+        detail: "sourceEventTransactionId must be a non-zero 32-byte hex value",
+      },
+      {
+        name: "wrong route and asset",
+        routeReport: readyRouteReport({
+          routeId: "minamoto_tron_xor",
+          assetKey: "dot",
+        }),
+        detail: "expected route taira_tron_xor/xor",
+      },
+      {
+        name: "missing deployment evidence",
+        routeReport: readyRouteReport({ deployment: null }),
+        detail: "deployment evidence is missing",
+      },
+      {
+        name: "missing TRON network binding",
+        routeReport: readyRouteReport({
+          deployment: {
+            bridgeAddress: BRIDGE_ADDRESS,
+            tokenAddress: TOKEN_ADDRESS,
+            sourceBridgeAddress: SOURCE_BRIDGE_ADDRESS,
+            verifierAddress: VERIFIER_ADDRESS,
+            settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          },
+        }),
+        detail: "networkIdHex is missing",
+      },
+      {
+        name: "invalid TRON bridge address",
+        routeReport: readyRouteReport({
+          deployment: {
+            bridgeAddress: "T000000000000000000000000000000000",
+            tokenAddress: TOKEN_ADDRESS,
+            sourceBridgeAddress: SOURCE_BRIDGE_ADDRESS,
+            verifierAddress: VERIFIER_ADDRESS,
+            networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+            settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          },
+        }),
+        detail:
+          "bridgeAddress must be a valid TRON mainnet Base58Check address",
+      },
+    ];
+
+    for (const { name, routeReport, detail } of cases) {
+      const report = evaluateSccpLiveSmokeReadiness({
+        routeReport,
+        walletConnectProjectId: "project_123",
+        destinationProverModuleUrl: "/sccp-tron-prover.js",
+        sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+        checkedAt: "2026-06-02T00:00:00.000Z",
+      });
+
+      expect(report.ready, name).toBe(false);
+      expect(report.routeReady, name).toBe(false);
+      expect(report.reasons, name).toContain(
+        "SCCP route preflight report is not bound to TAIRA/TRON XOR.",
+      );
+      expect(report.checks, name).toContainEqual(
+        expect.objectContaining({
+          id: "route-preflight",
+          status: "fail",
+          detail: expect.stringContaining(
+            "Route preflight report is not for taira_tron_xor/xor",
+          ),
+        }),
+      );
+      expect(
+        report.checks.find((check) => check.id === "route-preflight")?.detail,
+        name,
+      ).toContain(detail);
+      expect(report.nextSteps, name).not.toEqual(SCCP_LIVE_SMOKE_STEPS);
+    }
+  });
+
+  it("echoes only public route deployment fields in readiness reports", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      routeReport: readyRouteReport({
+        deployment: {
+          bridgeAddress: { private_key: "nested-secret" },
+          tokenAddress: TOKEN_ADDRESS,
+          sourceBridgeAddress: SOURCE_BRIDGE_ADDRESS,
+          verifierAddress: VERIFIER_ADDRESS,
+          networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+          settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          private_key: "top-level-secret",
+          seedPhrase: "seed words must not leak",
+        },
+      }),
+      walletConnectProjectId: "project_123",
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+      checkedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.routeReady).toBe(false);
+    expect(report.route?.deployment).toEqual({
+      bridgeAddress: null,
+      tokenAddress: TOKEN_ADDRESS,
+      sourceBridgeAddress: SOURCE_BRIDGE_ADDRESS,
+      verifierAddress: VERIFIER_ADDRESS,
+      networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+      settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    });
+    expect(report.route?.postDeployLiveEvidence).toEqual(
+      readyRouteReport().postDeployLiveEvidence,
+    );
+    expect(JSON.stringify(report)).not.toContain("private_key");
+    expect(JSON.stringify(report)).not.toContain("seedPhrase");
+    expect(JSON.stringify(report)).not.toContain("nested-secret");
+    expect(JSON.stringify(report)).not.toContain("top-level-secret");
+    expect(JSON.stringify(report)).not.toContain("seed words must not leak");
   });
 
   it("runs the read-only route preflight before evaluating live-smoke prerequisites", async () => {

@@ -22,6 +22,9 @@ const VERIFIER_ADDRESS = "TLsV52sRDL79HXGGm9yzwKibb6BeruhUzy";
 const HASH_11 = `0x${"11".repeat(32)}`;
 const HASH_22 = `0x${"22".repeat(32)}`;
 const HASH_33 = `0x${"33".repeat(32)}`;
+const HASH_44 = `0x${"44".repeat(32)}`;
+const HASH_55 = `0x${"55".repeat(32)}`;
+const HASH_66 = `0x${"66".repeat(32)}`;
 const BINDING_KEY = "tron:0:5:mainnet:taira_tron_xor:v1";
 const ARTIFACT_B64 = Buffer.from(
   "taira xor sccp burn-record test artifact",
@@ -72,6 +75,13 @@ const readyManifest = (overrides = {}) => ({
     },
     gasLimit: 500000,
   },
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    sourceBridgeConfigHash: HASH_44,
+    sourceEventTransactionId: HASH_55,
+    routeCanaryEvidenceHash: HASH_66,
+    routeCanaryTransactionId: `0x${"77".repeat(32)}`,
+  },
   ...overrides,
 });
 
@@ -104,6 +114,13 @@ describe("SCCP route preflight", () => {
       verifierAddress: VERIFIER_ADDRESS,
       networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
       settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    });
+    expect(report.postDeployLiveEvidence).toEqual({
+      fullTomlReady: true,
+      sourceBridgeConfigHash: HASH_44,
+      sourceEventTransactionId: HASH_55,
+      routeCanaryEvidenceHash: HASH_66,
+      routeCanaryTransactionId: `0x${"77".repeat(32)}`,
     });
     expect(JSON.stringify(report)).not.toContain(ARTIFACT_B64);
     expect(JSON.stringify(report)).not.toContain("private");
@@ -228,6 +245,53 @@ describe("SCCP route preflight", () => {
     expect(failedCheck(report, "production-ready")?.detail).toContain(
       "boolean true",
     );
+  });
+
+  it("requires source-event and route-canary post-deploy live evidence", () => {
+    for (const [override, detail] of [
+      [
+        {
+          postDeployLiveEvidence: undefined,
+        },
+        "post-deploy live evidence is missing",
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...readyManifest().postDeployLiveEvidence,
+            fullTomlReady: false,
+          },
+        },
+        "fullTomlReady must be true",
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...readyManifest().postDeployLiveEvidence,
+            sourceEventTransactionId: undefined,
+          },
+        },
+        "sourceEventTransactionId",
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...readyManifest().postDeployLiveEvidence,
+            routeCanaryTransactionId: `0x${"00".repeat(32)}`,
+          },
+        },
+        "routeCanaryTransactionId",
+      ],
+    ]) {
+      const report = evaluate({
+        manifestSet: { manifests: [readyManifest(override)] },
+      });
+
+      expect(report.ready).toBe(false);
+      expect(
+        failedCheck(report, "post-deploy-live-evidence")?.detail,
+      ).toContain(detail);
+    }
   });
 
   it("rejects malformed TRON deployment addresses", () => {

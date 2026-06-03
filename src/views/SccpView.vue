@@ -669,6 +669,30 @@ const runTronSourceProofWorker = (
 const fingerprintSccpManifest = (manifest: Record<string, unknown>): string =>
   JSON.stringify(manifest);
 
+const cloneSccpManifestSnapshot = (
+  manifest: Record<string, unknown>,
+): Record<string, unknown> => {
+  try {
+    const serialized = JSON.stringify(manifest);
+    if (!serialized) {
+      throw new Error("empty manifest");
+    }
+    const cloned = JSON.parse(serialized) as unknown;
+    if (
+      typeof cloned !== "object" ||
+      cloned === null ||
+      Array.isArray(cloned)
+    ) {
+      throw new Error("invalid manifest");
+    }
+    return cloned as Record<string, unknown>;
+  } catch (_error) {
+    throw new Error(
+      "SCCP route manifest must be JSON-cloneable before bridge actions.",
+    );
+  }
+};
+
 const createSccpOperationContext = (
   ids: Pick<SccpOperationContext, "messageId" | "tronTxId"> = {},
 ): SccpOperationContext => {
@@ -679,6 +703,7 @@ const createSccpOperationContext = (
         "Route readiness must be true before bridge actions are enabled.",
     );
   }
+  const manifestSnapshot = cloneSccpManifestSnapshot(manifest);
   return {
     direction: direction.value,
     toriiUrl: session.connection.toriiUrl,
@@ -689,8 +714,8 @@ const createSccpOperationContext = (
     amountDecimal: normalizeBridgeAmount(amount.value),
     tronRecipient: tronRecipient.value.trim(),
     tairaRecipient: tairaRecipient.value.trim(),
-    manifest,
-    manifestFingerprint: fingerprintSccpManifest(manifest),
+    manifest: manifestSnapshot,
+    manifestFingerprint: fingerprintSccpManifest(manifestSnapshot),
     ...ids,
   };
 };

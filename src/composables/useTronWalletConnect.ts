@@ -554,8 +554,9 @@ export const useTronWalletConnect = () => {
     error.value = "";
     connecting.value = true;
     let shouldClearRejectedSession = false;
+    let connector: UniversalConnector | null = null;
     try {
-      const connector = await getConnector();
+      connector = await getConnector();
       const { session } = await connector.connect(
         createTronWalletConnectConnectParams(),
       );
@@ -584,6 +585,11 @@ export const useTronWalletConnect = () => {
       persist();
     } catch (connectError) {
       if (shouldClearRejectedSession) {
+        try {
+          await connector?.disconnect();
+        } catch {
+          // Preserve the validation error that rejected this session.
+        }
         clearSession();
       }
       error.value =

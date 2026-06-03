@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_TAIRA_TORII_URL,
   DEFAULT_TRON_GATEWAY_URL,
+  SCCP_XOR_ASSET_KEY,
+  SCCP_XOR_ROUTE_ID,
+  TRON_MAINNET_NETWORK_ID_HEX,
+  isValidTronBase58CheckAddress,
   normalizeToriiEndpoint,
   normalizeTronGatewayEndpoint,
   runSccpRoutePreflight,
@@ -24,6 +28,170 @@ export const SCCP_LIVE_SMOKE_STEPS = Object.freeze([
 ]);
 
 const trimString = (value) => String(value ?? "").trim();
+
+const isRecord = (value) =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const PUBLIC_ROUTE_DEPLOYMENT_FIELDS = Object.freeze([
+  "bridgeAddress",
+  "tokenAddress",
+  "sourceBridgeAddress",
+  "verifierAddress",
+  "networkIdHex",
+  "settlementAssetDefinitionId",
+]);
+
+const PUBLIC_POST_DEPLOY_EVIDENCE_FIELDS = Object.freeze([
+  "sourceBridgeConfigHash",
+  "sourceEventTransactionId",
+  "routeCanaryEvidenceHash",
+  "routeCanaryTransactionId",
+]);
+
+const readPublicDeploymentString = (deployment, key) => {
+  if (!isRecord(deployment)) {
+    return null;
+  }
+  const value = deployment[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const publicRouteDeployment = (deployment) => {
+  if (!isRecord(deployment)) {
+    return null;
+  }
+  return Object.fromEntries(
+    PUBLIC_ROUTE_DEPLOYMENT_FIELDS.map((key) => [
+      key,
+      readPublicDeploymentString(deployment, key),
+    ]),
+  );
+};
+
+const readPublicEvidenceString = (evidence, key) => {
+  if (!isRecord(evidence)) {
+    return null;
+  }
+  const value = evidence[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim().toLowerCase();
+  return trimmed || null;
+};
+
+const isNonZeroHex32 = (value) =>
+  typeof value === "string" &&
+  /^0x[0-9a-f]{64}$/u.test(value) &&
+  !/^0x0{64}$/u.test(value);
+
+const publicPostDeployLiveEvidence = (evidence) => {
+  if (!isRecord(evidence)) {
+    return null;
+  }
+  return {
+    fullTomlReady: evidence.fullTomlReady === true,
+    ...Object.fromEntries(
+      PUBLIC_POST_DEPLOY_EVIDENCE_FIELDS.map((key) => [
+        key,
+        readPublicEvidenceString(evidence, key),
+      ]),
+    ),
+    ...(readPublicEvidenceString(evidence, "offlineFullTomlSha256")
+      ? {
+          offlineFullTomlSha256: readPublicEvidenceString(
+            evidence,
+            "offlineFullTomlSha256",
+          ),
+        }
+      : {}),
+  };
+};
+
+const routeReportHasPassedCheck = (routeReport, id) =>
+  Array.isArray(routeReport.checks) &&
+  routeReport.checks.some(
+    (check) =>
+      isRecord(check) && check.id === id && trimString(check.status) === "pass",
+  );
+
+const routeReportProblems = (routeReport) => {
+  const problems = [];
+  if (!isRecord(routeReport)) {
+    return ["route report is missing."];
+  }
+
+  const routeId = readPublicDeploymentString(routeReport, "routeId");
+  const assetKey = readPublicDeploymentString(routeReport, "assetKey");
+  if (routeId !== SCCP_XOR_ROUTE_ID || assetKey !== SCCP_XOR_ASSET_KEY) {
+    problems.push(
+      `expected route ${SCCP_XOR_ROUTE_ID}/${SCCP_XOR_ASSET_KEY}, received ${routeId || "<missing>"}/${assetKey || "<missing>"}.`,
+    );
+  }
+
+  const deployment = publicRouteDeployment(routeReport.deployment);
+  if (!deployment) {
+    problems.push("deployment evidence is missing.");
+    return problems;
+  }
+
+  for (const key of PUBLIC_ROUTE_DEPLOYMENT_FIELDS) {
+    if (!deployment[key]) {
+      problems.push(`${key} is missing.`);
+    }
+  }
+
+  for (const key of [
+    "bridgeAddress",
+    "tokenAddress",
+    "sourceBridgeAddress",
+    "verifierAddress",
+  ]) {
+    const value = deployment[key];
+    if (value && !isValidTronBase58CheckAddress(value)) {
+      problems.push(`${key} must be a valid TRON mainnet Base58Check address.`);
+    }
+  }
+
+  if (
+    deployment.networkIdHex &&
+    deployment.networkIdHex.toLowerCase() !== TRON_MAINNET_NETWORK_ID_HEX
+  ) {
+    problems.push("networkIdHex must be the TRON mainnet network id.");
+  }
+  if (!routeReportHasPassedCheck(routeReport, "post-deploy-live-evidence")) {
+    problems.push("post-deploy live evidence preflight check has not passed.");
+  }
+  const postDeployLiveEvidence = publicPostDeployLiveEvidence(
+    routeReport.postDeployLiveEvidence,
+  );
+  if (!postDeployLiveEvidence) {
+    problems.push("postDeployLiveEvidence is missing.");
+  } else {
+    if (!postDeployLiveEvidence.fullTomlReady) {
+      problems.push("postDeployLiveEvidence.fullTomlReady must be true.");
+    }
+    for (const key of PUBLIC_POST_DEPLOY_EVIDENCE_FIELDS) {
+      if (!isNonZeroHex32(postDeployLiveEvidence[key])) {
+        problems.push(`${key} must be a non-zero 32-byte hex value.`);
+      }
+    }
+    if (
+      postDeployLiveEvidence.offlineFullTomlSha256 &&
+      !isNonZeroHex32(postDeployLiveEvidence.offlineFullTomlSha256)
+    ) {
+      problems.push(
+        "offlineFullTomlSha256 must be a non-zero 32-byte hex value.",
+      );
+    }
+  }
+
+  return problems;
+};
 
 const isLoopbackHost = (hostname) => {
   const normalized = hostname.toLowerCase();
@@ -129,7 +297,9 @@ export const evaluateSccpLiveSmokeReadiness = ({
   const reasons = [];
   const nextSteps = [];
 
-  const routeReady = routeReport?.ready === true;
+  const rawRouteReady = routeReport?.ready === true;
+  const routeProblems = rawRouteReady ? routeReportProblems(routeReport) : [];
+  const routeReady = rawRouteReady && routeProblems.length === 0;
   checks.push(
     check(
       "route-preflight",
@@ -137,11 +307,17 @@ export const evaluateSccpLiveSmokeReadiness = ({
       routeReady ? "pass" : "fail",
       routeReady
         ? "Route manifest, capabilities, and deployment evidence are ready."
-        : "Run npm run e2e:sccp:preflight and activate the route manifest before live transfer smoke.",
+        : routeProblems.length
+          ? `Route preflight report is not for ${SCCP_XOR_ROUTE_ID}/${SCCP_XOR_ASSET_KEY}: ${routeProblems.join(" ")}`
+          : "Run npm run e2e:sccp:preflight and activate the route manifest before live transfer smoke.",
     ),
   );
   if (!routeReady) {
-    reasons.push("SCCP route preflight is not ready.");
+    reasons.push(
+      routeProblems.length
+        ? "SCCP route preflight report is not bound to TAIRA/TRON XOR."
+        : "SCCP route preflight is not ready.",
+    );
     nextSteps.push(
       ...(Array.isArray(routeReport?.nextSteps) && routeReport.nextSteps.length
         ? routeReport.nextSteps
@@ -297,7 +473,10 @@ export const evaluateSccpLiveSmokeReadiness = ({
           endpoint: routeReport.endpoint ?? null,
           routeId: routeReport.routeId ?? null,
           assetKey: routeReport.assetKey ?? null,
-          deployment: routeReport.deployment ?? null,
+          deployment: publicRouteDeployment(routeReport.deployment),
+          postDeployLiveEvidence: publicPostDeployLiveEvidence(
+            routeReport.postDeployLiveEvidence,
+          ),
         }
       : null,
   };

@@ -355,6 +355,13 @@ const READY_TRON_MANIFEST = {
     destinationBindingKey: TRON_DESTINATION_BINDING.key,
     destinationBindingHash: TRON_DESTINATION_BINDING.bindingHash,
   },
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    sourceBridgeConfigHash: HEX32_A,
+    sourceEventTransactionId: HEX32_B,
+    routeCanaryEvidenceHash: HEX32_C,
+    routeCanaryTransactionId: HEX32_F,
+  },
   ...BURN_RECORD_MATERIAL,
 };
 
@@ -876,6 +883,55 @@ describe("SCCP helpers", () => {
     expect(stringProductionReady.reasons.join(" ")).toMatch(
       /production-ready flag is invalid/,
     );
+    for (const [manifestOverride, reason] of [
+      [
+        {
+          postDeployLiveEvidence: undefined,
+        },
+        /post-deploy live evidence is missing/,
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...READY_TRON_MANIFEST.postDeployLiveEvidence,
+            sourceEventTransactionId: undefined,
+          },
+        },
+        /sourceEventTransactionId/,
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...READY_TRON_MANIFEST.postDeployLiveEvidence,
+            routeCanaryEvidenceHash: `0x${"00".repeat(32)}`,
+          },
+        },
+        /routeCanaryEvidenceHash.*non-zero/,
+      ],
+    ] as const) {
+      const missingLiveEvidence = resolveSccpRouteReadiness({
+        connection: {
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: TAIRA_NETWORK_PREFIX,
+        },
+        capabilities,
+        manifestSet: {
+          manifests: [
+            {
+              counterpartyDomain: SCCP_TRON_DOMAIN,
+              verifierTarget: "TronContract",
+              productionReady: true,
+              routeId: "taira_tron_xor",
+              assetKey: "xor",
+              ...READY_TRON_MANIFEST,
+              ...manifestOverride,
+            },
+          ],
+        },
+      });
+      expect(missingLiveEvidence.ready).toBe(false);
+      expect(missingLiveEvidence.reasons.join(" ")).toMatch(reason);
+    }
     const genericTronManifest = resolveSccpRouteReadiness({
       connection: {
         chainId: TAIRA_CHAIN_ID,

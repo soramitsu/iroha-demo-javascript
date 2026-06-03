@@ -307,6 +307,14 @@ const mocks = vi.hoisted(() => ({
   buildTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("instruction-tx", "utf8"),
   })),
+  buildIvmProvedTransactionMock: vi.fn(
+    (input?: { privateKey?: Buffer | Uint8Array }) => ({
+      signedTransaction: Buffer.from(
+        `ivm-proved-${Buffer.from(input?.privateKey ?? []).toString("hex")}`,
+        "utf8",
+      ),
+    }),
+  ),
   buildTransferAssetTransactionMock: vi.fn(() => ({
     signedTransaction: Buffer.from("public-transfer", "utf8"),
   })),
@@ -576,6 +584,7 @@ vi.mock("@iroha/iroha-js", async () => {
     buildRegisterAccountAndTransferTransaction:
       mocks.buildRegisterAccountAndTransferTransactionMock,
     buildTransaction: mocks.buildTransactionMock,
+    buildIvmProvedTransaction: mocks.buildIvmProvedTransactionMock,
     buildTransferAssetTransaction: mocks.buildTransferAssetTransactionMock,
     submitSignedTransaction: mocks.submitSignedTransactionMock,
     submitTransactionEntrypoint: mocks.submitTransactionEntrypointMock,
@@ -730,6 +739,9 @@ const loadBridge = async () => {
     submitSccpBridgeMessage: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    submitZkIvmProvedTransaction: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
     getChainMetadata: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -807,6 +819,7 @@ describe("preload Kaigi bridge", () => {
     mocks.buildJoinKaigiTransactionMock.mockClear();
     mocks.buildEndKaigiTransactionMock.mockClear();
     mocks.buildTransactionMock.mockClear();
+    mocks.buildIvmProvedTransactionMock.mockClear();
     mocks.buildTransferAssetTransactionMock.mockClear();
     mocks.buildRegisterAccountAndTransferTransactionMock.mockClear();
     mocks.buildPrivateKaigiFeeSpendMock.mockClear();
@@ -1429,6 +1442,75 @@ describe("preload Kaigi bridge", () => {
         finalize_inbound: true,
       },
     });
+  });
+
+  it("submits ZK IVM proved transactions with the stored vault key only", async () => {
+    const bridge = await loadBridge();
+    const privateKeyHex = "12".repeat(32);
+    mocks.storedAccountSecrets.set(ALICE_ACCOUNT_ID, privateKeyHex);
+
+    await expect(
+      bridge.submitZkIvmProvedTransaction({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        proved: { overlay: [] },
+        attachment: {
+          backend: "halo2/ipa",
+          proof: { backend: "halo2/ipa", bytes: [1, 2, 3] },
+          vk_ref: { backend: "halo2/ipa", name: "ivm-exec-v1" },
+        },
+        metadata: { gas_limit: 1000 },
+      }),
+    ).resolves.toMatchObject({
+      hash: `hash-ivm-proved-${privateKeyHex}`,
+    });
+
+    expect(mocks.buildIvmProvedTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authority: ALICE_ACCOUNT_ID,
+        privateKey: Buffer.from(privateKeyHex, "hex"),
+      }),
+    );
+    expect(
+      JSON.stringify(mocks.submitTransactionMock.mock.calls),
+    ).not.toContain(privateKeyHex);
+  });
+
+  it("rejects inline keys for ZK IVM proved transaction submissions before signing", async () => {
+    const bridge = await loadBridge();
+
+    await expect(
+      bridge.submitZkIvmProvedTransaction({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        privateKeyHex: "12".repeat(32),
+        proved: { overlay: [] },
+        attachment: {
+          backend: "halo2/ipa",
+          proof: { backend: "halo2/ipa", bytes: [1, 2, 3] },
+          vk_ref: { backend: "halo2/ipa", name: "ivm-exec-v1" },
+        },
+      }),
+    ).rejects.toThrow(/inline private keys are not accepted/);
+
+    await expect(
+      bridge.submitZkIvmProvedTransaction({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        accountId: ALICE_ACCOUNT_ID,
+        proved: { overlay: [] },
+        attachment: {
+          backend: "halo2/ipa",
+          proof: { backend: "halo2/ipa", bytes: [1, 2, 3] },
+          vk_ref: { backend: "halo2/ipa", name: "ivm-exec-v1" },
+        },
+      }),
+    ).rejects.toThrow(/requires a stored wallet secret/);
+
+    expect(mocks.buildIvmProvedTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.submitTransactionMock).not.toHaveBeenCalled();
   });
 
   it("passes through successful TRON broadcast responses", async () => {

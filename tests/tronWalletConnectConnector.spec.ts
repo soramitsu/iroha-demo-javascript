@@ -186,11 +186,12 @@ describe("TRON WalletConnect connector", () => {
         },
       },
     });
+    const disconnectMock = vi.fn();
     vi.doMock("@reown/appkit-universal-connector", () => ({
       UniversalConnector: {
         init: vi.fn().mockResolvedValue({
           connect: connectMock,
-          disconnect: vi.fn(),
+          disconnect: disconnectMock,
           provider: { session: null },
           request: vi.fn(),
         }),
@@ -203,6 +204,7 @@ describe("TRON WalletConnect connector", () => {
     const tron = useTronWalletConnect();
 
     await expect(tron.connect()).rejects.toThrow(/multiple TRON mainnet/);
+    expect(disconnectMock).toHaveBeenCalledTimes(1);
     expect(tron.address.value).toBe("");
     expect(
       localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
@@ -224,11 +226,12 @@ describe("TRON WalletConnect connector", () => {
         },
       },
     });
+    const disconnectMock = vi.fn();
     vi.doMock("@reown/appkit-universal-connector", () => ({
       UniversalConnector: {
         init: vi.fn().mockResolvedValue({
           connect: connectMock,
-          disconnect: vi.fn(),
+          disconnect: disconnectMock,
           provider: { session: null },
           request: vi.fn(),
         }),
@@ -243,6 +246,7 @@ describe("TRON WalletConnect connector", () => {
     await expect(tron.connect()).rejects.toThrow(
       /Connected WalletConnect topic is required/,
     );
+    expect(disconnectMock).toHaveBeenCalledTimes(1);
     expect(tron.address.value).toBe("");
     expect(
       localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
@@ -738,11 +742,12 @@ describe("TRON WalletConnect connector", () => {
         },
       },
     });
+    const disconnectMock = vi.fn();
     vi.doMock("@reown/appkit-universal-connector", () => ({
       UniversalConnector: {
         init: vi.fn().mockResolvedValue({
           connect: connectMock,
-          disconnect: vi.fn(),
+          disconnect: disconnectMock,
           provider: { session: null },
           request: vi.fn(),
         }),
@@ -758,6 +763,7 @@ describe("TRON WalletConnect connector", () => {
     await expect(tron.connect()).rejects.toThrow(
       "Connected wallet did not approve TRON v1 transaction signing.",
     );
+    expect(disconnectMock).toHaveBeenCalledTimes(1);
     expect(tron.address.value).toBe("");
     expect(
       localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),

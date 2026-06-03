@@ -631,6 +631,13 @@ const sampleReadyManifestSet = () => ({
         destinationBindingKey: BINDING_KEY,
         destinationBindingHash: BINDING_HASH,
       },
+      postDeployLiveEvidence: {
+        fullTomlReady: true,
+        sourceBridgeConfigHash: `0x${"11".repeat(32)}`,
+        sourceEventTransactionId: `0x${"22".repeat(32)}`,
+        routeCanaryEvidenceHash: `0x${"33".repeat(32)}`,
+        routeCanaryTransactionId: `0x${"44".repeat(32)}`,
+      },
       tairaXorBurnRecord: {
         settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
         contractArtifactB64: "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==",
@@ -1831,6 +1838,49 @@ describe("SccpView", () => {
 
     expect(wrapper.text()).toContain("SCCP bridge context changed");
     expect(workerCtor).toHaveBeenCalledOnce();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("snapshots the route manifest before TRON source data loading", async () => {
+    storeConnectedTronWallet();
+    const mutableManifestSet = sampleReadyManifestSet();
+    getSccpProofManifestsMock.mockResolvedValue(mutableManifestSet);
+    getTronTransactionMock.mockImplementationOnce(() => {
+      (
+        mutableManifestSet.manifests[0] as Record<string, unknown>
+      ).tronBridgeAddress = TRON_TOKEN_ADDRESS;
+      return Promise.resolve(sampleTronTransaction());
+    });
+    const workerCtor = vi.fn();
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(TRON_TX_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("SCCP bridge context changed");
+    expect(workerCtor).not.toHaveBeenCalled();
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 

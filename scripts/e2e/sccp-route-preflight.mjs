@@ -177,6 +177,14 @@ const normalizeHex32 = (value, label) => {
   return `0x${normalized}`;
 };
 
+const normalizeNonZeroHex32 = (value, label) => {
+  const normalized = normalizeHex32(value, label);
+  if (/^0x0{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
 const readDestinationRollout = (manifest) =>
   readRecord(manifest, "destinationRollout") ||
   readRecord(manifest, "destination_rollout");
@@ -618,6 +626,81 @@ const readProductionReadyFlag = (manifest) => {
 
 const isCanonicalTairaAssetDefinitionId = (value) =>
   /^[1-9A-HJ-NP-Za-km-z]{16,80}$/u.test(value);
+
+const readPostDeployLiveEvidence = (manifest) => {
+  const evidence = readFirstRecord(
+    manifest,
+    "postDeployLiveEvidence",
+    "post_deploy_live_evidence",
+  );
+  if (!evidence) {
+    throw new Error("The TRON SCCP post-deploy live evidence is missing.");
+  }
+  const fullTomlReady =
+    evidence.fullTomlReady ?? evidence.full_toml_ready ?? false;
+  if (fullTomlReady !== true) {
+    throw new Error("postDeployLiveEvidence.fullTomlReady must be true.");
+  }
+
+  const sourceBridgeConfigHash = normalizeNonZeroHex32(
+    readFirstString(
+      evidence,
+      "sourceBridgeConfigHash",
+      "source_bridge_config_hash",
+    ),
+    "postDeployLiveEvidence.sourceBridgeConfigHash",
+  );
+  const sourceEventTransactionId = normalizeNonZeroHex32(
+    readFirstString(
+      evidence,
+      "sourceEventTransactionId",
+      "source_event_transaction_id",
+    ),
+    "postDeployLiveEvidence.sourceEventTransactionId",
+  );
+  const routeCanaryEvidenceHash = normalizeNonZeroHex32(
+    readFirstString(
+      evidence,
+      "routeCanaryEvidenceHash",
+      "route_canary_evidence_hash",
+    ),
+    "postDeployLiveEvidence.routeCanaryEvidenceHash",
+  );
+  const routeCanaryTransactionId = normalizeNonZeroHex32(
+    readFirstString(
+      evidence,
+      "routeCanaryTransactionId",
+      "route_canary_transaction_id",
+    ),
+    "postDeployLiveEvidence.routeCanaryTransactionId",
+  );
+  const offlineFullTomlSha256 = readFirstString(
+    evidence,
+    "offlineFullTomlSha256",
+    "offline_full_toml_sha256",
+  );
+  if (offlineFullTomlSha256) {
+    normalizeNonZeroHex32(
+      offlineFullTomlSha256,
+      "postDeployLiveEvidence.offlineFullTomlSha256",
+    );
+  }
+  return {
+    fullTomlReady: true,
+    sourceBridgeConfigHash,
+    sourceEventTransactionId,
+    routeCanaryEvidenceHash,
+    routeCanaryTransactionId,
+    ...(offlineFullTomlSha256
+      ? {
+          offlineFullTomlSha256: normalizeNonZeroHex32(
+            offlineFullTomlSha256,
+            "postDeployLiveEvidence.offlineFullTomlSha256",
+          ),
+        }
+      : {}),
+  };
+};
 
 export const SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES = 32;
 export const SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024;
@@ -1065,6 +1148,24 @@ export const evaluateSccpRoutePreflight = ({
       );
     }
 
+    try {
+      readPostDeployLiveEvidence(manifest);
+      pass(
+        checks,
+        "post-deploy-live-evidence",
+        "TRON source-event and route-canary live evidence are complete.",
+      );
+    } catch (error) {
+      fail(
+        checks,
+        "post-deploy-live-evidence",
+        "TRON source-event and route-canary live evidence are complete.",
+        error instanceof Error
+          ? error.message
+          : "Post-deploy live evidence invalid.",
+      );
+    }
+
     const burnRecordMaterial = readSccpTairaBurnRecordMaterial(manifest);
     try {
       validateBurnRecordMaterial(burnRecordMaterial);
@@ -1196,6 +1297,14 @@ export const evaluateSccpRoutePreflight = ({
   }
 
   const failedChecks = checks.filter((check) => check.status === "fail");
+  let postDeployLiveEvidence = null;
+  if (manifest) {
+    try {
+      postDeployLiveEvidence = readPostDeployLiveEvidence(manifest);
+    } catch (_error) {
+      postDeployLiveEvidence = null;
+    }
+  }
   const deployment = manifest
     ? {
         bridgeAddress: readSccpTronBridgeAddress(manifest) || null,
@@ -1216,6 +1325,7 @@ export const evaluateSccpRoutePreflight = ({
     routeId: SCCP_XOR_ROUTE_ID,
     assetKey: SCCP_XOR_ASSET_KEY,
     deployment,
+    postDeployLiveEvidence,
     checks,
     reasons: failedChecks.map((check) => check.detail || check.label),
     nextSteps:
