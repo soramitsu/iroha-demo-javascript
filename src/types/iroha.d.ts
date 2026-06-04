@@ -851,6 +851,7 @@ export interface SccpProofManifestSetResponse {
   localChain: string;
   proofFamily: string;
   manifests: readonly SccpProofManifestView[];
+  routes?: readonly Record<string, unknown>[];
 }
 
 export interface SccpRecentMessagesResponse {
@@ -872,6 +873,11 @@ export interface SccpDestinationProofMaterialInput {
 
 export interface SccpMessageProofInput
   extends SccpDestinationProofMaterialInput {
+  toriiUrl: string;
+  messageId: string;
+}
+
+export interface SccpMessageProofBundleInput {
   toriiUrl: string;
   messageId: string;
 }
@@ -960,6 +966,18 @@ export interface TronEventsInput extends TronGatewayInput {
 
 export interface TronBroadcastInput extends TronGatewayInput {
   transaction: Record<string, unknown>;
+}
+
+export interface SccpNileTestTronSignerStatus {
+  enabled: boolean;
+  network: "nile";
+  address: string;
+  reason?: string;
+}
+
+export interface SccpNileTestTronTransactionSignInput {
+  transaction: Record<string, unknown>;
+  ownerAddress?: string;
 }
 
 export type TronContractParameterInput =
@@ -1662,6 +1680,9 @@ export interface IrohaBridge {
   listSccpRecentMessages(
     input: SccpRecentMessagesInput,
   ): Promise<SccpRecentMessagesResponse>;
+  getSccpMessageProofBundle(
+    input: SccpMessageProofBundleInput,
+  ): Promise<Record<string, unknown>>;
   getSccpMessageProofArtifact(
     input: SccpMessageProofInput,
   ): Promise<Record<string, unknown>>;
@@ -1674,6 +1695,17 @@ export interface IrohaBridge {
   submitSccpBridgeMessage(
     input: SccpBridgeMessageSubmitInput,
   ): Promise<Record<string, unknown>>;
+  waitForSccpTransactionCommit(input: {
+    toriiUrl: string;
+    hashHex: string;
+  }): Promise<Record<string, unknown>>;
+  deploySccpTairaInboundSettlementContract(input: {
+    toriiUrl: string;
+    accountId: string;
+    contractAlias?: string | null;
+    compiledCodeB64?: string | null;
+    leaseExpiryMs?: number | string | null;
+  }): Promise<Record<string, unknown> | null>;
   deriveZkIvmPayload(
     input: ZkIvmRequestInput,
   ): Promise<Record<string, unknown>>;
@@ -1701,6 +1733,10 @@ export interface IrohaBridge {
   getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
   getTronFinalityData(
     input?: TronGatewayInput,
+  ): Promise<Record<string, unknown>>;
+  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
+  signSccpNileTestTronTransaction(
+    input: SccpNileTestTronTransactionSignInput,
   ): Promise<Record<string, unknown>>;
   broadcastTronTransaction(
     input: TronBroadcastInput,

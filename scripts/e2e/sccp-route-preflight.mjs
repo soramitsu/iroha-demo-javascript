@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /* global BigInt, globalThis */
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -15,6 +16,27 @@ export const TRON_MAINNET_CHAIN_ID_HEX = "0x2b6653dc";
 export const TRON_MAINNET_NETWORK_ID_HEX =
   "0x000000000000000000000000000000000000000000000000000000002b6653dc";
 export const DEFAULT_TRON_GATEWAY_URL = "https://api.trongrid.io";
+export const TRON_NILE_CHAIN_ID_HEX = "0xcd8690dc";
+export const TRON_NILE_NETWORK_ID_HEX =
+  "0x00000000000000000000000000000000000000000000000000000000cd8690dc";
+export const DEFAULT_TRON_NILE_GATEWAY_URL = "https://nile.trongrid.io";
+
+export const SCCP_TRON_NETWORK_PROFILES = {
+  mainnet: {
+    key: "mainnet",
+    label: "TRON mainnet",
+    chainIdHex: TRON_MAINNET_CHAIN_ID_HEX,
+    networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+    gatewayUrl: DEFAULT_TRON_GATEWAY_URL,
+  },
+  nile: {
+    key: "nile",
+    label: "TRON Nile testnet",
+    chainIdHex: TRON_NILE_CHAIN_ID_HEX,
+    networkIdHex: TRON_NILE_NETWORK_ID_HEX,
+    gatewayUrl: DEFAULT_TRON_NILE_GATEWAY_URL,
+  },
+};
 
 const TRON_BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -89,6 +111,24 @@ const readNumber = (record, key) => {
 const listRecords = (value) =>
   Array.isArray(value) ? value.filter((entry) => isRecord(entry)) : [];
 
+export const normalizeSccpTronNetworkKey = (value) => {
+  const normalized = trimString(value).toLowerCase();
+  if (
+    !normalized ||
+    normalized === "mainnet" ||
+    normalized === "tron-mainnet"
+  ) {
+    return "mainnet";
+  }
+  if (normalized === "nile" || normalized === "tron-nile") {
+    return "nile";
+  }
+  throw new Error("--tron-network must be mainnet or nile.");
+};
+
+export const resolveSccpTronNetworkProfile = (value) =>
+  SCCP_TRON_NETWORK_PROFILES[normalizeSccpTronNetworkKey(value)];
+
 const bytesEqual = (left, right) =>
   left.length === right.length &&
   left.every((byte, index) => byte === right[index]);
@@ -158,13 +198,14 @@ export const isValidTronBase58CheckAddress = (address) => {
   }
 };
 
-const normalizeTronNetworkIdHex = (networkId) => {
+const normalizeTronNetworkIdHex = (networkId, tronNetwork = "mainnet") => {
+  const profile = resolveSccpTronNetworkProfile(tronNetwork);
   const normalized = trimString(networkId).toLowerCase();
-  if (normalized === TRON_MAINNET_CHAIN_ID_HEX) {
-    return TRON_MAINNET_NETWORK_ID_HEX;
+  if (normalized === profile.chainIdHex) {
+    return profile.networkIdHex;
   }
-  if (normalized !== TRON_MAINNET_NETWORK_ID_HEX) {
-    throw new Error("TRON SCCP routes must target TRON mainnet.");
+  if (normalized !== profile.networkIdHex) {
+    throw new Error(`TRON SCCP routes must target ${profile.label}.`);
   }
   return normalized;
 };
@@ -239,7 +280,10 @@ export const readSccpTronVerifierAddress = (manifest) => {
   );
 };
 
-export const readSccpTronProofMaterial = (manifest) => {
+export const readSccpTronProofMaterial = (
+  manifest,
+  tronNetwork = "mainnet",
+) => {
   const rollout = readDestinationRollout(manifest);
   try {
     return {
@@ -250,6 +294,7 @@ export const readSccpTronProofMaterial = (manifest) => {
             "destinationNetworkId",
             "destination_network_id",
           ),
+        tronNetwork,
       ),
       tronVerifierAddress: normalizeTronAddress(
         readSccpTronVerifierAddress(manifest),
@@ -424,6 +469,51 @@ const manifestMatchesRoute = (manifest) => {
   return routeId === SCCP_XOR_ROUTE_ID && assetKey === SCCP_XOR_ASSET_KEY;
 };
 
+const normalizeManifestTronNetworkKey = (value) => {
+  const normalized = trimString(value).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "tron") {
+    return "mainnet";
+  }
+  try {
+    return normalizeSccpTronNetworkKey(normalized);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readManifestTronNetworkKey = (manifest) => {
+  for (const value of [
+    readString(manifest, "tronNetwork"),
+    readString(manifest, "tron_network"),
+    readString(manifest, "network"),
+    readString(manifest, "chain"),
+  ]) {
+    const key = normalizeManifestTronNetworkKey(value);
+    if (key) {
+      return key;
+    }
+  }
+  return null;
+};
+
+const manifestMatchesTronNetworkProfile = (
+  manifest,
+  tronNetwork = "mainnet",
+) => {
+  const profile = resolveSccpTronNetworkProfile(tronNetwork);
+  const declaredNetwork = readManifestTronNetworkKey(manifest);
+  if (declaredNetwork) {
+    return declaredNetwork === profile.key;
+  }
+  if (readSccpTronProofMaterial(manifest, profile.key)) {
+    return true;
+  }
+  return profile.key === "mainnet";
+};
+
 const safeManifestDiagnosticValue = (value) => {
   const normalized = trimString(value);
   if (!normalized) {
@@ -483,14 +573,50 @@ const describeTronManifestCandidates = (manifestSet) => {
   }.`;
 };
 
-export const pickTairaTronXorManifest = (manifestSet) =>
+export const pickTairaTronXorManifest = (
+  manifestSet,
+  tronNetwork = "mainnet",
+) =>
   manifestRecords(manifestSet).find(
     (manifest) =>
-      manifestTargetsTron(manifest) && manifestMatchesRoute(manifest),
+      manifestTargetsTron(manifest) &&
+      manifestMatchesRoute(manifest) &&
+      manifestMatchesTronNetworkProfile(manifest, tronNetwork),
   ) ?? null;
 
 const hasAnyTronManifest = (manifestSet) =>
   manifestRecords(manifestSet).some(manifestTargetsTron);
+
+export const parseSccpRouteManifestFilePayload = (payload) => {
+  if (Array.isArray(payload)) {
+    return { routes: listRecords(payload) };
+  }
+  if (!isRecord(payload)) {
+    throw new Error("SCCP route manifest file must contain a JSON object.");
+  }
+  if (manifestRecords(payload).length > 0) {
+    return payload;
+  }
+  return { routes: [payload] };
+};
+
+export const loadSccpRouteManifestFile = async (
+  manifestFilePath,
+  { readFileImpl = readFile } = {},
+) => {
+  const raw = await readFileImpl(manifestFilePath, "utf8");
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(
+      `SCCP route manifest file is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  return parseSccpRouteManifestFilePayload(payload);
+};
 
 export const normalizeTronAddress = (address) => {
   const normalized = trimString(address);
@@ -623,6 +749,15 @@ const readProductionReadyFlag = (manifest) => {
   }
   return { ready: false, invalid: true };
 };
+
+const hasPostDeployLiveEvidence = (manifest) =>
+  Boolean(
+    readFirstRecord(
+      manifest,
+      "postDeployLiveEvidence",
+      "post_deploy_live_evidence",
+    ),
+  );
 
 const isCanonicalTairaAssetDefinitionId = (value) =>
   /^[1-9A-HJ-NP-Za-km-z]{16,80}$/u.test(value);
@@ -843,8 +978,8 @@ const readTronConstantBool = (response, label) => {
 const readTronConstantBytes32 = (response, label) =>
   `0x${readTronConstantWord(response, label)}`;
 
-const validateDestinationBinding = (manifest) => {
-  const proofMaterial = readSccpTronProofMaterial(manifest);
+const validateDestinationBinding = (manifest, tronNetwork = "mainnet") => {
+  const proofMaterial = readSccpTronProofMaterial(manifest, tronNetwork);
   if (!proofMaterial) {
     throw new Error(
       "The TRON SCCP verifier rollout proof material is incomplete.",
@@ -950,16 +1085,31 @@ const validateBurnRecordMaterial = (material) => {
   }
 };
 
+const manifestAllowsSelectedTestnetRoute = (
+  manifest,
+  profile,
+  productionReady,
+) =>
+  profile.key !== "mainnet" &&
+  !productionReady.ready &&
+  !productionReady.invalid &&
+  readManifestTronNetworkKey(manifest) === profile.key &&
+  Boolean(readSccpTronProofMaterial(manifest, profile.key));
+
 export const evaluateSccpRoutePreflight = ({
   endpoint = DEFAULT_TAIRA_TORII_URL,
+  tronNetwork = "mainnet",
   chainMetadata,
   capabilities,
   manifestSet,
   tronContractReadback = null,
+  manifestSource = "endpoint",
   errors = {},
   warnings = [],
   checkedAt = new Date().toISOString(),
 } = {}) => {
+  const tronProfile = resolveSccpTronNetworkProfile(tronNetwork);
+  const usesLocalManifestFile = manifestSource === "file";
   const checks = [];
   const normalizedChainId = trimString(chainMetadata?.chainId);
   const networkPrefix = Number(chainMetadata?.networkPrefix);
@@ -1037,19 +1187,31 @@ export const evaluateSccpRoutePreflight = ({
     }
   }
 
-  const manifest = pickTairaTronXorManifest(manifestSet);
+  if (usesLocalManifestFile) {
+    warn(
+      checks,
+      "route-manifest-source",
+      "SCCP route manifest source.",
+      "Using a local manifest file override; public TAIRA route publication is not proven by this report.",
+    );
+  }
+
+  const manifest = pickTairaTronXorManifest(manifestSet, tronProfile.key);
+  const manifestCheckLabel = usesLocalManifestFile
+    ? "Local manifest override provides the taira_tron_xor TRON manifest."
+    : "TAIRA advertises the taira_tron_xor TRON manifest.";
   if (!manifestSet) {
     fail(
       checks,
       "route-manifest",
-      "TAIRA advertises the taira_tron_xor TRON manifest.",
+      manifestCheckLabel,
       errors.manifests || "Manifests were not loaded.",
     );
   } else if (!manifest) {
     fail(
       checks,
       "route-manifest",
-      "TAIRA advertises the taira_tron_xor TRON manifest.",
+      manifestCheckLabel,
       hasAnyTronManifest(manifestSet)
         ? `TRON manifests are present, but none match route taira_tron_xor with asset key xor.${describeTronManifestCandidates(
             manifestSet,
@@ -1057,14 +1219,14 @@ export const evaluateSccpRoutePreflight = ({
         : "No TRON SCCP manifest is advertised.",
     );
   } else {
-    pass(
-      checks,
-      "route-manifest",
-      "TAIRA advertises the taira_tron_xor TRON manifest.",
-      SCCP_XOR_ROUTE_ID,
-    );
+    pass(checks, "route-manifest", manifestCheckLabel, SCCP_XOR_ROUTE_ID);
 
     const productionReady = readProductionReadyFlag(manifest);
+    const allowSelectedTestnetRoute = manifestAllowsSelectedTestnetRoute(
+      manifest,
+      tronProfile,
+      productionReady,
+    );
     if (productionReady.invalid) {
       fail(
         checks,
@@ -1072,7 +1234,7 @@ export const evaluateSccpRoutePreflight = ({
         "Route manifest is explicitly production-ready.",
         "productionReady must be boolean true.",
       );
-    } else if (!productionReady.ready) {
+    } else if (!productionReady.ready && !allowSelectedTestnetRoute) {
       fail(
         checks,
         "production-ready",
@@ -1085,42 +1247,45 @@ export const evaluateSccpRoutePreflight = ({
         checks,
         "production-ready",
         "Route manifest is explicitly production-ready.",
+        allowSelectedTestnetRoute
+          ? `Explicit ${tronProfile.label} draft accepted.`
+          : undefined,
       );
     }
 
     validateAddressCheck(
       checks,
       "tron-bridge-address",
-      "TRON bridge contract address is a valid mainnet Base58Check address.",
+      "TRON bridge contract address is a valid Base58Check address.",
       readSccpTronBridgeAddress(manifest),
     );
     validateAddressCheck(
       checks,
       "tron-token-address",
-      "TairaXOR token contract address is a valid mainnet Base58Check address.",
+      "TairaXOR token contract address is a valid Base58Check address.",
       readSccpTronTokenAddress(manifest),
     );
     validateAddressCheck(
       checks,
       "tron-source-bridge-address",
-      "TRON source bridge contract address is a valid mainnet Base58Check address.",
+      "TRON source bridge contract address is a valid Base58Check address.",
       readSccpTronSourceBridgeAddress(manifest),
     );
     validateAddressCheck(
       checks,
       "tron-verifier-address",
-      "TRON verifier identity is a valid mainnet Base58Check address.",
+      "TRON verifier identity is a valid Base58Check address.",
       readSccpTronVerifierAddress(manifest),
     );
     validateDistinctTronContractAddresses(checks, manifest);
 
-    const proofMaterial = readSccpTronProofMaterial(manifest);
+    const proofMaterial = readSccpTronProofMaterial(manifest, tronProfile.key);
     if (!proofMaterial) {
       fail(
         checks,
         "tron-proof-material",
         "TRON destination verifier rollout material is complete.",
-        "Expected TRON mainnet network id, verifier code hash, verifier key hash, and binding hash.",
+        `Expected ${tronProfile.label} network id, verifier code hash, verifier key hash, and binding hash.`,
       );
     } else {
       pass(
@@ -1132,7 +1297,7 @@ export const evaluateSccpRoutePreflight = ({
     }
 
     try {
-      const binding = validateDestinationBinding(manifest);
+      const binding = validateDestinationBinding(manifest, tronProfile.key);
       pass(
         checks,
         "destination-binding",
@@ -1148,21 +1313,30 @@ export const evaluateSccpRoutePreflight = ({
       );
     }
 
-    try {
-      readPostDeployLiveEvidence(manifest);
+    if (productionReady.ready || hasPostDeployLiveEvidence(manifest)) {
+      try {
+        readPostDeployLiveEvidence(manifest);
+        pass(
+          checks,
+          "post-deploy-live-evidence",
+          "TRON source-event and route-canary live evidence are complete.",
+        );
+      } catch (error) {
+        fail(
+          checks,
+          "post-deploy-live-evidence",
+          "TRON source-event and route-canary live evidence are complete.",
+          error instanceof Error
+            ? error.message
+            : "Post-deploy live evidence invalid.",
+        );
+      }
+    } else if (allowSelectedTestnetRoute) {
       pass(
         checks,
         "post-deploy-live-evidence",
         "TRON source-event and route-canary live evidence are complete.",
-      );
-    } catch (error) {
-      fail(
-        checks,
-        "post-deploy-live-evidence",
-        "TRON source-event and route-canary live evidence are complete.",
-        error instanceof Error
-          ? error.message
-          : "Post-deploy live evidence invalid.",
+        `Skipped for explicit ${tronProfile.label} draft.`,
       );
     }
 
@@ -1200,7 +1374,8 @@ export const evaluateSccpRoutePreflight = ({
       ? tronSolidityAddressHex(readSccpTronBridgeAddress(manifest))
       : "";
     const expectedBindingHash = manifest
-      ? readSccpTronProofMaterial(manifest)?.expectedDestinationBindingHashHex
+      ? readSccpTronProofMaterial(manifest, tronProfile.key)
+          ?.expectedDestinationBindingHashHex
       : null;
     let failedReadback = false;
     if (tronContracts.tokenBridgeAddress !== expectedBridgeAddress) {
@@ -1297,6 +1472,8 @@ export const evaluateSccpRoutePreflight = ({
   }
 
   const failedChecks = checks.filter((check) => check.status === "fail");
+  const failedCheckIds = new Set(failedChecks.map((check) => check.id));
+  const routeManifestMissing = failedCheckIds.has("route-manifest");
   let postDeployLiveEvidence = null;
   if (manifest) {
     try {
@@ -1311,7 +1488,9 @@ export const evaluateSccpRoutePreflight = ({
         tokenAddress: readSccpTronTokenAddress(manifest) || null,
         sourceBridgeAddress: readSccpTronSourceBridgeAddress(manifest) || null,
         verifierAddress: readSccpTronVerifierAddress(manifest) || null,
-        networkIdHex: readSccpTronProofMaterial(manifest)?.networkIdHex ?? null,
+        networkIdHex:
+          readSccpTronProofMaterial(manifest, tronProfile.key)?.networkIdHex ??
+          null,
         settlementAssetDefinitionId:
           readSccpTairaBurnRecordMaterial(manifest)
             ?.settlementAssetDefinitionId ?? null,
@@ -1322,6 +1501,8 @@ export const evaluateSccpRoutePreflight = ({
     ready: failedChecks.length === 0,
     checkedAt,
     endpoint,
+    tronNetwork: tronProfile.key,
+    manifestSource: usesLocalManifestFile ? "file" : "endpoint",
     routeId: SCCP_XOR_ROUTE_ID,
     assetKey: SCCP_XOR_ASSET_KEY,
     deployment,
@@ -1330,12 +1511,21 @@ export const evaluateSccpRoutePreflight = ({
     reasons: failedChecks.map((check) => check.detail || check.label),
     nextSteps:
       failedChecks.length === 0
-        ? [
-            "Run one tiny TAIRA -> TRON transfer and one tiny TRON -> TAIRA transfer with real WalletConnect approvals after deployment funding is complete.",
-          ]
-        : [
-            "Deploy or activate the missing TRON contracts, verifier material, TAIRA burn-record contract material, and route manifest evidence before live transfer smoke.",
-          ],
+        ? usesLocalManifestFile
+          ? [
+              "Publish this route manifest into the TAIRA endpoint configuration, then rerun preflight without --manifest-file before live transfer smoke.",
+              "Run one tiny TAIRA -> TRON transfer and one tiny TRON -> TAIRA transfer with real WalletConnect approvals after public route publication is complete.",
+            ]
+          : [
+              "Run one tiny TAIRA -> TRON transfer and one tiny TRON -> TAIRA transfer with real WalletConnect approvals after deployment funding is complete.",
+            ]
+        : routeManifestMissing
+          ? [
+              "Publish or activate the taira_tron_xor/xor route manifest in the TAIRA endpoint configuration, then rerun preflight without --manifest-file.",
+            ]
+          : [
+              "Deploy or activate the missing TRON contracts, verifier material, TAIRA burn-record contract material, and route manifest evidence before live transfer smoke.",
+            ],
   };
 };
 
@@ -1837,16 +2027,23 @@ export const fetchTairaChainMetadata = async ({
 
 export const runSccpRoutePreflight = async ({
   endpoint = DEFAULT_TAIRA_TORII_URL,
-  tronEndpoint = DEFAULT_TRON_GATEWAY_URL,
+  tronNetwork = "mainnet",
+  tronEndpoint,
+  manifestFilePath,
   checkTronContracts = false,
   fetchImpl = globalThis.fetch,
+  readManifestFile = loadSccpRouteManifestFile,
   timeoutMs = 10_000,
 } = {}) => {
+  const tronProfile = resolveSccpTronNetworkProfile(tronNetwork);
+  const normalizedTronEndpoint = tronEndpoint ?? tronProfile.gatewayUrl;
   const errors = {};
   const warnings = [];
   let chainMetadata = null;
   let capabilities = null;
+  let endpointManifestSet = null;
   let manifestSet = null;
+  let manifestSource = "endpoint";
   let tronContractReadback = null;
 
   try {
@@ -1878,7 +2075,7 @@ export const runSccpRoutePreflight = async ({
   }
 
   try {
-    manifestSet = await fetchJson(
+    endpointManifestSet = await fetchJson(
       fetchImpl,
       endpoint,
       SCCP_MANIFESTS_PATH,
@@ -1890,8 +2087,27 @@ export const runSccpRoutePreflight = async ({
       error instanceof Error ? error.message : "Unable to load SCCP manifests.";
   }
 
+  manifestSet = endpointManifestSet;
+  if (manifestFilePath) {
+    try {
+      manifestSet = await readManifestFile(manifestFilePath);
+      manifestSource = "file";
+      if (!pickTairaTronXorManifest(endpointManifestSet, tronProfile.key)) {
+        warnings.push(
+          "Using a local SCCP manifest file; the public TAIRA endpoint still does not advertise this route.",
+        );
+      }
+    } catch (error) {
+      manifestSet = null;
+      errors.manifests =
+        error instanceof Error
+          ? error.message
+          : "Unable to load SCCP route manifest file.";
+    }
+  }
+
   if (checkTronContracts) {
-    const manifest = pickTairaTronXorManifest(manifestSet);
+    const manifest = pickTairaTronXorManifest(manifestSet, tronProfile.key);
     if (!manifest) {
       errors.tronContracts =
         "Cannot read TRON contracts before the taira_tron_xor manifest is available.";
@@ -1899,7 +2115,7 @@ export const runSccpRoutePreflight = async ({
       try {
         tronContractReadback = await fetchTronContractReadback({
           manifest,
-          endpoint: tronEndpoint,
+          endpoint: normalizedTronEndpoint,
           fetchImpl,
           timeoutMs,
         });
@@ -1914,10 +2130,12 @@ export const runSccpRoutePreflight = async ({
 
   return evaluateSccpRoutePreflight({
     endpoint,
+    tronNetwork: tronProfile.key,
     chainMetadata,
     capabilities,
     manifestSet,
     tronContractReadback,
+    manifestSource,
     errors,
     warnings,
   });
@@ -1947,6 +2165,12 @@ const parseBoolean = (value) =>
 
 const cli = async () => {
   const args = parseArgs(process.argv.slice(2));
+  const tronProfile = resolveSccpTronNetworkProfile(
+    args["tron-network"] ||
+      process.env.SCCP_TRON_NETWORK ||
+      process.env.VITE_SCCP_TRON_NETWORK ||
+      "mainnet",
+  );
   const endpoint = normalizeToriiEndpoint(
     args.endpoint ||
       args["torii-url"] ||
@@ -1960,7 +2184,7 @@ const cli = async () => {
     args["tron-endpoint"] ||
       process.env.SCCP_TRON_GATEWAY_URL ||
       process.env.TRON_GATEWAY_URL ||
-      DEFAULT_TRON_GATEWAY_URL,
+      tronProfile.gatewayUrl,
   );
   const timeoutMs = Number(args["timeout-ms"] ?? 10_000);
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
@@ -1968,7 +2192,13 @@ const cli = async () => {
   }
   const report = await runSccpRoutePreflight({
     endpoint,
+    tronNetwork: tronProfile.key,
     tronEndpoint,
+    manifestFilePath:
+      args["manifest-file"] ||
+      process.env.SCCP_ROUTE_MANIFEST_FILE ||
+      process.env.VITE_SCCP_ROUTE_MANIFEST_FILE ||
+      undefined,
     checkTronContracts: parseBoolean(args["check-tron-contracts"]),
     timeoutMs,
   });

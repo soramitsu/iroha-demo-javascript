@@ -5,7 +5,11 @@
         <div>
           <h2>{{ t("SCCP Bridge") }}</h2>
           <p class="helper">
-            {{ t("Bridge XOR between TAIRA and TRON mainnet.") }}
+            {{
+              t("Bridge XOR between TAIRA and {network}.", {
+                network: SCCP_TRON_NETWORK.label,
+              })
+            }}
           </p>
         </div>
         <div class="sccp-command-actions">
@@ -281,7 +285,7 @@ import { useTronWalletConnect } from "@/composables/useTronWalletConnect";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import {
   broadcastTronTransaction,
-  deriveZkIvmPayload,
+  getSccpMessageProofBundle,
   getSccpMessageProofJob,
   getTronAccount,
   getTronFinalityData,
@@ -294,6 +298,7 @@ import {
   submitZkIvmProvedTransaction,
   triggerTronConstantContract,
   triggerTronSmartContract,
+  waitForSccpTransactionCommit,
 } from "@/services/iroha";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { getAccountDisplayLabel } from "@/utils/accountId";
@@ -308,22 +313,25 @@ import {
   bindTronSourceDataForProof,
   bindTronToTairaSourceProofPackage,
   bindUnsignedTronSmartContractTransaction,
+  buildSccpMessageBundleSubmitPayload,
   buildTairaExplorerTransactionUrl,
   buildTairaXorBurnTriggerRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
   buildTairaXorFinalizeProofBinding,
   buildTairaXorFinalizeTriggerRequest,
+  buildTairaXorMessageProofJobQueryMaterial,
   formatBaseUnitAmount,
   formatTronSunBalance,
   normalizeBridgeAmount,
   normalizeSccpMessageId,
+  normalizeTairaTransactionHash,
   normalizeTronTransactionId,
   readTronAccountBalanceSun,
   readTronConstantUint256,
   readSccpTronBridgeAddress,
-  readSccpTronProofMaterial,
-  TRON_MAINNET_TRONSCAN_URL,
+  readSccpTronGatewayEndpoint,
+  SCCP_TRON_NETWORK,
   SCCP_XOR_ASSET_KEY,
   SCCP_TRON_TOKEN_SYMBOL,
   type SccpBridgeDirection,
@@ -554,9 +562,102 @@ const isRetryableTronSourceDataError = (error: unknown): boolean => {
   const message = (error instanceof Error ? error.message : String(error))
     .trim()
     .toLowerCase();
-  return /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable|solid block has not finalized|must include at least one event)/u.test(
+  return /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable|solid block has not finalized|must include at least one event|receipt .*tx id|32-byte tron transaction id)/u.test(
     message,
   );
+};
+
+const readTronReceiptStatusText = (
+  receipt: Record<string, unknown>,
+): string | null => {
+  const nested =
+    typeof receipt.receipt === "object" &&
+    receipt.receipt !== null &&
+    !Array.isArray(receipt.receipt)
+      ? (receipt.receipt as Record<string, unknown>)
+      : null;
+  for (const candidate of [
+    receipt.result,
+    receipt.contractRet,
+    receipt.contract_ret,
+    nested?.result,
+    nested?.contractRet,
+    nested?.contract_ret,
+  ]) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim().toUpperCase();
+    }
+  }
+  return null;
+};
+
+const readTronReceiptTxIdText = (
+  receipt: Record<string, unknown>,
+): string | null => {
+  for (const candidate of [
+    receipt.id,
+    receipt.txID,
+    receipt.txid,
+    receipt.txId,
+    receipt.transactionId,
+    receipt.transaction_id,
+    receipt.transaction_id_hex,
+  ]) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return normalizeTronTransactionId(candidate);
+    }
+  }
+  return null;
+};
+
+const waitForTronTransactionSuccess = async (
+  context: SccpOperationContext,
+  txId: string,
+  label: string,
+): Promise<Record<string, unknown>> => {
+  let lastError: unknown = null;
+  for (
+    let attempt = 0;
+    attempt < SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      assertSccpOperationContextCurrent(context);
+      const receipt = asRecord(
+        await getTronTransactionReceipt({
+          endpoint: context.tronGatewayEndpoint,
+          txId,
+        }),
+        `${label} receipt`,
+      );
+      const receiptTxId = readTronReceiptTxIdText(receipt);
+      if (receiptTxId && receiptTxId !== txId) {
+        throw new Error(`${label} receipt id does not match the broadcast.`);
+      }
+      const status = readTronReceiptStatusText(receipt);
+      if (status === "SUCCESS") {
+        return receipt;
+      }
+      if (!status) {
+        throw new Error(`${label} receipt is not indexed yet.`);
+      }
+      throw new Error(`${label} failed with ${status}.`);
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableTronSourceDataError(error) ||
+        attempt >= SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS - 1
+      ) {
+        break;
+      }
+      markPhase(3, "active", `Waiting for ${label} confirmation`);
+      await wait(SCCP_TRON_SOURCE_DATA_POLL_MS);
+    }
+  }
+  if (lastError && !isRetryableTronSourceDataError(lastError)) {
+    throw lastError;
+  }
+  throw new Error(`Timed out waiting for ${label} confirmation.`);
 };
 
 type SccpProofWorkerRequest =
@@ -580,6 +681,7 @@ type SccpOperationContext = {
   tronRecipient: string;
   tairaRecipient: string;
   manifest: Record<string, unknown>;
+  tronGatewayEndpoint: string;
   manifestFingerprint: string;
   messageId?: string;
   tronTxId?: string;
@@ -715,6 +817,10 @@ const createSccpOperationContext = (
     tronRecipient: tronRecipient.value.trim(),
     tairaRecipient: tairaRecipient.value.trim(),
     manifest: manifestSnapshot,
+    tronGatewayEndpoint: readSccpTronGatewayEndpoint(
+      manifestSnapshot,
+      SCCP_TRON_NETWORK.key,
+    ),
     manifestFingerprint: fingerprintSccpManifest(manifestSnapshot),
     ...ids,
   };
@@ -736,6 +842,8 @@ const assertSccpOperationContextCurrent = (
     context.amountDecimal !== normalizeBridgeAmount(amount.value) ||
     context.tronRecipient !== tronRecipient.value.trim() ||
     context.tairaRecipient !== tairaRecipient.value.trim() ||
+    context.tronGatewayEndpoint !==
+      readSccpTronGatewayEndpoint(currentManifest, SCCP_TRON_NETWORK.key) ||
     context.manifestFingerprint !== fingerprintSccpManifest(currentManifest) ||
     (context.messageId !== undefined &&
       context.messageId !== messageId.value.trim().toLowerCase()) ||
@@ -746,33 +854,30 @@ const assertSccpOperationContextCurrent = (
   }
 };
 
-const sccpDestinationProofParams = (
-  context: SccpOperationContext,
-): Record<string, string> => {
-  const material = readSccpTronProofMaterial(context.manifest);
-  if (!material) {
-    return {};
-  }
-  return {
-    networkIdHex: material.networkIdHex,
-    verifierCodeHashHex: material.verifierCodeHashHex,
-    verifierKeyHashHex: material.verifierKeyHashHex,
-    expectedDestinationBindingHashHex:
-      material.expectedDestinationBindingHashHex,
-    tronVerifierAddress: material.tronVerifierAddress,
-  };
-};
-
 const loadTairaMessageProofJob = async (
   context: SccpOperationContext,
   input: { pollForIndexing?: boolean } = {},
 ): Promise<Record<string, unknown>> => {
-  const request = {
+  const baseRequest = {
     toriiUrl: context.toriiUrl,
     messageId: context.messageId ?? messageId.value,
-    ...sccpDestinationProofParams(context),
+  };
+  const buildRequest = async () => {
+    const messageBundle = await getSccpMessageProofBundle(baseRequest);
+    assertSccpOperationContextCurrent(context);
+    return {
+      ...baseRequest,
+      ...buildTairaXorMessageProofJobQueryMaterial({
+        manifest: context.manifest,
+        messageBundle,
+        messageId: baseRequest.messageId,
+        tronNetwork: SCCP_TRON_NETWORK.key,
+      }),
+    };
   };
   if (!input.pollForIndexing) {
+    assertSccpOperationContextCurrent(context);
+    const request = await buildRequest();
     assertSccpOperationContextCurrent(context);
     return getSccpMessageProofJob(request);
   }
@@ -783,6 +888,8 @@ const loadTairaMessageProofJob = async (
     attempt += 1
   ) {
     try {
+      assertSccpOperationContextCurrent(context);
+      const request = await buildRequest();
       assertSccpOperationContextCurrent(context);
       return await getSccpMessageProofJob(request);
     } catch (error) {
@@ -811,10 +918,21 @@ const loadTronSourceDataForProof = async (input: {
   const readSourceData = async () => {
     assertSccpOperationContextCurrent(input.context);
     const [transaction, receipt, events, finality] = await Promise.all([
-      getTronTransaction({ txId: input.txId }),
-      getTronTransactionReceipt({ txId: input.txId }),
-      getTronTransactionEvents({ txId: input.txId }),
-      getTronFinalityData(),
+      getTronTransaction({
+        endpoint: input.context.tronGatewayEndpoint,
+        txId: input.txId,
+      }),
+      getTronTransactionReceipt({
+        endpoint: input.context.tronGatewayEndpoint,
+        txId: input.txId,
+      }),
+      getTronTransactionEvents({
+        endpoint: input.context.tronGatewayEndpoint,
+        txId: input.txId,
+      }),
+      getTronFinalityData({
+        endpoint: input.context.tronGatewayEndpoint,
+      }),
     ]);
     return bindTronSourceDataForProof({
       txId: input.txId,
@@ -866,13 +984,27 @@ const waitForZkIvmProof = async (
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
 }> => {
-  const maxAttempts = 30;
+  const maxAttempts = 600;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     assertSccpOperationContextCurrent(context);
-    const job = await getZkIvmProveJob({
-      toriiUrl: context.toriiUrl,
-      jobId,
-    });
+    let job: Record<string, unknown>;
+    try {
+      job = await getZkIvmProveJob({
+        toriiUrl: context.toriiUrl,
+        jobId,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        attempt < maxAttempts - 1 &&
+        /ZK IVM prove job .*404 .*prove job not found/iu.test(message)
+      ) {
+        markPhase(2, "active", "Waiting for TAIRA burn-record proof job");
+        await wait(1000);
+        continue;
+      }
+      throw error;
+    }
     const status = String(job.status ?? "").toLowerCase();
     if (status === "done") {
       return {
@@ -905,8 +1037,14 @@ const refreshTronBalances = async () => {
   }
   tronBalanceLoading.value = true;
   try {
+    const endpoint = bridge.readiness.value.tronManifest
+      ? readSccpTronGatewayEndpoint(
+          bridge.readiness.value.tronManifest,
+          SCCP_TRON_NETWORK.key,
+        )
+      : SCCP_TRON_NETWORK.rpcUrl;
     const [account, tokenBalance] = await Promise.all([
-      getTronAccount({ address: tron.address.value }),
+      getTronAccount({ endpoint, address: tron.address.value }),
       bridge.readiness.value.ready
         ? triggerTronConstantContract(
             buildTairaXorTokenBalanceRequest({
@@ -1067,6 +1205,7 @@ const finalizeTairaMessageToTron = async (
   assertSccpOperationContextCurrent(context);
   const broadcast = bindTronBroadcastResult({
     response: await broadcastTronTransaction({
+      endpoint: context.tronGatewayEndpoint,
       transaction: signedTransaction.transaction,
     }),
     expectedTxId: signedTransaction.txId,
@@ -1075,7 +1214,7 @@ const finalizeTairaMessageToTron = async (
   if (txId) {
     const finalizeLink = {
       label: t("TRON finalize transaction"),
-      href: `${TRON_MAINNET_TRONSCAN_URL}/#/transaction/${txId}`,
+      href: `${SCCP_TRON_NETWORK.tronscanUrl}/#/transaction/${txId}`,
     };
     transactionLinks.value = [
       ...transactionLinks.value.filter(
@@ -1083,9 +1222,16 @@ const finalizeTairaMessageToTron = async (
       ),
       finalizeLink,
     ];
+    markPhase(3, "active", "Waiting for TRON finalize confirmation");
+    await waitForTronTransactionSuccess(
+      context,
+      txId,
+      "TRON finalize transaction",
+    );
+    assertSccpOperationContextCurrent(context);
   }
   proofReady.value = true;
-  markPhase(3, "complete", "Signed TRON finalize transaction broadcast");
+  markPhase(3, "complete", "TRON finalize transaction confirmed");
 };
 
 const finalizeTronBurnToTaira = async (
@@ -1135,15 +1281,18 @@ const finalizeTronBurnToTaira = async (
   const response = await submitSccpBridgeMessage({
     toriiUrl: context.toriiUrl,
     accountId: context.accountId,
-    messageBundle: boundProofPackage.messageBundle,
+    messageBundle: buildSccpMessageBundleSubmitPayload(
+      boundProofPackage.messageBundle,
+    ),
     settlement: boundProofPackage.settlement,
   });
   const tairaTxHash = String(
     response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
   ).trim();
+  const normalizedTairaTxHash = normalizeTairaTransactionHash(tairaTxHash);
   const tairaTxHref = buildTairaExplorerTransactionUrl(
     TAIRA_EXPLORER_URL,
-    tairaTxHash,
+    normalizedTairaTxHash,
   );
   if (tairaTxHref) {
     transactionLinks.value = [
@@ -1154,8 +1303,14 @@ const finalizeTronBurnToTaira = async (
       },
     ];
   }
+  markPhase(3, "active", "Waiting for TAIRA settlement confirmation");
+  await waitForSccpTransactionCommit({
+    toriiUrl: context.toriiUrl,
+    hashHex: normalizedTairaTxHash,
+  });
+  assertSccpOperationContextCurrent(context);
   proofReady.value = true;
-  markPhase(3, "complete", "TAIRA settlement submitted");
+  markPhase(3, "complete", "TAIRA settlement confirmed");
 };
 
 const prepareBridge = async () => {
@@ -1179,21 +1334,14 @@ const prepareBridge = async () => {
         ...operationContext,
         messageId: request.outbound.messageId,
       };
-      markPhase(1, "active", "Deriving TAIRA burn-record payload");
-      const derived = await deriveZkIvmPayload({
-        toriiUrl: operationContext.toriiUrl,
-        ...request.zkIvmRequest.request,
-      });
-      assertSccpOperationContextCurrent(tairaSourceContext);
-      const proved = asRecord(derived.proved, "Derived ZK IVM proved payload");
-      markPhase(1, "complete", "Canonical TAIRA burn-record payload derived");
+      markPhase(1, "active", "Queueing TAIRA burn-record proof request");
       markPhase(2, "active", "Generating TAIRA burn-record proof");
       const proveJob = await startZkIvmProveJob({
         toriiUrl: operationContext.toriiUrl,
         ...request.zkIvmRequest.request,
-        proved,
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
+      markPhase(1, "complete", "TAIRA burn-record proof request queued");
       const jobId = readJobId(proveJob);
       const proof = await waitForZkIvmProof(tairaSourceContext, jobId);
       assertSccpOperationContextCurrent(tairaSourceContext);
@@ -1205,7 +1353,10 @@ const prepareBridge = async () => {
         accountId: operationContext.accountId,
         proved: proof.proved,
         attachment: proof.attachment,
-        metadata: { ...request.zkIvmRequest.request.metadata },
+        metadata: {
+          ...request.zkIvmRequest.request.metadata,
+          gas_asset_id: request.material.settlementAssetDefinitionId,
+        },
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
       const tairaTxHash = String(
@@ -1235,7 +1386,11 @@ const prepareBridge = async () => {
     }
 
     markPhase(1, "active", "Collecting TRON finality data");
-    bindTronFinalitySnapshot(await getTronFinalityData());
+    bindTronFinalitySnapshot(
+      await getTronFinalityData({
+        endpoint: operationContext.tronGatewayEndpoint,
+      }),
+    );
     assertSccpOperationContextCurrent(operationContext);
     const triggerRequest = buildTairaXorBurnTriggerRequest({
       manifest: operationContext.manifest,
@@ -1274,6 +1429,7 @@ const prepareBridge = async () => {
     assertSccpOperationContextCurrent(operationContext);
     const broadcast = bindTronBroadcastResult({
       response: await broadcastTronTransaction({
+        endpoint: operationContext.tronGatewayEndpoint,
         transaction: signedTransaction.transaction,
       }),
       expectedTxId: signedTransaction.txId,
@@ -1288,7 +1444,7 @@ const prepareBridge = async () => {
       transactionLinks.value = [
         {
           label: t("TRON transaction"),
-          href: `${TRON_MAINNET_TRONSCAN_URL}/#/transaction/${nextTxId}`,
+          href: `${SCCP_TRON_NETWORK.tronscanUrl}/#/transaction/${nextTxId}`,
         },
       ];
     }

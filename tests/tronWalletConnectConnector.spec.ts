@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TRON_MAINNET_CAIP_CHAIN_ID,
   TRON_MAINNET_RPC_URL,
+  TRON_NILE_CAIP_CHAIN_ID,
+  TRON_NILE_RPC_URL,
   WALLETCONNECT_TRON_METHOD_VERSION,
   WALLETCONNECT_TRON_NAMESPACE,
   WALLETCONNECT_TRON_SIGN_METHOD,
@@ -22,6 +24,7 @@ describe("TRON WalletConnect connector", () => {
     vi.unstubAllEnvs();
     vi.doUnmock("@reown/appkit-universal-connector");
     vi.resetModules();
+    Reflect.deleteProperty(window, "iroha");
   });
 
   it("normalizes only opaque WalletConnect project identifiers", async () => {
@@ -167,6 +170,137 @@ describe("TRON WalletConnect connector", () => {
     ).not.toMatch(/private|seed|mnemonic/iu);
   });
 
+  it("can target TRON Nile when explicitly configured for testnet", async () => {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "nile");
+    const connectMock = vi.fn().mockResolvedValue({
+      session: {
+        topic: "topic-nile",
+        namespaces: {
+          [WALLETCONNECT_TRON_NAMESPACE]: {
+            accounts: [`${TRON_NILE_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+        },
+        sessionProperties: {
+          tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+        },
+      },
+    });
+    const initMock = vi.fn().mockResolvedValue({
+      connect: connectMock,
+      disconnect: vi.fn(),
+      provider: { session: null },
+      request: vi.fn(),
+    });
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useTronWalletConnect } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+    const tron = useTronWalletConnect();
+    await tron.connect();
+
+    expect(initMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        networks: [
+          expect.objectContaining({
+            chains: [
+              expect.objectContaining({
+                caipNetworkId: TRON_NILE_CAIP_CHAIN_ID,
+                name: "TRON Nile Testnet",
+                rpcUrls: {
+                  default: {
+                    http: [TRON_NILE_RPC_URL],
+                  },
+                },
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    expect(connectMock).toHaveBeenCalledWith({
+      namespaces: {
+        [WALLETCONNECT_TRON_NAMESPACE]: {
+          chains: [TRON_NILE_CAIP_CHAIN_ID],
+          methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          events: ["accountsChanged", "chainChanged"],
+        },
+      },
+      sessionProperties: {
+        tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+      },
+    });
+    expect(
+      JSON.parse(
+        localStorage.getItem("iroha-demo:sccp:tron-walletconnect") ?? "null",
+      ),
+    ).toMatchObject({
+      topic: "topic-nile",
+      address: VALID_TRON_ADDRESS,
+      chainId: TRON_NILE_CAIP_CHAIN_ID,
+    });
+  });
+
+  it("uses the Electron Nile test signer when WalletConnect is not configured", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "nile");
+    const unsignedTransaction = {
+      visible: true,
+      txID: "aa".repeat(32),
+      raw_data: { contract: [] },
+      raw_data_hex: "12",
+    };
+    const signedTransaction = {
+      ...unsignedTransaction,
+      signature: ["11".repeat(65)],
+    };
+    const getSignerMock = vi.fn().mockResolvedValue({
+      enabled: true,
+      network: "nile",
+      address: VALID_TRON_ADDRESS,
+    });
+    const signMock = vi.fn().mockResolvedValue(signedTransaction);
+    (window as unknown as { iroha?: unknown }).iroha = {
+      getSccpNileTestTronSigner: getSignerMock,
+      signSccpNileTestTronTransaction: signMock,
+    };
+    const initMock = vi.fn();
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useTronWalletConnect } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+    const tron = useTronWalletConnect();
+    await tron.refreshTestSigner();
+
+    expect(tron.projectConfigured.value).toBe(true);
+    expect(tron.testSignerEnabled.value).toBe(true);
+    await tron.connect();
+
+    expect(tron.address.value).toBe(VALID_TRON_ADDRESS);
+    expect(tron.sessionTopic.value).toBe("sccp-nile-test-signer");
+    expect(
+      localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
+    ).toBeNull();
+    await expect(
+      tron.signTransaction(unsignedTransaction),
+    ).resolves.toBe(signedTransaction);
+    expect(signMock).toHaveBeenCalledWith({
+      transaction: unsignedTransaction,
+      ownerAddress: VALID_TRON_ADDRESS,
+    });
+    expect(initMock).not.toHaveBeenCalled();
+  });
+
   it("rejects ambiguous WalletConnect sessions with multiple TRON mainnet accounts", async () => {
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
@@ -203,7 +337,7 @@ describe("TRON WalletConnect connector", () => {
     );
     const tron = useTronWalletConnect();
 
-    await expect(tron.connect()).rejects.toThrow(/multiple TRON mainnet/);
+    await expect(tron.connect()).rejects.toThrow(/multiple TRON Mainnet/);
     expect(disconnectMock).toHaveBeenCalledTimes(1);
     expect(tron.address.value).toBe("");
     expect(

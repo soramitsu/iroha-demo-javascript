@@ -6,10 +6,12 @@ import {
   TAIRA_CHAIN_ID,
   TAIRA_NETWORK_PREFIX,
   TRON_MAINNET_NETWORK_ID_HEX,
+  TRON_NILE_NETWORK_ID_HEX,
 } from "../scripts/e2e/sccp-route-preflight.mjs";
 import {
   SCCP_LIVE_SMOKE_STEPS,
   evaluateSccpLiveSmokeReadiness,
+  isSccpNileTestSignerConfigured,
   normalizeSccpBrowserModuleUrl,
   normalizeWalletConnectProjectId,
   runSccpLiveSmokeReadiness,
@@ -29,6 +31,8 @@ const HASH_66 = `0x${"66".repeat(32)}`;
 const readyRouteReport = (overrides = {}) => ({
   ready: true,
   endpoint: DEFAULT_TAIRA_TORII_URL,
+  tronNetwork: "mainnet",
+  manifestSource: "endpoint",
   routeId: SCCP_XOR_ROUTE_ID,
   assetKey: SCCP_XOR_ASSET_KEY,
   deployment: {
@@ -102,12 +106,24 @@ const readyManifest = () => ({
   },
 });
 
+const readyNileRouteReport = (overrides = {}) =>
+  readyRouteReport({
+    tronNetwork: "nile",
+    deployment: {
+      ...readyRouteReport().deployment,
+      networkIdHex: TRON_NILE_NETWORK_ID_HEX,
+    },
+    postDeployLiveEvidence: null,
+    ...overrides,
+  });
+
 describe("SCCP live smoke readiness", () => {
   it("passes when route, WalletConnect, and browser prover prerequisites are configured", () => {
     const report = evaluateSccpLiveSmokeReadiness({
       routeReport: readyRouteReport(),
       walletConnectProjectId: "project_123",
       destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
       checkedAt: "2026-06-02T00:00:00.000Z",
     });
 
@@ -119,13 +135,32 @@ describe("SCCP live smoke readiness", () => {
       expect.objectContaining({
         id: "source-prover-module",
         status: "pass",
-        detail: expect.stringContaining(
-          "using VITE_SCCP_TRON_PROVER_MODULE_URL fallback",
-        ),
+        detail: "/sccp-tron-source-prover.js",
       }),
     );
     expect(JSON.stringify(report)).not.toContain("private");
     expect(JSON.stringify(report)).not.toContain("seed");
+  });
+
+  it("does not treat the destination prover URL as an implicit source prover", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      routeReport: readyRouteReport(),
+      walletConnectProjectId: "project_123",
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "",
+      checkedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.reasons).toContain(
+      "TRON -> TAIRA browser source prover module URL is missing.",
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "source-prover-module",
+        status: "fail",
+      }),
+    );
   });
 
   it("fails closed when route preflight or live-smoke app configuration is missing", () => {
@@ -147,9 +182,115 @@ describe("SCCP live smoke readiness", () => {
       "TRON -> TAIRA browser source prover module URL is missing.",
     ]);
     expect(report.nextSteps).toContain("Activate route manifest evidence.");
-    expect(report.nextSteps).toContain(
-      "Set VITE_WALLETCONNECT_PROJECT_ID before launching the Electron renderer.",
+    expect(report.nextSteps.join("\n")).toContain(
+      "Set VITE_WALLETCONNECT_PROJECT_ID before launching the Electron renderer",
     );
+    expect(report.nextSteps.join("\n")).toContain(
+      "SCCP_TRON_NILE_TEST_SIGNER=1",
+    );
+  });
+
+  it("accepts selected TRON Nile endpoint reports without mainnet live evidence", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      tronNetwork: "nile",
+      routeReport: readyNileRouteReport(),
+      walletConnectProjectId: "project_123",
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+      checkedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.routeReady).toBe(true);
+    expect(report.route?.tronNetwork).toBe("nile");
+    expect(report.route?.deployment?.networkIdHex).toBe(
+      TRON_NILE_NETWORK_ID_HEX,
+    );
+  });
+
+  it("passes Nile readiness with the explicit test signer when WalletConnect is absent", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      tronNetwork: "nile",
+      routeReport: readyNileRouteReport(),
+      walletConnectProjectId: "",
+      nileTestSignerConfigured: true,
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+      checkedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.reasons).toEqual([]);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "walletconnect-project-id",
+        status: "pass",
+        detail: "Using explicit Nile-only Electron test signer for this test run.",
+      }),
+    );
+    expect(JSON.stringify(report)).not.toContain("private");
+  });
+
+  it("does not apply the Nile test signer to mainnet readiness", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      routeReport: readyRouteReport(),
+      walletConnectProjectId: "",
+      nileTestSignerConfigured: true,
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.reasons).toContain("WalletConnect project ID is missing.");
+  });
+
+  it("requires both the Nile test signer flag and secret file", () => {
+    expect(
+      isSccpNileTestSignerConfigured({
+        tronNetwork: "nile",
+        enabled: "1",
+        secretFile: "../iroha/artifacts/sccp-tron/nile.secret.json",
+      }),
+    ).toBe(true);
+    expect(
+      isSccpNileTestSignerConfigured({
+        tronNetwork: "mainnet",
+        enabled: "1",
+        secretFile: "../iroha/artifacts/sccp-tron/nile.secret.json",
+      }),
+    ).toBe(false);
+    expect(
+      isSccpNileTestSignerConfigured({
+        tronNetwork: "nile",
+        enabled: "0",
+        secretFile: "../iroha/artifacts/sccp-tron/nile.secret.json",
+      }),
+    ).toBe(false);
+    expect(
+      isSccpNileTestSignerConfigured({
+        tronNetwork: "nile",
+        enabled: "1",
+        secretFile: "",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not treat a local manifest-file route preflight as public live-smoke readiness", () => {
+    const report = evaluateSccpLiveSmokeReadiness({
+      tronNetwork: "nile",
+      routeReport: readyNileRouteReport({ manifestSource: "file" }),
+      walletConnectProjectId: "project_123",
+      destinationProverModuleUrl: "/sccp-tron-prover.js",
+      sourceProverModuleUrl: "/sccp-tron-source-prover.js",
+      checkedAt: "2026-06-02T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.routeReady).toBe(false);
+    expect(report.route?.manifestSource).toBe("file");
+    expect(
+      report.checks.find((check) => check.id === "route-preflight")?.detail,
+    ).toContain("public TAIRA route publication is not proven");
   });
 
   it("rejects unsafe WalletConnect identifiers and browser prover module URLs", () => {
@@ -268,8 +409,7 @@ describe("SCCP live smoke readiness", () => {
             settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
           },
         }),
-        detail:
-          "bridgeAddress must be a valid TRON mainnet Base58Check address",
+        detail: "bridgeAddress must be a valid TRON Base58Check address",
       },
     ];
 
@@ -370,6 +510,7 @@ describe("SCCP live smoke readiness", () => {
     const report = await runSccpLiveSmokeReadiness({
       endpoint: DEFAULT_TAIRA_TORII_URL,
       checkTronContracts: false,
+      tronNetwork: "mainnet",
       fetchImpl,
       timeoutMs: 1000,
       walletConnectProjectId: "project_123",

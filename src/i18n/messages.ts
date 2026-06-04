@@ -1116,6 +1116,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "SCCP Bridge": "SCCP Bridge",
   "TAIRA and TRON XOR bridge": "TAIRA and TRON XOR bridge",
   "Bridge XOR with TRON": "Bridge XOR with TRON",
+  "Bridge XOR between TAIRA and {network}.":
+    "Bridge XOR between TAIRA and {network}.",
   "Bridge XOR between TAIRA and TRON mainnet.":
     "Bridge XOR between TAIRA and TRON mainnet.",
   "Refresh route": "Refresh route",
@@ -1211,6 +1213,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Deriving TAIRA burn-record payload": "Deriving TAIRA burn-record payload",
   "Canonical TAIRA burn-record payload derived":
     "Canonical TAIRA burn-record payload derived",
+  "Queueing TAIRA burn-record proof request":
+    "Queueing TAIRA burn-record proof request",
+  "TAIRA burn-record proof request queued":
+    "TAIRA burn-record proof request queued",
   "Generating TAIRA burn-record proof": "Generating TAIRA burn-record proof",
   "TAIRA burn-record proof is ready": "TAIRA burn-record proof is ready",
   "Submitting TAIRA source transaction": "Submitting TAIRA source transaction",
@@ -1245,6 +1251,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "TRON source proof package is ready": "TRON source proof package is ready",
   "Submitting TAIRA settlement": "Submitting TAIRA settlement",
   "TAIRA settlement submitted": "TAIRA settlement submitted",
+  "Waiting for TAIRA settlement confirmation":
+    "Waiting for TAIRA settlement confirmation",
+  "TAIRA settlement confirmed": "TAIRA settlement confirmed",
   "TAIRA settlement transaction": "TAIRA settlement transaction",
   "Proof job metadata is available": "Proof job metadata is available",
   "Target-chain signing is not requested automatically":
@@ -1255,6 +1264,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "TRON finalize transaction": "TRON finalize transaction",
   "Signed TRON finalize transaction broadcast":
     "Signed TRON finalize transaction broadcast",
+  "TRON finalize transaction confirmed":
+    "TRON finalize transaction confirmed",
   "Waiting for TRON finality before TAIRA proof submission":
     "Waiting for TRON finality before TAIRA proof submission",
   "0.0001": "0.0001",

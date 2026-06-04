@@ -7,11 +7,14 @@ import {
   TAIRA_CHAIN_ID,
   TAIRA_NETWORK_PREFIX,
   TRON_MAINNET_NETWORK_ID_HEX,
+  TRON_NILE_NETWORK_ID_HEX,
   evaluateSccpRoutePreflight,
   fetchTronContractReadback,
   isValidTronBase58CheckAddress,
+  normalizeSccpTronNetworkKey,
   normalizeToriiEndpoint,
   normalizeTronGatewayEndpoint,
+  parseSccpRouteManifestFilePayload,
   runSccpRoutePreflight,
 } from "../scripts/e2e/sccp-route-preflight.mjs";
 
@@ -216,6 +219,9 @@ describe("SCCP route preflight", () => {
     expect(failedCheck(report, "route-manifest")?.detail).toContain(
       "route=taira_tron_other asset=xor target=5",
     );
+    expect(report.nextSteps[0]).toContain(
+      "Publish or activate the taira_tron_xor/xor route manifest",
+    );
   });
 
   it("redacts unsafe route manifest mismatch diagnostics", () => {
@@ -345,6 +351,84 @@ describe("SCCP route preflight", () => {
     expect(report.ready).toBe(false);
     expect(failedCheck(report, "tron-proof-material")?.detail).toContain(
       "Expected TRON mainnet",
+    );
+  });
+
+  it("accepts TRON Nile rollout material only when testnet is selected", () => {
+    expect(normalizeSccpTronNetworkKey(" tron-nile ")).toBe("nile");
+    const nileManifest = readyManifest({
+      destinationRollout: {
+        ...readyManifest().destinationRollout,
+        destinationNetworkId: TRON_NILE_NETWORK_ID_HEX,
+      },
+    });
+
+    const defaultReport = evaluate({
+      manifestSet: { manifests: [nileManifest] },
+    });
+    expect(defaultReport.ready).toBe(false);
+    expect(failedCheck(defaultReport, "tron-proof-material")?.detail).toContain(
+      "Expected TRON mainnet",
+    );
+
+    const nileReport = evaluate({
+      tronNetwork: "nile",
+      manifestSet: { manifests: [nileManifest] },
+    });
+    expect(nileReport.ready).toBe(true);
+    expect(nileReport.tronNetwork).toBe("nile");
+    expect(nileReport.deployment.networkIdHex).toBe(TRON_NILE_NETWORK_ID_HEX);
+  });
+
+  it("allows explicit TRON Nile testnet draft manifests without mainnet live evidence", () => {
+    const nileDraftManifest = readyManifest({
+      tronNetwork: "nile",
+      chain: "tron-nile",
+      productionReady: false,
+      disabledReason: "Nile route is in test rollout.",
+      destinationRollout: {
+        ...readyManifest().destinationRollout,
+        destinationNetworkId: TRON_NILE_NETWORK_ID_HEX,
+      },
+      postDeployLiveEvidence: undefined,
+    });
+
+    const nileReport = evaluate({
+      tronNetwork: "nile",
+      manifestSet: { manifests: [nileDraftManifest] },
+    });
+    expect(nileReport.ready).toBe(true);
+    expect(nileReport.postDeployLiveEvidence).toBeNull();
+    expect(nileReport.checks).toContainEqual(
+      expect.objectContaining({
+        id: "production-ready",
+        status: "pass",
+        detail: expect.stringContaining("TRON Nile testnet"),
+      }),
+    );
+    expect(nileReport.checks).toContainEqual(
+      expect.objectContaining({
+        id: "post-deploy-live-evidence",
+        status: "pass",
+        detail: expect.stringContaining("testnet draft"),
+      }),
+    );
+
+    const untaggedNileReport = evaluate({
+      tronNetwork: "nile",
+      manifestSet: {
+        manifests: [
+          {
+            ...nileDraftManifest,
+            tronNetwork: undefined,
+            chain: undefined,
+          },
+        ],
+      },
+    });
+    expect(untaggedNileReport.ready).toBe(false);
+    expect(failedCheck(untaggedNileReport, "production-ready")?.detail).toBe(
+      "Nile route is in test rollout.",
     );
   });
 
@@ -489,6 +573,20 @@ describe("SCCP route preflight", () => {
       isValidTronBase58CheckAddress("TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjUX"),
     ).toBe(false);
     expect(isValidTronBase58CheckAddress("0x2b6653dc")).toBe(false);
+  });
+
+  it("parses a local SCCP route manifest file payload as a manifest set", () => {
+    const manifest = readyManifest();
+
+    expect(parseSccpRouteManifestFilePayload(manifest)).toEqual({
+      routes: [manifest],
+    });
+    expect(parseSccpRouteManifestFilePayload({ routes: [manifest] })).toEqual({
+      routes: [manifest],
+    });
+    expect(() => parseSccpRouteManifestFilePayload("manifest")).toThrow(
+      "JSON object",
+    );
   });
 
   it("fetches only non-mutating SCCP and metadata endpoints", async () => {
@@ -667,5 +765,73 @@ describe("SCCP route preflight", () => {
     expect(calls.some((call) => call.href.includes("/wallet/broadcast"))).toBe(
       false,
     );
+  });
+
+  it("uses a local route manifest file for contract readback without treating public route publication as proven", async () => {
+    const calls = [];
+    const fetchImpl = vi.fn(async (url, init) => {
+      const href = String(url);
+      calls.push({ href, method: init?.method });
+      if (href.endsWith("/v1/chain/metadata")) {
+        return Response.json(readyChainMetadata);
+      }
+      if (href.endsWith("/v1/sccp/capabilities")) {
+        return Response.json(readyCapabilities);
+      }
+      if (href.endsWith("/v1/sccp/manifests")) {
+        return Response.json({ manifests: [] });
+      }
+      if (href.endsWith("/wallet/triggerconstantcontract")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        if (body.function_selector === "bridgeLocked()") {
+          return constantResponse(`${"0".repeat(63)}1`);
+        }
+        if (
+          body.function_selector === "bridge()" ||
+          body.function_selector === "owner()"
+        ) {
+          return constantResponse(ABI_ADDRESS_BRIDGE);
+        }
+        return constantResponse(HASH_33.slice(2));
+      }
+      return new Response(JSON.stringify({}), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      });
+    });
+
+    const report = await runSccpRoutePreflight({
+      endpoint: DEFAULT_TAIRA_TORII_URL,
+      fetchImpl,
+      manifestFilePath: "nile-taira-xor-route.manifest.json",
+      readManifestFile: async () => ({ routes: [readyManifest()] }),
+      checkTronContracts: true,
+      timeoutMs: 1000,
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.manifestSource).toBe("file");
+    expect(report.nextSteps[0]).toContain("Publish this route manifest");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "route-manifest-source",
+        status: "warn",
+      }),
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "endpoint-warning",
+        status: "warn",
+        detail: expect.stringContaining("public TAIRA endpoint"),
+      }),
+    );
+    expect(calls.some((call) => call.href.endsWith("/v1/sccp/manifests"))).toBe(
+      true,
+    );
+    expect(
+      calls.some((call) =>
+        call.href.endsWith("/wallet/triggerconstantcontract"),
+      ),
+    ).toBe(true);
   });
 });

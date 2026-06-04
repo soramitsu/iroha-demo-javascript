@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
+  readonly VITE_SCCP_TRON_NETWORK?: string;
   readonly VITE_SCCP_TRON_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL?: string;
 }

@@ -12,9 +12,11 @@ import {
   bindTronToTairaSourceProofPackage,
   bindUnsignedTronSmartContractTransaction,
   buildTairaExplorerTransactionUrl,
+  buildSccpMessageBundleSubmitPayload,
   buildTairaXorInboundSettlement,
   buildTairaXorFinalizeProofBinding,
   buildTairaXorFinalizeTriggerRequest,
+  buildTairaXorMessageProofJobQueryMaterial,
   buildTairaXorBurnTriggerRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorOutboundPreview,
@@ -29,6 +31,7 @@ import {
   isValidTronTransactionId,
   normalizeBridgeAmount,
   normalizeSccpMessageId,
+  normalizeSccpTronNetworkKey,
   normalizeTairaAccountId,
   normalizeTairaTransactionHash,
   normalizeTronTransactionId,
@@ -37,6 +40,7 @@ import {
   readTronConstantUint256,
   readSccpTairaBurnRecordMaterial,
   readSccpTronBridgeAddress,
+  readSccpTronGatewayEndpoint,
   readSccpTronProofMaterial,
   readSccpTronSourceBridgeAddress,
   readSccpTronTokenAddress,
@@ -50,10 +54,16 @@ import {
   TRON_MAINNET_CAIP_CHAIN_ID,
   TRON_MAINNET_CHAIN_ID_HEX,
   TRON_MAINNET_NETWORK_ID_HEX,
+  TRON_MAINNET_RPC_URL,
+  TRON_NILE_CAIP_CHAIN_ID,
+  TRON_NILE_CHAIN_ID_HEX,
+  TRON_NILE_NETWORK_ID_HEX,
+  TRON_NILE_RPC_URL,
   walletConnectSessionFromAddress,
 } from "@/utils/sccp";
 import {
   canonicalSccpTransferPayloadBytes,
+  canonicalSccpPayloadEnvelopeBytes,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
@@ -316,6 +326,19 @@ const TRON_DESTINATION_BINDING = tronSccpDestinationBinding({
   verifierCodeHash: HEX32_D,
   verifierKeyHash: HEX32_E,
 });
+const TRON_NILE_DESTINATION_BINDING_KEY = `tron:0:${SCCP_TRON_DOMAIN}:${TRON_NILE_NETWORK_ID_HEX.slice(
+  2,
+)}:${TRON_VERIFIER_ADDRESS}:${HEX32_D}:${HEX32_E}`;
+const TRON_NILE_DESTINATION_BINDING = tronSccpDestinationBinding({
+  version: 1,
+  key: TRON_NILE_DESTINATION_BINDING_KEY,
+  sourceDomain: 0,
+  targetDomain: SCCP_TRON_DOMAIN,
+  networkId: TRON_NILE_NETWORK_ID_HEX,
+  verifierAddress: TRON_VERIFIER_ADDRESS,
+  verifierCodeHash: HEX32_D,
+  verifierKeyHash: HEX32_E,
+});
 const TAIRA_TO_TRON_TRANSFER_PAYLOAD = {
   version: 1,
   source_domain: 0,
@@ -336,7 +359,10 @@ const TAIRA_TO_TRON_MESSAGE_ID = sccpTransferMessageId(
   TAIRA_TO_TRON_TRANSFER_PAYLOAD,
 );
 const TAIRA_TO_TRON_PAYLOAD_HASH = sccpPayloadHash(
-  canonicalSccpTransferPayloadBytes(TAIRA_TO_TRON_TRANSFER_PAYLOAD),
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
+  }),
 );
 const READY_TRON_MANIFEST = {
   tronBridgeAddress: VALID_TRON_ADDRESS,
@@ -363,6 +389,29 @@ const READY_TRON_MANIFEST = {
     routeCanaryTransactionId: HEX32_F,
   },
   ...BURN_RECORD_MATERIAL,
+};
+const READY_NILE_TRON_MANIFEST = {
+  counterpartyDomain: SCCP_TRON_DOMAIN,
+  verifierTarget: "TronContract",
+  routeId: "taira_tron_xor",
+  assetKey: "xor",
+  ...READY_TRON_MANIFEST,
+  tronNetwork: "nile",
+  chain: "tron-nile",
+  productionReady: false,
+  disabledReason: "Nile route is in test rollout.",
+  destinationBinding: {
+    version: 1,
+    key: TRON_NILE_DESTINATION_BINDING.key,
+    bindingHash: TRON_NILE_DESTINATION_BINDING.bindingHash,
+  },
+  destinationRollout: {
+    ...READY_TRON_MANIFEST.destinationRollout,
+    destinationNetworkId: TRON_NILE_NETWORK_ID_HEX,
+    destinationBindingKey: TRON_NILE_DESTINATION_BINDING.key,
+    destinationBindingHash: TRON_NILE_DESTINATION_BINDING.bindingHash,
+  },
+  postDeployLiveEvidence: undefined,
 };
 
 const sampleTairaToTronJob = (
@@ -399,6 +448,14 @@ const sampleTairaToTronJob = (
     payloadProjection: {
       kind: "Transfer",
       value: transferProjection,
+    },
+    submissionPackage: {
+      platformPayload: {
+        kind: "tron_contract_call",
+        value: {
+          statementHash: HEX32_E,
+        },
+      },
     },
     bundle: {
       version: 1,
@@ -441,7 +498,10 @@ const sampleTronToTairaProofPackage = (
     route_id: "taira_tron_xor",
   };
   const payloadHash = sccpPayloadHash(
-    canonicalSccpTransferPayloadBytes(transferPayload),
+    canonicalSccpPayloadEnvelopeBytes({
+      kind: "Transfer",
+      value: transferPayload,
+    }),
   );
   const messageId = sccpTransferMessageId(transferPayload);
   const messageBundle = {
@@ -703,7 +763,10 @@ describe("SCCP helpers", () => {
       `0x${"ab".repeat(32)}`,
     );
     expect(isValidSccpMessageId(`0x${"11".repeat(32)}`)).toBe(true);
-    expect(isValidSccpMessageId("11".repeat(32))).toBe(false);
+    expect(normalizeSccpMessageId("11".repeat(32))).toBe(
+      `0x${"11".repeat(32)}`,
+    );
+    expect(isValidSccpMessageId("11".repeat(32))).toBe(true);
     expect(normalizeTronTransactionId(` 0X${"CD".repeat(32)} `)).toBe(
       "cd".repeat(32),
     );
@@ -711,7 +774,12 @@ describe("SCCP helpers", () => {
     expect(isValidTronTransactionId("0x1234")).toBe(false);
   });
 
-  it("normalizes only TRON mainnet SCCP network ids", () => {
+  it("normalizes supported TRON SCCP network ids by profile", () => {
+    expect(normalizeSccpTronNetworkKey("")).toBe("mainnet");
+    expect(normalizeSccpTronNetworkKey(" tron-nile ")).toBe("nile");
+    expect(() => normalizeSccpTronNetworkKey("shasta")).toThrow(
+      /mainnet or nile/,
+    );
     expect(normalizeTronNetworkIdHex(` ${TRON_MAINNET_CHAIN_ID_HEX} `)).toBe(
       TRON_MAINNET_NETWORK_ID_HEX,
     );
@@ -720,10 +788,35 @@ describe("SCCP helpers", () => {
         ` ${TRON_MAINNET_NETWORK_ID_HEX.toUpperCase()} `,
       ),
     ).toBe(TRON_MAINNET_NETWORK_ID_HEX);
-    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/mainnet/);
+    expect(normalizeTronNetworkIdHex(TRON_NILE_CHAIN_ID_HEX, "nile")).toBe(
+      TRON_NILE_NETWORK_ID_HEX,
+    );
+    expect(normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX, "nile")).toBe(
+      TRON_NILE_NETWORK_ID_HEX,
+    );
+    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/Mainnet/);
+    expect(() => normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX)).toThrow(
+      /Mainnet/,
+    );
+    expect(() =>
+      normalizeTronNetworkIdHex(TRON_MAINNET_NETWORK_ID_HEX, "nile"),
+    ).toThrow(/Nile/);
   });
 
-  it("requires a production TRON manifest for route readiness", () => {
+  it("resolves TRON gateway endpoints from selected route manifests", () => {
+    expect(readSccpTronGatewayEndpoint(READY_TRON_MANIFEST)).toBe(
+      TRON_MAINNET_RPC_URL,
+    );
+    expect(readSccpTronGatewayEndpoint(READY_NILE_TRON_MANIFEST)).toBe(
+      TRON_NILE_RPC_URL,
+    );
+    expect(readSccpTronGatewayEndpoint({ chain: "tron-nile" })).toBe(
+      TRON_NILE_RPC_URL,
+    );
+    expect(readSccpTronGatewayEndpoint(null, "nile")).toBe(TRON_NILE_RPC_URL);
+  });
+
+  it("requires a production mainnet or explicit selected-testnet TRON manifest for route readiness", () => {
     const capabilities = {
       proofSubmitPath: "/v1/bridge/proofs/submit",
       messageSubmitPath: "/v1/bridge/messages",
@@ -797,6 +890,78 @@ describe("SCCP helpers", () => {
         },
       }).ready,
     ).toBe(true);
+    const nileDraftReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [READY_NILE_TRON_MANIFEST],
+      },
+      tronNetwork: "nile",
+    });
+    expect(nileDraftReadiness.ready).toBe(true);
+    const nileDraftAsMainnetReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [READY_NILE_TRON_MANIFEST],
+      },
+      tronNetwork: "mainnet",
+    });
+    expect(nileDraftAsMainnetReadiness.ready).toBe(false);
+    expect(nileDraftAsMainnetReadiness.reasons.join(" ")).toContain(
+      "taira_tron_xor",
+    );
+    const untaggedNileDraftReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_NILE_TRON_MANIFEST,
+            tronNetwork: undefined,
+            chain: undefined,
+          },
+        ],
+      },
+      tronNetwork: "nile",
+    });
+    expect(untaggedNileDraftReadiness.ready).toBe(false);
+    expect(untaggedNileDraftReadiness.reasons.join(" ")).toMatch(
+      /test rollout/,
+    );
+    const mainnetDraftReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            counterpartyDomain: SCCP_TRON_DOMAIN,
+            verifierTarget: "TronContract",
+            routeId: "taira_tron_xor",
+            assetKey: "xor",
+            ...READY_TRON_MANIFEST,
+            productionReady: false,
+            disabledReason: "mainnet route is still staged.",
+            postDeployLiveEvidence: undefined,
+          },
+        ],
+      },
+      tronNetwork: "mainnet",
+    });
+    expect(mainnetDraftReadiness.ready).toBe(false);
+    expect(mainnetDraftReadiness.reasons.join(" ")).toMatch(/still staged/);
     const whitespaceCapabilities = resolveSccpRouteReadiness({
       connection: {
         chainId: TAIRA_CHAIN_ID,
@@ -1291,6 +1456,7 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toMatchObject({
+      endpoint: TRON_MAINNET_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
@@ -1302,6 +1468,14 @@ describe("SCCP helpers", () => {
         amount: bridgeDecimalToBaseUnits("1.5"),
       }),
     );
+    expect(
+      buildTairaXorBurnTriggerRequest({
+        manifest: READY_NILE_TRON_MANIFEST,
+        ownerAddress: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "1",
+      }).endpoint,
+    ).toBe(TRON_NILE_RPC_URL);
     expect(() =>
       buildTairaXorBurnTriggerRequest({
         manifest: {},
@@ -1390,11 +1564,18 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toEqual({
+      endpoint: TRON_MAINNET_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: "balanceOf(address)",
       parameter: tronAbiAddressWord(VALID_TRON_ADDRESS),
     });
+    expect(
+      buildTairaXorTokenBalanceRequest({
+        manifest: READY_NILE_TRON_MANIFEST,
+        ownerAddress: VALID_TRON_ADDRESS,
+      }).endpoint,
+    ).toBe(TRON_NILE_RPC_URL);
     expect(readTronAccountBalanceSun({ balance: 1234567 })).toBe("1234567");
     expect(readTronAccountBalanceSun({})).toBe("0");
     expect(
@@ -1919,6 +2100,23 @@ describe("SCCP helpers", () => {
         },
       },
     });
+    expect(
+      bindUnsignedTronSmartContractTransaction({
+        transaction: sampleTronTriggerTransaction((transaction) => {
+          const value = (
+            (
+              (
+                (transaction.raw_data as Record<string, unknown>)
+                  .contract as Array<Record<string, unknown>>
+              )[0].parameter as Record<string, unknown>
+            ).value as Record<string, unknown>
+          );
+          value.owner_address = VALID_TRON_ADDRESS;
+          value.contract_address = VALID_TRON_ADDRESS;
+        }),
+        trigger,
+      }).txId,
+    ).toBe(TRON_TX_ID);
 
     expect(() =>
       bindUnsignedTronSmartContractTransaction({
@@ -2220,6 +2418,48 @@ describe("SCCP helpers", () => {
       sourceEventDigest: TRON_SOURCE_EVENT_DIGEST,
     });
 
+    expect(
+      bindTronSourceDataForProof({
+        txId: TRON_TX_ID,
+        bridgeAddress: VALID_TRON_ADDRESS,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "0.0001",
+        ...sampleTronSourceData((next) => {
+          const event = (next.events.data as Record<string, unknown>[])[0];
+          const result = event.result as Record<string, unknown>;
+          result.tairaRecipient = String(result.tairaRecipient).replace(
+            /^0x/u,
+            "",
+          );
+        }),
+      }),
+    ).toMatchObject({
+      txId: TRON_TX_ID,
+      sourceEventDigest: TRON_SOURCE_EVENT_DIGEST,
+    });
+
+    expect(
+      bindTronSourceDataForProof({
+        txId: TRON_TX_ID,
+        bridgeAddress: VALID_TRON_ADDRESS,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "0.0001",
+        ...sampleTronSourceData((next) => {
+          const event = (next.events.data as Record<string, unknown>[])[0];
+          const result = event.result as Record<string, unknown>;
+          result.source_event_digest = String(result.sourceEventDigest).replace(
+            /^0x/u,
+            "",
+          );
+        }),
+      }),
+    ).toMatchObject({
+      txId: TRON_TX_ID,
+      sourceEventDigest: TRON_SOURCE_EVENT_DIGEST,
+    });
+
     const sourceRawDataHex = buildTronTriggerRawDataHex({
       dataHex: TRON_BURN_CALL_DATA,
       feeLimit: 50_000_003n,
@@ -2375,6 +2615,16 @@ describe("SCCP helpers", () => {
         }),
       ),
     ).toThrow(/burn nonce/);
+
+    expect(() =>
+      bindTronSourceDataForProof(
+        sampleBoundTronSourceDataInput((next) => {
+          const event = (next.events.data as Record<string, unknown>[])[0];
+          (event.result as Record<string, unknown>).source_event_digest =
+            HEX32_A;
+        }),
+      ),
+    ).toThrow(/source event digest.*conflict/);
 
     expect(() =>
       bindTronSourceDataForProof(
@@ -2618,6 +2868,24 @@ describe("SCCP helpers", () => {
     );
     expect(readSccpTronProofMaterial(manifest)).toEqual({
       networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+      tronVerifierAddress: TRON_VERIFIER_ADDRESS,
+      verifierCodeHashHex: HEX32_A,
+      verifierKeyHashHex: HEX32_B,
+      expectedDestinationBindingHashHex: TRON_DESTINATION_BINDING.bindingHash,
+    });
+    expect(
+      readSccpTronProofMaterial(
+        {
+          ...manifest,
+          destinationRollout: {
+            ...manifest.destinationRollout,
+            destinationNetworkId: TRON_NILE_CHAIN_ID_HEX,
+          },
+        },
+        "nile",
+      ),
+    ).toEqual({
+      networkIdHex: TRON_NILE_NETWORK_ID_HEX,
       tronVerifierAddress: TRON_VERIFIER_ADDRESS,
       verifierCodeHashHex: HEX32_A,
       verifierKeyHashHex: HEX32_B,
@@ -2877,6 +3145,183 @@ describe("SCCP helpers", () => {
     );
   });
 
+  it("uses TRON platform payload binding when job top-level binding is generic", () => {
+    const binding = buildTairaXorFinalizeProofBinding({
+      manifest: READY_TRON_MANIFEST,
+      job: sampleTairaToTronJob({
+        destinationBinding: {
+          version: 1,
+          key: "sccp:0:5:tron:tron-groth16-bn254-v1:4",
+          bindingHash: HEX32_A,
+        },
+        submissionPackage: {
+          platformPayload: {
+            kind: "TronContractCall",
+            value: {
+              destinationBinding: {
+                version: 1,
+                key: TRON_DESTINATION_BINDING.key,
+                bindingHash: TRON_DESTINATION_BINDING.bindingHash,
+              },
+              statementHash: HEX32_E,
+            },
+          },
+        },
+      }),
+      messageId: TAIRA_TO_TRON_MESSAGE_ID,
+      tairaSender: TAIRA_SENDER,
+      tronRecipient: VALID_TRON_ADDRESS,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+
+    expect(binding.destinationBinding.bindingHash).toBe(
+      TRON_DESTINATION_BINDING.bindingHash,
+    );
+  });
+
+  it("allows generic top-level job binding when TRON platform payload omits binding", () => {
+    const binding = buildTairaXorFinalizeProofBinding({
+      manifest: READY_TRON_MANIFEST,
+      job: sampleTairaToTronJob({
+        destinationBinding: {
+          version: 1,
+          key: "sccp:0:5:tron:tron-groth16-bn254-v1:4",
+          bindingHash: HEX32_A,
+        },
+        submissionPackage: {
+          platformPayload: {
+            kind: "tron_contract_call",
+            value: {
+              proofBytes: "0x01",
+              publicInputs: {
+                messageId: TAIRA_TO_TRON_MESSAGE_ID,
+              },
+              statementHash: HEX32_B,
+            },
+          },
+        },
+      }),
+      messageId: TAIRA_TO_TRON_MESSAGE_ID,
+      tairaSender: TAIRA_SENDER,
+      tronRecipient: VALID_TRON_ADDRESS,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+
+    expect(binding.destinationBinding.bindingHash).toBe(
+      TRON_DESTINATION_BINDING.bindingHash,
+    );
+  });
+
+  it("accepts TRON codec recipient payload variants in proof jobs", () => {
+    const baseTransfer = (
+      sampleTairaToTronJob().payloadProjection as {
+        value: Record<string, unknown>;
+      }
+    ).value;
+    const recipientPayload = bytesToHex(
+      decodeTronBase58CheckAddress(VALID_TRON_ADDRESS),
+    );
+
+    for (const payload of [recipientPayload.slice(2), VALID_TRON_ADDRESS]) {
+      const binding = buildTairaXorFinalizeProofBinding({
+        manifest: READY_TRON_MANIFEST,
+        job: sampleTairaToTronJob({
+          payloadProjection: {
+            kind: "Transfer",
+            value: {
+              ...baseTransfer,
+              recipient: { kind: "TronBase58Check", payload },
+            },
+          },
+        }),
+        messageId: TAIRA_TO_TRON_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        tronRecipient: VALID_TRON_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      });
+
+      expect(binding.messageId).toBe(TAIRA_TO_TRON_MESSAGE_ID);
+    }
+  });
+
+  it("accepts normalized codec payloads in TAIRA message bundles", () => {
+    const baseJob = sampleTairaToTronJob();
+    const baseBundle = baseJob.bundle as Record<string, unknown>;
+    const textHex = (value: string) =>
+      bytesToHex(new TextEncoder().encode(value));
+    const binding = buildTairaXorFinalizeProofBinding({
+      manifest: READY_TRON_MANIFEST,
+      job: sampleTairaToTronJob({
+        bundle: {
+          ...baseBundle,
+          payload: {
+            kind: "Transfer",
+            value: {
+              version: 1,
+              source_domain: 0,
+              dest_domain: SCCP_TRON_DOMAIN,
+              nonce: "7",
+              asset_home_domain: 0,
+              asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+              asset_id: textHex("xor"),
+              amount: BRIDGE_AMOUNT_BASE_UNITS,
+              sender_codec: SCCP_CODEC_TEXT_UTF8,
+              sender: textHex(TAIRA_SENDER),
+              recipient_codec: SCCP_CODEC_TRON_BASE58CHECK,
+              recipient: textHex(VALID_TRON_ADDRESS),
+              route_id_codec: SCCP_CODEC_TEXT_UTF8,
+              route_id: textHex("taira_tron_xor"),
+            },
+          },
+        },
+      }),
+      messageId: TAIRA_TO_TRON_MESSAGE_ID,
+      tairaSender: TAIRA_SENDER,
+      tronRecipient: VALID_TRON_ADDRESS,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+
+    expect(binding.canonicalPayloadHex).toBe(
+      bytesToHex(
+        canonicalSccpTransferPayloadBytes(TAIRA_TO_TRON_TRANSFER_PAYLOAD),
+      ),
+    );
+  });
+
+  it("builds TRON query material for TAIRA message proof jobs", () => {
+    const bundle = sampleTairaToTronJob().bundle as Record<string, unknown>;
+    const material = buildTairaXorMessageProofJobQueryMaterial({
+      manifest: READY_TRON_MANIFEST,
+      messageBundle: bundle,
+      messageId: TAIRA_TO_TRON_MESSAGE_ID,
+    });
+
+    expect(material).toMatchObject({
+      networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+      tronVerifierAddress: TRON_VERIFIER_ADDRESS,
+      verifierCodeHashHex: HEX32_D,
+      verifierKeyHashHex: HEX32_E,
+      expectedDestinationBindingHashHex: TRON_DESTINATION_BINDING.bindingHash,
+    });
+    const proofBytes = hexToBytes(material.proofBytesHex);
+    expect(proofBytes).toHaveLength(
+      SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
+    );
+    expect(bytesToHex(proofBytes.slice(32, 64))).toBe(
+      TAIRA_TO_TRON_MESSAGE_ID,
+    );
+    expect(bytesToHex(proofBytes.slice(64, 96))).toBe(`0x${"00".repeat(32)}`);
+    expect(bytesToHex(proofBytes.slice(96, 128))).toBe(HEX32_C);
+
+    expect(() =>
+      buildTairaXorMessageProofJobQueryMaterial({
+        manifest: READY_TRON_MANIFEST,
+        messageBundle: bundle,
+        messageId: HEX32_D,
+      }),
+    ).toThrow(/requested message id/);
+  });
+
   it("rejects stale or adversarial TAIRA message proof jobs", () => {
     expect(() =>
       buildTairaXorFinalizeProofBinding({
@@ -3002,7 +3447,7 @@ describe("SCCP helpers", () => {
         tronRecipient: VALID_TRON_ADDRESS,
         amountDecimal: BRIDGE_AMOUNT_DECIMAL,
       }),
-    ).toThrow(/payload hash.*canonical transfer payload/i);
+    ).toThrow(/payload hash.*canonical SCCP payload envelope/i);
   });
 
   it("builds TRON finalize trigger requests from completed proof packages", () => {
@@ -3027,7 +3472,10 @@ describe("SCCP helpers", () => {
     );
     const messageId = sccpTransferMessageId(transferPayload);
     const payloadHash = sccpPayloadHash(
-      canonicalSccpTransferPayloadBytes(transferPayload),
+      canonicalSccpPayloadEnvelopeBytes({
+        kind: "Transfer",
+        value: transferPayload,
+      }),
     );
     const trigger = buildTairaXorFinalizeTriggerRequest({
       manifest: READY_TRON_MANIFEST,
@@ -3057,13 +3505,39 @@ describe("SCCP helpers", () => {
       amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
       messageId,
       trigger: {
+        endpoint: TRON_MAINNET_RPC_URL,
         ownerAddress: VALID_TRON_ADDRESS,
         contractAddress: VALID_TRON_ADDRESS,
         functionSelector: TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
-        feeLimit: 100_000_000,
+        feeLimit: 250_000_000,
       },
     });
     expect(trigger.trigger.callData).toMatch(/^0x[0-9a-f]+$/u);
+    expect(
+      buildTairaXorFinalizeTriggerRequest({
+        manifest: READY_NILE_TRON_MANIFEST,
+        ownerAddress: VALID_TRON_ADDRESS,
+        tronRecipient: VALID_TRON_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId,
+        canonicalPayloadHex,
+        proofPackage: {
+          submission: {
+            proofBytes: bytesToHex(groth16ProofBytes()),
+            publicInputs: {
+              version: 1,
+              messageId,
+              payloadHash,
+              targetDomain: SCCP_TRON_DOMAIN,
+              commitmentRoot: HEX32_C,
+              finalityHeight: 10,
+              finalityBlockHash: HEX32_F,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }).trigger.endpoint,
+    ).toBe(TRON_NILE_RPC_URL);
     expect(
       buildTairaXorFinalizeTriggerRequest({
         manifest: READY_TRON_MANIFEST,
@@ -3115,7 +3589,10 @@ describe("SCCP helpers", () => {
     );
     const messageId = sccpTransferMessageId(transferPayload);
     const payloadHash = sccpPayloadHash(
-      canonicalSccpTransferPayloadBytes(transferPayload),
+      canonicalSccpPayloadEnvelopeBytes({
+        kind: "Transfer",
+        value: transferPayload,
+      }),
     );
     for (const feeLimit of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(() =>
@@ -3226,7 +3703,7 @@ describe("SCCP helpers", () => {
           },
         },
       }),
-    ).toThrow(/payload hash.*canonical payload bytes/);
+    ).toThrow(/payload(?:Hash| hash).*canonical SCCP payload envelope/i);
 
     expect(() =>
       buildTairaXorFinalizeTriggerRequest({
@@ -3348,6 +3825,28 @@ describe("SCCP helpers", () => {
         messageId: result.messageId,
       },
     });
+    expect(buildSccpMessageBundleSubmitPayload(result.messageBundle)).toMatchObject({
+      commitment_root: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      commitment: {
+        message_id: result.messageId.replace(/^0x/u, ""),
+        payload_hash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      },
+      payload: {
+        Transfer: {
+          asset_id: bytesToHex(new TextEncoder().encode("xor")).slice(2),
+          sender: bytesToHex(new TextEncoder().encode(VALID_TRON_ADDRESS)).slice(
+            2,
+          ),
+          recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)).slice(
+            2,
+          ),
+          route_id: bytesToHex(
+            new TextEncoder().encode("taira_tron_xor"),
+          ).slice(2),
+        },
+      },
+      finality_proof: expect.stringMatching(/^[0-9a-f]+$/u),
+    });
   });
 
   it("uses manifest settlement routing without accepting caller payloads", () => {
@@ -3365,9 +3864,21 @@ describe("SCCP helpers", () => {
     ).toEqual({
       entrypoint: "finalize_inbound",
       route: "taira_tron_xor",
-      contract_address: "bridge@sccp",
       contract_alias: "sccp.taira_xor",
       gas_limit: 1000,
+    });
+    expect(
+      buildTairaXorInboundSettlement({
+        manifest: {
+          settlement: {
+            contractAddress: "bridge@sccp",
+          },
+        },
+      }),
+    ).toEqual({
+      entrypoint: "finalize_inbound",
+      route: "taira_tron_xor",
+      contract_address: "bridge@sccp",
     });
 
     expect(() =>
@@ -3641,6 +4152,13 @@ describe("SCCP helpers", () => {
       namespace: "tron",
     });
     expect(JSON.stringify(snapshot)).not.toMatch(/private|seed|mnemonic/iu);
+    expect(
+      walletConnectSessionFromAddress(
+        VALID_TRON_ADDRESS,
+        "topic",
+        TRON_NILE_CAIP_CHAIN_ID,
+      ).chainId,
+    ).toBe(TRON_NILE_CAIP_CHAIN_ID);
   });
 });
 

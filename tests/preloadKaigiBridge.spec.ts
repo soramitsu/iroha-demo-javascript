@@ -14,6 +14,7 @@ import {
   decryptKaigiPayloadWithSecret,
   generateKaigiX25519KeyPair,
 } from "../electron/kaigiCrypto";
+import { deriveTronTestSignerAddressFromPrivateKey } from "../electron/tronTestSigner";
 
 const jsonResponse = (body: unknown, status = 200) => ({
   ok: status >= 200 && status < 300,
@@ -50,6 +51,10 @@ const RELAY_TX_HASH = "ab".repeat(32);
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
 const TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const OTHER_TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(8);
+const TRON_BROADCAST_ADDRESS_BASE58 =
+  deriveTronTestSignerAddressFromPrivateKey(
+    TRON_BROADCAST_PRIVATE_KEY,
+  ).base58;
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -69,6 +74,9 @@ const tronPayloadHexFromPrivateKey = (
   const addressHash = keccak_256(publicKey.slice(1));
   return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
 };
+
+const exposedEd25519PrivateKey = (privateKeyHex: string): string =>
+  `ed25519:802620${privateKeyHex.toUpperCase()}`;
 
 const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -651,6 +659,9 @@ vi.mock("@iroha/iroha-js/crypto", async () => {
       publicKey: Buffer.alloc(32, 0x21),
       privateKey: Buffer.alloc(32, 0x34),
     })),
+    privateKeyMultihash: vi.fn((privateKey: Buffer | Uint8Array) =>
+      `802620${Buffer.from(privateKey).toString("hex").toUpperCase()}`,
+    ),
   };
 });
 
@@ -725,6 +736,9 @@ const loadBridge = async () => {
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     getSccpProofManifests: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    getSccpMessageProofBundle: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     getSccpMessageProofArtifact: (
@@ -1308,14 +1322,14 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.submitBridgeProofMock).toHaveBeenCalledWith({
       authority: ALICE_ACCOUNT_ID,
-      privateKey: privateKeyHex,
+      privateKey: exposedEd25519PrivateKey(privateKeyHex),
       messageBundle,
       networkIdHex: "0x" + "44".repeat(32),
       tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
     });
     expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
       authority: ALICE_ACCOUNT_ID,
-      privateKey: privateKeyHex,
+      privateKey: exposedEd25519PrivateKey(privateKeyHex),
       messageBundle,
       settlement: { finalize_inbound: true },
     });
@@ -1432,7 +1446,7 @@ describe("preload Kaigi bridge", () => {
     await expect(submitPromise).resolves.toEqual({ ok: true });
     expect(mocks.submitBridgeMessageMock).toHaveBeenCalledWith({
       authority: ALICE_ACCOUNT_ID,
-      privateKey: privateKeyHex,
+      privateKey: exposedEd25519PrivateKey(privateKeyHex),
       messageBundle: {
         commitment: {
           message_id: "22".repeat(32),
@@ -1539,6 +1553,90 @@ describe("preload Kaigi bridge", () => {
           raw_data_hex: transaction.raw_data_hex.toLowerCase(),
           signature: [signature],
         }),
+      }),
+    );
+  });
+
+  it("normalizes non-visible TRON broadcast raw_data addresses before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const transaction = signedTronBroadcastTransaction();
+    const value = (
+      (
+        (transaction.raw_data.contract[0] as Record<string, unknown>)
+          .parameter as Record<string, unknown>
+      ).value as Record<string, unknown>
+    );
+    value.owner_address = TRON_BROADCAST_ADDRESS_BASE58;
+    value.contract_address = TRON_BROADCAST_ADDRESS_BASE58;
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ result: true, txid: transaction.txID }),
+    );
+
+    await expect(
+      bridge.broadcastTronTransaction({ transaction }),
+    ).resolves.toMatchObject({
+      result: true,
+      txid: transaction.txID,
+    });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/broadcasttransaction",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          ...transaction,
+          raw_data: {
+            ...transaction.raw_data,
+            contract: [
+              {
+                ...transaction.raw_data.contract[0],
+                parameter: {
+                  ...transaction.raw_data.contract[0].parameter,
+                  value: {
+                    ...value,
+                    owner_address: tronPayloadHexFromPrivateKey(),
+                    contract_address: tronPayloadHexFromPrivateKey(),
+                    data: "abcdef01",
+                  },
+                },
+              },
+            ],
+          },
+        }),
+      }),
+    );
+  });
+
+  it("preserves visible TRON broadcast raw_data addresses before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const transaction = {
+      ...signedTronBroadcastTransaction(),
+      visible: true,
+    };
+    const value = (
+      (
+        (transaction.raw_data.contract[0] as Record<string, unknown>)
+          .parameter as Record<string, unknown>
+      ).value as Record<string, unknown>
+    );
+    value.owner_address = TRON_BROADCAST_ADDRESS_BASE58;
+    value.contract_address = TRON_BROADCAST_ADDRESS_BASE58;
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({ result: true, txid: transaction.txID }),
+    );
+
+    await expect(
+      bridge.broadcastTronTransaction({ transaction }),
+    ).resolves.toMatchObject({
+      result: true,
+      txid: transaction.txID,
+    });
+
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://api.trongrid.io/wallet/broadcasttransaction",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(transaction),
       }),
     );
   });

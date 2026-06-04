@@ -444,6 +444,11 @@ export const listSccpRecentMessages = (
 ): Promise<SccpRecentMessagesResponse> =>
   bridge().listSccpRecentMessages(input);
 
+export const getSccpMessageProofBundle = (
+  input: Parameters<IrohaBridge["getSccpMessageProofBundle"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().getSccpMessageProofBundle(input);
+
 export const getSccpMessageProofArtifact = (
   input: Parameters<IrohaBridge["getSccpMessageProofArtifact"]>[0],
 ): Promise<Record<string, unknown>> =>
@@ -460,6 +465,16 @@ export const submitSccpBridgeProof = (
 export const submitSccpBridgeMessage = (
   input: Parameters<IrohaBridge["submitSccpBridgeMessage"]>[0],
 ): Promise<Record<string, unknown>> => bridge().submitSccpBridgeMessage(input);
+
+export const waitForSccpTransactionCommit = (
+  input: Parameters<IrohaBridge["waitForSccpTransactionCommit"]>[0],
+): Promise<Record<string, unknown>> =>
+  bridge().waitForSccpTransactionCommit(input);
+
+export const deploySccpTairaInboundSettlementContract = (
+  input: Parameters<IrohaBridge["deploySccpTairaInboundSettlementContract"]>[0],
+): Promise<Record<string, unknown> | null> =>
+  bridge().deploySccpTairaInboundSettlementContract(input);
 
 export const deriveZkIvmPayload = (
   input: Parameters<IrohaBridge["deriveZkIvmPayload"]>[0],
@@ -510,6 +525,15 @@ export const getTronWitnesses = (
 export const getTronFinalityData = (
   input?: Parameters<IrohaBridge["getTronFinalityData"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getTronFinalityData(input);
+
+export const getSccpNileTestTronSigner = (): ReturnType<
+  IrohaBridge["getSccpNileTestTronSigner"]
+> => bridge().getSccpNileTestTronSigner();
+
+export const signSccpNileTestTronTransaction = (
+  input: Parameters<IrohaBridge["signSccpNileTestTronTransaction"]>[0],
+): ReturnType<IrohaBridge["signSccpNileTestTronTransaction"]> =>
+  bridge().signSccpNileTestTronTransaction(input);
 
 export const broadcastTronTransaction = (
   input: Parameters<IrohaBridge["broadcastTronTransaction"]>[0],

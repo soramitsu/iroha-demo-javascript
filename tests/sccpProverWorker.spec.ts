@@ -525,6 +525,27 @@ describe("SCCP prover worker", () => {
     expect(mocks.bindSource).not.toHaveBeenCalled();
   });
 
+  it("does not reuse the destination prover module URL for TRON source proving", async () => {
+    vi.stubEnv(
+      "VITE_SCCP_TRON_PROVER_MODULE_URL",
+      "/src/utils/sccpNileDiagnosticProver.ts",
+    );
+    vi.stubEnv("VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL", "");
+    mocks.loadSourceProver.mockResolvedValue(undefined);
+    const worker = await createWorkerHarness();
+
+    await worker.post({
+      id: "source-no-fallback",
+      kind: "prove-tron-source-package",
+      input: sourceInput,
+    });
+
+    expect(mocks.loadSourceProver).toHaveBeenCalledWith({
+      globalScope: expect.any(Object),
+      moduleUrl: "",
+    });
+  });
+
   it("rebinds TRON source prover output to the original event and recipient context", async () => {
     const rawProofPackage = { raw: true, txId: "stale" };
     const boundProofPackage = { submissionPayload: { proof: "0x03" } };

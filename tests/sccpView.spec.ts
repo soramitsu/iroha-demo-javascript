@@ -14,12 +14,15 @@ import {
   TAIRA_NETWORK_PREFIX,
 } from "@/constants/chains";
 import {
+  buildSccpMessageBundleSubmitPayload,
   decodeTronBase58CheckAddress,
   tairaXorBurnToTairaCallData,
   TRON_MAINNET_NETWORK_ID_HEX,
+  TRON_MAINNET_RPC_URL,
   TRON_MAINNET_TRONSCAN_URL,
 } from "@/utils/sccp";
 import {
+  canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpTransferPayloadBytes,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
@@ -61,10 +64,14 @@ const TAIRA_TO_TRON_TRANSFER_PAYLOAD = {
 };
 const MESSAGE_ID = sccpTransferMessageId(TAIRA_TO_TRON_TRANSFER_PAYLOAD);
 const PAYLOAD_HASH = sccpPayloadHash(
-  canonicalSccpTransferPayloadBytes(TAIRA_TO_TRON_TRANSFER_PAYLOAD),
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
+  }),
 );
 const COMMITMENT_ROOT = `0x${"33".repeat(32)}`;
 const FINALITY_BLOCK_HASH = `0x${"44".repeat(32)}`;
+const STATEMENT_HASH = `0x${"55".repeat(32)}`;
 const TRON_SOLID_BLOCK_NUMBER = 12;
 const VERIFIER_CODE_HASH = `0x${"66".repeat(32)}`;
 const VERIFIER_KEY_HASH = `0x${"77".repeat(32)}`;
@@ -234,6 +241,7 @@ const getSccpCapabilitiesMock = vi.fn();
 const getSccpProofManifestsMock = vi.fn();
 const listSccpRecentMessagesMock = vi.fn();
 const fetchAccountAssetsMock = vi.fn();
+const getSccpMessageProofBundleMock = vi.fn();
 const getSccpMessageProofJobMock = vi.fn();
 const getTronAccountMock = vi.fn();
 const getTronFinalityDataMock = vi.fn();
@@ -245,6 +253,7 @@ const startZkIvmProveJobMock = vi.fn();
 const getZkIvmProveJobMock = vi.fn();
 const submitZkIvmProvedTransactionMock = vi.fn();
 const submitSccpBridgeMessageMock = vi.fn();
+const waitForSccpTransactionCommitMock = vi.fn();
 const triggerTronConstantContractMock = vi.fn();
 const triggerTronSmartContractMock = vi.fn();
 const broadcastTronTransactionMock = vi.fn();
@@ -254,6 +263,8 @@ vi.mock("@/services/iroha", () => ({
   getSccpProofManifests: (input: unknown) => getSccpProofManifestsMock(input),
   listSccpRecentMessages: (input: unknown) => listSccpRecentMessagesMock(input),
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
+  getSccpMessageProofBundle: (input: unknown) =>
+    getSccpMessageProofBundleMock(input),
   getSccpMessageProofJob: (input: unknown) => getSccpMessageProofJobMock(input),
   getTronAccount: (input: unknown) => getTronAccountMock(input),
   getTronFinalityData: (input: unknown) => getTronFinalityDataMock(input),
@@ -269,6 +280,8 @@ vi.mock("@/services/iroha", () => ({
     submitZkIvmProvedTransactionMock(input),
   submitSccpBridgeMessage: (input: unknown) =>
     submitSccpBridgeMessageMock(input),
+  waitForSccpTransactionCommit: (input: unknown) =>
+    waitForSccpTransactionCommitMock(input),
   triggerTronConstantContract: (input: unknown) =>
     triggerTronConstantContractMock(input),
   triggerTronSmartContract: (input: unknown) =>
@@ -336,6 +349,14 @@ const sampleMessageProofJob = (): Record<string, unknown> => ({
     version: 1,
     key: BINDING_KEY,
     bindingHash: BINDING_HASH,
+  },
+  submissionPackage: {
+    platformPayload: {
+      kind: "tron_contract_call",
+      value: {
+        statementHash: STATEMENT_HASH,
+      },
+    },
   },
   payloadProjection: {
     kind: "Transfer",
@@ -473,8 +494,8 @@ const mockSuccessfulTronBroadcast = (): void => {
   );
 };
 
-const sampleTronReceipt = (): Record<string, unknown> => ({
-  id: TRON_TX_ID,
+const sampleTronReceipt = (txId = TRON_TX_ID): Record<string, unknown> => ({
+  id: txId,
   blockNumber: 10,
   receipt: {
     result: "SUCCESS",
@@ -530,7 +551,10 @@ const sampleTronToTairaSourceProofPackage = (
     route_id: "taira_tron_xor",
   };
   const payloadHash = sccpPayloadHash(
-    canonicalSccpTransferPayloadBytes(transferPayload),
+    canonicalSccpPayloadEnvelopeBytes({
+      kind: "Transfer",
+      value: transferPayload,
+    }),
   );
   const messageId = sccpTransferMessageId(transferPayload);
   const proofPackage = {
@@ -827,6 +851,7 @@ describe("SccpView", () => {
     getSccpProofManifestsMock.mockReset();
     listSccpRecentMessagesMock.mockReset();
     fetchAccountAssetsMock.mockReset();
+    getSccpMessageProofBundleMock.mockReset();
     getSccpMessageProofJobMock.mockReset();
     getTronAccountMock.mockReset();
     getTronFinalityDataMock.mockReset();
@@ -838,6 +863,7 @@ describe("SccpView", () => {
     getZkIvmProveJobMock.mockReset();
     submitZkIvmProvedTransactionMock.mockReset();
     submitSccpBridgeMessageMock.mockReset();
+    waitForSccpTransactionCommitMock.mockReset();
     triggerTronConstantContractMock.mockReset();
     triggerTronSmartContractMock.mockReset();
     broadcastTronTransactionMock.mockReset();
@@ -851,6 +877,9 @@ describe("SccpView", () => {
       total: 1,
       raw: {},
     });
+    getSccpMessageProofBundleMock.mockResolvedValue(
+      sampleMessageProofJob().bundle,
+    );
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
@@ -868,10 +897,17 @@ describe("SccpView", () => {
       constant_result: ["0".repeat(63) + "7"],
     });
     getTronTransactionMock.mockResolvedValue(sampleTronTransaction());
-    getTronTransactionReceiptMock.mockResolvedValue(sampleTronReceipt());
+    getTronTransactionReceiptMock.mockImplementation(
+      (input: { txId?: unknown }) =>
+        Promise.resolve(sampleTronReceipt(String(input.txId ?? TRON_TX_ID))),
+    );
     getTronTransactionEventsMock.mockResolvedValue(sampleTronEvents());
     submitSccpBridgeMessageMock.mockResolvedValue({
       tx_hash_hex: "99".repeat(32),
+    });
+    waitForSccpTransactionCommitMock.mockResolvedValue({
+      hash_hex: "99".repeat(32),
+      status: "Applied",
     });
   });
 
@@ -952,9 +988,11 @@ describe("SccpView", () => {
     expect(wrapper.text()).toContain("1.234567 TRX");
     expect(wrapper.text()).toContain("0.000000000000000007 TairaXOR");
     expect(getTronAccountMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       address: VALID_TRON_ADDRESS,
     });
     expect(triggerTronConstantContractMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: TRON_TOKEN_ADDRESS,
       functionSelector: "balanceOf(address)",
@@ -1262,15 +1300,20 @@ describe("SccpView", () => {
     await fetchButton!.trigger("click");
     await flushPromises();
 
+    expect(getSccpMessageProofBundleMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      messageId: MESSAGE_ID,
+    });
     expect(getSccpMessageProofJobMock).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         messageId: MESSAGE_ID,
         networkIdHex: NETWORK_ID,
+        tronVerifierAddress: TRON_VERIFIER_ADDRESS,
         verifierCodeHashHex: VERIFIER_CODE_HASH,
         verifierKeyHashHex: VERIFIER_KEY_HASH,
         expectedDestinationBindingHashHex: BINDING_HASH,
-        tronVerifierAddress: TRON_VERIFIER_ADDRESS,
+        proofBytesHex: expect.stringMatching(/^0x[0-9a-f]{768}$/u),
       }),
     );
     expect(wrapper.text()).toContain("TRON SCCP Groth16 prover is not linked");
@@ -1656,15 +1699,20 @@ describe("SccpView", () => {
     await flushPromises();
 
     expect(getTronTransactionMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       txId: TRON_TX_ID,
     });
     expect(getTronTransactionReceiptMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       txId: TRON_TX_ID,
     });
     expect(getTronTransactionEventsMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       txId: TRON_TX_ID,
     });
-    expect(getTronFinalityDataMock).toHaveBeenCalled();
+    expect(getTronFinalityDataMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
+    });
     expect(wrapper.text()).toContain("source prover is not linked");
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
@@ -2010,10 +2058,16 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: TAIRA_ACCOUNT_ID,
-      messageBundle,
+      messageBundle: buildSccpMessageBundleSubmitPayload(
+        messageBundle as Record<string, unknown>,
+      ),
       settlement,
     });
-    expect(wrapper.text()).toContain("TAIRA settlement submitted");
+    expect(waitForSccpTransactionCommitMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      hashHex: "99".repeat(32),
+    });
+    expect(wrapper.text()).toContain("TAIRA settlement confirmed");
     expect(wrapper.text()).toContain("TAIRA settlement transaction");
     const settlementLink = wrapper
       .findAll("a")
@@ -2023,7 +2077,7 @@ describe("SccpView", () => {
     );
   });
 
-  it("does not render a generic TAIRA settlement link when the response hash is invalid", async () => {
+  it("rejects TAIRA settlement responses with an invalid transaction hash", async () => {
     storeConnectedTronWallet();
     submitSccpBridgeMessageMock.mockResolvedValue({
       tx_hash_hex: "not-a-transaction-hash",
@@ -2055,7 +2109,10 @@ describe("SccpView", () => {
     await fetchButton!.trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("TAIRA settlement submitted");
+    expect(wrapper.text()).toContain(
+      "TAIRA transaction hash must be a 32-byte hex value.",
+    );
+    expect(waitForSccpTransactionCommitMock).not.toHaveBeenCalled();
     expect(
       wrapper
         .findAll("a")
@@ -2115,10 +2172,16 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
       accountId: TAIRA_ACCOUNT_ID,
-      messageBundle: proofPackage.messageBundle,
+      messageBundle: buildSccpMessageBundleSubmitPayload(
+        proofPackage.messageBundle as Record<string, unknown>,
+      ),
       settlement: proofPackage.settlement,
     });
-    expect(wrapper.text()).toContain("TAIRA settlement submitted");
+    expect(waitForSccpTransactionCommitMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      hashHex: "99".repeat(32),
+    });
+    expect(wrapper.text()).toContain("TAIRA settlement confirmed");
     expect(wrapper.text()).toContain("TAIRA settlement transaction");
     const settlementLink = wrapper
       .findAll("a")
@@ -2309,7 +2372,7 @@ describe("SccpView", () => {
     expect(requestMock).toHaveBeenCalled();
     expect(broadcastTronTransactionMock).toHaveBeenCalled();
     expect(wrapper.text()).toContain(
-      "Signed TRON finalize transaction broadcast",
+      "TRON finalize transaction confirmed",
     );
   });
 
@@ -2478,11 +2541,17 @@ describe("SccpView", () => {
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         messageId: MESSAGE_ID,
+        networkIdHex: NETWORK_ID,
+        tronVerifierAddress: TRON_VERIFIER_ADDRESS,
+        verifierCodeHashHex: VERIFIER_CODE_HASH,
+        verifierKeyHashHex: VERIFIER_KEY_HASH,
         expectedDestinationBindingHashHex: BINDING_HASH,
+        proofBytesHex: expect.stringMatching(/^0x[0-9a-f]{768}$/u),
       }),
     );
     expect(triggerTronSmartContractMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        endpoint: TRON_MAINNET_RPC_URL,
         ownerAddress: VALID_TRON_ADDRESS,
         contractAddress: VALID_TRON_ADDRESS,
         functionSelector: expect.stringContaining("finalizeFromTaira"),
@@ -2499,6 +2568,7 @@ describe("SccpView", () => {
       "tron:0x2b6653dc",
     );
     expect(broadcastTronTransactionMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
       transaction: {
         ...unsignedTransaction,
         signature: [
@@ -2506,8 +2576,12 @@ describe("SccpView", () => {
         ],
       },
     });
+    expect(getTronTransactionReceiptMock).toHaveBeenCalledWith({
+      endpoint: TRON_MAINNET_RPC_URL,
+      txId: String(unsignedTransaction.txID),
+    });
     expect(wrapper.text()).toContain(
-      "Signed TRON finalize transaction broadcast",
+      "TRON finalize transaction confirmed",
     );
     expect(wrapper.text()).toContain("TAIRA source transaction");
     expect(wrapper.text()).toContain("TRON finalize transaction");

@@ -6,6 +6,7 @@ import {
   getTronAccount,
   getZkIvmProveJob,
   getSccpCapabilities,
+  getSccpMessageProofBundle,
   getSccpMessageProofArtifact,
   getSccpMessageProofJob,
   getSccpProofManifests,
@@ -41,6 +42,10 @@ describe("SCCP service wrappers", () => {
       listSccpRecentMessages: (input: unknown) => {
         bridgeCalls.push(["listSccpRecentMessages", input]);
         return Promise.resolve({ items: [], total: 0 });
+      },
+      getSccpMessageProofBundle: (input: unknown) => {
+        bridgeCalls.push(["getSccpMessageProofBundle", input]);
+        return Promise.resolve({ commitment: {} });
       },
       getSccpMessageProofArtifact: (input: unknown) => {
         bridgeCalls.push(["getSccpMessageProofArtifact", input]);
@@ -151,6 +156,10 @@ describe("SCCP service wrappers", () => {
       networkIdHex: "0x" + "22".repeat(32),
       tronVerifierAddress: "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8",
     };
+    const proofBundleInput = {
+      toriiUrl: "https://taira.sora.org",
+      messageId: "0x" + "11".repeat(32),
+    };
     const proofSubmitInput = {
       toriiUrl: "https://taira.sora.org",
       networkIdHex: "0x" + "22".repeat(32),
@@ -158,6 +167,7 @@ describe("SCCP service wrappers", () => {
       accountId: "testu1234567890abcdef",
       messageBundle: { commitment: { message_id: "11".repeat(32) } },
     };
+    await getSccpMessageProofBundle(proofBundleInput);
     await getSccpMessageProofArtifact(proofArtifactInput);
     await getSccpMessageProofJob(proofArtifactInput);
     await submitSccpBridgeProof({
@@ -165,6 +175,7 @@ describe("SCCP service wrappers", () => {
     });
 
     expect(bridgeCalls).toEqual([
+      ["getSccpMessageProofBundle", proofBundleInput],
       ["getSccpMessageProofArtifact", proofArtifactInput],
       ["getSccpMessageProofJob", proofArtifactInput],
       ["submitSccpBridgeProof", proofSubmitInput],

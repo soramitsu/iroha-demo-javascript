@@ -4,6 +4,7 @@ import {
   claimPublicLaneRewards,
   connectVpn,
   disconnectVpn,
+  deploySccpTairaInboundSettlementContract,
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
@@ -96,6 +97,31 @@ describe("iroha services bridge", () => {
       signatureB64: "signature",
     });
     expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(input);
+  });
+
+  it("forwards TAIRA SCCP inbound settlement deployments to the bridge", async () => {
+    const deployMock = vi.fn().mockResolvedValue({
+      contract_alias: "taira_xor_inbound_settlement::universal",
+      contract_address: "tairac1settlement",
+    });
+    (window as any).iroha = {
+      deploySccpTairaInboundSettlementContract: deployMock,
+    };
+
+    const input = {
+      toriiUrl: "https://taira.sora.org",
+      accountId: "testuaccount",
+      contractAlias: "taira_xor_inbound_settlement::universal",
+      compiledCodeB64: "SVZNAA==",
+    };
+
+    await expect(
+      deploySccpTairaInboundSettlementContract(input),
+    ).resolves.toEqual({
+      contract_alias: "taira_xor_inbound_settlement::universal",
+      contract_address: "tairac1settlement",
+    });
+    expect(deployMock).toHaveBeenCalledWith(input);
   });
 
   it("forwards offset-based pagination to asset and transaction fetchers", async () => {

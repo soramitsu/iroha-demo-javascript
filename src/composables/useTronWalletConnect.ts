@@ -3,9 +3,7 @@ import type { CustomCaipNetwork } from "@reown/appkit-universal-connector";
 import type { UniversalConnector } from "@reown/appkit-universal-connector";
 import {
   normalizeTronAddress,
-  TRON_MAINNET_CAIP_CHAIN_ID,
-  TRON_MAINNET_CHAIN_ID_HEX,
-  TRON_MAINNET_RPC_URL,
+  SCCP_TRON_NETWORK,
   WALLETCONNECT_TRON_METHOD_VERSION,
   WALLETCONNECT_TRON_NAMESPACE,
   WALLETCONNECT_TRON_SIGN_METHOD,
@@ -13,8 +11,14 @@ import {
   type WalletConnectSessionSnapshot,
 } from "@/utils/sccp";
 import { isSecretLikeTextValue } from "@/utils/secretLike";
+import {
+  getSccpNileTestTronSigner,
+  signSccpNileTestTronTransaction,
+} from "@/services/iroha";
+import type { SccpNileTestTronSignerStatus } from "@/types/iroha";
 
 const STORAGE_KEY = "iroha-demo:sccp:tron-walletconnect";
+const TEST_SIGNER_SESSION_TOPIC = "sccp-nile-test-signer";
 export const TRON_WALLETCONNECT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TRON_WALLETCONNECT_SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_WALLETCONNECT_TOPIC_LENGTH = 256;
@@ -93,12 +97,13 @@ const readConfiguredProjectId = (): { projectId: string; error: string } => {
 
 let connectorPromise: Promise<UniversalConnector> | null = null;
 let connectorProjectId = "";
+let connectorNetworkKey = "";
 
-const tronMainnet = {
-  id: Number.parseInt(TRON_MAINNET_CHAIN_ID_HEX.slice(2), 16),
+const activeTronWalletConnectNetwork = {
+  id: Number.parseInt(SCCP_TRON_NETWORK.chainIdHex.slice(2), 16),
   chainNamespace: WALLETCONNECT_TRON_NAMESPACE,
-  caipNetworkId: TRON_MAINNET_CAIP_CHAIN_ID,
-  name: "TRON Mainnet",
+  caipNetworkId: SCCP_TRON_NETWORK.caipChainId,
+  name: SCCP_TRON_NETWORK.label,
   nativeCurrency: {
     name: "TRON",
     symbol: "TRX",
@@ -106,7 +111,7 @@ const tronMainnet = {
   },
   rpcUrls: {
     default: {
-      http: [TRON_MAINNET_RPC_URL],
+      http: [SCCP_TRON_NETWORK.rpcUrl],
     },
   },
 } satisfies CustomCaipNetwork<typeof WALLETCONNECT_TRON_NAMESPACE>;
@@ -117,7 +122,7 @@ export const createTronWalletConnectConnectParams =
   (): WalletConnectConnectParams => ({
     namespaces: {
       [WALLETCONNECT_TRON_NAMESPACE]: {
-        chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+        chains: [SCCP_TRON_NETWORK.caipChainId],
         methods: [WALLETCONNECT_TRON_SIGN_METHOD],
         events: ["accountsChanged", "chainChanged"],
       },
@@ -127,7 +132,7 @@ export const createTronWalletConnectConnectParams =
     },
   });
 
-const listTronMainnetSessionAddresses = (
+const listActiveTronSessionAddresses = (
   session: WalletConnectSessionLike | null | undefined,
 ): string[] => {
   const accounts =
@@ -139,11 +144,11 @@ const listTronMainnetSessionAddresses = (
     .filter(
       (item) =>
         typeof item === "string" &&
-        item.startsWith(`${TRON_MAINNET_CAIP_CHAIN_ID}:`),
+        item.startsWith(`${SCCP_TRON_NETWORK.caipChainId}:`),
     )
     .map((account) =>
       normalizeTronAddress(
-        account.slice(`${TRON_MAINNET_CAIP_CHAIN_ID}:`.length),
+        account.slice(`${SCCP_TRON_NETWORK.caipChainId}:`.length),
       ),
     );
   return Array.from(new Set(addresses));
@@ -152,13 +157,13 @@ const listTronMainnetSessionAddresses = (
 export const extractTronAddressFromSession = (
   session: WalletConnectSessionLike | null | undefined,
 ): string | null => {
-  const addresses = listTronMainnetSessionAddresses(session);
+  const addresses = listActiveTronSessionAddresses(session);
   if (addresses.length === 0) {
     return null;
   }
   if (addresses.length > 1) {
     throw new Error(
-      "Connected wallet exposed multiple TRON mainnet accounts; select one account and reconnect.",
+      `Connected wallet exposed multiple ${SCCP_TRON_NETWORK.label} accounts; select one account and reconnect.`,
     );
   }
   return addresses[0];
@@ -324,7 +329,7 @@ export const readStoredTronWalletConnectSession =
         return null;
       }
       if (
-        parsed.chainId !== TRON_MAINNET_CAIP_CHAIN_ID ||
+        parsed.chainId !== SCCP_TRON_NETWORK.caipChainId ||
         parsed.namespace !== WALLETCONNECT_TRON_NAMESPACE ||
         parsed.methodVersion !== WALLETCONNECT_TRON_METHOD_VERSION
       ) {
@@ -374,7 +379,7 @@ export const writeStoredTronWalletConnectSession = (
     return;
   }
   if (
-    snapshot.chainId !== TRON_MAINNET_CAIP_CHAIN_ID ||
+    snapshot.chainId !== SCCP_TRON_NETWORK.caipChainId ||
     snapshot.namespace !== WALLETCONNECT_TRON_NAMESPACE ||
     snapshot.methodVersion !== WALLETCONNECT_TRON_METHOD_VERSION
   ) {
@@ -419,9 +424,13 @@ const getConnector = async (): Promise<UniversalConnector> => {
   if (!projectId) {
     throw new Error("WalletConnect project ID is not configured.");
   }
-  if (connectorProjectId !== projectId) {
+  if (
+    connectorProjectId !== projectId ||
+    connectorNetworkKey !== SCCP_TRON_NETWORK.key
+  ) {
     connectorPromise = null;
     connectorProjectId = projectId;
+    connectorNetworkKey = SCCP_TRON_NETWORK.key;
   }
   if (!connectorPromise) {
     connectorPromise = import("@reown/appkit-universal-connector")
@@ -437,7 +446,7 @@ const getConnector = async (): Promise<UniversalConnector> => {
           networks: [
             {
               namespace: WALLETCONNECT_TRON_NAMESPACE,
-              chains: [tronMainnet],
+              chains: [activeTronWalletConnectNetwork],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
               events: ["accountsChanged", "chainChanged"],
             },
@@ -455,6 +464,7 @@ const getConnector = async (): Promise<UniversalConnector> => {
         if (connectorProjectId === projectId) {
           connectorPromise = null;
           connectorProjectId = "";
+          connectorNetworkKey = "";
         }
         throw error;
       });
@@ -509,15 +519,33 @@ export const useTronWalletConnect = () => {
   const disconnecting = ref(false);
   const error = ref("");
   const sessionConnectedAtMs = ref(stored?.connectedAtMs ?? 0);
+  const testSignerStatus = ref<SccpNileTestTronSignerStatus>({
+    enabled: false,
+    network: "nile",
+    address: "",
+  });
+  const testSignerChecking = ref(false);
+  const testSignerError = ref("");
 
   const connected = computed(() => Boolean(address.value));
   const projectConfigurationError = computed(
     () => readConfiguredProjectId().error,
   );
   const projectConfigured = computed(
-    () => !projectConfigurationError.value && Boolean(getConfiguredProjectId()),
+    () =>
+      !projectConfigurationError.value &&
+      (Boolean(getConfiguredProjectId()) || testSignerStatus.value.enabled),
   );
   const projectId = computed(() => getConfiguredProjectId());
+  const testSignerEnabled = computed(() => testSignerStatus.value.enabled);
+  const testSignerAddress = computed(() => testSignerStatus.value.address);
+  const isTestSignerSession = computed(
+    () =>
+      sessionTopic.value === TEST_SIGNER_SESSION_TOPIC &&
+      Boolean(address.value) &&
+      address.value === testSignerStatus.value.address &&
+      testSignerStatus.value.enabled,
+  );
   const shortAddress = computed(() =>
     address.value
       ? `${address.value.slice(0, 6)}...${address.value.slice(-6)}`
@@ -550,12 +578,57 @@ export const useTronWalletConnect = () => {
     writeStoredTronWalletConnectSession(currentSnapshot());
   };
 
+  const refreshTestSigner = async () => {
+    testSignerChecking.value = true;
+    try {
+      const status = await getSccpNileTestTronSigner();
+      testSignerStatus.value = status.enabled
+        ? {
+            ...status,
+            address: normalizeTronAddress(status.address),
+          }
+        : status;
+      testSignerError.value = status.reason ?? "";
+      if (
+        sessionTopic.value === TEST_SIGNER_SESSION_TOPIC &&
+        !isTestSignerSession.value
+      ) {
+        clearSession();
+      }
+    } catch (statusError) {
+      testSignerStatus.value = {
+        enabled: false,
+        network: "nile",
+        address: "",
+      };
+      testSignerError.value =
+        statusError instanceof Error ? statusError.message : String(statusError);
+      if (sessionTopic.value === TEST_SIGNER_SESSION_TOPIC) {
+        clearSession();
+      }
+    } finally {
+      testSignerChecking.value = false;
+    }
+  };
+
+  void refreshTestSigner();
+
   const connect = async () => {
     error.value = "";
     connecting.value = true;
     let shouldClearRejectedSession = false;
     let connector: UniversalConnector | null = null;
     try {
+      if (!getConfiguredProjectId()) {
+        await refreshTestSigner();
+        if (testSignerStatus.value.enabled) {
+          address.value = testSignerStatus.value.address;
+          sessionTopic.value = TEST_SIGNER_SESSION_TOPIC;
+          sessionConnectedAtMs.value = Date.now();
+          writeStoredTronWalletConnectSession(null);
+          return;
+        }
+      }
       connector = await getConnector();
       const { session } = await connector.connect(
         createTronWalletConnectConnectParams(),
@@ -564,7 +637,7 @@ export const useTronWalletConnect = () => {
       const nextAddress = extractTronAddressFromSession(session);
       if (!nextAddress) {
         throw new Error(
-          "Connected wallet did not provide a TRON mainnet account.",
+          `Connected wallet did not provide a ${SCCP_TRON_NETWORK.label} account.`,
         );
       }
       if (!tronWalletConnectSessionSupportsRequiredSigning(session)) {
@@ -606,8 +679,10 @@ export const useTronWalletConnect = () => {
     error.value = "";
     disconnecting.value = true;
     try {
-      const connector = connectorPromise ? await connectorPromise : null;
-      await connector?.disconnect();
+      if (!isTestSignerSession.value) {
+        const connector = connectorPromise ? await connectorPromise : null;
+        await connector?.disconnect();
+      }
     } catch (disconnectError) {
       error.value =
         disconnectError instanceof Error
@@ -622,6 +697,14 @@ export const useTronWalletConnect = () => {
   const signTransaction = async (transaction: Record<string, unknown>) => {
     if (!address.value) {
       throw new Error("Connect a TRON wallet before signing.");
+    }
+    const transactionForWallet =
+      cloneTronWalletConnectTransactionRequest(transaction);
+    if (isTestSignerSession.value) {
+      return signSccpNileTestTronTransaction({
+        transaction: transactionForWallet,
+        ownerAddress: address.value,
+      });
     }
     const snapshot = currentSnapshot();
     if (
@@ -640,8 +723,6 @@ export const useTronWalletConnect = () => {
       clearSession();
       throw new Error("Reconnect your TRON wallet before signing.");
     }
-    const transactionForWallet =
-      cloneTronWalletConnectTransactionRequest(transaction);
     return connector.request(
       {
         method: WALLETCONNECT_TRON_SIGN_METHOD,
@@ -650,7 +731,7 @@ export const useTronWalletConnect = () => {
           transaction: transactionForWallet,
         },
       },
-      TRON_MAINNET_CAIP_CHAIN_ID,
+      SCCP_TRON_NETWORK.caipChainId,
     );
   };
 
@@ -665,8 +746,13 @@ export const useTronWalletConnect = () => {
     projectConfigurationError,
     projectId,
     shortAddress,
+    testSignerAddress,
+    testSignerChecking,
+    testSignerEnabled,
+    testSignerError,
     connect,
     disconnect,
+    refreshTestSigner,
     signTransaction,
   };
 };

@@ -7,14 +7,17 @@ import {
   DEFAULT_TRON_GATEWAY_URL,
   SCCP_XOR_ASSET_KEY,
   SCCP_XOR_ROUTE_ID,
-  TRON_MAINNET_NETWORK_ID_HEX,
   isValidTronBase58CheckAddress,
+  resolveSccpTronNetworkProfile,
   normalizeToriiEndpoint,
   normalizeTronGatewayEndpoint,
   runSccpRoutePreflight,
 } from "./sccp-route-preflight.mjs";
 
 export const WALLETCONNECT_PROJECT_ID_ENV = "VITE_WALLETCONNECT_PROJECT_ID";
+export const SCCP_TRON_NILE_TEST_SIGNER_ENV = "SCCP_TRON_NILE_TEST_SIGNER";
+export const SCCP_TRON_NILE_TEST_SIGNER_SECRET_FILE_ENV =
+  "SCCP_TRON_NILE_TEST_SIGNER_SECRET_FILE";
 export const SCCP_TRON_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_TRON_PROVER_MODULE_URL";
 export const SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV =
@@ -22,12 +25,15 @@ export const SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV =
 
 export const SCCP_LIVE_SMOKE_STEPS = Object.freeze([
   "Connect a TAIRA local wallet with testnet XOR on the TAIRA endpoint.",
-  "Connect a TRON mainnet wallet through WalletConnect/AppKit; do not import TRON keys.",
+  "Connect a wallet for the selected TRON network through WalletConnect/AppKit, or use the explicit Nile-only Electron test signer for this test run.",
   "Run one tiny TAIRA -> TRON bridge transfer and verify the TRON finalize transaction link.",
   "Run one tiny TRON -> TAIRA bridge transfer and verify the TAIRA finalize_inbound transaction link.",
 ]);
 
 const trimString = (value) => String(value ?? "").trim();
+
+const parseBoolean = (value) =>
+  ["1", "true", "yes", "on"].includes(trimString(value).toLowerCase());
 
 const isRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -119,10 +125,18 @@ const routeReportHasPassedCheck = (routeReport, id) =>
       isRecord(check) && check.id === id && trimString(check.status) === "pass",
   );
 
-const routeReportProblems = (routeReport) => {
+const routeReportProblems = (routeReport, tronNetwork = "mainnet") => {
   const problems = [];
+  const tronProfile = resolveSccpTronNetworkProfile(
+    routeReport?.tronNetwork ?? tronNetwork,
+  );
   if (!isRecord(routeReport)) {
     return ["route report is missing."];
+  }
+  if (routeReport.manifestSource === "file") {
+    problems.push(
+      "route preflight used a local manifest file; public TAIRA route publication is not proven.",
+    );
   }
 
   const routeId = readPublicDeploymentString(routeReport, "routeId");
@@ -153,15 +167,15 @@ const routeReportProblems = (routeReport) => {
   ]) {
     const value = deployment[key];
     if (value && !isValidTronBase58CheckAddress(value)) {
-      problems.push(`${key} must be a valid TRON mainnet Base58Check address.`);
+      problems.push(`${key} must be a valid TRON Base58Check address.`);
     }
   }
 
   if (
     deployment.networkIdHex &&
-    deployment.networkIdHex.toLowerCase() !== TRON_MAINNET_NETWORK_ID_HEX
+    deployment.networkIdHex.toLowerCase() !== tronProfile.networkIdHex
   ) {
-    problems.push("networkIdHex must be the TRON mainnet network id.");
+    problems.push(`networkIdHex must be the ${tronProfile.label} network id.`);
   }
   if (!routeReportHasPassedCheck(routeReport, "post-deploy-live-evidence")) {
     problems.push("post-deploy live evidence preflight check has not passed.");
@@ -169,9 +183,9 @@ const routeReportProblems = (routeReport) => {
   const postDeployLiveEvidence = publicPostDeployLiveEvidence(
     routeReport.postDeployLiveEvidence,
   );
-  if (!postDeployLiveEvidence) {
+  if (!postDeployLiveEvidence && tronProfile.key === "mainnet") {
     problems.push("postDeployLiveEvidence is missing.");
-  } else {
+  } else if (postDeployLiveEvidence) {
     if (!postDeployLiveEvidence.fullTomlReady) {
       problems.push("postDeployLiveEvidence.fullTomlReady must be true.");
     }
@@ -231,6 +245,17 @@ export const normalizeWalletConnectProjectId = (value) => {
   return projectId;
 };
 
+export const isSccpNileTestSignerConfigured = ({
+  tronNetwork = "nile",
+  enabled = process.env[SCCP_TRON_NILE_TEST_SIGNER_ENV] ??
+    process.env.SCCP_ENABLE_NILE_TEST_SIGNER,
+  secretFile = process.env[SCCP_TRON_NILE_TEST_SIGNER_SECRET_FILE_ENV] ??
+    process.env.SCCP_TRON_TEST_SIGNER_SECRET_FILE,
+} = {}) =>
+  resolveSccpTronNetworkProfile(tronNetwork).key === "nile" &&
+  parseBoolean(enabled) &&
+  Boolean(trimString(secretFile));
+
 export const normalizeSccpBrowserModuleUrl = (value, label) => {
   const moduleUrl = trimString(value);
   if (!moduleUrl) {
@@ -288,7 +313,9 @@ const safeNormalize = (fn, fallbackMessage) => {
 
 export const evaluateSccpLiveSmokeReadiness = ({
   routeReport,
+  tronNetwork = "mainnet",
   walletConnectProjectId,
+  nileTestSignerConfigured = false,
   destinationProverModuleUrl,
   sourceProverModuleUrl,
   checkedAt = new Date().toISOString(),
@@ -296,9 +323,14 @@ export const evaluateSccpLiveSmokeReadiness = ({
   const checks = [];
   const reasons = [];
   const nextSteps = [];
+  const tronProfile = resolveSccpTronNetworkProfile(
+    routeReport?.tronNetwork ?? tronNetwork,
+  );
 
   const rawRouteReady = routeReport?.ready === true;
-  const routeProblems = rawRouteReady ? routeReportProblems(routeReport) : [];
+  const routeProblems = rawRouteReady
+    ? routeReportProblems(routeReport, tronProfile.key)
+    : [];
   const routeReady = rawRouteReady && routeProblems.length === 0;
   checks.push(
     check(
@@ -306,7 +338,7 @@ export const evaluateSccpLiveSmokeReadiness = ({
       "TAIRA/TRON SCCP route preflight is ready.",
       routeReady ? "pass" : "fail",
       routeReady
-        ? "Route manifest, capabilities, and deployment evidence are ready."
+        ? `Route manifest, capabilities, and ${tronProfile.label} deployment evidence are ready.`
         : routeProblems.length
           ? `Route preflight report is not for ${SCCP_XOR_ROUTE_ID}/${SCCP_XOR_ASSET_KEY}: ${routeProblems.join(" ")}`
           : "Run npm run e2e:sccp:preflight and activate the route manifest before live transfer smoke.",
@@ -342,18 +374,29 @@ export const evaluateSccpLiveSmokeReadiness = ({
     );
     reasons.push(project.error);
   } else if (!project.value) {
-    checks.push(
-      check(
-        "walletconnect-project-id",
-        "WalletConnect project ID is configured.",
-        "fail",
-        `${WALLETCONNECT_PROJECT_ID_ENV} is required for TRON WalletConnect signing.`,
-      ),
-    );
-    reasons.push("WalletConnect project ID is missing.");
-    nextSteps.push(
-      `Set ${WALLETCONNECT_PROJECT_ID_ENV} before launching the Electron renderer.`,
-    );
+    if (nileTestSignerConfigured && tronProfile.key === "nile") {
+      checks.push(
+        check(
+          "walletconnect-project-id",
+          "WalletConnect project ID is configured.",
+          "pass",
+          "Using explicit Nile-only Electron test signer for this test run.",
+        ),
+      );
+    } else {
+      checks.push(
+        check(
+          "walletconnect-project-id",
+          "WalletConnect project ID is configured.",
+          "fail",
+          `${WALLETCONNECT_PROJECT_ID_ENV} is required for TRON WalletConnect signing.`,
+        ),
+      );
+      reasons.push("WalletConnect project ID is missing.");
+      nextSteps.push(
+        `Set ${WALLETCONNECT_PROJECT_ID_ENV} before launching the Electron renderer, or set ${SCCP_TRON_NILE_TEST_SIGNER_ENV}=1 plus ${SCCP_TRON_NILE_TEST_SIGNER_SECRET_FILE_ENV}=... for a Nile-only test run.`,
+      );
+    }
   } else {
     checks.push(
       check(
@@ -407,11 +450,10 @@ export const evaluateSccpLiveSmokeReadiness = ({
     );
   }
 
-  const sourceInput = sourceProverModuleUrl || destinationProver.value || "";
   const sourceProver = safeNormalize(
     () =>
       normalizeSccpBrowserModuleUrl(
-        sourceInput,
+        sourceProverModuleUrl,
         "TRON -> TAIRA source prover module URL",
       ),
     "Unable to validate TRON -> TAIRA source prover module URL.",
@@ -432,12 +474,12 @@ export const evaluateSccpLiveSmokeReadiness = ({
         "source-prover-module",
         "TRON -> TAIRA browser source prover module is configured.",
         "fail",
-        `${SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV} or ${SCCP_TRON_PROVER_MODULE_URL_ENV} is required for source proof generation.`,
+        `${SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV} is required for source proof generation.`,
       ),
     );
     reasons.push("TRON -> TAIRA browser source prover module URL is missing.");
     nextSteps.push(
-      `Set ${SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV}, or use ${SCCP_TRON_PROVER_MODULE_URL_ENV} only if that module exports both prover functions.`,
+      `Set ${SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV} to a browser-safe TRON source proof module. If one module exports both prover functions, set both SCCP prover env vars to that same URL.`,
     );
   } else {
     checks.push(
@@ -445,16 +487,15 @@ export const evaluateSccpLiveSmokeReadiness = ({
         "source-prover-module",
         "TRON -> TAIRA browser source prover module is configured.",
         "pass",
-        sourceProverModuleUrl
-          ? sourceProver.value
-          : `${sourceProver.value} (using ${SCCP_TRON_PROVER_MODULE_URL_ENV} fallback)`,
+        sourceProver.value,
       ),
     );
   }
 
   if (
     routeReady &&
-    project.value &&
+    (project.value ||
+      (nileTestSignerConfigured && tronProfile.key === "nile")) &&
     destinationProver.value &&
     sourceProver.value
   ) {
@@ -471,6 +512,8 @@ export const evaluateSccpLiveSmokeReadiness = ({
     route: routeReport
       ? {
           endpoint: routeReport.endpoint ?? null,
+          tronNetwork: routeReport.tronNetwork ?? tronProfile.key,
+          manifestSource: routeReport.manifestSource ?? null,
           routeId: routeReport.routeId ?? null,
           assetKey: routeReport.assetKey ?? null,
           deployment: publicRouteDeployment(routeReport.deployment),
@@ -484,25 +527,33 @@ export const evaluateSccpLiveSmokeReadiness = ({
 
 export const runSccpLiveSmokeReadiness = async ({
   endpoint = DEFAULT_TAIRA_TORII_URL,
-  tronEndpoint = DEFAULT_TRON_GATEWAY_URL,
+  tronNetwork = "mainnet",
+  tronEndpoint,
+  manifestFilePath,
   checkTronContracts = true,
   walletConnectProjectId = process.env[WALLETCONNECT_PROJECT_ID_ENV],
+  nileTestSignerConfigured = isSccpNileTestSignerConfigured({ tronNetwork }),
   destinationProverModuleUrl = process.env[SCCP_TRON_PROVER_MODULE_URL_ENV],
   sourceProverModuleUrl = process.env[SCCP_TRON_SOURCE_PROVER_MODULE_URL_ENV],
   fetchImpl = globalThis.fetch,
   timeoutMs = 10_000,
   checkedAt,
 } = {}) => {
+  const tronProfile = resolveSccpTronNetworkProfile(tronNetwork);
   const routeReport = await runSccpRoutePreflight({
     endpoint,
-    tronEndpoint,
+    tronNetwork: tronProfile.key,
+    tronEndpoint: tronEndpoint ?? tronProfile.gatewayUrl,
+    manifestFilePath,
     checkTronContracts,
     fetchImpl,
     timeoutMs,
   });
   return evaluateSccpLiveSmokeReadiness({
     routeReport,
+    tronNetwork: tronProfile.key,
     walletConnectProjectId,
+    nileTestSignerConfigured,
     destinationProverModuleUrl,
     sourceProverModuleUrl,
     checkedAt,
@@ -528,11 +579,14 @@ const parseArgs = (argv) => {
   return args;
 };
 
-const parseBoolean = (value) =>
-  ["1", "true", "yes", "on"].includes(trimString(value).toLowerCase());
-
 const cli = async () => {
   const args = parseArgs(process.argv.slice(2));
+  const tronProfile = resolveSccpTronNetworkProfile(
+    args["tron-network"] ||
+      process.env.SCCP_TRON_NETWORK ||
+      process.env.VITE_SCCP_TRON_NETWORK ||
+      "mainnet",
+  );
   const endpoint = normalizeToriiEndpoint(
     args.endpoint ||
       args["torii-url"] ||
@@ -546,6 +600,7 @@ const cli = async () => {
     args["tron-endpoint"] ||
       process.env.SCCP_TRON_GATEWAY_URL ||
       process.env.TRON_GATEWAY_URL ||
+      tronProfile.gatewayUrl ||
       DEFAULT_TRON_GATEWAY_URL,
   );
   const timeoutMs = Number(args["timeout-ms"] ?? 10_000);
@@ -554,7 +609,13 @@ const cli = async () => {
   }
   const report = await runSccpLiveSmokeReadiness({
     endpoint,
+    tronNetwork: tronProfile.key,
     tronEndpoint,
+    manifestFilePath:
+      args["manifest-file"] ||
+      process.env.SCCP_ROUTE_MANIFEST_FILE ||
+      process.env.VITE_SCCP_ROUTE_MANIFEST_FILE ||
+      undefined,
     checkTronContracts:
       args["check-tron-contracts"] === undefined
         ? true
@@ -562,6 +623,10 @@ const cli = async () => {
     walletConnectProjectId:
       args["walletconnect-project-id"] ||
       process.env[WALLETCONNECT_PROJECT_ID_ENV],
+    nileTestSignerConfigured:
+      args["nile-test-signer"] === undefined
+        ? isSccpNileTestSignerConfigured({ tronNetwork: tronProfile.key })
+        : parseBoolean(args["nile-test-signer"]),
     destinationProverModuleUrl:
       args["destination-prover-module-url"] ||
       process.env[SCCP_TRON_PROVER_MODULE_URL_ENV],

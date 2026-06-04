@@ -4037,6 +4037,165 @@ button:not(.secondary):hover {
   overflow-wrap: anywhere;
 }
 
+:root[data-demo-recording="sccp"] {
+  --iroha-muted: #42526e;
+  --surface: #ffffff;
+  --surface-strong: #ffffff;
+  --surface-soft: #eef3fb;
+  --panel-border: #cbd6e8;
+  --menu-glass: #ffffff;
+  --menu-glass-strong: #ffffff;
+  --menu-highlight: transparent;
+  --menu-accent-glow: transparent;
+  --glass-border: #cbd6e8;
+  --glass-highlight: transparent;
+  --glass-veil: transparent;
+  --gi-ambient: rgba(15, 23, 42, 0.08);
+  --gi-accent: rgba(255, 76, 102, 0.08);
+  color: #111827;
+  background-color: #f4f7fb;
+}
+
+:root[data-demo-recording="sccp"] body {
+  background: #f4f7fb;
+}
+
+:root[data-demo-recording="sccp"] body::before,
+:root[data-demo-recording="sccp"] .sakura-layer,
+:root[data-demo-recording="sccp"] .app-ambient,
+:root[data-demo-recording="sccp"] .card::before,
+:root[data-demo-recording="sccp"] .card::after {
+  display: none;
+}
+
+:root[data-demo-recording="sccp"] .app-container {
+  gap: 10px;
+  padding: 12px;
+}
+
+:root[data-demo-recording="sccp"] .app-header,
+:root[data-demo-recording="sccp"] .sidebar,
+:root[data-demo-recording="sccp"] .workspace-header,
+:root[data-demo-recording="sccp"] .card {
+  background: #ffffff;
+  border-color: #cbd6e8;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-demo-recording="sccp"] .app-header {
+  padding: 10px 14px;
+}
+
+:root[data-demo-recording="sccp"] .app-shell {
+  gap: 12px;
+}
+
+:root[data-demo-recording="sccp"] .sidebar {
+  width: 260px;
+  padding: 16px 12px;
+  border-radius: 18px;
+}
+
+:root[data-demo-recording="sccp"] .nav-groups,
+:root[data-demo-recording="sccp"] .sidebar-panel {
+  gap: 14px;
+}
+
+:root[data-demo-recording="sccp"] .nav-link {
+  padding: 10px 8px;
+  border-radius: 12px;
+}
+
+:root[data-demo-recording="sccp"] .nav-description,
+:root[data-demo-recording="sccp"] .chip-sub,
+:root[data-demo-recording="sccp"] .helper,
+:root[data-demo-recording="sccp"] .sccp-progress-list small,
+:root[data-demo-recording="sccp"] .sccp-activity-item small {
+  color: #42526e;
+}
+
+:root[data-demo-recording="sccp"] .workspace {
+  gap: 10px;
+}
+
+:root[data-demo-recording="sccp"] .workspace-header {
+  padding: 12px 16px;
+}
+
+:root[data-demo-recording="sccp"] .workspace-body {
+  padding: 0;
+}
+
+:root[data-demo-recording="sccp"] .sccp-shell {
+  gap: 12px;
+}
+
+:root[data-demo-recording="sccp"] .sccp-shell .card {
+  border-radius: 14px;
+  padding: 16px;
+}
+
+:root[data-demo-recording="sccp"] .sccp-command-card,
+:root[data-demo-recording="sccp"] .sccp-bridge-card,
+:root[data-demo-recording="sccp"] .sccp-progress-card,
+:root[data-demo-recording="sccp"] .sccp-activity-card,
+:root[data-demo-recording="sccp"] .sccp-links-card {
+  background: #ffffff;
+}
+
+:root[data-demo-recording="sccp"] .sccp-status-grid,
+:root[data-demo-recording="sccp"] .sccp-lower-grid {
+  gap: 10px;
+}
+
+:root[data-demo-recording="sccp"] .sccp-status-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+:root[data-demo-recording="sccp"] .sccp-direction-tabs,
+:root[data-demo-recording="sccp"] .sccp-progress-list li,
+:root[data-demo-recording="sccp"] .sccp-activity-item {
+  background: #eef3fb;
+  border-color: #cbd6e8;
+}
+
+:root[data-demo-recording="sccp"] .sccp-direction-tabs button.active {
+  background: #ffffff;
+  color: #c41b27;
+  border-color: #cbd6e8;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+:root[data-demo-recording="sccp"] .sccp-form {
+  gap: 12px;
+  margin-top: 12px;
+}
+
+:root[data-demo-recording="sccp"] .sccp-form input {
+  background: #ffffff;
+  border-color: #b8c5d9;
+  color: #111827;
+}
+
+:root[data-demo-recording="sccp"] .sccp-progress-list {
+  margin-top: 10px;
+}
+
+:root[data-demo-recording="sccp"] .pill.positive,
+:root[data-demo-recording="sccp"] .nav-pill.positive {
+  background: #e9f8f0;
+  border-color: #86d6ad;
+  color: #12683d;
+}
+
+:root[data-demo-recording="sccp"] button,
+:root[data-demo-recording="sccp"] .header-action,
+:root[data-demo-recording="sccp"] .theme-toggle {
+  box-shadow: none;
+}
+
 @media (max-width: 1080px) {
   .sccp-status-grid,
   .sccp-lower-grid {

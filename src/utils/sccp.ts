@@ -6,6 +6,7 @@ import {
   buildTairaXorSccpRecordDescriptor,
   buildTairaXorSccpBurnRecordZkIvmRequest,
   canonicalSccpTransferPayloadBytes,
+  canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpMessageProofBundleBytes,
   sccpPayloadHash,
   sccpTransferMessageId,
@@ -17,6 +18,8 @@ import {
   bindTairaXorTronBurnStartedEvent,
   bindTairaXorTronToTairaSourceProofPackage,
   parseTronTriggerSmartContractRawData,
+  SCCP_CODEC_TEXT_UTF8,
+  SCCP_CODEC_TRON_BASE58CHECK,
   tairaXorBurnSourceEventDigest,
   tairaXorBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
@@ -39,6 +42,12 @@ export const TRON_MAINNET_NETWORK_ID_HEX =
   "0x000000000000000000000000000000000000000000000000000000002b6653dc";
 export const TRON_MAINNET_RPC_URL = "https://api.trongrid.io";
 export const TRON_MAINNET_TRONSCAN_URL = "https://tronscan.org";
+export const TRON_NILE_CAIP_CHAIN_ID = "tron:0xcd8690dc";
+export const TRON_NILE_CHAIN_ID_HEX = "0xcd8690dc";
+export const TRON_NILE_NETWORK_ID_HEX =
+  "0x00000000000000000000000000000000000000000000000000000000cd8690dc";
+export const TRON_NILE_RPC_URL = "https://nile.trongrid.io";
+export const TRON_NILE_TRONSCAN_URL = "https://nile.tronscan.org";
 export const WALLETCONNECT_TRON_NAMESPACE = "tron";
 export const WALLETCONNECT_TRON_SIGN_METHOD = "tron_signTransaction";
 export const WALLETCONNECT_TRON_METHOD_VERSION = "v1";
@@ -48,7 +57,7 @@ export const SCCP_XOR_ROUTE_ID = SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1;
 export const SCCP_XOR_ASSET_KEY = SCCP_TAIRA_XOR_ASSET_KEY_V1;
 export const SCCP_TRON_TOKEN_SYMBOL = "TairaXOR";
 export const SCCP_XOR_DECIMALS = 18;
-export const SCCP_TRON_DEFAULT_FEE_LIMIT = 100_000_000;
+export const SCCP_TRON_DEFAULT_FEE_LIMIT = 250_000_000;
 
 export {
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
@@ -75,6 +84,67 @@ const SCCP_TRON_TRANSACTION_SIGNING_HELPER_KEY_PATTERN =
 
 export type SccpBridgeDirection = "taira-to-tron" | "tron-to-taira";
 
+export type SccpTronNetworkKey = "mainnet" | "nile";
+
+export type SccpTronNetworkProfile = {
+  key: SccpTronNetworkKey;
+  label: string;
+  caipChainId: `tron:${string}`;
+  chainIdHex: string;
+  networkIdHex: string;
+  rpcUrl: string;
+  tronscanUrl: string;
+};
+
+export const SCCP_TRON_NETWORK_PROFILES = {
+  mainnet: {
+    key: "mainnet",
+    label: "TRON Mainnet",
+    caipChainId: TRON_MAINNET_CAIP_CHAIN_ID,
+    chainIdHex: TRON_MAINNET_CHAIN_ID_HEX,
+    networkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+    rpcUrl: TRON_MAINNET_RPC_URL,
+    tronscanUrl: TRON_MAINNET_TRONSCAN_URL,
+  },
+  nile: {
+    key: "nile",
+    label: "TRON Nile Testnet",
+    caipChainId: TRON_NILE_CAIP_CHAIN_ID,
+    chainIdHex: TRON_NILE_CHAIN_ID_HEX,
+    networkIdHex: TRON_NILE_NETWORK_ID_HEX,
+    rpcUrl: TRON_NILE_RPC_URL,
+    tronscanUrl: TRON_NILE_TRONSCAN_URL,
+  },
+} satisfies Record<SccpTronNetworkKey, SccpTronNetworkProfile>;
+
+export const normalizeSccpTronNetworkKey = (
+  value: unknown,
+): SccpTronNetworkKey => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    !normalized ||
+    normalized === "mainnet" ||
+    normalized === "tron-mainnet"
+  ) {
+    return "mainnet";
+  }
+  if (normalized === "nile" || normalized === "tron-nile") {
+    return "nile";
+  }
+  throw new Error("SCCP TRON network must be mainnet or nile.");
+};
+
+export const resolveSccpTronNetworkProfile = (
+  value: unknown,
+): SccpTronNetworkProfile =>
+  SCCP_TRON_NETWORK_PROFILES[normalizeSccpTronNetworkKey(value)];
+
+export const SCCP_TRON_NETWORK = resolveSccpTronNetworkProfile(
+  import.meta.env.VITE_SCCP_TRON_NETWORK,
+);
+
 export type SccpRouteConfig = {
   id: string;
   assetKey: string;
@@ -91,8 +161,8 @@ export const SCCP_XOR_ROUTE: SccpRouteConfig = {
   label: "XOR / TairaXOR",
   localDomain: SCCP_SORA_DOMAIN,
   tronDomain: SCCP_TRON_DOMAIN,
-  tronChainId: TRON_MAINNET_CAIP_CHAIN_ID,
-  tronNetworkIdHex: TRON_MAINNET_NETWORK_ID_HEX,
+  tronChainId: SCCP_TRON_NETWORK.caipChainId,
+  tronNetworkIdHex: SCCP_TRON_NETWORK.networkIdHex,
 };
 
 export type SccpNetworkSnapshot = {
@@ -117,6 +187,7 @@ export type WalletConnectSessionSnapshot = {
 };
 
 export type TronSmartContractTriggerRequest = {
+  endpoint?: string;
   ownerAddress: string;
   contractAddress: string;
   functionSelector: string;
@@ -125,6 +196,7 @@ export type TronSmartContractTriggerRequest = {
 };
 
 export type TronConstantContractTriggerRequest = {
+  endpoint?: string;
   ownerAddress: string;
   contractAddress: string;
   functionSelector: string;
@@ -172,6 +244,10 @@ export type TronSccpProofMaterial = {
   verifierCodeHashHex: string;
   verifierKeyHashHex: string;
   expectedDestinationBindingHashHex: string;
+};
+
+export type TronSccpProofQueryMaterial = TronSccpProofMaterial & {
+  proofBytesHex: string;
 };
 
 export type TairaXorOutboundPreview = {
@@ -339,6 +415,40 @@ const base58Decode = (value: string): Uint8Array | null => {
   return output;
 };
 
+const base58Encode = (bytes: Uint8Array): string => {
+  let number = 0n;
+  for (const byte of bytes) {
+    number = (number << 8n) + BigInt(byte);
+  }
+
+  let encoded = "";
+  while (number > 0n) {
+    const remainder = Number(number % 58n);
+    encoded = `${TRON_BASE58_ALPHABET[remainder]}${encoded}`;
+    number /= 58n;
+  }
+
+  const leadingZeroes = bytes.findIndex((byte) => byte !== 0);
+  const prefixLength =
+    leadingZeroes === -1 ? bytes.length : Math.max(0, leadingZeroes);
+  return `${"1".repeat(prefixLength)}${encoded || ""}`;
+};
+
+const encodeTronBase58CheckAddress = (payload: Uint8Array): string => {
+  if (
+    payload.length !== 21 ||
+    payload[0] !== 0x41 ||
+    payload.slice(1).every((byte) => byte === 0)
+  ) {
+    throw new Error("TRON address payload must be a non-zero 21-byte value.");
+  }
+  const checksum = doubleSha256(payload).slice(0, 4);
+  const encoded = new Uint8Array(payload.length + checksum.length);
+  encoded.set(payload);
+  encoded.set(checksum, payload.length);
+  return base58Encode(encoded);
+};
+
 export const decodeTronBase58CheckAddress = (address: string): Uint8Array => {
   const normalized = address.trim();
   if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(normalized)) {
@@ -377,13 +487,17 @@ export const normalizeTronAddress = (address: string): string => {
   return normalized;
 };
 
-export const normalizeTronNetworkIdHex = (networkId: string): string => {
+export const normalizeTronNetworkIdHex = (
+  networkId: string,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
+): string => {
+  const profile = resolveSccpTronNetworkProfile(tronNetwork);
   const normalized = networkId.trim().toLowerCase();
-  if (normalized === TRON_MAINNET_CHAIN_ID_HEX) {
-    return TRON_MAINNET_NETWORK_ID_HEX;
+  if (normalized === profile.chainIdHex) {
+    return profile.networkIdHex;
   }
-  if (normalized !== TRON_MAINNET_NETWORK_ID_HEX) {
-    throw new Error("TRON SCCP routes must target TRON mainnet.");
+  if (normalized !== profile.networkIdHex) {
+    throw new Error(`TRON SCCP routes must target ${profile.label}.`);
   }
   return normalized;
 };
@@ -514,6 +628,7 @@ export const buildTairaXorTokenBalanceRequest = (input: {
     throw new Error("The TRON token deployment address is missing.");
   }
   return {
+    endpoint: readSccpTronGatewayEndpoint(input.manifest),
     ownerAddress,
     contractAddress: normalizeTronAddress(tokenAddress),
     functionSelector: "balanceOf(address)",
@@ -592,6 +707,7 @@ export const readSccpTronVerifierAddress = (
 
 export const readSccpTronProofMaterial = (
   manifest: Record<string, unknown> | null | undefined,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
 ): TronSccpProofMaterial | null => {
   if (!manifest) {
     return null;
@@ -619,7 +735,7 @@ export const readSccpTronProofMaterial = (
     readString(rollout ?? {}, "destination_binding_hash");
   try {
     return {
-      networkIdHex: normalizeTronNetworkIdHex(networkId),
+      networkIdHex: normalizeTronNetworkIdHex(networkId, tronNetwork),
       tronVerifierAddress: normalizeTronAddress(
         readSccpTronVerifierAddress(manifest),
       ),
@@ -872,6 +988,7 @@ export const buildTairaXorBurnTriggerRequest = (input: {
     throw new Error("Amount must be greater than zero.");
   }
   return {
+    endpoint: readSccpTronGatewayEndpoint(input.manifest),
     ownerAddress,
     contractAddress: normalizedContractAddress,
     functionSelector: TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
@@ -972,7 +1089,7 @@ export const buildTairaXorOutboundBurnRecordRequest = (input: {
 };
 
 const normalizeHex32 = (value: string, label: string): string => {
-  const normalized = value.trim().toLowerCase();
+  const normalized = `0x${value.trim().toLowerCase().replace(/^0x/u, "")}`;
   if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
     throw new Error(`${label} must be a 32-byte hex value.`);
   }
@@ -1038,7 +1155,11 @@ const normalizeTronAddressPayloadHex = (
   value: string,
   label: string,
 ): string => {
-  const normalized = value.trim().toLowerCase().replace(/^0x/u, "");
+  const trimmed = value.trim();
+  if (trimmed.startsWith("T")) {
+    return bytesToLowerHex(decodeTronBase58CheckAddress(trimmed));
+  }
+  const normalized = trimmed.toLowerCase().replace(/^0x/u, "");
   if (!/^41[0-9a-f]{40}$/u.test(normalized)) {
     throw new Error(`${label} must be a 21-byte TRON mainnet address payload.`);
   }
@@ -1049,7 +1170,7 @@ const normalizeTronAddressPayloadHex = (
 };
 
 export const normalizeSccpMessageId = (value: string): string =>
-  normalizeHex32(value, "messageId");
+  normalizeHex32(`0x${value.trim().replace(/^0x/iu, "")}`, "messageId");
 
 export const isValidSccpMessageId = (value: string): boolean => {
   try {
@@ -1077,6 +1198,41 @@ const bytesToLowerHex = (bytes: Uint8Array): string =>
 
 const bytesToBigInt = (bytes: Uint8Array): bigint =>
   BigInt(bytesToLowerHex(bytes));
+
+const BN254_G1_GENERATOR_WORDS = [
+  1n,
+  2n,
+] as const;
+const BN254_G2_GENERATOR_WORDS = [
+  10857046999023057135944570762232829481370756359578518086990519993285655852781n,
+  11559732032986387107991004021392285783925812861821192530917403151452391805634n,
+  8495653923123431417604973247489272438418190587263600148770280649306958101930n,
+  4082367875863433681332203403145435568316851327593401208105741076214120093531n,
+] as const;
+
+const abiUint256Word = (value: bigint): string => {
+  if (value < 0n || value >= 1n << 256n) {
+    throw new Error("SCCP ABI word is out of range.");
+  }
+  return value.toString(16).padStart(64, "0");
+};
+
+const abiHex32Word = (value: string, label: string): string =>
+  normalizeHex32(value, label).slice(2);
+
+const buildSccpGroth16JobQueryProofBytesHex = (input: {
+  messageId: string;
+  commitmentRoot: string;
+}): string =>
+  `0x${[
+    abiUint256Word(1n),
+    abiHex32Word(input.messageId, "SCCP message id"),
+    abiUint256Word(BigInt(SCCP_SORA_DOMAIN)),
+    abiHex32Word(input.commitmentRoot, "SCCP commitment root"),
+    ...BN254_G1_GENERATOR_WORDS.map(abiUint256Word),
+    ...BN254_G2_GENERATOR_WORDS.map(abiUint256Word),
+    ...BN254_G1_GENERATOR_WORDS.map(abiUint256Word),
+  ].join("")}`;
 
 const recoverTronSignatureOwnerPayload = (
   signatureHex: string,
@@ -2093,10 +2249,11 @@ const normalizePositiveBaseUnitString = (
 
 const decodeEventBytesText = (value: string, label: string): string => {
   const trimmed = value.trim();
-  if (!trimmed.toLowerCase().startsWith("0x")) {
+  const hasHexPrefix = trimmed.toLowerCase().startsWith("0x");
+  const normalized = hasHexPrefix ? trimmed.slice(2).toLowerCase() : trimmed.toLowerCase();
+  if (!hasHexPrefix && (normalized.length === 0 || !/^[0-9a-f]+$/u.test(normalized))) {
     return trimmed;
   }
-  const normalized = trimmed.slice(2).toLowerCase();
   if (normalized.length % 2 !== 0 || /[^0-9a-f]/u.test(normalized)) {
     throw new Error(`${label} must be hex-encoded bytes.`);
   }
@@ -2570,11 +2727,11 @@ const readCodecTronPayload = (value: unknown, label: string): string => {
   if (variant.kind !== "TronBase58Check") {
     throw new Error(`${label} must be a TronBase58Check SCCP codec value.`);
   }
-  return normalizeHexBytes(
-    readScalarText({ payload: variant.value }, "payload"),
-    21,
-    label,
-  );
+  const payload = readScalarText({ payload: variant.value }, "payload");
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(payload)) {
+    return bytesToLowerHex(decodeTronBase58CheckAddress(payload));
+  }
+  return normalizeTronAddressPayloadHex(payload, label);
 };
 
 const readTransferProjection = (
@@ -2600,8 +2757,125 @@ const readBundleTransferPayload = (
   if (payload.kind !== "Transfer") {
     throw new Error("SCCP message bundle must carry a Transfer payload.");
   }
-  return payload.value;
+  return normalizeBundleTransferPayload(payload.value);
 };
+
+const readRequiredTransferScalar = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = readScalarText(record, key);
+  if (!value) {
+    throw new Error(`${label} is missing from the SCCP transfer payload.`);
+  }
+  return value;
+};
+
+const readTransferCodecId = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): number | null => {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const codec = Number(readRequiredTransferScalar(record, key, label));
+  if (!Number.isSafeInteger(codec) || codec < 0) {
+    throw new Error(`${label} codec must be a safe non-negative integer.`);
+  }
+  return codec;
+};
+
+const readTransferTextField = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    throw new Error(`${label} is missing from the SCCP transfer payload.`);
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return readCodecText(value, label);
+  }
+  const codec = readTransferCodecId(record, `${key}_codec`, label);
+  if (codec !== null) {
+    if (codec !== SCCP_CODEC_TEXT_UTF8) {
+      throw new Error(`${label} must use the TextUtf8 SCCP codec.`);
+    }
+    return decodeEventBytesText(readRequiredTransferScalar(record, key, label), label);
+  }
+  return readRequiredTransferScalar(record, key, label);
+};
+
+const readTransferTronAddressField = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    throw new Error(`${label} is missing from the SCCP transfer payload.`);
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return encodeTronBase58CheckAddress(
+      hexDataToBytes(readCodecTronPayload(value, label), label),
+    );
+  }
+  const codec = readTransferCodecId(record, `${key}_codec`, label);
+  if (codec !== null) {
+    if (codec !== SCCP_CODEC_TRON_BASE58CHECK) {
+      throw new Error(`${label} must use the TronBase58Check SCCP codec.`);
+    }
+    return normalizeTronAddress(
+      decodeEventBytesText(readRequiredTransferScalar(record, key, label), label),
+    );
+  }
+  const address = readRequiredTransferScalar(record, key, label);
+  if (/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(address)) {
+    return normalizeTronAddress(address);
+  }
+  return encodeTronBase58CheckAddress(
+    hexDataToBytes(normalizeTronAddressPayloadHex(address, label), label),
+  );
+};
+
+const normalizeBundleTransferPayload = (
+  transfer: Record<string, unknown>,
+): Record<string, unknown> => ({
+  version: readRequiredTransferScalar(transfer, "version", "Bundle version"),
+  source_domain: readRequiredTransferScalar(
+    transfer,
+    "source_domain",
+    "Bundle source domain",
+  ),
+  dest_domain: readRequiredTransferScalar(
+    transfer,
+    "dest_domain",
+    "Bundle destination domain",
+  ),
+  nonce: readRequiredTransferScalar(transfer, "nonce", "Bundle nonce"),
+  asset_home_domain: readRequiredTransferScalar(
+    transfer,
+    "asset_home_domain",
+    "Bundle asset home domain",
+  ),
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: readTransferTextField(transfer, "asset_id", "Bundle asset key"),
+  amount: readRequiredTransferScalar(transfer, "amount", "Bundle amount"),
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: readTransferTextField(transfer, "sender", "Bundle sender"),
+  recipient_codec: SCCP_CODEC_TRON_BASE58CHECK,
+  recipient: readTransferTronAddressField(
+    transfer,
+    "recipient",
+    "Bundle recipient",
+  ),
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: readTransferTextField(transfer, "route_id", "Bundle route id"),
+});
 
 const compareOptionalScalar = (
   record: Record<string, unknown>,
@@ -2660,10 +2934,39 @@ const requireOptionalDestinationBindingHashMatch = (
   }
 };
 
+const readSccpPlatformPayloadValue = (
+  record: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  const submissionPackage =
+    readRecord(record, "submissionPackage") ??
+    readRecord(record, "submission_package");
+  const platformPayload =
+    readRecord(submissionPackage ?? {}, "platformPayload") ??
+    readRecord(submissionPackage ?? {}, "platform_payload") ??
+    readRecord(record, "platformPayload") ??
+    readRecord(record, "platform_payload");
+  return (
+    readRecord(platformPayload ?? {}, "value") ??
+    (platformPayload ? platformPayload : null)
+  );
+};
+
+const readSccpPlatformDestinationBinding = (
+  record: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  const platformValue = readSccpPlatformPayloadValue(record);
+  return (
+    readRecord(platformValue ?? {}, "destinationBinding") ??
+    readRecord(platformValue ?? {}, "destination_binding")
+  );
+};
+
 const readDestinationBindingInput = (
   manifest: Record<string, unknown>,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
 ): TronSccpDestinationBindingInput => {
-  const proofMaterial = readSccpTronProofMaterial(manifest);
+  const selectedNetwork = readManifestTronNetworkKey(manifest) ?? tronNetwork;
+  const proofMaterial = readSccpTronProofMaterial(manifest, selectedNetwork);
   if (!proofMaterial) {
     throw new Error(
       "The TRON SCCP verifier rollout proof material is incomplete.",
@@ -2727,6 +3030,58 @@ const readDestinationBindingInput = (
   return input;
 };
 
+export const buildTairaXorMessageProofJobQueryMaterial = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  messageBundle: Record<string, unknown> | null | undefined;
+  messageId?: string;
+  tronNetwork?: unknown;
+}): TronSccpProofQueryMaterial => {
+  const manifest = requireRecord(input.manifest, "SCCP TRON manifest");
+  const bundle = requireRecord(input.messageBundle, "SCCP message bundle");
+  const tronNetwork = input.tronNetwork ?? SCCP_TRON_NETWORK.key;
+  const proofMaterial = readSccpTronProofMaterial(manifest, tronNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The TRON SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  readDestinationBindingInput(manifest, tronNetwork);
+
+  const commitment = requireRecord(
+    bundle.commitment,
+    "SCCP message commitment",
+  );
+  const messageId = normalizeSccpMessageId(
+    readFirstString(commitment, "messageId", "message_id"),
+  );
+  if (input.messageId) {
+    const expectedMessageId = normalizeSccpMessageId(input.messageId);
+    if (messageId !== expectedMessageId) {
+      throw new Error(
+        "SCCP message bundle does not match the requested message id.",
+      );
+    }
+  }
+  if (
+    Number(commitment.targetDomain ?? commitment.target_domain) !==
+    SCCP_TRON_DOMAIN
+  ) {
+    throw new Error("SCCP message bundle must target TRON.");
+  }
+  const commitmentRoot = normalizeHex32(
+    readFirstString(bundle, "commitmentRoot", "commitment_root"),
+    "SCCP commitment root",
+  );
+
+  return {
+    ...proofMaterial,
+    proofBytesHex: buildSccpGroth16JobQueryProofBytesHex({
+      messageId,
+      commitmentRoot,
+    }),
+  };
+};
+
 export const buildTairaXorFinalizeProofBinding = (input: {
   manifest: Record<string, unknown> | null | undefined;
   job: Record<string, unknown>;
@@ -2748,6 +3103,11 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   const destinationBindingHash = normalizeHex32(
     destinationBinding.bindingHash ?? "",
     "TRON destination binding hash",
+  );
+  const platformValue = readSccpPlatformPayloadValue(job);
+  const statementHash = normalizeHex32(
+    readFirstString(platformValue, "statementHash", "statement_hash"),
+    "SCCP proof job statement hash",
   );
   const publicInputMessageId = normalizeHex32(
     readFirstString(publicInputs, "messageId", "message_id"),
@@ -2876,16 +3236,25 @@ export const buildTairaXorFinalizeProofBinding = (input: {
     "Bundle amount",
   );
   compareOptionalText(bundleTransfer, "sender", tairaSender, "Bundle sender");
-  compareOptionalText(
-    bundleTransfer,
-    "recipient",
-    input.tronRecipient.trim(),
-    "Bundle recipient",
-  );
+  if (
+    bytesToLowerHex(
+      decodeTronBase58CheckAddress(
+        readScalarText(bundleTransfer, "recipient"),
+      ),
+    ) !== expectedRecipientPayload
+  ) {
+    throw new Error(
+      "Bundle recipient must match the selected TAIRA/TRON route.",
+    );
+  }
   const canonicalPayloadBytes = canonicalSccpTransferPayloadBytes(
     bundleTransfer as unknown as SccpTransferPayload,
   );
   const canonicalPayloadHex = bytesToLowerHex(canonicalPayloadBytes);
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: bundleTransfer,
+  });
   if (
     sccpTransferMessageId(bundleTransfer as unknown as SccpTransferPayload) !==
     expectedMessageId
@@ -2894,17 +3263,21 @@ export const buildTairaXorFinalizeProofBinding = (input: {
       "SCCP message id does not match the canonical transfer payload.",
     );
   }
-  if (sccpPayloadHash(canonicalPayloadBytes) !== payloadHash) {
+  if (sccpPayloadHash(canonicalPayloadEnvelopeBytes) !== payloadHash) {
     throw new Error(
-      "SCCP proof job payload hash does not match the canonical transfer payload.",
+      "SCCP proof job payload hash does not match the canonical SCCP payload envelope.",
     );
   }
 
+  const platformDestinationBinding = readSccpPlatformDestinationBinding(job);
   const jobDestinationBinding =
     readRecord(job, "destinationBinding") ??
     readRecord(job, "destination_binding");
+  const shouldCheckTopLevelDestinationBinding =
+    !platformValue;
   const jobBindingHash = readFirstString(
-    jobDestinationBinding,
+    platformDestinationBinding ??
+      (shouldCheckTopLevelDestinationBinding ? jobDestinationBinding : null),
     "bindingHash",
     "binding_hash",
   );
@@ -2918,16 +3291,26 @@ export const buildTairaXorFinalizeProofBinding = (input: {
     );
   }
 
+  const normalizedBundle = {
+    ...bundle,
+    payload: {
+      kind: "Transfer",
+      value: bundleTransfer,
+    },
+  };
+
   return {
     witness: {
       publicInputs,
-      bundleBytes: canonicalSccpMessageProofBundleBytes(bundle),
+      bundleBytes: canonicalSccpMessageProofBundleBytes(normalizedBundle),
       sourceProofBytes: [],
       sourceDomain: SCCP_SORA_DOMAIN,
       destinationBinding,
+      statementHash,
+      destinationBindingHash,
     },
     destinationBinding,
-    messageBundle: bundle,
+    messageBundle: normalizedBundle,
     canonicalPayloadHex,
     amountBaseUnits,
     messageId: expectedMessageId,
@@ -3044,23 +3427,6 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
       "TRON SCCP proof package canonical payload bytes do not match this bridge request.",
     );
   }
-  const publicInputPayloadHash = normalizeHex32(
-    readFirstString(publicInputs, "payloadHash", "payload_hash"),
-    "proofPackage.publicInputs.payloadHash",
-  );
-  if (
-    publicInputPayloadHash !==
-    sccpPayloadHash(
-      hexDataToBytes(
-        normalizedCanonicalPayloadHex,
-        "TRON SCCP proof package canonical payload bytes",
-      ),
-    )
-  ) {
-    throw new Error(
-      "TRON SCCP proof package payload hash does not match the canonical payload bytes.",
-    );
-  }
   const callData = tairaXorFinalizeFromTairaCallData({
     proofBytes,
     publicInputs,
@@ -3071,6 +3437,7 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
   });
   return {
     trigger: {
+      endpoint: readSccpTronGatewayEndpoint(manifest),
       ownerAddress: normalizeTronAddress(input.ownerAddress),
       contractAddress: normalizedContractAddress,
       functionSelector: TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
@@ -3112,8 +3479,10 @@ export const buildTairaXorInboundSettlement = (input: {
   return {
     entrypoint: "finalize_inbound",
     route: SCCP_XOR_ROUTE_ID,
-    ...(contractAddress ? { contract_address: contractAddress } : {}),
     ...(contractAlias ? { contract_alias: contractAlias } : {}),
+    ...(!contractAlias && contractAddress
+      ? { contract_address: contractAddress }
+      : {}),
     ...(input.gasLimit ? { gas_limit: input.gasLimit } : {}),
   };
 };
@@ -3198,6 +3567,225 @@ export const bindTronToTairaSourceProofPackage = (input: {
   };
 };
 
+const utf8TextEncoder = new TextEncoder();
+
+const readFirstValue = (
+  record: Record<string, unknown>,
+  ...keys: string[]
+): unknown => {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      return record[key];
+    }
+  }
+  return undefined;
+};
+
+const readRequiredSubmitInteger = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): number => {
+  const value = readFirstValue(record, ...keys);
+  const normalized =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value.trim())
+        : Number.NaN;
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new Error(`${label} must be a safe non-negative integer.`);
+  }
+  return normalized;
+};
+
+const readRequiredSubmitText = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): string => {
+  for (const key of keys) {
+    const text = readScalarText(record, key);
+    if (text) {
+      return text;
+    }
+  }
+  throw new Error(`${label} is required.`);
+};
+
+const readSubmitByteText = (value: unknown, label: string): string => {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return readRequiredText(String(value), label);
+  }
+  const record = requireRecord(value, label);
+  const direct = readScalarText(record, "value") || readScalarText(record, "payload");
+  if (direct) {
+    return direct;
+  }
+  const variant = readRecordVariant(record, label);
+  return (
+    readScalarText(variant.value, "value") ||
+    readScalarText(variant.value, "payload") ||
+    (() => {
+      throw new Error(`${label} is required.`);
+    })()
+  );
+};
+
+const utf8TextToSubmitHex = (value: unknown, label: string): string =>
+  bytesToLowerHex(utf8TextEncoder.encode(readSubmitByteText(value, label))).slice(2);
+
+const normalizeSubmitHex32 = (value: string, label: string): string =>
+  normalizeHex32(value, label).slice(2);
+
+const normalizeSubmitHexData = (value: string, label: string): string =>
+  normalizeHexData(value, label).slice(2);
+
+const serializeSccpMerkleProofForSubmit = (
+  value: unknown,
+): Record<string, unknown> => {
+  const proof = requireRecord(value, "messageBundle.merkle_proof");
+  const steps = proof.steps;
+  if (!Array.isArray(steps)) {
+    throw new Error("messageBundle.merkle_proof.steps must be an array.");
+  }
+  return {
+    steps: steps.map((entry, index) => {
+      const step = requireRecord(
+        entry,
+        `messageBundle.merkle_proof.steps[${index}]`,
+      );
+      return {
+        sibling_hash: normalizeSubmitHex32(
+          readFirstString(step, "sibling_hash", "siblingHash"),
+          `messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+        ),
+        sibling_is_left: Boolean(
+          readFirstValue(step, "sibling_is_left", "siblingIsLeft"),
+        ),
+      };
+    }),
+  };
+};
+
+const serializeSccpTransferPayloadForSubmit = (
+  value: Record<string, unknown>,
+): Record<string, unknown> => ({
+  version: readRequiredSubmitInteger(value, ["version"], "payload.version"),
+  source_domain: readRequiredSubmitInteger(
+    value,
+    ["source_domain", "sourceDomain"],
+    "payload.source_domain",
+  ),
+  dest_domain: readRequiredSubmitInteger(
+    value,
+    ["dest_domain", "destDomain"],
+    "payload.dest_domain",
+  ),
+  nonce: readRequiredSubmitText(value, ["nonce"], "payload.nonce"),
+  asset_home_domain: readRequiredSubmitInteger(
+    value,
+    ["asset_home_domain", "assetHomeDomain"],
+    "payload.asset_home_domain",
+  ),
+  asset_id_codec: readRequiredSubmitInteger(
+    value,
+    ["asset_id_codec", "assetIdCodec"],
+    "payload.asset_id_codec",
+  ),
+  asset_id: utf8TextToSubmitHex(
+    readFirstValue(value, "asset_id", "assetId"),
+    "payload.asset_id",
+  ),
+  amount: readRequiredSubmitText(value, ["amount"], "payload.amount"),
+  sender_codec: readRequiredSubmitInteger(
+    value,
+    ["sender_codec", "senderCodec"],
+    "payload.sender_codec",
+  ),
+  sender: utf8TextToSubmitHex(
+    readFirstValue(value, "sender"),
+    "payload.sender",
+  ),
+  recipient_codec: readRequiredSubmitInteger(
+    value,
+    ["recipient_codec", "recipientCodec"],
+    "payload.recipient_codec",
+  ),
+  recipient: utf8TextToSubmitHex(
+    readFirstValue(value, "recipient"),
+    "payload.recipient",
+  ),
+  route_id_codec: readRequiredSubmitInteger(
+    value,
+    ["route_id_codec", "routeIdCodec"],
+    "payload.route_id_codec",
+  ),
+  route_id: utf8TextToSubmitHex(
+    readFirstValue(value, "route_id", "routeId"),
+    "payload.route_id",
+  ),
+});
+
+export const buildSccpMessageBundleSubmitPayload = (
+  messageBundle: Record<string, unknown>,
+): Record<string, unknown> => {
+  const bundle = requireRecord(messageBundle, "messageBundle");
+  const commitment = requireRecord(
+    readFirstValue(bundle, "commitment"),
+    "messageBundle.commitment",
+  );
+  const payload = readRecordVariant(
+    readFirstValue(bundle, "payload"),
+    "messageBundle.payload",
+  );
+  if (payload.kind !== "Transfer") {
+    throw new Error("messageBundle.payload must be a Transfer.");
+  }
+  return {
+    version: readRequiredSubmitInteger(bundle, ["version"], "messageBundle.version"),
+    commitment_root: normalizeSubmitHex32(
+      readFirstString(bundle, "commitment_root", "commitmentRoot"),
+      "messageBundle.commitment_root",
+    ),
+    commitment: {
+      version: readRequiredSubmitInteger(
+        commitment,
+        ["version"],
+        "messageBundle.commitment.version",
+      ),
+      kind: readRequiredSubmitText(
+        commitment,
+        ["kind"],
+        "messageBundle.commitment.kind",
+      ),
+      target_domain: readRequiredSubmitInteger(
+        commitment,
+        ["target_domain", "targetDomain"],
+        "messageBundle.commitment.target_domain",
+      ),
+      message_id: normalizeSubmitHex32(
+        readFirstString(commitment, "message_id", "messageId"),
+        "messageBundle.commitment.message_id",
+      ),
+      payload_hash: normalizeSubmitHex32(
+        readFirstString(commitment, "payload_hash", "payloadHash"),
+        "messageBundle.commitment.payload_hash",
+      ),
+    },
+    merkle_proof: serializeSccpMerkleProofForSubmit(
+      readFirstValue(bundle, "merkle_proof", "merkleProof"),
+    ),
+    payload: {
+      Transfer: serializeSccpTransferPayloadForSubmit(payload.value),
+    },
+    finality_proof: normalizeSubmitHexData(
+      readFirstString(bundle, "finality_proof", "finalityProof"),
+      "messageBundle.finality_proof",
+    ),
+  };
+};
+
 const readString = (record: Record<string, unknown>, key: string): string =>
   typeof record[key] === "string" ? record[key].trim() : "";
 
@@ -3254,6 +3842,69 @@ const manifestTargetsTron = (manifest: Record<string, unknown>): boolean => {
   );
 };
 
+const normalizeManifestTronNetworkKey = (
+  value: string,
+): SccpTronNetworkKey | null => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "tron") {
+    return "mainnet";
+  }
+  try {
+    return normalizeSccpTronNetworkKey(normalized);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readManifestTronNetworkKey = (
+  manifest: Record<string, unknown>,
+): SccpTronNetworkKey | null => {
+  for (const value of [
+    readString(manifest, "tronNetwork"),
+    readString(manifest, "tron_network"),
+    readString(manifest, "network"),
+    readString(manifest, "chain"),
+  ]) {
+    const key = normalizeManifestTronNetworkKey(value);
+    if (key) {
+      return key;
+    }
+  }
+  return null;
+};
+
+export const readSccpTronGatewayEndpoint = (
+  manifest: Record<string, unknown> | null | undefined,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
+): string => {
+  const declaredNetwork =
+    manifest && typeof manifest === "object"
+      ? readManifestTronNetworkKey(manifest)
+      : null;
+  const profile = declaredNetwork
+    ? SCCP_TRON_NETWORK_PROFILES[declaredNetwork]
+    : resolveSccpTronNetworkProfile(tronNetwork);
+  return profile.rpcUrl;
+};
+
+const manifestMatchesTronNetworkProfile = (
+  manifest: Record<string, unknown>,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
+): boolean => {
+  const profile = resolveSccpTronNetworkProfile(tronNetwork);
+  const declaredNetwork = readManifestTronNetworkKey(manifest);
+  if (declaredNetwork) {
+    return declaredNetwork === profile.key;
+  }
+  if (readSccpTronProofMaterial(manifest, profile.key)) {
+    return true;
+  }
+  return profile.key === "mainnet";
+};
+
 const manifestMatchesRoute = (manifest: Record<string, unknown>): boolean => {
   const routeId =
     readString(manifest, "routeId") ||
@@ -3270,10 +3921,13 @@ const manifestMatchesRoute = (manifest: Record<string, unknown>): boolean => {
 
 export const pickTronSccpManifest = (
   manifestSet: unknown,
+  tronNetwork: unknown = SCCP_TRON_NETWORK.key,
 ): Record<string, unknown> | null =>
   manifestRecords(manifestSet).find(
     (manifest) =>
-      manifestTargetsTron(manifest) && manifestMatchesRoute(manifest),
+      manifestTargetsTron(manifest) &&
+      manifestMatchesRoute(manifest) &&
+      manifestMatchesTronNetworkProfile(manifest, tronNetwork),
   ) ?? null;
 
 const hasAnyTronManifest = (manifestSet: unknown): boolean =>
@@ -3421,6 +4075,17 @@ const readProductionReadyFlag = (
   return { ready: false, invalid: true };
 };
 
+const hasPostDeployLiveEvidence = (
+  manifest: Record<string, unknown>,
+): boolean =>
+  Boolean(
+    readFirstRecord(
+      manifest,
+      "postDeployLiveEvidence",
+      "post_deploy_live_evidence",
+    ),
+  );
+
 const validatePostDeployLiveEvidence = (
   manifest: Record<string, unknown>,
 ): void => {
@@ -3488,12 +4153,27 @@ const validatePostDeployLiveEvidence = (
   }
 };
 
+const manifestAllowsSelectedTestnetRoute = (
+  manifest: Record<string, unknown>,
+  profile: SccpTronNetworkProfile,
+  productionReady: { ready: boolean; invalid: boolean },
+): boolean =>
+  profile.key !== "mainnet" &&
+  !productionReady.ready &&
+  !productionReady.invalid &&
+  readManifestTronNetworkKey(manifest) === profile.key &&
+  Boolean(readSccpTronProofMaterial(manifest, profile.key));
+
 export const resolveSccpRouteReadiness = (input: {
   connection: SccpNetworkSnapshot;
   capabilities?: Record<string, unknown> | null;
   manifestSet?: Record<string, unknown> | null;
+  tronNetwork?: unknown;
 }): SccpRouteReadiness => {
   const reasons: string[] = [];
+  const tronProfile = resolveSccpTronNetworkProfile(
+    input.tronNetwork ?? SCCP_TRON_NETWORK.key,
+  );
   if (!isTairaSccpNetwork(input.connection)) {
     reasons.push("Switch to the TAIRA testnet profile.");
   }
@@ -3526,7 +4206,7 @@ export const resolveSccpRouteReadiness = (input: {
     }
   }
 
-  const tronManifest = pickTronSccpManifest(input.manifestSet);
+  const tronManifest = pickTronSccpManifest(input.manifestSet, tronProfile.key);
   if (!input.manifestSet) {
     reasons.push("SCCP proof manifests have not been loaded.");
   } else if (!tronManifest) {
@@ -3540,9 +4220,14 @@ export const resolveSccpRouteReadiness = (input: {
     const disabledReason =
       readString(tronManifest, "disabledReason") ||
       readString(tronManifest, "disabled_reason");
+    const allowSelectedTestnetRoute = manifestAllowsSelectedTestnetRoute(
+      tronManifest,
+      tronProfile,
+      productionReady,
+    );
     if (productionReady.invalid) {
       reasons.push("The TRON SCCP route production-ready flag is invalid.");
-    } else if (!productionReady.ready) {
+    } else if (!productionReady.ready && !allowSelectedTestnetRoute) {
       reasons.push(
         disabledReason || "The TRON SCCP route is not production-ready.",
       );
@@ -3604,7 +4289,7 @@ export const resolveSccpRouteReadiness = (input: {
       }
     }
     try {
-      readDestinationBindingInput(tronManifest);
+      readDestinationBindingInput(tronManifest, tronProfile.key);
     } catch (error) {
       reasons.push(
         error instanceof Error
@@ -3612,14 +4297,16 @@ export const resolveSccpRouteReadiness = (input: {
           : "The TRON SCCP verifier rollout proof material is incomplete.",
       );
     }
-    try {
-      validatePostDeployLiveEvidence(tronManifest);
-    } catch (error) {
-      reasons.push(
-        error instanceof Error
-          ? error.message
-          : "The TRON SCCP post-deploy live evidence is incomplete.",
-      );
+    if (productionReady.ready || hasPostDeployLiveEvidence(tronManifest)) {
+      try {
+        validatePostDeployLiveEvidence(tronManifest);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message
+            : "The TRON SCCP post-deploy live evidence is incomplete.",
+        );
+      }
     }
     const burnRecordMaterial =
       readSccpTairaBurnRecordMaterialResult(tronManifest);
@@ -3669,10 +4356,11 @@ export const resolveSccpRouteReadiness = (input: {
 export const walletConnectSessionFromAddress = (
   address: string,
   topic: string | null = null,
+  chainId = SCCP_TRON_NETWORK.caipChainId,
 ): WalletConnectSessionSnapshot => ({
   topic,
   address: normalizeTronAddress(address),
-  chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+  chainId,
   namespace: WALLETCONNECT_TRON_NAMESPACE,
   methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
   connectedAtMs: Date.now(),

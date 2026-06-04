@@ -241,9 +241,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         if (kind === "prove-tron-source-package") {
           const proveSource = await loadTronSccpSourceProveFn({
             globalScope: self as unknown as TronSccpProverGlobal,
-            moduleUrl:
-              import.meta.env.VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL ??
-              import.meta.env.VITE_SCCP_TRON_PROVER_MODULE_URL,
+            moduleUrl: import.meta.env.VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL,
           });
           if (typeof proveSource !== "function") {
             const error = new Error(

@@ -27,6 +27,7 @@ import {
   buildIvmProvedTransaction,
   buildRegisterAccountAndTransferTransaction,
   buildTransferAssetTransaction,
+  compileKotodamaProgram,
   submitTransactionEntrypoint,
   hashSignedTransaction,
   extractPipelineStatusKind,
@@ -42,6 +43,7 @@ import { parseTronTriggerSmartContractRawData } from "@iroha/iroha-js/sccp";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair,
+  privateKeyMultihash,
   publicKeyFromPrivate,
   signEd25519,
 } from "@iroha/iroha-js/crypto";
@@ -110,6 +112,12 @@ import {
   bootstrapPortableConnectPreviewSession,
   resolvePortableConnectLaunchUri,
 } from "./connectPreview";
+import {
+  getSccpNileTestTronSignerStatus,
+  signSccpNileTestTronTransaction,
+  type SccpNileTestTronSignerStatus,
+  type SccpNileTestTronTransactionSignInput,
+} from "./tronTestSigner";
 import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
@@ -1114,6 +1122,7 @@ type SccpCapabilitiesResponse = Awaited<
 type SccpProofManifestSetResponse = Awaited<
   ReturnType<ToriiClient["getSccpProofManifests"]>
 >;
+type SccpMessageProofBundleResponse = Record<string, unknown>;
 type SccpMessageProofArtifactResponse = Awaited<
   ReturnType<ToriiClient["getSccpMessageProofArtifact"]>
 >;
@@ -1140,6 +1149,9 @@ type SccpDestinationProofMaterialInput = {
   tronVerifierAddress?: string;
   proofBytesHex?: string;
 };
+type SccpMessageProofBundleInput = ToriiConfig & {
+  messageId: string;
+};
 type SccpMessageProofInput = ToriiConfig &
   SccpDestinationProofMaterialInput & {
     messageId: string;
@@ -1163,6 +1175,16 @@ type SccpBridgeMessageSubmitInput = ToriiConfig &
     settlement?: Record<string, unknown>;
     creationTimeMs?: number | string;
   };
+type SccpTransactionCommitWaitInput = ToriiConfig & {
+  hashHex: string;
+};
+type SccpTairaInboundSettlementDeployInput = ToriiConfig & {
+  accountId: string;
+  contractAlias?: string | null;
+  compiledCodeB64?: string | null;
+  leaseExpiryMs?: number | string | null;
+  privateKeyHex?: unknown;
+};
 type TronGatewayInput = {
   endpoint?: string;
 };
@@ -1513,6 +1535,9 @@ type IrohaBridge = {
   listSccpRecentMessages(
     input: SccpRecentMessagesInput,
   ): Promise<SccpRecentMessagesResponse>;
+  getSccpMessageProofBundle(
+    input: SccpMessageProofBundleInput,
+  ): Promise<SccpMessageProofBundleResponse>;
   getSccpMessageProofArtifact(
     input: SccpMessageProofInput,
   ): Promise<SccpMessageProofArtifactResponse>;
@@ -1525,6 +1550,12 @@ type IrohaBridge = {
   submitSccpBridgeMessage(
     input: SccpBridgeMessageSubmitInput,
   ): Promise<Record<string, unknown>>;
+  waitForSccpTransactionCommit(
+    input: SccpTransactionCommitWaitInput,
+  ): Promise<Record<string, unknown>>;
+  deploySccpTairaInboundSettlementContract(
+    input: SccpTairaInboundSettlementDeployInput,
+  ): Promise<Record<string, unknown> | null>;
   deriveZkIvmPayload(
     input: ZkIvmRequestInput,
   ): Promise<Record<string, unknown>>;
@@ -1552,6 +1583,10 @@ type IrohaBridge = {
   getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
   getTronFinalityData(
     input?: TronGatewayInput,
+  ): Promise<Record<string, unknown>>;
+  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
+  signSccpNileTestTronTransaction(
+    input: SccpNileTestTronTransactionSignInput,
   ): Promise<Record<string, unknown>>;
   broadcastTronTransaction(
     input: TronBroadcastInput,
@@ -2189,6 +2224,12 @@ const resolvePrivateKeyHex = async (input: {
     `${input.operationLabel} requires a stored wallet secret. Restore or save this wallet again.`,
   );
 };
+
+const formatExposedEd25519PrivateKey = (privateKeyHex: string): string =>
+  `ed25519:${privateKeyMultihash(
+    hexToBuffer(privateKeyHex, "privateKeyHex"),
+    { algorithm: "ed25519" },
+  )}`;
 
 const resolveConfidentialWalletDecryptionContext = async (input: {
   accountId: string;
@@ -4695,6 +4736,25 @@ const buildSccpDestinationProofOptions = (
   return options;
 };
 
+const normalizeSccpMessageIdPathSegment = (value: string): string => {
+  const normalized = trimString(value).toLowerCase().replace(/^0x/u, "");
+  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error("SCCP message id must be a 32-byte hex string.");
+  }
+  return normalized;
+};
+
+const getSccpMessageProofBundleFromTorii = (
+  input: SccpMessageProofBundleInput,
+): Promise<SccpMessageProofBundleResponse> =>
+  fetchJson(
+    buildNexusEndpoint(
+      input.toriiUrl,
+      `/v1/sccp/proofs/message/${normalizeSccpMessageIdPathSegment(input.messageId)}`,
+    ),
+    "SCCP message proof bundle",
+  );
+
 const listSccpRecentMessagesFromTorii = async (
   input: SccpRecentMessagesInput,
 ): Promise<SccpRecentMessagesResponse> => {
@@ -4784,10 +4844,12 @@ const buildSccpBridgeAuthorityPayload = async (
     ...(hasDetachedSignature
       ? { publicKeyHex, signatureB64 }
       : {
-          privateKey: await resolvePrivateKeyHex({
-            accountId,
-            operationLabel,
-          }),
+          privateKey: formatExposedEd25519PrivateKey(
+            await resolvePrivateKeyHex({
+              accountId,
+              operationLabel,
+            }),
+          ),
         }),
   };
 };
@@ -4849,6 +4911,156 @@ const submitSccpBridgeMessageToTorii = async (
   };
   const client = getClient(input.toriiUrl);
   return client.submitBridgeMessage(payload);
+};
+
+const waitForSccpTransactionCommitOnTorii = async (
+  input: SccpTransactionCommitWaitInput,
+): Promise<Record<string, unknown>> => {
+  const fee = await waitForTransactionCommit(input.toriiUrl, input.hashHex);
+  return {
+    ok: true,
+    hash_hex: input.hashHex,
+    status: "Applied",
+    ...(fee ? { fee } : {}),
+  };
+};
+
+const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS =
+  "taira_xor_inbound_settlement::universal";
+const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME =
+  "contracts/taira/sccp/TairaXorSccpInboundSettlement.ko";
+const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE = `
+seiyaku TairaXorSccpInboundSettlement {
+  kotoage fn finalize_inbound() permission(AssetManager) {
+    require(true);
+  }
+}
+`;
+
+const normalizeSccpContractAlias = (
+  value: unknown,
+  fallback: string,
+): string => {
+  const alias = trimString(value) || fallback;
+  if (!alias.includes("::")) {
+    throw new Error(
+      "TAIRA SCCP settlement contract alias must be fully qualified.",
+    );
+  }
+  return alias;
+};
+
+const normalizeOptionalLeaseExpiryMs = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error("Contract alias leaseExpiryMs must be a non-negative integer.");
+  }
+  return parsed;
+};
+
+const normalizeOptionalCompiledContractCodeB64 = (
+  value: unknown,
+): Uint8Array | null => {
+  const encoded = trimString(value);
+  if (!encoded) {
+    return null;
+  }
+  let decoded: Buffer;
+  try {
+    decoded = Buffer.from(encoded, "base64");
+  } catch {
+    throw new Error("compiledCodeB64 must be valid base64 contract bytecode.");
+  }
+  if (decoded.length === 0) {
+    throw new Error("compiledCodeB64 must not be empty.");
+  }
+  return Uint8Array.from(decoded);
+};
+
+const deploySccpTairaInboundSettlementContractToTorii = async (
+  input: SccpTairaInboundSettlementDeployInput,
+): Promise<Record<string, unknown> | null> => {
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  if (trimString(input.privateKeyHex)) {
+    throw new Error(
+      "TAIRA SCCP settlement contract deployment must use the stored wallet secret; inline private keys are not accepted.",
+    );
+  }
+  const privateKeyHex = await resolvePrivateKeyHex({
+    accountId,
+    operationLabel: "Deploy TAIRA SCCP settlement contract",
+  });
+  const contractAlias = normalizeSccpContractAlias(
+    input.contractAlias,
+    SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS,
+  );
+  const externalArtifactBytes = normalizeOptionalCompiledContractCodeB64(
+    input.compiledCodeB64,
+  );
+  let compiledCodeHashHex: string | undefined;
+  let compiledAbiHashHex: string | undefined;
+  const artifactBytes =
+    externalArtifactBytes ??
+    (() => {
+      const compiled = compileKotodamaProgram(
+        SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE,
+        {
+          sourceName: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
+        },
+      );
+      if (compiled.diagnostics.length > 0) {
+        throw new Error(
+          compiled.diagnostics
+            .map((entry) => `${entry.severity}: ${entry.message}`)
+            .join("\n"),
+        );
+      }
+      const entrypoint = compiled.manifest?.entrypoints.find(
+        (candidate) => candidate.name === "finalize_inbound",
+      );
+      const params = entrypoint?.params.map((param) => [
+        param.name,
+        param.type_name,
+      ]);
+      if (
+        !entrypoint ||
+        entrypoint.permission !== "AssetManager" ||
+        JSON.stringify(params) !== JSON.stringify([])
+      ) {
+        throw new Error("Compiled TAIRA SCCP settlement contract ABI is invalid.");
+      }
+      compiledCodeHashHex = compiled.codeHashHex;
+      compiledAbiHashHex = compiled.abiHashHex;
+      return Uint8Array.from(compiled.artifactBytes);
+    })();
+  if (artifactBytes.length === 0) {
+    throw new Error("Compiled TAIRA SCCP settlement contract is empty.");
+  }
+  const baseUrl = normalizeBaseUrl(input.toriiUrl);
+  const client = new ToriiClient(baseUrl, {
+    fetchImpl: nodeFetch,
+    allowInsecure: baseUrl.startsWith("http://"),
+  });
+  const response = await client.deployContract({
+    authority: accountId,
+    privateKey: formatExposedEd25519PrivateKey(privateKeyHex),
+    contractAlias,
+    codeB64: Buffer.from(artifactBytes).toString("base64"),
+    leaseExpiryMs: normalizeOptionalLeaseExpiryMs(input.leaseExpiryMs),
+  });
+  return {
+    ...(response ?? {}),
+    contract_alias: response?.contract_alias ?? contractAlias,
+    code_hash_hex: response?.code_hash_hex ?? compiledCodeHashHex,
+    abi_hash_hex: response?.abi_hash_hex ?? compiledAbiHashHex,
+    source_name: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
+  };
 };
 
 type ZkIvmRequestInput = {
@@ -5557,7 +5769,11 @@ const normalizeTronSignatureHex = (value: unknown, label: string): string => {
 };
 
 const normalizeTronPayloadHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
+  const text = trimString(value);
+  if (text.startsWith("T")) {
+    return decodeTronBase58CheckPayload(text, label).toString("hex");
+  }
+  const normalized = text.replace(/^0x/iu, "").toLowerCase();
   if (!/^41[0-9a-f]{40}$/u.test(normalized)) {
     throw new Error(`${label} must be a TRON mainnet address payload.`);
   }
@@ -5626,6 +5842,7 @@ const normalizeTronContractType = (value: unknown): string =>
 
 const readTronRawDataTriggerBinding = (
   rawData: Record<string, unknown>,
+  options: { canonicalizeDecodedFields?: boolean } = {},
 ): TronBroadcastTriggerBinding => {
   const contracts = rawData.contract;
   if (!Array.isArray(contracts) || contracts.length !== 1) {
@@ -5681,6 +5898,15 @@ const readTronRawDataTriggerBinding = (
     throw new Error(
       "TRON broadcast transaction raw_data.contract[0] must include smart-contract call data.",
     );
+  }
+  if (options.canonicalizeDecodedFields) {
+    value.owner_address = ownerPayload;
+    value.contract_address = contractPayload;
+    value.data = dataHex;
+    delete value.ownerAddress;
+    delete value.contractAddress;
+    delete value.call_data;
+    delete value.callData;
   }
   return { ownerPayload, contractPayload, dataHex };
 };
@@ -5740,7 +5966,9 @@ const normalizeTronBroadcastTransaction = (
   if (expectedTxId !== txId) {
     throw new Error("TRON txID must match raw_data_hex.");
   }
-  const triggerBinding = readTronRawDataTriggerBinding(rawData);
+  const triggerBinding = readTronRawDataTriggerBinding(rawData, {
+    canonicalizeDecodedFields: normalized.visible !== true,
+  });
   try {
     parseTronTriggerSmartContractRawData(canonicalRawDataHex, {
       expectedOwnerAddress: triggerBinding.ownerPayload,
@@ -11094,6 +11322,9 @@ const api: IrohaBridge = {
   listSccpRecentMessages(input) {
     return listSccpRecentMessagesFromTorii(input);
   },
+  getSccpMessageProofBundle(input) {
+    return getSccpMessageProofBundleFromTorii(input);
+  },
   getSccpMessageProofArtifact(input) {
     const client = getClient(input.toriiUrl);
     return client.getSccpMessageProofArtifact(
@@ -11113,6 +11344,12 @@ const api: IrohaBridge = {
   },
   submitSccpBridgeMessage(input) {
     return submitSccpBridgeMessageToTorii(input);
+  },
+  waitForSccpTransactionCommit(input) {
+    return waitForSccpTransactionCommitOnTorii(input);
+  },
+  deploySccpTairaInboundSettlementContract(input) {
+    return deploySccpTairaInboundSettlementContractToTorii(input);
   },
   deriveZkIvmPayload(input) {
     return deriveZkIvmPayloadOnTorii(input);
@@ -11149,6 +11386,12 @@ const api: IrohaBridge = {
   },
   getTronFinalityData(input) {
     return getTronFinalityDataFromGateway(input);
+  },
+  getSccpNileTestTronSigner() {
+    return getSccpNileTestTronSignerStatus();
+  },
+  signSccpNileTestTronTransaction(input) {
+    return signSccpNileTestTronTransaction(input);
   },
   broadcastTronTransaction(input) {
     return broadcastTronTransactionToGateway(input);
