@@ -76,6 +76,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("requests official TRON mainnet v1 transaction signing and stores only metadata", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
       session: {
@@ -247,8 +248,7 @@ describe("TRON WalletConnect connector", () => {
     });
   });
 
-  it("uses the Electron Nile test signer when WalletConnect is not configured", async () => {
-    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "nile");
+  it("uses the Electron Nile test signer by default when WalletConnect is not configured", async () => {
     const unsignedTransaction = {
       visible: true,
       txID: "aa".repeat(32),
@@ -301,7 +301,51 @@ describe("TRON WalletConnect connector", () => {
     expect(initMock).not.toHaveBeenCalled();
   });
 
+  it("does not use the Nile test signer for an explicit mainnet TRON profile", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
+    const getSignerMock = vi.fn().mockResolvedValue({
+      enabled: true,
+      network: "nile",
+      address: VALID_TRON_ADDRESS,
+    });
+    const signMock = vi.fn();
+    (window as unknown as { iroha?: unknown }).iroha = {
+      getSccpNileTestTronSigner: getSignerMock,
+      signSccpNileTestTronTransaction: signMock,
+    };
+    const initMock = vi.fn();
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useTronWalletConnect } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+    const tron = useTronWalletConnect();
+    await tron.refreshTestSigner();
+
+    expect(getSignerMock).not.toHaveBeenCalled();
+    expect(tron.projectConfigured.value).toBe(false);
+    expect(tron.testSignerEnabled.value).toBe(false);
+    expect(tron.testSignerAddress.value).toBe("");
+
+    await expect(tron.connect()).rejects.toThrow(
+      /WalletConnect project ID is not configured/,
+    );
+    expect(getSignerMock).not.toHaveBeenCalled();
+    expect(signMock).not.toHaveBeenCalled();
+    expect(initMock).not.toHaveBeenCalled();
+    expect(tron.address.value).toBe("");
+    expect(tron.sessionTopic.value).toBe("");
+    expect(
+      localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
+    ).toBeNull();
+  });
+
   it("rejects ambiguous WalletConnect sessions with multiple TRON mainnet accounts", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
       session: {
@@ -346,6 +390,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("rejects WalletConnect sessions without a stable topic", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
       session: {
@@ -388,6 +433,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("allows duplicate WalletConnect account entries only when they normalize to one TRON address", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
       session: {
@@ -427,6 +473,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("sends tron_signTransaction with the documented v1 request shape", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const unsignedTransaction = {
       visible: true,
@@ -497,6 +544,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("clones unsigned transactions before WalletConnect signing so adapter mutations cannot rewrite caller intent", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const unsignedTransaction = {
       visible: true,
@@ -685,6 +733,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("does not send unsafe transaction requests to WalletConnect", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const requestMock = vi.fn();
     const connector = {
@@ -804,6 +853,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("clears failed connector initialization so a later connect can retry", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const connectMock = vi.fn().mockResolvedValue({
       session: {
@@ -850,6 +900,7 @@ describe("TRON WalletConnect connector", () => {
   });
 
   it("clears stale metadata when a connected WalletConnect session lacks required TRON signing", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     localStorage.setItem(
       "iroha-demo:sccp:tron-walletconnect",
@@ -907,6 +958,7 @@ describe("TRON WalletConnect connector", () => {
   it("expires restored WalletConnect metadata before signing", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const unsignedTransaction = {
       visible: true,

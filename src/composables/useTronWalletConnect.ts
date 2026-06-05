@@ -19,6 +19,7 @@ import type { SccpNileTestTronSignerStatus } from "@/types/iroha";
 
 const STORAGE_KEY = "iroha-demo:sccp:tron-walletconnect";
 const TEST_SIGNER_SESSION_TOPIC = "sccp-nile-test-signer";
+const NILE_TEST_SIGNER_ALLOWED = SCCP_TRON_NETWORK.key === "nile";
 export const TRON_WALLETCONNECT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const TRON_WALLETCONNECT_SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_WALLETCONNECT_TOPIC_LENGTH = 256;
@@ -531,20 +532,24 @@ export const useTronWalletConnect = () => {
   const projectConfigurationError = computed(
     () => readConfiguredProjectId().error,
   );
+  const projectId = computed(() => getConfiguredProjectId());
+  const testSignerEnabled = computed(
+    () => NILE_TEST_SIGNER_ALLOWED && testSignerStatus.value.enabled,
+  );
+  const testSignerAddress = computed(() =>
+    testSignerEnabled.value ? testSignerStatus.value.address : "",
+  );
   const projectConfigured = computed(
     () =>
       !projectConfigurationError.value &&
-      (Boolean(getConfiguredProjectId()) || testSignerStatus.value.enabled),
+      (Boolean(getConfiguredProjectId()) || testSignerEnabled.value),
   );
-  const projectId = computed(() => getConfiguredProjectId());
-  const testSignerEnabled = computed(() => testSignerStatus.value.enabled);
-  const testSignerAddress = computed(() => testSignerStatus.value.address);
   const isTestSignerSession = computed(
     () =>
       sessionTopic.value === TEST_SIGNER_SESSION_TOPIC &&
       Boolean(address.value) &&
       address.value === testSignerStatus.value.address &&
-      testSignerStatus.value.enabled,
+      testSignerEnabled.value,
   );
   const shortAddress = computed(() =>
     address.value
@@ -579,6 +584,18 @@ export const useTronWalletConnect = () => {
   };
 
   const refreshTestSigner = async () => {
+    if (!NILE_TEST_SIGNER_ALLOWED) {
+      testSignerStatus.value = {
+        enabled: false,
+        network: "nile",
+        address: "",
+      };
+      testSignerError.value = "";
+      if (sessionTopic.value === TEST_SIGNER_SESSION_TOPIC) {
+        clearSession();
+      }
+      return;
+    }
     testSignerChecking.value = true;
     try {
       const status = await getSccpNileTestTronSigner();
@@ -621,7 +638,7 @@ export const useTronWalletConnect = () => {
     try {
       if (!getConfiguredProjectId()) {
         await refreshTestSigner();
-        if (testSignerStatus.value.enabled) {
+        if (testSignerEnabled.value) {
           address.value = testSignerStatus.value.address;
           sessionTopic.value = TEST_SIGNER_SESSION_TOPIC;
           sessionConnectedAtMs.value = Date.now();

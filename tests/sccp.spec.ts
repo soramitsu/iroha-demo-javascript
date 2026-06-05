@@ -51,6 +51,7 @@ import {
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
   SCCP_SORA_DOMAIN,
   SCCP_TRON_DOMAIN,
+  SCCP_TRON_NETWORK,
   TRON_MAINNET_CAIP_CHAIN_ID,
   TRON_MAINNET_CHAIN_ID_HEX,
   TRON_MAINNET_NETWORK_ID_HEX,
@@ -365,6 +366,8 @@ const TAIRA_TO_TRON_PAYLOAD_HASH = sccpPayloadHash(
   }),
 );
 const READY_TRON_MANIFEST = {
+  tronNetwork: "mainnet",
+  chain: "tron-mainnet",
   tronBridgeAddress: VALID_TRON_ADDRESS,
   tronTokenAddress: TRON_TOKEN_ADDRESS,
   sccpTronSourceBridgeAddress: TRON_SOURCE_BRIDGE_ADDRESS,
@@ -775,17 +778,22 @@ describe("SCCP helpers", () => {
   });
 
   it("normalizes supported TRON SCCP network ids by profile", () => {
+    expect(SCCP_TRON_NETWORK.key).toBe("nile");
     expect(normalizeSccpTronNetworkKey("")).toBe("mainnet");
     expect(normalizeSccpTronNetworkKey(" tron-nile ")).toBe("nile");
     expect(() => normalizeSccpTronNetworkKey("shasta")).toThrow(
       /mainnet or nile/,
     );
-    expect(normalizeTronNetworkIdHex(` ${TRON_MAINNET_CHAIN_ID_HEX} `)).toBe(
-      TRON_MAINNET_NETWORK_ID_HEX,
+    expect(normalizeTronNetworkIdHex(TRON_NILE_CHAIN_ID_HEX)).toBe(
+      TRON_NILE_NETWORK_ID_HEX,
     );
+    expect(
+      normalizeTronNetworkIdHex(` ${TRON_MAINNET_CHAIN_ID_HEX} `, "mainnet"),
+    ).toBe(TRON_MAINNET_NETWORK_ID_HEX);
     expect(
       normalizeTronNetworkIdHex(
         ` ${TRON_MAINNET_NETWORK_ID_HEX.toUpperCase()} `,
+        "mainnet",
       ),
     ).toBe(TRON_MAINNET_NETWORK_ID_HEX);
     expect(normalizeTronNetworkIdHex(TRON_NILE_CHAIN_ID_HEX, "nile")).toBe(
@@ -794,10 +802,10 @@ describe("SCCP helpers", () => {
     expect(normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX, "nile")).toBe(
       TRON_NILE_NETWORK_ID_HEX,
     );
-    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/Mainnet/);
-    expect(() => normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX)).toThrow(
-      /Mainnet/,
-    );
+    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/Nile/);
+    expect(() =>
+      normalizeTronNetworkIdHex(TRON_MAINNET_NETWORK_ID_HEX),
+    ).toThrow(/Nile/);
     expect(() =>
       normalizeTronNetworkIdHex(TRON_MAINNET_NETWORK_ID_HEX, "nile"),
     ).toThrow(/Nile/);
@@ -842,6 +850,7 @@ describe("SCCP helpers", () => {
         },
         capabilities,
         manifestSet,
+        tronNetwork: "mainnet",
       }).ready,
     ).toBe(true);
     expect(
@@ -859,6 +868,7 @@ describe("SCCP helpers", () => {
         manifestSet: {
           items: manifestSet.manifests,
         },
+        tronNetwork: "mainnet",
       }).ready,
     ).toBe(true);
     expect(
@@ -876,6 +886,7 @@ describe("SCCP helpers", () => {
         manifestSet: {
           routes: manifestSet.manifests,
         },
+        tronNetwork: "mainnet",
       }).ready,
     ).toBe(true);
     expect(
@@ -888,6 +899,7 @@ describe("SCCP helpers", () => {
         manifestSet: {
           proof_manifests: manifestSet.manifests,
         },
+        tronNetwork: "mainnet",
       }).ready,
     ).toBe(true);
     const nileDraftReadiness = resolveSccpRouteReadiness({
@@ -1043,6 +1055,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(stringProductionReady.ready).toBe(false);
     expect(stringProductionReady.reasons.join(" ")).toMatch(
@@ -1093,6 +1106,7 @@ describe("SCCP helpers", () => {
             },
           ],
         },
+        tronNetwork: "mainnet",
       });
       expect(missingLiveEvidence.ready).toBe(false);
       expect(missingLiveEvidence.reasons.join(" ")).toMatch(reason);
@@ -1113,6 +1127,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(genericTronManifest.ready).toBe(false);
     expect(genericTronManifest.reasons.join(" ")).toContain("taira_tron_xor");
@@ -1136,6 +1151,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(missingVerifierMaterial.ready).toBe(false);
     expect(missingVerifierMaterial.reasons.join(" ")).toMatch(
@@ -1164,6 +1180,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(mismatchedBinding.ready).toBe(false);
     expect(mismatchedBinding.reasons.join(" ")).toMatch(/bindingHash/i);
@@ -1190,6 +1207,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(wrongBindingDomains.ready).toBe(false);
     expect(wrongBindingDomains.reasons.join(" ")).toMatch(
@@ -1218,6 +1236,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(wrongBindingTargetDomain.ready).toBe(false);
     expect(wrongBindingTargetDomain.reasons.join(" ")).toMatch(
@@ -1243,6 +1262,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(invalidDeploymentAddresses.ready).toBe(false);
     expect(invalidDeploymentAddresses.reasons.join(" ")).toMatch(
@@ -1270,6 +1290,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(missingSourceBridgeAddress.ready).toBe(false);
     expect(missingSourceBridgeAddress.reasons.join(" ")).toMatch(
@@ -1297,6 +1318,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(missingVerifierAddress.ready).toBe(false);
     expect(missingVerifierAddress.reasons.join(" ")).toMatch(
@@ -1324,6 +1346,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(invalidVerifierAddress.ready).toBe(false);
     expect(invalidVerifierAddress.reasons.join(" ")).toMatch(
@@ -1348,6 +1371,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(duplicateDeploymentAddresses.ready).toBe(false);
     expect(duplicateDeploymentAddresses.reasons.join(" ")).toMatch(
@@ -1375,6 +1399,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(invalidBurnRecordGas.ready).toBe(false);
     expect(invalidBurnRecordGas.reasons.join(" ")).toMatch(/burn-record/);
@@ -1400,6 +1425,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(aliasBurnRecordAsset.ready).toBe(false);
     expect(aliasBurnRecordAsset.reasons.join(" ")).toMatch(
@@ -1427,6 +1453,7 @@ describe("SCCP helpers", () => {
           },
         ],
       },
+      tronNetwork: "mainnet",
     });
     expect(malformedBurnRecordArtifact.ready).toBe(false);
     expect(malformedBurnRecordArtifact.reasons.join(" ")).toMatch(
@@ -1456,7 +1483,7 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toMatchObject({
-      endpoint: TRON_MAINNET_RPC_URL,
+      endpoint: TRON_NILE_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
@@ -1564,7 +1591,7 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toEqual({
-      endpoint: TRON_MAINNET_RPC_URL,
+      endpoint: TRON_NILE_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: "balanceOf(address)",
@@ -2849,6 +2876,8 @@ describe("SCCP helpers", () => {
 
   it("reads TRON deployment evidence from normalized SCCP manifests", () => {
     const manifest = {
+      tron_network: "mainnet",
+      chain: "tron-mainnet",
       taira_xor_bridge_address: VALID_TRON_ADDRESS,
       taira_xor_token_address: TRON_TOKEN_ADDRESS,
       sccp_tron_source_bridge_address: TRON_SOURCE_BRIDGE_ADDRESS,
@@ -2877,6 +2906,8 @@ describe("SCCP helpers", () => {
       readSccpTronProofMaterial(
         {
           ...manifest,
+          tron_network: "nile",
+          chain: "tron-nile",
           destinationRollout: {
             ...manifest.destinationRollout,
             destinationNetworkId: TRON_NILE_CHAIN_ID_HEX,
@@ -3179,36 +3210,36 @@ describe("SCCP helpers", () => {
     );
   });
 
-  it("allows generic top-level job binding when TRON platform payload omits binding", () => {
-    const binding = buildTairaXorFinalizeProofBinding({
-      manifest: READY_TRON_MANIFEST,
-      job: sampleTairaToTronJob({
-        destinationBinding: {
-          version: 1,
-          key: "sccp:0:5:tron:tron-groth16-bn254-v1:4",
-          bindingHash: HEX32_A,
-        },
-        submissionPackage: {
-          platformPayload: {
-            kind: "tron_contract_call",
-            value: {
-              proofBytes: "0x01",
-              publicInputs: {
-                messageId: TAIRA_TO_TRON_MESSAGE_ID,
+  it("rejects mismatched top-level job binding when TRON platform payload omits binding", () => {
+    expect(() =>
+      buildTairaXorFinalizeProofBinding({
+        manifest: READY_TRON_MANIFEST,
+        job: sampleTairaToTronJob({
+          destinationBinding: {
+            version: 1,
+            key: "sccp:0:5:tron:tron-groth16-bn254-v1:4",
+            bindingHash: HEX32_A,
+          },
+          submissionPackage: {
+            platformPayload: {
+              kind: "tron_contract_call",
+              value: {
+                proofBytes: "0x01",
+                publicInputs: {
+                  messageId: TAIRA_TO_TRON_MESSAGE_ID,
+                },
+                statementHash: HEX32_B,
               },
-              statementHash: HEX32_B,
             },
           },
-        },
+        }),
+        messageId: TAIRA_TO_TRON_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        tronRecipient: VALID_TRON_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
       }),
-      messageId: TAIRA_TO_TRON_MESSAGE_ID,
-      tairaSender: TAIRA_SENDER,
-      tronRecipient: VALID_TRON_ADDRESS,
-      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
-    });
-
-    expect(binding.destinationBinding.bindingHash).toBe(
-      TRON_DESTINATION_BINDING.bindingHash,
+    ).toThrow(
+      /destination binding does not match the TRON route manifest/i,
     );
   });
 
@@ -4148,7 +4179,7 @@ describe("SCCP helpers", () => {
     expect(snapshot).toMatchObject({
       topic: "topic",
       address: VALID_TRON_ADDRESS,
-      chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+      chainId: TRON_NILE_CAIP_CHAIN_ID,
       namespace: "tron",
     });
     expect(JSON.stringify(snapshot)).not.toMatch(/private|seed|mnemonic/iu);
@@ -4156,9 +4187,9 @@ describe("SCCP helpers", () => {
       walletConnectSessionFromAddress(
         VALID_TRON_ADDRESS,
         "topic",
-        TRON_NILE_CAIP_CHAIN_ID,
+        TRON_MAINNET_CAIP_CHAIN_ID,
       ).chainId,
-    ).toBe(TRON_NILE_CAIP_CHAIN_ID);
+    ).toBe(TRON_MAINNET_CAIP_CHAIN_ID);
   });
 });
 

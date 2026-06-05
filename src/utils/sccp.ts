@@ -142,7 +142,7 @@ export const resolveSccpTronNetworkProfile = (
   SCCP_TRON_NETWORK_PROFILES[normalizeSccpTronNetworkKey(value)];
 
 export const SCCP_TRON_NETWORK = resolveSccpTronNetworkProfile(
-  import.meta.env.VITE_SCCP_TRON_NETWORK,
+  import.meta.env.VITE_SCCP_TRON_NETWORK || "nile",
 );
 
 export type SccpRouteConfig = {
@@ -712,6 +712,7 @@ export const readSccpTronProofMaterial = (
   if (!manifest) {
     return null;
   }
+  const selectedNetwork = readManifestTronNetworkKey(manifest) ?? tronNetwork;
   const rollout = readDestinationRollout(manifest);
   const networkId =
     readString(manifest, "networkIdHex") ||
@@ -735,7 +736,7 @@ export const readSccpTronProofMaterial = (
     readString(rollout ?? {}, "destination_binding_hash");
   try {
     return {
-      networkIdHex: normalizeTronNetworkIdHex(networkId, tronNetwork),
+      networkIdHex: normalizeTronNetworkIdHex(networkId, selectedNetwork),
       tronVerifierAddress: normalizeTronAddress(
         readSccpTronVerifierAddress(manifest),
       ),
@@ -3273,11 +3274,8 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   const jobDestinationBinding =
     readRecord(job, "destinationBinding") ??
     readRecord(job, "destination_binding");
-  const shouldCheckTopLevelDestinationBinding =
-    !platformValue;
   const jobBindingHash = readFirstString(
-    platformDestinationBinding ??
-      (shouldCheckTopLevelDestinationBinding ? jobDestinationBinding : null),
+    platformDestinationBinding ?? jobDestinationBinding,
     "bindingHash",
     "binding_hash",
   );
