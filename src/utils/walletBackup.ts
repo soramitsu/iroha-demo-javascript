@@ -1,4 +1,8 @@
 import { normalizeMnemonicPhrase, type MnemonicWordCount } from "./mnemonic";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  normalizeStoredSigningAlgorithm,
+} from "./signingAlgorithms";
 
 export type WalletBackupTarget = "manual" | "icloud" | "google";
 export const CONFIDENTIAL_WALLET_BACKUP_SCHEMA_V1 =
@@ -11,6 +15,7 @@ export const CONFIDENTIAL_WALLET_BACKUP_KDF_INFO =
 export type WalletBackupPayload = {
   mnemonic: string;
   wordCount: MnemonicWordCount;
+  signingAlgorithm: string;
   createdAt: string;
   target: WalletBackupTarget;
   displayName?: string;
@@ -160,6 +165,7 @@ const parseConfidentialWalletBackupMetadata = (
 export const buildWalletBackupPayload = (input: {
   mnemonic: string;
   wordCount: MnemonicWordCount;
+  signingAlgorithm?: string;
   target: WalletBackupTarget;
   createdAt?: string;
   displayName?: string;
@@ -169,6 +175,7 @@ export const buildWalletBackupPayload = (input: {
   const payload: WalletBackupPayload = {
     mnemonic: normalizeMnemonicPhrase(input.mnemonic),
     wordCount: input.wordCount,
+    signingAlgorithm: normalizeStoredSigningAlgorithm(input.signingAlgorithm),
     createdAt: trimString(input.createdAt) || new Date().toISOString(),
     target: input.target,
   };
@@ -252,6 +259,9 @@ export const parseWalletBackupPayload = (raw: string) => {
   return {
     mnemonic,
     wordCount: normalizeWordCount(payload.wordCount) ?? derivedWordCount,
+    signingAlgorithm: normalizeStoredSigningAlgorithm(
+      payload.signingAlgorithm ?? DEFAULT_SIGNING_ALGORITHM,
+    ),
     displayName: trimString(payload.displayName),
     domain: trimString(payload.domain),
     ...(confidentialWallet ? { confidentialWallet } : {}),

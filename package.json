@@ -31,6 +31,15 @@
     "e2e:explorer": "node scripts/e2e/taira-explorer-smoke.mjs",
     "e2e:sccp:preflight": "node scripts/e2e/sccp-route-preflight.mjs",
     "e2e:sccp:smoke-readiness": "node scripts/e2e/sccp-live-smoke-readiness.mjs",
+    "e2e:sccp:bsc-preflight": "node scripts/e2e/sccp-bsc-route-preflight.mjs --check-bsc-contracts true",
+    "e2e:sccp:bsc-route-manifest": "node scripts/e2e/sccp-bsc-route-manifest.mjs",
+    "e2e:sccp:bsc-runtime-prover-config": "node scripts/e2e/sccp-bsc-runtime-prover-config.mjs",
+    "e2e:sccp:bsc-prover-manifest": "node scripts/e2e/sccp-bsc-prover-manifest.mjs",
+    "e2e:sccp:bsc-material-inventory": "node scripts/e2e/sccp-bsc-production-material-inventory.mjs",
+    "e2e:sccp:bsc-peer-config-audit": "node scripts/e2e/sccp-bsc-peer-config-audit.mjs",
+    "e2e:sccp:bsc-smoke-readiness": "node scripts/e2e/sccp-bsc-live-smoke-readiness.mjs",
+    "e2e:sccp:bsc-production-gate": "node scripts/e2e/sccp-bsc-production-gate.mjs",
+    "e2e:sccp:bsc-video": "node scripts/e2e/sccp-bsc-live-video.mjs",
     "trade:soraswap:live": "node scripts/connect-soraswap-live-trade.mjs",
     "trade:soraswap:perps": "SORASWAP_MODE=perps_open node scripts/connect-soraswap-live-trade.mjs",
     "trade:soraswap:n3x": "SORASWAP_MODE=n3x_mint node scripts/connect-soraswap-live-trade.mjs",
@@ -76,5 +85,18 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "directories": {
+    "test": "tests"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/soramitsu/iroha-demo-javascript.git"
+  },
+  "keywords": [],
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/soramitsu/iroha-demo-javascript/issues"
+  },
+  "homepage": "https://github.com/soramitsu/iroha-demo-javascript#readme"
 }

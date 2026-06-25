@@ -194,6 +194,9 @@ const routeReportProblems = (routeReport, tronNetwork = "mainnet") => {
         problems.push(`${key} must be a non-zero 32-byte hex value.`);
       }
     }
+    if (!postDeployLiveEvidence.offlineFullTomlSha256) {
+      problems.push("offlineFullTomlSha256 is required.");
+    }
     if (
       postDeployLiveEvidence.offlineFullTomlSha256 &&
       !isNonZeroHex32(postDeployLiveEvidence.offlineFullTomlSha256)
@@ -226,6 +229,29 @@ const hasUnsafeUrlCharacter = (value) => {
     }
   }
   return false;
+};
+
+const hasParentDirectorySegment = (value) => {
+  let normalized = value.replace(/\\/gu, "/");
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (/(?:^|\/)\.\.(?:\/|$)/u.test(normalized)) {
+      return true;
+    }
+    let decoded;
+    try {
+      decoded = decodeURIComponent(normalized).replace(/\\/gu, "/");
+    } catch (_error) {
+      return true;
+    }
+    if (decoded === normalized) {
+      return false;
+    }
+    normalized = decoded;
+  }
+  // Values that are still changing after several decode passes are
+  // intentionally treated as unsafe instead of guessing how many layers an
+  // intermediary might decode.
+  return true;
 };
 
 export const normalizeWalletConnectProjectId = (value) => {
@@ -268,6 +294,9 @@ export const normalizeSccpBrowserModuleUrl = (value, label) => {
   }
   if (/[?#]/u.test(moduleUrl)) {
     throw new Error(`${label} must not include query strings or fragments.`);
+  }
+  if (hasParentDirectorySegment(moduleUrl)) {
+    throw new Error(`${label} must not include parent directory segments.`);
   }
   if (/^(?:\/(?!\/)|\.{1,2}\/)/u.test(moduleUrl)) {
     return moduleUrl;

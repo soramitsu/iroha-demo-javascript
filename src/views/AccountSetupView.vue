@@ -55,6 +55,10 @@
                 {{ generatedVisibleAccountId || t("Not created yet") }}
               </p>
             </div>
+            <div class="wizard-summary-row">
+              <p class="meta-label">{{ t("Signing algorithm") }}</p>
+              <p class="meta-value">{{ selectedSigningAlgorithmLabel }}</p>
+            </div>
           </details>
         </section>
       </aside>
@@ -85,6 +89,21 @@
               <select v-model.number="wordCount">
                 <option :value="12">{{ t("12 words") }}</option>
                 <option :value="24">{{ t("24 words") }}</option>
+              </select>
+            </label>
+            <label class="wizard-field-compact">
+              {{ t("Signing algorithm") }}
+              <select
+                v-model="selectedSigningAlgorithm"
+                :disabled="generating || restoring || Boolean(generatedKeys)"
+              >
+                <option
+                  v-for="option in signingAlgorithmOptions"
+                  :key="option.id"
+                  :value="option.id"
+                >
+                  {{ option.label }}
+                </option>
               </select>
             </label>
           </div>
@@ -241,6 +260,10 @@
               <p class="meta-label">{{ t("Domain") }}</p>
               <p class="meta-value">{{ normalizedDomain }}</p>
             </div>
+            <div class="wizard-review-item">
+              <p class="meta-label">{{ t("Signing algorithm") }}</p>
+              <p class="meta-value">{{ generatedSigningAlgorithmLabel }}</p>
+            </div>
           </div>
           <div class="actions">
             <button
@@ -285,6 +308,21 @@
             <option :value="24">{{ t("24 words") }}</option>
           </select>
         </label>
+        <label class="wizard-field-compact">
+          {{ t("Signing algorithm") }}
+          <select
+            v-model="selectedSigningAlgorithm"
+            :disabled="generating || restoring || Boolean(generatedKeys)"
+          >
+            <option
+              v-for="option in signingAlgorithmOptions"
+              :key="option.id"
+              :value="option.id"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
       </div>
       <details class="technical-details">
         <summary>{{ t("Advanced wallet details") }}</summary>
@@ -302,6 +340,10 @@
         <div class="wizard-review-item">
           <p class="meta-label">{{ t("Domain") }}</p>
           <p class="meta-value">{{ normalizedDomain }}</p>
+        </div>
+        <div class="wizard-review-item">
+          <p class="meta-label">{{ t("Signing algorithm") }}</p>
+          <p class="meta-value">{{ generatedSigningAlgorithmLabel }}</p>
         </div>
       </div>
 
@@ -666,8 +708,9 @@ import {
   createConnectPreview,
   copyTextToClipboard,
   deriveAccountAddress,
-  derivePublicKey,
   exportConfidentialWalletBackup,
+  generateKeyPair,
+  getSigningAlgorithms,
   importConfidentialWalletBackup,
   isSecureVaultAvailable,
   storeAccountSecret,
@@ -682,6 +725,10 @@ import {
   parseWalletBackupPayload,
   type ConfidentialWalletBackupMetadata,
 } from "@/utils/walletBackup";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  signingAlgorithmLabel,
+} from "@/utils/signingAlgorithms";
 import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
@@ -709,6 +756,14 @@ const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
   chainId: session.connection.chainId,
 });
+const signingAlgorithmOptions = ref([
+  {
+    id: DEFAULT_SIGNING_ALGORITHM,
+    label: signingAlgorithmLabel(DEFAULT_SIGNING_ALGORITHM),
+    isDefault: true,
+  },
+]);
+const selectedSigningAlgorithm = ref(DEFAULT_SIGNING_ALGORITHM);
 const activeNetworkPreset = computed(() =>
   CHAIN_PRESETS.find(
     (preset) =>
@@ -720,6 +775,36 @@ const activeNetworkPreset = computed(() =>
 const activeNetworkLabel = computed(
   () => activeNetworkPreset.value?.label ?? t("Custom endpoint"),
 );
+
+const findSigningAlgorithmOption = (algorithm: string) =>
+  signingAlgorithmOptions.value.find((option) => option.id === algorithm);
+const selectedSigningAlgorithmLabel = computed(
+  () =>
+    findSigningAlgorithmOption(selectedSigningAlgorithm.value)?.label ??
+    signingAlgorithmLabel(selectedSigningAlgorithm.value),
+);
+const generatedSigningAlgorithmLabel = computed(() =>
+  generatedKeys.value
+    ? signingAlgorithmLabel(generatedKeys.value.signingAlgorithm)
+    : selectedSigningAlgorithmLabel.value,
+);
+
+const loadSigningAlgorithmOptions = async () => {
+  try {
+    const options = await getSigningAlgorithms(connectionForm.toriiUrl);
+    if (options.length > 0) {
+      signingAlgorithmOptions.value = options;
+    }
+  } catch (error) {
+    console.warn("Failed to load signing algorithm capabilities", error);
+  }
+  if (!findSigningAlgorithmOption(selectedSigningAlgorithm.value)) {
+    selectedSigningAlgorithm.value =
+      signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
+      signingAlgorithmOptions.value[0]?.id ??
+      DEFAULT_SIGNING_ALGORITHM;
+  }
+};
 
 watch(
   () => session.connection,
@@ -739,6 +824,14 @@ watch(
   { deep: true, immediate: true },
 );
 
+watch(
+  () => connectionForm.toriiUrl,
+  () => {
+    void loadSigningAlgorithmOptions();
+  },
+  { immediate: true },
+);
+
 const aliasInput = ref(session.activeAccount?.displayName || "");
 const domainInput = ref(session.activeAccount?.domain || DEFAULT_DOMAIN_LABEL);
 const wordCount = ref<12 | 24>(24);
@@ -748,6 +841,7 @@ const backupFileInput = ref<HTMLInputElement | null>(null);
 const generatedKeys = ref<{
   privateKeyHex: string;
   publicKeyHex: string;
+  signingAlgorithm: string;
 } | null>(null);
 const restorePhraseInput = ref("");
 const backupConfirmed = ref(false);
@@ -800,6 +894,7 @@ const generatedAccountSummary = computed(() => {
       domain: normalizedDomain.value,
       publicKeyHex: generatedKeys.value.publicKeyHex,
       networkPrefix: session.connection.networkPrefix,
+      signingAlgorithm: generatedKeys.value.signingAlgorithm,
     });
   } catch (_error) {
     return null;
@@ -888,6 +983,10 @@ const startNewRegistration = () => {
   mnemonicWords.value = [];
   recoveryMnemonic.value = "";
   generatedKeys.value = null;
+  selectedSigningAlgorithm.value =
+    signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
+    signingAlgorithmOptions.value[0]?.id ??
+    DEFAULT_SIGNING_ALGORITHM;
   restorePhraseInput.value = "";
   backupConfirmed.value = false;
   showRestorePanel.value = false;
@@ -906,6 +1005,7 @@ const startNewRegistration = () => {
 const applyBackupMetadata = (payload: {
   displayName?: string;
   domain?: string;
+  signingAlgorithm?: string;
   confidentialWallet?: ConfidentialWalletBackupMetadata;
 }) => {
   if (typeof payload.displayName === "string") {
@@ -913,6 +1013,9 @@ const applyBackupMetadata = (payload: {
   }
   if (typeof payload.domain === "string" && payload.domain.trim()) {
     domainInput.value = payload.domain;
+  }
+  if (typeof payload.signingAlgorithm === "string") {
+    selectedSigningAlgorithm.value = payload.signingAlgorithm;
   }
   pendingConfidentialWalletBackup.value = payload.confidentialWallet ?? null;
 };
@@ -959,6 +1062,22 @@ watch(
   { deep: true },
 );
 
+const deriveKeysFromRecoveryPhrase = async (
+  mnemonic: string,
+  signingAlgorithm: string,
+) => {
+  const seedHex = mnemonicToPrivateKeyHex(mnemonic);
+  const pair = await generateKeyPair({
+    signingAlgorithm,
+    seedHex,
+  });
+  return {
+    privateKeyHex: pair.privateKeyHex,
+    publicKeyHex: pair.publicKeyHex,
+    signingAlgorithm: pair.signingAlgorithm || signingAlgorithm,
+  };
+};
+
 const generateRecovery = async () => {
   generateError.value = "";
   restoreError.value = "";
@@ -975,12 +1094,10 @@ const generateRecovery = async () => {
     mnemonicWords.value = words;
     const mnemonic = normalizeMnemonicPhrase(words.join(" "));
     recoveryMnemonic.value = mnemonic;
-    const privateKeyHex = mnemonicToPrivateKeyHex(mnemonic);
-    const { publicKeyHex } = await derivePublicKey(privateKeyHex);
-    generatedKeys.value = {
-      privateKeyHex,
-      publicKeyHex,
-    };
+    generatedKeys.value = await deriveKeysFromRecoveryPhrase(
+      mnemonic,
+      selectedSigningAlgorithm.value,
+    );
     backupConfirmed.value = false;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -991,7 +1108,10 @@ const generateRecovery = async () => {
   }
 };
 
-const restoreFromPhrase = async (phrase: string) => {
+const restoreFromPhrase = async (
+  phrase: string,
+  signingAlgorithm = selectedSigningAlgorithm.value,
+) => {
   const normalizedPhrase = normalizeMnemonicPhrase(phrase);
   if (!normalizedPhrase) {
     throw new Error(t("Enter a recovery phrase."));
@@ -1002,14 +1122,13 @@ const restoreFromPhrase = async (phrase: string) => {
     throw new Error(t("Recovery phrase must contain 12 or 24 words."));
   }
 
-  const privateKeyHex = mnemonicToPrivateKeyHex(normalizedPhrase);
-  const { publicKeyHex } = await derivePublicKey(privateKeyHex);
   mnemonicWords.value = [];
   recoveryMnemonic.value = normalizedPhrase;
-  generatedKeys.value = {
-    privateKeyHex,
-    publicKeyHex,
-  };
+  selectedSigningAlgorithm.value = signingAlgorithm;
+  generatedKeys.value = await deriveKeysFromRecoveryPhrase(
+    normalizedPhrase,
+    signingAlgorithm,
+  );
   wordCount.value = wordTotal as 12 | 24;
   backupConfirmed.value = true;
   restorePhraseInput.value = "";
@@ -1058,7 +1177,8 @@ const handleBackupFileSelection = async (event: Event) => {
   try {
     restoring.value = true;
     const payload = parseWalletBackupPayload(await file.text());
-    await restoreFromPhrase(payload.mnemonic);
+    selectedSigningAlgorithm.value = payload.signingAlgorithm;
+    await restoreFromPhrase(payload.mnemonic, payload.signingAlgorithm);
     applyBackupMetadata(payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -1102,6 +1222,7 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
   await storeAccountSecret({
     accountId,
     privateKeyHex: generatedKeys.value.privateKeyHex,
+    signingAlgorithm: generatedKeys.value.signingAlgorithm,
   });
   if (pendingConfidentialWalletBackup.value && recoveryMnemonic.value) {
     await importConfidentialWalletBackup({
@@ -1124,6 +1245,7 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
     i105AccountId,
     i105DefaultAccountId,
     publicKeyHex: generatedKeys.value.publicKeyHex,
+    signingAlgorithm: generatedKeys.value.signingAlgorithm,
     hasStoredSecret: true,
     localOnly,
   });
@@ -1194,6 +1316,8 @@ const downloadBackup = async (target: "manual" | "icloud" | "google") => {
     target,
     displayName: aliasInput.value.trim(),
     domain: normalizedDomain.value,
+    signingAlgorithm:
+      generatedKeys.value?.signingAlgorithm ?? selectedSigningAlgorithm.value,
     confidentialWallet,
   });
   const blob = new Blob([JSON.stringify(payload, null, 2)], {

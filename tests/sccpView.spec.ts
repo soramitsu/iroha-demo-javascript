@@ -14,9 +14,13 @@ import {
   TAIRA_NETWORK_PREFIX,
 } from "@/constants/chains";
 import {
+  canonicalEip55EvmAddress,
   buildSccpMessageBundleSubmitPayload,
   decodeTronBase58CheckAddress,
+  readBscSourceProverMaterialBinding,
+  tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
+  SCCP_EVM_SOURCE_EVENT_TOPIC,
   TRON_MAINNET_NETWORK_ID_HEX,
   TRON_MAINNET_RPC_URL,
   TRON_MAINNET_TRONSCAN_URL,
@@ -24,10 +28,19 @@ import {
 import {
   canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpTransferPayloadBytes,
+  evmSccpDestinationBinding,
+  SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  SCCP_CODEC_EVM_HEX,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
+  SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
+  SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
+  SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
+  SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
+  sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
+  tairaXorBscBurnSourceEventDigest,
   tairaXorBurnSourceEventDigest,
   tairaXorRouteIdHash,
   tairaXorAssetKeyHash,
@@ -35,6 +48,26 @@ import {
 } from "@iroha/iroha-js/sccp";
 
 const VALID_TRON_ADDRESS = "TGkWdpawVNfeset3P6uTBbLaPY7nZVZvXY";
+const fixtureBscAddress = (label: string): string =>
+  canonicalEip55EvmAddress(
+    `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    )
+      .join("")
+      .slice(0, 40)}`,
+  );
+const VALID_BSC_ADDRESS = fixtureBscAddress("sccp view bsc wallet");
+const BSC_BRIDGE_ADDRESS = fixtureBscAddress("sccp view bsc bridge");
+const BSC_TOKEN_ADDRESS = fixtureBscAddress("sccp view bsc token");
+const BSC_SOURCE_BRIDGE_ADDRESS = fixtureBscAddress(
+  "sccp view bsc source bridge",
+);
+const BSC_VERIFIER_ADDRESS = fixtureBscAddress("sccp view bsc verifier");
+const VALID_BSC_ADDRESS_HEX = VALID_BSC_ADDRESS.toLowerCase();
+const BSC_BRIDGE_ADDRESS_HEX = BSC_BRIDGE_ADDRESS.toLowerCase();
+const BSC_VERIFIER_ADDRESS_HEX = BSC_VERIFIER_ADDRESS.toLowerCase();
+const BSC_TESTNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000061";
 const TRON_TOKEN_ADDRESS = "TD5gsCwxykWsLN9aPrq2TAfNjByuZKYp4E";
 const TRON_SOURCE_BRIDGE_ADDRESS = "TEdvoHEatmDKvTh3o9vBRB9Vdtbhn4QFhy";
 const TRON_VERIFIER_ADDRESS = "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv";
@@ -69,14 +102,44 @@ const PAYLOAD_HASH = sccpPayloadHash(
     value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
   }),
 );
+const TAIRA_TO_BSC_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: 0,
+  dest_domain: 2,
+  nonce: "7",
+  asset_home_domain: 0,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: TAIRA_ACCOUNT_ID,
+  recipient_codec: SCCP_CODEC_EVM_HEX,
+  recipient: VALID_BSC_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: "taira_bsc_xor",
+};
+const BSC_MESSAGE_ID = sccpTransferMessageId(TAIRA_TO_BSC_TRANSFER_PAYLOAD);
+const BSC_PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+  }),
+);
 const COMMITMENT_ROOT = `0x${"33".repeat(32)}`;
 const FINALITY_BLOCK_HASH = `0x${"44".repeat(32)}`;
 const STATEMENT_HASH = `0x${"55".repeat(32)}`;
 const TRON_SOLID_BLOCK_NUMBER = 12;
 const VERIFIER_CODE_HASH = `0x${"66".repeat(32)}`;
 const VERIFIER_KEY_HASH = `0x${"77".repeat(32)}`;
+const BSC_PROOF_ARTIFACT_HASH = `0x${"88".repeat(32)}`;
+const BSC_PROVING_KEY_HASH = `0x${"99".repeat(32)}`;
+const BSC_VERIFIER_KEY_ARTIFACT_HASH = `0x${"aa".repeat(32)}`;
+const OFFLINE_FULL_TOML_SHA256 = `0x${"ab".repeat(32)}`;
+const BSC_BURN_RECORD_ARTIFACT_SHA256 =
+  "0x1ad4f776520bfcdd4a4022cdcaaff5e26d2a3172c4fafb01917505e7be325592";
 const TRON_SIGNING_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const TRON_TO_TAIRA_NONCE = "9";
+const BSC_TO_TAIRA_NONCE = "1";
 const TRON_SOURCE_EVENT_DIGEST = tairaXorBurnSourceEventDigest({
   bridgeAddress: VALID_TRON_ADDRESS,
   burnerAddress: VALID_TRON_ADDRESS,
@@ -88,6 +151,19 @@ const TRON_BURN_CALL_DATA = tairaXorBurnToTairaCallData({
   tairaRecipient: TAIRA_ACCOUNT_ID,
   amount: BRIDGE_AMOUNT_BASE_UNITS,
 });
+const BSC_SOURCE_EVENT_DIGEST = tairaXorBscBurnSourceEventDigest({
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  burnerAddress: VALID_BSC_ADDRESS,
+  tairaRecipient: TAIRA_ACCOUNT_ID,
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+  nonce: BSC_TO_TAIRA_NONCE,
+});
+const BSC_BURN_CALL_DATA = tairaXorBscBurnToTairaAccountCallData({
+  tairaRecipient: TAIRA_ACCOUNT_ID,
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+});
+const BSC_TX_HASH = `0x${"aa".repeat(32)}`;
+const BSC_BLOCK_HASH = `0x${"bb".repeat(32)}`;
 const NETWORK_ID = TRON_MAINNET_NETWORK_ID_HEX;
 const BINDING_KEY = `tron:0:5:${NETWORK_ID.slice(
   2,
@@ -102,6 +178,90 @@ const BINDING_HASH = tronSccpDestinationBinding({
   verifierCodeHash: VERIFIER_CODE_HASH,
   verifierKeyHash: VERIFIER_KEY_HASH,
 }).bindingHash;
+const BSC_BINDING_KEY = `evm:0:2:${BSC_TESTNET_NETWORK_ID_HEX.slice(
+  2,
+)}:${BSC_VERIFIER_ADDRESS_HEX}:${BSC_BRIDGE_ADDRESS_HEX}:${VERIFIER_CODE_HASH}:${VERIFIER_KEY_HASH}`;
+const BSC_BINDING_HASH = evmSccpDestinationBinding({
+  version: 1,
+  key: BSC_BINDING_KEY,
+  sourceDomain: 0,
+  targetDomain: 2,
+  networkId: BSC_TESTNET_NETWORK_ID_HEX,
+  verifierAddress: BSC_VERIFIER_ADDRESS,
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  verifierCodeHash: VERIFIER_CODE_HASH,
+  verifierKeyHash: VERIFIER_KEY_HASH,
+}).bindingHash;
+const repeatedHex32 = (byteHex: string): string => {
+  const byte = byteHex.toLowerCase().padStart(2, "0");
+  return `0x${byte.repeat(32)}`;
+};
+const fixtureHash = (label: string): string =>
+  `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+const BSC_NATIVE_EVM_PROVER_BUNDLE = {
+  schema: SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
+  bundle_id: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  domain: 2,
+  chain: "bsc-testnet",
+  proof_backend: SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
+  proof_artifact: "artifacts/bsc-testnet/taira-xor/proof-artifact.r1cs",
+  proof_artifact_hash: BSC_PROOF_ARTIFACT_HASH,
+  proving_key: "artifacts/bsc-testnet/taira-xor/proving-key.zkey",
+  proving_key_hash: BSC_PROVING_KEY_HASH,
+  verifier_key: "artifacts/bsc-testnet/taira-xor/verifier-key.json",
+  verifier_key_hash: VERIFIER_KEY_HASH,
+  verifier_key_artifact_hash: BSC_VERIFIER_KEY_ARTIFACT_HASH,
+  destination_binding_hash: BSC_BINDING_HASH,
+  no_wasm: true,
+  remote_prover_required: false,
+  browser_implementation: "pure-typescript",
+  cross_sdk_parity_artifact:
+    "artifacts/bsc-testnet/taira-xor/cross-sdk-parity.json",
+  native_prover_self_test_artifact:
+    "artifacts/bsc-testnet/taira-xor/native-prover-self-test.json",
+  groth16_proof_self_test_artifact:
+    "artifacts/bsc-testnet/taira-xor/groth16-proof-self-test.json",
+  groth16_proof_self_test_hash: fixtureHash("view bsc groth16 proof self-test"),
+  native_sdk_artifacts: Object.entries(
+    SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
+  ).map(([sdk, implementation], index) => ({
+    sdk,
+    implementation,
+    prover_artifact_hash: BSC_PROOF_ARTIFACT_HASH,
+    proving_key_hash: BSC_PROVING_KEY_HASH,
+    implementation_artifact: `artifacts/bsc-testnet/taira-xor/${sdk}-implementation.bin`,
+    implementation_hash: repeatedHex32((0xa1 + index).toString(16)),
+  })),
+  audit_hashes: {
+    circuit_security_audit: fixtureHash("view bsc circuit audit"),
+    native_implementation_audit: fixtureHash("view bsc native audit"),
+    reproducible_build_attestation: fixtureHash(
+      "view bsc reproducible attestation",
+    ),
+    cross_sdk_parity: fixtureHash("view bsc parity"),
+    native_prover_self_test: fixtureHash("view bsc self-test"),
+    no_wasm_no_remote_scan: fixtureHash("view bsc no-wasm scan"),
+  },
+};
+
+const BSC_SOURCE_PROVER_MATERIAL_BINDING = readBscSourceProverMaterialBinding({
+  bscNetwork: "testnet",
+  chain: "bsc-testnet",
+  bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+  bscVerifierAddress: BSC_VERIFIER_ADDRESS,
+  proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+  provingKeyHash: BSC_PROVING_KEY_HASH,
+  nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+  destinationRollout: {
+    verifierCodeHash: VERIFIER_CODE_HASH,
+    verifierKeyHash: VERIFIER_KEY_HASH,
+    destinationNetworkId: BSC_TESTNET_NETWORK_ID_HEX,
+    destinationBridgeAddress: BSC_BRIDGE_ADDRESS,
+    destinationBindingHash: BSC_BINDING_HASH,
+  },
+});
 
 const bytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -117,6 +277,43 @@ const hexToBytes = (hex: string): Uint8Array =>
       .match(/.{2}/gu)
       ?.map((byte) => Number.parseInt(byte, 16)) ?? [],
   );
+
+const abiWord = (value: bigint): Uint8Array => {
+  let remaining = value;
+  const out = new Uint8Array(32);
+  for (let index = out.length - 1; index >= 0; index -= 1) {
+    out[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return out;
+};
+
+const BN254_G2_GENERATOR_WORDS = [
+  abiWord(0x1800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6edn),
+  abiWord(0x198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c2n),
+  abiWord(0x12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daan),
+  abiWord(0x090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975bn),
+];
+
+const sampleGroth16ProofBytes = (input: {
+  messageId: string;
+  commitmentRoot: string;
+  sourceDomain: number;
+}): Uint8Array => {
+  const out = new Uint8Array(SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1);
+  [
+    abiWord(1n),
+    hexToBytes(input.messageId),
+    abiWord(BigInt(input.sourceDomain)),
+    hexToBytes(input.commitmentRoot),
+    abiWord(1n),
+    abiWord(2n),
+    ...BN254_G2_GENERATOR_WORDS,
+    abiWord(1n),
+    abiWord(2n),
+  ].forEach((word, index) => out.set(word, index * 32));
+  return out;
+};
 
 const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -257,6 +454,13 @@ const waitForSccpTransactionCommitMock = vi.fn();
 const triggerTronConstantContractMock = vi.fn();
 const triggerTronSmartContractMock = vi.fn();
 const broadcastTronTransactionMock = vi.fn();
+const getEvmChainIdMock = vi.fn();
+const getEvmBalanceMock = vi.fn();
+const callEvmContractMock = vi.fn();
+const getEvmTransactionReceiptMock = vi.fn();
+const getEvmTransactionMock = vi.fn();
+const getEvmBlockByHashMock = vi.fn();
+const getEvmLogsMock = vi.fn();
 
 vi.mock("@/services/iroha", () => ({
   getSccpCapabilities: (input: unknown) => getSccpCapabilitiesMock(input),
@@ -288,6 +492,14 @@ vi.mock("@/services/iroha", () => ({
     triggerTronSmartContractMock(input),
   broadcastTronTransaction: (input: unknown) =>
     broadcastTronTransactionMock(input),
+  getEvmChainId: (input: unknown) => getEvmChainIdMock(input),
+  getEvmBalance: (input: unknown) => getEvmBalanceMock(input),
+  callEvmContract: (input: unknown) => callEvmContractMock(input),
+  getEvmTransactionReceipt: (input: unknown) =>
+    getEvmTransactionReceiptMock(input),
+  getEvmTransaction: (input: unknown) => getEvmTransactionMock(input),
+  getEvmBlockByHash: (input: unknown) => getEvmBlockByHashMock(input),
+  getEvmLogs: (input: unknown) => getEvmLogsMock(input),
 }));
 
 const mountView = (connection: {
@@ -390,6 +602,96 @@ const sampleMessageProofJob = (): Record<string, unknown> => ({
       value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
     },
     finalityProof: "0x010203",
+  },
+});
+
+const sampleTairaToBscMessageProofJob = (): Record<string, unknown> => ({
+  publicInputs: {
+    version: 1,
+    messageId: BSC_MESSAGE_ID,
+    payloadHash: BSC_PAYLOAD_HASH,
+    targetDomain: 2,
+    commitmentRoot: COMMITMENT_ROOT,
+    finalityHeight: 10,
+    finalityBlockHash: FINALITY_BLOCK_HASH,
+    destinationBindingHash: BSC_BINDING_HASH,
+  },
+  destinationBinding: {
+    version: 1,
+    key: BSC_BINDING_KEY,
+    bindingHash: BSC_BINDING_HASH,
+  },
+  submissionPackage: {
+    platformPayload: {
+      kind: "evm_groth16_contract_call",
+      value: {
+        statementHash: STATEMENT_HASH,
+        destinationBinding: {
+          version: 1,
+          key: BSC_BINDING_KEY,
+          bindingHash: BSC_BINDING_HASH,
+        },
+      },
+    },
+  },
+  payloadProjection: {
+    kind: "Transfer",
+    value: {
+      source_domain: 0,
+      dest_domain: 2,
+      asset_home_domain: 0,
+      asset_id: { kind: "TextUtf8", value: "xor" },
+      route_id: { kind: "TextUtf8", value: "taira_bsc_xor" },
+      amount: BRIDGE_AMOUNT_BASE_UNITS,
+      sender: { kind: "TextUtf8", value: TAIRA_ACCOUNT_ID },
+      recipient: { kind: "EvmHex", value: VALID_BSC_ADDRESS_HEX },
+    },
+  },
+  bundle: {
+    version: 1,
+    commitmentRoot: COMMITMENT_ROOT,
+    commitment: {
+      version: 1,
+      kind: "Transfer",
+      targetDomain: 2,
+      messageId: BSC_MESSAGE_ID,
+      payloadHash: BSC_PAYLOAD_HASH,
+    },
+    merkleProof: { steps: [] },
+    payload: {
+      kind: "Transfer",
+      value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+    },
+    finalityProof: "0x010203",
+  },
+});
+
+const sampleTairaToBscProofPackage = (): Record<string, unknown> => ({
+  canonicalPayloadHex: bytesToHex(
+    canonicalSccpTransferPayloadBytes(TAIRA_TO_BSC_TRANSFER_PAYLOAD),
+  ),
+  submission: {
+    proofBytes: bytesToHex(
+      sampleGroth16ProofBytes({
+        messageId: BSC_MESSAGE_ID,
+        commitmentRoot: COMMITMENT_ROOT,
+        sourceDomain: 0,
+      }),
+    ),
+    publicInputs: {
+      version: 1,
+      messageId: BSC_MESSAGE_ID,
+      payloadHash: BSC_PAYLOAD_HASH,
+      targetDomain: 2,
+      commitmentRoot: COMMITMENT_ROOT,
+      finalityHeight: 10,
+      finalityBlockHash: FINALITY_BLOCK_HASH,
+      destinationBindingHash: BSC_BINDING_HASH,
+    },
+    statementHash: STATEMENT_HASH,
+    canonicalPayloadHex: bytesToHex(
+      canonicalSccpTransferPayloadBytes(TAIRA_TO_BSC_TRANSFER_PAYLOAD),
+    ),
   },
 });
 
@@ -558,6 +860,7 @@ const sampleTronToTairaSourceProofPackage = (
   );
   const messageId = sccpTransferMessageId(transferPayload);
   const proofPackage = {
+    ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
     messageBundle: {
       version: 1,
       commitmentRoot: FINALITY_BLOCK_HASH,
@@ -583,6 +886,142 @@ const sampleTronToTairaSourceProofPackage = (
     txId: TRON_TX_ID,
     messageId,
     amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+  };
+  mutate?.(proofPackage);
+  return proofPackage;
+};
+
+const sampleBscTransaction = (): Record<string, unknown> => ({
+  hash: BSC_TX_HASH,
+  from: VALID_BSC_ADDRESS,
+  to: BSC_BRIDGE_ADDRESS,
+  input: BSC_BURN_CALL_DATA,
+});
+
+const sampleBscReceipt = (
+  mutate?: (receipt: Record<string, unknown>) => void,
+): Record<string, unknown> => {
+  const sourceLog = {
+    address: BSC_SOURCE_BRIDGE_ADDRESS,
+    topics: [SCCP_EVM_SOURCE_EVENT_TOPIC, BSC_SOURCE_EVENT_DIGEST],
+    data: "0x",
+    transactionHash: BSC_TX_HASH,
+    blockNumber: "0x7b",
+    blockHash: BSC_BLOCK_HASH,
+  };
+  const receipt = {
+    transactionHash: BSC_TX_HASH,
+    status: "0x1",
+    from: VALID_BSC_ADDRESS,
+    to: BSC_BRIDGE_ADDRESS,
+    blockNumber: "0x7b",
+    blockHash: BSC_BLOCK_HASH,
+    logs: [{ ...sourceLog, topics: [...sourceLog.topics] }],
+  };
+  mutate?.(receipt);
+  return receipt;
+};
+
+const sampleBscIndexedLogs = (
+  mutate?: (logs: Record<string, unknown>[]) => void,
+): Record<string, unknown>[] => {
+  const logs = [
+    {
+      address: BSC_SOURCE_BRIDGE_ADDRESS,
+      topics: [SCCP_EVM_SOURCE_EVENT_TOPIC, BSC_SOURCE_EVENT_DIGEST],
+      data: "0x",
+      transactionHash: BSC_TX_HASH,
+      blockNumber: "0x7b",
+      blockHash: BSC_BLOCK_HASH,
+    },
+  ];
+  mutate?.(logs);
+  return logs;
+};
+
+const sampleBscBlock = (): Record<string, unknown> => ({
+  hash: BSC_BLOCK_HASH,
+  number: "0x7b",
+  transactions: [BSC_TX_HASH],
+});
+
+const sampleBscToTairaSourceProofPackage = (
+  mutate?: (proofPackage: Record<string, unknown>) => void,
+): Record<string, unknown> => {
+  const transferPayload = {
+    version: 1,
+    source_domain: 2,
+    dest_domain: 0,
+    nonce: BSC_TO_TAIRA_NONCE,
+    asset_home_domain: 0,
+    asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+    asset_id: "xor",
+    amount: BRIDGE_AMOUNT_BASE_UNITS,
+    sender_codec: SCCP_CODEC_EVM_HEX,
+    sender: VALID_BSC_ADDRESS,
+    recipient_codec: SCCP_CODEC_TEXT_UTF8,
+    recipient: TAIRA_ACCOUNT_ID,
+    route_id_codec: SCCP_CODEC_TEXT_UTF8,
+    route_id: "taira_bsc_xor",
+  };
+  const payloadHash = sccpPayloadHash(
+    canonicalSccpPayloadEnvelopeBytes({
+      kind: "Transfer",
+      value: transferPayload,
+    }),
+  );
+  const messageId = sccpTransferMessageId(transferPayload);
+  const commitment = {
+    version: 1,
+    kind: "Transfer" as const,
+    targetDomain: 0,
+    messageId,
+    payloadHash,
+  };
+  const merkleProof = { steps: [] };
+  const commitmentRoot = sccpMerkleRootFromCommitment(
+    {
+      version: commitment.version,
+      kind: commitment.kind,
+      target_domain: commitment.targetDomain,
+      message_id: commitment.messageId,
+      payload_hash: commitment.payloadHash,
+    },
+    merkleProof,
+  );
+  const proofPackage = {
+    messageBundle: {
+      version: 1,
+      commitmentRoot,
+      commitment,
+      merkleProof,
+      payload: {
+        kind: "Transfer",
+        value: transferPayload,
+      },
+      finalityProof: "0x010203",
+    },
+    settlement: {
+      entrypoint: "finalize_inbound",
+      route: "taira_bsc_xor",
+    },
+    sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+    txId: BSC_TX_HASH,
+    messageId,
+    amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+    publicInputs: {
+      sourceDomain: 2,
+      targetDomain: 0,
+      messageId,
+      payloadHash,
+      commitmentRoot,
+      txId: BSC_TX_HASH,
+      sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+      sender: VALID_BSC_ADDRESS,
+      recipient: TAIRA_ACCOUNT_ID,
+      routeId: "taira_bsc_xor",
+    },
   };
   mutate?.(proofPackage);
   return proofPackage;
@@ -631,6 +1070,87 @@ const storeConnectedTronWallet = (
   );
 };
 
+const storeConnectedBscWallet = (
+  options: { projectConfigured?: boolean } = {},
+) => {
+  if (options.projectConfigured !== false) {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-walletconnect-project");
+  }
+  localStorage.setItem(
+    "iroha-demo:sccp:bsc-walletconnect",
+    JSON.stringify({
+      topic: "topic-bsc",
+      address: VALID_BSC_ADDRESS,
+      chainId: "eip155:97",
+      namespace: "eip155",
+      methodVersion: "eip155-v1",
+      connectedAtMs: Date.now(),
+    }),
+  );
+};
+
+const sampleReadyBscManifestSet = () => ({
+  manifests: [
+    {
+      counterpartyDomain: 2,
+      verifierTarget: "EvmContract",
+      productionReady: true,
+      routeId: "taira_bsc_xor",
+      assetKey: "xor",
+      counterpartyAccountCodecKey: "evm_hex",
+      counterpartyAccountCodec: SCCP_CODEC_EVM_HEX,
+      bscNetwork: "testnet",
+      chain: "bsc-testnet",
+      bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+      bscTokenAddress: BSC_TOKEN_ADDRESS,
+      sccpBscSourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
+      bscVerifierAddress: BSC_VERIFIER_ADDRESS,
+      proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+      provingKeyHash: BSC_PROVING_KEY_HASH,
+      nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+      destinationBinding: {
+        version: 1,
+        key: BSC_BINDING_KEY,
+        bindingHash: BSC_BINDING_HASH,
+        sourceDomain: 0,
+        targetDomain: 2,
+      },
+      destinationRollout: {
+        verifierIdentity: BSC_VERIFIER_ADDRESS,
+        verifierCodeHash: VERIFIER_CODE_HASH,
+        verifierKeyHash: VERIFIER_KEY_HASH,
+        proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+        provingKeyHash: BSC_PROVING_KEY_HASH,
+        nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+        destinationNetworkId: BSC_TESTNET_NETWORK_ID_HEX,
+        destinationBridgeAddress: BSC_BRIDGE_ADDRESS,
+        destinationBindingKey: BSC_BINDING_KEY,
+        destinationBindingHash: BSC_BINDING_HASH,
+      },
+      postDeployLiveEvidence: {
+        fullTomlReady: true,
+        offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
+        sourceBridgeConfigHash: `0x${"11".repeat(32)}`,
+        sourceEventTransactionId: `0x${"22".repeat(32)}`,
+        sourceEventExplorerUrl: `https://testnet.bscscan.com/tx/0x${"22".repeat(32)}`,
+        routeCanaryEvidenceHash: `0x${"33".repeat(32)}`,
+        routeCanaryTransactionId: `0x${"44".repeat(32)}`,
+        routeCanaryExplorerUrl: `https://testnet.bscscan.com/tx/0x${"44".repeat(32)}`,
+      },
+      tairaXorBurnRecord: {
+        settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        contractArtifactB64: "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==",
+        artifactSha256: BSC_BURN_RECORD_ARTIFACT_SHA256,
+        vkRef: {
+          backend: "halo2/ipa",
+          name: "taira-xor-bsc-burn-record-v1",
+        },
+        gasLimit: 123456,
+      },
+    },
+  ],
+});
+
 const sampleReadyManifestSet = () => ({
   manifests: [
     {
@@ -657,6 +1177,7 @@ const sampleReadyManifestSet = () => ({
       },
       postDeployLiveEvidence: {
         fullTomlReady: true,
+        offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
         sourceBridgeConfigHash: `0x${"11".repeat(32)}`,
         sourceEventTransactionId: `0x${"22".repeat(32)}`,
         routeCanaryEvidenceHash: `0x${"33".repeat(32)}`,
@@ -700,6 +1221,7 @@ const mockSuccessfulTairaToTronTargetStack = () => {
             namespaces: {
               tron: {
                 accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                chains: ["tron:0x2b6653dc"],
                 methods: ["tron_signTransaction"],
               },
             },
@@ -800,6 +1322,7 @@ const mockSuccessfulTronToTairaBridgeStack = (
             namespaces: {
               tron: {
                 accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                chains: ["tron:0x2b6653dc"],
                 methods: ["tron_signTransaction"],
               },
             },
@@ -844,6 +1367,138 @@ const mockSuccessfulTronToTairaBridgeStack = (
   return { requestMock, proofPackage, workerCtor };
 };
 
+const mockSuccessfulBscToTairaBridgeStack = (
+  proofPackage: Record<string, unknown> = sampleBscToTairaSourceProofPackage(),
+  walletTransactionHash: string = BSC_TX_HASH,
+) => {
+  const requestMock = vi.fn().mockResolvedValue(walletTransactionHash);
+  vi.doMock("@reown/appkit-universal-connector", () => ({
+    UniversalConnector: {
+      init: vi.fn().mockResolvedValue({
+        disconnect: vi.fn(),
+        provider: {
+          session: {
+            topic: "topic-bsc",
+            namespaces: {
+              eip155: {
+                accounts: [`eip155:97:${VALID_BSC_ADDRESS}`],
+                chains: ["eip155:97"],
+                methods: ["eth_sendTransaction"],
+              },
+            },
+          },
+        },
+        request: requestMock,
+      }),
+    },
+  }));
+  const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+    onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+    onerror: null;
+    terminate: () => void;
+    postMessage: (message: {
+      id: string;
+      kind: string;
+      input: Record<string, unknown>;
+    }) => void;
+  }) {
+    this.onmessage = null;
+    this.onerror = null;
+    this.terminate = vi.fn();
+    this.postMessage = (message: {
+      id: string;
+      kind: string;
+      input: Record<string, unknown>;
+    }) => {
+      expect(message.kind).toBe("prove-bsc-source-package");
+      expect(message.input).toMatchObject({
+        txId: BSC_TX_HASH,
+        bscSender: VALID_BSC_ADDRESS_HEX,
+        tairaRecipient: TAIRA_ACCOUNT_ID,
+        amountDecimal: "0.0001",
+      });
+      expect(message.input).not.toHaveProperty("proofArtifactHash");
+      expect(message.input).not.toHaveProperty("provingKeyHash");
+      expect(message.input).not.toHaveProperty("nativeEvmProverBundleHash");
+      this.onmessage?.({
+        data: {
+          id: message.id,
+          ok: true,
+          result: {
+            ...proofPackage,
+            ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+          },
+        },
+      });
+    };
+  });
+  vi.stubGlobal("Worker", workerCtor);
+  return { requestMock, proofPackage, workerCtor };
+};
+
+const mockSuccessfulTairaToBscBridgeStack = (
+  proofPackage: Record<string, unknown> = sampleTairaToBscProofPackage(),
+  walletTransactionHash: string = BSC_TX_HASH,
+) => {
+  const requestMock = vi.fn().mockResolvedValue(walletTransactionHash);
+  vi.doMock("@reown/appkit-universal-connector", () => ({
+    UniversalConnector: {
+      init: vi.fn().mockResolvedValue({
+        disconnect: vi.fn(),
+        provider: {
+          session: {
+            topic: "topic-bsc",
+            namespaces: {
+              eip155: {
+                accounts: [`eip155:97:${VALID_BSC_ADDRESS}`],
+                chains: ["eip155:97"],
+                methods: ["eth_sendTransaction"],
+              },
+            },
+          },
+        },
+        request: requestMock,
+      }),
+    },
+  }));
+  const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+    onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+    onerror: null;
+    terminate: () => void;
+    postMessage: (message: {
+      id: string;
+      kind: string;
+      input: Record<string, unknown>;
+    }) => void;
+  }) {
+    this.onmessage = null;
+    this.onerror = null;
+    this.terminate = vi.fn();
+    this.postMessage = (message: {
+      id: string;
+      kind: string;
+      input: Record<string, unknown>;
+    }) => {
+      expect(message.kind).toBe("prove-bsc-proof-package");
+      expect(message.input).toMatchObject({
+        authority: VALID_BSC_ADDRESS_HEX,
+        canonicalPayloadHex: bytesToHex(
+          canonicalSccpTransferPayloadBytes(TAIRA_TO_BSC_TRANSFER_PAYLOAD),
+        ),
+      });
+      this.onmessage?.({
+        data: {
+          id: message.id,
+          ok: true,
+          result: proofPackage,
+        },
+      });
+    };
+  });
+  vi.stubGlobal("Worker", workerCtor);
+  return { requestMock, proofPackage, workerCtor };
+};
+
 describe("SccpView", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -867,6 +1522,13 @@ describe("SccpView", () => {
     triggerTronConstantContractMock.mockReset();
     triggerTronSmartContractMock.mockReset();
     broadcastTronTransactionMock.mockReset();
+    getEvmChainIdMock.mockReset();
+    getEvmBalanceMock.mockReset();
+    callEvmContractMock.mockReset();
+    getEvmTransactionReceiptMock.mockReset();
+    getEvmTransactionMock.mockReset();
+    getEvmBlockByHashMock.mockReset();
+    getEvmLogsMock.mockReset();
     getSccpCapabilitiesMock.mockResolvedValue({
       proofSubmitPath: "/v1/bridge/proofs/submit",
       messageSubmitPath: "/v1/bridge/messages",
@@ -896,6 +1558,13 @@ describe("SccpView", () => {
       result: { result: true },
       constant_result: ["0".repeat(63) + "7"],
     });
+    getEvmChainIdMock.mockResolvedValue("0x61");
+    getEvmBalanceMock.mockResolvedValue("0xde0b6b3a7640000");
+    callEvmContractMock.mockResolvedValue("0x" + "0".repeat(63) + "9");
+    getEvmTransactionMock.mockResolvedValue(sampleBscTransaction());
+    getEvmTransactionReceiptMock.mockResolvedValue(sampleBscReceipt());
+    getEvmBlockByHashMock.mockResolvedValue(sampleBscBlock());
+    getEvmLogsMock.mockResolvedValue(sampleBscIndexedLogs());
     getTronTransactionMock.mockResolvedValue(sampleTronTransaction());
     getTronTransactionReceiptMock.mockImplementation(
       (input: { txId?: unknown }) =>
@@ -973,6 +1642,694 @@ describe("SccpView", () => {
     });
     expect(listSccpRecentMessagesMock).toHaveBeenCalled();
     expect(getTronAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("enables TAIRA to BSC and BSC to TAIRA route actions", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+    await nextTick();
+
+    expect(wrapper.text()).toContain("BSC wallet");
+    expect(wrapper.text()).toContain("BSC Testnet");
+    expect(wrapper.text()).toContain("1 BNB");
+    expect(wrapper.text()).toContain("0.000000000000000009 TairaXOR");
+    expect(wrapper.text()).toContain(
+      "Bridge actions will request explicit wallet approval before signing.",
+    );
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    await flushPromises();
+
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> BSC"));
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(prepareButton).toBeTruthy();
+    expect(fetchButton).toBeTruthy();
+    expect(prepareButton!.attributes("disabled")).toBeUndefined();
+    expect(fetchButton!.attributes("disabled")).toBeDefined();
+    expect(getEvmChainIdMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+    });
+    expect(getEvmBalanceMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      address: VALID_BSC_ADDRESS_HEX,
+    });
+    expect(callEvmContractMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      to: BSC_TOKEN_ADDRESS,
+      data: `0x70a08231000000000000000000000000${VALID_BSC_ADDRESS_HEX.slice(2)}`,
+    });
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+    expect(wrapper.text()).toContain(
+      "Bridge actions will request explicit wallet approval before signing.",
+    );
+    const returnPrepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare BSC -> TAIRA"));
+    expect(returnPrepareButton?.attributes("disabled")).toBeUndefined();
+
+    expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
+    expect(getSccpMessageProofJobMock).not.toHaveBeenCalled();
+    expect(submitZkIvmProvedTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("continues BSC finalize after BSC receipt indexing catches up", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedBscWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "bsc-finalize-retry-project");
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const bscProofJob = sampleTairaToBscMessageProofJob();
+    getSccpMessageProofBundleMock.mockResolvedValue(bscProofJob.bundle);
+    getSccpMessageProofJobMock.mockResolvedValue(bscProofJob);
+    startZkIvmProveJobMock.mockResolvedValue({
+      job_id: "22".repeat(16),
+    });
+    getZkIvmProveJobMock.mockResolvedValue({
+      status: "done",
+      proved: { overlay: [] },
+      attachment: {
+        backend: "halo2/ipa",
+        proof: {
+          backend: "halo2/ipa",
+          bytes: "0x01",
+        },
+        vk_ref: {
+          backend: "halo2/ipa",
+          name: "taira-xor-bsc-burn-record-v1",
+        },
+      },
+    });
+    submitZkIvmProvedTransactionMock.mockResolvedValue({
+      tx_hash_hex: "88".repeat(32),
+    });
+    const { requestMock, workerCtor } = mockSuccessfulTairaToBscBridgeStack();
+    const receiptWithoutStatus = sampleBscReceipt();
+    delete receiptWithoutStatus.status;
+    getEvmTransactionReceiptMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(receiptWithoutStatus)
+      .mockResolvedValue(sampleBscReceipt());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        messageId: BSC_MESSAGE_ID,
+        networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+        verifierAddressHex: BSC_VERIFIER_ADDRESS_HEX,
+        bridgeAddressHex: BSC_BRIDGE_ADDRESS_HEX,
+        expectedDestinationBindingHashHex: BSC_BINDING_HASH,
+      }),
+    );
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(requestMock).toHaveBeenCalledWith(
+      {
+        method: "eth_sendTransaction",
+        params: [
+          expect.objectContaining({
+            from: VALID_BSC_ADDRESS_HEX,
+            to: BSC_BRIDGE_ADDRESS_HEX,
+            chainId: "0x61",
+            data: expect.stringMatching(/^0x[0-9a-f]+$/u),
+          }),
+        ],
+      },
+      "eip155:97",
+    );
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain(
+      "Waiting for BSC finalize transaction confirmation",
+    );
+    expect(wrapper.text()).not.toContain("BSC finalize transaction confirmed");
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await flushPromises();
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain(
+      "Waiting for BSC finalize transaction confirmation",
+    );
+    expect(wrapper.text()).not.toContain("BSC finalize transaction confirmed");
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await submitPromise;
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(3);
+    expect(wrapper.text()).toContain("BSC finalize transaction confirmed");
+    expect(wrapper.text()).toContain("BSC finalize transaction");
+  });
+
+  it("rejects BSC finalize confirmations without a receipt transaction hash", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedBscWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "bsc-missing-receipt-hash");
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const bscProofJob = sampleTairaToBscMessageProofJob();
+    getSccpMessageProofBundleMock.mockResolvedValue(bscProofJob.bundle);
+    getSccpMessageProofJobMock.mockResolvedValue(bscProofJob);
+    startZkIvmProveJobMock.mockResolvedValue({
+      job_id: "22".repeat(16),
+    });
+    getZkIvmProveJobMock.mockResolvedValue({
+      status: "done",
+      proved: { overlay: [] },
+      attachment: {
+        backend: "halo2/ipa",
+        proof: {
+          backend: "halo2/ipa",
+          bytes: "0x01",
+        },
+        vk_ref: {
+          backend: "halo2/ipa",
+          name: "taira-xor-bsc-burn-record-v1",
+        },
+      },
+    });
+    submitZkIvmProvedTransactionMock.mockResolvedValue({
+      tx_hash_hex: "88".repeat(32),
+    });
+    const { requestMock, workerCtor } = mockSuccessfulTairaToBscBridgeStack();
+    const receiptWithoutHash = sampleBscReceipt();
+    delete receiptWithoutHash.transactionHash;
+    getEvmTransactionReceiptMock.mockResolvedValue(receiptWithoutHash);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    await wrapper.find("form").trigger("submit");
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(requestMock).toHaveBeenCalledOnce();
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain(
+      "BSC finalize transaction receipt is missing transaction hash.",
+    );
+    expect(wrapper.text()).not.toContain("BSC finalize transaction confirmed");
+  });
+
+  it("continues BSC burn submission through TAIRA settlement", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const { requestMock, workerCtor } = mockSuccessfulBscToTairaBridgeStack();
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await wrapper.find("form").trigger("submit");
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalledWith(
+      {
+        method: "eth_sendTransaction",
+        params: [
+          expect.objectContaining({
+            from: VALID_BSC_ADDRESS_HEX,
+            to: BSC_BRIDGE_ADDRESS_HEX,
+            chainId: "0x61",
+            value: "0x0",
+            data: BSC_BURN_CALL_DATA,
+          }),
+        ],
+      },
+      "eip155:97",
+    );
+    expect(getEvmTransactionMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      txHash: BSC_TX_HASH,
+    });
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      txHash: BSC_TX_HASH,
+    });
+    expect(getEvmBlockByHashMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      blockHash: BSC_BLOCK_HASH,
+      fullTransactions: false,
+    });
+    expect(getEvmLogsMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      address: BSC_SOURCE_BRIDGE_ADDRESS,
+      blockHash: BSC_BLOCK_HASH,
+      topics: [SCCP_EVM_SOURCE_EVENT_TOPIC],
+    });
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(submitSccpBridgeMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        accountId: TAIRA_ACCOUNT_ID,
+        settlement: expect.objectContaining({
+          entrypoint: "finalize_inbound",
+          route: "taira_bsc_xor",
+        }),
+      }),
+    );
+    const submitPayload = submitSccpBridgeMessageMock.mock.calls[0][0] as {
+      messageBundle: unknown;
+    };
+    expect(submitPayload.messageBundle).toEqual(
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage().messageBundle as Record<
+          string,
+          unknown
+        >,
+      ),
+    );
+    expect(waitForSccpTransactionCommitMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      hashHex: "99".repeat(32),
+    });
+    expect(wrapper.text()).toContain("TAIRA settlement confirmed");
+    expect(wrapper.text()).toContain("BSC transaction");
+  });
+
+  it("continues BSC burn settlement after BSC receipt indexing catches up", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedBscWallet();
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "bsc-auto-retry-project");
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const { requestMock, workerCtor } = mockSuccessfulBscToTairaBridgeStack();
+    getEvmTransactionMock
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(sampleBscTransaction());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(getEvmTransactionMock).toHaveBeenCalledTimes(1);
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(1);
+    expect(getEvmBlockByHashMock).not.toHaveBeenCalled();
+    expect(getEvmLogsMock).not.toHaveBeenCalled();
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Waiting for BSC receipt and block indexing",
+    );
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await submitPromise;
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getEvmTransactionMock).toHaveBeenCalledTimes(2);
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(2);
+    expect(getEvmBlockByHashMock).toHaveBeenCalledOnce();
+    expect(getEvmLogsMock).toHaveBeenCalledOnce();
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(submitSccpBridgeMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        accountId: TAIRA_ACCOUNT_ID,
+        settlement: expect.objectContaining({
+          entrypoint: "finalize_inbound",
+          route: "taira_bsc_xor",
+        }),
+      }),
+    );
+    expect(wrapper.text()).toContain("TAIRA settlement confirmed");
+  });
+
+  it("waits for BSC burn receipts to expose block identity before source proofing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(7);
+    storeConnectedBscWallet();
+    vi.stubEnv(
+      "VITE_WALLETCONNECT_PROJECT_ID",
+      "bsc-receipt-blockhash-project",
+    );
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const { requestMock, workerCtor } = mockSuccessfulBscToTairaBridgeStack();
+    const receiptWithoutBlockHash = sampleBscReceipt();
+    delete receiptWithoutBlockHash.blockHash;
+    getEvmTransactionReceiptMock
+      .mockResolvedValueOnce(receiptWithoutBlockHash)
+      .mockResolvedValue(sampleBscReceipt());
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    const submitPromise = wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(requestMock).toHaveBeenCalled();
+    expect(getEvmTransactionMock).toHaveBeenCalledTimes(1);
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(1);
+    expect(getEvmBlockByHashMock).not.toHaveBeenCalled();
+    expect(getEvmLogsMock).not.toHaveBeenCalled();
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Waiting for BSC receipt and block indexing",
+    );
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await submitPromise;
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledTimes(2);
+    expect(getEvmBlockByHashMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      blockHash: BSC_BLOCK_HASH,
+      fullTransactions: false,
+    });
+    expect(getEvmLogsMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      address: BSC_SOURCE_BRIDGE_ADDRESS,
+      blockHash: BSC_BLOCK_HASH,
+      topics: [SCCP_EVM_SOURCE_EVENT_TOPIC],
+    });
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(submitSccpBridgeMessageMock).toHaveBeenCalledOnce();
+    expect(wrapper.text()).toContain("TAIRA settlement confirmed");
+  });
+
+  it("normalizes uppercase manual BSC burn transaction hashes before proofing", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const { requestMock, workerCtor } = mockSuccessfulBscToTairaBridgeStack();
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(BSC_TX_HASH.toUpperCase());
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(getEvmTransactionMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      txHash: BSC_TX_HASH,
+    });
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(submitSccpBridgeMessageMock).toHaveBeenCalledOnce();
+  });
+
+  it("blocks BSC source proofing when indexed source logs drift from the receipt", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    getEvmLogsMock.mockResolvedValue(
+      sampleBscIndexedLogs((logs) => {
+        (logs[0].topics as string[])[1] = `0x${"cc".repeat(32)}`;
+      }),
+    );
+    const { requestMock, workerCtor } = mockSuccessfulBscToTairaBridgeStack();
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(BSC_TX_HASH);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(requestMock).not.toHaveBeenCalled();
+    expect(getEvmLogsMock).toHaveBeenCalledWith({
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      address: BSC_SOURCE_BRIDGE_ADDRESS,
+      blockHash: BSC_BLOCK_HASH,
+      topics: [SCCP_EVM_SOURCE_EVENT_TOPIC],
+    });
+    expect(wrapper.text()).toContain(
+      "BSC indexed source bridge log digest does not match the transaction receipt.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects noncanonical manual BSC burn transaction hashes before RPC reads", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const workerCtor = vi.fn();
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(BSC_TX_HASH.slice(2));
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("0x-prefixed 32-byte hex hash");
+    expect(getEvmTransactionMock).not.toHaveBeenCalled();
+    expect(getEvmTransactionReceiptMock).not.toHaveBeenCalled();
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects all-zero manual BSC burn transaction hashes before RPC reads", async () => {
+    storeConnectedBscWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
+    const workerCtor = vi.fn();
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const bscRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /BSC Testnet/iu.test(button.text()));
+    expect(bscRouteButton).toBeTruthy();
+    await bscRouteButton!.trigger("click");
+    await flushPromises();
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("BSC -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(`0x${"0".repeat(64)}`);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("BSC transaction hash must be non-zero.");
+    expect(getEvmTransactionMock).not.toHaveBeenCalled();
+    expect(getEvmTransactionReceiptMock).not.toHaveBeenCalled();
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 
   it("loads connected TRON TRX and TairaXOR balances through preload", async () => {
@@ -1889,7 +3246,7 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 
-  it("snapshots the route manifest before TRON source data loading", async () => {
+  it("uses a sanitized route manifest snapshot during TRON source data loading", async () => {
     storeConnectedTronWallet();
     const mutableManifestSet = sampleReadyManifestSet();
     getSccpProofManifestsMock.mockResolvedValue(mutableManifestSet);
@@ -1899,6 +3256,72 @@ describe("SccpView", () => {
       ).tronBridgeAddress = TRON_TOKEN_ADDRESS;
       return Promise.resolve(sampleTronTransaction());
     });
+    const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+      onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+      onerror: null;
+      terminate: () => void;
+      postMessage: (message: { id: string; kind: string }) => void;
+    }) {
+      this.onmessage = null;
+      this.onerror = null;
+      this.terminate = vi.fn();
+      this.postMessage = (message: { id: string; kind: string }) => {
+        expect(message.kind).toBe("prove-tron-source-package");
+        this.onmessage?.({
+          data: {
+            id: message.id,
+            ok: true,
+            result: {},
+          },
+        });
+      };
+    });
+    vi.stubGlobal("Worker", workerCtor);
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const directionTab = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(directionTab).toBeTruthy();
+    await directionTab!.trigger("click");
+    await flushPromises();
+
+    const inputs = wrapper.findAll("input");
+    await inputs[0].setValue("0.0001");
+    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await inputs[3].setValue(TRON_TX_ID);
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Fetch proof job"));
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "TRON -> TAIRA source proof package settlement is missing.",
+    );
+    expect(workerCtor).toHaveBeenCalledOnce();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects accessor-backed route manifests before bridge actions", async () => {
+    storeConnectedTronWallet();
+    const manifestSet = sampleReadyManifestSet();
+    const accessedFields: string[] = [];
+    Object.defineProperty(manifestSet.manifests[0], "diagnosticNote", {
+      enumerable: true,
+      get() {
+        accessedFields.push("diagnosticNote");
+        return "route material";
+      },
+    });
+    getSccpProofManifestsMock.mockResolvedValue(manifestSet);
     const workerCtor = vi.fn();
     vi.stubGlobal("Worker", workerCtor);
 
@@ -1927,7 +3350,11 @@ describe("SccpView", () => {
     await fetchButton!.trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain("SCCP bridge context changed");
+    expect(wrapper.text()).toContain(
+      "SCCP route manifest must contain only JSON-serializable",
+    );
+    expect(accessedFields).toEqual([]);
+    expect(getTronTransactionMock).not.toHaveBeenCalled();
     expect(workerCtor).not.toHaveBeenCalled();
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
@@ -2371,9 +3798,7 @@ describe("SccpView", () => {
     expect(triggerTronSmartContractMock).toHaveBeenCalled();
     expect(requestMock).toHaveBeenCalled();
     expect(broadcastTronTransactionMock).toHaveBeenCalled();
-    expect(wrapper.text()).toContain(
-      "TRON finalize transaction confirmed",
-    );
+    expect(wrapper.text()).toContain("TRON finalize transaction confirmed");
   });
 
   it("does not request TRON wallet approval when TAIRA proof job indexing times out", async () => {
@@ -2443,6 +3868,7 @@ describe("SccpView", () => {
               namespaces: {
                 tron: {
                   accounts: [`tron:0x2b6653dc:${VALID_TRON_ADDRESS}`],
+                  chains: ["tron:0x2b6653dc"],
                   methods: ["tron_signTransaction"],
                 },
               },
@@ -2580,9 +4006,7 @@ describe("SccpView", () => {
       endpoint: TRON_MAINNET_RPC_URL,
       txId: String(unsignedTransaction.txID),
     });
-    expect(wrapper.text()).toContain(
-      "TRON finalize transaction confirmed",
-    );
+    expect(wrapper.text()).toContain("TRON finalize transaction confirmed");
     expect(wrapper.text()).toContain("TAIRA source transaction");
     expect(wrapper.text()).toContain("TRON finalize transaction");
     const sourceLink = wrapper

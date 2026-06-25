@@ -310,10 +310,10 @@ const readTransactionOwner = (
   );
   const originAddress =
     isPlainRecord(value.new_contract) || isPlainRecord(value.newContract)
-      ? (value.new_contract as Record<string, unknown> | undefined)
+      ? ((value.new_contract as Record<string, unknown> | undefined)
           ?.origin_address ??
         (value.newContract as Record<string, unknown> | undefined)
-          ?.origin_address
+          ?.origin_address)
       : undefined;
   if (originAddress !== undefined) {
     const origin = normalizeTronTestSignerAddress(
@@ -358,8 +358,7 @@ const recoverTronSignatureAddress = (
 ): TronAddressView => {
   const signature = Uint8Array.from(Buffer.from(signatureHex, "hex"));
   const recoveryId = signature[64];
-  const normalizedRecoveryId =
-    recoveryId >= 27 ? recoveryId - 27 : recoveryId;
+  const normalizedRecoveryId = recoveryId >= 27 ? recoveryId - 27 : recoveryId;
   const publicKey = secp256k1.Signature.fromCompact(signature.slice(0, 64))
     .addRecoveryBit(normalizedRecoveryId)
     .recoverPublicKey(hash)
@@ -490,7 +489,9 @@ export const signSccpNileTestTronTransaction = async (
   signature.set(signatureObject.toCompactRawBytes());
   signature[64] = signatureObject.recovery;
   if (!isCanonicalRecoverableSignature(signature)) {
-    throw new Error("TRON Nile test signer generated a non-canonical signature.");
+    throw new Error(
+      "TRON Nile test signer generated a non-canonical signature.",
+    );
   }
   const signatureHex = bytesToHex(signature, false);
   const recovered = recoverTronSignatureAddress(signatureHex, hash);

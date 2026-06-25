@@ -1,10 +1,25 @@
 import {
+  BscMainnetSccpProver,
+  BscTestnetSccpProver,
+  buildBscMainnetSccpDestinationProofRequest,
+  buildBscMainnetSccpDestinationSubmission,
+  buildBscTestnetSccpDestinationProofRequest,
+  buildBscTestnetSccpDestinationSubmission,
+  buildEvmSccpBridgeProofSubmitPayload,
   buildTronSccpBridgeProofSubmitPayload,
   buildTronSccpProofRequest,
   buildTronSccpSubmission,
   TronSccpProver,
+  wrapBscMainnetSccpDestinationProofResult,
+  wrapBscTestnetSccpDestinationProofResult,
   wrapTronSccpProofResult,
   type BinaryLike,
+  type EvmSccpBridgeProofSubmitPayloadInput,
+  type EvmSccpDestinationBindingInput,
+  type EvmSccpProofRequestInput,
+  type EvmSccpProofResult,
+  type EvmSccpProveFn,
+  type EvmSccpSubmission,
   type TronSccpBridgeProofSubmitPayloadInput,
   type TronSccpDestinationBindingInput,
   type TronSccpProofResult,
@@ -12,6 +27,12 @@ import {
   type TronSccpProveFn,
   type TronSccpSubmission,
 } from "@iroha/iroha-js/sccp";
+import { snapshotSccpDataValue } from "@/utils/sccpDataSnapshot";
+
+const BSC_MAINNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000038";
+const BSC_TESTNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000061";
 
 export type SerializedSccpValue =
   | null
@@ -40,26 +61,191 @@ export type TronSccpProofPackage = {
   bridgePayload: SerializedSccpValue | null;
 };
 
+export type BscSccpProofPackageInput = {
+  witness: EvmSccpProofRequestInput;
+  proofBytes?: BinaryLike;
+  proofResult?: EvmSccpProofResult;
+  authority?: string;
+  messageBundle?: Record<string, unknown>;
+  destinationBinding?: EvmSccpDestinationBindingInput;
+  canonicalPayloadHex?: string;
+};
+
+export type BscSccpProofGenerationInput = BscSccpProofPackageInput & {
+  prove?: EvmSccpProveFn;
+};
+
+export type BscSccpProofPackage = {
+  request: SerializedSccpValue;
+  submission: SerializedSccpValue | null;
+  bridgePayload: SerializedSccpValue | null;
+  canonicalPayloadHex: string | null;
+};
+
 const snapshotProofPackageInput = <T>(input: T, label: string): T => {
-  try {
-    return structuredClone(input);
-  } catch (_error) {
-    throw new Error(`${label} must be structured-cloneable.`);
-  }
+  return snapshotSccpDataValue(input, label);
 };
 
 const bytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
 
-export const serializeSccpValue = (value: unknown): SerializedSccpValue => {
-  if (value === null || value === undefined) {
+const SCCP_SERIALIZED_VALUE_ERROR =
+  "SCCP proof package values must contain only acyclic enumerable string-keyed data properties with JSON-compatible values or binary proof bytes.";
+
+const isCanonicalArrayIndexKey = (key: string, length: number): boolean => {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+    return false;
+  }
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index >= 0 && index < length;
+};
+
+const isPlainSerializableRecord = (value: object): boolean => {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const ownSerializableDataEntries = (
+  value: object,
+  options: { allowAccessors: boolean },
+): Array<[string, unknown]> => {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const entries: Array<[string, unknown]> = [];
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+        throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+      }
+    }
+  } else if (!isPlainSerializableRecord(value)) {
+    throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+  }
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor) {
+      continue;
+    }
+    if (Array.isArray(value) && key === "length") {
+      continue;
+    }
+    if (!descriptor.enumerable) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
+    if (
+      typeof key !== "string" ||
+      (Array.isArray(value) && !isCanonicalArrayIndexKey(key, value.length))
+    ) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
+    if (!("value" in descriptor)) {
+      if (!options.allowAccessors || typeof descriptor.get !== "function") {
+        throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+      }
+      entries.push([key, descriptor.get.call(value)]);
+      continue;
+    }
+    entries.push([key, descriptor.value]);
+  }
+  return entries;
+};
+
+const normalizeOptionalCanonicalPayloadHex = (
+  value: unknown,
+  label: string,
+): string | null => {
+  if (value === null || value === undefined || value === "") {
     return null;
   }
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be 0x-prefixed byte hex.`);
+  }
+  const normalized = value.trim().toLowerCase();
   if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
+    normalized !== value.trim() ||
+    !/^0x(?:[0-9a-f]{2})*$/u.test(normalized)
   ) {
+    throw new Error(`${label} must be canonical 0x-prefixed byte hex.`);
+  }
+  return normalized;
+};
+
+const readOwnSccpProofDataProperty = (
+  value: object,
+  keys: readonly string[],
+): unknown => {
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor) {
+      continue;
+    }
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
+    return descriptor.value;
+  }
+  return undefined;
+};
+
+const readBscProofPackageNetwork = (
+  witness: EvmSccpProofRequestInput,
+): "mainnet" | "testnet" => {
+  const binding = readOwnSccpProofDataProperty(witness as object, [
+    "destinationBinding",
+    "destination_binding",
+  ]);
+  let networkId = BSC_TESTNET_NETWORK_ID_HEX;
+  if (binding !== undefined && binding !== null) {
+    if (
+      typeof binding !== "object" ||
+      Array.isArray(binding) ||
+      !isPlainSerializableRecord(binding)
+    ) {
+      throw new Error(
+        "BSC SCCP proof request destination binding must be a plain object.",
+      );
+    }
+    const networkIdValue =
+      readOwnSccpProofDataProperty(binding, [
+        "networkId",
+        "network_id",
+        "networkIdHex",
+        "network_id_hex",
+      ]) ?? BSC_TESTNET_NETWORK_ID_HEX;
+    if (typeof networkIdValue !== "string") {
+      throw new Error(
+        "BSC SCCP proof request network id must be canonical hex.",
+      );
+    }
+    networkId = networkIdValue.trim().toLowerCase();
+  }
+  if (networkId === "0x38" || networkId === BSC_MAINNET_NETWORK_ID_HEX) {
+    return "mainnet";
+  }
+  if (networkId === "0x61" || networkId === BSC_TESTNET_NETWORK_ID_HEX) {
+    return "testnet";
+  }
+  throw new Error("BSC SCCP proof request must target BSC mainnet or testnet.");
+};
+
+const serializeSccpValueWithOptions = (
+  value: unknown,
+  options: { allowAccessors: boolean },
+  visiting = new WeakSet<object>(),
+): SerializedSccpValue => {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined) {
+    throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+  }
+  if (typeof value === "string" || typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
     return value;
   }
   if (typeof value === "bigint") {
@@ -69,72 +255,104 @@ export const serializeSccpValue = (value: unknown): SerializedSccpValue => {
     return bytesToHex(value);
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => serializeSccpValue(entry));
+    if (visiting.has(value)) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
+    visiting.add(value);
+    try {
+      return ownSerializableDataEntries(value, options).map(([, entry]) =>
+        serializeSccpValueWithOptions(entry, options, visiting),
+      );
+    } finally {
+      visiting.delete(value);
+    }
   }
   if (typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        serializeSccpValue(entry),
-      ]),
-    );
+    if (visiting.has(value)) {
+      throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
+    }
+    visiting.add(value);
+    try {
+      return Object.fromEntries(
+        ownSerializableDataEntries(value, options).map(([key, entry]) => [
+          key,
+          serializeSccpValueWithOptions(entry, options, visiting),
+        ]),
+      );
+    } finally {
+      visiting.delete(value);
+    }
   }
-  return String(value);
+  throw new Error(SCCP_SERIALIZED_VALUE_ERROR);
 };
+
+export const serializeSccpValue = (value: unknown): SerializedSccpValue =>
+  serializeSccpValueWithOptions(value, { allowAccessors: false });
+
+const serializeTrustedSccpValue = (value: unknown): SerializedSccpValue =>
+  serializeSccpValueWithOptions(value, { allowAccessors: true });
 
 export const buildTronSccpProofPackage = (
   input: TronSccpProofPackageInput,
+  snapshotInput = true,
 ): TronSccpProofPackage => {
-  const request = buildTronSccpProofRequest(input.witness);
-  if (input.proofResult) {
-    if (input.proofResult.requestHash !== request.requestHash) {
+  const packageInput = snapshotInput
+    ? snapshotProofPackageInput(input, "TRON SCCP proof package input")
+    : input;
+  const request = buildTronSccpProofRequest(packageInput.witness);
+  if (packageInput.proofResult) {
+    if (packageInput.proofResult.requestHash !== request.requestHash) {
       throw new Error("TRON SCCP proof result must match the proof request.");
     }
     const submission: TronSccpSubmission = buildTronSccpSubmission({
-      proofResult: input.proofResult,
+      proofResult: packageInput.proofResult,
     });
     const bridgePayload =
-      input.authority && input.messageBundle && input.destinationBinding
+      packageInput.authority &&
+      packageInput.messageBundle &&
+      packageInput.destinationBinding
         ? buildTronSccpBridgeProofSubmitPayload({
-            authority: input.authority,
-            messageBundle: input.messageBundle,
+            authority: packageInput.authority,
+            messageBundle: packageInput.messageBundle,
             tronSccpSubmission: submission,
-            destinationBinding: input.destinationBinding,
+            destinationBinding: packageInput.destinationBinding,
           } satisfies TronSccpBridgeProofSubmitPayloadInput)
         : null;
 
     return {
-      request: serializeSccpValue(request),
-      submission: serializeSccpValue(submission),
-      bridgePayload: serializeSccpValue(bridgePayload),
+      request: serializeTrustedSccpValue(request),
+      submission: serializeTrustedSccpValue(submission),
+      bridgePayload: serializeTrustedSccpValue(bridgePayload),
     };
   }
-  if (!input.proofBytes) {
+  if (!packageInput.proofBytes) {
     return {
-      request: serializeSccpValue(request),
+      request: serializeTrustedSccpValue(request),
       submission: null,
       bridgePayload: null,
     };
   }
 
-  const proofResult = wrapTronSccpProofResult(input.proofBytes, request);
+  const proofResult = wrapTronSccpProofResult(packageInput.proofBytes, request);
   const submission: TronSccpSubmission = buildTronSccpSubmission({
     proofResult,
   });
   const bridgePayload =
-    input.authority && input.messageBundle && input.destinationBinding
+    packageInput.authority &&
+    packageInput.messageBundle &&
+    packageInput.destinationBinding
       ? buildTronSccpBridgeProofSubmitPayload({
-          authority: input.authority,
-          messageBundle: input.messageBundle,
+          authority: packageInput.authority,
+          messageBundle: packageInput.messageBundle,
           tronSccpSubmission: submission,
-          destinationBinding: input.destinationBinding,
+          destinationBinding: packageInput.destinationBinding,
         } satisfies TronSccpBridgeProofSubmitPayloadInput)
       : null;
 
   return {
-    request: serializeSccpValue(request),
-    submission: serializeSccpValue(submission),
-    bridgePayload: serializeSccpValue(bridgePayload),
+    request: serializeTrustedSccpValue(request),
+    submission: serializeTrustedSccpValue(submission),
+    bridgePayload: serializeTrustedSccpValue(bridgePayload),
   };
 };
 
@@ -158,10 +376,145 @@ export const generateTronSccpProofPackage = async (
     packageInputSnapshot.witness,
     "TRON SCCP proof witness",
   );
-  const prover = new TronSccpProver({ prove });
+  const safeProve: TronSccpProveFn = async (request) =>
+    snapshotProofPackageInput(await prove(request), "TRON SCCP proof result");
+  const prover = new TronSccpProver({ prove: safeProve });
   const proofResult = await prover.prove(proverWitnessSnapshot);
-  return buildTronSccpProofPackage({
-    ...packageInputSnapshot,
-    proofResult,
-  });
+  return buildTronSccpProofPackage(
+    {
+      ...packageInputSnapshot,
+      proofResult,
+    },
+    false,
+  );
+};
+
+export const buildBscSccpProofPackage = (
+  input: BscSccpProofPackageInput,
+  snapshotInput = true,
+): BscSccpProofPackage => {
+  const packageInput = snapshotInput
+    ? snapshotProofPackageInput(input, "BSC SCCP proof package input")
+    : input;
+  const network = readBscProofPackageNetwork(packageInput.witness);
+  const canonicalPayloadHex = normalizeOptionalCanonicalPayloadHex(
+    packageInput.canonicalPayloadHex,
+    "BSC SCCP proof package canonical payload bytes",
+  );
+  const request =
+    network === "mainnet"
+      ? buildBscMainnetSccpDestinationProofRequest(packageInput.witness)
+      : buildBscTestnetSccpDestinationProofRequest(packageInput.witness);
+  if (packageInput.proofResult) {
+    if (packageInput.proofResult.requestHash !== request.requestHash) {
+      throw new Error("BSC SCCP proof result must match the proof request.");
+    }
+    const submission: EvmSccpSubmission =
+      network === "mainnet"
+        ? buildBscMainnetSccpDestinationSubmission({
+            proofResult: packageInput.proofResult,
+          })
+        : buildBscTestnetSccpDestinationSubmission({
+            proofResult: packageInput.proofResult,
+          });
+    const bridgePayload =
+      packageInput.authority &&
+      packageInput.messageBundle &&
+      packageInput.destinationBinding
+        ? buildEvmSccpBridgeProofSubmitPayload({
+            authority: packageInput.authority,
+            messageBundle: packageInput.messageBundle,
+            evmSccpSubmission: submission,
+            destinationBinding: packageInput.destinationBinding,
+          } satisfies EvmSccpBridgeProofSubmitPayloadInput)
+        : null;
+
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: serializeTrustedSccpValue(submission),
+      bridgePayload: serializeTrustedSccpValue(bridgePayload),
+      canonicalPayloadHex,
+    };
+  }
+  if (!packageInput.proofBytes) {
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: null,
+      bridgePayload: null,
+      canonicalPayloadHex,
+    };
+  }
+
+  const proofResult =
+    network === "mainnet"
+      ? wrapBscMainnetSccpDestinationProofResult(
+          packageInput.proofBytes,
+          request,
+        )
+      : wrapBscTestnetSccpDestinationProofResult(
+          packageInput.proofBytes,
+          request,
+        );
+  const submission: EvmSccpSubmission =
+    network === "mainnet"
+      ? buildBscMainnetSccpDestinationSubmission({
+          proofResult,
+        })
+      : buildBscTestnetSccpDestinationSubmission({
+          proofResult,
+        });
+  const bridgePayload =
+    packageInput.authority &&
+    packageInput.messageBundle &&
+    packageInput.destinationBinding
+      ? buildEvmSccpBridgeProofSubmitPayload({
+          authority: packageInput.authority,
+          messageBundle: packageInput.messageBundle,
+          evmSccpSubmission: submission,
+          destinationBinding: packageInput.destinationBinding,
+        } satisfies EvmSccpBridgeProofSubmitPayloadInput)
+      : null;
+
+  return {
+    request: serializeTrustedSccpValue(request),
+    submission: serializeTrustedSccpValue(submission),
+    bridgePayload: serializeTrustedSccpValue(bridgePayload),
+    canonicalPayloadHex,
+  };
+};
+
+export const generateBscSccpProofPackage = async (
+  input: BscSccpProofGenerationInput,
+): Promise<BscSccpProofPackage> => {
+  const { prove, ...packageInput } = input;
+  if (typeof prove !== "function") {
+    const error = new Error(
+      "BSC SCCP Groth16 prover is not linked; provide a browser-safe prove function before generating production proofs.",
+    );
+    (error as Error & { code?: string }).code =
+      "ERR_SCCP_BSC_PROVER_UNAVAILABLE";
+    throw error;
+  }
+  const packageInputSnapshot = snapshotProofPackageInput(
+    packageInput,
+    "BSC SCCP proof package input",
+  );
+  const proverWitnessSnapshot = snapshotProofPackageInput(
+    packageInputSnapshot.witness,
+    "BSC SCCP proof witness",
+  );
+  const safeProve: EvmSccpProveFn = async (request) =>
+    snapshotProofPackageInput(await prove(request), "BSC SCCP proof result");
+  const prover =
+    readBscProofPackageNetwork(proverWitnessSnapshot) === "mainnet"
+      ? new BscMainnetSccpProver({ prove: safeProve })
+      : new BscTestnetSccpProver({ prove: safeProve });
+  const proofResult = await prover.prove(proverWitnessSnapshot);
+  return buildBscSccpProofPackage(
+    {
+      ...packageInputSnapshot,
+      proofResult,
+    },
+    false,
+  );
 };

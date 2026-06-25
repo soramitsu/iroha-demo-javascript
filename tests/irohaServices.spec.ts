@@ -49,6 +49,18 @@ import {
   keepSubscription,
   pauseSubscription,
   resumeSubscription,
+  callEvmRpc,
+  getEvmBalance,
+  getEvmBlockByHash,
+  getEvmChainId,
+  getEvmCode,
+  getEvmLogs,
+  getEvmTransaction,
+  getEvmTransactionReceipt,
+  getSigningAlgorithms,
+  generateKeyPair,
+  derivePublicKey,
+  storeAccountSecret,
   signIrohaConnectMessage,
   submitGovernancePlainBallot,
   transferAsset,
@@ -99,6 +111,75 @@ describe("iroha services bridge", () => {
     expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(input);
   });
 
+  it("forwards signing algorithm selection calls to the bridge", async () => {
+    const getSigningAlgorithmsMock = vi.fn().mockResolvedValue([
+      { id: "ed25519", label: "Ed25519", isDefault: true },
+      { id: "secp256k1", label: "Secp256k1", isDefault: false },
+    ]);
+    const generateKeyPairMock = vi.fn().mockReturnValue({
+      privateKeyHex: "11".repeat(32),
+      publicKeyHex: "02" + "22".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+    const derivePublicKeyMock = vi.fn().mockReturnValue({
+      publicKeyHex: "02" + "22".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+    const storeAccountSecretMock = vi.fn().mockResolvedValue(undefined);
+    (window as any).iroha = {
+      getSigningAlgorithms: getSigningAlgorithmsMock,
+      generateKeyPair: generateKeyPairMock,
+      derivePublicKey: derivePublicKeyMock,
+      storeAccountSecret: storeAccountSecretMock,
+    };
+
+    await expect(
+      getSigningAlgorithms("https://taira.sora.org"),
+    ).resolves.toHaveLength(2);
+    expect(getSigningAlgorithmsMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+    });
+    expect(
+      generateKeyPair({
+        signingAlgorithm: "secp256k1",
+        seedHex: "33".repeat(32),
+      }),
+    ).toEqual({
+      privateKeyHex: "11".repeat(32),
+      publicKeyHex: "02" + "22".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+    expect(generateKeyPairMock).toHaveBeenCalledWith({
+      signingAlgorithm: "secp256k1",
+      seedHex: "33".repeat(32),
+    });
+    expect(
+      derivePublicKey({
+        privateKeyHex: "11".repeat(32),
+        signingAlgorithm: "secp256k1",
+      }),
+    ).toEqual({
+      publicKeyHex: "02" + "22".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+    expect(derivePublicKeyMock).toHaveBeenCalledWith({
+      privateKeyHex: "11".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+    await expect(
+      storeAccountSecret({
+        accountId: "testuSecp",
+        privateKeyHex: "11".repeat(32),
+        signingAlgorithm: "secp256k1",
+      }),
+    ).resolves.toBeUndefined();
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "testuSecp",
+      privateKeyHex: "11".repeat(32),
+      signingAlgorithm: "secp256k1",
+    });
+  });
+
   it("forwards TAIRA SCCP inbound settlement deployments to the bridge", async () => {
     const deployMock = vi.fn().mockResolvedValue({
       contract_alias: "taira_xor_inbound_settlement::universal",
@@ -122,6 +203,80 @@ describe("iroha services bridge", () => {
       contract_address: "tairac1settlement",
     });
     expect(deployMock).toHaveBeenCalledWith(input);
+  });
+
+  it("forwards EVM/BSC read methods through the preload bridge", async () => {
+    const callEvmRpcMock = vi.fn().mockResolvedValue("0x61");
+    const getEvmChainIdMock = vi.fn().mockResolvedValue("0x61");
+    const getEvmBalanceMock = vi.fn().mockResolvedValue("0xde0b6b3a7640000");
+    const getEvmCodeMock = vi.fn().mockResolvedValue("0x6000");
+    const receipt = { transactionHash: "0x".padEnd(66, "1") };
+    const transaction = { hash: "0x".padEnd(66, "2") };
+    const block = { hash: "0x".padEnd(66, "3") };
+    const logs = [{ transactionHash: "0x".padEnd(66, "4") }];
+    const getEvmTransactionReceiptMock = vi.fn().mockResolvedValue(receipt);
+    const getEvmTransactionMock = vi.fn().mockResolvedValue(transaction);
+    const getEvmBlockByHashMock = vi.fn().mockResolvedValue(block);
+    const getEvmLogsMock = vi.fn().mockResolvedValue(logs);
+
+    (window as any).iroha = {
+      callEvmRpc: callEvmRpcMock,
+      getEvmChainId: getEvmChainIdMock,
+      getEvmBalance: getEvmBalanceMock,
+      getEvmCode: getEvmCodeMock,
+      getEvmTransactionReceipt: getEvmTransactionReceiptMock,
+      getEvmTransaction: getEvmTransactionMock,
+      getEvmBlockByHash: getEvmBlockByHashMock,
+      getEvmLogs: getEvmLogsMock,
+    };
+
+    const rpcInput = {
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      method: "eth_chainId",
+      params: [],
+    };
+    const defaultInput = {
+      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+    };
+    const addressInput = {
+      ...defaultInput,
+      address: "0x1111111111111111111111111111111111111111",
+    };
+    const txInput = {
+      ...defaultInput,
+      txHash: "0x".padEnd(66, "1"),
+    };
+    const blockInput = {
+      ...defaultInput,
+      blockHash: "0x".padEnd(66, "2"),
+      fullTransactions: true,
+    };
+    const logsInput = {
+      ...defaultInput,
+      address: "0x2222222222222222222222222222222222222222",
+      fromBlock: "0x1",
+      toBlock: "latest",
+    };
+
+    await expect(callEvmRpc(rpcInput)).resolves.toBe("0x61");
+    await expect(getEvmChainId(defaultInput)).resolves.toBe("0x61");
+    await expect(getEvmBalance(addressInput)).resolves.toBe(
+      "0xde0b6b3a7640000",
+    );
+    await expect(getEvmCode(addressInput)).resolves.toBe("0x6000");
+    await expect(getEvmTransactionReceipt(txInput)).resolves.toEqual(receipt);
+    await expect(getEvmTransaction(txInput)).resolves.toEqual(transaction);
+    await expect(getEvmBlockByHash(blockInput)).resolves.toEqual(block);
+    await expect(getEvmLogs(logsInput)).resolves.toEqual(logs);
+
+    expect(callEvmRpcMock).toHaveBeenCalledWith(rpcInput);
+    expect(getEvmChainIdMock).toHaveBeenCalledWith(defaultInput);
+    expect(getEvmBalanceMock).toHaveBeenCalledWith(addressInput);
+    expect(getEvmCodeMock).toHaveBeenCalledWith(addressInput);
+    expect(getEvmTransactionReceiptMock).toHaveBeenCalledWith(txInput);
+    expect(getEvmTransactionMock).toHaveBeenCalledWith(txInput);
+    expect(getEvmBlockByHashMock).toHaveBeenCalledWith(blockInput);
+    expect(getEvmLogsMock).toHaveBeenCalledWith(logsInput);
   });
 
   it("forwards offset-based pagination to asset and transaction fetchers", async () => {

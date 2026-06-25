@@ -371,6 +371,42 @@ describe("HeaderIrohaConnectButton", () => {
     ).toBe("sign_result_ok");
   });
 
+  it("returns the selected signing algorithm metadata in IrohaConnect signature responses", async () => {
+    const wrapper = mountComponent();
+    const { socket, keys } = await approveConnection(wrapper);
+    const signingMessageB64 =
+      Buffer.from("transfer with secp").toString("base64");
+    signIrohaConnectMessageMock.mockResolvedValueOnce({
+      publicKeyHex: "02" + "ab".repeat(32),
+      signatureB64: Buffer.from("secp-signature").toString("base64"),
+      signingAlgorithm: "secp256k1",
+      algorithmCode: 1,
+      algorithmLabel: "Secp256k1",
+    });
+
+    emitBinaryMessage(
+      socket,
+      encodeContractSignRequestFrame(keys.appKey, {
+        requestId: "request-secp",
+        accountId: EXAMPLE_ACCOUNT_ID,
+        signingMessageB64,
+      }),
+    );
+    await flushPromises();
+    await getButtonByText(wrapper, t("Approve and sign")).trigger("click");
+    await flushPromises();
+
+    const envelope = decodeLatestWalletEnvelope(socket, keys.walletKey);
+    expect(envelope.payload).toMatchObject({
+      type: "sign_result_ok",
+      signature: {
+        algorithmCode: 1,
+        algorithmLabel: "Secp256k1",
+        signatureBase64: Buffer.from("secp-signature").toString("base64"),
+      },
+    });
+  });
+
   it("rejects an IrohaConnect transaction request without signing", async () => {
     const wrapper = mountComponent();
     const { socket, keys } = await approveConnection(wrapper);

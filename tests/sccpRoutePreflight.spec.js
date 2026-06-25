@@ -28,6 +28,7 @@ const HASH_33 = `0x${"33".repeat(32)}`;
 const HASH_44 = `0x${"44".repeat(32)}`;
 const HASH_55 = `0x${"55".repeat(32)}`;
 const HASH_66 = `0x${"66".repeat(32)}`;
+const HASH_88 = `0x${"88".repeat(32)}`;
 const BINDING_KEY = "tron:0:5:mainnet:taira_tron_xor:v1";
 const ARTIFACT_B64 = Buffer.from(
   "taira xor sccp burn-record test artifact",
@@ -80,6 +81,7 @@ const readyManifest = (overrides = {}) => ({
   },
   postDeployLiveEvidence: {
     fullTomlReady: true,
+    offlineFullTomlSha256: HASH_88,
     sourceBridgeConfigHash: HASH_44,
     sourceEventTransactionId: HASH_55,
     routeCanaryEvidenceHash: HASH_66,
@@ -120,6 +122,7 @@ describe("SCCP route preflight", () => {
     });
     expect(report.postDeployLiveEvidence).toEqual({
       fullTomlReady: true,
+      offlineFullTomlSha256: HASH_88,
       sourceBridgeConfigHash: HASH_44,
       sourceEventTransactionId: HASH_55,
       routeCanaryEvidenceHash: HASH_66,
@@ -269,6 +272,15 @@ describe("SCCP route preflight", () => {
           },
         },
         "fullTomlReady must be true",
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...readyManifest().postDeployLiveEvidence,
+            offlineFullTomlSha256: undefined,
+          },
+        },
+        "offlineFullTomlSha256",
       ],
       [
         {

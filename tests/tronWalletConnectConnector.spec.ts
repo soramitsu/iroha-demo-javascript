@@ -11,6 +11,7 @@ import {
 
 const VALID_TRON_ADDRESS = "TJRabPrwbZy45sbavfcjinPJC18kjpRTv8";
 const SECOND_TRON_ADDRESS = "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7";
+const TRON_WALLETCONNECT_STORAGE_KEY = "iroha-demo:sccp:tron-walletconnect";
 const TRON_WALLETCONNECT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -84,6 +85,7 @@ describe("TRON WalletConnect connector", () => {
         namespaces: {
           [WALLETCONNECT_TRON_NAMESPACE]: {
             accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -180,6 +182,7 @@ describe("TRON WalletConnect connector", () => {
         namespaces: {
           [WALLETCONNECT_TRON_NAMESPACE]: {
             accounts: [`${TRON_NILE_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_NILE_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -248,7 +251,118 @@ describe("TRON WalletConnect connector", () => {
     });
   });
 
-  it("uses the Electron Nile test signer by default when WalletConnect is not configured", async () => {
+  it("expires or rejects unsafe stored TRON WalletConnect metadata", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-05T00:00:00Z"));
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
+    const nowMs = Date.now();
+    const { readStoredTronWalletConnectSession } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+
+    for (const stored of [
+      null,
+      [],
+      {
+        topic: "topic",
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_NILE_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+      },
+      {
+        topic: "private_key_topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs - TRON_WALLETCONNECT_SESSION_MAX_AGE_MS - 1,
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs + 10 * 60 * 1000,
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+        label: "unexpected metadata must not persist",
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+        privateKeyHex: "00".repeat(32),
+      },
+      {
+        topic: "topic",
+        address: VALID_TRON_ADDRESS,
+        chainId: TRON_MAINNET_CAIP_CHAIN_ID,
+        namespace: WALLETCONNECT_TRON_NAMESPACE,
+        methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+        connectedAtMs: nowMs,
+        sessionProperties: {
+          tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+        },
+      },
+    ]) {
+      localStorage.setItem(
+        TRON_WALLETCONNECT_STORAGE_KEY,
+        JSON.stringify(stored),
+      );
+      expect(readStoredTronWalletConnectSession()).toBeNull();
+      expect(localStorage.getItem(TRON_WALLETCONNECT_STORAGE_KEY)).toBeNull();
+    }
+  });
+
+  it("rejects duplicate JSON keys in stored TRON WalletConnect metadata", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-05T00:00:00Z"));
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
+    const nowMs = Date.now();
+    const { readStoredTronWalletConnectSession } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+
+    for (const stored of [
+      `{"topic":"topic-tron","\\u0074opic":"topic-shadow","address":"${VALID_TRON_ADDRESS}","chainId":"${TRON_MAINNET_CAIP_CHAIN_ID}","namespace":"${WALLETCONNECT_TRON_NAMESPACE}","methodVersion":"${WALLETCONNECT_TRON_METHOD_VERSION}","connectedAtMs":${nowMs}}`,
+      `{"topic":"topic-tron","address":"${VALID_TRON_ADDRESS}","\\u0061ddress":"${SECOND_TRON_ADDRESS}","chainId":"${TRON_MAINNET_CAIP_CHAIN_ID}","namespace":"${WALLETCONNECT_TRON_NAMESPACE}","methodVersion":"${WALLETCONNECT_TRON_METHOD_VERSION}","connectedAtMs":${nowMs}}`,
+      `{"topic":"topic-tron","address":"${VALID_TRON_ADDRESS}","chainId":"${TRON_MAINNET_CAIP_CHAIN_ID}","namespace":"${WALLETCONNECT_TRON_NAMESPACE}","methodVersion":"${WALLETCONNECT_TRON_METHOD_VERSION}","connectedAtMs":${nowMs},"sessionProperties":{"tron_method_version":"${WALLETCONNECT_TRON_METHOD_VERSION}","\\u0074ron_method_version":"shadow"}}`,
+    ]) {
+      localStorage.setItem(TRON_WALLETCONNECT_STORAGE_KEY, stored);
+      expect(readStoredTronWalletConnectSession()).toBeNull();
+      expect(localStorage.getItem(TRON_WALLETCONNECT_STORAGE_KEY)).toBeNull();
+    }
+  });
+
+  it("uses the Electron Nile test signer when Nile is explicitly configured and WalletConnect is not configured", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "nile");
     const unsignedTransaction = {
       visible: true,
       txID: "aa".repeat(32),
@@ -291,9 +405,9 @@ describe("TRON WalletConnect connector", () => {
     expect(
       localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
     ).toBeNull();
-    await expect(
-      tron.signTransaction(unsignedTransaction),
-    ).resolves.toBe(signedTransaction);
+    await expect(tron.signTransaction(unsignedTransaction)).resolves.toBe(
+      signedTransaction,
+    );
     expect(signMock).toHaveBeenCalledWith({
       transaction: unsignedTransaction,
       ownerAddress: VALID_TRON_ADDRESS,
@@ -356,6 +470,7 @@ describe("TRON WalletConnect connector", () => {
               `${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`,
               `${TRON_MAINNET_CAIP_CHAIN_ID}:${SECOND_TRON_ADDRESS}`,
             ],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -389,6 +504,129 @@ describe("TRON WalletConnect connector", () => {
     ).toBeNull();
   });
 
+  it("rejects over-scoped or cross-profile TRON WalletConnect sessions", async () => {
+    vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
+    const baseSession = {
+      topic: "topic-scope",
+      namespaces: {
+        [WALLETCONNECT_TRON_NAMESPACE]: {
+          accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+          chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+          methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+        },
+      },
+      sessionProperties: {
+        tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+      },
+    };
+    const connectMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          namespaces: {
+            [WALLETCONNECT_TRON_NAMESPACE]: {
+              accounts: [
+                `${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`,
+                `${TRON_NILE_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`,
+              ],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          namespaces: {
+            [WALLETCONNECT_TRON_NAMESPACE]: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          namespaces: {
+            [WALLETCONNECT_TRON_NAMESPACE]: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD, "tron_signMessage"],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          namespaces: {
+            [WALLETCONNECT_TRON_NAMESPACE]: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+            },
+            eip155: {
+              accounts: [],
+              methods: [],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          namespaces: {
+            [WALLETCONNECT_TRON_NAMESPACE]: {
+              accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID, TRON_NILE_CAIP_CHAIN_ID],
+              methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+            },
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        session: {
+          ...baseSession,
+          sessionProperties: {
+            tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+            debug: true,
+          },
+        },
+      });
+    const disconnectMock = vi.fn();
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: vi.fn().mockResolvedValue({
+          connect: connectMock,
+          disconnect: disconnectMock,
+          provider: { session: null },
+          request: vi.fn(),
+        }),
+      },
+    }));
+
+    const { useTronWalletConnect } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+    const tron = useTronWalletConnect();
+
+    await expect(tron.connect()).rejects.toThrow(
+      /unsupported TRON accounts \(tron:0xcd8690dc\)/u,
+    );
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await expect(tron.connect()).rejects.toThrow(
+        "Connected wallet did not approve TRON v1 transaction signing.",
+      );
+      expect(tron.address.value).toBe("");
+      expect(localStorage.getItem(TRON_WALLETCONNECT_STORAGE_KEY)).toBeNull();
+    }
+    expect(disconnectMock).toHaveBeenCalledTimes(6);
+  });
+
   it("rejects WalletConnect sessions without a stable topic", async () => {
     vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
@@ -397,6 +635,7 @@ describe("TRON WalletConnect connector", () => {
         namespaces: {
           [WALLETCONNECT_TRON_NAMESPACE]: {
             accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -444,6 +683,7 @@ describe("TRON WalletConnect connector", () => {
               `${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`,
               `${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`,
             ],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -494,6 +734,7 @@ describe("TRON WalletConnect connector", () => {
           namespaces: {
             [WALLETCONNECT_TRON_NAMESPACE]: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
             },
           },
@@ -543,7 +784,7 @@ describe("TRON WalletConnect connector", () => {
     );
   });
 
-  it("clones unsigned transactions before WalletConnect signing so adapter mutations cannot rewrite caller intent", async () => {
+  it("clones and freezes unsigned transactions before WalletConnect signing so adapter mutations cannot rewrite caller intent", async () => {
     vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");
     const unsignedTransaction = {
@@ -553,8 +794,19 @@ describe("TRON WalletConnect connector", () => {
       raw_data_hex: "12",
     };
     const requestMock = vi.fn().mockImplementation((request) => {
-      request.params.transaction.raw_data.contract.push({ mutated: true });
-      request.params.transaction.raw_data_hex = "feedface";
+      expect(Object.isFrozen(request)).toBe(true);
+      expect(Object.isFrozen(request.params)).toBe(true);
+      expect(Object.isFrozen(request.params.transaction)).toBe(true);
+      expect(Object.isFrozen(request.params.transaction.raw_data)).toBe(true);
+      expect(
+        Object.isFrozen(request.params.transaction.raw_data.contract),
+      ).toBe(true);
+      expect(() => {
+        request.params.transaction.raw_data.contract.push({ mutated: true });
+      }).toThrow(TypeError);
+      expect(() => {
+        request.params.transaction.raw_data_hex = "feedface";
+      }).toThrow(TypeError);
       return Promise.resolve({
         ...request.params.transaction,
         signature: ["11".repeat(65)],
@@ -569,6 +821,7 @@ describe("TRON WalletConnect connector", () => {
           namespaces: {
             [WALLETCONNECT_TRON_NAMESPACE]: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
             },
           },
@@ -608,8 +861,8 @@ describe("TRON WalletConnect connector", () => {
     expect(unsignedTransaction.raw_data.contract).toEqual([]);
     expect(unsignedTransaction.raw_data_hex).toBe("12");
     expect(signed).toMatchObject({
-      raw_data: { contract: [{ mutated: true }] },
-      raw_data_hex: "feedface",
+      raw_data: { contract: [] },
+      raw_data_hex: "12",
     });
   });
 
@@ -745,6 +998,7 @@ describe("TRON WalletConnect connector", () => {
           namespaces: {
             [WALLETCONNECT_TRON_NAMESPACE]: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
             },
           },
@@ -840,16 +1094,160 @@ describe("TRON WalletConnect connector", () => {
     expect(requestMock).not.toHaveBeenCalled();
   });
 
-  it("rejects uncloneable WalletConnect transaction requests before signing", async () => {
+  it("rejects non-JSON and hostile object graph transaction requests before signing", async () => {
     const { cloneTronWalletConnectTransactionRequest } = await import(
       "@/composables/useTronWalletConnect"
     );
+    const valid = {
+      txID: "aa".repeat(32),
+      raw_data: { contract: [] as Array<Record<string, unknown>> },
+      raw_data_hex: "12",
+    };
+    const nullPrototypeTransaction = Object.assign(Object.create(null), valid);
+    expect(
+      cloneTronWalletConnectTransactionRequest(nullPrototypeTransaction),
+    ).toEqual(valid);
+
+    class TronTransactionRequest {
+      txID = "aa".repeat(32);
+      raw_data = { contract: [] };
+      raw_data_hex = "12";
+    }
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(
+        new TronTransactionRequest() as unknown as Record<string, unknown>,
+      ),
+    ).toThrow(/plain object/);
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(
+        Object.assign(
+          Object.create({
+            raw_data: { contract: [] },
+            raw_data_hex: "12",
+          }),
+          { txID: "aa".repeat(32) },
+        ),
+      ),
+    ).toThrow(/plain object/);
     expect(() =>
       cloneTronWalletConnectTransactionRequest({
         txID: "aa".repeat(32),
         debug: () => "not cloneable",
       }),
-    ).toThrow(/structured-cloneable/);
+    ).toThrow(/JSON-serializable/);
+    for (const nonJsonValue of [
+      1n,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      expect(() =>
+        cloneTronWalletConnectTransactionRequest({
+          ...valid,
+          raw_data: {
+            contract: [],
+            nonJsonValue,
+          },
+        }),
+      ).toThrow(/JSON-serializable/);
+    }
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest({
+        ...valid,
+        raw_data: {
+          contract: [],
+          omittedBeforeWallet: undefined,
+        },
+      }),
+    ).toThrow(/must not contain undefined fields/);
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest({
+        ...valid,
+        raw_data: {
+          contract: [{ parameter: { value: { owner_address: undefined } } }],
+        },
+      }),
+    ).toThrow(/must not contain undefined fields/);
+    const cyclicTransaction = { ...valid } as Record<string, unknown>;
+    cyclicTransaction.self = cyclicTransaction;
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(cyclicTransaction),
+    ).toThrow(/JSON-serializable/);
+
+    const getterBackedTransaction = { ...valid };
+    const accessedFields: string[] = [];
+    Object.defineProperty(getterBackedTransaction, "raw_data_hex", {
+      enumerable: true,
+      get() {
+        accessedFields.push("raw_data_hex");
+        return "12";
+      },
+    });
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(getterBackedTransaction),
+    ).toThrow(/enumerable string-keyed data fields/);
+    expect(accessedFields).toEqual([]);
+
+    const nestedGetterBackedTransaction = {
+      ...valid,
+      raw_data: { contract: [{}] },
+    };
+    const nestedAccessedFields: string[] = [];
+    Object.defineProperty(
+      nestedGetterBackedTransaction.raw_data.contract[0],
+      "secret",
+      {
+        enumerable: true,
+        get() {
+          nestedAccessedFields.push("secret");
+          return VALID_MNEMONIC;
+        },
+      },
+    );
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(nestedGetterBackedTransaction),
+    ).toThrow(/enumerable string-keyed data fields/);
+    expect(nestedAccessedFields).toEqual([]);
+
+    const symbolBackedTransaction = { ...valid } as Record<
+      PropertyKey,
+      unknown
+    >;
+    symbolBackedTransaction[Symbol("privateKeyHex")] = "00".repeat(32);
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(
+        symbolBackedTransaction as Record<string, unknown>,
+      ),
+    ).toThrow(/enumerable string-keyed data fields/);
+
+    const hiddenSecretTransaction = { ...valid };
+    Object.defineProperty(hiddenSecretTransaction, "privateKeyHex", {
+      enumerable: false,
+      value: "00".repeat(32),
+    });
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest(hiddenSecretTransaction),
+    ).toThrow(/enumerable string-keyed data fields/);
+
+    const sparseContract = [] as Array<Record<string, unknown>>;
+    sparseContract.length = 1;
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest({
+        ...valid,
+        raw_data: { contract: sparseContract },
+      }),
+    ).toThrow(/enumerable string-keyed data fields/);
+
+    const contractWithExtraProperty = [{ parameter: { value: {} } }] as Array<
+      Record<string, unknown>
+    > & { privateKeyHex?: string };
+    contractWithExtraProperty.privateKeyHex = "00".repeat(32);
+    expect(() =>
+      cloneTronWalletConnectTransactionRequest({
+        ...valid,
+        raw_data: { contract: contractWithExtraProperty },
+      }),
+    ).toThrow(/enumerable string-keyed data fields/);
   });
 
   it("clears failed connector initialization so a later connect can retry", async () => {
@@ -861,6 +1259,7 @@ describe("TRON WalletConnect connector", () => {
         namespaces: {
           [WALLETCONNECT_TRON_NAMESPACE]: {
             accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: [WALLETCONNECT_TRON_SIGN_METHOD],
           },
         },
@@ -919,6 +1318,7 @@ describe("TRON WalletConnect connector", () => {
         namespaces: {
           [WALLETCONNECT_TRON_NAMESPACE]: {
             accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: ["tron_signMessage"],
           },
         },
@@ -976,6 +1376,7 @@ describe("TRON WalletConnect connector", () => {
           namespaces: {
             [WALLETCONNECT_TRON_NAMESPACE]: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
             },
           },

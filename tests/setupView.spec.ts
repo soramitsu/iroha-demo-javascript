@@ -11,6 +11,7 @@ import { formatAssetDefinitionLabel } from "@/utils/assetId";
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
 const generateKeyPairMock = vi.fn();
+const getSigningAlgorithmsMock = vi.fn();
 const isSecureVaultAvailableMock = vi.fn();
 const pingToriiMock = vi.fn();
 const registerAccountMock = vi.fn();
@@ -23,7 +24,9 @@ vi.mock("@/services/iroha", () => ({
   deriveAccountAddress: (input: unknown) => deriveAccountAddressMock(input),
   derivePublicKey: (privateKeyHex: string) =>
     derivePublicKeyMock(privateKeyHex),
-  generateKeyPair: () => generateKeyPairMock(),
+  generateKeyPair: (input: unknown) => generateKeyPairMock(input),
+  getSigningAlgorithms: (toriiUrl?: string) =>
+    getSigningAlgorithmsMock(toriiUrl),
   isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
   pingTorii: (toriiUrl: string) => pingToriiMock(toriiUrl),
   registerAccount: (input: unknown) => registerAccountMock(input),
@@ -35,6 +38,7 @@ describe("SetupView", () => {
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
     generateKeyPairMock.mockReset();
+    getSigningAlgorithmsMock.mockReset();
     isSecureVaultAvailableMock.mockReset();
     pingToriiMock.mockReset();
     registerAccountMock.mockReset();
@@ -56,7 +60,11 @@ describe("SetupView", () => {
     generateKeyPairMock.mockResolvedValue({
       privateKeyHex: "11".repeat(32),
       publicKeyHex: "ab".repeat(32),
+      signingAlgorithm: "ed25519",
     });
+    getSigningAlgorithmsMock.mockResolvedValue([
+      { id: "ed25519", label: "Ed25519", isDefault: true },
+    ]);
     isSecureVaultAvailableMock.mockResolvedValue(true);
     pingToriiMock.mockResolvedValue({ status: "ok" });
     registerAccountMock.mockResolvedValue({ hash: "0xabc" });
@@ -198,6 +206,7 @@ describe("SetupView", () => {
       accountId:
         "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV",
       privateKeyHex: "11".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(session.activeAccount?.hasStoredSecret).toBe(true);
     expect(session.activeAccount?.privateKeyHex).toBe("");
@@ -230,6 +239,7 @@ describe("SetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uSetupStableAccount1234567890",
       privateKeyHex: "11".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(session.connection.networkPrefix).toBe(42);
     expect(session.activeAccountId).toBe("n42uSetupStableAccount1234567890");
@@ -264,6 +274,7 @@ describe("SetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uDeniedSetupAccount1234567890",
       privateKeyHex: "11".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(session.connection.networkPrefix).toBe(
       TAIRA_CHAIN_PRESET.connection.networkPrefix,
@@ -295,6 +306,7 @@ describe("SetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "testuAuthority",
       privateKeyHex: "22".repeat(32),
+      signingAlgorithm: "ed25519",
     });
     expect(session.authority.accountId).toBe("");
     expect(session.authority.hasStoredSecret).toBe(false);

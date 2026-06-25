@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTronSccpProofRequest,
+  canonicalSccpMessageProofBundleBytes,
+  canonicalSccpPayloadEnvelopeBytes,
+  SCCP_CODEC_TEXT_UTF8,
+  SCCP_CODEC_TRON_BASE58CHECK,
   sccpSubmitMessageProofCallData,
+  sccpMerkleRootFromCommitment,
+  sccpPayloadHash,
+  sccpTransferMessageId,
   tronSccpDestinationBinding,
   wrapTronSccpProofResult,
   type TronSccpProofRequest,
@@ -22,12 +29,56 @@ const NILE_BINDING_HASH =
   "0xdbce00b44904bf0462b08d97eebb5095906d09733f624f0a0b3319589f2b6e3f";
 
 const hex32 = (byte: string): string => `0x${byte.repeat(32)}`;
+const SAMPLE_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: SCCP_SORA_DOMAIN,
+  dest_domain: SCCP_TRON_DOMAIN,
+  nonce: "19",
+  asset_home_domain: SCCP_SORA_DOMAIN,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: "1000000000000000000",
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: "sora-test-sender",
+  recipient_codec: SCCP_CODEC_TRON_BASE58CHECK,
+  recipient: NILE_VERIFIER_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: "taira_tron_xor",
+};
+const SAMPLE_PAYLOAD_ENVELOPE = {
+  kind: "Transfer" as const,
+  value: SAMPLE_TRANSFER_PAYLOAD,
+};
+const SAMPLE_MESSAGE_ID = sccpTransferMessageId(SAMPLE_TRANSFER_PAYLOAD);
+const SAMPLE_PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpPayloadEnvelopeBytes(SAMPLE_PAYLOAD_ENVELOPE),
+);
+const SAMPLE_COMMITMENT = {
+  version: 1 as const,
+  kind: "Transfer" as const,
+  target_domain: SCCP_TRON_DOMAIN,
+  message_id: SAMPLE_MESSAGE_ID,
+  payload_hash: SAMPLE_PAYLOAD_HASH,
+};
+const SAMPLE_MERKLE_PROOF = { steps: [] };
+const SAMPLE_COMMITMENT_ROOT = sccpMerkleRootFromCommitment(
+  SAMPLE_COMMITMENT,
+  SAMPLE_MERKLE_PROOF,
+);
+const SAMPLE_BUNDLE_BYTES = canonicalSccpMessageProofBundleBytes({
+  version: 1,
+  commitment_root: SAMPLE_COMMITMENT_ROOT,
+  commitment: SAMPLE_COMMITMENT,
+  merkle_proof: SAMPLE_MERKLE_PROOF,
+  payload: SAMPLE_PAYLOAD_ENVELOPE,
+  finality_proof: "0x",
+});
 const SAMPLE_PUBLIC_INPUTS = {
   version: 1 as const,
-  messageId: hex32("11"),
-  payloadHash: hex32("22"),
+  messageId: SAMPLE_MESSAGE_ID,
+  payloadHash: SAMPLE_PAYLOAD_HASH,
   targetDomain: SCCP_TRON_DOMAIN,
-  commitmentRoot: hex32("33"),
+  commitmentRoot: SAMPLE_COMMITMENT_ROOT,
   finalityHeight: "19",
   finalityBlockHash: hex32("44"),
 };
@@ -52,7 +103,7 @@ const buildRequest = (): TronSccpProofRequest => {
 
   return buildTronSccpProofRequest({
     publicInputs: SAMPLE_PUBLIC_INPUTS,
-    bundleBytes: new Uint8Array([5, 6, 7]),
+    bundleBytes: SAMPLE_BUNDLE_BYTES,
     sourceProofBytes: [],
     sourceDomain: SCCP_SORA_DOMAIN,
     statementHash: hex32("55"),
@@ -100,9 +151,7 @@ describe("SCCP Nile diagnostic destination prover", () => {
         messageId: request.publicInputs.messageId.slice(2),
         commitmentRoot: request.publicInputs.commitmentRoot.slice(2),
       },
-      publicSignalWords: request.publicSignalWords.map((word) =>
-        word.slice(2),
-      ),
+      publicSignalWords: request.publicSignalWords.map((word) => word.slice(2)),
     };
 
     const result = await prove(bareRequest);

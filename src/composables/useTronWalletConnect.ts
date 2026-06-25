@@ -16,6 +16,8 @@ import {
   signSccpNileTestTronTransaction,
 } from "@/services/iroha";
 import type { SccpNileTestTronSignerStatus } from "@/types/iroha";
+import { parseJsonWithoutDuplicateObjectKeys } from "@/utils/json";
+import { snapshotSccpJsonDataValue } from "@/utils/sccpDataSnapshot";
 
 const STORAGE_KEY = "iroha-demo:sccp:tron-walletconnect";
 const TEST_SIGNER_SESSION_TOPIC = "sccp-nile-test-signer";
@@ -27,12 +29,27 @@ const TRON_WALLETCONNECT_SECRET_KEY_PATTERN =
   /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
 const TRON_WALLETCONNECT_SIGNING_HELPER_KEY_PATTERN =
   /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
+const TRON_WALLETCONNECT_PLAIN_DATA_INPUT_ERROR =
+  "TRON transaction request must contain only JSON-serializable enumerable string-keyed data fields before WalletConnect signing.";
+const TRON_WALLETCONNECT_UNDEFINED_INPUT_ERROR =
+  "TRON transaction request must not contain undefined fields before WalletConnect signing.";
+const TRON_WALLETCONNECT_STORED_SESSION_FIELDS = new Set<string>([
+  "topic",
+  "address",
+  "chainId",
+  "namespace",
+  "methodVersion",
+  "connectedAtMs",
+]);
 const WALLETCONNECT_PROJECT_ID_ERROR =
   "WalletConnect project ID must be a non-empty opaque identifier without URL syntax.";
 
 type WalletConnectSessionLike = {
   topic?: string;
-  namespaces?: Record<string, { accounts?: string[]; methods?: string[] }>;
+  namespaces?: Record<
+    string,
+    { accounts?: string[]; chains?: string[]; methods?: string[] }
+  >;
   sessionProperties?: Record<string, unknown>;
 };
 
@@ -118,6 +135,8 @@ const activeTronWalletConnectNetwork = {
 } satisfies CustomCaipNetwork<typeof WALLETCONNECT_TRON_NAMESPACE>;
 
 export const walletConnectProjectId = getConfiguredProjectId();
+const TRON_WALLETCONNECT_ACCOUNT_PREFIX = `${WALLETCONNECT_TRON_NAMESPACE}:`;
+const ACTIVE_TRON_WALLETCONNECT_ACCOUNT_PREFIX = `${SCCP_TRON_NETWORK.caipChainId}:`;
 
 export const createTronWalletConnectConnectParams =
   (): WalletConnectConnectParams => ({
@@ -145,19 +164,47 @@ const listActiveTronSessionAddresses = (
     .filter(
       (item) =>
         typeof item === "string" &&
-        item.startsWith(`${SCCP_TRON_NETWORK.caipChainId}:`),
+        item.startsWith(ACTIVE_TRON_WALLETCONNECT_ACCOUNT_PREFIX),
     )
     .map((account) =>
       normalizeTronAddress(
-        account.slice(`${SCCP_TRON_NETWORK.caipChainId}:`.length),
+        account.slice(ACTIVE_TRON_WALLETCONNECT_ACCOUNT_PREFIX.length),
       ),
     );
   return Array.from(new Set(addresses));
 };
 
+const listUnsupportedTronSessionChains = (
+  session: WalletConnectSessionLike | null | undefined,
+): string[] => {
+  const accounts =
+    session?.namespaces?.[WALLETCONNECT_TRON_NAMESPACE]?.accounts ?? [];
+  if (!Array.isArray(accounts)) {
+    return [];
+  }
+  const chains = accounts
+    .filter(
+      (account) =>
+        typeof account === "string" &&
+        account.startsWith(TRON_WALLETCONNECT_ACCOUNT_PREFIX) &&
+        !account.startsWith(ACTIVE_TRON_WALLETCONNECT_ACCOUNT_PREFIX),
+    )
+    .map((account) => {
+      const [, reference = "unknown"] = account.split(":");
+      return `${WALLETCONNECT_TRON_NAMESPACE}:${reference}`;
+    });
+  return Array.from(new Set(chains)).sort();
+};
+
 export const extractTronAddressFromSession = (
   session: WalletConnectSessionLike | null | undefined,
 ): string | null => {
+  const unsupportedChains = listUnsupportedTronSessionChains(session);
+  if (unsupportedChains.length > 0) {
+    throw new Error(
+      `Connected wallet exposed unsupported TRON accounts (${unsupportedChains.join(", ")}); approve only ${SCCP_TRON_NETWORK.label} and reconnect.`,
+    );
+  }
   const addresses = listActiveTronSessionAddresses(session);
   if (addresses.length === 0) {
     return null;
@@ -173,12 +220,33 @@ export const extractTronAddressFromSession = (
 export const tronWalletConnectSessionSupportsRequiredSigning = (
   session: WalletConnectSessionLike | null | undefined,
 ): boolean => {
-  const methods =
-    session?.namespaces?.[WALLETCONNECT_TRON_NAMESPACE]?.methods ?? [];
+  const namespaces = session?.namespaces;
+  const namespaceKeys = isRecordLike(namespaces) ? Object.keys(namespaces) : [];
+  const namespaceScopeAccepted =
+    namespaceKeys.length === 1 &&
+    namespaceKeys[0] === WALLETCONNECT_TRON_NAMESPACE;
+  const namespace = namespaces?.[WALLETCONNECT_TRON_NAMESPACE];
+  const methods = namespace?.methods ?? [];
+  const chains = namespace?.chains;
+  const chainScopeAccepted =
+    Array.isArray(chains) &&
+    chains.length === 1 &&
+    chains[0] === SCCP_TRON_NETWORK.caipChainId;
+  const sessionProperties = session?.sessionProperties;
+  const sessionPropertyKeys = isRecordLike(sessionProperties)
+    ? Object.keys(sessionProperties)
+    : [];
+  const sessionPropertiesAccepted =
+    sessionPropertyKeys.length === 1 &&
+    sessionPropertyKeys[0] === "tron_method_version";
   const methodVersion = session?.sessionProperties?.tron_method_version;
   return (
+    namespaceScopeAccepted &&
     Array.isArray(methods) &&
-    methods.includes(WALLETCONNECT_TRON_SIGN_METHOD) &&
+    methods.length === 1 &&
+    methods[0] === WALLETCONNECT_TRON_SIGN_METHOD &&
+    chainScopeAccepted &&
+    sessionPropertiesAccepted &&
     typeof methodVersion === "string" &&
     methodVersion === WALLETCONNECT_TRON_METHOD_VERSION
   );
@@ -227,6 +295,11 @@ const hasUnsafeStoredTextCharacter = (value: string): boolean => {
 const isRecordLike = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const isPlainRecordLike = (value: Record<string, unknown>): boolean => {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
 const assertNoSecretLikeTransactionRequestFields = (
   value: unknown,
   path = "TRON transaction request",
@@ -273,6 +346,51 @@ const assertNoSecretLikeTransactionRequestFields = (
   }
 };
 
+const assertNoUndefinedTransactionRequestFields = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): void => {
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (key === "length") {
+        continue;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) {
+        continue;
+      }
+      if (descriptor.value === undefined) {
+        throw new Error(TRON_WALLETCONNECT_UNDEFINED_INPUT_ERROR);
+      }
+      assertNoUndefinedTransactionRequestFields(descriptor.value, seen);
+    }
+    return;
+  }
+  if (!isRecordLike(value)) {
+    return;
+  }
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) {
+      continue;
+    }
+    if (descriptor.value === undefined) {
+      throw new Error(TRON_WALLETCONNECT_UNDEFINED_INPUT_ERROR);
+    }
+    assertNoUndefinedTransactionRequestFields(descriptor.value, seen);
+  }
+};
+
 const normalizeStoredWalletConnectTopic = (value: unknown): string | null => {
   if (value === null || value === undefined || value === "") {
     return null;
@@ -284,6 +402,7 @@ const normalizeStoredWalletConnectTopic = (value: unknown): string | null => {
   if (
     topic.length === 0 ||
     topic.length > MAX_WALLETCONNECT_TOPIC_LENGTH ||
+    TRON_WALLETCONNECT_SECRET_KEY_PATTERN.test(topic) ||
     hasUnsafeStoredTextCharacter(topic) ||
     isSecretLikeTextValue(topic)
   ) {
@@ -301,6 +420,21 @@ const requireStoredWalletConnectTopic = (
     throw new Error(`${label} is required.`);
   }
   return topic;
+};
+
+const isStoredWalletConnectSessionRecord = (
+  value: unknown,
+): value is WalletConnectSessionSnapshot => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    return false;
+  }
+  return Object.keys(value).every((key) =>
+    TRON_WALLETCONNECT_STORED_SESSION_FIELDS.has(key),
+  );
 };
 
 export const isFreshTronWalletConnectSessionTimestamp = (
@@ -322,11 +456,25 @@ export const isFreshTronWalletConnectSessionTimestamp = (
 
 export const readStoredTronWalletConnectSession =
   (): WalletConnectSessionSnapshot | null => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) {
+      return null;
+    }
     try {
-      const parsed = JSON.parse(
-        localStorage.getItem(STORAGE_KEY) ?? "null",
+      const parsed = parseJsonWithoutDuplicateObjectKeys(
+        stored,
+        "Stored TRON WalletConnect session",
       ) as WalletConnectSessionSnapshot | null;
+      if (parsed === null) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+      if (!isStoredWalletConnectSessionRecord(parsed)) {
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
       if (!parsed?.address) {
+        localStorage.removeItem(STORAGE_KEY);
         return null;
       }
       if (
@@ -476,40 +624,50 @@ const getConnector = async (): Promise<UniversalConnector> => {
 export const cloneTronWalletConnectTransactionRequest = (
   transaction: Record<string, unknown>,
 ): Record<string, unknown> => {
-  try {
-    const cloned = structuredClone(transaction);
-    if (
-      typeof cloned !== "object" ||
-      cloned === null ||
-      Array.isArray(cloned)
-    ) {
-      throw new Error("TRON transaction request must be an object.");
-    }
-    if (Object.prototype.hasOwnProperty.call(cloned, "signature")) {
-      throw new Error(
-        "TRON transaction request must not already contain signatures before WalletConnect signing.",
-      );
-    }
-    assertNoSecretLikeTransactionRequestFields(cloned);
-    return cloned as Record<string, unknown>;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      (error.message === "TRON transaction request must be an object." ||
-        error.message.startsWith(
-          "TRON transaction request must not already contain signatures",
-        ) ||
-        error.message.endsWith("must not be sent to the connected wallet.") ||
-        error.message.endsWith(
-          "must not contain recovery phrases or private key material before WalletConnect signing.",
-        ))
-    ) {
-      throw error;
-    }
+  if (!isRecordLike(transaction)) {
+    throw new Error("TRON transaction request must be an object.");
+  }
+  if (!isPlainRecordLike(transaction)) {
+    throw new Error("TRON transaction request must be a plain object.");
+  }
+  assertNoUndefinedTransactionRequestFields(transaction);
+  const cloned = snapshotSccpJsonDataValue(
+    transaction,
+    TRON_WALLETCONNECT_PLAIN_DATA_INPUT_ERROR,
+  );
+  if (
+    typeof cloned !== "object" ||
+    cloned === null ||
+    Array.isArray(cloned) ||
+    !isPlainRecordLike(cloned as Record<string, unknown>)
+  ) {
+    throw new Error("TRON transaction request must be a plain object.");
+  }
+  if (Object.prototype.hasOwnProperty.call(cloned, "signature")) {
     throw new Error(
-      "TRON transaction request must be structured-cloneable before WalletConnect signing.",
+      "TRON transaction request must not already contain signatures before WalletConnect signing.",
     );
   }
+  assertNoSecretLikeTransactionRequestFields(cloned);
+  return cloned as Record<string, unknown>;
+};
+
+const freezeTronWalletConnectValue = <T>(value: T, seen = new WeakSet()): T => {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (seen.has(value)) {
+    return value;
+  }
+  seen.add(value);
+  for (const descriptor of Object.values(
+    Object.getOwnPropertyDescriptors(value),
+  )) {
+    if ("value" in descriptor) {
+      freezeTronWalletConnectValue(descriptor.value, seen);
+    }
+  }
+  return Object.freeze(value);
 };
 
 export const useTronWalletConnect = () => {
@@ -619,7 +777,9 @@ export const useTronWalletConnect = () => {
         address: "",
       };
       testSignerError.value =
-        statusError instanceof Error ? statusError.message : String(statusError);
+        statusError instanceof Error
+          ? statusError.message
+          : String(statusError);
       if (sessionTopic.value === TEST_SIGNER_SESSION_TOPIC) {
         clearSession();
       }
@@ -740,14 +900,15 @@ export const useTronWalletConnect = () => {
       clearSession();
       throw new Error("Reconnect your TRON wallet before signing.");
     }
-    return connector.request(
-      {
-        method: WALLETCONNECT_TRON_SIGN_METHOD,
-        params: {
-          address: address.value,
-          transaction: transactionForWallet,
-        },
+    const walletConnectRequest = freezeTronWalletConnectValue({
+      method: WALLETCONNECT_TRON_SIGN_METHOD,
+      params: {
+        address: address.value,
+        transaction: transactionForWallet,
       },
+    });
+    return connector.request(
+      walletConnectRequest,
       SCCP_TRON_NETWORK.caipChainId,
     );
   };

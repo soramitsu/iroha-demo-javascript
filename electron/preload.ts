@@ -42,11 +42,17 @@ import {
 import { parseTronTriggerSmartContractRawData } from "@iroha/iroha-js/sccp";
 import {
   buildKaigiRosterJoinProof,
-  generateKeyPair,
+  generateKeyPair as generateSdkKeyPair,
+  normalizeCryptoAlgorithm,
   privateKeyMultihash,
   publicKeyFromPrivate,
-  signEd25519,
+  sign,
+  supportedCryptoAlgorithms,
 } from "@iroha/iroha-js/crypto";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  signingAlgorithmLabel,
+} from "../src/utils/signingAlgorithms";
 import {
   confidentialModeSupportsShield,
   formatOnboardingError,
@@ -157,6 +163,10 @@ import {
   type ConfidentialWalletBackupStateBoxV2,
 } from "../src/utils/walletBackup";
 import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
+import {
+  snapshotSccpDataValue,
+  snapshotSccpJsonDataValue,
+} from "../src/utils/sccpDataSnapshot";
 
 type HexString = string;
 
@@ -167,6 +177,11 @@ type ToriiConfig = {
 };
 
 type ChainMetadataResponse = ChainMetadata;
+type SigningAlgorithmOption = {
+  id: string;
+  label: string;
+  isDefault: boolean;
+};
 
 const KNOWN_CHAIN_METADATA_FALLBACKS = [
   {
@@ -314,16 +329,22 @@ const assertSecureVaultAvailable = async (operationLabel: string) => {
 const storeAccountSecretInVault = async (input: {
   accountId: string;
   privateKeyHex: string;
+  signingAlgorithm?: string;
 }): Promise<void> => {
   await ipcRenderer.invoke("vault:storeAccountSecret", input);
 };
 
-const getAccountSecretFromVault = async (
+type AccountSecretMaterial = {
+  privateKeyHex: string;
+  signingAlgorithm: string;
+};
+
+const getAccountSecretMaterialFromVault = async (
   accountId: string,
-): Promise<string | null> =>
-  (await ipcRenderer.invoke("vault:getAccountSecret", {
+): Promise<AccountSecretMaterial | null> =>
+  (await ipcRenderer.invoke("vault:getAccountSecretMaterial", {
     accountId,
-  })) as string | null;
+  })) as AccountSecretMaterial | null;
 
 const listAccountSecretFlagsFromVault = async (
   accountIds: string[],
@@ -361,6 +382,7 @@ type RegisterAccountInput = {
   metadata?: Record<string, unknown>;
   authorityAccountId: string;
   authorityPrivateKeyHex?: HexString;
+  authoritySigningAlgorithm?: string;
 };
 
 type TransferAssetInput = {
@@ -372,6 +394,7 @@ type TransferAssetInput = {
   networkPrefix?: number;
   quantity: string;
   privateKeyHex?: HexString;
+  signingAlgorithm?: string;
   metadata?: Record<string, unknown>;
   shielded?: boolean;
   unshield?: boolean;
@@ -395,6 +418,7 @@ type UranaiPrivateTradeProofInput = {
   collateralIn: string;
   privacyFee?: string;
   privateKeyHex?: HexString;
+  signingAlgorithm?: string;
   marketId?: string;
   outcomeIndex?: number;
 };
@@ -1228,6 +1252,34 @@ type TronConstantContractInput = TronGatewayInput &
     contractAddress: string;
     functionSelector: string;
   };
+type EvmRpcInput = {
+  endpoint?: string;
+};
+type EvmRpcCallInput = EvmRpcInput & {
+  method: string;
+  params?: unknown[];
+};
+type EvmTransactionInput = EvmRpcInput & {
+  txHash: string;
+};
+type EvmAddressInput = EvmRpcInput & {
+  address: string;
+  blockTag?: string;
+};
+type EvmCallInput = EvmRpcInput & {
+  to: string;
+  data: string;
+  from?: string;
+  value?: string;
+  blockTag?: string;
+};
+type EvmLogsInput = EvmRpcInput & {
+  address?: string | string[];
+  blockHash?: string;
+  fromBlock?: string;
+  toBlock?: string;
+  topics?: Array<string | string[] | null>;
+};
 type TronEventsInput = TronGatewayInput & {
   txId: string;
 };
@@ -1235,12 +1287,18 @@ type TronEventsInput = TronGatewayInput & {
 type IrohaBridge = {
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
-  generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
+  getSigningAlgorithms(config?: ToriiConfig): Promise<SigningAlgorithmOption[]>;
+  generateKeyPair(input?: { signingAlgorithm?: string; seedHex?: string }): {
+    publicKeyHex: string;
+    privateKeyHex: string;
+    signingAlgorithm: string;
+  };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
   isSecureVaultAvailable(): Promise<boolean>;
   storeAccountSecret(input: {
     accountId: string;
     privateKeyHex: string;
+    signingAlgorithm?: string;
   }): Promise<void>;
   listAccountSecretFlags(input: {
     accountIds: string[];
@@ -1250,15 +1308,24 @@ type IrohaBridge = {
     domain: string;
     publicKeyHex: string;
     networkPrefix?: number;
+    signingAlgorithm?: string;
   }): {
     accountId: string;
     i105AccountId: string;
     i105DefaultAccountId: string;
     i105DefaultFullwidthAccountId?: string;
     publicKeyHex: string;
+    signingAlgorithm: string;
     accountIdWarning: string;
   };
-  derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
+  derivePublicKey(
+    input:
+      | string
+      | {
+          privateKeyHex: string;
+          signingAlgorithm?: string;
+        },
+  ): { publicKeyHex: string; signingAlgorithm: string };
   deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
   deriveConfidentialReceiveAddress(privateKeyHex: string): {
     ownerTagHex: string;
@@ -1289,7 +1356,13 @@ type IrohaBridge = {
   signIrohaConnectMessage(input: {
     accountId: string;
     signingMessageB64: string;
-  }): Promise<{ publicKeyHex: string; signatureB64: string }>;
+  }): Promise<{
+    publicKeyHex: string;
+    signatureB64: string;
+    signingAlgorithm: string;
+    algorithmCode: number;
+    algorithmLabel: string;
+  }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -1597,6 +1670,23 @@ type IrohaBridge = {
   triggerTronConstantContract(
     input: TronConstantContractInput,
   ): Promise<Record<string, unknown>>;
+  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
+  getEvmChainId(input?: EvmRpcInput): Promise<string>;
+  getEvmBalance(input: EvmAddressInput): Promise<string>;
+  getEvmCode(input: EvmAddressInput): Promise<string>;
+  callEvmContract(input: EvmCallInput): Promise<string>;
+  getEvmTransactionReceipt(
+    input: EvmTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  getEvmTransaction(
+    input: EvmTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  getEvmBlockByHash(input: {
+    endpoint?: string;
+    blockHash: string;
+    fullTransactions?: boolean;
+  }): Promise<Record<string, unknown> | null>;
+  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
   ): Promise<TransactionSubmissionResultView>;
@@ -2195,20 +2285,168 @@ const hexToBuffer = (hex: string, label: string) => {
 const normalizePrivateKeyHex = (privateKeyHex: string) =>
   hexToBuffer(privateKeyHex, "privateKeyHex").toString("hex");
 
-const resolveOptionalPrivateKeyHex = async (input: {
+const normalizeBridgeSigningAlgorithm = (value?: unknown): string => {
+  const candidate = trimString(value) || DEFAULT_SIGNING_ALGORITHM;
+  try {
+    return normalizeCryptoAlgorithm(candidate);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unsupported signing algorithm "${candidate}": ${detail}`);
+  }
+};
+
+const toSigningAlgorithmOption = (
+  algorithm: string,
+): SigningAlgorithmOption => {
+  const id = normalizeBridgeSigningAlgorithm(algorithm);
+  return {
+    id,
+    label: signingAlgorithmLabel(id),
+    isDefault: id === DEFAULT_SIGNING_ALGORITHM,
+  };
+};
+
+const dedupeSigningAlgorithms = (algorithms: Iterable<unknown>): string[] => {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const algorithm of algorithms) {
+    try {
+      const id = normalizeBridgeSigningAlgorithm(algorithm);
+      if (!seen.has(id)) {
+        seen.add(id);
+        result.push(id);
+      }
+    } catch {
+      // Ignore malformed endpoint capability entries and rely on local support.
+    }
+  }
+  return result;
+};
+
+const readNodeSigningAlgorithms = (capabilities: unknown): string[] => {
+  if (!isPlainRecord(capabilities)) {
+    return [];
+  }
+  const crypto = capabilities.crypto;
+  if (!isPlainRecord(crypto)) {
+    return [];
+  }
+  const sm = crypto.sm;
+  if (!isPlainRecord(sm)) {
+    return [];
+  }
+  const allowedSigning = sm.allowedSigning ?? sm.allowed_signing;
+  return Array.isArray(allowedSigning)
+    ? dedupeSigningAlgorithms(allowedSigning)
+    : [];
+};
+
+const resolveSigningAlgorithmOptions = async (
+  config?: ToriiConfig,
+): Promise<SigningAlgorithmOption[]> => {
+  const localAlgorithms = dedupeSigningAlgorithms(supportedCryptoAlgorithms());
+  const localSet = new Set(localAlgorithms);
+  let selectedAlgorithms = localAlgorithms;
+  const toriiUrl = trimString(config?.toriiUrl);
+  if (toriiUrl) {
+    try {
+      const nodeAlgorithms = readNodeSigningAlgorithms(
+        await getClient(toriiUrl).getNodeCapabilities(),
+      );
+      const intersection = nodeAlgorithms.filter((algorithm) =>
+        localSet.has(algorithm),
+      );
+      if (intersection.length > 0) {
+        selectedAlgorithms = intersection;
+      }
+    } catch {
+      // Endpoint capability discovery is best-effort; local support remains useful offline.
+    }
+  }
+  if (!selectedAlgorithms.includes(DEFAULT_SIGNING_ALGORITHM)) {
+    selectedAlgorithms = localSet.has(DEFAULT_SIGNING_ALGORITHM)
+      ? [DEFAULT_SIGNING_ALGORITHM, ...selectedAlgorithms]
+      : selectedAlgorithms;
+  }
+  return selectedAlgorithms.map(toSigningAlgorithmOption);
+};
+
+const CONNECT_SIGNING_ALGORITHM_CODES = new Map<string, number>([
+  ["ed25519", 0],
+  ["secp256k1", 1],
+  ["ml-dsa", 4],
+]);
+
+const getConnectSigningAlgorithmCode = (algorithm: string): number => {
+  const normalized = normalizeBridgeSigningAlgorithm(algorithm);
+  const code = CONNECT_SIGNING_ALGORITHM_CODES.get(normalized);
+  if (code === undefined) {
+    throw new Error(
+      `IrohaConnect does not support ${signingAlgorithmLabel(normalized)} signatures yet.`,
+    );
+  }
+  return code;
+};
+
+type SigningMaterial = {
+  privateKeyHex: string;
+  signingAlgorithm: string;
+};
+
+const normalizeSigningMaterial = (
+  material: SigningMaterial,
+): SigningMaterial => ({
+  privateKeyHex: normalizePrivateKeyHex(material.privateKeyHex),
+  signingAlgorithm: normalizeBridgeSigningAlgorithm(material.signingAlgorithm),
+});
+
+const resolveOptionalSigningMaterial = async (input: {
   accountId: string;
   privateKeyHex?: string;
-}): Promise<string | null> => {
+  signingAlgorithm?: string;
+}): Promise<SigningMaterial | null> => {
   const inlinePrivateKeyHex = trimString(input.privateKeyHex);
   if (inlinePrivateKeyHex) {
-    return normalizePrivateKeyHex(inlinePrivateKeyHex);
+    return normalizeSigningMaterial({
+      privateKeyHex: inlinePrivateKeyHex,
+      signingAlgorithm: input.signingAlgorithm ?? DEFAULT_SIGNING_ALGORITHM,
+    });
   }
   const accountId = normalizeCompatAccountIdLiteral(
     input.accountId,
     "accountId",
   );
-  const storedSecret = await getAccountSecretFromVault(accountId);
-  return storedSecret ? normalizePrivateKeyHex(storedSecret) : null;
+  const storedSecret = await getAccountSecretMaterialFromVault(accountId);
+  return storedSecret ? normalizeSigningMaterial(storedSecret) : null;
+};
+
+const resolveSigningMaterial = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+  signingAlgorithm?: string;
+  operationLabel: string;
+}): Promise<SigningMaterial> => {
+  const resolved = await resolveOptionalSigningMaterial(input);
+  if (resolved) {
+    return resolved;
+  }
+  throw new Error(
+    `${input.operationLabel} requires a stored wallet secret. Restore or save this wallet again.`,
+  );
+};
+
+const resolveOptionalPrivateKeyHex = async (input: {
+  accountId: string;
+  privateKeyHex?: string;
+}): Promise<string | null> => {
+  return (
+    (
+      await resolveOptionalSigningMaterial({
+        accountId: input.accountId,
+        privateKeyHex: input.privateKeyHex,
+      })
+    )?.privateKeyHex ?? null
+  );
 };
 
 const resolvePrivateKeyHex = async (input: {
@@ -2225,11 +2463,31 @@ const resolvePrivateKeyHex = async (input: {
   );
 };
 
-const formatExposedEd25519PrivateKey = (privateKeyHex: string): string =>
-  `ed25519:${privateKeyMultihash(
-    hexToBuffer(privateKeyHex, "privateKeyHex"),
-    { algorithm: "ed25519" },
-  )}`;
+const formatExposedPrivateKey = (material: SigningMaterial): string => {
+  const normalized = normalizeSigningMaterial(material);
+  const encoded = privateKeyMultihash(
+    hexToBuffer(normalized.privateKeyHex, "privateKeyHex"),
+    {
+      algorithm: normalized.signingAlgorithm,
+    },
+  );
+  return encoded.includes(":")
+    ? encoded
+    : `${normalized.signingAlgorithm}:${encoded}`;
+};
+
+const assertEd25519SigningMaterial = (
+  material: SigningMaterial,
+  operationLabel: string,
+) => {
+  const normalized = normalizeSigningMaterial(material);
+  if (normalized.signingAlgorithm !== DEFAULT_SIGNING_ALGORITHM) {
+    throw new Error(
+      `${operationLabel} currently requires an Ed25519 wallet because confidential wallet material is Ed25519-only.`,
+    );
+  }
+  return normalized;
+};
 
 const resolveConfidentialWalletDecryptionContext = async (input: {
   accountId: string;
@@ -2240,11 +2498,15 @@ const resolveConfidentialWalletDecryptionContext = async (input: {
     input.accountId,
     "accountId",
   );
-  const privateKeyHex = await resolvePrivateKeyHex({
-    accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: input.operationLabel,
-  });
+  const signingMaterial = assertEd25519SigningMaterial(
+    await resolveSigningMaterial({
+      accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: input.operationLabel,
+    }),
+    input.operationLabel,
+  );
+  const privateKeyHex = signingMaterial.privateKeyHex;
   let receiveKeys: ConfidentialReceiveKeyRecord[] = [];
   try {
     receiveKeys = await listConfidentialReceiveKeysForAccount(accountId);
@@ -4384,14 +4646,14 @@ const normalizeSubscriptionPrivateActionBody = async (
     input.accountId,
     "accountId",
   );
-  const privateKeyHex = await resolvePrivateKeyHex({
+  const signingMaterial = await resolveSigningMaterial({
     accountId,
     privateKeyHex: input.privateKeyHex,
     operationLabel,
   });
   const body: Record<string, unknown> = {
     authority: accountId,
-    private_key: privateKeyHex,
+    private_key: formatExposedPrivateKey(signingMaterial),
   };
   const chargeAtMs = normalizeOptionalPositiveInteger(
     input.chargeAtMs,
@@ -4458,7 +4720,7 @@ const createSubscriptionOnTorii = async (
     input.accountId,
     "accountId",
   );
-  const privateKeyHex = await resolvePrivateKeyHex({
+  const signingMaterial = await resolveSigningMaterial({
     accountId,
     privateKeyHex: input.privateKeyHex,
     operationLabel: "Create subscription",
@@ -4477,7 +4739,7 @@ const createSubscriptionOnTorii = async (
   );
   const body: Record<string, unknown> = {
     authority: accountId,
-    private_key: privateKeyHex,
+    private_key: formatExposedPrivateKey(signingMaterial),
     subscription_id: subscriptionId,
     plan_id: planId,
   };
@@ -4660,11 +4922,15 @@ const deploySoraCloudHfOnTorii = async (
     input.accountId,
     "accountId",
   );
-  const privateKeyHex = await resolvePrivateKeyHex({
-    accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Launch SoraCloud instance",
-  });
+  const signingMaterial = assertEd25519SigningMaterial(
+    await resolveSigningMaterial({
+      accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: "Launch SoraCloud instance",
+    }),
+    "Launch SoraCloud instance",
+  );
+  const privateKeyHex = signingMaterial.privateKeyHex;
   const request = buildSoraCloudHfDeployRequest({
     repoId: trimString(input.repoId),
     revision: trimString(input.revision) || undefined,
@@ -4789,13 +5055,10 @@ const normalizeSccpSubmissionRecord = (
   if (!isPlainRecord(value)) {
     throw new Error(`${label} must be an object.`);
   }
-  assertNoSecretLikePayloadFields(value, label);
-  let normalized: Record<string, unknown>;
-  try {
-    normalized = structuredClone(value) as Record<string, unknown>;
-  } catch (_error) {
-    throw new Error(`${label} must be structured-cloneable.`);
-  }
+  const normalized = snapshotSccpDataValue(value, label) as Record<
+    string,
+    unknown
+  >;
   if (!isPlainRecord(normalized)) {
     throw new Error(`${label} must be an object.`);
   }
@@ -4844,8 +5107,8 @@ const buildSccpBridgeAuthorityPayload = async (
     ...(hasDetachedSignature
       ? { publicKeyHex, signatureB64 }
       : {
-          privateKey: formatExposedEd25519PrivateKey(
-            await resolvePrivateKeyHex({
+          privateKey: formatExposedPrivateKey(
+            await resolveSigningMaterial({
               accountId,
               operationLabel,
             }),
@@ -4956,7 +5219,9 @@ const normalizeOptionalLeaseExpiryMs = (value: unknown): number | undefined => {
   }
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error("Contract alias leaseExpiryMs must be a non-negative integer.");
+    throw new Error(
+      "Contract alias leaseExpiryMs must be a non-negative integer.",
+    );
   }
   return parsed;
 };
@@ -4992,7 +5257,7 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
       "TAIRA SCCP settlement contract deployment must use the stored wallet secret; inline private keys are not accepted.",
     );
   }
-  const privateKeyHex = await resolvePrivateKeyHex({
+  const signingMaterial = await resolveSigningMaterial({
     accountId,
     operationLabel: "Deploy TAIRA SCCP settlement contract",
   });
@@ -5033,7 +5298,9 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
         entrypoint.permission !== "AssetManager" ||
         JSON.stringify(params) !== JSON.stringify([])
       ) {
-        throw new Error("Compiled TAIRA SCCP settlement contract ABI is invalid.");
+        throw new Error(
+          "Compiled TAIRA SCCP settlement contract ABI is invalid.",
+        );
       }
       compiledCodeHashHex = compiled.codeHashHex;
       compiledAbiHashHex = compiled.abiHashHex;
@@ -5049,7 +5316,7 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
   });
   const response = await client.deployContract({
     authority: accountId,
-    privateKey: formatExposedEd25519PrivateKey(privateKeyHex),
+    privateKey: formatExposedPrivateKey(signingMaterial),
     contractAlias,
     codeB64: Buffer.from(artifactBytes).toString("base64"),
     leaseExpiryMs: normalizeOptionalLeaseExpiryMs(input.leaseExpiryMs),
@@ -5225,7 +5492,7 @@ const submitZkIvmProvedTransactionToTorii = async (
       "ZK IVM proved transaction submissions must use stored wallet secrets; inline private keys are not accepted.",
     );
   }
-  const privateKeyHex = await resolvePrivateKeyHex({
+  const signingMaterial = await resolveSigningMaterial({
     accountId,
     operationLabel: "Submit ZK IVM proved transaction",
   });
@@ -5238,7 +5505,8 @@ const submitZkIvmProvedTransactionToTorii = async (
     creationTimeMs: input.creationTimeMs,
     ttlMs: input.ttlMs,
     nonce: input.nonce,
-    privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
+    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
     input.toriiUrl,
@@ -5917,19 +6185,17 @@ const normalizeTronBroadcastTransaction = (
   if (!isPlainRecord(transaction)) {
     throw new Error("TRON broadcast transaction must be an object.");
   }
-  assertNoSecretLikeTransactionFields(
+  const normalized = snapshotSccpJsonDataValue(
     transaction,
+    "TRON broadcast transaction must contain only enumerable string-keyed data properties with JSON-compatible values.",
+  ) as Record<string, unknown>;
+  assertNoSecretLikeTransactionFields(
+    normalized,
     "TRON broadcast transaction",
     {
       allowTopLevelSignature: true,
     },
   );
-  let normalized: Record<string, unknown>;
-  try {
-    normalized = structuredClone(transaction) as Record<string, unknown>;
-  } catch (_error) {
-    throw new Error("TRON broadcast transaction must be structured-cloneable.");
-  }
   const txId = normalizeTronTxId(
     trimString(normalized.txID ?? normalized.txid),
   );
@@ -6095,6 +6361,596 @@ const triggerTronConstantContractFromGateway = (
     assertTronGatewayAccepted(payload, "Trigger TRON constant contract");
     return payload;
   });
+};
+
+const DEFAULT_BSC_TESTNET_RPC_URL =
+  "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+
+const isLoopbackEvmRpcHost = (hostname: string): boolean => {
+  const normalized = hostname
+    .trim()
+    .toLowerCase()
+    .replace(/^\[/u, "")
+    .replace(/\]$/u, "")
+    .replace(/\.$/u, "");
+  return (
+    normalized === "localhost" ||
+    normalized.endsWith(".localhost") ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    /^127(?:\.\d{1,3}){3}$/u.test(normalized)
+  );
+};
+
+const normalizeEvmRpcUrl = (endpoint?: string): string => {
+  const normalized = normalizeBaseUrl(
+    trimString(endpoint) || DEFAULT_BSC_TESTNET_RPC_URL,
+  );
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    throw new Error(
+      "EVM RPC endpoint must be a valid HTTPS or loopback HTTP URL.",
+    );
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("EVM RPC endpoint must not include credentials.");
+  }
+  if (parsed.search || parsed.hash) {
+    throw new Error("EVM RPC endpoint must not include query or hash.");
+  }
+  const loopback = isLoopbackEvmRpcHost(parsed.hostname);
+  if (parsed.protocol === "http:" && loopback) {
+    return normalized;
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(
+      "EVM RPC endpoint must use HTTPS unless it is loopback HTTP.",
+    );
+  }
+  if (isPrivateTronGatewayHost(parsed.hostname) && !loopback) {
+    throw new Error("EVM RPC endpoint must not target a private network.");
+  }
+  return normalized;
+};
+
+const normalizeEvmHash = (value: unknown, label: string): string => {
+  const normalized = trimString(value).toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be a 32-byte hex value.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmNonZeroHash = (value: unknown, label: string): string => {
+  const normalized = normalizeEvmHash(value, label);
+  if (/^0x0{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmAddressHex = (value: unknown, label: string): string => {
+  const normalized = trimString(value).toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/u.test(normalized)) {
+    throw new Error(`${label} must be a 20-byte EVM address.`);
+  }
+  if (/^0x0{40}$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmDataHex = (value: unknown, label: string): string => {
+  const normalized = trimString(value).toLowerCase();
+  if (!/^0x(?:[0-9a-f]{2})*$/u.test(normalized)) {
+    throw new Error(`${label} must be hex-encoded bytes.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmBlockTag = (
+  value: unknown,
+  label = "EVM block tag",
+): string => {
+  const normalized =
+    value === undefined ? "latest" : trimString(value).toLowerCase();
+  if (/^(?:latest|earliest|pending|safe|finalized)$/u.test(normalized)) {
+    return normalized;
+  }
+  if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
+    return normalized;
+  }
+  throw new Error(`${label} must be a standard EVM block tag or quantity.`);
+};
+
+const normalizeEvmQuantity = (value: unknown, label: string): string => {
+  const normalized = trimString(value).toLowerCase();
+  if (!/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
+    throw new Error(`${label} must be an EVM hex quantity.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmTopic = (value: unknown, label: string): string => {
+  if (value === null || value === undefined) {
+    throw new Error(`${label} is required.`);
+  }
+  return normalizeEvmHash(value, label);
+};
+
+const EVM_READ_RPC_METHODS = new Set([
+  "eth_chainId",
+  "net_version",
+  "web3_clientVersion",
+  "eth_getBalance",
+  "eth_getCode",
+  "eth_call",
+  "eth_getTransactionReceipt",
+  "eth_getTransactionByHash",
+  "eth_getBlockByHash",
+  "eth_getLogs",
+]);
+
+const normalizeEvmRpcParamsSnapshot = (
+  params: unknown[] | undefined,
+): unknown[] => {
+  if (params === undefined) {
+    return [];
+  }
+  if (!Array.isArray(params)) {
+    throw new Error("EVM RPC params must be an array when provided.");
+  }
+  return snapshotSccpJsonDataValue(
+    params,
+    "EVM RPC params must contain only enumerable string-keyed data properties with JSON-compatible values.",
+  );
+};
+
+const requireExactEvmRpcParams = (
+  method: string,
+  params: unknown[],
+  count: number,
+): void => {
+  if (params.length !== count) {
+    throw new Error(`EVM RPC ${method} requires exactly ${count} params.`);
+  }
+};
+
+const normalizeEvmRpcCallObject = (value: unknown): Record<string, string> => {
+  if (!isPlainRecord(value)) {
+    throw new Error("EVM RPC eth_call params[0] must be an object.");
+  }
+  const allowedKeys = new Set([
+    "from",
+    "to",
+    "gas",
+    "gasPrice",
+    "maxFeePerGas",
+    "maxPriorityFeePerGas",
+    "value",
+    "data",
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`EVM RPC eth_call params[0] unsupported field ${key}.`);
+    }
+  }
+  const call: Record<string, string> = {
+    to: normalizeEvmAddressHex(value.to, "EVM RPC eth_call to"),
+    data: normalizeEvmDataHex(value.data, "EVM RPC eth_call data"),
+  };
+  if (value.from !== undefined) {
+    call.from = normalizeEvmAddressHex(value.from, "EVM RPC eth_call from");
+  }
+  for (const key of [
+    "gas",
+    "gasPrice",
+    "maxFeePerGas",
+    "maxPriorityFeePerGas",
+    "value",
+  ] as const) {
+    if (value[key] !== undefined) {
+      call[key] = normalizeEvmQuantity(value[key], `EVM RPC eth_call ${key}`);
+    }
+  }
+  return call;
+};
+
+const normalizeEvmRpcLogAddress = (value: unknown): string | string[] => {
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.length > 64) {
+      throw new Error(
+        "EVM RPC eth_getLogs address arrays must contain 1 to 64 addresses.",
+      );
+    }
+    return value.map((address, index) =>
+      normalizeEvmAddressHex(
+        address,
+        `EVM RPC eth_getLogs address ${index + 1}`,
+      ),
+    );
+  }
+  return normalizeEvmAddressHex(value, "EVM RPC eth_getLogs address");
+};
+
+const normalizeEvmRpcLogTopics = (
+  value: unknown,
+): Array<string | string[] | null> => {
+  if (!Array.isArray(value) || value.length > 4) {
+    throw new Error(
+      "EVM RPC eth_getLogs topics must be an array of at most four items.",
+    );
+  }
+  return value.map((topic, index) => {
+    if (topic === null) {
+      return null;
+    }
+    if (Array.isArray(topic)) {
+      if (topic.length === 0 || topic.length > 64) {
+        throw new Error(
+          `EVM RPC eth_getLogs topic ${index + 1} arrays must contain 1 to 64 topics.`,
+        );
+      }
+      return topic.map((entry, innerIndex) =>
+        normalizeEvmTopic(
+          entry,
+          `EVM RPC eth_getLogs topic ${index + 1}.${innerIndex + 1}`,
+        ),
+      );
+    }
+    return normalizeEvmTopic(topic, `EVM RPC eth_getLogs topic ${index + 1}`);
+  });
+};
+
+const normalizeEvmRpcLogsFilter = (value: unknown): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    throw new Error("EVM RPC eth_getLogs params[0] must be a filter object.");
+  }
+  const allowedKeys = new Set([
+    "address",
+    "fromBlock",
+    "toBlock",
+    "blockHash",
+    "topics",
+  ]);
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      throw new Error(`EVM RPC eth_getLogs unsupported filter field ${key}.`);
+    }
+  }
+  if (
+    value.blockHash !== undefined &&
+    (value.fromBlock !== undefined || value.toBlock !== undefined)
+  ) {
+    throw new Error(
+      "EVM RPC eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
+    );
+  }
+  const filter: Record<string, unknown> = {};
+  if (value.address !== undefined) {
+    filter.address = normalizeEvmRpcLogAddress(value.address);
+  }
+  if (value.fromBlock !== undefined) {
+    filter.fromBlock = normalizeEvmBlockTag(
+      value.fromBlock,
+      "EVM RPC eth_getLogs fromBlock",
+    );
+  }
+  if (value.toBlock !== undefined) {
+    filter.toBlock = normalizeEvmBlockTag(
+      value.toBlock,
+      "EVM RPC eth_getLogs toBlock",
+    );
+  }
+  if (value.blockHash !== undefined) {
+    filter.blockHash = normalizeEvmNonZeroHash(
+      value.blockHash,
+      "EVM RPC eth_getLogs blockHash",
+    );
+  }
+  if (value.topics !== undefined) {
+    filter.topics = normalizeEvmRpcLogTopics(value.topics);
+  }
+  return filter;
+};
+
+const normalizeEvmRpcParams = (
+  method: string,
+  params: unknown[] | undefined,
+): unknown[] => {
+  const cloned = normalizeEvmRpcParamsSnapshot(params);
+  switch (method) {
+    case "eth_chainId":
+    case "net_version":
+    case "web3_clientVersion":
+      requireExactEvmRpcParams(method, cloned, 0);
+      return [];
+    case "eth_getBalance":
+    case "eth_getCode":
+      requireExactEvmRpcParams(method, cloned, 2);
+      return [
+        normalizeEvmAddressHex(cloned[0], `EVM RPC ${method} address`),
+        normalizeEvmBlockTag(cloned[1], `EVM RPC ${method} block tag`),
+      ];
+    case "eth_call":
+      requireExactEvmRpcParams(method, cloned, 2);
+      return [
+        normalizeEvmRpcCallObject(cloned[0]),
+        normalizeEvmBlockTag(cloned[1], "EVM RPC eth_call block tag"),
+      ];
+    case "eth_getTransactionReceipt":
+    case "eth_getTransactionByHash":
+      requireExactEvmRpcParams(method, cloned, 1);
+      return [normalizeEvmNonZeroHash(cloned[0], `EVM RPC ${method} hash`)];
+    case "eth_getBlockByHash":
+      requireExactEvmRpcParams(method, cloned, 2);
+      if (typeof cloned[1] !== "boolean") {
+        throw new Error(
+          "EVM RPC eth_getBlockByHash params[1] must be a boolean.",
+        );
+      }
+      return [
+        normalizeEvmNonZeroHash(cloned[0], "EVM RPC eth_getBlockByHash hash"),
+        cloned[1],
+      ];
+    case "eth_getLogs":
+      requireExactEvmRpcParams(method, cloned, 1);
+      return [normalizeEvmRpcLogsFilter(cloned[0])];
+    default:
+      throw new Error("EVM RPC bridge only allows read-only methods.");
+  }
+};
+
+const callEvmRpcOnGateway = async (
+  input: EvmRpcCallInput,
+): Promise<unknown> => {
+  const method = trimString(input.method);
+  if (!/^[a-z][a-z0-9_]{1,64}$/iu.test(method)) {
+    throw new Error("EVM RPC method name is invalid.");
+  }
+  if (!EVM_READ_RPC_METHODS.has(method)) {
+    throw new Error("EVM RPC bridge only allows read-only methods.");
+  }
+  const payload = await postJson(
+    normalizeEvmRpcUrl(input.endpoint),
+    `EVM RPC ${method}`,
+    {
+      jsonrpc: "2.0",
+      id: 1,
+      method,
+      params: normalizeEvmRpcParams(method, input.params),
+    },
+  );
+  if (isPlainRecord(payload.error)) {
+    const code = trimString(payload.error.code);
+    const message = trimString(payload.error.message);
+    const detail = [code, message].filter(Boolean).join(": ");
+    throw new Error(
+      detail
+        ? `EVM RPC ${method} failed: ${detail}`
+        : `EVM RPC ${method} failed.`,
+    );
+  }
+  return payload.result;
+};
+
+const requireEvmRpcStringResult = async (
+  input: EvmRpcCallInput,
+  label: string,
+): Promise<string> => {
+  const result = await callEvmRpcOnGateway(input);
+  if (typeof result !== "string") {
+    throw new Error(`${label} did not return a string result.`);
+  }
+  return result;
+};
+
+const snapshotEvmRpcWrapperInput = <T>(input: T, label: string): T => {
+  const normalized = snapshotSccpJsonDataValue(
+    input,
+    `${label} must contain only enumerable string-keyed data properties with JSON-compatible values.`,
+  );
+  if (!isPlainRecord(normalized)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return normalized;
+};
+
+const getEvmChainIdFromRpc = (input?: EvmRpcInput): Promise<string> => {
+  const normalizedInput =
+    input === undefined
+      ? undefined
+      : snapshotEvmRpcWrapperInput(input, "EVM chain id input");
+  return requireEvmRpcStringResult(
+    {
+      endpoint: normalizedInput?.endpoint,
+      method: "eth_chainId",
+      params: [],
+    },
+    "EVM chain id",
+  ).then((chainId) => normalizeEvmQuantity(chainId, "EVM chain id"));
+};
+
+const getEvmBalanceFromRpc = (input: EvmAddressInput): Promise<string> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(
+    input,
+    "EVM balance input",
+  );
+  return requireEvmRpcStringResult(
+    {
+      endpoint: normalizedInput.endpoint,
+      method: "eth_getBalance",
+      params: [
+        normalizeEvmAddressHex(normalizedInput.address, "EVM balance address"),
+        normalizeEvmBlockTag(normalizedInput.blockTag),
+      ],
+    },
+    "EVM balance",
+  ).then((balance) => normalizeEvmQuantity(balance, "EVM balance"));
+};
+
+const getEvmCodeFromRpc = (input: EvmAddressInput): Promise<string> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM code input");
+  return requireEvmRpcStringResult(
+    {
+      endpoint: normalizedInput.endpoint,
+      method: "eth_getCode",
+      params: [
+        normalizeEvmAddressHex(normalizedInput.address, "EVM code address"),
+        normalizeEvmBlockTag(normalizedInput.blockTag),
+      ],
+    },
+    "EVM code",
+  ).then((code) => normalizeEvmDataHex(code, "EVM code"));
+};
+
+const callEvmContractFromRpc = (input: EvmCallInput): Promise<string> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM call input");
+  const call: Record<string, string> = {
+    to: normalizeEvmAddressHex(normalizedInput.to, "EVM call target"),
+    data: normalizeEvmDataHex(normalizedInput.data, "EVM call data"),
+  };
+  if (normalizedInput.from !== undefined) {
+    call.from = normalizeEvmAddressHex(normalizedInput.from, "EVM call sender");
+  }
+  if (normalizedInput.value !== undefined) {
+    call.value = normalizeEvmQuantity(normalizedInput.value, "EVM call value");
+  }
+  return requireEvmRpcStringResult(
+    {
+      endpoint: normalizedInput.endpoint,
+      method: "eth_call",
+      params: [call, normalizeEvmBlockTag(normalizedInput.blockTag)],
+    },
+    "EVM contract call",
+  ).then((result) => normalizeEvmDataHex(result, "EVM contract call result"));
+};
+
+const getEvmTransactionReceiptFromRpc = async (
+  input: EvmTransactionInput,
+): Promise<Record<string, unknown> | null> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(
+    input,
+    "EVM transaction receipt input",
+  );
+  const result = await callEvmRpcOnGateway({
+    endpoint: normalizedInput.endpoint,
+    method: "eth_getTransactionReceipt",
+    params: [
+      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
+    ],
+  });
+  if (result === null) {
+    return null;
+  }
+  if (!isPlainRecord(result)) {
+    throw new Error("EVM transaction receipt must be an object or null.");
+  }
+  return result;
+};
+
+const getEvmTransactionFromRpc = async (
+  input: EvmTransactionInput,
+): Promise<Record<string, unknown> | null> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(
+    input,
+    "EVM transaction input",
+  );
+  const result = await callEvmRpcOnGateway({
+    endpoint: normalizedInput.endpoint,
+    method: "eth_getTransactionByHash",
+    params: [
+      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
+    ],
+  });
+  if (result === null) {
+    return null;
+  }
+  if (!isPlainRecord(result)) {
+    throw new Error("EVM transaction must be an object or null.");
+  }
+  return result;
+};
+
+const getEvmBlockByHashFromRpc = async (input: {
+  endpoint?: string;
+  blockHash: string;
+  fullTransactions?: boolean;
+}): Promise<Record<string, unknown> | null> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM block input");
+  const result = await callEvmRpcOnGateway({
+    endpoint: normalizedInput.endpoint,
+    method: "eth_getBlockByHash",
+    params: [
+      normalizeEvmNonZeroHash(normalizedInput.blockHash, "EVM block hash"),
+      normalizedInput.fullTransactions === true,
+    ],
+  });
+  if (result === null) {
+    return null;
+  }
+  if (!isPlainRecord(result)) {
+    throw new Error("EVM block must be an object or null.");
+  }
+  return result;
+};
+
+const getEvmLogsFromRpc = async (
+  input: EvmLogsInput,
+): Promise<Record<string, unknown>[]> => {
+  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM logs input");
+  const filter: Record<string, unknown> = {};
+  if (
+    normalizedInput.blockHash !== undefined &&
+    (normalizedInput.fromBlock !== undefined ||
+      normalizedInput.toBlock !== undefined)
+  ) {
+    throw new Error(
+      "EVM eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
+    );
+  }
+  if (normalizedInput.address !== undefined) {
+    filter.address = normalizeEvmRpcLogAddress(normalizedInput.address);
+  }
+  if (normalizedInput.blockHash !== undefined) {
+    filter.blockHash = normalizeEvmNonZeroHash(
+      normalizedInput.blockHash,
+      "EVM blockHash",
+    );
+  }
+  if (normalizedInput.fromBlock !== undefined) {
+    filter.fromBlock = normalizeEvmBlockTag(
+      normalizedInput.fromBlock,
+      "EVM fromBlock",
+    );
+  }
+  if (normalizedInput.toBlock !== undefined) {
+    filter.toBlock = normalizeEvmBlockTag(
+      normalizedInput.toBlock,
+      "EVM toBlock",
+    );
+  }
+  if (normalizedInput.topics !== undefined) {
+    filter.topics = normalizeEvmRpcLogTopics(normalizedInput.topics);
+  }
+  const result = await callEvmRpcOnGateway({
+    endpoint: normalizedInput.endpoint,
+    method: "eth_getLogs",
+    params: [filter],
+  });
+  if (!Array.isArray(result)) {
+    throw new Error("EVM logs response must be an array.");
+  }
+  for (const [index, entry] of result.entries()) {
+    if (!isPlainRecord(entry)) {
+      throw new Error(
+        `EVM logs response entry ${index + 1} must be an object.`,
+      );
+    }
+  }
+  return result as Record<string, unknown>[];
 };
 
 const fetchExplorerAssetDefinitionSnapshot = async (
@@ -7960,11 +8816,16 @@ const buildUranaiPrivateTradeProofEnvelope = async (
       "Uranai private trade spend amount must be greater than zero.",
     );
   }
-  const privateKeyHex = await resolvePrivateKeyHex({
-    accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Uranai private trade proof",
-  });
+  const signingMaterial = assertEd25519SigningMaterial(
+    await resolveSigningMaterial({
+      accountId,
+      privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
+      operationLabel: "Uranai private trade proof",
+    }),
+    "Uranai private trade proof",
+  );
+  const privateKeyHex = signingMaterial.privateKeyHex;
   const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
   const materials = await resolveConfidentialUnshieldMaterials({
     toriiUrl: input.toriiUrl,
@@ -8114,11 +8975,15 @@ const submitConfidentialSelfConsolidation = async (input: {
     privateKeyHex: input.privateKeyHex,
     assetDefinitionId: input.assetDefinitionId,
   });
-  const privateKeyHex = await resolvePrivateKeyHex({
-    accountId: input.accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Confidential consolidation",
-  });
+  const signingMaterial = assertEd25519SigningMaterial(
+    await resolveSigningMaterial({
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+      operationLabel: "Confidential consolidation",
+    }),
+    "Confidential consolidation",
+  );
+  const privateKeyHex = signingMaterial.privateKeyHex;
   const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
   const receiveDescriptor = await createStoredConfidentialReceiveDescriptor({
     accountId: input.accountId,
@@ -8182,6 +9047,7 @@ const submitConfidentialSelfConsolidation = async (input: {
     },
     metadata,
     privateKey,
+    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
   const submission = await submitConfidentialRelayTransfer({
     toriiUrl: input.toriiUrl,
@@ -8457,6 +9323,7 @@ const submitInstructionTransaction = async (input: {
   chainId: string;
   authorityAccountId: string;
   privateKeyHex?: string;
+  signingAlgorithm?: string;
   instruction: Record<string, unknown>;
 }) => {
   const chainId = input.chainId.trim();
@@ -8467,9 +9334,10 @@ const submitInstructionTransaction = async (input: {
     input.authorityAccountId,
     "authorityAccountId",
   );
-  const privateKeyHex = await resolvePrivateKeyHex({
+  const signingMaterial = await resolveSigningMaterial({
     accountId: authority,
     privateKeyHex: input.privateKeyHex,
+    signingAlgorithm: input.signingAlgorithm,
     operationLabel: "Transaction submission",
   });
   const tx = buildTransaction({
@@ -8477,7 +9345,8 @@ const submitInstructionTransaction = async (input: {
     authority,
     instructions: [input.instruction],
     metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
-    privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
+    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
     input.toriiUrl,
@@ -8736,11 +9605,22 @@ const api: IrohaBridge = {
   async getChainMetadata(config) {
     return fetchChainMetadata(config.toriiUrl);
   },
-  generateKeyPair() {
-    const { publicKey, privateKey } = generateKeyPair();
+  async getSigningAlgorithms(config) {
+    return resolveSigningAlgorithmOptions(config);
+  },
+  generateKeyPair(input = {}) {
+    const signingAlgorithm = normalizeBridgeSigningAlgorithm(
+      input.signingAlgorithm,
+    );
+    const seedHex = trimString(input.seedHex);
+    const { publicKey, privateKey } = generateSdkKeyPair({
+      algorithm: signingAlgorithm,
+      ...(seedHex ? { seed: hexToBuffer(seedHex, "seedHex") } : {}),
+    });
     return {
       publicKeyHex: toHex(publicKey),
       privateKeyHex: toHex(privateKey),
+      signingAlgorithm,
     };
   },
   generateKaigiSignalKeyPair() {
@@ -8749,10 +9629,11 @@ const api: IrohaBridge = {
   async isSecureVaultAvailable() {
     return await isSecureVaultAvailable();
   },
-  async storeAccountSecret({ accountId, privateKeyHex }) {
+  async storeAccountSecret({ accountId, privateKeyHex, signingAlgorithm }) {
     await storeAccountSecretInVault({
       accountId: normalizeCompatAccountIdLiteral(accountId, "accountId"),
       privateKeyHex,
+      signingAlgorithm: normalizeBridgeSigningAlgorithm(signingAlgorithm),
     });
   },
   async listAccountSecretFlags({ accountIds }) {
@@ -8769,14 +9650,31 @@ const api: IrohaBridge = {
     }
     clipboard.writeText(value);
   },
-  deriveAccountAddress({ domain, publicKeyHex, networkPrefix }) {
-    return deriveAccountAddressView({ domain, publicKeyHex, networkPrefix });
+  deriveAccountAddress({
+    domain,
+    publicKeyHex,
+    networkPrefix,
+    signingAlgorithm,
+  }) {
+    return deriveAccountAddressView({
+      domain,
+      publicKeyHex,
+      networkPrefix,
+      signingAlgorithm: normalizeBridgeSigningAlgorithm(signingAlgorithm),
+    });
   },
-  derivePublicKey(privateKeyHex) {
+  derivePublicKey(input) {
+    const privateKeyHex =
+      typeof input === "string" ? input : input.privateKeyHex;
+    const signingAlgorithm =
+      typeof input === "string"
+        ? DEFAULT_SIGNING_ALGORITHM
+        : normalizeBridgeSigningAlgorithm(input.signingAlgorithm);
     const publicKey = publicKeyFromPrivate(
       hexToBuffer(privateKeyHex, "privateKeyHex"),
+      { algorithm: signingAlgorithm },
     );
-    return { publicKeyHex: toHex(publicKey) };
+    return { publicKeyHex: toHex(publicKey), signingAlgorithm };
   },
   deriveConfidentialOwnerTag(privateKeyHex) {
     return {
@@ -8923,9 +9821,10 @@ const api: IrohaBridge = {
       input.authorityAccountId,
       "authorityAccountId",
     );
-    const authorityPrivateKeyHex = await resolvePrivateKeyHex({
+    const authoritySigningMaterial = await resolveSigningMaterial({
       accountId: authorityAccountId,
       privateKeyHex: input.authorityPrivateKeyHex,
+      signingAlgorithm: input.authoritySigningAlgorithm,
       operationLabel: "Create on-chain account",
     });
     const tx = buildRegisterAccountAndTransferTransaction({
@@ -8939,7 +9838,11 @@ const api: IrohaBridge = {
         metadata: input.metadata ?? {},
       },
       metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
-      privateKey: hexToBuffer(authorityPrivateKeyHex, "authorityPrivateKeyHex"),
+      privateKey: hexToBuffer(
+        authoritySigningMaterial.privateKeyHex,
+        "authorityPrivateKeyHex",
+      ),
+      privateKeyAlgorithm: authoritySigningMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       input.toriiUrl,
@@ -8970,17 +9873,20 @@ const api: IrohaBridge = {
           })
         ).accountId
       : "";
-    const privateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
       operationLabel: input.unshield
         ? "Confidential public exit"
         : input.shielded
           ? "Shielded transfer"
           : "Transfer",
     });
+    const privateKeyHex = signingMaterial.privateKeyHex;
 
     if (input.unshield) {
+      assertEd25519SigningMaterial(signingMaterial, "Confidential public exit");
       await assertSecureVaultAvailable("Confidential public exit");
       if (!destinationAccountId) {
         throw new Error("destinationAccountId is required.");
@@ -9211,6 +10117,7 @@ const api: IrohaBridge = {
         },
         metadata,
         privateKey,
+        privateKeyAlgorithm: signingMaterial.signingAlgorithm,
       });
       const submission = await submitSignedTransactionAndWaitForCommit(
         input.toriiUrl,
@@ -9249,6 +10156,12 @@ const api: IrohaBridge = {
     }
 
     if (input.shielded) {
+      assertEd25519SigningMaterial(
+        signingMaterial,
+        destinationAccountId === accountId
+          ? "Private balance creation"
+          : "Shielded transfer",
+      );
       await assertSecureVaultAvailable(
         destinationAccountId === accountId
           ? "Private balance creation"
@@ -9337,6 +10250,7 @@ const api: IrohaBridge = {
           },
           metadata,
           privateKey,
+          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
         });
         const submission = await submitSignedTransactionAsVersioned(
           input.toriiUrl,
@@ -9561,6 +10475,7 @@ const api: IrohaBridge = {
         },
         metadata,
         privateKey,
+        privateKeyAlgorithm: signingMaterial.signingAlgorithm,
       });
       const shadowMetadata = metadata;
       const shadowInstructions = [
@@ -9757,6 +10672,7 @@ const api: IrohaBridge = {
       destinationAccountId,
       metadata: withRequiredGasAssetMetadata(input.metadata, input.toriiUrl),
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
+      privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       input.toriiUrl,
@@ -9769,7 +10685,7 @@ const api: IrohaBridge = {
   },
   async signIrohaConnectMessage({ accountId, signingMessageB64 }) {
     const authority = normalizeCompatAccountIdLiteral(accountId, "accountId");
-    const privateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       operationLabel: "IrohaConnect signing",
     });
@@ -9781,12 +10697,27 @@ const api: IrohaBridge = {
     if (message.length === 0) {
       throw new Error("IrohaConnect signing message is empty.");
     }
-    const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
+    const privateKey = hexToBuffer(
+      signingMaterial.privateKeyHex,
+      "privateKeyHex",
+    );
+    const algorithmCode = getConnectSigningAlgorithmCode(
+      signingMaterial.signingAlgorithm,
+    );
     return {
-      publicKeyHex: toHex(publicKeyFromPrivate(privateKey)),
-      signatureB64: Buffer.from(signEd25519(message, privateKey)).toString(
-        "base64",
+      publicKeyHex: toHex(
+        publicKeyFromPrivate(privateKey, {
+          algorithm: signingMaterial.signingAlgorithm,
+        }),
       ),
+      signatureB64: Buffer.from(
+        sign(message, privateKey, {
+          algorithm: signingMaterial.signingAlgorithm,
+        }),
+      ).toString("base64"),
+      signingAlgorithm: signingMaterial.signingAlgorithm,
+      algorithmCode,
+      algorithmLabel: signingAlgorithmLabel(signingMaterial.signingAlgorithm),
     };
   },
   async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
@@ -10656,11 +11587,12 @@ const api: IrohaBridge = {
       hostAccountId,
       "hostAccountId",
     );
-    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       privateKeyHex,
       operationLabel: "Kaigi meeting creation",
     });
+    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const normalizedScheduledStartMs = normalizeTimestampMs(
       scheduledStartMs,
@@ -10802,6 +11734,7 @@ const api: IrohaBridge = {
       },
       metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
+      privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,
@@ -10836,11 +11769,12 @@ const api: IrohaBridge = {
       participantAccountId,
       "participantAccountId",
     );
-    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       privateKeyHex,
       operationLabel: "Kaigi meeting join",
     });
+    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
     const createdAtMs = Date.now();
@@ -10940,6 +11874,7 @@ const api: IrohaBridge = {
       },
       metadata: withRequiredGasAssetMetadata(metadata, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
+      privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,
@@ -11085,11 +12020,12 @@ const api: IrohaBridge = {
       hostAccountId,
       "hostAccountId",
     );
-    const resolvedPrivateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       privateKeyHex,
       operationLabel: "Kaigi meeting end",
     });
+    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const resolvedEndedAtMs =
       endedAtMs === undefined
@@ -11164,6 +12100,7 @@ const api: IrohaBridge = {
       },
       metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
+      privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
     const submission = await submitSignedTransactionAndWaitForCommit(
       toriiUrl,
@@ -11401,6 +12338,33 @@ const api: IrohaBridge = {
   },
   triggerTronConstantContract(input) {
     return triggerTronConstantContractFromGateway(input);
+  },
+  callEvmRpc(input) {
+    return callEvmRpcOnGateway(input);
+  },
+  getEvmChainId(input) {
+    return getEvmChainIdFromRpc(input);
+  },
+  getEvmBalance(input) {
+    return getEvmBalanceFromRpc(input);
+  },
+  getEvmCode(input) {
+    return getEvmCodeFromRpc(input);
+  },
+  callEvmContract(input) {
+    return callEvmContractFromRpc(input);
+  },
+  getEvmTransactionReceipt(input) {
+    return getEvmTransactionReceiptFromRpc(input);
+  },
+  getEvmTransaction(input) {
+    return getEvmTransactionFromRpc(input);
+  },
+  getEvmBlockByHash(input) {
+    return getEvmBlockByHashFromRpc(input);
+  },
+  getEvmLogs(input) {
+    return getEvmLogsFromRpc(input);
   },
   bondPublicLaneStake({
     toriiUrl,

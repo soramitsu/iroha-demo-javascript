@@ -5,6 +5,8 @@ import { sha256 } from "@noble/hashes/sha256";
 import { keccak_256 } from "@noble/hashes/sha3";
 import {
   bridgeDecimalToBaseUnits,
+  bindBscSourceDataForProof,
+  bindBscToTairaSourceProofPackage,
   bindSignedTronTransactionForBroadcast,
   bindTronBroadcastResult,
   bindTronFinalitySnapshot,
@@ -18,27 +20,51 @@ import {
   buildTairaXorFinalizeTriggerRequest,
   buildTairaXorMessageProofJobQueryMaterial,
   buildTairaXorBurnTriggerRequest,
+  buildTairaXorBscBurnTransactionRequest,
+  buildTairaXorBscFinalizeProofBinding,
+  buildTairaXorBscFinalizeTransactionRequest,
+  buildTairaXorBscInboundSettlement,
+  buildTairaXorBscMessageProofJobQueryMaterial,
+  buildTairaXorBscOutboundBurnRecordRequest,
+  buildTairaXorBscOutboundPreview,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorOutboundPreview,
   buildTairaXorTokenBalanceRequest,
+  canonicalEip55EvmAddress,
   decodeTronBase58CheckAddress,
+  evmFunctionSelector,
   formatBaseUnitAmount,
   formatTronSunBalance,
   isTairaSccpNetwork,
   isLikelyTairaAccount,
+  isValidBscAddress,
+  isValidBscTransactionHash,
   isValidSccpMessageId,
   isValidTronBase58CheckAddress,
   isValidTronTransactionId,
   normalizeBridgeAmount,
+  normalizeBscNetworkIdHex,
+  normalizeBscRouteEvidenceAddress,
+  normalizeBscTransactionHash,
+  normalizeEvmAddress,
   normalizeSccpMessageId,
   normalizeSccpTronNetworkKey,
   normalizeTairaAccountId,
   normalizeTairaTransactionHash,
   normalizeTronTransactionId,
   normalizeTronNetworkIdHex,
+  pickBscSccpManifest,
+  pickTronSccpManifest,
   readTronAccountBalanceSun,
   readTronConstantUint256,
   readSccpTairaBurnRecordMaterial,
+  readSccpBscBridgeAddress,
+  readSccpBscProofMaterial,
+  readSccpBscRpcEndpoint,
+  readSccpBscSourceBridgeAddress,
+  readSccpBscTokenAddress,
+  readSccpBscVerifierAddress,
+  readBscSourceProverMaterialBinding,
   readSccpTronBridgeAddress,
   readSccpTronGatewayEndpoint,
   readSccpTronProofMaterial,
@@ -46,9 +72,19 @@ import {
   readSccpTronTokenAddress,
   resolveSccpRouteReadiness,
   tairaXorBurnToTairaAccountCallData,
+  tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
+  tairaXorFinalizeFromTairaCallData,
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
+  BSC_TESTNET_CHAIN_ID_HEX,
+  BSC_MAINNET_NETWORK_ID_HEX,
+  BSC_TESTNET_NETWORK_ID_HEX,
+  BSC_MAINNET_RPC_URL,
+  BSC_TESTNET_RPC_URL,
+  SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES,
+  SCCP_BSC_DOMAIN,
+  SCCP_BSC_NETWORK,
   SCCP_SORA_DOMAIN,
   SCCP_TRON_DOMAIN,
   SCCP_TRON_NETWORK,
@@ -56,7 +92,6 @@ import {
   TRON_MAINNET_CHAIN_ID_HEX,
   TRON_MAINNET_NETWORK_ID_HEX,
   TRON_MAINNET_RPC_URL,
-  TRON_NILE_CAIP_CHAIN_ID,
   TRON_NILE_CHAIN_ID_HEX,
   TRON_NILE_NETWORK_ID_HEX,
   TRON_NILE_RPC_URL,
@@ -65,18 +100,32 @@ import {
 import {
   canonicalSccpTransferPayloadBytes,
   canonicalSccpPayloadEnvelopeBytes,
+  canonicalSccpMessageProofBundleBytes,
+  SCCP_CODEC_EVM_HEX,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
+  SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
+  SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
   SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
+  SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
+  buildBscTestnetSccpDestinationProofRequest,
+  sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
+  tairaXorBscBurnSourceEventDigest,
   tairaXorBurnSourceEventDigest,
   tairaXorRouteIdHash,
   tairaXorAssetKeyHash,
+  evmSccpDestinationBinding,
   tronSccpDestinationBinding,
+  wrapBscTestnetSccpDestinationProofResult,
 } from "@iroha/iroha-js/sccp";
 import {
+  buildBscSccpProofPackage,
   buildTronSccpProofPackage,
+  generateBscSccpProofPackage,
   generateTronSccpProofPackage,
   serializeSccpValue,
 } from "@/utils/sccpProofPackage";
@@ -90,6 +139,8 @@ const VALID_TRON_ADDRESS = "TGkWdpawVNfeset3P6uTBbLaPY7nZVZvXY";
 const VALID_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const BURN_RECORD_ARTIFACT_B64 =
   "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==";
+const BURN_RECORD_ARTIFACT_SHA256 =
+  "0x1ad4f776520bfcdd4a4022cdcaaff5e26d2a3172c4fafb01917505e7be325592";
 const BURN_RECORD_MATERIAL = {
   tairaXorBurnRecord: {
     settlementAssetDefinitionId: VALID_ASSET_DEFINITION_ID,
@@ -107,6 +158,10 @@ const HEX32_C = `0x${"33".repeat(32)}`;
 const HEX32_D = `0x${"44".repeat(32)}`;
 const HEX32_E = `0x${"55".repeat(32)}`;
 const HEX32_F = `0x${"66".repeat(32)}`;
+const OFFLINE_FULL_TOML_SHA256 = `0x${"99".repeat(32)}`;
+const BSC_PROOF_ARTIFACT_HASH = `0x${"77".repeat(32)}`;
+const BSC_PROVING_KEY_HASH = `0x${"88".repeat(32)}`;
+const BSC_VERIFIER_KEY_ARTIFACT_HASH = `0x${"aa".repeat(32)}`;
 const TRON_SOLID_BLOCK_NUMBER = 12;
 const TRON_SOLID_BLOCK_ID = `0x${TRON_SOLID_BLOCK_NUMBER.toString(16).padStart(
   16,
@@ -115,11 +170,58 @@ const TRON_SOLID_BLOCK_ID = `0x${TRON_SOLID_BLOCK_NUMBER.toString(16).padStart(
 const TRON_TOKEN_ADDRESS = "TD5gsCwxykWsLN9aPrq2TAfNjByuZKYp4E";
 const TRON_SOURCE_BRIDGE_ADDRESS = "TEdvoHEatmDKvTh3o9vBRB9Vdtbhn4QFhy";
 const TRON_VERIFIER_ADDRESS = "TGCAjMXComunWZEXCT1LPBdcYbDVuyexBv";
+const fixtureBscAddress = (label: string): string =>
+  canonicalEip55EvmAddress(
+    `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    )
+      .join("")
+      .slice(0, 40)}`,
+  );
+const BSC_BRIDGE_ADDRESS = fixtureBscAddress("renderer sccp bsc bridge");
+const BSC_TOKEN_ADDRESS = fixtureBscAddress("renderer sccp bsc token");
+const BSC_SOURCE_BRIDGE_ADDRESS = fixtureBscAddress(
+  "renderer sccp bsc source bridge",
+);
+const BSC_VERIFIER_ADDRESS = fixtureBscAddress("renderer sccp bsc verifier");
+const BSC_RECIPIENT_ADDRESS = fixtureBscAddress("renderer sccp bsc recipient");
+const BSC_BRIDGE_ADDRESS_HEX = normalizeEvmAddress(BSC_BRIDGE_ADDRESS);
+const BSC_VERIFIER_ADDRESS_HEX = normalizeEvmAddress(BSC_VERIFIER_ADDRESS);
+const BSC_RECIPIENT_ADDRESS_HEX = normalizeEvmAddress(BSC_RECIPIENT_ADDRESS);
+const BSC_MIXED_RECIPIENT_ADDRESS_LOWER =
+  "0x52908400098527886e0f7030069857d2e4169ee7";
+const BSC_MIXED_RECIPIENT_ADDRESS =
+  "0x52908400098527886E0F7030069857D2E4169EE7";
+const BSC_SENDER_ADDRESS = fixtureBscAddress("renderer sccp bsc sender");
+const BSC_SENDER_ADDRESS_HEX = normalizeEvmAddress(BSC_SENDER_ADDRESS);
 const SIGNING_TRON_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const WRONG_SIGNING_TRON_PRIVATE_KEY = new Uint8Array(32).fill(8);
 const SIGNING_TRON_ADDRESS = VALID_TRON_ADDRESS;
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+const TRON_TRANSACTION_SECRET_INPUT_ERROR =
+  "TRON bridge transaction must not contain secret-like material before broadcast.";
+const TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR =
+  "TRON bridge transaction must not contain nested signatures or signing helper payloads before broadcast.";
+
+const expectGenericTronTransactionRejection = (
+  action: () => unknown,
+  expectedMessage: string,
+  forbidden: string[],
+): void => {
+  let caught: unknown = null;
+  try {
+    action();
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  const message = caught instanceof Error ? caught.message : "";
+  expect(message).toBe(expectedMessage);
+  for (const value of forbidden) {
+    expect(message).not.toContain(value);
+  }
+};
 
 const bytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
@@ -265,13 +367,24 @@ const BN254_G2_GENERATOR_WORDS = [
   abiWord(0x090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975bn),
 ];
 
-const groth16ProofBytes = (): Uint8Array => {
+const groth16ProofBytes = (
+  context: {
+    publicInputs?: {
+      messageId?: string;
+      commitmentRoot?: string;
+    };
+    sourceDomain?: number | string;
+  } = {},
+): Uint8Array => {
   const out = new Uint8Array(SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1);
+  const messageId = context.publicInputs?.messageId ?? HEX32_A;
+  const sourceDomain = BigInt(context.sourceDomain ?? SCCP_SORA_DOMAIN);
+  const commitmentRoot = context.publicInputs?.commitmentRoot ?? HEX32_C;
   [
     abiWord(1n),
-    Uint8Array.from({ length: 32 }, () => 0x11),
-    abiWord(0n),
-    Uint8Array.from({ length: 32 }, () => 0x33),
+    hexToBytes(messageId),
+    abiWord(sourceDomain),
+    hexToBytes(commitmentRoot),
     abiWord(1n),
     abiWord(2n),
     ...BN254_G2_GENERATOR_WORDS,
@@ -308,6 +421,23 @@ const TRON_BURN_CALL_DATA = tairaXorBurnToTairaCallData({
   tairaRecipient: TAIRA_SENDER,
   amount: BRIDGE_AMOUNT_BASE_UNITS,
 });
+const BSC_TO_TAIRA_NONCE = "1";
+const BSC_SOURCE_EVENT_TOPIC = bytesToHex(
+  keccak_256(new TextEncoder().encode("SccpSourceEvent(bytes32)")),
+);
+const BSC_SOURCE_EVENT_DIGEST = tairaXorBscBurnSourceEventDigest({
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  burnerAddress: BSC_SENDER_ADDRESS,
+  tairaRecipient: TAIRA_SENDER,
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+  nonce: BSC_TO_TAIRA_NONCE,
+});
+const BSC_BURN_CALL_DATA = tairaXorBscBurnToTairaAccountCallData({
+  tairaRecipient: TAIRA_SENDER,
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+});
+const BSC_SOURCE_TX_HASH = HEX32_E;
+const BSC_SOURCE_BLOCK_HASH = HEX32_F;
 const DEFAULT_TRON_SOURCE_RAW_DATA_HEX = buildTronTriggerRawDataHex({
   dataHex: TRON_BURN_CALL_DATA,
 });
@@ -365,6 +495,31 @@ const TAIRA_TO_TRON_PAYLOAD_HASH = sccpPayloadHash(
     value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
   }),
 );
+const TAIRA_TO_BSC_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: 0,
+  dest_domain: SCCP_BSC_DOMAIN,
+  nonce: "7",
+  asset_home_domain: 0,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: BRIDGE_AMOUNT_BASE_UNITS,
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: TAIRA_SENDER,
+  recipient_codec: SCCP_CODEC_EVM_HEX,
+  recipient: BSC_RECIPIENT_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: "taira_bsc_xor",
+};
+const TAIRA_TO_BSC_MESSAGE_ID = sccpTransferMessageId(
+  TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+);
+const TAIRA_TO_BSC_PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+  }),
+);
 const READY_TRON_MANIFEST = {
   tronNetwork: "mainnet",
   chain: "tron-mainnet",
@@ -386,12 +541,17 @@ const READY_TRON_MANIFEST = {
   },
   postDeployLiveEvidence: {
     fullTomlReady: true,
+    offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
     sourceBridgeConfigHash: HEX32_A,
     sourceEventTransactionId: HEX32_B,
     routeCanaryEvidenceHash: HEX32_C,
     routeCanaryTransactionId: HEX32_F,
   },
   ...BURN_RECORD_MATERIAL,
+  tairaXorBurnRecord: {
+    ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
+    artifactSha256: BURN_RECORD_ARTIFACT_SHA256,
+  },
 };
 const READY_NILE_TRON_MANIFEST = {
   counterpartyDomain: SCCP_TRON_DOMAIN,
@@ -416,6 +576,193 @@ const READY_NILE_TRON_MANIFEST = {
   },
   postDeployLiveEvidence: undefined,
 };
+const BSC_DESTINATION_BINDING_KEY = `evm:0:${SCCP_BSC_DOMAIN}:${BSC_TESTNET_NETWORK_ID_HEX.slice(
+  2,
+)}:${normalizeEvmAddress(BSC_VERIFIER_ADDRESS)}:${normalizeEvmAddress(BSC_BRIDGE_ADDRESS)}:${HEX32_D}:${HEX32_E}`;
+const DIAGNOSTIC_BSC_VERIFIER_KEY_HASH = [
+  ...SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES,
+][0];
+const BSC_DESTINATION_BINDING = evmSccpDestinationBinding({
+  version: 1,
+  key: BSC_DESTINATION_BINDING_KEY,
+  sourceDomain: 0,
+  targetDomain: SCCP_BSC_DOMAIN,
+  networkId: BSC_TESTNET_NETWORK_ID_HEX,
+  verifierAddress: BSC_VERIFIER_ADDRESS,
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  verifierCodeHash: HEX32_D,
+  verifierKeyHash: HEX32_E,
+});
+const BSC_MAINNET_DESTINATION_BINDING_KEY = `evm:0:${SCCP_BSC_DOMAIN}:${BSC_MAINNET_NETWORK_ID_HEX.slice(
+  2,
+)}:${normalizeEvmAddress(BSC_VERIFIER_ADDRESS)}:${normalizeEvmAddress(BSC_BRIDGE_ADDRESS)}:${HEX32_D}:${HEX32_E}`;
+const BSC_MAINNET_DESTINATION_BINDING = evmSccpDestinationBinding({
+  version: 1,
+  key: BSC_MAINNET_DESTINATION_BINDING_KEY,
+  sourceDomain: 0,
+  targetDomain: SCCP_BSC_DOMAIN,
+  networkId: BSC_MAINNET_NETWORK_ID_HEX,
+  verifierAddress: BSC_VERIFIER_ADDRESS,
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  verifierCodeHash: HEX32_D,
+  verifierKeyHash: HEX32_E,
+});
+const repeatedHex32 = (byteHex: string): string => {
+  const byte = byteHex.toLowerCase().padStart(2, "0");
+  return `0x${byte.repeat(32)}`;
+};
+const fixtureHash = (label: string): string =>
+  `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
+const BSC_NATIVE_EVM_PROVER_BUNDLE = {
+  schema: SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
+  bundle_id: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  domain: SCCP_BSC_DOMAIN,
+  chain: "bsc-testnet",
+  proof_backend: SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1,
+  proof_artifact: "artifacts/bsc-testnet/taira-xor/proof-artifact.r1cs",
+  proof_artifact_hash: BSC_PROOF_ARTIFACT_HASH,
+  proving_key: "artifacts/bsc-testnet/taira-xor/proving-key.zkey",
+  proving_key_hash: BSC_PROVING_KEY_HASH,
+  verifier_key: "artifacts/bsc-testnet/taira-xor/verifier-key.json",
+  verifier_key_hash: HEX32_E,
+  verifier_key_artifact_hash: BSC_VERIFIER_KEY_ARTIFACT_HASH,
+  destination_binding_hash: BSC_DESTINATION_BINDING.bindingHash,
+  no_wasm: true,
+  remote_prover_required: false,
+  browser_implementation: "pure-typescript",
+  cross_sdk_parity_artifact:
+    "artifacts/bsc-testnet/taira-xor/cross-sdk-parity.json",
+  native_prover_self_test_artifact:
+    "artifacts/bsc-testnet/taira-xor/native-prover-self-test.json",
+  groth16_proof_self_test_artifact:
+    "artifacts/bsc-testnet/taira-xor/groth16-proof-self-test.json",
+  groth16_proof_self_test_hash: fixtureHash(
+    "renderer bsc groth16 proof self-test",
+  ),
+  native_sdk_artifacts: Object.entries(
+    SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
+  ).map(([sdk, implementation], index) => ({
+    sdk,
+    implementation,
+    prover_artifact_hash: BSC_PROOF_ARTIFACT_HASH,
+    proving_key_hash: BSC_PROVING_KEY_HASH,
+    implementation_artifact: `artifacts/bsc-testnet/taira-xor/${sdk}-implementation.bin`,
+    implementation_hash: repeatedHex32((0x81 + index).toString(16)),
+  })),
+  audit_hashes: {
+    circuit_security_audit: fixtureHash("renderer bsc circuit audit"),
+    native_implementation_audit: fixtureHash("renderer bsc native audit"),
+    reproducible_build_attestation: fixtureHash(
+      "renderer bsc reproducible attestation",
+    ),
+    cross_sdk_parity: fixtureHash("renderer bsc parity"),
+    native_prover_self_test: fixtureHash("renderer bsc self-test"),
+    no_wasm_no_remote_scan: fixtureHash("renderer bsc no-wasm scan"),
+  },
+};
+const BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE = {
+  ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+  bundle_id: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
+  chain: "bsc-mainnet",
+  proof_artifact: "artifacts/bsc-mainnet/taira-xor/proof-artifact.r1cs",
+  proving_key: "artifacts/bsc-mainnet/taira-xor/proving-key.zkey",
+  verifier_key: "artifacts/bsc-mainnet/taira-xor/verifier-key.json",
+  destination_binding_hash: BSC_MAINNET_DESTINATION_BINDING.bindingHash,
+  cross_sdk_parity_artifact:
+    "artifacts/bsc-mainnet/taira-xor/cross-sdk-parity.json",
+  native_prover_self_test_artifact:
+    "artifacts/bsc-mainnet/taira-xor/native-prover-self-test.json",
+  groth16_proof_self_test_artifact:
+    "artifacts/bsc-mainnet/taira-xor/groth16-proof-self-test.json",
+  native_sdk_artifacts: BSC_NATIVE_EVM_PROVER_BUNDLE.native_sdk_artifacts.map(
+    (artifact) => ({
+      ...artifact,
+      implementation_artifact: String(artifact.implementation_artifact).replace(
+        "bsc-testnet",
+        "bsc-mainnet",
+      ),
+    }),
+  ),
+};
+const READY_BSC_MANIFEST = {
+  bscNetwork: "testnet",
+  chain: "bsc-testnet",
+  counterpartyDomain: SCCP_BSC_DOMAIN,
+  counterpartyAccountCodecKey: "evm_hex",
+  verifierTarget: "EvmContract",
+  routeId: "taira_bsc_xor",
+  assetKey: "xor",
+  productionReady: true,
+  bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+  bscTokenAddress: BSC_TOKEN_ADDRESS,
+  sccpBscSourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
+  bscVerifierAddress: BSC_VERIFIER_ADDRESS,
+  bscRpcUrl: BSC_TESTNET_RPC_URL,
+  proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+  provingKeyHash: BSC_PROVING_KEY_HASH,
+  nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+  destinationBinding: {
+    version: 1,
+    key: BSC_DESTINATION_BINDING.key,
+    bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+  },
+  destinationRollout: {
+    verifierIdentity: BSC_VERIFIER_ADDRESS,
+    verifierCodeHash: HEX32_D,
+    verifierKeyHash: HEX32_E,
+    proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+    provingKeyHash: BSC_PROVING_KEY_HASH,
+    nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+    destinationNetworkId: BSC_TESTNET_NETWORK_ID_HEX,
+    destinationBridgeAddress: BSC_BRIDGE_ADDRESS,
+    destinationBindingKey: BSC_DESTINATION_BINDING.key,
+    destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+  },
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
+    sourceBridgeConfigHash: HEX32_A,
+    sourceEventTransactionId: HEX32_B,
+    sourceEventExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_B}`,
+    routeCanaryEvidenceHash: HEX32_C,
+    routeCanaryTransactionId: HEX32_F,
+    routeCanaryExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_F}`,
+  },
+  ...BURN_RECORD_MATERIAL,
+  tairaXorBurnRecord: {
+    ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
+    artifactSha256: BURN_RECORD_ARTIFACT_SHA256,
+  },
+};
+const READY_BSC_MAINNET_MANIFEST = {
+  ...READY_BSC_MANIFEST,
+  bscNetwork: "mainnet",
+  chain: "bsc-mainnet",
+  bscRpcUrl: BSC_MAINNET_RPC_URL,
+  nativeEvmProverBundle: BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE,
+  destinationBinding: {
+    version: 1,
+    key: BSC_MAINNET_DESTINATION_BINDING.key,
+    bindingHash: BSC_MAINNET_DESTINATION_BINDING.bindingHash,
+  },
+  destinationRollout: {
+    ...READY_BSC_MANIFEST.destinationRollout,
+    nativeEvmProverBundle: BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE,
+    destinationNetworkId: BSC_MAINNET_NETWORK_ID_HEX,
+    destinationBindingKey: BSC_MAINNET_DESTINATION_BINDING.key,
+    destinationBindingHash: BSC_MAINNET_DESTINATION_BINDING.bindingHash,
+  },
+  postDeployLiveEvidence: {
+    ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+    sourceEventExplorerUrl: `https://bscscan.com/tx/${HEX32_B}`,
+    routeCanaryExplorerUrl: `https://bscscan.com/tx/${HEX32_F}`,
+  },
+};
+
+const BSC_SOURCE_PROVER_MATERIAL_BINDING =
+  readBscSourceProverMaterialBinding(READY_BSC_MANIFEST);
 
 const sampleTairaToTronJob = (
   overrides: Record<string, unknown> = {},
@@ -474,6 +821,73 @@ const sampleTairaToTronJob = (
       payload: {
         kind: "Transfer",
         value: TAIRA_TO_TRON_TRANSFER_PAYLOAD,
+      },
+      finalityProof: "0x010203",
+    },
+    ...overrides,
+  };
+};
+
+const sampleTairaToBscJob = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => {
+  const transferProjection = {
+    source_domain: 0,
+    dest_domain: SCCP_BSC_DOMAIN,
+    asset_home_domain: 0,
+    asset_id: { kind: "TextUtf8", value: "xor" },
+    route_id: { kind: "TextUtf8", value: "taira_bsc_xor" },
+    amount: BRIDGE_AMOUNT_BASE_UNITS,
+    sender: { kind: "TextUtf8", value: TAIRA_SENDER },
+    recipient: { kind: "EvmHex", value: BSC_RECIPIENT_ADDRESS },
+  };
+  return {
+    publicInputs: {
+      version: 1,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+      targetDomain: SCCP_BSC_DOMAIN,
+      commitmentRoot: HEX32_C,
+      finalityHeight: 10,
+      finalityBlockHash: HEX32_F,
+      destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+    },
+    destinationBinding: {
+      version: 1,
+      key: BSC_DESTINATION_BINDING.key,
+      bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+    },
+    payloadProjection: {
+      kind: "Transfer",
+      value: transferProjection,
+    },
+    submissionPackage: {
+      platformPayload: {
+        kind: "evm_groth16_contract_call",
+        value: {
+          statementHash: HEX32_E,
+          destinationBinding: {
+            version: 1,
+            key: BSC_DESTINATION_BINDING.key,
+            bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+          },
+        },
+      },
+    },
+    bundle: {
+      version: 1,
+      commitmentRoot: HEX32_C,
+      commitment: {
+        version: 1,
+        kind: "Transfer",
+        targetDomain: SCCP_BSC_DOMAIN,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+      },
+      merkleProof: { steps: [] },
+      payload: {
+        kind: "Transfer",
+        value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
       },
       finalityProof: "0x010203",
     },
@@ -679,6 +1093,144 @@ const sampleBoundTronSourceDataInput = (
   ...sampleTronSourceData(mutate),
 });
 
+const sampleBscSourceData = (
+  mutate?: (source: {
+    transaction: Record<string, unknown>;
+    receipt: Record<string, unknown>;
+    indexedLogs: Record<string, unknown>[];
+    block: Record<string, unknown>;
+  }) => void,
+) => {
+  const sourceLog = {
+    address: BSC_SOURCE_BRIDGE_ADDRESS,
+    topics: [BSC_SOURCE_EVENT_TOPIC, BSC_SOURCE_EVENT_DIGEST],
+    data: "0x",
+    transactionHash: BSC_SOURCE_TX_HASH,
+    blockNumber: "0x7b",
+    blockHash: BSC_SOURCE_BLOCK_HASH,
+  };
+  const source = {
+    transaction: {
+      hash: BSC_SOURCE_TX_HASH,
+      from: BSC_SENDER_ADDRESS,
+      to: BSC_BRIDGE_ADDRESS,
+      input: BSC_BURN_CALL_DATA,
+    },
+    receipt: {
+      transactionHash: BSC_SOURCE_TX_HASH,
+      status: "0x1",
+      from: BSC_SENDER_ADDRESS,
+      to: BSC_BRIDGE_ADDRESS,
+      blockNumber: "0x7b",
+      blockHash: BSC_SOURCE_BLOCK_HASH,
+      logs: [{ ...sourceLog, topics: [...sourceLog.topics] }],
+    },
+    indexedLogs: [{ ...sourceLog, topics: [...sourceLog.topics] }],
+    block: {
+      hash: BSC_SOURCE_BLOCK_HASH,
+      number: "0x7b",
+      transactions: [BSC_SOURCE_TX_HASH],
+    },
+  };
+  mutate?.(source);
+  return source;
+};
+
+const sampleBoundBscSourceDataInput = (
+  mutate?: Parameters<typeof sampleBscSourceData>[0],
+) => ({
+  txId: BSC_SOURCE_TX_HASH,
+  bridgeAddress: BSC_BRIDGE_ADDRESS,
+  sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
+  bscSender: BSC_SENDER_ADDRESS,
+  tairaRecipient: TAIRA_SENDER,
+  amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+  ...sampleBscSourceData(mutate),
+});
+
+const sampleBscToTairaSourceProofPackage = (
+  mutate?: (proofPackage: Record<string, unknown>) => void,
+): Record<string, unknown> => {
+  const transferPayload = {
+    version: 1,
+    source_domain: SCCP_BSC_DOMAIN,
+    dest_domain: SCCP_SORA_DOMAIN,
+    nonce: BSC_TO_TAIRA_NONCE,
+    asset_home_domain: SCCP_SORA_DOMAIN,
+    asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+    asset_id: "xor",
+    amount: BRIDGE_AMOUNT_BASE_UNITS,
+    sender_codec: SCCP_CODEC_EVM_HEX,
+    sender: BSC_SENDER_ADDRESS,
+    recipient_codec: SCCP_CODEC_TEXT_UTF8,
+    recipient: TAIRA_SENDER,
+    route_id_codec: SCCP_CODEC_TEXT_UTF8,
+    route_id: "taira_bsc_xor",
+  };
+  const payloadHash = sccpPayloadHash(
+    canonicalSccpPayloadEnvelopeBytes({
+      kind: "Transfer",
+      value: transferPayload,
+    }),
+  );
+  const messageId = sccpTransferMessageId(transferPayload);
+  const commitment = {
+    version: 1,
+    kind: "Transfer" as const,
+    targetDomain: SCCP_SORA_DOMAIN,
+    messageId,
+    payloadHash,
+  };
+  const merkleProof = { steps: [] };
+  const commitmentRoot = sccpMerkleRootFromCommitment(
+    {
+      version: commitment.version,
+      kind: commitment.kind,
+      target_domain: commitment.targetDomain,
+      message_id: commitment.messageId,
+      payload_hash: commitment.payloadHash,
+    },
+    merkleProof,
+  );
+  const proofPackage = {
+    ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+    messageBundle: {
+      version: 1,
+      commitmentRoot,
+      commitment,
+      merkleProof,
+      payload: {
+        kind: "Transfer",
+        value: transferPayload,
+      },
+      finalityProof: "0x010203",
+    },
+    settlement: {
+      entrypoint: "finalize_inbound",
+      route: "taira_bsc_xor",
+    },
+    sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+    txId: BSC_SOURCE_TX_HASH,
+    messageId,
+    amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+    publicInputs: {
+      sourceDomain: SCCP_BSC_DOMAIN,
+      targetDomain: SCCP_SORA_DOMAIN,
+      messageId,
+      payloadHash,
+      commitmentRoot,
+      txId: BSC_SOURCE_TX_HASH,
+      sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+      sender: BSC_SENDER_ADDRESS,
+      recipient: TAIRA_SENDER,
+      routeId: "taira_bsc_xor",
+    },
+  };
+  mutate?.(proofPackage);
+  return proofPackage;
+};
+
 describe("SCCP helpers", () => {
   it("gates the bridge to TAIRA chain id and network prefix", () => {
     expect(
@@ -777,15 +1329,29 @@ describe("SCCP helpers", () => {
     expect(isValidTronTransactionId("0x1234")).toBe(false);
   });
 
+  it("normalizes BSC transaction hashes without accepting message-id shortcuts", () => {
+    expect(normalizeBscTransactionHash(` 0X${"AB".repeat(32)} `)).toBe(
+      `0x${"ab".repeat(32)}`,
+    );
+    expect(isValidBscTransactionHash(`0x${"11".repeat(32)}`)).toBe(true);
+    expect(isValidBscTransactionHash("11".repeat(32))).toBe(false);
+    expect(() => normalizeBscTransactionHash("11".repeat(32))).toThrow(
+      /0x-prefixed/,
+    );
+    expect(() => normalizeBscTransactionHash(`0x${"00".repeat(32)}`)).toThrow(
+      /non-zero/,
+    );
+  });
+
   it("normalizes supported TRON SCCP network ids by profile", () => {
-    expect(SCCP_TRON_NETWORK.key).toBe("nile");
+    expect(SCCP_TRON_NETWORK.key).toBe("mainnet");
     expect(normalizeSccpTronNetworkKey("")).toBe("mainnet");
     expect(normalizeSccpTronNetworkKey(" tron-nile ")).toBe("nile");
     expect(() => normalizeSccpTronNetworkKey("shasta")).toThrow(
       /mainnet or nile/,
     );
-    expect(normalizeTronNetworkIdHex(TRON_NILE_CHAIN_ID_HEX)).toBe(
-      TRON_NILE_NETWORK_ID_HEX,
+    expect(normalizeTronNetworkIdHex(TRON_MAINNET_CHAIN_ID_HEX)).toBe(
+      TRON_MAINNET_NETWORK_ID_HEX,
     );
     expect(
       normalizeTronNetworkIdHex(` ${TRON_MAINNET_CHAIN_ID_HEX} `, "mainnet"),
@@ -802,10 +1368,10 @@ describe("SCCP helpers", () => {
     expect(normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX, "nile")).toBe(
       TRON_NILE_NETWORK_ID_HEX,
     );
-    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/Nile/);
-    expect(() =>
-      normalizeTronNetworkIdHex(TRON_MAINNET_NETWORK_ID_HEX),
-    ).toThrow(/Nile/);
+    expect(() => normalizeTronNetworkIdHex(HEX32_C)).toThrow(/Mainnet/);
+    expect(() => normalizeTronNetworkIdHex(TRON_NILE_NETWORK_ID_HEX)).toThrow(
+      /Mainnet/,
+    );
     expect(() =>
       normalizeTronNetworkIdHex(TRON_MAINNET_NETWORK_ID_HEX, "nile"),
     ).toThrow(/Nile/);
@@ -822,6 +1388,1234 @@ describe("SCCP helpers", () => {
       TRON_NILE_RPC_URL,
     );
     expect(readSccpTronGatewayEndpoint(null, "nile")).toBe(TRON_NILE_RPC_URL);
+  });
+
+  it("normalizes BSC testnet route metadata and EVM addresses", () => {
+    expect(SCCP_BSC_NETWORK.key).toBe("testnet");
+    expect(normalizeBscNetworkIdHex(BSC_TESTNET_CHAIN_ID_HEX)).toBe(
+      BSC_TESTNET_NETWORK_ID_HEX,
+    );
+    expect(
+      normalizeBscNetworkIdHex(BSC_TESTNET_NETWORK_ID_HEX.toUpperCase()),
+    ).toBe(BSC_TESTNET_NETWORK_ID_HEX);
+    expect(() => normalizeBscNetworkIdHex(TRON_MAINNET_CHAIN_ID_HEX)).toThrow(
+      /BSC Testnet/,
+    );
+    expect(normalizeEvmAddress(BSC_BRIDGE_ADDRESS.toUpperCase())).toBe(
+      BSC_BRIDGE_ADDRESS_HEX,
+    );
+    expect(canonicalEip55EvmAddress(BSC_MIXED_RECIPIENT_ADDRESS_LOWER)).toBe(
+      BSC_MIXED_RECIPIENT_ADDRESS,
+    );
+    expect(normalizeEvmAddress(BSC_MIXED_RECIPIENT_ADDRESS)).toBe(
+      BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+    );
+    expect(isValidBscAddress(BSC_BRIDGE_ADDRESS)).toBe(true);
+    expect(
+      isValidBscAddress("0x1111111111111111111111111111111111111111"),
+    ).toBe(true);
+    expect(() =>
+      normalizeBscRouteEvidenceAddress(
+        "0x1111111111111111111111111111111111111111",
+        "BSC bridge address",
+      ),
+    ).toThrow(/repeated-byte placeholder material/);
+    expect(
+      isValidBscAddress("0x0000000000000000000000000000000000000000"),
+    ).toBe(false);
+    expect(readSccpBscBridgeAddress(READY_BSC_MANIFEST)).toBe(
+      BSC_BRIDGE_ADDRESS,
+    );
+    expect(readSccpBscTokenAddress(READY_BSC_MANIFEST)).toBe(BSC_TOKEN_ADDRESS);
+    expect(readSccpBscSourceBridgeAddress(READY_BSC_MANIFEST)).toBe(
+      BSC_SOURCE_BRIDGE_ADDRESS,
+    );
+    expect(() =>
+      readSccpBscSourceBridgeAddress({
+        ...READY_BSC_MANIFEST,
+        sccpBscSourceBridgeAddress: undefined,
+        sccp_tron_source_bridge_address: BSC_SOURCE_BRIDGE_ADDRESS,
+      }),
+    ).toThrow(/must not use TRON aliases.*sccp_tron_source_bridge_address/);
+    expect(() =>
+      readSccpBscVerifierAddress({
+        ...READY_BSC_MANIFEST,
+        bscVerifierAddress: undefined,
+        tron_verifier_address: BSC_VERIFIER_ADDRESS,
+      }),
+    ).toThrow(/must not use TRON aliases.*tron_verifier_address/);
+    expect(
+      readSccpBscSourceBridgeAddress({
+        ...READY_BSC_MANIFEST,
+        sccpBscSourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS.toUpperCase(),
+        source_bridge_address: BSC_SOURCE_BRIDGE_ADDRESS,
+      }),
+    ).toBe(BSC_SOURCE_BRIDGE_ADDRESS.toUpperCase());
+    expect(() =>
+      readSccpBscSourceBridgeAddress({
+        ...READY_BSC_MANIFEST,
+        source_bridge_address: BSC_BRIDGE_ADDRESS,
+      }),
+    ).toThrow(/source bridge address aliases disagree/);
+    expect(() =>
+      readSccpBscBridgeAddress({
+        ...READY_BSC_MANIFEST,
+        bscBridgeAddress: "0x1111111111111111111111111111111111111111",
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          destinationBridgeAddress:
+            "0x1111111111111111111111111111111111111111",
+        },
+      }),
+    ).toThrow(/repeated-byte placeholder material/);
+    expect(() =>
+      readSccpBscVerifierAddress({
+        ...READY_BSC_MANIFEST,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          verifierIdentity: BSC_BRIDGE_ADDRESS,
+        },
+      }),
+    ).toThrow(/verifier address aliases disagree/);
+    expect(readSccpBscRpcEndpoint(READY_BSC_MANIFEST)).toBe(
+      BSC_TESTNET_RPC_URL,
+    );
+    expect(
+      readSccpBscRpcEndpoint({
+        ...READY_BSC_MANIFEST,
+        bsc_network: "bsc-testnet",
+        bsc_rpc_url: BSC_TESTNET_RPC_URL,
+      }),
+    ).toBe(BSC_TESTNET_RPC_URL);
+    expect(() =>
+      readSccpBscRpcEndpoint({
+        ...READY_BSC_MANIFEST,
+        bsc_network: "mainnet",
+      }),
+    ).toThrow(/BSC network aliases disagree/);
+    expect(() =>
+      readSccpBscRpcEndpoint({
+        ...READY_BSC_MANIFEST,
+        bsc_rpc_url: BSC_MAINNET_RPC_URL,
+      }),
+    ).toThrow(/BSC RPC endpoint aliases disagree/);
+    expect(readSccpBscProofMaterial(READY_BSC_MANIFEST)).toMatchObject({
+      networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+      verifierAddressHex: BSC_VERIFIER_ADDRESS_HEX,
+      bridgeAddressHex: BSC_BRIDGE_ADDRESS_HEX,
+      expectedDestinationBindingHashHex: BSC_DESTINATION_BINDING.bindingHash,
+    });
+
+    const accessorBackedBscManifest: Record<string, unknown> = {
+      ...READY_BSC_MANIFEST,
+    };
+    const accessorReads: string[] = [];
+    Object.defineProperty(accessorBackedBscManifest, "destinationRollout", {
+      enumerable: true,
+      get() {
+        accessorReads.push("destinationRollout");
+        return READY_BSC_MANIFEST.destinationRollout;
+      },
+    });
+    expect(() => readSccpBscBridgeAddress(accessorBackedBscManifest)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(() => readSccpBscTokenAddress(accessorBackedBscManifest)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(() =>
+      readSccpBscSourceBridgeAddress(accessorBackedBscManifest),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(() => readSccpBscVerifierAddress(accessorBackedBscManifest)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(() => readSccpBscRpcEndpoint(accessorBackedBscManifest)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(() =>
+      buildTairaXorBscBurnTransactionRequest({
+        manifest: accessorBackedBscManifest,
+        ownerAddress: BSC_MIXED_RECIPIENT_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "1",
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(() =>
+      readBscSourceProverMaterialBinding(accessorBackedBscManifest),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(readSccpBscProofMaterial(accessorBackedBscManifest)).toBeNull();
+    expect(accessorReads).toEqual([]);
+  });
+
+  it("requires a production-ready BSC testnet XOR manifest for BSC route readiness", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    const ready = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [READY_BSC_MANIFEST, READY_TRON_MANIFEST],
+      },
+      counterparty: "bsc",
+    });
+    expect(ready.ready).toBe(true);
+    expect(ready.counterparty).toBe("bsc");
+    expect(ready.manifest).toStrictEqual(READY_BSC_MANIFEST);
+    expect(ready.bscManifest).toStrictEqual(READY_BSC_MANIFEST);
+
+    const mainnetReady = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [READY_BSC_MAINNET_MANIFEST],
+      },
+      counterparty: "bsc",
+      bscNetwork: "mainnet",
+    });
+    expect(mainnetReady.ready).toBe(true);
+    expect(mainnetReady.bscManifest).toStrictEqual(READY_BSC_MAINNET_MANIFEST);
+
+    const missingRoute = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [{ ...READY_BSC_MANIFEST, routeId: "taira_bsc_other" }],
+      },
+      counterparty: "bsc",
+    });
+    expect(missingRoute.ready).toBe(false);
+    expect(missingRoute.reasons.join(" ")).toContain("taira_bsc_xor");
+
+    const staged = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_BSC_MANIFEST,
+            productionReady: false,
+            disabledReason: "BSC route is still staged.",
+          },
+        ],
+      },
+      counterparty: "bsc",
+    });
+    expect(staged.ready).toBe(false);
+    expect(staged.reasons.join(" ")).toContain("still staged");
+
+    const wrongNetwork = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_BSC_MANIFEST,
+            destinationRollout: {
+              ...READY_BSC_MANIFEST.destinationRollout,
+              destinationNetworkId: TRON_MAINNET_NETWORK_ID_HEX,
+            },
+          },
+        ],
+      },
+      counterparty: "bsc",
+    });
+    expect(wrongNetwork.ready).toBe(false);
+    expect(wrongNetwork.reasons.join(" ")).toMatch(
+      /BSC SCCP verifier rollout proof material is incomplete/,
+    );
+  });
+
+  it("fails closed when direct manifest picking receives non-data route lists", () => {
+    const accessorSet = {};
+    const manifestReads: string[] = [];
+    Object.defineProperty(accessorSet, "manifests", {
+      enumerable: true,
+      get() {
+        manifestReads.push("manifests");
+        return [READY_BSC_MANIFEST];
+      },
+    });
+    expect(() => pickBscSccpManifest(accessorSet)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(manifestReads).toEqual([]);
+
+    const hiddenSet = {};
+    Object.defineProperty(hiddenSet, "manifests", {
+      enumerable: false,
+      value: [READY_BSC_MANIFEST],
+    });
+    expect(() => pickBscSccpManifest(hiddenSet)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+
+    const symbolSet = {
+      [Symbol("manifests")]: [READY_BSC_MANIFEST],
+    };
+    expect(() => pickBscSccpManifest(symbolSet)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+
+    const accessorArray = [READY_TRON_MANIFEST];
+    const arrayReads: string[] = [];
+    Object.defineProperty(accessorArray, "0", {
+      enumerable: true,
+      get() {
+        arrayReads.push("0");
+        return READY_TRON_MANIFEST;
+      },
+    });
+    expect(() => pickTronSccpManifest(accessorArray, "mainnet")).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+    expect(arrayReads).toEqual([]);
+
+    const sparseSet = { manifests: [] as unknown[] };
+    sparseSet.manifests.length = 1;
+    expect(() => pickBscSccpManifest(sparseSet)).toThrow(
+      /SCCP route manifest must contain only JSON-serializable/,
+    );
+  });
+
+  it("rejects the deployed stale TAIRA BSC DTO with legacy TRON address aliases", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    const postDeployLiveEvidence: Record<string, unknown> = {
+      ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+    };
+    delete postDeployLiveEvidence.sourceEventExplorerUrl;
+    delete postDeployLiveEvidence.routeCanaryExplorerUrl;
+    const legacyBscManifest = {
+      ...READY_BSC_MANIFEST,
+      counterpartyAccountCodecKey: undefined,
+      sccpBscSourceBridgeAddress: undefined,
+      sccp_tron_source_bridge_address: BSC_SOURCE_BRIDGE_ADDRESS,
+      tron_verifier_address: BSC_VERIFIER_ADDRESS,
+      postDeployLiveEvidence,
+    };
+
+    const ready = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [legacyBscManifest],
+      },
+      counterparty: "bsc",
+    });
+
+    expect(ready.ready).toBe(false);
+    expect(ready.counterparty).toBe("bsc");
+    expect(ready.bscManifest).toStrictEqual(
+      JSON.parse(JSON.stringify(legacyBscManifest)),
+    );
+    expect(ready.reasons.join(" ")).toMatch(
+      /source bridge address must not use TRON aliases.*sccp_tron_source_bridge_address/,
+    );
+    expect(ready.reasons.join(" ")).toMatch(
+      /verifier address must not use TRON aliases.*tron_verifier_address/,
+    );
+  });
+
+  it("fails closed for adversarial BSC testnet route manifests", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    const readinessFor = (manifest: Record<string, unknown>) =>
+      resolveSccpRouteReadiness({
+        connection: {
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: TAIRA_NETWORK_PREFIX,
+        },
+        capabilities,
+        manifestSet: { manifests: [manifest] },
+        counterparty: "bsc",
+      });
+
+    const cases: Array<{
+      name: string;
+      manifest: Record<string, unknown>;
+      reason: RegExp;
+    }> = [
+      {
+        name: "non-boolean production-ready flag",
+        manifest: { ...READY_BSC_MANIFEST, productionReady: "true" },
+        reason: /production-ready flag is invalid/,
+      },
+      {
+        name: "conflicting production-ready aliases",
+        manifest: { ...READY_BSC_MANIFEST, production_ready: false },
+        reason: /productionReady aliases disagree/,
+      },
+      {
+        name: "conflicting disabled-reason aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          productionReady: false,
+          disabledReason: "operator disabled route",
+          disabled_reason: "stale route evidence",
+        },
+        reason: /disabledReason aliases disagree/,
+      },
+      {
+        name: "production-ready route carries disabled reason",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          disabledReason: "operator disabled route",
+        },
+        reason: /marked production-ready but also carries a disabled reason/,
+      },
+      {
+        name: "TRON codec key",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          counterpartyAccountCodecKey: "tron_base58check",
+        },
+        reason: /evm_hex account codec/,
+      },
+      {
+        name: "conflicting BSC codec key aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          counterparty_account_codec_key: "tron_base58check",
+        },
+        reason: /counterpartyAccountCodecKey aliases disagree/,
+      },
+      {
+        name: "TRON codec id",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          counterpartyAccountCodec: SCCP_CODEC_TRON_BASE58CHECK,
+        },
+        reason: /EVM hex account codec id/,
+      },
+      {
+        name: "conflicting BSC codec id aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          counterpartyAccountCodec: SCCP_CODEC_EVM_HEX,
+          counterparty_account_codec: SCCP_CODEC_TRON_BASE58CHECK,
+        },
+        reason: /counterpartyAccountCodec aliases disagree/,
+      },
+      {
+        name: "diagnostic verifier flag",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          diagnosticVerifier: true,
+        },
+        reason: /verifier material is diagnostic/,
+      },
+      {
+        name: "placeholder operator warning",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          operatorWarning: "placeholder BSC verifier rollout",
+        },
+        reason: /placeholder, fixture-only, or test-only material/,
+      },
+      {
+        name: "TODO operator handoff",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          operatorWarning: "TODO replace verifier material before rollout",
+        },
+        reason: /placeholder, fixture-only, or test-only material/,
+      },
+      {
+        name: "example verifier evidence note",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            operatorNote: "example verifier evidence must not ship",
+          },
+        },
+        reason: /placeholder, fixture-only, or test-only material/,
+      },
+      {
+        name: "nested fixture-only marker",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            fixtureOnlyVerifier: true,
+          },
+        },
+        reason: /fixtureOnlyVerifier/,
+      },
+      {
+        name: "nested replace-me verifier field",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            replaceMeVerifierKeyHash:
+              READY_BSC_MANIFEST.destinationRollout.verifierKeyHash,
+          },
+        },
+        reason: /replaceMeVerifierKeyHash/,
+      },
+      {
+        name: "repeated-byte BSC bridge address",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          bscBridgeAddress: "0x1111111111111111111111111111111111111111",
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            destinationBridgeAddress:
+              "0x1111111111111111111111111111111111111111",
+          },
+        },
+        reason: /repeated-byte placeholder material/,
+      },
+      {
+        name: "known diagnostic verifier key hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            verifierKeyHash: DIAGNOSTIC_BSC_VERIFIER_KEY_HASH,
+          },
+        },
+        reason: /known diagnostic BSC verifier key hash/,
+      },
+      {
+        name: "same-valued BSC network id aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+          network_id_hex: BSC_TESTNET_CHAIN_ID_HEX,
+        },
+        reason:
+          /BSC network id must not use multiple aliases in route manifest/,
+      },
+      {
+        name: "drifting BSC network id rollout alias",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            destinationNetworkId: BSC_MAINNET_NETWORK_ID_HEX,
+          },
+        },
+        reason: /BSC network id aliases disagree/,
+      },
+      {
+        name: "BSC verifier key hash reuses verifier code hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            verifierKeyHash: HEX32_D,
+          },
+        },
+        reason: /verifierKeyHash must not equal verifierCodeHash/,
+      },
+      {
+        name: "BSC proof artifact hash reuses verifier key hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          proofArtifactHash: HEX32_E,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            proofArtifactHash: HEX32_E,
+          },
+        },
+        reason: /proofArtifactHash must not equal verifierKeyHash/,
+      },
+      {
+        name: "same-valued BSC route verifier code hash aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          verifierCodeHash: HEX32_D,
+          verifier_code_hash: HEX32_D,
+        },
+        reason: /verifier rollout proof material is incomplete/,
+      },
+      {
+        name: "same-valued BSC rollout verifier key hash aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            verifier_key_hash:
+              READY_BSC_MANIFEST.destinationRollout.verifierKeyHash,
+          },
+        },
+        reason: /verifier rollout proof material is incomplete/,
+      },
+      {
+        name: "same-valued BSC destination binding hash aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            binding_hash: READY_BSC_MANIFEST.destinationBinding.bindingHash,
+          },
+        },
+        reason: /verifier rollout proof material is incomplete/,
+      },
+      {
+        name: "missing native EVM prover bundle",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          nativeEvmProverBundle: undefined,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            nativeEvmProverBundle: undefined,
+          },
+        },
+        reason: /native EVM prover bundle is required/,
+      },
+      {
+        name: "foreign native EVM prover bundle chain",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          nativeEvmProverBundle: {
+            ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+            chain: "eth",
+          },
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            nativeEvmProverBundle: {
+              ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+              chain: "eth",
+            },
+          },
+        },
+        reason: /chain must be bsc-testnet/,
+      },
+      {
+        name: "native EVM prover proof artifact drift",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          nativeEvmProverBundle: {
+            ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+            proof_artifact_hash: repeatedHex32("79"),
+            native_sdk_artifacts:
+              BSC_NATIVE_EVM_PROVER_BUNDLE.native_sdk_artifacts.map(
+                (artifact) => ({
+                  ...artifact,
+                  prover_artifact_hash: repeatedHex32("79"),
+                }),
+              ),
+          },
+        },
+        reason: /proofArtifactHash does not match/,
+      },
+      {
+        name: "missing BSC route proof artifact hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          proofArtifactHash: undefined,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            proofArtifactHash: undefined,
+          },
+        },
+        reason: /proof artifact hash is required/,
+      },
+      {
+        name: "same-valued BSC route proof artifact hash aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          proof_artifact_hash: READY_BSC_MANIFEST.proofArtifactHash,
+        },
+        reason:
+          /proof artifact hash must not use multiple aliases in route manifest/,
+      },
+      {
+        name: "same-valued BSC rollout proving key hash aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            proving_key_hash:
+              READY_BSC_MANIFEST.destinationRollout.provingKeyHash,
+          },
+        },
+        reason:
+          /proving key hash must not use multiple aliases in route manifest destinationRollout/,
+      },
+      {
+        name: "conflicting native EVM prover bundle aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            nativeEvmProverBundle: {
+              ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+              proving_key_hash: repeatedHex32("89"),
+              native_sdk_artifacts:
+                BSC_NATIVE_EVM_PROVER_BUNDLE.native_sdk_artifacts.map(
+                  (artifact) => ({
+                    ...artifact,
+                    proving_key_hash: repeatedHex32("89"),
+                  }),
+                ),
+            },
+          },
+        },
+        reason: /native EVM prover bundle aliases disagree/,
+      },
+      {
+        name: "duplicate deployment addresses",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          bscVerifierAddress: BSC_BRIDGE_ADDRESS,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            verifierIdentity: BSC_BRIDGE_ADDRESS,
+          },
+        },
+        reason: /contract addresses must be distinct/,
+      },
+      {
+        name: "drifting source bridge aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          source_bridge_address: BSC_BRIDGE_ADDRESS,
+        },
+        reason: /source bridge address aliases disagree/,
+      },
+      {
+        name: "drifting token aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          tokenAddress: BSC_BRIDGE_ADDRESS,
+        },
+        reason: /token address aliases disagree/,
+      },
+      {
+        name: "drifting bridge rollout alias",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            destinationBridgeAddress: BSC_TOKEN_ADDRESS,
+          },
+        },
+        reason: /bridge address aliases disagree/,
+      },
+      {
+        name: "drifting verifier rollout identity",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            verifierIdentity: BSC_BRIDGE_ADDRESS,
+          },
+        },
+        reason: /verifier address aliases disagree/,
+      },
+      {
+        name: "recovery phrase leaked in route metadata",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          operatorNotes: VALID_MNEMONIC,
+        },
+        reason: /secret-like material/,
+      },
+      {
+        name: "wrong destination binding version",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            version: 2,
+          },
+        },
+        reason: /destination binding version must be 1/,
+      },
+      {
+        name: "wrong destination binding source domain",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            sourceDomain: SCCP_TRON_DOMAIN,
+          },
+        },
+        reason: /destination binding source domain is wrong/,
+      },
+      {
+        name: "wrong destination binding target domain",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            targetDomain: SCCP_TRON_DOMAIN,
+          },
+        },
+        reason: /destination binding target domain is wrong/,
+      },
+      {
+        name: "forged destination binding hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            bindingHash: HEX32_A,
+          },
+        },
+        reason: /destination binding hash|bindingHash/,
+      },
+      {
+        name: "missing post-deploy live evidence canary",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            routeCanaryTransactionId: "0x" + "00".repeat(32),
+          },
+        },
+        reason: /routeCanaryTransactionId.*non-zero/,
+      },
+      {
+        name: "missing offline full-TOML hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            offlineFullTomlSha256: undefined,
+          },
+        },
+        reason: /offlineFullTomlSha256/,
+      },
+      {
+        name: "conflicting post-deploy evidence record aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          post_deploy_live_evidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            routeCanaryTransactionId: HEX32_B,
+            routeCanaryExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_B}`,
+          },
+        },
+        reason: /postDeployLiveEvidence aliases disagree/,
+      },
+      {
+        name: "conflicting full-TOML readiness aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            full_toml_ready: false,
+          },
+        },
+        reason: /fullTomlReady aliases disagree/,
+      },
+      {
+        name: "conflicting source event transaction aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            source_event_transaction_id: HEX32_F,
+          },
+        },
+        reason: /sourceEventTransactionId aliases disagree/,
+      },
+      {
+        name: "reused source and canary evidence hash",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            routeCanaryEvidenceHash: HEX32_A,
+          },
+        },
+        reason:
+          /source bridge config hash and route canary evidence hash must be distinct/,
+      },
+      {
+        name: "reused source and canary transaction id",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            routeCanaryTransactionId: HEX32_B,
+            routeCanaryExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_B}`,
+          },
+        },
+        reason:
+          /source event and route canary transaction ids must be distinct/,
+      },
+      {
+        name: "missing source event explorer URL",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            sourceEventExplorerUrl: "",
+          },
+        },
+        reason: /sourceEventExplorerUrl is required/,
+      },
+      {
+        name: "conflicting source event explorer URL aliases",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            sourceEventTransactionUrl: `https://testnet.bscscan.com/tx/${HEX32_F}`,
+          },
+        },
+        reason: /sourceEventExplorerUrl aliases disagree/,
+      },
+      {
+        name: "mainnet BSC explorer URL",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            sourceEventExplorerUrl: `https://bscscan.com/tx/${HEX32_B}`,
+          },
+        },
+        reason: /BSC testnet explorer/,
+      },
+      {
+        name: "explorer URL with query string",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            routeCanaryExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_F}?utm=proof`,
+          },
+        },
+        reason: /query strings/,
+      },
+      {
+        name: "source event explorer hash mismatch",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          postDeployLiveEvidence: {
+            ...READY_BSC_MANIFEST.postDeployLiveEvidence,
+            sourceEventExplorerUrl: `https://testnet.bscscan.com/tx/${HEX32_F}`,
+          },
+        },
+        reason: /transaction hash must match/,
+      },
+      {
+        name: "missing burn-record artifact sha",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          tairaXorBurnRecord: {
+            ...READY_BSC_MANIFEST.tairaXorBurnRecord,
+            artifactSha256: undefined,
+          },
+        },
+        reason: /artifact SHA-256 is missing/,
+      },
+      {
+        name: "malformed burn-record artifact sha",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          tairaXorBurnRecord: {
+            ...READY_BSC_MANIFEST.tairaXorBurnRecord,
+            artifactSha256: "0x1234",
+          },
+        },
+        reason: /artifact SHA-256.*32-byte hex/,
+      },
+      {
+        name: "zero burn-record artifact sha",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          tairaXorBurnRecord: {
+            ...READY_BSC_MANIFEST.tairaXorBurnRecord,
+            artifactSha256: `0x${"00".repeat(32)}`,
+          },
+        },
+        reason: /artifact SHA-256 must be non-zero/,
+      },
+      {
+        name: "mismatched burn-record artifact sha",
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          tairaXorBurnRecord: {
+            ...READY_BSC_MANIFEST.tairaXorBurnRecord,
+            artifactSha256: HEX32_A,
+          },
+        },
+        reason: /artifact SHA-256 does not match/,
+      },
+    ];
+
+    for (const { name, manifest, reason } of cases) {
+      const result = readinessFor(manifest);
+      expect(result.ready, name).toBe(false);
+      expect(result.reasons.join(" "), name).toMatch(reason);
+    }
+
+    const accessorManifest = { ...READY_BSC_MANIFEST };
+    const accessorReads: string[] = [];
+    Object.defineProperty(accessorManifest, "operatorWarning", {
+      enumerable: true,
+      get() {
+        accessorReads.push("operatorWarning");
+        return "placeholder diagnostic verifier rollout";
+      },
+    });
+    const accessorTainted = readinessFor(accessorManifest);
+    expect(accessorTainted.ready).toBe(false);
+    expect(accessorTainted.manifest).toBeNull();
+    expect(accessorTainted.bscManifest).toBeNull();
+    expect(accessorTainted.reasons).toEqual([
+      expect.stringMatching(
+        /JSON-serializable enumerable string-keyed data|secret-like material/,
+      ),
+    ]);
+    expect(accessorReads).toEqual([]);
+
+    const accessorArrayManifest = {
+      ...READY_BSC_MANIFEST,
+      warnings: ["ready"],
+    };
+    const warningReads: string[] = [];
+    Object.defineProperty(accessorArrayManifest.warnings, "0", {
+      enumerable: true,
+      get() {
+        warningReads.push("0");
+        return "diagnostic verifier rollout";
+      },
+    });
+    const accessorArrayTainted = readinessFor(accessorArrayManifest);
+    expect(accessorArrayTainted.ready).toBe(false);
+    expect(accessorArrayTainted.manifest).toBeNull();
+    expect(accessorArrayTainted.reasons).toEqual([
+      expect.stringMatching(
+        /JSON-serializable enumerable string-keyed data|secret-like material/,
+      ),
+    ]);
+    expect(warningReads).toEqual([]);
+
+    const hiddenSecretManifest = { ...READY_BSC_MANIFEST };
+    Object.defineProperty(hiddenSecretManifest, "privateKeyHex", {
+      enumerable: false,
+      value: "00".repeat(32),
+    });
+    const hiddenSecretTainted = readinessFor(hiddenSecretManifest);
+    expect(hiddenSecretTainted.ready).toBe(false);
+    expect(hiddenSecretTainted.manifest).toBeNull();
+    expect(hiddenSecretTainted.reasons).toEqual([
+      expect.stringMatching(
+        /JSON-serializable enumerable string-keyed data|secret-like material/,
+      ),
+    ]);
+    expect(JSON.stringify(hiddenSecretTainted)).not.toContain("privateKeyHex");
+    expect(JSON.stringify(hiddenSecretTainted)).not.toContain("00000000");
+
+    const symbolSecretManifest = { ...READY_BSC_MANIFEST } as Record<
+      PropertyKey,
+      unknown
+    >;
+    symbolSecretManifest[Symbol("privateKeyHex")] = "11".repeat(32);
+    const symbolSecretTainted = readinessFor(
+      symbolSecretManifest as Record<string, unknown>,
+    );
+    expect(symbolSecretTainted.ready).toBe(false);
+    expect(symbolSecretTainted.manifest).toBeNull();
+    expect(symbolSecretTainted.reasons).toEqual([
+      expect.stringMatching(
+        /JSON-serializable enumerable string-keyed data|secret-like material/,
+      ),
+    ]);
+    expect(JSON.stringify(symbolSecretTainted)).not.toContain("11111111");
+
+    const secretTainted = readinessFor({
+      ...READY_BSC_MANIFEST,
+      deployment: {
+        privateKey: "do-not-serialize",
+      },
+      operatorNotes: VALID_MNEMONIC,
+    });
+    expect(secretTainted.ready).toBe(false);
+    expect(secretTainted.manifest).toBeNull();
+    expect(secretTainted.bscManifest).toBeNull();
+    expect(secretTainted.reasons).toEqual([
+      "SCCP route manifest contains secret-like material.",
+    ]);
+    const serializedSecretTainted = JSON.stringify(secretTainted);
+    expect(serializedSecretTainted).not.toContain("privateKey");
+    expect(serializedSecretTainted).not.toContain("do-not-serialize");
+    expect(serializedSecretTainted).not.toContain("operatorNotes");
+    expect(serializedSecretTainted).not.toContain("abandon abandon");
+
+    const mainnetShaped = readinessFor({
+      ...READY_BSC_MANIFEST,
+      chain: "bsc-mainnet",
+      bscNetwork: "bsc-mainnet",
+      destinationRollout: {
+        ...READY_BSC_MANIFEST.destinationRollout,
+        destinationNetworkId:
+          "0x0000000000000000000000000000000000000000000000000000000000000038",
+      },
+    });
+    expect(mainnetShaped.ready).toBe(false);
+    expect(mainnetShaped.manifest).toBeNull();
+    expect(mainnetShaped.reasons.join(" ")).toContain("taira_bsc_xor");
+  });
+
+  it("derives BSC source prover material only from route-bound native bundles", () => {
+    expect(
+      readBscSourceProverMaterialBinding(READY_BSC_MANIFEST),
+    ).toMatchObject({
+      proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+      provingKeyHash: BSC_PROVING_KEY_HASH,
+      nativeEvmProverBundleHash: expect.stringMatching(/^0x[0-9a-f]{64}$/u),
+    });
+    const mainnetMaterial = readBscSourceProverMaterialBinding(
+      READY_BSC_MAINNET_MANIFEST,
+    );
+    expect(mainnetMaterial).toMatchObject({
+      proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
+      provingKeyHash: BSC_PROVING_KEY_HASH,
+      nativeEvmProverBundleHash: expect.stringMatching(/^0x[0-9a-f]{64}$/u),
+    });
+    expect(mainnetMaterial.nativeEvmProverBundleHash).not.toBe(
+      BSC_SOURCE_PROVER_MATERIAL_BINDING.nativeEvmProverBundleHash,
+    );
+
+    expect(
+      readSccpBscProofMaterial({
+        ...READY_BSC_MANIFEST,
+        verifierCodeHash: HEX32_D,
+        verifier_code_hash: HEX32_D,
+      }),
+    ).toBeNull();
+
+    expect(
+      readSccpBscProofMaterial({
+        ...READY_BSC_MANIFEST,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          verifier_key_hash:
+            READY_BSC_MANIFEST.destinationRollout.verifierKeyHash,
+        },
+      }),
+    ).toBeNull();
+
+    expect(
+      readSccpBscProofMaterial({
+        ...READY_BSC_MANIFEST,
+        destinationBinding: {
+          ...READY_BSC_MANIFEST.destinationBinding,
+          binding_hash: READY_BSC_MANIFEST.destinationBinding.bindingHash,
+        },
+      }),
+    ).toBeNull();
+
+    expect(
+      readSccpBscProofMaterial({
+        ...READY_BSC_MANIFEST,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          verifierKeyHash: HEX32_D,
+        },
+      }),
+    ).toBeNull();
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        proofArtifactHash: HEX32_E,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          proofArtifactHash: HEX32_E,
+        },
+      }),
+    ).toThrow(/proofArtifactHash must not equal verifierKeyHash/);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        proof_artifact_hash: READY_BSC_MANIFEST.proofArtifactHash,
+      }),
+    ).toThrow(/proof artifact hash must not use multiple aliases/);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          proving_key_hash:
+            READY_BSC_MANIFEST.destinationRollout.provingKeyHash,
+        },
+      }),
+    ).toThrow(/proving key hash must not use multiple aliases/);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MAINNET_MANIFEST,
+        nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+      }),
+    ).toThrow(/mainnet|bundle|chain|network/u);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        nativeEvmProverBundle: {
+          ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+          proof_artifact_hash: repeatedHex32("79"),
+          native_sdk_artifacts:
+            BSC_NATIVE_EVM_PROVER_BUNDLE.native_sdk_artifacts.map(
+              (artifact) => ({
+                ...artifact,
+                prover_artifact_hash: repeatedHex32("79"),
+              }),
+            ),
+        },
+      }),
+    ).toThrow(/proofArtifactHash does not match/);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        nativeEvmProverBundle: {
+          ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+          verifier_key_hash: repeatedHex32("7a"),
+        },
+      }),
+    ).toThrow(/verifierKeyHash does not match/);
+
+    expect(() =>
+      readBscSourceProverMaterialBinding({
+        ...READY_BSC_MANIFEST,
+        destinationRollout: {
+          ...READY_BSC_MANIFEST.destinationRollout,
+          nativeEvmProverBundle: {
+            ...BSC_NATIVE_EVM_PROVER_BUNDLE,
+            native_prover_self_test_artifact:
+              "artifacts/bsc-testnet/taira-xor/native-prover-self-test-v2.json",
+          },
+        },
+      }),
+    ).toThrow(/native EVM prover bundle aliases disagree/);
   });
 
   it("requires a production mainnet or explicit selected-testnet TRON manifest for route readiness", () => {
@@ -850,6 +2644,27 @@ describe("SCCP helpers", () => {
         },
         capabilities,
         manifestSet,
+        tronNetwork: "mainnet",
+      }).ready,
+    ).toBe(true);
+    expect(
+      resolveSccpRouteReadiness({
+        connection: {
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: TAIRA_NETWORK_PREFIX,
+        },
+        capabilities: {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          proof_submit_path: "/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/messages",
+          paths: {
+            proof: "/v1/bridge/proofs/submit",
+            message_path: "/v1/bridge/messages",
+          },
+        },
+        manifestSet: {
+          routes: manifestSet.manifests,
+        },
         tronNetwork: "mainnet",
       }).ready,
     ).toBe(true);
@@ -974,6 +2789,31 @@ describe("SCCP helpers", () => {
     });
     expect(mainnetDraftReadiness.ready).toBe(false);
     expect(mainnetDraftReadiness.reasons.join(" ")).toMatch(/still staged/);
+    const contradictoryMainnetReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            counterpartyDomain: SCCP_TRON_DOMAIN,
+            verifierTarget: "TronContract",
+            routeId: "taira_tron_xor",
+            assetKey: "xor",
+            ...READY_TRON_MANIFEST,
+            productionReady: true,
+            disabledReason: "operator disabled route",
+          },
+        ],
+      },
+      tronNetwork: "mainnet",
+    });
+    expect(contradictoryMainnetReadiness.ready).toBe(false);
+    expect(contradictoryMainnetReadiness.reasons.join(" ")).toMatch(
+      /marked production-ready but also carries a disabled reason/,
+    );
     const whitespaceCapabilities = resolveSccpRouteReadiness({
       connection: {
         chainId: TAIRA_CHAIN_ID,
@@ -989,6 +2829,119 @@ describe("SCCP helpers", () => {
     expect(whitespaceCapabilities.reasons.join(" ")).toMatch(
       /missing SCCP submit endpoints/,
     );
+    const accessorCapabilities = {
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    const capabilityReads: string[] = [];
+    Object.defineProperty(accessorCapabilities, "proofSubmitPath", {
+      enumerable: true,
+      get() {
+        capabilityReads.push("proofSubmitPath");
+        return "/v1/bridge/proofs/submit";
+      },
+    });
+    const accessorCapabilityReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities: accessorCapabilities,
+      manifestSet,
+    });
+    expect(accessorCapabilityReadiness.ready).toBe(false);
+    expect(accessorCapabilityReadiness.reasons.join(" ")).toMatch(
+      /SCCP capabilities must contain only enumerable string-keyed data fields/,
+    );
+    expect(capabilityReads).toEqual([]);
+
+    const nestedAccessorCapabilities = {
+      messageSubmitPath: "/v1/bridge/messages",
+      paths: {},
+    };
+    const nestedCapabilityReads: string[] = [];
+    Object.defineProperty(nestedAccessorCapabilities.paths, "proof", {
+      enumerable: true,
+      get() {
+        nestedCapabilityReads.push("proof");
+        return "/v1/bridge/proofs/submit";
+      },
+    });
+    const nestedAccessorCapabilityReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities: nestedAccessorCapabilities,
+      manifestSet,
+    });
+    expect(nestedAccessorCapabilityReadiness.ready).toBe(false);
+    expect(nestedAccessorCapabilityReadiness.reasons.join(" ")).toMatch(
+      /SCCP capabilities must contain only enumerable string-keyed data fields/,
+    );
+    expect(nestedCapabilityReads).toEqual([]);
+
+    const hiddenCapabilityPath = {
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    Object.defineProperty(hiddenCapabilityPath, "proofSubmitPath", {
+      enumerable: false,
+      value: "/v1/bridge/proofs/submit",
+    });
+    const hiddenCapabilityReadiness = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities: hiddenCapabilityPath,
+      manifestSet,
+    });
+    expect(hiddenCapabilityReadiness.ready).toBe(false);
+    expect(hiddenCapabilityReadiness.reasons.join(" ")).toMatch(
+      /SCCP capabilities must contain only enumerable string-keyed data fields/,
+    );
+    for (const [ambiguousCapabilities, reason] of [
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          proof_submit_path: "/v1/sccp/proofs",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        /SCCP proof submit path aliases disagree/,
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/messages",
+          paths: {
+            proof: "/v1/sccp/proofs",
+            message: "/v1/bridge/messages",
+          },
+        },
+        /SCCP proof submit path aliases disagree/,
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/messages",
+          submit: {
+            proof: "/v1/bridge/proofs/submit",
+            messageSubmitPath: "/v1/bridge/messages/submit",
+          },
+        },
+        /SCCP bridge-message submit path aliases disagree/,
+      ],
+    ] as const) {
+      const ambiguousReadiness = resolveSccpRouteReadiness({
+        connection: {
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: TAIRA_NETWORK_PREFIX,
+        },
+        capabilities: ambiguousCapabilities,
+        manifestSet,
+      });
+      expect(ambiguousReadiness.ready).toBe(false);
+      expect(ambiguousReadiness.reasons.join(" ")).toMatch(reason);
+    }
     for (const [unsafeCapabilities, reason] of [
       [
         {
@@ -1017,6 +2970,20 @@ describe("SCCP helpers", () => {
           messageSubmitPath: "/v1/bridge/messages",
         },
         /encoded path separators/,
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/bridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/%252e%252e/messages",
+        },
+        /path traversal segments/,
+      ],
+      [
+        {
+          proofSubmitPath: "/v1/%62ridge/proofs/submit",
+          messageSubmitPath: "/v1/bridge/messages",
+        },
+        /percent-encoded path segments/,
       ],
       [
         {
@@ -1067,6 +3034,15 @@ describe("SCCP helpers", () => {
           postDeployLiveEvidence: undefined,
         },
         /post-deploy live evidence is missing/,
+      ],
+      [
+        {
+          postDeployLiveEvidence: {
+            ...READY_TRON_MANIFEST.postDeployLiveEvidence,
+            offlineFullTomlSha256: undefined,
+          },
+        },
+        /offlineFullTomlSha256/,
       ],
       [
         {
@@ -1483,7 +3459,7 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toMatchObject({
-      endpoint: TRON_NILE_RPC_URL,
+      endpoint: TRON_MAINNET_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
@@ -1546,6 +3522,82 @@ describe("SCCP helpers", () => {
     }
   });
 
+  it("builds BSC burn transaction requests from route manifest material", () => {
+    const request = buildTairaXorBscBurnTransactionRequest({
+      manifest: {
+        bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+      },
+      ownerAddress: BSC_SENDER_ADDRESS,
+      tairaRecipient: TAIRA_SENDER,
+      amountDecimal: "1.5",
+    });
+
+    expect(request).toMatchObject({
+      transaction: {
+        from: BSC_SENDER_ADDRESS_HEX,
+        to: BSC_BRIDGE_ADDRESS_HEX,
+        chainId: BSC_TESTNET_CHAIN_ID_HEX,
+        value: "0x0",
+      },
+      amountBaseUnits: bridgeDecimalToBaseUnits("1.5"),
+    });
+    expect(request.transaction.data).toBe(
+      tairaXorBscBurnToTairaAccountCallData({
+        tairaRecipient: TAIRA_SENDER,
+        amount: bridgeDecimalToBaseUnits("1.5"),
+      }),
+    );
+    expect(() =>
+      buildTairaXorBscBurnTransactionRequest({
+        manifest: {},
+        ownerAddress: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "1",
+      }),
+    ).toThrow(/deployment address/);
+    expect(() =>
+      buildTairaXorBscBurnTransactionRequest({
+        manifest: {
+          bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+        },
+        ownerAddress: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: "1",
+      }),
+    ).toThrow(/EVM address|address/i);
+    expect(() =>
+      buildTairaXorBscBurnTransactionRequest({
+        manifest: {
+          bscBridgeAddress: BSC_BRIDGE_ADDRESS,
+        },
+        ownerAddress: BSC_SENDER_ADDRESS,
+        tairaRecipient: MINAMOTO_ACCOUNT_ID,
+        amountDecimal: "1",
+      }),
+    ).toThrow(/canonical TAIRA I105/);
+  });
+
+  it("derives EVM function selectors for BSC SCCP approval binding", () => {
+    const burnSelector = evmFunctionSelector(TAIRA_XOR_BURN_TO_TAIRA_ABI_V1);
+    const finalizeSelector = evmFunctionSelector(
+      TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
+    );
+
+    expect(evmFunctionSelector("balanceOf(address)")).toBe("0x70a08231");
+    expect(burnSelector).toMatch(/^0x[0-9a-f]{8}$/u);
+    expect(finalizeSelector).toMatch(/^0x[0-9a-f]{8}$/u);
+    expect(finalizeSelector).not.toBe(burnSelector);
+    expect(BSC_BURN_CALL_DATA.slice(0, 10)).toBe(burnSelector);
+    for (const malformed of [
+      "",
+      "balanceOf( address)",
+      "balanceOf",
+      "balanceOf(address) extra",
+    ]) {
+      expect(() => evmFunctionSelector(malformed)).toThrow(/canonical text/);
+    }
+  });
+
   it("rejects raw-recipient forms for account-only TRON burn calldata", () => {
     expect(
       tairaXorBurnToTairaAccountCallData({
@@ -1591,7 +3643,7 @@ describe("SCCP helpers", () => {
     });
 
     expect(request).toEqual({
-      endpoint: TRON_NILE_RPC_URL,
+      endpoint: TRON_MAINNET_RPC_URL,
       ownerAddress: VALID_TRON_ADDRESS,
       contractAddress: VALID_TRON_ADDRESS,
       functionSelector: "balanceOf(address)",
@@ -1948,61 +4000,97 @@ describe("SCCP helpers", () => {
         },
         ownerAddress: VALID_TRON_ADDRESS,
       }),
-    ).toThrow(/structured-cloneable/);
+    ).toThrow(/Signed TRON transaction.*SCCP proof data/);
 
+    const accessorSignedTransaction = sampleSignedTronTriggerTransaction();
+    const accessedSignedTransactionFields: string[] = [];
+    Object.defineProperty(accessorSignedTransaction, "debug", {
+      enumerable: true,
+      get() {
+        accessedSignedTransactionFields.push("debug");
+        return "not JSON";
+      },
+    });
     expect(() =>
       bindSignedTronTransactionForBroadcast({
         unsignedTransaction: sampleTronTriggerTransaction(),
-        signedTransaction: sampleSignedTronTriggerTransaction((transaction) => {
-          transaction.privateKeyHex = "11".repeat(32);
-        }),
+        signedTransaction: accessorSignedTransaction,
         ownerAddress: VALID_TRON_ADDRESS,
       }),
-    ).toThrow(/Signed TRON transaction\.privateKeyHex.*private key material/);
+    ).toThrow(/Signed TRON transaction.*SCCP proof data/);
+    expect(accessedSignedTransactionFields).toEqual([]);
 
-    expect(() =>
-      bindSignedTronTransactionForBroadcast({
-        unsignedTransaction: sampleTronTriggerTransaction(),
-        signedTransaction: sampleSignedTronTriggerTransaction((transaction) => {
-          transaction.signature_b64 = "already-signed";
+    expectGenericTronTransactionRejection(
+      () =>
+        bindSignedTronTransactionForBroadcast({
+          unsignedTransaction: sampleTronTriggerTransaction(),
+          signedTransaction: sampleSignedTronTriggerTransaction(
+            (transaction) => {
+              transaction.privateKeyHex = "11".repeat(32);
+            },
+          ),
+          ownerAddress: VALID_TRON_ADDRESS,
         }),
-        ownerAddress: VALID_TRON_ADDRESS,
-      }),
-    ).toThrow(/Signed TRON transaction\.signature_b64.*signing helper/);
+      TRON_TRANSACTION_SECRET_INPUT_ERROR,
+      ["Signed TRON transaction", "privateKeyHex", "11".repeat(32)],
+    );
 
-    expect(() =>
-      bindSignedTronTransactionForBroadcast({
-        unsignedTransaction: sampleTronTriggerTransaction(),
-        signedTransaction: sampleSignedTronTriggerTransaction((transaction) => {
-          (
+    expectGenericTronTransactionRejection(
+      () =>
+        bindSignedTronTransactionForBroadcast({
+          unsignedTransaction: sampleTronTriggerTransaction(),
+          signedTransaction: sampleSignedTronTriggerTransaction(
+            (transaction) => {
+              transaction.signature_b64 = "already-signed";
+            },
+          ),
+          ownerAddress: VALID_TRON_ADDRESS,
+        }),
+      TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR,
+      ["Signed TRON transaction", "signature_b64", "already-signed"],
+    );
+
+    expectGenericTronTransactionRejection(
+      () =>
+        bindSignedTronTransactionForBroadcast({
+          unsignedTransaction: sampleTronTriggerTransaction(),
+          signedTransaction: sampleSignedTronTriggerTransaction(
+            (transaction) => {
+              (
+                (
+                  (
+                    (transaction.raw_data as Record<string, unknown>)
+                      .contract as Array<Record<string, unknown>>
+                  )[0].parameter as Record<string, unknown>
+                ).value as Record<string, unknown>
+              ).note = VALID_MNEMONIC;
+            },
+          ),
+          ownerAddress: VALID_TRON_ADDRESS,
+        }),
+      TRON_TRANSACTION_SECRET_INPUT_ERROR,
+      ["note", "abandon abandon", "raw_data"],
+    );
+
+    expectGenericTronTransactionRejection(
+      () =>
+        bindSignedTronTransactionForBroadcast({
+          unsignedTransaction: sampleTronTriggerTransaction((transaction) => {
             (
               (
-                (transaction.raw_data as Record<string, unknown>)
-                  .contract as Array<Record<string, unknown>>
-              )[0].parameter as Record<string, unknown>
-            ).value as Record<string, unknown>
-          ).note = VALID_MNEMONIC;
+                (
+                  (transaction.raw_data as Record<string, unknown>)
+                    .contract as Array<Record<string, unknown>>
+                )[0].parameter as Record<string, unknown>
+              ).value as Record<string, unknown>
+            ).walletSignature = "11".repeat(65);
+          }),
+          signedTransaction: sampleSignedTronTriggerTransaction(),
+          ownerAddress: VALID_TRON_ADDRESS,
         }),
-        ownerAddress: VALID_TRON_ADDRESS,
-      }),
-    ).toThrow(/note.*recovery phrases/);
-
-    expect(() =>
-      bindSignedTronTransactionForBroadcast({
-        unsignedTransaction: sampleTronTriggerTransaction((transaction) => {
-          (
-            (
-              (
-                (transaction.raw_data as Record<string, unknown>)
-                  .contract as Array<Record<string, unknown>>
-              )[0].parameter as Record<string, unknown>
-            ).value as Record<string, unknown>
-          ).walletSignature = "11".repeat(65);
-        }),
-        signedTransaction: sampleSignedTronTriggerTransaction(),
-        ownerAddress: VALID_TRON_ADDRESS,
-      }),
-    ).toThrow(/Unsigned TRON transaction.*walletSignature.*signing helper/);
+      TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR,
+      ["Unsigned TRON transaction", "walletSignature", "11".repeat(65)],
+    );
 
     expect(() =>
       bindSignedTronTransactionForBroadcast({
@@ -2132,12 +4220,10 @@ describe("SCCP helpers", () => {
         transaction: sampleTronTriggerTransaction((transaction) => {
           const value = (
             (
-              (
-                (transaction.raw_data as Record<string, unknown>)
-                  .contract as Array<Record<string, unknown>>
-              )[0].parameter as Record<string, unknown>
-            ).value as Record<string, unknown>
-          );
+              (transaction.raw_data as Record<string, unknown>)
+                .contract as Array<Record<string, unknown>>
+            )[0].parameter as Record<string, unknown>
+          ).value as Record<string, unknown>;
           value.owner_address = VALID_TRON_ADDRESS;
           value.contract_address = VALID_TRON_ADDRESS;
         }),
@@ -2152,30 +4238,36 @@ describe("SCCP helpers", () => {
       }),
     ).toThrow(/must not already contain signatures/);
 
-    expect(() =>
-      bindUnsignedTronSmartContractTransaction({
-        transaction: sampleTronTriggerTransaction((transaction) => {
-          transaction.privateKeyHex = "11".repeat(32);
+    expectGenericTronTransactionRejection(
+      () =>
+        bindUnsignedTronSmartContractTransaction({
+          transaction: sampleTronTriggerTransaction((transaction) => {
+            transaction.privateKeyHex = "11".repeat(32);
+          }),
+          trigger,
         }),
-        trigger,
-      }),
-    ).toThrow(/Unsigned TRON transaction\.privateKeyHex.*private key material/);
+      TRON_TRANSACTION_SECRET_INPUT_ERROR,
+      ["Unsigned TRON transaction", "privateKeyHex", "11".repeat(32)],
+    );
 
-    expect(() =>
-      bindUnsignedTronSmartContractTransaction({
-        transaction: sampleTronTriggerTransaction((transaction) => {
-          (
+    expectGenericTronTransactionRejection(
+      () =>
+        bindUnsignedTronSmartContractTransaction({
+          transaction: sampleTronTriggerTransaction((transaction) => {
             (
               (
-                (transaction.raw_data as Record<string, unknown>)
-                  .contract as Array<Record<string, unknown>>
-              )[0].parameter as Record<string, unknown>
-            ).value as Record<string, unknown>
-          ).signature_b64 = "already-signed";
+                (
+                  (transaction.raw_data as Record<string, unknown>)
+                    .contract as Array<Record<string, unknown>>
+                )[0].parameter as Record<string, unknown>
+              ).value as Record<string, unknown>
+            ).signature_b64 = "already-signed";
+          }),
+          trigger,
         }),
-        trigger,
-      }),
-    ).toThrow(/Unsigned TRON transaction.*signature_b64.*signing helper/);
+      TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR,
+      ["Unsigned TRON transaction", "signature_b64", "already-signed"],
+    );
 
     expect(() =>
       bindUnsignedTronSmartContractTransaction({
@@ -2400,11 +4492,34 @@ describe("SCCP helpers", () => {
     ).toThrow(/active witnesses/);
 
     expect(() =>
+      bindTronFinalitySnapshot(
+        sampleTronFinalityData((finality) => {
+          const witnesses = finality.witnesses as { witnesses: unknown[] };
+          witnesses.witnesses.push("not-a-witness");
+        }),
+      ),
+    ).toThrow(/TRON finality witnesses\[1\] must be an object/);
+
+    expect(() =>
       bindTronFinalitySnapshot({
         ...sampleTronFinalityData(),
         debug: () => "not cloneable",
       }),
-    ).toThrow(/structured-cloneable/);
+    ).toThrow(/TRON finality data.*SCCP proof data/);
+
+    const accessorFinality = sampleTronFinalityData();
+    const accessedFinalityFields: string[] = [];
+    Object.defineProperty(accessorFinality, "debug", {
+      enumerable: true,
+      get() {
+        accessedFinalityFields.push("debug");
+        return "not JSON";
+      },
+    });
+    expect(() => bindTronFinalitySnapshot(accessorFinality)).toThrow(
+      /TRON finality data.*SCCP proof data/,
+    );
+    expect(accessedFinalityFields).toEqual([]);
   });
 
   it("binds coherent TRON source data before TAIRA settlement proof generation", () => {
@@ -2597,7 +4712,31 @@ describe("SCCP helpers", () => {
           next.events.debug = () => "not cloneable";
         }),
       ),
-    ).toThrow(/TRON transaction events.*structured-cloneable/);
+    ).toThrow(/TRON transaction events.*SCCP proof data/);
+
+    const accessedTronEventFields: string[] = [];
+    expect(() =>
+      bindTronSourceDataForProof(
+        sampleBoundTronSourceDataInput((next) => {
+          Object.defineProperty(next.events, "debug", {
+            enumerable: true,
+            get() {
+              accessedTronEventFields.push("debug");
+              return "not JSON";
+            },
+          });
+        }),
+      ),
+    ).toThrow(/TRON transaction events.*SCCP proof data/);
+    expect(accessedTronEventFields).toEqual([]);
+
+    expect(() =>
+      bindTronSourceDataForProof(
+        sampleBoundTronSourceDataInput((next) => {
+          (next.events.data as unknown[]).push("not-an-event");
+        }),
+      ),
+    ).toThrow(/TRON transaction events\.data\[1\] must be an object/);
 
     expect(() =>
       bindTronSourceDataForProof(
@@ -2753,8 +4892,7 @@ describe("SCCP helpers", () => {
       bindTronSourceDataForProof(
         sampleBoundTronSourceDataInput((next) => {
           const event = (next.events.data as Record<string, unknown>[])[0];
-          (event.result as Record<string, unknown>).sourceEventDigest =
-            undefined;
+          delete (event.result as Record<string, unknown>).sourceEventDigest;
         }),
       ),
     ).toThrow(/source event digest/);
@@ -2872,6 +5010,421 @@ describe("SCCP helpers", () => {
         }),
       ),
     ).toThrow(/signatures/);
+  });
+
+  it("binds coherent BSC source data before TAIRA settlement proof generation", () => {
+    const source = sampleBscSourceData();
+
+    expect(
+      bindBscSourceDataForProof({
+        txId: BSC_SOURCE_TX_HASH,
+        bridgeAddress: BSC_BRIDGE_ADDRESS,
+        sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+        ...source,
+      }),
+    ).toMatchObject({
+      txId: BSC_SOURCE_TX_HASH,
+      sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+      indexedLogs: [
+        {
+          address: BSC_SOURCE_BRIDGE_ADDRESS,
+          transactionHash: BSC_SOURCE_TX_HASH,
+        },
+      ],
+      receiptBlockNumber: "0x7b",
+      receiptBlockHash: BSC_SOURCE_BLOCK_HASH,
+    });
+
+    const mutableSource = sampleBscSourceData();
+    const boundSource = bindBscSourceDataForProof({
+      txId: BSC_SOURCE_TX_HASH,
+      bridgeAddress: BSC_BRIDGE_ADDRESS,
+      sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
+      bscSender: BSC_SENDER_ADDRESS,
+      tairaRecipient: TAIRA_SENDER,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      ...mutableSource,
+    });
+    mutableSource.transaction.input = "0xfeedface";
+    (mutableSource.receipt.logs as Record<string, unknown>[])[0].topics = [
+      BSC_SOURCE_EVENT_TOPIC,
+      HEX32_A,
+    ];
+    mutableSource.indexedLogs[0].topics = [BSC_SOURCE_EVENT_TOPIC, HEX32_A];
+    mutableSource.block.hash = HEX32_A;
+    expect(boundSource.transaction?.input).toBe(BSC_BURN_CALL_DATA);
+    expect(
+      (
+        (boundSource.receipt.logs as Record<string, unknown>[])[0]
+          .topics as string[]
+      )[1],
+    ).toBe(BSC_SOURCE_EVENT_DIGEST);
+    expect((boundSource.indexedLogs?.[0].topics as string[])[1]).toBe(
+      BSC_SOURCE_EVENT_DIGEST,
+    );
+    expect(boundSource.block?.hash).toBe(BSC_SOURCE_BLOCK_HASH);
+
+    expect(() =>
+      bindBscSourceDataForProof({
+        txId: BSC_SOURCE_TX_HASH,
+        ...sampleBscSourceData(),
+      } as unknown as Parameters<typeof bindBscSourceDataForProof>[0]),
+    ).toThrow(/BSC bridge address is required/);
+
+    expect(() =>
+      bindBscSourceDataForProof({
+        ...sampleBoundBscSourceDataInput(),
+        txId: BSC_SOURCE_TX_HASH.slice(2),
+      }),
+    ).toThrow(/0x-prefixed 32-byte EVM hash/);
+
+    expect(() =>
+      bindBscSourceDataForProof({
+        ...sampleBoundBscSourceDataInput(),
+        txId: `0x${"00".repeat(32)}`,
+      }),
+    ).toThrow(/txId must be non-zero/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.transaction.hash = BSC_SOURCE_TX_HASH.slice(2);
+        }),
+      ),
+    ).toThrow(/0x-prefixed 32-byte EVM hash/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.transaction.hash = `0x${"00".repeat(32)}`;
+        }),
+      ),
+    ).toThrow(/BSC source transaction hash must be non-zero/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.transaction.transaction_hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/source transaction hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.transactionHash = BSC_SOURCE_TX_HASH.slice(2);
+        }),
+      ),
+    ).toThrow(/0x-prefixed 32-byte EVM hash/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.transaction_hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/receipt transaction hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof({
+        ...sampleBoundBscSourceDataInput(),
+        bscSender: BSC_RECIPIENT_ADDRESS,
+      }),
+    ).toThrow(/sender.*connected wallet/);
+
+    expect(() =>
+      bindBscSourceDataForProof({
+        ...sampleBoundBscSourceDataInput(),
+        amountDecimal: "0.0002",
+      }),
+    ).toThrow(/call data.*bridge request/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.transaction.data = "0xfeedface";
+        }),
+      ),
+    ).toThrow(/source transaction input aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.transaction.to = BSC_RECIPIENT_ADDRESS;
+        }),
+      ),
+    ).toThrow(/target.*bridge contract/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.status = "0x0";
+        }),
+      ),
+    ).toThrow(/receipt must report success/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.transactionHash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/receipt hash/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.block_hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/receipt block hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.receipt.block_number = "0x7c";
+        }),
+      ),
+    ).toThrow(/receipt block number aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].address =
+            BSC_RECIPIENT_ADDRESS;
+        }),
+      ),
+    ).toThrow(/source bridge SccpSourceEvent log/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (
+            (next.receipt.logs as Record<string, unknown>[])[0]
+              .topics as string[]
+          )[0] = BSC_SOURCE_EVENT_TOPIC.slice(2);
+        }),
+      ),
+    ).toThrow(/0x-prefixed 32-byte EVM hash/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].transactionHash =
+            HEX32_A;
+        }),
+      ),
+    ).toThrow(/log transaction hash.*source transaction/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].transaction_hash =
+            HEX32_A;
+        }),
+      ),
+    ).toThrow(/log transaction hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].blockHash =
+            HEX32_A;
+        }),
+      ),
+    ).toThrow(/log block hash.*transaction receipt/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].block_hash =
+            HEX32_A;
+        }),
+      ),
+    ).toThrow(/log block hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].blockNumber =
+            "0x7c";
+        }),
+      ),
+    ).toThrow(/log block number.*transaction receipt/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[])[0].block_number =
+            "0x7c";
+        }),
+      ),
+    ).toThrow(/log block number aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as Record<string, unknown>[]).push({
+            address: BSC_SOURCE_BRIDGE_ADDRESS,
+            topics: [BSC_SOURCE_EVENT_TOPIC, BSC_SOURCE_EVENT_DIGEST],
+            transactionHash: BSC_SOURCE_TX_HASH,
+            blockNumber: "0x7b",
+            blockHash: BSC_SOURCE_BLOCK_HASH,
+          });
+        }),
+      ),
+    ).toThrow(/exactly one source bridge/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.receipt.logs as unknown[]).push("not-a-log");
+        }),
+      ),
+    ).toThrow(/BSC transaction receipt log 1 must be an object/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.indexedLogs = [];
+        }),
+      ),
+    ).toThrow(/indexed source bridge logs.*SccpSourceEvent/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (
+            next.indexedLogs as Array<Record<string, unknown>> & {
+              privateKeyHex?: string;
+            }
+          ).privateKeyHex = "11".repeat(32);
+        }),
+      ),
+    ).toThrow(/BSC indexed source logs.*SCCP proof data/);
+
+    const accessedBscIndexedLogFields: string[] = [];
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          Object.defineProperty(next.indexedLogs, "debug", {
+            enumerable: true,
+            get() {
+              accessedBscIndexedLogFields.push("debug");
+              return "not JSON";
+            },
+          });
+        }),
+      ),
+    ).toThrow(/BSC indexed source logs.*SCCP proof data/);
+    expect(accessedBscIndexedLogFields).toEqual([]);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.indexedLogs.push({
+            address: BSC_SOURCE_BRIDGE_ADDRESS,
+            topics: [BSC_SOURCE_EVENT_TOPIC, BSC_SOURCE_EVENT_DIGEST],
+            transactionHash: BSC_SOURCE_TX_HASH,
+            blockNumber: "0x7b",
+            blockHash: BSC_SOURCE_BLOCK_HASH,
+          });
+        }),
+      ),
+    ).toThrow(/indexed source bridge logs.*exactly one/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.indexedLogs as unknown[]).push("not-a-log");
+        }),
+      ),
+    ).toThrow(/BSC indexed source logs\[1\] must be an object/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          (next.indexedLogs[0].topics as string[])[1] = HEX32_A;
+        }),
+      ),
+    ).toThrow(/digest.*transaction receipt/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.indexedLogs[0].transactionHash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/log transaction hash.*source transaction/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.indexedLogs[0].transaction_hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/log transaction hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/block hash.*receipt/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.block_hash = HEX32_A;
+        }),
+      ),
+    ).toThrow(/source block hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.blockNumber = "0x7c";
+        }),
+      ),
+    ).toThrow(/source block number aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          delete next.block.transactions;
+        }),
+      ),
+    ).toThrow(/transactions array/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.transactions = [HEX32_A];
+        }),
+      ),
+    ).toThrow(/source transaction/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.transactions = [
+            { hash: BSC_SOURCE_TX_HASH, transactionHash: HEX32_A },
+          ];
+        }),
+      ),
+    ).toThrow(/source block transaction 0 hash aliases disagree/);
+
+    expect(() =>
+      bindBscSourceDataForProof(
+        sampleBoundBscSourceDataInput((next) => {
+          next.block.transactions = [{ hash: BSC_SOURCE_TX_HASH }];
+        }),
+      ),
+    ).not.toThrow();
   });
 
   it("reads TRON deployment evidence from normalized SCCP manifests", () => {
@@ -3142,6 +5695,95 @@ describe("SCCP helpers", () => {
     ).toThrow(/canonical TAIRA I105/);
   });
 
+  it("builds TAIRA to BSC canonical outbound previews and burn-record requests from SDK bindings", () => {
+    const preview = buildTairaXorBscOutboundPreview({
+      manifest: READY_BSC_MANIFEST,
+      tairaSender: TAIRA_SENDER,
+      bscRecipient: BSC_RECIPIENT_ADDRESS.toUpperCase(),
+      amountDecimal: "2.25",
+      nonce: "7",
+    });
+
+    expect(preview.payload).toMatchObject({
+      source_domain: 0,
+      dest_domain: SCCP_BSC_DOMAIN,
+      asset_id: "xor",
+      amount: "2250000000000000000",
+      recipient: BSC_RECIPIENT_ADDRESS,
+      route_id: "taira_bsc_xor",
+    });
+    expect(preview.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.payloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.contractPayloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.canonicalPayloadHex).toMatch(/^0x[0-9a-f]+$/u);
+    expect(preview.recordDescriptor).toMatchObject({
+      execution_kind: "ivm_proved_record_sccp_message_v1",
+      chain_id: TAIRA_CHAIN_ID,
+      network_prefix: TAIRA_NETWORK_PREFIX,
+      route_id: "taira_bsc_xor",
+      message_id: preview.messageId,
+      canonical_payload_hex: preview.canonicalPayloadHex,
+    });
+
+    const mixedAddressPreview = buildTairaXorBscOutboundPreview({
+      manifest: READY_BSC_MANIFEST,
+      tairaSender: TAIRA_SENDER,
+      bscRecipient: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+      amountDecimal: "2.25",
+      nonce: "7",
+    });
+    expect(mixedAddressPreview.payload).toMatchObject({
+      recipient: BSC_MIXED_RECIPIENT_ADDRESS,
+    });
+    expect(
+      normalizeEvmAddress(String(mixedAddressPreview.payload.recipient)),
+    ).toBe(BSC_MIXED_RECIPIENT_ADDRESS_LOWER);
+    expect(mixedAddressPreview.canonicalPayloadHex).toBe(
+      bytesToHex(
+        canonicalSccpTransferPayloadBytes({
+          ...TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+          amount: "2250000000000000000",
+          recipient: BSC_MIXED_RECIPIENT_ADDRESS,
+        }),
+      ),
+    );
+
+    const request = buildTairaXorBscOutboundBurnRecordRequest({
+      manifest: READY_BSC_MANIFEST,
+      tairaSender: TAIRA_SENDER,
+      bscRecipient: BSC_RECIPIENT_ADDRESS,
+      amountDecimal: "2.25",
+      nonce: "7",
+    });
+    expect(request.outbound.messageId).toBe(preview.messageId);
+    expect(request.zkIvmRequest).toMatchObject({
+      route_id: "taira_bsc_xor",
+      asset_key: "xor",
+      descriptor: {
+        route_id: "taira_bsc_xor",
+        dest_domain: SCCP_BSC_DOMAIN,
+      },
+    });
+    expect(() =>
+      buildTairaXorBscOutboundPreview({
+        manifest: {},
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: "2.25",
+        nonce: "7",
+      }),
+    ).toThrow(/BSC bridge deployment address/);
+    expect(() =>
+      buildTairaXorBscOutboundBurnRecordRequest({
+        manifest: READY_BSC_MANIFEST,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: VALID_TRON_ADDRESS,
+        amountDecimal: "2.25",
+        nonce: "7",
+      }),
+    ).toThrow(/EVM address|recipientAddress|BSC/i);
+  });
+
   it("binds TAIRA message proof jobs to TRON finalize proof requests", () => {
     const binding = buildTairaXorFinalizeProofBinding({
       manifest: READY_TRON_MANIFEST,
@@ -3238,9 +5880,7 @@ describe("SCCP helpers", () => {
         tronRecipient: VALID_TRON_ADDRESS,
         amountDecimal: BRIDGE_AMOUNT_DECIMAL,
       }),
-    ).toThrow(
-      /destination binding does not match the TRON route manifest/i,
-    );
+    ).toThrow(/destination binding does not match the TRON route manifest/i);
   });
 
   it("accepts TRON codec recipient payload variants in proof jobs", () => {
@@ -3338,9 +5978,7 @@ describe("SCCP helpers", () => {
     expect(proofBytes).toHaveLength(
       SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
     );
-    expect(bytesToHex(proofBytes.slice(32, 64))).toBe(
-      TAIRA_TO_TRON_MESSAGE_ID,
-    );
+    expect(bytesToHex(proofBytes.slice(32, 64))).toBe(TAIRA_TO_TRON_MESSAGE_ID);
     expect(bytesToHex(proofBytes.slice(64, 96))).toBe(`0x${"00".repeat(32)}`);
     expect(bytesToHex(proofBytes.slice(96, 128))).toBe(HEX32_C);
 
@@ -3351,6 +5989,441 @@ describe("SCCP helpers", () => {
         messageId: HEX32_D,
       }),
     ).toThrow(/requested message id/);
+  });
+
+  it("binds TAIRA message proof jobs to BSC finalize proof requests", () => {
+    const binding = buildTairaXorBscFinalizeProofBinding({
+      manifest: READY_BSC_MANIFEST,
+      job: sampleTairaToBscJob(),
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      tairaSender: TAIRA_SENDER,
+      bscRecipient: BSC_RECIPIENT_ADDRESS.toUpperCase(),
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+
+    expect(binding).toMatchObject({
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+      destinationBinding: {
+        bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+        verifierAddress: BSC_VERIFIER_ADDRESS_HEX,
+        bridgeAddress: BSC_BRIDGE_ADDRESS_HEX,
+      },
+    });
+    expect(binding.witness.publicInputs).toMatchObject({
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      targetDomain: SCCP_BSC_DOMAIN,
+    });
+    expect(binding.witness.bundleBytes).toBeInstanceOf(Uint8Array);
+    expect((binding.witness.bundleBytes as Uint8Array).length).toBeGreaterThan(
+      100,
+    );
+
+    const mixedAddressPayload = {
+      ...TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+      recipient: BSC_MIXED_RECIPIENT_ADDRESS,
+    };
+    const mixedAddressMessageId = sccpTransferMessageId(mixedAddressPayload);
+    const mixedAddressPayloadHash = sccpPayloadHash(
+      canonicalSccpPayloadEnvelopeBytes({
+        kind: "Transfer",
+        value: mixedAddressPayload,
+      }),
+    );
+    const baseJob = sampleTairaToBscJob();
+    const baseProjection = (
+      baseJob.payloadProjection as {
+        value: Record<string, unknown>;
+      }
+    ).value;
+    const baseBundle = baseJob.bundle as Record<string, unknown>;
+    const baseCommitment = baseBundle.commitment as Record<string, unknown>;
+    const mixedAddressBinding = buildTairaXorBscFinalizeProofBinding({
+      manifest: READY_BSC_MANIFEST,
+      job: sampleTairaToBscJob({
+        publicInputs: {
+          ...(baseJob.publicInputs as Record<string, unknown>),
+          messageId: mixedAddressMessageId,
+          payloadHash: mixedAddressPayloadHash,
+        },
+        payloadProjection: {
+          kind: "Transfer",
+          value: {
+            ...baseProjection,
+            recipient: {
+              kind: "EvmHex",
+              value: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+            },
+          },
+        },
+        bundle: {
+          ...baseBundle,
+          commitment: {
+            ...baseCommitment,
+            messageId: mixedAddressMessageId,
+            payloadHash: mixedAddressPayloadHash,
+          },
+          payload: {
+            kind: "Transfer",
+            value: {
+              ...mixedAddressPayload,
+              recipient: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+            },
+          },
+        },
+      }),
+      messageId: mixedAddressMessageId,
+      tairaSender: TAIRA_SENDER,
+      bscRecipient: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+    expect(mixedAddressBinding.canonicalPayloadHex).toBe(
+      bytesToHex(canonicalSccpTransferPayloadBytes(mixedAddressPayload)),
+    );
+    expect(
+      (
+        mixedAddressBinding.messageBundle.payload as {
+          value: Record<string, unknown>;
+        }
+      ).value.recipient,
+    ).toBe(BSC_MIXED_RECIPIENT_ADDRESS);
+  });
+
+  it("builds BSC query material for TAIRA message proof jobs", () => {
+    const bundle = sampleTairaToBscJob().bundle as Record<string, unknown>;
+    const material = buildTairaXorBscMessageProofJobQueryMaterial({
+      manifest: READY_BSC_MANIFEST,
+      messageBundle: bundle,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+    });
+
+    expect(material).toMatchObject({
+      networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+      verifierAddressHex: BSC_VERIFIER_ADDRESS_HEX,
+      bridgeAddressHex: BSC_BRIDGE_ADDRESS_HEX,
+      verifierCodeHashHex: HEX32_D,
+      verifierKeyHashHex: HEX32_E,
+      expectedDestinationBindingHashHex: BSC_DESTINATION_BINDING.bindingHash,
+    });
+    const proofBytes = hexToBytes(material.proofBytesHex);
+    expect(proofBytes).toHaveLength(
+      SCCP_GROTH16_BN254_PROOF_ABI_BYTE_LENGTH_V1,
+    );
+    expect(bytesToHex(proofBytes.slice(32, 64))).toBe(TAIRA_TO_BSC_MESSAGE_ID);
+    expect(bytesToHex(proofBytes.slice(64, 96))).toBe(`0x${"00".repeat(32)}`);
+    expect(bytesToHex(proofBytes.slice(96, 128))).toBe(HEX32_C);
+
+    expect(() =>
+      buildTairaXorBscMessageProofJobQueryMaterial({
+        manifest: READY_BSC_MANIFEST,
+        messageBundle: bundle,
+        messageId: HEX32_D,
+      }),
+    ).toThrow(/requested message id/);
+    expect(() =>
+      buildTairaXorBscMessageProofJobQueryMaterial({
+        manifest: READY_BSC_MANIFEST,
+        messageBundle: {
+          ...bundle,
+          commitment: {
+            ...(bundle.commitment as Record<string, unknown>),
+            message_id: HEX32_A,
+          },
+        },
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      }),
+    ).toThrow(/messageId aliases disagree/);
+    expect(() =>
+      buildTairaXorBscMessageProofJobQueryMaterial({
+        manifest: READY_BSC_MANIFEST,
+        messageBundle: {
+          ...bundle,
+          commitment_root: HEX32_A,
+        },
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      }),
+    ).toThrow(/commitment root aliases disagree/);
+    expect(() =>
+      buildTairaXorBscMessageProofJobQueryMaterial({
+        manifest: READY_BSC_MANIFEST,
+        messageBundle: sampleTairaToTronJob().bundle as Record<string, unknown>,
+        messageId: TAIRA_TO_TRON_MESSAGE_ID,
+      }),
+    ).toThrow(/target BSC/);
+  });
+
+  it("rejects stale or adversarial TAIRA to BSC message proof jobs", () => {
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            bindingKey: "forged-binding-key",
+          },
+        },
+        job: sampleTairaToBscJob(),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/destination binding key aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationRollout: {
+            ...READY_BSC_MANIFEST.destinationRollout,
+            destination_binding_key: "forged-binding-key",
+          },
+        },
+        job: sampleTairaToBscJob(),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/destination binding key aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          destinationBinding: {
+            ...READY_BSC_MANIFEST.destinationBinding,
+            sourceDomain: SCCP_SORA_DOMAIN,
+            source_domain: SCCP_TRON_DOMAIN,
+          },
+        },
+        job: sampleTairaToBscJob(),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/destination binding source domain aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          publicInputs: {
+            ...(sampleTairaToBscJob().publicInputs as Record<string, unknown>),
+            targetDomain: SCCP_TRON_DOMAIN,
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/target BSC/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          publicInputs: {
+            ...(sampleTairaToBscJob().publicInputs as Record<string, unknown>),
+            targetDomain: SCCP_BSC_DOMAIN,
+            target_domain: SCCP_TRON_DOMAIN,
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/public inputs targetDomain aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          submissionPackage: {
+            platformPayload: {
+              kind: "evm_groth16_contract_call",
+              value: {
+                statementHash: HEX32_E,
+                statement_hash: HEX32_A,
+                destinationBinding: {
+                  version: 1,
+                  key: BSC_DESTINATION_BINDING.key,
+                  bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+                },
+              },
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/statement hash aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          publicInputs: {
+            ...(sampleTairaToBscJob().publicInputs as Record<string, unknown>),
+            message_id: HEX32_A,
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs\.messageId aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          bundle: {
+            ...(sampleTairaToBscJob().bundle as Record<string, unknown>),
+            commitment: {
+              ...((sampleTairaToBscJob().bundle as Record<string, unknown>)
+                .commitment as Record<string, unknown>),
+              message_id: HEX32_A,
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/bundle\.commitment\.messageId aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          publicInputs: {
+            ...(sampleTairaToBscJob().publicInputs as Record<string, unknown>),
+            payload_hash: HEX32_A,
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs\.payloadHash aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          bundle: {
+            ...(sampleTairaToBscJob().bundle as Record<string, unknown>),
+            commitment: {
+              ...((sampleTairaToBscJob().bundle as Record<string, unknown>)
+                .commitment as Record<string, unknown>),
+              payload_hash: HEX32_A,
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/bundle\.commitment\.payloadHash aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          publicInputs: {
+            ...(sampleTairaToBscJob().publicInputs as Record<string, unknown>),
+            destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            destination_binding_hash: HEX32_A,
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/destination binding hash aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          submissionPackage: {
+            platformPayload: {
+              kind: "evm_groth16_contract_call",
+              value: {
+                statementHash: HEX32_E,
+                destinationBinding: {
+                  version: 1,
+                  key: BSC_DESTINATION_BINDING.key,
+                  bindingHash: BSC_DESTINATION_BINDING.bindingHash,
+                  binding_hash: HEX32_A,
+                },
+              },
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/destination binding hash aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          payloadProjection: {
+            kind: "Transfer",
+            value: {
+              ...(
+                sampleTairaToBscJob().payloadProjection as {
+                  value: Record<string, unknown>;
+                }
+              ).value,
+              recipient: { kind: "EvmHex", value: BSC_BRIDGE_ADDRESS },
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/recipient/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeProofBinding({
+        manifest: READY_BSC_MANIFEST,
+        job: sampleTairaToBscJob({
+          bundle: {
+            ...(sampleTairaToBscJob().bundle as Record<string, unknown>),
+            payload: {
+              kind: "Transfer",
+              value: {
+                ...TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+                route_id: "taira_tron_xor",
+              },
+            },
+          },
+        }),
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/Bundle route id|message id.*canonical/i);
   });
 
   it("rejects stale or adversarial TAIRA message proof jobs", () => {
@@ -3596,6 +6669,410 @@ describe("SCCP helpers", () => {
         },
       }).trigger.feeLimit,
     ).toBe(150_000_000);
+  });
+
+  it("builds BSC finalize transaction requests from completed proof packages", () => {
+    const canonicalPayloadHex = bytesToHex(
+      canonicalSccpTransferPayloadBytes(TAIRA_TO_BSC_TRANSFER_PAYLOAD),
+    );
+    const proofBytes = bytesToHex(groth16ProofBytes());
+    const publicInputs = {
+      version: 1,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+      targetDomain: SCCP_BSC_DOMAIN,
+      commitmentRoot: HEX32_C,
+      finalityHeight: 10,
+      finalityBlockHash: HEX32_F,
+      destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+    } as const;
+    const callDataHex = tairaXorFinalizeFromTairaCallData({
+      proofBytes,
+      publicInputs,
+      statementHash: HEX32_E,
+      canonicalPayloadHex,
+      amount: BRIDGE_AMOUNT_BASE_UNITS,
+    });
+    const transaction = buildTairaXorBscFinalizeTransactionRequest({
+      manifest: READY_BSC_MANIFEST,
+      ownerAddress: BSC_RECIPIENT_ADDRESS.toUpperCase(),
+      bscRecipient: BSC_RECIPIENT_ADDRESS,
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      canonicalPayloadHex,
+      proofPackage: {
+        canonicalPayloadHex,
+        submission: {
+          callDataHex,
+          canonicalPayloadHex,
+          proofBytes,
+          publicInputs,
+          statementHash: HEX32_E,
+        },
+      },
+    });
+
+    expect(transaction).toEqual({
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+      messageId: TAIRA_TO_BSC_MESSAGE_ID,
+      transaction: {
+        from: BSC_RECIPIENT_ADDRESS_HEX,
+        to: BSC_BRIDGE_ADDRESS_HEX,
+        data: callDataHex,
+        chainId: BSC_TESTNET_CHAIN_ID_HEX,
+      },
+    });
+
+    const accessorBackedManifest: Record<string, unknown> = {
+      ...READY_BSC_MANIFEST,
+    };
+    const manifestReads: string[] = [];
+    Object.defineProperty(accessorBackedManifest, "destinationBinding", {
+      enumerable: true,
+      get() {
+        manifestReads.push("destinationBinding");
+        return READY_BSC_MANIFEST.destinationBinding;
+      },
+    });
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: accessorBackedManifest,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs,
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(manifestReads).toEqual([]);
+
+    expect(
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs,
+            statementHash: HEX32_E,
+          },
+        },
+      }).transaction.data,
+    ).toBe(callDataHex);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_TRON_MESSAGE_ID,
+              payloadHash: TAIRA_TO_TRON_PAYLOAD_HASH,
+              targetDomain: SCCP_TRON_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/target BSC/);
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: VALID_TRON_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/EVM address|BSC/i);
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/bridge request message id/);
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/bridge request canonical payload bytes/);
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          submission: {
+            callDataHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/proof package is missing canonical payload bytes/);
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex: bytesToHex(new Uint8Array([0xde, 0xad])),
+          submission: {
+            callDataHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/canonical payload bytes.*bridge request/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            canonical_payload_hex: bytesToHex(new Uint8Array([0xde, 0xad])),
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/canonical payload bytes aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            call_data_hex: "0xdeadbeef",
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/call data aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex: `${callDataHex.slice(0, 10)}${"00".repeat(64)}`,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs,
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/locally generated finalize request/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              target_domain: SCCP_TRON_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/public inputs targetDomain aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              message_id: HEX32_A,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/proofPackage\.publicInputs\.messageId aliases disagree/);
+
+    expect(() =>
+      buildTairaXorBscFinalizeTransactionRequest({
+        manifest: READY_BSC_MANIFEST,
+        ownerAddress: BSC_RECIPIENT_ADDRESS,
+        bscRecipient: BSC_RECIPIENT_ADDRESS,
+        amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+        messageId: TAIRA_TO_BSC_MESSAGE_ID,
+        canonicalPayloadHex,
+        proofPackage: {
+          canonicalPayloadHex,
+          submission: {
+            callDataHex,
+            canonicalPayloadHex,
+            proofBytes,
+            publicInputs: {
+              messageId: TAIRA_TO_BSC_MESSAGE_ID,
+              payloadHash: TAIRA_TO_BSC_PAYLOAD_HASH,
+              targetDomain: SCCP_BSC_DOMAIN,
+              destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+              destination_binding_hash: HEX32_A,
+            },
+            statementHash: HEX32_E,
+          },
+        },
+      }),
+    ).toThrow(/destination binding hash aliases disagree/);
   });
 
   it("rejects incomplete TRON finalize proof packages", () => {
@@ -3856,7 +7333,9 @@ describe("SCCP helpers", () => {
         messageId: result.messageId,
       },
     });
-    expect(buildSccpMessageBundleSubmitPayload(result.messageBundle)).toMatchObject({
+    expect(
+      buildSccpMessageBundleSubmitPayload(result.messageBundle),
+    ).toMatchObject({
       commitment_root: expect.stringMatching(/^[0-9a-f]{64}$/u),
       commitment: {
         message_id: result.messageId.replace(/^0x/u, ""),
@@ -3865,9 +7344,9 @@ describe("SCCP helpers", () => {
       payload: {
         Transfer: {
           asset_id: bytesToHex(new TextEncoder().encode("xor")).slice(2),
-          sender: bytesToHex(new TextEncoder().encode(VALID_TRON_ADDRESS)).slice(
-            2,
-          ),
+          sender: bytesToHex(
+            new TextEncoder().encode(VALID_TRON_ADDRESS),
+          ).slice(2),
           recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)).slice(
             2,
           ),
@@ -3910,6 +7389,57 @@ describe("SCCP helpers", () => {
       entrypoint: "finalize_inbound",
       route: "taira_tron_xor",
       contract_address: "bridge@sccp",
+    });
+
+    const manifestSettlementAlias = "sccp.taira_tron_xor";
+    const accessorTronManifest = { ...READY_TRON_MANIFEST };
+    const tronManifestReads: string[] = [];
+    Object.defineProperty(accessorTronManifest, "settlement", {
+      enumerable: true,
+      get() {
+        tronManifestReads.push("settlement");
+        return { contractAlias: manifestSettlementAlias };
+      },
+    });
+    expect(() =>
+      buildTairaXorInboundSettlement({
+        manifest: accessorTronManifest,
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: accessorTronManifest,
+        proofPackage: sampleTronToTairaProofPackage(),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(tronManifestReads).toEqual([]);
+
+    expect(
+      bindTronToTairaSourceProofPackage({
+        manifest: {
+          ...READY_TRON_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }).settlement,
+    ).toMatchObject({
+      entrypoint: "finalize_inbound",
+      route: "taira_tron_xor",
+      contract_alias: manifestSettlementAlias,
     });
 
     expect(() =>
@@ -3981,6 +7511,23 @@ describe("SCCP helpers", () => {
       }),
     ).toThrow(/route.*taira_tron_xor/);
 
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: READY_TRON_MANIFEST,
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.route_id = "taira_bsc_xor";
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement route aliases disagree/);
+
     expect(
       bindTronToTairaSourceProofPackage({
         manifest: READY_TRON_MANIFEST,
@@ -3999,6 +7546,101 @@ describe("SCCP helpers", () => {
       entrypoint: "finalize_inbound",
       route: "taira_tron_xor",
     });
+
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: READY_TRON_MANIFEST,
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement target must come from the TRON manifest/);
+
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: {
+          ...READY_TRON_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = "sccp.taira_bsc_xor";
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement contract alias must match the TRON manifest/);
+
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: {
+          ...READY_TRON_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_address = "bridge@sccp";
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not override the manifest contract alias/);
+
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: {
+          ...READY_TRON_MANIFEST,
+          settlement: { contractAddress: "bridge@sccp" },
+        },
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not override the manifest contract address/);
+
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: READY_TRON_MANIFEST,
+        proofPackage: sampleTronToTairaProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+          settlement.contract_address = "bridge@sccp";
+        }),
+        txId: TRON_TX_ID,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not declare both contract alias and contract address/);
 
     expect(() =>
       bindTronToTairaSourceProofPackage({
@@ -4143,6 +7785,1058 @@ describe("SCCP helpers", () => {
         amountDecimal: BRIDGE_AMOUNT_DECIMAL,
       }),
     ).toThrow(/amount.*bridge request/);
+
+    const accessorProofPackage = sampleTronToTairaProofPackage();
+    const proofPackageReads: string[] = [];
+    Object.defineProperty(accessorProofPackage, "settlement", {
+      enumerable: true,
+      get() {
+        proofPackageReads.push("settlement");
+        return {
+          route: "taira_tron_xor",
+          entrypoint: "finalize_inbound",
+        };
+      },
+    });
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: READY_TRON_MANIFEST,
+        proofPackage: accessorProofPackage,
+        txId: TRON_TX_ID,
+        events: sampleTronSourceData().events,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/TRON -> TAIRA source proof package.*SCCP proof data/);
+    expect(proofPackageReads).toEqual([]);
+
+    const accessorEvents = sampleTronSourceData().events;
+    const eventReads: string[] = [];
+    Object.defineProperty(accessorEvents, "data", {
+      enumerable: true,
+      get() {
+        eventReads.push("data");
+        return [];
+      },
+    });
+    expect(() =>
+      bindTronToTairaSourceProofPackage({
+        manifest: READY_TRON_MANIFEST,
+        proofPackage: sampleTronToTairaProofPackage(),
+        txId: TRON_TX_ID,
+        events: accessorEvents,
+        tronSender: VALID_TRON_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/TRON source proof package events.*SCCP proof data/);
+    expect(eventReads).toEqual([]);
+  });
+
+  it("binds BSC source proof packages to canonical receipt log metadata", () => {
+    const receipt = sampleBscSourceData().receipt;
+    expect(
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toMatchObject({
+      txId: BSC_SOURCE_TX_HASH,
+      sourceEventDigest: BSC_SOURCE_EVENT_DIGEST,
+      amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+    });
+
+    const manifestSettlementAlias = "sccp.taira_bsc_xor";
+    expect(
+      buildTairaXorBscInboundSettlement({
+        manifest: {
+          settlement: {
+            contractAlias: manifestSettlementAlias,
+            contractAddress: "bridge@sccp",
+          },
+        },
+      }),
+    ).toEqual({
+      entrypoint: "finalize_inbound",
+      route: "taira_bsc_xor",
+      contract_alias: manifestSettlementAlias,
+    });
+    const accessorBscManifest = { ...READY_BSC_MANIFEST };
+    const bscManifestReads: string[] = [];
+    Object.defineProperty(accessorBscManifest, "settlement", {
+      enumerable: true,
+      get() {
+        bscManifestReads.push("settlement");
+        return { contractAlias: manifestSettlementAlias };
+      },
+    });
+    expect(() =>
+      buildTairaXorBscInboundSettlement({
+        manifest: accessorBscManifest,
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: accessorBscManifest,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/SCCP route manifest must contain only JSON-serializable/);
+    expect(bscManifestReads).toEqual([]);
+
+    expect(
+      bindBscToTairaSourceProofPackage({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }).settlement,
+    ).toMatchObject({
+      contract_alias: manifestSettlementAlias,
+      route: "taira_bsc_xor",
+      entrypoint: "finalize_inbound",
+    });
+
+    const mixedAddressPayload = {
+      version: 1,
+      source_domain: SCCP_BSC_DOMAIN,
+      dest_domain: SCCP_SORA_DOMAIN,
+      nonce: BSC_TO_TAIRA_NONCE,
+      asset_home_domain: SCCP_SORA_DOMAIN,
+      asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+      asset_id: "xor",
+      amount: BRIDGE_AMOUNT_BASE_UNITS,
+      sender_codec: SCCP_CODEC_EVM_HEX,
+      sender: BSC_MIXED_RECIPIENT_ADDRESS,
+      recipient_codec: SCCP_CODEC_TEXT_UTF8,
+      recipient: TAIRA_SENDER,
+      route_id_codec: SCCP_CODEC_TEXT_UTF8,
+      route_id: "taira_bsc_xor",
+    };
+    const mixedAddressPayloadHash = sccpPayloadHash(
+      canonicalSccpPayloadEnvelopeBytes({
+        kind: "Transfer",
+        value: mixedAddressPayload,
+      }),
+    );
+    const mixedAddressMessageId = sccpTransferMessageId(mixedAddressPayload);
+    const mixedAddressCommitment = {
+      version: 1,
+      kind: "Transfer",
+      targetDomain: SCCP_SORA_DOMAIN,
+      messageId: mixedAddressMessageId,
+      payloadHash: mixedAddressPayloadHash,
+    } as const;
+    const mixedAddressMerkleProof = { steps: [] };
+    const mixedAddressCommitmentRoot = sccpMerkleRootFromCommitment(
+      {
+        version: mixedAddressCommitment.version,
+        kind: mixedAddressCommitment.kind,
+        target_domain: mixedAddressCommitment.targetDomain,
+        message_id: mixedAddressCommitment.messageId,
+        payload_hash: mixedAddressCommitment.payloadHash,
+      },
+      mixedAddressMerkleProof,
+    );
+    const mixedAddressSourceEventDigest = tairaXorBscBurnSourceEventDigest({
+      bridgeAddress: BSC_BRIDGE_ADDRESS,
+      burnerAddress: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+      tairaRecipient: TAIRA_SENDER,
+      amount: BRIDGE_AMOUNT_BASE_UNITS,
+      nonce: BSC_TO_TAIRA_NONCE,
+    });
+    const mixedAddressBound = bindBscToTairaSourceProofPackage({
+      manifest: READY_BSC_MANIFEST,
+      ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+      proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+        packageRecord.sourceEventDigest = mixedAddressSourceEventDigest;
+        packageRecord.messageId = mixedAddressMessageId;
+        packageRecord.messageBundle = {
+          version: 1,
+          commitmentRoot: mixedAddressCommitmentRoot,
+          commitment: mixedAddressCommitment,
+          merkleProof: mixedAddressMerkleProof,
+          payload: {
+            kind: "Transfer",
+            value: {
+              ...mixedAddressPayload,
+              sender: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+            },
+          },
+          finalityProof: "0x010203",
+        };
+        packageRecord.publicInputs = {
+          sourceDomain: SCCP_BSC_DOMAIN,
+          targetDomain: SCCP_SORA_DOMAIN,
+          messageId: mixedAddressMessageId,
+          payloadHash: mixedAddressPayloadHash,
+          commitmentRoot: mixedAddressCommitmentRoot,
+          txId: BSC_SOURCE_TX_HASH,
+          sourceEventDigest: mixedAddressSourceEventDigest,
+          amountBaseUnits: BRIDGE_AMOUNT_BASE_UNITS,
+          sender: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+          recipient: TAIRA_SENDER,
+          routeId: "taira_bsc_xor",
+        };
+      }),
+      txId: BSC_SOURCE_TX_HASH,
+      bscSender: BSC_MIXED_RECIPIENT_ADDRESS_LOWER,
+      tairaRecipient: TAIRA_SENDER,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+    expect(
+      (
+        mixedAddressBound.messageBundle.payload as {
+          value: Record<string, unknown>;
+        }
+      ).value.sender,
+    ).toBe(BSC_MIXED_RECIPIENT_ADDRESS);
+    const serializedMixedAddressBundle = buildSccpMessageBundleSubmitPayload(
+      mixedAddressBound.messageBundle,
+    ) as { payload: { Transfer: { sender: string } } };
+    expect(serializedMixedAddressBundle.payload.Transfer.sender).toBe(
+      bytesToHex(new TextEncoder().encode(BSC_MIXED_RECIPIENT_ADDRESS)).slice(
+        2,
+      ),
+    );
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          packageRecord.proofArtifactHash = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/proofArtifactHash must match the source request/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          delete packageRecord.nativeEvmProverBundleHash;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/nativeEvmProverBundleHash/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          packageRecord.proof_artifact_hash = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/proofArtifactHash aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          packageRecord.proving_key_hash = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/provingKeyHash aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          packageRecord.native_evm_prover_bundle_hash = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/nativeEvmProverBundleHash aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          delete packageRecord.publicInputs;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const publicInputs = packageRecord.publicInputs as Record<
+            string,
+            unknown
+          >;
+          packageRecord.public_inputs = {
+            ...publicInputs,
+            payloadHash: HEX32_A,
+          };
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const publicInputs = packageRecord.publicInputs as Record<
+            string,
+            unknown
+          >;
+          publicInputs.targetDomain = SCCP_BSC_DOMAIN;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs must bind BSC -> TAIRA/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const publicInputs = packageRecord.publicInputs as Record<
+            string,
+            unknown
+          >;
+          publicInputs.txId = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs txId must match the source transaction/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const publicInputs = packageRecord.publicInputs as Record<
+            string,
+            unknown
+          >;
+          publicInputs.sender = BSC_BRIDGE_ADDRESS;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/publicInputs sender must match the BSC sender/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.route_id = "taira_tron_xor";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement route aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = "sccp.taira_tron_xor";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement target must come from the BSC manifest/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = "sccp.taira_tron_xor";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/settlement contract alias must match the BSC manifest/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          settlement: { contractAlias: manifestSettlementAlias },
+        },
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_address = "bridge@sccp";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not override the manifest contract alias/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: {
+          ...READY_BSC_MANIFEST,
+          settlement: { contractAddress: "bridge@sccp" },
+        },
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not override the manifest contract address/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const settlement = packageRecord.settlement as Record<
+            string,
+            unknown
+          >;
+          settlement.contract_alias = manifestSettlementAlias;
+          settlement.contract_address = "bridge@sccp";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/must not declare both contract alias and contract address/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.target_domain = SCCP_BSC_DOMAIN;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/commitment\.target_domain aliases disagree|target TAIRA\/SORA/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.commitment_root = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/commitment_root aliases disagree|must not use multiple aliases/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          const merkleProof = {
+            steps: [{ sibling_hash: HEX32_A, sibling_is_left: false }],
+          };
+          bundle.merkle_proof = merkleProof;
+          bundle.commitmentRoot = sccpMerkleRootFromCommitment(
+            {
+              version: Number(commitment.version),
+              kind: "Transfer",
+              target_domain: Number(commitment.targetDomain),
+              message_id: String(commitment.messageId),
+              payload_hash: String(commitment.payloadHash),
+            },
+            merkleProof,
+          );
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/messageBundle\.merkle_proof aliases disagree/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.payloadHash = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/payload hash must match the TAIRA XOR BSC payload/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.commitmentRoot = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/commitment(?:R|_r)oot must match the commitment Merkle proof/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkleProof = {
+            steps: [{ sibling_hash: HEX32_A, sibling_is_left: false }],
+          };
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/commitment(?:R|_r)oot must match the commitment Merkle proof/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.messageId = HEX32_A;
+          packageRecord.messageId = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/message id must match the TAIRA XOR BSC payload/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const payload = bundle.payload as Record<string, unknown>;
+          const transfer = payload.value as Record<string, unknown>;
+          transfer.nonce = "2";
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/payload hash must match the TAIRA XOR BSC payload/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH.slice(2),
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/0x-prefixed 32-byte EVM hash/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: `0x${"00".repeat(32)}`,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/txId must be non-zero/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage((packageRecord) => {
+          packageRecord.sourceEventDigest = HEX32_A;
+        }),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/source event digest/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt: sampleBscSourceData((source) => {
+          const logs = source.receipt.logs as Record<string, unknown>[];
+          logs[0].transactionHash = HEX32_A;
+        }).receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/log transaction hash.*source transaction/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt: sampleBscSourceData((source) => {
+          const logs = source.receipt.logs as Record<string, unknown>[];
+          logs[0].blockHash = HEX32_A;
+        }).receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/log block hash.*transaction receipt/);
+
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt: sampleBscSourceData((source) => {
+          source.receipt.block_hash = HEX32_A;
+        }).receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/receipt block hash aliases disagree/);
+
+    const accessorProofPackage = sampleBscToTairaSourceProofPackage();
+    const proofPackageReads: string[] = [];
+    Object.defineProperty(accessorProofPackage, "settlement", {
+      enumerable: true,
+      get() {
+        proofPackageReads.push("settlement");
+        return {
+          route: "taira_bsc_xor",
+          entrypoint: "finalize_inbound",
+        };
+      },
+    });
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: accessorProofPackage,
+        txId: BSC_SOURCE_TX_HASH,
+        receipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/BSC -> TAIRA source proof package.*SCCP proof data/);
+    expect(proofPackageReads).toEqual([]);
+
+    const accessorReceipt = sampleBscSourceData().receipt;
+    const receiptReads: string[] = [];
+    Object.defineProperty(accessorReceipt, "blockNumber", {
+      enumerable: true,
+      get() {
+        receiptReads.push("blockNumber");
+        return "0x7b";
+      },
+    });
+    expect(() =>
+      bindBscToTairaSourceProofPackage({
+        manifest: READY_BSC_MANIFEST,
+        ...BSC_SOURCE_PROVER_MATERIAL_BINDING,
+        proofPackage: sampleBscToTairaSourceProofPackage(),
+        txId: BSC_SOURCE_TX_HASH,
+        receipt: accessorReceipt,
+        bscSender: BSC_SENDER_ADDRESS,
+        tairaRecipient: TAIRA_SENDER,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/BSC source proof package receipt.*SCCP proof data/);
+    expect(receiptReads).toEqual([]);
+  });
+
+  it("serializes BSC source message bundles only with strict proof surfaces", () => {
+    const serialized = buildSccpMessageBundleSubmitPayload(
+      sampleBscToTairaSourceProofPackage().messageBundle as Record<
+        string,
+        unknown
+      >,
+    );
+    expect(serialized).toMatchObject({
+      commitment_root: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      commitment: {
+        kind: "Transfer",
+        target_domain: SCCP_SORA_DOMAIN,
+        message_id: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        payload_hash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      },
+      merkle_proof: { steps: [] },
+      payload: {
+        Transfer: {
+          sender_codec: SCCP_CODEC_EVM_HEX,
+          sender: bytesToHex(
+            new TextEncoder().encode(BSC_SENDER_ADDRESS),
+          ).slice(2),
+          recipient_codec: SCCP_CODEC_TEXT_UTF8,
+          recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)).slice(
+            2,
+          ),
+          route_id: bytesToHex(new TextEncoder().encode("taira_bsc_xor")).slice(
+            2,
+          ),
+        },
+      },
+      finality_proof: "010203",
+    });
+
+    const accessorBundle = sampleBscToTairaSourceProofPackage()
+      .messageBundle as Record<string, unknown>;
+    const accessorCommitment = accessorBundle.commitment as Record<
+      string,
+      unknown
+    >;
+    const accessedBundleFields: string[] = [];
+    Object.defineProperty(accessorCommitment, "debug", {
+      enumerable: true,
+      get() {
+        accessedBundleFields.push("debug");
+        return "not JSON";
+      },
+    });
+    expect(() => buildSccpMessageBundleSubmitPayload(accessorBundle)).toThrow(
+      /messageBundle.*SCCP proof data/,
+    );
+    expect(accessedBundleFields).toEqual([]);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkleProof = {
+            steps: [{ siblingHash: HEX32_A, siblingIsLeft: "false" }],
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/sibling_is_left must be boolean/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkleProof = {
+            steps: [
+              { siblingHash: `0x${"00".repeat(32)}`, siblingIsLeft: false },
+            ],
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/sibling_hash must be non-zero/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.finalityProof = "0x0000";
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/finality_proof must be non-zero/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.commitmentRoot = `0x${"00".repeat(32)}`;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/commitment_root must be non-zero/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.payloadHash = `0x${"00".repeat(32)}`;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/payload_hash must be non-zero/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.commitment_root = HEX32_A;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/commitment_root aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.message_id = HEX32_A;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/message_id aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.payload_hash = HEX32_A;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/payload_hash aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const commitment = bundle.commitment as Record<string, unknown>;
+          commitment.target_domain = SCCP_BSC_DOMAIN;
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/target_domain aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkle_proof = {
+            steps: [{ sibling_hash: HEX32_A, sibling_is_left: false }],
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/merkle_proof aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkleProof = {
+            steps: [
+              {
+                siblingHash: HEX32_A,
+                sibling_hash: HEX32_B,
+                siblingIsLeft: false,
+              },
+            ],
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/sibling_hash aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.merkleProof = {
+            steps: [
+              {
+                siblingHash: HEX32_A,
+                siblingIsLeft: false,
+                sibling_is_left: true,
+              },
+            ],
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/sibling_is_left aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          bundle.finality_proof = "0x040506";
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/finality_proof aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const payload = bundle.payload as Record<string, unknown>;
+          const transfer = payload.value as Record<string, unknown>;
+          transfer.assetId = "not-xor";
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/payload\.asset_id aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const payload = bundle.payload as Record<string, unknown>;
+          const transfer = payload.value as Record<string, unknown>;
+          transfer.routeId = "taira_tron_xor";
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/payload\.route_id aliases disagree/);
+
+    expect(() =>
+      buildSccpMessageBundleSubmitPayload(
+        sampleBscToTairaSourceProofPackage((packageRecord) => {
+          const bundle = packageRecord.messageBundle as Record<string, unknown>;
+          const payload = bundle.payload as Record<string, unknown>;
+          const transfer = payload.value as Record<string, unknown>;
+          transfer.sender = {
+            value: BSC_SENDER_ADDRESS,
+            payload: BSC_BRIDGE_ADDRESS,
+          };
+        }).messageBundle as Record<string, unknown>,
+      ),
+    ).toThrow(/payload\.sender aliases disagree/);
   });
 
   it("keeps route readiness false when deployment evidence is missing", () => {
@@ -4179,7 +8873,7 @@ describe("SCCP helpers", () => {
     expect(snapshot).toMatchObject({
       topic: "topic",
       address: VALID_TRON_ADDRESS,
-      chainId: TRON_NILE_CAIP_CHAIN_ID,
+      chainId: TRON_MAINNET_CAIP_CHAIN_ID,
       namespace: "tron",
     });
     expect(JSON.stringify(snapshot)).not.toMatch(/private|seed|mnemonic/iu);
@@ -4194,27 +8888,252 @@ describe("SCCP helpers", () => {
 });
 
 describe("SCCP proof package helpers", () => {
+  const destinationProofBundleFixture = (targetDomain: number) => {
+    const transferPayload =
+      targetDomain === SCCP_BSC_DOMAIN
+        ? TAIRA_TO_BSC_TRANSFER_PAYLOAD
+        : TAIRA_TO_TRON_TRANSFER_PAYLOAD;
+    const payload = {
+      kind: "Transfer" as const,
+      value: transferPayload,
+    };
+    const messageId = sccpTransferMessageId(transferPayload);
+    const payloadHash = sccpPayloadHash(
+      canonicalSccpPayloadEnvelopeBytes(payload),
+    );
+    const commitment = {
+      version: 1 as const,
+      kind: "Transfer" as const,
+      target_domain: targetDomain,
+      message_id: messageId,
+      payload_hash: payloadHash,
+    };
+    const merkleProof = { steps: [] };
+    const commitmentRoot = sccpMerkleRootFromCommitment(
+      commitment,
+      merkleProof,
+    );
+    const bundleBytes = canonicalSccpMessageProofBundleBytes({
+      version: 1,
+      commitment_root: commitmentRoot,
+      commitment,
+      merkle_proof: merkleProof,
+      payload,
+      finality_proof: "0x",
+    });
+    return {
+      publicInputs: {
+        version: 1 as const,
+        messageId,
+        payloadHash,
+        targetDomain,
+        commitmentRoot,
+        finalityHeight: 10,
+        finalityBlockHash: HEX32_D,
+      },
+      bundleBytes,
+      sourceProofBytes: Uint8Array.from([]),
+    };
+  };
+
+  const tronPackageWitness = () => ({
+    ...destinationProofBundleFixture(SCCP_TRON_DOMAIN),
+    sourceDomain: SCCP_SORA_DOMAIN,
+    statementHash: HEX32_E,
+    destinationBinding: TRON_DESTINATION_BINDING,
+    destinationBindingHash: TRON_DESTINATION_BINDING.bindingHash,
+  });
+
+  const bscPackageWitness = () => ({
+    ...destinationProofBundleFixture(SCCP_BSC_DOMAIN),
+    sourceDomain: SCCP_SORA_DOMAIN,
+    statementHash: HEX32_E,
+    destinationBinding: BSC_DESTINATION_BINDING,
+    destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+  });
+
+  const wrappedBscProofResult = (
+    witness = bscPackageWitness(),
+  ): Record<string, unknown> => {
+    const request = buildBscTestnetSccpDestinationProofRequest(witness);
+    const result = wrapBscTestnetSccpDestinationProofResult(
+      groth16ProofBytes(request),
+      request,
+    );
+    return {
+      ...result,
+      proofBytes: result.proofBytes,
+      bundleBytes: result.bundleBytes,
+      sourceProofBytes: result.sourceProofBytes,
+    };
+  };
+
   it("serializes byte arrays as hex strings", () => {
     expect(serializeSccpValue(Uint8Array.from([0, 15, 255]))).toBe("0x000fff");
   });
 
-  it("builds canonical TRON proof requests before proof bytes are available", () => {
-    const result = buildTronSccpProofPackage({
-      witness: {
-        publicInputs: {
-          version: 1,
-          messageId: HEX32_A,
-          payloadHash: HEX32_B,
-          targetDomain: SCCP_TRON_DOMAIN,
-          commitmentRoot: HEX32_C,
-          finalityHeight: 10,
-          finalityBlockHash: HEX32_D,
-        },
-        bundleBytes: [1, 2, 3],
-        sourceProofBytes: [4, 5],
-        statementHash: HEX32_E,
-        destinationBindingHash: HEX32_A,
+  it("rejects accessor-backed serialized proof values without invoking them", () => {
+    const accessedFields: string[] = [];
+    const value = {
+      proof: {
+        bytes: Uint8Array.from([1, 2, 3]),
       },
+    };
+    Object.defineProperty(value.proof, "debug", {
+      enumerable: true,
+      get() {
+        accessedFields.push("debug");
+        return "not JSON";
+      },
+    });
+
+    expect(() => serializeSccpValue(value)).toThrow(
+      /SCCP proof package values/,
+    );
+    expect(accessedFields).toEqual([]);
+  });
+
+  it("rejects array side-channel fields during proof value serialization", () => {
+    const value = {
+      proofs: [Uint8Array.from([1, 2, 3])],
+    };
+    (
+      value.proofs as Array<Uint8Array> & {
+        privateKeyHex?: string;
+      }
+    ).privateKeyHex = "11".repeat(32);
+
+    expect(() => serializeSccpValue(value)).toThrow(
+      /SCCP proof package values/,
+    );
+  });
+
+  it("accepts null-prototype proof records during value serialization", () => {
+    const value = Object.create(null) as Record<string, unknown>;
+    value.proofBytes = Uint8Array.from([1, 2, 3]);
+
+    expect(serializeSccpValue(value)).toEqual({
+      proofBytes: "0x010203",
+    });
+  });
+
+  it("rejects non-plain object instances during proof value serialization", () => {
+    expect(() =>
+      serializeSccpValue({
+        proof: new Map([["bytes", Uint8Array.from([1, 2, 3])]]),
+      }),
+    ).toThrow(/SCCP proof package values/);
+    expect(() =>
+      serializeSccpValue({
+        generatedAt: new Date(0),
+      }),
+    ).toThrow(/SCCP proof package values/);
+  });
+
+  it("rejects hidden own proof fields during value serialization", () => {
+    const value = {
+      proofBytes: Uint8Array.from([1, 2, 3]),
+    };
+    Object.defineProperty(value, "requestHash", {
+      enumerable: false,
+      value: HEX32_A,
+    });
+
+    expect(() => serializeSccpValue(value)).toThrow(
+      /SCCP proof package values/,
+    );
+  });
+
+  it("rejects hidden array and symbol proof fields during value serialization", () => {
+    const symbolKey = Symbol("proof");
+    const value = {
+      proofs: [Uint8Array.from([1, 2, 3])],
+    };
+    Object.defineProperty(value.proofs, "requestHash", {
+      enumerable: false,
+      value: HEX32_A,
+    });
+
+    expect(() => serializeSccpValue(value)).toThrow(
+      /SCCP proof package values/,
+    );
+
+    const symbolValue = {
+      proofBytes: Uint8Array.from([1, 2, 3]),
+    };
+    Object.defineProperty(symbolValue, symbolKey, {
+      enumerable: false,
+      value: HEX32_B,
+    });
+
+    expect(() => serializeSccpValue(symbolValue)).toThrow(
+      /SCCP proof package values/,
+    );
+  });
+
+  it("rejects cyclic proof values during value serialization", () => {
+    const objectCycle: Record<string, unknown> = {
+      proofBytes: Uint8Array.from([1, 2, 3]),
+    };
+    objectCycle.self = objectCycle;
+
+    expect(() => serializeSccpValue(objectCycle)).toThrow(
+      /SCCP proof package values/,
+    );
+
+    const arrayCycle: unknown[] = [Uint8Array.from([1, 2, 3])];
+    arrayCycle.push(arrayCycle);
+
+    expect(() => serializeSccpValue({ proofs: arrayCycle })).toThrow(
+      /SCCP proof package values/,
+    );
+  });
+
+  it("allows repeated acyclic proof references during value serialization", () => {
+    const shared = {
+      proofBytes: Uint8Array.from([1, 2, 3]),
+    };
+
+    expect(
+      serializeSccpValue({
+        first: shared,
+        second: shared,
+      }),
+    ).toEqual({
+      first: {
+        proofBytes: "0x010203",
+      },
+      second: {
+        proofBytes: "0x010203",
+      },
+    });
+  });
+
+  it("rejects non-finite proof numbers during value serialization", () => {
+    expect(() =>
+      serializeSccpValue({
+        finalityHeight: Number.NaN,
+      }),
+    ).toThrow(/SCCP proof package values/);
+    expect(() =>
+      serializeSccpValue({
+        finalityHeight: Number.POSITIVE_INFINITY,
+      }),
+    ).toThrow(/SCCP proof package values/);
+  });
+
+  it("rejects undefined proof values during value serialization", () => {
+    expect(() =>
+      serializeSccpValue({
+        proofBytes: undefined,
+      }),
+    ).toThrow(/SCCP proof package values/);
+  });
+
+  it("builds canonical TRON proof requests before proof bytes are available", () => {
+    const witness = tronPackageWitness();
+    const result = buildTronSccpProofPackage({
+      witness,
     });
 
     expect(result.submission).toBeNull();
@@ -4222,29 +9141,139 @@ describe("SCCP proof package helpers", () => {
     expect(result.request).toMatchObject({
       version: 1,
       targetDomain: SCCP_TRON_DOMAIN,
-      bundleBytes: "0x010203",
-      sourceProofBytes: "0x0405",
+      bundleBytes: bytesToHex(witness.bundleBytes),
+      sourceProofBytes: "0x",
     });
+  });
+
+  it("builds canonical BSC proof requests before proof bytes are available", () => {
+    const witness = bscPackageWitness();
+    const result = buildBscSccpProofPackage({
+      witness,
+    });
+
+    expect(result.submission).toBeNull();
+    expect(result.bridgePayload).toBeNull();
+    expect(result.request).toMatchObject({
+      version: 1,
+      targetDomain: SCCP_BSC_DOMAIN,
+      bundleBytes: bytesToHex(witness.bundleBytes),
+      sourceProofBytes: "0x",
+      destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+    });
+  });
+
+  it("rejects non-empty source proof bytes for SORA-origin destination proof requests", () => {
+    expect(() =>
+      buildTronSccpProofPackage({
+        witness: {
+          ...tronPackageWitness(),
+          sourceProofBytes: Uint8Array.from([4, 5]),
+        },
+      }),
+    ).toThrow(/sourceProofBytes must be empty for SORA source bundle/u);
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness: {
+          ...bscPackageWitness(),
+          sourceProofBytes: Uint8Array.from([4, 5]),
+        },
+      }),
+    ).toThrow(/sourceProofBytes must be empty for SORA source bundle/u);
+  });
+
+  it("rejects accessor-backed TRON proof package inputs without invoking them", () => {
+    const witness = tronPackageWitness();
+    const accessedFields: string[] = [];
+    Object.defineProperty(witness.publicInputs, "messageId", {
+      enumerable: true,
+      get() {
+        accessedFields.push("messageId");
+        return HEX32_F;
+      },
+    });
+
+    expect(() =>
+      buildTronSccpProofPackage({
+        witness,
+      }),
+    ).toThrow(/SCCP proof data/u);
+    expect(accessedFields).toEqual([]);
+  });
+
+  it("rejects accessor-backed BSC proof package inputs before prover execution", async () => {
+    const witness = bscPackageWitness();
+    const accessedFields: string[] = [];
+    let proveCalled = false;
+    Object.defineProperty(witness.publicInputs, "payloadHash", {
+      enumerable: true,
+      get() {
+        accessedFields.push("payloadHash");
+        return HEX32_F;
+      },
+    });
+
+    await expect(
+      generateBscSccpProofPackage({
+        witness,
+        prove: (request) => {
+          proveCalled = true;
+          return {
+            proofBytes: groth16ProofBytes(request),
+            requestHash: request.requestHash,
+          };
+        },
+      }),
+    ).rejects.toThrow(/SCCP proof data/u);
+    expect(proveCalled).toBe(false);
+    expect(accessedFields).toEqual([]);
+  });
+
+  it("rejects unsafe BSC proof package network metadata without coercion", () => {
+    const witnessWithAccessorNetwork = bscPackageWitness();
+    const accessorNetworkBinding = { ...BSC_DESTINATION_BINDING };
+    const accessedFields: string[] = [];
+    Object.defineProperty(accessorNetworkBinding, "networkId", {
+      enumerable: true,
+      get() {
+        accessedFields.push("networkId");
+        return BSC_TESTNET_NETWORK_ID_HEX;
+      },
+    });
+    witnessWithAccessorNetwork.destinationBinding =
+      accessorNetworkBinding as never;
+
+    expect(() =>
+      buildBscSccpProofPackage(
+        {
+          witness: witnessWithAccessorNetwork,
+        },
+        false,
+      ),
+    ).toThrow(/SCCP proof package values/u);
+    expect(accessedFields).toEqual([]);
+
+    const witnessWithNumericNetwork = bscPackageWitness();
+    witnessWithNumericNetwork.destinationBinding = {
+      ...BSC_DESTINATION_BINDING,
+      networkId: 97,
+    } as never;
+
+    expect(() =>
+      buildBscSccpProofPackage(
+        {
+          witness: witnessWithNumericNetwork,
+        },
+        false,
+      ),
+    ).toThrow(/network id must be canonical hex/u);
   });
 
   it("rejects stale TRON proof results before building submission payloads", () => {
     expect(() =>
       buildTronSccpProofPackage({
-        witness: {
-          publicInputs: {
-            version: 1,
-            messageId: HEX32_A,
-            payloadHash: HEX32_B,
-            targetDomain: SCCP_TRON_DOMAIN,
-            commitmentRoot: HEX32_C,
-            finalityHeight: 10,
-            finalityBlockHash: HEX32_D,
-          },
-          bundleBytes: [1, 2, 3],
-          sourceProofBytes: [4, 5],
-          statementHash: HEX32_E,
-          destinationBindingHash: HEX32_A,
-        },
+        witness: tronPackageWitness(),
         proofResult: {
           requestHash: HEX32_B,
         } as never,
@@ -4252,56 +9281,172 @@ describe("SCCP proof package helpers", () => {
     ).toThrow(/must match the proof request/);
   });
 
+  it("rejects stale BSC proof results before building submission payloads", () => {
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness: bscPackageWitness(),
+        proofResult: {
+          requestHash: HEX32_B,
+        } as never,
+      }),
+    ).toThrow(/must match the proof request/);
+  });
+
+  it("rejects BSC proof results whose destination binding hash drifts after request binding", () => {
+    const witness = bscPackageWitness();
+    const proofResult = {
+      ...wrappedBscProofResult(witness),
+      destinationBindingHash: HEX32_F,
+    };
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness,
+        proofResult: proofResult as never,
+      }),
+    ).toThrow(/destinationBindingHash/u);
+  });
+
+  it("rejects BSC proof results whose proof context drifts after request binding", () => {
+    const witness = bscPackageWitness();
+    const proofResult = wrappedBscProofResult(witness);
+    proofResult.proofContext = {
+      ...(proofResult.proofContext as Record<string, unknown>),
+      statementHash: HEX32_F,
+    };
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness,
+        proofResult: proofResult as never,
+      }),
+    ).toThrow(/proofContext must match statementHash/u);
+  });
+
+  it("rejects BSC proof results whose bundle bytes drift while requestHash stays fixed", () => {
+    const witness = bscPackageWitness();
+    const proofResult = {
+      ...wrappedBscProofResult(witness),
+      bundleBytes: Uint8Array.from([9, 9, 9]),
+    };
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness,
+        proofResult: proofResult as never,
+      }),
+    ).toThrow(/bundleBytes/u);
+  });
+
+  it("rejects BSC proof results whose proofBase64 does not match proofBytes", () => {
+    const witness = bscPackageWitness();
+    const proofResult = {
+      ...wrappedBscProofResult(witness),
+      proofBase64: "tampered",
+    };
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness,
+        proofResult: proofResult as never,
+      }),
+    ).toThrow(/proofBase64 must match proofResult.proofBytes/u);
+  });
+
+  it("rejects BSC proof results whose destination binding bridge drifts", () => {
+    const witness = bscPackageWitness();
+    const proofResult = wrappedBscProofResult(witness);
+    proofResult.destinationBinding = {
+      ...(proofResult.destinationBinding as Record<string, unknown>),
+      bridgeAddress: BSC_RECIPIENT_ADDRESS,
+    };
+
+    expect(() =>
+      buildBscSccpProofPackage({
+        witness,
+        proofResult: proofResult as never,
+      }),
+    ).toThrow(/destinationBinding/u);
+  });
+
   it("reports missing browser-safe TRON prover before proof generation", async () => {
     await expect(
       generateTronSccpProofPackage({
-        witness: {
-          publicInputs: {
-            version: 1,
-            messageId: HEX32_A,
-            payloadHash: HEX32_B,
-            targetDomain: SCCP_TRON_DOMAIN,
-            commitmentRoot: HEX32_C,
-            finalityHeight: 10,
-            finalityBlockHash: HEX32_D,
-          },
-          bundleBytes: [1, 2, 3],
-          sourceProofBytes: [4, 5],
-          statementHash: HEX32_E,
-          destinationBindingHash: HEX32_A,
-        },
+        witness: tronPackageWitness(),
       }),
     ).rejects.toMatchObject({
       code: "ERR_SCCP_TRON_PROVER_UNAVAILABLE",
     });
   });
 
+  it("reports missing browser-safe BSC prover before proof generation", async () => {
+    await expect(
+      generateBscSccpProofPackage({
+        witness: bscPackageWitness(),
+      }),
+    ).rejects.toMatchObject({
+      code: "ERR_SCCP_BSC_PROVER_UNAVAILABLE",
+    });
+  });
+
+  it("rejects accessor-backed TRON prover results before submission binding", async () => {
+    const accessedFields: string[] = [];
+    await expect(
+      generateTronSccpProofPackage({
+        witness: tronPackageWitness(),
+        prove: (request) => {
+          const result = {
+            proofBytes: groth16ProofBytes(request),
+          };
+          Object.defineProperty(result, "requestHash", {
+            enumerable: true,
+            get() {
+              accessedFields.push("requestHash");
+              return request.requestHash;
+            },
+          });
+          return result as never;
+        },
+      }),
+    ).rejects.toThrow(/TRON SCCP proof result.*SCCP proof data/u);
+    expect(accessedFields).toEqual([]);
+  });
+
+  it("rejects accessor-backed BSC prover results before submission binding", async () => {
+    const accessedFields: string[] = [];
+    await expect(
+      generateBscSccpProofPackage({
+        witness: bscPackageWitness(),
+        prove: (request) => {
+          const result = {
+            proofBytes: groth16ProofBytes(request),
+          };
+          Object.defineProperty(result, "requestHash", {
+            enumerable: true,
+            get() {
+              accessedFields.push("requestHash");
+              return request.requestHash;
+            },
+          });
+          return result as never;
+        },
+      }),
+    ).rejects.toThrow(/BSC SCCP proof result.*SCCP proof data/u);
+    expect(accessedFields).toEqual([]);
+  });
+
   it("binds generated proof packages to a pre-prover witness snapshot", async () => {
-    const witness = {
-      publicInputs: {
-        version: 1 as const,
-        messageId: HEX32_A,
-        payloadHash: HEX32_B,
-        targetDomain: SCCP_TRON_DOMAIN,
-        commitmentRoot: HEX32_C,
-        finalityHeight: 10,
-        finalityBlockHash: HEX32_D,
-      },
-      bundleBytes: [1, 2, 3],
-      sourceProofBytes: [4, 5],
-      statementHash: HEX32_E,
-      sourceDomain: SCCP_SORA_DOMAIN,
-      destinationBinding: TRON_DESTINATION_BINDING,
-      destinationBindingHash: TRON_DESTINATION_BINDING.bindingHash,
-    };
+    const witness = tronPackageWitness();
+    const originalPublicInputs = { ...witness.publicInputs };
+    const originalBundleBytesHex = bytesToHex(witness.bundleBytes);
 
     const result = await generateTronSccpProofPackage({
       witness,
       prove: (request) => {
         witness.publicInputs.messageId = HEX32_F;
-        witness.bundleBytes = [9, 9, 9];
+        witness.bundleBytes = Uint8Array.from([9, 9, 9]);
         return {
-          proofBytes: groth16ProofBytes(),
+          proofBytes: groth16ProofBytes(request),
           requestHash: request.requestHash,
         };
       },
@@ -4310,14 +9455,50 @@ describe("SCCP proof package helpers", () => {
     expect(witness.publicInputs.messageId).toBe(HEX32_F);
     expect(result.request).toMatchObject({
       publicInputs: {
-        messageId: HEX32_A,
-        payloadHash: HEX32_B,
+        messageId: originalPublicInputs.messageId,
+        payloadHash: originalPublicInputs.payloadHash,
       },
-      bundleBytes: "0x010203",
-      sourceProofBytes: "0x0405",
+      bundleBytes: originalBundleBytesHex,
+      sourceProofBytes: "0x",
     });
     expect(result.submission).toMatchObject({
       proofBytes: expect.any(String),
+    });
+  });
+
+  it("binds generated BSC proof packages to a pre-prover witness snapshot", async () => {
+    const canonicalPayloadHex = "0x01020304";
+    const witness = bscPackageWitness();
+    const originalPublicInputs = { ...witness.publicInputs };
+    const originalBundleBytesHex = bytesToHex(witness.bundleBytes);
+
+    const result = await generateBscSccpProofPackage({
+      witness,
+      canonicalPayloadHex,
+      prove: (request) => {
+        witness.publicInputs.messageId = HEX32_F;
+        witness.bundleBytes = Uint8Array.from([9, 9, 9]);
+        return {
+          proofBytes: groth16ProofBytes(request),
+          requestHash: request.requestHash,
+        };
+      },
+    });
+
+    expect(witness.publicInputs.messageId).toBe(HEX32_F);
+    expect(result.canonicalPayloadHex).toBe(canonicalPayloadHex);
+    expect(result.request).toMatchObject({
+      publicInputs: {
+        messageId: originalPublicInputs.messageId,
+        payloadHash: originalPublicInputs.payloadHash,
+        targetDomain: SCCP_BSC_DOMAIN,
+      },
+      bundleBytes: originalBundleBytesHex,
+      sourceProofBytes: "0x",
+    });
+    expect(result.submission).toMatchObject({
+      proofBytes: expect.any(String),
+      callDataHex: expect.stringMatching(/^0x[0-9a-f]+$/u),
     });
   });
 });

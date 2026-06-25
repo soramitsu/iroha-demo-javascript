@@ -74,6 +74,18 @@
           <input v-model="userForm.domain" />
         </label>
         <label>
+          {{ t("Signing algorithm") }}
+          <select v-model="userForm.signingAlgorithm">
+            <option
+              v-for="option in signingAlgorithmOptions"
+              :key="option.id"
+              :value="option.id"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <label>
           {{ t("Private Key (hex)") }}
           <textarea v-model="userForm.privateKeyHex" rows="2"></textarea>
         </label>
@@ -152,6 +164,18 @@
           <textarea v-model="authorityForm.privateKeyHex" rows="2"></textarea>
         </label>
         <label>
+          {{ t("Authority signing algorithm") }}
+          <select v-model="authorityForm.signingAlgorithm">
+            <option
+              v-for="option in signingAlgorithmOptions"
+              :key="option.id"
+              :value="option.id"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+        <label>
           {{ t("Account Metadata (JSON)") }}
           <textarea v-model="metadataInput" rows="4"></textarea>
         </label>
@@ -187,6 +211,7 @@ import {
   deriveAccountAddress,
   derivePublicKey,
   generateKeyPair,
+  getSigningAlgorithms,
   isSecureVaultAvailable,
   pingTorii,
   registerAccount,
@@ -200,6 +225,10 @@ import {
   formatTransactionFee,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  signingAlgorithmLabel,
+} from "@/utils/signingAlgorithms";
 
 type PingState = "idle" | "ok" | "error";
 
@@ -208,6 +237,13 @@ const { t } = useAppI18n();
 const DEFAULT_DOMAIN_LABEL = "default";
 
 const connectionForm = reactive({ ...session.connection });
+const signingAlgorithmOptions = ref([
+  {
+    id: DEFAULT_SIGNING_ALGORITHM,
+    label: signingAlgorithmLabel(DEFAULT_SIGNING_ALGORITHM),
+    isDefault: true,
+  },
+]);
 const assetDefinitionDraft = ref("");
 const activeNetworkPreset = computed(() =>
   CHAIN_PRESETS.find(
@@ -238,6 +274,7 @@ const emptyAccount = () => ({
   i105AccountId: "",
   i105DefaultAccountId: "",
   publicKeyHex: "",
+  signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
   privateKeyHex: "",
   hasStoredSecret: false,
 });
@@ -250,6 +287,7 @@ const authorityForm = reactive(
     {
       accountId: "",
       privateKeyHex: "",
+      signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
       hasStoredSecret: false,
     },
     session.authority,
@@ -271,6 +309,39 @@ const registering = ref(false);
 const registerMessage = ref("");
 const showAdvancedRegistration = ref(false);
 
+const normalizeSelectedSigningAlgorithms = () => {
+  const fallback =
+    signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
+    signingAlgorithmOptions.value[0]?.id ??
+    DEFAULT_SIGNING_ALGORITHM;
+  if (
+    !signingAlgorithmOptions.value.some(
+      (option) => option.id === userForm.signingAlgorithm,
+    )
+  ) {
+    userForm.signingAlgorithm = fallback;
+  }
+  if (
+    !signingAlgorithmOptions.value.some(
+      (option) => option.id === authorityForm.signingAlgorithm,
+    )
+  ) {
+    authorityForm.signingAlgorithm = fallback;
+  }
+};
+
+const loadSigningAlgorithmOptions = async () => {
+  try {
+    const options = await getSigningAlgorithms(connectionForm.toriiUrl);
+    if (options.length > 0) {
+      signingAlgorithmOptions.value = options;
+    }
+  } catch (error) {
+    console.warn("Failed to load signing algorithm capabilities", error);
+  }
+  normalizeSelectedSigningAlgorithms();
+};
+
 watch(
   () => session.connection,
   (value) => {
@@ -286,8 +357,16 @@ watch(
     };
     Object.assign(connectionForm, nextConnection);
     assetDefinitionDraft.value = "";
+    void loadSigningAlgorithmOptions();
   },
   { deep: true, immediate: true },
+);
+
+watch(
+  () => connectionForm.toriiUrl,
+  () => {
+    void loadSigningAlgorithmOptions();
+  },
 );
 
 watch(
@@ -314,7 +393,7 @@ watch(
 );
 
 watch(
-  () => [userForm.domain, userForm.publicKeyHex],
+  () => [userForm.domain, userForm.publicKeyHex, userForm.signingAlgorithm],
   () => {
     if (!userForm.publicKeyHex || !userForm.domain) return;
     try {
@@ -322,6 +401,7 @@ watch(
         domain: userForm.domain,
         publicKeyHex: userForm.publicKeyHex,
         networkPrefix: connectionForm.networkPrefix,
+        signingAlgorithm: userForm.signingAlgorithm,
       });
       Object.assign(userForm, summary);
     } catch (error) {
@@ -408,6 +488,7 @@ const saveUser = async () => {
     await storeAccountSecret({
       accountId: userForm.accountId,
       privateKeyHex: userForm.privateKeyHex,
+      signingAlgorithm: userForm.signingAlgorithm,
     });
   } catch (error) {
     registerMessage.value = toUserFacingErrorMessage(
@@ -440,6 +521,7 @@ const saveAuthority = async () => {
     await storeAccountSecret({
       accountId: authorityForm.accountId,
       privateKeyHex: authorityForm.privateKeyHex,
+      signingAlgorithm: authorityForm.signingAlgorithm,
     });
   } catch (error) {
     registerMessage.value = toUserFacingErrorMessage(
@@ -478,9 +560,12 @@ const handlePing = async () => {
 const handleGenerate = async () => {
   generating.value = true;
   try {
-    const pair = await generateKeyPair();
+    const pair = await generateKeyPair({
+      signingAlgorithm: userForm.signingAlgorithm,
+    });
     userForm.privateKeyHex = pair.privateKeyHex;
     userForm.publicKeyHex = pair.publicKeyHex;
+    userForm.signingAlgorithm = pair.signingAlgorithm;
     if (!userForm.domain) {
       userForm.domain = DEFAULT_DOMAIN_LABEL;
     }
@@ -488,6 +573,7 @@ const handleGenerate = async () => {
       domain: userForm.domain,
       publicKeyHex: pair.publicKeyHex,
       networkPrefix: connectionForm.networkPrefix,
+      signingAlgorithm: pair.signingAlgorithm,
     });
     Object.assign(userForm, summary);
     await saveUser();
@@ -499,12 +585,17 @@ const handleGenerate = async () => {
 const handleDerivePublic = () => {
   if (!userForm.privateKeyHex) return;
   try {
-    const derived = derivePublicKey(userForm.privateKeyHex);
+    const derived = derivePublicKey({
+      privateKeyHex: userForm.privateKeyHex,
+      signingAlgorithm: userForm.signingAlgorithm,
+    });
     userForm.publicKeyHex = derived.publicKeyHex;
+    userForm.signingAlgorithm = derived.signingAlgorithm;
     const summary = deriveAccountAddress({
       domain: userForm.domain || DEFAULT_DOMAIN_LABEL,
       publicKeyHex: derived.publicKeyHex,
       networkPrefix: connectionForm.networkPrefix,
+      signingAlgorithm: derived.signingAlgorithm,
     });
     Object.assign(userForm, summary);
   } catch (error) {
@@ -531,6 +622,7 @@ const handleRegister = async () => {
       metadata,
       authorityAccountId: authorityForm.accountId,
       authorityPrivateKeyHex: authorityForm.privateKeyHex.trim() || undefined,
+      authoritySigningAlgorithm: authorityForm.signingAlgorithm,
     });
     syncConnectionFormToSession();
     session.updateActiveAccount({ ...userForm, privateKeyHex: "" });

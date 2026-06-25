@@ -119,6 +119,48 @@ describe("session store", () => {
     expect(store.customChains).toHaveLength(0);
   });
 
+  it("normalizes signing algorithm metadata on hydrate and persist", () => {
+    localStorage.setItem(
+      SESSION_STORAGE_KEY,
+      JSON.stringify({
+        accounts: [
+          {
+            displayName: "Alice",
+            domain: "wonderland",
+            accountId: "abc@wonderland",
+            publicKeyHex: "abc",
+            signingAlgorithm: "  Secp256K1  ",
+            hasStoredSecret: true,
+          },
+          {
+            displayName: "Mallory",
+            domain: "wonderland",
+            accountId: "mallory@wonderland",
+            publicKeyHex: "def",
+            signingAlgorithm: { nested: "ml-dsa" },
+            hasStoredSecret: true,
+          },
+        ],
+        activeAccountId: "abc@wonderland",
+        authority: {
+          accountId: "authority@wonderland",
+          signingAlgorithm: "ml-dsa\ned25519",
+        },
+      }),
+    );
+
+    const store = useSessionStore();
+    store.hydrate();
+    store.persistState();
+
+    expect(store.accounts[0]?.signingAlgorithm).toBe("secp256k1");
+    expect(store.accounts[1]?.signingAlgorithm).toBe("ed25519");
+    expect(store.authority.signingAlgorithm).toBe("ed25519");
+    expect(snapshot().accounts[0].signingAlgorithm).toBe("secp256k1");
+    expect(snapshot().accounts[1].signingAlgorithm).toBe("ed25519");
+    expect(snapshot().authority.signingAlgorithm).toBe("ed25519");
+  });
+
   it("migrates saved Minamoto sessions onto the deployed chain id", () => {
     localStorage.setItem(
       SESSION_STORAGE_KEY,

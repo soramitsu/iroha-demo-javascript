@@ -6,6 +6,7 @@ import {
   encodeI105AccountAddress,
   normalizeAccountId as normalizeSdkAccountId,
 } from "@iroha/iroha-js";
+import { DEFAULT_SIGNING_ALGORITHM } from "../src/utils/signingAlgorithms";
 
 const SORA_NETWORK_PREFIX = 753;
 const DEFAULT_NETWORK_PREFIX = SORA_NETWORK_PREFIX;
@@ -379,13 +380,19 @@ export const deriveAccountAddressView = (input: {
   domain: string;
   publicKeyHex: string;
   networkPrefix?: number;
+  signingAlgorithm?: string;
 }) => {
   const networkPrefix = normalizeNetworkPrefix(input.networkPrefix);
   const publicKey = hexToBuffer(input.publicKeyHex, "publicKeyHex");
+  const signingAlgorithm =
+    trimString(input.signingAlgorithm) || DEFAULT_SIGNING_ALGORITHM;
   // Modern account addresses are signatory-only; keep `domain` on the input
   // for compatibility with stored profile metadata and onboarding UX.
   void trimString(input.domain);
-  const address = AccountAddress.fromAccount({ publicKey });
+  const address = AccountAddress.fromAccount({
+    publicKey,
+    algorithm: signingAlgorithm,
+  });
   const canonicalBytes = Uint8Array.from(address.canonicalBytes());
   const compatAccountId = normalizeCompatLiteralFromAddress(
     address,
@@ -405,6 +412,7 @@ export const deriveAccountAddressView = (input: {
     ),
     i105DefaultFullwidthAccountId: nativeRendering?.i105DefaultFullwidth ?? "",
     publicKeyHex: publicKey.toString("hex").toUpperCase(),
+    signingAlgorithm,
     accountIdWarning: nativeRendering
       ? ""
       : "Native I105 rendering is unavailable; using canonical JS I105 rendering.",

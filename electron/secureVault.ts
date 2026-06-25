@@ -6,6 +6,8 @@ import { delimiter, dirname, join } from "node:path";
 
 const SECURE_VAULT_FILENAME = "secure-vault.json";
 const SECURE_VAULT_VERSION = 1;
+const ACCOUNT_SECRET_SCHEMA_V2 = "iroha-demo-account-secret/v2";
+const DEFAULT_SIGNING_ALGORITHM = "ed25519";
 const WINDOWS_DPAPI_ENVELOPE = "win-dpapi:";
 const WSL_KERNEL_MARKER_RE = /microsoft|wsl/i;
 const WINDOWS_POWERSHELL_SUBPATH = [
@@ -157,6 +159,56 @@ const normalizeHex = (value: string, label: string): string => {
   return normalized.toLowerCase();
 };
 
+const normalizeSigningAlgorithm = (value: unknown): string => {
+  if (value === null || value === undefined || value === "") {
+    return DEFAULT_SIGNING_ALGORITHM;
+  }
+  if (typeof value !== "string") {
+    throw new Error("signingAlgorithm must be a string.");
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return DEFAULT_SIGNING_ALGORITHM;
+  }
+  if (!/^[\x20-\x7e]{1,128}$/.test(normalized)) {
+    throw new Error("signingAlgorithm must use printable ASCII.");
+  }
+  return normalized;
+};
+
+const encodeAccountSecretMaterial = (input: AccountSecretMaterial): string =>
+  JSON.stringify({
+    schema: ACCOUNT_SECRET_SCHEMA_V2,
+    privateKeyHex: normalizeHex(input.privateKeyHex, "privateKeyHex"),
+    signingAlgorithm: normalizeSigningAlgorithm(input.signingAlgorithm),
+  });
+
+const decodeAccountSecretMaterial = (raw: string): AccountSecretMaterial => {
+  const trimmed = trimString(raw);
+  if (trimmed.startsWith("{")) {
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    } catch {
+      // Fall through to legacy hex parsing so a malformed wrapper gets a
+      // deterministic privateKeyHex validation error.
+    }
+    if (parsed?.schema === ACCOUNT_SECRET_SCHEMA_V2) {
+      return {
+        privateKeyHex: normalizeHex(
+          String(parsed.privateKeyHex ?? ""),
+          "privateKeyHex",
+        ),
+        signingAlgorithm: normalizeSigningAlgorithm(parsed.signingAlgorithm),
+      };
+    }
+  }
+  return {
+    privateKeyHex: normalizeHex(trimmed, "privateKeyHex"),
+    signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
+  };
+};
+
 const normalizeReceiveKeyId = (value: string): string => {
   const normalized = trimString(value);
   if (!/^[A-Za-z0-9_-]{8,128}$/.test(normalized)) {
@@ -199,6 +251,11 @@ type SecureVaultFile = {
   version: number;
   accountSecrets: Record<string, string>;
   receiveKeys: Record<string, StoredReceiveKeyRecord>;
+};
+
+export type AccountSecretMaterial = {
+  privateKeyHex: string;
+  signingAlgorithm: string;
 };
 
 export type ConfidentialReceiveKeyRecord = {
@@ -354,22 +411,35 @@ export class SecureVault {
   async storeAccountSecret(input: {
     accountId: string;
     privateKeyHex: string;
+    signingAlgorithm?: string;
   }): Promise<void> {
     this.ensureAvailable();
     const vault = await this.load();
     vault.accountSecrets[normalizeAccountSecretStorageKey(input.accountId)] =
-      await this.encrypt(normalizeHex(input.privateKeyHex, "privateKeyHex"));
+      await this.encrypt(
+        encodeAccountSecretMaterial({
+          privateKeyHex: input.privateKeyHex,
+          signingAlgorithm: normalizeSigningAlgorithm(input.signingAlgorithm),
+        }),
+      );
     await this.persist(vault);
   }
 
   async getAccountSecret(accountId: string): Promise<string | null> {
+    const material = await this.getAccountSecretMaterial(accountId);
+    return material?.privateKeyHex ?? null;
+  }
+
+  async getAccountSecretMaterial(
+    accountId: string,
+  ): Promise<AccountSecretMaterial | null> {
     this.ensureAvailable();
     const vault = await this.load();
     const encrypted = findAccountSecret(vault.accountSecrets, accountId);
     if (!encrypted) {
       return null;
     }
-    return normalizeHex(await this.decrypt(encrypted), "privateKeyHex");
+    return decodeAccountSecretMaterial(await this.decrypt(encrypted));
   }
 
   async listAccountSecretFlags(

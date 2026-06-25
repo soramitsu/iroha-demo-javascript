@@ -814,26 +814,22 @@ const readPostDeployLiveEvidence = (manifest) => {
     "offlineFullTomlSha256",
     "offline_full_toml_sha256",
   );
-  if (offlineFullTomlSha256) {
-    normalizeNonZeroHex32(
-      offlineFullTomlSha256,
-      "postDeployLiveEvidence.offlineFullTomlSha256",
+  if (!offlineFullTomlSha256) {
+    throw new Error(
+      "postDeployLiveEvidence.fullTomlReady requires postDeployLiveEvidence.offlineFullTomlSha256.",
     );
   }
+  const normalizedOfflineFullTomlSha256 = normalizeNonZeroHex32(
+    offlineFullTomlSha256,
+    "postDeployLiveEvidence.offlineFullTomlSha256",
+  );
   return {
     fullTomlReady: true,
     sourceBridgeConfigHash,
     sourceEventTransactionId,
     routeCanaryEvidenceHash,
     routeCanaryTransactionId,
-    ...(offlineFullTomlSha256
-      ? {
-          offlineFullTomlSha256: normalizeNonZeroHex32(
-            offlineFullTomlSha256,
-            "postDeployLiveEvidence.offlineFullTomlSha256",
-          ),
-        }
-      : {}),
+    offlineFullTomlSha256: normalizedOfflineFullTomlSha256,
   };
 };
 

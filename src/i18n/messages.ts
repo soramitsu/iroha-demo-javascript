@@ -1049,6 +1049,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "No wallet yet": "No wallet yet",
   "Create or restore a wallet": "Create or restore a wallet",
   "Switch wallets or create a new one.": "Switch wallets or create a new one.",
+  "Signing algorithm": "Signing algorithm",
+  "Authority signing algorithm": "Authority signing algorithm",
   "Balance, funding, and activity": "Balance, funding, and activity",
   "Network health and activity": "Network health and activity",
   "Pay with a QR or account": "Pay with a QR or account",
@@ -1115,18 +1117,27 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Register and vote": "Register and vote",
   "SCCP Bridge": "SCCP Bridge",
   "TAIRA and TRON XOR bridge": "TAIRA and TRON XOR bridge",
+  "TAIRA, TRON, and BSC XOR bridge": "TAIRA, TRON, and BSC XOR bridge",
   "Bridge XOR with TRON": "Bridge XOR with TRON",
   "Bridge XOR between TAIRA and {network}.":
     "Bridge XOR between TAIRA and {network}.",
   "Bridge XOR between TAIRA and TRON mainnet.":
     "Bridge XOR between TAIRA and TRON mainnet.",
+  "SCCP route": "SCCP route",
+  TRON: "TRON",
+  "BSC testnet": "BSC testnet",
+  "BSC Testnet": "BSC Testnet",
+  "BSC Mainnet": "BSC Mainnet",
   "Refresh route": "Refresh route",
   "Disconnect TRON": "Disconnect TRON",
+  "Disconnect BSC": "Disconnect BSC",
   Connecting: "Connecting",
   Disconnecting: "Disconnecting",
   "Connect TRON wallet": "Connect TRON wallet",
+  "Connect BSC wallet": "Connect BSC wallet",
   "TAIRA account": "TAIRA account",
   "TRON wallet": "TRON wallet",
+  "BSC wallet": "BSC wallet",
   Route: "Route",
   "XOR balance": "XOR balance",
   "WalletConnect ready": "WalletConnect ready",
@@ -1137,16 +1148,24 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Bridge direction": "Bridge direction",
   "TAIRA -> TRON": "TAIRA -> TRON",
   "TRON -> TAIRA": "TRON -> TAIRA",
+  "TAIRA -> BSC": "TAIRA -> BSC",
+  "BSC -> TAIRA": "BSC -> TAIRA",
   "TRON recipient": "TRON recipient",
+  "BSC recipient": "BSC recipient",
   "TRON Base58Check address": "TRON Base58Check address",
+  "0x... BSC address": "0x... BSC address",
   "TAIRA recipient": "TAIRA recipient",
   "testu... account": "testu... account",
   "Message ID": "Message ID",
   "Optional 32-byte SCCP message id": "Optional 32-byte SCCP message id",
   "TRON transaction ID": "TRON transaction ID",
+  "BSC transaction hash": "BSC transaction hash",
   "Optional TRON burn transaction id": "Optional TRON burn transaction id",
+  "Optional BSC burn transaction hash": "Optional BSC burn transaction hash",
   "Prepare TAIRA -> TRON": "Prepare TAIRA -> TRON",
   "Prepare TRON -> TAIRA": "Prepare TRON -> TAIRA",
+  "Prepare TAIRA -> BSC": "Prepare TAIRA -> BSC",
+  "Prepare BSC -> TAIRA": "Prepare BSC -> TAIRA",
   "Loading proof job": "Loading proof job",
   "Fetch proof job": "Fetch proof job",
   "Proof progress": "Proof progress",
@@ -1189,18 +1208,31 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
   "WalletConnect project ID is invalid, so TRON wallet connection is disabled.":
     "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+  "WalletConnect project ID is missing, so wallet connection is disabled.":
+    "WalletConnect project ID is missing, so wallet connection is disabled.",
+  "WalletConnect project ID is invalid, so wallet connection is disabled.":
+    "WalletConnect project ID is invalid, so wallet connection is disabled.",
   "Connect a TRON wallet to continue.": "Connect a TRON wallet to continue.",
+  "Connect a BSC wallet to continue.": "Connect a BSC wallet to continue.",
   "Route readiness must be true before bridge actions are enabled.":
     "Route readiness must be true before bridge actions are enabled.",
   "Bridge actions will request explicit wallet approval before signing.":
     "Bridge actions will request explicit wallet approval before signing.",
   "Enter a valid TRON Base58Check recipient.":
     "Enter a valid TRON Base58Check recipient.",
+  "Enter a valid BSC recipient address.":
+    "Enter a valid BSC recipient address.",
+  "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.":
+    "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.",
+  "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
+    "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
   "Enter a TAIRA testnet account.": "Enter a TAIRA testnet account.",
   "Enter a SCCP message ID before fetching proof data.":
     "Enter a SCCP message ID before fetching proof data.",
   "Enter a TRON transaction ID before fetching proof data.":
     "Enter a TRON transaction ID before fetching proof data.",
+  "Enter a BSC transaction hash before fetching proof data.":
+    "Enter a BSC transaction hash before fetching proof data.",
   "Validate route": "Validate route",
   "Waiting for route readiness": "Waiting for route readiness",
   "Gather chain data": "Gather chain data",
@@ -1236,19 +1268,30 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "No signing request has been sent yet",
   "TAIRA source transaction": "TAIRA source transaction",
   "TRON transaction": "TRON transaction",
+  "BSC transaction": "BSC transaction",
   "Route and message id accepted": "Route and message id accepted",
   "Route and TRON transaction id accepted":
     "Route and TRON transaction id accepted",
+  "Route and BSC transaction hash accepted":
+    "Route and BSC transaction hash accepted",
   "Torii returned an SCCP proof job": "Torii returned an SCCP proof job",
   "Collecting TRON transaction and finality data":
     "Collecting TRON transaction and finality data",
   "Waiting for TRON finality and event indexing":
     "Waiting for TRON finality and event indexing",
+  "Collecting BSC transaction and receipt data":
+    "Collecting BSC transaction and receipt data",
+  "Waiting for BSC receipt and block indexing":
+    "Waiting for BSC receipt and block indexing",
   "TRON source transaction data collected":
     "TRON source transaction data collected",
+  "BSC source transaction data collected":
+    "BSC source transaction data collected",
   "Generating TRON source proof package":
     "Generating TRON source proof package",
+  "Generating BSC source proof package": "Generating BSC source proof package",
   "TRON source proof package is ready": "TRON source proof package is ready",
+  "BSC source proof package is ready": "BSC source proof package is ready",
   "Submitting TAIRA settlement": "Submitting TAIRA settlement",
   "TAIRA settlement submitted": "TAIRA settlement submitted",
   "Waiting for TAIRA settlement confirmation":
@@ -1259,13 +1302,25 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Target-chain signing is not requested automatically":
     "Target-chain signing is not requested automatically",
   "Generating TRON finalize proof": "Generating TRON finalize proof",
+  "Generating BSC finalize proof": "Generating BSC finalize proof",
   "TRON finalize proof package is ready":
     "TRON finalize proof package is ready",
+  "BSC finalize proof package is ready": "BSC finalize proof package is ready",
   "TRON finalize transaction": "TRON finalize transaction",
+  "BSC finalize transaction": "BSC finalize transaction",
+  "Requesting BSC wallet approval": "Requesting BSC wallet approval",
+  "Waiting for BSC finalize confirmation":
+    "Waiting for BSC finalize confirmation",
+  "BSC finalize transaction confirmed": "BSC finalize transaction confirmed",
+  "Creating BSC burn transaction": "Creating BSC burn transaction",
+  "Unsigned BSC burn transaction created":
+    "Unsigned BSC burn transaction created",
+  "BSC-source proof data collection can begin after broadcast":
+    "BSC-source proof data collection can begin after broadcast",
+  "BSC burn transaction broadcast": "BSC burn transaction broadcast",
   "Signed TRON finalize transaction broadcast":
     "Signed TRON finalize transaction broadcast",
-  "TRON finalize transaction confirmed":
-    "TRON finalize transaction confirmed",
+  "TRON finalize transaction confirmed": "TRON finalize transaction confirmed",
   "Waiting for TRON finality before TAIRA proof submission":
     "Waiting for TRON finality before TAIRA proof submission",
   "0.0001": "0.0001",
@@ -3121,6 +3176,9 @@ const EN_TRANSLATIONS: TranslationTable = {
   "Edit raw asset ID": "Edit raw asset ID",
   "Raw asset ID": "Raw asset ID",
   "TRON transaction": "TRON transaction",
+  "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
+    "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
+  "BSC finalize transaction": "BSC finalize transaction",
 };
 
 const TABLES: Record<SupportedLocale, TranslationTable> = {

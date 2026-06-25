@@ -46,6 +46,7 @@ import type {
   SccpCapabilitiesResponse,
   SccpProofManifestSetResponse,
   SccpRecentMessagesResponse,
+  SigningAlgorithmOption,
   ToriiHealth,
   VpnAvailability,
   VpnAuthContext,
@@ -70,7 +71,15 @@ export const getChainMetadata = (
   toriiUrl: string,
 ): Promise<ChainMetadataResponse> => bridge().getChainMetadata({ toriiUrl });
 
-export const generateKeyPair = () => bridge().generateKeyPair();
+export const getSigningAlgorithms = (
+  toriiUrl?: string,
+): Promise<SigningAlgorithmOption[]> =>
+  bridge().getSigningAlgorithms(toriiUrl ? { toriiUrl } : undefined);
+
+export const generateKeyPair = (input?: {
+  signingAlgorithm?: string;
+  seedHex?: string;
+}) => bridge().generateKeyPair(input);
 
 export const generateKaigiSignalKeyPair = (): KaigiSignalKeyPair =>
   bridge().generateKaigiSignalKeyPair();
@@ -81,6 +90,7 @@ export const isSecureVaultAvailable = (): Promise<boolean> =>
 export const storeAccountSecret = (input: {
   accountId: string;
   privateKeyHex: string;
+  signingAlgorithm?: string;
 }): Promise<void> => bridge().storeAccountSecret(input);
 
 export const listAccountSecretFlags = (input: {
@@ -94,10 +104,17 @@ export const deriveAccountAddress = (params: {
   domain: string;
   publicKeyHex: string;
   networkPrefix?: number;
+  signingAlgorithm?: string;
 }): AccountAddressView => bridge().deriveAccountAddress(params);
 
-export const derivePublicKey = (privateKeyHex: string) =>
-  bridge().derivePublicKey(privateKeyHex);
+export const derivePublicKey = (
+  input:
+    | string
+    | {
+        privateKeyHex: string;
+        signingAlgorithm?: string;
+      },
+) => bridge().derivePublicKey(input);
 
 export const resolveAccountAlias = (input: {
   toriiUrl: string;
@@ -547,6 +564,43 @@ export const triggerTronConstantContract = (
   input: Parameters<IrohaBridge["triggerTronConstantContract"]>[0],
 ): Promise<Record<string, unknown>> =>
   bridge().triggerTronConstantContract(input);
+
+export const callEvmRpc = (
+  input: Parameters<IrohaBridge["callEvmRpc"]>[0],
+): Promise<unknown> => bridge().callEvmRpc(input);
+
+export const getEvmChainId = (
+  input?: Parameters<IrohaBridge["getEvmChainId"]>[0],
+): Promise<string> => bridge().getEvmChainId(input);
+
+export const getEvmBalance = (
+  input: Parameters<IrohaBridge["getEvmBalance"]>[0],
+): Promise<string> => bridge().getEvmBalance(input);
+
+export const getEvmCode = (
+  input: Parameters<IrohaBridge["getEvmCode"]>[0],
+): Promise<string> => bridge().getEvmCode(input);
+
+export const callEvmContract = (
+  input: Parameters<IrohaBridge["callEvmContract"]>[0],
+): Promise<string> => bridge().callEvmContract(input);
+
+export const getEvmTransactionReceipt = (
+  input: Parameters<IrohaBridge["getEvmTransactionReceipt"]>[0],
+): Promise<Record<string, unknown> | null> =>
+  bridge().getEvmTransactionReceipt(input);
+
+export const getEvmTransaction = (
+  input: Parameters<IrohaBridge["getEvmTransaction"]>[0],
+): Promise<Record<string, unknown> | null> => bridge().getEvmTransaction(input);
+
+export const getEvmBlockByHash = (
+  input: Parameters<IrohaBridge["getEvmBlockByHash"]>[0],
+): Promise<Record<string, unknown> | null> => bridge().getEvmBlockByHash(input);
+
+export const getEvmLogs = (
+  input: Parameters<IrohaBridge["getEvmLogs"]>[0],
+): Promise<Record<string, unknown>[]> => bridge().getEvmLogs(input);
 
 export type { SubscriptionStatusView };
 

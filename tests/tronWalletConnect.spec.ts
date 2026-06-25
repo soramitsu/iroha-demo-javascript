@@ -11,6 +11,7 @@ import {
 } from "@/composables/useTronWalletConnect";
 import {
   TRON_MAINNET_CAIP_CHAIN_ID,
+  TRON_NILE_CAIP_CHAIN_ID,
   WALLETCONNECT_TRON_METHOD_VERSION,
   WALLETCONNECT_TRON_NAMESPACE,
   WALLETCONNECT_TRON_SIGN_METHOD,
@@ -63,8 +64,8 @@ describe("TRON WalletConnect state", () => {
     ).toBe(VALID_TRON_ADDRESS);
   });
 
-  it("ignores sessions without a TRON mainnet account", () => {
-    expect(
+  it("rejects unsupported TRON-chain accounts and ignores malformed account lists", () => {
+    expect(() =>
       extractTronAddressFromSession({
         namespaces: {
           tron: {
@@ -72,7 +73,7 @@ describe("TRON WalletConnect state", () => {
           },
         },
       }),
-    ).toBeNull();
+    ).toThrow(/unsupported TRON accounts \(tron:0x00000000\)/u);
     expect(
       extractTronAddressFromSession({
         namespaces: {
@@ -105,7 +106,7 @@ describe("TRON WalletConnect state", () => {
     });
   });
 
-  it("scrubs unexpected fields from accepted persisted metadata", () => {
+  it("rejects unexpected fields in persisted metadata", () => {
     localStorage.setItem(
       "iroha-demo:sccp:tron-walletconnect",
       JSON.stringify({
@@ -120,14 +121,10 @@ describe("TRON WalletConnect state", () => {
       }),
     );
 
-    expect(readStoredTronWalletConnectSession()).toMatchObject({
-      topic: "topic",
-      address: VALID_TRON_ADDRESS,
-      connectedAtMs: expect.any(Number),
-    });
+    expect(readStoredTronWalletConnectSession()).toBeNull();
     expect(
       localStorage.getItem("iroha-demo:sccp:tron-walletconnect"),
-    ).not.toMatch(/privateKey|mnemonic|do-not-keep/iu);
+    ).toBeNull();
   });
 
   it("requires official TRON v1 transaction signing in connected sessions", () => {
@@ -135,6 +132,7 @@ describe("TRON WalletConnect state", () => {
       namespaces: {
         tron: {
           accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+          chains: [TRON_MAINNET_CAIP_CHAIN_ID],
           methods: [WALLETCONNECT_TRON_SIGN_METHOD],
         },
       },
@@ -150,6 +148,18 @@ describe("TRON WalletConnect state", () => {
         namespaces: {
           tron: {
             accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
             methods: ["tron_signMessage"],
           },
         },
@@ -160,6 +170,67 @@ describe("TRON WalletConnect state", () => {
         ...session,
         sessionProperties: {
           tron_method_version: "legacy",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD, "tron_signMessage"],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+          eip155: {
+            accounts: [],
+            methods: [],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_NILE_CAIP_CHAIN_ID],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        namespaces: {
+          tron: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID, TRON_NILE_CAIP_CHAIN_ID],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+        },
+      }),
+    ).toBe(false);
+    expect(
+      tronWalletConnectSessionSupportsRequiredSigning({
+        ...session,
+        sessionProperties: {
+          tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+          debug: true,
         },
       }),
     ).toBe(false);
@@ -192,6 +263,7 @@ describe("TRON WalletConnect state", () => {
       namespaces: {
         tron: {
           accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+          chains: [TRON_MAINNET_CAIP_CHAIN_ID],
           methods: [WALLETCONNECT_TRON_SIGN_METHOD],
         },
       },
@@ -223,6 +295,7 @@ describe("TRON WalletConnect state", () => {
           namespaces: {
             tron: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: ["tron_signMessage"],
             },
           },
@@ -237,6 +310,7 @@ describe("TRON WalletConnect state", () => {
           namespaces: {
             tron: {
               accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:not-a-tron-address`],
+              chains: [TRON_MAINNET_CAIP_CHAIN_ID],
               methods: [WALLETCONNECT_TRON_SIGN_METHOD],
             },
           },

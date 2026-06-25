@@ -6,6 +6,10 @@ import {
 } from "@/utils/chainMetadata";
 import { normalizeAccountIdLiteralForNetwork } from "@/utils/accountId";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  normalizeStoredSigningAlgorithm,
+} from "@/utils/signingAlgorithms";
 
 export const SESSION_STORAGE_KEY = "iroha-demo:session";
 
@@ -23,6 +27,7 @@ export type UserProfile = {
   i105AccountId?: string;
   i105DefaultAccountId?: string;
   publicKeyHex: string;
+  signingAlgorithm: string;
   privateKeyHex?: string;
   hasStoredSecret?: boolean;
   localOnly: boolean;
@@ -30,6 +35,7 @@ export type UserProfile = {
 
 export type AuthorityProfile = {
   accountId: string;
+  signingAlgorithm?: string;
   privateKeyHex?: string;
   hasStoredSecret?: boolean;
 };
@@ -57,6 +63,7 @@ const defaultUser = (): UserProfile => ({
   i105AccountId: "",
   i105DefaultAccountId: "",
   publicKeyHex: "",
+  signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
   privateKeyHex: "",
   hasStoredSecret: false,
   localOnly: false,
@@ -67,6 +74,7 @@ const defaultState = (): SessionState => ({
   connection: { ...DEFAULT_CHAIN_PRESET.connection },
   authority: {
     accountId: "",
+    signingAlgorithm: DEFAULT_SIGNING_ALGORITHM,
     privateKeyHex: "",
     hasStoredSecret: false,
   },
@@ -124,6 +132,7 @@ const deriveAccountAddressesFromProfile = (
     const derived = window.iroha.deriveAccountAddress({
       domain,
       publicKeyHex,
+      signingAlgorithm: normalizeStoredSigningAlgorithm(user.signingAlgorithm),
       networkPrefix,
     });
     const accountId = trimString(derived.accountId);
@@ -225,6 +234,9 @@ const normalizeUser = (
       derivedAccountAddresses?.i105DefaultAccountId ||
       trimString(normalized.i105DefaultAccountId),
     publicKeyHex: trimString(normalized.publicKeyHex),
+    signingAlgorithm: normalizeStoredSigningAlgorithm(
+      normalized.signingAlgorithm,
+    ),
     privateKeyHex: trimString(normalized.privateKeyHex),
     hasStoredSecret: Boolean(normalized.hasStoredSecret),
     localOnly: Boolean(normalized.localOnly),
@@ -239,6 +251,7 @@ const normalizeAuthority = (
     authority.accountId,
     options?.networkPrefix ?? DEFAULT_CHAIN_PRESET.connection.networkPrefix,
   ),
+  signingAlgorithm: normalizeStoredSigningAlgorithm(authority.signingAlgorithm),
   privateKeyHex: trimString(authority.privateKeyHex),
   hasStoredSecret: Boolean(authority.hasStoredSecret),
 });
@@ -586,7 +599,7 @@ export const useSessionStore = defineStore("session", {
         { networkPrefix: this.connection.networkPrefix },
       );
     },
-    addAccount(account: UserProfile) {
+    addAccount(account: Partial<UserProfile> & Record<string, unknown>) {
       const normalized = normalizeUser(account, {
         networkPrefix: this.connection.networkPrefix,
       });

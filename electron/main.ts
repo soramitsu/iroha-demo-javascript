@@ -183,6 +183,9 @@ const registerVaultHandlers = () => {
   ipcMain.handle("vault:getAccountSecret", (_event, input) =>
     secureVault.getAccountSecret(input.accountId),
   );
+  ipcMain.handle("vault:getAccountSecretMaterial", (_event, input) =>
+    secureVault.getAccountSecretMaterial(input.accountId),
+  );
   ipcMain.handle("vault:listAccountSecretFlags", (_event, input) =>
     secureVault.listAccountSecretFlags(
       Array.isArray(input?.accountIds) ? input.accountIds : [],

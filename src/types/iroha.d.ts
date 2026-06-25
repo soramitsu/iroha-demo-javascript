@@ -16,6 +16,7 @@ export interface AccountAddressView {
   i105DefaultAccountId: string;
   i105DefaultFullwidthAccountId?: string;
   publicKeyHex: string;
+  signingAlgorithm: string;
   accountIdWarning: string;
 }
 
@@ -794,6 +795,7 @@ export interface SccpCounterpartySubmissionTemplateView {
 export interface SccpTairaXorBurnRecordMaterialView {
   settlementAssetDefinitionId: string;
   contractArtifactB64: string;
+  artifactSha256?: string;
   vkRef: {
     backend: string;
     name: string;
@@ -1011,6 +1013,40 @@ export type TronConstantContractInput = TronGatewayInput &
     functionSelector: string;
   };
 
+export interface EvmRpcInput {
+  endpoint?: string;
+}
+
+export interface EvmRpcCallInput extends EvmRpcInput {
+  method: string;
+  params?: unknown[];
+}
+
+export interface EvmTransactionInput extends EvmRpcInput {
+  txHash: string;
+}
+
+export interface EvmAddressInput extends EvmRpcInput {
+  address: string;
+  blockTag?: string;
+}
+
+export interface EvmCallInput extends EvmRpcInput {
+  to: string;
+  data: string;
+  from?: string;
+  value?: string;
+  blockTag?: string;
+}
+
+export interface EvmLogsInput extends EvmRpcInput {
+  address?: string | string[];
+  blockHash?: string;
+  fromBlock?: string;
+  toBlock?: string;
+  topics?: Array<string | string[] | null>;
+}
+
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 
 export interface GovernanceProposalResult {
@@ -1201,17 +1237,31 @@ export interface GovernanceLifecycleSnapshot {
   futureStagesUnavailable: boolean;
 }
 
+export interface SigningAlgorithmOption {
+  id: string;
+  label: string;
+  isDefault: boolean;
+}
+
 export interface IrohaBridge {
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   getChainMetadata(config: {
     toriiUrl: string;
   }): Promise<ChainMetadataResponse>;
-  generateKeyPair(): { publicKeyHex: string; privateKeyHex: string };
+  getSigningAlgorithms(config?: {
+    toriiUrl: string;
+  }): Promise<SigningAlgorithmOption[]>;
+  generateKeyPair(input?: { signingAlgorithm?: string; seedHex?: string }): {
+    publicKeyHex: string;
+    privateKeyHex: string;
+    signingAlgorithm: string;
+  };
   generateKaigiSignalKeyPair(): KaigiSignalKeyPair;
   isSecureVaultAvailable(): Promise<boolean>;
   storeAccountSecret(input: {
     accountId: string;
     privateKeyHex: string;
+    signingAlgorithm?: string;
   }): Promise<void>;
   listAccountSecretFlags(input: {
     accountIds: string[];
@@ -1221,8 +1271,16 @@ export interface IrohaBridge {
     domain: string;
     publicKeyHex: string;
     networkPrefix?: number;
+    signingAlgorithm?: string;
   }): AccountAddressView;
-  derivePublicKey(privateKeyHex: string): { publicKeyHex: string };
+  derivePublicKey(
+    input:
+      | string
+      | {
+          privateKeyHex: string;
+          signingAlgorithm?: string;
+        },
+  ): { publicKeyHex: string; signingAlgorithm: string };
   deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
   deriveConfidentialReceiveAddress(privateKeyHex: string): {
     ownerTagHex: string;
@@ -1257,6 +1315,7 @@ export interface IrohaBridge {
     metadata?: Record<string, unknown>;
     authorityAccountId: string;
     authorityPrivateKeyHex?: string;
+    authoritySigningAlgorithm?: string;
   }): Promise<TransactionSubmissionResult>;
   transferAsset(input: {
     toriiUrl: string;
@@ -1267,6 +1326,7 @@ export interface IrohaBridge {
     networkPrefix?: number;
     quantity: string;
     privateKeyHex?: string;
+    signingAlgorithm?: string;
     metadata?: Record<string, unknown>;
     shielded?: boolean;
     unshield?: boolean;
@@ -1289,13 +1349,20 @@ export interface IrohaBridge {
     collateralIn: string;
     privacyFee?: string;
     privateKeyHex?: string;
+    signingAlgorithm?: string;
     marketId?: string;
     outcomeIndex?: number;
   }): Promise<UranaiPrivateTradeProof>;
   signIrohaConnectMessage(input: {
     accountId: string;
     signingMessageB64: string;
-  }): Promise<{ publicKeyHex: string; signatureB64: string }>;
+  }): Promise<{
+    publicKeyHex: string;
+    signatureB64: string;
+    signingAlgorithm: string;
+    algorithmCode: number;
+    algorithmLabel: string;
+  }>;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -1747,6 +1814,23 @@ export interface IrohaBridge {
   triggerTronConstantContract(
     input: TronConstantContractInput,
   ): Promise<Record<string, unknown>>;
+  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
+  getEvmChainId(input?: EvmRpcInput): Promise<string>;
+  getEvmBalance(input: EvmAddressInput): Promise<string>;
+  getEvmCode(input: EvmAddressInput): Promise<string>;
+  callEvmContract(input: EvmCallInput): Promise<string>;
+  getEvmTransactionReceipt(
+    input: EvmTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  getEvmTransaction(
+    input: EvmTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  getEvmBlockByHash(input: {
+    endpoint?: string;
+    blockHash: string;
+    fullTransactions?: boolean;
+  }): Promise<Record<string, unknown> | null>;
+  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;

@@ -23,10 +23,26 @@ describe("wallet backup helpers", () => {
     ).toEqual({
       mnemonic: VALID_MNEMONIC,
       wordCount: 12,
+      signingAlgorithm: "ed25519",
       createdAt: "2026-03-29T00:00:00.000Z",
       target: "manual",
       displayName: "Alice",
       domain: "default",
+    });
+  });
+
+  it("preserves a selected non-default signing algorithm in backup metadata", () => {
+    const payload = buildWalletBackupPayload({
+      mnemonic: VALID_MNEMONIC,
+      wordCount: 12,
+      createdAt: "2026-03-29T00:00:00.000Z",
+      target: "manual",
+      signingAlgorithm: "  Secp256K1  ",
+    });
+
+    expect(payload.signingAlgorithm).toBe("secp256k1");
+    expect(parseWalletBackupPayload(JSON.stringify(payload))).toMatchObject({
+      signingAlgorithm: "secp256k1",
     });
   });
 
@@ -116,9 +132,30 @@ describe("wallet backup helpers", () => {
     ).toEqual({
       mnemonic: VALID_MNEMONIC,
       wordCount: 12,
+      signingAlgorithm: "ed25519",
       displayName: "",
       domain: "",
     });
+  });
+
+  it("defaults adversarial signing algorithm metadata when parsing backups", () => {
+    for (const signingAlgorithm of [
+      { nested: "secp256k1" },
+      "ed25519\nsecp256k1",
+      "x".repeat(129),
+    ]) {
+      expect(
+        parseWalletBackupPayload(
+          JSON.stringify({
+            mnemonic: VALID_MNEMONIC,
+            wordCount: 12,
+            createdAt: "2026-03-29T00:00:00.000Z",
+            target: "manual",
+            signingAlgorithm,
+          }),
+        ).signingAlgorithm,
+      ).toBe("ed25519");
+    }
   });
 
   it("rejects invalid backup payloads", () => {

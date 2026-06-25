@@ -1,4 +1,4 @@
-import { computed, ref } from "vue";
+import { computed, ref, unref, type MaybeRef } from "vue";
 import { useSessionStore } from "@/stores/session";
 import {
   fetchAccountAssets,
@@ -9,6 +9,7 @@ import {
 import {
   resolveSccpRouteReadiness,
   SCCP_XOR_ROUTE,
+  type SccpRouteConfig,
   type SccpRouteReadiness,
 } from "@/utils/sccp";
 import type {
@@ -18,7 +19,7 @@ import type {
 } from "@/types/iroha";
 
 export type SccpBridgeState = {
-  route: typeof SCCP_XOR_ROUTE;
+  route: SccpRouteConfig;
   readiness: SccpRouteReadiness;
   capabilities: SccpCapabilitiesResponse | null;
   manifestSet: SccpProofManifestSetResponse | null;
@@ -29,7 +30,9 @@ export type SccpBridgeState = {
   error: string;
 };
 
-export const useSccpBridge = () => {
+export const useSccpBridge = (
+  route: MaybeRef<SccpRouteConfig> = SCCP_XOR_ROUTE,
+) => {
   const session = useSessionStore();
   const capabilities = ref<SccpCapabilitiesResponse | null>(null);
   const manifestSet = ref<SccpProofManifestSetResponse | null>(null);
@@ -65,11 +68,12 @@ export const useSccpBridge = () => {
       connection: session.connection,
       capabilities: capabilities.value,
       manifestSet: manifestSet.value,
+      route: unref(route),
     }),
   );
 
   const snapshot = computed<SccpBridgeState>(() => ({
-    route: SCCP_XOR_ROUTE,
+    route: unref(route),
     readiness: readiness.value,
     capabilities: capabilities.value,
     manifestSet: manifestSet.value,
@@ -93,7 +97,7 @@ export const useSccpBridge = () => {
           getSccpProofManifests({ toriiUrl }),
           listSccpRecentMessages({
             toriiUrl,
-            routeId: SCCP_XOR_ROUTE.id,
+            routeId: unref(route).id,
             limit: 8,
           }).catch(() => ({ items: [], total: 0 })),
         ]);

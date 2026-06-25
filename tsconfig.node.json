@@ -10,6 +10,8 @@
     "src/utils/errorMessage.ts",
     "src/utils/mnemonic.ts",
     "src/utils/secretLike.ts",
+    "src/utils/sccpDataSnapshot.ts",
+    "src/utils/signingAlgorithms.ts",
     "src/utils/soracloud.ts",
     "src/utils/transactionFee.ts",
     "src/utils/walletBackup.ts"

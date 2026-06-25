@@ -96,10 +96,7 @@ const negateG1 = (point: G1Point): G1Point => {
 };
 
 const normalizeHex32 = (value: unknown, label: string): string => {
-  if (
-    typeof value !== "string" ||
-    !/^(?:0x)?[0-9a-f]{64}$/iu.test(value)
-  ) {
+  if (typeof value !== "string" || !/^(?:0x)?[0-9a-f]{64}$/iu.test(value)) {
     throw new Error(`${label} must be a 32-byte hex string.`);
   }
   const normalized = value.toLowerCase();

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
+import { generateKeyPair } from "@iroha/iroha-js/crypto";
 import {
   deriveAccountAddressView,
   parseAccountAddressLiteral,
@@ -217,5 +218,34 @@ describe("accountAddress helper", () => {
     expect(alternateDomain.i105DefaultAccountId).toBe(
       defaultDomain.i105DefaultAccountId,
     );
+  });
+
+  it("uses the selected signing algorithm when deriving I105 account literals", () => {
+    const { publicKey } = generateKeyPair({
+      algorithm: "secp256k1",
+      seed: Buffer.alloc(32, 0x42),
+    });
+    const publicKeyHex = Buffer.from(publicKey).toString("hex");
+    const derived = deriveAccountAddressView({
+      domain: "default",
+      publicKeyHex,
+      networkPrefix: 369,
+      signingAlgorithm: "secp256k1",
+    });
+
+    expect(derived.signingAlgorithm).toBe("secp256k1");
+    expect(derived.accountId).toBe(
+      AccountAddress.fromAccount({
+        publicKey,
+        algorithm: "secp256k1",
+      }).toI105(369),
+    );
+    expect(() =>
+      deriveAccountAddressView({
+        domain: "default",
+        publicKeyHex,
+        networkPrefix: 369,
+      }),
+    ).toThrow(/payload size is incorrect|public key/i);
   });
 });

@@ -27,6 +27,7 @@ const HASH_33 = `0x${"33".repeat(32)}`;
 const HASH_44 = `0x${"44".repeat(32)}`;
 const HASH_55 = `0x${"55".repeat(32)}`;
 const HASH_66 = `0x${"66".repeat(32)}`;
+const HASH_88 = `0x${"88".repeat(32)}`;
 
 const readyRouteReport = (overrides = {}) => ({
   ready: true,
@@ -52,6 +53,7 @@ const readyRouteReport = (overrides = {}) => ({
   ],
   postDeployLiveEvidence: {
     fullTomlReady: true,
+    offlineFullTomlSha256: HASH_88,
     sourceBridgeConfigHash: HASH_44,
     sourceEventTransactionId: HASH_55,
     routeCanaryEvidenceHash: HASH_66,
@@ -99,6 +101,7 @@ const readyManifest = () => ({
   },
   postDeployLiveEvidence: {
     fullTomlReady: true,
+    offlineFullTomlSha256: HASH_88,
     sourceBridgeConfigHash: HASH_44,
     sourceEventTransactionId: HASH_55,
     routeCanaryEvidenceHash: HASH_66,
@@ -225,7 +228,8 @@ describe("SCCP live smoke readiness", () => {
       expect.objectContaining({
         id: "walletconnect-project-id",
         status: "pass",
-        detail: "Using explicit Nile-only Electron test signer for this test run.",
+        detail:
+          "Using explicit Nile-only Electron test signer for this test run.",
       }),
     );
     expect(JSON.stringify(report)).not.toContain("private");
@@ -347,6 +351,24 @@ describe("SCCP live smoke readiness", () => {
         "module",
       ),
     ).toThrow(/whitespace/);
+    expect(() =>
+      normalizeSccpBrowserModuleUrl(".%2e/prover.js", "module"),
+    ).toThrow(/parent directory segments/);
+    expect(() =>
+      normalizeSccpBrowserModuleUrl(".%252e/prover.js", "module"),
+    ).toThrow(/parent directory segments/);
+    expect(() =>
+      normalizeSccpBrowserModuleUrl(
+        "https://cdn.example.invalid/provers/%252e%252e/source.js",
+        "module",
+      ),
+    ).toThrow(/parent directory segments/);
+    expect(() =>
+      normalizeSccpBrowserModuleUrl(
+        "https://cdn.example.invalid/provers/%252525252e%252525252e/source.js",
+        "module",
+      ),
+    ).toThrow(/parent directory segments/);
   });
 
   it("rejects ready route reports that are not bound to TAIRA/TRON XOR", () => {
@@ -370,6 +392,16 @@ describe("SCCP live smoke readiness", () => {
           },
         }),
         detail: "sourceEventTransactionId must be a non-zero 32-byte hex value",
+      },
+      {
+        name: "missing offline full-TOML hash",
+        routeReport: readyRouteReport({
+          postDeployLiveEvidence: {
+            ...readyRouteReport().postDeployLiveEvidence,
+            offlineFullTomlSha256: undefined,
+          },
+        }),
+        detail: "offlineFullTomlSha256 is required",
       },
       {
         name: "wrong route and asset",

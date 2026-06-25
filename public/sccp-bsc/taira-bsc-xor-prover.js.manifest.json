@@ -1,0 +1,11 @@
+{
+  "schema": "iroha-demo-sccp-bsc-browser-prover-local-sidecar/v1",
+  "moduleUrl": "./taira-bsc-xor-prover.js",
+  "moduleSha256": "0xc5d148f88eaeb1041b5e12b04055ddd29037543575f0730cd3d88d46697becfe",
+  "exports": [
+    "bscSccpProve",
+    "bscSccpNativeProverSelfTest",
+    "bscSccpSourceProve",
+    "bscSccpSourceNativeProverSelfTest"
+  ]
+}

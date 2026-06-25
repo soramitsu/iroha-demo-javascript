@@ -3906,6 +3906,26 @@ button:not(.secondary):hover {
   justify-content: flex-end;
 }
 
+.sccp-route-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(82px, 1fr));
+  gap: 6px;
+  padding: 3px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.sccp-route-toggle button {
+  min-height: 36px;
+}
+
+.sccp-route-toggle button.active {
+  background: var(--surface-strong);
+  border-color: var(--panel-border);
+  color: var(--iroha-accent);
+}
+
 .sccp-status-grid,
 .sccp-lower-grid {
   display: grid;

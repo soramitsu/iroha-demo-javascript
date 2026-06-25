@@ -29,6 +29,8 @@ const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
 const exportConfidentialWalletBackupMock = vi.fn();
+const generateKeyPairMock = vi.fn();
+const getSigningAlgorithmsMock = vi.fn();
 const importConfidentialWalletBackupMock = vi.fn();
 const isSecureVaultAvailableMock = vi.fn();
 const storeAccountSecretMock = vi.fn();
@@ -126,6 +128,9 @@ vi.mock("@/services/iroha", () => ({
     derivePublicKeyMock(privateKeyHex),
   exportConfidentialWalletBackup: (input: unknown) =>
     exportConfidentialWalletBackupMock(input),
+  generateKeyPair: (input: unknown) => generateKeyPairMock(input),
+  getSigningAlgorithms: (toriiUrl?: string) =>
+    getSigningAlgorithmsMock(toriiUrl),
   importConfidentialWalletBackup: (input: unknown) =>
     importConfidentialWalletBackupMock(input),
   isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
@@ -165,6 +170,8 @@ describe("AccountSetupView", () => {
     deriveAccountAddressMock.mockReset();
     derivePublicKeyMock.mockReset();
     exportConfidentialWalletBackupMock.mockReset();
+    generateKeyPairMock.mockReset();
+    getSigningAlgorithmsMock.mockReset();
     importConfidentialWalletBackupMock.mockReset();
     isSecureVaultAvailableMock.mockReset();
     storeAccountSecretMock.mockReset();
@@ -184,6 +191,19 @@ describe("AccountSetupView", () => {
     derivePublicKeyMock.mockResolvedValue({
       publicKeyHex: "ab".repeat(32),
     });
+    generateKeyPairMock.mockImplementation(
+      async (input: { seedHex?: string; signingAlgorithm?: string } = {}) => {
+        const derived = await derivePublicKeyMock(input.seedHex ?? "");
+        return {
+          privateKeyHex: input.seedHex ?? "cd".repeat(32),
+          publicKeyHex: derived.publicKeyHex,
+          signingAlgorithm: input.signingAlgorithm ?? "ed25519",
+        };
+      },
+    );
+    getSigningAlgorithmsMock.mockResolvedValue([
+      { id: "ed25519", label: "Ed25519", isDefault: true },
+    ]);
     exportConfidentialWalletBackupMock.mockResolvedValue({
       schema: "iroha-demo-confidential-wallet-backup/v2",
       chainId: TAIRA_CHAIN_PRESET.connection.chainId,
@@ -756,6 +776,60 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
+  it("uses the selected non-default signing algorithm when creating a wallet", async () => {
+    getSigningAlgorithmsMock.mockResolvedValueOnce([
+      { id: "ed25519", label: "Ed25519", isDefault: true },
+      { id: "secp256k1", label: "Secp256k1", isDefault: false },
+    ]);
+    deriveAccountAddressMock.mockImplementation(
+      (input: { domain?: string; signingAlgorithm?: string }) => ({
+        accountId: `alice-${input.signingAlgorithm}@${input.domain || "wonderland"}`,
+        i105AccountId: `alice-${input.signingAlgorithm}@${input.domain || "wonderland"}`,
+        i105DefaultAccountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+        i105DefaultFullwidthAccountId: "",
+        publicKeyHex: "ab".repeat(32),
+        signingAlgorithm: input.signingAlgorithm,
+        accountIdWarning: "",
+      }),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    await flushPromises();
+
+    const signingSelect = wrapper
+      .findAll("select")
+      .find((select) => select.find('option[value="secp256k1"]').exists());
+    if (!signingSelect) {
+      throw new Error("Signing algorithm select was not rendered.");
+    }
+    await signingSelect.setValue("secp256k1");
+
+    await getButtonByText(wrapper, t("Generate recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+    await wrapper.find('input[type="checkbox"]').setValue(true);
+    await flushPromises();
+    await getButtonByText(wrapper, t("Save identity")).trigger("click");
+    await flushPromises();
+
+    expect(generateKeyPairMock).toHaveBeenCalledWith({
+      signingAlgorithm: "secp256k1",
+      seedHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+    });
+    expect(deriveAccountAddressMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signingAlgorithm: "secp256k1",
+      }),
+    );
+    expect(storeAccountSecretMock).toHaveBeenCalledWith({
+      accountId: "alice-secp256k1@default",
+      privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+      signingAlgorithm: "secp256k1",
+    });
+    expect(session.activeAccount?.signingAlgorithm).toBe("secp256k1");
+  });
+
   it("preserves the previewed network prefix for vault storage and the saved account", async () => {
     deriveAccountAddressMock.mockImplementation(
       (input: { domain?: string; networkPrefix?: number }) => {
@@ -797,6 +871,7 @@ describe("AccountSetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uflowersStableAccount1234567890",
       privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+      signingAlgorithm: "ed25519",
     });
     expect(session.connection.networkPrefix).toBe(42);
     expect(session.activeAccountId).toBe("n42uflowersStableAccount1234567890");
@@ -842,6 +917,7 @@ describe("AccountSetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "n42uflowersPartialAccount1234567890",
       privateKeyHex: expect.stringMatching(/^[0-9a-f]{64}$/i),
+      signingAlgorithm: "ed25519",
     });
     expect(session.activeAccountId).toBe("n42uflowersPartialAccount1234567890");
     expect(session.activeAccount?.i105AccountId).toBe(
@@ -1009,6 +1085,7 @@ describe("AccountSetupView", () => {
     expect(storeAccountSecretMock).toHaveBeenCalledWith({
       accountId: "alice@backup-domain",
       privateKeyHex: VALID_MNEMONIC_PRIVATE_KEY_HEX,
+      signingAlgorithm: "ed25519",
     });
     expect(importConfidentialWalletBackupMock).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain("confidential bundle rejected");

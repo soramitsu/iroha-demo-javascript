@@ -24,6 +24,20 @@ const protectFixture = (value: string) =>
   `dpapi-${Buffer.from(value, "utf8").toString("base64url")}`;
 const unprotectFixture = (value: string) =>
   Buffer.from(value.replace(/^dpapi-/, ""), "base64url").toString("utf8");
+const accountSecretMaterialFixture = (
+  privateKeyHex: string,
+  signingAlgorithm = "ed25519",
+) =>
+  JSON.stringify({
+    schema: "iroha-demo-account-secret/v2",
+    privateKeyHex,
+    signingAlgorithm,
+  });
+const protectAccountSecretFixture = (
+  privateKeyHex: string,
+  signingAlgorithm = "ed25519",
+) =>
+  protectFixture(accountSecretMaterialFixture(privateKeyHex, signingAlgorithm));
 const createWindowsDpapiMock = () => ({
   protect: vi.fn(async (value: string) => protectFixture(value)),
   unprotect: vi.fn(async (value: string) => unprotectFixture(value)),
@@ -68,6 +82,12 @@ describe("SecureVault", () => {
     await expect(
       vault.getAccountSecret("sorauLegacyAccount1234567890"),
     ).resolves.toBe(privateKeyHex);
+    await expect(
+      vault.getAccountSecretMaterial("sorauLegacyAccount1234567890"),
+    ).resolves.toEqual({
+      privateKeyHex,
+      signingAlgorithm: "ed25519",
+    });
     await expect(
       vault.listAccountSecretFlags([
         "sorauLegacyAccount1234567890",
@@ -121,6 +141,89 @@ describe("SecureVault", () => {
     );
   });
 
+  it("stores the signing algorithm with account secret material", async () => {
+    const privateKeyHex = "12".repeat(32);
+    const vault = new SecureVault(tempDir);
+
+    await vault.storeAccountSecret({
+      accountId: "sorauSecpAccount1234567890",
+      privateKeyHex,
+      signingAlgorithm: "secp256k1",
+    });
+
+    await expect(
+      vault.getAccountSecretMaterial("testuSecpAccount1234567890"),
+    ).resolves.toEqual({
+      privateKeyHex,
+      signingAlgorithm: "secp256k1",
+    });
+    await expect(
+      vault.getAccountSecret("testuSecpAccount1234567890"),
+    ).resolves.toBe(privateKeyHex);
+  });
+
+  it("normalizes stored signing algorithm casing before encryption", async () => {
+    const privateKeyHex = "13".repeat(32);
+    const vault = new SecureVault(tempDir);
+
+    await vault.storeAccountSecret({
+      accountId: "sorauUpperAlgoAccount1234567890",
+      privateKeyHex,
+      signingAlgorithm: "  Secp256K1  ",
+    });
+
+    await expect(
+      vault.getAccountSecretMaterial("sorauUpperAlgoAccount1234567890"),
+    ).resolves.toEqual({
+      privateKeyHex,
+      signingAlgorithm: "secp256k1",
+    });
+  });
+
+  it("rejects malformed signing algorithm metadata before encrypting", async () => {
+    const vault = new SecureVault(tempDir);
+
+    await expect(
+      vault.storeAccountSecret({
+        accountId: "sorauBadAlgoAccount1234567890",
+        privateKeyHex: "14".repeat(32),
+        signingAlgorithm: "ed25519\nsecp256k1",
+      }),
+    ).rejects.toThrow("signingAlgorithm must use printable ASCII.");
+    await expect(
+      vault.storeAccountSecret({
+        accountId: "sorauObjectAlgoAccount1234567890",
+        privateKeyHex: "15".repeat(32),
+        signingAlgorithm: { nested: "secp256k1" } as unknown as string,
+      }),
+    ).rejects.toThrow("signingAlgorithm must be a string.");
+    expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
+  });
+
+  it("rejects decrypted account secret wrappers with adversarial algorithms", async () => {
+    await writeFile(
+      vaultFile(tempDir),
+      JSON.stringify({
+        version: 1,
+        accountSecrets: {
+          "i105:badalgoaccount1234567890": encryptFixture(
+            JSON.stringify({
+              schema: "iroha-demo-account-secret/v2",
+              privateKeyHex: "16".repeat(32),
+              signingAlgorithm: { nested: "secp256k1" },
+            }),
+          ),
+        },
+        receiveKeys: {},
+      }),
+    );
+    const vault = new SecureVault(tempDir);
+
+    await expect(
+      vault.getAccountSecretMaterial("sorauBadAlgoAccount1234567890"),
+    ).rejects.toThrow("signingAlgorithm must be a string.");
+  });
+
   it("uses Windows DPAPI when safeStorage is unavailable on Windows", async () => {
     const privateKeyHex = "dd".repeat(32);
     safeStorageMock.isEncryptionAvailable.mockReturnValue(false);
@@ -139,13 +242,15 @@ describe("SecureVault", () => {
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
     const encrypted = persisted.accountSecrets["i105:windowsaccount1234567890"];
-    expect(encrypted).toBe(`win-dpapi:${protectFixture(privateKeyHex)}`);
+    expect(encrypted).toBe(
+      `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
+    );
     expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
     await expect(
       vault.getAccountSecret("testuWindowsAccount1234567890"),
     ).resolves.toBe(privateKeyHex);
     expect(windowsDpapi.unprotect).toHaveBeenCalledWith(
-      protectFixture(privateKeyHex),
+      protectAccountSecretFixture(privateKeyHex),
     );
   });
 
@@ -168,14 +273,14 @@ describe("SecureVault", () => {
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
     expect(persisted.accountSecrets["i105:wslaccount1234567890"]).toBe(
-      `win-dpapi:${protectFixture(privateKeyHex)}`,
+      `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
     );
     expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
     await expect(
       vault.getAccountSecret("testuWslAccount1234567890"),
     ).resolves.toBe(privateKeyHex);
     expect(windowsDpapi.unprotect).toHaveBeenCalledWith(
-      protectFixture(privateKeyHex),
+      protectAccountSecretFixture(privateKeyHex),
     );
   });
 
@@ -247,7 +352,7 @@ describe("SecureVault", () => {
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
     expect(persisted.accountSecrets["i105:probeaccount1234567890"]).toBe(
-      `win-dpapi:${protectFixture(privateKeyHex)}`,
+      `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
     );
   });
 

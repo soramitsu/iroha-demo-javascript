@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  loadBscSccpProveFn,
+  loadBscSccpSourceProveFn,
   loadTronSccpProveFn,
   loadTronSccpSourceProveFn,
   normalizeTronSccpProverModuleUrl,
+  pickBscSccpProveFn,
+  pickBscSccpSourceProveFn,
   pickTronSccpProveFn,
   pickTronSccpSourceProveFn,
+  type BscSccpProverGlobal,
   type TronSccpProverModule,
 } from "@/utils/sccpProverLink";
 
@@ -45,6 +50,23 @@ describe("SCCP TRON prover linker", () => {
     });
   });
 
+  it("accepts every supported BSC destination prover export shape", () => {
+    const exportNames: Array<keyof TronSccpProverModule> = [
+      "irohaSccpBscProve",
+      "bscSccpProve",
+      "evmSccpProve",
+      "proveBsc",
+      "prove",
+      "proveFn",
+      "default",
+    ];
+
+    exportNames.forEach((exportName) => {
+      const prove = vi.fn();
+      expect(pickBscSccpProveFn({}, { [exportName]: prove })).toBe(prove);
+    });
+  });
+
   it("falls back to worker globals when no module function is present", () => {
     const irohaGlobal = vi.fn();
     const tronGlobal = vi.fn();
@@ -61,6 +83,26 @@ describe("SCCP TRON prover linker", () => {
         tronSccpProve: tronGlobal,
       }),
     ).toBe(tronGlobal);
+  });
+
+  it("does not use BSC worker globals when no module function is present", () => {
+    const irohaGlobal = vi.fn();
+    const bscGlobal = vi.fn();
+    const evmGlobal = vi.fn();
+
+    expect(
+      pickBscSccpProveFn({
+        irohaSccpBscProve: irohaGlobal,
+        bscSccpProve: bscGlobal,
+        evmSccpProve: evmGlobal,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      pickBscSccpProveFn({
+        bscSccpProve: bscGlobal,
+      }),
+    ).toBeUndefined();
   });
 
   it("ignores non-function exports and globals", () => {
@@ -81,6 +123,69 @@ describe("SCCP TRON prover linker", () => {
     ).toBeUndefined();
   });
 
+  it("rejects accessor-backed prover exports without invoking them", async () => {
+    const accessor = vi.fn(() => vi.fn());
+    const bscModule = {};
+    Object.defineProperty(bscModule, "proveBsc", {
+      enumerable: true,
+      get: accessor,
+    });
+
+    expect(() =>
+      pickBscSccpProveFn({}, bscModule as TronSccpProverModule),
+    ).toThrow(/own enumerable data properties/u);
+    expect(accessor).not.toHaveBeenCalled();
+
+    const tronGlobalAccessor = vi.fn(() => vi.fn());
+    const tronGlobal = {};
+    Object.defineProperty(tronGlobal, "tronSccpProve", {
+      enumerable: true,
+      get: tronGlobalAccessor,
+    });
+
+    expect(() => pickTronSccpProveFn(tronGlobal)).toThrow(
+      /own enumerable data properties/u,
+    );
+    expect(tronGlobalAccessor).not.toHaveBeenCalled();
+
+    const importedAccessor = vi.fn(() => vi.fn());
+    const importedModule = {};
+    Object.defineProperty(importedModule, "default", {
+      enumerable: true,
+      get: importedAccessor,
+    });
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<TronSccpProverModule>>()
+      .mockResolvedValue(importedModule as TronSccpProverModule);
+
+    await expect(
+      loadBscSccpProveFn({
+        globalScope: {},
+        moduleUrl: "/sccp-bsc-prover.js",
+        importer,
+      }),
+    ).rejects.toThrow(/own enumerable data properties/u);
+    expect(importer).toHaveBeenCalledWith("/sccp-bsc-prover.js");
+    expect(importedAccessor).not.toHaveBeenCalled();
+  });
+
+  it("rejects hidden or inherited prover exports", () => {
+    const hiddenModule = {};
+    Object.defineProperty(hiddenModule, "proveBsc", {
+      value: vi.fn(),
+      enumerable: false,
+    });
+
+    expect(() =>
+      pickBscSccpProveFn({}, hiddenModule as TronSccpProverModule),
+    ).toThrow(/own enumerable data properties/u);
+
+    const inheritedModule = Object.create({ proveBsc: vi.fn() });
+    expect(
+      pickBscSccpProveFn({}, inheritedModule as TronSccpProverModule),
+    ).toBeUndefined();
+  });
+
   it("does not import when the module URL is empty", async () => {
     const prove = vi.fn();
     const importer = vi.fn<() => Promise<TronSccpProverModule>>();
@@ -92,6 +197,20 @@ describe("SCCP TRON prover linker", () => {
         importer,
       }),
     ).resolves.toBe(prove);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it("does not use BSC destination globals when the module URL is empty", async () => {
+    const prove = vi.fn();
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadBscSccpProveFn({
+        globalScope: { bscSccpProve: prove },
+        moduleUrl: "  ",
+        importer,
+      }),
+    ).resolves.toBeUndefined();
     expect(importer).not.toHaveBeenCalled();
   });
 
@@ -111,6 +230,22 @@ describe("SCCP TRON prover linker", () => {
     expect(importer).toHaveBeenCalledWith(
       "https://cdn.example.invalid/sccp-tron-prover.js",
     );
+  });
+
+  it("imports a configured BSC prover module URL", async () => {
+    const proveBsc = vi.fn();
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<TronSccpProverModule>>()
+      .mockResolvedValue({ proveBsc });
+
+    await expect(
+      loadBscSccpProveFn({
+        globalScope: {},
+        moduleUrl: " /sccp-bsc-prover.js ",
+        importer,
+      }),
+    ).resolves.toBe(proveBsc);
+    expect(importer).toHaveBeenCalledWith("/sccp-bsc-prover.js");
   });
 
   it("normalizes only production-safe or local-development prover module URLs", () => {
@@ -142,6 +277,14 @@ describe("SCCP TRON prover linker", () => {
       "https://cdn.example.invalid/sccp-tron-prover.js#debug",
       "/sccp-tron-prover.js?token=secret",
       "./sccp-tron-prover.js#debug",
+      "../sccp-tron-prover.js",
+      "./../sccp-tron-prover.js",
+      "/assets/../sccp-tron-prover.js",
+      "https://cdn.example.invalid/assets/../sccp-tron-prover.js",
+      "https://cdn.example.invalid/assets/%2e%2e/sccp-tron-prover.js",
+      "https://cdn.example.invalid/assets/%252e%252e/sccp-tron-prover.js",
+      "https://cdn.example.invalid/assets/%25252e%25252e/sccp-tron-prover.js",
+      ".%252e/sccp-tron-prover.js",
       "https://cdn.example.invalid/sccp tron prover.js",
       "cdn.example.invalid/sccp-tron-prover.js",
     ]) {
@@ -170,6 +313,28 @@ describe("SCCP TRON prover linker", () => {
         importer,
       }),
     ).rejects.toThrow(/query strings or fragments/u);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe BSC prover module URLs before importing", async () => {
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadBscSccpProveFn({
+        globalScope: {},
+        moduleUrl: "../sccp-bsc-prover.js",
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module URL/u);
+    expect(importer).not.toHaveBeenCalled();
+
+    await expect(
+      loadBscSccpProveFn({
+        globalScope: {},
+        moduleUrl: "file:///tmp/sccp-bsc-prover.js",
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module URL/u);
     expect(importer).not.toHaveBeenCalled();
   });
 
@@ -202,6 +367,45 @@ describe("SCCP TRON prover linker", () => {
     });
   });
 
+  it("picks supported BSC source prover export names", () => {
+    const exportNames: Array<keyof TronSccpProverModule> = [
+      "irohaSccpBscSourceProve",
+      "bscSccpSourceProve",
+      "proveBscSource",
+    ];
+
+    exportNames.forEach((exportName) => {
+      const prove = vi.fn();
+      expect(pickBscSccpSourceProveFn({}, { [exportName]: prove })).toBe(prove);
+    });
+  });
+
+  it("rejects accessor-backed source prover exports without invoking them", () => {
+    const tronSourceAccessor = vi.fn(() => vi.fn());
+    const tronSourceModule = {};
+    Object.defineProperty(tronSourceModule, "proveTronSource", {
+      enumerable: true,
+      get: tronSourceAccessor,
+    });
+
+    expect(() =>
+      pickTronSccpSourceProveFn({}, tronSourceModule as TronSccpProverModule),
+    ).toThrow(/own enumerable data properties/u);
+    expect(tronSourceAccessor).not.toHaveBeenCalled();
+
+    const bscSourceAccessor = vi.fn(() => vi.fn());
+    const bscSourceModule = {};
+    Object.defineProperty(bscSourceModule, "proveBscSource", {
+      enumerable: true,
+      get: bscSourceAccessor,
+    });
+
+    expect(() =>
+      pickBscSccpSourceProveFn({}, bscSourceModule as TronSccpProverModule),
+    ).toThrow(/own enumerable data properties/u);
+    expect(bscSourceAccessor).not.toHaveBeenCalled();
+  });
+
   it("falls back to TRON source prover worker globals", () => {
     const irohaGlobal = vi.fn();
     const tronGlobal = vi.fn();
@@ -220,6 +424,22 @@ describe("SCCP TRON prover linker", () => {
     ).toBe(tronGlobal);
   });
 
+  it("does not use BSC source prover worker globals", () => {
+    const irohaGlobal = vi.fn();
+    const bscGlobal = vi.fn();
+    const adversarialIrohaGlobal = {
+      irohaSccpBscSourceProve: irohaGlobal,
+      bscSccpSourceProve: bscGlobal,
+    } as unknown as BscSccpProverGlobal;
+    const adversarialBscGlobal = {
+      bscSccpSourceProve: bscGlobal,
+    } as unknown as BscSccpProverGlobal;
+
+    expect(pickBscSccpSourceProveFn(adversarialIrohaGlobal)).toBeUndefined();
+
+    expect(pickBscSccpSourceProveFn(adversarialBscGlobal)).toBeUndefined();
+  });
+
   it("imports a configured TRON source prover module URL", async () => {
     const proveTronSource = vi.fn();
     const importer = vi
@@ -236,6 +456,22 @@ describe("SCCP TRON prover linker", () => {
     expect(importer).toHaveBeenCalledWith("/sccp-tron-source-prover.js");
   });
 
+  it("imports a configured BSC source prover module URL", async () => {
+    const proveBscSource = vi.fn();
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<TronSccpProverModule>>()
+      .mockResolvedValue({ proveBscSource });
+
+    await expect(
+      loadBscSccpSourceProveFn({
+        globalScope: {},
+        moduleUrl: " /sccp-bsc-source-prover.js ",
+        importer,
+      }),
+    ).resolves.toBe(proveBscSource);
+    expect(importer).toHaveBeenCalledWith("/sccp-bsc-source-prover.js");
+  });
+
   it("does not import an empty TRON source prover URL", async () => {
     const prove = vi.fn();
     const importer = vi.fn<() => Promise<TronSccpProverModule>>();
@@ -250,6 +486,22 @@ describe("SCCP TRON prover linker", () => {
     expect(importer).not.toHaveBeenCalled();
   });
 
+  it("does not use BSC source globals for an empty prover URL", async () => {
+    const prove = vi.fn();
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadBscSccpSourceProveFn({
+        globalScope: {
+          bscSccpSourceProve: prove,
+        } as unknown as BscSccpProverGlobal,
+        moduleUrl: "",
+        importer,
+      }),
+    ).resolves.toBeUndefined();
+    expect(importer).not.toHaveBeenCalled();
+  });
+
   it("rejects unsafe TRON source prover module URLs before importing", async () => {
     const importer = vi.fn<() => Promise<TronSccpProverModule>>();
 
@@ -257,6 +509,20 @@ describe("SCCP TRON prover linker", () => {
       loadTronSccpSourceProveFn({
         globalScope: {},
         moduleUrl: "http://cdn.example.invalid/sccp-tron-source-prover.js",
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module URL/u);
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it("rejects unsafe BSC source prover module URLs before importing", async () => {
+    const importer = vi.fn<() => Promise<TronSccpProverModule>>();
+
+    await expect(
+      loadBscSccpSourceProveFn({
+        globalScope: {},
+        moduleUrl:
+          "https://cdn.example.invalid/assets/%252e%252e/sccp-bsc-source-prover.js",
         importer,
       }),
     ).rejects.toThrow(/SCCP prover module URL/u);

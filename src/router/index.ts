@@ -111,7 +111,7 @@ const routes = [
     component: SccpView,
     meta: {
       titleKey: "SCCP Bridge",
-      subtitleKey: "TAIRA and TRON XOR bridge",
+      subtitleKey: "TAIRA, TRON, and BSC XOR bridge",
     },
   },
   {

@@ -51,10 +51,9 @@ const RELAY_TX_HASH = "ab".repeat(32);
 const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
 const TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(7);
 const OTHER_TRON_BROADCAST_PRIVATE_KEY = new Uint8Array(32).fill(8);
-const TRON_BROADCAST_ADDRESS_BASE58 =
-  deriveTronTestSignerAddressFromPrivateKey(
-    TRON_BROADCAST_PRIVATE_KEY,
-  ).base58;
+const TRON_BROADCAST_ADDRESS_BASE58 = deriveTronTestSignerAddressFromPrivateKey(
+  TRON_BROADCAST_PRIVATE_KEY,
+).base58;
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -228,12 +227,19 @@ const unwrapNrt0Frame = (payload: Buffer) => {
 const versionedPayload = (payload: Buffer) =>
   Buffer.concat([Buffer.from([0x01]), unwrapNrt0Frame(payload)]);
 
+type MockStoredAccountSecret =
+  | string
+  | {
+      privateKeyHex: string;
+      signingAlgorithm: string;
+    };
+
 const mocks = vi.hoisted(() => ({
   exposedApi: null as any,
   clipboardWriteTextMock: vi.fn(),
   ipcInvokeMock: vi.fn(),
   vaultAvailable: true,
-  storedAccountSecrets: new Map<string, string>(),
+  storedAccountSecrets: new Map<string, MockStoredAccountSecret>(),
   storedReceiveKeys: new Map<string, Record<string, unknown>>(),
   normalizeCanonicalAccountIdLiteralMock: vi.fn(),
   normalizeCompatAccountIdLiteralMock: vi.fn(),
@@ -659,8 +665,9 @@ vi.mock("@iroha/iroha-js/crypto", async () => {
       publicKey: Buffer.alloc(32, 0x21),
       privateKey: Buffer.alloc(32, 0x34),
     })),
-    privateKeyMultihash: vi.fn((privateKey: Buffer | Uint8Array) =>
-      `802620${Buffer.from(privateKey).toString("hex").toUpperCase()}`,
+    privateKeyMultihash: vi.fn(
+      (privateKey: Buffer | Uint8Array) =>
+        `802620${Buffer.from(privateKey).toString("hex").toUpperCase()}`,
     ),
   };
 });
@@ -783,6 +790,20 @@ const loadBridge = async () => {
     triggerTronConstantContract: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    callEvmRpc: (input: Record<string, unknown>) => Promise<unknown>;
+    callEvmContract: (input: Record<string, unknown>) => Promise<string>;
+    getEvmTransaction: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | null>;
+    getEvmTransactionReceipt: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | null>;
+    getEvmBlockByHash: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | null>;
+    getEvmLogs: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>[]>;
     copyTextToClipboard: (input: { text: string }) => Promise<void>;
   };
 };
@@ -795,7 +816,7 @@ describe("preload Kaigi bridge", () => {
     mocks.clipboardWriteTextMock.mockReset();
     mocks.ipcInvokeMock.mockReset();
     mocks.vaultAvailable = true;
-    mocks.storedAccountSecrets = new Map<string, string>();
+    mocks.storedAccountSecrets = new Map<string, MockStoredAccountSecret>();
     mocks.storedReceiveKeys = new Map<string, Record<string, unknown>>();
     mocks.normalizeCanonicalAccountIdLiteralMock.mockReset();
     mocks.normalizeCompatAccountIdLiteralMock.mockReset();
@@ -1015,17 +1036,34 @@ describe("preload Kaigi bridge", () => {
         if (channel === "vault:storeAccountSecret") {
           const accountId = String(input?.accountId ?? "").trim();
           const privateKeyHex = String(input?.privateKeyHex ?? "").trim();
+          const signingAlgorithm =
+            String(input?.signingAlgorithm ?? "").trim() || "ed25519";
           if (accountId && privateKeyHex) {
-            mocks.storedAccountSecrets.set(accountId, privateKeyHex);
+            mocks.storedAccountSecrets.set(accountId, {
+              privateKeyHex,
+              signingAlgorithm,
+            });
           }
           return undefined;
         }
         if (channel === "vault:getAccountSecret") {
-          return (
-            mocks.storedAccountSecrets.get(
-              String(input?.accountId ?? "").trim(),
-            ) ?? null
+          const stored = mocks.storedAccountSecrets.get(
+            String(input?.accountId ?? "").trim(),
           );
+          return typeof stored === "string"
+            ? stored
+            : (stored?.privateKeyHex ?? null);
+        }
+        if (channel === "vault:getAccountSecretMaterial") {
+          const stored = mocks.storedAccountSecrets.get(
+            String(input?.accountId ?? "").trim(),
+          );
+          if (!stored) {
+            return null;
+          }
+          return typeof stored === "string"
+            ? { privateKeyHex: stored, signingAlgorithm: "ed25519" }
+            : stored;
         }
         if (channel === "vault:listAccountSecretFlags") {
           const accountIds = Array.isArray(input?.accountIds)
@@ -1417,6 +1455,25 @@ describe("preload Kaigi bridge", () => {
       }),
     ).rejects.toThrow(/SCCP messageBundle must be an object/);
 
+    const accessorMessageBundle = {
+      ...baseInput.messageBundle,
+    };
+    const accessedSccpBundleFields: string[] = [];
+    Object.defineProperty(accessorMessageBundle, "debug", {
+      enumerable: true,
+      get() {
+        accessedSccpBundleFields.push("debug");
+        return "not JSON";
+      },
+    });
+    await expect(
+      bridge.submitSccpBridgeProof({
+        ...baseInput,
+        messageBundle: accessorMessageBundle,
+      }),
+    ).rejects.toThrow(/SCCP messageBundle.*SCCP proof data/);
+    expect(accessedSccpBundleFields).toEqual([]);
+
     expect(mocks.submitBridgeProofMock).not.toHaveBeenCalled();
     expect(mocks.submitBridgeMessageMock).not.toHaveBeenCalled();
   });
@@ -1561,11 +1618,9 @@ describe("preload Kaigi bridge", () => {
     const bridge = await loadBridge();
     const transaction = signedTronBroadcastTransaction();
     const value = (
-      (
-        (transaction.raw_data.contract[0] as Record<string, unknown>)
-          .parameter as Record<string, unknown>
-      ).value as Record<string, unknown>
-    );
+      (transaction.raw_data.contract[0] as Record<string, unknown>)
+        .parameter as Record<string, unknown>
+    ).value as Record<string, unknown>;
     value.owner_address = TRON_BROADCAST_ADDRESS_BASE58;
     value.contract_address = TRON_BROADCAST_ADDRESS_BASE58;
     mocks.nodeFetchMock.mockResolvedValueOnce(
@@ -1614,11 +1669,9 @@ describe("preload Kaigi bridge", () => {
       visible: true,
     };
     const value = (
-      (
-        (transaction.raw_data.contract[0] as Record<string, unknown>)
-          .parameter as Record<string, unknown>
-      ).value as Record<string, unknown>
-    );
+      (transaction.raw_data.contract[0] as Record<string, unknown>)
+        .parameter as Record<string, unknown>
+    ).value as Record<string, unknown>;
     value.owner_address = TRON_BROADCAST_ADDRESS_BASE58;
     value.contract_address = TRON_BROADCAST_ADDRESS_BASE58;
     mocks.nodeFetchMock.mockResolvedValueOnce(
@@ -1875,7 +1928,23 @@ describe("preload Kaigi bridge", () => {
           debug: () => "not cloneable",
         },
       }),
-    ).rejects.toThrow(/structured-cloneable/);
+    ).rejects.toThrow(/TRON broadcast transaction.*JSON-compatible/);
+
+    const accessorTransaction = { ...transaction };
+    const accessedBroadcastTransactionFields: string[] = [];
+    Object.defineProperty(accessorTransaction, "debug", {
+      enumerable: true,
+      get() {
+        accessedBroadcastTransactionFields.push("debug");
+        return "not JSON";
+      },
+    });
+    await expect(
+      bridge.broadcastTronTransaction({
+        transaction: accessorTransaction,
+      }),
+    ).rejects.toThrow(/TRON broadcast transaction.*JSON-compatible/);
+    expect(accessedBroadcastTransactionFields).toEqual([]);
 
     expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
   });
@@ -1963,6 +2032,356 @@ describe("preload Kaigi bridge", () => {
     }
 
     expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes generic EVM RPC read params before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const address = "0xAa000000000000000000000000000000000000Bb";
+    const topicA = `0x${"11".repeat(32)}`;
+    const topicB = `0x${"22".repeat(32)}`;
+    const blockHash = `0x${"33".repeat(32)}`;
+    mocks.nodeFetchMock
+      .mockResolvedValueOnce(jsonResponse({ result: "0x61" }))
+      .mockResolvedValueOnce(jsonResponse({ result: [] }))
+      .mockResolvedValueOnce(jsonResponse({ result: [] }));
+
+    await expect(
+      bridge.callEvmRpc({
+        method: "eth_chainId",
+        params: [],
+      }),
+    ).resolves.toBe("0x61");
+    await expect(
+      bridge.callEvmRpc({
+        endpoint: "http://127.0.0.1:8545",
+        method: "eth_getLogs",
+        params: [
+          {
+            address: [address],
+            fromBlock: "0x1",
+            toBlock: "latest",
+            topics: [null, topicA.toUpperCase(), [topicB]],
+          },
+        ],
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      bridge.getEvmLogs({
+        endpoint: "http://127.0.0.1:8545",
+        address,
+        blockHash: blockHash.toUpperCase(),
+        topics: [topicA],
+      }),
+    ).resolves.toEqual([]);
+
+    expect(mocks.nodeFetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_chainId",
+          params: [],
+        }),
+      }),
+    );
+    expect(mocks.nodeFetchMock).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8545",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getLogs",
+          params: [
+            {
+              address: [address.toLowerCase()],
+              fromBlock: "0x1",
+              toBlock: "latest",
+              topics: [null, topicA, [topicB]],
+            },
+          ],
+        }),
+      }),
+    );
+    expect(mocks.nodeFetchMock).toHaveBeenNthCalledWith(
+      3,
+      "http://127.0.0.1:8545",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getLogs",
+          params: [
+            {
+              address: address.toLowerCase(),
+              blockHash,
+              topics: [topicA],
+            },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("rejects malformed generic EVM RPC params before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const address = "0x1111111111111111111111111111111111111111";
+    const hash = `0x${"22".repeat(32)}`;
+    const zeroHash = `0x${"00".repeat(32)}`;
+    const callObject = {
+      to: address,
+      data: "0x12345678",
+    };
+    mocks.nodeFetchMock.mockClear();
+
+    for (const input of [
+      { method: "eth_sendRawTransaction", params: ["0xdeadbeef"] },
+      { method: "eth_chainId", params: null },
+      { method: "eth_chainId", params: {} },
+      { method: "eth_chainId", params: "[]" },
+      { method: "eth_getBalance", params: [address] },
+      { method: "eth_getBalance", params: [address, "latest", "extra"] },
+      { method: "eth_getBalance", params: [address, null] },
+      { method: "eth_getTransactionByHash", params: [zeroHash] },
+      { method: "eth_getTransactionReceipt", params: [zeroHash] },
+      {
+        method: "eth_call",
+        params: [{ ...callObject, nonce: "0x1" }, "latest"],
+      },
+      {
+        method: "eth_call",
+        params: [{ ...callObject, value: "1" }, "latest"],
+      },
+      { method: "eth_getBlockByHash", params: [hash, "false"] },
+      { method: "eth_getBlockByHash", params: [zeroHash, false] },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            blockHash: hash,
+            fromBlock: "0x1",
+          },
+        ],
+      },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            blockHash: zeroHash,
+          },
+        ],
+      },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            topics: [null, null, null, null, null],
+          },
+        ],
+      },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            address: [],
+          },
+        ],
+      },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            unknown: "field",
+          },
+        ],
+      },
+      {
+        method: "eth_getLogs",
+        params: [
+          {
+            address: undefined,
+          },
+        ],
+      },
+    ]) {
+      await expect(bridge.callEvmRpc(input)).rejects.toThrow(/EVM RPC/u);
+    }
+
+    const accessorCallObject = { ...callObject };
+    const accessedFields: string[] = [];
+    Object.defineProperty(accessorCallObject, "debug", {
+      enumerable: true,
+      get() {
+        accessedFields.push("debug");
+        return "not JSON";
+      },
+    });
+    await expect(
+      bridge.callEvmRpc({
+        method: "eth_call",
+        params: [accessorCallObject, "latest"],
+      }),
+    ).rejects.toThrow(/EVM RPC params.*JSON-compatible/);
+    expect(accessedFields).toEqual([]);
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects ambiguous typed EVM wrapper inputs before Node fetch", async () => {
+    const bridge = await loadBridge();
+    const address = "0x1111111111111111111111111111111111111111";
+    const topic = `0x${"22".repeat(32)}`;
+    const zeroHash = `0x${"00".repeat(32)}`;
+    const expectNoFetchRejection = (
+      action: () => Promise<unknown> | unknown,
+      pattern: RegExp,
+    ) => expect(Promise.resolve().then(action)).rejects.toThrow(pattern);
+
+    mocks.nodeFetchMock.mockClear();
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs({ address: [] }),
+      /address arrays must contain 1 to 64 addresses/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.getEvmLogs({
+          address: Array.from({ length: 65 }, () => address),
+        }),
+      /address arrays must contain 1 to 64 addresses/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs({ fromBlock: "" }),
+      /fromBlock.*standard EVM block tag/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.getEvmLogs({
+          blockHash: topic,
+          fromBlock: "0x1",
+        }),
+      /blockHash must not be combined with fromBlock or toBlock/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs({ blockHash: topic.slice(2) }),
+      /blockHash.*32-byte hex value/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmTransaction({ txHash: zeroHash }),
+      /transaction hash.*non-zero/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmTransactionReceipt({ txHash: zeroHash }),
+      /transaction hash.*non-zero/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmBlockByHash({ blockHash: zeroHash }),
+      /block hash.*non-zero/,
+    );
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs({ blockHash: zeroHash }),
+      /blockHash.*non-zero/,
+    );
+    const accessorLogsInput: Record<string, unknown> = { blockHash: topic };
+    const accessedFields: string[] = [];
+    Object.defineProperty(accessorLogsInput, "address", {
+      enumerable: true,
+      get() {
+        accessedFields.push("address");
+        return address;
+      },
+    });
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs(accessorLogsInput),
+      /EVM logs input.*JSON-compatible/,
+    );
+    expect(accessedFields).toEqual([]);
+    await expectNoFetchRejection(
+      () => bridge.getEvmLogs({ topics: [[]] }),
+      /topic 1 arrays must contain 1 to 64 topics/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.getEvmLogs({
+          topics: [Array.from({ length: 65 }, () => topic)],
+        }),
+      /topic 1 arrays must contain 1 to 64 topics/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.callEvmContract({
+          to: address,
+          data: "0x12345678",
+          from: "",
+        }),
+      /call sender.*20-byte EVM address/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.callEvmContract({
+          to: address,
+          data: "0x12345678",
+          value: "",
+        }),
+      /call value.*EVM hex quantity/,
+    );
+    await expectNoFetchRejection(
+      () =>
+        bridge.callEvmContract({
+          to: address,
+          data: "0x12345678",
+          blockTag: "",
+        }),
+      /block tag.*standard EVM block tag/,
+    );
+
+    expect(mocks.nodeFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects malformed EVM log response entries instead of dropping them", async () => {
+    const bridge = await loadBridge();
+    const address = "0x1111111111111111111111111111111111111111";
+    const transactionHash = `0x${"44".repeat(32)}`;
+    mocks.nodeFetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        result: [
+          {
+            address,
+            transactionHash,
+          },
+          "malformed-log-entry",
+        ],
+      }),
+    );
+
+    await expect(
+      bridge.getEvmLogs({
+        address,
+        fromBlock: "0x1",
+        toBlock: "latest",
+      }),
+    ).rejects.toThrow(/EVM logs response entry 2 must be an object/);
+    expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
+      "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_getLogs",
+          params: [
+            {
+              address,
+              fromBlock: "0x1",
+              toBlock: "latest",
+            },
+          ],
+        }),
+      }),
+    );
   });
 
   it("normalizes TRON constant-contract balance calls", async () => {

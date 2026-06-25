@@ -3,37 +3,53 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
+  buildTairaXorBscSccpRecordDescriptor,
+  buildTairaXorBscSccpBurnRecordZkIvmRequest,
   buildTairaXorSccpRecordDescriptor,
   buildTairaXorSccpBurnRecordZkIvmRequest,
   canonicalSccpTransferPayloadBytes,
   canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpMessageProofBundleBytes,
+  sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
   tronSccpDestinationBinding,
+  SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1,
   SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1,
   SCCP_TAIRA_XOR_ASSET_KEY_V1,
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
+  bindTairaXorBscToTairaSourceProofPackage,
   bindTairaXorTronBurnStartedEvent,
   bindTairaXorTronToTairaSourceProofPackage,
+  evmSccpDestinationBinding,
   parseTronTriggerSmartContractRawData,
+  SCCP_CODEC_EVM_HEX,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   tairaXorBurnSourceEventDigest,
+  tairaXorBscBurnSourceEventDigest,
+  tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   tairaXorFinalizeFromTairaCallData,
   tairaXorTransferPayloadHash,
+  validateBscMainnetNativeEvmProverBundle,
+  validateBscTestnetNativeEvmProverBundle,
 } from "@iroha/iroha-js/sccp";
 import type {
+  TairaXorBscSccpBurnRecordZkIvmRequest,
+  TairaXorBscSccpRecordDescriptor,
   TairaXorSccpBurnRecordZkIvmRequest,
   TairaXorSccpRecordDescriptor,
   SccpTransferPayload,
+  EvmSccpDestinationBindingInput,
+  EvmSccpProofRequestInput,
   TronSccpDestinationBindingInput,
   TronSccpProofRequestInput,
 } from "@iroha/iroha-js/sccp";
 import { TAIRA_CHAIN_ID, TAIRA_NETWORK_PREFIX } from "@/constants/chains";
+import { snapshotSccpDataValue } from "@/utils/sccpDataSnapshot";
 import { isSecretLikeTextValue } from "@/utils/secretLike";
 
 export const TRON_MAINNET_CAIP_CHAIN_ID = "tron:0x2b6653dc";
@@ -52,21 +68,57 @@ export const WALLETCONNECT_TRON_NAMESPACE = "tron";
 export const WALLETCONNECT_TRON_SIGN_METHOD = "tron_signTransaction";
 export const WALLETCONNECT_TRON_METHOD_VERSION = "v1";
 export const SCCP_TRON_DOMAIN = 5;
+export const SCCP_BSC_DOMAIN = 2;
 export const SCCP_SORA_DOMAIN = 0;
 export const SCCP_XOR_ROUTE_ID = SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1;
+export const SCCP_BSC_XOR_ROUTE_ID = SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1;
 export const SCCP_XOR_ASSET_KEY = SCCP_TAIRA_XOR_ASSET_KEY_V1;
 export const SCCP_TRON_TOKEN_SYMBOL = "TairaXOR";
+export const SCCP_BSC_TOKEN_SYMBOL = "TairaXOR";
 export const SCCP_XOR_DECIMALS = 18;
 export const SCCP_TRON_DEFAULT_FEE_LIMIT = 250_000_000;
+export const BSC_TESTNET_CAIP_CHAIN_ID = "eip155:97";
+export const BSC_TESTNET_CHAIN_ID_HEX = "0x61";
+export const BSC_TESTNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000061";
+export const BSC_TESTNET_RPC_URL =
+  "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+export const BSC_TESTNET_EXPLORER_URL = "https://testnet.bscscan.com";
+export const BSC_MAINNET_CAIP_CHAIN_ID = "eip155:56";
+export const BSC_MAINNET_CHAIN_ID_HEX = "0x38";
+export const BSC_MAINNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000038";
+export const BSC_MAINNET_RPC_URL = "https://bsc-dataseed.bnbchain.org";
+export const BSC_MAINNET_EXPLORER_URL = "https://bscscan.com";
+export const SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES = new Set<string>([
+  "0x9ef8067d260532f88e60cfa4b458fe678fc46b9c242de18fc91ba646e0857fc4",
+]);
 
 export {
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
   tairaXorBurnSourceEventDigest,
+  tairaXorBscBurnSourceEventDigest,
+  tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   tairaXorFinalizeFromTairaCallData,
   tairaXorTransferPayloadHash,
+};
+
+export const evmFunctionSelector = (signature: string): string => {
+  const normalizedSignature = String(signature ?? "").trim();
+  if (
+    !normalizedSignature ||
+    /\s/u.test(normalizedSignature) ||
+    !/^[$A-Z_a-z][$\w]*\(.*\)$/u.test(normalizedSignature)
+  ) {
+    throw new Error("EVM function signature must be canonical text.");
+  }
+  return `0x${Array.from(
+    keccak_256(new TextEncoder().encode(normalizedSignature)).slice(0, 4),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
 };
 
 const TRON_BASE58_ALPHABET =
@@ -81,8 +133,20 @@ const SCCP_TRON_TRANSACTION_SECRET_KEY_PATTERN =
   /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
 const SCCP_TRON_TRANSACTION_SIGNING_HELPER_KEY_PATTERN =
   /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
+const SCCP_TRON_TRANSACTION_SECRET_INPUT_ERROR =
+  "TRON bridge transaction must not contain secret-like material before broadcast.";
+const SCCP_TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR =
+  "TRON bridge transaction must not contain nested signatures or signing helper payloads before broadcast.";
+const SCCP_MANIFEST_SECRET_KEY_PATTERN =
+  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
 
-export type SccpBridgeDirection = "taira-to-tron" | "tron-to-taira";
+export type SccpCounterpartyKey = "tron" | "bsc";
+
+export type SccpBridgeDirection =
+  | "taira-to-tron"
+  | "tron-to-taira"
+  | "taira-to-bsc"
+  | "bsc-to-taira";
 
 export type SccpTronNetworkKey = "mainnet" | "nile";
 
@@ -95,6 +159,70 @@ export type SccpTronNetworkProfile = {
   rpcUrl: string;
   tronscanUrl: string;
 };
+
+export type SccpBscNetworkKey = "testnet" | "mainnet";
+
+export type SccpBscNetworkProfile = {
+  key: SccpBscNetworkKey;
+  label: string;
+  caipChainId: `eip155:${number}`;
+  chainIdHex: `0x${string}`;
+  networkIdHex: `0x${string}`;
+  rpcUrl: string;
+  explorerUrl: string;
+};
+
+export const SCCP_BSC_NETWORK_PROFILES = {
+  testnet: {
+    key: "testnet",
+    label: "BSC Testnet",
+    caipChainId: BSC_TESTNET_CAIP_CHAIN_ID,
+    chainIdHex: BSC_TESTNET_CHAIN_ID_HEX,
+    networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+    rpcUrl: BSC_TESTNET_RPC_URL,
+    explorerUrl: BSC_TESTNET_EXPLORER_URL,
+  },
+  mainnet: {
+    key: "mainnet",
+    label: "BSC Mainnet",
+    caipChainId: BSC_MAINNET_CAIP_CHAIN_ID,
+    chainIdHex: BSC_MAINNET_CHAIN_ID_HEX,
+    networkIdHex: BSC_MAINNET_NETWORK_ID_HEX,
+    rpcUrl: BSC_MAINNET_RPC_URL,
+    explorerUrl: BSC_MAINNET_EXPLORER_URL,
+  },
+} satisfies Record<SccpBscNetworkKey, SccpBscNetworkProfile>;
+
+export const normalizeSccpBscNetworkKey = (
+  value: unknown,
+): SccpBscNetworkKey => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (
+    !normalized ||
+    normalized === "testnet" ||
+    normalized === "bsc-testnet" ||
+    normalized === "chapel" ||
+    normalized === "bsc-chapel"
+  ) {
+    return "testnet";
+  }
+  if (
+    normalized === "mainnet" ||
+    normalized === "bsc-mainnet" ||
+    normalized === "bnb-mainnet" ||
+    normalized === "bsc"
+  ) {
+    return "mainnet";
+  }
+  throw new Error("SCCP BSC network must be mainnet or testnet.");
+};
+
+export const resolveSccpBscNetworkProfile = (
+  value: unknown,
+): SccpBscNetworkProfile =>
+  SCCP_BSC_NETWORK_PROFILES[normalizeSccpBscNetworkKey(value)];
 
 export const SCCP_TRON_NETWORK_PROFILES = {
   mainnet: {
@@ -142,7 +270,11 @@ export const resolveSccpTronNetworkProfile = (
   SCCP_TRON_NETWORK_PROFILES[normalizeSccpTronNetworkKey(value)];
 
 export const SCCP_TRON_NETWORK = resolveSccpTronNetworkProfile(
-  import.meta.env.VITE_SCCP_TRON_NETWORK || "nile",
+  import.meta.env.VITE_SCCP_TRON_NETWORK || "mainnet",
+);
+
+export const SCCP_BSC_NETWORK = resolveSccpBscNetworkProfile(
+  import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
 );
 
 export type SccpRouteConfig = {
@@ -150,9 +282,16 @@ export type SccpRouteConfig = {
   assetKey: string;
   label: string;
   localDomain: number;
-  tronDomain: number;
-  tronChainId: string;
-  tronNetworkIdHex: string;
+  counterparty: SccpCounterpartyKey;
+  counterpartyDomain: number;
+  caipChainId: string;
+  networkIdHex: string;
+  explorerUrl?: string;
+  rpcUrl?: string;
+  tokenSymbol: string;
+  tronDomain?: number;
+  tronChainId?: string;
+  tronNetworkIdHex?: string;
 };
 
 export const SCCP_XOR_ROUTE: SccpRouteConfig = {
@@ -160,10 +299,62 @@ export const SCCP_XOR_ROUTE: SccpRouteConfig = {
   assetKey: SCCP_XOR_ASSET_KEY,
   label: "XOR / TairaXOR",
   localDomain: SCCP_SORA_DOMAIN,
+  counterparty: "tron",
+  counterpartyDomain: SCCP_TRON_DOMAIN,
+  caipChainId: SCCP_TRON_NETWORK.caipChainId,
+  networkIdHex: SCCP_TRON_NETWORK.networkIdHex,
+  explorerUrl: SCCP_TRON_NETWORK.tronscanUrl,
+  rpcUrl: SCCP_TRON_NETWORK.rpcUrl,
+  tokenSymbol: SCCP_TRON_TOKEN_SYMBOL,
   tronDomain: SCCP_TRON_DOMAIN,
   tronChainId: SCCP_TRON_NETWORK.caipChainId,
   tronNetworkIdHex: SCCP_TRON_NETWORK.networkIdHex,
 };
+
+export const SCCP_BSC_XOR_ROUTE: SccpRouteConfig = {
+  id: SCCP_BSC_XOR_ROUTE_ID,
+  assetKey: SCCP_XOR_ASSET_KEY,
+  label: "XOR / TairaXOR",
+  localDomain: SCCP_SORA_DOMAIN,
+  counterparty: "bsc",
+  counterpartyDomain: SCCP_BSC_DOMAIN,
+  caipChainId: SCCP_BSC_NETWORK.caipChainId,
+  networkIdHex: SCCP_BSC_NETWORK.networkIdHex,
+  explorerUrl: SCCP_BSC_NETWORK.explorerUrl,
+  rpcUrl: SCCP_BSC_NETWORK.rpcUrl,
+  tokenSymbol: SCCP_BSC_TOKEN_SYMBOL,
+};
+
+export const SCCP_ROUTE_PROFILES = {
+  tron: SCCP_XOR_ROUTE,
+  bsc: SCCP_BSC_XOR_ROUTE,
+} satisfies Record<SccpCounterpartyKey, SccpRouteConfig>;
+
+export const normalizeSccpCounterpartyKey = (
+  value: unknown,
+): SccpCounterpartyKey => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized || normalized === "tron") {
+    return "tron";
+  }
+  if (
+    normalized === "bsc" ||
+    normalized === "bsc-testnet" ||
+    normalized === "bsc-mainnet" ||
+    normalized === "bnb" ||
+    normalized === "bnb-testnet" ||
+    normalized === "bnb-mainnet" ||
+    normalized === "chapel"
+  ) {
+    return "bsc";
+  }
+  throw new Error("SCCP counterparty must be TRON or BSC.");
+};
+
+export const resolveSccpRouteProfile = (value: unknown): SccpRouteConfig =>
+  SCCP_ROUTE_PROFILES[normalizeSccpCounterpartyKey(value)];
 
 export type SccpNetworkSnapshot = {
   chainId?: string | null;
@@ -174,16 +365,38 @@ export type SccpRouteReadiness = {
   ready: boolean;
   status: "ready" | "disabled" | "unavailable" | "incomplete";
   reasons: string[];
+  counterparty: SccpCounterpartyKey;
+  manifest: Record<string, unknown> | null;
   tronManifest: Record<string, unknown> | null;
+  bscManifest: Record<string, unknown> | null;
 };
 
 export type WalletConnectSessionSnapshot = {
   topic: string | null;
   address: string | null;
   chainId: string;
-  namespace: typeof WALLETCONNECT_TRON_NAMESPACE;
-  methodVersion: typeof WALLETCONNECT_TRON_METHOD_VERSION;
+  namespace: typeof WALLETCONNECT_TRON_NAMESPACE | "eip155";
+  methodVersion: typeof WALLETCONNECT_TRON_METHOD_VERSION | "eip155-v1";
   connectedAtMs: number;
+};
+
+export type BscSccpProofMaterial = {
+  networkIdHex: string;
+  verifierAddressHex: string;
+  bridgeAddressHex: string;
+  verifierCodeHashHex: string;
+  verifierKeyHashHex: string;
+  expectedDestinationBindingHashHex: string;
+};
+
+export type BscSccpProofBinding = {
+  witness: EvmSccpProofRequestInput;
+  destinationBinding: EvmSccpDestinationBindingInput;
+  messageBundle: Record<string, unknown>;
+  canonicalPayloadHex: string;
+  amountBaseUnits: string;
+  messageId: string;
+  payloadHash: string;
 };
 
 export type TronSmartContractTriggerRequest = {
@@ -238,6 +451,17 @@ export type BoundTronSourceData = {
   solidBlockHash: string;
 };
 
+export type BoundBscSourceData = {
+  txId: string;
+  transaction: Record<string, unknown> | null;
+  receipt: Record<string, unknown>;
+  block: Record<string, unknown> | null;
+  indexedLogs: Record<string, unknown>[] | null;
+  sourceEventDigest: string;
+  receiptBlockNumber: string;
+  receiptBlockHash: string;
+};
+
 export type TronSccpProofMaterial = {
   networkIdHex: string;
   tronVerifierAddress: string;
@@ -253,7 +477,9 @@ export type TronSccpProofQueryMaterial = TronSccpProofMaterial & {
 export type TairaXorOutboundPreview = {
   payload: Record<string, unknown>;
   canonicalPayloadHex: string;
-  recordDescriptor: TairaXorSccpRecordDescriptor;
+  recordDescriptor:
+    | TairaXorSccpRecordDescriptor
+    | TairaXorBscSccpRecordDescriptor;
   messageId: string;
   payloadHash: string;
   contractPayloadHash: string;
@@ -263,6 +489,7 @@ export type TairaXorOutboundPreview = {
 export type TairaXorBurnRecordMaterial = {
   settlementAssetDefinitionId: string;
   contractArtifactB64: string;
+  artifactSha256?: string;
   vkRef: {
     backend: string;
     name: string;
@@ -278,7 +505,9 @@ type TairaXorBurnRecordMaterialResult = {
 export type TairaXorOutboundBurnRecordRequest = {
   outbound: TairaXorOutboundPreview;
   material: TairaXorBurnRecordMaterial;
-  zkIvmRequest: TairaXorSccpBurnRecordZkIvmRequest;
+  zkIvmRequest:
+    | TairaXorSccpBurnRecordZkIvmRequest
+    | TairaXorBscSccpBurnRecordZkIvmRequest;
 };
 
 export type TairaXorFinalizeFromTairaProofBinding = {
@@ -289,6 +518,38 @@ export type TairaXorFinalizeFromTairaProofBinding = {
   amountBaseUnits: string;
   messageId: string;
   payloadHash: string;
+};
+
+export type TairaXorBscFinalizeFromTairaProofBinding = {
+  witness: EvmSccpProofRequestInput;
+  destinationBinding: EvmSccpDestinationBindingInput;
+  messageBundle: Record<string, unknown>;
+  canonicalPayloadHex: string;
+  amountBaseUnits: string;
+  messageId: string;
+  payloadHash: string;
+};
+
+export type TairaXorBscFinalizeTransactionRequest = {
+  transaction: {
+    from: string;
+    to: string;
+    data: string;
+    chainId: SccpBscNetworkProfile["chainIdHex"];
+  };
+  amountBaseUnits: string;
+  messageId: string;
+};
+
+export type TairaXorBscBurnTransactionRequest = {
+  transaction: {
+    from: string;
+    to: string;
+    data: string;
+    chainId: SccpBscNetworkProfile["chainIdHex"];
+    value: "0x0";
+  };
+  amountBaseUnits: string;
 };
 
 export type TairaXorFinalizeTriggerRequest = {
@@ -309,6 +570,20 @@ export type TronToTairaSourceProofPackageInput = {
   amountDecimal: string;
 };
 
+export type BscToTairaSourceProofPackageInput = {
+  manifest: Record<string, unknown> | null | undefined;
+  proofArtifactHash: string;
+  provingKeyHash: string;
+  nativeEvmProverBundleHash: string;
+  txId: string;
+  transaction: Record<string, unknown> | null;
+  receipt: Record<string, unknown>;
+  block?: Record<string, unknown> | null;
+  bscSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+};
+
 export type TronToTairaSourceProofPackage = {
   messageBundle: Record<string, unknown>;
   settlement: Record<string, unknown>;
@@ -316,6 +591,18 @@ export type TronToTairaSourceProofPackage = {
   txId: string;
   messageId: string;
   amountBaseUnits: string;
+};
+
+export type BscToTairaSourceProofPackage = {
+  messageBundle: Record<string, unknown>;
+  settlement: Record<string, unknown>;
+  sourceEventDigest: string;
+  txId: string;
+  messageId: string;
+  amountBaseUnits: string;
+  proofArtifactHash: string;
+  provingKeyHash: string;
+  nativeEvmProverBundleHash: string;
 };
 
 export const isTairaSccpNetwork = (connection: SccpNetworkSnapshot): boolean =>
@@ -500,6 +787,99 @@ export const normalizeTronNetworkIdHex = (
     throw new Error(`TRON SCCP routes must target ${profile.label}.`);
   }
   return normalized;
+};
+
+export const normalizeBscNetworkIdHex = (
+  networkId: string,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): string => {
+  const profile = resolveSccpBscNetworkProfile(bscNetwork);
+  const normalized = networkId.trim().toLowerCase();
+  if (normalized === profile.chainIdHex) {
+    return profile.networkIdHex;
+  }
+  if (normalized !== profile.networkIdHex) {
+    throw new Error(`BSC SCCP routes must target ${profile.label}.`);
+  }
+  return normalized;
+};
+
+export const normalizeEvmAddress = (address: string): string => {
+  const normalized = address.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/u.test(normalized)) {
+    throw new Error("EVM address must be a 20-byte hex address.");
+  }
+  if (/^0x0{40}$/u.test(normalized)) {
+    throw new Error("EVM address must be non-zero.");
+  }
+  return normalized;
+};
+
+const REPEATED_BYTE_EVM_ADDRESS_PATTERN = /^0x([0-9a-f]{2})\1{19}$/u;
+
+export const normalizeBscRouteEvidenceAddress = (
+  address: string,
+  label = "BSC route contract address",
+): string => {
+  const normalized = normalizeEvmAddress(address);
+  if (REPEATED_BYTE_EVM_ADDRESS_PATTERN.test(normalized)) {
+    throw new Error(`${label} must not be repeated-byte placeholder material.`);
+  }
+  return normalized;
+};
+
+export const canonicalEip55EvmAddress = (address: string): string => {
+  const normalized = normalizeEvmAddress(address);
+  const lowercasePayload = normalized.slice(2);
+  const checksum = keccak_256(new TextEncoder().encode(lowercasePayload));
+  let output = "0x";
+  for (let index = 0; index < lowercasePayload.length; index += 1) {
+    const character = lowercasePayload[index];
+    if (/[0-9]/u.test(character)) {
+      output += character;
+      continue;
+    }
+    const checksumByte = checksum[Math.floor(index / 2)];
+    const checksumNibble =
+      index % 2 === 0 ? checksumByte >> 4 : checksumByte & 0x0f;
+    output += checksumNibble >= 8 ? character.toUpperCase() : character;
+  }
+  return output;
+};
+
+export const isValidEvmAddress = (address: string): boolean => {
+  try {
+    normalizeEvmAddress(address);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+};
+
+export const normalizeBscAddress = normalizeEvmAddress;
+
+export const isValidBscAddress = isValidEvmAddress;
+
+export const normalizeBscTransactionHash = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error(
+      "BSC transaction hash must be a 0x-prefixed 32-byte hex hash.",
+    );
+  }
+  if (/^0x0{64}$/u.test(normalized)) {
+    throw new Error("BSC transaction hash must be non-zero.");
+  }
+  return normalized;
+};
+
+export const isValidBscTransactionHash = (value: string): boolean => {
+  try {
+    normalizeBscTransactionHash(value);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 };
 
 export const normalizeBridgeAmount = (value: string): string => {
@@ -758,6 +1138,340 @@ export const readSccpTronProofMaterial = (
   }
 };
 
+const cloneSccpRouteManifestForRead = (
+  manifest: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null =>
+  manifest ? cloneSccpJsonRouteManifest(manifest) : null;
+
+const readSccpBscBridgeAddressFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifest);
+  return readConsistentBscRouteAddressAliasString("BSC bridge address", [
+    {
+      record: manifest,
+      keys: [
+        "tairaXorBridgeAddress",
+        "taira_xor_bridge_address",
+        "bscBridgeAddress",
+        "bsc_bridge_address",
+        "evmBridgeAddress",
+        "evm_bridge_address",
+        "bridgeAddress",
+        "bridge_address",
+        "destinationBridgeAddress",
+        "destination_bridge_address",
+        "bridge_contract_address",
+      ],
+    },
+    {
+      record: rollout,
+      keys: ["destinationBridgeAddress", "destination_bridge_address"],
+    },
+  ]);
+};
+
+export const readSccpBscBridgeAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpBscBridgeAddressFromManifest(cloneSccpRouteManifestForRead(manifest));
+
+const readSccpBscTokenAddressFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  return readConsistentBscRouteAddressAliasString("BSC token address", [
+    {
+      record: manifest,
+      keys: [
+        "tairaXorTokenAddress",
+        "taira_xor_token_address",
+        "bscTokenAddress",
+        "bsc_token_address",
+        "evmTokenAddress",
+        "evm_token_address",
+        "tokenAddress",
+        "token_address",
+        "token_contract_address",
+      ],
+    },
+  ]);
+};
+
+export const readSccpBscTokenAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpBscTokenAddressFromManifest(cloneSccpRouteManifestForRead(manifest));
+
+const assertNoBscRouteAddressAliases = (
+  manifest: Record<string, unknown>,
+  label: string,
+  aliases: string[],
+): void => {
+  const presentAliases = aliases.filter((key) => readString(manifest, key));
+  if (presentAliases.length > 0) {
+    throw new Error(
+      `${label} must not use TRON aliases on a BSC route manifest: ${presentAliases.join(", ")}.`,
+    );
+  }
+};
+
+const readSccpBscSourceBridgeAddressFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  assertNoBscRouteAddressAliases(manifest, "BSC source bridge address", [
+    "sccpTronSourceBridgeAddress",
+    "sccp_tron_source_bridge_address",
+    "tronSourceBridgeAddress",
+    "tron_source_bridge_address",
+  ]);
+  return readConsistentBscRouteAddressAliasString("BSC source bridge address", [
+    {
+      record: manifest,
+      keys: [
+        "sccpBscSourceBridgeAddress",
+        "sccp_bsc_source_bridge_address",
+        "bscSourceBridgeAddress",
+        "bsc_source_bridge_address",
+        "evmSourceBridgeAddress",
+        "evm_source_bridge_address",
+        "sourceBridgeAddress",
+        "source_bridge_address",
+      ],
+    },
+  ]);
+};
+
+export const readSccpBscSourceBridgeAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpBscSourceBridgeAddressFromManifest(
+    cloneSccpRouteManifestForRead(manifest),
+  );
+
+const readSccpBscVerifierAddressFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifest);
+  assertNoBscRouteAddressAliases(manifest, "BSC verifier address", [
+    "tronVerifierAddress",
+    "tron_verifier_address",
+    "sccpTronDestinationVerifierAddress",
+    "sccp_tron_destination_verifier_address",
+  ]);
+  return readConsistentBscRouteAddressAliasString("BSC verifier address", [
+    {
+      record: manifest,
+      keys: [
+        "sccpBscDestinationVerifierAddress",
+        "sccp_bsc_destination_verifier_address",
+        "destinationVerifierAddress",
+        "destination_verifier_address",
+        "verifierAddress",
+        "verifier_address",
+        "bscVerifierAddress",
+        "bsc_verifier_address",
+        "evmVerifierAddress",
+        "evm_verifier_address",
+        "verifierAddressHex",
+        "verifier_address_hex",
+      ],
+    },
+    {
+      record: rollout,
+      keys: ["verifierIdentity", "verifier_identity"],
+    },
+  ]);
+};
+
+export const readSccpBscVerifierAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpBscVerifierAddressFromManifest(
+    cloneSccpRouteManifestForRead(manifest),
+  );
+
+const readSccpBscProofMaterialStrict = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): BscSccpProofMaterial => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    throw new Error("The BSC SCCP verifier rollout proof material is missing.");
+  }
+  const selectedNetwork =
+    readManifestBscNetworkKey(manifestForRead) ?? bscNetwork;
+  const rollout = readDestinationRollout(manifestForRead);
+  const networkId = readConsistentBscNetworkIdAliasString(
+    "BSC network id",
+    [
+      {
+        record: manifestForRead,
+        sourceLabel: "route manifest",
+        keys: ["networkIdHex", "network_id_hex"],
+      },
+      {
+        record: rollout,
+        sourceLabel: "route manifest destinationRollout",
+        keys: [
+          "destinationNetworkId",
+          "destination_network_id",
+          "networkIdHex",
+          "network_id_hex",
+        ],
+      },
+    ],
+    selectedNetwork,
+  );
+  const verifierCodeHash = readConsistentHex32AliasString(
+    "BSC verifier code hash",
+    [
+      {
+        record: manifestForRead,
+        sourceLabel: "route manifest",
+        keys: [
+          "verifierCodeHash",
+          "verifier_code_hash",
+          "verifierCodeHashHex",
+          "verifier_code_hash_hex",
+        ],
+      },
+      {
+        record: rollout,
+        sourceLabel: "route manifest destinationRollout",
+        keys: [
+          "verifierCodeHash",
+          "verifier_code_hash",
+          "verifierCodeHashHex",
+          "verifier_code_hash_hex",
+        ],
+      },
+    ],
+  );
+  const verifierKeyHash = readConsistentHex32AliasString(
+    "BSC verifier key hash",
+    [
+      {
+        record: manifestForRead,
+        sourceLabel: "route manifest",
+        keys: [
+          "verifierKeyHash",
+          "verifier_key_hash",
+          "verifierKeyHashHex",
+          "verifier_key_hash_hex",
+        ],
+      },
+      {
+        record: rollout,
+        sourceLabel: "route manifest destinationRollout",
+        keys: [
+          "verifierKeyHash",
+          "verifier_key_hash",
+          "verifierKeyHashHex",
+          "verifier_key_hash_hex",
+        ],
+      },
+    ],
+  );
+  const destinationBindingHash = readConsistentHex32AliasString(
+    "BSC destination binding hash",
+    [
+      {
+        record: manifestForRead,
+        sourceLabel: "route manifest",
+        keys: [
+          "expectedDestinationBindingHashHex",
+          "expected_destination_binding_hash_hex",
+          "destinationBindingHash",
+          "destination_binding_hash",
+        ],
+      },
+      {
+        record: rollout,
+        sourceLabel: "route manifest destinationRollout",
+        keys: [
+          "expectedDestinationBindingHashHex",
+          "expected_destination_binding_hash_hex",
+          "destinationBindingHash",
+          "destination_binding_hash",
+        ],
+      },
+      {
+        record: readFirstRecord(
+          manifestForRead,
+          "destinationBinding",
+          "destination_binding",
+        ),
+        sourceLabel: "route manifest destinationBinding",
+        keys: ["bindingHash", "binding_hash"],
+      },
+    ],
+  );
+  const material = {
+    networkIdHex: normalizeBscNetworkIdHex(networkId, selectedNetwork),
+    verifierAddressHex: normalizeEvmAddress(
+      readSccpBscVerifierAddressFromManifest(manifestForRead),
+    ),
+    bridgeAddressHex: normalizeEvmAddress(
+      readSccpBscBridgeAddressFromManifest(manifestForRead),
+    ),
+    verifierCodeHashHex: normalizeHex32(
+      verifierCodeHash,
+      "BSC verifier code hash",
+    ),
+    verifierKeyHashHex: normalizeHex32(
+      verifierKeyHash,
+      "BSC verifier key hash",
+    ),
+    expectedDestinationBindingHashHex: normalizeHex32(
+      destinationBindingHash,
+      "BSC destination binding hash",
+    ),
+  };
+  assertBscHashRolesSeparated("BSC verifier rollout proof material", [
+    ["verifierCodeHash", material.verifierCodeHashHex],
+    ["verifierKeyHash", material.verifierKeyHashHex],
+    ["destinationBindingHash", material.expectedDestinationBindingHashHex],
+  ]);
+  return material;
+};
+
+export const readSccpBscProofMaterial = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): BscSccpProofMaterial | null => {
+  try {
+    return readSccpBscProofMaterialStrict(manifest, bscNetwork);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readSccpBscProofMaterialFailureReason = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): string => {
+  try {
+    readSccpBscProofMaterialStrict(manifest, bscNetwork);
+    return "";
+  } catch (error) {
+    return error instanceof Error
+      ? error.message
+      : "The BSC SCCP verifier rollout proof material is incomplete.";
+  }
+};
+
 const readFirstString = (
   record: Record<string, unknown> | null | undefined,
   ...keys: string[]
@@ -774,6 +1488,68 @@ const readFirstString = (
   return "";
 };
 
+const hasOwnKey = (
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): boolean =>
+  Boolean(record && Object.prototype.hasOwnProperty.call(record, key));
+
+const hasAnyOwnKey = (
+  record: Record<string, unknown> | null | undefined,
+  keys: string[],
+): boolean => keys.some((key) => hasOwnKey(record, key));
+
+const readConsistentEvmAliasString = (
+  label: string,
+  sources: Array<{
+    record: Record<string, unknown> | null | undefined;
+    keys: string[];
+  }>,
+): string => {
+  let selectedValue = "";
+  let selectedKey = "";
+  let selectedComparable = "";
+  for (const source of sources) {
+    if (!source.record) {
+      continue;
+    }
+    const record = source.record;
+    for (const key of source.keys) {
+      const value = readString(record, key);
+      if (!value) {
+        continue;
+      }
+      const comparable = value.toLowerCase();
+      if (!selectedValue) {
+        selectedValue = value;
+        selectedKey = key;
+        selectedComparable = comparable;
+        continue;
+      }
+      if (selectedComparable !== comparable) {
+        throw new Error(
+          `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${value}.`,
+        );
+      }
+    }
+  }
+  return selectedValue;
+};
+
+const readConsistentBscRouteAddressAliasString = (
+  label: string,
+  sources: Array<{
+    record: Record<string, unknown> | null | undefined;
+    keys: string[];
+  }>,
+): string => {
+  const selectedValue = readConsistentEvmAliasString(label, sources);
+  if (selectedValue) {
+    normalizeBscRouteEvidenceAddress(selectedValue, label);
+  }
+  return selectedValue;
+};
+
 const readFirstRecord = (
   record: Record<string, unknown> | null | undefined,
   ...keys: string[]
@@ -788,6 +1564,142 @@ const readFirstRecord = (
     }
   }
   return null;
+};
+
+const readConsistentHex32AliasString = (
+  label: string,
+  sources: Array<{
+    record: Record<string, unknown> | null | undefined;
+    keys: string[];
+    sourceLabel?: string;
+  }>,
+): string => {
+  let selected = "";
+  let selectedKey = "";
+  for (const source of sources) {
+    if (!source.record) {
+      continue;
+    }
+    const record = source.record;
+    const presentKeys = source.keys.filter((key) =>
+      Boolean(readString(record, key)),
+    );
+    if (presentKeys.length > 1) {
+      throw new Error(
+        `${label} must not use multiple aliases in ${
+          source.sourceLabel ?? "manifest object"
+        }: ${presentKeys.join(", ")}.`,
+      );
+    }
+    for (const key of source.keys) {
+      const value = readString(record, key);
+      if (!value) {
+        continue;
+      }
+      const normalized = normalizeNonZeroHex32Loose(value, label);
+      if (!selected) {
+        selected = normalized;
+        selectedKey = key;
+        continue;
+      }
+      if (selected !== normalized) {
+        throw new Error(
+          `${label} aliases disagree: ${selectedKey}=${selected} but ${key}=${value}.`,
+        );
+      }
+    }
+  }
+  return selected;
+};
+
+const readConsistentBscNetworkIdAliasString = (
+  label: string,
+  sources: Array<{
+    record: Record<string, unknown> | null | undefined;
+    keys: string[];
+    sourceLabel?: string;
+  }>,
+  bscNetwork: unknown,
+): string => {
+  let selected = "";
+  let selectedKey = "";
+  for (const source of sources) {
+    if (!source.record) {
+      continue;
+    }
+    const record = source.record;
+    const presentKeys = source.keys.filter((key) =>
+      Boolean(readString(record, key)),
+    );
+    if (presentKeys.length > 1) {
+      throw new Error(
+        `${label} must not use multiple aliases in ${
+          source.sourceLabel ?? "manifest object"
+        }: ${presentKeys.join(", ")}.`,
+      );
+    }
+    for (const key of source.keys) {
+      const value = readString(record, key);
+      if (!value) {
+        continue;
+      }
+      let normalized = "";
+      try {
+        normalized = normalizeBscNetworkIdHex(value, bscNetwork);
+      } catch (error) {
+        if (selected) {
+          throw new Error(
+            `${label} aliases disagree: ${selectedKey}=${selected} but ${key}=${value}.`,
+          );
+        }
+        throw error;
+      }
+      if (!selected) {
+        selected = normalized;
+        selectedKey = key;
+        continue;
+      }
+      if (selected !== normalized) {
+        throw new Error(
+          `${label} aliases disagree: ${selectedKey}=${selected} but ${key}=${value}.`,
+        );
+      }
+    }
+  }
+  return selected;
+};
+
+const SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_KEYS = [
+  "nativeEvmProverBundle",
+  "native_evm_prover_bundle",
+  "bscNativeEvmProverBundle",
+  "bsc_native_evm_prover_bundle",
+  "nativeProverBundle",
+  "native_prover_bundle",
+  "proverBundle",
+  "prover_bundle",
+] as const;
+
+const readBscNativeEvmProverBundleRecords = (
+  manifest: Record<string, unknown>,
+): Array<{ path: string; value: Record<string, unknown> }> => {
+  const rollout = readDestinationRollout(manifest);
+  const entries: Array<{ path: string; value: Record<string, unknown> }> = [];
+  for (const [record, pathName] of [
+    [manifest, "manifest"],
+    [rollout, "manifest.destinationRollout"],
+  ] as const) {
+    if (!record) {
+      continue;
+    }
+    for (const key of SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_KEYS) {
+      const value = readRecord(record, key);
+      if (value) {
+        entries.push({ path: `${pathName}.${key}`, value });
+      }
+    }
+  }
+  return entries;
 };
 
 const readBurnRecordVkRef = (
@@ -822,13 +1734,32 @@ const readBurnRecordVkRef = (
   return backend && name ? { backend, name } : null;
 };
 
+const readBurnRecordArtifactSha256 = (
+  manifest: Record<string, unknown>,
+  burnRecord: Record<string, unknown> | null,
+): string =>
+  readFirstString(
+    burnRecord,
+    "artifactSha256",
+    "artifact_sha256",
+    "contractArtifactSha256",
+    "contract_artifact_sha256",
+  ) ||
+  readFirstString(
+    manifest,
+    "tairaXorBurnRecordArtifactSha256",
+    "taira_xor_burn_record_artifact_sha256",
+    "burnRecordArtifactSha256",
+    "burn_record_artifact_sha256",
+  );
+
 const isCanonicalTairaAssetDefinitionId = (value: string): boolean =>
   /^[1-9A-HJ-NP-Za-km-z]{16,80}$/u.test(value);
 
 const SCCP_BURN_RECORD_ARTIFACT_MIN_BYTES = 32;
 const SCCP_BURN_RECORD_ARTIFACT_MAX_BYTES = 8 * 1024 * 1024;
 
-const strictBase64DecodedLength = (value: string): number | null => {
+const strictBase64DecodedBytes = (value: string): Uint8Array | null => {
   const normalized = value.trim();
   if (
     normalized.length < 8 ||
@@ -839,13 +1770,17 @@ const strictBase64DecodedLength = (value: string): number | null => {
   }
   try {
     const decoded = atob(normalized);
-    return decoded.length > 0 && btoa(decoded) === normalized
-      ? decoded.length
-      : null;
+    if (decoded.length === 0 || btoa(decoded) !== normalized) {
+      return null;
+    }
+    return Uint8Array.from(decoded, (character) => character.charCodeAt(0));
   } catch (_error) {
     return null;
   }
 };
+
+const strictBase64DecodedLength = (value: string): number | null =>
+  strictBase64DecodedBytes(value)?.length ?? null;
 
 const readSccpTairaBurnRecordMaterialResult = (
   manifest: Record<string, unknown> | null | undefined,
@@ -941,10 +1876,12 @@ const readSccpTairaBurnRecordMaterialResult = (
       reason: "The TAIRA burn-record gas limit must be positive.",
     };
   }
+  const artifactSha256 = readBurnRecordArtifactSha256(manifest, burnRecord);
   return {
     material: {
       settlementAssetDefinitionId,
       contractArtifactB64,
+      ...(artifactSha256 ? { artifactSha256 } : {}),
       vkRef,
       gasLimit,
     },
@@ -1001,6 +1938,38 @@ export const buildTairaXorBurnTriggerRequest = (input: {
   };
 };
 
+export const buildTairaXorBscBurnTransactionRequest = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  ownerAddress: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+}): TairaXorBscBurnTransactionRequest => {
+  const ownerAddress = normalizeBscAddress(input.ownerAddress);
+  const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
+  const bscProfile = resolveManifestBscNetworkProfile(input.manifest);
+  const bridgeAddress = readSccpBscBridgeAddress(input.manifest);
+  if (!bridgeAddress) {
+    throw new Error("The BSC bridge deployment address is missing.");
+  }
+  const normalizedBridgeAddress = normalizeBscAddress(bridgeAddress);
+  const amount = bridgeDecimalToBaseUnits(
+    normalizeBridgeAmount(input.amountDecimal),
+  );
+  return {
+    transaction: {
+      from: ownerAddress,
+      to: normalizedBridgeAddress,
+      data: tairaXorBscBurnToTairaAccountCallData({
+        tairaRecipient,
+        amount,
+      }),
+      chainId: bscProfile.chainIdHex,
+      value: "0x0",
+    },
+    amountBaseUnits: amount,
+  };
+};
+
 export const buildTairaXorOutboundPreview = (input: {
   manifest: Record<string, unknown> | null | undefined;
   tairaSender: string;
@@ -1047,6 +2016,53 @@ export const buildTairaXorOutboundPreview = (input: {
   };
 };
 
+export const buildTairaXorBscOutboundPreview = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  bscRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+}): TairaXorOutboundPreview => {
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const recipientAddress = normalizeBscAddress(input.bscRecipient);
+  const bridgeAddress = readSccpBscBridgeAddress(input.manifest);
+  if (!bridgeAddress) {
+    throw new Error("The BSC bridge deployment address is missing.");
+  }
+  normalizeBscAddress(bridgeAddress);
+  const amount = bridgeDecimalToBaseUnits(input.amountDecimal);
+  if (amount === "0") {
+    throw new Error("Amount must be greater than zero.");
+  }
+  const recordDescriptor = buildTairaXorBscSccpRecordDescriptor({
+    chainId: TAIRA_CHAIN_ID,
+    networkPrefix: TAIRA_NETWORK_PREFIX,
+    tairaSender,
+    recipientAddress,
+    amount,
+    nonce: input.nonce,
+  });
+  const payload = recordDescriptor.payload as unknown as Record<
+    string,
+    unknown
+  >;
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: payload,
+  });
+  return {
+    payload,
+    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
+    recordDescriptor,
+    messageId: recordDescriptor.message_id,
+    payloadHash: sccpPayloadHash(canonicalPayloadEnvelopeBytes),
+    contractPayloadHash: sccpPayloadHash(
+      recordDescriptor.canonicalPayloadBytes,
+    ),
+    amountBaseUnits: amount,
+  };
+};
+
 export const buildTairaXorOutboundBurnRecordRequest = (input: {
   manifest: Record<string, unknown> | null | undefined;
   tairaSender: string;
@@ -1069,11 +2085,53 @@ export const buildTairaXorOutboundBurnRecordRequest = (input: {
     ? normalizeTairaAccountId(input.authority)
     : tairaSender;
   const zkIvmRequest = buildTairaXorSccpBurnRecordZkIvmRequest({
-    descriptor: outbound.recordDescriptor,
+    descriptor: outbound.recordDescriptor as TairaXorSccpRecordDescriptor,
     chainId: TAIRA_CHAIN_ID,
     networkPrefix: TAIRA_NETWORK_PREFIX,
     sender: tairaSender,
     recipientAddress: normalizeTronAddress(input.tronRecipient),
+    amount: outbound.amountBaseUnits,
+    nonce: input.nonce,
+    settlementAssetDefinitionId: material.settlementAssetDefinitionId,
+    authority,
+    vkRef: material.vkRef,
+    bytecode: material.contractArtifactB64,
+    gasLimit: material.gasLimit,
+  });
+  return {
+    outbound,
+    material,
+    zkIvmRequest,
+  };
+};
+
+export const buildTairaXorBscOutboundBurnRecordRequest = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  bscRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+  authority?: string;
+}): TairaXorOutboundBurnRecordRequest => {
+  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
+  const material = materialResult.material;
+  if (!material) {
+    throw new Error(
+      materialResult.reason ??
+        "The TAIRA burn-record ZK contract material is missing.",
+    );
+  }
+  const outbound = buildTairaXorBscOutboundPreview(input);
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const authority = input.authority
+    ? normalizeTairaAccountId(input.authority)
+    : tairaSender;
+  const zkIvmRequest = buildTairaXorBscSccpBurnRecordZkIvmRequest({
+    descriptor: outbound.recordDescriptor as TairaXorBscSccpRecordDescriptor,
+    chainId: TAIRA_CHAIN_ID,
+    networkPrefix: TAIRA_NETWORK_PREFIX,
+    sender: tairaSender,
+    recipientAddress: normalizeBscAddress(input.bscRecipient),
     amount: outbound.amountBaseUnits,
     nonce: input.nonce,
     settlementAssetDefinitionId: material.settlementAssetDefinitionId,
@@ -1097,6 +2155,302 @@ const normalizeHex32 = (value: string, label: string): string => {
   return normalized;
 };
 
+const bscHashRoleSeparationReasons = (
+  roles: Array<[string, string | null | undefined]>,
+): string[] => {
+  const seen = new Map<string, string>();
+  const reasons: string[] = [];
+  for (const [label, value] of roles) {
+    if (!value) {
+      continue;
+    }
+    let normalized = "";
+    try {
+      normalized = normalizeHex32(value, `BSC ${label}`);
+    } catch (_error) {
+      continue;
+    }
+    const previous = seen.get(normalized);
+    if (previous) {
+      reasons.push(`${label} must not equal ${previous}`);
+    } else {
+      seen.set(normalized, label);
+    }
+  }
+  return reasons;
+};
+
+const assertBscHashRolesSeparated = (
+  label: string,
+  roles: Array<[string, string | null | undefined]>,
+): void => {
+  const reasons = bscHashRoleSeparationReasons(roles);
+  if (reasons.length > 0) {
+    throw new Error(
+      `${label} hashes must be role-separated: ${reasons.join("; ")}.`,
+    );
+  }
+};
+
+const isKnownDiagnosticBscVerifierKeyHash = (value: string): boolean => {
+  try {
+    return SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES.has(
+      normalizeHex32(value, "BSC verifier key hash"),
+    );
+  } catch (_error) {
+    return false;
+  }
+};
+
+const SCCP_BSC_DIAGNOSTIC_TEXT_KEYS = [
+  "schema",
+  "warning",
+  "warnings",
+  "note",
+  "notes",
+  "operatorWarning",
+  "operator_warning",
+  "verifierWarning",
+  "verifier_warning",
+  "verifierMaterialWarning",
+  "verifier_material_warning",
+  "diagnosticReason",
+  "diagnostic_reason",
+] as const;
+
+const SCCP_BSC_DIAGNOSTIC_FLAG_KEYS = [
+  "diagnosticVerifier",
+  "diagnostic_verifier",
+  "diagnosticVerifierMaterial",
+  "diagnostic_verifier_material",
+  "diagnostic",
+] as const;
+
+const SCCP_BSC_PRODUCTION_PLACEHOLDER_PATTERN =
+  /(?:change[-_ ]?me|changeme|dummy|example|mock|placeholder|replace[-_ ]?me|sample|stub|test[-_ ]?only|fixture[-_ ]?only|todo|your[-_ ]?[a-z0-9_-]*)/iu;
+
+const isCanonicalBscMaterialArrayIndexKey = (
+  key: string,
+  length: number,
+): boolean => {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+    return false;
+  }
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index >= 0 && index < length;
+};
+
+const unsafeBscMaterialShapeReason = (pathName: string): string =>
+  `${pathName} must contain only enumerable string-keyed data properties while scanning BSC production material`;
+
+const readBscMaterialDataProperty = (
+  record: Record<string, unknown>,
+  key: string,
+  pathName: string,
+):
+  | { ok: true; present: boolean; value: unknown }
+  | { ok: false; reason: string } => {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor) {
+    return { ok: true, present: false, value: undefined };
+  }
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    return { ok: false, reason: unsafeBscMaterialShapeReason(pathName) };
+  }
+  return { ok: true, present: true, value: descriptor.value };
+};
+
+const diagnosticTextReason = (
+  value: unknown,
+  pathName: string,
+  seen = new WeakSet<object>(),
+): string => {
+  if (typeof value === "string") {
+    return /\bdiagnostic\b/iu.test(value)
+      ? `${pathName} mentions diagnostic verifier material`
+      : "";
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "";
+    }
+    seen.add(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+        return unsafeBscMaterialShapeReason(pathName);
+      }
+    }
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (key === "length") {
+        continue;
+      }
+      if (
+        typeof key !== "string" ||
+        !isCanonicalBscMaterialArrayIndexKey(key, value.length)
+      ) {
+        return unsafeBscMaterialShapeReason(pathName);
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        return unsafeBscMaterialShapeReason(`${pathName}[${key}]`);
+      }
+      const reason = diagnosticTextReason(
+        descriptor.value,
+        `${pathName}[${key}]`,
+        seen,
+      );
+      if (reason) {
+        return reason;
+      }
+    }
+  }
+  return "";
+};
+
+const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const bscProductionPlaceholderReason = (
+  value: unknown,
+  pathName = "manifest",
+  seen = new WeakSet<object>(),
+): string => {
+  if (typeof value === "string") {
+    return SCCP_BSC_PRODUCTION_PLACEHOLDER_PATTERN.test(value)
+      ? `${pathName} contains placeholder, fixture-only, or test-only material`
+      : "";
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return "";
+    }
+    seen.add(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+        return unsafeBscMaterialShapeReason(pathName);
+      }
+    }
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (key === "length") {
+        continue;
+      }
+      if (
+        typeof key !== "string" ||
+        !isCanonicalBscMaterialArrayIndexKey(key, value.length)
+      ) {
+        return unsafeBscMaterialShapeReason(pathName);
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        return unsafeBscMaterialShapeReason(`${pathName}[${key}]`);
+      }
+      const reason = bscProductionPlaceholderReason(
+        descriptor.value,
+        `${pathName}[${key}]`,
+        seen,
+      );
+      if (reason) {
+        return reason;
+      }
+    }
+    return "";
+  }
+  if (!isPlainRecord(value)) {
+    return "";
+  }
+  if (seen.has(value)) {
+    return "";
+  }
+  seen.add(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string") {
+      return unsafeBscMaterialShapeReason(pathName);
+    }
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      return unsafeBscMaterialShapeReason(`${pathName}.${key}`);
+    }
+    const childPath = `${pathName}.${key}`;
+    if (SCCP_BSC_PRODUCTION_PLACEHOLDER_PATTERN.test(key)) {
+      return `${childPath} is placeholder, fixture-only, or test-only material`;
+    }
+    const reason = bscProductionPlaceholderReason(
+      descriptor.value,
+      childPath,
+      seen,
+    );
+    if (reason) {
+      return reason;
+    }
+  }
+  return "";
+};
+
+const bscDiagnosticVerifierMaterialReasons = (
+  manifest: Record<string, unknown>,
+  proofMaterial: BscSccpProofMaterial | null,
+): string[] => {
+  const records: Array<[Record<string, unknown> | null, string]> = [
+    [manifest, "manifest"],
+    [readDestinationRollout(manifest), "manifest.destinationRollout"],
+    [
+      readFirstRecord(
+        manifest,
+        "postDeployLiveEvidence",
+        "post_deploy_live_evidence",
+      ),
+      "manifest.postDeployLiveEvidence",
+    ],
+  ];
+  const reasons: string[] = [];
+  for (const [record, pathName] of records) {
+    if (!record) {
+      continue;
+    }
+    for (const key of SCCP_BSC_DIAGNOSTIC_FLAG_KEYS) {
+      const value = readBscMaterialDataProperty(
+        record,
+        key,
+        `${pathName}.${key}`,
+      );
+      if (!value.ok) {
+        reasons.push(value.reason);
+      } else if (value.present && value.value === true) {
+        reasons.push(`${pathName}.${key}=true`);
+      }
+    }
+    for (const key of SCCP_BSC_DIAGNOSTIC_TEXT_KEYS) {
+      const value = readBscMaterialDataProperty(
+        record,
+        key,
+        `${pathName}.${key}`,
+      );
+      if (!value.ok) {
+        reasons.push(value.reason);
+        continue;
+      }
+      if (value.present) {
+        const reason = diagnosticTextReason(value.value, `${pathName}.${key}`);
+        if (reason) {
+          reasons.push(reason);
+        }
+      }
+    }
+  }
+  if (
+    proofMaterial &&
+    isKnownDiagnosticBscVerifierKeyHash(proofMaterial.verifierKeyHashHex)
+  ) {
+    reasons.push(
+      `verifierKeyHash=${proofMaterial.verifierKeyHashHex} is a known diagnostic BSC verifier key hash`,
+    );
+  }
+  return reasons;
+};
+
 const normalizeNonZeroHex32Loose = (value: string, label: string): string => {
   const normalized = value.trim().toLowerCase().replace(/^0x/u, "");
   if (!/^[0-9a-f]{64}$/u.test(normalized)) {
@@ -1108,21 +2462,348 @@ const normalizeNonZeroHex32Loose = (value: string, label: string): string => {
   return `0x${normalized}`;
 };
 
-const normalizeHexBytes = (
-  value: string,
-  byteLength: number,
-  label: string,
-): string => {
-  const normalized = value.trim().toLowerCase();
-  const hexLength = byteLength * 2;
-  if (
-    !normalized.startsWith("0x") ||
-    normalized.length !== hexLength + 2 ||
-    !/^[0-9a-f]+$/u.test(normalized.slice(2))
-  ) {
-    throw new Error(`${label} must be a ${byteLength}-byte hex value.`);
+const readBscRouteNativeProverHashMaterial = (
+  manifest: Record<string, unknown>,
+): { proofArtifactHash: string; provingKeyHash: string } => {
+  const rollout = readDestinationRollout(manifest);
+  const hashes = {
+    proofArtifactHash: readConsistentHex32AliasString(
+      "BSC proof artifact hash",
+      [
+        {
+          record: manifest,
+          sourceLabel: "route manifest",
+          keys: [
+            "proofArtifactHash",
+            "proof_artifact_hash",
+            "proverArtifactHash",
+            "prover_artifact_hash",
+            "circuitArtifactHash",
+            "circuit_artifact_hash",
+          ],
+        },
+        {
+          record: rollout,
+          sourceLabel: "route manifest destinationRollout",
+          keys: [
+            "proofArtifactHash",
+            "proof_artifact_hash",
+            "proverArtifactHash",
+            "prover_artifact_hash",
+            "circuitArtifactHash",
+            "circuit_artifact_hash",
+          ],
+        },
+      ],
+    ),
+    provingKeyHash: readConsistentHex32AliasString("BSC proving key hash", [
+      {
+        record: manifest,
+        sourceLabel: "route manifest",
+        keys: ["provingKeyHash", "proving_key_hash"],
+      },
+      {
+        record: rollout,
+        sourceLabel: "route manifest destinationRollout",
+        keys: ["provingKeyHash", "proving_key_hash"],
+      },
+    ]),
+  };
+  assertBscHashRolesSeparated("BSC route native prover material", [
+    ["proofArtifactHash", hashes.proofArtifactHash],
+    ["provingKeyHash", hashes.provingKeyHash],
+  ]);
+  return hashes;
+};
+
+type BscNativeEvmProverBundleDescriptor =
+  | ReturnType<typeof validateBscTestnetNativeEvmProverBundle>
+  | ReturnType<typeof validateBscMainnetNativeEvmProverBundle>;
+
+const bscNativeEvmProverBundleValidator = (network: SccpBscNetworkKey) =>
+  network === "mainnet"
+    ? validateBscMainnetNativeEvmProverBundle
+    : validateBscTestnetNativeEvmProverBundle;
+
+const canonicalBscNativeEvmProverBundleHash = (
+  bundle: BscNativeEvmProverBundleDescriptor,
+): string =>
+  bytesToLowerHex(
+    sha256(
+      new TextEncoder().encode(
+        JSON.stringify({
+          schema: bundle.schema,
+          bundleId: bundle.bundleId,
+          domain: bundle.domain,
+          chain: bundle.chain,
+          proofBackend: bundle.proofBackend,
+          proofArtifact: bundle.proofArtifact,
+          proofArtifactHash: bundle.proofArtifactHash,
+          provingKey: bundle.provingKey,
+          provingKeyHash: bundle.provingKeyHash,
+          verifierKey: bundle.verifierKey,
+          verifierKeyHash: bundle.verifierKeyHash,
+          destinationBindingHash: bundle.destinationBindingHash,
+          noWasm: bundle.noWasm,
+          remoteProverRequired: bundle.remoteProverRequired,
+          browserImplementation: bundle.browserImplementation,
+          nativeSdkArtifacts: bundle.nativeSdkArtifacts,
+          crossSdkParityArtifact: bundle.crossSdkParityArtifact,
+          nativeProverSelfTestArtifact: bundle.nativeProverSelfTestArtifact,
+          auditHashes: bundle.auditHashes,
+        }),
+      ),
+    ),
+  );
+
+export type BscSourceProverMaterialBinding = {
+  proofArtifactHash: string;
+  provingKeyHash: string;
+  nativeEvmProverBundleHash: string;
+};
+
+export const readBscSourceProverMaterialBinding = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): BscSourceProverMaterialBinding => {
+  if (!isPlainRecord(manifest)) {
+    throw new Error("The BSC SCCP source prover manifest is missing.");
   }
-  return normalized;
+  const manifestForRead = cloneSccpJsonRouteManifest(manifest);
+  const selectedNetwork =
+    readManifestBscNetworkKey(manifestForRead) ??
+    normalizeSccpBscNetworkKey(bscNetwork);
+  const profile = resolveSccpBscNetworkProfile(selectedNetwork);
+  const routeHashes = readBscRouteNativeProverHashMaterial(manifestForRead);
+  const proofMaterial = readSccpBscProofMaterial(manifestForRead, profile.key);
+  if (!proofMaterial) {
+    throw new Error(
+      "The BSC SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  assertBscHashRolesSeparated("BSC source prover material", [
+    ["verifierCodeHash", proofMaterial.verifierCodeHashHex],
+    ["verifierKeyHash", proofMaterial.verifierKeyHashHex],
+    ["destinationBindingHash", proofMaterial.expectedDestinationBindingHashHex],
+    ["proofArtifactHash", routeHashes.proofArtifactHash],
+    ["provingKeyHash", routeHashes.provingKeyHash],
+  ]);
+  const entries = readBscNativeEvmProverBundleRecords(manifestForRead);
+  if (entries.length === 0) {
+    throw new Error("The BSC native EVM prover bundle is required.");
+  }
+  const validateBundle = bscNativeEvmProverBundleValidator(profile.key);
+  let selectedHash = "";
+  let selectedPath = "";
+  for (const entry of entries) {
+    const normalized = validateBundle(entry.value as never, {
+      expectedDestinationBindingHash:
+        proofMaterial.expectedDestinationBindingHashHex,
+    });
+    if (normalized.proofArtifactHash !== routeHashes.proofArtifactHash) {
+      throw new Error(
+        `${entry.path}.proofArtifactHash does not match the BSC route proofArtifactHash.`,
+      );
+    }
+    if (normalized.provingKeyHash !== routeHashes.provingKeyHash) {
+      throw new Error(
+        `${entry.path}.provingKeyHash does not match the BSC route provingKeyHash.`,
+      );
+    }
+    if (normalized.verifierKeyHash !== proofMaterial.verifierKeyHashHex) {
+      throw new Error(
+        `${entry.path}.verifierKeyHash does not match the BSC route verifierKeyHash.`,
+      );
+    }
+    const hash = canonicalBscNativeEvmProverBundleHash(normalized);
+    if (selectedHash && selectedHash !== hash) {
+      throw new Error(
+        `BSC native EVM prover bundle aliases disagree: ${selectedPath} does not match ${entry.path}.`,
+      );
+    }
+    selectedHash = hash;
+    selectedPath = entry.path;
+  }
+  assertBscHashRolesSeparated("BSC source prover material", [
+    ["verifierCodeHash", proofMaterial.verifierCodeHashHex],
+    ["verifierKeyHash", proofMaterial.verifierKeyHashHex],
+    ["destinationBindingHash", proofMaterial.expectedDestinationBindingHashHex],
+    ["proofArtifactHash", routeHashes.proofArtifactHash],
+    ["provingKeyHash", routeHashes.provingKeyHash],
+    ["nativeEvmProverBundleHash", selectedHash],
+  ]);
+
+  return {
+    proofArtifactHash: routeHashes.proofArtifactHash,
+    provingKeyHash: routeHashes.provingKeyHash,
+    nativeEvmProverBundleHash: selectedHash,
+  };
+};
+
+const bscNativeEvmProverBundleReadinessReasons = (
+  manifest: Record<string, unknown>,
+  proofMaterial: BscSccpProofMaterial | null,
+  bscNetwork: SccpBscNetworkKey = SCCP_BSC_NETWORK.key,
+): string[] => {
+  const reasons: string[] = [];
+  const validateBundle = bscNativeEvmProverBundleValidator(bscNetwork);
+  const entries = readBscNativeEvmProverBundleRecords(manifest);
+  if (entries.length === 0) {
+    reasons.push("The BSC native EVM prover bundle is required.");
+  }
+  if (!proofMaterial) {
+    reasons.push(
+      "The BSC native EVM prover bundle requires complete verifier rollout proof material.",
+    );
+  }
+  let proofArtifactHash = "";
+  let provingKeyHash = "";
+  try {
+    const routeHashes = readBscRouteNativeProverHashMaterial(manifest);
+    proofArtifactHash = routeHashes.proofArtifactHash;
+    provingKeyHash = routeHashes.provingKeyHash;
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "The BSC native EVM prover route hashes are invalid.",
+    );
+  }
+  if (!proofArtifactHash) {
+    reasons.push("The BSC proof artifact hash is required.");
+  }
+  if (!provingKeyHash) {
+    reasons.push("The BSC proving key hash is required.");
+  }
+  if (proofMaterial) {
+    const roleReasons = bscHashRoleSeparationReasons([
+      ["verifierCodeHash", proofMaterial.verifierCodeHashHex],
+      ["verifierKeyHash", proofMaterial.verifierKeyHashHex],
+      [
+        "destinationBindingHash",
+        proofMaterial.expectedDestinationBindingHashHex,
+      ],
+      ["proofArtifactHash", proofArtifactHash],
+      ["provingKeyHash", provingKeyHash],
+    ]);
+    if (roleReasons.length > 0) {
+      reasons.push(
+        `BSC route cryptographic material hashes must be role-separated: ${roleReasons.join("; ")}.`,
+      );
+    }
+  }
+
+  let selectedJson = "";
+  let selectedPath = "";
+  for (const entry of entries) {
+    try {
+      const normalized = validateBundle(entry.value as never, {
+        expectedDestinationBindingHash:
+          proofMaterial?.expectedDestinationBindingHashHex,
+      });
+      if (
+        proofMaterial &&
+        normalized.verifierKeyHash !== proofMaterial.verifierKeyHashHex
+      ) {
+        reasons.push(
+          `${entry.path}.verifierKeyHash does not match the BSC route verifierKeyHash.`,
+        );
+      }
+      if (
+        proofArtifactHash &&
+        normalized.proofArtifactHash !== proofArtifactHash
+      ) {
+        reasons.push(
+          `${entry.path}.proofArtifactHash does not match the BSC route proofArtifactHash.`,
+        );
+      }
+      if (provingKeyHash && normalized.provingKeyHash !== provingKeyHash) {
+        reasons.push(
+          `${entry.path}.provingKeyHash does not match the BSC route provingKeyHash.`,
+        );
+      }
+      const normalizedJson = JSON.stringify(normalized);
+      if (selectedJson && selectedJson !== normalizedJson) {
+        reasons.push(
+          `BSC native EVM prover bundle aliases disagree: ${selectedPath} does not match ${entry.path}.`,
+        );
+      }
+      const nativeBundleHash =
+        canonicalBscNativeEvmProverBundleHash(normalized);
+      const nativeBundleRoleReasons = bscHashRoleSeparationReasons([
+        ["verifierKeyHash", proofMaterial?.verifierKeyHashHex],
+        [
+          "destinationBindingHash",
+          proofMaterial?.expectedDestinationBindingHashHex,
+        ],
+        ["proofArtifactHash", proofArtifactHash],
+        ["provingKeyHash", provingKeyHash],
+        ["nativeEvmProverBundleHash", nativeBundleHash],
+      ]);
+      if (nativeBundleRoleReasons.length > 0) {
+        reasons.push(
+          `BSC native EVM prover bundle hash must be role-separated: ${nativeBundleRoleReasons.join("; ")}.`,
+        );
+      }
+      selectedJson = normalizedJson;
+      selectedPath = entry.path;
+    } catch (error) {
+      reasons.push(
+        `${entry.path} failed BSC native EVM prover bundle validation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+  return reasons;
+};
+
+const normalizeBscExplorerTransactionUrl = (
+  value: string,
+  label: string,
+  expectedTransactionId: string,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): string => {
+  const profile = resolveSccpBscNetworkProfile(bscNetwork);
+  const text = value.trim();
+  if (!text) {
+    throw new Error(`${label} is required.`);
+  }
+  let url: URL;
+  try {
+    url = new URL(text);
+  } catch (_error) {
+    throw new Error(`${label} must be a valid URL.`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== new URL(profile.explorerUrl).hostname ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    const explorerLabel =
+      profile.key === "testnet" ? "BSC testnet" : "BSC mainnet";
+    throw new Error(
+      `${label} must be an HTTPS ${explorerLabel} explorer transaction URL without credentials, query strings, or fragments.`,
+    );
+  }
+  const match = url.pathname
+    .replace(/\/+$/u, "")
+    .match(/^\/tx\/0x([0-9a-f]{64})$/iu);
+  if (!match) {
+    throw new Error(`${label} must use the /tx/0x<hash> path.`);
+  }
+  const expected = normalizeNonZeroHex32Loose(
+    expectedTransactionId,
+    `${label} transaction id`,
+  );
+  const actual = `0x${match[1].toLowerCase()}`;
+  if (actual !== expected) {
+    throw new Error(`${label} transaction hash must match ${expected}.`);
+  }
+  return `${profile.explorerUrl}/tx/${expected}`;
 };
 
 const normalizeHexData = (value: string, label: string): string => {
@@ -1200,10 +2881,7 @@ const bytesToLowerHex = (bytes: Uint8Array): string =>
 const bytesToBigInt = (bytes: Uint8Array): bigint =>
   BigInt(bytesToLowerHex(bytes));
 
-const BN254_G1_GENERATOR_WORDS = [
-  1n,
-  2n,
-] as const;
+const BN254_G1_GENERATOR_WORDS = [1n, 2n] as const;
 const BN254_G2_GENERATOR_WORDS = [
   10857046999023057135944570762232829481370756359578518086990519993285655852781n,
   11559732032986387107991004021392285783925812861821192530917403151452391805634n,
@@ -1618,11 +3296,7 @@ const snapshotTronTransactionRecord = (
   label: string,
 ): Record<string, unknown> => {
   const record = requireRecord(value, label);
-  try {
-    return requireRecord(structuredClone(record), label);
-  } catch (_error) {
-    throw new Error(`${label} must be structured-cloneable.`);
-  }
+  return requireRecord(snapshotSccpDataValue(record, label), label);
 };
 
 const isBinaryLikeSccpTransactionValue = (value: unknown): boolean =>
@@ -1640,9 +3314,7 @@ const assertNoUnsafeTronTransactionPayloadFields = (
   seen = new WeakSet<object>(),
 ): void => {
   if (isSecretLikeTextValue(value)) {
-    throw new Error(
-      `${path} must not contain recovery phrases or private key material before TRON broadcast.`,
-    );
+    throw new Error(SCCP_TRON_TRANSACTION_SECRET_INPUT_ERROR);
   }
   if (isBinaryLikeSccpTransactionValue(value)) {
     return;
@@ -1671,9 +3343,7 @@ const assertNoUnsafeTronTransactionPayloadFields = (
   seen.add(value);
   for (const [key, child] of Object.entries(value)) {
     if (SCCP_TRON_TRANSACTION_SECRET_KEY_PATTERN.test(key)) {
-      throw new Error(
-        `${path}.${key} must not contain private key material before TRON broadcast.`,
-      );
+      throw new Error(SCCP_TRON_TRANSACTION_SECRET_INPUT_ERROR);
     }
     const allowedTopLevelSignature =
       options.allowTopLevelSignature &&
@@ -1683,9 +3353,7 @@ const assertNoUnsafeTronTransactionPayloadFields = (
       !allowedTopLevelSignature &&
       SCCP_TRON_TRANSACTION_SIGNING_HELPER_KEY_PATTERN.test(key)
     ) {
-      throw new Error(
-        `${path}.${key} must not include nested signatures or signing helper payloads before TRON broadcast.`,
-      );
+      throw new Error(SCCP_TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR);
     }
     assertNoUnsafeTronTransactionPayloadFields(
       child,
@@ -2049,13 +3717,23 @@ const readFirstOptionalSafePositiveInteger = (
   return null;
 };
 
-const listRecordArray = (value: unknown): Record<string, unknown>[] =>
-  Array.isArray(value)
-    ? value.filter(
-        (entry): entry is Record<string, unknown> =>
-          typeof entry === "object" && entry !== null && !Array.isArray(entry),
-      )
-    : [];
+const requireRecordArray = (
+  value: unknown,
+  label: string,
+): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  return value.map((entry, index) =>
+    requireRecord(entry, `${label}[${index}]`),
+  );
+};
+
+const snapshotTronTransactionRecordArray = (
+  value: unknown,
+  label: string,
+): Record<string, unknown>[] =>
+  requireRecordArray(snapshotSccpDataValue(value, label), label);
 
 const readTronReceiptStatus = (
   receipt: Record<string, unknown>,
@@ -2087,8 +3765,11 @@ const readTronFinalityWitnesses = (
   finality: Record<string, unknown>,
 ): Record<string, unknown>[] => {
   const witnessPayload = finality.witnesses;
+  if (witnessPayload === undefined || witnessPayload === null) {
+    return [];
+  }
   if (Array.isArray(witnessPayload)) {
-    return listRecordArray(witnessPayload);
+    return requireRecordArray(witnessPayload, "TRON finality witnesses");
   }
   const witnessRecord =
     typeof witnessPayload === "object" &&
@@ -2096,7 +3777,10 @@ const readTronFinalityWitnesses = (
     !Array.isArray(witnessPayload)
       ? (witnessPayload as Record<string, unknown>)
       : null;
-  return listRecordArray(witnessRecord?.witnesses ?? witnessRecord?.items);
+  const nestedWitnesses = witnessRecord?.witnesses ?? witnessRecord?.items;
+  return nestedWitnesses === undefined || nestedWitnesses === null
+    ? []
+    : requireRecordArray(nestedWitnesses, "TRON finality witnesses");
 };
 
 const readTronSolidBlockHashCandidate = (
@@ -2181,12 +3865,23 @@ export const bindTronFinalitySnapshot = (
 
 const readTronEventRecords = (
   events: Record<string, unknown>,
-): Record<string, unknown>[] =>
-  listRecordArray(events.data).length > 0
-    ? listRecordArray(events.data)
-    : listRecordArray(events.events).length > 0
-      ? listRecordArray(events.events)
-      : listRecordArray(events.items);
+): Record<string, unknown>[] => {
+  for (const [key, label] of [
+    ["data", "TRON transaction events.data"],
+    ["events", "TRON transaction events.events"],
+    ["items", "TRON transaction events.items"],
+  ] as const) {
+    const value = events[key];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    const records = requireRecordArray(value, label);
+    if (records.length > 0) {
+      return records;
+    }
+  }
+  return [];
+};
 
 const normalizeTronAddressToPayloadHex = (
   value: string,
@@ -2251,8 +3946,13 @@ const normalizePositiveBaseUnitString = (
 const decodeEventBytesText = (value: string, label: string): string => {
   const trimmed = value.trim();
   const hasHexPrefix = trimmed.toLowerCase().startsWith("0x");
-  const normalized = hasHexPrefix ? trimmed.slice(2).toLowerCase() : trimmed.toLowerCase();
-  if (!hasHexPrefix && (normalized.length === 0 || !/^[0-9a-f]+$/u.test(normalized))) {
+  const normalized = hasHexPrefix
+    ? trimmed.slice(2).toLowerCase()
+    : trimmed.toLowerCase();
+  if (
+    !hasHexPrefix &&
+    (normalized.length === 0 || !/^[0-9a-f]+$/u.test(normalized))
+  ) {
     return trimmed;
   }
   if (normalized.length % 2 !== 0 || /[^0-9a-f]/u.test(normalized)) {
@@ -2641,6 +4341,426 @@ export const bindTronSourceDataForProof = (input: {
   });
 };
 
+export const SCCP_EVM_SOURCE_EVENT_TOPIC = bytesToLowerHex(
+  keccak_256(new TextEncoder().encode("SccpSourceEvent(bytes32)")),
+);
+
+const normalizeEvmTxHash = (value: string, label: string): string => {
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be a 0x-prefixed 32-byte EVM hash.`);
+  }
+  if (/^0x0{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
+const normalizeEvmQuantityText = (value: unknown, label: string): string => {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be an EVM hex quantity.`);
+  }
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
+    throw new Error(`${label} must be an EVM hex quantity.`);
+  }
+  return normalized;
+};
+
+const readEvmTransactionHashFromRecord = (
+  record: Record<string, unknown>,
+  label: string,
+): string =>
+  normalizeEvmTxHash(
+    readConsistentAliasString(
+      record,
+      ["hash", "transactionHash", "transaction_hash", "txHash", "tx_hash"],
+      `${label} hash`,
+      (value) => normalizeEvmTxHash(value, `${label} hash`),
+    ),
+    `${label} hash`,
+  );
+
+const readEvmReceiptTransactionHashFromRecord = (
+  record: Record<string, unknown>,
+  label: string,
+): string =>
+  normalizeEvmTxHash(
+    readConsistentAliasString(
+      record,
+      ["transactionHash", "transaction_hash", "hash"],
+      `${label} transaction hash`,
+      (value) => normalizeEvmTxHash(value, `${label} transaction hash`),
+    ),
+    `${label} transaction hash`,
+  );
+
+const readEvmReceiptStatusOk = (receipt: Record<string, unknown>): boolean => {
+  const status = receipt.status;
+  if (status === true || status === 1) {
+    return true;
+  }
+  if (typeof status === "string") {
+    const normalized = status.trim().toLowerCase();
+    return normalized === "0x1" || normalized === "1" || normalized === "true";
+  }
+  return false;
+};
+
+const readEvmLogTopics = (log: Record<string, unknown>): string[] =>
+  Array.isArray(log.topics)
+    ? log.topics.map((topic, index) =>
+        normalizeEvmTxHash(String(topic), `EVM log topic ${index}`),
+      )
+    : [];
+
+const readEvmBlockTransactionHashes = (
+  block: Record<string, unknown>,
+  label: string,
+): string[] => {
+  if (!Array.isArray(block.transactions)) {
+    throw new Error(`${label} must include a transactions array.`);
+  }
+  return block.transactions.map((entry, index) => {
+    if (typeof entry === "string") {
+      return normalizeEvmTxHash(entry, `${label} transaction ${index}`);
+    }
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      return readEvmTransactionHashFromRecord(
+        entry as Record<string, unknown>,
+        `${label} transaction ${index}`,
+      );
+    }
+    throw new Error(`${label} transaction ${index} must be a hash or object.`);
+  });
+};
+
+const readBscSourceLogRecords = (
+  value: unknown,
+  label: string,
+): Record<string, unknown>[] => {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`BSC ${label} logs must be an array.`);
+  }
+  return value.map((entry, index) =>
+    requireRecord(entry, `BSC ${label} log ${index}`),
+  );
+};
+
+const readBscSourceEventDigestFromLogs = (
+  logs: Record<string, unknown>[],
+  label: string,
+  input: {
+    sourceBridgeAddress: string;
+    txId: string;
+    receiptBlockHash: string;
+    receiptBlockNumber: string;
+  },
+): string => {
+  const expectedAddress = normalizeBscAddress(input.sourceBridgeAddress);
+  const matching = logs.flatMap((log) => {
+    const address = readFirstString(log, "address");
+    if (!address || normalizeBscAddress(address) !== expectedAddress) {
+      return [];
+    }
+    const topics = readEvmLogTopics(log);
+    if (topics[0] !== SCCP_EVM_SOURCE_EVENT_TOPIC) {
+      return [];
+    }
+    const logTransactionHash = normalizeEvmTxHash(
+      readConsistentAliasString(
+        log,
+        ["transactionHash", "transaction_hash"],
+        "BSC source bridge log transaction hash",
+        (value) =>
+          normalizeEvmTxHash(value, "BSC source bridge log transaction hash"),
+      ),
+      "BSC source bridge log transaction hash",
+    );
+    if (logTransactionHash !== input.txId) {
+      throw new Error(
+        "BSC source bridge log transaction hash does not match the source transaction.",
+      );
+    }
+    const logBlockHash = normalizeEvmTxHash(
+      readConsistentAliasString(
+        log,
+        ["blockHash", "block_hash"],
+        "BSC source bridge log block hash",
+        (value) =>
+          normalizeEvmTxHash(value, "BSC source bridge log block hash"),
+      ),
+      "BSC source bridge log block hash",
+    );
+    if (logBlockHash !== input.receiptBlockHash) {
+      throw new Error(
+        "BSC source bridge log block hash does not match the transaction receipt.",
+      );
+    }
+    const logBlockNumber = normalizeEvmQuantityText(
+      readConsistentAliasString(
+        log,
+        ["blockNumber", "block_number"],
+        "BSC source bridge log block number",
+        (value) =>
+          normalizeEvmQuantityText(value, "BSC source bridge log block number"),
+      ),
+      "BSC source bridge log block number",
+    );
+    if (logBlockNumber !== input.receiptBlockNumber) {
+      throw new Error(
+        "BSC source bridge log block number does not match the transaction receipt.",
+      );
+    }
+    if (!topics[1]) {
+      throw new Error("BSC source bridge log is missing source event digest.");
+    }
+    return [normalizeEvmTxHash(topics[1], "BSC source event digest")];
+  });
+  if (matching.length === 0) {
+    throw new Error(
+      `BSC ${label} must include a source bridge SccpSourceEvent log.`,
+    );
+  }
+  if (matching.length !== 1) {
+    throw new Error(
+      `BSC ${label} must contain exactly one source bridge SccpSourceEvent log.`,
+    );
+  }
+  return matching[0];
+};
+
+const readBscSourceEventDigestFromReceipt = (
+  receipt: Record<string, unknown>,
+  input: {
+    sourceBridgeAddress: string;
+    txId: string;
+    receiptBlockHash: string;
+    receiptBlockNumber: string;
+  },
+): string =>
+  readBscSourceEventDigestFromLogs(
+    readBscSourceLogRecords(receipt.logs, "transaction receipt"),
+    "transaction receipt",
+    input,
+  );
+
+export const bindBscSourceDataForProof = (input: {
+  txId: string;
+  transaction: unknown;
+  receipt: unknown;
+  indexedLogs?: unknown;
+  block?: unknown;
+  bridgeAddress: string;
+  sourceBridgeAddress: string;
+  bscSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+}): BoundBscSourceData => {
+  const txId = normalizeEvmTxHash(readRequiredText(input.txId, "txId"), "txId");
+  const bridgeAddress = normalizeBscAddress(
+    readRequiredText(input.bridgeAddress, "BSC bridge address"),
+  );
+  const sourceBridgeAddress = normalizeBscAddress(
+    readRequiredText(input.sourceBridgeAddress, "BSC source bridge address"),
+  );
+  const bscSender = normalizeBscAddress(
+    readRequiredText(input.bscSender, "BSC sender address"),
+  );
+  const tairaRecipient = normalizeTairaAccountId(
+    readRequiredText(input.tairaRecipient, "TAIRA recipient account"),
+  );
+  const amountBaseUnits = bridgeDecimalToBaseUnits(
+    normalizeBridgeAmount(
+      readRequiredText(input.amountDecimal, "Bridge amount"),
+    ),
+  );
+
+  const transaction = snapshotTronTransactionRecord(
+    input.transaction,
+    "BSC source transaction",
+  );
+  if (
+    readEvmTransactionHashFromRecord(transaction, "BSC source transaction") !==
+    txId
+  ) {
+    throw new Error(
+      "BSC source transaction hash does not match this bridge request.",
+    );
+  }
+  if (normalizeBscAddress(readFirstString(transaction, "from")) !== bscSender) {
+    throw new Error(
+      "BSC source transaction sender does not match the connected wallet.",
+    );
+  }
+  if (
+    normalizeBscAddress(readFirstString(transaction, "to")) !== bridgeAddress
+  ) {
+    throw new Error(
+      "BSC source transaction target does not match the bridge contract.",
+    );
+  }
+  const transactionInput = readConsistentAliasString(
+    transaction,
+    ["input", "data"],
+    "BSC source transaction input",
+    (value) => normalizeHexData(value, "BSC source transaction input"),
+  );
+  const expectedCallData = normalizeHexData(
+    tairaXorBscBurnToTairaAccountCallData({
+      tairaRecipient,
+      amount: amountBaseUnits,
+    }),
+    "Expected BSC burnToTaira call data",
+  );
+  if (
+    normalizeHexData(transactionInput, "BSC source transaction input") !==
+    expectedCallData
+  ) {
+    throw new Error(
+      "BSC source transaction call data does not match this bridge request.",
+    );
+  }
+
+  const receipt = snapshotTronTransactionRecord(
+    input.receipt,
+    "BSC source transaction receipt",
+  );
+  if (
+    readEvmReceiptTransactionHashFromRecord(
+      receipt,
+      "BSC source transaction receipt",
+    ) !== txId
+  ) {
+    throw new Error(
+      "BSC source transaction receipt hash does not match this bridge request.",
+    );
+  }
+  if (!readEvmReceiptStatusOk(receipt)) {
+    throw new Error("BSC source transaction receipt must report success.");
+  }
+  if (normalizeBscAddress(readFirstString(receipt, "from")) !== bscSender) {
+    throw new Error(
+      "BSC source transaction receipt sender does not match the connected wallet.",
+    );
+  }
+  if (normalizeBscAddress(readFirstString(receipt, "to")) !== bridgeAddress) {
+    throw new Error(
+      "BSC source transaction receipt target does not match the bridge contract.",
+    );
+  }
+  const receiptBlockNumber = normalizeEvmQuantityText(
+    readConsistentAliasString(
+      receipt,
+      ["blockNumber", "block_number"],
+      "BSC source transaction receipt block number",
+      (value) =>
+        normalizeEvmQuantityText(
+          value,
+          "BSC source transaction receipt block number",
+        ),
+    ),
+    "BSC source transaction receipt block number",
+  );
+  const receiptBlockHash = normalizeEvmTxHash(
+    readConsistentAliasString(
+      receipt,
+      ["blockHash", "block_hash"],
+      "BSC source transaction receipt block hash",
+      (value) =>
+        normalizeEvmTxHash(value, "BSC source transaction receipt block hash"),
+    ),
+    "BSC source transaction receipt block hash",
+  );
+  const sourceEventDigest = readBscSourceEventDigestFromReceipt(receipt, {
+    sourceBridgeAddress,
+    txId,
+    receiptBlockHash,
+    receiptBlockNumber,
+  });
+  const indexedLogs =
+    input.indexedLogs === undefined || input.indexedLogs === null
+      ? null
+      : snapshotTronTransactionRecordArray(
+          input.indexedLogs,
+          "BSC indexed source logs",
+        );
+  if (indexedLogs) {
+    const indexedSourceEventDigest = readBscSourceEventDigestFromLogs(
+      indexedLogs,
+      "indexed source bridge logs",
+      {
+        sourceBridgeAddress,
+        txId,
+        receiptBlockHash,
+        receiptBlockNumber,
+      },
+    );
+    if (indexedSourceEventDigest !== sourceEventDigest) {
+      throw new Error(
+        "BSC indexed source bridge log digest does not match the transaction receipt.",
+      );
+    }
+  }
+  const block =
+    input.block === undefined || input.block === null
+      ? null
+      : snapshotTronTransactionRecord(input.block, "BSC source block");
+  if (block) {
+    const blockHash = normalizeEvmTxHash(
+      readConsistentAliasString(
+        block,
+        ["hash", "blockHash", "block_hash"],
+        "BSC source block hash",
+        (value) => normalizeEvmTxHash(value, "BSC source block hash"),
+      ),
+      "BSC source block hash",
+    );
+    if (blockHash !== receiptBlockHash) {
+      throw new Error(
+        "BSC source block hash does not match the transaction receipt.",
+      );
+    }
+    const blockNumber = normalizeEvmQuantityText(
+      readConsistentAliasString(
+        block,
+        ["number", "blockNumber", "block_number"],
+        "BSC source block number",
+        (value) => normalizeEvmQuantityText(value, "BSC source block number"),
+      ),
+      "BSC source block number",
+    );
+    if (blockNumber !== receiptBlockNumber) {
+      throw new Error(
+        "BSC source block number does not match the transaction receipt.",
+      );
+    }
+    const blockTransactionHashes = readEvmBlockTransactionHashes(
+      block,
+      "BSC source block",
+    );
+    if (!blockTransactionHashes.includes(txId)) {
+      throw new Error(
+        "BSC source block transactions do not include the source transaction.",
+      );
+    }
+  }
+
+  return Object.freeze({
+    txId,
+    transaction,
+    receipt,
+    block,
+    indexedLogs,
+    sourceEventDigest,
+    receiptBlockNumber,
+    receiptBlockHash,
+  });
+};
+
 const readRecordVariant = (
   value: unknown,
   label: string,
@@ -2735,6 +4855,32 @@ const readCodecTronPayload = (value: unknown, label: string): string => {
   return normalizeTronAddressPayloadHex(payload, label);
 };
 
+const readCodecEvmAddress = (value: unknown, label: string): string => {
+  const record = requireRecord(value, label);
+  const variant =
+    typeof record.kind === "string"
+      ? {
+          kind: record.kind,
+          value: record.value ?? record.payload,
+        }
+      : (() => {
+          const entries = Object.entries(record);
+          if (entries.length !== 1) {
+            throw new Error(`${label} must contain exactly one codec variant.`);
+          }
+          const [[kind, body]] = entries;
+          const variantBody = requireRecord(body, `${label}.${kind}`);
+          return {
+            kind,
+            value: variantBody.value ?? variantBody.payload,
+          };
+        })();
+  if (variant.kind !== "EvmHex") {
+    throw new Error(`${label} must be an EvmHex SCCP codec value.`);
+  }
+  return normalizeEvmAddress(readScalarText({ value: variant.value }, "value"));
+};
+
 const readTransferProjection = (
   job: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -2750,6 +4896,7 @@ const readTransferProjection = (
 
 const readBundleTransferPayload = (
   bundle: Record<string, unknown>,
+  targetDomain = SCCP_TRON_DOMAIN,
 ): Record<string, unknown> => {
   const payload = readRecordVariant(
     bundle.payload,
@@ -2758,7 +4905,7 @@ const readBundleTransferPayload = (
   if (payload.kind !== "Transfer") {
     throw new Error("SCCP message bundle must carry a Transfer payload.");
   }
-  return normalizeBundleTransferPayload(payload.value);
+  return normalizeBundleTransferPayload(payload.value, targetDomain);
 };
 
 const readRequiredTransferScalar = (
@@ -2806,7 +4953,10 @@ const readTransferTextField = (
     if (codec !== SCCP_CODEC_TEXT_UTF8) {
       throw new Error(`${label} must use the TextUtf8 SCCP codec.`);
     }
-    return decodeEventBytesText(readRequiredTransferScalar(record, key, label), label);
+    return decodeEventBytesText(
+      readRequiredTransferScalar(record, key, label),
+      label,
+    );
   }
   return readRequiredTransferScalar(record, key, label);
 };
@@ -2831,7 +4981,10 @@ const readTransferTronAddressField = (
       throw new Error(`${label} must use the TronBase58Check SCCP codec.`);
     }
     return normalizeTronAddress(
-      decodeEventBytesText(readRequiredTransferScalar(record, key, label), label),
+      decodeEventBytesText(
+        readRequiredTransferScalar(record, key, label),
+        label,
+      ),
     );
   }
   const address = readRequiredTransferScalar(record, key, label);
@@ -2843,8 +4996,32 @@ const readTransferTronAddressField = (
   );
 };
 
+const readTransferEvmAddressField = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    throw new Error(`${label} is missing from the SCCP transfer payload.`);
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return readCodecEvmAddress(value, label);
+  }
+  const codec = readTransferCodecId(record, `${key}_codec`, label);
+  if (codec !== null && codec !== SCCP_CODEC_EVM_HEX) {
+    throw new Error(`${label} must use the EvmHex SCCP codec.`);
+  }
+  const address = readRequiredTransferScalar(record, key, label);
+  if (/^0x[0-9a-fA-F]{40}$/u.test(address)) {
+    return normalizeEvmAddress(address);
+  }
+  return normalizeEvmAddress(decodeEventBytesText(address, label));
+};
+
 const normalizeBundleTransferPayload = (
   transfer: Record<string, unknown>,
+  targetDomain = SCCP_TRON_DOMAIN,
 ): Record<string, unknown> => ({
   version: readRequiredTransferScalar(transfer, "version", "Bundle version"),
   source_domain: readRequiredTransferScalar(
@@ -2868,12 +5045,20 @@ const normalizeBundleTransferPayload = (
   amount: readRequiredTransferScalar(transfer, "amount", "Bundle amount"),
   sender_codec: SCCP_CODEC_TEXT_UTF8,
   sender: readTransferTextField(transfer, "sender", "Bundle sender"),
-  recipient_codec: SCCP_CODEC_TRON_BASE58CHECK,
-  recipient: readTransferTronAddressField(
-    transfer,
-    "recipient",
-    "Bundle recipient",
-  ),
+  recipient_codec:
+    targetDomain === SCCP_BSC_DOMAIN
+      ? SCCP_CODEC_EVM_HEX
+      : SCCP_CODEC_TRON_BASE58CHECK,
+  recipient:
+    targetDomain === SCCP_BSC_DOMAIN
+      ? canonicalEip55EvmAddress(
+          readTransferEvmAddressField(
+            transfer,
+            "recipient",
+            "Bundle recipient",
+          ),
+        )
+      : readTransferTronAddressField(transfer, "recipient", "Bundle recipient"),
   route_id_codec: SCCP_CODEC_TEXT_UTF8,
   route_id: readTransferTextField(transfer, "route_id", "Bundle route id"),
 });
@@ -2915,12 +5100,16 @@ const requireOptionalDestinationBindingHashMatch = (
   expectedBindingHash: string,
   label: string,
 ): void => {
-  const actualBindingHash = readFirstString(
+  const actualBindingHash = readConsistentAliasString(
     record,
-    "destinationBindingHash",
-    "destination_binding_hash",
-    "destinationBindingHashHex",
-    "destination_binding_hash_hex",
+    [
+      "destinationBindingHash",
+      "destination_binding_hash",
+      "destinationBindingHashHex",
+      "destination_binding_hash_hex",
+    ],
+    `${label} destination binding hash`,
+    (value) => normalizeHex32(value, `${label} destination binding hash`),
   );
   if (!actualBindingHash) {
     return;
@@ -2930,7 +5119,7 @@ const requireOptionalDestinationBindingHashMatch = (
     expectedBindingHash
   ) {
     throw new Error(
-      `${label} destination binding hash does not match the TRON route manifest.`,
+      `${label} destination binding hash does not match the route manifest.`,
     );
   }
 };
@@ -3031,6 +5220,135 @@ const readDestinationBindingInput = (
   return input;
 };
 
+const readBscDestinationBindingInput = (
+  manifest: Record<string, unknown>,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): EvmSccpDestinationBindingInput => {
+  const selectedNetwork = readManifestBscNetworkKey(manifest) ?? bscNetwork;
+  const proofMaterial = readSccpBscProofMaterial(manifest, selectedNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The BSC SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  const manifestBinding =
+    readRecord(manifest, "destinationBinding") ??
+    readRecord(manifest, "destination_binding");
+  const rollout = readDestinationRollout(manifest);
+  const manifestBindingKey = readConsistentAliasString(
+    manifestBinding ?? {},
+    ["key", "bindingKey", "binding_key"],
+    "BSC destination binding key",
+  );
+  const rolloutBindingKey = readConsistentAliasString(
+    rollout ?? {},
+    ["destinationBindingKey", "destination_binding_key"],
+    "BSC destination binding key",
+  );
+  if (
+    manifestBindingKey &&
+    rolloutBindingKey &&
+    manifestBindingKey !== rolloutBindingKey
+  ) {
+    throw new Error(
+      "BSC destination binding key aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const key = manifestBindingKey || rolloutBindingKey;
+  if (!key) {
+    throw new Error("The BSC SCCP destination binding key is missing.");
+  }
+  const version =
+    readNumber(manifestBinding ?? {}, "version") ??
+    readNumber(rollout ?? {}, "version") ??
+    1;
+  if (version !== 1) {
+    throw new Error("The BSC SCCP destination binding version must be 1.");
+  }
+  const manifestSourceDomain = readConsistentAliasInteger(
+    manifestBinding ?? {},
+    ["sourceDomain", "source_domain"],
+    "BSC destination binding source domain",
+  );
+  const rolloutSourceDomain = readConsistentAliasInteger(
+    rollout ?? {},
+    ["sourceDomain", "source_domain"],
+    "BSC destination binding source domain",
+  );
+  if (
+    manifestSourceDomain !== null &&
+    rolloutSourceDomain !== null &&
+    manifestSourceDomain !== rolloutSourceDomain
+  ) {
+    throw new Error(
+      "BSC destination binding source domain aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const sourceDomain =
+    manifestSourceDomain !== null ? manifestSourceDomain : rolloutSourceDomain;
+  const manifestTargetDomain = readConsistentAliasInteger(
+    manifestBinding ?? {},
+    ["targetDomain", "target_domain"],
+    "BSC destination binding target domain",
+  );
+  const rolloutTargetDomain = readConsistentAliasInteger(
+    rollout ?? {},
+    ["targetDomain", "target_domain"],
+    "BSC destination binding target domain",
+  );
+  if (
+    manifestTargetDomain !== null &&
+    rolloutTargetDomain !== null &&
+    manifestTargetDomain !== rolloutTargetDomain
+  ) {
+    throw new Error(
+      "BSC destination binding target domain aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const targetDomain =
+    manifestTargetDomain !== null ? manifestTargetDomain : rolloutTargetDomain;
+  if (sourceDomain !== null && sourceDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error("The BSC SCCP destination binding source domain is wrong.");
+  }
+  if (targetDomain !== null && targetDomain !== SCCP_BSC_DOMAIN) {
+    throw new Error("The BSC SCCP destination binding target domain is wrong.");
+  }
+  const explicitBindingHash = readConsistentAliasString(
+    manifestBinding ?? {},
+    ["bindingHash", "binding_hash"],
+    "BSC destination binding hash",
+    (value) => normalizeHex32(value, "BSC destination binding hash"),
+  );
+  if (
+    explicitBindingHash &&
+    normalizeHex32(explicitBindingHash, "BSC destination binding hash") !==
+      proofMaterial.expectedDestinationBindingHashHex
+  ) {
+    throw new Error(
+      "The BSC SCCP destination binding hash does not match the verifier rollout material.",
+    );
+  }
+  const normalizedExplicitBindingHash = explicitBindingHash
+    ? normalizeHex32(explicitBindingHash, "BSC destination binding hash")
+    : "";
+  const input: EvmSccpDestinationBindingInput = {
+    version: 1 as const,
+    key,
+    sourceDomain: SCCP_SORA_DOMAIN,
+    targetDomain: SCCP_BSC_DOMAIN,
+    networkId: proofMaterial.networkIdHex,
+    verifierAddress: proofMaterial.verifierAddressHex,
+    bridgeAddress: proofMaterial.bridgeAddressHex,
+    verifierCodeHash: proofMaterial.verifierCodeHashHex,
+    verifierKeyHash: proofMaterial.verifierKeyHashHex,
+    bindingHash:
+      normalizedExplicitBindingHash ||
+      proofMaterial.expectedDestinationBindingHashHex,
+  };
+  evmSccpDestinationBinding(input);
+  return input;
+};
+
 export const buildTairaXorMessageProofJobQueryMaterial = (input: {
   manifest: Record<string, unknown> | null | undefined;
   messageBundle: Record<string, unknown> | null | undefined;
@@ -3053,7 +5371,12 @@ export const buildTairaXorMessageProofJobQueryMaterial = (input: {
     "SCCP message commitment",
   );
   const messageId = normalizeSccpMessageId(
-    readFirstString(commitment, "messageId", "message_id"),
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "SCCP message commitment messageId",
+      normalizeSccpMessageId,
+    ),
   );
   if (input.messageId) {
     const expectedMessageId = normalizeSccpMessageId(input.messageId);
@@ -3070,7 +5393,76 @@ export const buildTairaXorMessageProofJobQueryMaterial = (input: {
     throw new Error("SCCP message bundle must target TRON.");
   }
   const commitmentRoot = normalizeHex32(
-    readFirstString(bundle, "commitmentRoot", "commitment_root"),
+    readConsistentAliasString(
+      bundle,
+      ["commitmentRoot", "commitment_root"],
+      "SCCP commitment root",
+      (value) => normalizeHex32(value, "SCCP commitment root"),
+    ),
+    "SCCP commitment root",
+  );
+
+  return {
+    ...proofMaterial,
+    proofBytesHex: buildSccpGroth16JobQueryProofBytesHex({
+      messageId,
+      commitmentRoot,
+    }),
+  };
+};
+
+export const buildTairaXorBscMessageProofJobQueryMaterial = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  messageBundle: Record<string, unknown> | null | undefined;
+  messageId?: string;
+  bscNetwork?: unknown;
+}): BscSccpProofMaterial & { proofBytesHex: string } => {
+  const manifest = requireRecord(input.manifest, "SCCP BSC manifest");
+  const bundle = requireRecord(input.messageBundle, "SCCP message bundle");
+  const bscNetwork = input.bscNetwork ?? SCCP_BSC_NETWORK.key;
+  const proofMaterial = readSccpBscProofMaterial(manifest, bscNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The BSC SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  readBscDestinationBindingInput(manifest, bscNetwork);
+
+  const commitment = requireRecord(
+    bundle.commitment,
+    "SCCP message commitment",
+  );
+  const messageId = normalizeSccpMessageId(
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "BSC SCCP message commitment messageId",
+      normalizeSccpMessageId,
+    ),
+  );
+  if (input.messageId) {
+    const expectedMessageId = normalizeSccpMessageId(input.messageId);
+    if (messageId !== expectedMessageId) {
+      throw new Error(
+        "SCCP message bundle does not match the requested message id.",
+      );
+    }
+  }
+  const commitmentTargetDomain = readConsistentAliasInteger(
+    commitment,
+    ["targetDomain", "target_domain"],
+    "SCCP message commitment targetDomain",
+  );
+  if (commitmentTargetDomain !== SCCP_BSC_DOMAIN) {
+    throw new Error("SCCP message bundle must target BSC.");
+  }
+  const commitmentRoot = normalizeHex32(
+    readConsistentAliasString(
+      bundle,
+      ["commitmentRoot", "commitment_root"],
+      "BSC SCCP commitment root",
+      (value) => normalizeHex32(value, "BSC SCCP commitment root"),
+    ),
     "SCCP commitment root",
   );
 
@@ -3107,11 +5499,21 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   );
   const platformValue = readSccpPlatformPayloadValue(job);
   const statementHash = normalizeHex32(
-    readFirstString(platformValue, "statementHash", "statement_hash"),
+    readConsistentAliasString(
+      platformValue ?? {},
+      ["statementHash", "statement_hash"],
+      "SCCP proof job statement hash",
+      (value) => normalizeHex32(value, "SCCP proof job statement hash"),
+    ),
     "SCCP proof job statement hash",
   );
   const publicInputMessageId = normalizeHex32(
-    readFirstString(publicInputs, "messageId", "message_id"),
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "publicInputs.messageId",
+      (value) => normalizeHex32(value, "publicInputs.messageId"),
+    ),
     "publicInputs.messageId",
   );
   if (publicInputMessageId !== expectedMessageId) {
@@ -3137,18 +5539,33 @@ export const buildTairaXorFinalizeProofBinding = (input: {
     "SCCP message commitment",
   );
   const commitmentMessageId = normalizeHex32(
-    readFirstString(commitment, "messageId", "message_id"),
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "bundle.commitment.messageId",
+      (value) => normalizeHex32(value, "bundle.commitment.messageId"),
+    ),
     "bundle.commitment.messageId",
   );
   if (commitmentMessageId !== expectedMessageId) {
     throw new Error("SCCP message bundle does not match this bridge request.");
   }
   const payloadHash = normalizeHex32(
-    readFirstString(publicInputs, "payloadHash", "payload_hash"),
+    readConsistentAliasString(
+      publicInputs,
+      ["payloadHash", "payload_hash"],
+      "publicInputs.payloadHash",
+      (value) => normalizeHex32(value, "publicInputs.payloadHash"),
+    ),
     "publicInputs.payloadHash",
   );
   const commitmentPayloadHash = normalizeHex32(
-    readFirstString(commitment, "payloadHash", "payload_hash"),
+    readConsistentAliasString(
+      commitment,
+      ["payloadHash", "payload_hash"],
+      "bundle.commitment.payloadHash",
+      (value) => normalizeHex32(value, "bundle.commitment.payloadHash"),
+    ),
     "bundle.commitment.payloadHash",
   );
   if (payloadHash !== commitmentPayloadHash) {
@@ -3239,9 +5656,7 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   compareOptionalText(bundleTransfer, "sender", tairaSender, "Bundle sender");
   if (
     bytesToLowerHex(
-      decodeTronBase58CheckAddress(
-        readScalarText(bundleTransfer, "recipient"),
-      ),
+      decodeTronBase58CheckAddress(readScalarText(bundleTransfer, "recipient")),
     ) !== expectedRecipientPayload
   ) {
     throw new Error(
@@ -3286,6 +5701,266 @@ export const buildTairaXorFinalizeProofBinding = (input: {
   ) {
     throw new Error(
       "SCCP proof job destination binding does not match the TRON route manifest.",
+    );
+  }
+
+  const normalizedBundle = {
+    ...bundle,
+    payload: {
+      kind: "Transfer",
+      value: bundleTransfer,
+    },
+  };
+
+  return {
+    witness: {
+      publicInputs,
+      bundleBytes: canonicalSccpMessageProofBundleBytes(normalizedBundle),
+      sourceProofBytes: [],
+      sourceDomain: SCCP_SORA_DOMAIN,
+      destinationBinding,
+      statementHash,
+      destinationBindingHash,
+    },
+    destinationBinding,
+    messageBundle: normalizedBundle,
+    canonicalPayloadHex,
+    amountBaseUnits,
+    messageId: expectedMessageId,
+    payloadHash,
+  };
+};
+
+export const buildTairaXorBscFinalizeProofBinding = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  job: Record<string, unknown>;
+  messageId: string;
+  tairaSender: string;
+  bscRecipient: string;
+  amountDecimal: string;
+}): TairaXorBscFinalizeFromTairaProofBinding => {
+  const manifest = requireRecord(input.manifest, "SCCP BSC manifest");
+  const job = requireRecord(input.job, "SCCP proof job");
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const expectedMessageId = normalizeHex32(input.messageId, "messageId");
+  const amountBaseUnits = bridgeDecimalToBaseUnits(input.amountDecimal);
+  const expectedRecipient = normalizeBscAddress(input.bscRecipient);
+  const destinationBinding = readBscDestinationBindingInput(manifest);
+  const publicInputs = requireRecord(job.publicInputs, "SCCP job publicInputs");
+  const destinationBindingHash = normalizeHex32(
+    destinationBinding.bindingHash ?? "",
+    "BSC destination binding hash",
+  );
+  const platformValue = readSccpPlatformPayloadValue(job);
+  const statementHash = normalizeHex32(
+    readConsistentAliasString(
+      platformValue ?? {},
+      ["statementHash", "statement_hash"],
+      "SCCP proof job statement hash",
+      (value) => normalizeHex32(value, "SCCP proof job statement hash"),
+    ),
+    "SCCP proof job statement hash",
+  );
+  const publicInputMessageId = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "publicInputs.messageId",
+      (value) => normalizeHex32(value, "publicInputs.messageId"),
+    ),
+    "publicInputs.messageId",
+  );
+  if (publicInputMessageId !== expectedMessageId) {
+    throw new Error(
+      "SCCP proof job message id does not match this bridge request.",
+    );
+  }
+  const publicInputTargetDomain = readConsistentAliasInteger(
+    publicInputs,
+    ["targetDomain", "target_domain"],
+    "SCCP proof job public inputs targetDomain",
+  );
+  if (publicInputTargetDomain !== SCCP_BSC_DOMAIN) {
+    throw new Error("SCCP proof job must target BSC.");
+  }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    destinationBindingHash,
+    "SCCP proof job public inputs",
+  );
+
+  const bundle = requireRecord(job.bundle, "SCCP proof job bundle");
+  const commitment = requireRecord(
+    bundle.commitment,
+    "SCCP message commitment",
+  );
+  const commitmentMessageId = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "bundle.commitment.messageId",
+      (value) => normalizeHex32(value, "bundle.commitment.messageId"),
+    ),
+    "bundle.commitment.messageId",
+  );
+  if (commitmentMessageId !== expectedMessageId) {
+    throw new Error("SCCP message bundle does not match this bridge request.");
+  }
+  const payloadHash = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["payloadHash", "payload_hash"],
+      "publicInputs.payloadHash",
+      (value) => normalizeHex32(value, "publicInputs.payloadHash"),
+    ),
+    "publicInputs.payloadHash",
+  );
+  const commitmentPayloadHash = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["payloadHash", "payload_hash"],
+      "bundle.commitment.payloadHash",
+      (value) => normalizeHex32(value, "bundle.commitment.payloadHash"),
+    ),
+    "bundle.commitment.payloadHash",
+  );
+  if (payloadHash !== commitmentPayloadHash) {
+    throw new Error(
+      "SCCP message bundle payload hash does not match public inputs.",
+    );
+  }
+
+  const transfer = readTransferProjection(job);
+  compareOptionalScalar(
+    transfer,
+    "source_domain",
+    SCCP_SORA_DOMAIN,
+    "Source domain",
+  );
+  compareOptionalScalar(
+    transfer,
+    "dest_domain",
+    SCCP_BSC_DOMAIN,
+    "Destination domain",
+  );
+  compareOptionalScalar(
+    transfer,
+    "asset_home_domain",
+    SCCP_SORA_DOMAIN,
+    "Asset home domain",
+  );
+  if (
+    readCodecText(transfer.asset_id, "payload.asset_id") !== SCCP_XOR_ASSET_KEY
+  ) {
+    throw new Error("SCCP proof job asset key must be XOR.");
+  }
+  if (
+    readCodecText(transfer.route_id, "payload.route_id") !==
+    SCCP_BSC_XOR_ROUTE_ID
+  ) {
+    throw new Error("SCCP proof job route id must be taira_bsc_xor.");
+  }
+  if (readScalarText(transfer, "amount") !== amountBaseUnits) {
+    throw new Error(
+      "SCCP proof job amount does not match this bridge request.",
+    );
+  }
+  if (readCodecText(transfer.sender, "payload.sender") !== tairaSender) {
+    throw new Error(
+      "SCCP proof job sender does not match the active TAIRA account.",
+    );
+  }
+  if (
+    readTransferEvmAddressField(transfer, "recipient", "payload.recipient") !==
+    expectedRecipient
+  ) {
+    throw new Error(
+      "SCCP proof job recipient does not match this bridge request.",
+    );
+  }
+
+  const bundleTransfer = readBundleTransferPayload(bundle, SCCP_BSC_DOMAIN);
+  compareOptionalScalar(
+    bundleTransfer,
+    "source_domain",
+    SCCP_SORA_DOMAIN,
+    "Bundle source domain",
+  );
+  compareOptionalScalar(
+    bundleTransfer,
+    "dest_domain",
+    SCCP_BSC_DOMAIN,
+    "Bundle destination domain",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "asset_id",
+    SCCP_XOR_ASSET_KEY,
+    "Bundle asset key",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "route_id",
+    SCCP_BSC_XOR_ROUTE_ID,
+    "Bundle route id",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "amount",
+    amountBaseUnits,
+    "Bundle amount",
+  );
+  compareOptionalText(bundleTransfer, "sender", tairaSender, "Bundle sender");
+  if (
+    readTransferEvmAddressField(
+      bundleTransfer,
+      "recipient",
+      "Bundle recipient",
+    ) !== expectedRecipient
+  ) {
+    throw new Error(
+      "Bundle recipient must match the selected TAIRA/BSC route.",
+    );
+  }
+  const canonicalPayloadBytes = canonicalSccpTransferPayloadBytes(
+    bundleTransfer as unknown as SccpTransferPayload,
+  );
+  const canonicalPayloadHex = bytesToLowerHex(canonicalPayloadBytes);
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: bundleTransfer,
+  });
+  if (
+    sccpTransferMessageId(bundleTransfer as unknown as SccpTransferPayload) !==
+    expectedMessageId
+  ) {
+    throw new Error(
+      "SCCP message id does not match the canonical transfer payload.",
+    );
+  }
+  if (sccpPayloadHash(canonicalPayloadEnvelopeBytes) !== payloadHash) {
+    throw new Error(
+      "SCCP proof job payload hash does not match the canonical SCCP payload envelope.",
+    );
+  }
+
+  const platformDestinationBinding = readSccpPlatformDestinationBinding(job);
+  const jobDestinationBinding =
+    readRecord(job, "destinationBinding") ??
+    readRecord(job, "destination_binding");
+  const jobBindingHash = readConsistentAliasString(
+    platformDestinationBinding ?? jobDestinationBinding ?? {},
+    ["bindingHash", "binding_hash"],
+    "SCCP proof job destination binding hash",
+    (value) => normalizeHex32(value, "SCCP proof job destination binding hash"),
+  );
+  if (
+    jobBindingHash &&
+    normalizeHex32(jobBindingHash, "job.destinationBinding.bindingHash") !==
+      destinationBinding.bindingHash
+  ) {
+    throw new Error(
+      "SCCP proof job destination binding does not match the BSC route manifest.",
     );
   }
 
@@ -3374,7 +6049,12 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
     "TRON SCCP proof package public inputs",
   );
   const messageId = normalizeHex32(
-    readFirstString(publicInputs, "messageId", "message_id"),
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "proofPackage.publicInputs.messageId",
+      (value) => normalizeHex32(value, "proofPackage.publicInputs.messageId"),
+    ),
     "proofPackage.publicInputs.messageId",
   );
   if (
@@ -3447,12 +6127,201 @@ export const buildTairaXorFinalizeTriggerRequest = (input: {
   };
 };
 
+export const buildTairaXorBscFinalizeTransactionRequest = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  proofPackage: Record<string, unknown>;
+  ownerAddress: string;
+  bscRecipient: string;
+  amountBaseUnits: string;
+  messageId?: string;
+  canonicalPayloadHex?: string;
+}): TairaXorBscFinalizeTransactionRequest => {
+  const manifest = cloneSccpJsonRouteManifest(
+    requireRecord(input.manifest, "SCCP BSC manifest"),
+  );
+  const bscProfile = resolveManifestBscNetworkProfile(manifest);
+  const bridgeAddress = readSccpBscBridgeAddress(manifest);
+  if (!bridgeAddress) {
+    throw new Error("The BSC bridge deployment address is missing.");
+  }
+  const normalizedBridgeAddress = normalizeBscAddress(bridgeAddress);
+  normalizeBscAddress(input.bscRecipient);
+  const destinationBinding = readBscDestinationBindingInput(manifest);
+  const proofPackage = requireRecord(
+    input.proofPackage,
+    "BSC SCCP proof package",
+  );
+  const submission = requireRecord(
+    proofPackage.submission,
+    "BSC SCCP proof package submission",
+  );
+  const platformValue =
+    readRecord(readRecord(submission, "platformPayload") ?? {}, "value") ??
+    readRecord(readRecord(submission, "platform_payload") ?? {}, "value");
+  const proofBytes =
+    readFirstString(submission, "proofBytes", "proof_bytes") ||
+    readFirstString(platformValue, "proofBytes", "proof_bytes");
+  if (!proofBytes) {
+    throw new Error("BSC SCCP proof package is missing proof bytes.");
+  }
+  const publicInputs =
+    readRecord(submission, "publicInputs") ??
+    readRecord(submission, "public_inputs") ??
+    readRecord(platformValue ?? {}, "publicInputs") ??
+    readRecord(platformValue ?? {}, "public_inputs");
+  if (!publicInputs) {
+    throw new Error("BSC SCCP proof package is missing public inputs.");
+  }
+  const destinationBindingHash = normalizeHex32(
+    destinationBinding.bindingHash ?? "",
+    "BSC destination binding hash",
+  );
+  const publicInputTargetDomain = readConsistentAliasInteger(
+    publicInputs,
+    ["targetDomain", "target_domain"],
+    "BSC SCCP proof package public inputs targetDomain",
+  );
+  if (publicInputTargetDomain !== SCCP_BSC_DOMAIN) {
+    throw new Error("BSC SCCP proof package must target BSC.");
+  }
+  const expectedMessageId = input.messageId
+    ? normalizeHex32(input.messageId, "messageId")
+    : "";
+  if (!expectedMessageId) {
+    throw new Error(
+      "BSC finalize requests must include the bridge request message id.",
+    );
+  }
+  if (!input.canonicalPayloadHex) {
+    throw new Error(
+      "BSC finalize requests must include bridge request canonical payload bytes.",
+    );
+  }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    destinationBindingHash,
+    "BSC SCCP proof package public inputs",
+  );
+  const messageId = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "proofPackage.publicInputs.messageId",
+      (value) => normalizeHex32(value, "proofPackage.publicInputs.messageId"),
+    ),
+    "proofPackage.publicInputs.messageId",
+  );
+  if (messageId !== expectedMessageId) {
+    throw new Error(
+      "BSC SCCP proof package message id does not match this bridge request.",
+    );
+  }
+  const amount = normalizePositiveBaseUnitString(
+    input.amountBaseUnits,
+    "BSC finalize amount",
+  );
+  const statementHash =
+    readFirstString(submission, "statementHash", "statement_hash") ||
+    readFirstString(platformValue, "statementHash", "statement_hash");
+  if (!statementHash) {
+    throw new Error("BSC SCCP proof package is missing the statement hash.");
+  }
+  const packageTopCanonicalPayloadHex = readConsistentAliasString(
+    proofPackage,
+    ["canonicalPayloadHex", "canonical_payload_hex"],
+    "BSC SCCP proof package canonical payload bytes",
+    (value) =>
+      normalizeHexData(value, "BSC SCCP proof package canonical payload bytes"),
+  );
+  const submissionCanonicalPayloadHex = readConsistentAliasString(
+    submission,
+    ["canonicalPayloadHex", "canonical_payload_hex"],
+    "BSC SCCP proof package submission canonical payload bytes",
+    (value) =>
+      normalizeHexData(
+        value,
+        "BSC SCCP proof package submission canonical payload bytes",
+      ),
+  );
+  if (
+    packageTopCanonicalPayloadHex &&
+    submissionCanonicalPayloadHex &&
+    normalizeHexData(
+      packageTopCanonicalPayloadHex,
+      "BSC SCCP proof package canonical payload bytes",
+    ) !==
+      normalizeHexData(
+        submissionCanonicalPayloadHex,
+        "BSC SCCP proof package submission canonical payload bytes",
+      )
+  ) {
+    throw new Error(
+      "BSC SCCP proof package canonical payload aliases disagree between package and submission.",
+    );
+  }
+  const packageCanonicalPayloadHex =
+    packageTopCanonicalPayloadHex || submissionCanonicalPayloadHex;
+  if (!packageCanonicalPayloadHex) {
+    throw new Error(
+      "BSC SCCP proof package is missing canonical payload bytes.",
+    );
+  }
+  const normalizedCanonicalPayloadHex = normalizeHexData(
+    packageCanonicalPayloadHex,
+    "BSC SCCP proof package canonical payload bytes",
+  );
+  if (
+    normalizeHexData(
+      input.canonicalPayloadHex,
+      "bridge request canonical payload bytes",
+    ) !== normalizedCanonicalPayloadHex
+  ) {
+    throw new Error(
+      "BSC SCCP proof package canonical payload bytes do not match this bridge request.",
+    );
+  }
+  const packageCallData = readConsistentAliasString(
+    submission,
+    ["callDataHex", "call_data_hex", "callData", "call_data"],
+    "BSC SCCP proof package call data",
+    (value) => normalizeHexData(value, "BSC SCCP proof package call data"),
+  );
+  const callData = tairaXorFinalizeFromTairaCallData({
+    proofBytes,
+    publicInputs,
+    statementHash,
+    canonicalPayloadHex: normalizedCanonicalPayloadHex,
+    amount,
+  });
+  if (
+    packageCallData &&
+    normalizeHexData(packageCallData, "BSC SCCP proof package call data") !==
+      callData
+  ) {
+    throw new Error(
+      "BSC SCCP proof package call data does not match the locally generated finalize request.",
+    );
+  }
+  return {
+    transaction: {
+      from: normalizeBscAddress(input.ownerAddress),
+      to: normalizedBridgeAddress,
+      data: callData,
+      chainId: bscProfile.chainIdHex,
+    },
+    amountBaseUnits: amount,
+    messageId,
+  };
+};
+
 export const buildTairaXorInboundSettlement = (input: {
   manifest: Record<string, unknown> | null | undefined;
   gasLimit?: number;
 }): Record<string, unknown> => {
   const manifest = input.manifest
-    ? requireRecord(input.manifest, "SCCP TRON manifest")
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP TRON manifest"),
+      )
     : {};
   const settlement =
     readFirstRecord(manifest, "settlement", "tairaSettlement") ?? {};
@@ -3485,6 +6354,46 @@ export const buildTairaXorInboundSettlement = (input: {
   };
 };
 
+export const buildTairaXorBscInboundSettlement = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  gasLimit?: number;
+}): Record<string, unknown> => {
+  const manifest = input.manifest
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP BSC manifest"),
+      )
+    : {};
+  const settlement =
+    readFirstRecord(manifest, "settlement", "tairaSettlement") ?? {};
+  const contractAddress = readFirstString(
+    settlement,
+    "contractAddress",
+    "contract_address",
+  );
+  const contractAlias = readFirstString(
+    settlement,
+    "contractAlias",
+    "contract_alias",
+  );
+  if (
+    input.gasLimit !== undefined &&
+    (!Number.isSafeInteger(input.gasLimit) || input.gasLimit <= 0)
+  ) {
+    throw new Error(
+      "TAIRA settlement gas limit must be a positive safe integer.",
+    );
+  }
+  return {
+    entrypoint: "finalize_inbound",
+    route: SCCP_BSC_XOR_ROUTE_ID,
+    ...(contractAlias ? { contract_alias: contractAlias } : {}),
+    ...(!contractAlias && contractAddress
+      ? { contract_address: contractAddress }
+      : {}),
+    ...(input.gasLimit ? { gas_limit: input.gasLimit } : {}),
+  };
+};
+
 const requireTronToTairaSourceSettlement = (
   proofPackage: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -3500,12 +6409,24 @@ const requireTronToTairaSourceSettlement = (
     proofPackage.settlement,
     "TRON -> TAIRA source proof package settlement",
   );
-  if (readFirstString(settlement, "entrypoint") !== "finalize_inbound") {
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["entrypoint"],
+      "TRON -> TAIRA settlement entrypoint",
+    ) !== "finalize_inbound"
+  ) {
     throw new Error(
       "TRON -> TAIRA settlement entrypoint must be finalize_inbound.",
     );
   }
-  if (readFirstString(settlement, "route", "route_id") !== SCCP_XOR_ROUTE_ID) {
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["route", "route_id"],
+      "TRON -> TAIRA settlement route",
+    ) !== SCCP_XOR_ROUTE_ID
+  ) {
     throw new Error("TRON -> TAIRA settlement route must be taira_tron_xor.");
   }
   return settlement;
@@ -3522,24 +6443,41 @@ export const bindTronToTairaSourceProofPackage = (input: {
 }): TronToTairaSourceProofPackage => {
   const amountBaseUnits = bridgeDecimalToBaseUnits(input.amountDecimal);
   const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
+  const manifest = input.manifest
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP TRON manifest"),
+      )
+    : null;
   const proofPackage = requireRecord(
-    input.proofPackage,
+    snapshotSccpDataValue(
+      input.proofPackage,
+      "TRON -> TAIRA source proof package",
+    ),
     "TRON -> TAIRA source proof package",
   );
-  requireTronToTairaSourceSettlement(proofPackage);
-  const bridgeAddress = readSccpTronBridgeAddress(input.manifest);
+  const events =
+    input.events === undefined || input.events === null
+      ? null
+      : snapshotTronTransactionRecord(
+          input.events,
+          "TRON source proof package events",
+        );
+  const settlement = requireTronToTairaSourceSettlement(proofPackage);
+  const settlementDefaults = buildTairaXorInboundSettlement({ manifest });
+  requireTronToTairaSettlementTargetBinding(settlement, settlementDefaults);
+  const bridgeAddress = readSccpTronBridgeAddress(manifest);
   const bound = bindTairaXorTronToTairaSourceProofPackage({
     proofPackage,
-    settlementDefaults: buildTairaXorInboundSettlement(input),
+    settlementDefaults,
     txId: input.txId,
     tronSender: input.tronSender,
     tairaRecipient,
     amount: amountBaseUnits,
     ...(bridgeAddress ? { bridgeAddress } : {}),
   });
-  if (input.events) {
+  if (events) {
     const expectedSourceEventDigest = readTronSourceEventDigestFromEvents(
-      input.events,
+      events,
       input.txId,
       bridgeAddress || undefined,
     );
@@ -3565,6 +6503,896 @@ export const bindTronToTairaSourceProofPackage = (input: {
   };
 };
 
+const requireBscToTairaSourceSettlement = (
+  proofPackage: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (
+    proofPackage.settlement === undefined ||
+    proofPackage.settlement === null
+  ) {
+    throw new Error("BSC -> TAIRA source proof package settlement is missing.");
+  }
+  const settlement = requireRecord(
+    proofPackage.settlement,
+    "BSC -> TAIRA source proof package settlement",
+  );
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["entrypoint"],
+      "BSC -> TAIRA settlement entrypoint",
+    ) !== "finalize_inbound"
+  ) {
+    throw new Error(
+      "BSC -> TAIRA settlement entrypoint must be finalize_inbound.",
+    );
+  }
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["route", "route_id"],
+      "BSC -> TAIRA settlement route",
+    ) !== SCCP_BSC_XOR_ROUTE_ID
+  ) {
+    throw new Error("BSC -> TAIRA settlement route must be taira_bsc_xor.");
+  }
+  return settlement;
+};
+
+const readConsistentStringAlias = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): string => {
+  let selectedValue = "";
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = record[key];
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    if (typeof value !== "string") {
+      throw new Error(`${label} must be text.`);
+    }
+    const text = value.trim();
+    if (!text) {
+      continue;
+    }
+    if (!selectedValue) {
+      selectedValue = text;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== text) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${text}.`,
+      );
+    }
+  }
+  return selectedValue;
+};
+
+const requireBscToTairaSettlementTargetBinding = (
+  settlement: Record<string, unknown>,
+  settlementDefaults: Record<string, unknown>,
+): void => {
+  const expectedAlias = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_alias", "contractAlias"],
+    "BSC -> TAIRA manifest settlement contract alias",
+  );
+  const expectedAddress = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_address", "contractAddress"],
+    "BSC -> TAIRA manifest settlement contract address",
+  );
+  const packageAlias = readConsistentStringAlias(
+    settlement,
+    ["contract_alias", "contractAlias"],
+    "BSC -> TAIRA source proof package settlement contract alias",
+  );
+  const packageAddress = readConsistentStringAlias(
+    settlement,
+    ["contract_address", "contractAddress"],
+    "BSC -> TAIRA source proof package settlement contract address",
+  );
+  if (packageAlias && packageAddress) {
+    throw new Error(
+      "BSC -> TAIRA source proof package settlement must not declare both contract alias and contract address.",
+    );
+  }
+  if (!expectedAlias && !expectedAddress) {
+    if (packageAlias || packageAddress) {
+      throw new Error(
+        "BSC -> TAIRA source proof package settlement target must come from the BSC manifest.",
+      );
+    }
+    return;
+  }
+  if (expectedAlias) {
+    if (packageAddress) {
+      throw new Error(
+        "BSC -> TAIRA source proof package settlement must not override the manifest contract alias with a contract address.",
+      );
+    }
+    if (packageAlias && packageAlias !== expectedAlias) {
+      throw new Error(
+        "BSC -> TAIRA source proof package settlement contract alias must match the BSC manifest.",
+      );
+    }
+    return;
+  }
+  if (packageAlias) {
+    throw new Error(
+      "BSC -> TAIRA source proof package settlement must not override the manifest contract address with a contract alias.",
+    );
+  }
+  if (packageAddress && packageAddress !== expectedAddress) {
+    throw new Error(
+      "BSC -> TAIRA source proof package settlement contract address must match the BSC manifest.",
+    );
+  }
+};
+
+const requireTronToTairaSettlementTargetBinding = (
+  settlement: Record<string, unknown>,
+  settlementDefaults: Record<string, unknown>,
+): void => {
+  const expectedAlias = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_alias", "contractAlias"],
+    "TRON -> TAIRA manifest settlement contract alias",
+  );
+  const expectedAddress = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_address", "contractAddress"],
+    "TRON -> TAIRA manifest settlement contract address",
+  );
+  const packageAlias = readConsistentStringAlias(
+    settlement,
+    ["contract_alias", "contractAlias"],
+    "TRON -> TAIRA source proof package settlement contract alias",
+  );
+  const packageAddress = readConsistentStringAlias(
+    settlement,
+    ["contract_address", "contractAddress"],
+    "TRON -> TAIRA source proof package settlement contract address",
+  );
+  if (packageAlias && packageAddress) {
+    throw new Error(
+      "TRON -> TAIRA source proof package settlement must not declare both contract alias and contract address.",
+    );
+  }
+  if (!expectedAlias && !expectedAddress) {
+    if (packageAlias || packageAddress) {
+      throw new Error(
+        "TRON -> TAIRA source proof package settlement target must come from the TRON manifest.",
+      );
+    }
+    return;
+  }
+  if (expectedAlias) {
+    if (packageAddress) {
+      throw new Error(
+        "TRON -> TAIRA source proof package settlement must not override the manifest contract alias with a contract address.",
+      );
+    }
+    if (packageAlias && packageAlias !== expectedAlias) {
+      throw new Error(
+        "TRON -> TAIRA source proof package settlement contract alias must match the TRON manifest.",
+      );
+    }
+    return;
+  }
+  if (packageAlias) {
+    throw new Error(
+      "TRON -> TAIRA source proof package settlement must not override the manifest contract address with a contract alias.",
+    );
+  }
+  if (packageAddress && packageAddress !== expectedAddress) {
+    throw new Error(
+      "TRON -> TAIRA source proof package settlement contract address must match the TRON manifest.",
+    );
+  }
+};
+
+const readConsistentAliasString = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+  normalize: (value: string) => string = (value) => value,
+): string => {
+  let selectedValue = "";
+  let selectedKey = "";
+  let selectedComparable = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const text = readScalarText(record, key);
+    if (!text) {
+      continue;
+    }
+    const comparable = normalize(text);
+    if (!selectedValue) {
+      selectedValue = text;
+      selectedKey = key;
+      selectedComparable = comparable;
+      continue;
+    }
+    if (selectedComparable !== comparable) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${text}.`,
+      );
+    }
+  }
+  return selectedValue;
+};
+
+const readConsistentAliasInteger = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): number | null => {
+  let selectedValue: number | null = null;
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = record[key];
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim()
+          ? Number(value.trim())
+          : Number.NaN;
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new Error(`${label} must be a safe non-negative integer.`);
+    }
+    if (selectedValue === null) {
+      selectedValue = parsed;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== parsed) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${parsed}.`,
+      );
+    }
+  }
+  return selectedValue;
+};
+
+const readConsistentAliasBoolean = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): boolean | null => {
+  let selectedValue: boolean | null = null;
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = record[key];
+    if (typeof value !== "boolean") {
+      throw new Error(`${label} must be boolean.`);
+    }
+    if (selectedValue === null) {
+      selectedValue = value;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== value) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${value}.`,
+      );
+    }
+  }
+  return selectedValue;
+};
+
+const readConsistentAliasRecord = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): Record<string, unknown> | null => {
+  let selectedValue: Record<string, unknown> | null = null;
+  let selectedKey = "";
+  let selectedComparable = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = requireRecord(record[key], label);
+    const comparable = JSON.stringify(stableJsonValue(value));
+    if (!selectedValue) {
+      selectedValue = value;
+      selectedKey = key;
+      selectedComparable = comparable;
+      continue;
+    }
+    if (selectedComparable !== comparable) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey} and ${key} carry different records.`,
+      );
+    }
+  }
+  return selectedValue;
+};
+
+const requireBscSourceProofMaterialHashBinding = (
+  proofPackage: Record<string, unknown>,
+  input: BscSourceProverMaterialBinding,
+): BscSourceProverMaterialBinding => {
+  const expected = {
+    proofArtifactHash: normalizeHex32(
+      input.proofArtifactHash,
+      "BSC source request proofArtifactHash",
+    ),
+    provingKeyHash: normalizeHex32(
+      input.provingKeyHash,
+      "BSC source request provingKeyHash",
+    ),
+    nativeEvmProverBundleHash: normalizeHex32(
+      input.nativeEvmProverBundleHash,
+      "BSC source request nativeEvmProverBundleHash",
+    ),
+  };
+  const actual = {
+    proofArtifactHash: normalizeHex32(
+      readConsistentAliasString(
+        proofPackage,
+        [
+          "proofArtifactHash",
+          "proof_artifact_hash",
+          "proverArtifactHash",
+          "prover_artifact_hash",
+        ],
+        "BSC source proof package proofArtifactHash",
+        (value) =>
+          normalizeHex32(value, "BSC source proof package proofArtifactHash"),
+      ),
+      "BSC source proof package proofArtifactHash",
+    ),
+    provingKeyHash: normalizeHex32(
+      readConsistentAliasString(
+        proofPackage,
+        ["provingKeyHash", "proving_key_hash"],
+        "BSC source proof package provingKeyHash",
+        (value) =>
+          normalizeHex32(value, "BSC source proof package provingKeyHash"),
+      ),
+      "BSC source proof package provingKeyHash",
+    ),
+    nativeEvmProverBundleHash: normalizeHex32(
+      readConsistentAliasString(
+        proofPackage,
+        ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
+        "BSC source proof package nativeEvmProverBundleHash",
+        (value) =>
+          normalizeHex32(
+            value,
+            "BSC source proof package nativeEvmProverBundleHash",
+          ),
+      ),
+      "BSC source proof package nativeEvmProverBundleHash",
+    ),
+  };
+  if (actual.proofArtifactHash !== expected.proofArtifactHash) {
+    throw new Error(
+      "BSC source proof package proofArtifactHash must match the source request.",
+    );
+  }
+  if (actual.provingKeyHash !== expected.provingKeyHash) {
+    throw new Error(
+      "BSC source proof package provingKeyHash must match the source request.",
+    );
+  }
+  if (actual.nativeEvmProverBundleHash !== expected.nativeEvmProverBundleHash) {
+    throw new Error(
+      "BSC source proof package nativeEvmProverBundleHash must match the source request.",
+    );
+  }
+  return expected;
+};
+
+const requireBscSourceMessageBundleMerkleRootBinding = (
+  messageBundle: Record<string, unknown>,
+  options: { checkRoot?: boolean } = {},
+): void => {
+  const commitmentRecord = requireRecord(
+    readFirstValue(messageBundle, "commitment"),
+    "BSC source proof package messageBundle.commitment",
+  );
+  const merkleProofRecord = requireRecord(
+    readConsistentAliasRecord(
+      messageBundle,
+      ["merkle_proof", "merkleProof"],
+      "BSC source proof package messageBundle.merkle_proof",
+    ),
+    "BSC source proof package messageBundle.merkle_proof",
+  );
+  const rawSteps = merkleProofRecord.steps;
+  if (!Array.isArray(rawSteps)) {
+    throw new Error(
+      "BSC source proof package messageBundle.merkle_proof.steps must be an array.",
+    );
+  }
+  const merkleProof = {
+    steps: rawSteps.map((entry, index) => {
+      const step = requireRecord(
+        entry,
+        `BSC source proof package messageBundle.merkle_proof.steps[${index}]`,
+      );
+      const siblingIsLeft = readConsistentAliasBoolean(
+        step,
+        ["sibling_is_left", "siblingIsLeft"],
+        `BSC source proof package messageBundle.merkle_proof.steps[${index}].sibling_is_left`,
+      );
+      if (siblingIsLeft === null) {
+        throw new Error(
+          `BSC source proof package messageBundle.merkle_proof.steps[${index}].sibling_is_left must be boolean.`,
+        );
+      }
+      return {
+        sibling_hash: normalizeNonZeroHex32Loose(
+          readConsistentAliasString(
+            step,
+            ["sibling_hash", "siblingHash"],
+            `BSC source proof package messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+            (value) =>
+              normalizeNonZeroHex32Loose(
+                value,
+                `BSC source proof package messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+              ),
+          ),
+          `BSC source proof package messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+        ),
+        sibling_is_left: siblingIsLeft,
+      };
+    }),
+  };
+  const commitmentVersion = Number(readFirstValue(commitmentRecord, "version"));
+  if (!Number.isSafeInteger(commitmentVersion) || commitmentVersion !== 1) {
+    throw new Error(
+      "BSC source proof package messageBundle.commitment.version must be 1.",
+    );
+  }
+  const commitmentKind = readFirstString(commitmentRecord, "kind");
+  if (commitmentKind !== "Transfer") {
+    throw new Error(
+      "BSC source proof package messageBundle.commitment.kind must be Transfer.",
+    );
+  }
+  const targetDomain = readConsistentAliasInteger(
+    commitmentRecord,
+    ["target_domain", "targetDomain"],
+    "BSC source proof package messageBundle.commitment.target_domain",
+  );
+  if (targetDomain === null) {
+    throw new Error(
+      "BSC source proof package messageBundle.commitment.target_domain must be a safe non-negative integer.",
+    );
+  }
+  if (targetDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error(
+      "BSC source proof package messageBundle.commitment.target_domain must target SORA.",
+    );
+  }
+  const commitment = {
+    version: commitmentVersion,
+    kind: "Transfer" as const,
+    target_domain: targetDomain,
+    message_id: normalizeNonZeroHex32Loose(
+      readConsistentAliasString(
+        commitmentRecord,
+        ["message_id", "messageId"],
+        "BSC source proof package messageBundle.commitment.message_id",
+        (value) =>
+          normalizeNonZeroHex32Loose(
+            value,
+            "BSC source proof package messageBundle.commitment.message_id",
+          ),
+      ),
+      "BSC source proof package messageBundle.commitment.message_id",
+    ),
+    payload_hash: normalizeNonZeroHex32Loose(
+      readConsistentAliasString(
+        commitmentRecord,
+        ["payload_hash", "payloadHash"],
+        "BSC source proof package messageBundle.commitment.payload_hash",
+        (value) =>
+          normalizeNonZeroHex32Loose(
+            value,
+            "BSC source proof package messageBundle.commitment.payload_hash",
+          ),
+      ),
+      "BSC source proof package messageBundle.commitment.payload_hash",
+    ),
+  };
+  const actualRoot = normalizeNonZeroHex32Loose(
+    readConsistentAliasString(
+      messageBundle,
+      ["commitment_root", "commitmentRoot"],
+      "BSC source proof package messageBundle.commitment_root",
+      (value) =>
+        normalizeNonZeroHex32Loose(
+          value,
+          "BSC source proof package messageBundle.commitment_root",
+        ),
+    ),
+    "BSC source proof package messageBundle.commitment_root",
+  );
+  if (options.checkRoot === false) {
+    return;
+  }
+  const expectedRoot = normalizeNonZeroHex32Loose(
+    sccpMerkleRootFromCommitment(commitment, merkleProof),
+    "BSC source proof package messageBundle expected commitment_root",
+  );
+  if (actualRoot !== expectedRoot) {
+    throw new Error(
+      "BSC source proof package messageBundle commitment_root must match the commitment Merkle proof.",
+    );
+  }
+};
+
+const requireBscSourceProofPublicInputsBinding = (input: {
+  proofPackage: Record<string, unknown>;
+  messageBundle: Record<string, unknown>;
+  txId: string;
+  sourceEventDigest: string;
+  bscSender: string;
+  tairaRecipient: string;
+  amountBaseUnits: string;
+}): void => {
+  const publicInputs = requireRecord(
+    readConsistentAliasRecord(
+      input.proofPackage,
+      ["publicInputs", "public_inputs"],
+      "BSC source proof package publicInputs",
+    ),
+    "BSC source proof package publicInputs",
+  );
+  const sourceDomain = readConsistentAliasInteger(
+    publicInputs,
+    ["sourceDomain", "source_domain"],
+    "BSC source proof package publicInputs sourceDomain",
+  );
+  const targetDomain = readConsistentAliasInteger(
+    publicInputs,
+    ["targetDomain", "target_domain"],
+    "BSC source proof package publicInputs targetDomain",
+  );
+  if (sourceDomain !== SCCP_BSC_DOMAIN || targetDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error(
+      "BSC source proof package publicInputs must bind BSC -> TAIRA.",
+    );
+  }
+
+  const commitment = requireRecord(
+    input.messageBundle.commitment,
+    "BSC source proof package messageBundle.commitment",
+  );
+  const expectedMessageId = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "BSC source proof package messageBundle commitment messageId",
+      (value) =>
+        normalizeHex32(
+          value,
+          "BSC source proof package messageBundle commitment messageId",
+        ),
+    ),
+    "BSC source proof package messageBundle commitment messageId",
+  );
+  const expectedPayloadHash = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["payloadHash", "payload_hash"],
+      "BSC source proof package messageBundle commitment payloadHash",
+      (value) =>
+        normalizeHex32(
+          value,
+          "BSC source proof package messageBundle commitment payloadHash",
+        ),
+    ),
+    "BSC source proof package messageBundle commitment payloadHash",
+  );
+  const expectedCommitmentRoot = normalizeHex32(
+    readConsistentAliasString(
+      input.messageBundle,
+      ["commitmentRoot", "commitment_root"],
+      "BSC source proof package messageBundle commitmentRoot",
+      (value) =>
+        normalizeHex32(
+          value,
+          "BSC source proof package messageBundle commitmentRoot",
+        ),
+    ),
+    "BSC source proof package messageBundle commitmentRoot",
+  );
+  const bindings = [
+    {
+      actual: normalizeHex32(
+        readConsistentAliasString(
+          publicInputs,
+          ["messageId", "message_id"],
+          "BSC source proof package publicInputs messageId",
+          (value) =>
+            normalizeHex32(
+              value,
+              "BSC source proof package publicInputs messageId",
+            ),
+        ),
+        "BSC source proof package publicInputs messageId",
+      ),
+      expected: expectedMessageId,
+      message:
+        "BSC source proof package publicInputs messageId must match messageBundle commitment.",
+    },
+    {
+      actual: normalizeHex32(
+        readConsistentAliasString(
+          publicInputs,
+          ["payloadHash", "payload_hash"],
+          "BSC source proof package publicInputs payloadHash",
+          (value) =>
+            normalizeHex32(
+              value,
+              "BSC source proof package publicInputs payloadHash",
+            ),
+        ),
+        "BSC source proof package publicInputs payloadHash",
+      ),
+      expected: expectedPayloadHash,
+      message:
+        "BSC source proof package publicInputs payloadHash must match messageBundle commitment.",
+    },
+    {
+      actual: normalizeHex32(
+        readConsistentAliasString(
+          publicInputs,
+          ["commitmentRoot", "commitment_root"],
+          "BSC source proof package publicInputs commitmentRoot",
+          (value) =>
+            normalizeHex32(
+              value,
+              "BSC source proof package publicInputs commitmentRoot",
+            ),
+        ),
+        "BSC source proof package publicInputs commitmentRoot",
+      ),
+      expected: expectedCommitmentRoot,
+      message:
+        "BSC source proof package publicInputs commitmentRoot must match messageBundle.",
+    },
+    {
+      actual: normalizeEvmTxHash(
+        readConsistentAliasString(
+          publicInputs,
+          ["txId", "tx_id", "transactionHash"],
+          "BSC source proof package publicInputs txId",
+          (value) =>
+            normalizeEvmTxHash(
+              value,
+              "BSC source proof package publicInputs txId",
+            ),
+        ),
+        "BSC source proof package publicInputs txId",
+      ),
+      expected: normalizeEvmTxHash(input.txId, "BSC source proof txId"),
+      message:
+        "BSC source proof package publicInputs txId must match the source transaction.",
+    },
+    {
+      actual: normalizeHex32(
+        readConsistentAliasString(
+          publicInputs,
+          ["sourceEventDigest", "source_event_digest"],
+          "BSC source proof package publicInputs sourceEventDigest",
+          (value) =>
+            normalizeHex32(
+              value,
+              "BSC source proof package publicInputs sourceEventDigest",
+            ),
+        ),
+        "BSC source proof package publicInputs sourceEventDigest",
+      ),
+      expected: normalizeHex32(
+        input.sourceEventDigest,
+        "BSC source proof sourceEventDigest",
+      ),
+      message:
+        "BSC source proof package publicInputs sourceEventDigest must match the source event digest.",
+    },
+  ];
+  for (const binding of bindings) {
+    if (binding.actual !== binding.expected) {
+      throw new Error(binding.message);
+    }
+  }
+
+  const publicAmount = normalizePositiveBaseUnitString(
+    readConsistentAliasString(
+      publicInputs,
+      ["amountBaseUnits", "amount_base_units", "amount"],
+      "BSC source proof package publicInputs amount",
+    ),
+    "BSC source proof package publicInputs amount",
+  );
+  if (publicAmount !== input.amountBaseUnits) {
+    throw new Error(
+      "BSC source proof package publicInputs amount must match the bridge request.",
+    );
+  }
+  const publicSender = normalizeBscAddress(
+    readConsistentAliasString(
+      publicInputs,
+      ["sender", "bscSender", "bsc_sender"],
+      "BSC source proof package publicInputs sender",
+    ),
+  );
+  if (publicSender !== normalizeBscAddress(input.bscSender)) {
+    throw new Error(
+      "BSC source proof package publicInputs sender must match the BSC sender.",
+    );
+  }
+  const publicRecipient = readConsistentAliasString(
+    publicInputs,
+    ["recipient", "tairaRecipient", "taira_recipient"],
+    "BSC source proof package publicInputs recipient",
+  );
+  if (publicRecipient !== input.tairaRecipient) {
+    throw new Error(
+      "BSC source proof package publicInputs recipient must match the TAIRA recipient.",
+    );
+  }
+  const publicRoute = readConsistentAliasString(
+    publicInputs,
+    ["routeId", "route_id", "route"],
+    "BSC source proof package publicInputs route",
+  );
+  if (publicRoute !== SCCP_BSC_XOR_ROUTE_ID) {
+    throw new Error(
+      "BSC source proof package publicInputs route must be taira_bsc_xor.",
+    );
+  }
+};
+
+export const bindBscToTairaSourceProofPackage = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  proofArtifactHash: string;
+  provingKeyHash: string;
+  nativeEvmProverBundleHash: string;
+  proofPackage: unknown;
+  txId: string;
+  receipt?: Record<string, unknown>;
+  bscSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+}): BscToTairaSourceProofPackage => {
+  const amountBaseUnits = bridgeDecimalToBaseUnits(input.amountDecimal);
+  const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
+  const txId = normalizeEvmTxHash(readRequiredText(input.txId, "txId"), "txId");
+  const manifest = input.manifest
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP BSC manifest"),
+      )
+    : null;
+  const proofPackage = requireRecord(
+    snapshotSccpDataValue(
+      input.proofPackage,
+      "BSC -> TAIRA source proof package",
+    ),
+    "BSC -> TAIRA source proof package",
+  );
+  const receipt =
+    input.receipt === undefined || input.receipt === null
+      ? null
+      : snapshotTronTransactionRecord(
+          input.receipt,
+          "BSC source proof package receipt",
+        );
+  const settlement = requireBscToTairaSourceSettlement(proofPackage);
+  const settlementDefaults = buildTairaXorBscInboundSettlement({ manifest });
+  requireBscToTairaSettlementTargetBinding(settlement, settlementDefaults);
+  const materialBinding = requireBscSourceProofMaterialHashBinding(
+    proofPackage,
+    input,
+  );
+  const sourceMessageBundle = requireRecord(
+    readConsistentAliasRecord(
+      proofPackage,
+      ["messageBundle", "message_bundle"],
+      "BSC source proof package messageBundle",
+    ),
+    "BSC source proof package messageBundle",
+  );
+  requireBscSourceMessageBundleMerkleRootBinding(sourceMessageBundle, {
+    checkRoot: false,
+  });
+  const bridgeAddress = readSccpBscBridgeAddress(manifest);
+  const bound = bindTairaXorBscToTairaSourceProofPackage({
+    proofPackage,
+    settlementDefaults,
+    txId,
+    bscSender: input.bscSender,
+    tairaRecipient,
+    amount: amountBaseUnits,
+    ...(bridgeAddress ? { bridgeAddress } : {}),
+  });
+  requireBscSourceMessageBundleMerkleRootBinding(
+    bound.messageBundle as Record<string, unknown>,
+  );
+  requireBscSourceProofPublicInputsBinding({
+    proofPackage,
+    messageBundle: bound.messageBundle as Record<string, unknown>,
+    sourceEventDigest: bound.sourceEventDigest,
+    txId: bound.txId,
+    bscSender: input.bscSender,
+    tairaRecipient,
+    amountBaseUnits,
+  });
+  if (receipt) {
+    const sourceBridgeAddress = readSccpBscSourceBridgeAddress(manifest);
+    if (!sourceBridgeAddress) {
+      throw new Error(
+        "BSC source proof package receipt binding requires a source bridge address.",
+      );
+    }
+    const receiptBlockNumber = normalizeEvmQuantityText(
+      receipt.blockNumber,
+      "BSC source proof package receipt block number",
+    );
+    const receiptBlockHash = normalizeEvmTxHash(
+      readConsistentAliasString(
+        receipt,
+        ["blockHash", "block_hash"],
+        "BSC source proof package receipt block hash",
+        (value) =>
+          normalizeEvmTxHash(
+            value,
+            "BSC source proof package receipt block hash",
+          ),
+      ),
+      "BSC source proof package receipt block hash",
+    );
+    const expectedSourceEventDigest = readBscSourceEventDigestFromReceipt(
+      receipt,
+      {
+        sourceBridgeAddress,
+        txId,
+        receiptBlockHash,
+        receiptBlockNumber,
+      },
+    );
+    if (bound.sourceEventDigest !== expectedSourceEventDigest) {
+      throw new Error(
+        "BSC source proof package digest does not match the bridge source event.",
+      );
+    }
+  }
+
+  return {
+    messageBundle: bound.messageBundle as Record<string, unknown>,
+    settlement: bound.settlement as Record<string, unknown>,
+    sourceEventDigest: bound.sourceEventDigest,
+    txId: bound.txId,
+    messageId: bound.messageId,
+    amountBaseUnits,
+    proofArtifactHash: materialBinding.proofArtifactHash,
+    provingKeyHash: materialBinding.provingKeyHash,
+    nativeEvmProverBundleHash: materialBinding.nativeEvmProverBundleHash,
+  };
+};
+
 const utf8TextEncoder = new TextEncoder();
 
 const readFirstValue = (
@@ -3584,14 +7412,8 @@ const readRequiredSubmitInteger = (
   keys: string[],
   label: string,
 ): number => {
-  const value = readFirstValue(record, ...keys);
-  const normalized =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim()
-        ? Number(value.trim())
-        : Number.NaN;
-  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+  const normalized = readConsistentAliasInteger(record, keys, label);
+  if (normalized === null) {
     throw new Error(`${label} must be a safe non-negative integer.`);
   }
   return normalized;
@@ -3602,42 +7424,100 @@ const readRequiredSubmitText = (
   keys: string[],
   label: string,
 ): string => {
-  for (const key of keys) {
-    const text = readScalarText(record, key);
-    if (text) {
-      return text;
-    }
+  const text = readConsistentAliasString(record, keys, label);
+  if (!text) {
+    throw new Error(`${label} is required.`);
   }
-  throw new Error(`${label} is required.`);
+  return text;
 };
 
 const readSubmitByteText = (value: unknown, label: string): string => {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "bigint"
+  ) {
     return readRequiredText(String(value), label);
   }
   const record = requireRecord(value, label);
-  const direct = readScalarText(record, "value") || readScalarText(record, "payload");
+  const direct = readConsistentAliasString(record, ["value", "payload"], label);
   if (direct) {
     return direct;
   }
   const variant = readRecordVariant(record, label);
-  return (
-    readScalarText(variant.value, "value") ||
-    readScalarText(variant.value, "payload") ||
-    (() => {
-      throw new Error(`${label} is required.`);
-    })()
+  const variantText = readConsistentAliasString(
+    variant.value,
+    ["value", "payload"],
+    label,
   );
+  if (!variantText) {
+    throw new Error(`${label} is required.`);
+  }
+  return variantText;
+};
+
+const readRequiredSubmitByteText = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): string => {
+  let selectedValue = "";
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const text = readSubmitByteText(record[key], label);
+    if (!selectedValue) {
+      selectedValue = text;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== text) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${text}.`,
+      );
+    }
+  }
+  if (!selectedValue) {
+    throw new Error(`${label} is required.`);
+  }
+  return selectedValue;
 };
 
 const utf8TextToSubmitHex = (value: unknown, label: string): string =>
-  bytesToLowerHex(utf8TextEncoder.encode(readSubmitByteText(value, label))).slice(2);
-
-const normalizeSubmitHex32 = (value: string, label: string): string =>
-  normalizeHex32(value, label).slice(2);
+  bytesToLowerHex(
+    utf8TextEncoder.encode(readSubmitByteText(value, label)),
+  ).slice(2);
 
 const normalizeSubmitHexData = (value: string, label: string): string =>
   normalizeHexData(value, label).slice(2);
+
+const normalizeSubmitNonZeroHex32 = (value: string, label: string): string =>
+  normalizeNonZeroHex32Loose(value, label).slice(2);
+
+const normalizeSubmitNonZeroHexData = (
+  value: string,
+  label: string,
+): string => {
+  const normalized = normalizeSubmitHexData(value, label);
+  if (/^0+$/u.test(normalized)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return normalized;
+};
+
+const readRequiredSubmitBoolean = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): boolean => {
+  const value = readConsistentAliasBoolean(record, keys, label);
+  if (value === null) {
+    throw new Error(`${label} must be boolean.`);
+  }
+  return value;
+};
 
 const serializeSccpMerkleProofForSubmit = (
   value: unknown,
@@ -3654,12 +7534,23 @@ const serializeSccpMerkleProofForSubmit = (
         `messageBundle.merkle_proof.steps[${index}]`,
       );
       return {
-        sibling_hash: normalizeSubmitHex32(
-          readFirstString(step, "sibling_hash", "siblingHash"),
+        sibling_hash: normalizeSubmitNonZeroHex32(
+          readConsistentAliasString(
+            step,
+            ["sibling_hash", "siblingHash"],
+            `messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+            (entryValue) =>
+              normalizeNonZeroHex32Loose(
+                entryValue,
+                `messageBundle.merkle_proof.steps[${index}].sibling_hash`,
+              ),
+          ),
           `messageBundle.merkle_proof.steps[${index}].sibling_hash`,
         ),
-        sibling_is_left: Boolean(
-          readFirstValue(step, "sibling_is_left", "siblingIsLeft"),
+        sibling_is_left: readRequiredSubmitBoolean(
+          step,
+          ["sibling_is_left", "siblingIsLeft"],
+          `messageBundle.merkle_proof.steps[${index}].sibling_is_left`,
         ),
       };
     }),
@@ -3692,7 +7583,11 @@ const serializeSccpTransferPayloadForSubmit = (
     "payload.asset_id_codec",
   ),
   asset_id: utf8TextToSubmitHex(
-    readFirstValue(value, "asset_id", "assetId"),
+    readRequiredSubmitByteText(
+      value,
+      ["asset_id", "assetId"],
+      "payload.asset_id",
+    ),
     "payload.asset_id",
   ),
   amount: readRequiredSubmitText(value, ["amount"], "payload.amount"),
@@ -3702,7 +7597,7 @@ const serializeSccpTransferPayloadForSubmit = (
     "payload.sender_codec",
   ),
   sender: utf8TextToSubmitHex(
-    readFirstValue(value, "sender"),
+    readRequiredSubmitByteText(value, ["sender"], "payload.sender"),
     "payload.sender",
   ),
   recipient_codec: readRequiredSubmitInteger(
@@ -3711,7 +7606,7 @@ const serializeSccpTransferPayloadForSubmit = (
     "payload.recipient_codec",
   ),
   recipient: utf8TextToSubmitHex(
-    readFirstValue(value, "recipient"),
+    readRequiredSubmitByteText(value, ["recipient"], "payload.recipient"),
     "payload.recipient",
   ),
   route_id_codec: readRequiredSubmitInteger(
@@ -3720,7 +7615,11 @@ const serializeSccpTransferPayloadForSubmit = (
     "payload.route_id_codec",
   ),
   route_id: utf8TextToSubmitHex(
-    readFirstValue(value, "route_id", "routeId"),
+    readRequiredSubmitByteText(
+      value,
+      ["route_id", "routeId"],
+      "payload.route_id",
+    ),
     "payload.route_id",
   ),
 });
@@ -3728,7 +7627,10 @@ const serializeSccpTransferPayloadForSubmit = (
 export const buildSccpMessageBundleSubmitPayload = (
   messageBundle: Record<string, unknown>,
 ): Record<string, unknown> => {
-  const bundle = requireRecord(messageBundle, "messageBundle");
+  const bundle = requireRecord(
+    snapshotSccpDataValue(messageBundle, "messageBundle"),
+    "messageBundle",
+  );
   const commitment = requireRecord(
     readFirstValue(bundle, "commitment"),
     "messageBundle.commitment",
@@ -3741,9 +7643,19 @@ export const buildSccpMessageBundleSubmitPayload = (
     throw new Error("messageBundle.payload must be a Transfer.");
   }
   return {
-    version: readRequiredSubmitInteger(bundle, ["version"], "messageBundle.version"),
-    commitment_root: normalizeSubmitHex32(
-      readFirstString(bundle, "commitment_root", "commitmentRoot"),
+    version: readRequiredSubmitInteger(
+      bundle,
+      ["version"],
+      "messageBundle.version",
+    ),
+    commitment_root: normalizeSubmitNonZeroHex32(
+      readConsistentAliasString(
+        bundle,
+        ["commitment_root", "commitmentRoot"],
+        "messageBundle.commitment_root",
+        (value) =>
+          normalizeNonZeroHex32Loose(value, "messageBundle.commitment_root"),
+      ),
       "messageBundle.commitment_root",
     ),
     commitment: {
@@ -3762,23 +7674,50 @@ export const buildSccpMessageBundleSubmitPayload = (
         ["target_domain", "targetDomain"],
         "messageBundle.commitment.target_domain",
       ),
-      message_id: normalizeSubmitHex32(
-        readFirstString(commitment, "message_id", "messageId"),
+      message_id: normalizeSubmitNonZeroHex32(
+        readConsistentAliasString(
+          commitment,
+          ["message_id", "messageId"],
+          "messageBundle.commitment.message_id",
+          (value) =>
+            normalizeNonZeroHex32Loose(
+              value,
+              "messageBundle.commitment.message_id",
+            ),
+        ),
         "messageBundle.commitment.message_id",
       ),
-      payload_hash: normalizeSubmitHex32(
-        readFirstString(commitment, "payload_hash", "payloadHash"),
+      payload_hash: normalizeSubmitNonZeroHex32(
+        readConsistentAliasString(
+          commitment,
+          ["payload_hash", "payloadHash"],
+          "messageBundle.commitment.payload_hash",
+          (value) =>
+            normalizeNonZeroHex32Loose(
+              value,
+              "messageBundle.commitment.payload_hash",
+            ),
+        ),
         "messageBundle.commitment.payload_hash",
       ),
     },
     merkle_proof: serializeSccpMerkleProofForSubmit(
-      readFirstValue(bundle, "merkle_proof", "merkleProof"),
+      readConsistentAliasRecord(
+        bundle,
+        ["merkle_proof", "merkleProof"],
+        "messageBundle.merkle_proof",
+      ),
     ),
     payload: {
       Transfer: serializeSccpTransferPayloadForSubmit(payload.value),
     },
-    finality_proof: normalizeSubmitHexData(
-      readFirstString(bundle, "finality_proof", "finalityProof"),
+    finality_proof: normalizeSubmitNonZeroHexData(
+      readConsistentAliasString(
+        bundle,
+        ["finality_proof", "finalityProof"],
+        "messageBundle.finality_proof",
+        (value) => normalizeHexData(value, "messageBundle.finality_proof"),
+      ),
       "messageBundle.finality_proof",
     ),
   };
@@ -3796,13 +7735,163 @@ const readNumber = (
   return Number.isFinite(parsed) ? parsed : null;
 };
 
-const listRecords = (value: unknown): Record<string, unknown>[] =>
-  Array.isArray(value)
-    ? value.filter(
-        (entry): entry is Record<string, unknown> =>
-          typeof entry === "object" && entry !== null && !Array.isArray(entry),
-      )
-    : [];
+export const SCCP_ROUTE_MANIFEST_JSON_ERROR =
+  "SCCP route manifest must contain only JSON-serializable enumerable string-keyed data before bridge actions.";
+
+const isPlainSccpJsonRecord = (value: Record<string, unknown>): boolean => {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
+
+const isCanonicalSccpArrayIndexKey = (key: string, length: number): boolean => {
+  if (!/^(?:0|[1-9][0-9]*)$/u.test(key)) {
+    return false;
+  }
+  const index = Number(key);
+  return Number.isSafeInteger(index) && index >= 0 && index < length;
+};
+
+const cloneSccpJsonValue = (
+  value: unknown,
+  visiting = new WeakSet<object>(),
+): unknown => {
+  if (value === null) {
+    return null;
+  }
+  const valueType = typeof value;
+  if (valueType !== "object") {
+    if (
+      valueType === "string" ||
+      valueType === "boolean" ||
+      (valueType === "number" && Number.isFinite(value))
+    ) {
+      return value;
+    }
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  const objectValue = value as object;
+  if (visiting.has(objectValue)) {
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  visiting.add(objectValue);
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(objectValue);
+    if (Array.isArray(objectValue)) {
+      const clone: unknown[] = [];
+      for (let index = 0; index < objectValue.length; index += 1) {
+        if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+          throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+        }
+      }
+      for (const key of Reflect.ownKeys(descriptors)) {
+        if (key === "length") {
+          continue;
+        }
+        if (
+          typeof key !== "string" ||
+          !isCanonicalSccpArrayIndexKey(key, objectValue.length)
+        ) {
+          throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+        }
+        const descriptor = descriptors[key];
+        if (!descriptor.enumerable || !("value" in descriptor)) {
+          throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+        }
+        clone[Number(key)] = cloneSccpJsonValue(descriptor.value, visiting);
+      }
+      return clone;
+    }
+    if (!isPlainSccpJsonRecord(objectValue as Record<string, unknown>)) {
+      throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+    }
+    const clone: Record<string, unknown> = {};
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (typeof key !== "string") {
+        throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+      }
+      if (descriptor.value !== undefined) {
+        clone[key] = cloneSccpJsonValue(descriptor.value, visiting);
+      }
+    }
+    return clone;
+  } finally {
+    visiting.delete(objectValue);
+  }
+};
+
+export const cloneSccpJsonRouteManifest = (
+  manifest: Record<string, unknown>,
+): Record<string, unknown> => {
+  const cloned = cloneSccpJsonValue(manifest);
+  if (typeof cloned !== "object" || cloned === null || Array.isArray(cloned)) {
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  return cloned as Record<string, unknown>;
+};
+
+const cloneSccpJsonManifestSet = (manifestSet: unknown): unknown => {
+  const cloned = cloneSccpJsonValue(manifestSet);
+  if (
+    typeof cloned !== "object" ||
+    cloned === null ||
+    (!Array.isArray(cloned) &&
+      !isPlainSccpJsonRecord(cloned as Record<string, unknown>))
+  ) {
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  return cloned;
+};
+
+const listRecords = (value: unknown): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const records: Record<string, unknown>[] = [];
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+      throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+    }
+  }
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (key === "length") {
+      continue;
+    }
+    if (
+      typeof key !== "string" ||
+      !isCanonicalSccpArrayIndexKey(key, value.length)
+    ) {
+      throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+    }
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+    }
+    const entry = descriptor.value;
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      records[Number(key)] = entry as Record<string, unknown>;
+    }
+  }
+  return records.filter(Boolean);
+};
+
+const readManifestListProperty = (
+  record: Record<string, unknown>,
+  key: string,
+): Record<string, unknown>[] => {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor) {
+    return [];
+  }
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  return listRecords(descriptor.value);
+};
 
 const manifestRecords = (manifestSet: unknown): Record<string, unknown>[] => {
   if (Array.isArray(manifestSet)) {
@@ -3816,13 +7905,108 @@ const manifestRecords = (manifestSet: unknown): Record<string, unknown>[] => {
     return [];
   }
   const record = manifestSet as Record<string, unknown>;
+  if (!isPlainSccpJsonRecord(record)) {
+    throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(record);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (
+      typeof key !== "string" ||
+      !descriptor ||
+      !descriptor.enumerable ||
+      !("value" in descriptor)
+    ) {
+      throw new Error(SCCP_ROUTE_MANIFEST_JSON_ERROR);
+    }
+  }
   return [
-    ...listRecords(record.manifests),
-    ...listRecords(record.items),
-    ...listRecords(record.routes),
-    ...listRecords(record.proofManifests),
-    ...listRecords(record.proof_manifests),
+    ...readManifestListProperty(record, "manifests"),
+    ...readManifestListProperty(record, "items"),
+    ...readManifestListProperty(record, "routes"),
+    ...readManifestListProperty(record, "proofManifests"),
+    ...readManifestListProperty(record, "proof_manifests"),
   ];
+};
+
+const unsafeSccpManifestSecretReason = (
+  value: unknown,
+  path = "SCCP route manifest",
+  seen = new WeakSet<object>(),
+): string | null => {
+  if (isSecretLikeTextValue(value)) {
+    return `${path} must not contain recovery phrases or private key material.`;
+  }
+  if (Array.isArray(value)) {
+    if (seen.has(value)) {
+      return null;
+    }
+    seen.add(value);
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.prototype.hasOwnProperty.call(descriptors, String(index))) {
+        return `${path} must contain only enumerable string-keyed data properties.`;
+      }
+    }
+    for (const key of Reflect.ownKeys(descriptors)) {
+      if (key === "length") {
+        continue;
+      }
+      if (
+        typeof key !== "string" ||
+        !isCanonicalBscMaterialArrayIndexKey(key, value.length)
+      ) {
+        return `${path} must contain only enumerable string-keyed data properties.`;
+      }
+      const descriptor = descriptors[key];
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        return `${path}[${key}] must contain only enumerable string-keyed data properties.`;
+      }
+      const reason = unsafeSccpManifestSecretReason(
+        descriptor.value,
+        `${path}[${key}]`,
+        seen,
+      );
+      if (reason) {
+        return reason;
+      }
+    }
+    return null;
+  }
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    ArrayBuffer.isView(value) ||
+    value instanceof ArrayBuffer
+  ) {
+    return null;
+  }
+  if (seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string") {
+      return `${path} must contain only enumerable string-keyed data properties.`;
+    }
+    const descriptor = descriptors[key];
+    if (!descriptor.enumerable || !("value" in descriptor)) {
+      return `${path}.${key} must contain only enumerable string-keyed data properties.`;
+    }
+    if (SCCP_MANIFEST_SECRET_KEY_PATTERN.test(key)) {
+      return `${path}.${key} must not contain private key material.`;
+    }
+    const reason = unsafeSccpManifestSecretReason(
+      descriptor.value,
+      `${path}.${key}`,
+      seen,
+    );
+    if (reason) {
+      return reason;
+    }
+  }
+  return null;
 };
 
 const manifestTargetsTron = (manifest: Record<string, unknown>): boolean => {
@@ -3837,6 +8021,87 @@ const manifestTargetsTron = (manifest: Record<string, unknown>): boolean => {
     counterpartyDomain === SCCP_TRON_DOMAIN ||
     verifierTarget === "TronContract" ||
     chain.includes("tron")
+  );
+};
+
+const readConsistentRouteAliasString = (
+  manifest: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): string => {
+  try {
+    return readConsistentAliasString(manifest, keys, label);
+  } catch (_error) {
+    return "";
+  }
+};
+
+const readConsistentRouteAliasInteger = (
+  manifest: Record<string, unknown>,
+  keys: string[],
+  label: string,
+): number | null => {
+  try {
+    return readConsistentAliasInteger(manifest, keys, label);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readReadinessAliasString = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+  reasons: string[],
+): string => {
+  try {
+    return readConsistentAliasString(record, keys, label);
+  } catch (error) {
+    reasons.push(
+      error instanceof Error ? error.message : `${label} is invalid.`,
+    );
+    return "";
+  }
+};
+
+const readReadinessAliasInteger = (
+  record: Record<string, unknown>,
+  keys: string[],
+  label: string,
+  reasons: string[],
+): number | null => {
+  try {
+    return readConsistentAliasInteger(record, keys, label);
+  } catch (error) {
+    reasons.push(
+      error instanceof Error ? error.message : `${label} is invalid.`,
+    );
+    return null;
+  }
+};
+
+const manifestTargetsBsc = (manifest: Record<string, unknown>): boolean => {
+  const counterpartyDomain = readConsistentRouteAliasInteger(
+    manifest,
+    ["counterpartyDomain", "counterparty_domain"],
+    "counterpartyDomain",
+  );
+  const verifierTarget = readConsistentRouteAliasString(
+    manifest,
+    ["verifierTarget", "verifier_target"],
+    "verifierTarget",
+  );
+  const chain = readString(manifest, "chain").toLowerCase();
+  const codec = readConsistentRouteAliasString(
+    manifest,
+    ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
+    "counterpartyAccountCodecKey",
+  );
+  return (
+    counterpartyDomain === SCCP_BSC_DOMAIN ||
+    chain.includes("bsc") ||
+    chain.includes("bnb") ||
+    (verifierTarget === "EvmContract" && codec === "evm_hex")
   );
 };
 
@@ -3874,6 +8139,71 @@ const readManifestTronNetworkKey = (
   return null;
 };
 
+const normalizeManifestBscNetworkKey = (
+  value: string,
+): SccpBscNetworkKey | null => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (
+    normalized === "bsc-mainnet" ||
+    normalized === "bnb-mainnet" ||
+    normalized === "mainnet" ||
+    normalized === "bsc"
+  ) {
+    return "mainnet";
+  }
+  try {
+    return normalizeSccpBscNetworkKey(normalized);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readManifestBscNetworkKey = (
+  manifest: Record<string, unknown>,
+): SccpBscNetworkKey | null => {
+  let selectedKey: SccpBscNetworkKey | null = null;
+  let selectedField = "";
+  let selectedValue = "";
+  for (const field of ["bscNetwork", "bsc_network", "network", "chain"]) {
+    if (!Object.prototype.hasOwnProperty.call(manifest, field)) {
+      continue;
+    }
+    const value = readString(manifest, field);
+    const key = normalizeManifestBscNetworkKey(value);
+    if (!key) {
+      continue;
+    }
+    if (!selectedKey) {
+      selectedKey = key;
+      selectedField = field;
+      selectedValue = value;
+      continue;
+    }
+    if (selectedKey !== key) {
+      throw new Error(
+        `BSC network aliases disagree: ${selectedField}=${selectedValue} but ${field}=${value}.`,
+      );
+    }
+  }
+  return selectedKey;
+};
+
+const resolveManifestBscNetworkProfile = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): SccpBscNetworkProfile => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  const declaredNetwork = manifestForRead
+    ? readManifestBscNetworkKey(manifestForRead)
+    : null;
+  return declaredNetwork
+    ? SCCP_BSC_NETWORK_PROFILES[declaredNetwork]
+    : resolveSccpBscNetworkProfile(bscNetwork);
+};
+
 export const readSccpTronGatewayEndpoint = (
   manifest: Record<string, unknown> | null | undefined,
   tronNetwork: unknown = SCCP_TRON_NETWORK.key,
@@ -3886,6 +8216,27 @@ export const readSccpTronGatewayEndpoint = (
     ? SCCP_TRON_NETWORK_PROFILES[declaredNetwork]
     : resolveSccpTronNetworkProfile(tronNetwork);
   return profile.rpcUrl;
+};
+
+export const readSccpBscRpcEndpoint = (
+  manifest: Record<string, unknown> | null | undefined,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  const declaredNetwork = manifestForRead
+    ? readManifestBscNetworkKey(manifestForRead)
+    : null;
+  const profile = declaredNetwork
+    ? SCCP_BSC_NETWORK_PROFILES[declaredNetwork]
+    : resolveSccpBscNetworkProfile(bscNetwork);
+  const configuredRpc = manifestForRead
+    ? readConsistentAliasString(
+        manifestForRead,
+        ["bscRpcUrl", "bsc_rpc_url", "evmRpcUrl", "evm_rpc_url"],
+        "BSC RPC endpoint",
+      )
+    : "";
+  return configuredRpc || profile.rpcUrl;
 };
 
 const manifestMatchesTronNetworkProfile = (
@@ -3903,18 +8254,38 @@ const manifestMatchesTronNetworkProfile = (
   return profile.key === "mainnet";
 };
 
-const manifestMatchesRoute = (manifest: Record<string, unknown>): boolean => {
-  const routeId =
-    readString(manifest, "routeId") ||
-    readString(manifest, "route_id") ||
-    readString(manifest, "route") ||
-    readString(manifest, "id");
-  const assetKey =
-    readString(manifest, "assetKey") ||
-    readString(manifest, "asset_key") ||
-    readString(manifest, "assetId") ||
-    readString(manifest, "asset_id");
-  return routeId === SCCP_XOR_ROUTE_ID && assetKey === SCCP_XOR_ASSET_KEY;
+const manifestMatchesBscNetworkProfile = (
+  manifest: Record<string, unknown>,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): boolean => {
+  const profile = resolveSccpBscNetworkProfile(bscNetwork);
+  let declaredNetwork: SccpBscNetworkKey | null = null;
+  try {
+    declaredNetwork = readManifestBscNetworkKey(manifest);
+  } catch (_error) {
+    return false;
+  }
+  if (declaredNetwork) {
+    return declaredNetwork === profile.key;
+  }
+  return Boolean(readSccpBscProofMaterial(manifest, profile.key));
+};
+
+const manifestMatchesRoute = (
+  manifest: Record<string, unknown>,
+  route: SccpRouteConfig = SCCP_XOR_ROUTE,
+): boolean => {
+  const routeId = readConsistentRouteAliasString(
+    manifest,
+    ["routeId", "route_id", "route", "id"],
+    "routeId",
+  );
+  const assetKey = readConsistentRouteAliasString(
+    manifest,
+    ["assetKey", "asset_key", "assetId", "asset_id"],
+    "assetKey",
+  );
+  return routeId === route.id && assetKey === route.assetKey;
 };
 
 export const pickTronSccpManifest = (
@@ -3924,12 +8295,118 @@ export const pickTronSccpManifest = (
   manifestRecords(manifestSet).find(
     (manifest) =>
       manifestTargetsTron(manifest) &&
-      manifestMatchesRoute(manifest) &&
+      manifestMatchesRoute(manifest, SCCP_XOR_ROUTE) &&
       manifestMatchesTronNetworkProfile(manifest, tronNetwork),
   ) ?? null;
 
 const hasAnyTronManifest = (manifestSet: unknown): boolean =>
   manifestRecords(manifestSet).some(manifestTargetsTron);
+
+export const pickBscSccpManifest = (
+  manifestSet: unknown,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): Record<string, unknown> | null =>
+  manifestRecords(manifestSet).find(
+    (manifest) =>
+      manifestTargetsBsc(manifest) &&
+      manifestMatchesRoute(manifest, SCCP_BSC_XOR_ROUTE) &&
+      manifestMatchesBscNetworkProfile(manifest, bscNetwork),
+  ) ?? null;
+
+const hasAnyBscManifest = (manifestSet: unknown): boolean =>
+  manifestRecords(manifestSet).some(manifestTargetsBsc);
+
+const SCCP_CAPABILITIES_DATA_ERROR =
+  "SCCP capabilities must contain only enumerable string-keyed data fields.";
+
+const readCapabilityDataProperty = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+):
+  | { ok: true; present: boolean; value: unknown }
+  | { ok: false; reason: string } => {
+  const descriptor = Object.getOwnPropertyDescriptor(record, key);
+  if (!descriptor) {
+    return { ok: true, present: false, value: undefined };
+  }
+  if (!descriptor.enumerable || !("value" in descriptor)) {
+    return {
+      ok: false,
+      reason: `${label}.${key} ${SCCP_CAPABILITIES_DATA_ERROR}`,
+    };
+  }
+  return { ok: true, present: true, value: descriptor.value };
+};
+
+const readCapabilityString = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const result = readCapabilityDataProperty(record, key, label);
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  return typeof result.value === "string" ? result.value.trim() : "";
+};
+
+const readCapabilityRecord = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): Record<string, unknown> | null => {
+  const result = readCapabilityDataProperty(record, key, label);
+  if (!result.ok) {
+    throw new Error(result.reason);
+  }
+  if (result.value === undefined || result.value === null) {
+    return null;
+  }
+  if (
+    typeof result.value !== "object" ||
+    Array.isArray(result.value) ||
+    !isPlainSccpJsonRecord(result.value as Record<string, unknown>)
+  ) {
+    throw new Error(`${label}.${key} ${SCCP_CAPABILITIES_DATA_ERROR}`);
+  }
+  return result.value as Record<string, unknown>;
+};
+
+const readConsistentCapabilityPath = (
+  sources: Array<{
+    record: Record<string, unknown> | null;
+    label: string;
+    keys: string[];
+  }>,
+  label: string,
+): string => {
+  let selectedValue = "";
+  let selectedKey = "";
+  for (const source of sources) {
+    if (!source.record) {
+      continue;
+    }
+    for (const key of source.keys) {
+      const value = readCapabilityString(source.record, key, source.label);
+      if (!value) {
+        continue;
+      }
+      const qualifiedKey = `${source.label}.${key}`;
+      if (!selectedValue) {
+        selectedValue = value;
+        selectedKey = qualifiedKey;
+        continue;
+      }
+      if (selectedValue !== value) {
+        throw new Error(
+          `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${qualifiedKey}=${value}.`,
+        );
+      }
+    }
+  }
+  return selectedValue;
+};
 
 const readCapabilityPath = (
   capabilities: Record<string, unknown> | null | undefined,
@@ -3939,40 +8416,110 @@ const readCapabilityPath = (
     return "";
   }
   if (pathKind === "proof") {
-    return (
-      readFirstString(
-        capabilities,
-        "proofSubmitPath",
-        "proof_submit_path",
-        "proofSubmit",
-        "proof_submit",
-      ) ||
-      readFirstString(
-        readFirstRecord(capabilities, "submit", "submissions", "paths"),
-        "proof",
-        "proofPath",
-        "proof_path",
-        "proofSubmitPath",
-        "proof_submit_path",
-      )
+    return readConsistentCapabilityPath(
+      [
+        {
+          record: capabilities,
+          label: "capabilities",
+          keys: [
+            "proofSubmitPath",
+            "proof_submit_path",
+            "proofSubmit",
+            "proof_submit",
+          ],
+        },
+        {
+          record: readCapabilityRecord(capabilities, "submit", "capabilities"),
+          label: "capabilities.submit",
+          keys: [
+            "proof",
+            "proofPath",
+            "proof_path",
+            "proofSubmitPath",
+            "proof_submit_path",
+          ],
+        },
+        {
+          record: readCapabilityRecord(
+            capabilities,
+            "submissions",
+            "capabilities",
+          ),
+          label: "capabilities.submissions",
+          keys: [
+            "proof",
+            "proofPath",
+            "proof_path",
+            "proofSubmitPath",
+            "proof_submit_path",
+          ],
+        },
+        {
+          record: readCapabilityRecord(capabilities, "paths", "capabilities"),
+          label: "capabilities.paths",
+          keys: [
+            "proof",
+            "proofPath",
+            "proof_path",
+            "proofSubmitPath",
+            "proof_submit_path",
+          ],
+        },
+      ],
+      "SCCP proof submit path",
     );
   }
-  return (
-    readFirstString(
-      capabilities,
-      "messageSubmitPath",
-      "message_submit_path",
-      "messageSubmit",
-      "message_submit",
-    ) ||
-    readFirstString(
-      readFirstRecord(capabilities, "submit", "submissions", "paths"),
-      "message",
-      "messagePath",
-      "message_path",
-      "messageSubmitPath",
-      "message_submit_path",
-    )
+  return readConsistentCapabilityPath(
+    [
+      {
+        record: capabilities,
+        label: "capabilities",
+        keys: [
+          "messageSubmitPath",
+          "message_submit_path",
+          "messageSubmit",
+          "message_submit",
+        ],
+      },
+      {
+        record: readCapabilityRecord(capabilities, "submit", "capabilities"),
+        label: "capabilities.submit",
+        keys: [
+          "message",
+          "messagePath",
+          "message_path",
+          "messageSubmitPath",
+          "message_submit_path",
+        ],
+      },
+      {
+        record: readCapabilityRecord(
+          capabilities,
+          "submissions",
+          "capabilities",
+        ),
+        label: "capabilities.submissions",
+        keys: [
+          "message",
+          "messagePath",
+          "message_path",
+          "messageSubmitPath",
+          "message_submit_path",
+        ],
+      },
+      {
+        record: readCapabilityRecord(capabilities, "paths", "capabilities"),
+        label: "capabilities.paths",
+        keys: [
+          "message",
+          "messagePath",
+          "message_path",
+          "messageSubmitPath",
+          "message_submit_path",
+        ],
+      },
+    ],
+    "SCCP bridge-message submit path",
   );
 };
 
@@ -4026,18 +8573,34 @@ const normalizeSccpCapabilitySubmitPath = (
     .split("/")
     .filter(Boolean)
     .map((segment) => {
-      try {
-        return decodeURIComponent(segment).toLowerCase();
-      } catch (_error) {
-        throw new Error(`${label} contains invalid percent encoding.`);
+      let decoded = segment;
+      let changed = false;
+      for (let depth = 0; depth < 8; depth += 1) {
+        let next: string;
+        try {
+          next = decodeURIComponent(decoded);
+        } catch (_error) {
+          throw new Error(`${label} contains invalid percent encoding.`);
+        }
+        if (/[\\/]/u.test(next)) {
+          throw new Error(`${label} must not contain encoded path separators.`);
+        }
+        if (next === "." || next === "..") {
+          throw new Error(`${label} must not contain path traversal segments.`);
+        }
+        if (next === decoded) {
+          if (changed) {
+            throw new Error(
+              `${label} must not contain percent-encoded path segments.`,
+            );
+          }
+          return decoded.toLowerCase();
+        }
+        changed = true;
+        decoded = next;
       }
+      throw new Error(`${label} contains over-encoded path segments.`);
     });
-  if (decodedSegments.some((segment) => segment === "." || segment === "..")) {
-    throw new Error(`${label} must not contain path traversal segments.`);
-  }
-  if (decodedSegments.some((segment) => /[\\/]/u.test(segment))) {
-    throw new Error(`${label} must not contain encoded path separators.`);
-  }
   const normalizedPath = decodedSegments.join("/");
   if (!/(?:^|\/)(?:bridge|sccp)(?:\/|$)/u.test(normalizedPath)) {
     throw new Error(`${label} must target an SCCP or bridge endpoint.`);
@@ -4058,16 +8621,42 @@ const normalizeSccpCapabilitySubmitPath = (
 
 const readProductionReadyFlag = (
   manifest: Record<string, unknown>,
-): { ready: boolean; invalid: boolean } => {
-  const hasCamel = Object.prototype.hasOwnProperty.call(
-    manifest,
-    "productionReady",
-  );
-  const value = hasCamel ? manifest.productionReady : manifest.production_ready;
-  if (value === true) {
+): { ready: boolean; invalid: boolean; reason?: string } => {
+  let selectedValue: boolean | null = null;
+  let selectedField = "";
+  for (const field of ["productionReady", "production_ready"]) {
+    if (!Object.prototype.hasOwnProperty.call(manifest, field)) {
+      continue;
+    }
+    const value = manifest[field];
+    if (value === undefined || value === null) {
+      continue;
+    }
+    if (typeof value !== "boolean") {
+      return {
+        ready: false,
+        invalid: true,
+        reason:
+          "The SCCP route production-ready flag is invalid: value must be boolean.",
+      };
+    }
+    if (selectedValue === null) {
+      selectedValue = value;
+      selectedField = field;
+      continue;
+    }
+    if (selectedValue !== value) {
+      return {
+        ready: false,
+        invalid: true,
+        reason: `The SCCP route production-ready flag is invalid: productionReady aliases disagree: ${selectedField}=${selectedValue} but ${field}=${value}.`,
+      };
+    }
+  }
+  if (selectedValue === true) {
     return { ready: true, invalid: false };
   }
-  if (value === false || value === undefined || value === null) {
+  if (selectedValue === false || selectedValue === null) {
     return { ready: false, invalid: false };
   }
   return { ready: false, invalid: true };
@@ -4077,60 +8666,107 @@ const hasPostDeployLiveEvidence = (
   manifest: Record<string, unknown>,
 ): boolean =>
   Boolean(
-    readFirstRecord(
-      manifest,
-      "postDeployLiveEvidence",
-      "post_deploy_live_evidence",
-    ),
+    readFirstRecord(manifest, "postDeployLiveEvidence") ||
+      readFirstRecord(manifest, "post_deploy_live_evidence"),
   );
+
+const readPostDeployLiveEvidenceRecord = (
+  manifest: Record<string, unknown>,
+): Record<string, unknown> | null => {
+  let selectedValue: Record<string, unknown> | null = null;
+  let selectedKey = "";
+  let selectedComparable = "";
+  for (const key of ["postDeployLiveEvidence", "post_deploy_live_evidence"]) {
+    if (!Object.prototype.hasOwnProperty.call(manifest, key)) {
+      continue;
+    }
+    const rawValue = manifest[key];
+    if (rawValue === undefined || rawValue === null) {
+      continue;
+    }
+    const value = requireRecord(rawValue, "postDeployLiveEvidence");
+    const comparable = JSON.stringify(stableJsonValue(value));
+    if (!selectedValue) {
+      selectedValue = value;
+      selectedKey = key;
+      selectedComparable = comparable;
+      continue;
+    }
+    if (selectedComparable !== comparable) {
+      throw new Error(
+        `postDeployLiveEvidence aliases disagree: ${selectedKey} and ${key} carry different records.`,
+      );
+    }
+  }
+  return selectedValue;
+};
 
 const validatePostDeployLiveEvidence = (
   manifest: Record<string, unknown>,
 ): void => {
-  const evidence = readFirstRecord(
-    manifest,
-    "postDeployLiveEvidence",
-    "post_deploy_live_evidence",
-  );
+  const evidence = readPostDeployLiveEvidenceRecord(manifest);
   if (!evidence) {
     throw new Error("The TRON SCCP post-deploy live evidence is missing.");
   }
-  const fullTomlReady =
-    evidence.fullTomlReady ?? evidence.full_toml_ready ?? false;
+  const fullTomlReady = readConsistentAliasBoolean(
+    evidence,
+    ["fullTomlReady", "full_toml_ready"],
+    "postDeployLiveEvidence.fullTomlReady",
+  );
   if (fullTomlReady !== true) {
     throw new Error("postDeployLiveEvidence.fullTomlReady must be true.");
   }
 
   for (const [value, label] of [
     [
-      readFirstString(
+      readConsistentAliasString(
         evidence,
-        "sourceBridgeConfigHash",
-        "source_bridge_config_hash",
+        ["sourceBridgeConfigHash", "source_bridge_config_hash"],
+        "postDeployLiveEvidence.sourceBridgeConfigHash",
+        (entry) =>
+          normalizeNonZeroHex32Loose(
+            entry,
+            "postDeployLiveEvidence.sourceBridgeConfigHash",
+          ),
       ),
       "postDeployLiveEvidence.sourceBridgeConfigHash",
     ],
     [
-      readFirstString(
+      readConsistentAliasString(
         evidence,
-        "sourceEventTransactionId",
-        "source_event_transaction_id",
+        ["sourceEventTransactionId", "source_event_transaction_id"],
+        "postDeployLiveEvidence.sourceEventTransactionId",
+        (entry) =>
+          normalizeNonZeroHex32Loose(
+            entry,
+            "postDeployLiveEvidence.sourceEventTransactionId",
+          ),
       ),
       "postDeployLiveEvidence.sourceEventTransactionId",
     ],
     [
-      readFirstString(
+      readConsistentAliasString(
         evidence,
-        "routeCanaryEvidenceHash",
-        "route_canary_evidence_hash",
+        ["routeCanaryEvidenceHash", "route_canary_evidence_hash"],
+        "postDeployLiveEvidence.routeCanaryEvidenceHash",
+        (entry) =>
+          normalizeNonZeroHex32Loose(
+            entry,
+            "postDeployLiveEvidence.routeCanaryEvidenceHash",
+          ),
       ),
       "postDeployLiveEvidence.routeCanaryEvidenceHash",
     ],
     [
-      readFirstString(
+      readConsistentAliasString(
         evidence,
-        "routeCanaryTransactionId",
-        "route_canary_transaction_id",
+        ["routeCanaryTransactionId", "route_canary_transaction_id"],
+        "postDeployLiveEvidence.routeCanaryTransactionId",
+        (entry) =>
+          normalizeNonZeroHex32Loose(
+            entry,
+            "postDeployLiveEvidence.routeCanaryTransactionId",
+          ),
       ),
       "postDeployLiveEvidence.routeCanaryTransactionId",
     ],
@@ -4138,17 +8774,139 @@ const validatePostDeployLiveEvidence = (
     normalizeNonZeroHex32Loose(value, label);
   }
 
-  const offlineFullTomlSha256 = readFirstString(
+  const offlineFullTomlSha256 = readConsistentAliasString(
     evidence,
-    "offlineFullTomlSha256",
-    "offline_full_toml_sha256",
+    ["offlineFullTomlSha256", "offline_full_toml_sha256"],
+    "postDeployLiveEvidence.offlineFullTomlSha256",
+    (entry) =>
+      normalizeNonZeroHex32Loose(
+        entry,
+        "postDeployLiveEvidence.offlineFullTomlSha256",
+      ),
   );
-  if (offlineFullTomlSha256) {
-    normalizeNonZeroHex32Loose(
-      offlineFullTomlSha256,
-      "postDeployLiveEvidence.offlineFullTomlSha256",
+  if (!offlineFullTomlSha256) {
+    throw new Error(
+      "postDeployLiveEvidence.fullTomlReady requires postDeployLiveEvidence.offlineFullTomlSha256.",
     );
   }
+  normalizeNonZeroHex32Loose(
+    offlineFullTomlSha256,
+    "postDeployLiveEvidence.offlineFullTomlSha256",
+  );
+};
+
+const validateBscPostDeployLiveEvidence = (
+  manifest: Record<string, unknown>,
+  bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+): void => {
+  const bscProfile = resolveManifestBscNetworkProfile(manifest, bscNetwork);
+  validatePostDeployLiveEvidence(manifest);
+  const evidence = readPostDeployLiveEvidenceRecord(manifest);
+  if (!evidence) {
+    throw new Error("The BSC SCCP post-deploy live evidence is missing.");
+  }
+  const sourceBridgeConfigHash = normalizeNonZeroHex32Loose(
+    readConsistentAliasString(
+      evidence,
+      ["sourceBridgeConfigHash", "source_bridge_config_hash"],
+      "postDeployLiveEvidence.sourceBridgeConfigHash",
+      (entry) =>
+        normalizeNonZeroHex32Loose(
+          entry,
+          "postDeployLiveEvidence.sourceBridgeConfigHash",
+        ),
+    ),
+    "postDeployLiveEvidence.sourceBridgeConfigHash",
+  );
+  const routeCanaryEvidenceHash = normalizeNonZeroHex32Loose(
+    readConsistentAliasString(
+      evidence,
+      ["routeCanaryEvidenceHash", "route_canary_evidence_hash"],
+      "postDeployLiveEvidence.routeCanaryEvidenceHash",
+      (entry) =>
+        normalizeNonZeroHex32Loose(
+          entry,
+          "postDeployLiveEvidence.routeCanaryEvidenceHash",
+        ),
+    ),
+    "postDeployLiveEvidence.routeCanaryEvidenceHash",
+  );
+  if (sourceBridgeConfigHash === routeCanaryEvidenceHash) {
+    throw new Error(
+      "postDeployLiveEvidence source bridge config hash and route canary evidence hash must be distinct.",
+    );
+  }
+  const sourceEventTransactionId = normalizeNonZeroHex32Loose(
+    readConsistentAliasString(
+      evidence,
+      ["sourceEventTransactionId", "source_event_transaction_id"],
+      "postDeployLiveEvidence.sourceEventTransactionId",
+      (entry) =>
+        normalizeNonZeroHex32Loose(
+          entry,
+          "postDeployLiveEvidence.sourceEventTransactionId",
+        ),
+    ),
+    "postDeployLiveEvidence.sourceEventTransactionId",
+  );
+  const routeCanaryTransactionId = normalizeNonZeroHex32Loose(
+    readConsistentAliasString(
+      evidence,
+      ["routeCanaryTransactionId", "route_canary_transaction_id"],
+      "postDeployLiveEvidence.routeCanaryTransactionId",
+      (entry) =>
+        normalizeNonZeroHex32Loose(
+          entry,
+          "postDeployLiveEvidence.routeCanaryTransactionId",
+        ),
+    ),
+    "postDeployLiveEvidence.routeCanaryTransactionId",
+  );
+  if (sourceEventTransactionId === routeCanaryTransactionId) {
+    throw new Error(
+      "postDeployLiveEvidence source event and route canary transaction ids must be distinct.",
+    );
+  }
+  const sourceEventExplorerUrlKeys = [
+    "sourceEventExplorerUrl",
+    "source_event_explorer_url",
+    "sourceEventTransactionUrl",
+    "source_event_transaction_url",
+  ];
+  const routeCanaryExplorerUrlKeys = [
+    "routeCanaryExplorerUrl",
+    "route_canary_explorer_url",
+    "routeCanaryTransactionUrl",
+    "route_canary_transaction_url",
+  ];
+  const sourceEventExplorerUrl = readConsistentAliasString(
+    evidence,
+    sourceEventExplorerUrlKeys,
+    "postDeployLiveEvidence.sourceEventExplorerUrl",
+  );
+  const routeCanaryExplorerUrl = readConsistentAliasString(
+    evidence,
+    routeCanaryExplorerUrlKeys,
+    "postDeployLiveEvidence.routeCanaryExplorerUrl",
+  );
+  normalizeBscExplorerTransactionUrl(
+    sourceEventExplorerUrl ||
+      (!hasAnyOwnKey(evidence, sourceEventExplorerUrlKeys)
+        ? `${bscProfile.explorerUrl}/tx/${sourceEventTransactionId}`
+        : ""),
+    "postDeployLiveEvidence.sourceEventExplorerUrl",
+    sourceEventTransactionId,
+    bscProfile.key,
+  );
+  normalizeBscExplorerTransactionUrl(
+    routeCanaryExplorerUrl ||
+      (!hasAnyOwnKey(evidence, routeCanaryExplorerUrlKeys)
+        ? `${bscProfile.explorerUrl}/tx/${routeCanaryTransactionId}`
+        : ""),
+    "postDeployLiveEvidence.routeCanaryExplorerUrl",
+    routeCanaryTransactionId,
+    bscProfile.key,
+  );
 };
 
 const manifestAllowsSelectedTestnetRoute = (
@@ -4166,21 +8924,44 @@ export const resolveSccpRouteReadiness = (input: {
   connection: SccpNetworkSnapshot;
   capabilities?: Record<string, unknown> | null;
   manifestSet?: Record<string, unknown> | null;
+  counterparty?: unknown;
+  route?: SccpRouteConfig;
   tronNetwork?: unknown;
+  bscNetwork?: unknown;
 }): SccpRouteReadiness => {
   const reasons: string[] = [];
+  const route =
+    input.route ??
+    resolveSccpRouteProfile(input.counterparty ?? SCCP_XOR_ROUTE.counterparty);
   const tronProfile = resolveSccpTronNetworkProfile(
     input.tronNetwork ?? SCCP_TRON_NETWORK.key,
+  );
+  const bscProfile = resolveSccpBscNetworkProfile(
+    input.bscNetwork ?? SCCP_BSC_NETWORK.key,
   );
   if (!isTairaSccpNetwork(input.connection)) {
     reasons.push("Switch to the TAIRA testnet profile.");
   }
 
   const capabilities = input.capabilities;
-  const proofSubmitPath = readCapabilityPath(capabilities, "proof");
-  const messageSubmitPath = readCapabilityPath(capabilities, "message");
+  let proofSubmitPath = "";
+  let messageSubmitPath = "";
+  let capabilityPathError = "";
+  if (capabilities) {
+    try {
+      proofSubmitPath = readCapabilityPath(capabilities, "proof");
+      messageSubmitPath = readCapabilityPath(capabilities, "message");
+    } catch (error) {
+      capabilityPathError =
+        error instanceof Error
+          ? error.message
+          : "This Torii endpoint exposes ambiguous SCCP submit endpoints.";
+    }
+  }
   if (!capabilities) {
     reasons.push("SCCP capabilities have not been loaded.");
+  } else if (capabilityPathError) {
+    reasons.push(capabilityPathError);
   } else if (!proofSubmitPath || !messageSubmitPath) {
     reasons.push("This Torii endpoint is missing SCCP submit endpoints.");
   } else {
@@ -4204,27 +8985,70 @@ export const resolveSccpRouteReadiness = (input: {
     }
   }
 
-  const tronManifest = pickTronSccpManifest(input.manifestSet, tronProfile.key);
+  let manifestSetForReadiness: unknown = input.manifestSet;
+  let manifestJsonReason = "";
+  if (input.manifestSet) {
+    try {
+      manifestSetForReadiness = cloneSccpJsonManifestSet(input.manifestSet);
+    } catch (error) {
+      manifestSetForReadiness = null;
+      manifestJsonReason =
+        error instanceof Error ? error.message : SCCP_ROUTE_MANIFEST_JSON_ERROR;
+    }
+  }
+  const tronManifest =
+    route.counterparty === "tron" && !manifestJsonReason
+      ? pickTronSccpManifest(manifestSetForReadiness, tronProfile.key)
+      : null;
+  const bscManifest =
+    route.counterparty === "bsc" && !manifestJsonReason
+      ? pickBscSccpManifest(manifestSetForReadiness, bscProfile.key)
+      : null;
+  const manifest = route.counterparty === "bsc" ? bscManifest : tronManifest;
+  const manifestSecretReason = manifest
+    ? unsafeSccpManifestSecretReason(manifest)
+    : null;
+  const manifestContainsSecretLikeMaterial = Boolean(manifestSecretReason);
   if (!input.manifestSet) {
     reasons.push("SCCP proof manifests have not been loaded.");
-  } else if (!tronManifest) {
+  } else if (manifestJsonReason) {
+    reasons.push(manifestJsonReason);
+  } else if (route.counterparty === "tron" && !tronManifest) {
     reasons.push(
-      hasAnyTronManifest(input.manifestSet)
+      hasAnyTronManifest(manifestSetForReadiness)
         ? `No ${SCCP_XOR_ROUTE_ID} TRON SCCP manifest is advertised by this endpoint.`
         : "No TRON SCCP manifest is advertised by this endpoint.",
     );
-  } else {
+  } else if (route.counterparty === "bsc" && !bscManifest) {
+    reasons.push(
+      hasAnyBscManifest(manifestSetForReadiness)
+        ? `No ${SCCP_BSC_XOR_ROUTE_ID} BSC testnet SCCP manifest is advertised by this endpoint.`
+        : "No BSC SCCP manifest is advertised by this endpoint.",
+    );
+  } else if (manifestSecretReason) {
+    reasons.push("SCCP route manifest contains secret-like material.");
+  } else if (tronManifest) {
     const productionReady = readProductionReadyFlag(tronManifest);
-    const disabledReason =
-      readString(tronManifest, "disabledReason") ||
-      readString(tronManifest, "disabled_reason");
+    const disabledReason = readReadinessAliasString(
+      tronManifest,
+      ["disabledReason", "disabled_reason"],
+      "disabledReason",
+      reasons,
+    );
     const allowSelectedTestnetRoute = manifestAllowsSelectedTestnetRoute(
       tronManifest,
       tronProfile,
       productionReady,
     );
     if (productionReady.invalid) {
-      reasons.push("The TRON SCCP route production-ready flag is invalid.");
+      reasons.push(
+        productionReady.reason ??
+          "The TRON SCCP route production-ready flag is invalid.",
+      );
+    } else if (productionReady.ready && disabledReason) {
+      reasons.push(
+        "The TRON SCCP route is marked production-ready but also carries a disabled reason.",
+      );
     } else if (!productionReady.ready && !allowSelectedTestnetRoute) {
       reasons.push(
         disabledReason || "The TRON SCCP route is not production-ready.",
@@ -4334,6 +9158,265 @@ export const resolveSccpRouteReadiness = (input: {
     ) {
       reasons.push("TRON deployment contract addresses must be distinct.");
     }
+  } else if (bscManifest) {
+    const productionReady = readProductionReadyFlag(bscManifest);
+    const disabledReason = readReadinessAliasString(
+      bscManifest,
+      ["disabledReason", "disabled_reason"],
+      "disabledReason",
+      reasons,
+    );
+    if (productionReady.invalid) {
+      reasons.push(
+        productionReady.reason ??
+          "The BSC SCCP route production-ready flag is invalid.",
+      );
+    } else if (productionReady.ready && disabledReason) {
+      reasons.push(
+        "The BSC SCCP route is marked production-ready but also carries a disabled reason.",
+      );
+    } else if (!productionReady.ready) {
+      reasons.push(
+        disabledReason || "The BSC SCCP route is not production-ready.",
+      );
+    }
+    if (productionReady.ready) {
+      const placeholderReason = bscProductionPlaceholderReason(bscManifest);
+      if (placeholderReason) {
+        reasons.push(
+          `The BSC SCCP route manifest contains placeholder, fixture-only, or test-only material: ${placeholderReason}.`,
+        );
+      }
+    }
+    const codecKey = readReadinessAliasString(
+      bscManifest,
+      ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
+      "counterpartyAccountCodecKey",
+      reasons,
+    );
+    const codecId = readReadinessAliasInteger(
+      bscManifest,
+      ["counterpartyAccountCodec", "counterparty_account_codec"],
+      "counterpartyAccountCodec",
+      reasons,
+    );
+    if (codecKey && codecKey !== "evm_hex") {
+      reasons.push("The BSC route must use the evm_hex account codec.");
+    }
+    if (codecId !== null && codecId !== SCCP_CODEC_EVM_HEX) {
+      reasons.push("The BSC route must use the EVM hex account codec id.");
+    }
+    let bridgeAddress = "";
+    try {
+      bridgeAddress = readSccpBscBridgeAddress(bscManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The BSC bridge deployment address aliases are invalid.",
+      );
+    }
+    if (!bridgeAddress) {
+      reasons.push("The BSC bridge deployment address is missing.");
+    } else {
+      try {
+        normalizeEvmAddress(bridgeAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The BSC bridge deployment address is invalid: ${error.message}`
+            : "The BSC bridge deployment address is invalid.",
+        );
+      }
+    }
+    let tokenAddress = "";
+    try {
+      tokenAddress = readSccpBscTokenAddress(bscManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The BSC TairaXOR token deployment address aliases are invalid.",
+      );
+    }
+    if (!tokenAddress) {
+      reasons.push("The BSC TairaXOR token deployment address is missing.");
+    } else {
+      try {
+        normalizeEvmAddress(tokenAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The BSC TairaXOR token deployment address is invalid: ${error.message}`
+            : "The BSC TairaXOR token deployment address is invalid.",
+        );
+      }
+    }
+    let sourceBridgeAddress = "";
+    try {
+      sourceBridgeAddress = readSccpBscSourceBridgeAddress(bscManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The BSC source bridge deployment address aliases are invalid.",
+      );
+    }
+    if (!sourceBridgeAddress) {
+      reasons.push("The BSC source bridge deployment address is missing.");
+    } else {
+      try {
+        normalizeEvmAddress(sourceBridgeAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The BSC source bridge deployment address is invalid: ${error.message}`
+            : "The BSC source bridge deployment address is invalid.",
+        );
+      }
+    }
+    let verifierAddress = "";
+    try {
+      verifierAddress = readSccpBscVerifierAddress(bscManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The BSC verifier deployment address aliases are invalid.",
+      );
+    }
+    if (!verifierAddress) {
+      reasons.push("The BSC verifier deployment address is missing.");
+    } else {
+      try {
+        normalizeEvmAddress(verifierAddress);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The BSC verifier deployment address is invalid: ${error.message}`
+            : "The BSC verifier deployment address is invalid.",
+        );
+      }
+    }
+    const bscProofMaterial = readSccpBscProofMaterial(
+      bscManifest,
+      bscProfile.key,
+    );
+    if (!bscProofMaterial) {
+      reasons.push(
+        readSccpBscProofMaterialFailureReason(bscManifest, bscProfile.key),
+      );
+    }
+    try {
+      readBscDestinationBindingInput(bscManifest, bscProfile.key);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The BSC SCCP verifier rollout proof material is incomplete.",
+      );
+    }
+    const diagnosticVerifierReasons = bscDiagnosticVerifierMaterialReasons(
+      bscManifest,
+      bscProofMaterial,
+    );
+    if (diagnosticVerifierReasons.length > 0) {
+      reasons.push(
+        `The BSC SCCP verifier material is diagnostic and must be replaced before production readiness: ${diagnosticVerifierReasons.join("; ")}.`,
+      );
+    }
+    reasons.push(
+      ...bscNativeEvmProverBundleReadinessReasons(
+        bscManifest,
+        bscProofMaterial,
+        bscProfile.key,
+      ),
+    );
+    if (productionReady.ready || hasPostDeployLiveEvidence(bscManifest)) {
+      try {
+        validateBscPostDeployLiveEvidence(bscManifest, bscProfile.key);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message.replace(/TRON/gu, "BSC")
+            : "The BSC SCCP post-deploy live evidence is incomplete.",
+        );
+      }
+    }
+    const burnRecordMaterial =
+      readSccpTairaBurnRecordMaterialResult(bscManifest);
+    if (!burnRecordMaterial.material) {
+      reasons.push(
+        burnRecordMaterial.reason ??
+          "The TAIRA burn-record ZK contract material is missing.",
+      );
+    }
+    const burnRecord = readFirstRecord(
+      bscManifest,
+      "tairaXorBurnRecord",
+      "taira_xor_burn_record",
+      "burnRecord",
+      "burn_record",
+      "sourceRecordContract",
+      "source_record_contract",
+    );
+    const artifactSha256 = readBurnRecordArtifactSha256(
+      bscManifest,
+      burnRecord,
+    );
+    if (!artifactSha256) {
+      reasons.push("The BSC TAIRA burn-record artifact SHA-256 is missing.");
+    } else {
+      try {
+        const normalizedArtifactSha256 = normalizeNonZeroHex32Loose(
+          artifactSha256,
+          "BSC TAIRA burn-record artifact SHA-256",
+        );
+        const artifactBytes = burnRecordMaterial.material
+          ? strictBase64DecodedBytes(
+              burnRecordMaterial.material.contractArtifactB64,
+            )
+          : null;
+        if (artifactBytes) {
+          const computedArtifactSha256 = bytesToLowerHex(sha256(artifactBytes));
+          if (computedArtifactSha256 !== normalizedArtifactSha256) {
+            reasons.push(
+              "The BSC TAIRA burn-record artifact SHA-256 does not match the contract artifact.",
+            );
+          }
+        } else if (burnRecordMaterial.material) {
+          reasons.push(
+            "The BSC TAIRA burn-record contract artifact must be strict base64.",
+          );
+        }
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message
+            : "The BSC TAIRA burn-record artifact SHA-256 is invalid.",
+        );
+      }
+    }
+    const distinctDeploymentAddresses = [
+      bridgeAddress,
+      tokenAddress,
+      sourceBridgeAddress,
+      verifierAddress,
+    ]
+      .map((address) => {
+        try {
+          return address ? normalizeEvmAddress(address) : "";
+        } catch (_error) {
+          return "";
+        }
+      })
+      .filter(Boolean);
+    if (
+      distinctDeploymentAddresses.length === 4 &&
+      new Set(distinctDeploymentAddresses).size !== 4
+    ) {
+      reasons.push("BSC deployment contract addresses must be distinct.");
+    }
   }
 
   return {
@@ -4341,13 +9424,16 @@ export const resolveSccpRouteReadiness = (input: {
     status:
       reasons.length === 0
         ? "ready"
-        : tronManifest && capabilities
+        : manifest && capabilities
           ? "disabled"
           : capabilities || input.manifestSet
             ? "incomplete"
             : "unavailable",
     reasons,
-    tronManifest,
+    counterparty: route.counterparty,
+    manifest: manifestContainsSecretLikeMaterial ? null : manifest,
+    tronManifest: manifestContainsSecretLikeMaterial ? null : tronManifest,
+    bscManifest: manifestContainsSecretLikeMaterial ? null : bscManifest,
   };
 };
 
@@ -4361,5 +9447,18 @@ export const walletConnectSessionFromAddress = (
   chainId,
   namespace: WALLETCONNECT_TRON_NAMESPACE,
   methodVersion: WALLETCONNECT_TRON_METHOD_VERSION,
+  connectedAtMs: Date.now(),
+});
+
+export const bscWalletConnectSessionFromAddress = (
+  address: string,
+  topic: string | null = null,
+  chainId = SCCP_BSC_NETWORK.caipChainId,
+): WalletConnectSessionSnapshot => ({
+  topic,
+  address: normalizeEvmAddress(address),
+  chainId,
+  namespace: "eip155",
+  methodVersion: "eip155-v1",
   connectedAtMs: Date.now(),
 });

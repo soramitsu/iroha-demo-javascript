@@ -804,8 +804,8 @@ const handleContractCallSignRequest = async (
     sendEncryptedConnectPayload(socket, parsed, {
       type: "sign_result_ok",
       signature: {
-        algorithmCode: 0,
-        algorithmLabel: "Ed25519",
+        algorithmCode: signature.algorithmCode ?? 0,
+        algorithmLabel: signature.algorithmLabel || "Ed25519",
         signatureHex: bytesToHex(base64ToBytes(signature.signatureB64)),
         signatureBase64: signature.signatureB64,
       },
@@ -856,8 +856,8 @@ const approveOpenConnectFrame = async (
       permissions,
       proof: null,
       signature: {
-        algorithmCode: 0,
-        algorithmLabel: "Ed25519",
+        algorithmCode: approveSignature.algorithmCode ?? 0,
+        algorithmLabel: approveSignature.algorithmLabel || "Ed25519",
         signatureHex: bytesToHex(base64ToBytes(approveSignature.signatureB64)),
         signatureBase64: approveSignature.signatureB64,
       },
