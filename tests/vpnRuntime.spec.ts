@@ -367,6 +367,32 @@ describe("VpnRuntime", () => {
     expect(listVpnReceiptsMock).toHaveBeenCalled();
   });
 
+  it("rejects non-Ed25519 wallets before VPN canonical auth signing", async () => {
+    const controller = createControllerMock();
+    const runtime = new VpnRuntime({
+      userDataPath,
+      helperVersion: "embedded-1.0.0",
+      controller,
+    });
+
+    await expect(
+      runtime.connect({
+        toriiUrl: "https://taira.sora.org",
+        chainId: "chain",
+        accountId: "alice@wonderland",
+        privateKeyHex: "ab".repeat(32),
+        signingAlgorithm: "secp256k1",
+        exitClass: "standard",
+      }),
+    ).rejects.toThrow(
+      /VPN connect currently requires an Ed25519 wallet because VPN canonical authentication is Ed25519-only/,
+    );
+
+    expect(createVpnQuoteMock).not.toHaveBeenCalled();
+    expect(createVpnSessionMock).not.toHaveBeenCalled();
+    expect(buildTransactionMock).not.toHaveBeenCalled();
+  });
+
   it("waits for committed vpn payment finality before creating a session", async () => {
     let resolvePayment!: (value: unknown) => void;
     submitTransactionAndWaitMock.mockReturnValueOnce(
@@ -583,6 +609,7 @@ describe("VpnRuntime", () => {
           },
         ],
         privateKey,
+        privateKeyAlgorithm: "ed25519",
       }),
     );
     expect(submitTransactionAndWaitMock).toHaveBeenCalledWith(

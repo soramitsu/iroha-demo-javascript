@@ -3398,6 +3398,8 @@ const BSC_BROWSER_PROVER_MANIFEST_FIELDS = Object.freeze(
     "proofArtifactHash",
     "provingKeyHash",
     "nativeEvmProverBundleHash",
+    "boundRouteHash",
+    "boundProofHash",
     "deployment",
     "postDeployLiveEvidence",
   ]),
@@ -4328,7 +4330,7 @@ const peerAuditReportProblems = (peerAuditReport, routeReport) => {
         : "peer audit report is not ready.",
     );
   }
-  if (!peerEntries || peerEntries.length === 0) {
+  if (!peerEntries) {
     problems.push("peer audit report does not include peer summaries.");
   } else {
     for (const [index, peer] of peerEntries.entries()) {
@@ -4343,7 +4345,7 @@ const peerAuditReportProblems = (peerAuditReport, routeReport) => {
         .filter(({ peer }) => isRecord(peer))
     : [];
   const peerCount = readPublicNumber(peerAuditReport, "peerCount");
-  if (!Number.isSafeInteger(peerCount) || peerCount <= 0) {
+  if (!Number.isSafeInteger(peerCount) || peerCount < 0) {
     problems.push("peer audit peerCount is missing or invalid.");
   } else if (peerCount !== peerSummaries.length) {
     problems.push("peer audit peerCount does not match peer summaries.");
@@ -4725,6 +4727,18 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
     "nativeProverBundleHash",
     "native_prover_bundle_hash",
   );
+  const boundRouteHash = requireManifestHex32(
+    manifest,
+    problems,
+    "boundRouteHash",
+    "bound_route_hash",
+  );
+  const boundProofHash = requireManifestHex32(
+    manifest,
+    problems,
+    "boundProofHash",
+    "bound_proof_hash",
+  );
 
   const deployment = publicRouteDeployment(
     readPublicRecord(routeReport, "deployment"),
@@ -4796,6 +4810,24 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
           `${manifestKeys[0]} ${actual} does not match route deployment ${expected}.`,
         );
       }
+    }
+    if (
+      boundRouteHash &&
+      manifestDeployment.destinationBindingHash &&
+      boundRouteHash !== manifestDeployment.destinationBindingHash
+    ) {
+      problems.push(
+        `boundRouteHash ${boundRouteHash} does not match deployment.destinationBindingHash ${manifestDeployment.destinationBindingHash}.`,
+      );
+    }
+    if (
+      boundProofHash &&
+      proofArtifactHash &&
+      boundProofHash !== proofArtifactHash
+    ) {
+      problems.push(
+        `boundProofHash ${boundProofHash} does not match proofArtifactHash ${proofArtifactHash}.`,
+      );
     }
   }
   const manifestHashRoles = [

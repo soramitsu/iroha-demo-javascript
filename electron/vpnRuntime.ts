@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { buildTransaction, ToriiClient } from "@iroha/iroha-js";
+import { normalizeCryptoAlgorithm } from "@iroha/iroha-js/crypto";
 import { nodeFetch } from "./nodeFetch";
 import {
   BundledVpnController,
@@ -20,6 +21,10 @@ import type {
 } from "../src/types/iroha";
 import { normalizeAccountIdLiteralForNetwork } from "../src/utils/accountId";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
+import {
+  DEFAULT_SIGNING_ALGORITHM,
+  signingAlgorithmLabel,
+} from "../src/utils/signingAlgorithms";
 
 type VpnAvailabilityInput = {
   toriiUrl: string;
@@ -37,6 +42,7 @@ type ActiveVpnSession = {
   accountId: string;
   networkPrefix?: number;
   privateKeyHex: string;
+  signingAlgorithm: string;
   sessionId: string;
   exitClass: VpnExitClass;
   relayEndpoint: string;
@@ -106,6 +112,28 @@ const normalizeHex = (value: string, label: string) => {
 
 const toPrivateKeyBuffer = (privateKeyHex: string) =>
   Buffer.from(normalizeHex(privateKeyHex, "privateKeyHex"), "hex");
+
+const normalizeVpnSigningAlgorithm = (value?: string | null) =>
+  normalizeCryptoAlgorithm(value || DEFAULT_SIGNING_ALGORITHM);
+
+const buildVpnCanonicalAuth = (
+  auth: Pick<
+    VpnAuthContext,
+    "accountId" | "privateKeyHex" | "signingAlgorithm"
+  >,
+  operationLabel: string,
+) => {
+  const signingAlgorithm = normalizeVpnSigningAlgorithm(auth.signingAlgorithm);
+  if (signingAlgorithm !== DEFAULT_SIGNING_ALGORITHM) {
+    throw new Error(
+      `${operationLabel} currently requires an Ed25519 wallet because VPN canonical authentication is Ed25519-only. This wallet uses ${signingAlgorithmLabel(signingAlgorithm)}.`,
+    );
+  }
+  return {
+    accountId: auth.accountId,
+    privateKey: toPrivateKeyBuffer(auth.privateKeyHex),
+  };
+};
 
 const normalizeChainId = (value: string) => {
   const normalized = value.trim();
@@ -539,15 +567,22 @@ export class VpnRuntime {
       "accountId",
       input.networkPrefix,
     );
+    const signingAlgorithm = normalizeVpnSigningAlgorithm(
+      input.signingAlgorithm,
+    );
     const privateKey = toPrivateKeyBuffer(input.privateKeyHex);
-    const canonicalAuth = {
-      accountId,
-      privateKey,
-    };
     const client = this.getClient(input.toriiUrl);
     let session: Awaited<ReturnType<ToriiClient["createVpnSession"]>> | null =
       null;
     try {
+      const canonicalAuth = buildVpnCanonicalAuth(
+        {
+          accountId,
+          privateKeyHex: input.privateKeyHex,
+          signingAlgorithm,
+        },
+        "VPN connect",
+      );
       const meteringPublicKeyHex = generateVpnMeteringPublicKeyHex();
       const quote = await client.createVpnQuote(
         {
@@ -561,6 +596,7 @@ export class VpnRuntime {
         authority: accountId,
         instructions: normalizeVpnTxInstructions(quote.txInstructions),
         privateKey,
+        privateKeyAlgorithm: signingAlgorithm,
       });
       const paymentTxHash = paymentTransaction.hash.toString("hex");
       await client.submitTransactionAndWait(
@@ -584,6 +620,7 @@ export class VpnRuntime {
       const normalizedSession = this.normalizeRemoteSession(session, {
         ...input,
         accountId,
+        signingAlgorithm,
       });
       const controllerRelayEndpoint =
         await resolveVpnRelayEndpointForController(
@@ -620,10 +657,14 @@ export class VpnRuntime {
       if (session?.sessionId) {
         const receipt = await this.getClient(input.toriiUrl)
           .deleteVpnSession(session.sessionId, {
-            canonicalAuth: {
-              accountId,
-              privateKey: toPrivateKeyBuffer(input.privateKeyHex),
-            },
+            canonicalAuth: buildVpnCanonicalAuth(
+              {
+                accountId,
+                privateKeyHex: input.privateKeyHex,
+                signingAlgorithm,
+              },
+              "VPN session cleanup",
+            ),
           })
           .catch(() => null);
         if (receipt) {
@@ -675,10 +716,7 @@ export class VpnRuntime {
       const receipt = await this.getClient(auth.toriiUrl).deleteVpnSession(
         session.sessionId,
         {
-          canonicalAuth: {
-            accountId: auth.accountId,
-            privateKey: toPrivateKeyBuffer(auth.privateKeyHex),
-          },
+          canonicalAuth: buildVpnCanonicalAuth(auth, "VPN disconnect"),
         },
       );
       if (receipt) {
@@ -766,6 +804,7 @@ export class VpnRuntime {
       const parsed = JSON.parse(raw) as ActiveVpnSession;
       return {
         ...parsed,
+        signingAlgorithm: normalizeVpnSigningAlgorithm(parsed.signingAlgorithm),
         relayEndpoint: resolveVpnRelayEndpoint(
           parsed.relayEndpoint,
           parsed.toriiUrl,
@@ -833,6 +872,7 @@ export class VpnRuntime {
       accountId: auth.accountId,
       networkPrefix: auth.networkPrefix,
       privateKeyHex: auth.privateKeyHex,
+      signingAlgorithm: normalizeVpnSigningAlgorithm(auth.signingAlgorithm),
       sessionId: session.sessionId,
       exitClass: isVpnExitClass(session.exitClass)
         ? session.exitClass
@@ -859,10 +899,7 @@ export class VpnRuntime {
 
   private async syncReceiptsFromServer(auth: VpnAuthContext) {
     const receipts = await this.getClient(auth.toriiUrl).listVpnReceipts({
-      canonicalAuth: {
-        accountId: auth.accountId,
-        privateKey: toPrivateKeyBuffer(auth.privateKeyHex),
-      },
+      canonicalAuth: buildVpnCanonicalAuth(auth, "VPN receipt sync"),
     });
     this.receipts = receipts
       .map((item) =>
@@ -881,6 +918,9 @@ export class VpnRuntime {
     const accountIdRaw = input?.accountId ?? session?.accountId;
     const privateKeyHex = input?.privateKeyHex ?? session?.privateKeyHex;
     const networkPrefix = input?.networkPrefix ?? session?.networkPrefix;
+    const signingAlgorithm = normalizeVpnSigningAlgorithm(
+      input?.signingAlgorithm ?? session?.signingAlgorithm,
+    );
     if (!toriiUrl || !accountIdRaw || !privateKeyHex) {
       return null;
     }
@@ -892,6 +932,7 @@ export class VpnRuntime {
         networkPrefix,
       ),
       privateKeyHex,
+      signingAlgorithm,
       networkPrefix,
     };
   }
@@ -945,10 +986,7 @@ export class VpnRuntime {
     const remote = await this.getClient(auth.toriiUrl).getVpnSession(
       this.activeSession.sessionId,
       {
-        canonicalAuth: {
-          accountId: auth.accountId,
-          privateKey: toPrivateKeyBuffer(auth.privateKeyHex),
-        },
+        canonicalAuth: buildVpnCanonicalAuth(auth, "VPN status refresh"),
       },
     );
 

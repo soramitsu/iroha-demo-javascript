@@ -75,7 +75,10 @@
         </label>
         <label>
           {{ t("Signing algorithm") }}
-          <select v-model="userForm.signingAlgorithm">
+          <select
+            v-model="userForm.signingAlgorithm"
+            :disabled="signingAlgorithmsUnavailable"
+          >
             <option
               v-for="option in signingAlgorithmOptions"
               :key="option.id"
@@ -85,6 +88,9 @@
             </option>
           </select>
         </label>
+        <p v-if="signingAlgorithmCapabilityError" class="helper error">
+          {{ signingAlgorithmCapabilityError }}
+        </p>
         <label>
           {{ t("Private Key (hex)") }}
           <textarea v-model="userForm.privateKeyHex" rows="2"></textarea>
@@ -120,17 +126,24 @@
         }}
       </p>
       <div class="actions">
-        <button :disabled="generating" @click="handleGenerate">
+        <button
+          :disabled="generating || signingAlgorithmsUnavailable"
+          @click="handleGenerate"
+        >
           {{ t("Generate pair") }}
         </button>
         <button
           class="secondary"
-          :disabled="!userForm.privateKeyHex"
+          :disabled="!userForm.privateKeyHex || signingAlgorithmsUnavailable"
           @click="handleDerivePublic"
         >
           {{ t("Derive from private key") }}
         </button>
-        <button class="secondary" @click="saveUser">
+        <button
+          class="secondary"
+          :disabled="signingAlgorithmsUnavailable"
+          @click="saveUser"
+        >
           {{ t("Save identity") }}
         </button>
         <button
@@ -165,7 +178,10 @@
         </label>
         <label>
           {{ t("Authority signing algorithm") }}
-          <select v-model="authorityForm.signingAlgorithm">
+          <select
+            v-model="authorityForm.signingAlgorithm"
+            :disabled="signingAlgorithmsUnavailable"
+          >
             <option
               v-for="option in signingAlgorithmOptions"
               :key="option.id"
@@ -175,6 +191,9 @@
             </option>
           </select>
         </label>
+        <p v-if="signingAlgorithmCapabilityError" class="helper error">
+          {{ signingAlgorithmCapabilityError }}
+        </p>
         <label>
           {{ t("Account Metadata (JSON)") }}
           <textarea v-model="metadataInput" rows="4"></textarea>
@@ -193,7 +212,11 @@
         <button :disabled="registering || !canRegister" @click="handleRegister">
           {{ registering ? t("Submitting…") : t("Create on-chain account") }}
         </button>
-        <button class="secondary" @click="saveAuthority">
+        <button
+          class="secondary"
+          :disabled="signingAlgorithmsUnavailable"
+          @click="saveAuthority"
+        >
           {{ t("Save authority") }}
         </button>
       </div>
@@ -308,12 +331,35 @@ const generating = ref(false);
 const registering = ref(false);
 const registerMessage = ref("");
 const showAdvancedRegistration = ref(false);
+const signingAlgorithmsUnavailable = computed(
+  () => signingAlgorithmOptions.value.length === 0,
+);
+const signingAlgorithmCapabilityError = computed(() =>
+  signingAlgorithmsUnavailable.value
+    ? t(
+        "This endpoint does not advertise any signing algorithms supported by this app.",
+      )
+    : "",
+);
+
+const assertSigningAlgorithmAvailable = (algorithm: string) => {
+  if (signingAlgorithmsUnavailable.value) {
+    throw new Error(signingAlgorithmCapabilityError.value);
+  }
+  if (
+    !signingAlgorithmOptions.value.some((option) => option.id === algorithm)
+  ) {
+    throw new Error(
+      t("Select a signing algorithm supported by this endpoint."),
+    );
+  }
+};
 
 const normalizeSelectedSigningAlgorithms = () => {
   const fallback =
     signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
     signingAlgorithmOptions.value[0]?.id ??
-    DEFAULT_SIGNING_ALGORITHM;
+    "";
   if (
     !signingAlgorithmOptions.value.some(
       (option) => option.id === userForm.signingAlgorithm,
@@ -333,9 +379,7 @@ const normalizeSelectedSigningAlgorithms = () => {
 const loadSigningAlgorithmOptions = async () => {
   try {
     const options = await getSigningAlgorithms(connectionForm.toriiUrl);
-    if (options.length > 0) {
-      signingAlgorithmOptions.value = options;
-    }
+    signingAlgorithmOptions.value = options;
   } catch (error) {
     console.warn("Failed to load signing algorithm capabilities", error);
   }
@@ -434,6 +478,7 @@ const canRegister = computed(() =>
   Boolean(
     connectionForm.toriiUrl &&
       connectionForm.chainId &&
+      !signingAlgorithmsUnavailable.value &&
       userForm.accountId &&
       authorityForm.accountId &&
       (authorityForm.privateKeyHex.trim() || authorityHasSavedSecret.value),
@@ -473,6 +518,13 @@ const saveConnection = () => {
 };
 
 const saveUser = async () => {
+  try {
+    assertSigningAlgorithmAvailable(userForm.signingAlgorithm);
+  } catch (error) {
+    registerMessage.value =
+      error instanceof Error ? error.message : String(error);
+    return;
+  }
   if (!userForm.accountId || !userForm.privateKeyHex.trim()) {
     registerMessage.value = t("Enter an identity private key first.");
     return;
@@ -506,6 +558,13 @@ const saveUser = async () => {
 };
 
 const saveAuthority = async () => {
+  try {
+    assertSigningAlgorithmAvailable(authorityForm.signingAlgorithm);
+  } catch (error) {
+    registerMessage.value =
+      error instanceof Error ? error.message : String(error);
+    return;
+  }
   if (!authorityForm.accountId.trim() || !authorityForm.privateKeyHex.trim()) {
     registerMessage.value = t("Enter an authority private key first.");
     return;
@@ -560,6 +619,7 @@ const handlePing = async () => {
 const handleGenerate = async () => {
   generating.value = true;
   try {
+    assertSigningAlgorithmAvailable(userForm.signingAlgorithm);
     const pair = await generateKeyPair({
       signingAlgorithm: userForm.signingAlgorithm,
     });
@@ -577,6 +637,11 @@ const handleGenerate = async () => {
     });
     Object.assign(userForm, summary);
     await saveUser();
+  } catch (error) {
+    registerMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to create the on-chain account."),
+    );
   } finally {
     generating.value = false;
   }
@@ -585,6 +650,7 @@ const handleGenerate = async () => {
 const handleDerivePublic = () => {
   if (!userForm.privateKeyHex) return;
   try {
+    assertSigningAlgorithmAvailable(userForm.signingAlgorithm);
     const derived = derivePublicKey({
       privateKeyHex: userForm.privateKeyHex,
       signingAlgorithm: userForm.signingAlgorithm,

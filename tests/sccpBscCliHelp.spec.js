@@ -123,6 +123,26 @@ describe("BSC SCCP CLI help", () => {
     }
   });
 
+  it("documents peer audit as a stale local override check", () => {
+    const outputDir = mkdtempSync(path.join(tmpdir(), "sccp-bsc-help-"));
+    try {
+      const result = runHelp(
+        "scripts/e2e/sccp-bsc-peer-config-audit.mjs",
+        outputDir,
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "stale local BSC SCCP route/prover overrides",
+      );
+      expect(result.stdout).not.toContain(
+        "one identical BSC SCCP route stanza",
+      );
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true });
+    }
+  });
+
   it("rejects unsupported strict BSC CLI options before writing reports", () => {
     const outputDir = mkdtempSync(path.join(tmpdir(), "sccp-bsc-unknown-"));
     const cases = [

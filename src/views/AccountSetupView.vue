@@ -95,7 +95,12 @@
               {{ t("Signing algorithm") }}
               <select
                 v-model="selectedSigningAlgorithm"
-                :disabled="generating || restoring || Boolean(generatedKeys)"
+                :disabled="
+                  generating ||
+                  restoring ||
+                  Boolean(generatedKeys) ||
+                  signingAlgorithmsUnavailable
+                "
               >
                 <option
                   v-for="option in signingAlgorithmOptions"
@@ -106,6 +111,9 @@
                 </option>
               </select>
             </label>
+            <p v-if="signingAlgorithmCapabilityError" class="helper error">
+              {{ signingAlgorithmCapabilityError }}
+            </p>
           </div>
           <details class="technical-details">
             <summary>{{ t("Advanced wallet details") }}</summary>
@@ -127,7 +135,9 @@
           <div class="actions">
             <button
               v-if="!isRestoreMode"
-              :disabled="generating || restoring"
+              :disabled="
+                generating || restoring || signingAlgorithmsUnavailable
+              "
               @click="generateRecovery"
             >
               {{
@@ -137,7 +147,9 @@
             <button
               v-else
               class="secondary"
-              :disabled="generating || restoring"
+              :disabled="
+                generating || restoring || signingAlgorithmsUnavailable
+              "
               @click="startNewRegistration"
             >
               {{ t("Create recovery phrase") }}
@@ -170,12 +182,15 @@
               <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
             </label>
             <div class="actions">
-              <button :disabled="restoring" @click="restoreRecovery">
+              <button
+                :disabled="restoring || signingAlgorithmsUnavailable"
+                @click="restoreRecovery"
+              >
                 {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
               </button>
               <button
                 class="secondary"
-                :disabled="restoring"
+                :disabled="restoring || signingAlgorithmsUnavailable"
                 @click="openBackupImportPicker"
               >
                 {{ t("Import backup JSON") }}
@@ -312,7 +327,12 @@
           {{ t("Signing algorithm") }}
           <select
             v-model="selectedSigningAlgorithm"
-            :disabled="generating || restoring || Boolean(generatedKeys)"
+            :disabled="
+              generating ||
+              restoring ||
+              Boolean(generatedKeys) ||
+              signingAlgorithmsUnavailable
+            "
           >
             <option
               v-for="option in signingAlgorithmOptions"
@@ -323,6 +343,9 @@
             </option>
           </select>
         </label>
+        <p v-if="signingAlgorithmCapabilityError" class="helper error">
+          {{ signingAlgorithmCapabilityError }}
+        </p>
       </div>
       <details class="technical-details">
         <summary>{{ t("Advanced wallet details") }}</summary>
@@ -350,7 +373,7 @@
       <div class="actions">
         <button
           v-if="!isRestoreMode"
-          :disabled="generating || restoring"
+          :disabled="generating || restoring || signingAlgorithmsUnavailable"
           @click="generateRecovery"
         >
           {{ generating ? t("Generating…") : t("Generate recovery phrase") }}
@@ -358,7 +381,7 @@
         <button
           v-else
           class="secondary"
-          :disabled="generating || restoring"
+          :disabled="generating || restoring || signingAlgorithmsUnavailable"
           @click="startNewRegistration"
         >
           {{ t("Create recovery phrase") }}
@@ -398,12 +421,15 @@
           <textarea v-model.trim="restorePhraseInput" rows="4"></textarea>
         </label>
         <div class="actions">
-          <button :disabled="restoring" @click="restoreRecovery">
+          <button
+            :disabled="restoring || signingAlgorithmsUnavailable"
+            @click="restoreRecovery"
+          >
             {{ restoring ? t("Restoring…") : t("Load recovery phrase") }}
           </button>
           <button
             class="secondary"
-            :disabled="restoring"
+            :disabled="restoring || signingAlgorithmsUnavailable"
             @click="openBackupImportPicker"
           >
             {{ t("Import backup JSON") }}
@@ -778,11 +804,33 @@ const activeNetworkLabel = computed(
 
 const findSigningAlgorithmOption = (algorithm: string) =>
   signingAlgorithmOptions.value.find((option) => option.id === algorithm);
-const selectedSigningAlgorithmLabel = computed(
-  () =>
-    findSigningAlgorithmOption(selectedSigningAlgorithm.value)?.label ??
-    signingAlgorithmLabel(selectedSigningAlgorithm.value),
+const signingAlgorithmsUnavailable = computed(
+  () => signingAlgorithmOptions.value.length === 0,
 );
+const signingAlgorithmCapabilityError = computed(() =>
+  signingAlgorithmsUnavailable.value
+    ? t(
+        "This endpoint does not advertise any signing algorithms supported by this app.",
+      )
+    : "",
+);
+const selectedSigningAlgorithmLabel = computed(() =>
+  signingAlgorithmsUnavailable.value
+    ? t("Unavailable")
+    : (findSigningAlgorithmOption(selectedSigningAlgorithm.value)?.label ??
+      signingAlgorithmLabel(selectedSigningAlgorithm.value)),
+);
+
+const assertSigningAlgorithmAvailable = (algorithm: string) => {
+  if (signingAlgorithmsUnavailable.value) {
+    throw new Error(signingAlgorithmCapabilityError.value);
+  }
+  if (!findSigningAlgorithmOption(algorithm)) {
+    throw new Error(
+      t("Select a signing algorithm supported by this endpoint."),
+    );
+  }
+};
 const generatedSigningAlgorithmLabel = computed(() =>
   generatedKeys.value
     ? signingAlgorithmLabel(generatedKeys.value.signingAlgorithm)
@@ -792,9 +840,7 @@ const generatedSigningAlgorithmLabel = computed(() =>
 const loadSigningAlgorithmOptions = async () => {
   try {
     const options = await getSigningAlgorithms(connectionForm.toriiUrl);
-    if (options.length > 0) {
-      signingAlgorithmOptions.value = options;
-    }
+    signingAlgorithmOptions.value = options;
   } catch (error) {
     console.warn("Failed to load signing algorithm capabilities", error);
   }
@@ -802,7 +848,7 @@ const loadSigningAlgorithmOptions = async () => {
     selectedSigningAlgorithm.value =
       signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
       signingAlgorithmOptions.value[0]?.id ??
-      DEFAULT_SIGNING_ALGORITHM;
+      "";
   }
 };
 
@@ -986,7 +1032,7 @@ const startNewRegistration = () => {
   selectedSigningAlgorithm.value =
     signingAlgorithmOptions.value.find((option) => option.isDefault)?.id ??
     signingAlgorithmOptions.value[0]?.id ??
-    DEFAULT_SIGNING_ALGORITHM;
+    "";
   restorePhraseInput.value = "";
   backupConfirmed.value = false;
   showRestorePanel.value = false;
@@ -1066,6 +1112,7 @@ const deriveKeysFromRecoveryPhrase = async (
   mnemonic: string,
   signingAlgorithm: string,
 ) => {
+  assertSigningAlgorithmAvailable(signingAlgorithm);
   const seedHex = mnemonicToPrivateKeyHex(mnemonic);
   const pair = await generateKeyPair({
     signingAlgorithm,
@@ -1200,6 +1247,7 @@ const canSaveGenerated = computed(() => {
     generatedKeys.value &&
       generatedAccountId.value &&
       backupConfirmed.value &&
+      !signingAlgorithmsUnavailable.value &&
       connectionForm.toriiUrl &&
       connectionForm.chainId,
   );
@@ -1258,6 +1306,13 @@ const saveGeneratedIdentity = async () => {
   onboardingStatus.value = "";
   if (!generatedKeys.value) {
     onboardingError.value = t("Generate a keypair first.");
+    return;
+  }
+  try {
+    assertSigningAlgorithmAvailable(generatedKeys.value.signingAlgorithm);
+  } catch (error) {
+    onboardingError.value =
+      error instanceof Error ? error.message : String(error);
     return;
   }
   if (!generatedAccountId.value) {

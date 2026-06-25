@@ -244,6 +244,10 @@ const PUBLIC_DEPLOYMENT_FIELDS = Object.freeze([
   "destinationBindingHash",
   "settlementAssetDefinitionId",
 ]);
+const PUBLIC_DEPLOYMENT_OBJECT_FIELDS = Object.freeze([
+  "destinationBrowserProver",
+  "sourceBrowserProver",
+]);
 const ROLE_SEPARATED_PRODUCTION_HASH_FIELDS = Object.freeze([
   "verifierCodeHash",
   "verifierKeyHash",
@@ -379,6 +383,14 @@ const PUBLIC_DEPLOYMENT_ALIASES = Object.freeze({
     "nativeEvmProverBundleHash",
     "native_evm_prover_bundle_hash",
   ]),
+  destinationBrowserProver: Object.freeze([
+    "destinationBrowserProver",
+    "destination_browser_prover",
+  ]),
+  sourceBrowserProver: Object.freeze([
+    "sourceBrowserProver",
+    "source_browser_prover",
+  ]),
   destinationBindingHash: Object.freeze([
     "destinationBindingHash",
     "destination_binding_hash",
@@ -492,7 +504,7 @@ const PUBLIC_BSC_PROFILE_FIELDS_WITH_ALIASES = publicAliasFieldSet(
   PUBLIC_BSC_PROFILE_ALIASES,
 );
 const PUBLIC_DEPLOYMENT_FIELDS_WITH_ALIASES = publicAliasFieldSet(
-  PUBLIC_DEPLOYMENT_FIELDS,
+  [...PUBLIC_DEPLOYMENT_FIELDS, ...PUBLIC_DEPLOYMENT_OBJECT_FIELDS],
   PUBLIC_DEPLOYMENT_ALIASES,
 );
 const PUBLIC_POST_DEPLOY_EVIDENCE_FIELDS_WITH_ALIASES = publicAliasFieldSet(
@@ -893,6 +905,8 @@ const SMOKE_READINESS_PROVER_MANIFEST_FIELDS = Object.freeze(
     "tairaChainId",
     "tairaNetworkPrefix",
     "moduleSha256",
+    "boundRouteHash",
+    "boundProofHash",
     "deployment",
     "postDeployLiveEvidence",
     ...PUBLIC_ROUTE_IDENTITY_FIELDS_WITH_ALIASES,
@@ -929,7 +943,10 @@ const REQUIRED_ROUTE_PREFLIGHT_COMMON_CHECK_IDS = Object.freeze([
   "bsc-destination-binding",
   "bsc-production-verifier-material",
   "bsc-production-prover-material",
+  "bsc-native-evm-prover-bundle-hash",
   "bsc-native-evm-prover-bundle",
+  "bsc-destination-browser-prover",
+  "bsc-source-browser-prover",
   "bsc-post-deploy-live-evidence",
   "taira-burn-record-material",
   "bsc-rpc-chain-id-readback",
@@ -1797,7 +1814,10 @@ const publicDeployment = (deployment) => {
       }
       return value !== undefined && value !== null;
     });
-  for (const key of PUBLIC_DEPLOYMENT_FIELDS) {
+  for (const key of [
+    ...PUBLIC_DEPLOYMENT_FIELDS,
+    ...PUBLIC_DEPLOYMENT_OBJECT_FIELDS,
+  ]) {
     const aliases = presentAliases(key);
     if (aliases.length > 1) {
       aliasProblems.push(`${key} uses multiple aliases: ${aliases.join(", ")}`);
@@ -1824,9 +1844,24 @@ const publicDeployment = (deployment) => {
     }
     return null;
   };
+  const readDeploymentRecord = (key) => {
+    for (const alias of PUBLIC_DEPLOYMENT_ALIASES[key] ?? [key]) {
+      const value = readRecord(deployment, alias);
+      if (isRecord(value)) {
+        return value;
+      }
+    }
+    return null;
+  };
   return {
     ...Object.fromEntries(
       PUBLIC_DEPLOYMENT_FIELDS.map((key) => [key, readDeploymentString(key)]),
+    ),
+    ...Object.fromEntries(
+      PUBLIC_DEPLOYMENT_OBJECT_FIELDS.map((key) => [
+        key,
+        readDeploymentRecord(key),
+      ]),
     ),
     ...(aliasProblems.length > 0 ? { aliasProblems } : {}),
   };
@@ -2436,6 +2471,8 @@ const publicBrowserProverManifestSummary = (manifest) =>
           manifest,
           "nativeEvmProverBundleHash",
         ),
+        boundRouteHash: readString(manifest, "boundRouteHash"),
+        boundProofHash: readString(manifest, "boundProofHash"),
         acceptedExport: readString(manifest, "acceptedExport"),
         acceptedSelfTestExport: readString(manifest, "acceptedSelfTestExport"),
         deployment: publicBrowserProverManifestDeployment(
@@ -4741,10 +4778,6 @@ const peerEvidenceHashProblems = (peerAuditReport) => {
     problems.push("peer audit report does not include peer summaries.");
     return problems;
   }
-  if (rawPeers.length === 0) {
-    problems.push("peer audit report does not include peer summaries.");
-    return problems;
-  }
   rawPeers.forEach((peer, index) => {
     if (!isRecord(peer)) {
       problems.push(`peer audit peer summary ${index} is not an object.`);
@@ -4752,13 +4785,16 @@ const peerEvidenceHashProblems = (peerAuditReport) => {
   });
   if (
     !Number.isSafeInteger(readNumber(peerAuditReport, "peerCount")) ||
-    readNumber(peerAuditReport, "peerCount") <= 0
+    readNumber(peerAuditReport, "peerCount") < 0
   ) {
     problems.push("peer audit peerCount is missing or invalid.");
   } else if (readNumber(peerAuditReport, "peerCount") !== rawPeers.length) {
     problems.push("peer audit peerCount does not match peer summaries.");
   }
-  if (!readBoolean(peerAuditReport, "sanitizedStanzaFilesChecked")) {
+  if (
+    rawPeers.length > 0 &&
+    !readBoolean(peerAuditReport, "sanitizedStanzaFilesChecked")
+  ) {
     problems.push("peer audit sanitized stanza files were not checked.");
   }
   const peers = rawPeers.filter(isRecord);
@@ -5681,6 +5717,20 @@ const deploymentDiffs = (left, right, label) => {
     if (!leftDeployment[key] || !rightDeployment[key]) {
       problems.push(`${label} ${key} is missing.`);
     } else if (!deploymentFieldMatches(key)) {
+      problems.push(`${label} ${key} does not match.`);
+    }
+  }
+  for (const key of PUBLIC_DEPLOYMENT_OBJECT_FIELDS) {
+    const leftValue = leftDeployment[key];
+    const rightValue = rightDeployment[key];
+    if (!leftValue && !rightValue) {
+      continue;
+    }
+    if (!leftValue || !rightValue) {
+      problems.push(`${label} ${key} is missing.`);
+      continue;
+    }
+    if (JSON.stringify(leftValue) !== JSON.stringify(rightValue)) {
       problems.push(`${label} ${key} does not match.`);
     }
   }
@@ -6940,6 +6990,8 @@ const MATERIAL_INVENTORY_BROWSER_PROVER_MANIFEST_FIELDS = Object.freeze(
     "proofArtifactHash",
     "provingKeyHash",
     "nativeEvmProverBundleHash",
+    "boundRouteHash",
+    "boundProofHash",
     "acceptedExport",
     "acceptedSelfTestExport",
     "deployment",
@@ -7497,14 +7549,20 @@ const routePreflightReportShapeProblems = (routeReport) => {
       ),
     );
   }
-  if (isRecord(readRecord(routeReport, "deployment"))) {
+  const routeDeployment = readRecord(routeReport, "deployment");
+  if (isRecord(routeDeployment)) {
     problems.push(
       ...unsupportedFieldProblems(
-        readRecord(routeReport, "deployment"),
+        routeDeployment,
         PUBLIC_DEPLOYMENT_FIELDS_WITH_ALIASES,
         "route preflight deployment",
       ),
     );
+    for (const key of PUBLIC_DEPLOYMENT_OBJECT_FIELDS) {
+      if (!isRecord(readRecord(routeDeployment, key))) {
+        problems.push(`route preflight deployment ${key} is missing.`);
+      }
+    }
   }
   if (isRecord(readRecord(routeReport, "postDeployLiveEvidence"))) {
     problems.push(
@@ -11481,9 +11539,16 @@ const browserProverManifestBindingProblems = ({
     "proofArtifactHash",
     "provingKeyHash",
     "nativeEvmProverBundleHash",
+    "boundRouteHash",
+    "boundProofHash",
   ]) {
     const manifestHash = readString(manifest, key);
-    const routeHash = routeDeployment?.[key];
+    const routeHash =
+      key === "boundRouteHash"
+        ? routeDeployment?.destinationBindingHash
+        : key === "boundProofHash"
+          ? routeDeployment?.proofArtifactHash
+          : routeDeployment?.[key];
     if (!isNonZeroHex32(manifestHash)) {
       problems.push(
         `production material inventory ${label} browser prover manifest ${key} is missing or invalid.`,
@@ -13794,7 +13859,12 @@ const videoReadinessBindingProblems = ({
       ),
     );
     const smokePeerAudit = readRecord(smokeReadinessReport, "peerAudit");
-    if (!readBoolean(bindingPeerAudit, "sanitizedStanzaFilesChecked")) {
+    const bindingPeerCount = readNumber(bindingPeerAudit, "peerCount");
+    if (
+      Number.isSafeInteger(bindingPeerCount) &&
+      bindingPeerCount > 0 &&
+      !readBoolean(bindingPeerAudit, "sanitizedStanzaFilesChecked")
+    ) {
       problems.push(
         "video readiness binding peer audit sanitized stanza files were not checked.",
       );
@@ -13816,16 +13886,12 @@ const videoReadinessBindingProblems = ({
         "video readiness binding peer audit sanitized stanza file status differs from smoke-readiness report.",
       );
     }
-    if (
-      !Number.isSafeInteger(readNumber(bindingPeerAudit, "peerCount")) ||
-      readNumber(bindingPeerAudit, "peerCount") <= 0
-    ) {
+    if (!Number.isSafeInteger(bindingPeerCount) || bindingPeerCount < 0) {
       problems.push("video readiness binding peer audit peerCount is invalid.");
     } else {
       if (
         Number.isSafeInteger(readNumber(peerAuditReport, "peerCount")) &&
-        readNumber(bindingPeerAudit, "peerCount") !==
-          readNumber(peerAuditReport, "peerCount")
+        bindingPeerCount !== readNumber(peerAuditReport, "peerCount")
       ) {
         problems.push("video readiness binding peer audit peerCount differs.");
       }
@@ -13836,7 +13902,7 @@ const videoReadinessBindingProblems = ({
             "peerCount",
           ),
         ) &&
-        readNumber(bindingPeerAudit, "peerCount") !==
+        bindingPeerCount !==
           readNumber(readRecord(smokeReadinessReport, "peerAudit"), "peerCount")
       ) {
         problems.push(

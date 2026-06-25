@@ -247,6 +247,7 @@ const mocks = vi.hoisted(() => ({
   getTransactionStatusMock: vi.fn(),
   getStatusSnapshotMock: vi.fn(),
   getExplorerMetricsMock: vi.fn(),
+  getNodeCapabilitiesMock: vi.fn(),
   getSumeragiStatusTypedMock: vi.fn(),
   getSccpCapabilitiesMock: vi.fn(),
   getSccpProofManifestsMock: vi.fn(),
@@ -545,6 +546,10 @@ vi.mock("@iroha/iroha-js", async () => {
       return mocks.getExplorerMetricsMock(...args);
     }
 
+    getNodeCapabilities(...args: unknown[]) {
+      return mocks.getNodeCapabilitiesMock(...args);
+    }
+
     getSumeragiStatusTyped(...args: unknown[]) {
       return mocks.getSumeragiStatusTypedMock(...args);
     }
@@ -766,6 +771,24 @@ const loadBridge = async () => {
     getChainMetadata: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
+    getSigningAlgorithms: (
+      input?: Record<string, unknown>,
+    ) => Promise<Array<Record<string, unknown>>>;
+    getVpnStatus: (
+      input?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | undefined>;
+    connectVpn: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | undefined>;
+    disconnectVpn: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | undefined>;
+    repairVpn: (
+      input?: Record<string, unknown>,
+    ) => Promise<Record<string, unknown> | undefined>;
+    listVpnReceipts: (
+      input?: Record<string, unknown>,
+    ) => Promise<Array<Record<string, unknown>> | undefined>;
     getGovernanceCouncilCurrent: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
@@ -824,6 +847,7 @@ describe("preload Kaigi bridge", () => {
     mocks.getTransactionStatusMock.mockReset();
     mocks.getStatusSnapshotMock.mockReset();
     mocks.getExplorerMetricsMock.mockReset();
+    mocks.getNodeCapabilitiesMock.mockReset();
     mocks.getSumeragiStatusTypedMock.mockReset();
     mocks.getSccpCapabilitiesMock.mockReset();
     mocks.getSccpProofManifestsMock.mockReset();
@@ -911,6 +935,7 @@ describe("preload Kaigi bridge", () => {
       averageCommitTimeMs: 1_500,
       averageBlockTimeMs: 2_000,
     });
+    mocks.getNodeCapabilitiesMock.mockResolvedValue({});
     mocks.getSumeragiStatusTypedMock.mockResolvedValue({
       lane_governance: [
         {
@@ -1314,6 +1339,102 @@ describe("preload Kaigi bridge", () => {
     globalThis.localStorage?.clear();
     vi.useRealTimers();
     vi.resetModules();
+  });
+
+  it("respects endpoint signing capabilities without re-adding Ed25519", async () => {
+    const bridge = await loadBridge();
+    mocks.getNodeCapabilitiesMock.mockResolvedValueOnce({
+      crypto: {
+        sm: {
+          allowedSigning: ["sm2"],
+        },
+      },
+    });
+
+    await expect(
+      bridge.getSigningAlgorithms({ toriiUrl: "https://sm2-only.example" }),
+    ).resolves.toEqual([{ id: "sm2", label: "SM2", isDefault: false }]);
+  });
+
+  it("returns no signing options when advertised endpoint algorithms are unsupported locally", async () => {
+    const bridge = await loadBridge();
+    mocks.getNodeCapabilitiesMock.mockResolvedValueOnce({
+      crypto: {
+        sm: {
+          allowedSigning: ["ed448"],
+        },
+      },
+    });
+
+    await expect(
+      bridge.getSigningAlgorithms({
+        toriiUrl: "https://unsupported-signing.example",
+      }),
+    ).resolves.toEqual([]);
+  });
+
+  it("falls back to local signing algorithms when endpoint capability discovery fails", async () => {
+    const bridge = await loadBridge();
+    mocks.getNodeCapabilitiesMock.mockRejectedValueOnce(
+      new Error("capabilities unavailable"),
+    );
+
+    await expect(
+      bridge.getSigningAlgorithms({ toriiUrl: "https://offline.example" }),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "ed25519", isDefault: true }),
+      ]),
+    );
+  });
+
+  it("forwards stored signing algorithms through VPN IPC helpers", async () => {
+    const bridge = await loadBridge();
+    const privateKeyHex = "22".repeat(32);
+    mocks.storedAccountSecrets.set(ALICE_ACCOUNT_ID, {
+      privateKeyHex,
+      signingAlgorithm: "secp256k1",
+    });
+
+    await bridge.getVpnStatus({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+    });
+    await bridge.connectVpn({
+      toriiUrl: "https://taira.sora.org",
+      chainId: "chain",
+      accountId: ALICE_ACCOUNT_ID,
+      exitClass: "standard",
+    });
+    await bridge.disconnectVpn({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+    });
+    await bridge.repairVpn({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+    });
+    await bridge.listVpnReceipts({
+      toriiUrl: "https://taira.sora.org",
+      accountId: ALICE_ACCOUNT_ID,
+    });
+
+    for (const channel of [
+      "vpn:getStatus",
+      "vpn:connect",
+      "vpn:disconnect",
+      "vpn:repair",
+      "vpn:listReceipts",
+    ]) {
+      expect(mocks.ipcInvokeMock).toHaveBeenCalledWith(
+        channel,
+        expect.objectContaining({
+          accountId: ALICE_ACCOUNT_ID,
+          privateKeyHex,
+          signingAlgorithm: "secp256k1",
+        }),
+      );
+    }
   });
 
   it("copies text through the native Electron clipboard", async () => {

@@ -259,7 +259,10 @@ const REQUIRED_ROUTE_PREFLIGHT_COMMON_CHECK_IDS = [
   "bsc-destination-binding",
   "bsc-production-verifier-material",
   "bsc-production-prover-material",
+  "bsc-native-evm-prover-bundle-hash",
   "bsc-native-evm-prover-bundle",
+  "bsc-destination-browser-prover",
+  "bsc-source-browser-prover",
   "bsc-post-deploy-live-evidence",
   "taira-burn-record-material",
   "bsc-rpc-chain-id-readback",
@@ -594,6 +597,20 @@ const fileBackedExplorerScreenshots = (fixtures) =>
     sha256: fixtures[entry.kind].sha256,
   }));
 
+const routeBrowserProverRef = (direction = "destination") => ({
+  moduleUrl:
+    direction === "source" ? "/sccp-bsc/source.js" : "/sccp-bsc/destination.js",
+  moduleSpecifier: `@sora/sccp-bsc-${direction}-prover`,
+  moduleHash: direction === "source" ? HASH_77 : HASH_55,
+  manifestHash: direction === "source" ? HASH_66 : HASH_44,
+  expectedExports:
+    direction === "source"
+      ? ["bscSccpSourceProve", "bscSccpSourceNativeProverSelfTest"]
+      : ["bscSccpProve", "bscSccpNativeProverSelfTest"],
+  boundRouteHash: HASH_33,
+  boundProofHash: HASH_44,
+});
+
 const deployment = (overrides = {}) => {
   const { bscNetwork = "testnet", ...rest } = overrides;
   const profile = resolveBscNetworkProfile(bscNetwork);
@@ -608,6 +625,8 @@ const deployment = (overrides = {}) => {
     proofArtifactHash: HASH_44,
     provingKeyHash: HASH_66,
     nativeEvmProverBundleHash: HASH_99,
+    destinationBrowserProver: routeBrowserProverRef("destination"),
+    sourceBrowserProver: routeBrowserProverRef("source"),
     destinationBindingHash: HASH_33,
     settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
     ...rest,
@@ -817,6 +836,7 @@ const peerAuditReport = (overrides = {}) => {
     generatedAtMs: effectiveGeneratedAtMs,
     routeId: SCCP_BSC_XOR_ROUTE_ID,
     assetKey: SCCP_BSC_XOR_ASSET_KEY,
+    bscNetwork,
     peerCount,
     manifestFingerprint: null,
     sanitizedStanzaFilesChecked: true,
@@ -832,6 +852,15 @@ const peerAuditReport = (overrides = {}) => {
     peers,
     ...rest,
   };
+};
+
+const smokePeerAuditReport = (overrides = {}) => {
+  const report = peerAuditReport(overrides);
+  return Object.fromEntries(
+    Object.entries(report).filter(
+      ([key]) => key !== "bscNetwork" && key !== "bsc",
+    ),
+  );
 };
 
 const smokeProverManifest = (direction = "destination", overrides = {}) => {
@@ -865,6 +894,8 @@ const smokeProverManifest = (direction = "destination", overrides = {}) => {
     proofArtifactHash: HASH_44,
     provingKeyHash: HASH_66,
     nativeEvmProverBundleHash: HASH_99,
+    boundRouteHash: HASH_33,
+    boundProofHash: HASH_44,
     deployment: deployment({ bscNetwork: profile.key }),
     postDeployLiveEvidence: postDeployLiveEvidence({
       bscNetwork: profile.key,
@@ -899,6 +930,8 @@ const inventorySidecarManifest = (
     proofArtifactHash: HASH_44,
     provingKeyHash: HASH_66,
     nativeEvmProverBundleHash: HASH_99,
+    boundRouteHash: HASH_33,
+    boundProofHash: HASH_44,
     acceptedExport:
       direction === "source" ? "bscSccpSourceProve" : "bscSccpProve",
     acceptedSelfTestExport:
@@ -937,7 +970,7 @@ const smokeReadinessReport = (overrides = {}) => {
         bscNetwork: profile.key,
       }),
     },
-    peerAudit: peerAuditReport({ bscNetwork: profile.key }),
+    peerAudit: smokePeerAuditReport({ bscNetwork: profile.key }),
     checks: [
       { id: "route-preflight", status: "pass", message: "ready" },
       { id: "peer-config-audit", status: "pass", message: "ready" },
@@ -2923,6 +2956,19 @@ describe("BSC SCCP aggregate production gate", () => {
     expect(JSON.stringify(report)).not.toMatch(/private|seed|mnemonic/iu);
   });
 
+  it("rejects route preflight reports that omit route-bound browser prover refs", () => {
+    const report = evaluate({
+      routeReport: routeReport({
+        deployment: deployment({ destinationBrowserProver: undefined }),
+      }),
+    });
+
+    expect(report.ready).toBe(false);
+    expect(failedCheck(report, "route-preflight-ready")?.detail).toMatch(
+      /route preflight deployment destinationBrowserProver is missing/u,
+    );
+  });
+
   it("redacts material inventory next-action fields before publishing the aggregate summary", () => {
     const baseInventory = materialInventoryReport();
     const secret = `privateKey=0x${"11".repeat(32)}`;
@@ -4494,7 +4540,6 @@ describe("BSC SCCP aggregate production gate", () => {
     const unpublishedEvidence = postDeployLiveEvidence({
       offlineFullTomlSha256: undefined,
     });
-    const basePeerAudit = peerAuditReport();
     const baseSmoke = smokeReadinessReport();
     const baseInventory = materialInventoryReport();
     const baseVideo = videoTranscript();
@@ -6904,6 +6949,26 @@ describe("BSC SCCP aggregate production gate", () => {
         name,
       ).toMatch(detail);
     }
+
+    const onChainOnlyPeerAudit = peerAuditReport({
+      expectedPeers: null,
+      peerCount: 0,
+      peers: [],
+      sanitizedStanzaFilesChecked: false,
+    });
+    const onChainOnlyReport = evaluate({
+      peerAuditReport: onChainOnlyPeerAudit,
+      smokeReadinessReport: smokeReadinessReport({
+        peerAudit: onChainOnlyPeerAudit,
+      }),
+    });
+
+    expect(
+      failedCheck(onChainOnlyReport, "peer-config-audit-ready"),
+    ).toBeUndefined();
+    expect(
+      failedCheck(onChainOnlyReport, "smoke-peer-audit-binding"),
+    ).toBeUndefined();
 
     const smokeBlocker = evaluate({
       smokeReadinessReport: smokeReadinessReport({
@@ -17808,13 +17873,13 @@ describe("BSC SCCP aggregate production gate", () => {
           id: "peer-route-consistency",
           ok: false,
           message:
-            "All TAIRA peer configs carry the same BSC route manifest material.",
+            "TAIRA peer configs do not carry local BSC route manifest material.",
         },
         {
           id: "peer-route-production-readiness",
           ok: false,
           message:
-            "Every TAIRA peer config advertises a production-ready BSC route stanza.",
+            "BSC route production readiness is not sourced from peer config overrides.",
         },
       ],
       peers: [],
@@ -17855,7 +17920,7 @@ describe("BSC SCCP aggregate production gate", () => {
       false,
     );
     expect(failedCheck(report, "peer-config-audit-ready")?.detail).toMatch(
-      /peer audit report does not include peer summaries/u,
+      /peer audit report is not ready/u,
     );
     expect(
       failedCheck(report, "smoke-peer-audit-binding")?.detail ?? "",

@@ -566,6 +566,8 @@ describe("BSC SCCP browser prover sidecar generator", () => {
         proofArtifactHash: HASH_44,
         provingKeyHash: HASH_55,
         nativeEvmProverBundleHash: HASH_99,
+        boundRouteHash: HASH_33,
+        boundProofHash: HASH_44,
         deployment: {
           bridgeAddress: BSC_BRIDGE_ADDRESS,
           tokenAddress: BSC_TOKEN_ADDRESS,

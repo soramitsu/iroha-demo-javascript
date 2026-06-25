@@ -553,6 +553,23 @@ describe("BSC SCCP TAIRA peer config audit", () => {
     expect(JSON.stringify(report)).not.toContain(ARTIFACT_B64);
   });
 
+  it("accepts on-chain-only audit mode without peer config sources", () => {
+    const report = evaluateBscSccpPeerConfigAudit([], {
+      bscNetwork: "testnet",
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.peerCount).toBe(0);
+    expect(report.manifestFingerprint).toBeNull();
+    expect(report.peers).toEqual([]);
+    expect(failedCheck(report, "peer-config-files")).toBeUndefined();
+    expect(
+      failedCheck(report, "peer-route-production-readiness"),
+    ).toBeUndefined();
+    expect(report.nextActions).toEqual([]);
+    expect(report.missingProductionInputs).toEqual([]);
+  });
+
   it("rejects stale local peer route stanzas", () => {
     const missing = evaluateBscSccpPeerConfigAudit(
       peerConfigs([

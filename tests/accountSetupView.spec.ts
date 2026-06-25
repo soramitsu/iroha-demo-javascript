@@ -776,6 +776,25 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
   });
 
+  it("blocks wallet generation when the endpoint has no supported signing algorithms", async () => {
+    getSigningAlgorithmsMock.mockResolvedValueOnce([]);
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      t(
+        "This endpoint does not advertise any signing algorithms supported by this app.",
+      ),
+    );
+    expect(
+      (
+        getButtonByText(wrapper, t("Generate recovery phrase"))
+          .element as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+  });
+
   it("uses the selected non-default signing algorithm when creating a wallet", async () => {
     getSigningAlgorithmsMock.mockResolvedValueOnce([
       { id: "ed25519", label: "Ed25519", isDefault: true },

@@ -1612,6 +1612,8 @@ export const buildBscSccpBrowserProverManifest = (input = {}) => {
       deployment,
       "nativeEvmProverBundleHash",
     ),
+    boundRouteHash: ownValue(deployment, "destinationBindingHash"),
+    boundProofHash: ownValue(deployment, "proofArtifactHash"),
     deployment: {
       bridgeAddress: ownValue(deployment, "bridgeAddress"),
       tokenAddress: ownValue(deployment, "tokenAddress"),

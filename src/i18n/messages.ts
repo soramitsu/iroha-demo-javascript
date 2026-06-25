@@ -1051,6 +1051,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Switch wallets or create a new one.": "Switch wallets or create a new one.",
   "Signing algorithm": "Signing algorithm",
   "Authority signing algorithm": "Authority signing algorithm",
+  "Select a signing algorithm supported by this endpoint.":
+    "Select a signing algorithm supported by this endpoint.",
+  "This endpoint does not advertise any signing algorithms supported by this app.":
+    "This endpoint does not advertise any signing algorithms supported by this app.",
   "Balance, funding, and activity": "Balance, funding, and activity",
   "Network health and activity": "Network health and activity",
   "Pay with a QR or account": "Pay with a QR or account",

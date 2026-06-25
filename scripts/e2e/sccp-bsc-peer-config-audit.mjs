@@ -1861,8 +1861,10 @@ export const evaluateBscSccpPeerConfigAudit = (peerConfigs, input = {}) => {
   check(
     checks,
     "peer-config-files",
-    peerRows.length > 0 && peerConfigShapeProblems.length === 0,
-    "At least one TAIRA peer config was audited.",
+    peerConfigShapeProblems.length === 0,
+    peerRows.length > 0
+      ? "TAIRA peer config audit input is well formed."
+      : "No TAIRA peer config source was provided; route material is expected on-chain.",
     peerConfigShapeProblems.join("; "),
   );
   if (expectedPeers !== null) {
@@ -1906,7 +1908,7 @@ export const evaluateBscSccpPeerConfigAudit = (peerConfigs, input = {}) => {
   check(
     checks,
     "peer-route-production-readiness",
-    unreadyPeers.length === 0 && peers.length > 0,
+    unreadyPeers.length === 0,
     "BSC route production readiness is not sourced from peer config overrides.",
     unreadyPeers
       .map((peer) => {
@@ -1925,7 +1927,7 @@ export const evaluateBscSccpPeerConfigAudit = (peerConfigs, input = {}) => {
   check(
     checks,
     "peer-route-burn-record-material",
-    burnRecordMaterialProblemDetails.length === 0 && peers.length > 0,
+    burnRecordMaterialProblemDetails.length === 0,
     "TAIRA peer configs do not override BSC burn-record material.",
     burnRecordMaterialProblemDetails.join("; "),
   );
@@ -1935,7 +1937,7 @@ export const evaluateBscSccpPeerConfigAudit = (peerConfigs, input = {}) => {
   check(
     checks,
     "peer-route-hash-role-separation",
-    hashRoleProblemDetails.length === 0 && peers.length > 0,
+    hashRoleProblemDetails.length === 0,
     "TAIRA peer configs do not override BSC route cryptographic hashes.",
     hashRoleProblemDetails.join("; "),
   );
@@ -2097,7 +2099,7 @@ const assertNoConflictingPeerAuditSources = (args, env = process.env) => {
 const printUsage = () => {
   console.log(`Usage: node scripts/e2e/sccp-bsc-peer-config-audit.mjs [options]
 
-Audit TAIRA peer configs for one identical BSC SCCP route stanza.
+Audit TAIRA peer configs for stale local BSC SCCP route/prover overrides.
 
 Options:
   --dir DIR

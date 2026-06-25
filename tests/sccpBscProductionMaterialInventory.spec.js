@@ -2513,6 +2513,8 @@ const sidecarManifest = ({
   proofArtifactHash: deploymentInfo.proofArtifactHash,
   provingKeyHash: deploymentInfo.provingKeyHash,
   nativeEvmProverBundleHash: deploymentInfo.nativeEvmProverBundleHash,
+  boundRouteHash: deploymentInfo.destinationBindingHash,
+  boundProofHash: deploymentInfo.proofArtifactHash,
   deployment: {
     bridgeAddress: BSC_BRIDGE_ADDRESS,
     tokenAddress: BSC_TOKEN_ADDRESS,

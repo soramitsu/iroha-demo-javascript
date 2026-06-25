@@ -257,6 +257,7 @@ export interface VpnAuthContext {
   toriiUrl: string;
   accountId: string;
   privateKeyHex: string;
+  signingAlgorithm?: string;
   chainId?: string;
   networkPrefix?: number;
 }

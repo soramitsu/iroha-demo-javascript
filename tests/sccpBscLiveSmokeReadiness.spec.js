@@ -816,6 +816,8 @@ const readyProverManifest = ({
     proofArtifactHash,
     provingKeyHash,
     nativeEvmProverBundleHash,
+    boundRouteHash: HASH_33,
+    boundProofHash: proofArtifactHash,
     deployment: {
       bridgeAddress: BSC_BRIDGE_ADDRESS,
       tokenAddress: BSC_TOKEN_ADDRESS,
@@ -3609,6 +3611,31 @@ describe("BSC SCCP live smoke readiness", () => {
         "diagnostic verifier detail must not be echoed",
       );
     }
+  });
+
+  it("accepts a ready on-chain-only TAIRA peer-config audit", () => {
+    const report = evaluateBscSccpLiveSmokeReadiness(
+      readySmokeReadinessInput({
+        peerAuditReport: readyPeerAuditReport({
+          expectedPeers: null,
+          peerCount: 0,
+          peers: [],
+          checks: readyPeerAuditReport().checks.filter(
+            (entry) => entry.id !== "peer-count",
+          ),
+        }),
+      }),
+    );
+
+    expect(report.ready).toBe(true);
+    expect(report.peerAudit).toMatchObject({
+      ready: true,
+      peerCount: 0,
+      peers: [],
+    });
+    expect(
+      report.checks.find((entry) => entry.id === "peer-config-audit"),
+    ).toMatchObject({ status: "pass" });
   });
 
   it("checks local and remote browser prover module availability without executing modules", async () => {

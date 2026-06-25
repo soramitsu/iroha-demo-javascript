@@ -6,62 +6,85 @@ understand profile-specific BSC chain ids, network ids, explorer hosts, native
 EVM prover bundles, and proof bindings. The BSC testnet contracts are deployed
 from the diagnostic rollout, and the latest public TAIRA preflight now finds a
 matching `taira_bsc_xor` testnet manifest with live BSC contract readback.
-That manifest still carries diagnostic verifier material and omits production
-proof/proving-key/native prover hashes. Public TAIRA does not yet advertise the
-BSC mainnet route manifest. Hardened readiness checks
-intentionally keep both profiles disabled for production execution until
-production verifier material, production proof/proving-key hashes, SDK-valid
-native EVM prover bundles, public route publication, and browser-safe BSC
-prover modules are available.
+The current public testnet manifest publishes production-shaped verifier,
+proof, proving-key, destination-binding, and post-deploy evidence hashes, but
+still omits the SDK-valid native EVM prover bundle hash and destination/source
+browser prover references required before live transfers can run. Public TAIRA
+does not yet advertise the BSC mainnet route manifest. Hardened readiness
+checks intentionally keep both profiles disabled for production execution until
+SDK-valid native EVM prover bundles, route-bound browser prover modules, clean
+production route artifacts, and live UI proof evidence are available.
 
 ## Current Gate Snapshot
 
-As of 2026-06-21T21:00:36.632Z,
-`output/sccp-bsc-production-gate/testnet/latest.json` reports `ready: false`
-with 27 failed checks and 45 unique missing production inputs. The refreshed
-public route preflight
-(`output/sccp-bsc-preflight/testnet/latest.json`) now passes route discovery,
-SCCP submit-path, post-deploy live evidence, and BSC contract readback checks,
-but fails on diagnostic verifier material plus missing production proof,
-proving-key, and native EVM prover bundle hashes. The refreshed
-smoke-readiness report is bound to the refreshed four-peer SSH audit; it fails
-closed on the same route readiness issue, non-production peer route material,
-missing WalletConnect project id, missing destination/source browser prover
-URLs, and missing route-bound production sidecar manifests. The refreshed
-production material
-inventory is bound to the current public BSC testnet deployment and the same
-local prover module path, and still reports
-`ready: false` with 12 failed checks and 28 missing production inputs. The
-aggregate production gate now regenerates peer evidence from the remote SSH
-source during refresh, writes sanitized stanza evidence under
-`output/sccp-bsc-peer-config-audit/testnet/`, and records
-`peer-audit-refresh-source` as passing.
+As of 2026-06-25T11:13:28.012Z,
+`output/sccp-bsc-production-gate-current/latest.json` reports `ready: false`.
+The refreshed public route preflight
+(`output/sccp-bsc-preflight-current/latest.json`) passes route discovery, SCCP
+submit paths, post-deploy live evidence, production verifier/prover hash
+checks, and BSC contract readback. It fails closed only on the missing
+`nativeEvmProverBundleHash`, missing SDK-valid native EVM prover bundle, and
+missing destination/source browser prover references. The smoke-readiness
+report (`output/sccp-bsc-smoke-readiness-current/latest.json`) is now aligned
+with the on-chain route-manifest model: peer config audit passes when no local
+BSC route/prover overrides are present, while readiness still fails because the
+public route is not ready and WalletConnect plus destination/source prover
+module URLs are not configured. The refreshed production material inventory
+(`output/sccp-bsc-material-inventory-current/latest.json`) is bound to the
+current public BSC testnet deployment, passes the secret/diagnostic artifact
+scan, and fails only on missing production artifacts.
 
 Remaining blockers:
 
 - public TAIRA route preflight finds the BSC testnet manifest and confirms live
-  BSC contract readback, but the verifier key hash is the known diagnostic
-  hash `0x9ef8067d260532f88e60cfa4b458fe678fc46b9c242de18fc91ba646e0857fc4`;
-- the latest SSH-backed peer audit proves four active TAIRA peers carry one
-  identical `taira_bsc_xor` route stanza, but those stanzas are still not
-  production-ready and do not publish a native EVM prover bundle hash;
-- no production Groth16 verifier key, `.r1cs`, `.zkey`, SDK-validated native
-  EVM prover bundle, or production browser prover sidecar is present locally;
-- the checked-in BSC browser prover loader hashes correctly, but its sidecar is
-  only `iroha-demo-sccp-bsc-browser-prover-local-sidecar/v1`; it is not a
-  route-bound production prover manifest and no runtime prover config exists;
-- the production route overlay/offline full-TOML evidence has not been
-  published to TAIRA peer configs; and
+  BSC contract readback, but the route is not production-ready until it
+  publishes the route-bound native EVM prover bundle hash and both browser
+  prover references;
+- no clean production-ready route artifact, offline full-TOML evidence,
+  route-referenced TAIRA burn-record material, production Groth16 material
+  manifest, attestation request/handoff, proof self-test report, `.r1cs`,
+  `.zkey`, or SDK-validated native EVM prover bundle is present locally;
+- the checked-in BSC browser prover loader hashes correctly, but no
+  route-bound production prover manifest is checked in yet; destination/source
+  sidecars must be generated from a ready public route report and no runtime
+  prover config exists;
+- WalletConnect and BSC destination/source browser prover module URLs are not
+  configured for live smoke; and
 - the live UI video proof for TAIRA -> BSC -> TAIRA is not recorded.
 
-The corrected verifier replacement command emitted by the gate is:
+The current blocker is not verifier redeployment. Do not replace the deployed
+BSC verifier unless live readback or verifier-key evidence changes. The next
+operator path is to generate SDK-valid native prover material, generate
+route-bound browser sidecars from a ready public route report, publish the
+production route manifest through the on-chain route-manifest path, and rerun
+the read-only gates:
 
 ```sh
-node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs deploy \
+npm run e2e:sccp:bsc-material-inventory -- --bsc-network testnet
+npm run e2e:sccp:bsc-smoke-readiness -- --bsc-network testnet
+npm run e2e:sccp:bsc-production-gate -- --bsc-network testnet
+```
+
+After the missing production material exists, the route manifest generator must
+receive the native EVM prover bundle and both browser prover sidecars before
+`--production-ready true` is allowed:
+
+```sh
+node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs route-manifest \
   --bsc-network testnet \
-  --verifier <production-verifier-key.json> \
-  --broadcast true \
-  --confirm-network taira_bsc_xor:testnet
+  --evidence <testnet-deployment-evidence.json> \
+  --taira-contract <taira-burn-record.contract.json> \
+  --settlement-asset-definition-id <canonical-asset-definition-id> \
+  --proof-artifact-hash <0x...> \
+  --proving-key-hash <0x...> \
+  --native-prover-bundle <native-evm-prover-bundle.json> \
+  --destination-browser-prover-manifest <destination-browser-prover-manifest.json> \
+  --source-browser-prover-manifest <source-browser-prover-manifest.json> \
+  --offline-full-toml-evidence <offline-full-toml-evidence.json> \
+  --production-ready true \
+  --live-readback-checked true \
+  --confirm-testnet taira_bsc_xor \
+  --out <production-route.manifest.json>
 ```
 
 ## Current Status
@@ -507,12 +530,14 @@ aliases, BSC calldata aliases, SCCP message IDs, commitment roots, statement
 hashes, and public-input / commitment payload hashes before the UI can request
 wallet approval.
 
-The operator peer-config consistency gate is now available as
-`npm run e2e:sccp:bsc-peer-config-audit`. It parses TAIRA peer TOML files,
-checks that every audited peer carries exactly one `taira_bsc_xor` / `xor`
-route stanza, verifies that the route material is identical across peers, and
-reuses the BSC preflight production checks without serializing full TOML,
-private material, or burn-record bytecode into the report.
+The operator peer-config audit gate is now available as
+`npm run e2e:sccp:bsc-peer-config-audit`. It parses TAIRA peer TOML files only
+to prove peers do not carry stale local `taira_bsc_xor` / `xor` route or prover
+overrides. Production route material is expected to come from the on-chain
+`UpsertSccpRouteManifest` / `/v1/sccp/manifests` path; if historical peer
+stanzas are found, the audit treats them as stale local overrides without
+serializing full TOML, private material, or burn-record bytecode into the
+report.
 The latest live remote peer audit is
 `output/sccp-bsc-peer-config-audit/live-remote-20260606T112800Z/report/latest.json`.
 After the peer-route fingerprint was widened to include top-level route
@@ -872,18 +897,17 @@ The latest live recheck after the public BSC alias-tight rollout is:
 - Aggregate production gate:
   `output/sccp-bsc-production-gate/testnet/latest.json`
 
-That bundle confirms public TAIRA and all four remote peers publish the same
-BSC route stanza and BSC testnet contract readback still passes. It also
-confirms `ready: false` for real production blockers only:
-`bsc-production-ready`, `bsc-production-verifier-material`,
-`bsc-production-prover-material`, and `bsc-native-evm-prover-bundle` in
-preflight; non-ready peer configs caused by the same missing production proof
-material; missing WalletConnect/prover configuration in smoke readiness; no
-clean production route/verifier/proof/native-prover material in inventory; and
-no complete UI video transcript. A workspace and remote peer-host artifact
-search found no production BSC `.zkey`, `.r1cs`, browser prover WASM, native
-EVM prover bundle, or route-bound BSC prover sidecar beyond the diagnostic
-verifier key and checked-in loader/validator module.
+That bundle confirms public TAIRA publishes the BSC route, stale local peer
+route/prover overrides are not required, and BSC testnet contract readback still
+passes. It also confirms `ready: false` for real production blockers only:
+missing native EVM prover bundle hash/material and missing destination/source
+browser prover references in preflight; missing WalletConnect/prover
+configuration in smoke readiness; no clean production route, offline
+full-TOML, burn-record, Groth16, proof, proving-key, or native-prover material
+in inventory; and no complete UI video transcript. A workspace and remote
+peer-host artifact search found no production BSC `.zkey`, `.r1cs`, browser
+prover WASM, native EVM prover bundle, or route-bound BSC prover sidecar beyond
+the checked-in loader/validator module.
 
 ## Remaining UI Rollout
 
@@ -1164,11 +1188,13 @@ identity readbacks (`verifier()`, `verifierCodeHash()`, `verifierKeyHash()`,
 `networkId()`, `expectedSourceDomain()`, `expectedTargetDomain()`), plus the
 raw verifier contract's `verifyingKeyHash()` readback. The raw BSC verifier
 address is distinct and does not expose `destinationBindingHash()`.
-Production-ready route manifests and peer configs must also declare BSC
-testnet `chain_id_hex = "0x61"` / `chainIdHex: "0x61"`; the app preflight,
-peer-config audit, deployment helper, material inventory, aggregate production
-gate, and `iroha_config` runtime parser reject mainnet or missing BSC chain IDs
-before UI smoke can pass.
+Production-ready route manifests must also declare BSC testnet
+`chainIdHex: "0x61"`; legacy/offline TOML evidence uses the equivalent
+`chain_id_hex = "0x61"` only for hashing proof. The app preflight,
+deployment helper, material inventory, aggregate production gate, and
+`iroha_config` runtime parser reject mainnet or missing BSC chain IDs before UI
+smoke can pass, while the peer-config audit rejects local route/prover
+overrides instead of treating peer configs as a route source.
 Evidence must also include post-deploy source-event plus route-canary hashes,
 transaction ids, and canonical BSC testnet explorer URLs
 (`https://testnet.bscscan.com/tx/0x...`) matching those transaction ids. The
@@ -1236,9 +1262,9 @@ The BSC preflight is deliberately fail-closed. A ready report requires:
   `SccpBscSourceBridge.owner()`,
   `TairaXorSccpBridge.destinationBindingHash()`, and route bridge verifier
   identity/domain readbacks matching the manifest
-- all TAIRA peer configs carrying exactly one identical production-ready
-  `taira_bsc_xor` / `xor` route stanza, verified with
-  `npm run e2e:sccp:bsc-peer-config-audit`
+- no TAIRA peer config carries local `taira_bsc_xor` / `xor` route or prover
+  overrides; `npm run e2e:sccp:bsc-peer-config-audit` verifies that the
+  on-chain manifest path is the only production route source
 
 ## Local Verification Commands
 

@@ -950,6 +950,7 @@ type VpnConnectInput = {
   accountId: string;
   networkPrefix?: number;
   privateKeyHex?: HexString;
+  signingAlgorithm?: string;
   exitClass: "standard" | "low-latency" | "high-security";
 };
 
@@ -958,6 +959,7 @@ type VpnDisconnectInput = {
   accountId: string;
   networkPrefix?: number;
   privateKeyHex?: HexString;
+  signingAlgorithm?: string;
 };
 
 type VpnStatusInput = Partial<VpnDisconnectInput>;
@@ -2323,22 +2325,22 @@ const dedupeSigningAlgorithms = (algorithms: Iterable<unknown>): string[] => {
   return result;
 };
 
-const readNodeSigningAlgorithms = (capabilities: unknown): string[] => {
+const readNodeSigningAlgorithms = (capabilities: unknown): string[] | null => {
   if (!isPlainRecord(capabilities)) {
-    return [];
+    return null;
   }
   const crypto = capabilities.crypto;
   if (!isPlainRecord(crypto)) {
-    return [];
+    return null;
   }
   const sm = crypto.sm;
   if (!isPlainRecord(sm)) {
-    return [];
+    return null;
   }
   const allowedSigning = sm.allowedSigning ?? sm.allowed_signing;
   return Array.isArray(allowedSigning)
     ? dedupeSigningAlgorithms(allowedSigning)
-    : [];
+    : null;
 };
 
 const resolveSigningAlgorithmOptions = async (
@@ -2353,20 +2355,14 @@ const resolveSigningAlgorithmOptions = async (
       const nodeAlgorithms = readNodeSigningAlgorithms(
         await getClient(toriiUrl).getNodeCapabilities(),
       );
-      const intersection = nodeAlgorithms.filter((algorithm) =>
-        localSet.has(algorithm),
-      );
-      if (intersection.length > 0) {
-        selectedAlgorithms = intersection;
+      if (nodeAlgorithms) {
+        selectedAlgorithms = nodeAlgorithms.filter((algorithm) =>
+          localSet.has(algorithm),
+        );
       }
     } catch {
       // Endpoint capability discovery is best-effort; local support remains useful offline.
     }
-  }
-  if (!selectedAlgorithms.includes(DEFAULT_SIGNING_ALGORITHM)) {
-    selectedAlgorithms = localSet.has(DEFAULT_SIGNING_ALGORITHM)
-      ? [DEFAULT_SIGNING_ALGORITHM, ...selectedAlgorithms]
-      : selectedAlgorithms;
   }
   return selectedAlgorithms.map(toSigningAlgorithmOption);
 };
@@ -2446,20 +2442,6 @@ const resolveOptionalPrivateKeyHex = async (input: {
         privateKeyHex: input.privateKeyHex,
       })
     )?.privateKeyHex ?? null
-  );
-};
-
-const resolvePrivateKeyHex = async (input: {
-  accountId: string;
-  privateKeyHex?: string;
-  operationLabel: string;
-}): Promise<string> => {
-  const resolved = await resolveOptionalPrivateKeyHex(input);
-  if (resolved) {
-    return resolved;
-  }
-  throw new Error(
-    `${input.operationLabel} requires a stored wallet secret. Restore or save this wallet again.`,
   );
 };
 
@@ -11226,61 +11208,66 @@ const api: IrohaBridge = {
     if (!input?.accountId) {
       return await ipcRenderer.invoke("vpn:getStatus", input);
     }
-    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+    const signingMaterial = await resolveOptionalSigningMaterial({
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
     });
     return await ipcRenderer.invoke("vpn:getStatus", {
       ...input,
-      ...(privateKeyHex ? { privateKeyHex } : {}),
+      ...(signingMaterial ?? {}),
     });
   },
   async connectVpn(input) {
-    const privateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
       operationLabel: "VPN connect",
     });
     return await ipcRenderer.invoke("vpn:connect", {
       ...input,
-      privateKeyHex,
+      ...signingMaterial,
     });
   },
   async disconnectVpn(input) {
-    const privateKeyHex = await resolvePrivateKeyHex({
+    const signingMaterial = await resolveSigningMaterial({
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
       operationLabel: "VPN disconnect",
     });
     return await ipcRenderer.invoke("vpn:disconnect", {
       ...input,
-      privateKeyHex,
+      ...signingMaterial,
     });
   },
   async repairVpn(input) {
     if (!input?.accountId) {
       return await ipcRenderer.invoke("vpn:repair", input);
     }
-    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+    const signingMaterial = await resolveOptionalSigningMaterial({
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
     });
     return await ipcRenderer.invoke("vpn:repair", {
       ...input,
-      ...(privateKeyHex ? { privateKeyHex } : {}),
+      ...(signingMaterial ?? {}),
     });
   },
   async listVpnReceipts(input) {
     if (!input?.accountId) {
       return await ipcRenderer.invoke("vpn:listReceipts", input);
     }
-    const privateKeyHex = await resolveOptionalPrivateKeyHex({
+    const signingMaterial = await resolveOptionalSigningMaterial({
       accountId: input.accountId,
       privateKeyHex: input.privateKeyHex,
+      signingAlgorithm: input.signingAlgorithm,
     });
     return await ipcRenderer.invoke("vpn:listReceipts", {
       ...input,
-      ...(privateKeyHex ? { privateKeyHex } : {}),
+      ...(signingMaterial ?? {}),
     });
   },
   listOfflineAllowances({
