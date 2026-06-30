@@ -2,8 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   configureIrohaJsNativeDir,
   hasRequiredIrohaJsNativeExports,
+  installGlobalIrohaJsNativeBinding,
   resolveIrohaJsNativeDir,
 } from "../electron/irohaJsNativeDir";
+
+const compatibleNativeModule = () => ({
+  deriveConfidentialReceiveAddressV2() {},
+  buildConfidentialTransferProofV2() {},
+  buildConfidentialUnshieldProofV2() {},
+  buildConfidentialUnshieldProofV3() {},
+  buildIvmProvedTransaction() {},
+});
 
 describe("irohaJsNativeDir", () => {
   it("prefers the installed iroha-js native directory when dist/native is absent", () => {
@@ -16,12 +25,7 @@ describe("irohaJsNativeDir", () => {
           "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
         );
       },
-      () => ({
-        deriveConfidentialReceiveAddressV2() {},
-        buildConfidentialTransferProofV2() {},
-        buildConfidentialUnshieldProofV2() {},
-        buildConfidentialUnshieldProofV3() {},
-      }),
+      () => compatibleNativeModule(),
     );
 
     expect(resolved).toBe(
@@ -56,12 +60,7 @@ describe("irohaJsNativeDir", () => {
         ) || path.endsWith("/dist/native/iroha_js_host.node"),
       (_moduleUrl, nativeModulePath) =>
         nativeModulePath.endsWith("/dist/native/iroha_js_host.node")
-          ? {
-              deriveConfidentialReceiveAddressV2() {},
-              buildConfidentialTransferProofV2() {},
-              buildConfidentialUnshieldProofV2() {},
-              buildConfidentialUnshieldProofV3() {},
-            }
+          ? compatibleNativeModule()
           : {},
     );
 
@@ -70,7 +69,13 @@ describe("irohaJsNativeDir", () => {
 });
 
 describe("hasRequiredIrohaJsNativeExports", () => {
-  it("accepts binaries that expose confidential v2 helpers", () => {
+  it("accepts binaries that expose confidential and IVM transaction helpers", () => {
+    expect(hasRequiredIrohaJsNativeExports(compatibleNativeModule())).toBe(
+      true,
+    );
+  });
+
+  it("rejects binaries missing required production helpers", () => {
     expect(
       hasRequiredIrohaJsNativeExports({
         deriveConfidentialReceiveAddressV2() {},
@@ -78,14 +83,47 @@ describe("hasRequiredIrohaJsNativeExports", () => {
         buildConfidentialUnshieldProofV2() {},
         buildConfidentialUnshieldProofV3() {},
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("rejects binaries missing confidential v2 helpers", () => {
-    expect(
-      hasRequiredIrohaJsNativeExports({
-        deriveConfidentialOwnerTagV2() {},
-      }),
-    ).toBe(false);
+  it("installs the resolved native module for SDK calls bundled through Electron", () => {
+    const previous = (
+      globalThis as typeof globalThis & { __IROHA_NATIVE_BINDING__?: unknown }
+    ).__IROHA_NATIVE_BINDING__;
+    try {
+      delete (
+        globalThis as typeof globalThis & { __IROHA_NATIVE_BINDING__?: unknown }
+      ).__IROHA_NATIVE_BINDING__;
+      const nativeModule = compatibleNativeModule();
+
+      const installed = installGlobalIrohaJsNativeBinding(
+        "file:///Users/test/app/dist/preload/preload.mjs",
+        { IROHA_JS_NATIVE_DIR: "/mock/native" } as NodeJS.ProcessEnv,
+        () => nativeModule,
+      );
+
+      expect(installed).toBe(nativeModule);
+      expect(
+        (
+          globalThis as typeof globalThis & {
+            __IROHA_NATIVE_BINDING__?: unknown;
+          }
+        ).__IROHA_NATIVE_BINDING__,
+      ).toBe(nativeModule);
+    } finally {
+      if (previous === undefined) {
+        delete (
+          globalThis as typeof globalThis & {
+            __IROHA_NATIVE_BINDING__?: unknown;
+          }
+        ).__IROHA_NATIVE_BINDING__;
+      } else {
+        (
+          globalThis as typeof globalThis & {
+            __IROHA_NATIVE_BINDING__?: unknown;
+          }
+        ).__IROHA_NATIVE_BINDING__ = previous;
+      }
+    }
   });
 });

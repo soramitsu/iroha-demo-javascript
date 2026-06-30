@@ -23,6 +23,7 @@ import {
   SCCP_BSC_XOR_ROUTE_ID,
 } from "../scripts/e2e/sccp-bsc-route-preflight.mjs";
 import {
+  BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS,
   BSC_PROVER_SIDECAR_REQUIRED_ROUTE_CHECK_IDS,
   buildBscSccpBrowserProverManifest,
   defaultBscProverManifestOutputPath,
@@ -454,11 +455,41 @@ const readyRouteReport = (overrides = {}, profile = BSC_PROFILES.testnet) => ({
   ...overrides,
 });
 
+const sidecarBootstrapRouteReport = (
+  overrides = {},
+  profile = BSC_PROFILES.testnet,
+) => {
+  const allowed = new Set(
+    BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS,
+  );
+  return readyRouteReport(
+    {
+      ready: false,
+      checks: routeCheckIds(profile).map((id) => ({
+        id,
+        ok: !allowed.has(id),
+        message: allowed.has(id)
+          ? `${id} waiting for browser prover sidecar`
+          : `${id} ready`,
+      })),
+      ...overrides,
+    },
+    profile,
+  );
+};
+
 describe("BSC SCCP browser prover sidecar generator", () => {
   it("uses profile-specific required preflight checks for sidecar generation", () => {
     expect(routeCheckIds(BSC_PROFILES.testnet)).toEqual(
       BSC_PROVER_SIDECAR_REQUIRED_ROUTE_CHECK_IDS,
     );
+    expect(
+      BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS,
+    ).toEqual([
+      "bsc-production-ready",
+      "bsc-destination-browser-prover",
+      "bsc-source-browser-prover",
+    ]);
     expect(routeCheckIds(BSC_PROFILES.mainnet)).toContain(
       "bsc-mainnet-chain-id",
     );
@@ -1393,9 +1424,50 @@ describe("BSC SCCP browser prover sidecar generator", () => {
     ).toBe(true);
   });
 
+  it("builds route-bound sidecars from a pre-sidecar bootstrap route report", () => {
+    const routeReport = sidecarBootstrapRouteReport();
+    const manifest = buildBscSccpBrowserProverManifest({
+      routeReport,
+      moduleUrl: "/sccp-bsc-prover.js",
+      moduleBytes: PROVER_MODULE_BYTES,
+      direction: "destination",
+    });
+
+    expect(manifest).toMatchObject({
+      schema: SCCP_BSC_BROWSER_PROVER_MANIFEST_SCHEMA,
+      kind: "bsc-destination",
+      proofArtifactHash: HASH_44,
+      provingKeyHash: HASH_55,
+      nativeEvmProverBundleHash: HASH_99,
+      boundRouteHash: HASH_33,
+      boundProofHash: HASH_44,
+    });
+    expect(
+      validateBscSccpBrowserProverManifest({
+        manifest,
+        routeReport: readyRouteReport(),
+        moduleUrl: "/sccp-bsc-prover.js",
+        expectedDirection: "destination",
+        label: "TAIRA -> BSC bootstrap prover",
+      }).ok,
+    ).toBe(true);
+  });
+
   it("refuses non-ready, local-only, or proof-hash-incomplete route reports", () => {
     const cases = [
       readyRouteReport({ ready: false }),
+      sidecarBootstrapRouteReport({
+        checks: routeCheckIds().map((id) => ({
+          id,
+          ok:
+            id === "bsc-native-evm-prover-bundle"
+              ? false
+              : !BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS.includes(
+                  id,
+                ),
+          message: `${id} status`,
+        })),
+      }),
       readyRouteReport({ manifestSource: "file" }),
       readyRouteReport({
         deployment: {
@@ -1427,6 +1499,21 @@ describe("BSC SCCP browser prover sidecar generator", () => {
         }),
       ).toThrow(/Cannot generate BSC prover sidecar/u);
     }
+  });
+
+  it("allows local route reports for the sidecar bootstrap-only gap", () => {
+    const manifest = buildBscSccpBrowserProverManifest({
+      routeReport: sidecarBootstrapRouteReport({ manifestSource: "file" }),
+      moduleUrl: "/sccp-bsc-prover.js",
+      moduleBytes: PROVER_MODULE_BYTES,
+    });
+
+    expect(manifest).toMatchObject({
+      schema: SCCP_BSC_BROWSER_PROVER_MANIFEST_SCHEMA,
+      kind: "bsc-destination",
+      routeId: SCCP_BSC_XOR_ROUTE_ID,
+      assetKey: SCCP_BSC_XOR_ASSET_KEY,
+    });
   });
 
   it("rejects tiny placeholder prover modules before writing sidecars", async () => {
@@ -1525,7 +1612,7 @@ describe("BSC SCCP browser prover sidecar generator", () => {
     const cases = [
       {
         routeReport: readyRouteReport({ checks: [] }),
-        detail: /bsc-production-ready preflight check has not passed/u,
+        detail: /taira-network preflight check has not passed/u,
       },
       {
         routeReport: readyRouteReport({

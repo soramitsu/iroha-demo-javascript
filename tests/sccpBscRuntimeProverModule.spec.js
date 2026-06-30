@@ -108,19 +108,20 @@ const BSC_GROTH16_PUBLIC_SIGNAL_NAMES = Object.freeze([
   "statement_hash",
   "destination_binding_hash",
 ]);
+const TAIRA_XOR_DECIMALS = 9;
 
 const sha256Hex = (bytes) =>
   `0x${createHash("sha256").update(bytes).digest("hex")}`;
 
 const decimalToBaseUnits = (value) => {
   const match = String(value).match(/^([0-9]+)(?:\.([0-9]+))?$/u);
-  if (!match || (match[2] ?? "").length > 18) {
+  if (!match || (match[2] ?? "").length > TAIRA_XOR_DECIMALS) {
     throw new Error(`invalid decimal test amount: ${value}`);
   }
-  return `${match[1]}${(match[2] ?? "").padEnd(18, "0")}`.replace(
-    /^0+(?=\d)/u,
-    "",
-  );
+  return `${match[1]}${(match[2] ?? "").padEnd(
+    TAIRA_XOR_DECIMALS,
+    "0",
+  )}`.replace(/^0+(?=\d)/u, "");
 };
 
 const sourcePayloadForRequest = (request) =>
@@ -679,10 +680,14 @@ const buildDirectionConfig = (
   }
   const nativeArtifacts = {
     parity,
+    paritySeed: seed + 19,
     parityHash: sha256Hex(parity),
     selfTest,
+    selfTestSeed: seed + 23,
     selfTestHash: sha256Hex(selfTest),
     groth16ProofSelfTest,
+    groth16ProofSelfTestSeed,
+    materialManifestHash,
     groth16ProofSelfTestHash: sha256Hex(groth16ProofSelfTest),
     implementations,
     implementationHashes,
@@ -834,9 +839,29 @@ const retargetDirectionProofMaterial = (
     verifierKeyArtifactHash: direction.material.verifierKeyArtifactHash,
     destinationBindingHash,
   };
+  direction.nativeArtifacts.parity = nativeSupportArtifactBytes({
+    seed: direction.nativeArtifacts.paritySeed,
+    kind: "parity",
+    binding,
+    materialManifestHash: direction.nativeArtifacts.materialManifestHash,
+    profile,
+  });
+  direction.nativeArtifacts.parityHash = sha256Hex(
+    direction.nativeArtifacts.parity,
+  );
+  direction.nativeArtifacts.selfTest = nativeSupportArtifactBytes({
+    seed: direction.nativeArtifacts.selfTestSeed,
+    kind: "selfTest",
+    binding,
+    materialManifestHash: direction.nativeArtifacts.materialManifestHash,
+    profile,
+  });
+  direction.nativeArtifacts.selfTestHash = sha256Hex(
+    direction.nativeArtifacts.selfTest,
+  );
   direction.nativeArtifacts.groth16ProofSelfTest =
     groth16ProofSelfTestArtifactBytes({
-      seed: 700,
+      seed: direction.nativeArtifacts.groth16ProofSelfTestSeed,
       binding,
       profile,
     });
@@ -1004,6 +1029,7 @@ const sourceRequest = (material, overrides = {}) => {
     bscSender: BSC_BRIDGE_ADDRESS,
     tairaRecipient: TAIRA_RECIPIENT,
     amountDecimal: "1",
+    amountBaseUnits: decimalToBaseUnits("1"),
     sourceNonce: BSC_SOURCE_NONCE,
     sourceEventDigest: HASH_22,
     ...overrides,
@@ -3146,7 +3172,7 @@ const { fetch: runtimeFetch } = globalThis;`,
     expect(calls).toHaveLength(0);
   });
 
-  it("rejects hash-consistent proof artifacts with out-of-order r1cs section ids", async () => {
+  it("accepts hash-consistent proof artifacts with valid out-of-order r1cs section ids", async () => {
     const runtime = buildRuntimeConfig();
     const proofArtifact = proofArtifactMaterialBytes(0x7c);
     swapSnarkjsSectionIds(proofArtifact, 0, 2);
@@ -3161,10 +3187,14 @@ const { fetch: runtimeFetch } = globalThis;`,
 
     await expect(
       mod.bscSccpProve(destinationRequest(runtime.destination.material)),
-    ).rejects.toThrow(
-      /destination proof artifact \.r1cs section ids must be in canonical order: 1, 2, 3/u,
-    );
-    expect(calls).toHaveLength(0);
+    ).resolves.toMatchObject({
+      proofBytes: expect.any(Uint8Array),
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      direction: "destination",
+      proofArtifactHash: runtime.destination.material.proofArtifactHash,
+    });
   });
 
   it("rejects hash-consistent proving keys with unsupported zkey section ids", async () => {
@@ -3189,7 +3219,7 @@ const { fetch: runtimeFetch } = globalThis;`,
     expect(calls).toHaveLength(0);
   });
 
-  it("rejects hash-consistent proving keys with out-of-order zkey section ids", async () => {
+  it("accepts hash-consistent proving keys with valid out-of-order zkey section ids", async () => {
     const runtime = buildRuntimeConfig();
     const provingKey = provingKeyMaterialBytes(0x7d);
     swapSnarkjsSectionIds(provingKey, 0, 9);
@@ -3205,10 +3235,14 @@ const { fetch: runtimeFetch } = globalThis;`,
 
     await expect(
       mod.bscSccpSourceProve(sourceRequest(runtime.source.material)),
-    ).rejects.toThrow(
-      /source proving key \.zkey section ids must be in canonical order: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/u,
-    );
-    expect(calls).toHaveLength(0);
+    ).resolves.toMatchObject({
+      provingKeyHash: runtime.source.material.provingKeyHash,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      direction: "source",
+      provingKeyHash: runtime.source.material.provingKeyHash,
+    });
   });
 
   it("rejects configs missing the native EVM prover bundle descriptor hash", async () => {

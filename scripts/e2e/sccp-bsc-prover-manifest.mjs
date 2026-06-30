@@ -396,6 +396,12 @@ const DIAGNOSTIC_FLAG_KEYS = new Set([
 export const BSC_PROVER_SIDECAR_REQUIRED_ROUTE_CHECK_IDS =
   SCCP_BSC_REQUIRED_ROUTE_CHECK_IDS;
 export const requiredBscProverSidecarRouteCheckIds = requiredBscRouteCheckIds;
+export const BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS =
+  Object.freeze([
+    "bsc-production-ready",
+    "bsc-destination-browser-prover",
+    "bsc-source-browser-prover",
+  ]);
 
 const routeReportHasPassedCheck = (routeReport, id) => {
   const checks = ownValue(routeReport, "checks");
@@ -409,6 +415,33 @@ const routeReportHasPassedCheck = (routeReport, id) => {
           trimString(ownValue(entry, "status")).toLowerCase() === "pass"),
     )
   );
+};
+
+const routeReportFailedCheckIds = (routeReport) => {
+  const checks = ownValue(routeReport, "checks");
+  if (!Array.isArray(checks)) {
+    return [];
+  }
+  const failed = [];
+  for (const entry of ownArrayValues(checks)) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const id = trimString(ownValue(entry, "id"));
+    if (!id) {
+      continue;
+    }
+    const hasOk = typeof ownValue(entry, "ok") === "boolean";
+    const status = trimString(ownValue(entry, "status")).toLowerCase();
+    const hasStatus = status === "pass" || status === "fail";
+    if (
+      (hasOk && ownValue(entry, "ok") === false) ||
+      (hasStatus && status === "fail")
+    ) {
+      failed.push(id);
+    }
+  }
+  return failed;
 };
 
 const routeReportCheckIntegrityProblems = (routeReport) => {
@@ -1280,10 +1313,33 @@ export const assertBscRouteReportReadyForProverSidecar = (
   if (diagnosticVerifierHashReason) {
     problems.push(diagnosticVerifierHashReason);
   }
-  if (ownValue(routeReportRecord, "ready") !== true) {
-    problems.push("route preflight report is not ready");
+  const allowedBootstrapFailures = new Set(
+    BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS,
+  );
+  const failedCheckIds = routeReportFailedCheckIds(routeReportRecord);
+  const disallowedFailedCheckIds = failedCheckIds.filter(
+    (id) => !allowedBootstrapFailures.has(id),
+  );
+  const ready = ownValue(routeReportRecord, "ready") === true;
+  const sidecarBootstrapOnly =
+    !ready &&
+    failedCheckIds.length > 0 &&
+    disallowedFailedCheckIds.length === 0;
+  if (!ready) {
+    if (failedCheckIds.length === 0) {
+      problems.push(
+        "route preflight report is not ready and does not identify sidecar-bootstrap checks",
+      );
+    } else if (disallowedFailedCheckIds.length > 0) {
+      problems.push(
+        `route preflight report is not ready because non-sidecar checks failed: ${disallowedFailedCheckIds.join(", ")}`,
+      );
+    }
   }
-  if (ownValue(routeReportRecord, "manifestSource") === "file") {
+  if (
+    ownValue(routeReportRecord, "manifestSource") === "file" &&
+    !sidecarBootstrapOnly
+  ) {
     problems.push("public TAIRA route publication is not proven");
   }
   if (
@@ -1324,6 +1380,9 @@ export const assertBscRouteReportReadyForProverSidecar = (
   }
   problems.push(...routeReportCheckIntegrityProblems(routeReport));
   for (const id of requiredBscProverSidecarRouteCheckIds(bscProfile)) {
+    if (allowedBootstrapFailures.has(id)) {
+      continue;
+    }
     if (!routeReportHasPassedCheck(routeReportRecord, id)) {
       problems.push(`${id} preflight check has not passed`);
     }
@@ -1619,6 +1678,7 @@ export const buildBscSccpBrowserProverManifest = (input = {}) => {
       tokenAddress: ownValue(deployment, "tokenAddress"),
       sourceBridgeAddress: ownValue(deployment, "sourceBridgeAddress"),
       verifierAddress: ownValue(deployment, "verifierAddress"),
+      networkIdHex: ownValue(deployment, "networkIdHex"),
       verifierCodeHash: ownValue(deployment, "verifierCodeHash"),
       verifierKeyHash: ownValue(deployment, "verifierKeyHash"),
       proofArtifactHash: ownValue(deployment, "proofArtifactHash"),
@@ -1628,6 +1688,10 @@ export const buildBscSccpBrowserProverManifest = (input = {}) => {
         "nativeEvmProverBundleHash",
       ),
       destinationBindingHash: ownValue(deployment, "destinationBindingHash"),
+      settlementAssetDefinitionId: ownValue(
+        deployment,
+        "settlementAssetDefinitionId",
+      ),
     },
     postDeployLiveEvidence: {
       fullTomlReady: ownValue(postDeployLiveEvidence, "fullTomlReady"),

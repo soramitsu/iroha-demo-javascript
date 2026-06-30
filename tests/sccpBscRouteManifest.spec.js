@@ -1373,6 +1373,10 @@ describe("BSC SCCP route manifest draft generator", () => {
 
     expect(manifest.productionReady).toBe(false);
     expect(manifest.disabledReason).toMatch(/not production-ready/u);
+    expect(manifest.disabledReason).toMatch(/native EVM prover bundle/u);
+    expect(manifest.disabledReason).not.toMatch(/contract readback/u);
+    expect(manifest.disabledReason).not.toMatch(/TAIRA route publication/u);
+    expect(manifest.disabledReason).not.toMatch(/live canary/u);
     expect(manifest.postDeployLiveEvidence).toMatchObject({
       fullTomlReady: true,
       sourceBridgeConfigHash: HASH_33,
@@ -1427,6 +1431,7 @@ describe("BSC SCCP route manifest draft generator", () => {
     );
 
     expect(manifest.productionReady).toBe(false);
+    expect(manifest.disabledReason).toMatch(/post-deploy live evidence/u);
     expect(manifest.postDeployLiveEvidence).toBeUndefined();
   });
 

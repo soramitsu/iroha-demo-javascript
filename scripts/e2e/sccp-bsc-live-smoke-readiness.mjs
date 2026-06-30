@@ -507,6 +507,12 @@ const scrubAllowedBscRuntimeTermsForPlaceholderScan = (text) =>
       "sccp-bsc-native-evm-cross-sdk-parity-v1",
     )
     .replace(
+      /\bsccp-ethereum-mainnet-native-evm-cross-sdk-fixture-parity-v1\b/gu,
+      "sccp-ethereum-mainnet-native-evm-cross-sdk-parity-v1",
+    )
+    .replace(/\bcross_sdk_fixture_parity\b/gu, "cross_sdk_parity")
+    .replace(/\bcross_sdk_fixture_parity_artifact\b/gu, "cross_sdk_parity_artifact")
+    .replace(
       /\bDIAGNOSTIC_BSC_VERIFIER_KEY_HASHES\b/gu,
       "BSC_VERIFIER_KEY_HASH_DENYLIST",
     )
@@ -2100,6 +2106,10 @@ const PUBLIC_ROUTE_DEPLOYMENT_FIELDS = Object.freeze([
   "destinationBindingHash",
   "settlementAssetDefinitionId",
 ]);
+const PUBLIC_ROUTE_DEPLOYMENT_OBJECT_FIELDS = Object.freeze([
+  "destinationBrowserProver",
+  "sourceBrowserProver",
+]);
 
 export const requiredBscSmokeRouteCheckIds = requiredBscRouteCheckIds;
 
@@ -2337,12 +2347,20 @@ const publicRouteDeployment = (deployment) => {
   if (!isRecord(deployment)) {
     return null;
   }
-  return Object.fromEntries(
-    PUBLIC_ROUTE_DEPLOYMENT_FIELDS.map((key) => [
-      key,
-      readPublicDeploymentString(deployment, key),
-    ]),
-  );
+  return {
+    ...Object.fromEntries(
+      PUBLIC_ROUTE_DEPLOYMENT_FIELDS.map((key) => [
+        key,
+        readPublicDeploymentString(deployment, key),
+      ]),
+    ),
+    ...Object.fromEntries(
+      PUBLIC_ROUTE_DEPLOYMENT_OBJECT_FIELDS.map((key) => [
+        key,
+        readPublicRecord(deployment, key),
+      ]),
+    ),
+  };
 };
 
 const PUBLIC_POST_DEPLOY_EVIDENCE_FIELDS = Object.freeze([
@@ -2452,6 +2470,10 @@ const publicPeerAuditReport = (peerAuditReport) => {
           .filter(isRecord)
           .map((peer) => ({
             source: readPublicString(peer, "source"),
+            sanitizedStanzaSource: readPublicString(
+              peer,
+              "sanitizedStanzaSource",
+            ),
             routeCount: readPublicNumber(peer, "routeCount"),
             rawTomlSha256: readPublicString(peer, "rawTomlSha256"),
             sanitizedStanzaSha256: readPublicString(
@@ -3411,12 +3433,14 @@ const BSC_BROWSER_PROVER_DEPLOYMENT_FIELDS = Object.freeze(
     "tokenAddress",
     "sourceBridgeAddress",
     "verifierAddress",
+    "networkIdHex",
     "verifierCodeHash",
     "verifierKeyHash",
     "proofArtifactHash",
     "provingKeyHash",
     "nativeEvmProverBundleHash",
     "destinationBindingHash",
+    "settlementAssetDefinitionId",
   ]),
 );
 
@@ -4748,6 +4772,7 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
     ["tokenAddress", "tokenAddress", "token_address"],
     ["sourceBridgeAddress", "sourceBridgeAddress", "source_bridge_address"],
     ["verifierAddress", "verifierAddress", "verifier_address"],
+    ["networkIdHex", "networkIdHex", "network_id_hex"],
     ["verifierCodeHash", "verifierCodeHash", "verifier_code_hash"],
     ["verifierKeyHash", "verifierKeyHash", "verifier_key_hash"],
     [
@@ -4780,11 +4805,21 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
     problems.push("route deployment evidence is missing.");
   } else {
     manifestDeployment = Object.fromEntries(
-      expectedFields.map(([deploymentKey, ...manifestKeys]) => [
-        deploymentKey,
-        normalizeHexString(readManifestString(manifest, ...manifestKeys)) ||
-          null,
-      ]),
+      [
+        ...expectedFields.map(([deploymentKey, ...manifestKeys]) => [
+          deploymentKey,
+          normalizeHexString(readManifestString(manifest, ...manifestKeys)) ||
+            null,
+        ]),
+        [
+          "settlementAssetDefinitionId",
+          readManifestString(
+            manifest,
+            "settlementAssetDefinitionId",
+            "settlement_asset_definition_id",
+          ) ?? null,
+        ],
+      ],
     );
     for (const [deploymentKey, ...manifestKeys] of expectedFields) {
       problems.push(
@@ -4827,6 +4862,14 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
     ) {
       problems.push(
         `boundProofHash ${boundProofHash} does not match proofArtifactHash ${proofArtifactHash}.`,
+      );
+    }
+    if (
+      manifestDeployment.settlementAssetDefinitionId !==
+      deployment.settlementAssetDefinitionId
+    ) {
+      problems.push(
+        `settlementAssetDefinitionId ${manifestDeployment.settlementAssetDefinitionId ?? "null"} does not match route deployment ${deployment.settlementAssetDefinitionId ?? "null"}.`,
       );
     }
   }
@@ -4925,6 +4968,8 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
     proofArtifactHash,
     provingKeyHash,
     nativeEvmProverBundleHash,
+    boundRouteHash,
+    boundProofHash,
     acceptedExport: acceptedExport ?? null,
     acceptedSelfTestExport: acceptedSelfTestExport ?? null,
     deployment: manifestDeployment,
@@ -5948,6 +5993,12 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
     routeRecord,
     "sourceBrowserProver",
   );
+  const activeDestinationProverModuleUrl =
+    trimString(destinationProverModuleUrl) ||
+    trimString(destinationRouteBrowserProverRef?.moduleUrl);
+  const activeSourceProverModuleUrl =
+    trimString(sourceProverModuleUrl) ||
+    trimString(sourceRouteBrowserProverRef?.moduleUrl);
 
   checks.push(
     check(
@@ -6044,8 +6095,8 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
   }
 
   const runtimeProverModuleUrls = [
-    destinationProverModuleUrl,
-    sourceProverModuleUrl,
+    activeDestinationProverModuleUrl,
+    activeSourceProverModuleUrl,
     readPublicString(
       readPublicRecord(destinationProverManifestInspectionRecord, "manifest"),
       "moduleUrl",
@@ -6148,7 +6199,7 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
   const destinationProver = safeNormalize(
     () =>
       normalizeSccpBrowserModuleUrl(
-        destinationProverModuleUrl,
+        activeDestinationProverModuleUrl,
         "TAIRA -> BSC prover module URL",
       ),
     "Unable to validate TAIRA -> BSC prover module URL.",
@@ -6340,7 +6391,7 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
   const sourceProver = safeNormalize(
     () =>
       normalizeSccpBrowserModuleUrl(
-        sourceProverModuleUrl,
+        activeSourceProverModuleUrl,
         "BSC -> TAIRA source prover module URL",
       ),
     "Unable to validate BSC -> TAIRA source prover module URL.",
@@ -6763,22 +6814,6 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
   const timeoutMs = readOwnValue(input, "timeoutMs") ?? 10_000;
   const checkedAt = readOwnValue(input, "checkedAt");
   const bscProfile = resolveBscNetworkProfile(bscNetwork);
-  const activeDestinationProverModuleUrl =
-    trimString(destinationProverModuleUrl) ||
-    readBscProfileEnv(
-      bscProfile,
-      SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_PROVER_MODULE_URL_ENV,
-    );
-  const activeSourceProverModuleUrl =
-    trimString(sourceProverModuleUrl) ||
-    readBscProfileEnv(
-      bscProfile,
-      SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
-    );
   const activeDestinationProverManifestUrl =
     trimString(destinationProverManifestUrl) ||
     readBscProfileEnv(
@@ -6813,6 +6848,32 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
     bscRpcUrl: bscRpcUrl || bscProfile.rpcUrl,
     allowLocalRpc,
   });
+  const routeDestinationProverRef = readRouteBrowserProverRef(
+    routeReport,
+    "destinationBrowserProver",
+  );
+  const routeSourceProverRef = readRouteBrowserProverRef(
+    routeReport,
+    "sourceBrowserProver",
+  );
+  const activeDestinationProverModuleUrl =
+    trimString(destinationProverModuleUrl) ||
+    trimString(routeDestinationProverRef?.moduleUrl) ||
+    readBscProfileEnv(
+      bscProfile,
+      SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
+      SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
+      SCCP_BSC_PROVER_MODULE_URL_ENV,
+    );
+  const activeSourceProverModuleUrl =
+    trimString(sourceProverModuleUrl) ||
+    trimString(routeSourceProverRef?.moduleUrl) ||
+    readBscProfileEnv(
+      bscProfile,
+      SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
+      SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
+      SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
+    );
   const normalizedDestinationProverModuleUrl = safeNormalize(
     () =>
       normalizeSccpBrowserModuleUrl(

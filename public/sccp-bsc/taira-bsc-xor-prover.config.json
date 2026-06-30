@@ -1,0 +1,59 @@
+{
+  "schema": "iroha-demo-sccp-bsc-runtime-prover/v1",
+  "routeId": "taira_bsc_xor",
+  "assetKey": "xor",
+  "tairaChainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "tairaNetworkPrefix": 369,
+  "bscNetwork": "testnet",
+  "bscChain": "bsc-testnet",
+  "bscChainIdHex": "0x61",
+  "bscNetworkIdHex": "0x0000000000000000000000000000000000000000000000000000000000000061",
+  "destination": {
+    "nativeProverBundleUrl": "http://127.0.0.1:38661/iroha-demo-javascript/output/sccp-bsc-production/bsc-testnet-native-evm-prover-bundle.scaled-20260627T083530Z.json",
+    "nativeProverArtifactBaseUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/",
+    "nativeProverBundleSha256": "0x5d95daab065007c6dfb73bec0c577d15a5224100842e5954b1c4df0f82a76fc1",
+    "nativeEvmProverBundleHash": "0xfb2b2e53b4bf64b41974e1e2d6c609f98fbb6090f062ed89fb2f07635f72b1f7",
+    "nativeProverVerifiedSdks": [
+      "dotnet",
+      "java-android",
+      "javascript",
+      "kotlin",
+      "swift"
+    ],
+    "proofArtifactUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.r1cs",
+    "proofArtifactSha256": "0x4c5be12a6f38f13d859e64da63b9a33957c0e08c032bfe3acbc5f9d4d6ca31e7",
+    "provingKeyUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.final.zkey",
+    "provingKeySha256": "0x62f451847348cbe072b33f4a4199316eda61d86c90d3cabef4b48c42e4946d5d",
+    "verifierKeyUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/testnet-bsc-groth16-verifier-key.json",
+    "verifierKeySha256": "0x932f1e91ee15994d8627f7d15af97ae7574eaabddef2b17a3fef1344c5a816b1",
+      "backendModuleUrl": "http://127.0.0.1:38661/iroha-demo-javascript/public/sccp-bsc/taira-bsc-xor-groth16-backend.js",
+    "backendModuleSha256": "0xee71c6afc166422814d6fd201c1dd0717d4e779ca1415aecc130964f36ad74e4",
+    "backendSelfContained": true,
+    "backendAcceptedExport": "bscSccpProve",
+    "backendAcceptedSelfTestExport": "irohaSccpBscNativeProverSelfTest"
+  },
+  "source": {
+    "nativeProverBundleUrl": "http://127.0.0.1:38661/iroha-demo-javascript/output/sccp-bsc-production/bsc-testnet-native-evm-prover-bundle.scaled-20260627T083530Z.json",
+    "nativeProverArtifactBaseUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/",
+    "nativeProverBundleSha256": "0x5d95daab065007c6dfb73bec0c577d15a5224100842e5954b1c4df0f82a76fc1",
+    "nativeEvmProverBundleHash": "0xfb2b2e53b4bf64b41974e1e2d6c609f98fbb6090f062ed89fb2f07635f72b1f7",
+    "nativeProverVerifiedSdks": [
+      "dotnet",
+      "java-android",
+      "javascript",
+      "kotlin",
+      "swift"
+    ],
+    "proofArtifactUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.r1cs",
+    "proofArtifactSha256": "0x4c5be12a6f38f13d859e64da63b9a33957c0e08c032bfe3acbc5f9d4d6ca31e7",
+    "provingKeyUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.final.zkey",
+    "provingKeySha256": "0x62f451847348cbe072b33f4a4199316eda61d86c90d3cabef4b48c42e4946d5d",
+    "verifierKeyUrl": "http://127.0.0.1:38661/iroha/artifacts/sccp-bsc/native-prover/testnet/testnet-bsc-groth16-verifier-key.json",
+    "verifierKeySha256": "0x932f1e91ee15994d8627f7d15af97ae7574eaabddef2b17a3fef1344c5a816b1",
+      "backendModuleUrl": "http://127.0.0.1:38661/iroha-demo-javascript/public/sccp-bsc/taira-bsc-xor-groth16-backend.js",
+    "backendModuleSha256": "0xee71c6afc166422814d6fd201c1dd0717d4e779ca1415aecc130964f36ad74e4",
+    "backendSelfContained": true,
+    "backendAcceptedExport": "bscSccpSourceProve",
+    "backendAcceptedSelfTestExport": "irohaSccpBscSourceNativeProverSelfTest"
+  }
+}

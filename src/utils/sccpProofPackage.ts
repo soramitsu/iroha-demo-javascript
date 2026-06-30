@@ -69,6 +69,7 @@ export type BscSccpProofPackageInput = {
   messageBundle?: Record<string, unknown>;
   destinationBinding?: EvmSccpDestinationBindingInput;
   canonicalPayloadHex?: string;
+  proverModuleUrl?: string;
 };
 
 export type BscSccpProofGenerationInput = BscSccpProofPackageInput & {
@@ -186,6 +187,53 @@ const readOwnSccpProofDataProperty = (
   }
   return undefined;
 };
+
+const BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS = [
+  "nativeEvmProverBundleHash",
+  "native_evm_prover_bundle_hash",
+] as const;
+
+type BscRuntimeBoundProofRequest<T extends object> = T & {
+  nativeEvmProverBundleHash?: string;
+};
+
+const readOptionalBscNativeEvmProverBundleHash = (
+  value: unknown,
+  label: string,
+): string | undefined => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const hash = readOwnSccpProofDataProperty(
+    value,
+    BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS,
+  );
+  if (hash === undefined || hash === null || hash === "") {
+    return undefined;
+  }
+  if (typeof hash !== "string") {
+    throw new Error(`${label} nativeEvmProverBundleHash must be canonical hex.`);
+  }
+  const normalized = hash.trim().toLowerCase();
+  if (
+    normalized !== hash.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(normalized) ||
+    /^0x0{64}$/u.test(normalized)
+  ) {
+    throw new Error(
+      `${label} nativeEvmProverBundleHash must be a non-zero 32-byte hex value.`,
+    );
+  }
+  return normalized;
+};
+
+const bindBscNativeEvmProverBundleHash = <T extends object>(
+  request: T,
+  nativeEvmProverBundleHash: string | undefined,
+): BscRuntimeBoundProofRequest<T> =>
+  nativeEvmProverBundleHash
+    ? { ...request, nativeEvmProverBundleHash }
+    : request;
 
 const readBscProofPackageNetwork = (
   witness: EvmSccpProofRequestInput,
@@ -405,6 +453,14 @@ export const buildBscSccpProofPackage = (
     network === "mainnet"
       ? buildBscMainnetSccpDestinationProofRequest(packageInput.witness)
       : buildBscTestnetSccpDestinationProofRequest(packageInput.witness);
+  const nativeEvmProverBundleHash = readOptionalBscNativeEvmProverBundleHash(
+    packageInput.witness,
+    "BSC SCCP proof witness",
+  );
+  const runtimeRequest = bindBscNativeEvmProverBundleHash(
+    request,
+    nativeEvmProverBundleHash,
+  );
   if (packageInput.proofResult) {
     if (packageInput.proofResult.requestHash !== request.requestHash) {
       throw new Error("BSC SCCP proof result must match the proof request.");
@@ -430,7 +486,7 @@ export const buildBscSccpProofPackage = (
         : null;
 
     return {
-      request: serializeTrustedSccpValue(request),
+      request: serializeTrustedSccpValue(runtimeRequest),
       submission: serializeTrustedSccpValue(submission),
       bridgePayload: serializeTrustedSccpValue(bridgePayload),
       canonicalPayloadHex,
@@ -438,7 +494,7 @@ export const buildBscSccpProofPackage = (
   }
   if (!packageInput.proofBytes) {
     return {
-      request: serializeTrustedSccpValue(request),
+      request: serializeTrustedSccpValue(runtimeRequest),
       submission: null,
       bridgePayload: null,
       canonicalPayloadHex,
@@ -476,7 +532,7 @@ export const buildBscSccpProofPackage = (
       : null;
 
   return {
-    request: serializeTrustedSccpValue(request),
+    request: serializeTrustedSccpValue(runtimeRequest),
     submission: serializeTrustedSccpValue(submission),
     bridgePayload: serializeTrustedSccpValue(bridgePayload),
     canonicalPayloadHex,
@@ -486,7 +542,7 @@ export const buildBscSccpProofPackage = (
 export const generateBscSccpProofPackage = async (
   input: BscSccpProofGenerationInput,
 ): Promise<BscSccpProofPackage> => {
-  const { prove, ...packageInput } = input;
+  const { prove, proverModuleUrl: _proverModuleUrl, ...packageInput } = input;
   if (typeof prove !== "function") {
     const error = new Error(
       "BSC SCCP Groth16 prover is not linked; provide a browser-safe prove function before generating production proofs.",
@@ -503,8 +559,20 @@ export const generateBscSccpProofPackage = async (
     packageInputSnapshot.witness,
     "BSC SCCP proof witness",
   );
+  const nativeEvmProverBundleHash = readOptionalBscNativeEvmProverBundleHash(
+    proverWitnessSnapshot,
+    "BSC SCCP proof witness",
+  );
   const safeProve: EvmSccpProveFn = async (request) =>
-    snapshotProofPackageInput(await prove(request), "BSC SCCP proof result");
+    snapshotProofPackageInput(
+      await prove(
+        bindBscNativeEvmProverBundleHash(
+          request,
+          nativeEvmProverBundleHash,
+        ),
+      ),
+      "BSC SCCP proof result",
+    );
   const prover =
     readBscProofPackageNetwork(proverWitnessSnapshot) === "mainnet"
       ? new BscMainnetSccpProver({ prove: safeProve })

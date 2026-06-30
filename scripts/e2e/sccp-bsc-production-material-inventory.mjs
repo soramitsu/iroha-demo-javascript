@@ -85,9 +85,91 @@ export const bscSccpProductionMaterialInventoryRouteReportPath = (
     "latest.json",
   );
 const COMMON_BSC_PRODUCTION_MATERIAL_SCAN_PATHS = Object.freeze([
-  path.join(irohaRoot, "artifacts/sccp-bsc"),
-  path.join(repoRoot, "output/sccp-bsc-production"),
+  path.join(irohaRoot, "artifacts/sccp-bsc/contracts"),
+  path.join(repoRoot, "public/sccp-bsc"),
 ]);
+const BSC_PRODUCTION_MATERIAL_CURATED_IROHA_SCAN_PATHS = Object.freeze({
+  testnet: Object.freeze([
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/bsc-testnet-native-evm-prover-bundle.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/cross-sdk-parity.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/dotnet-implementation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/java-android-implementation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/javascript-implementation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/kotlin-implementation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/swift-implementation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/no-wasm-no-remote-scan.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/native-prover-self-test.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/source-parity-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.r1cs",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/sccp-bsc-full-message-v1.final.zkey",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/testnet-bsc-groth16-material.manifest.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/native-prover/testnet/testnet-bsc-groth16-proof-self-test.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/taira-bsc-xor-production-requirements.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/taira-bsc-xor-deployment.evidence.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/taira-bsc-xor-route.full-taira-config.evidence.json",
+    ),
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/taira-bsc-xor-route.manifest.json",
+    ),
+  ]),
+  mainnet: Object.freeze([
+    path.join(
+      irohaRoot,
+      "artifacts/sccp-bsc/taira-bsc-mainnet-xor-production-requirements.json",
+    ),
+  ]),
+});
 const BSC_PRODUCTION_MATERIAL_NATIVE_OUTPUT_SCAN_PATHS = Object.freeze({
   testnet: Object.freeze([
     path.join(
@@ -105,6 +187,30 @@ const BSC_PRODUCTION_MATERIAL_NATIVE_OUTPUT_SCAN_PATHS = Object.freeze({
     path.join(
       irohaRoot,
       "output/sccp-bsc-production/groth16-material/testnet-full/testnet-bsc-groth16-attestation-handoff.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/semantic-sccp-circuit-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/circuit-security-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/trusted-setup-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/reproducible-build-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/trusted-setup-transcript.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/testnet-full/reproducible-build-transcript.with-toolchain-hashes.json",
     ),
     path.join(
       irohaRoot,
@@ -138,6 +244,30 @@ const BSC_PRODUCTION_MATERIAL_NATIVE_OUTPUT_SCAN_PATHS = Object.freeze({
     ),
     path.join(
       irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/semantic-sccp-circuit-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/circuit-security-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/trusted-setup-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/reproducible-build-attestation.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/trusted-setup-transcript.json",
+    ),
+    path.join(
+      irohaRoot,
+      "output/sccp-bsc-production/groth16-material/mainnet-full/reproducible-build-transcript.with-toolchain-hashes.json",
+    ),
+    path.join(
+      irohaRoot,
       "output/sccp-bsc-production/groth16-material/mainnet-full/mainnet-bsc-groth16-proof-self-test.json",
     ),
     path.join(
@@ -154,27 +284,7 @@ const BSC_PRODUCTION_MATERIAL_DEPLOY_SCAN_PATHS = Object.freeze({
   testnet: Object.freeze([
     path.join(
       repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-route.manifest.draft.json",
-    ),
-    path.join(
-      repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-route.manifest.production-ready.json",
-    ),
-    path.join(
-      repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-route.production-ready.route-only.toml",
-    ),
-    path.join(
-      repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-route.production-ready.torii.toml",
-    ),
-    path.join(
-      repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-route.full-taira-config.evidence.json",
-    ),
-    path.join(
-      repoRoot,
-      "output/sccp-bsc-deploy/taira-bsc-xor-deployment.evidence.json",
+      "output/sccp-bsc-production/taira-bsc-xor-burn-record.production-ready.contract.json",
     ),
   ]),
   mainnet: Object.freeze([
@@ -204,10 +314,22 @@ const BSC_PRODUCTION_MATERIAL_DEPLOY_SCAN_PATHS = Object.freeze({
     ),
   ]),
 });
+const BSC_ROUTE_MANIFEST_PUBLICATION_SEARCH_DIRS = Object.freeze({
+  testnet: Object.freeze([path.join(repoRoot, "output/sccp-bsc-production")]),
+  mainnet: Object.freeze([
+    path.join(repoRoot, "output/sccp-bsc-deploy"),
+    path.join(repoRoot, "output/sccp-bsc-production"),
+  ]),
+});
+const BSC_ROUTE_MANIFEST_PUBLICATION_FILE_PATTERNS = Object.freeze({
+  testnet: /^taira-bsc-xor-route(?:\.[^.][\w.-]*)?\.upsert-isi\.json$/u,
+  mainnet: /^taira-bsc-mainnet-xor-route(?:\.[^.][\w.-]*)?\.upsert-isi\.json$/u,
+});
 export const bscSccpProductionMaterialScanPaths = (bscNetwork = "testnet") => {
   const bscProfile = resolveBscNetworkProfile(bscNetwork);
   return Object.freeze([
     ...COMMON_BSC_PRODUCTION_MATERIAL_SCAN_PATHS,
+    ...BSC_PRODUCTION_MATERIAL_CURATED_IROHA_SCAN_PATHS[bscProfile.key],
     ...BSC_PRODUCTION_MATERIAL_NATIVE_OUTPUT_SCAN_PATHS[bscProfile.key],
     ...BSC_PRODUCTION_MATERIAL_DEPLOY_SCAN_PATHS[bscProfile.key],
   ]);
@@ -265,6 +387,7 @@ const OFFLINE_FULL_TOML_EVIDENCE_SCHEMA =
   "iroha-sccp-bsc-taira-xor-offline-full-toml-evidence/v1";
 const TAIRA_BURN_RECORD_CONTRACT_SCHEMA =
   "iroha-sccp-taira-xor-burn-record-contract/v1";
+const BSC_ROUTE_MANIFEST_ISI_SCHEMA = "iroha-sccp-route-manifest-isi/v1";
 const BSC_DEPLOYMENT_READBACK_FIELDS = Object.freeze(
   new Set([
     "chainIdHex",
@@ -638,8 +761,10 @@ const MIN_PRODUCTION_PROOF_FILE_UNIQUE_BYTES = 16;
 const MAX_PRODUCTION_PROOF_FILE_REPEATED_PATTERN_BYTES = 64;
 const MAX_PRODUCTION_PROOF_FILE_DOMINANT_BYTE_FRACTION = 0.98;
 export const SCCP_BSC_NATIVE_PROVER_ARTIFACT_MAX_BYTES =
-  SCCP_BSC_RUNTIME_NATIVE_ARTIFACT_MAX_BYTES;
+  SCCP_BSC_PRODUCTION_PROOF_FILE_MAX_BYTES;
 const NON_ZERO_HEX32 = /^0x(?!0{64}$)[0-9a-f]{64}$/iu;
+const TAIRA_ASSET_DEFINITION_ID =
+  /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{16,80}$/u;
 const DECIMAL_WORD = /^(?:0|[1-9]\d*)$/u;
 const EVM_ADDRESS = /^0x[0-9a-f]{40}$/iu;
 const REPEATED_BYTE_EVM_ADDRESS_PATTERN = /^0x([0-9a-f]{2})\1{19}$/iu;
@@ -679,6 +804,8 @@ const REQUIRED_PRODUCTION_REQUIREMENT_REPORTS = Object.freeze([
 const REQUIRED_PRODUCTION_REQUIREMENT_STATIC_INPUT_IDS = Object.freeze([
   "production-groth16-verifier-key-json",
   "production-route-manifest",
+  "destination-browser-prover-manifest",
+  "source-browser-prover-manifest",
   "taira-burn-record-contract",
   "canonical-settlement-asset-definition-id",
   "post-deploy-live-evidence",
@@ -714,7 +841,7 @@ const REQUIRED_PRODUCTION_REQUIREMENT_STATIC_INPUT_IDS = Object.freeze([
   "audit-native-implementation",
   "audit-reproducible-build",
   "audit-no-wasm-no-remote-scan",
-  "taira-peer-config-targets",
+  "taira-route-manifest-manager",
 ]);
 const PRIVATE_KEY_PEM_PATTERN =
   /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----[\s\S]*?-----END(?: [A-Z0-9]+)* PRIVATE KEY-----/iu;
@@ -736,6 +863,8 @@ const PRODUCTION_PLACEHOLDER_PATH_PATTERN =
 const PRODUCTION_PLACEHOLDER_STATUS_KEYS = new Set([
   "productionPlaceholderFree",
   "production_placeholder_free",
+  "placeholderMaterial",
+  "placeholder_material",
   "unresolvedPlaceholders",
   "unresolved_placeholders",
 ]);
@@ -998,6 +1127,36 @@ const normalizeHex32 = (value) => {
   const normalized = trim(value).toLowerCase();
   return NON_ZERO_HEX32.test(normalized) ? normalized : null;
 };
+const normalizeTransactionHash = (value) => {
+  const normalized = trim(value).toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  return normalizeHex32(
+    normalized.startsWith("0x") ? normalized : `0x${normalized}`,
+  );
+};
+const normalizeCanonicalTairaAssetDefinitionId = (value) => {
+  const normalized = trim(value);
+  return TAIRA_ASSET_DEFINITION_ID.test(normalized) ? normalized : null;
+};
+const isSafeEvidenceHttpUrl = (value) => {
+  try {
+    const parsed = new URL(trim(value));
+    if (parsed.username || parsed.password) {
+      return false;
+    }
+    if (parsed.protocol === "https:") {
+      return true;
+    }
+    return (
+      parsed.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+};
 const normalizeOptionalPrefixHex32 = (value) => {
   const normalized = trim(value).toLowerCase();
   if (!normalized) {
@@ -1218,6 +1377,13 @@ const MATERIAL_INVENTORY_NEXT_ACTIONS = Object.freeze([
           "Generated offline full-TOML evidence whose hash is published by public route and peer evidence.",
       },
       {
+        id: "route-manifest-publication-isi",
+        kind: "file",
+        placeholder: "<route-manifest.upsert-isi.json>",
+        description:
+          "Applied TAIRA UpsertSccpRouteManifest publication artifact for the selected BSC route.",
+      },
+      {
         id: "{bscNetwork}-bsc-deployment-evidence",
         kind: "file",
         placeholder: "<{bscNetwork}-deployment-evidence.json>",
@@ -1279,11 +1445,13 @@ const MATERIAL_INVENTORY_NEXT_ACTIONS = Object.freeze([
       "deployment-evidence-artifact",
       "production-route-artifact",
       "offline-full-toml-evidence-artifact",
+      "route-manifest-publication-evidence",
       "production-burn-record-material",
     ],
     commands: [
       "node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs route-manifest --bsc-network {bscNetwork} --evidence <{bscNetwork}-deployment-evidence.json> --taira-contract <taira-burn-record.contract.json> --settlement-asset-definition-id <canonical-asset-definition-id> --proof-artifact-hash <0x...> --proving-key-hash <0x...> --native-prover-bundle <native-evm-prover-bundle.json> --source-bridge-config-hash <0x...> --source-event-transaction-id <0x...> --source-event-explorer-url <url> --route-canary-evidence-hash <0x...> --route-canary-transaction-id <0x...> --route-canary-explorer-url <url> --full-toml-ready true --offline-full-toml-evidence <offline-full-toml-evidence.json> --production-ready true --live-readback-checked true {routeManifestConfirmationArgs} --out <production-route.manifest.json>",
       "node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs route-config --manifest <production-route.manifest.json> --base-config <deployed-taira-config.toml> --out <production-route.production-ready.torii.toml> --write-offline-full-toml-evidence <offline-full-toml-evidence.json>",
+      "node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs publish-route-manifest --manifest <production-route.manifest.json> --submit true --authority <route-manager-account-id> --out <route-manifest.upsert-isi.json>",
       "npm run e2e:sccp:bsc-material-inventory -- --bsc-network {bscNetwork}",
     ],
   }),
@@ -1571,6 +1739,8 @@ const MATERIAL_INVENTORY_NEXT_ACTIONS = Object.freeze([
       "runtime-prover-config",
     ],
     commands: [
+      "npm run e2e:sccp:bsc-prover-manifest -- --bsc-network {bscNetwork} --route-report <pre-sidecar-route-preflight-report.json> --module-url <destination-prover-module-url> --direction destination --out <destination-browser-prover-manifest.json>",
+      "npm run e2e:sccp:bsc-prover-manifest -- --bsc-network {bscNetwork} --route-report <pre-sidecar-route-preflight-report.json> --module-url <source-prover-module-url> --direction source --out <source-browser-prover-manifest.json>",
       "npm run e2e:sccp:bsc-runtime-prover-config -- --bsc-network {bscNetwork}",
       "npm run e2e:sccp:bsc-material-inventory -- --bsc-network {bscNetwork}",
     ],
@@ -2215,7 +2385,13 @@ const diagnosticLike = (value, seen = new WeakSet()) => {
   }
   seen.add(value);
   return ownRecordEntries(value).some(
-    ([key, entry]) => DIAGNOSTIC_KEY_PATTERN.test(key) || diagnosticLike(entry),
+    ([key, entry]) =>
+      (DIAGNOSTIC_KEY_PATTERN.test(key) &&
+        !(
+          PRODUCTION_PLACEHOLDER_STATUS_KEYS.has(key) &&
+          entry === false
+        )) ||
+      diagnosticLike(entry),
   );
 };
 
@@ -2266,6 +2442,9 @@ const productionPlaceholderMaterialReason = (
   seen.add(value);
   for (const [key, entry] of ownRecordEntries(value)) {
     const childPath = `${pathName}.${key}`;
+    if (PRODUCTION_PLACEHOLDER_STATUS_KEYS.has(key) && entry === false) {
+      continue;
+    }
     if (
       !PRODUCTION_PLACEHOLDER_STATUS_KEYS.has(key) &&
       PRODUCTION_PLACEHOLDER_PATTERN.test(key)
@@ -2404,7 +2583,7 @@ const collectFiles = async (scanPaths, maxFiles = MAX_SCAN_FILES) => {
       } else if (
         entry.isFile() &&
         (RELEVANT_FILE_PATTERN.test(entry.name) ||
-          ROUTE_FILE_PATTERN.test(child))
+          (ROUTE_FILE_PATTERN.test(entry.name) && !path.extname(entry.name)))
       ) {
         await visit(child, scanRoot);
       }
@@ -3055,6 +3234,11 @@ const firstMaterialValue = (record, keys) => {
   }
   return undefined;
 };
+
+const isVerifierKeyLikePath = (filePath) =>
+  /(?:^|[._-])(?:verifier[._-]?key|verification[._-]?key|vk)(?:[._-]|$)/iu.test(
+    path.basename(filePath),
+  );
 
 const normalizeVerifierVectorScalar = (value) => {
   if (typeof value === "bigint") {
@@ -4453,7 +4637,7 @@ const TAIRA_BSC_BURN_RECORD_SOURCE_NAME =
   "contracts/taira/sccp/TairaXorBscSccpBurnRecord.ko";
 const TAIRA_BURN_RECORD_ENTRYPOINT = "burn_and_record";
 const TAIRA_BURN_RECORD_PARAM_SIGNATURE =
-  "sender:AccountId,settlement_asset:AssetDefinitionId,amount:int,record_instruction:Blob";
+  "sender:AccountId,settlement_asset:AssetDefinitionId,amount:Amount,record_instruction:bytes";
 
 const tairaBurnRecordContractMetadata = ({ json, text }) => {
   if (trim(ownValue(json, "schema")) !== TAIRA_BURN_RECORD_CONTRACT_SCHEMA) {
@@ -4730,6 +4914,378 @@ const tairaBurnRecordContractMetadata = ({ json, text }) => {
   };
 };
 
+const routeManifestUpsertIsiMetadata = ({ json, bscProfile }) => {
+  if (trim(ownValue(json, "schema")) !== BSC_ROUTE_MANIFEST_ISI_SCHEMA) {
+    return {
+      looksLikeRouteManifestUpsertIsi: false,
+      problems: [],
+    };
+  }
+  const routeKey = ownValue(json, "routeKey") ?? ownValue(json, "route_key");
+  const instruction = ownValue(json, "instruction");
+  const upsert = ownValue(instruction, "UpsertSccpRouteManifest");
+  const manifest = ownValue(upsert, "manifest");
+  const routeId = trim(ownValue(json, "routeId") ?? ownValue(json, "route_id"));
+  const assetKey = trim(
+    ownValue(json, "assetKey") ?? ownValue(json, "asset_key"),
+  );
+  const routeKeyRouteId = trim(
+    ownValue(routeKey, "routeId") ?? ownValue(routeKey, "route_id"),
+  );
+  const routeKeyAssetKey = trim(
+    ownValue(routeKey, "assetKey") ?? ownValue(routeKey, "asset_key"),
+  );
+  const routeKeyChainIdHex = trim(
+    ownValue(routeKey, "chainIdHex") ?? ownValue(routeKey, "chain_id_hex"),
+  );
+  const routeKeyCounterpartyDomain = Number(
+    ownValue(routeKey, "counterpartyDomain") ??
+      ownValue(routeKey, "counterparty_domain"),
+  );
+  const manifestRouteId = trim(
+    ownValue(manifest, "route_id") ?? ownValue(manifest, "routeId"),
+  );
+  const manifestAssetKey = trim(
+    ownValue(manifest, "asset_key") ?? ownValue(manifest, "assetKey"),
+  );
+  const manifestChain = trim(ownValue(manifest, "chain"));
+  const manifestLegacyNetwork = trim(
+    ownValue(manifest, "tron_network") ??
+      ownValue(manifest, "legacyTronNetwork"),
+  );
+  const manifestChainIdHex = trim(
+    ownValue(manifest, "chain_id_hex") ?? ownValue(manifest, "chainIdHex"),
+  );
+  const manifestNetworkIdHex = normalizeHex32(
+    ownValue(manifest, "network_id_hex") ?? ownValue(manifest, "networkIdHex"),
+  );
+  const manifestCounterpartyDomain = Number(
+    ownValue(manifest, "counterparty_domain") ??
+      ownValue(manifest, "counterpartyDomain"),
+  );
+  const productionReady =
+    ownValue(json, "productionReady") ?? ownValue(json, "production_ready");
+  const manifestProductionReady =
+    ownValue(manifest, "production_ready") ??
+    ownValue(manifest, "productionReady");
+  const manifestSha256 = normalizeHex32(
+    ownValue(json, "manifestSha256") ?? ownValue(json, "manifest_sha256"),
+  );
+  const requiredPermission = trim(
+    ownValue(json, "requiredPermission") ??
+      ownValue(json, "required_permission"),
+  );
+  const submission = ownValue(json, "submission");
+  let submissionSummary = undefined;
+  const problems = [];
+  if (!isRecord(routeKey)) {
+    problems.push("routeKey must be an object.");
+  }
+  if (!isRecord(instruction) || !isRecord(upsert) || !isRecord(manifest)) {
+    problems.push(
+      "instruction.UpsertSccpRouteManifest.manifest must be an object.",
+    );
+  }
+  if (requiredPermission !== "CanManageSccpRouteManifests") {
+    problems.push("requiredPermission must be CanManageSccpRouteManifests.");
+  }
+  if (!manifestSha256) {
+    problems.push("manifestSha256 must be a non-zero 32-byte hex value.");
+  }
+  if (submission !== undefined) {
+    if (!isRecord(submission)) {
+      problems.push("submission must be an object when present.");
+    } else {
+      const submitted = ownValue(submission, "submitted");
+      const toriiUrl = trim(ownValue(submission, "toriiUrl"));
+      const chainId = trim(ownValue(submission, "chainId"));
+      const authority = trim(ownValue(submission, "authority"));
+      const hash = normalizeTransactionHash(ownValue(submission, "hash"));
+      const submittedHash = normalizeTransactionHash(
+        ownValue(submission, "submittedHash"),
+      );
+      const statusKind = trim(
+        ownValue(submission, "statusKind") ??
+          ownValue(submission, "status_kind"),
+      );
+      const gasAssetId = normalizeCanonicalTairaAssetDefinitionId(
+        ownValue(submission, "gasAssetId") ??
+          ownValue(submission, "gas_asset_id"),
+      );
+      const waitForCommit =
+        ownValue(submission, "waitForCommit") ??
+        ownValue(submission, "wait_for_commit");
+      if (submitted !== true) {
+        problems.push("submission.submitted must be true.");
+      }
+      if (!isSafeEvidenceHttpUrl(toriiUrl)) {
+        problems.push(
+          "submission.toriiUrl must be HTTPS or loopback HTTP without credentials.",
+        );
+      }
+      if (chainId !== BSC_TAIRA_CHAIN_ID) {
+        problems.push(`submission.chainId must be ${BSC_TAIRA_CHAIN_ID}.`);
+      }
+      if (!authority) {
+        problems.push("submission.authority must be non-empty.");
+      }
+      if (!hash) {
+        problems.push("submission.hash must be a non-zero 32-byte hex value.");
+      }
+      if (!submittedHash) {
+        problems.push(
+          "submission.submittedHash must be a non-zero 32-byte hex value.",
+        );
+      }
+      if (hash && submittedHash && hash !== submittedHash) {
+        problems.push("submission.hash must match submission.submittedHash.");
+      }
+      if (!statusKind) {
+        problems.push("submission.statusKind must be non-empty.");
+      }
+      if (typeof waitForCommit !== "boolean") {
+        problems.push("submission.waitForCommit must be boolean.");
+      }
+      if (waitForCommit === true && statusKind !== "Applied") {
+        problems.push(
+          "submission.statusKind must be Applied when waitForCommit is true.",
+        );
+      }
+      if (!gasAssetId) {
+        problems.push(
+          "submission.gasAssetId must be a canonical Base58 TAIRA asset definition id.",
+        );
+      }
+      submissionSummary = {
+        submitted: submitted === true,
+        toriiUrl,
+        chainId,
+        authority,
+        hash,
+        submittedHash,
+        statusKind,
+        gasAssetId,
+        waitForCommit,
+      };
+    }
+  }
+  for (const [label, value] of [
+    ["routeId", routeId],
+    ["routeKey.routeId", routeKeyRouteId],
+    ["manifest.route_id", manifestRouteId],
+  ]) {
+    if (value !== SCCP_BSC_XOR_ROUTE_ID) {
+      problems.push(`${label} must be ${SCCP_BSC_XOR_ROUTE_ID}.`);
+    }
+  }
+  for (const [label, value] of [
+    ["assetKey", assetKey],
+    ["routeKey.assetKey", routeKeyAssetKey],
+    ["manifest.asset_key", manifestAssetKey],
+  ]) {
+    if (value !== SCCP_BSC_XOR_ASSET_KEY) {
+      problems.push(`${label} must be ${SCCP_BSC_XOR_ASSET_KEY}.`);
+    }
+  }
+  if (routeKeyChainIdHex !== bscProfile.chainIdHex) {
+    problems.push(`routeKey.chainIdHex must be ${bscProfile.chainIdHex}.`);
+  }
+  if (routeKeyCounterpartyDomain !== SCCP_DOMAIN_BSC) {
+    problems.push(`routeKey.counterpartyDomain must be ${SCCP_DOMAIN_BSC}.`);
+  }
+  if (manifestChain !== bscProfile.chain) {
+    problems.push(`manifest.chain must be ${bscProfile.chain}.`);
+  }
+  if (manifestLegacyNetwork && manifestLegacyNetwork !== bscProfile.chain) {
+    problems.push(`manifest.tron_network must be ${bscProfile.chain}.`);
+  }
+  if (manifestChainIdHex !== bscProfile.chainIdHex) {
+    problems.push(`manifest.chain_id_hex must be ${bscProfile.chainIdHex}.`);
+  }
+  if (manifestNetworkIdHex !== normalizeHex32(bscProfile.networkIdHex)) {
+    problems.push(
+      `manifest.network_id_hex must be ${bscProfile.networkIdHex}.`,
+    );
+  }
+  if (manifestCounterpartyDomain !== SCCP_DOMAIN_BSC) {
+    problems.push(`manifest.counterparty_domain must be ${SCCP_DOMAIN_BSC}.`);
+  }
+  if (
+    typeof productionReady !== "boolean" ||
+    typeof manifestProductionReady !== "boolean" ||
+    productionReady !== manifestProductionReady
+  ) {
+    problems.push(
+      "productionReady must be boolean and match manifest.production_ready.",
+    );
+  }
+  return {
+    looksLikeRouteManifestUpsertIsi: true,
+    valid: problems.length === 0,
+    schema: BSC_ROUTE_MANIFEST_ISI_SCHEMA,
+    problems,
+    routeId,
+    assetKey,
+    chain: manifestChain,
+    chainIdHex: manifestChainIdHex,
+    networkIdHex: manifestNetworkIdHex,
+    counterpartyDomain: manifestCounterpartyDomain,
+    requiredPermission,
+    manifestSha256,
+    productionReady,
+    submission: submissionSummary,
+  };
+};
+
+const bscRoutePublicationTimestampMs = (filePath) => {
+  const match = path.basename(filePath).match(/(\d{8})T(\d{6})Z/u);
+  if (!match) {
+    return 0;
+  }
+  const [, datePart, timePart] = match;
+  const timestamp = Date.parse(
+    `${datePart.slice(0, 4)}-${datePart.slice(4, 6)}-${datePart.slice(
+      6,
+      8,
+    )}T${timePart.slice(0, 2)}:${timePart.slice(2, 4)}:${timePart.slice(
+      4,
+      6,
+    )}Z`,
+  );
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const positiveSafeInteger = (value) => {
+  const numeric = Number(value);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
+};
+
+const bscRoutePublicationBlockHeight = (json) => {
+  const submission = ownValue(json, "submission");
+  const status = ownValue(submission, "status");
+  const transactionStatus = ownValue(status, "status");
+  return (
+    positiveSafeInteger(ownValue(submission, "blockHeight")) ||
+    positiveSafeInteger(ownValue(submission, "block_height")) ||
+    positiveSafeInteger(ownValue(transactionStatus, "block_height")) ||
+    positiveSafeInteger(
+      ownValue(ownValue(transactionStatus, "content"), "block_height"),
+    )
+  );
+};
+
+const inspectBscRoutePublicationCandidate = async (filePath, bscProfile) => {
+  let info;
+  try {
+    info = await lstat(filePath);
+  } catch (_error) {
+    return null;
+  }
+  if (!info.isFile() || info.isSymbolicLink()) {
+    return null;
+  }
+  if (info.size > SCCP_BSC_MATERIAL_SCAN_FILE_MAX_BYTES) {
+    return null;
+  }
+  let json;
+  try {
+    json = parseJsonWithoutDuplicateKeys(
+      await readFile(filePath, "utf8"),
+      publicPath(filePath),
+    );
+  } catch (_error) {
+    return null;
+  }
+  if (!isRecord(json)) {
+    return null;
+  }
+  const metadata = routeManifestUpsertIsiMetadata({ json, bscProfile });
+  if (
+    metadata.valid !== true ||
+    metadata.productionReady !== true ||
+    metadata.submission?.submitted !== true ||
+    metadata.submission?.statusKind !== "Applied" ||
+    !normalizeTransactionHash(metadata.submission?.submittedHash)
+  ) {
+    return null;
+  }
+  return {
+    filePath,
+    blockHeight: bscRoutePublicationBlockHeight(json),
+    timestampMs: bscRoutePublicationTimestampMs(filePath),
+    mtimeMs: Number.isFinite(info.mtimeMs) ? info.mtimeMs : 0,
+    submittedHash: metadata.submission.submittedHash,
+  };
+};
+
+export const resolveLatestBscSccpRouteManifestPublicationIsiPath = async (
+  input = {},
+) => {
+  const bscProfile = resolveBscNetworkProfile(
+    ownValue(input, "bscNetwork") ?? "testnet",
+  );
+  const searchDirs = parseList(ownValue(input, "searchDirs"));
+  const directories = searchDirs.length
+    ? searchDirs
+    : BSC_ROUTE_MANIFEST_PUBLICATION_SEARCH_DIRS[bscProfile.key];
+  const filePattern =
+    BSC_ROUTE_MANIFEST_PUBLICATION_FILE_PATTERNS[bscProfile.key];
+  const candidates = [];
+  for (const directory of directories) {
+    let entries;
+    try {
+      entries = await readdir(directory, { withFileTypes: true });
+    } catch (_error) {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isFile() || !filePattern.test(entry.name)) {
+        continue;
+      }
+      const inspected = await inspectBscRoutePublicationCandidate(
+        path.join(directory, entry.name),
+        bscProfile,
+      );
+      if (inspected) {
+        candidates.push(inspected);
+      }
+    }
+  }
+  candidates.sort((left, right) => {
+    const timestampDiff = right.timestampMs - left.timestampMs;
+    if (timestampDiff !== 0) {
+      return timestampDiff;
+    }
+    const mtimeDiff = right.mtimeMs - left.mtimeMs;
+    if (mtimeDiff !== 0) {
+      return mtimeDiff;
+    }
+    const blockDiff = right.blockHeight - left.blockHeight;
+    if (blockDiff !== 0) {
+      return blockDiff;
+    }
+    return publicPath(right.filePath).localeCompare(publicPath(left.filePath));
+  });
+  return candidates[0]?.filePath ?? null;
+};
+
+export const bscSccpProductionMaterialScanPathsWithLatestPublication = async (
+  input = {},
+) => {
+  const bscNetwork = ownValue(input, "bscNetwork") ?? "testnet";
+  const scanPaths = [...bscSccpProductionMaterialScanPaths(bscNetwork)];
+  const latestPublicationPath =
+    await resolveLatestBscSccpRouteManifestPublicationIsiPath({
+      bscNetwork,
+      searchDirs: ownValue(input, "publicationSearchDirs"),
+    });
+  return Object.freeze(
+    latestPublicationPath
+      ? uniqueResolvedPaths([...scanPaths, latestPublicationPath])
+      : scanPaths,
+  );
+};
+
 const routeMetadata = ({ filePath, text, json, bscProfile }) => {
   if (
     trim(ownValue(json, "schema")) === PRODUCTION_REQUIREMENTS_SCHEMA ||
@@ -4740,7 +5296,8 @@ const routeMetadata = ({ filePath, text, json, bscProfile }) => {
     BSC_GROTH16_TRANSCRIPT_SCHEMAS.has(trim(ownValue(json, "schema"))) ||
     trim(ownValue(json, "schema")) === OFFLINE_FULL_TOML_EVIDENCE_SCHEMA ||
     trim(ownValue(json, "schema")) === BSC_DEPLOYMENT_EVIDENCE_SCHEMA ||
-    trim(ownValue(json, "schema")) === TAIRA_BURN_RECORD_CONTRACT_SCHEMA
+    trim(ownValue(json, "schema")) === TAIRA_BURN_RECORD_CONTRACT_SCHEMA ||
+    trim(ownValue(json, "schema")) === BSC_ROUTE_MANIFEST_ISI_SCHEMA
   ) {
     return {
       looksLikeRoute: false,
@@ -4827,6 +5384,19 @@ const routeMetadata = ({ filePath, text, json, bscProfile }) => {
     keys: ["destinationBindingHash", "destination_binding_hash", "bindingHash"],
     label: "destinationBindingHash",
     normalizeValue: normalizeHex32,
+  });
+  const settlementAssetDefinitionIdResult = readConsistentMaterialString({
+    json,
+    text,
+    keys: [
+      "settlementAssetDefinitionId",
+      "settlement_asset_definition_id",
+      "tairaBurnRecordSettlementAssetDefinitionId",
+      "taira_burn_record_settlement_asset_definition_id",
+      "tairaXorBurnRecordSettlementAssetDefinitionId",
+      "taira_xor_burn_record_settlement_asset_definition_id",
+    ],
+    label: "settlementAssetDefinitionId",
     rejectDuplicateAliases: true,
   });
   const bridgeAddressResult = readConsistentMaterialString({
@@ -5063,6 +5633,7 @@ const routeMetadata = ({ filePath, text, json, bscProfile }) => {
     provingKeyHashResult,
     nativeEvmProverBundleHashResult,
     destinationBindingHashResult,
+    settlementAssetDefinitionIdResult,
     bridgeAddressResult,
     tokenAddressResult,
     sourceBridgeAddressResult,
@@ -5085,6 +5656,7 @@ const routeMetadata = ({ filePath, text, json, bscProfile }) => {
   const provingKeyHash = provingKeyHashResult.value;
   const nativeEvmProverBundleHash = nativeEvmProverBundleHashResult.value;
   const destinationBindingHash = destinationBindingHashResult.value;
+  const settlementAssetDefinitionId = settlementAssetDefinitionIdResult.value;
   const bridgeAddress = bridgeAddressResult.value;
   const tokenAddress = tokenAddressResult.value;
   const sourceBridgeAddress = sourceBridgeAddressResult.value;
@@ -5209,6 +5781,7 @@ const routeMetadata = ({ filePath, text, json, bscProfile }) => {
     provingKeyHash,
     nativeEvmProverBundleHash,
     destinationBindingHash,
+    settlementAssetDefinitionId,
     bridgeAddress,
     tokenAddress,
     sourceBridgeAddress,
@@ -5290,7 +5863,27 @@ const productionRequirementInputContracts = (bscProfile) => {
       {
         kind: "file",
         placeholder: expectedPaths.routeManifest,
-        requiredBy: ["native-prover-bundle", "route-config"],
+        requiredBy: [
+          "native-prover-bundle",
+          "route-config",
+          "publish-route-manifest",
+        ],
+      },
+    ],
+    [
+      "destination-browser-prover-manifest",
+      {
+        kind: "file-or-url",
+        placeholder: "<destination-browser-prover-manifest.json>",
+        requiredBy: ["route-manifest"],
+      },
+    ],
+    [
+      "source-browser-prover-manifest",
+      {
+        kind: "file-or-url",
+        placeholder: "<source-browser-prover-manifest.json>",
+        requiredBy: ["route-manifest"],
       },
     ],
     [
@@ -5525,8 +6118,12 @@ const productionRequirementInputContracts = (bscProfile) => {
       { kind: "hash-or-file", requiredBy: ["native-prover-bundle"] },
     ]),
     [
-      "taira-peer-config-targets",
-      { kind: "operator-environment", requiredBy: ["route-config"] },
+      "taira-route-manifest-manager",
+      {
+        kind: "operator-environment",
+        placeholder: "<taira-route-manifest-manager-account-and-key-env>",
+        requiredBy: ["publish-route-manifest"],
+      },
     ],
   ]);
 };
@@ -9463,10 +10060,7 @@ const verifierMetadata = ({
   ) {
     return { looksLikeVerifier: false };
   }
-  const verifierFileByName =
-    /(?:^|[._-])(?:verifier[._-]?key|verification[._-]?key|vk)(?:[._-]|$)/iu.test(
-      path.basename(filePath),
-    );
+  const verifierFileByName = isVerifierKeyLikePath(filePath);
   const looksLikeVerifier =
     verifierFileByName ||
     readNestedString(json, ["verifierKeyHash", "verifier_key_hash", "vkHash"]);
@@ -10676,9 +11270,21 @@ const compiledContractArtifactMetadata = ({ filePath, json }) => {
     BSC_COMPILED_CONTRACT_ARTIFACTS,
     basename,
   );
+  const pathSegments = filePath.split(/[\\/]+/u);
+  const generatedCompileOutput = pathSegments.some((segment) =>
+    /compiled[-_]contract[-_]artifacts(?:\.json)?$/iu.test(segment),
+  );
+  const compiledShape =
+    isRecord(json) &&
+    trim(ownValue(json, "contractName")) === expectedContractName &&
+    Array.isArray(ownValue(json, "abi")) &&
+    Boolean(trim(ownValue(json, "bytecode"))) &&
+    Boolean(trim(ownValue(json, "deployedBytecode")));
   const looksLikeCompiledContract =
     Boolean(expectedContractName) &&
-    filePath.split(/[\\/]+/u).includes("contracts");
+    (pathSegments.includes("contracts") ||
+      generatedCompileOutput ||
+      compiledShape);
   if (!looksLikeCompiledContract) {
     return {
       looksLikeCompiledContract: false,
@@ -11393,7 +11999,7 @@ const scanOneFile = async (
     }
   }
 
-  const route =
+  const routeManifestUpsertIsi =
     browserProverSidecar.looksLikeBrowserProverSidecar ||
     compiledContractArtifact.looksLikeCompiledContract ||
     productionRequirements.looksLikeProductionRequirements ||
@@ -11405,6 +12011,33 @@ const scanOneFile = async (
     offlineFullTomlEvidence.looksLikeOfflineFullTomlEvidence ||
     tairaBurnRecordContract.looksLikeTairaBurnRecordContract ||
     deploymentEvidence.looksLikeDeploymentEvidence
+      ? { looksLikeRouteManifestUpsertIsi: false, problems: [] }
+      : routeManifestUpsertIsiMetadata({ json, bscProfile });
+  if (routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi) {
+    for (const problem of routeManifestUpsertIsi.problems ?? []) {
+      findings.push(
+        finding(
+          "critical",
+          "invalid-route-manifest-isi",
+          `BSC route manifest ISI publication artifact is invalid: ${problem}`,
+        ),
+      );
+    }
+  }
+
+  const route =
+    browserProverSidecar.looksLikeBrowserProverSidecar ||
+    compiledContractArtifact.looksLikeCompiledContract ||
+    productionRequirements.looksLikeProductionRequirements ||
+    sourceParityAttestation.looksLikeSourceParityAttestation ||
+    groth16AttestationRequestPackage.looksLikeGroth16AttestationRequestPackage ||
+    groth16AttestationHandoff.looksLikeGroth16AttestationHandoff ||
+    groth16MaterialManifest.looksLikeGroth16MaterialManifest ||
+    groth16ProofSelfTestReport.looksLikeGroth16ProofSelfTestReport ||
+    offlineFullTomlEvidence.looksLikeOfflineFullTomlEvidence ||
+    tairaBurnRecordContract.looksLikeTairaBurnRecordContract ||
+    deploymentEvidence.looksLikeDeploymentEvidence ||
+    routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi
       ? { looksLikeRoute: false, problems: [] }
       : routeMetadata({ filePath, text, json, bscProfile });
   for (const problem of ownValue(route, "problems") ?? []) {
@@ -11511,7 +12144,12 @@ const scanOneFile = async (
     );
   }
 
-  const verifier = verifierMetadata({ filePath, text, json, bscProfile });
+  const verifierFileByName = isVerifierKeyLikePath(filePath);
+  const verifier =
+    routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi ||
+    (route.looksLikeRoute && !verifierFileByName)
+    ? { looksLikeVerifier: false, problems: [] }
+    : verifierMetadata({ filePath, text, json, bscProfile });
   if (verifier.looksLikeVerifier) {
     for (const problem of verifier.problems ?? []) {
       findings.push(
@@ -11590,10 +12228,16 @@ const scanOneFile = async (
     }
   }
 
-  const nativeProverBundleResult = nativeProverBundleMetadata({
-    json,
-    bscProfile,
-  });
+  const nativeProverBundleResult =
+    routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi
+      ? {
+          descriptor: null,
+          metadata: { looksLikeNativeProverBundle: false, problems: [] },
+        }
+      : nativeProverBundleMetadata({
+          json,
+          bscProfile,
+        });
   const nativeProverBundle = nativeProverBundleResult.metadata;
   if (nativeProverBundle.looksLikeNativeProverBundle) {
     for (const problem of nativeProverBundle.problems ?? []) {
@@ -11696,9 +12340,12 @@ const scanOneFile = async (
     ROUTE_FILE_PATTERN.test(path.basename(filePath)) &&
     info.size <= SCCP_BSC_BROWSER_MODULE_MAX_BYTES;
   if (isBrowserProverModuleCandidate) {
+    const browserModuleLabel = /groth16-backend/iu.test(path.basename(filePath))
+      ? "BSC runtime backend module"
+      : "BSC prover module";
     const moduleShape = validateBscSccpBrowserProverModuleBytes(
       await readFile(filePath),
-      "BSC prover module",
+      browserModuleLabel,
     );
     if (!moduleShape.ok) {
       findings.push(
@@ -11753,28 +12400,30 @@ const scanOneFile = async (
                   ? "offline-full-toml-evidence"
                   : deploymentEvidence.looksLikeDeploymentEvidence
                     ? "deployment-evidence"
-                    : tairaBurnRecordContract.looksLikeTairaBurnRecordContract
-                      ? "taira-burn-record-contract"
-                      : compiledContractArtifact.looksLikeCompiledContract
-                        ? "contract-artifact"
-                        : nativeProverBundle.looksLikeNativeProverBundle
-                          ? "native-prover-bundle"
-                          : browserProverSidecar.looksLikeBrowserProverSidecar
-                            ? "browser-prover-sidecar"
-                            : verifier.looksLikeVerifier &&
-                                verifier.requiresVerifierBinding
-                              ? "verifier"
-                              : route.looksLikeRoute
-                                ? "route"
-                                : verifier.looksLikeVerifier
-                                  ? "verifier"
-                                  : proofFile.isProvingKey
-                                    ? "proving-key"
-                                    : proofFile.isProofArtifact
-                                      ? "proof-artifact"
-                                      : /\.m?js$/iu.test(filePath)
-                                        ? "browser-module"
-                                        : "artifact",
+                    : routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi
+                      ? "route-manifest-isi"
+                      : tairaBurnRecordContract.looksLikeTairaBurnRecordContract
+                        ? "taira-burn-record-contract"
+                        : compiledContractArtifact.looksLikeCompiledContract
+                          ? "contract-artifact"
+                          : nativeProverBundle.looksLikeNativeProverBundle
+                            ? "native-prover-bundle"
+                            : browserProverSidecar.looksLikeBrowserProverSidecar
+                              ? "browser-prover-sidecar"
+                              : verifier.looksLikeVerifier &&
+                                  verifier.requiresVerifierBinding
+                                ? "verifier"
+                                : route.looksLikeRoute
+                                  ? "route"
+                                  : verifier.looksLikeVerifier
+                                    ? "verifier"
+                                    : proofFile.isProvingKey
+                                      ? "proving-key"
+                                      : proofFile.isProofArtifact
+                                        ? "proof-artifact"
+                                        : /\.m?js$/iu.test(filePath)
+                                          ? "browser-module"
+                                          : "artifact",
     sizeBytes: info.size,
     sha256,
     productionRequirements:
@@ -12051,6 +12700,25 @@ const scanOneFile = async (
           ),
         }
       : undefined,
+    routeManifestUpsertIsi:
+      routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi
+        ? {
+            valid: routeManifestUpsertIsi.valid === true,
+            schema: routeManifestUpsertIsi.schema,
+            routeId: routeManifestUpsertIsi.routeId,
+            assetKey: routeManifestUpsertIsi.assetKey,
+            chain: routeManifestUpsertIsi.chain,
+            chainIdHex: routeManifestUpsertIsi.chainIdHex,
+            networkIdHex: routeManifestUpsertIsi.networkIdHex,
+            counterpartyDomain: routeManifestUpsertIsi.counterpartyDomain,
+            requiredPermission: routeManifestUpsertIsi.requiredPermission,
+            manifestSha256: routeManifestUpsertIsi.manifestSha256,
+            productionReady: routeManifestUpsertIsi.productionReady === true,
+            ...(routeManifestUpsertIsi.submission
+              ? { submission: routeManifestUpsertIsi.submission }
+              : {}),
+          }
+        : undefined,
     contractArtifact: compiledContractArtifact.looksLikeCompiledContract
       ? {
           valid: compiledContractArtifact.valid === true,
@@ -12078,6 +12746,7 @@ const scanOneFile = async (
             provingKeyHash: route.provingKeyHash,
             nativeEvmProverBundleHash: route.nativeEvmProverBundleHash,
             destinationBindingHash: route.destinationBindingHash,
+            settlementAssetDefinitionId: route.settlementAssetDefinitionId,
             bridgeAddress: route.bridgeAddress,
             tokenAddress: route.tokenAddress,
             sourceBridgeAddress: route.sourceBridgeAddress,
@@ -12124,6 +12793,7 @@ const scanOneFile = async (
           moduleSha256: browserProverSidecar.moduleSha256,
           moduleSha256Actual: browserProverSidecar.moduleSha256Actual,
           exports: browserProverSidecar.exports,
+          manifest: browserProverSidecar.manifest,
           valid: (browserProverSidecar.problems ?? []).length === 0,
         }
       : undefined,
@@ -12197,6 +12867,12 @@ const publicRouteDeployment = (routeReport) => {
     const value = ownValue(deployment, key);
     if (typeof value === "string" && value.trim()) {
       out[key] = value.trim();
+    }
+  }
+  for (const key of ["destinationBrowserProver", "sourceBrowserProver"]) {
+    const value = ownValue(deployment, key);
+    if (isRecord(value)) {
+      out[key] = ownJsonRecord(value);
     }
   }
   return Object.keys(out).length ? out : null;
@@ -13375,8 +14051,13 @@ export const evaluateBscSccpProductionMaterialInventory = async (
     ownValue(input, "generatedAt") ?? new Date().toISOString();
   const maxFiles = ownValue(input, "maxFiles") ?? MAX_SCAN_FILES;
   const bscProfile = resolveBscNetworkProfile(bscNetwork);
+  const routeReportRecord = isRecord(routeReport)
+    ? ownJsonRecord(routeReport)
+    : routeReport;
+  const routeDeployment = publicRouteDeployment(routeReportRecord);
   const activeDestinationModuleUrl =
     trim(destinationModuleUrl) ||
+    trim(ownValue(routeDeployment?.destinationBrowserProver, "moduleUrl")) ||
     readBscProfileEnv(
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
@@ -13385,6 +14066,7 @@ export const evaluateBscSccpProductionMaterialInventory = async (
     );
   const activeSourceModuleUrl =
     trim(sourceModuleUrl) ||
+    trim(ownValue(routeDeployment?.sourceBrowserProver, "moduleUrl")) ||
     readBscProfileEnv(
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
@@ -13419,10 +14101,6 @@ export const evaluateBscSccpProductionMaterialInventory = async (
       ),
     );
   }
-  const routeReportRecord = isRecord(routeReport)
-    ? ownJsonRecord(routeReport)
-    : routeReport;
-  const routeDeployment = publicRouteDeployment(routeReportRecord);
   const routeProofArtifactHash = normalizeHex32(
     routeDeployment?.proofArtifactHash,
   );
@@ -13623,6 +14301,38 @@ export const evaluateBscSccpProductionMaterialInventory = async (
     cleanProductionRouteArtifacts.length === 0
       ? "No clean production-ready BSC route artifact was found."
       : "No clean production-ready BSC route artifact matched the public route deployment hashes and post-deploy live evidence.",
+  );
+  const cleanRouteManifestPublicationArtifacts = routeBoundFiles.filter(
+    (entry) =>
+      entry.kind === "route-manifest-isi" &&
+      entry.routeManifestUpsertIsi?.valid === true &&
+      entry.routeManifestUpsertIsi?.routeId === SCCP_BSC_XOR_ROUTE_ID &&
+      entry.routeManifestUpsertIsi?.assetKey === SCCP_BSC_XOR_ASSET_KEY &&
+      entry.routeManifestUpsertIsi?.chain === bscProfile.chain &&
+      entry.routeManifestUpsertIsi?.chainIdHex === bscProfile.chainIdHex &&
+      entry.routeManifestUpsertIsi?.networkIdHex === bscProfile.networkIdHex &&
+      entry.routeManifestUpsertIsi?.productionReady === true &&
+      entry.findings.every((item) => item.severity !== "critical"),
+  );
+  const appliedRouteManifestPublicationArtifacts =
+    cleanRouteManifestPublicationArtifacts.filter(
+      (entry) =>
+        entry.routeManifestUpsertIsi?.submission?.submitted === true &&
+        entry.routeManifestUpsertIsi?.submission?.statusKind === "Applied" &&
+        Boolean(
+          normalizeTransactionHash(
+            entry.routeManifestUpsertIsi?.submission?.submittedHash,
+          ),
+        ),
+    );
+  check(
+    checks,
+    "route-manifest-publication-evidence",
+    appliedRouteManifestPublicationArtifacts.length > 0,
+    "At least one applied TAIRA route-manifest publication artifact is clean and route-bound.",
+    cleanRouteManifestPublicationArtifacts.length === 0
+      ? "No clean route-bound BSC route-manifest publication artifact was found."
+      : "No clean route-bound BSC route-manifest publication artifact carried an applied TAIRA submission.",
   );
   const cleanOfflineFullTomlEvidenceArtifacts = routeBoundFiles.filter(
     (entry) =>
@@ -14182,6 +14892,8 @@ export const evaluateBscSccpProductionMaterialInventory = async (
       skippedGeneratedDirectories:
         fileCollection.skippedGeneratedDirectories.length,
       productionRouteArtifacts: productionRouteArtifacts.length,
+      routeManifestPublicationArtifacts:
+        appliedRouteManifestPublicationArtifacts.length,
       productionOfflineFullTomlEvidenceArtifacts:
         productionOfflineFullTomlEvidenceArtifacts.length,
       productionDeploymentEvidenceArtifacts:
@@ -14254,6 +14966,9 @@ export const evaluateBscSccpProductionMaterialInventory = async (
         : {}),
       ...(entry.deploymentEvidence
         ? { deploymentEvidence: entry.deploymentEvidence }
+        : {}),
+      ...(entry.routeManifestUpsertIsi
+        ? { routeManifestUpsertIsi: entry.routeManifestUpsertIsi }
         : {}),
       ...(entry.contractArtifact
         ? { contractArtifact: entry.contractArtifact }
@@ -14403,6 +15118,7 @@ export const shouldFailBscSccpProductionMaterialInventoryCli = (
 
 export const runBscSccpProductionMaterialInventory = async (input = {}) => {
   const scanPaths = ownValue(input, "scanPaths");
+  const publicationSearchDirs = ownValue(input, "publicationSearchDirs");
   const routeReportPath = ownValue(input, "routeReportPath");
   const bscNetwork =
     ownValue(input, "bscNetwork") ??
@@ -14420,8 +15136,15 @@ export const runBscSccpProductionMaterialInventory = async (input = {}) => {
   const selectedRouteReportPath =
     trim(routeReportPath) ||
     bscSccpProductionMaterialInventoryRouteReportPath(bscNetwork);
+  const explicitScanPaths = parseList(scanPaths);
+  const resolvedScanPaths = explicitScanPaths.length
+    ? scanPaths
+    : await bscSccpProductionMaterialScanPathsWithLatestPublication({
+        bscNetwork,
+        publicationSearchDirs,
+      });
   return evaluateBscSccpProductionMaterialInventory({
-    scanPaths,
+    scanPaths: resolvedScanPaths,
     routeReport: await readJsonReport(selectedRouteReportPath, "route report"),
     bscNetwork,
     destinationModuleUrl,

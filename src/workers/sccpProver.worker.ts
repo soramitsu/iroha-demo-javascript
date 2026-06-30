@@ -7,9 +7,15 @@ import {
   type TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
 import {
+  buildBscPlaceholderSourceChainProofEnvelope,
+  type BscPlaceholderSourceChainProofEnvelopeInput,
+  type BscPlaceholderSourceChainProofEnvelopeResult,
+} from "@iroha/iroha-js/sccp";
+import {
   bindBscToTairaSourceProofPackage,
   bindTronToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
+  type BscSourceProverMaterialBinding,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
   type TronToTairaSourceProofPackage,
@@ -20,7 +26,9 @@ import {
   loadBscSccpSourceProveFn,
   loadTronSccpSourceProveFn,
   loadTronSccpProveFn,
+  type BscSccpProverModule,
   type BscSccpProverGlobal,
+  type TronSccpProverModule,
   type TronSccpProverGlobal,
 } from "@/utils/sccpProverLink";
 import { snapshotSccpDataValue } from "@/utils/sccpDataSnapshot";
@@ -73,7 +81,9 @@ type SccpProverWorkerRequest =
 type BscToTairaSourceProofWorkerInput = Omit<
   BscToTairaSourceProofPackageInput,
   "proofArtifactHash" | "provingKeyHash" | "nativeEvmProverBundleHash"
->;
+> & {
+  proverModuleUrl?: string;
+};
 
 type SccpProverWorkerResponse =
   | {
@@ -195,6 +205,25 @@ const readBscProfileEnv = (
   );
 };
 
+const readOptionalWorkerString = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
+const resolveWorkerPublicUrl = (value: unknown): string => {
+  const url = readOptionalWorkerString(value);
+  if (!url) {
+    return "";
+  }
+  if (url.startsWith("/") && self.location?.protocol === "file:") {
+    return new URL(`..${url}`, self.location.href).href;
+  }
+  return url;
+};
+
+const importWorkerPublicModule = async <TModule>(
+  moduleUrl: string,
+): Promise<TModule> =>
+  import(/* @vite-ignore */ resolveWorkerPublicUrl(moduleUrl)) as Promise<TModule>;
+
 const isSccpProverWorkerRequestKind = (
   value: unknown,
 ): value is SccpProverWorkerRequestKind =>
@@ -235,6 +264,318 @@ const snapshotSccpProverWorkerInput = <T>(input: T, label: string): T => {
   return snapshotSccpDataValue(input, label);
 };
 
+const readWorkerOwnField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): unknown => {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      return value[key];
+    }
+  }
+  return undefined;
+};
+
+const readRequiredWorkerTextField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): string => {
+  const selected = readWorkerOwnField(value, keys);
+  const text = typeof selected === "string" ? selected.trim() : "";
+  if (!text) {
+    throw new Error(`${label} is required.`);
+  }
+  return text;
+};
+
+const readOptionalWorkerTextField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined => {
+  const selected = readWorkerOwnField(value, keys);
+  const text = typeof selected === "string" ? selected.trim() : "";
+  return text || undefined;
+};
+
+const readRequiredWorkerRecordField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> => {
+  const selected = readWorkerOwnField(value, keys);
+  if (!isRecord(selected)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return selected;
+};
+
+const readOptionalWorkerRecordField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> | undefined => {
+  const selected = readWorkerOwnField(value, keys);
+  return isRecord(selected) ? selected : undefined;
+};
+
+const normalizeWorkerUnsignedIndex = (value: unknown, label: string): string => {
+  let parsed: bigint;
+  if (typeof value === "bigint") {
+    parsed = value;
+  } else if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`${label} must be a safe non-negative integer.`);
+    }
+    parsed = BigInt(value);
+  } else if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(text)) {
+      parsed = BigInt(text);
+    } else if (/^(?:0|[1-9][0-9]*)$/u.test(text)) {
+      parsed = BigInt(text);
+    } else {
+      throw new Error(`${label} must be an unsigned integer.`);
+    }
+  } else {
+    throw new Error(`${label} must be an unsigned integer.`);
+  }
+  if (parsed < 0n || parsed > (1n << 64n) - 1n) {
+    throw new Error(`${label} must fit in an unsigned 64-bit integer.`);
+  }
+  return parsed.toString();
+};
+
+const readOptionalWorkerUnsignedIndex = (
+  record: Record<string, unknown> | undefined,
+  keys: readonly string[],
+  label: string,
+): string | undefined => {
+  if (!record) {
+    return undefined;
+  }
+  let selectedValue = "";
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = record[key];
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    const normalized = normalizeWorkerUnsignedIndex(value, label);
+    if (!selectedValue) {
+      selectedValue = normalized;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== normalized) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${normalized}.`,
+      );
+    }
+  }
+  return selectedValue || undefined;
+};
+
+const readBscSourceReceiptRootIndex = (
+  input: Record<string, unknown>,
+  receipt: Record<string, unknown> | undefined,
+): string | undefined => {
+  const keys = [
+    "receiptRootIndex",
+    "receipt_root_index",
+    "transactionIndex",
+    "transaction_index",
+  ] as const;
+  const topLevel = readOptionalWorkerUnsignedIndex(
+    input,
+    keys,
+    "BSC source receipt root index",
+  );
+  const receiptLevel = readOptionalWorkerUnsignedIndex(
+    receipt,
+    keys,
+    "BSC source receipt root index",
+  );
+  if (topLevel && receiptLevel && topLevel !== receiptLevel) {
+    throw new Error(
+      "BSC source receipt root index aliases disagree between request and receipt.",
+    );
+  }
+  return topLevel || receiptLevel;
+};
+
+const withBscSourceReceiptRootIndex = <T extends Record<string, unknown>>(
+  input: T,
+): T & { receiptRootIndex?: string } => {
+  const receipt = readOptionalWorkerRecordField(input, ["receipt"]);
+  const receiptRootIndex = readBscSourceReceiptRootIndex(input, receipt);
+  return receiptRootIndex
+    ? {
+        ...input,
+        receiptRootIndex,
+      }
+    : input;
+};
+
+const replaceBscSourcePackageFinalityProof = (
+  proofPackage: Record<string, unknown>,
+  sourceProof: BscPlaceholderSourceChainProofEnvelopeResult,
+): Record<string, unknown> => {
+  const messageBundle = readRequiredWorkerRecordField(
+    proofPackage,
+    ["messageBundle", "message_bundle"],
+    "BSC source proof package messageBundle",
+  );
+  const patchedMessageBundle: Record<string, unknown> = {
+    ...messageBundle,
+    finality_proof: sourceProof.sourceProofHex,
+  };
+  if (Object.prototype.hasOwnProperty.call(messageBundle, "finalityProof")) {
+    patchedMessageBundle.finalityProof = sourceProof.sourceProofHex;
+  }
+  const patchedPackage: Record<string, unknown> = {
+    ...proofPackage,
+    messageBundle: patchedMessageBundle,
+  };
+  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
+    patchedPackage.message_bundle = patchedMessageBundle;
+  }
+  return patchedPackage;
+};
+
+const withBscSourcePublicInputFinality = (
+  proofPackage: Record<string, unknown>,
+  sourceProof: Pick<
+    BscPlaceholderSourceChainProofEnvelopeResult,
+    "finalityHeight" | "finalityBlockHash"
+  >,
+): Record<string, unknown> => {
+  const publicInputKey = isRecord(proofPackage.publicInputs)
+    ? "publicInputs"
+    : isRecord(proofPackage.public_inputs)
+      ? "public_inputs"
+      : null;
+  if (!publicInputKey) {
+    return proofPackage;
+  }
+  return {
+    ...proofPackage,
+    [publicInputKey]: {
+      ...(proofPackage[publicInputKey] as Record<string, unknown>),
+      finalityHeight: sourceProof.finalityHeight,
+      finalityBlockHash: sourceProof.finalityBlockHash,
+    },
+  };
+};
+
+const buildBinaryBscSourceProofPackage = (
+  proofPackage: unknown,
+  input: BscToTairaSourceProofPackageInput,
+): Record<string, unknown> => {
+  const packageSnapshot = snapshotSccpDataValue(
+    proofPackage,
+    "BSC source proof package",
+  );
+  if (!isRecord(packageSnapshot)) {
+    throw new Error("BSC source proof package must be an object.");
+  }
+  const packageRecord = packageSnapshot;
+  const messageBundle = readRequiredWorkerRecordField(
+    packageRecord,
+    ["messageBundle", "message_bundle"],
+    "BSC source proof package messageBundle",
+  );
+  const commitment = readRequiredWorkerRecordField(
+    messageBundle,
+    ["commitment"],
+    "BSC source proof package commitment",
+  );
+  const inputRecord = input as Record<string, unknown>;
+  if (
+    isRecord(inputRecord.sourceVerifierMaterial) ||
+    isRecord(inputRecord.source_verifier_material) ||
+    isRecord(inputRecord.sourceAdapterEngineDeployment) ||
+    isRecord(inputRecord.source_adapter_engine_deployment)
+  ) {
+    throw new Error(
+      "BSC -> TAIRA deployment-bound source proofs require the native Electron proof bridge; the browser worker cannot generate the Rust OpenVerify/FastPQ source proof.",
+    );
+  }
+  const receipt = readOptionalWorkerRecordField(inputRecord, ["receipt"]);
+  const block = readOptionalWorkerRecordField(inputRecord, ["block"]);
+  const blockReceipts =
+    Array.isArray(inputRecord.blockReceipts)
+      ? inputRecord.blockReceipts
+      : Array.isArray(inputRecord.block_receipts)
+        ? inputRecord.block_receipts
+        : undefined;
+  const receiptRootIndex = readBscSourceReceiptRootIndex(inputRecord, receipt);
+  const sourceBridgeEmitterAddress = readOptionalWorkerTextField(inputRecord, [
+    "sourceBridgeEmitterAddress",
+    "source_bridge_emitter_address",
+    "sourceBridgeAddress",
+    "source_bridge_address",
+    "bscSourceBridgeAddress",
+    "bsc_source_bridge_address",
+  ]);
+  const sourceBridgeEmitterCodeHash = readOptionalWorkerTextField(inputRecord, [
+    "sourceBridgeEmitterCodeHash",
+    "source_bridge_emitter_code_hash",
+    "sourceBridgeCodeHash",
+    "source_bridge_code_hash",
+  ]);
+  const finalityHeight = readOptionalWorkerTextField(inputRecord, [
+    "finalityHeight",
+    "finality_height",
+  ]);
+  const finalityBlockHash = readOptionalWorkerTextField(inputRecord, [
+    "finalityBlockHash",
+    "finality_block_hash",
+  ]);
+  const sourceProofInput: BscPlaceholderSourceChainProofEnvelopeInput = {
+    messageId: readRequiredWorkerTextField(
+      commitment,
+      ["message_id", "messageId"],
+      "BSC source proof package message id",
+    ),
+    payloadHash: readRequiredWorkerTextField(
+      commitment,
+      ["payload_hash", "payloadHash"],
+      "BSC source proof package payload hash",
+    ),
+    commitmentRoot: readRequiredWorkerTextField(
+      messageBundle,
+      ["commitment_root", "commitmentRoot"],
+      "BSC source proof package commitment root",
+    ),
+    sourceEventDigest: readRequiredWorkerTextField(
+      packageRecord,
+      ["sourceEventDigest", "source_event_digest"],
+      "BSC source proof package source event digest",
+    ),
+    ...(sourceBridgeEmitterAddress ? { sourceBridgeEmitterAddress } : {}),
+    ...(sourceBridgeEmitterCodeHash ? { sourceBridgeEmitterCodeHash } : {}),
+    ...(finalityHeight ? { finalityHeight } : {}),
+    ...(finalityBlockHash ? { finalityBlockHash } : {}),
+    ...(receipt ? { receipt } : {}),
+    ...(block ? { block } : {}),
+    ...(blockReceipts ? { blockReceipts } : {}),
+    ...(receiptRootIndex
+      ? {
+          receiptRootIndex,
+        }
+      : {}),
+  };
+  const sourceProof =
+    buildBscPlaceholderSourceChainProofEnvelope(sourceProofInput);
+  return withBscSourcePublicInputFinality(
+    replaceBscSourcePackageFinalityProof(packageRecord, sourceProof),
+    sourceProof,
+  );
+};
+
 const configureBscRuntimeProverConfigUrl = (): void => {
   const configUrl = readBscProfileEnv(
     "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
@@ -243,7 +584,8 @@ const configureBscRuntimeProverConfigUrl = (): void => {
   );
   const workerGlobal = self as BscRuntimeProverWorkerGlobal;
   if (configUrl) {
-    workerGlobal.IrohaSccpBscProverConfigUrl = configUrl;
+    workerGlobal.IrohaSccpBscProverConfigUrl =
+      resolveWorkerPublicUrl(configUrl);
   } else {
     delete workerGlobal.IrohaSccpBscProverConfigUrl;
   }
@@ -452,14 +794,17 @@ self.onmessage = (event: MessageEvent<unknown>) => {
       }
       if (kind === "prove-bsc-proof-package") {
         configureBscRuntimeProverConfigUrl();
-        const prove = await loadBscSccpProveFn({
-          globalScope: self as unknown as BscSccpProverGlobal,
-          moduleUrl: readBscProfileEnv(
-            "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
-            "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL",
-            "VITE_SCCP_BSC_PROVER_MODULE_URL",
-          ),
-        });
+	        const prove = await loadBscSccpProveFn({
+	          globalScope: self as unknown as BscSccpProverGlobal,
+	          moduleUrl:
+	            readOptionalWorkerString(input.proverModuleUrl) ||
+	            readBscProfileEnv(
+	              "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
+	              "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL",
+	              "VITE_SCCP_BSC_PROVER_MODULE_URL",
+	            ),
+	          importer: importWorkerPublicModule<BscSccpProverModule>,
+	        });
         const result = await generateBscSccpProofPackage({
           ...input,
           prove,
@@ -470,14 +815,17 @@ self.onmessage = (event: MessageEvent<unknown>) => {
       if (kind !== "build-tron-proof-package") {
         if (kind === "prove-bsc-source-package") {
           configureBscRuntimeProverConfigUrl();
-          const proveSource = await loadBscSccpSourceProveFn({
-            globalScope: self as unknown as BscSccpProverGlobal,
-            moduleUrl: readBscProfileEnv(
-              "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL",
-              "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL",
-              "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
-            ),
-          });
+	          const proveSource = await loadBscSccpSourceProveFn({
+	            globalScope: self as unknown as BscSccpProverGlobal,
+	            moduleUrl:
+	              readOptionalWorkerString(input.proverModuleUrl) ||
+	              readBscProfileEnv(
+	                "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL",
+	                "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL",
+	                "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
+	              ),
+	            importer: importWorkerPublicModule<BscSccpProverModule>,
+	          });
           if (typeof proveSource !== "function") {
             const error = new Error(
               "BSC -> TAIRA SCCP source prover is not linked; provide a browser-safe BSC source proof module before submitting TAIRA settlement.",
@@ -489,8 +837,13 @@ self.onmessage = (event: MessageEvent<unknown>) => {
           const materialBinding = readBscSourceProverMaterialBinding(
             input.manifest,
           );
-          const materialBoundInput = {
-            ...input,
+          const normalizedInput = withBscSourceReceiptRootIndex(
+            input as BscToTairaSourceProofWorkerInput &
+              Record<string, unknown>,
+          );
+          const materialBoundInput: BscToTairaSourceProofWorkerInput &
+            BscSourceProverMaterialBinding & { receiptRootIndex?: string } = {
+            ...normalizedInput,
             ...materialBinding,
           };
           const bindInput = snapshotSccpProverWorkerInput(
@@ -506,7 +859,10 @@ self.onmessage = (event: MessageEvent<unknown>) => {
             proofArtifactHash: bindInput.proofArtifactHash,
             provingKeyHash: bindInput.provingKeyHash,
             nativeEvmProverBundleHash: bindInput.nativeEvmProverBundleHash,
-            proofPackage: await proveSource(proveInput),
+            proofPackage: buildBinaryBscSourceProofPackage(
+              await proveSource(proveInput),
+              bindInput,
+            ),
             txId: bindInput.txId,
             receipt: bindInput.receipt,
             bscSender: bindInput.bscSender,

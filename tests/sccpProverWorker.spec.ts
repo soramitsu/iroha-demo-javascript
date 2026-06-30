@@ -11,6 +11,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   bindBscSource: vi.fn(),
   bindSource: vi.fn(),
+  buildBscPlaceholderSourceProof: vi.fn(),
   buildBscProofPackage: vi.fn(),
   buildProofPackage: vi.fn(),
   generateBscProofPackage: vi.fn(),
@@ -40,6 +41,11 @@ vi.mock("@/utils/sccpProverLink", () => ({
   loadBscSccpSourceProveFn: mocks.loadBscSourceProver,
   loadTronSccpProveFn: mocks.loadDestinationProver,
   loadTronSccpSourceProveFn: mocks.loadSourceProver,
+}));
+
+vi.mock("@iroha/iroha-js/sccp", () => ({
+  buildBscPlaceholderSourceChainProofEnvelope:
+    mocks.buildBscPlaceholderSourceProof,
 }));
 
 type WorkerHarness = {
@@ -116,6 +122,7 @@ const bscSourceInput = {
   },
   receipt: {
     transactionHash: `0x${"33".repeat(32)}`,
+    transactionIndex: "0x2",
     status: "0x1",
     logs: [],
   },
@@ -125,6 +132,7 @@ const bscSourceInput = {
   bscSender: "0x4444444444444444444444444444444444444444",
   tairaRecipient: "testu4gw9wmmr7aek32p2syxs7qkp7x9gksw2hhvlq2kq4e6n4v4",
   amountDecimal: "1",
+  amountBaseUnits: "1000000000",
 } as unknown as BscToTairaSourceProofPackageInput;
 
 const bscSourceMaterialBinding = {
@@ -147,6 +155,46 @@ const WORKER_BSC_BUILD_PROOF_MATERIAL_ERROR =
   "BSC destination proof requests must not include caller-supplied proof material; proof material must come from the configured BSC prover module.";
 const WORKER_BSC_SOURCE_PROOF_MATERIAL_ERROR =
   "BSC source proof requests must not include caller-supplied proof material; proof hashes are derived from the route manifest inside the worker.";
+const BSC_BINARY_SOURCE_PROOF_HEX = `0x${"ab".repeat(96)}`;
+const BSC_SOURCE_FINALITY_HEIGHT = "1";
+const BSC_SOURCE_FINALITY_BLOCK_HASH = `0x${"78".repeat(32)}`;
+
+const bscRawSourceProofPackage = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  txId: bscSourceInput.txId,
+  sourceEventDigest: `0x${"99".repeat(32)}`,
+  publicInputs: {
+    routeId: "taira_bsc_xor",
+  },
+  messageBundle: {
+    commitment_root: `0x${"cc".repeat(32)}`,
+    commitment: {
+      message_id: `0x${"aa".repeat(32)}`,
+      payload_hash: `0x${"bb".repeat(32)}`,
+    },
+    finality_proof: `0x${"7b".repeat(8)}`,
+  },
+  ...overrides,
+});
+
+const bscPatchedSourceProofPackage = (
+  raw: Record<string, unknown>,
+): Record<string, unknown> => {
+  const messageBundle = raw.messageBundle as Record<string, unknown>;
+  return {
+    ...raw,
+    publicInputs: {
+      ...((raw.publicInputs as Record<string, unknown> | undefined) ?? {}),
+      finalityHeight: BSC_SOURCE_FINALITY_HEIGHT,
+      finalityBlockHash: BSC_SOURCE_FINALITY_BLOCK_HASH,
+    },
+    messageBundle: {
+      ...messageBundle,
+      finality_proof: BSC_BINARY_SOURCE_PROOF_HEX,
+    },
+  };
+};
 
 const expectNoWorkerSecretLeak = (
   message: string,
@@ -161,6 +209,7 @@ describe("SCCP prover worker", () => {
   beforeEach(() => {
     mocks.bindBscSource.mockReset();
     mocks.bindSource.mockReset();
+    mocks.buildBscPlaceholderSourceProof.mockReset();
     mocks.buildBscProofPackage.mockReset();
     mocks.buildProofPackage.mockReset();
     mocks.generateBscProofPackage.mockReset();
@@ -171,6 +220,19 @@ describe("SCCP prover worker", () => {
     mocks.loadSourceProver.mockReset();
     mocks.readBscSourceMaterial.mockReset();
     mocks.readBscSourceMaterial.mockReturnValue(bscSourceMaterialBinding);
+    mocks.buildBscPlaceholderSourceProof.mockReturnValue({
+      sourceProofHex: BSC_BINARY_SOURCE_PROOF_HEX,
+      sourceProofBytes: new Uint8Array(96),
+      sourceEventDigest: `0x${"12".repeat(32)}`,
+      observedSourceEventDigest: `0x${"99".repeat(32)}`,
+      sourceEventLeafHash: `0x${"34".repeat(32)}`,
+      receiptOrMessageRoot: `0x${"56".repeat(32)}`,
+      finalityHeight: BSC_SOURCE_FINALITY_HEIGHT,
+      finalityBlockHash: BSC_SOURCE_FINALITY_BLOCK_HASH,
+      receiptsRoot: `0x${"9a".repeat(32)}`,
+      receiptRootIndex: "0",
+      syntheticRootMarker: true,
+    });
   });
 
   afterEach(() => {
@@ -992,6 +1054,7 @@ describe("SCCP prover worker", () => {
     });
     expect(mocks.loadBscDestinationProver).toHaveBeenCalledWith({
       globalScope: expect.any(Object),
+      importer: expect.any(Function),
       moduleUrl: "/sccp-bsc/taira-bsc-xor-prover.js",
     });
     expect(mocks.generateBscProofPackage).toHaveBeenCalledWith({
@@ -1019,6 +1082,7 @@ describe("SCCP prover worker", () => {
 
     expect(mocks.loadBscDestinationProver).toHaveBeenCalledWith({
       globalScope: expect.any(Object),
+      importer: expect.any(Function),
       moduleUrl: "",
     });
     expect(worker.scope.IrohaSccpBscProverConfigUrl).toBeUndefined();
@@ -1100,6 +1164,7 @@ describe("SCCP prover worker", () => {
 
     expect(mocks.loadBscSourceProver).toHaveBeenCalledWith({
       globalScope: expect.any(Object),
+      importer: expect.any(Function),
       moduleUrl: "",
     });
   });
@@ -1144,7 +1209,7 @@ describe("SCCP prover worker", () => {
       "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
       "/sccp-bsc/taira-bsc-xor-prover.js",
     );
-    const rawProofPackage = { raw: true, txId: "stale" };
+    const rawProofPackage = bscRawSourceProofPackage({ txId: "stale" });
     const boundProofPackage = { submissionPayload: { proof: "0x13" } };
     const proveSource = vi.fn().mockResolvedValue(rawProofPackage);
     mocks.loadBscSourceProver.mockResolvedValue(proveSource);
@@ -1164,16 +1229,24 @@ describe("SCCP prover worker", () => {
     });
     expect(mocks.loadBscSourceProver).toHaveBeenCalledWith({
       globalScope: expect.any(Object),
+      importer: expect.any(Function),
       moduleUrl: "/sccp-bsc/taira-bsc-xor-prover.js",
     });
     expect(proveSource).toHaveBeenCalledWith({
       ...bscSourceInput,
+      receiptRootIndex: "2",
       ...bscSourceMaterialBinding,
     });
+    expect(mocks.buildBscPlaceholderSourceProof).toHaveBeenCalledWith(
+      expect.objectContaining({
+        receipt: bscSourceInput.receipt,
+        receiptRootIndex: "2",
+      }),
+    );
     expect(mocks.bindBscSource).toHaveBeenCalledWith({
       manifest: bscSourceInput.manifest,
       ...bscSourceMaterialBinding,
-      proofPackage: rawProofPackage,
+      proofPackage: bscPatchedSourceProofPackage(rawProofPackage),
       txId: bscSourceInput.txId,
       receipt: bscSourceInput.receipt,
       bscSender: bscSourceInput.bscSender,
@@ -1235,7 +1308,7 @@ describe("SCCP prover worker", () => {
   });
 
   it("binds BSC source proofs against a snapshot when the prover mutates input", async () => {
-    const rawProofPackage = { raw: true, txId: "mutated" };
+    const rawProofPackage = bscRawSourceProofPackage({ txId: "mutated" });
     const boundProofPackage = { submissionPayload: { proof: "0x14" } };
     let preMutationProverInput: unknown;
     const proveSource = vi.fn().mockImplementation(async (input) => {
@@ -1268,6 +1341,7 @@ describe("SCCP prover worker", () => {
       expect.objectContaining({
         txId: bscSourceInput.txId,
         receipt: bscSourceInput.receipt,
+        receiptRootIndex: "2",
         ...bscSourceMaterialBinding,
         tairaRecipient: bscSourceInput.tairaRecipient,
         amountDecimal: bscSourceInput.amountDecimal,
@@ -1277,7 +1351,7 @@ describe("SCCP prover worker", () => {
     expect(mocks.bindBscSource).toHaveBeenCalledWith({
       manifest: bscSourceInput.manifest,
       ...bscSourceMaterialBinding,
-      proofPackage: rawProofPackage,
+      proofPackage: bscPatchedSourceProofPackage(rawProofPackage),
       txId: bscSourceInput.txId,
       receipt: bscSourceInput.receipt,
       bscSender: bscSourceInput.bscSender,
@@ -1310,7 +1384,7 @@ describe("SCCP prover worker", () => {
   });
 
   it("does not return raw BSC source prover output when binding fails", async () => {
-    const rawProofPackage = { raw: true, txId: "stale" };
+    const rawProofPackage = bscRawSourceProofPackage({ txId: "stale" });
     const proveSource = vi.fn().mockResolvedValue(rawProofPackage);
     mocks.loadBscSourceProver.mockResolvedValue(proveSource);
     mocks.bindBscSource.mockImplementation(() => {

@@ -46,11 +46,17 @@ const expectGenericSecretTransactionRejection = (
 
 describe("BSC WalletConnect connector", () => {
   afterEach(() => {
+    delete (
+      window as unknown as {
+        __irohaBscWalletHarness?: unknown;
+      }
+    ).__irohaBscWalletHarness;
     localStorage.clear();
     vi.useRealTimers();
     vi.unstubAllEnvs();
     vi.doUnmock("@reown/appkit-universal-connector");
     vi.resetModules();
+    Reflect.deleteProperty(window, "iroha");
   });
 
   it("normalizes only opaque WalletConnect project identifiers", async () => {
@@ -180,6 +186,200 @@ describe("BSC WalletConnect connector", () => {
     expect(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY)).not.toMatch(
       /private|seed|mnemonic/iu,
     );
+  });
+
+  it("ignores the E2E BSC wallet harness unless it is explicitly enabled", async () => {
+    const harnessConnect = vi.fn().mockResolvedValue({
+      address: VALID_BSC_ADDRESS,
+      topic: "e2e-topic",
+      connectedAtMs: Date.now(),
+    });
+    (
+      window as unknown as {
+        __irohaBscWalletHarness?: {
+          connect: typeof harnessConnect;
+        };
+      }
+    ).__irohaBscWalletHarness = {
+      connect: harnessConnect,
+    };
+
+    const { useBscWalletConnect } = await import(
+      "@/composables/useBscWalletConnect"
+    );
+    const bsc = useBscWalletConnect();
+
+    expect(bsc.projectConfigured.value).toBe(false);
+    await expect(bsc.connect()).rejects.toThrow(
+      /WalletConnect project ID is not configured/,
+    );
+    expect(harnessConnect).not.toHaveBeenCalled();
+    expect(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY)).toBeNull();
+  });
+
+  it("uses runtime preload config for the E2E BSC wallet harness", async () => {
+    const nowMs = Date.now();
+    const harnessConnect = vi.fn().mockResolvedValue({
+      address: VALID_BSC_ADDRESS,
+      topic: "runtime-e2e-topic",
+      connectedAtMs: nowMs,
+    });
+    (
+      window as unknown as {
+        iroha?: unknown;
+        __irohaBscWalletHarness?: {
+          connect: typeof harnessConnect;
+        };
+      }
+    ).iroha = {
+      getRuntimeConfig: () => ({
+        walletConnectProjectId: "runtime-project",
+        sccpBscE2eWallet: "1",
+      }),
+    };
+    (
+      window as unknown as {
+        __irohaBscWalletHarness?: {
+          connect: typeof harnessConnect;
+        };
+      }
+    ).__irohaBscWalletHarness = {
+      connect: harnessConnect,
+    };
+
+    const { useBscWalletConnect } = await import(
+      "@/composables/useBscWalletConnect"
+    );
+    const bsc = useBscWalletConnect();
+
+    expect(bsc.projectId.value).toBe("runtime-project");
+    expect(bsc.projectConfigured.value).toBe(true);
+    await bsc.connect();
+    expect(harnessConnect).toHaveBeenCalled();
+    expect(
+      JSON.parse(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY) ?? "null"),
+    ).toEqual({
+      topic: "runtime-e2e-topic",
+      address: VALID_BSC_ADDRESS,
+      chainId: BSC_TESTNET_CAIP_CHAIN_ID,
+      namespace: BSC_WALLETCONNECT_NAMESPACE,
+      methodVersion: "eip155-v1",
+      connectedAtMs: nowMs,
+    });
+  });
+
+  it("uses the explicitly enabled E2E BSC wallet harness without persisting secrets", async () => {
+    vi.stubEnv("VITE_SCCP_BSC_E2E_WALLET", "1");
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "https://not-used.invalid");
+    const nowMs = Date.now();
+    const harnessSend = vi.fn(async (transaction) => {
+      expect(Object.isFrozen(transaction)).toBe(true);
+      expect(transaction).toEqual({
+        from: VALID_BSC_ADDRESS,
+        to: SECOND_BSC_ADDRESS,
+        data: "0x12345678",
+        value: "0x0",
+        chainId: BSC_TESTNET_CHAIN_ID_HEX,
+      });
+      return "0x" + "CD".repeat(32);
+    });
+    const harnessDisconnect = vi.fn();
+    (
+      window as unknown as {
+        __irohaBscWalletHarness?: {
+          connect: () => Promise<{
+            address: string;
+            topic: string;
+            connectedAtMs: number;
+          }>;
+          disconnect: typeof harnessDisconnect;
+          sendTransaction: typeof harnessSend;
+        };
+      }
+    ).__irohaBscWalletHarness = {
+      connect: vi.fn().mockResolvedValue({
+        address: VALID_BSC_ADDRESS.toUpperCase(),
+        topic: "e2e-topic",
+        connectedAtMs: nowMs,
+      }),
+      disconnect: harnessDisconnect,
+      sendTransaction: harnessSend,
+    };
+
+    const { useBscWalletConnect } = await import(
+      "@/composables/useBscWalletConnect"
+    );
+    const bsc = useBscWalletConnect();
+
+    expect(bsc.projectConfigurationError.value).toBe("");
+    expect(bsc.projectConfigured.value).toBe(true);
+    await bsc.connect();
+    expect(bsc.address.value).toBe(VALID_BSC_ADDRESS);
+    expect(
+      JSON.parse(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY) ?? "null"),
+    ).toEqual({
+      topic: "e2e-topic",
+      address: VALID_BSC_ADDRESS,
+      chainId: BSC_TESTNET_CAIP_CHAIN_ID,
+      namespace: BSC_WALLETCONNECT_NAMESPACE,
+      methodVersion: "eip155-v1",
+      connectedAtMs: nowMs,
+    });
+    expect(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY)).not.toMatch(
+      /private|seed|mnemonic|secret/iu,
+    );
+    await expect(
+      bsc.sendTransaction(
+        {
+          from: VALID_BSC_ADDRESS,
+          to: SECOND_BSC_ADDRESS,
+          data: "0x12345678",
+          value: "0x0",
+          chainId: BSC_TESTNET_CHAIN_ID_HEX,
+        },
+        allowedBscRouteTarget,
+      ),
+    ).resolves.toBe("0x" + "cd".repeat(32));
+    await expect(
+      bsc.sendTransaction(
+        {
+          from: VALID_BSC_ADDRESS,
+          to: THIRD_BSC_ADDRESS,
+          data: "0x12345678",
+          value: "0x0",
+          chainId: BSC_TESTNET_CHAIN_ID_HEX,
+        },
+        allowedBscRouteTarget,
+      ),
+    ).rejects.toThrow(/to address must match/);
+    await expect(
+      bsc.sendTransaction(
+        {
+          from: VALID_BSC_ADDRESS,
+          to: SECOND_BSC_ADDRESS,
+          data: SECOND_BSC_SELECTOR,
+          value: "0x0",
+          chainId: BSC_TESTNET_CHAIN_ID_HEX,
+        },
+        allowedBscRouteTarget,
+      ),
+    ).rejects.toThrow(/call data selector must match/);
+    await expect(
+      bsc.sendTransaction(
+        {
+          from: VALID_BSC_ADDRESS,
+          to: SECOND_BSC_ADDRESS,
+          data: "0x12345678",
+          chainId: BSC_TESTNET_CHAIN_ID_HEX,
+          privateKeyHex: "00".repeat(32),
+        } as unknown as Record<string, unknown>,
+        allowedBscRouteTarget,
+      ),
+    ).rejects.toThrow(/secret-like material|unsupported field/u);
+    expect(harnessSend).toHaveBeenCalledTimes(1);
+    await bsc.disconnect();
+    expect(harnessDisconnect).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem(BSC_WALLETCONNECT_STORAGE_KEY)).toBeNull();
   });
 
   it("rejects ambiguous or under-scoped BSC WalletConnect sessions", async () => {

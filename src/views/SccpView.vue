@@ -314,6 +314,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import { blake2b } from "@noble/hashes/blake2b";
 import { useSessionStore } from "@/stores/session";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSccpBridge } from "@/composables/useSccpBridge";
@@ -322,6 +323,7 @@ import { useTronWalletConnect } from "@/composables/useTronWalletConnect";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import {
   broadcastTronTransaction,
+  callEvmRpc,
   callEvmContract,
   getEvmBalance,
   getEvmBlockByHash,
@@ -377,6 +379,7 @@ import {
   buildTairaXorFinalizeTriggerRequest,
   buildTairaXorMessageProofJobQueryMaterial,
   cloneSccpJsonRouteManifest,
+  bridgeDecimalToTairaBaseUnits,
   formatBaseUnitAmount,
   formatTronSunBalance,
   normalizeBridgeAmount,
@@ -388,8 +391,10 @@ import {
   readTronConstantUint256,
   readSccpTronBridgeAddress,
   readSccpBscBridgeAddress,
+  readSccpBscDestinationProverModuleUrl,
   readSccpBscRpcEndpoint,
   readSccpBscSourceBridgeAddress,
+  readSccpBscSourceProverModuleUrl,
   readSccpBscTokenAddress,
   readSccpTronGatewayEndpoint,
   SCCP_EVM_SOURCE_EVENT_TOPIC,
@@ -414,6 +419,7 @@ import type {
   TronSccpProofPackage,
   TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
+import { buildBscSccpProofPackage } from "@/utils/sccpProofPackage";
 
 const session = useSessionStore();
 const { t, n } = useAppI18n();
@@ -467,7 +473,7 @@ const proofPhases = ref([
   },
 ]);
 const SCCP_PROOF_WORKER_TIMEOUT_MS = 120_000;
-const SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS = 10;
+const SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS = 80;
 const SCCP_PROOF_JOB_INDEXING_POLL_MS = 3_000;
 const SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS = 40;
 const SCCP_TRON_SOURCE_DATA_POLL_MS = 3_000;
@@ -747,6 +753,24 @@ const asRecord = (value: unknown, label: string): Record<string, unknown> => {
   throw new Error(`${label} must be an object.`);
 };
 
+const normalizeEvmQuantityToUnsignedDecimal = (
+  value: unknown,
+  label: string,
+): string => {
+  const text = String(value ?? "").trim();
+  const quantityPattern = /^0x[0-9a-f]+$/iu;
+  const decimalPattern = /^(?:0|[1-9]\d*)$/u;
+  let parsed: bigint;
+  if (quantityPattern.test(text)) {
+    parsed = BigInt(text);
+  } else if (decimalPattern.test(text)) {
+    parsed = BigInt(text);
+  } else {
+    throw new Error(`${label} must be an unsigned integer.`);
+  }
+  return parsed.toString(10);
+};
+
 const readJobId = (value: Record<string, unknown>): string => {
   const jobId = String(value.job_id ?? value.jobId ?? "").trim();
   if (!/^[0-9a-f]{32}$/iu.test(jobId)) {
@@ -762,7 +786,7 @@ const isRetryableSccpProofJobError = (error: unknown): boolean => {
   const message = (error instanceof Error ? error.message : String(error))
     .trim()
     .toLowerCase();
-  return /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
+  return /(?:404|408|425|429|5\d\d|bad gateway|gateway timeout|service unavailable|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
     message,
   );
 };
@@ -771,7 +795,7 @@ const retryableChainReadErrorMessage = (error: unknown): string =>
   (error instanceof Error ? error.message : String(error)).trim().toLowerCase();
 
 const isRetryableChainReadErrorMessage = (message: string): boolean =>
-  /(?:404|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
+  /(?:404|408|425|429|5\d\d|bad gateway|gateway timeout|service unavailable|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
     message,
   );
 
@@ -800,6 +824,15 @@ const isRetryableBscSourceDataError = (error: unknown): boolean => {
   return (
     isRetryableChainReadErrorMessage(message) ||
     /(?:receipt is not finalized yet)/u.test(message)
+  );
+};
+
+const isOptionalBscSourceLogReadError = (error: unknown): boolean => {
+  const message = (error instanceof Error ? error.message : String(error))
+    .trim()
+    .toLowerCase();
+  return /(?:eth_getlogs.*)?(?:limit exceeded|archive requests require.*personal token|archive request.*personal token|request exceeds .*log|log query.*too large)/u.test(
+    message,
   );
 };
 
@@ -1022,7 +1055,12 @@ type SccpProofWorkerRequest =
 type BscSourceProofWorkerInput = Omit<
   BscToTairaSourceProofPackageInput,
   "proofArtifactHash" | "provingKeyHash" | "nativeEvmProverBundleHash"
->;
+> & {
+  proofArtifactHash?: string;
+  provingKeyHash?: string;
+  nativeEvmProverBundleHash?: string;
+  proverModuleUrl?: string;
+};
 
 type SccpOperationContext = {
   direction: SccpBridgeDirection;
@@ -1118,11 +1156,73 @@ const runTronProofWorker = (
 ): Promise<TronSccpProofPackage> =>
   runSccpProofWorker<TronSccpProofPackage>({ kind, input });
 
-const runBscProofWorker = (
+const sccpHexToBytes = (value: string, label: string): Uint8Array => {
+  const normalized = value.trim().toLowerCase();
+  if (!/^0x(?:[0-9a-f]{2})+$/u.test(normalized)) {
+    throw new Error(`${label} must be even-length hex.`);
+  }
+  const bytes = new Uint8Array((normalized.length - 2) / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(
+      normalized.slice(2 + index * 2, 4 + index * 2),
+      16,
+    );
+  }
+  return bytes;
+};
+
+const sccpBytesToHex = (bytes: Uint8Array): string =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+const buildBscProofEnvelopeHash = (
+  requestHash: string,
+  proofBytesHex: string,
+): string => {
+  const prefix = new TextEncoder().encode(
+    "sccp:evm:groth16-proof-envelope:v1",
+  );
+  const requestHashBytes = sccpHexToBytes(requestHash, "requestHash");
+  if (requestHashBytes.length !== 32) {
+    throw new Error("requestHash must be 32 bytes.");
+  }
+  const proofBytes = sccpHexToBytes(proofBytesHex, "proofBytes");
+  const payload = new Uint8Array(
+    prefix.length + requestHashBytes.length + proofBytes.length,
+  );
+  payload.set(prefix);
+  payload.set(requestHashBytes, prefix.length);
+  payload.set(proofBytes, prefix.length + requestHashBytes.length);
+  return sccpBytesToHex(blake2b(payload, { dkLen: 32 }));
+};
+
+const runBscProofWorker = async (
   kind: "prove-bsc-proof-package",
   input: BscSccpProofPackageInput,
-): Promise<BscSccpProofPackage> =>
-  runSccpProofWorker<BscSccpProofPackage>({ kind, input });
+): Promise<BscSccpProofPackage> => {
+  const electronProver = window.iroha?.proveBscSccpProof;
+  if (typeof electronProver === "function") {
+    const proofResult = await electronProver({
+      request: input.witness as unknown as Record<string, unknown>,
+      proverModuleUrl: input.proverModuleUrl,
+    });
+    const proofResultRecord = {
+      ...(proofResult as Record<string, unknown>),
+    };
+    const requestHash = String(proofResultRecord.requestHash ?? "").trim();
+    const proofBytes = String(proofResultRecord.proofBytes ?? "").trim();
+    proofResultRecord.envelopeHash = buildBscProofEnvelopeHash(
+      requestHash,
+      proofBytes,
+    );
+    delete proofResultRecord.envelope_hash;
+    return buildBscSccpProofPackage({
+      ...input,
+      proofResult:
+        proofResultRecord as unknown as BscSccpProofPackageInput["proofResult"],
+    });
+  }
+  return runSccpProofWorker<BscSccpProofPackage>({ kind, input });
+};
 
 const runTronSourceProofWorker = (
   input: TronToTairaSourceProofPackageInput,
@@ -1132,13 +1232,27 @@ const runTronSourceProofWorker = (
     input,
   });
 
-const runBscSourceProofWorker = (
+const runBscSourceProofWorker = async (
   input: BscSourceProofWorkerInput,
-): Promise<BscToTairaSourceProofPackage> =>
-  runSccpProofWorker<BscToTairaSourceProofPackage>({
+): Promise<BscToTairaSourceProofPackage> => {
+  const electronProver = window.iroha?.proveBscSccpSourceProof;
+  if (typeof electronProver === "function") {
+    return (await electronProver({
+      input: input as unknown as Record<string, unknown>,
+      proverModuleUrl: input.proverModuleUrl,
+    })) as unknown as BscToTairaSourceProofPackage;
+  }
+  const {
+    proofArtifactHash: _proofArtifactHash,
+    provingKeyHash: _provingKeyHash,
+    nativeEvmProverBundleHash: _nativeEvmProverBundleHash,
+    ...workerInput
+  } = input;
+  return runSccpProofWorker<BscToTairaSourceProofPackage>({
     kind: "prove-bsc-source-package",
-    input,
+    input: workerInput,
   });
+};
 
 const cloneSccpManifestSnapshot = (
   manifest: Record<string, unknown>,
@@ -1430,28 +1544,44 @@ const loadBscSourceDataForProof = async (input: {
     const sourceBridgeAddress = readSccpBscSourceBridgeAddress(
       input.context.manifest,
     );
+    const indexedLogsPromise = getEvmLogs({
+      endpoint: input.context.bscRpcEndpoint,
+      address: sourceBridgeAddress,
+      fromBlock: receiptBlockNumber,
+      toBlock: receiptBlockNumber,
+      topics: [SCCP_EVM_SOURCE_EVENT_TOPIC],
+    }).catch((error: unknown) => {
+      if (isOptionalBscSourceLogReadError(error)) {
+        return null;
+      }
+      throw error;
+    });
     const [block, indexedLogs] = await Promise.all([
       getEvmBlockByHash({
         endpoint: input.context.bscRpcEndpoint,
         blockHash,
         fullTransactions: false,
       }),
-      getEvmLogs({
-        endpoint: input.context.bscRpcEndpoint,
-        address: sourceBridgeAddress,
-        blockHash,
-        topics: [SCCP_EVM_SOURCE_EVENT_TOPIC],
-      }),
+      indexedLogsPromise,
     ]);
     if (!block) {
       throw new Error("BSC source block is not indexed yet.");
     }
+    const blockRecord = asRecord(block, "BSC source block");
+    const blockReceipts = await loadBscBlockReceiptsForProof({
+      endpoint: input.context.bscRpcEndpoint,
+      block: blockRecord,
+      blockNumber: receiptBlockNumber,
+      txHash,
+      knownReceipt: receiptRecord,
+    });
     return bindBscSourceDataForProof({
       txId: txHash,
       transaction,
       receipt: receiptRecord,
-      indexedLogs,
-      block,
+      indexedLogs: indexedLogs ?? undefined,
+      block: blockRecord,
+      blockReceipts,
       bridgeAddress: readSccpBscBridgeAddress(input.context.manifest),
       sourceBridgeAddress,
       bscSender: input.context.bscAddress,
@@ -1853,6 +1983,7 @@ const finalizeTairaMessageToBsc = async (
     messageBundle: binding.messageBundle,
     destinationBinding: binding.destinationBinding,
     canonicalPayloadHex: binding.canonicalPayloadHex,
+    proverModuleUrl: readSccpBscDestinationProverModuleUrl(context.manifest),
   });
   assertSccpOperationContextCurrent(context);
   const finalizeRequest = buildTairaXorBscFinalizeTransactionRequest({
@@ -1959,15 +2090,6 @@ const finalizeTronBurnToTaira = async (
     TAIRA_EXPLORER_URL,
     normalizedTairaTxHash,
   );
-  if (tairaTxHref) {
-    transactionLinks.value = [
-      ...transactionLinks.value,
-      {
-        label: t("TAIRA settlement transaction"),
-        href: tairaTxHref,
-      },
-    ];
-  }
   markPhase(3, "active", "Waiting for TAIRA settlement confirmation");
   await waitForSccpTransactionCommit({
     toriiUrl: context.toriiUrl,
@@ -1976,6 +2098,99 @@ const finalizeTronBurnToTaira = async (
   assertSccpOperationContextCurrent(context);
   proofReady.value = true;
   markPhase(3, "complete", "TAIRA settlement confirmed");
+  if (tairaTxHref) {
+    transactionLinks.value = [
+      ...transactionLinks.value.filter((link) => link.href !== tairaTxHref),
+      {
+        label: t("TAIRA settlement transaction"),
+        href: tairaTxHref,
+      },
+    ];
+  }
+};
+
+const readBscBlockTransactionHashes = (
+  block: Record<string, unknown>,
+  label: string,
+): string[] => {
+  if (!Array.isArray(block.transactions)) {
+    throw new Error(`${label} must include a transactions array.`);
+  }
+  return block.transactions.map((entry, index) => {
+    if (typeof entry === "string") {
+      return normalizeBscTransactionHash(entry);
+    }
+    if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+      return normalizeBscTransactionHash(
+        String(
+          (entry as Record<string, unknown>).hash ??
+            (entry as Record<string, unknown>).transactionHash ??
+            (entry as Record<string, unknown>).transaction_hash ??
+            "",
+        ),
+      );
+    }
+    throw new Error(`${label} transaction ${index} must be a hash or object.`);
+  });
+};
+
+const loadBscBlockReceiptsForProof = async (input: {
+  endpoint: string;
+  block: Record<string, unknown>;
+  blockNumber: string;
+  txHash: string;
+  knownReceipt: Record<string, unknown>;
+}): Promise<Record<string, unknown>[]> => {
+  try {
+    const result = await callEvmRpc({
+      endpoint: input.endpoint,
+      method: "eth_getBlockReceipts",
+      params: [input.blockNumber],
+    });
+    if (Array.isArray(result) && result.length > 0) {
+      return result.map((entry, index) =>
+        asRecord(entry, `BSC block receipt ${index}`),
+      );
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      !/method not found|does not exist|unsupported|not supported|the method .* does not exist/iu.test(
+        message,
+      )
+    ) {
+      throw error;
+    }
+  }
+
+  const transactionHashes = readBscBlockTransactionHashes(
+    input.block,
+    "BSC source block",
+  );
+  const receipts: Record<string, unknown>[] = [];
+  const batchSize = 12;
+  for (let offset = 0; offset < transactionHashes.length; offset += batchSize) {
+    const batch = transactionHashes.slice(offset, offset + batchSize);
+    const batchReceipts = await Promise.all(
+      batch.map(async (txHash) => {
+        if (txHash === input.txHash) {
+          return input.knownReceipt;
+        }
+        const receipt = await getEvmTransactionReceipt({
+          endpoint: input.endpoint,
+          txHash,
+        });
+        if (!receipt) {
+          throw new Error(
+            `BSC block receipt ${txHash} is not indexed yet.`,
+          );
+        }
+        return receipt;
+      }),
+    );
+    receipts.push(...batchReceipts);
+  }
+  return receipts;
 };
 
 const finalizeBscBurnToTaira = async (
@@ -2000,15 +2215,32 @@ const finalizeBscBurnToTaira = async (
   const sourceMaterialBinding = readBscSourceProverMaterialBinding(
     context.manifest,
   );
+  const finalityHeight = normalizeEvmQuantityToUnsignedDecimal(
+    sourceData.receiptBlockNumber,
+    "BSC source proof finality height",
+  );
   const proofPackage = await runBscSourceProofWorker({
     manifest: context.manifest,
+    bscNetwork: SCCP_BSC_NETWORK.key,
+    ...sourceMaterialBinding,
+    proverModuleUrl: readSccpBscSourceProverModuleUrl(context.manifest),
+    bscRpcUrl:
+      readSccpBscRpcEndpoint(context.manifest, SCCP_BSC_NETWORK.key) ||
+      SCCP_BSC_NETWORK.rpcUrl,
+    sourceBridgeAddress: readSccpBscSourceBridgeAddress(context.manifest),
     txId: sourceData.txId,
     transaction: sourceData.transaction,
-    receipt: sourceData.receipt,
+    receipt: sourceData.proofReceipt,
+    blockReceipts: sourceData.blockReceipts ?? undefined,
     block: sourceData.block,
+    finalityHeight,
+    finality_height: finalityHeight,
+    finalityBlockHash: sourceData.receiptBlockHash,
+    finality_block_hash: sourceData.receiptBlockHash,
     bscSender: context.bscAddress,
     tairaRecipient: context.tairaRecipient,
     amountDecimal: context.amountDecimal,
+    amountBaseUnits: bridgeDecimalToTairaBaseUnits(context.amountDecimal),
   });
   assertSccpOperationContextCurrent(context);
   const boundProofPackage = bindBscToTairaSourceProofPackage({
@@ -2041,15 +2273,6 @@ const finalizeBscBurnToTaira = async (
     TAIRA_EXPLORER_URL,
     normalizedTairaTxHash,
   );
-  if (tairaTxHref) {
-    transactionLinks.value = [
-      ...transactionLinks.value,
-      {
-        label: t("TAIRA settlement transaction"),
-        href: tairaTxHref,
-      },
-    ];
-  }
   markPhase(3, "active", "Waiting for TAIRA settlement confirmation");
   await waitForSccpTransactionCommit({
     toriiUrl: context.toriiUrl,
@@ -2058,6 +2281,15 @@ const finalizeBscBurnToTaira = async (
   assertSccpOperationContextCurrent(context);
   proofReady.value = true;
   markPhase(3, "complete", "TAIRA settlement confirmed");
+  if (tairaTxHref) {
+    transactionLinks.value = [
+      ...transactionLinks.value.filter((link) => link.href !== tairaTxHref),
+      {
+        label: t("TAIRA settlement transaction"),
+        href: tairaTxHref,
+      },
+    ];
+  }
 };
 
 const prepareBridge = async () => {

@@ -1561,6 +1561,62 @@ const normalizeNativeProverBundleForManifest = async ({
     nativeEvmProverBundleHash,
   };
 };
+
+const formatBscMissingReadinessItems = (items) => {
+  if (items.length === 0) {
+    return "production readiness acknowledgement";
+  }
+  if (items.length === 1) {
+    return items[0];
+  }
+  return `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+};
+
+const buildBscRouteDraftDisabledReason = ({
+  diagnosticVerifierReasons,
+  proofArtifactHash,
+  provingKeyHash,
+  nativeEvmProverBundleHash,
+  postDeployLiveEvidence,
+}) => {
+  if (diagnosticVerifierReasons.length > 0) {
+    return "BSC verifier material is diagnostic and must be replaced before production readiness.";
+  }
+  const missing = [];
+  if (!proofArtifactHash || !provingKeyHash) {
+    missing.push("proof artifact and proving key hashes");
+  }
+  if (!nativeEvmProverBundleHash) {
+    missing.push("native EVM prover bundle");
+  }
+  if (!postDeployLiveEvidence) {
+    missing.push("post-deploy live evidence");
+  } else {
+    if (postDeployLiveEvidence.fullTomlReady !== true) {
+      missing.push("offline full-TOML readiness evidence");
+    }
+    if (!postDeployLiveEvidence.offlineFullTomlSha256) {
+      missing.push("offline full-TOML hash");
+    }
+    if (
+      !postDeployLiveEvidence.sourceBridgeConfigHash ||
+      !postDeployLiveEvidence.sourceEventTransactionId ||
+      !postDeployLiveEvidence.sourceEventExplorerUrl
+    ) {
+      missing.push("BSC source-event evidence");
+    }
+    if (
+      !postDeployLiveEvidence.routeCanaryEvidenceHash ||
+      !postDeployLiveEvidence.routeCanaryTransactionId ||
+      !postDeployLiveEvidence.routeCanaryExplorerUrl
+    ) {
+      missing.push("BSC route-canary evidence");
+    }
+  }
+  return `Route manifest draft is not production-ready; missing ${formatBscMissingReadinessItems(
+    missing,
+  )}.`;
+};
 const postDeployString = (options, record, optionKey, ...recordKeys) =>
   ownValue(options, optionKey) || readFirstString(record, ...recordKeys);
 
@@ -2658,10 +2714,13 @@ export const buildBscRouteManifestDraft = async (input = {}) => {
     ...(productionReady
       ? { postDeployReadbackChecked: true }
       : {
-          disabledReason:
-            diagnosticVerifierReasons.length > 0
-              ? "BSC verifier material is diagnostic and must be replaced before production readiness."
-              : "Route manifest draft is not production-ready until BSC contract readback and live canary evidence are complete.",
+          disabledReason: buildBscRouteDraftDisabledReason({
+            diagnosticVerifierReasons,
+            proofArtifactHash,
+            provingKeyHash,
+            nativeEvmProverBundleHash,
+            postDeployLiveEvidence,
+          }),
         }),
     bscTokenAddress: addresses.token,
     bscBridgeAddress: addresses.bridge,

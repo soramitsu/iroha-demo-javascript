@@ -6,6 +6,7 @@ const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const TAIRA_NETWORK_PREFIX = 369;
 const SCCP_SORA_DOMAIN = 0;
 const SCCP_BSC_DOMAIN = 2;
+const TAIRA_XOR_DECIMALS = 9;
 const SCCP_CODEC_TEXT_UTF8 = 1;
 const SCCP_CODEC_EVM_HEX = 2;
 const SCCP_PAYLOAD_TRANSFER_DISCRIMINANT = 2;
@@ -71,7 +72,7 @@ const MIN_NATIVE_IMPLEMENTATION_BYTES = 1024;
 const MIN_DESTINATION_PROOF_BYTES = 384;
 const MAX_CONFIG_BYTES = 512 * 1024;
 const MAX_BACKEND_BYTES = 32 * 1024 * 1024;
-const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_ARTIFACT_BYTES = 2 * 1024 * 1024 * 1024;
 const RUNTIME_FETCH_OPTIONS = Object.freeze({
   method: "GET",
   credentials: "omit",
@@ -1098,7 +1099,6 @@ const assertSnarkjsBinaryHeader = (
   }
   let offset = 12;
   const sectionIds = new Set();
-  const sectionIdList = [];
   for (let index = 0; index < sectionCount; index += 1) {
     if (offset + 12 > bytes.byteLength) {
       fail(
@@ -1122,7 +1122,6 @@ const assertSnarkjsBinaryHeader = (
       );
     }
     sectionIds.add(sectionId);
-    sectionIdList.push(sectionId);
     if (sectionSize === null || sectionSize <= 0) {
       fail(
         "ERR_SCCP_BSC_RUNTIME_MATERIAL_FORMAT",
@@ -1159,15 +1158,6 @@ const assertSnarkjsBinaryHeader = (
     fail(
       "ERR_SCCP_BSC_RUNTIME_MATERIAL_FORMAT",
       `${label} ${formatLabel} contains unsupported section ids: ${unexpectedSectionIds.join(", ")}`,
-    );
-  }
-  const canonicalOrder = requiredSectionIds.every(
-    (sectionId, index) => sectionIdList[index] === sectionId,
-  );
-  if (sectionIdList.length !== requiredSectionIds.length || !canonicalOrder) {
-    fail(
-      "ERR_SCCP_BSC_RUNTIME_MATERIAL_FORMAT",
-      `${label} ${formatLabel} section ids must be in canonical order: ${requiredSectionIds.join(", ")}`,
     );
   }
 };
@@ -2871,6 +2861,8 @@ const GROTH16_PROOF_SELF_TEST_REPORT_KNOWN_FIELDS = Object.freeze(
     "publicSignalsHash",
     "public_signals_hash",
     "snarkjs",
+    "adversarialChecks",
+    "adversarial_checks",
     "proof",
     "publicSignals",
     "public_signals",
@@ -4131,11 +4123,17 @@ const bytesFromProofResult = (result) => {
   if (!isRecord(result)) {
     return null;
   }
-  const value = optionalResultField(
-    result,
-    ["proofBytes", "proof_bytes", "proof"],
-    "BSC destination prover proofBytes",
-  );
+  const value =
+    optionalResultField(
+      result,
+      ["proofBytes", "proof_bytes"],
+      "BSC destination prover proofBytes",
+    ) ??
+    optionalResultField(
+      result,
+      ["proof"],
+      "BSC destination prover proofBytes",
+    );
   if (value instanceof Uint8Array) {
     return value;
   }
@@ -4293,14 +4291,14 @@ const normalizeResultAmountBaseUnits = (value, label) => {
 const decimalAmountToBaseUnits = (value, label) => {
   const text = trim(value);
   const match = text.match(/^([0-9]+)(?:\.([0-9]+))?$/u);
-  if (!match || match[2]?.length > 18) {
+  if (!match || match[2]?.length > TAIRA_XOR_DECIMALS) {
     fail(
       "ERR_SCCP_BSC_RUNTIME_RESULT",
-      `${label} must be a decimal amount with at most 18 fractional digits`,
+      `${label} must be a TAIRA decimal amount with at most ${TAIRA_XOR_DECIMALS} fractional digits`,
     );
   }
   const whole = match[1].replace(/^0+(?=\d)/u, "");
-  const fraction = (match[2] ?? "").padEnd(18, "0");
+  const fraction = (match[2] ?? "").padEnd(TAIRA_XOR_DECIMALS, "0");
   const units = `${whole}${fraction}`.replace(/^0+(?=\d)/u, "");
   return normalizeResultAmountBaseUnits(units, `${label} base units`);
 };

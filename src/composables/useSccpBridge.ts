@@ -2,11 +2,13 @@ import { computed, ref, unref, type MaybeRef } from "vue";
 import { useSessionStore } from "@/stores/session";
 import {
   fetchAccountAssets,
+  getParameters,
   getSccpCapabilities,
   getSccpProofManifests,
   listSccpRecentMessages,
 } from "@/services/iroha";
 import {
+  mergeSccpLaneMaterialsIntoManifestSet,
   resolveSccpRouteReadiness,
   SCCP_XOR_ROUTE,
   type SccpRouteConfig,
@@ -23,6 +25,7 @@ export type SccpBridgeState = {
   readiness: SccpRouteReadiness;
   capabilities: SccpCapabilitiesResponse | null;
   manifestSet: SccpProofManifestSetResponse | null;
+  parameters: Record<string, unknown> | null;
   recentMessages: Record<string, unknown>[];
   balances: AccountAssetItem[];
   loading: boolean;
@@ -36,6 +39,7 @@ export const useSccpBridge = (
   const session = useSessionStore();
   const capabilities = ref<SccpCapabilitiesResponse | null>(null);
   const manifestSet = ref<SccpProofManifestSetResponse | null>(null);
+  const parameters = ref<Record<string, unknown> | null>(null);
   const recentMessages = ref<Record<string, unknown>[]>([]);
   const balances = ref<AccountAssetItem[]>([]);
   const loading = ref(false);
@@ -56,6 +60,7 @@ export const useSccpBridge = (
     balanceRefreshSerial += 1;
     capabilities.value = null;
     manifestSet.value = null;
+    parameters.value = null;
     recentMessages.value = [];
     balances.value = [];
     loading.value = false;
@@ -67,7 +72,11 @@ export const useSccpBridge = (
     resolveSccpRouteReadiness({
       connection: session.connection,
       capabilities: capabilities.value,
-      manifestSet: manifestSet.value,
+      manifestSet: mergeSccpLaneMaterialsIntoManifestSet(
+        manifestSet.value,
+        parameters.value,
+        import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
+      ) as Record<string, unknown> | null,
       route: unref(route),
     }),
   );
@@ -77,12 +86,41 @@ export const useSccpBridge = (
     readiness: readiness.value,
     capabilities: capabilities.value,
     manifestSet: manifestSet.value,
+    parameters: parameters.value,
     recentMessages: recentMessages.value,
     balances: balances.value,
     loading: loading.value,
     balanceLoading: balanceLoading.value,
     error: error.value,
   }));
+
+  const refreshRecentMessages = async (
+    refreshSerial: number,
+    connectionKey: string,
+  ) => {
+    try {
+      const nextRecentMessages = await listSccpRecentMessages({
+        toriiUrl: session.connection.toriiUrl,
+        routeId: unref(route).id,
+        limit: 8,
+      });
+      if (
+        refreshSerial !== routeRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
+      recentMessages.value = nextRecentMessages.items;
+    } catch {
+      if (
+        refreshSerial !== routeRefreshSerial ||
+        connectionKey !== currentConnectionKey()
+      ) {
+        return;
+      }
+      recentMessages.value = [];
+    }
+  };
 
   const refreshRoute = async () => {
     const refreshSerial = (routeRefreshSerial += 1);
@@ -91,15 +129,11 @@ export const useSccpBridge = (
     error.value = "";
     loading.value = true;
     try {
-      const [nextCapabilities, nextManifestSet, nextRecentMessages] =
+      const [nextCapabilities, nextManifestSet, nextParameters] =
         await Promise.all([
-          getSccpCapabilities({ toriiUrl }),
-          getSccpProofManifests({ toriiUrl }),
-          listSccpRecentMessages({
-            toriiUrl,
-            routeId: unref(route).id,
-            limit: 8,
-          }).catch(() => ({ items: [], total: 0 })),
+        getSccpCapabilities({ toriiUrl }),
+        getSccpProofManifests({ toriiUrl }),
+          getParameters({ toriiUrl }),
         ]);
       if (
         refreshSerial !== routeRefreshSerial ||
@@ -109,7 +143,8 @@ export const useSccpBridge = (
       }
       capabilities.value = nextCapabilities;
       manifestSet.value = nextManifestSet;
-      recentMessages.value = nextRecentMessages.items;
+      parameters.value = nextParameters;
+      void refreshRecentMessages(refreshSerial, connectionKey);
     } catch (routeError) {
       if (
         refreshSerial !== routeRefreshSerial ||
@@ -119,6 +154,7 @@ export const useSccpBridge = (
       }
       capabilities.value = null;
       manifestSet.value = null;
+      parameters.value = null;
       recentMessages.value = [];
       error.value =
         routeError instanceof Error ? routeError.message : String(routeError);
@@ -182,6 +218,7 @@ export const useSccpBridge = (
   return {
     capabilities,
     manifestSet,
+    parameters,
     recentMessages,
     balances,
     loading,

@@ -25,6 +25,9 @@ const __dirname = dirname(__filename);
 
 const isMac = process.platform === "darwin";
 const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
+const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
+const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
+const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
 const requestSystemMediaAccess = isMac
   ? (kind: "camera" | "microphone") => systemPreferences.askForMediaAccess(kind)
   : undefined;
@@ -40,6 +43,35 @@ const devProfileSuffix = createHash("sha1")
   .update(process.cwd())
   .digest("hex")
   .slice(0, 10);
+
+const configureSccpProverHeap = () => {
+  const rawValue =
+    process.env["SCCP_BSC_PROVER_V8_HEAP_MB"] ??
+    process.env["VITE_SCCP_BSC_PROVER_V8_HEAP_MB"] ??
+    String(DEFAULT_SCCP_PROVER_V8_HEAP_MB);
+  const normalizedValue = String(rawValue).trim().toLowerCase();
+  if (
+    !normalizedValue ||
+    normalizedValue === "0" ||
+    normalizedValue === "false" ||
+    normalizedValue === "off"
+  ) {
+    return;
+  }
+  const parsed = Number(normalizedValue);
+  const heapMb = Number.isFinite(parsed)
+    ? Math.min(
+        MAX_SCCP_PROVER_V8_HEAP_MB,
+        Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
+      )
+    : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
+  app.commandLine.appendSwitch(
+    "js-flags",
+    `--max-old-space-size=${heapMb}`,
+  );
+};
+
+configureSccpProverHeap();
 
 if (!app.isPackaged) {
   const scopedUserDataPath = join(

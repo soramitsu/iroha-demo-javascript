@@ -6,6 +6,7 @@ interface ImportMetaEnv {
   readonly VITE_SCCP_TRON_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_TRON_SOURCE_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_BSC_NETWORK?: string;
+  readonly VITE_SCCP_BSC_E2E_WALLET?: string;
   readonly VITE_SCCP_BSC_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_BSC_PROVER_MANIFEST_URL?: string;

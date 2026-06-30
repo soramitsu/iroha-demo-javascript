@@ -37,8 +37,7 @@ export const SCCP_BSC_DOMAIN = 2;
 export const BSC_TESTNET_NETWORK_ID_HEX =
   "0x0000000000000000000000000000000000000000000000000000000000000061";
 export const BSC_TESTNET_CHAIN_ID_HEX = "0x61";
-export const BSC_TESTNET_RPC_URL =
-  "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+export const BSC_TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 export const BSC_MAINNET_NETWORK_ID_HEX =
   "0x0000000000000000000000000000000000000000000000000000000000000038";
 export const BSC_MAINNET_CHAIN_ID_HEX = "0x38";
@@ -285,10 +284,22 @@ const bscPreflightNextActions = (checks, profile) => {
             "SDK-validated native EVM prover bundle bound to the selected BSC route.",
           ),
           bscPreflightRequiredInput(
+            "destination-browser-prover-module",
+            "url",
+            "<destination-prover-module-url>",
+            "Browser-safe TAIRA-to-BSC prover module URL used to build the sidecar manifest.",
+          ),
+          bscPreflightRequiredInput(
             "destination-browser-prover-manifest",
             "file",
             "<destination-browser-prover-manifest.json>",
             "Route-bound TAIRA-to-BSC browser prover sidecar manifest with module/content hashes.",
+          ),
+          bscPreflightRequiredInput(
+            "source-browser-prover-module",
+            "url",
+            "<source-prover-module-url>",
+            "Browser-safe BSC-to-TAIRA source prover module URL used to build the sidecar manifest.",
           ),
           bscPreflightRequiredInput(
             "source-browser-prover-manifest",
@@ -329,6 +340,8 @@ const bscPreflightNextActions = (checks, profile) => {
           "bsc-source-browser-prover",
         ].filter((id) => failed(id)),
         commands: [
+          `npm run e2e:sccp:bsc-prover-manifest -- --bsc-network ${profile.key} --route-report <pre-sidecar-route-preflight-report.json> --module-url <destination-prover-module-url> --direction destination --out <destination-browser-prover-manifest.json>`,
+          `npm run e2e:sccp:bsc-prover-manifest -- --bsc-network ${profile.key} --route-report <pre-sidecar-route-preflight-report.json> --module-url <source-prover-module-url> --direction source --out <source-browser-prover-manifest.json>`,
           `node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs route-manifest --bsc-network ${profile.key} --evidence <${profile.key}-deployment-evidence.json> --taira-contract <taira-burn-record.contract.json> --settlement-asset-definition-id <canonical-asset-definition-id> --proof-artifact-hash <0x...> --proving-key-hash <0x...> --native-prover-bundle <native-evm-prover-bundle.json> --destination-browser-prover-manifest <destination-browser-prover-manifest.json> --source-browser-prover-manifest <source-browser-prover-manifest.json> --source-bridge-config-hash <0x...> --source-event-transaction-id <0x...> --source-event-explorer-url <url> --route-canary-evidence-hash <0x...> --route-canary-transaction-id <0x...> --route-canary-explorer-url <url> --full-toml-ready true --offline-full-toml-evidence <offline-full-toml-evidence.json> --production-ready true --live-readback-checked true ${bscPreflightRouteManifestConfirmationArgs(profile)} --out <production-route.manifest.json>`,
           "node ../iroha/scripts/sccp_bsc_taira_xor_deploy.mjs publish-route-manifest --manifest <production-route.manifest.json> --submit true --authority <route-manager-account-id>",
           `npm run e2e:sccp:bsc-preflight -- --bsc-network ${profile.key} --check-bsc-contracts true`,
@@ -1873,6 +1886,15 @@ const productionPlaceholderReason = (
   for (const key of Object.keys(value)) {
     const entry = ownValue(value, key);
     const childPath = `${pathName}.${key}`;
+    if (
+      (key === "placeholder_material" || key === "placeholderMaterial") &&
+      typeof entry === "boolean"
+    ) {
+      if (entry) {
+        return `${childPath}=true is placeholder, fixture-only, or test-only material`;
+      }
+      continue;
+    }
     if (productionPlaceholderPattern.test(key)) {
       return `${childPath} is placeholder, fixture-only, or test-only material`;
     }

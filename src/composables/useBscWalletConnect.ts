@@ -98,6 +98,22 @@ type BscWalletConnectSendTransactionOptions = {
   allowedCallDataSelectorLabel?: string;
 };
 
+type BscE2eWalletHarness = {
+  connect?: () => Promise<{
+    address?: unknown;
+    topic?: unknown;
+    connectedAtMs?: unknown;
+  }>;
+  disconnect?: () => Promise<void>;
+  sendTransaction?: (transaction: Record<string, unknown>) => Promise<unknown>;
+};
+
+declare global {
+  interface Window {
+    __irohaBscWalletHarness?: BscE2eWalletHarness;
+  }
+}
+
 const BSC_WALLETCONNECT_ACCOUNT_PREFIX = `${BSC_WALLETCONNECT_NAMESPACE}:`;
 const ACTIVE_BSC_WALLETCONNECT_ACCOUNT_PREFIX = `${SCCP_BSC_NETWORK.caipChainId}:`;
 
@@ -128,12 +144,35 @@ export const normalizeBscWalletConnectProjectId = (
   return projectId;
 };
 
+const readRuntimeWalletConnectProjectId = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return window.iroha?.getRuntimeConfig?.().walletConnectProjectId ?? "";
+  } catch (_error) {
+    return "";
+  }
+};
+
+const runtimeBscE2eWalletEnabled = (): boolean => {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    return window.iroha?.getRuntimeConfig?.().sccpBscE2eWallet === "1";
+  } catch (_error) {
+    return false;
+  }
+};
+
 const readConfiguredProjectId = (): { projectId: string; error: string } => {
   try {
     return {
       projectId:
         normalizeBscWalletConnectProjectId(
-          import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,
+          import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ||
+            readRuntimeWalletConnectProjectId(),
         ) ?? "",
       error: "",
     };
@@ -143,6 +182,21 @@ const readConfiguredProjectId = (): { projectId: string; error: string } => {
       error: error instanceof Error ? error.message : String(error),
     };
   }
+};
+
+const e2eWalletHarnessEnabled = (): boolean =>
+  import.meta.env.VITE_SCCP_BSC_E2E_WALLET === "1" ||
+  runtimeBscE2eWalletEnabled();
+
+const readE2eWalletHarness = (): BscE2eWalletHarness | null => {
+  if (!e2eWalletHarnessEnabled() || typeof window === "undefined") {
+    return null;
+  }
+  const harness = window.__irohaBscWalletHarness;
+  if (typeof harness !== "object" || harness === null) {
+    return null;
+  }
+  return harness;
 };
 
 const activeBscWalletConnectNetwork = {
@@ -1113,12 +1167,14 @@ export const useBscWalletConnect = () => {
   const error = ref("");
 
   const connected = computed(() => Boolean(address.value));
-  const projectConfigurationError = computed(
-    () => readConfiguredProjectId().error,
+  const projectConfigurationError = computed(() =>
+    readE2eWalletHarness() ? "" : readConfiguredProjectId().error,
   );
   const projectId = computed(() => readConfiguredProjectId().projectId);
   const projectConfigured = computed(
-    () => !projectConfigurationError.value && Boolean(projectId.value),
+    () =>
+      Boolean(readE2eWalletHarness()) ||
+      (!projectConfigurationError.value && Boolean(projectId.value)),
   );
   const shortAddress = computed(() =>
     address.value
@@ -1155,6 +1211,38 @@ export const useBscWalletConnect = () => {
     let shouldClearRejectedSession = false;
     let connector: UniversalConnector | null = null;
     try {
+      const harness = readE2eWalletHarness();
+      if (harness) {
+        if (typeof harness.connect !== "function") {
+          throw new Error("BSC E2E wallet harness connect hook is missing.");
+        }
+        const connectedHarness = await harness.connect();
+        const nextAddress = normalizeEvmAddress(
+          String(connectedHarness?.address ?? ""),
+        );
+        const snapshot = bscWalletConnectSessionFromAddress(
+          nextAddress,
+          requireStoredWalletConnectTopic(
+            connectedHarness?.topic ?? "e2e-bsc-wallet-harness",
+            "BSC E2E wallet topic",
+          ),
+        );
+        if (
+          connectedHarness?.connectedAtMs !== undefined &&
+          connectedHarness.connectedAtMs !== null
+        ) {
+          const connectedAtMs = Number(connectedHarness.connectedAtMs);
+          if (!isFreshBscWalletConnectSessionTimestamp(connectedAtMs)) {
+            throw new Error("BSC E2E wallet session timestamp is invalid.");
+          }
+          snapshot.connectedAtMs = connectedAtMs;
+        }
+        address.value = snapshot.address ?? "";
+        sessionTopic.value = snapshot.topic ?? "";
+        sessionConnectedAtMs.value = snapshot.connectedAtMs;
+        persist();
+        return;
+      }
       connector = await getConnector();
       const { session } = await connector.connect(
         createBscWalletConnectConnectParams(),
@@ -1204,8 +1292,13 @@ export const useBscWalletConnect = () => {
     error.value = "";
     disconnecting.value = true;
     try {
-      const connector = connectorPromise ? await connectorPromise : null;
-      await connector?.disconnect();
+      const harness = readE2eWalletHarness();
+      if (harness && typeof harness.disconnect === "function") {
+        await harness.disconnect();
+      } else {
+        const connector = connectorPromise ? await connectorPromise : null;
+        await connector?.disconnect();
+      }
     } catch (disconnectError) {
       error.value =
         disconnectError instanceof Error
@@ -1233,6 +1326,27 @@ export const useBscWalletConnect = () => {
     ) {
       clearSession();
       throw new Error("Reconnect your BSC wallet before sending.");
+    }
+    const harness = readE2eWalletHarness();
+    if (harness) {
+      if (typeof harness.sendTransaction !== "function") {
+        throw new Error(
+          "BSC E2E wallet harness sendTransaction hook is missing.",
+        );
+      }
+      assertTransactionFromMatchesActiveAccount(
+        transactionForWallet,
+        snapshot.address,
+      );
+      assertTransactionToMatchesAllowedTargets(transactionForWallet, options);
+      assertTransactionDataMatchesAllowedSelectors(
+        transactionForWallet,
+        options,
+      );
+      Object.freeze(transactionForWallet);
+      return normalizeBscWalletConnectTransactionHash(
+        await harness.sendTransaction(transactionForWallet),
+      );
     }
     const connector = await getConnector();
     const activeSession = connector.provider.session as

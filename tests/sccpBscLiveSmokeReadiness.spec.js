@@ -823,12 +823,14 @@ const readyProverManifest = ({
       tokenAddress: BSC_TOKEN_ADDRESS,
       sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
       verifierAddress: BSC_VERIFIER_ADDRESS,
+      networkIdHex: bscNetworkIdHex,
       verifierCodeHash: HASH_11,
       verifierKeyHash: HASH_22,
       proofArtifactHash: HASH_44,
       provingKeyHash: HASH_66,
       nativeEvmProverBundleHash,
       destinationBindingHash: HASH_33,
+      settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
     },
     postDeployLiveEvidence: {
       fullTomlReady: true,
@@ -1676,6 +1678,55 @@ describe("BSC SCCP live smoke readiness", () => {
       failedChecks: [],
     });
     expect(JSON.stringify(report)).not.toMatch(/private|seed|mnemonic/iu);
+  });
+
+  it("uses route-published BSC browser prover refs when local env URLs are absent", () => {
+    const report = evaluateBscSccpLiveSmokeReadiness({
+      routeReport: readyRouteReport(),
+      peerAuditReport: readyPeerAuditReport(),
+      walletConnectProjectId: VALID_WALLETCONNECT_PROJECT_ID,
+      destinationProverModuleAvailability:
+        readyDestinationProverModuleAvailability(),
+      sourceProverModuleAvailability: readySourceProverModuleAvailability(),
+      destinationProverManifestInspection: readyProverInspection(),
+      sourceProverManifestInspection: readySourceProverInspection(),
+      checkedAt: "2026-06-05T00:00:00.000Z",
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.reasons).toEqual([]);
+    expect(report.provers.destination.moduleUrl).toBe("/sccp-bsc-prover.js");
+    expect(report.provers.source.moduleUrl).toBe("/sccp-bsc-source-prover.js");
+    expect(report.nextActions).toEqual([]);
+    expect(report.missingProductionInputs).toEqual([]);
+  });
+
+  it("rejects unsafe route-published BSC browser prover refs when env URLs are absent", () => {
+    const report = evaluateBscSccpLiveSmokeReadiness({
+      routeReport: readyRouteReport({
+        deployment: {
+          ...readyRouteReport().deployment,
+          destinationBrowserProver: {
+            ...readyRouteReport().deployment.destinationBrowserProver,
+            moduleUrl: "https://user:pass@cdn.example.invalid/p.js",
+          },
+          sourceBrowserProver: {
+            ...readyRouteReport().deployment.sourceBrowserProver,
+            moduleUrl:
+              "http://cdn.example.invalid/source.js?token=secret#frag",
+          },
+        },
+      }),
+      peerAuditReport: readyPeerAuditReport(),
+      walletConnectProjectId: VALID_WALLETCONNECT_PROJECT_ID,
+    });
+
+    expect(report.ready).toBe(false);
+    expect(report.reasons.join("\n")).toContain("credentials");
+    expect(report.reasons.join("\n")).toContain("query strings or fragments");
+    expect(report.nextActions.map((entry) => entry.id)).toContain(
+      "publish-bsc-prover-modules",
+    );
   });
 
   it("preserves public route preflight runbook fields in the embedded route summary", () => {
@@ -4879,23 +4930,17 @@ describe("BSC SCCP live smoke readiness", () => {
       "SCCP BSC route preflight is not ready.",
       "TAIRA peer config audit is not ready.",
       "WalletConnect project ID is missing.",
-      "TAIRA -> BSC browser prover module URL is missing.",
-      "TAIRA -> BSC browser prover manifest URL is missing.",
-      "BSC -> TAIRA browser source prover module URL is missing.",
-      "BSC -> TAIRA browser source prover manifest URL is missing.",
+      "TAIRA -> BSC browser prover module availability was not checked.",
+      "TAIRA -> BSC browser prover manifest was not checked.",
+      "BSC -> TAIRA browser source prover module availability was not checked.",
+      "BSC -> TAIRA browser source prover manifest was not checked.",
     ]);
     expect(report.nextSteps).toContain("Activate BSC route manifest evidence.");
     expect(report.nextSteps.join("\n")).toContain(
       "Set VITE_WALLETCONNECT_PROJECT_ID",
     );
-    expect(report.nextSteps.join("\n")).toContain(
+    expect(report.nextSteps.join("\n")).not.toContain(
       "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
-    );
-    expect(report.nextSteps.join("\n")).toContain(
-      SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
-    );
-    expect(report.nextSteps.join("\n")).toContain(
-      SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
     );
     expect(report.nextActions.map((entry) => entry.id)).toEqual([
       "refresh-bsc-route-preflight",
@@ -4960,34 +5005,27 @@ describe("BSC SCCP live smoke readiness", () => {
     expect(
       report.checks.find((entry) => entry.id === "destination-prover-module")
         ?.detail,
-    ).toContain(
-      `${SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV} (or fallback ${SCCP_BSC_PROVER_MODULE_URL_ENV})`,
-    );
+    ).toBe("TAIRA -> BSC browser prover module availability was not checked.");
     expect(
       report.checks.find((entry) => entry.id === "source-prover-module")
         ?.detail,
-    ).toContain(
-      `${SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV} (or fallback ${SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV})`,
+    ).toBe(
+      "BSC -> TAIRA browser source prover module availability was not checked.",
     );
   });
 
-  it("uses mainnet-specific BSC prover env names in missing-input guidance", () => {
+  it("uses mainnet-specific BSC prover env names when route refs are absent", () => {
+    const routeReport = readyMainnetRouteReport();
     const report = evaluateBscSccpLiveSmokeReadiness({
       bscNetwork: "mainnet",
-      routeReport: readyRouteReport({
-        bsc: {
-          network: "mainnet",
-          chain: "bsc-mainnet",
-          chainIdHex: "0x38",
-          networkIdHex: BSC_MAINNET_NETWORK_ID_HEX,
-          explorerUrl: "https://bscscan.com",
-          explorerHost: "bscscan.com",
-        },
+      routeReport: {
+        ...routeReport,
         deployment: {
-          ...readyRouteReport().deployment,
-          networkIdHex: BSC_MAINNET_NETWORK_ID_HEX,
+          ...routeReport.deployment,
+          destinationBrowserProver: null,
+          sourceBrowserProver: null,
         },
-      }),
+      },
       walletConnectProjectId: VALID_WALLETCONNECT_PROJECT_ID,
       destinationProverModuleUrl: "",
       sourceProverModuleUrl: "",
@@ -5168,7 +5206,12 @@ describe("BSC SCCP live smoke readiness", () => {
 
   it("does not treat the destination prover URL as an implicit source prover", () => {
     const report = evaluateBscSccpLiveSmokeReadiness({
-      routeReport: readyRouteReport(),
+      routeReport: readyRouteReport({
+        deployment: {
+          ...readyRouteReport().deployment,
+          sourceBrowserProver: null,
+        },
+      }),
       walletConnectProjectId: VALID_WALLETCONNECT_PROJECT_ID,
       destinationProverModuleUrl: "/sccp-bsc-prover.js",
       sourceProverModuleUrl: "",
@@ -6050,6 +6093,8 @@ describe("BSC SCCP live smoke readiness", () => {
       nativeEvmProverBundleHash: HASH_99,
       destinationBindingHash: HASH_33,
       settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      destinationBrowserProver: null,
+      sourceBrowserProver: null,
     });
     expect(JSON.stringify(report)).not.toContain("private_key");
     expect(JSON.stringify(report)).not.toContain("seedPhrase");
@@ -6361,7 +6406,7 @@ describe("BSC SCCP live smoke readiness", () => {
     expect(JSON.stringify(duplicateKeyReport)).not.toContain('"ready":true');
   });
 
-  it("prefers profile-specific BSC smoke env over hostile generic prover env", async () => {
+  it("uses route-published BSC smoke refs ahead of hostile prover env", async () => {
     const calls = [];
     const destinationModuleUrl = PROFILE_DESTINATION_PROVER_MODULE_URL;
     const sourceModuleUrl = PROFILE_SOURCE_PROVER_MODULE_URL;
@@ -6514,8 +6559,10 @@ describe("BSC SCCP live smoke readiness", () => {
             "https://user:pass@cdn.example.invalid/generic-destination.manifest.json",
           [SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV]:
             "https://cdn.example.invalid/generic-source.manifest.json?token=secret",
-          [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]: destinationModuleUrl,
-          [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]: sourceModuleUrl,
+          [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]:
+            "https://cdn.example.invalid/stale-testnet-destination.js",
+          [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]:
+            "https://cdn.example.invalid/stale-testnet-source.js",
           [SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV]: destinationManifestUrl,
           [SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV]: sourceManifestUrl,
         },
@@ -6550,6 +6597,7 @@ describe("BSC SCCP live smoke readiness", () => {
       expect(fetched).toContain(destinationModuleUrl);
       expect(fetched).toContain(sourceModuleUrl);
       expect(fetched.join("\n")).not.toContain("generic-");
+      expect(fetched.join("\n")).not.toContain("stale-testnet");
       expect(fetched.join("\n")).not.toContain("token=secret");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });

@@ -23,7 +23,12 @@ import {
   MAX_SCREENSHOT_ARTIFACT_BYTES,
   MAX_VIDEO_ARTIFACT_BYTES,
   REQUIRED_SCCP_BSC_VIDEO_TRANSACTION_SLOTS,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+  SCCP_BSC_WALLETCONNECT_NAMESPACE,
+  SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
   SCCP_BSC_VIDEO_COMPLETE_OPERATOR_NOTES,
+  sccpBscWalletConnectCaipChainId,
 } from "./sccp-bsc-live-video.mjs";
 import {
   BSC_DESTINATION_PROVER_EXPORTS,
@@ -531,7 +536,7 @@ const REQUIRED_MATERIAL_INVENTORY_CHECK_IDS = Object.freeze([
   "route-report-binding",
   "material-inventory-runbook-contract",
 ]);
-const REQUIRED_BSC_PRODUCTION_REQUIREMENTS_INPUT_COUNT = 41;
+const REQUIRED_BSC_PRODUCTION_REQUIREMENTS_INPUT_COUNT = 43;
 
 const REQUIRED_MATERIAL_ROUTE_HASH_FIELDS = Object.freeze([
   "verifierCodeHash",
@@ -540,6 +545,10 @@ const REQUIRED_MATERIAL_ROUTE_HASH_FIELDS = Object.freeze([
   "provingKeyHash",
   "nativeEvmProverBundleHash",
   "destinationBindingHash",
+]);
+const REQUIRED_MATERIAL_ROUTE_BINDING_FIELDS = Object.freeze([
+  ...REQUIRED_MATERIAL_ROUTE_HASH_FIELDS,
+  "settlementAssetDefinitionId",
 ]);
 const NATIVE_EVM_PROVER_ROLE_SEPARATED_HASH_FIELDS = Object.freeze([
   "verifierKeyHash",
@@ -572,9 +581,11 @@ const VIDEO_MISSING_EVIDENCE_FIELDS = Object.freeze([
   "duplicateExplorerScreenshotSlots",
   "invalidExplorerScreenshotSlots",
   "unexpectedExplorerScreenshotKinds",
+  "invalidTransactionLinks",
   "readiness",
   "videoArtifacts",
   "videoTimeline",
+  "walletApproval",
 ]);
 
 const VIDEO_NESTED_PROOF_EVIDENCE_FIELDS = Object.freeze([
@@ -605,9 +616,20 @@ const VIDEO_TRANSCRIPT_FIELDS = Object.freeze(
     "transactionLinks",
     "explorerScreenshots",
     "videoArtifacts",
+    "walletApprovalEvidence",
     "evidence",
     "operatorNotes",
     "missingEvidence",
+  ]),
+);
+const VIDEO_WALLET_APPROVAL_EVIDENCE_FIELDS = Object.freeze(
+  new Set([
+    "mode",
+    "productionReady",
+    "walletConnectNamespace",
+    "walletConnectMethod",
+    "walletConnectChainId",
+    "e2eWalletHarness",
   ]),
 );
 const VIDEO_READINESS_BINDING_FIELDS = Object.freeze(
@@ -636,6 +658,7 @@ const VIDEO_READINESS_BINDING_PEER_AUDIT_FIELDS = Object.freeze(
     "ready",
     "peerCount",
     "manifestFingerprint",
+    "localRouteCount",
     "sanitizedStanzaFilesChecked",
     ...PUBLIC_ROUTE_IDENTITY_FIELDS_WITH_ALIASES,
   ]),
@@ -684,6 +707,7 @@ const VIDEO_EVIDENCE_FIELDS = Object.freeze(
     "postDeployTransactionEvidence",
     "videoArtifactEvidence",
     "timelineEvidence",
+    "invalidTransactionLinkEntries",
   ]),
 );
 const VIDEO_READINESS_EVIDENCE_FIELDS = Object.freeze(
@@ -2978,6 +3002,130 @@ const publicMaterialFileSummary = (entry) =>
               },
             }
           : {}),
+        ...(isRecord(readRecord(entry, "routeManifestUpsertIsi"))
+          ? {
+              routeManifestUpsertIsi: {
+                valid: readBoolean(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "valid",
+                ),
+                schema: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "schema",
+                ),
+                routeId: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "routeId",
+                ),
+                assetKey: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "assetKey",
+                ),
+                chain: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "chain",
+                ),
+                chainIdHex: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "chainIdHex",
+                ),
+                networkIdHex: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "networkIdHex",
+                ),
+                counterpartyDomain: readNumber(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "counterpartyDomain",
+                ),
+                requiredPermission: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "requiredPermission",
+                ),
+                manifestSha256: readString(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "manifestSha256",
+                ),
+                productionReady: readBoolean(
+                  readRecord(entry, "routeManifestUpsertIsi"),
+                  "productionReady",
+                ),
+                ...(isRecord(
+                  readRecord(
+                    readRecord(entry, "routeManifestUpsertIsi"),
+                    "submission",
+                  ),
+                )
+                  ? {
+                      submission: {
+                        submitted: readBoolean(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "submitted",
+                        ),
+                        toriiUrl: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "toriiUrl",
+                        ),
+                        chainId: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "chainId",
+                        ),
+                        authority: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "authority",
+                        ),
+                        hash: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "hash",
+                        ),
+                        submittedHash: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "submittedHash",
+                        ),
+                        statusKind: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "statusKind",
+                        ),
+                        gasAssetId: readString(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "gasAssetId",
+                        ),
+                        waitForCommit: readBoolean(
+                          readRecord(
+                            readRecord(entry, "routeManifestUpsertIsi"),
+                            "submission",
+                          ),
+                          "waitForCommit",
+                        ),
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
         ...(isRecord(readRecord(entry, "offlineFullTomlEvidence"))
           ? {
               offlineFullTomlEvidence: {
@@ -3212,6 +3360,10 @@ const publicMaterialInventorySummary = (materialInventoryReport) =>
                 readRecord(materialInventoryReport, "counts"),
                 "productionRouteArtifacts",
               ),
+              routeManifestPublicationArtifacts: readNumber(
+                readRecord(materialInventoryReport, "counts"),
+                "routeManifestPublicationArtifacts",
+              ),
               productionVerifierArtifacts: readNumber(
                 readRecord(materialInventoryReport, "counts"),
                 "productionVerifierArtifacts",
@@ -3324,6 +3476,29 @@ const publicVideoMissingEvidenceSummary = (missingEvidence) =>
           Array.isArray(missingEvidence[field]) ? missingEvidence[field] : [],
         ]),
       )
+    : null;
+
+const publicWalletApprovalEvidenceSummary = (walletApprovalEvidence) =>
+  isRecord(walletApprovalEvidence)
+    ? {
+        mode: readString(walletApprovalEvidence, "mode"),
+        productionReady:
+          readBoolean(walletApprovalEvidence, "productionReady") === true,
+        walletConnectNamespace: readString(
+          walletApprovalEvidence,
+          "walletConnectNamespace",
+        ),
+        walletConnectMethod: readString(
+          walletApprovalEvidence,
+          "walletConnectMethod",
+        ),
+        walletConnectChainId: readString(
+          walletApprovalEvidence,
+          "walletConnectChainId",
+        ),
+        e2eWalletHarness:
+          readBoolean(walletApprovalEvidence, "e2eWalletHarness") === true,
+      }
     : null;
 
 const expectedVideoEvidenceForBscProfile = (bscProfile) =>
@@ -3487,6 +3662,9 @@ const publicVideoSummary = (videoTranscript) => {
       fileReverified: readBoolean(artifact, "fileReverified") === true,
       fileVerificationError: publicProofFileVerificationError(artifact),
     })),
+    walletApprovalEvidence: publicWalletApprovalEvidenceSummary(
+      readRecord(videoTranscript, "walletApprovalEvidence"),
+    ),
   };
 };
 
@@ -3764,6 +3942,26 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
     ]),
   }),
   Object.freeze({
+    id: "configure-bsc-walletconnect",
+    title: "Configure BSC WalletConnect",
+    detail:
+      "Configure a WalletConnect project id so the UI can request BSC wallet approvals for live smoke transfers and video proof.",
+    requiredInputs: Object.freeze([
+      Object.freeze({
+        id: "walletconnect-project-id",
+        kind: "operator-environment",
+        placeholder: "<walletconnect-project-id>",
+        description:
+          "VITE_WALLETCONNECT_PROJECT_ID configured outside report files for BSC wallet approval flows.",
+      }),
+    ]),
+    blockedByCheckIds: Object.freeze(["smoke-walletconnect-configured"]),
+    commands: Object.freeze([
+      "VITE_WALLETCONNECT_PROJECT_ID=<walletconnect-project-id> npm run e2e:sccp:bsc-smoke-readiness -- --bsc-network {bscNetwork}",
+      "VITE_WALLETCONNECT_PROJECT_ID=<walletconnect-project-id> npm run e2e:sccp:bsc-production-gate -- --bsc-network {bscNetwork}",
+    ]),
+  }),
+  Object.freeze({
     id: "publish-bsc-prover-modules",
     title: "Publish browser BSC prover modules",
     detail:
@@ -3775,6 +3973,10 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
         placeholder: "<{bscNetwork}-destination-prover-module-url>",
         description:
           "Destination prover module URL accepted by the runtime prover config.",
+        requiredWhenCheckIds: Object.freeze([
+          "smoke-destination-prover-configured",
+          "material-destination-prover-configured",
+        ]),
       }),
       Object.freeze({
         id: "{bscNetwork}-destination-browser-prover-manifest",
@@ -3782,6 +3984,10 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
         placeholder: "<{bscNetwork}-destination-prover-manifest-url>",
         description:
           "Destination prover sidecar manifest with module hash and deployment binding.",
+        requiredWhenCheckIds: Object.freeze([
+          "smoke-destination-prover-configured",
+          "material-destination-prover-configured",
+        ]),
       }),
       Object.freeze({
         id: "{bscNetwork}-source-browser-prover-module",
@@ -3789,6 +3995,10 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
         placeholder: "<{bscNetwork}-source-prover-module-url>",
         description:
           "Source prover module URL accepted by the runtime prover config.",
+        requiredWhenCheckIds: Object.freeze([
+          "smoke-source-prover-configured",
+          "material-source-prover-configured",
+        ]),
       }),
       Object.freeze({
         id: "{bscNetwork}-source-browser-prover-manifest",
@@ -3796,6 +4006,10 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
         placeholder: "<{bscNetwork}-source-prover-manifest-url>",
         description:
           "Source prover sidecar manifest with module hash and deployment binding.",
+        requiredWhenCheckIds: Object.freeze([
+          "smoke-source-prover-configured",
+          "material-source-prover-configured",
+        ]),
       }),
       Object.freeze({
         id: "{bscNetwork}-runtime-prover-config",
@@ -3803,17 +4017,13 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
         placeholder: "<{bscNetwork}-runtime-prover-config-url>",
         description:
           "Runtime prover config selecting the route-bound browser prover modules.",
-      }),
-      Object.freeze({
-        id: "walletconnect-project-id",
-        kind: "operator-environment",
-        placeholder: "<walletconnect-project-id>",
-        description:
-          "WalletConnect project id configured for BSC wallet approval flows.",
+        requiredWhenCheckIds: Object.freeze([
+          "smoke-runtime-prover-configured",
+          "material-runtime-prover-configured",
+        ]),
       }),
     ]),
     blockedByCheckIds: Object.freeze([
-      "smoke-walletconnect-configured",
       "smoke-runtime-prover-configured",
       "smoke-destination-prover-configured",
       "smoke-source-prover-configured",
@@ -4051,6 +4261,13 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
           "Funded TAIRA wallet available through the app secure vault for the live UI flow.",
       }),
       Object.freeze({
+        id: "walletconnect-project-id",
+        kind: "operator-environment",
+        placeholder: "<walletconnect-project-id>",
+        description:
+          "VITE_WALLETCONNECT_PROJECT_ID or --walletconnect-project-id value used by the BSC UI recording harness.",
+      }),
+      Object.freeze({
         id: "{bscNetwork}-wallet-session",
         kind: "wallet-session",
         placeholder: "<{bscNetwork}-walletconnect-session>",
@@ -4080,7 +4297,7 @@ const SCCP_BSC_PRODUCTION_GATE_NEXT_ACTIONS = Object.freeze([
       "video-proof-complete",
     ]),
     commands: Object.freeze([
-      "npm run e2e:sccp:bsc-video -- --bsc-network {bscNetwork}",
+      "npm run e2e:sccp:bsc-video -- --bsc-network {bscNetwork} --walletconnect-project-id <walletconnect-project-id>",
       "npm run e2e:sccp:bsc-production-gate -- --bsc-network {bscNetwork} --require-reverified-video-proof-files true",
     ]),
   }),
@@ -4137,6 +4354,35 @@ const productionGateNextActionRequiredInputs = (
       ),
     ];
   });
+
+const REFRESH_SMOKE_AGGREGATE_CHECK_IDS = new Set([
+  "smoke-readiness-ready",
+  "smoke-readiness-binding",
+]);
+const SMOKE_SPECIFIC_REMEDIATION_CHECK_IDS = new Set([
+  "smoke-walletconnect-configured",
+  "smoke-runtime-prover-configured",
+  "smoke-destination-prover-configured",
+  "smoke-source-prover-configured",
+]);
+
+const productionGateNextActionBlockedChecks = (
+  actionId,
+  blockedByCheckIds,
+  failedIds,
+) => {
+  const blockedByChecks = blockedByCheckIds.filter((id) => failedIds.has(id));
+  if (
+    actionId !== "refresh-readiness-evidence" ||
+    !blockedByChecks.some((id) => REFRESH_SMOKE_AGGREGATE_CHECK_IDS.has(id)) ||
+    ![...SMOKE_SPECIFIC_REMEDIATION_CHECK_IDS].some((id) => failedIds.has(id))
+  ) {
+    return blockedByChecks;
+  }
+  return blockedByChecks.filter(
+    (id) => !REFRESH_SMOKE_AGGREGATE_CHECK_IDS.has(id),
+  );
+};
 
 const productionGateMergeMissingInput = (
   byId,
@@ -4245,7 +4491,11 @@ const productionGateNextActions = (checks, bscProfile) => {
         bscProfile,
         failedIds,
       ),
-      blockedByChecks: blockedByCheckIds.filter((id) => failedIds.has(id)),
+      blockedByChecks: productionGateNextActionBlockedChecks(
+        action.id,
+        blockedByCheckIds,
+        failedIds,
+      ),
     }),
   ).filter((action) => action.blockedByChecks.length > 0);
 };
@@ -5854,12 +6104,14 @@ const checkSummaryDiffs = (leftChecks, rightChecks, label) => {
   if (left.length !== right.length) {
     problems.push(`${label} check count differs.`);
   }
+  const rightById = new Map(right.map((check) => [check.id, check]));
   for (const [index, leftCheck] of left.entries()) {
-    const rightCheck = right[index];
+    const rightCheck = rightById.get(leftCheck.id);
     if (!rightCheck) {
+      problems.push(`${label} check ${index} id differs.`);
       continue;
     }
-    for (const key of ["id", "ok", "status", "message"]) {
+    for (const key of ["ok"]) {
       if (leftCheck[key] !== rightCheck[key]) {
         problems.push(`${label} check ${index} ${key} differs.`);
       }
@@ -6440,6 +6692,17 @@ const routeHashesMatchDeployment = (route, deployment) => {
       normalizeHex(actual) === normalizeHex(expected)
     );
   });
+  const routeSettlementAssetDefinitionId = readString(
+    route,
+    "settlementAssetDefinitionId",
+  );
+  const deploymentSettlementAssetDefinitionId = readString(
+    deployment,
+    "settlementAssetDefinitionId",
+  );
+  const settlementAssetMatches =
+    isCanonicalTairaAssetDefinitionId(routeSettlementAssetDefinitionId) &&
+    routeSettlementAssetDefinitionId === deploymentSettlementAssetDefinitionId;
   const addressesMatch = MATERIAL_DEPLOYMENT_EVIDENCE_ADDRESS_FIELDS.every(
     (key) => {
       const actual = normalizeNonZeroEvmAddress(readString(route, key));
@@ -6447,7 +6710,7 @@ const routeHashesMatchDeployment = (route, deployment) => {
       return Boolean(actual) && actual === expected;
     },
   );
-  return hashesMatch && addressesMatch;
+  return hashesMatch && settlementAssetMatches && addressesMatch;
 };
 
 const postDeployEvidenceMatches = (
@@ -6477,7 +6740,7 @@ const TAIRA_BURN_RECORD_CONTRACT_SCHEMA =
 const TAIRA_BSC_BURN_RECORD_SOURCE_NAME =
   "contracts/taira/sccp/TairaXorBscSccpBurnRecord.ko";
 const TAIRA_BURN_RECORD_PARAM_SIGNATURE =
-  "sender:AccountId,settlement_asset:AssetDefinitionId,amount:int,record_instruction:Blob";
+  "sender:AccountId,settlement_asset:AssetDefinitionId,amount:Amount,record_instruction:bytes";
 
 const MATERIAL_INVENTORY_FILE_SUMMARY_FIELDS = Object.freeze(
   new Set([
@@ -6497,6 +6760,7 @@ const MATERIAL_INVENTORY_FILE_SUMMARY_FIELDS = Object.freeze(
     "contractArtifact",
     "tairaBurnRecordContract",
     "deploymentEvidence",
+    "routeManifestUpsertIsi",
     "offlineFullTomlEvidence",
     "browserProverSidecar",
     "proofFile",
@@ -6619,6 +6883,36 @@ const MATERIAL_INVENTORY_DEPLOYMENT_EVIDENCE_FIELDS = Object.freeze(
     "publicDeploymentMatches",
   ]),
 );
+const MATERIAL_INVENTORY_ROUTE_MANIFEST_UPSERT_ISI_FIELDS = Object.freeze(
+  new Set([
+    "valid",
+    "schema",
+    "routeId",
+    "assetKey",
+    "chain",
+    "chainIdHex",
+    "networkIdHex",
+    "counterpartyDomain",
+    "requiredPermission",
+    "manifestSha256",
+    "productionReady",
+    "submission",
+  ]),
+);
+const MATERIAL_INVENTORY_ROUTE_MANIFEST_UPSERT_ISI_SUBMISSION_FIELDS =
+  Object.freeze(
+    new Set([
+      "submitted",
+      "toriiUrl",
+      "chainId",
+      "authority",
+      "hash",
+      "submittedHash",
+      "statusKind",
+      "gasAssetId",
+      "waitForCommit",
+    ]),
+  );
 const MATERIAL_INVENTORY_DEPLOYMENT_READBACK_FIELDS = Object.freeze(
   new Set([
     "chainIdHex",
@@ -6674,6 +6968,7 @@ const MATERIAL_INVENTORY_ROUTE_FILE_FIELDS = Object.freeze(
     "provingKeyHash",
     "nativeEvmProverBundleHash",
     "destinationBindingHash",
+    "settlementAssetDefinitionId",
     "bridgeAddress",
     "tokenAddress",
     "sourceBridgeAddress",
@@ -6944,6 +7239,7 @@ const MATERIAL_INVENTORY_COUNTS_FIELDS = Object.freeze(
     "truncated",
     "skippedGeneratedDirectories",
     "productionRouteArtifacts",
+    "routeManifestPublicationArtifacts",
     "productionOfflineFullTomlEvidenceArtifacts",
     "productionDeploymentEvidenceArtifacts",
     "productionTairaBurnRecordContracts",
@@ -8447,6 +8743,19 @@ const videoTranscriptShapeProblems = (videoTranscript) => {
       );
     }
   }
+  const walletApprovalEvidence = readRecord(
+    videoTranscript,
+    "walletApprovalEvidence",
+  );
+  if (walletApprovalEvidence) {
+    problems.push(
+      ...unsupportedFieldProblems(
+        walletApprovalEvidence,
+        VIDEO_WALLET_APPROVAL_EVIDENCE_FIELDS,
+        "video proof transcript wallet approval evidence",
+      ),
+    );
+  }
   const evidence = readRecord(videoTranscript, "evidence");
   if (evidence) {
     problems.push(
@@ -9109,6 +9418,81 @@ const materialProofFileSummaryIsProductionBound = (entry, proofFile) => {
   );
 };
 
+const materialRouteManifestIsiSubmissionProblems = (submission, label) => {
+  const problems = [];
+  problems.push(
+    ...unsupportedFieldProblems(
+      submission,
+      MATERIAL_INVENTORY_ROUTE_MANIFEST_UPSERT_ISI_SUBMISSION_FIELDS,
+      `${label} submission`,
+    ),
+  );
+  if (readOwnValue(submission, "submitted") !== true) {
+    problems.push(`${label} submission.submitted must be true.`);
+  }
+  const toriiUrl = readString(submission, "toriiUrl");
+  if (!toriiUrl) {
+    problems.push(`${label} submission.toriiUrl is missing.`);
+  } else {
+    try {
+      const parsed = new URL(toriiUrl);
+      const loopbackHttp =
+        parsed.protocol === "http:" &&
+        ["localhost", "127.0.0.1", "::1", "[::1]"].includes(parsed.hostname);
+      if (
+        parsed.username ||
+        parsed.password ||
+        (parsed.protocol !== "https:" && !loopbackHttp)
+      ) {
+        problems.push(
+          `${label} submission.toriiUrl must be HTTPS or loopback HTTP without credentials.`,
+        );
+      }
+    } catch {
+      problems.push(`${label} submission.toriiUrl is invalid.`);
+    }
+  }
+  if (readString(submission, "chainId") !== BSC_TAIRA_CHAIN_ID) {
+    problems.push(`${label} submission.chainId is invalid.`);
+  }
+  if (!readString(submission, "authority")) {
+    problems.push(`${label} submission.authority is missing.`);
+  }
+  const hash = readString(submission, "hash");
+  const submittedHash = readString(submission, "submittedHash");
+  if (!isNonZeroHex32(hash)) {
+    problems.push(`${label} submission.hash is missing or invalid.`);
+  }
+  if (!isNonZeroHex32(submittedHash)) {
+    problems.push(`${label} submission.submittedHash is missing or invalid.`);
+  }
+  if (
+    isNonZeroHex32(hash) &&
+    isNonZeroHex32(submittedHash) &&
+    hash.toLowerCase() !== submittedHash.toLowerCase()
+  ) {
+    problems.push(`${label} submission hash does not match submittedHash.`);
+  }
+  const waitForCommit = readOwnValue(submission, "waitForCommit");
+  if (typeof waitForCommit !== "boolean") {
+    problems.push(`${label} submission.waitForCommit must be boolean.`);
+  }
+  const statusKind = readString(submission, "statusKind");
+  if (!statusKind) {
+    problems.push(`${label} submission.statusKind is missing.`);
+  } else if (waitForCommit === true && statusKind !== "Applied") {
+    problems.push(
+      `${label} submission.statusKind must be Applied when waitForCommit is true.`,
+    );
+  }
+  if (
+    !isCanonicalTairaAssetDefinitionId(readString(submission, "gasAssetId"))
+  ) {
+    problems.push(`${label} submission.gasAssetId is missing or invalid.`);
+  }
+  return problems;
+};
+
 const materialInventoryFileSummaryProblems = (
   materialInventoryReport,
   routeReport,
@@ -9247,7 +9631,7 @@ const materialInventoryFileSummaryProblems = (
         ),
         ...deploymentFieldAliasProblems(
           routeFile,
-          REQUIRED_MATERIAL_ROUTE_HASH_FIELDS,
+          REQUIRED_MATERIAL_ROUTE_BINDING_FIELDS,
           `production material inventory route file ${index}`,
         ),
         ...postDeployEvidenceDiffs(
@@ -10418,6 +10802,121 @@ const materialInventoryFileSummaryProblems = (
         }),
       );
     }
+    const routeManifestUpsertIsi = readRecord(entry, "routeManifestUpsertIsi");
+    if (
+      readString(entry, "kind") !== "route-manifest-isi" &&
+      isRecord(routeManifestUpsertIsi)
+    ) {
+      problems.push(
+        `production material inventory file summary ${index} carries routeManifestUpsertIsi for non-ISI kind ${readString(entry, "kind")}.`,
+      );
+    }
+    if (
+      readString(entry, "kind") === "route-manifest-isi" &&
+      !isRecord(routeManifestUpsertIsi)
+    ) {
+      problems.push(
+        `production material inventory route manifest ISI file ${index} summary is missing.`,
+      );
+    }
+    if (
+      readString(entry, "kind") === "route-manifest-isi" &&
+      isRecord(routeManifestUpsertIsi)
+    ) {
+      problems.push(
+        ...unsupportedFieldProblems(
+          routeManifestUpsertIsi,
+          MATERIAL_INVENTORY_ROUTE_MANIFEST_UPSERT_ISI_FIELDS,
+          `production material inventory route manifest ISI file ${index}`,
+        ),
+        ...routeIdentityProblemDetails(
+          routeManifestUpsertIsi,
+          `production material inventory route manifest ISI file ${index}`,
+        ),
+      );
+      if (readBoolean(routeManifestUpsertIsi, "valid") !== true) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} is not valid.`,
+        );
+      }
+      if (
+        readString(routeManifestUpsertIsi, "schema") !==
+        "iroha-sccp-route-manifest-isi/v1"
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} schema is invalid.`,
+        );
+      }
+      if (readString(routeManifestUpsertIsi, "chain") !== bscProfile.chain) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} chain is invalid.`,
+        );
+      }
+      if (
+        readString(routeManifestUpsertIsi, "chainIdHex") !==
+        bscProfile.chainIdHex
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} chainIdHex is invalid.`,
+        );
+      }
+      if (
+        readString(routeManifestUpsertIsi, "networkIdHex") !==
+        bscProfile.networkIdHex
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} networkIdHex is invalid.`,
+        );
+      }
+      if (readNumber(routeManifestUpsertIsi, "counterpartyDomain") !== 2) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} counterpartyDomain must be BSC.`,
+        );
+      }
+      if (
+        readString(routeManifestUpsertIsi, "requiredPermission") !==
+        "CanManageSccpRouteManifests"
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} requiredPermission is invalid.`,
+        );
+      }
+      if (
+        !isNonZeroHex32(readString(routeManifestUpsertIsi, "manifestSha256"))
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} manifestSha256 is missing or invalid.`,
+        );
+      }
+      if (
+        typeof readOwnValue(routeManifestUpsertIsi, "productionReady") !==
+        "boolean"
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} productionReady must be boolean.`,
+        );
+      }
+      const routeManifestSubmission = readOwnValue(
+        routeManifestUpsertIsi,
+        "submission",
+      );
+      if (
+        routeManifestSubmission !== undefined &&
+        !isRecord(routeManifestSubmission)
+      ) {
+        problems.push(
+          `production material inventory route manifest ISI file ${index} submission must be an object when present.`,
+        );
+      }
+      if (isRecord(routeManifestSubmission)) {
+        problems.push(
+          ...materialRouteManifestIsiSubmissionProblems(
+            routeManifestSubmission,
+            `production material inventory route manifest ISI file ${index}`,
+          ),
+        );
+      }
+    }
     const offlineFullTomlEvidence = readRecord(
       entry,
       "offlineFullTomlEvidence",
@@ -10680,6 +11179,49 @@ const materialInventoryFileSummaryProblems = (
   if (routeFiles.length === 0) {
     problems.push(
       "production material inventory has no clean route file summary bound to the public route deployment hashes and post-deploy live evidence.",
+    );
+  }
+
+  const routeManifestPublicationFiles = files.filter((entry) => {
+    const publication = readRecord(entry, "routeManifestUpsertIsi");
+    const submission = readRecord(publication, "submission");
+    const hash = readString(submission, "hash");
+    const submittedHash = readString(submission, "submittedHash");
+    return (
+      readString(entry, "kind") === "route-manifest-isi" &&
+      isRecord(publication) &&
+      readBoolean(publication, "valid") === true &&
+      readString(publication, "schema") ===
+        "iroha-sccp-route-manifest-isi/v1" &&
+      readString(publication, "routeId") === SCCP_BSC_XOR_ROUTE_ID &&
+      readString(publication, "assetKey") === SCCP_BSC_XOR_ASSET_KEY &&
+      readString(publication, "chain") === bscProfile.chain &&
+      readString(publication, "chainIdHex") === bscProfile.chainIdHex &&
+      readString(publication, "networkIdHex") === bscProfile.networkIdHex &&
+      readNumber(publication, "counterpartyDomain") === 2 &&
+      readString(publication, "requiredPermission") ===
+        "CanManageSccpRouteManifests" &&
+      isNonZeroHex32(readString(publication, "manifestSha256")) &&
+      readBoolean(publication, "productionReady") === true &&
+      isRecord(submission) &&
+      readBoolean(submission, "submitted") === true &&
+      readString(submission, "chainId") === BSC_TAIRA_CHAIN_ID &&
+      readBoolean(submission, "waitForCommit") === true &&
+      readString(submission, "statusKind") === "Applied" &&
+      isNonZeroHex32(hash) &&
+      isNonZeroHex32(submittedHash) &&
+      normalizeHex(hash) === normalizeHex(submittedHash) &&
+      isCanonicalTairaAssetDefinitionId(readString(submission, "gasAssetId")) &&
+      materialRouteManifestIsiSubmissionProblems(
+        submission,
+        "production material inventory route manifest publication",
+      ).length === 0 &&
+      !hasCriticalFindings(entry)
+    );
+  });
+  if (routeManifestPublicationFiles.length === 0) {
+    problems.push(
+      "production material inventory has no clean applied route manifest publication artifact.",
     );
   }
 
@@ -11173,6 +11715,12 @@ const materialInventoryFileSummaryProblems = (
     ),
     ...materialInventoryCategoryCountProblems(
       counts,
+      "routeManifestPublicationArtifacts",
+      routeManifestPublicationFiles.length,
+      "route manifest publication artifact",
+    ),
+    ...materialInventoryCategoryCountProblems(
+      counts,
       "productionVerifierArtifacts",
       verifierFiles.length,
       "production verifier artifact",
@@ -11412,7 +11960,11 @@ const browserProverManifestDeploymentProblems = ({
       );
     } else if (!expected) {
       problems.push(`${label} route deployment ${key} is missing.`);
-    } else if (normalizeHex(actual) !== normalizeHex(expected)) {
+    } else if (
+      key === "settlementAssetDefinitionId"
+        ? actual !== expected
+        : normalizeHex(actual) !== normalizeHex(expected)
+    ) {
       problems.push(
         `production material inventory ${label} browser prover manifest deployment ${key} does not match route deployment.`,
       );
@@ -12416,6 +12968,10 @@ const materialInventoryBindingProblems = (
   const counts = readRecord(materialInventoryReport, "counts") ?? {};
   for (const [key, label] of [
     ["productionRouteArtifacts", "production-ready route artifact"],
+    [
+      "routeManifestPublicationArtifacts",
+      "route manifest publication artifact",
+    ],
     ["productionVerifierArtifacts", "production verifier artifact"],
     ["sourceParityAttestations", "source parity attestation"],
     ["productionNativeProverBundles", "native EVM prover bundle"],
@@ -13120,6 +13676,77 @@ const videoNestedEvidenceProblems = (videoTranscript) => {
   return problems;
 };
 
+const videoWalletApprovalEvidenceProblems = (videoTranscript, bscProfile) => {
+  const walletApprovalEvidence = readRecord(
+    videoTranscript,
+    "walletApprovalEvidence",
+  );
+  if (!isRecord(walletApprovalEvidence)) {
+    return ["video proof transcript wallet approval evidence is missing."];
+  }
+  const problems = [];
+  const approvalMode = readString(walletApprovalEvidence, "mode");
+  const e2eWalletHarness = readOwnValue(
+    walletApprovalEvidence,
+    "e2eWalletHarness",
+  );
+  if (
+    approvalMode !== SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE &&
+    approvalMode !== SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE
+  ) {
+    problems.push(
+      "video proof transcript wallet approval mode must be manual-walletconnect or e2e-wallet-harness.",
+    );
+  }
+  if (readBoolean(walletApprovalEvidence, "productionReady") !== true) {
+    problems.push(
+      "video proof transcript wallet approval evidence is not production-ready.",
+    );
+  }
+  if (
+    approvalMode === SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE &&
+    e2eWalletHarness !== false
+  ) {
+    problems.push(
+      "video proof transcript wallet approval must not use the E2E wallet harness.",
+    );
+  }
+  if (
+    approvalMode === SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE &&
+    e2eWalletHarness !== true
+  ) {
+    problems.push(
+      "video proof transcript E2E wallet approval must mark e2eWalletHarness true.",
+    );
+  }
+  if (
+    readString(walletApprovalEvidence, "walletConnectNamespace") !==
+    SCCP_BSC_WALLETCONNECT_NAMESPACE
+  ) {
+    problems.push(
+      `video proof transcript wallet approval namespace must be ${SCCP_BSC_WALLETCONNECT_NAMESPACE}.`,
+    );
+  }
+  if (
+    readString(walletApprovalEvidence, "walletConnectMethod") !==
+    SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD
+  ) {
+    problems.push(
+      `video proof transcript wallet approval method must be ${SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD}.`,
+    );
+  }
+  const expectedChainId = sccpBscWalletConnectCaipChainId(bscProfile.key);
+  if (
+    readString(walletApprovalEvidence, "walletConnectChainId") !==
+    expectedChainId
+  ) {
+    problems.push(
+      `video proof transcript wallet approval chain id must be ${expectedChainId}.`,
+    );
+  }
+  return problems;
+};
+
 const explorerScreenshotProofPathReuseProblems = (
   capturedScreenshotsBySlot,
 ) => {
@@ -13343,6 +13970,7 @@ const videoTranscriptProblems = (
   }
   problems.push(
     ...videoExpectedEvidenceProblems(videoTranscript, bscProfile),
+    ...videoWalletApprovalEvidenceProblems(videoTranscript, bscProfile),
     ...videoNestedEvidenceProblems(videoTranscript),
     ...videoMissingEvidenceProblems(
       readRecord(videoTranscript, "missingEvidence"),
@@ -13765,12 +14393,15 @@ const videoReadinessBindingProblems = ({
         "video readiness binding checkedAt is after the recording window.",
       );
     }
+    const smokeCheckedAt = readString(smokeReadinessReport, "checkedAt");
+    const smokeCheckedAtMs = parseTimestampMs(smokeCheckedAt);
     if (
-      readString(smokeReadinessReport, "checkedAt") &&
-      bindingCheckedAt !== readString(smokeReadinessReport, "checkedAt")
+      smokeCheckedAtMs !== null &&
+      bindingCheckedAtMs !== null &&
+      bindingCheckedAtMs < smokeCheckedAtMs
     ) {
       problems.push(
-        "video readiness binding checkedAt differs from smoke-readiness report.",
+        "video readiness binding checkedAt is before the smoke-readiness report.",
       );
     }
   }
@@ -15416,7 +16047,11 @@ const readSafeRelativeEvidenceFile = async (source, reportDir) => {
   return { ok: false, error: missing ? "is missing" : "has unsafe path" };
 };
 
-const sanitizedPeerStanzaContentProblem = (bytes, source) => {
+const sanitizedPeerStanzaContentProblem = (
+  bytes,
+  source,
+  { expectBscXorRoute = true } = {},
+) => {
   const text = Buffer.from(bytes).toString("utf8");
   if (secretLikeText(text)) {
     return "contains secret-like material";
@@ -15430,14 +16065,21 @@ const sanitizedPeerStanzaContentProblem = (bytes, source) => {
   } catch {
     return "is malformed SCCP route TOML";
   }
-  if (!stanzas.length) {
+  if (!stanzas.length && expectBscXorRoute) {
     return "does not contain SCCP route stanza evidence";
   }
   let hasBscXorRoute = false;
+  let hasBscRoute = false;
   for (const stanza of stanzas) {
     if (!isRecord(stanza)) {
       continue;
     }
+    const isBscRoute =
+      readString(stanza, "route_id", "routeId") === SCCP_BSC_XOR_ROUTE_ID;
+    if (!isBscRoute) {
+      continue;
+    }
+    hasBscRoute = true;
     const forbiddenAliases = Object.keys(stanza).filter((key) =>
       FORBIDDEN_BSC_SANITIZED_STANZA_ALIASES.has(key),
     );
@@ -15451,13 +16093,18 @@ const sanitizedPeerStanzaContentProblem = (bytes, source) => {
       return `contains unsupported sanitized route field ${publicUnsupportedFieldName(unsupportedKeys[0])}`;
     }
     if (
-      readString(stanza, "route_id", "routeId") === SCCP_BSC_XOR_ROUTE_ID &&
       readString(stanza, "asset_key", "assetKey") === SCCP_BSC_XOR_ASSET_KEY
     ) {
       hasBscXorRoute = true;
     }
   }
-  if (!hasBscXorRoute) {
+  if (hasBscRoute && !hasBscXorRoute) {
+    return "does not contain taira_bsc_xor/xor route stanza evidence";
+  }
+  if (!expectBscXorRoute && hasBscXorRoute) {
+    return "contains stale taira_bsc_xor/xor route stanza evidence";
+  }
+  if (expectBscXorRoute && !hasBscXorRoute) {
     return "does not contain taira_bsc_xor/xor route stanza evidence";
   }
   return "";
@@ -15515,6 +16162,7 @@ const verifyPeerAuditSanitizedStanzaFiles = async (peerAuditReport, file) => {
         const contentProblem = sanitizedPeerStanzaContentProblem(
           result.bytes,
           source,
+          { expectBscXorRoute: readNumber(peer, "routeCount") !== 0 },
         );
         return {
           ...base,

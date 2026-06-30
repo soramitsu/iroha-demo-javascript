@@ -3014,52 +3014,42 @@ describe("BSC SCCP runtime prover config generator", () => {
     }
   });
 
-  it("rejects route-bound proof artifacts with out-of-order r1cs section ids", async () => {
-    const material = await createRuntimeMaterial();
+  it("accepts route-bound proof artifacts with valid out-of-order r1cs section ids", async () => {
+    const proofBytes = proofArtifactMaterialBytes(0x7c);
+    swapSnarkjsSectionIds(proofBytes, 0, 2);
+    const material = await createRuntimeMaterial({ proofBytes });
     try {
-      const proofBytes = proofArtifactMaterialBytes(0x7c);
-      swapSnarkjsSectionIds(proofBytes, 0, 2);
-      await writeFile(material.paths.proofArtifact, proofBytes);
-      const deployment = await retargetRuntimeNativeBundleHashes(material, {
-        proofBytes,
+      const config = await buildBscSccpRuntimeProverConfig({
+        routeReport: material.routeReport,
+        destination: material.urls,
+        source: material.urls,
+        outputPath: material.paths.outputPath,
+        root: material.root,
       });
 
-      await expect(
-        buildBscSccpRuntimeProverConfig({
-          routeReport: routeReport(deployment),
-          destination: material.urls,
-          source: material.urls,
-          outputPath: material.paths.outputPath,
-          root: material.root,
-        }),
-      ).rejects.toThrow(
-        /destination proof artifact \.r1cs section ids must be in canonical order: 1, 2, 3/u,
+      expect(config.destination.proofArtifactSha256).toBe(
+        sha256Hex(proofBytes),
       );
     } finally {
       await rm(material.root, { recursive: true, force: true });
     }
   });
 
-  it("rejects route-bound proving keys with out-of-order zkey section ids", async () => {
-    const material = await createRuntimeMaterial();
+  it("accepts route-bound proving keys with valid out-of-order zkey section ids", async () => {
+    const provingBytes = provingKeyMaterialBytes(0x7d);
+    swapSnarkjsSectionIds(provingBytes, 0, 9);
+    const material = await createRuntimeMaterial({ provingBytes });
     try {
-      const provingBytes = provingKeyMaterialBytes(0x7d);
-      swapSnarkjsSectionIds(provingBytes, 0, 9);
-      await writeFile(material.paths.provingKey, provingBytes);
-      const deployment = await retargetRuntimeNativeBundleHashes(material, {
-        provingBytes,
+      const config = await buildBscSccpRuntimeProverConfig({
+        routeReport: material.routeReport,
+        destination: material.urls,
+        source: material.urls,
+        outputPath: material.paths.outputPath,
+        root: material.root,
       });
 
-      await expect(
-        buildBscSccpRuntimeProverConfig({
-          routeReport: routeReport(deployment),
-          destination: material.urls,
-          source: material.urls,
-          outputPath: material.paths.outputPath,
-          root: material.root,
-        }),
-      ).rejects.toThrow(
-        /destination proving key \.zkey section ids must be in canonical order: 1, 2, 3, 4, 5, 6, 7, 8, 9, 10/u,
+      expect(config.destination.provingKeySha256).toBe(
+        sha256Hex(provingBytes),
       );
     } finally {
       await rm(material.root, { recursive: true, force: true });

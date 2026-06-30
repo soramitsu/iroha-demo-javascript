@@ -96,12 +96,24 @@ export const normalizeTronWalletConnectProjectId = (
   return projectId;
 };
 
+const readRuntimeWalletConnectProjectId = (): string => {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return window.iroha?.getRuntimeConfig?.().walletConnectProjectId ?? "";
+  } catch (_error) {
+    return "";
+  }
+};
+
 const readConfiguredProjectId = (): { projectId: string; error: string } => {
   try {
     return {
       projectId:
         normalizeTronWalletConnectProjectId(
-          import.meta.env.VITE_WALLETCONNECT_PROJECT_ID,
+          import.meta.env.VITE_WALLETCONNECT_PROJECT_ID ||
+            readRuntimeWalletConnectProjectId(),
         ) ?? "",
       error: "",
     };

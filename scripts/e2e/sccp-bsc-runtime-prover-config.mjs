@@ -52,7 +52,8 @@ export const SCCP_BSC_RUNTIME_PROVER_CONFIG_SCHEMA =
   "iroha-demo-sccp-bsc-runtime-prover/v1";
 export const SCCP_BSC_RUNTIME_PROVER_CONFIG_MAX_BYTES = 512 * 1024;
 const SCCP_BSC_RUNTIME_ROUTE_REPORT_MAX_BYTES = 4 * 1024 * 1024;
-export const SCCP_BSC_RUNTIME_NATIVE_ARTIFACT_MAX_BYTES = 512 * 1024 * 1024;
+export const SCCP_BSC_RUNTIME_NATIVE_ARTIFACT_MAX_BYTES =
+  2 * 1024 * 1024 * 1024;
 export const SCCP_BSC_RUNTIME_PROOF_FILE_MIN_BYTES = 64 * 1024;
 const SCCP_BSC_RUNTIME_PROOF_SHAPE_MIN_BYTES = 4096;
 const SCCP_BSC_RUNTIME_PROOF_MIN_UNIQUE_BYTES = 16;
@@ -1666,7 +1667,6 @@ const assertSnarkjsBinaryHeader = (
   }
   let offset = 12;
   const sectionIds = new Set();
-  const sectionIdList = [];
   for (let index = 0; index < sectionCount; index += 1) {
     if (offset + 12 > bytes.byteLength) {
       throw new Error(`${label} ${formatLabel} section table is truncated.`);
@@ -1681,7 +1681,6 @@ const assertSnarkjsBinaryHeader = (
       throw new Error(`${label} ${formatLabel} section ids must be unique.`);
     }
     sectionIds.add(sectionId);
-    sectionIdList.push(sectionId);
     if (sectionSize === null || sectionSize <= 0) {
       throw new Error(`${label} ${formatLabel} section size is invalid.`);
     }
@@ -1709,14 +1708,6 @@ const assertSnarkjsBinaryHeader = (
   if (unexpectedSectionIds.length > 0) {
     throw new Error(
       `${label} ${formatLabel} contains unsupported section ids: ${unexpectedSectionIds.join(", ")}.`,
-    );
-  }
-  const canonicalOrder = requiredSectionIds.every(
-    (sectionId, index) => sectionIdList[index] === sectionId,
-  );
-  if (sectionIdList.length !== requiredSectionIds.length || !canonicalOrder) {
-    throw new Error(
-      `${label} ${formatLabel} section ids must be in canonical order: ${requiredSectionIds.join(", ")}.`,
     );
   }
 };
@@ -1975,6 +1966,7 @@ const buildRuntimeDirectionConfig = async ({
     root,
     fetchImpl,
     timeoutMs,
+    maxBytes: SCCP_BSC_RUNTIME_NATIVE_ARTIFACT_MAX_BYTES,
   });
   if (proofArtifact.bytes.byteLength < SCCP_BSC_RUNTIME_PROOF_FILE_MIN_BYTES) {
     throw new Error(`${direction} proof artifact is too small.`);
@@ -2001,6 +1993,7 @@ const buildRuntimeDirectionConfig = async ({
     root,
     fetchImpl,
     timeoutMs,
+    maxBytes: SCCP_BSC_RUNTIME_NATIVE_ARTIFACT_MAX_BYTES,
   });
   if (provingKey.bytes.byteLength < SCCP_BSC_RUNTIME_PROOF_FILE_MIN_BYTES) {
     throw new Error(`${direction} proving key is too small.`);

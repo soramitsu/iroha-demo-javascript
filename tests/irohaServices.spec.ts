@@ -231,12 +231,12 @@ describe("iroha services bridge", () => {
     };
 
     const rpcInput = {
-      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      endpoint: "https://bsc-testnet-rpc.publicnode.com",
       method: "eth_chainId",
       params: [],
     };
     const defaultInput = {
-      endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      endpoint: "https://bsc-testnet-rpc.publicnode.com",
     };
     const addressInput = {
       ...defaultInput,

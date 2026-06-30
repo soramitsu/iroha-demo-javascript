@@ -1,6 +1,8 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
 import { secp256k1 } from "@noble/curves/secp256k1";
+import { blake2b } from "@noble/hashes/blake2b";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { spawn } from "node:child_process";
 import {
   createCipheriv,
   createDecipheriv,
@@ -8,6 +10,9 @@ import {
   hkdfSync,
   randomBytes,
 } from "crypto";
+import { existsSync } from "node:fs";
+import { dirname, join, resolve as resolvePath } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ToriiClient,
   buildPrivateCreateKaigiTransaction,
@@ -39,7 +44,15 @@ import {
   type ToriiSccpEvmDestinationQueryOptions,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
-import { parseTronTriggerSmartContractRawData } from "@iroha/iroha-js/sccp";
+import {
+  bindTairaXorBscToTairaSourceProofPackage,
+  buildBscPlaceholderSourceChainProofEnvelope,
+  buildBscSourceChainProofEnvelope,
+  buildBscMainnetSccpDestinationProofRequest,
+  buildBscTestnetSccpDestinationProofRequest,
+  parseTronTriggerSmartContractRawData,
+  type EvmSccpProofRequestInput,
+} from "@iroha/iroha-js/sccp";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair as generateSdkKeyPair,
@@ -152,7 +165,10 @@ import {
   type WalletConfidentialTransactionLike,
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
-import { configureIrohaJsNativeDir } from "./irohaJsNativeDir";
+import {
+  configureIrohaJsNativeDir,
+  installGlobalIrohaJsNativeBinding,
+} from "./irohaJsNativeDir";
 import { buildSoraCloudHfDeployRequest } from "./soraCloudDeployRequest";
 import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
@@ -182,6 +198,13 @@ type SigningAlgorithmOption = {
   label: string;
   isDefault: boolean;
 };
+type RuntimeConfigResponse = {
+  walletConnectProjectId: string;
+  sccpBscE2eWallet: string;
+};
+const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
+const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
+const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
 
 const KNOWN_CHAIN_METADATA_FALLBACKS = [
   {
@@ -199,6 +222,16 @@ const KNOWN_CHAIN_METADATA_FALLBACKS = [
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const readRuntimeConfigEnv = (name: string): string =>
+  trimString(process.env[name]);
+
+const getRuntimeConfigSnapshot = (): RuntimeConfigResponse => ({
+  walletConnectProjectId: readRuntimeConfigEnv(
+    "VITE_WALLETCONNECT_PROJECT_ID",
+  ),
+  sccpBscE2eWallet: readRuntimeConfigEnv("VITE_SCCP_BSC_E2E_WALLET"),
+});
 
 const SECRET_LIKE_PAYLOAD_KEY_PATTERN =
   /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
@@ -1175,6 +1208,18 @@ type SccpDestinationProofMaterialInput = {
   tronVerifierAddress?: string;
   proofBytesHex?: string;
 };
+type SccpBscProofGenerateInput = {
+  request: unknown;
+  proverModuleUrl?: unknown;
+  proverConfigUrl?: unknown;
+  timeoutMs?: unknown;
+};
+type SccpBscSourceProofGenerateInput = {
+  input: unknown;
+  proverModuleUrl?: unknown;
+  proverConfigUrl?: unknown;
+  timeoutMs?: unknown;
+};
 type SccpMessageProofBundleInput = ToriiConfig & {
   messageId: string;
 };
@@ -1287,6 +1332,7 @@ type TronEventsInput = TronGatewayInput & {
 };
 
 type IrohaBridge = {
+  getRuntimeConfig(): RuntimeConfigResponse;
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
   getSigningAlgorithms(config?: ToriiConfig): Promise<SigningAlgorithmOption[]>;
@@ -1603,6 +1649,7 @@ type IrohaBridge = {
   getSoraCloudHfStatus(
     input: SoraCloudStatusInput,
   ): Promise<Record<string, unknown>>;
+  getParameters(input: ToriiConfig): Promise<Record<string, unknown>>;
   getSccpCapabilities(input: ToriiConfig): Promise<SccpCapabilitiesResponse>;
   getSccpProofManifests(
     input: ToriiConfig,
@@ -1619,6 +1666,12 @@ type IrohaBridge = {
   getSccpMessageProofJob(
     input: SccpMessageProofInput,
   ): Promise<SccpMessageProofJobResponse>;
+  proveBscSccpProof(
+    input: SccpBscProofGenerateInput,
+  ): Promise<Record<string, unknown>>;
+  proveBscSccpSourceProof(
+    input: SccpBscSourceProofGenerateInput,
+  ): Promise<Record<string, unknown>>;
   submitSccpBridgeProof(
     input: SccpBridgeProofSubmitInput,
   ): Promise<Record<string, unknown>>;
@@ -1789,19 +1842,50 @@ const isRedundantHttpErrorDetail = (
 };
 
 const clientCache = new Map<string, ToriiClient>();
+const nativeClientCache = new Map<string, ToriiClient>();
 const kaigiCallWatchers = new Map<string, AbortController>();
 const faucetRequestControllers = new Map<string, AbortController>();
 
-const getClient = (toriiUrlRaw: string) => {
+const isLoopbackToriiBaseUrl = (baseUrl: string): boolean => {
+  try {
+    const parsed = new URL(baseUrl);
+    const hostname = parsed.hostname
+      .trim()
+      .toLowerCase()
+      .replace(/^\[/u, "")
+      .replace(/\]$/u, "")
+      .replace(/\.$/u, "");
+    return (
+      parsed.protocol === "http:" &&
+      (hostname === "localhost" ||
+        hostname.endsWith(".localhost") ||
+        hostname === "127.0.0.1" ||
+        hostname === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/u.test(hostname))
+    );
+  } catch {
+    return false;
+  }
+};
+
+const getClient = (toriiUrlRaw: string, nativeBinding?: unknown) => {
   const baseUrl = normalizeBaseUrl(toriiUrlRaw);
-  const cached = clientCache.get(baseUrl);
+  const cache = nativeBinding ? nativeClientCache : clientCache;
+  const cached = cache.get(baseUrl);
   if (cached) {
     return cached;
   }
-  const client = new ToriiClient(baseUrl, {
+  const clientOptions: Record<string, unknown> = {
     fetchImpl: nodeFetch,
-  });
-  clientCache.set(baseUrl, client);
+  };
+  if (isLoopbackToriiBaseUrl(baseUrl)) {
+    clientOptions.allowInsecure = true;
+  }
+  if (nativeBinding) {
+    clientOptions.__nativeBinding = nativeBinding;
+  }
+  const client = new ToriiClient(baseUrl, clientOptions);
+  cache.set(baseUrl, client);
   return client;
 };
 
@@ -2000,6 +2084,37 @@ const readFaucetLedgerFinalityState = async (
     ageMs,
     height,
   };
+};
+
+const readLatestLedgerCreationTimeMs = async (
+  baseUrl: string,
+): Promise<number | null> => {
+  const endpoint = new URL(
+    "v1/ledger/headers?limit=1",
+    `${normalizeBaseUrl(baseUrl)}/`,
+  );
+  const response = await nodeFetch(endpoint.toString(), {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json().catch(() => null)) as unknown;
+  const headers = Array.isArray(payload)
+    ? payload
+    : isPlainRecord(payload) && Array.isArray(payload.items)
+      ? payload.items
+      : [];
+  const latestHeader = headers.find(isPlainRecord);
+  if (!latestHeader) {
+    return null;
+  }
+  return readNumericField(
+    latestHeader.creation_time_ms ?? latestHeader.creationTimeMs,
+  );
 };
 
 const readFaucetSumeragiState = async (
@@ -2615,7 +2730,7 @@ const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
 const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
-const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 180_000;
+const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 600_000;
 const CONFIDENTIAL_TX_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
 const CONFIDENTIAL_TX_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
 const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS = new Set([
@@ -2692,6 +2807,137 @@ const binaryToBuffer = (
     return Buffer.from(value);
   }
   return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+};
+
+const NORITO_FRAME_HEADER_LENGTH = 40;
+const NRT0_PAYLOAD_LENGTH_OFFSET = 23;
+const VERSIONED_TRANSACTION_PAYLOAD_VERSION = 0x01;
+
+type IrohaNativeTransactionCodec = {
+  encodeSignedTransactionNorito?: (
+    payload: Buffer,
+  ) => Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
+  encodeSignedTransactionVersioned?: (
+    payload: Buffer,
+  ) => Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
+  decodeTransactionReceiptJson?: (
+    payload: Buffer,
+  ) => string | Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
+};
+
+type IrohaNativeSccpCodec = {
+  sccpRebuildMessageBundleSourceProofWithDeployment?: (
+    messageBundleJson: string,
+    sourceMaterialJson: string,
+    sourceDeploymentJson: string,
+  ) => string;
+};
+
+const nativeCodecBytesToBuffer = (
+  value: Buffer | Uint8Array | ArrayBuffer | ArrayBufferView,
+  label: string,
+): Buffer => {
+  try {
+    return binaryToBuffer(value);
+  } catch (error) {
+    throw new Error(
+      `${label} returned bytes that could not be normalized: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+};
+
+const isNrt0NoritoFrame = (payload: Buffer): boolean =>
+  payload.length >= NORITO_FRAME_HEADER_LENGTH &&
+  payload.subarray(0, 4).toString("ascii") === "NRT0";
+
+const unwrapNrt0NoritoFrame = (payload: Buffer): Buffer => {
+  if (!isNrt0NoritoFrame(payload)) {
+    return payload;
+  }
+  if (payload[4] !== 0 || payload[5] !== 0) {
+    throw new Error("Unsupported NRT0 transaction frame version.");
+  }
+  const payloadLength = payload.readBigUInt64LE(NRT0_PAYLOAD_LENGTH_OFFSET);
+  if (payloadLength > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("NRT0 transaction frame payload is too large.");
+  }
+  const payloadStart = payload.length - Number(payloadLength);
+  if (payloadStart < NORITO_FRAME_HEADER_LENGTH) {
+    throw new Error("Malformed NRT0 transaction frame payload length.");
+  }
+  return payload.subarray(payloadStart);
+};
+
+const encodeSignedTransactionForPipeline = (
+  signedTransaction: Buffer,
+  options: {
+    nativeBinding?: unknown;
+    requireNativeEncoding?: boolean;
+  } = {},
+): Buffer => {
+  const rawPayload = unwrapNrt0NoritoFrame(signedTransaction);
+  const native = options.nativeBinding as
+    | IrohaNativeTransactionCodec
+    | undefined;
+  const nativeErrors: string[] = [];
+
+  if (typeof native?.encodeSignedTransactionVersioned === "function") {
+    try {
+      const encoded = nativeCodecBytesToBuffer(
+        native.encodeSignedTransactionVersioned(rawPayload),
+        "encodeSignedTransactionVersioned",
+      );
+      if (encoded[0] !== VERSIONED_TRANSACTION_PAYLOAD_VERSION) {
+        throw new Error(
+          `native versioned payload has unsupported version byte ${String(
+            encoded[0],
+          )}`,
+        );
+      }
+      return encoded;
+    } catch (error) {
+      nativeErrors.push(
+        `encodeSignedTransactionVersioned: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  if (typeof native?.encodeSignedTransactionNorito === "function") {
+    try {
+      const encoded = nativeCodecBytesToBuffer(
+        native.encodeSignedTransactionNorito(rawPayload),
+        "encodeSignedTransactionNorito",
+      );
+      return Buffer.concat([
+        Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
+        unwrapNrt0NoritoFrame(encoded),
+      ]);
+    } catch (error) {
+      nativeErrors.push(
+        `encodeSignedTransactionNorito: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  if (options.requireNativeEncoding) {
+    const detail = nativeErrors.length
+      ? ` ${nativeErrors.join("; ")}`
+      : " no compatible native encoder is available.";
+    throw new Error(
+      `ZK IVM proved transaction encoding requires the @iroha/iroha-js native encoder.${detail}`,
+    );
+  }
+
+  return Buffer.concat([
+    Buffer.from([VERSIONED_TRANSACTION_PAYLOAD_VERSION]),
+    rawPayload,
+  ]);
 };
 
 const toJsonByteArray = (
@@ -5003,16 +5249,73 @@ const getSccpMessageProofBundleFromTorii = (
     "SCCP message proof bundle",
   );
 
+const SCCP_DISCOVERY_REQUEST_TIMEOUT_MS = 15_000;
+
+const withSccpDiscoveryTimeout = async <T>(
+  label: string,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> => {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`${label} request timed out.`);
+      controller.abort(error);
+      reject(error);
+    }, SCCP_DISCOVERY_REQUEST_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([run(controller.signal), timeoutPromise]);
+  } finally {
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId);
+    }
+  }
+};
+
+const getSccpCapabilitiesFromTorii = (
+  input: ToriiConfig,
+): Promise<SccpCapabilitiesResponse> =>
+  withSccpDiscoveryTimeout("SCCP capabilities", (signal) =>
+    getClient(input.toriiUrl).getSccpCapabilities({ signal }),
+  );
+
+const getParametersFromTorii = (
+  input: ToriiConfig,
+): Promise<Record<string, unknown>> =>
+  withSccpDiscoveryTimeout("Network parameters", (signal) =>
+    fetchJson(
+      buildNexusEndpoint(input.toriiUrl, "/v1/parameters"),
+      "Network parameters",
+      undefined,
+      signal,
+    ),
+  );
+
+const getSccpProofManifestsFromTorii = (
+  input: ToriiConfig,
+): Promise<SccpProofManifestSetResponse> =>
+  withSccpDiscoveryTimeout("SCCP proof manifests", (signal) =>
+    getClient(input.toriiUrl).getSccpProofManifests({ signal }),
+  );
+
 const listSccpRecentMessagesFromTorii = async (
   input: SccpRecentMessagesInput,
 ): Promise<SccpRecentMessagesResponse> => {
-  const payload = await fetchJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/sccp/messages/recent", {
-      route_id: trimString(input.routeId) || undefined,
-      limit: input.limit,
-      offset: input.offset,
-    }),
+  const payload = await withSccpDiscoveryTimeout(
     "SCCP recent messages",
+    (signal) =>
+      fetchJson(
+        buildNexusEndpoint(input.toriiUrl, "/v1/sccp/messages/recent", {
+          route_id: trimString(input.routeId) || undefined,
+          limit: input.limit,
+          offset: input.offset,
+        }),
+        "SCCP recent messages",
+        undefined,
+        signal,
+      ),
   );
   const rawItems = Array.isArray(payload.items)
     ? payload.items
@@ -5168,6 +5471,1652 @@ const waitForSccpTransactionCommitOnTorii = async (
     status: "Applied",
     ...(fee ? { fee } : {}),
   };
+};
+
+const SCCP_BSC_NODE_PROVER_TIMEOUT_MS = 20 * 60 * 1000;
+const SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
+const SCCP_BSC_NODE_PROVER_CHILD_SOURCE = String.raw`
+const chunks = [];
+process.stdin.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+process.stdin.on("end", async () => {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { fileURLToPath } = await import("node:url");
+    const nativeFetch = globalThis.fetch?.bind(globalThis);
+    if (typeof nativeFetch !== "function") {
+      throw new Error("BSC SCCP child prover runtime does not expose fetch.");
+    }
+    globalThis.fetch = async (resource, init) => {
+      const rawUrl =
+        typeof resource === "string"
+          ? resource
+          : resource instanceof URL
+            ? resource.href
+            : typeof resource?.url === "string"
+              ? resource.url
+              : "";
+      if (/^file:/iu.test(rawUrl)) {
+        if (init?.method && String(init.method).toUpperCase() !== "GET") {
+          return new Response("file:// prover material only supports GET", { status: 405 });
+        }
+        const bytes = await readFile(fileURLToPath(rawUrl));
+        const contentType = rawUrl.endsWith(".json")
+          ? "application/json"
+          : rawUrl.endsWith(".js") || rawUrl.endsWith(".mjs")
+            ? "text/javascript"
+            : "application/octet-stream";
+        return new Response(bytes, {
+          status: 200,
+          headers: { "content-type": contentType },
+        });
+      }
+      return nativeFetch(resource, init);
+    };
+    const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new Error("BSC SCCP child prover input must be an object.");
+    }
+    const direction = input.direction === "source" ? "source" : "destination";
+    const request = input.request;
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      throw new Error("BSC SCCP child prover request must be an object.");
+    }
+    const moduleSpecifier = String(input.moduleSpecifier || "").trim();
+    if (!moduleSpecifier) {
+      throw new Error("BSC SCCP child prover module specifier is required.");
+    }
+    const configUrl = String(input.configUrl || "").trim();
+    if (configUrl) {
+      globalThis.IrohaSccpBscProverConfigUrl = configUrl;
+    }
+    const importProverModule = async (specifier) => {
+      if (/^https?:\/\//iu.test(specifier)) {
+        const response = await fetch(specifier, {
+          method: "GET",
+          credentials: "omit",
+          redirect: "error",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error("BSC SCCP prover module could not be loaded: HTTP " + response.status);
+        }
+        const source = await response.text();
+        return import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
+      }
+      return import(specifier);
+    };
+    const moduleExports = await importProverModule(moduleSpecifier);
+    const prove =
+      direction === "source"
+        ? [
+            moduleExports.irohaSccpBscSourceProve,
+            moduleExports.bscSccpSourceProve,
+            moduleExports.proveBscSource,
+            moduleExports.proveSource,
+            moduleExports.sourceProve,
+          ].find((candidate) => typeof candidate === "function")
+        : [
+            moduleExports.irohaSccpBscProve,
+            moduleExports.bscSccpProve,
+            moduleExports.evmSccpProve,
+            moduleExports.proveBsc,
+            moduleExports.prove,
+            moduleExports.proveFn,
+            moduleExports.default,
+          ].find((candidate) => typeof candidate === "function");
+    if (typeof prove !== "function") {
+      throw new Error("BSC SCCP prover module does not export a " + direction + " prove function.");
+    }
+    const proofBytesToHex = (value) => {
+      if (typeof value === "string") {
+        return value;
+      }
+      if (value instanceof ArrayBuffer) {
+        return "0x" + Buffer.from(value).toString("hex");
+      }
+      if (ArrayBuffer.isView(value)) {
+        return "0x" + Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("hex");
+      }
+      if (Array.isArray(value)) {
+        return "0x" + Buffer.from(value).toString("hex");
+      }
+      if (value && typeof value === "object") {
+        const keys = Object.keys(value);
+        if (keys.length > 0 && keys.every((key) => /^\d+$/u.test(key))) {
+          return "0x" + Buffer.from(keys.sort((a, b) => Number(a) - Number(b)).map((key) => value[key])).toString("hex");
+        }
+      }
+      throw new Error("BSC SCCP prover result proofBytes are missing.");
+    };
+    const resultField = (record, ...names) => {
+      if (!record || typeof record !== "object" || Array.isArray(record)) {
+        return undefined;
+      }
+      for (const name of names) {
+        if (Object.prototype.hasOwnProperty.call(record, name)) {
+          return record[name];
+        }
+      }
+      return undefined;
+    };
+    const result = await prove(request);
+    if (direction === "source") {
+      process.stdout.write(JSON.stringify({ ok: true, result }));
+      return;
+    }
+    const proofBytes = proofBytesToHex(resultField(result, "proofBytes", "proof_bytes"));
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      result: {
+        proofBytes,
+        requestHash: resultField(result, "requestHash", "request_hash") ?? request.requestHash ?? request.request_hash,
+        backend: resultField(result, "backend") ?? request.backend,
+      },
+    }));
+  } catch (error) {
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    }));
+    process.exitCode = 1;
+  }
+});
+`;
+
+const resolveSccpProverHeapMb = (): number => {
+  const rawValue =
+    process.env["SCCP_BSC_PROVER_V8_HEAP_MB"] ??
+    process.env["VITE_SCCP_BSC_PROVER_V8_HEAP_MB"] ??
+    String(DEFAULT_SCCP_PROVER_V8_HEAP_MB);
+  const normalizedValue = String(rawValue).trim().toLowerCase();
+  if (
+    !normalizedValue ||
+    normalizedValue === "0" ||
+    normalizedValue === "false" ||
+    normalizedValue === "off"
+  ) {
+    return DEFAULT_SCCP_PROVER_V8_HEAP_MB;
+  }
+  const parsed = Number(normalizedValue);
+  return Number.isFinite(parsed)
+    ? Math.min(
+        MAX_SCCP_PROVER_V8_HEAP_MB,
+        Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
+      )
+    : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
+};
+
+const activeSccpBscNetworkKey = (): "mainnet" | "testnet" => {
+  const normalized = readRuntimeConfigEnv("VITE_SCCP_BSC_NETWORK")
+    .toLowerCase()
+    .replace(/_/gu, "-");
+  return ["mainnet", "bsc-mainnet", "bnb-mainnet", "bsc"].includes(normalized)
+    ? "mainnet"
+    : "testnet";
+};
+
+const resolveSccpBscRuntimeProverConfigUrl = (input: unknown): string => {
+  const explicit = trimString(input);
+  if (explicit) {
+    return explicit;
+  }
+  const active = activeSccpBscNetworkKey();
+  return (
+    readRuntimeConfigEnv(
+      active === "mainnet"
+        ? "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL"
+        : "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
+    ) || readRuntimeConfigEnv("VITE_SCCP_BSC_PROVER_CONFIG_URL")
+  );
+};
+
+const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
+  const moduleUrl = trimString(input);
+  if (!moduleUrl) {
+    throw new Error("BSC SCCP prover module URL is required.");
+  }
+  if (/^https?:\/\//iu.test(moduleUrl) || moduleUrl.startsWith("data:")) {
+    return moduleUrl;
+  }
+  if (moduleUrl.startsWith("file:")) {
+    return moduleUrl;
+  }
+  const relativePath = moduleUrl.replace(/^\/+/u, "");
+  if (
+    !relativePath ||
+    relativePath.includes("\0") ||
+    relativePath.split(/[\\/]+/u).includes("..")
+  ) {
+    throw new Error("BSC SCCP prover module URL must be package-relative.");
+  }
+  const preloadDir = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolvePath(process.cwd(), "public", relativePath),
+    resolvePath(process.cwd(), "dist/renderer", relativePath),
+    resolvePath(preloadDir, "../renderer", relativePath),
+  ];
+  const modulePath = candidates.find((candidate) => existsSync(candidate));
+  if (!modulePath) {
+    throw new Error(
+      `BSC SCCP prover module was not found under public or renderer assets: ${moduleUrl}`,
+    );
+  }
+  return pathToFileURL(modulePath).href;
+};
+
+const normalizeOptionalTimeoutMs = (
+  value: unknown,
+  fallback: number,
+): number => {
+  if (value === undefined || value === null || value === "") {
+    return fallback;
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("BSC SCCP prover timeoutMs must be a positive integer.");
+  }
+  return Math.min(parsed, SCCP_BSC_NODE_PROVER_TIMEOUT_MS);
+};
+
+const collectLimitedChildOutput = (
+  chunks: Buffer[],
+  chunk: Buffer,
+  label: string,
+) => {
+  const current = chunks.reduce((sum, entry) => sum + entry.byteLength, 0);
+  if (current + chunk.byteLength > SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES) {
+    throw new Error(`${label} exceeded the maximum output size.`);
+  }
+  chunks.push(Buffer.from(chunk));
+};
+
+const SCCP_BSC_MAINNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000038";
+const SCCP_BSC_TESTNET_NETWORK_ID_HEX =
+  "0x0000000000000000000000000000000000000000000000000000000000000061";
+const SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS = [
+  "nativeEvmProverBundleHash",
+  "native_evm_prover_bundle_hash",
+] as const;
+
+const readSccpOwnField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): unknown => {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      return value[key];
+    }
+  }
+  return undefined;
+};
+
+const readRequiredSccpTextField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): string => {
+  const text = trimString(readSccpOwnField(value, keys));
+  if (!text) {
+    throw new Error(`${label} is required.`);
+  }
+  return text;
+};
+
+const readOptionalSccpTextField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): string | undefined => {
+  const text = trimString(readSccpOwnField(value, keys));
+  return text || undefined;
+};
+
+const readRequiredSccpRecordField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): Record<string, unknown> => {
+  const selected = readSccpOwnField(value, keys);
+  if (!isPlainRecord(selected)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return selected;
+};
+
+const readOptionalSccpRecordField = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): Record<string, unknown> | undefined => {
+  const selected = readSccpOwnField(value, keys);
+  return isPlainRecord(selected) ? selected : undefined;
+};
+
+const normalizeSccpUnsignedIndex = (value: unknown, label: string): string => {
+  let parsed: bigint;
+  if (typeof value === "bigint") {
+    parsed = value;
+  } else if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`${label} must be a safe non-negative integer.`);
+    }
+    parsed = BigInt(value);
+  } else if (typeof value === "string") {
+    const text = value.trim().toLowerCase();
+    if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(text)) {
+      parsed = BigInt(text);
+    } else if (/^(?:0|[1-9][0-9]*)$/u.test(text)) {
+      parsed = BigInt(text);
+    } else {
+      throw new Error(`${label} must be an unsigned integer.`);
+    }
+  } else {
+    throw new Error(`${label} must be an unsigned integer.`);
+  }
+  if (parsed < 0n || parsed > (1n << 64n) - 1n) {
+    throw new Error(`${label} must fit in an unsigned 64-bit integer.`);
+  }
+  return parsed.toString();
+};
+
+const readOptionalSccpUnsignedIndex = (
+  record: Record<string, unknown> | undefined,
+  keys: readonly string[],
+  label: string,
+): string | undefined => {
+  if (!record) {
+    return undefined;
+  }
+  let selectedValue = "";
+  let selectedKey = "";
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(record, key)) {
+      continue;
+    }
+    const value = record[key];
+    if (value === undefined || value === null || value === "") {
+      continue;
+    }
+    const normalized = normalizeSccpUnsignedIndex(value, label);
+    if (!selectedValue) {
+      selectedValue = normalized;
+      selectedKey = key;
+      continue;
+    }
+    if (selectedValue !== normalized) {
+      throw new Error(
+        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${normalized}.`,
+      );
+    }
+  }
+  return selectedValue || undefined;
+};
+
+const readBscSourceReceiptRootIndex = (
+  request: Record<string, unknown>,
+  receipt: Record<string, unknown> | undefined,
+): string | undefined => {
+  const keys = [
+    "receiptRootIndex",
+    "receipt_root_index",
+    "transactionIndex",
+    "transaction_index",
+  ] as const;
+  const topLevel = readOptionalSccpUnsignedIndex(
+    request,
+    keys,
+    "BSC source receipt root index",
+  );
+  const receiptLevel = readOptionalSccpUnsignedIndex(
+    receipt,
+    keys,
+    "BSC source receipt root index",
+  );
+  if (topLevel && receiptLevel && topLevel !== receiptLevel) {
+    throw new Error(
+      "BSC source receipt root index aliases disagree between request and receipt.",
+    );
+  }
+  return topLevel || receiptLevel;
+};
+
+const withBscSourceReceiptRootIndex = <T extends Record<string, unknown>>(
+  request: T,
+): T & { receiptRootIndex?: string } => {
+  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
+  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
+  return receiptRootIndex
+    ? {
+        ...request,
+        receiptRootIndex,
+      }
+    : request;
+};
+
+const replaceBscSourceMessageBundleFinalityProof = (
+  proofPackage: Record<string, unknown>,
+  sourceProofHex: string,
+): Record<string, unknown> => {
+  const messageBundle = readRequiredSccpRecordField(
+    proofPackage,
+    ["messageBundle", "message_bundle"],
+    "BSC SCCP source proof package messageBundle",
+  );
+  const patchedMessageBundle: Record<string, unknown> = {
+    ...messageBundle,
+    finality_proof: sourceProofHex,
+  };
+  if (Object.prototype.hasOwnProperty.call(messageBundle, "finalityProof")) {
+    patchedMessageBundle.finalityProof = sourceProofHex;
+  }
+  const patchedPackage: Record<string, unknown> = {
+    ...proofPackage,
+    messageBundle: patchedMessageBundle,
+  };
+  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
+    patchedPackage.message_bundle = patchedMessageBundle;
+  }
+  return patchedPackage;
+};
+
+const withBscSourcePublicInputFinality = (
+  proofPackage: Record<string, unknown>,
+  sourceProof: { finalityHeight: string; finalityBlockHash: string },
+): Record<string, unknown> => {
+  const publicInputKey = isPlainRecord(proofPackage.publicInputs)
+    ? "publicInputs"
+    : isPlainRecord(proofPackage.public_inputs)
+      ? "public_inputs"
+      : null;
+  if (!publicInputKey) {
+    return proofPackage;
+  }
+  return {
+    ...proofPackage,
+    [publicInputKey]: {
+      ...(proofPackage[publicInputKey] as Record<string, unknown>),
+      finalityHeight: sourceProof.finalityHeight,
+      finalityBlockHash: sourceProof.finalityBlockHash,
+    },
+  };
+};
+
+const readBscSourceLaneMaterialForNativeProof = (
+  request: Record<string, unknown>,
+): {
+  sourceVerifierMaterial: Record<string, unknown>;
+  sourceAdapterEngineDeployment: Record<string, unknown>;
+} | null => {
+  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
+    "sourceVerifierMaterial",
+    "source_verifier_material",
+    "bscSourceVerifierMaterial",
+    "bsc_source_verifier_material",
+    "sccpSourceVerifierMaterial",
+    "sccp_source_verifier_material",
+  ]);
+  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
+    "sourceAdapterEngineDeployment",
+    "source_adapter_engine_deployment",
+    "sourceAdapterDeployment",
+    "source_adapter_deployment",
+    "bscSourceAdapterEngineDeployment",
+    "bsc_source_adapter_engine_deployment",
+    "bscSourceAdapterDeployment",
+    "bsc_source_adapter_deployment",
+  ]);
+  if (!sourceVerifierMaterial && !sourceAdapterEngineDeployment) {
+    return null;
+  }
+  if (!sourceVerifierMaterial || !sourceAdapterEngineDeployment) {
+    throw new Error(
+      "BSC source proof requires both sourceVerifierMaterial and sourceAdapterEngineDeployment.",
+    );
+  }
+  return { sourceVerifierMaterial, sourceAdapterEngineDeployment };
+};
+
+const readBscSourceProofNetworkLabel = (
+  request: Record<string, unknown>,
+): "testnet" | "mainnet" | null => {
+  const normalizeNetworkLabel = (
+    selected: string | undefined,
+  ): "testnet" | "mainnet" | null => {
+    if (!selected) return null;
+    const normalized = selected.toLowerCase().replace(/_/gu, "-");
+    if (
+      normalized === "0x61" ||
+      normalized === "97" ||
+      normalized === "eip155:97" ||
+      normalized === SCCP_BSC_TESTNET_NETWORK_ID_HEX
+    ) {
+      return "testnet";
+    }
+    if (
+      normalized === "0x38" ||
+      normalized === "56" ||
+      normalized === "eip155:56" ||
+      normalized === SCCP_BSC_MAINNET_NETWORK_ID_HEX
+    ) {
+      return "mainnet";
+    }
+    if (normalized.includes("testnet") || normalized.includes("chapel")) {
+      return "testnet";
+    }
+    if (normalized.includes("mainnet") || normalized === "bsc") {
+      return "mainnet";
+    }
+    return null;
+  };
+  const directLabel = normalizeNetworkLabel(
+    readOptionalSccpTextField(request, [
+      "bscNetwork",
+      "bsc_network",
+      "evmNetwork",
+      "evm_network",
+      "network",
+      "networkKey",
+      "network_key",
+      "chainId",
+      "chain_id",
+      "chainIdHex",
+      "chain_id_hex",
+      "networkId",
+      "network_id",
+      "networkIdHex",
+      "network_id_hex",
+    ]),
+  );
+  if (directLabel) {
+    return directLabel;
+  }
+  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
+    "sourceVerifierMaterial",
+    "source_verifier_material",
+    "bscSourceVerifierMaterial",
+    "bsc_source_verifier_material",
+  ]);
+  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
+    "sourceAdapterEngineDeployment",
+    "source_adapter_engine_deployment",
+    "sourceAdapterDeployment",
+    "source_adapter_deployment",
+    "bscSourceAdapterEngineDeployment",
+    "bsc_source_adapter_engine_deployment",
+    "bscSourceAdapterDeployment",
+    "bsc_source_adapter_deployment",
+  ]);
+  for (const material of [
+    sourceVerifierMaterial,
+    sourceAdapterEngineDeployment,
+  ]) {
+    if (!material) continue;
+    const materialLabel = normalizeNetworkLabel(
+      readOptionalSccpTextField(material, [
+        "bscNetwork",
+        "bsc_network",
+        "evmNetwork",
+        "evm_network",
+        "network",
+        "networkKey",
+        "network_key",
+        "chainId",
+        "chain_id",
+        "chainIdHex",
+        "chain_id_hex",
+        "networkId",
+        "network_id",
+        "networkIdHex",
+        "network_id_hex",
+      ]),
+    );
+    if (materialLabel) {
+      return materialLabel;
+    }
+  }
+  const active = activeSccpBscNetworkKey();
+  if (active) {
+    return active;
+  }
+  return null;
+};
+
+const readBscSourceValidatorSigningConfig = (
+  request: Record<string, unknown>,
+): {
+  sourceValidatorPrivateKeys: string;
+  sourceValidatorPowers?: string[];
+} => {
+  const networkLabel = readBscSourceProofNetworkLabel(request);
+  const privateKeyEnvNames = [
+    ...(networkLabel === "testnet"
+      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
+      : []),
+    ...(networkLabel === "mainnet"
+      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
+      : []),
+    "SCCP_BSC_SOURCE_VALIDATOR_PRIVATE_KEYS",
+  ];
+  const sourceValidatorPrivateKeys = privateKeyEnvNames
+    .map((name) => process.env[name]?.trim())
+    .find((value): value is string => Boolean(value));
+  if (!sourceValidatorPrivateKeys) {
+    throw new Error(
+      `Deployment-bound BSC source proof requires runtime validator keys in ${privateKeyEnvNames.join(
+        " or ",
+      )}.`,
+    );
+  }
+  const powerEnvNames = [
+    ...(networkLabel === "testnet"
+      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_POWERS"]
+      : []),
+    ...(networkLabel === "mainnet"
+      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_POWERS"]
+      : []),
+    "SCCP_BSC_SOURCE_VALIDATOR_POWERS",
+  ];
+  const sourceValidatorPowers = powerEnvNames
+    .map((name) => process.env[name]?.trim())
+    .find((value): value is string => Boolean(value))
+    ?.split(/[\s,]+/u)
+    .filter(Boolean);
+  return {
+    sourceValidatorPrivateKeys,
+    ...(sourceValidatorPowers && sourceValidatorPowers.length > 0
+      ? { sourceValidatorPowers }
+      : {}),
+  };
+};
+
+const replaceBscSourceMessageBundle = (
+  proofPackage: Record<string, unknown>,
+  messageBundle: Record<string, unknown>,
+): Record<string, unknown> => {
+  const patchedPackage: Record<string, unknown> = {
+    ...proofPackage,
+    messageBundle,
+  };
+  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
+    patchedPackage.message_bundle = messageBundle;
+  }
+  return patchedPackage;
+};
+
+const isByteArray = (value: unknown): value is number[] =>
+  Array.isArray(value) &&
+  value.every(
+    (item) => Number.isInteger(item) && item >= 0 && item <= 255,
+  );
+
+const byteArrayToLowerHex = (bytes: readonly number[]): string =>
+  `0x${Buffer.from(bytes).toString("hex")}`;
+
+const readNumericByteObject = (
+  value: Record<string, unknown>,
+): number[] | null => {
+  const keys = Object.keys(value);
+  if (
+    keys.length === 0 ||
+    !keys.every((key) => /^(?:0|[1-9]\d*)$/u.test(key))
+  ) {
+    return null;
+  }
+  const indexed = keys
+    .map((key) => Number(key))
+    .sort((left, right) => left - right);
+  if (indexed.some((index, offset) => index !== offset)) {
+    return null;
+  }
+  const bytes = indexed.map((index) => value[String(index)]);
+  return isByteArray(bytes) ? bytes : null;
+};
+
+const canonicalizeSccpNativeJsonValue = (value: unknown): unknown => {
+  if (Buffer.isBuffer(value)) {
+    return `0x${value.toString("hex")}`;
+  }
+  if (value instanceof ArrayBuffer) {
+    return `0x${Buffer.from(value).toString("hex")}`;
+  }
+  if (ArrayBuffer.isView(value)) {
+    return `0x${Buffer.from(
+      value.buffer,
+      value.byteOffset,
+      value.byteLength,
+    ).toString("hex")}`;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalizeSccpNativeJsonValue(item));
+  }
+  if (!isPlainRecord(value)) {
+    return value;
+  }
+  if (value.type === "Buffer" && isByteArray(value.data)) {
+    return byteArrayToLowerHex(value.data);
+  }
+  const numericBytes = readNumericByteObject(value);
+  if (numericBytes) {
+    return byteArrayToLowerHex(numericBytes);
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entryValue]) => [
+      key,
+      canonicalizeSccpNativeJsonValue(entryValue),
+    ]),
+  );
+};
+
+const canonicalizeSccpNativeJsonRecord = (
+  value: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> => {
+  const canonical = canonicalizeSccpNativeJsonValue(value);
+  if (!isPlainRecord(canonical)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return canonical;
+};
+
+const readSccpNativeField = (
+  record: Record<string, unknown>,
+  aliases: readonly string[],
+  label: string,
+): unknown => {
+  for (const alias of aliases) {
+    if (Object.prototype.hasOwnProperty.call(record, alias)) {
+      return record[alias];
+    }
+  }
+  throw new Error(`${label} is required.`);
+};
+
+const readSccpNativeRecord = (
+  record: Record<string, unknown>,
+  aliases: readonly string[],
+  label: string,
+): Record<string, unknown> => {
+  const value = readSccpNativeField(record, aliases, label);
+  if (!isPlainRecord(value)) {
+    throw new Error(`${label} must be an object.`);
+  }
+  return value;
+};
+
+const readSccpNativePayloadVariant = (
+  value: unknown,
+): { kind: string; value: Record<string, unknown> } => {
+  if (!isPlainRecord(value)) {
+    throw new Error("BSC SCCP source proof package payload must be an object.");
+  }
+  if (isPlainRecord(value.Transfer)) {
+    return { kind: "Transfer", value: value.Transfer };
+  }
+  if (value.kind === "Transfer" && isPlainRecord(value.value)) {
+    return { kind: "Transfer", value: value.value };
+  }
+  throw new Error("BSC SCCP source proof package payload must be a Transfer.");
+};
+
+const buildSccpNativeMerkleProofPayload = (
+  value: unknown,
+): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    throw new Error(
+      "BSC SCCP source proof package merkle_proof must be an object.",
+    );
+  }
+  const steps = Array.isArray(value.steps) ? value.steps : [];
+  return {
+    steps: steps.map((step, index) => {
+      if (!isPlainRecord(step)) {
+        throw new Error(
+          `BSC SCCP source proof package merkle_proof.steps[${index}] must be an object.`,
+        );
+      }
+      return {
+        sibling_hash: readSccpNativeField(
+          step,
+          ["sibling_hash", "siblingHash"],
+          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_hash`,
+        ),
+        sibling_is_left: readSccpNativeField(
+          step,
+          ["sibling_is_left", "siblingIsLeft"],
+          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_is_left`,
+        ),
+      };
+    }),
+  };
+};
+
+const buildSccpNativeTransferPayload = (
+  value: Record<string, unknown>,
+): Record<string, unknown> => ({
+  version: readSccpNativeField(value, ["version"], "payload.version"),
+  source_domain: readSccpNativeField(
+    value,
+    ["source_domain", "sourceDomain"],
+    "payload.source_domain",
+  ),
+  dest_domain: readSccpNativeField(
+    value,
+    ["dest_domain", "destDomain"],
+    "payload.dest_domain",
+  ),
+  nonce: readSccpNativeField(value, ["nonce"], "payload.nonce"),
+  asset_home_domain: readSccpNativeField(
+    value,
+    ["asset_home_domain", "assetHomeDomain"],
+    "payload.asset_home_domain",
+  ),
+  asset_id_codec: readSccpNativeField(
+    value,
+    ["asset_id_codec", "assetIdCodec"],
+    "payload.asset_id_codec",
+  ),
+  asset_id: `0x${Buffer.from(
+    String(
+      readSccpNativeField(
+        value,
+        ["asset_id", "assetId"],
+        "payload.asset_id",
+      ),
+    ),
+    "utf8",
+  ).toString("hex")}`,
+  amount: readSccpNativeField(value, ["amount"], "payload.amount"),
+  sender_codec: readSccpNativeField(
+    value,
+    ["sender_codec", "senderCodec"],
+    "payload.sender_codec",
+  ),
+  sender: `0x${Buffer.from(
+    String(readSccpNativeField(value, ["sender"], "payload.sender")),
+    "utf8",
+  ).toString("hex")}`,
+  recipient_codec: readSccpNativeField(
+    value,
+    ["recipient_codec", "recipientCodec"],
+    "payload.recipient_codec",
+  ),
+  recipient: `0x${Buffer.from(
+    String(readSccpNativeField(value, ["recipient"], "payload.recipient")),
+    "utf8",
+  ).toString("hex")}`,
+  route_id_codec: readSccpNativeField(
+    value,
+    ["route_id_codec", "routeIdCodec"],
+    "payload.route_id_codec",
+  ),
+  route_id: `0x${Buffer.from(
+    String(
+      readSccpNativeField(value, ["route_id", "routeId"], "payload.route_id"),
+    ),
+    "utf8",
+  ).toString("hex")}`,
+});
+
+const buildSccpNativeMessageBundlePayload = (
+  messageBundle: Record<string, unknown>,
+): Record<string, unknown> => {
+  const canonicalBundle = canonicalizeSccpNativeJsonRecord(
+    messageBundle,
+    "BSC SCCP source proof package messageBundle",
+  );
+  const commitment = readSccpNativeRecord(
+    canonicalBundle,
+    ["commitment"],
+    "BSC SCCP source proof package messageBundle.commitment",
+  );
+  const payload = readSccpNativePayloadVariant(
+    readSccpNativeField(
+      canonicalBundle,
+      ["payload"],
+      "BSC SCCP source proof package messageBundle.payload",
+    ),
+  );
+  return {
+    version: readSccpNativeField(
+      canonicalBundle,
+      ["version"],
+      "BSC SCCP source proof package messageBundle.version",
+    ),
+    commitment_root: readSccpNativeField(
+      canonicalBundle,
+      ["commitment_root", "commitmentRoot"],
+      "BSC SCCP source proof package messageBundle.commitment_root",
+    ),
+    commitment: {
+      version: readSccpNativeField(
+        commitment,
+        ["version"],
+        "BSC SCCP source proof package messageBundle.commitment.version",
+      ),
+      kind: readSccpNativeField(
+        commitment,
+        ["kind"],
+        "BSC SCCP source proof package messageBundle.commitment.kind",
+      ),
+      target_domain: readSccpNativeField(
+        commitment,
+        ["target_domain", "targetDomain"],
+        "BSC SCCP source proof package messageBundle.commitment.target_domain",
+      ),
+      message_id: readSccpNativeField(
+        commitment,
+        ["message_id", "messageId"],
+        "BSC SCCP source proof package messageBundle.commitment.message_id",
+      ),
+      payload_hash: readSccpNativeField(
+        commitment,
+        ["payload_hash", "payloadHash"],
+        "BSC SCCP source proof package messageBundle.commitment.payload_hash",
+      ),
+    },
+    merkle_proof: buildSccpNativeMerkleProofPayload(
+      readSccpNativeField(
+        canonicalBundle,
+        ["merkle_proof", "merkleProof"],
+        "BSC SCCP source proof package messageBundle.merkle_proof",
+      ),
+    ),
+    payload: {
+      [payload.kind]: buildSccpNativeTransferPayload(payload.value),
+    },
+    finality_proof: readSccpNativeField(
+      canonicalBundle,
+      ["finality_proof", "finalityProof"],
+      "BSC SCCP source proof package messageBundle.finality_proof",
+    ),
+  };
+};
+
+const rebuildBscSourceMessageBundleWithNativeDeployment = (
+  proofPackage: Record<string, unknown>,
+  laneMaterial: {
+    sourceVerifierMaterial: Record<string, unknown>;
+    sourceAdapterEngineDeployment: Record<string, unknown>;
+  },
+): Record<string, unknown> => {
+  const messageBundle = readRequiredSccpRecordField(
+    proofPackage,
+    ["messageBundle", "message_bundle"],
+    "BSC SCCP source proof package messageBundle",
+  );
+  const nativeBinding = installGlobalIrohaJsNativeBinding(
+    import.meta.url,
+  ) as IrohaNativeSccpCodec;
+  const rebuild =
+    nativeBinding.sccpRebuildMessageBundleSourceProofWithDeployment;
+  if (typeof rebuild !== "function") {
+    throw new Error(
+      "Native iroha_js_host binding is missing deployment-bound BSC SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
+    );
+  }
+  const nativeMessageBundle = buildSccpNativeMessageBundlePayload(messageBundle);
+  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
+    laneMaterial.sourceVerifierMaterial,
+    "BSC SCCP source verifier material",
+  );
+  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
+    laneMaterial.sourceAdapterEngineDeployment,
+    "BSC SCCP source adapter deployment",
+  );
+  const outputText = rebuild(
+    JSON.stringify(nativeMessageBundle),
+    JSON.stringify(nativeSourceVerifierMaterial),
+    JSON.stringify(nativeSourceAdapterEngineDeployment),
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch (error) {
+    throw new Error(
+      `Native BSC SCCP source proof rebuild returned invalid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!isPlainRecord(parsed)) {
+    throw new Error("Native BSC SCCP source proof rebuild must return an object.");
+  }
+  const rebuiltMessageBundle = readRequiredSccpRecordField(
+    parsed,
+    ["messageBundle", "message_bundle"],
+    "Native BSC SCCP source proof rebuild messageBundle",
+  );
+  const sourceProofHash = readOptionalSccpTextField(parsed, [
+    "sourceProofHash",
+    "source_proof_hash",
+  ]);
+  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
+    "sourceAdapterDeploymentHash",
+    "source_adapter_deployment_hash",
+  ]);
+  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
+    "sourceAdapterDeploymentReceiptHash",
+    "source_adapter_deployment_receipt_hash",
+  ]);
+  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
+    "sourceVerifierEvidenceHash",
+    "source_verifier_evidence_hash",
+  ]);
+  return {
+    ...replaceBscSourceMessageBundle(proofPackage, rebuiltMessageBundle),
+    ...(sourceProofHash ? { sourceProofHash } : {}),
+    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
+    ...(sourceAdapterDeploymentReceiptHash
+      ? { sourceAdapterDeploymentReceiptHash }
+      : {}),
+    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
+  };
+};
+
+const readBscSourceBridgeAddressForSourceProof = (
+  request: Record<string, unknown>,
+): string => {
+  const manifest = readOptionalSccpRecordField(request, ["manifest"]);
+  const address =
+    readOptionalSccpTextField(request, [
+      "sourceBridgeEmitterAddress",
+      "source_bridge_emitter_address",
+      "sourceBridgeAddress",
+      "source_bridge_address",
+      "bscSourceBridgeAddress",
+      "bsc_source_bridge_address",
+    ]) ??
+    (manifest
+      ? readOptionalSccpTextField(manifest, [
+          "sccpBscSourceBridgeAddress",
+          "sccp_bsc_source_bridge_address",
+          "bscSourceBridgeAddress",
+          "bsc_source_bridge_address",
+          "evmSourceBridgeAddress",
+          "evm_source_bridge_address",
+          "sourceBridgeAddress",
+          "source_bridge_address",
+        ])
+      : undefined);
+  if (!address) {
+    throw new Error(
+      "BSC source proof requires the manifest source bridge address.",
+    );
+  }
+  return normalizeEvmAddressHex(address, "BSC source bridge address");
+};
+
+const readBscRpcUrlForSourceProof = (
+  request: Record<string, unknown>,
+): string => {
+  const endpoint = readOptionalSccpTextField(request, [
+    "bscRpcUrl",
+    "bsc_rpc_url",
+    "evmRpcUrl",
+    "evm_rpc_url",
+    "rpcUrl",
+    "rpc_url",
+  ]);
+  if (!endpoint) {
+    throw new Error(
+      "BSC source proof requires a BSC RPC URL to read source bridge code.",
+    );
+  }
+  return endpoint;
+};
+
+const readBscSourceBridgeCodeHashForSourceProof = async (
+  request: Record<string, unknown>,
+  sourceBridgeAddress: string,
+): Promise<string> => {
+  const supplied = readOptionalSccpTextField(request, [
+    "sourceBridgeEmitterCodeHash",
+    "source_bridge_emitter_code_hash",
+    "sourceBridgeCodeHash",
+    "source_bridge_code_hash",
+  ]);
+  if (supplied) {
+    return normalizeEvmNonZeroHash(supplied, "BSC source bridge code hash");
+  }
+  const code = await getEvmCodeFromRpc({
+    endpoint: readBscRpcUrlForSourceProof(request),
+    address: sourceBridgeAddress,
+    blockTag: "latest",
+  });
+  if (code === "0x") {
+    throw new Error("BSC source bridge contract code is empty.");
+  }
+  return `0x${Buffer.from(
+    keccak_256(Buffer.from(code.slice(2), "hex")),
+  ).toString("hex")}`;
+};
+
+const buildBinaryBscSourceProofPackage = async (
+  proofPackage: Record<string, unknown>,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  const messageBundle = readRequiredSccpRecordField(
+    proofPackage,
+    ["messageBundle", "message_bundle"],
+    "BSC SCCP source proof package messageBundle",
+  );
+  const commitment = readRequiredSccpRecordField(
+    messageBundle,
+    ["commitment"],
+    "BSC SCCP source proof package commitment",
+  );
+  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
+  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
+  const sourceBridgeEmitterAddress =
+    readBscSourceBridgeAddressForSourceProof(request);
+  const sourceBridgeEmitterCodeHash =
+    await readBscSourceBridgeCodeHashForSourceProof(
+      request,
+      sourceBridgeEmitterAddress,
+    );
+  const finalityHeight = readOptionalSccpTextField(request, [
+    "finalityHeight",
+    "finality_height",
+  ]);
+  const finalityBlockHash = readOptionalSccpTextField(request, [
+    "finalityBlockHash",
+    "finality_block_hash",
+  ]);
+  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
+  const sourceValidatorSigningConfig = laneMaterial
+    ? readBscSourceValidatorSigningConfig(request)
+    : null;
+  const blockReceipts = readSccpOwnField(request, [
+    "blockReceipts",
+    "block_receipts",
+    "receiptBlockReceipts",
+    "receipt_block_receipts",
+  ]);
+  const sourceProofInput = {
+    messageId: readRequiredSccpTextField(
+      commitment,
+      ["message_id", "messageId"],
+      "BSC SCCP source proof package message id",
+    ),
+    payloadHash: readRequiredSccpTextField(
+      commitment,
+      ["payload_hash", "payloadHash"],
+      "BSC SCCP source proof package payload hash",
+    ),
+    commitmentRoot: readRequiredSccpTextField(
+      messageBundle,
+      ["commitment_root", "commitmentRoot"],
+      "BSC SCCP source proof package commitment root",
+    ),
+    sourceEventDigest: readRequiredSccpTextField(
+      proofPackage,
+      ["sourceEventDigest", "source_event_digest"],
+      "BSC SCCP source proof package source event digest",
+    ),
+    sourceBridgeEmitterAddress,
+    sourceBridgeEmitterCodeHash,
+    ...(finalityHeight ? { finalityHeight } : {}),
+    ...(finalityBlockHash ? { finalityBlockHash } : {}),
+    ...(receipt ? { receipt } : {}),
+    ...(readOptionalSccpRecordField(request, ["block"])
+      ? { block: readOptionalSccpRecordField(request, ["block"]) }
+      : {}),
+    ...(Array.isArray(blockReceipts) ? { blockReceipts } : {}),
+    ...(receiptRootIndex
+      ? {
+          receiptRootIndex,
+        }
+      : {}),
+    ...(laneMaterial
+      ? {
+          sourceVerifierMaterial: laneMaterial.sourceVerifierMaterial,
+          sourceAdapterEngineDeployment:
+            laneMaterial.sourceAdapterEngineDeployment,
+        }
+      : {}),
+    ...(sourceValidatorSigningConfig ?? {}),
+  };
+  const sourceProof = laneMaterial
+    ? buildBscSourceChainProofEnvelope(sourceProofInput)
+    : buildBscPlaceholderSourceChainProofEnvelope(sourceProofInput);
+  const patchedProofPackage = withBscSourcePublicInputFinality(
+    replaceBscSourceMessageBundleFinalityProof(
+      proofPackage,
+      sourceProof.sourceProofHex,
+    ),
+    sourceProof,
+  );
+  return patchedProofPackage;
+};
+
+const SCCP_BSC_SOURCE_DOMAIN_ID = 2;
+const SCCP_SORA_TARGET_DOMAIN_ID = 0;
+const SCCP_TAIRA_BSC_XOR_ROUTE_ID = "taira_bsc_xor";
+
+const bindBscSourceProofResultInNode = async (
+  input: SccpBscSourceProofGenerateInput,
+  proofPackage: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  const request = snapshotSccpDataValue(
+    input.input,
+    "BSC SCCP source proof request",
+  );
+  if (!isPlainRecord(request)) {
+    throw new Error("BSC SCCP source proof request must be an object.");
+  }
+  const patchedProofPackage = await buildBinaryBscSourceProofPackage(
+    proofPackage,
+    request,
+  );
+  const bridgeAddress = readOptionalSccpTextField(request, [
+    "bridgeAddress",
+    "bridge_address",
+    "bscBridgeAddress",
+    "bsc_bridge_address",
+    "evmBridgeAddress",
+    "evm_bridge_address",
+  ]);
+  const bindInput = {
+    proofPackage: patchedProofPackage,
+    txId: readRequiredSccpTextField(
+      request,
+      [
+        "txId",
+        "txID",
+        "transactionHash",
+        "transaction_hash",
+        "transactionId",
+        "transaction_id",
+      ],
+      "BSC SCCP source proof request txId",
+    ),
+    bscSender: readRequiredSccpTextField(
+      request,
+      ["bscSender", "bsc_sender", "evmSender", "evm_sender", "sender"],
+      "BSC SCCP source proof request bscSender",
+    ),
+    tairaRecipient: readRequiredSccpTextField(
+      request,
+      [
+        "tairaRecipient",
+        "taira_recipient",
+        "recipient",
+        "tairaAccountId",
+        "taira_account_id",
+      ],
+      "BSC SCCP source proof request tairaRecipient",
+    ),
+    amount: readRequiredSccpTextField(
+      request,
+      ["amountBaseUnits", "amount_base_units", "amount"],
+      "BSC SCCP source proof request amountBaseUnits",
+    ),
+    ...(bridgeAddress ? { bridgeAddress } : {}),
+  };
+  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
+  const proofPackageForBinding = laneMaterial
+    ? rebuildBscSourceMessageBundleWithNativeDeployment(
+        {
+          ...patchedProofPackage,
+          messageBundle: bindTairaXorBscToTairaSourceProofPackage(bindInput)
+            .messageBundle,
+        },
+        laneMaterial,
+      )
+    : patchedProofPackage;
+  const bound = bindTairaXorBscToTairaSourceProofPackage({
+    ...bindInput,
+    proofPackage: proofPackageForBinding,
+  });
+  const boundMessageBundle = bound.messageBundle as Record<string, unknown>;
+  const boundCommitment = readRequiredSccpRecordField(
+    boundMessageBundle,
+    ["commitment"],
+    "BSC SCCP source proof package bound commitment",
+  );
+  const boundPayloadHash = readRequiredSccpTextField(
+    boundCommitment,
+    ["payload_hash", "payloadHash"],
+    "BSC SCCP source proof package bound payload hash",
+  );
+  const materialValue = (
+    packageKeys: readonly string[],
+    requestKeys: readonly string[],
+  ): string => {
+    return (
+      readOptionalSccpTextField(patchedProofPackage, packageKeys) ??
+      readOptionalSccpTextField(request, requestKeys) ??
+      ""
+    );
+  };
+  return {
+    messageBundle: boundMessageBundle,
+    settlement: bound.settlement,
+    publicInputs: {
+      sourceDomain: SCCP_BSC_SOURCE_DOMAIN_ID,
+      targetDomain: SCCP_SORA_TARGET_DOMAIN_ID,
+      messageId: bound.messageId,
+      payloadHash: boundPayloadHash,
+      commitmentRoot: bound.commitmentRoot,
+      txId: bound.txId,
+      sourceEventDigest: bound.sourceEventDigest,
+      amountBaseUnits: bound.amount,
+      sender: bindInput.bscSender,
+      recipient: bindInput.tairaRecipient,
+      routeId: SCCP_TAIRA_BSC_XOR_ROUTE_ID,
+    },
+    sourceEventDigest: bound.sourceEventDigest,
+    txId: bound.txId,
+    messageId: bound.messageId,
+    amountBaseUnits: bound.amount,
+    proofArtifactHash: materialValue(
+      ["proofArtifactHash", "proof_artifact_hash"],
+      ["proofArtifactHash", "proof_artifact_hash"],
+    ),
+    provingKeyHash: materialValue(
+      ["provingKeyHash", "proving_key_hash"],
+      ["provingKeyHash", "proving_key_hash"],
+    ),
+    nativeEvmProverBundleHash: materialValue(
+      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
+      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
+    ),
+  };
+};
+
+const readOptionalSccpHex32 = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  label: string,
+): string | undefined => {
+  const raw = readSccpOwnField(value, keys);
+  if (raw === undefined || raw === null || raw === "") {
+    return undefined;
+  }
+  if (typeof raw !== "string") {
+    throw new Error(`${label} must be a canonical 32-byte hex string.`);
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (
+    normalized !== raw.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(normalized) ||
+    /^0x0{64}$/u.test(normalized)
+  ) {
+    throw new Error(`${label} must be a non-zero 32-byte hex string.`);
+  }
+  return normalized;
+};
+
+const bindOptionalBscNativeEvmProverBundleHash = <
+  T extends Record<string, unknown>,
+>(
+  request: T,
+  witness: Record<string, unknown>,
+): T & { nativeEvmProverBundleHash?: string } => {
+  const nativeEvmProverBundleHash = readOptionalSccpHex32(
+    witness,
+    SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS,
+    "BSC SCCP proof witness nativeEvmProverBundleHash",
+  );
+  return nativeEvmProverBundleHash
+    ? { ...request, nativeEvmProverBundleHash }
+    : request;
+};
+
+const readBscNodeProverNetwork = (
+  witness: Record<string, unknown>,
+): "mainnet" | "testnet" => {
+  const binding = readSccpOwnField(witness, [
+    "destinationBinding",
+    "destination_binding",
+  ]);
+  if (!isPlainRecord(binding)) {
+    return "testnet";
+  }
+  const rawNetworkId = readSccpOwnField(binding, [
+    "networkId",
+    "network_id",
+    "networkIdHex",
+    "network_id_hex",
+  ]);
+  if (rawNetworkId === undefined || rawNetworkId === null || rawNetworkId === "") {
+    return "testnet";
+  }
+  if (typeof rawNetworkId !== "string") {
+    throw new Error("BSC SCCP destination binding networkId must be hex.");
+  }
+  const networkId = rawNetworkId.trim().toLowerCase();
+  if (networkId === SCCP_BSC_MAINNET_NETWORK_ID_HEX) {
+    return "mainnet";
+  }
+  if (networkId === SCCP_BSC_TESTNET_NETWORK_ID_HEX) {
+    return "testnet";
+  }
+  throw new Error("BSC SCCP destination binding networkId is unsupported.");
+};
+
+const buildBscNodeProverRequest = (
+  requestOrWitness: Record<string, unknown>,
+): Record<string, unknown> => {
+  const existingRequestHash = readSccpOwnField(requestOrWitness, [
+    "requestHash",
+    "request_hash",
+  ]);
+  if (existingRequestHash !== undefined && existingRequestHash !== null) {
+    return bindOptionalBscNativeEvmProverBundleHash(
+      requestOrWitness,
+      requestOrWitness,
+    );
+  }
+  const network = readBscNodeProverNetwork(requestOrWitness);
+  const request =
+    network === "mainnet"
+      ? buildBscMainnetSccpDestinationProofRequest(
+          requestOrWitness as EvmSccpProofRequestInput,
+        )
+      : buildBscTestnetSccpDestinationProofRequest(
+          requestOrWitness as EvmSccpProofRequestInput,
+        );
+  return bindOptionalBscNativeEvmProverBundleHash(
+    request as unknown as Record<string, unknown>,
+    requestOrWitness,
+  );
+};
+
+const bscEvmGroth16EnvelopeHash = (
+  requestHash: string,
+  proofBytesHex: string,
+): string => {
+  if (!/^0x[0-9a-fA-F]{64}$/u.test(requestHash)) {
+    throw new Error("BSC SCCP proof result requestHash must be 32-byte hex.");
+  }
+  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
+    throw new Error("BSC SCCP proof result proofBytes must be hex.");
+  }
+  const prefix = Buffer.from("sccp:evm:groth16-proof-envelope:v1", "utf8");
+  const digest = blake2b(
+    Buffer.concat([
+      prefix,
+      Buffer.from(requestHash.slice(2), "hex"),
+      Buffer.from(proofBytesHex.slice(2), "hex"),
+    ]),
+    { dkLen: 32 },
+  );
+  return `0x${Buffer.from(digest).toString("hex")}`;
+};
+
+const proveBscSccpProofInNode = async (
+  input: SccpBscProofGenerateInput,
+  direction: "destination" | "source" = "destination",
+): Promise<Record<string, unknown>> => {
+  const requestOrWitness = snapshotSccpDataValue(
+    input.request,
+    "BSC SCCP proof request",
+  );
+  if (!isPlainRecord(requestOrWitness)) {
+    throw new Error("BSC SCCP proof request must be an object.");
+  }
+  assertNoSecretLikePayloadFields(requestOrWitness, "BSC SCCP proof request");
+  const request =
+    direction === "source"
+      ? withBscSourceReceiptRootIndex(requestOrWitness)
+      : buildBscNodeProverRequest(requestOrWitness);
+  const moduleSpecifier = resolveSccpBscProverModuleSpecifier(
+    input.proverModuleUrl,
+  );
+  const configUrl = resolveSccpBscRuntimeProverConfigUrl(input.proverConfigUrl);
+  const timeoutMs = normalizeOptionalTimeoutMs(
+    input.timeoutMs,
+    SCCP_BSC_NODE_PROVER_TIMEOUT_MS,
+  );
+  const childInput = JSON.stringify({
+    direction,
+    request,
+    moduleSpecifier,
+    configUrl,
+  });
+  const heapMb = resolveSccpProverHeapMb();
+  const child = spawn(
+    process.execPath,
+    [`--max-old-space-size=${heapMb}`, "-e", SCCP_BSC_NODE_PROVER_CHILD_SOURCE],
+    {
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: "1",
+        SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
+        VITE_SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  const stdout: Buffer[] = [];
+  const stderr: Buffer[] = [];
+  let outputError: Error | null = null;
+  const timeout = setTimeout(() => {
+    child.kill("SIGTERM");
+  }, timeoutMs);
+  child.stdout.on("data", (chunk: Buffer) => {
+    try {
+      collectLimitedChildOutput(stdout, chunk, "BSC SCCP prover stdout");
+    } catch (error) {
+      outputError = error instanceof Error ? error : new Error(String(error));
+      child.kill("SIGTERM");
+    }
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    try {
+      collectLimitedChildOutput(stderr, chunk, "BSC SCCP prover stderr");
+    } catch (error) {
+      outputError = error instanceof Error ? error : new Error(String(error));
+      child.kill("SIGTERM");
+    }
+  });
+  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code, signal) => resolveExit({ code, signal }));
+    },
+  );
+  child.stdin.end(childInput);
+  const { code, signal } = await exit.finally(() => clearTimeout(timeout));
+  if (outputError) {
+    throw outputError;
+  }
+  const output = Buffer.concat(stdout).toString("utf8").trim();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch (_error) {
+    const detail = Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000);
+    throw new Error(
+      `BSC SCCP prover child returned unreadable output.${
+        detail ? ` stderr: ${detail}` : ""
+      }`,
+    );
+  }
+  if (!isPlainRecord(parsed)) {
+    throw new Error("BSC SCCP prover child returned an invalid response.");
+  }
+  if (parsed.ok !== true) {
+    const childError = trimString(parsed.error) || `exit ${code ?? signal}`;
+    throw new Error(`BSC SCCP prover child failed: ${childError}`);
+  }
+  if (code !== 0) {
+    throw new Error(`BSC SCCP prover child exited with ${code ?? signal}.`);
+  }
+  const result = snapshotSccpDataValue(
+    parsed.result,
+    "BSC SCCP proof result",
+  );
+  if (!isPlainRecord(result)) {
+    throw new Error("BSC SCCP prover child result must be an object.");
+  }
+  assertNoSecretLikePayloadFields(result, "BSC SCCP proof result");
+  if (direction === "source") {
+    return result;
+  }
+  const proofBytesHex = trimString(result.proofBytes ?? result.proof_bytes);
+  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
+    throw new Error("BSC SCCP prover child result proofBytes must be hex.");
+  }
+  const proofBase64 = Buffer.from(proofBytesHex.slice(2), "hex").toString(
+    "base64",
+  );
+  const proofResult: Record<string, unknown> = {
+    proofBytes: proofBytesHex,
+    proofBase64,
+    backend: trimString(result.backend) || request.backend,
+    requestHash: trimString(result.requestHash) || trimString(request.requestHash),
+    envelopeHash: bscEvmGroth16EnvelopeHash(
+      trimString(result.requestHash) || trimString(request.requestHash),
+      proofBytesHex,
+    ),
+    proofArtifactHash: request.proofArtifactHash,
+    provingKeyHash: request.provingKeyHash,
+    nativeEvmProverBundleHash: request.nativeEvmProverBundleHash,
+    destinationBinding: request.destinationBinding,
+    destinationBindingHash: request.destinationBindingHash,
+    publicInputs: request.publicInputs,
+    publicSignalWords: request.publicSignalWords,
+    bundleBytes: request.bundleBytes,
+    sourceProofBytes: request.sourceProofBytes,
+    proofContext: request.proofContext,
+    statementHash: request.statementHash,
+    sourceDomain: request.sourceDomain,
+  };
+  for (const [key, value] of Object.entries(proofResult)) {
+    if (value === undefined || value === null) {
+      delete proofResult[key];
+    }
+  }
+  delete proofResult.envelopeHash;
+  delete proofResult.envelope_hash;
+  return proofResult;
+};
+
+const proveBscSccpSourceProofInNode = async (
+  input: SccpBscSourceProofGenerateInput,
+): Promise<Record<string, unknown>> => {
+  const request = snapshotSccpDataValue(
+    input.input,
+    "BSC SCCP source proof request",
+  );
+  if (!isPlainRecord(request)) {
+    throw new Error("BSC SCCP source proof request must be an object.");
+  }
+  const sourceRequest = withBscSourceReceiptRootIndex(request);
+  const proofPackage = await proveBscSccpProofInNode(
+    {
+      request: sourceRequest,
+      proverModuleUrl: input.proverModuleUrl,
+      proverConfigUrl: input.proverConfigUrl,
+      timeoutMs: input.timeoutMs,
+    },
+    "source",
+  );
+  return bindBscSourceProofResultInNode(
+    { ...input, input: sourceRequest },
+    proofPackage,
+  );
 };
 
 const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS =
@@ -5478,14 +7427,16 @@ const submitZkIvmProvedTransactionToTorii = async (
     accountId,
     operationLabel: "Submit ZK IVM proved transaction",
   });
+  const nativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);
+  const creationTimeMs = input.creationTimeMs ?? Date.now();
   const tx = buildIvmProvedTransaction({
     chainId,
     authority: accountId,
     proved: input.proved,
     attachment: input.attachment,
     metadata: input.metadata,
-    creationTimeMs: input.creationTimeMs,
-    ttlMs: input.ttlMs,
+    creationTimeMs,
+    ttlMs: input.ttlMs ?? 10 * 60 * 1000,
     nonce: input.nonce,
     privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -5493,6 +7444,7 @@ const submitZkIvmProvedTransactionToTorii = async (
   const submission = await submitSignedTransactionAndWaitForCommit(
     input.toriiUrl,
     tx.signedTransaction,
+    { nativeBinding, requireNativeEncoding: true },
   );
   return transactionSubmissionResult(submission);
 };
@@ -6345,8 +8297,7 @@ const triggerTronConstantContractFromGateway = (
   });
 };
 
-const DEFAULT_BSC_TESTNET_RPC_URL =
-  "https://data-seed-prebsc-1-s1.bnbchain.org:8545";
+const DEFAULT_BSC_TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
 
 const isLoopbackEvmRpcHost = (hostname: string): boolean => {
   const normalized = hostname
@@ -6472,6 +8423,7 @@ const EVM_READ_RPC_METHODS = new Set([
   "eth_getTransactionReceipt",
   "eth_getTransactionByHash",
   "eth_getBlockByHash",
+  "eth_getBlockReceipts",
   "eth_getLogs",
 ]);
 
@@ -6676,6 +8628,19 @@ const normalizeEvmRpcParams = (
       return [
         normalizeEvmNonZeroHash(cloned[0], "EVM RPC eth_getBlockByHash hash"),
         cloned[1],
+      ];
+    case "eth_getBlockReceipts":
+      requireExactEvmRpcParams(method, cloned, 1);
+      return [
+        /^0x[0-9a-f]{64}$/iu.test(String(cloned[0] ?? "").trim())
+          ? normalizeEvmNonZeroHash(
+              cloned[0],
+              "EVM RPC eth_getBlockReceipts block hash",
+            )
+          : normalizeEvmBlockTag(
+              cloned[0],
+              "EVM RPC eth_getBlockReceipts block tag",
+            ),
       ];
     case "eth_getLogs":
       requireExactEvmRpcParams(method, cloned, 1);
@@ -7222,10 +9187,12 @@ const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
 const submitSignedTransactionAndWaitForCommit = async (
   toriiUrl: string,
   signedTransaction: Buffer,
+  options: { nativeBinding?: unknown; requireNativeEncoding?: boolean } = {},
 ) => {
   const submission = await submitSignedTransactionAsVersioned(
     toriiUrl,
     signedTransaction,
+    options,
   );
   const fee = await waitForTransactionCommit(toriiUrl, submission.hash);
   return {
@@ -7237,6 +9204,83 @@ const submitSignedTransactionAndWaitForCommit = async (
 const hashSignedTransactionHex = (signedTransaction: Buffer) => {
   const hash = hashSignedTransaction(signedTransaction, { encoding: "hex" });
   return Buffer.isBuffer(hash) ? hash.toString("hex") : hash;
+};
+
+const readPipelineSubmissionRoute = (
+  response: Pick<Response, "headers">,
+): Record<string, number> | null => {
+  const laneRaw = response.headers.get("x-iroha-route-lane-id");
+  const dataspaceRaw = response.headers.get("x-iroha-route-dataspace-id");
+  const laneId =
+    laneRaw !== null && laneRaw.trim() !== "" ? Number(laneRaw) : null;
+  const dataspaceId =
+    dataspaceRaw !== null && dataspaceRaw.trim() !== ""
+      ? Number(dataspaceRaw)
+      : null;
+  const route: Record<string, number> = {};
+  if (Number.isSafeInteger(laneId)) {
+    route.lane_id = Number(laneId);
+  }
+  if (Number.isSafeInteger(dataspaceId)) {
+    route.dataspace_id = Number(dataspaceId);
+  }
+  return Object.keys(route).length ? route : null;
+};
+
+const attachPipelineSubmissionRoute = (
+  value: unknown,
+  route: Record<string, number> | null,
+) => {
+  if (!route) {
+    return value ?? null;
+  }
+  if (isPlainRecord(value)) {
+    return { ...value, route };
+  }
+  if (value === null || value === undefined) {
+    return { route };
+  }
+  return { value, route };
+};
+
+const readPipelineSubmissionResponse = async (
+  response: Pick<Response, "headers" | "json" | "arrayBuffer">,
+  options: {
+    nativeBinding?: unknown;
+    route: Record<string, number> | null;
+  },
+) => {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    const payload = await response.json().catch(() => null);
+    return attachPipelineSubmissionRoute(payload, options.route);
+  }
+  if (contentType.includes("application/x-norito")) {
+    const body = Buffer.from(await response.arrayBuffer());
+    if (body.length === 0) {
+      return attachPipelineSubmissionRoute(null, options.route);
+    }
+    const native = options.nativeBinding as
+      | IrohaNativeTransactionCodec
+      | undefined;
+    if (typeof native?.decodeTransactionReceiptJson === "function") {
+      try {
+        const decoded = native.decodeTransactionReceiptJson(body);
+        const decodedText = Buffer.isBuffer(decoded)
+          ? decoded.toString("utf8")
+          : decoded instanceof ArrayBuffer || ArrayBuffer.isView(decoded)
+            ? binaryToBuffer(decoded).toString("utf8")
+            : String(decoded);
+        return attachPipelineSubmissionRoute(
+          JSON.parse(decodedText),
+          options.route,
+        );
+      } catch {
+        return attachPipelineSubmissionRoute(null, options.route);
+      }
+    }
+  }
+  return attachPipelineSubmissionRoute(null, options.route);
 };
 
 const ROUTE_UNAVAILABLE_PATTERN = /\broute_unavailable\b/i;
@@ -7291,9 +9335,40 @@ const isRouteUnavailableError = (error: unknown) =>
 const submitSignedTransactionAsVersioned = async (
   toriiUrl: string,
   signedTransaction: Buffer,
+  options: { nativeBinding?: unknown; requireNativeEncoding?: boolean } = {},
 ) => {
-  const client = getClient(toriiUrl);
   const signedTransactionBuffer = binaryToBuffer(signedTransaction);
+  if (options.nativeBinding || options.requireNativeEncoding) {
+    const pipelinePayload = encodeSignedTransactionForPipeline(
+      signedTransactionBuffer,
+      options,
+    );
+    const response = await nodeFetch(
+      buildNexusEndpoint(toriiUrl, "/v1/pipeline/transactions"),
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-norito",
+          Accept: "application/x-norito, application/json",
+        },
+        body: pipelinePayload as unknown as BodyInit,
+      },
+    );
+    if (!response.ok) {
+      throw await createApiRequestError(response, "Transaction submission");
+    }
+    const route = readPipelineSubmissionRoute(response);
+    const submission = await readPipelineSubmissionResponse(response, {
+      nativeBinding: options.nativeBinding,
+      route,
+    });
+    return {
+      hash: hashSignedTransactionHex(signedTransactionBuffer),
+      submission,
+    };
+  }
+
+  const client = getClient(toriiUrl);
   const submission = await client.submitTransaction(signedTransactionBuffer);
   return {
     hash: hashSignedTransactionHex(signedTransactionBuffer),
@@ -9580,6 +11655,9 @@ const readShieldedRecipientDescriptor = (
 };
 
 const api: IrohaBridge = {
+  getRuntimeConfig() {
+    return getRuntimeConfigSnapshot();
+  },
   async ping(config) {
     const client = getClient(config.toriiUrl);
     return client.getHealth().catch(() => null);
@@ -12235,13 +14313,14 @@ const api: IrohaBridge = {
   getSoraCloudHfStatus(input) {
     return getSoraCloudHfStatusFromTorii(input);
   },
+  getParameters({ toriiUrl }) {
+    return getParametersFromTorii({ toriiUrl });
+  },
   getSccpCapabilities({ toriiUrl }) {
-    const client = getClient(toriiUrl);
-    return client.getSccpCapabilities();
+    return getSccpCapabilitiesFromTorii({ toriiUrl });
   },
   getSccpProofManifests({ toriiUrl }) {
-    const client = getClient(toriiUrl);
-    return client.getSccpProofManifests();
+    return getSccpProofManifestsFromTorii({ toriiUrl });
   },
   listSccpRecentMessages(input) {
     return listSccpRecentMessagesFromTorii(input);
@@ -12262,6 +14341,12 @@ const api: IrohaBridge = {
       input.messageId,
       buildSccpDestinationProofOptions(input),
     );
+  },
+  proveBscSccpProof(input) {
+    return proveBscSccpProofInNode(input);
+  },
+  proveBscSccpSourceProof(input) {
+    return proveBscSccpSourceProofInNode(input);
   },
   submitSccpBridgeProof(input) {
     return submitSccpBridgeProofToTorii(input);

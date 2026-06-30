@@ -109,7 +109,7 @@ const routeToml = (overrides = {}) => {
     taira_burn_record_contract_artifact_b64: ARTIFACT_B64,
     taira_burn_record_artifact_sha256: ARTIFACT_SHA256,
     taira_burn_record_code_hash: HASH_77,
-    taira_burn_record_vk_backend: "halo2_ipa",
+    taira_burn_record_vk_backend: "halo2/ipa",
     taira_burn_record_vk_name: "taira_bsc_xor_burn_record_v1",
     taira_burn_record_gas_limit: 2000000,
     post_deploy_full_toml_ready: true,

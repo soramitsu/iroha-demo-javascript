@@ -12,7 +12,11 @@ import {
   BSC_NETWORK_PROFILES,
   resolveBscNetworkProfile,
 } from "./sccp-bsc-route-preflight.mjs";
-import { runBscSccpLiveSmokeReadiness } from "./sccp-bsc-live-smoke-readiness.mjs";
+import {
+  normalizeBscWalletConnectProjectId,
+  runBscSccpLiveSmokeReadiness,
+} from "./sccp-bsc-live-smoke-readiness.mjs";
+import { WALLETCONNECT_PROJECT_ID_ENV } from "./sccp-live-smoke-readiness.mjs";
 import {
   assertSafeJsonReportOutputDir,
   writeJsonReportFile,
@@ -22,6 +26,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "../..");
 const mainEntry = path.join(repoRoot, "dist", "main", "index.cjs");
 const defaultOutputRoot = path.join(repoRoot, "output/sccp-bsc-live-proof");
+const defaultBscE2eSignerEnvFile = path.join(
+  repoRoot,
+  "output/sccp-bsc-deploy/bsc-deployer.private.env",
+);
+const defaultFundedTairaWalletFile = path.join(
+  repoRoot,
+  "output/e2e/live-funded-wallet.json",
+);
 const MIN_VIDEO_ARTIFACT_BYTES = 64 * 1024;
 const MIN_SCREENSHOT_ARTIFACT_BYTES = 512;
 export const MAX_VIDEO_ARTIFACT_BYTES = 512 * 1024 * 1024;
@@ -29,9 +41,25 @@ export const MAX_SCREENSHOT_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const MIN_EXPLORER_CONTENT_CHARS = 64;
 const MIN_VIDEO_DURATION_MS = 30_000;
 const MAX_VIDEO_DURATION_MS = 7_200_000;
+const AUTO_FLOW_POST_COMPLETION_SETTLE_MS = 5_000;
+const EXPLORER_HASH_CONTENT_TIMEOUT_MS = 30_000;
+const EXPLORER_HASH_CONTENT_POLL_MS = 1_000;
 const ROUTE_ID = "taira_bsc_xor";
 const ASSET_KEY = "xor";
 const DEFAULT_BSC_NETWORK = "testnet";
+const DEFAULT_TAIRA_TORII_URL = "https://taira.sora.org";
+const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const TAIRA_NETWORK_PREFIX = 369;
+const DEFAULT_SCCP_BSC_E2E_AMOUNT = "0.0001";
+const DEFAULT_SCCP_BSC_PROVER_V8_HEAP_MB = 12288;
+const MIN_SCCP_BSC_PROVER_V8_HEAP_MB = 1024;
+const MAX_SCCP_BSC_PROVER_V8_HEAP_MB = 32768;
+export const SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE =
+  "manual-walletconnect";
+export const SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE = "e2e-wallet-harness";
+export const SCCP_BSC_WALLETCONNECT_NAMESPACE = "eip155";
+export const SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD =
+  "eth_sendTransaction";
 
 const BSC_LIVE_VIDEO_CLI_OPTIONS = new Set([
   "output-dir",
@@ -48,6 +76,11 @@ const BSC_LIVE_VIDEO_CLI_OPTIONS = new Set([
   "walletconnect-project-id",
   "destination-prover-module-url",
   "source-prover-module-url",
+  "auto-flow",
+  "no-auto-flow",
+  "e2e-signer-env-file",
+  "funded-wallet-file",
+  "e2e-amount",
   "auto-explorer",
   "no-auto-explorer",
 ]);
@@ -114,6 +147,11 @@ Options:
   --walletconnect-project-id ID
   --destination-prover-module-url URL
   --source-prover-module-url URL
+  --auto-flow                Drive the full UI round trip with the E2E signer harness
+  --no-auto-flow
+  --e2e-signer-env-file PATH Private env file with SCCP_BSC_DEPLOYER_PRIVATE_KEY
+  --funded-wallet-file PATH  Funded TAIRA wallet JSON for secure-vault bootstrap
+  --e2e-amount XOR           Auto-flow amount, default ${DEFAULT_SCCP_BSC_E2E_AMOUNT}
   --auto-explorer
   --no-auto-explorer
   --help, -h                   Show this help without launching Electron
@@ -123,9 +161,14 @@ Environment:
   SCCP_BSC_VIDEO_DURATION_MS
   SCCP_BSC_VIDEO_SKIP_PREFLIGHT
   SCCP_BSC_VIDEO_AUTO_EXPLORER
+  SCCP_BSC_VIDEO_AUTO_FLOW
   SCCP_BSC_VIDEO_ALLOW_INCOMPLETE
+  SCCP_BSC_E2E_SIGNER_ENV_FILE
+  SCCP_BSC_E2E_FUNDED_WALLET_FILE
+  SCCP_BSC_E2E_AMOUNT
   SCCP_BSC_NETWORK
   VITE_SCCP_BSC_NETWORK
+  VITE_WALLETCONNECT_PROJECT_ID
   SCCP_TAIRA_TORII_URL
   SCCP_ROUTE_MANIFEST_FILE
   SCCP_BSC_RPC_URL
@@ -187,6 +230,91 @@ export const prepareSccpBscLiveVideoRunDir = async (
   }
   await assertSafeJsonReportOutputDir(runDir);
   return { outputRoot, runDir };
+};
+
+export const resolveSccpBscLiveVideoWalletConnectProjectId = (
+  args = {},
+  env = process.env,
+) =>
+  normalizeBscWalletConnectProjectId(
+    ownValue(args, "walletconnect-project-id") ??
+      ownValue(env, WALLETCONNECT_PROJECT_ID_ENV),
+  ) ?? "";
+
+export const buildSccpBscLiveVideoElectronEnv = ({
+  args = {},
+  env = process.env,
+  bscNetwork = DEFAULT_BSC_NETWORK,
+  autoFlow = false,
+} = {}) => {
+  const bscProfile = resolveBscNetworkProfileOrDefault(bscNetwork);
+  const walletConnectProjectId = resolveSccpBscLiveVideoWalletConnectProjectId(
+    args,
+    env,
+  );
+  const destinationProverModuleUrl = normalizeText(
+    ownValue(args, "destination-prover-module-url"),
+  );
+  const sourceProverModuleUrl = normalizeText(
+    ownValue(args, "source-prover-module-url"),
+  );
+  const destinationProfileModuleEnvKey =
+    bscProfile.key === "mainnet"
+      ? "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL"
+      : "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL";
+  const sourceProfileModuleEnvKey =
+    bscProfile.key === "mainnet"
+      ? "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL"
+      : "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL";
+  return {
+    ...env,
+    VITE_SCCP_BSC_NETWORK: bscProfile.key,
+    ...(walletConnectProjectId
+      ? { [WALLETCONNECT_PROJECT_ID_ENV]: walletConnectProjectId }
+      : {}),
+    ...(destinationProverModuleUrl
+      ? {
+          VITE_SCCP_BSC_PROVER_MODULE_URL: destinationProverModuleUrl,
+          [destinationProfileModuleEnvKey]: destinationProverModuleUrl,
+        }
+      : {}),
+    ...(sourceProverModuleUrl
+      ? {
+          VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: sourceProverModuleUrl,
+          [sourceProfileModuleEnvKey]: sourceProverModuleUrl,
+        }
+      : {}),
+    ...(autoFlow ? { VITE_SCCP_BSC_E2E_WALLET: "1" } : {}),
+  };
+};
+
+export const resolveSccpBscProverV8HeapMb = (env = process.env) => {
+  const rawValue =
+    ownValue(env, "SCCP_BSC_PROVER_V8_HEAP_MB") ??
+    ownValue(env, "VITE_SCCP_BSC_PROVER_V8_HEAP_MB") ??
+    String(DEFAULT_SCCP_BSC_PROVER_V8_HEAP_MB);
+  const normalized = String(rawValue).trim().toLowerCase();
+  if (!normalized || normalized === "0" || normalized === "false") {
+    return null;
+  }
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_SCCP_BSC_PROVER_V8_HEAP_MB;
+  }
+  return Math.min(
+    MAX_SCCP_BSC_PROVER_V8_HEAP_MB,
+    Math.max(MIN_SCCP_BSC_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
+  );
+};
+
+export const buildSccpBscLiveVideoElectronArgs = ({
+  entrypoint = mainEntry,
+  env = process.env,
+} = {}) => {
+  const heapMb = resolveSccpBscProverV8HeapMb(env);
+  return heapMb
+    ? [`--js-flags=--max-old-space-size=${heapMb}`, entrypoint]
+    : [entrypoint];
 };
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -357,6 +485,139 @@ const parseBoolean = (value, label = "boolean option") => {
   throw new Error(`${label} must be true or false.`);
 };
 
+const EVM_ADDRESS_PATTERN = /^0x(?!0{40}$)[0-9a-f]{40}$/iu;
+const PRIVATE_KEY_HEX_PATTERN = /^(?:0x)?[0-9a-f]{64}$/iu;
+const EVM_QUANTITY_PATTERN = /^0x(?:0|[1-9a-f][0-9a-f]*)$/iu;
+
+const normalizeBscE2eAddress = (value, label = "BSC address") => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!EVM_ADDRESS_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be a non-zero 20-byte EVM address.`);
+  }
+  return normalized;
+};
+
+const normalizeBscE2ePrivateKeyHex = (value, label = "BSC private key") => {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/^0x/iu, "");
+  if (!PRIVATE_KEY_HEX_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be a 32-byte hexadecimal private key.`);
+  }
+  if (/^0{64}$/u.test(normalized.toLowerCase())) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return `0x${normalized.toLowerCase()}`;
+};
+
+const normalizeEvmQuantityBigInt = (value, label) => {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const normalized = String(value).trim().toLowerCase();
+  if (!EVM_QUANTITY_PATTERN.test(normalized)) {
+    throw new Error(`${label} must be a canonical EVM quantity.`);
+  }
+  return BigInt(normalized);
+};
+
+export const normalizeSccpBscE2eAmount = (value) => {
+  const normalized = String(value ?? DEFAULT_SCCP_BSC_E2E_AMOUNT).trim();
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/u.test(normalized)) {
+    throw new Error("SCCP BSC E2E amount must be a positive decimal value.");
+  }
+  if (/^0(?:\.0{1,18})?$/u.test(normalized)) {
+    throw new Error("SCCP BSC E2E amount must be greater than zero.");
+  }
+  return normalized;
+};
+
+export const parseSccpBscPrivateEnvText = (text) => {
+  const values = {};
+  for (const [index, rawLine] of String(text ?? "")
+    .split(/\r?\n/u)
+    .entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) {
+      continue;
+    }
+    const unexported = line.startsWith("export ") ? line.slice(7).trim() : line;
+    const match = unexported.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u);
+    if (!match) {
+      throw new Error(
+        `Private BSC signer env file contains an invalid assignment on line ${
+          index + 1
+        }.`,
+      );
+    }
+    let [, key, value] = match;
+    value = value.trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
+};
+
+export const readSccpBscE2eSignerEnvFile = async (filePath) => {
+  const resolvedPath = path.resolve(repoRoot, String(filePath ?? ""));
+  const parsed = parseSccpBscPrivateEnvText(
+    await readFile(resolvedPath, "utf8"),
+  );
+  const privateKeyHex = normalizeBscE2ePrivateKeyHex(
+    parsed.SCCP_BSC_DEPLOYER_PRIVATE_KEY,
+    "SCCP_BSC_DEPLOYER_PRIVATE_KEY",
+  );
+  const address = normalizeBscE2eAddress(
+    parsed.SCCP_BSC_DEPLOYER_ADDRESS,
+    "SCCP_BSC_DEPLOYER_ADDRESS",
+  );
+  return {
+    privateKeyHex,
+    address,
+  };
+};
+
+export const readSccpBscFundedTairaWalletFile = async (filePath) => {
+  const resolvedPath = path.resolve(repoRoot, String(filePath ?? ""));
+  const parsed = JSON.parse(await readFile(resolvedPath, "utf8"));
+  if (!isRecord(parsed)) {
+    throw new Error("Funded TAIRA wallet file must contain a JSON object.");
+  }
+  const privateKeyHex = normalizeBscE2ePrivateKeyHex(
+    ownValue(parsed, "privateKeyHex"),
+    "funded TAIRA wallet privateKeyHex",
+  ).slice(2);
+  const domain = normalizeText(ownValue(parsed, "domain") || "wonderland");
+  if (!domain || /[\s:@]/u.test(domain)) {
+    throw new Error("Funded TAIRA wallet domain is invalid.");
+  }
+  const assetDefinitionId = normalizeText(
+    ownValue(parsed, "assetDefinitionId"),
+  );
+  if (!assetDefinitionId) {
+    throw new Error("Funded TAIRA wallet assetDefinitionId is required.");
+  }
+  const { publicKeyFromPrivate } = await import("@iroha/iroha-js/crypto");
+  const publicKeyHex = Buffer.from(
+    publicKeyFromPrivate(Buffer.from(privateKeyHex, "hex")),
+  )
+    .toString("hex")
+    .toUpperCase();
+  return {
+    privateKeyHex,
+    publicKeyHex,
+    domain,
+    assetDefinitionId,
+  };
+};
+
 export const REQUIRED_SCCP_BSC_VIDEO_TRANSACTION_SLOTS = Object.freeze([
   "tairaSourceTx",
   "bscFinalizeTx",
@@ -391,6 +652,10 @@ const PUBLIC_DEPLOYMENT_FIELDS = Object.freeze([
   "nativeEvmProverBundleHash",
   "destinationBindingHash",
   "settlementAssetDefinitionId",
+]);
+const PUBLIC_DEPLOYMENT_OBJECT_FIELDS = Object.freeze([
+  "destinationBrowserProver",
+  "sourceBrowserProver",
 ]);
 const PUBLIC_DEPLOYMENT_ROLE_SEPARATED_HASH_FIELDS = Object.freeze([
   "verifierCodeHash",
@@ -1081,6 +1346,30 @@ const detectProofArtifactMediaType = (bytes) => {
 const resolveBscNetworkProfileOrDefault = (value) =>
   resolveBscNetworkProfile(value || DEFAULT_BSC_NETWORK);
 
+export const sccpBscWalletConnectCaipChainId = (bscNetwork) => {
+  const profile = resolveBscNetworkProfileOrDefault(bscNetwork);
+  return `${SCCP_BSC_WALLETCONNECT_NAMESPACE}:${Number(
+    BigInt(profile.chainIdHex),
+  )}`;
+};
+
+export const buildSccpBscVideoWalletApprovalEvidence = ({
+  bscNetwork = DEFAULT_BSC_NETWORK,
+  autoFlow = false,
+} = {}) => {
+  const e2eWalletHarness = autoFlow === true;
+  return {
+    mode: e2eWalletHarness
+      ? SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE
+      : SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+    productionReady: true,
+    walletConnectNamespace: SCCP_BSC_WALLETCONNECT_NAMESPACE,
+    walletConnectMethod: SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+    walletConnectChainId: sccpBscWalletConnectCaipChainId(bscNetwork),
+    e2eWalletHarness,
+  };
+};
+
 const resolveBscProfileFromEvidence = (...values) => {
   for (const value of values.flat()) {
     const normalized = normalizeText(value).toLowerCase();
@@ -1405,6 +1694,11 @@ const DEPLOYMENT_ALIAS_GROUPS = Object.freeze([
     "settlementAssetDefinitionId",
     ["settlementAssetDefinitionId", "settlement_asset_definition_id"],
   ],
+  [
+    "destinationBrowserProver",
+    ["destinationBrowserProver", "destination_browser_prover"],
+  ],
+  ["sourceBrowserProver", ["sourceBrowserProver", "source_browser_prover"]],
 ]);
 const FORBIDDEN_BSC_DEPLOYMENT_ALIAS_GROUPS = Object.freeze([
   [
@@ -1569,12 +1863,24 @@ const publicCheckSummaries = (checks) =>
   Array.isArray(checks)
     ? ownArrayValues(checks)
         .filter((entry) => isRecord(entry))
-        .map((entry) => ({
-          id: readPublicString(entry, "id"),
-          ok: ownValue(entry, "ok") === true,
-          status: readPublicString(entry, "status"),
-          message: readPublicString(entry, "message"),
-        }))
+        .map((entry) => {
+          const status = readPublicString(entry, "status")?.toLowerCase();
+          const ok =
+            typeof ownValue(entry, "ok") === "boolean"
+              ? ownValue(entry, "ok") === true
+              : status === "pass";
+          return {
+            id: readPublicString(entry, "id"),
+            ok,
+            status:
+              status === "pass" || status === "fail"
+                ? status
+                : ok
+                  ? "pass"
+                  : "fail",
+            message: readPublicString(entry, "message"),
+          };
+        })
         .filter((entry) => entry.id)
     : [];
 const reportCheckPassed = (checks, id) =>
@@ -1640,8 +1946,19 @@ const readPublicStringAlias = (record, aliasKeys, key) => {
   }
   return null;
 };
+const readPublicRecordAlias = (record, aliasKeys, key) => {
+  for (const alias of aliasKeys[key] ?? [key]) {
+    const value = ownValue(record, alias);
+    if (isRecord(value)) {
+      return value;
+    }
+  }
+  return null;
+};
 const readPublicAliasString = (record, key) =>
   readPublicStringAlias(record, DEPLOYMENT_ALIAS_KEYS, key);
+const readPublicAliasRecord = (record, key) =>
+  readPublicRecordAlias(record, DEPLOYMENT_ALIAS_KEYS, key);
 const readPublicBscProfileString = (record, key) =>
   readPublicStringAlias(record, BSC_PROFILE_ALIAS_KEYS, key);
 const readPublicPostDeployString = (record, key) =>
@@ -1651,14 +1968,83 @@ const readPublicPostDeployBoolean = (record, key) =>
     (alias) => hasOwn(record, alias) && ownValue(record, alias) === true,
   );
 
+const publicStringArrayAlias = (record, ...keys) => {
+  for (const key of keys) {
+    const value = ownValue(record, key);
+    if (Array.isArray(value)) {
+      return ownArrayValues(value)
+        .filter((entry) => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+};
+
+const publicBrowserProverRef = (record) =>
+  isRecord(record)
+    ? {
+        moduleUrl:
+          readPublicString(record, "moduleUrl") ||
+          readPublicString(record, "module_url") ||
+          readPublicString(record, "browserModuleUrl") ||
+          readPublicString(record, "browser_module_url"),
+        moduleSpecifier:
+          readPublicString(record, "moduleSpecifier") ||
+          readPublicString(record, "module_specifier") ||
+          readPublicString(record, "specifier"),
+        moduleHash:
+          readPublicString(record, "moduleHash") ||
+          readPublicString(record, "module_hash") ||
+          readPublicString(record, "moduleSha256") ||
+          readPublicString(record, "module_sha256") ||
+          readPublicString(record, "sha256"),
+        manifestHash:
+          readPublicString(record, "manifestHash") ||
+          readPublicString(record, "manifest_hash") ||
+          readPublicString(record, "manifestSha256") ||
+          readPublicString(record, "manifest_sha256"),
+        expectedExports: publicStringArrayAlias(
+          record,
+          "expectedExports",
+          "expected_exports",
+          "exports",
+          "exportNames",
+          "export_names",
+        ),
+        boundRouteHash:
+          readPublicString(record, "boundRouteHash") ||
+          readPublicString(record, "bound_route_hash") ||
+          readPublicString(record, "routeHash") ||
+          readPublicString(record, "route_hash") ||
+          readPublicString(record, "destinationBindingHash") ||
+          readPublicString(record, "destination_binding_hash"),
+        boundProofHash:
+          readPublicString(record, "boundProofHash") ||
+          readPublicString(record, "bound_proof_hash") ||
+          readPublicString(record, "proofHash") ||
+          readPublicString(record, "proof_hash") ||
+          readPublicString(record, "proofArtifactHash") ||
+          readPublicString(record, "proof_artifact_hash"),
+      }
+    : null;
+
 const publicDeployment = (deployment) =>
   isRecord(deployment)
-    ? Object.fromEntries(
-        PUBLIC_DEPLOYMENT_FIELDS.map((key) => [
-          key,
-          readPublicAliasString(deployment, key),
-        ]),
-      )
+    ? {
+        ...Object.fromEntries(
+          PUBLIC_DEPLOYMENT_FIELDS.map((key) => [
+            key,
+            readPublicAliasString(deployment, key),
+          ]),
+        ),
+        ...Object.fromEntries(
+          PUBLIC_DEPLOYMENT_OBJECT_FIELDS.map((key) => [
+            key,
+            publicBrowserProverRef(readPublicAliasRecord(deployment, key)),
+          ]),
+        ),
+      }
     : null;
 
 const publicDeploymentHashRoleCollisionProblems = (deployment) => {
@@ -2052,6 +2438,14 @@ export const buildSccpBscVideoReadinessBinding = (readiness) => {
   const peerAudit = ownValue(readiness, "peerAudit");
   const routeDeployment = ownValue(route, "deployment");
   const routePostDeploy = ownValue(route, "postDeployLiveEvidence");
+  const peerRouteCounts = ownArrayValues(ownValue(peerAudit, "peers")).map(
+    (peer) => (isRecord(peer) ? ownValue(peer, "routeCount") : null),
+  );
+  const localRouteCount =
+    peerRouteCounts.length > 0 &&
+    peerRouteCounts.every((count) => Number.isSafeInteger(count) && count >= 0)
+      ? peerRouteCounts.reduce((total, count) => total + count, 0)
+      : null;
   return {
     checkedAt: readPublicString(readiness, "checkedAt"),
     routeReady: ownValue(readiness, "routeReady") === true,
@@ -2080,6 +2474,7 @@ export const buildSccpBscVideoReadinessBinding = (readiness) => {
             peerAudit,
             "manifestFingerprint",
           ),
+          localRouteCount,
           sanitizedStanzaFilesChecked:
             ownValue(peerAudit, "sanitizedStanzaFilesChecked") === true,
         }
@@ -2458,7 +2853,7 @@ const readExplorerPageContent = async (page) => {
 export const assertExplorerPageContainsTransactionHash = async (
   page,
   href,
-  options,
+  options = {},
 ) => {
   const txHash = extractExplorerTransactionHash(href, options);
   if (!txHash) {
@@ -2466,13 +2861,28 @@ export const assertExplorerPageContainsTransactionHash = async (
       `Explorer transaction hash could not be read from ${href}.`,
     );
   }
-  const content = (await readExplorerPageContent(page)).toLowerCase();
-  if (!content.includes(txHash) && !content.includes(`0x${txHash}`)) {
-    throw new Error(
-      `Explorer page content did not include transaction hash ${txHash}.`,
-    );
+  const contentTimeoutMs = Number.isSafeInteger(
+    options.explorerHashContentTimeoutMs,
+  )
+    ? Math.max(0, options.explorerHashContentTimeoutMs)
+    : EXPLORER_HASH_CONTENT_TIMEOUT_MS;
+  const contentPollMs = Number.isSafeInteger(
+    options.explorerHashContentPollMs,
+  )
+    ? Math.max(0, options.explorerHashContentPollMs)
+    : EXPLORER_HASH_CONTENT_POLL_MS;
+  const deadline = Date.now() + contentTimeoutMs;
+  let content = "";
+  while (Date.now() <= deadline) {
+    content = (await readExplorerPageContent(page)).toLowerCase();
+    if (content.includes(txHash) || content.includes(`0x${txHash}`)) {
+      return { txHash, contentLength: content.length };
+    }
+    await wait(contentPollMs);
   }
-  return { txHash, contentLength: content.length };
+  throw new Error(
+    `Explorer page content did not include transaction hash ${txHash}.`,
+  );
 };
 
 export const classifySccpBscProofLink = (
@@ -2813,7 +3223,7 @@ export const evaluateSccpBscVideoReadinessEvidence = (
         ...publicPostDeployTransactionBindingProblems(postDeploy, profile),
       );
     }
-    if (!ownValue(peerAudit, "manifestFingerprint")) {
+    if (!peerAudit) {
       missingReadinessEvidence.push("peerAuditBinding");
     } else {
       if (ownValue(peerAudit, "ready") !== true) {
@@ -2832,11 +3242,18 @@ export const evaluateSccpBscVideoReadinessEvidence = (
         missingReadinessEvidence.push("peerAudit.peerCount");
       }
       if (
+        ownValue(peerAudit, "manifestFingerprint") &&
         !PEER_AUDIT_FINGERPRINT_PATTERN.test(
           ownValue(peerAudit, "manifestFingerprint"),
         )
       ) {
         missingReadinessEvidence.push("peerAudit.manifestFingerprint");
+      }
+      if (
+        !ownValue(peerAudit, "manifestFingerprint") &&
+        ownValue(peerAudit, "localRouteCount") !== 0
+      ) {
+        missingReadinessEvidence.push("peerAuditBinding");
       }
       if (ownValue(peerAudit, "sanitizedStanzaFilesChecked") !== true) {
         missingReadinessEvidence.push("peerAudit.sanitizedStanzaFilesChecked");
@@ -2853,6 +3270,7 @@ export const buildSccpBscLiveVideoTranscript = (input = {}) => {
   const runDir = ownValue(input, "runDir");
   const readiness = ownValue(input, "readiness");
   const bscNetwork = ownValue(input, "bscNetwork");
+  const autoFlow = ownValue(input, "autoFlow") === true;
   const startedAtMs = ownValue(input, "startedAtMs");
   const endedAtMs = ownValue(input, "endedAtMs");
   const links = ownValue(input, "links") ?? [];
@@ -2903,13 +3321,18 @@ export const buildSccpBscLiveVideoTranscript = (input = {}) => {
     startedAtMs,
     endedAtMs,
   });
+  const walletApprovalEvidence = buildSccpBscVideoWalletApprovalEvidence({
+    bscNetwork: bscProfile.key,
+    autoFlow,
+  });
   const proofComplete =
     evidence.proofComplete &&
     invalidTransactionLinkEntries.length === 0 &&
     readinessEvidence.ready &&
     postDeployTransactionEvidence.ready &&
     videoArtifactEvidence.ready &&
-    timelineEvidence.ready;
+    timelineEvidence.ready &&
+    walletApprovalEvidence.productionReady;
   return {
     schema: "iroha-demo-sccp-bsc-live-video/v1",
     startedAtMs,
@@ -2937,6 +3360,7 @@ export const buildSccpBscLiveVideoTranscript = (input = {}) => {
     transactionLinks: publicLinks,
     explorerScreenshots: publicExplorerScreenshots,
     videoArtifacts: publicVideoArtifacts,
+    walletApprovalEvidence,
     evidence: {
       ...evidence,
       invalidTransactionLinkEntries,
@@ -2967,6 +3391,9 @@ export const buildSccpBscLiveVideoTranscript = (input = {}) => {
       ],
       videoArtifacts: videoArtifactEvidence.missingVideoArtifacts,
       videoTimeline: timelineEvidence.missingVideoTimeline,
+      walletApproval: walletApprovalEvidence.productionReady
+        ? []
+        : ["manualWalletConnectApproval"],
     },
     proofComplete,
     transactions,
@@ -3007,6 +3434,7 @@ export const summarizeSccpBscLiveVideoMissingEvidence = (transcript) => {
     `readiness: ${missingList("readiness")}`,
     `video artifacts: ${missingList("videoArtifacts")}`,
     `video timeline: ${missingList("videoTimeline")}`,
+    `wallet approval: ${missingList("walletApproval")}`,
   ].join("; ");
 };
 
@@ -3047,11 +3475,675 @@ const collectTransactionLinks = async (page) =>
       .catch(() => []),
   );
 
+const makeBscE2eViemChain = (profile, rpcUrl) => ({
+  id: Number(BigInt(profile.chainIdHex)),
+  name: profile.label,
+  nativeCurrency: {
+    name: "BNB",
+    symbol: "BNB",
+    decimals: 18,
+  },
+  rpcUrls: {
+    default: {
+      http: [rpcUrl],
+    },
+  },
+});
+
+export const createBscE2eSignerHarness = async ({
+  privateKeyHex,
+  address,
+  bscProfile,
+  rpcUrl,
+}) => {
+  const [
+    { createPublicClient, createWalletClient, http },
+    { privateKeyToAccount },
+  ] = await Promise.all([import("viem"), import("viem/accounts")]);
+  const normalizedPrivateKey = normalizeBscE2ePrivateKeyHex(
+    privateKeyHex,
+    "SCCP_BSC_DEPLOYER_PRIVATE_KEY",
+  );
+  const expectedAddress = normalizeBscE2eAddress(
+    address,
+    "SCCP_BSC_DEPLOYER_ADDRESS",
+  );
+  const account = privateKeyToAccount(normalizedPrivateKey);
+  if (
+    normalizeBscE2eAddress(account.address, "derived BSC signer address") !==
+    expectedAddress
+  ) {
+    throw new Error(
+      "SCCP_BSC_DEPLOYER_ADDRESS does not match SCCP_BSC_DEPLOYER_PRIVATE_KEY.",
+    );
+  }
+  const endpoint = String(rpcUrl || bscProfile.rpcUrl || "").trim();
+  if (!endpoint) {
+    throw new Error("BSC E2E signer RPC endpoint is required.");
+  }
+  const chain = makeBscE2eViemChain(bscProfile, endpoint);
+  const transport = http(endpoint);
+  const walletClient = createWalletClient({
+    account,
+    chain,
+    transport,
+  });
+  const publicClient = createPublicClient({
+    chain,
+    transport,
+  });
+  const chainIdHex = bscProfile.chainIdHex.toLowerCase();
+  const sendTransaction = async (transaction) => {
+    if (!isRecord(transaction)) {
+      throw new Error("BSC E2E signer transaction must be a JSON object.");
+    }
+    const from = normalizeBscE2eAddress(
+      ownValue(transaction, "from"),
+      "BSC E2E transaction from",
+    );
+    if (from !== expectedAddress) {
+      throw new Error("BSC E2E transaction from does not match the signer.");
+    }
+    const txChainId = String(ownValue(transaction, "chainId") ?? "")
+      .trim()
+      .toLowerCase();
+    if (txChainId !== chainIdHex) {
+      throw new Error(`BSC E2E transaction chainId must be ${chainIdHex}.`);
+    }
+    const to = normalizeBscE2eAddress(
+      ownValue(transaction, "to"),
+      "BSC E2E transaction to",
+    );
+    const data = String(ownValue(transaction, "data") ?? "").trim();
+    if (!/^0x[0-9a-f]{8}(?:[0-9a-f]{2})*$/iu.test(data)) {
+      throw new Error("BSC E2E transaction data is invalid.");
+    }
+    const value = normalizeEvmQuantityBigInt(
+      ownValue(transaction, "value") ?? "0x0",
+      "BSC E2E transaction value",
+    );
+    if (value !== 0n) {
+      throw new Error("BSC E2E transaction value must be 0x0.");
+    }
+    const request = {
+      account,
+      chain,
+      to,
+      data,
+      value,
+    };
+    const gas =
+      normalizeEvmQuantityBigInt(ownValue(transaction, "gas"), "BSC E2E gas") ??
+      normalizeEvmQuantityBigInt(
+        ownValue(transaction, "gasLimit"),
+        "BSC E2E gasLimit",
+      );
+    if (gas !== null) {
+      request.gas = gas;
+    }
+    const gasPrice = normalizeEvmQuantityBigInt(
+      ownValue(transaction, "gasPrice"),
+      "BSC E2E gasPrice",
+    );
+    const maxFeePerGas = normalizeEvmQuantityBigInt(
+      ownValue(transaction, "maxFeePerGas"),
+      "BSC E2E maxFeePerGas",
+    );
+    const maxPriorityFeePerGas = normalizeEvmQuantityBigInt(
+      ownValue(transaction, "maxPriorityFeePerGas"),
+      "BSC E2E maxPriorityFeePerGas",
+    );
+    if (gasPrice !== null) {
+      request.gasPrice = gasPrice;
+    } else if (maxFeePerGas !== null && maxPriorityFeePerGas !== null) {
+      request.maxFeePerGas = maxFeePerGas;
+      request.maxPriorityFeePerGas = maxPriorityFeePerGas;
+    }
+    const nonce = normalizeEvmQuantityBigInt(
+      ownValue(transaction, "nonce"),
+      "BSC E2E nonce",
+    );
+    if (nonce !== null) {
+      request.nonce = Number(nonce);
+    }
+    if (request.gas === undefined) {
+      try {
+        request.gas = await publicClient.estimateGas({
+          account: account.address,
+          to,
+          data,
+          value,
+        });
+      } catch (_error) {
+        // viem will still estimate during sendTransaction when the RPC supports it.
+      }
+    }
+    return String(await walletClient.sendTransaction(request)).toLowerCase();
+  };
+  return {
+    address: expectedAddress,
+    async connectSnapshot() {
+      return {
+        address: expectedAddress,
+        topic: `e2e-bsc-${bscProfile.key}`,
+        connectedAtMs: Date.now(),
+      };
+    },
+    async disconnect() {},
+    sendTransaction,
+  };
+};
+
+const installBscE2eWalletHarness = async (page, signer) => {
+  await page.exposeFunction("__irohaBscHarnessConnect", async () =>
+    signer.connectSnapshot(),
+  );
+  await page.exposeFunction("__irohaBscHarnessDisconnect", async () =>
+    signer.disconnect(),
+  );
+  await page.exposeFunction("__irohaBscHarnessSendTransaction", async (tx) =>
+    signer.sendTransaction(tx),
+  );
+  const installScript = () => {
+    window.__irohaBscWalletHarness = {
+      connect: () => window.__irohaBscHarnessConnect(),
+      disconnect: () => window.__irohaBscHarnessDisconnect(),
+      sendTransaction: (transaction) =>
+        window.__irohaBscHarnessSendTransaction(transaction),
+    };
+  };
+  await page.addInitScript(installScript);
+  await page.evaluate(installScript);
+};
+
+const bootstrapFundedTairaWallet = async (
+  page,
+  fundedWallet,
+  { toriiUrl, chainId, networkPrefix },
+) => {
+  await page.evaluate(
+    async ({ wallet, torii, chain, prefix }) => {
+      localStorage.removeItem("iroha-demo:offline");
+      localStorage.setItem("iroha-demo:locale", "en-US");
+      const summary = window.iroha.deriveAccountAddress({
+        domain: wallet.domain,
+        publicKeyHex: wallet.publicKeyHex,
+        networkPrefix: prefix,
+      });
+      const vaultAvailable = await window.iroha
+        .isSecureVaultAvailable()
+        .catch(() => false);
+      if (!vaultAvailable) {
+        throw new Error(
+          "Secure vault is unavailable for the SCCP BSC live proof bootstrap.",
+        );
+      }
+      await window.iroha.storeAccountSecret({
+        accountId: summary.accountId,
+        privateKeyHex: wallet.privateKeyHex,
+      });
+      localStorage.setItem(
+        "iroha-demo:session",
+        JSON.stringify({
+          hydrated: true,
+          connection: {
+            toriiUrl: torii,
+            chainId: chain,
+            assetDefinitionId: wallet.assetDefinitionId,
+            networkPrefix: prefix,
+          },
+          authority: {
+            accountId: "",
+            privateKeyHex: "",
+            hasStoredSecret: false,
+          },
+          accounts: [
+            {
+              displayName: "SCCP Live Proof",
+              domain: wallet.domain,
+              accountId: summary.accountId,
+              i105AccountId: summary.i105AccountId,
+              i105DefaultAccountId: summary.i105DefaultAccountId,
+              publicKeyHex: wallet.publicKeyHex,
+              signingAlgorithm: "ed25519",
+              privateKeyHex: "",
+              hasStoredSecret: true,
+              localOnly: false,
+            },
+          ],
+          activeAccountId: summary.accountId,
+          customChains: [],
+        }),
+      );
+      return {
+        accountId: summary.accountId,
+        i105AccountId: summary.i105AccountId,
+      };
+    },
+    {
+      wallet: fundedWallet,
+      torii: toriiUrl,
+      chain: chainId,
+      prefix: networkPrefix,
+    },
+  );
+};
+
+const waitForLocatorEnabled = async (
+  locator,
+  label,
+  { timeoutMs = 60_000, pollMs = 500 } = {},
+) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    if (
+      (await locator.count().catch(() => 0)) > 0 &&
+      (await locator
+        .first()
+        .isVisible()
+        .catch(() => false)) &&
+      (await locator
+        .first()
+        .isEnabled()
+        .catch(() => false))
+    ) {
+      return locator.first();
+    }
+    await wait(pollMs);
+  }
+  throw new Error(`Timed out waiting for ${label} to become enabled.`);
+};
+
+const installVisibleUiPointer = async (page) => {
+  const installScript = () => {
+    const existing = document.getElementById("__sccp-demo-pointer");
+    if (existing && window.__sccpDemoPointer) {
+      return;
+    }
+    const style = document.createElement("style");
+    style.id = "__sccp-demo-pointer-style";
+    style.textContent = `
+      #__sccp-demo-pointer {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 24px;
+        height: 24px;
+        z-index: 2147483647;
+        pointer-events: none;
+        transform: translate(80px, 80px);
+        transition: transform 260ms ease;
+      }
+      #__sccp-demo-pointer::before {
+        content: "";
+        position: absolute;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #ff5a78;
+        border: 3px solid #ffffff;
+        box-shadow: 0 0 0 5px rgba(255, 90, 120, 0.28), 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      #__sccp-demo-pointer.clicking::before {
+        transform: scale(0.78);
+        box-shadow: 0 0 0 12px rgba(255, 90, 120, 0.34), 0 8px 24px rgba(0, 0, 0, 0.35);
+      }
+      #__sccp-demo-pointer-label {
+        position: absolute;
+        left: 28px;
+        top: -10px;
+        min-width: 160px;
+        max-width: 380px;
+        padding: 8px 11px;
+        border-radius: 8px;
+        background: rgba(20, 23, 31, 0.84);
+        color: #ffffff;
+        font: 700 14px/1.25 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        letter-spacing: 0;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        white-space: normal;
+      }
+    `;
+    if (!document.getElementById(style.id)) {
+      document.head.appendChild(style);
+    }
+    const pointer = document.createElement("div");
+    pointer.id = "__sccp-demo-pointer";
+    const label = document.createElement("div");
+    label.id = "__sccp-demo-pointer-label";
+    label.textContent = "SCCP UI flow";
+    pointer.appendChild(label);
+    document.body.appendChild(pointer);
+    window.__sccpDemoPointer = {
+      move(x, y, text) {
+        pointer.style.transform = `translate(${Math.round(x)}px, ${Math.round(
+          y,
+        )}px)`;
+        label.textContent = String(text || "SCCP UI flow");
+      },
+      click(text) {
+        if (text) {
+          label.textContent = String(text);
+        }
+        pointer.classList.add("clicking");
+        window.setTimeout(() => pointer.classList.remove("clicking"), 320);
+      },
+    };
+  };
+  await page.addInitScript(installScript);
+  await page.evaluate(installScript).catch(() => {});
+};
+
+const moveVisibleUiPointerToLocator = async (page, locator, label, options) => {
+  const target = await waitForLocatorEnabled(locator, label, options);
+  await target.scrollIntoViewIfNeeded().catch(() => {});
+  const box = await target.boundingBox().catch(() => null);
+  if (!box) {
+    return { target, x: null, y: null };
+  }
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page
+    .evaluate(
+      ({ pointerX, pointerY, pointerLabel }) =>
+        window.__sccpDemoPointer?.move(pointerX, pointerY, pointerLabel),
+      { pointerX: x, pointerY: y, pointerLabel: label },
+    )
+    .catch(() => {});
+  await page.mouse.move(x, y, { steps: 12 }).catch(() => {});
+  await wait(350);
+  return { target, x, y };
+};
+
+const clickWithVisibleUiPointer = async (page, locator, label, options) => {
+  const { target, x, y } = await moveVisibleUiPointerToLocator(
+    page,
+    locator,
+    label,
+    options,
+  );
+  await page
+    .evaluate(
+      ({ pointerLabel }) => window.__sccpDemoPointer?.click(pointerLabel),
+      { pointerLabel: label },
+    )
+    .catch(() => {});
+  if (x === null || y === null) {
+    await target.click({ timeout: 10_000 });
+  } else {
+    await page.mouse.click(x, y, { delay: 120 }).catch(async () => {
+      await target.click({ timeout: 10_000 });
+    });
+  }
+  await wait(500);
+  return target;
+};
+
+const fillWithVisibleUiPointer = async (page, locator, value, label) => {
+  const target = await clickWithVisibleUiPointer(page, locator, label, {
+    timeoutMs: 60_000,
+  });
+  await target.fill(value);
+  await page
+    .evaluate(
+      ({ pointerLabel }) => window.__sccpDemoPointer?.click(pointerLabel),
+      { pointerLabel: `${label}: filled` },
+    )
+    .catch(() => {});
+  await wait(350);
+};
+
+const waitForBscProofSlot = async (
+  page,
+  slot,
+  { bscNetwork = DEFAULT_BSC_NETWORK, timeoutMs = 600_000 } = {},
+) => {
+  const deadline = Date.now() + timeoutMs;
+  let lastLinks = [];
+  let lastDiagnostic = "";
+  let nextDiagnosticAt = 0;
+  while (Date.now() <= deadline) {
+    const links = await collectTransactionLinks(page);
+    lastLinks = links;
+    const transactions = inferSccpBscVideoTransactions(links, { bscNetwork });
+    if (transactions[slot]) {
+      return transactions[slot];
+    }
+    if (Date.now() >= nextDiagnosticAt) {
+      const bodyText = await page
+        .locator("body")
+        .innerText({ timeout: 5_000 })
+        .catch(() => "");
+      const interestingLines = bodyText
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(
+          (line) =>
+            line &&
+            /proof|phase|route|transaction|error|waiting|submitted|queued|generating|complete|failed|timed out|rejected/iu.test(
+              line,
+            ),
+        )
+        .slice(-20)
+        .join(" | ");
+      const diagnostic = sanitizeSccpBscLiveVideoLogText(
+        interestingLines,
+      ).slice(0, 2000);
+      if (diagnostic && diagnostic !== lastDiagnostic) {
+        console.log(`Auto-flow: waiting for ${slot}: ${diagnostic}`);
+        lastDiagnostic = diagnostic;
+      }
+      nextDiagnosticAt = Date.now() + 10_000;
+    }
+    await wait(2_000);
+  }
+  const bodyText = await page
+    .locator("body")
+    .innerText({ timeout: 5_000 })
+    .catch(() => "");
+  throw new Error(
+    `Timed out waiting for SCCP proof link ${slot}. Visible transaction links: ${JSON.stringify(
+      lastLinks,
+    ).slice(0, 1000)}. Page text: ${sanitizeSccpBscLiveVideoLogText(
+      bodyText,
+    ).slice(0, 2000)}`,
+  );
+};
+
+const waitForBscRoundTripConfirmedInUi = async (
+  page,
+  { bscNetwork = DEFAULT_BSC_NETWORK, timeoutMs = 180_000 } = {},
+) => {
+  const deadline = Date.now() + timeoutMs;
+  let lastDiagnostic = "";
+  while (Date.now() <= deadline) {
+    const [links, bodyText] = await Promise.all([
+      collectTransactionLinks(page),
+      page
+        .locator("body")
+        .innerText({ timeout: 5_000 })
+        .catch(() => ""),
+    ]);
+    const transactions = inferSccpBscVideoTransactions(links, { bscNetwork });
+    if (
+      transactions.tairaSettlementTx &&
+      /TAIRA settlement confirmed/u.test(bodyText)
+    ) {
+      return transactions.tairaSettlementTx;
+    }
+    const diagnostic = sanitizeSccpBscLiveVideoLogText(
+      bodyText
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter(
+          (line) =>
+            line &&
+            /proof|transaction|waiting|submitted|confirmed|complete|failed|timed out|rejected/iu.test(
+              line,
+            ),
+        )
+        .slice(-20)
+        .join(" | "),
+    ).slice(0, 2000);
+    if (diagnostic && diagnostic !== lastDiagnostic) {
+      console.log(
+        `Auto-flow: waiting for final TAIRA settlement confirmation: ${diagnostic}`,
+      );
+      lastDiagnostic = diagnostic;
+    }
+    await wait(2_000);
+  }
+  throw new Error(
+    "Timed out waiting for the SCCP UI to show final TAIRA settlement confirmation.",
+  );
+};
+
+const waitForSccpRouteReadyInUi = async (
+  page,
+  { timeoutMs = 180_000, pollMs = 5_000 } = {},
+) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() <= deadline) {
+    const bodyText = await page
+      .locator("body")
+      .innerText({ timeout: 5_000 })
+      .catch(() => "");
+    if (/Route ready/u.test(bodyText)) {
+      return;
+    }
+    const refreshButton = page.getByRole("button", {
+      name: /Refresh route|Refreshing/iu,
+    });
+    if (
+      (await refreshButton.count().catch(() => 0)) > 0 &&
+      (await refreshButton
+        .first()
+        .isEnabled()
+        .catch(() => false))
+    ) {
+      await refreshButton
+        .first()
+        .click()
+        .catch(() => {});
+    }
+    await wait(pollMs);
+  }
+  throw new Error(
+    "Timed out waiting for the SCCP route to become ready in UI.",
+  );
+};
+
+const runBscAutoRoundTrip = async (
+  page,
+  { bscProfile, bscAddress, amount, timeoutMs },
+) => {
+  console.log("Auto-flow: waiting for SCCP route readiness in UI.");
+  await waitForSccpRouteReadyInUi(page);
+  console.log("Auto-flow: route ready; connecting BSC wallet.");
+  const connectButton = page.getByRole("button", {
+    name: /Connect BSC wallet/iu,
+  });
+  if ((await connectButton.count().catch(() => 0)) > 0) {
+    await clickWithVisibleUiPointer(
+      page,
+      connectButton,
+      "Click: Connect BSC wallet",
+      {
+        timeoutMs: 60_000,
+      },
+    );
+  }
+  await waitForSccpRouteReadyInUi(page);
+  console.log("Auto-flow: BSC wallet connected; submitting TAIRA -> BSC.");
+  await fillWithVisibleUiPointer(
+    page,
+    page.getByLabel("Amount (XOR)"),
+    amount,
+    "Type amount",
+  );
+  await fillWithVisibleUiPointer(
+    page,
+    page.getByLabel("BSC recipient"),
+    bscAddress,
+    "Type BSC recipient",
+  );
+  await clickWithVisibleUiPointer(
+    page,
+    page.getByRole("button", { name: "Prepare TAIRA -> BSC" }),
+    "Click: Prepare TAIRA to BSC",
+    { timeoutMs: 120_000 },
+  );
+  const tairaSourceLink = await waitForBscProofSlot(page, "tairaSourceTx", {
+    bscNetwork: bscProfile.key,
+    timeoutMs,
+  });
+  console.log(`Auto-flow: TAIRA source link captured: ${tairaSourceLink}`);
+  const bscFinalizeLink = await waitForBscProofSlot(page, "bscFinalizeTx", {
+    bscNetwork: bscProfile.key,
+    timeoutMs,
+  });
+  console.log(`Auto-flow: BSC finalize link captured: ${bscFinalizeLink}`);
+  console.log("Auto-flow: submitting BSC -> TAIRA.");
+  await clickWithVisibleUiPointer(
+    page,
+    page.getByRole("button", { name: "BSC -> TAIRA" }),
+    "Click: BSC to TAIRA tab",
+    { timeoutMs: 60_000 },
+  );
+  await fillWithVisibleUiPointer(
+    page,
+    page.getByLabel("Amount (XOR)"),
+    amount,
+    "Type return amount",
+  );
+  await clickWithVisibleUiPointer(
+    page,
+    page.getByRole("button", { name: "Prepare BSC -> TAIRA" }),
+    "Click: Prepare BSC to TAIRA",
+    { timeoutMs: 120_000 },
+  );
+  const bscBurnLink = await waitForBscProofSlot(page, "bscBurnTx", {
+    bscNetwork: bscProfile.key,
+    timeoutMs,
+  });
+  console.log(`Auto-flow: BSC burn link captured: ${bscBurnLink}`);
+  const tairaSettlementLink = await waitForBscProofSlot(
+    page,
+    "tairaSettlementTx",
+    {
+      bscNetwork: bscProfile.key,
+      timeoutMs,
+    },
+  );
+  console.log(
+    `Auto-flow: TAIRA settlement link captured: ${tairaSettlementLink}`,
+  );
+  await waitForBscRoundTripConfirmedInUi(page, {
+    bscNetwork: bscProfile.key,
+    timeoutMs,
+  });
+  console.log("Auto-flow: UI shows TAIRA settlement confirmed.");
+  return [
+    { label: PUBLIC_PROOF_LINK_LABELS.tairaSourceTx, href: tairaSourceLink },
+    { label: PUBLIC_PROOF_LINK_LABELS.bscFinalizeTx, href: bscFinalizeLink },
+    { label: PUBLIC_PROOF_LINK_LABELS.bscBurnTx, href: bscBurnLink },
+    {
+      label: PUBLIC_PROOF_LINK_LABELS.tairaSettlementTx,
+      href: tairaSettlementLink,
+    },
+  ];
+};
+
 export const captureExplorerProofs = async (
   page,
   links,
   runDir,
-  { settleMs = 5_000, bscNetwork = DEFAULT_BSC_NETWORK } = {},
+  {
+    settleMs = 5_000,
+    bscNetwork = DEFAULT_BSC_NETWORK,
+    explorerHashContentTimeoutMs,
+    explorerHashContentPollMs,
+  } = {},
 ) => {
   const screenshots = [];
   const explorerLinks = canonicalizeSccpBscProofLinks(links, { bscNetwork });
@@ -3081,7 +4173,11 @@ export const captureExplorerProofs = async (
       const contentEvidence = await assertExplorerPageContainsTransactionHash(
         page,
         href,
-        { bscNetwork },
+        {
+          bscNetwork,
+          explorerHashContentTimeoutMs,
+          explorerHashContentPollMs,
+        },
       );
       await assertNewProofArtifactDestination(screenshotPath, runDir);
       await page.screenshot({ path: screenshotPath, fullPage: true });
@@ -3127,7 +4223,9 @@ export const captureExplorerProofs = async (
 
 const tryClick = async (page, locator, label) => {
   try {
-    await locator.click({ timeout: 10_000 });
+    await clickWithVisibleUiPointer(page, locator, `Click: ${label}`, {
+      timeoutMs: 10_000,
+    });
     return true;
   } catch (error) {
     console.warn(
@@ -3173,6 +4271,13 @@ const main = async () => {
       "BSC SCCP live-video --skip-preflight requires --allow-incomplete so debug captures cannot look like production proof runs.",
     );
   }
+  const autoFlow =
+    args["auto-flow"] === true ||
+    (args["no-auto-flow"] !== true &&
+      parseBoolean(
+        process.env.SCCP_BSC_VIDEO_AUTO_FLOW,
+        "SCCP_BSC_VIDEO_AUTO_FLOW",
+      ));
   const { runDir } = await prepareSccpBscLiveVideoRunDir(
     args["output-dir"] ||
       process.env.SCCP_BSC_VIDEO_OUTPUT_DIR ||
@@ -3193,25 +4298,69 @@ const main = async () => {
       process.env.VITE_SCCP_BSC_NETWORK ||
       DEFAULT_BSC_NETWORK,
   );
+  const walletConnectProjectId = resolveSccpBscLiveVideoWalletConnectProjectId(
+    args,
+    process.env,
+  );
+  const toriiUrl =
+    args["torii-url"] ||
+    process.env.SCCP_TAIRA_TORII_URL ||
+    DEFAULT_TAIRA_TORII_URL;
+  const bscRpcUrl =
+    args["bsc-rpc-url"] ||
+    process.env.SCCP_BSC_RPC_URL ||
+    process.env.BSC_RPC_URL;
+  const e2eAmount = normalizeSccpBscE2eAmount(
+    args["e2e-amount"] || process.env.SCCP_BSC_E2E_AMOUNT,
+  );
+  let bscE2eSigner = null;
+  let fundedTairaWallet = null;
+  if (autoFlow) {
+    const signerEnvFile =
+      args["e2e-signer-env-file"] ||
+      process.env.SCCP_BSC_E2E_SIGNER_ENV_FILE ||
+      defaultBscE2eSignerEnvFile;
+    const fundedWalletFile =
+      args["funded-wallet-file"] ||
+      process.env.SCCP_BSC_E2E_FUNDED_WALLET_FILE ||
+      defaultFundedTairaWalletFile;
+    const signerConfig = await readSccpBscE2eSignerEnvFile(signerEnvFile);
+    bscE2eSigner = await createBscE2eSignerHarness({
+      ...signerConfig,
+      bscProfile,
+      rpcUrl: bscRpcUrl || bscProfile.rpcUrl,
+    });
+    fundedTairaWallet =
+      await readSccpBscFundedTairaWalletFile(fundedWalletFile);
+  }
   const runReadinessPreflight = () =>
     runBscSccpLiveSmokeReadiness({
-      toriiUrl:
-        args["torii-url"] ||
-        process.env.SCCP_TAIRA_TORII_URL ||
-        "https://taira.sora.org",
+      toriiUrl,
       manifestFile:
         args["manifest-file"] || process.env.SCCP_ROUTE_MANIFEST_FILE || "",
       bscNetwork: bscProfile.key,
-      walletConnectProjectId: args["walletconnect-project-id"],
+      walletConnectProjectId,
       destinationProverModuleUrl: args["destination-prover-module-url"],
       sourceProverModuleUrl: args["source-prover-module-url"],
+      peerAuditReportPath: args["peer-audit-report"],
       checkBscContracts,
-      bscRpcUrl:
-        args["bsc-rpc-url"] ||
-        process.env.SCCP_BSC_RPC_URL ||
-        process.env.BSC_RPC_URL,
+      bscRpcUrl,
       allowLocalRpc,
     });
+  const runReadinessPreflightUntilReady = async () => {
+    let lastReadiness = null;
+    const attempts = autoFlow ? 8 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      lastReadiness = await runReadinessPreflight();
+      if (ownValue(lastReadiness, "ready") === true) {
+        return lastReadiness;
+      }
+      if (attempt < attempts - 1) {
+        await wait(5_000);
+      }
+    }
+    return lastReadiness;
+  };
 
   if (!existsSync(mainEntry)) {
     throw new Error(
@@ -3221,7 +4370,7 @@ const main = async () => {
 
   let readiness = null;
   if (!skipPreflight) {
-    readiness = await runReadinessPreflight();
+    readiness = await runReadinessPreflightUntilReady();
     await writeJsonReportFile(path.join(runDir, "readiness.json"), readiness);
     if (ownValue(readiness, "ready") !== true) {
       throw new Error(
@@ -3238,14 +4387,21 @@ const main = async () => {
   let pageVideo = null;
   let transcriptInputs = null;
   let recordingStartedAtMs = null;
+  let autoFlowCapturedLinks = [];
   const transcriptPath = path.join(runDir, "transcript.json");
   try {
+    const electronEnv = buildSccpBscLiveVideoElectronEnv({
+      args,
+      env: process.env,
+      bscNetwork: bscProfile.key,
+      autoFlow,
+    });
     app = await electron.launch({
-      args: [mainEntry],
-      env: {
-        ...process.env,
-        VITE_SCCP_BSC_NETWORK: bscProfile.key,
-      },
+      args: buildSccpBscLiveVideoElectronArgs({
+        entrypoint: mainEntry,
+        env: electronEnv,
+      }),
+      env: electronEnv,
       recordVideo: {
         dir: runDir,
         size: { width: 1440, height: 1000 },
@@ -3268,10 +4424,24 @@ const main = async () => {
     );
 
     await page.setViewportSize({ width: 1440, height: 1000 }).catch(() => {});
+    await installVisibleUiPointer(page);
+    if (autoFlow) {
+      await installBscE2eWalletHarness(page, bscE2eSigner);
+      await bootstrapFundedTairaWallet(page, fundedTairaWallet, {
+        toriiUrl,
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      });
+      await page.reload({ waitUntil: "domcontentloaded" });
+    }
     await page.evaluate(() => {
       window.location.hash = "#/sccp";
     });
-    await page.getByRole("heading", { name: "SCCP Bridge" }).waitFor();
+    await page
+      .getByRole("main")
+      .getByRole("heading", { name: "SCCP Bridge" })
+      .first()
+      .waitFor();
     await tryClick(
       page,
       page.getByRole("button", {
@@ -3282,7 +4452,7 @@ const main = async () => {
     recordingStartedAtMs = Date.now();
 
     if (!skipPreflight) {
-      readiness = await runReadinessPreflight();
+      readiness = await runReadinessPreflightUntilReady();
       await writeJsonReportFile(
         path.join(runDir, "readiness-recording.json"),
         readiness,
@@ -3299,7 +4469,9 @@ const main = async () => {
 
     const instructions = [
       "Recording started.",
-      `Use the app UI to connect the ${bscProfile.label} wallet, run TAIRA -> BSC, open the ${bscProfile.label} explorer proof, then run BSC -> TAIRA and open the final TAIRA proof.`,
+      autoFlow
+        ? `Auto-flow is enabled: the runner will connect the ${bscProfile.label} E2E wallet, run TAIRA -> BSC, then run BSC -> TAIRA.`
+        : `Use the app UI to connect the ${bscProfile.label} wallet, run TAIRA -> BSC, open the ${bscProfile.label} explorer proof, then run BSC -> TAIRA and open the final TAIRA proof.`,
       `Recording duration: ${durationMs}ms.`,
       `Output directory: ${runDir}`,
       autoExplorer
@@ -3314,7 +4486,35 @@ const main = async () => {
       runDir,
       "SCCP BSC live start",
     );
-    await wait(durationMs);
+    if (autoFlow) {
+      try {
+        autoFlowCapturedLinks = await runBscAutoRoundTrip(page, {
+          bscProfile,
+          bscAddress: bscE2eSigner.address,
+          amount: e2eAmount,
+          timeoutMs: durationMs,
+        });
+      } catch (autoFlowError) {
+        await captureUiProofScreenshot(
+          page,
+          path.join(runDir, "auto-flow-error.png"),
+          runDir,
+          "SCCP BSC auto-flow error",
+        ).catch(() => {});
+        const links = buildSccpBscTransactionLinksArtifact(
+          await collectTransactionLinks(page),
+          { bscNetwork: bscProfile.key },
+        );
+        await writeJsonReportFile(
+          path.join(runDir, "transaction-links-error.json"),
+          links,
+        ).catch(() => {});
+        throw autoFlowError;
+      }
+      await wait(AUTO_FLOW_POST_COMPLETION_SETTLE_MS);
+    } else {
+      await wait(durationMs);
+    }
     await captureUiProofScreenshot(
       page,
       path.join(runDir, "end.png"),
@@ -3323,7 +4523,7 @@ const main = async () => {
     );
 
     const links = buildSccpBscTransactionLinksArtifact(
-      await collectTransactionLinks(page),
+      [...autoFlowCapturedLinks, ...(await collectTransactionLinks(page))],
       { bscNetwork: bscProfile.key },
     );
     await writeJsonReportFile(
@@ -3340,6 +4540,7 @@ const main = async () => {
       runDir,
       readiness,
       bscNetwork: bscProfile.key,
+      autoFlow,
       startedAtMs: recordingStartedAtMs ?? endedAtMs - durationMs,
       endedAtMs,
       links,

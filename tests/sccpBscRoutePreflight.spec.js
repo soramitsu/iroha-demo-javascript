@@ -1069,9 +1069,11 @@ describe("BSC SCCP route preflight", () => {
             expect.objectContaining({ id: "burn-record-proof-artifact" }),
             expect.objectContaining({ id: "burn-record-proving-key" }),
             expect.objectContaining({ id: "native-evm-prover-bundle" }),
+            expect.objectContaining({ id: "destination-browser-prover-module" }),
             expect.objectContaining({
               id: "destination-browser-prover-manifest",
             }),
+            expect.objectContaining({ id: "source-browser-prover-module" }),
             expect.objectContaining({ id: "source-browser-prover-manifest" }),
             expect.objectContaining({ id: "post-deploy-live-evidence" }),
             expect.objectContaining({ id: "offline-full-toml-evidence" }),
@@ -1085,38 +1087,46 @@ describe("BSC SCCP route preflight", () => {
       (entry) => entry.id === "publish-public-bsc-route-manifest",
     );
     expect(publishAction?.commands[0]).toContain(
+      "e2e:sccp:bsc-prover-manifest",
+    );
+    expect(publishAction?.commands[0]).toContain("--direction destination");
+    expect(publishAction?.commands[0]).toContain(
+      "--route-report <pre-sidecar-route-preflight-report.json>",
+    );
+    expect(publishAction?.commands[1]).toContain("--direction source");
+    expect(publishAction?.commands[2]).toContain(
       "--evidence <testnet-deployment-evidence.json>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--destination-browser-prover-manifest <destination-browser-prover-manifest.json>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--source-browser-prover-manifest <source-browser-prover-manifest.json>",
     );
-    expect(publishAction?.commands[1]).toContain("publish-route-manifest");
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[3]).toContain("publish-route-manifest");
+    expect(publishAction?.commands[2]).toContain(
       "--taira-contract <taira-burn-record.contract.json>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--settlement-asset-definition-id <canonical-asset-definition-id>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--native-prover-bundle <native-evm-prover-bundle.json>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--offline-full-toml-evidence <offline-full-toml-evidence.json>",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--live-readback-checked true",
     );
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain(
       "--confirm-testnet taira_bsc_xor",
     );
-    expect(publishAction?.commands[0]).not.toContain(
+    expect(publishAction?.commands[2]).not.toContain(
       "--confirm-network testnet",
     );
-    expect(publishAction?.commands[1]).toContain("publish-route-manifest");
-    expect(publishAction?.commands[1]).toContain(
+    expect(publishAction?.commands[3]).toContain("publish-route-manifest");
+    expect(publishAction?.commands[3]).toContain(
       "--manifest <production-route.manifest.json>",
     );
     expect(report.missingProductionInputs).toEqual(
@@ -1165,14 +1175,16 @@ describe("BSC SCCP route preflight", () => {
       (entry) => entry.id === "publish-public-bsc-route-manifest",
     );
     expect(publishAction?.commands[0]).toContain("--bsc-network mainnet");
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[1]).toContain("--bsc-network mainnet");
+    expect(publishAction?.commands[2]).toContain("--bsc-network mainnet");
+    expect(publishAction?.commands[2]).toContain(
       "--evidence <mainnet-deployment-evidence.json>",
     );
-    expect(publishAction?.commands[0]).toContain("--confirm-mainnet true");
-    expect(publishAction?.commands[0]).toContain(
+    expect(publishAction?.commands[2]).toContain("--confirm-mainnet true");
+    expect(publishAction?.commands[2]).toContain(
       "--confirm-network taira_bsc_xor",
     );
-    expect(publishAction?.commands[0]).not.toContain("--confirm-testnet");
+    expect(publishAction?.commands[2]).not.toContain("--confirm-testnet");
     expect(publishAction?.requiredInputs).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "mainnet-bsc-deployment-evidence" }),
@@ -1508,6 +1520,35 @@ describe("BSC SCCP route preflight", () => {
     expect(report.checks).toContainEqual(
       expect.objectContaining({
         id: "bsc-token-lock-readback",
+        ok: true,
+      }),
+    );
+  });
+
+  it("accepts explicit non-placeholder source verifier material markers", () => {
+    const report = evaluateBscSccpRoutePreflight({
+      toriiUrl: TORII_URL,
+      chainMetadata: readyChainMetadata,
+      capabilities: readyCapabilities,
+      manifestSet: {
+        manifests: [
+          readyManifestWithNativeBundle({
+            sourceVerifierMaterial: {
+              version: 1,
+              sourceDomain: 2,
+              sourceChain: "bsc",
+              sourceProofPlan: "BscValidatorSetReceiptProof",
+              placeholder_material: false,
+            },
+          }),
+        ],
+      },
+    });
+
+    expect(report.ready).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        id: "bsc-production-placeholder-scan",
         ok: true,
       }),
     );
@@ -1982,6 +2023,20 @@ describe("BSC SCCP route preflight", () => {
         }),
         "bsc-production-placeholder-scan",
         /operatorWarning.*placeholder/,
+      ],
+      [
+        "productionReady with explicit placeholder source material marker",
+        readyManifest({
+          sourceVerifierMaterial: {
+            version: 1,
+            sourceDomain: 2,
+            sourceChain: "bsc",
+            sourceProofPlan: "BscValidatorSetReceiptProof",
+            placeholder_material: true,
+          },
+        }),
+        "bsc-production-placeholder-scan",
+        /placeholder_material=true.*placeholder/,
       ],
       [
         "productionReady with TODO operator handoff",

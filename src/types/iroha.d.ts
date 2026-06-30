@@ -885,6 +885,20 @@ export interface SccpMessageProofBundleInput {
   messageId: string;
 }
 
+export interface SccpBscProofGenerateInput {
+  request: Record<string, unknown>;
+  proverModuleUrl?: string;
+  proverConfigUrl?: string;
+  timeoutMs?: number;
+}
+
+export interface SccpBscSourceProofGenerateInput {
+  input: Record<string, unknown>;
+  proverModuleUrl?: string;
+  proverConfigUrl?: string;
+  timeoutMs?: number;
+}
+
 export interface SccpBridgeProofSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
@@ -1244,7 +1258,13 @@ export interface SigningAlgorithmOption {
   isDefault: boolean;
 }
 
+export interface RuntimeConfigResponse {
+  walletConnectProjectId: string;
+  sccpBscE2eWallet: string;
+}
+
 export interface IrohaBridge {
+  getRuntimeConfig(): RuntimeConfigResponse;
   ping(config: { toriiUrl: string }): Promise<ToriiHealth>;
   getChainMetadata(config: {
     toriiUrl: string;
@@ -1739,6 +1759,9 @@ export interface IrohaBridge {
     toriiUrl: string;
     apiToken?: string;
   }): Promise<Record<string, unknown>>;
+  getParameters(input: {
+    toriiUrl: string;
+  }): Promise<Record<string, unknown>>;
   getSccpCapabilities(input: {
     toriiUrl: string;
   }): Promise<SccpCapabilitiesResponse>;
@@ -1756,6 +1779,12 @@ export interface IrohaBridge {
   ): Promise<Record<string, unknown>>;
   getSccpMessageProofJob(
     input: SccpMessageProofInput,
+  ): Promise<Record<string, unknown>>;
+  proveBscSccpProof(
+    input: SccpBscProofGenerateInput,
+  ): Promise<Record<string, unknown>>;
+  proveBscSccpSourceProof(
+    input: SccpBscSourceProofGenerateInput,
   ): Promise<Record<string, unknown>>;
   submitSccpBridgeProof(
     input: SccpBridgeProofSubmitInput,

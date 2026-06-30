@@ -447,6 +447,10 @@ export const getSoraCloudHfStatus = (
   input: Parameters<IrohaBridge["getSoraCloudHfStatus"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getSoraCloudHfStatus(input);
 
+export const getParameters = (
+  input: Parameters<IrohaBridge["getParameters"]>[0],
+): Promise<Record<string, unknown>> => bridge().getParameters(input);
+
 export const getSccpCapabilities = (
   input: Parameters<IrohaBridge["getSccpCapabilities"]>[0],
 ): Promise<SccpCapabilitiesResponse> => bridge().getSccpCapabilities(input);

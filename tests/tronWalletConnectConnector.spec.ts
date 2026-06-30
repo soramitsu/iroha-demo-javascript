@@ -76,6 +76,59 @@ describe("TRON WalletConnect connector", () => {
     expect(initMock).not.toHaveBeenCalled();
   });
 
+  it("uses runtime preload config for WalletConnect project ID", async () => {
+    (
+      window as unknown as {
+        iroha?: unknown;
+      }
+    ).iroha = {
+      getRuntimeConfig: () => ({
+        walletConnectProjectId: "runtime-project",
+        sccpBscE2eWallet: "",
+      }),
+    };
+    const connectMock = vi.fn().mockResolvedValue({
+      session: {
+        topic: "runtime-topic",
+        namespaces: {
+          [WALLETCONNECT_TRON_NAMESPACE]: {
+            accounts: [`${TRON_MAINNET_CAIP_CHAIN_ID}:${VALID_TRON_ADDRESS}`],
+            chains: [TRON_MAINNET_CAIP_CHAIN_ID],
+            methods: [WALLETCONNECT_TRON_SIGN_METHOD],
+          },
+        },
+        sessionProperties: {
+          tron_method_version: WALLETCONNECT_TRON_METHOD_VERSION,
+        },
+      },
+    });
+    const initMock = vi.fn().mockResolvedValue({
+      connect: connectMock,
+      disconnect: vi.fn(),
+      provider: { session: null },
+      request: vi.fn(),
+    });
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useTronWalletConnect } = await import(
+      "@/composables/useTronWalletConnect"
+    );
+    const tron = useTronWalletConnect();
+    await tron.connect();
+
+    expect(tron.projectId.value).toBe("runtime-project");
+    expect(initMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "runtime-project",
+      }),
+    );
+    expect(connectMock).toHaveBeenCalled();
+  });
+
   it("requests official TRON mainnet v1 transaction signing and stores only metadata", async () => {
     vi.stubEnv("VITE_SCCP_TRON_NETWORK", "mainnet");
     vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", "test-project");

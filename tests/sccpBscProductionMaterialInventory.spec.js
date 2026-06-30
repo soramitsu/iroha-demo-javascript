@@ -49,7 +49,9 @@ import {
   bscSccpProductionMaterialInventoryOutputDir,
   bscSccpProductionMaterialInventoryRouteReportPath,
   bscSccpProductionMaterialScanPaths,
+  bscSccpProductionMaterialScanPathsWithLatestPublication,
   evaluateBscSccpProductionMaterialInventory,
+  resolveLatestBscSccpRouteManifestPublicationIsiPath,
   runBscSccpProductionMaterialInventory,
   shouldFailBscSccpProductionMaterialInventoryCli,
 } from "../scripts/e2e/sccp-bsc-production-material-inventory.mjs";
@@ -60,6 +62,8 @@ import {
   SCCP_BSC_PROVER_CONFIG_URL_ENV,
   SCCP_BSC_PROVER_MODULE_URL_ENV,
   SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
+  SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
+  SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
 } from "../scripts/e2e/sccp-bsc-live-smoke-readiness.mjs";
 import { writeBscSccpRuntimeProverConfig } from "../scripts/e2e/sccp-bsc-runtime-prover-config.mjs";
 import {
@@ -1044,6 +1048,8 @@ const compiledContractArtifact = (key) => {
 const writeJson = (filePath, payload) =>
   writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
 
+const FULL_FIXTURE_TEST_TIMEOUT_MS = 30_000;
+
 const withEnv = async (patch, fn) => {
   const original = new Map();
   for (const [key, value] of Object.entries(patch)) {
@@ -1121,7 +1127,7 @@ const tairaBurnRecordContractMaterial = ({
   artifact_b64: burnRecord.contractArtifactB64,
   artifact_sha256: burnRecord.artifactSha256,
   vkRef: {
-    backend: "halo2_ipa",
+    backend: "halo2/ipa",
     name: "taira_bsc_xor_burn_record_v1",
   },
   manifest: {
@@ -1136,8 +1142,8 @@ const tairaBurnRecordContractMaterial = ({
         params: [
           { name: "sender", type_name: "AccountId" },
           { name: "settlement_asset", type_name: "AssetDefinitionId" },
-          { name: "amount", type_name: "int" },
-          { name: "record_instruction", type_name: "Blob" },
+          { name: "amount", type_name: "Amount" },
+          { name: "record_instruction", type_name: "bytes" },
         ],
         return_type: null,
         permission: "AssetTransferRole",
@@ -2520,12 +2526,14 @@ const sidecarManifest = ({
     tokenAddress: BSC_TOKEN_ADDRESS,
     sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
     verifierAddress: BSC_VERIFIER_ADDRESS,
+    networkIdHex: profile.networkIdHex,
     verifierCodeHash: deploymentInfo.verifierCodeHash,
     verifierKeyHash: deploymentInfo.verifierKeyHash,
     proofArtifactHash: deploymentInfo.proofArtifactHash,
     provingKeyHash: deploymentInfo.provingKeyHash,
     nativeEvmProverBundleHash: deploymentInfo.nativeEvmProverBundleHash,
     destinationBindingHash: deploymentInfo.destinationBindingHash,
+    settlementAssetDefinitionId: deploymentInfo.settlementAssetDefinitionId,
   },
   postDeployLiveEvidence: postDeployLiveEvidence({}, profile),
 });
@@ -3059,9 +3067,28 @@ const productionRequirementInputs = (profile = BSC_PROFILES.testnet) => [
       profile.key === "mainnet"
         ? "artifacts/sccp-bsc/taira-bsc-mainnet-xor-route.manifest.json"
         : "artifacts/sccp-bsc/taira-bsc-xor-route.manifest.json",
-    requiredBy: ["native-prover-bundle", "route-config"],
+    requiredBy: [
+      "native-prover-bundle",
+      "route-config",
+      "publish-route-manifest",
+    ],
     description:
-      "Production route manifest bound to BSC deployment evidence, TAIRA route publication, and live canary evidence.",
+      "Production route manifest bound to BSC deployment evidence, browser prover references, TAIRA route publication, and live canary evidence.",
+  }),
+  productionRequirementInput({
+    id: "destination-browser-prover-manifest",
+    kind: "file-or-url",
+    placeholder: "<destination-browser-prover-manifest.json>",
+    requiredBy: ["route-manifest"],
+    description: "Route-bound TAIRA-to-BSC browser prover sidecar manifest.",
+  }),
+  productionRequirementInput({
+    id: "source-browser-prover-manifest",
+    kind: "file-or-url",
+    placeholder: "<source-browser-prover-manifest.json>",
+    requiredBy: ["route-manifest"],
+    description:
+      "Route-bound BSC-to-TAIRA browser source prover sidecar manifest.",
   }),
   productionRequirementInput({
     id: "taira-burn-record-contract",
@@ -3324,12 +3351,12 @@ const productionRequirementInputs = (profile = BSC_PROFILES.testnet) => [
     }),
   ),
   productionRequirementInput({
-    id: "taira-peer-config-targets",
+    id: "taira-route-manifest-manager",
     kind: "operator-environment",
-    placeholder: "<taira-peer-config-targets>",
-    requiredBy: ["route-config"],
+    placeholder: "<taira-route-manifest-manager-account-and-key-env>",
+    requiredBy: ["publish-route-manifest"],
     description:
-      "TAIRA peer configuration targets that will receive the generated route stanza.",
+      "TAIRA account with CanManageSccpRouteManifests and runtime-only signing material.",
   }),
 ];
 
@@ -3469,6 +3496,15 @@ const createReadyFixture = async ({
     postDeployLiveEvidence: postDeployLiveEvidence({}, profile),
     tairaXorBurnRecord: productionBurnRecordMaterial(),
   });
+  await writeJson(
+    path.join(root, "taira-bsc-xor-route.upsert-isi.json"),
+    routeManifestIsiArtifact(
+      { routeDeployment, profile },
+      {
+        submission: routeManifestIsiSubmission({ routeDeployment }),
+      },
+    ),
+  );
   const deploymentEvidencePath = path.join(
     root,
     profile.key === "mainnet"
@@ -3691,6 +3727,12 @@ const addRuntimeProverConfigToFixture = async (fixture) => {
       tairaXorBurnRecord: productionBurnRecordMaterial(),
     },
   );
+  await writeJson(
+    path.join(fixture.root, "taira-bsc-xor-route.upsert-isi.json"),
+    routeManifestIsiArtifact(fixture, {
+      submission: routeManifestIsiSubmission(fixture),
+    }),
+  );
   await writeJson(fixture.verifierPath, verifierMaterialForProfile(profile));
   const destinationModuleBytes = await readFile(fixture.destinationModulePath);
   const sourceModuleBytes = await readFile(fixture.sourceModulePath);
@@ -3767,6 +3809,82 @@ const evaluateFixture = async (fixture, overrides = {}) =>
     generatedAt: "2026-06-06T00:00:00.000Z",
     ...overrides,
   });
+
+const routeManifestIsiSubmission = (fixture, overrides = {}) => ({
+  submitted: true,
+  toriiUrl: "https://taira.sora.org",
+  chainId: BSC_TAIRA_CHAIN_ID,
+  authority: "testuRouteManifestPublisher",
+  hash: HASH_77,
+  submittedHash: HASH_77,
+  statusKind: "Applied",
+  status: {
+    status: {
+      kind: "Applied",
+      block_height: 1,
+      content: {
+        block_height: 1,
+      },
+    },
+  },
+  gasAssetId: fixture.routeDeployment.settlementAssetDefinitionId,
+  waitForCommit: true,
+  ...overrides,
+});
+
+const routeManifestIsiArtifact = (
+  fixture,
+  { artifactOverrides = {}, manifestOverrides = {}, submission } = {},
+) => {
+  const profile = fixture.profile ?? BSC_PROFILES.testnet;
+  return {
+    schema: "iroha-sccp-route-manifest-isi/v1",
+    routeId: SCCP_BSC_XOR_ROUTE_ID,
+    assetKey: SCCP_BSC_XOR_ASSET_KEY,
+    routeKey: {
+      routeId: SCCP_BSC_XOR_ROUTE_ID,
+      assetKey: SCCP_BSC_XOR_ASSET_KEY,
+      counterpartyDomain: 2,
+      chainIdHex: profile.chainIdHex,
+    },
+    requiredPermission: "CanManageSccpRouteManifests",
+    instruction: {
+      UpsertSccpRouteManifest: {
+        manifest: {
+          version: 1,
+          route_id: SCCP_BSC_XOR_ROUTE_ID,
+          asset_key: SCCP_BSC_XOR_ASSET_KEY,
+          tron_network: profile.chain,
+          chain: profile.chain,
+          chain_id_hex: profile.chainIdHex,
+          counterparty_domain: 2,
+          production_ready: true,
+          network_id_hex: profile.networkIdHex,
+          taira_xor_token_address: fixture.routeDeployment.tokenAddress,
+          taira_xor_bridge_address: fixture.routeDeployment.bridgeAddress,
+          sccp_tron_source_bridge_address:
+            fixture.routeDeployment.sourceBridgeAddress,
+          tron_verifier_address: fixture.routeDeployment.verifierAddress,
+          verifier_code_hash: fixture.routeDeployment.verifierCodeHash,
+          verifier_key_hash: fixture.routeDeployment.verifierKeyHash,
+          proof_artifact_hash: fixture.routeDeployment.proofArtifactHash,
+          proving_key_hash: fixture.routeDeployment.provingKeyHash,
+          native_evm_prover_bundle_hash:
+            fixture.routeDeployment.nativeEvmProverBundleHash,
+          destination_binding_hash:
+            fixture.routeDeployment.destinationBindingHash,
+          ...manifestOverrides,
+        },
+      },
+    },
+    manifestSha256: HASH_11,
+    productionReady: true,
+    nativeEvmProverBundleHash:
+      fixture.routeDeployment.nativeEvmProverBundleHash,
+    ...(submission === undefined ? {} : { submission }),
+    ...artifactOverrides,
+  };
+};
 
 describe("BSC SCCP production material inventory", () => {
   it("uses profile-specific default material inventory output directories", () => {
@@ -4238,59 +4356,213 @@ describe("BSC SCCP production material inventory", () => {
   });
 
   it("prefers profile-specific prover env over generic env while preserving explicit overrides", async () => {
-    await withEnv(
-      {
-        [SCCP_BSC_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-destination.js",
-        [SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV]:
-          "/sccp-bsc/mainnet-destination.js",
-        [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-source.js",
-        [SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV]:
-          "/sccp-bsc/mainnet-source.js",
-        [SCCP_BSC_PROVER_CONFIG_URL_ENV]: "/sccp-bsc/generic-config.json",
-        [SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV]:
-          "/sccp-bsc/mainnet-config.json",
-      },
-      async () => {
-        const report = await evaluateBscSccpProductionMaterialInventory({
-          scanPaths: [],
-          routeReport: routeReport({}, BSC_PROFILES.mainnet),
-          bscNetwork: "mainnet",
-          generatedAt: "2026-06-06T00:00:00.000Z",
-        });
-
-        expect(report.browserProvers.destination.module.moduleUrl).toBe(
-          "/sccp-bsc/mainnet-destination.js",
-        );
-        expect(report.browserProvers.source.module.moduleUrl).toBe(
-          "/sccp-bsc/mainnet-source.js",
-        );
-        expect(report.runtimeProverConfig.configUrl).toBe(
-          "/sccp-bsc/mainnet-config.json",
-        );
-
-        const explicitReport = await evaluateBscSccpProductionMaterialInventory(
-          {
-            scanPaths: [],
+    const root = await mkdtemp(path.join(tmpdir(), "sccp-bsc-inventory-env-"));
+    try {
+      await withEnv(
+        {
+          [SCCP_BSC_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-destination.js",
+          [SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV]:
+            "/sccp-bsc/mainnet-destination.js",
+          [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]:
+            "/sccp-bsc/generic-source.js",
+          [SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV]:
+            "/sccp-bsc/mainnet-source.js",
+          [SCCP_BSC_PROVER_CONFIG_URL_ENV]: "/sccp-bsc/generic-config.json",
+          [SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV]:
+            "/sccp-bsc/mainnet-config.json",
+        },
+        async () => {
+          const report = await evaluateBscSccpProductionMaterialInventory({
+            scanPaths: [root],
             routeReport: routeReport({}, BSC_PROFILES.mainnet),
             bscNetwork: "mainnet",
-            destinationModuleUrl: "/sccp-bsc/explicit-destination.js",
-            sourceModuleUrl: "/sccp-bsc/explicit-source.js",
-            runtimeProverConfigUrl: "/sccp-bsc/explicit-config.json",
             generatedAt: "2026-06-06T00:00:00.000Z",
+          });
+
+          expect(report.browserProvers.destination.module.moduleUrl).toBe(
+            "/sccp-bsc/mainnet-destination.js",
+          );
+          expect(report.browserProvers.source.module.moduleUrl).toBe(
+            "/sccp-bsc/mainnet-source.js",
+          );
+          expect(report.runtimeProverConfig.configUrl).toBe(
+            "/sccp-bsc/mainnet-config.json",
+          );
+
+          const explicitReport =
+            await evaluateBscSccpProductionMaterialInventory({
+              scanPaths: [root],
+              routeReport: routeReport({}, BSC_PROFILES.mainnet),
+              bscNetwork: "mainnet",
+              destinationModuleUrl: "/sccp-bsc/explicit-destination.js",
+              sourceModuleUrl: "/sccp-bsc/explicit-source.js",
+              runtimeProverConfigUrl: "/sccp-bsc/explicit-config.json",
+              generatedAt: "2026-06-06T00:00:00.000Z",
+            });
+
+          expect(
+            explicitReport.browserProvers.destination.module.moduleUrl,
+          ).toBe("/sccp-bsc/explicit-destination.js");
+          expect(explicitReport.browserProvers.source.module.moduleUrl).toBe(
+            "/sccp-bsc/explicit-source.js",
+          );
+          expect(explicitReport.runtimeProverConfig.configUrl).toBe(
+            "/sccp-bsc/explicit-config.json",
+          );
+        },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it(
+    "uses route-published browser prover refs when env URLs are absent",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const deploymentWithPublishedProvers = {
+          ...fixture.routeDeployment,
+          destinationBrowserProver: {
+            moduleUrl: fixture.destinationModuleUrl,
           },
+          sourceBrowserProver: {
+            moduleUrl: fixture.sourceModuleUrl,
+          },
+        };
+
+        const report = await withEnv(
+          {
+            [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]: undefined,
+            [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+            [SCCP_BSC_PROVER_MODULE_URL_ENV]: undefined,
+            [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+          },
+          () =>
+            evaluateBscSccpProductionMaterialInventory({
+              scanPaths: [fixture.root],
+              routeReport: routeReport({
+                deployment: deploymentWithPublishedProvers,
+              }),
+              bscNetwork: "testnet",
+              generatedAt: "2026-06-06T00:00:00.000Z",
+            }),
         );
 
-        expect(explicitReport.browserProvers.destination.module.moduleUrl).toBe(
-          "/sccp-bsc/explicit-destination.js",
+        expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(
+          true,
         );
-        expect(explicitReport.browserProvers.source.module.moduleUrl).toBe(
-          "/sccp-bsc/explicit-source.js",
+        expect(report.browserProvers.destination.module.moduleUrl).toBe(
+          fixture.destinationModuleUrl,
         );
-        expect(explicitReport.runtimeProverConfig.configUrl).toBe(
-          "/sccp-bsc/explicit-config.json",
+        expect(report.browserProvers.source.module.moduleUrl).toBe(
+          fixture.sourceModuleUrl,
         );
-      },
-    );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps route-published browser prover refs ahead of stale env URLs",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const deploymentWithPublishedProvers = {
+          ...fixture.routeDeployment,
+          destinationBrowserProver: {
+            moduleUrl: fixture.destinationModuleUrl,
+          },
+          sourceBrowserProver: {
+            moduleUrl: fixture.sourceModuleUrl,
+          },
+        };
+
+        const report = await withEnv(
+          {
+            [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]:
+              "https://cdn.example.invalid/stale-destination.js",
+            [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]:
+              "https://cdn.example.invalid/stale-source.js",
+            [SCCP_BSC_PROVER_MODULE_URL_ENV]:
+              "https://user:pass@cdn.example.invalid/generic-destination.js",
+            [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]:
+              "https://cdn.example.invalid/generic-source.js?token=secret",
+          },
+          () =>
+            evaluateBscSccpProductionMaterialInventory({
+              scanPaths: [fixture.root],
+              routeReport: routeReport({
+                deployment: deploymentWithPublishedProvers,
+              }),
+              bscNetwork: "testnet",
+              generatedAt: "2026-06-06T00:00:00.000Z",
+            }),
+        );
+
+        expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(
+          true,
+        );
+        expect(report.browserProvers.destination.module.moduleUrl).toBe(
+          fixture.destinationModuleUrl,
+        );
+        expect(report.browserProvers.source.module.moduleUrl).toBe(
+          fixture.sourceModuleUrl,
+        );
+        expect(JSON.stringify(report)).not.toContain("cdn.example.invalid");
+        expect(JSON.stringify(report)).not.toContain("token=secret");
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
+
+  it("rejects unsafe route-published browser prover refs when env URLs are absent", async () => {
+    const fixture = await createReadyFixture();
+    try {
+      const report = await withEnv(
+        {
+          [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]: undefined,
+          [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+          [SCCP_BSC_PROVER_MODULE_URL_ENV]: undefined,
+          [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+        },
+        () =>
+          evaluateBscSccpProductionMaterialInventory({
+            scanPaths: [fixture.root],
+            routeReport: routeReport({
+              deployment: {
+                ...fixture.routeDeployment,
+                destinationBrowserProver: {
+                  moduleUrl:
+                    "https://user:pass@cdn.example.invalid/destination.js",
+                },
+                sourceBrowserProver: {
+                  moduleUrl:
+                    "https://cdn.example.invalid/source.js?token=secret#frag",
+                },
+              },
+            }),
+            bscNetwork: "testnet",
+            generatedAt: "2026-06-06T00:00:00.000Z",
+          }),
+      );
+
+      expect(report.ready).toBe(false);
+      expect(
+        report.checks.find((entry) => entry.id === "destination-browser-prover")
+          ?.detail,
+      ).toMatch(/credentials/u);
+      expect(
+        report.checks.find((entry) => entry.id === "source-browser-prover")
+          ?.detail,
+      ).toMatch(/query strings or fragments/u);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
   });
 
   it("keeps default production scan roots network-scoped and away from diagnostic operator scratch output", () => {
@@ -4309,13 +4581,13 @@ describe("BSC SCCP production material inventory", () => {
       normalized.some((entry) => entry.endsWith("/output/sccp-bsc-deploy")),
     ).toBe(false);
     expect(normalized.some((entry) => entry.endsWith("/public/sccp-bsc"))).toBe(
-      false,
+      true,
     );
     expect(testnet.some((entry) => entry.endsWith("/public/sccp-bsc"))).toBe(
-      false,
+      true,
     );
     expect(mainnet.some((entry) => entry.endsWith("/public/sccp-bsc"))).toBe(
-      false,
+      true,
     );
     expect(
       normalized.some((entry) =>
@@ -4333,21 +4605,28 @@ describe("BSC SCCP production material inventory", () => {
           "/output/sccp-bsc-deploy/taira-bsc-xor-route.manifest.draft.json",
         ),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       normalized.some((entry) =>
         entry.endsWith(
           "/output/sccp-bsc-deploy/taira-bsc-xor-route.manifest.production-ready.json",
         ),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       normalized.some((entry) =>
         entry.endsWith(
           "/output/sccp-bsc-deploy/taira-bsc-xor-route.production-ready.route-only.toml",
         ),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/output/sccp-bsc-deploy/taira-bsc-xor-route.production-ready.torii.toml",
+        ),
+      ),
+    ).toBe(false);
     expect(
       normalized.some((entry) =>
         entry.endsWith(
@@ -4378,7 +4657,45 @@ describe("BSC SCCP production material inventory", () => {
     ).toBe(false);
     expect(
       normalized.some((entry) => entry.endsWith("/output/sccp-bsc-production")),
+    ).toBe(false);
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/output/sccp-bsc-production/taira-bsc-xor-burn-record.production-ready.contract.json",
+        ),
+      ),
     ).toBe(true);
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/output/sccp-bsc-production/taira-bsc-xor-route.republish-public-missing-20260626T165811Z.upsert-isi.json",
+        ),
+      ),
+    ).toBe(false);
+    expect(normalized.some((entry) => entry.endsWith(".upsert-isi.json"))).toBe(
+      false,
+    );
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/iroha/artifacts/sccp-bsc/taira-bsc-xor-route.manifest.json",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/iroha/artifacts/sccp-bsc/taira-bsc-xor-route.production-ready.torii.toml",
+        ),
+      ),
+    ).toBe(false);
+    expect(
+      normalized.some((entry) =>
+        entry.endsWith(
+          "/iroha/artifacts/sccp-bsc/taira-bsc-xor-burn-record.contract.json",
+        ),
+      ),
+    ).toBe(false);
     expect(
       normalized.some((entry) =>
         entry.endsWith(
@@ -4451,6 +4768,114 @@ describe("BSC SCCP production material inventory", () => {
     ).toBe(false);
   });
 
+  it("discovers the latest applied route manifest publication evidence for default scans", async () => {
+    const fixture = await createReadyFixture();
+    try {
+      const olderPath = path.join(
+        fixture.root,
+        "taira-bsc-xor-route.republish-public-missing-20260626T010000Z.upsert-isi.json",
+      );
+      const rejectedPath = path.join(
+        fixture.root,
+        "taira-bsc-xor-route.republish-public-missing-20260626T030000Z.upsert-isi.json",
+      );
+      const wrongRoutePath = path.join(
+        fixture.root,
+        "taira-bsc-xor-route.republish-public-missing-20260626T040000Z.upsert-isi.json",
+      );
+      const latestPath = path.join(
+        fixture.root,
+        "taira-bsc-xor-route.republish-public-missing-20260626T020000Z.upsert-isi.json",
+      );
+
+      await writeJson(
+        olderPath,
+        routeManifestIsiArtifact(fixture, {
+          submission: routeManifestIsiSubmission(fixture, {
+            hash: HASH_77,
+            submittedHash: HASH_77,
+            status: {
+              status: {
+                kind: "Applied",
+                block_height: 100,
+                content: { block_height: 100 },
+              },
+            },
+          }),
+        }),
+      );
+      await writeJson(
+        latestPath,
+        routeManifestIsiArtifact(fixture, {
+          submission: routeManifestIsiSubmission(fixture, {
+            hash: HASH_88,
+            submittedHash: HASH_88,
+            status: {
+              status: {
+                kind: "Applied",
+                block_height: 20,
+                content: { block_height: 20 },
+              },
+            },
+          }),
+        }),
+      );
+      await writeJson(
+        rejectedPath,
+        routeManifestIsiArtifact(fixture, {
+          submission: routeManifestIsiSubmission(fixture, {
+            hash: HASH_99,
+            submittedHash: HASH_99,
+            statusKind: "Rejected",
+            status: {
+              status: {
+                kind: "Rejected",
+                block_height: 99,
+                content: { block_height: 99 },
+              },
+            },
+          }),
+        }),
+      );
+      await writeJson(
+        wrongRoutePath,
+        routeManifestIsiArtifact(fixture, {
+          artifactOverrides: { routeId: "forged_bsc_xor" },
+          submission: routeManifestIsiSubmission(fixture, {
+            hash: HASH_66,
+            submittedHash: HASH_66,
+            status: {
+              status: {
+                kind: "Applied",
+                block_height: 100,
+                content: { block_height: 100 },
+              },
+            },
+          }),
+        }),
+      );
+
+      const resolved =
+        await resolveLatestBscSccpRouteManifestPublicationIsiPath({
+          bscNetwork: "testnet",
+          searchDirs: [fixture.root],
+        });
+      const scanPaths =
+        await bscSccpProductionMaterialScanPathsWithLatestPublication({
+          bscNetwork: "testnet",
+          publicationSearchDirs: [fixture.root],
+        });
+
+      expect(resolved).toBe(latestPath);
+      expect(scanPaths).toContain(latestPath);
+      expect(scanPaths).not.toContain(olderPath);
+      expect(scanPaths).not.toContain(rejectedPath);
+      expect(scanPaths).not.toContain(wrongRoutePath);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
   it("honors allow-not-ready for read-only production material audits", () => {
     expect(
       shouldFailBscSccpProductionMaterialInventoryCli({ ready: false }, {}),
@@ -4466,27 +4891,31 @@ describe("BSC SCCP production material inventory", () => {
     ).toBe(false);
   });
 
-  it("fails closed when the material scan would be truncated", async () => {
-    const fixture = await createReadyFixture();
-    try {
-      const report = await evaluateFixture(fixture, { maxFiles: 1 });
+  it(
+    "fails closed when the material scan would be truncated",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const report = await evaluateFixture(fixture, { maxFiles: 1 });
 
-      expect(report.ready).toBe(false);
-      expect(report.counts.files).toBe(1);
-      expect(report.counts.maxFiles).toBe(1);
-      expect(report.counts.truncated).toBe(true);
-      expect(report.counts.relevantFilesSeen).toBe(2);
-      expect(
-        report.checks.find((entry) => entry.id === "material-scan-complete"),
-      ).toMatchObject({
-        ok: false,
-        detail: expect.stringContaining("complete inventory"),
-      });
-      expect(report.reasons.join("\n")).toMatch(/material-scan-complete/u);
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+        expect(report.ready).toBe(false);
+        expect(report.counts.files).toBe(1);
+        expect(report.counts.maxFiles).toBe(1);
+        expect(report.counts.truncated).toBe(true);
+        expect(report.counts.relevantFilesSeen).toBe(2);
+        expect(
+          report.checks.find((entry) => entry.id === "material-scan-complete"),
+        ).toMatchObject({
+          ok: false,
+          detail: expect.stringContaining("complete inventory"),
+        });
+        expect(report.reasons.join("\n")).toMatch(/material-scan-complete/u);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("accepts clean production route, verifier, proof files, and browser prover sidecars", async () => {
     const fixture = await createReadyFixture();
@@ -4503,6 +4932,7 @@ describe("BSC SCCP production material inventory", () => {
         explorerHost: "testnet.bscscan.com",
       });
       expect(report.counts.productionRouteArtifacts).toBe(1);
+      expect(report.counts.routeManifestPublicationArtifacts).toBe(1);
       expect(report.counts.productionOfflineFullTomlEvidenceArtifacts).toBe(1);
       expect(report.counts.productionVerifierArtifacts).toBe(1);
       expect(report.counts.productionGroth16MaterialManifests).toBe(1);
@@ -4539,7 +4969,7 @@ describe("BSC SCCP production material inventory", () => {
         routeId: SCCP_BSC_XOR_ROUTE_ID,
         assetKey: SCCP_BSC_XOR_ASSET_KEY,
         bscNetwork: "testnet",
-        inputCount: 41,
+        inputCount: 43,
         requiredReportCount: 5,
         deniedVerifierKeyHashCount: 1,
         contractHash: bscProductionRequirementsContractHash("testnet"),
@@ -4745,41 +5175,48 @@ describe("BSC SCCP production material inventory", () => {
     }
   });
 
-  it("rejects self-consistent source-parity attestations with forged required marker categories", async () => {
-    const fixture = await createReadyFixture();
-    try {
-      const attestationPath = path.join(
-        fixture.root,
-        "source-parity-attestation.json",
-      );
-      const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
-      attestation.requiredMarkers = [
-        "BSC_TESTNET_NATIVE_EVM_LOCAL_ADMISSION_BUILDER",
-        "forged-marker-category",
-        "BSC_TESTNET_LOCAL_ADMISSION_ADVERSARIAL_TESTS",
-      ];
-      await writeJson(
-        attestationPath,
-        recomputeSourceParityHashes(attestation),
-      );
+  it(
+    "rejects self-consistent source-parity attestations with forged required marker categories",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const attestationPath = path.join(
+          fixture.root,
+          "source-parity-attestation.json",
+        );
+        const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+        attestation.requiredMarkers = [
+          "BSC_TESTNET_NATIVE_EVM_LOCAL_ADMISSION_BUILDER",
+          "forged-marker-category",
+          "BSC_TESTNET_LOCAL_ADMISSION_ADVERSARIAL_TESTS",
+        ];
+        await writeJson(
+          attestationPath,
+          recomputeSourceParityHashes(attestation),
+        );
 
-      const report = await evaluateFixture(fixture);
-      const findingText = JSON.stringify(
-        report.files.find((entry) => entry.kind === "source-parity-attestation")
-          ?.findings,
-      );
+        const report = await evaluateFixture(fixture);
+        const findingText = JSON.stringify(
+          report.files.find(
+            (entry) => entry.kind === "source-parity-attestation",
+          )?.findings,
+        );
 
-      expect(report.ready).toBe(false);
-      expect(findingText).toMatch(
-        /requiredMarkers contain unknown marker forged-marker-category/u,
-      );
-      expect(
-        report.checks.find((entry) => entry.id === "source-parity-attestation"),
-      ).toMatchObject({ ok: false });
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+        expect(report.ready).toBe(false);
+        expect(findingText).toMatch(
+          /requiredMarkers contain unknown marker forged-marker-category/u,
+        );
+        expect(
+          report.checks.find(
+            (entry) => entry.id === "source-parity-attestation",
+          ),
+        ).toMatchObject({ ok: false });
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("rejects mainnet source-parity attestations repackaged with testnet source markers", async () => {
     const fixture = await createReadyFixture({ profile: BSC_PROFILES.mainnet });
@@ -4822,36 +5259,41 @@ describe("BSC SCCP production material inventory", () => {
     }
   });
 
-  it("rejects self-consistent source-parity attestations with unexpected SDK file paths", async () => {
-    const fixture = await createReadyFixture();
-    try {
-      const attestationPath = path.join(
-        fixture.root,
-        "source-parity-attestation.json",
-      );
-      const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
-      attestation.sdks.javascript.files[0].path =
-        "javascript/iroha_js/src/pretend-bsc-local-admission.js";
-      await writeJson(
-        attestationPath,
-        recomputeSourceParityHashes(attestation),
-      );
+  it(
+    "rejects self-consistent source-parity attestations with unexpected SDK file paths",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const attestationPath = path.join(
+          fixture.root,
+          "source-parity-attestation.json",
+        );
+        const attestation = JSON.parse(await readFile(attestationPath, "utf8"));
+        attestation.sdks.javascript.files[0].path =
+          "javascript/iroha_js/src/pretend-bsc-local-admission.js";
+        await writeJson(
+          attestationPath,
+          recomputeSourceParityHashes(attestation),
+        );
 
-      const report = await evaluateFixture(fixture);
-      const findingText = JSON.stringify(
-        report.files.find((entry) => entry.kind === "source-parity-attestation")
-          ?.findings,
-      );
+        const report = await evaluateFixture(fixture);
+        const findingText = JSON.stringify(
+          report.files.find(
+            (entry) => entry.kind === "source-parity-attestation",
+          )?.findings,
+        );
 
-      expect(report.ready).toBe(false);
-      expect(findingText).toMatch(/path is not an expected SDK source path/u);
-      expect(findingText).toMatch(
-        /is missing expected file javascript\/iroha_js\/src\/sccp\.js/u,
-      );
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+        expect(report.ready).toBe(false);
+        expect(findingText).toMatch(/path is not an expected SDK source path/u);
+        expect(findingText).toMatch(
+          /is missing expected file javascript\/iroha_js\/src\/sccp\.js/u,
+        );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("rejects source-parity attestations with recomputed tree hashes but drifted SDK implementation hashes", async () => {
     const fixture = await createReadyFixture();
@@ -4899,50 +5341,56 @@ describe("BSC SCCP production material inventory", () => {
     }
   });
 
-  it("classifies standalone TAIRA burn-record contracts without treating them as route artifacts", async () => {
-    const fixture = await createReadyFixture();
-    try {
-      const burnRecord = productionBurnRecordMaterial();
-      const contractPath = path.join(
-        fixture.root,
-        "taira-bsc-xor-burn-record.contract.json",
-      );
-      await writeJson(
-        contractPath,
-        tairaBurnRecordContractMaterial({ burnRecord }),
-      );
+  it(
+    "classifies standalone TAIRA burn-record contracts without treating them as route artifacts",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const burnRecord = productionBurnRecordMaterial();
+        const contractPath = path.join(
+          fixture.root,
+          "taira-bsc-xor-burn-record.contract.json",
+        );
+        await writeJson(
+          contractPath,
+          tairaBurnRecordContractMaterial({ burnRecord }),
+        );
 
-      const report = await evaluateFixture(fixture);
-      const contract = report.files.find((entry) =>
-        entry.path.endsWith(".contract.json"),
-      );
+        const report = await evaluateFixture(fixture);
+        const contract = report.files.find((entry) =>
+          entry.path.endsWith(".contract.json"),
+        );
 
-      expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(true);
-      expect(report.counts.productionRouteArtifacts).toBe(1);
-      expect(report.counts.productionTairaBurnRecordContracts).toBe(1);
-      expect(contract?.kind).toBe("taira-burn-record-contract");
-      expect(contract?.tairaBurnRecordContract).toMatchObject({
-        valid: true,
-        schema: TAIRA_BURN_RECORD_CONTRACT_SCHEMA,
-        routeId: SCCP_BSC_XOR_ROUTE_ID,
-        assetKey: SCCP_BSC_XOR_ASSET_KEY,
-        artifactSha256: burnRecord.artifactSha256,
-        artifactProductionProblemCount: 0,
-        entrypoint: "burn_and_record",
-        permission: "AssetTransferRole",
-        executable: "IvmProved",
-        forceZkMode: true,
-        settlementInstruction: "Burn<Numeric, Asset>",
-        recordInstruction: "RecordSccpMessage",
-        routeArtifactHashMatches: true,
-      });
-      expect(
-        report.files.filter((entry) => entry.kind === "route"),
-      ).toHaveLength(1);
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+        expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(
+          true,
+        );
+        expect(report.counts.productionRouteArtifacts).toBe(1);
+        expect(report.counts.productionTairaBurnRecordContracts).toBe(1);
+        expect(contract?.kind).toBe("taira-burn-record-contract");
+        expect(contract?.tairaBurnRecordContract).toMatchObject({
+          valid: true,
+          schema: TAIRA_BURN_RECORD_CONTRACT_SCHEMA,
+          routeId: SCCP_BSC_XOR_ROUTE_ID,
+          assetKey: SCCP_BSC_XOR_ASSET_KEY,
+          artifactSha256: burnRecord.artifactSha256,
+          artifactProductionProblemCount: 0,
+          entrypoint: "burn_and_record",
+          permission: "AssetTransferRole",
+          executable: "IvmProved",
+          forceZkMode: true,
+          settlementInstruction: "Burn<Numeric, Asset>",
+          recordInstruction: "RecordSccpMessage",
+          routeArtifactHashMatches: true,
+        });
+        expect(
+          report.files.filter((entry) => entry.kind === "route"),
+        ).toHaveLength(1);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("accepts route-referenced standalone TAIRA burn-record material without clearing route publication", async () => {
     const fixture = await createReadyFixture();
@@ -4986,6 +5434,63 @@ describe("BSC SCCP production material inventory", () => {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it(
+    "accepts generated compiled contract artifact output directories",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const generatedDir = path.join(
+          fixture.root,
+          "testnet-bsc-compiled-contract-artifacts.json",
+        );
+        await mkdir(generatedDir, { recursive: true });
+        for (const key of Object.keys(BSC_COMPILED_CONTRACTS)) {
+          const artifact = JSON.parse(
+            await readFile(
+              path.join(fixture.root, "contracts", `${key}.json`),
+              "utf8",
+            ),
+          );
+          await writeJson(path.join(generatedDir, `${key}.json`), artifact);
+        }
+        await rm(path.join(fixture.root, "contracts"), {
+          recursive: true,
+          force: true,
+        });
+
+        const report = await evaluateFixture(fixture);
+
+        expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(
+          true,
+        );
+        expect(report.counts.compiledContractArtifacts).toBe(4);
+        expect(
+          report.files
+            .filter((entry) => entry.kind === "contract-artifact")
+            .map((entry) => entry.path),
+        ).toEqual(
+          expect.arrayContaining([
+            expect.stringMatching(
+              /testnet-bsc-compiled-contract-artifacts\.json\/bridge\.json$/u,
+            ),
+            expect.stringMatching(
+              /testnet-bsc-compiled-contract-artifacts\.json\/sourceBridge\.json$/u,
+            ),
+            expect.stringMatching(
+              /testnet-bsc-compiled-contract-artifacts\.json\/token\.json$/u,
+            ),
+            expect.stringMatching(
+              /testnet-bsc-compiled-contract-artifacts\.json\/verifier\.json$/u,
+            ),
+          ]),
+        );
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("rejects tampered compiled BSC contract artifact hashes", async () => {
     const fixture = await createReadyFixture();
@@ -5096,338 +5601,411 @@ describe("BSC SCCP production material inventory", () => {
     }
   });
 
-  it("skips generated fixture directories when scanning broad material roots", async () => {
-    const parent = await mkdtemp(
-      path.join(repoRoot, "output", "sccp-bsc-broad-scan-parent-"),
+  it(
+    "skips generated fixture directories when scanning broad material roots",
+    async () => {
+      const parent = await mkdtemp(
+        path.join(repoRoot, "output", "sccp-bsc-broad-scan-parent-"),
+      );
+      const fixture = await createReadyFixture({ rootDir: parent });
+      try {
+        const report = await evaluateBscSccpProductionMaterialInventory({
+          scanPaths: [parent],
+          routeReport: fixture.routeReport,
+          bscNetwork: fixture.profile.key,
+          destinationModuleUrl: fixture.destinationModuleUrl,
+          sourceModuleUrl: fixture.sourceModuleUrl,
+          generatedAt: "2026-06-06T00:00:00.000Z",
+        });
+
+        expect(report.ready).toBe(false);
+        expect(report.counts.skippedGeneratedDirectories).toBe(1);
+        expect(report.skippedGeneratedDirectories[0]).toContain(
+          "sccp-bsc-material-inventory-test-",
+        );
+        expect(report.counts.productionRouteArtifacts).toBe(0);
+        expect(report.counts.productionVerifierArtifacts).toBe(0);
+        expect(report.counts.productionNativeProverBundles).toBe(0);
+        expect(
+          report.checks.find(
+            (entry) => entry.id === "production-route-artifact",
+          )?.ok,
+        ).toBe(false);
+        expect(report.nextActions.map((action) => action.id)).toContain(
+          "publish-production-route-artifacts",
+        );
+        const routeAction = report.nextActions.find(
+          (action) => action.id === "publish-production-route-artifacts",
+        );
+        expect(routeAction?.requiredInputs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "testnet-bsc-deployment-evidence" }),
+            expect.objectContaining({ id: "taira-burn-record-contract" }),
+            expect.objectContaining({
+              id: "canonical-settlement-asset-definition-id",
+            }),
+            expect.objectContaining({ id: "burn-record-proof-artifact" }),
+            expect.objectContaining({ id: "burn-record-proving-key" }),
+            expect.objectContaining({ id: "native-evm-prover-bundle" }),
+            expect.objectContaining({ id: "post-deploy-live-evidence" }),
+            expect.objectContaining({ id: "deployed-taira-base-config" }),
+          ]),
+        );
+        expect(routeAction?.commands[0]).toContain(
+          "--evidence <testnet-deployment-evidence.json>",
+        );
+        expect(routeAction?.commands[0]).toContain(
+          "--taira-contract <taira-burn-record.contract.json>",
+        );
+        expect(routeAction?.commands[0]).toContain(
+          "--native-prover-bundle <native-evm-prover-bundle.json>",
+        );
+        expect(routeAction?.commands[0]).toContain(
+          "--offline-full-toml-evidence <offline-full-toml-evidence.json>",
+        );
+        expect(routeAction?.commands[0]).toContain(
+          "--confirm-testnet taira_bsc_xor",
+        );
+        expect(routeAction?.commands[0]).not.toMatch(/\{bscNetwork\}/u);
+        expect(routeAction?.commands[0]).not.toMatch(
+          /\{routeManifestConfirmationArgs\}/u,
+        );
+        expect(routeAction?.commands[1]).toContain(
+          "route-config --manifest <production-route.manifest.json>",
+        );
+        expect(routeAction?.commands[1]).toContain(
+          "--out <production-route.production-ready.torii.toml>",
+        );
+        expect(routeAction?.commands[1]).toContain(
+          "--write-offline-full-toml-evidence <offline-full-toml-evidence.json>",
+        );
+        const proofAction = report.nextActions.find(
+          (action) => action.id === "publish-production-proof-material",
+        );
+        expect(proofAction?.requiredInputs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "native-prover-artifact-root" }),
+            expect.objectContaining({ id: "native-prover-snarkjs-verifier" }),
+            expect.objectContaining({ id: "groth16-circom-compiler" }),
+            expect.objectContaining({
+              id: "production-groth16-verifier-key-json",
+            }),
+            expect.objectContaining({ id: "burn-record-proof-artifact" }),
+            expect.objectContaining({ id: "burn-record-proving-key" }),
+            expect.objectContaining({ id: "groth16-powers-of-tau" }),
+            expect.objectContaining({ id: "groth16-witness-wasm" }),
+            expect.objectContaining({ id: "groth16-material-manifest" }),
+            expect.objectContaining({
+              id: "candidate-groth16-material-manifest",
+            }),
+            expect.objectContaining({
+              id: "groth16-attestation-request-package",
+            }),
+            expect.objectContaining({ id: "signed-groth16-role-attestations" }),
+            expect.objectContaining({ id: "groth16-proof-self-test-report" }),
+            expect.objectContaining({
+              id: "trusted-groth16-attestation-signer",
+            }),
+            expect.objectContaining({ id: "trusted-setup-transcript" }),
+            expect.objectContaining({ id: "reproducible-build-transcript" }),
+            expect.objectContaining({ id: "cross-sdk-parity-report" }),
+            expect.objectContaining({ id: "native-prover-self-test-report" }),
+            expect.objectContaining({ id: "javascript-sdk-implementation" }),
+            expect.objectContaining({ id: "swift-sdk-implementation" }),
+            expect.objectContaining({ id: "kotlin-sdk-implementation" }),
+            expect.objectContaining({ id: "java-android-sdk-implementation" }),
+            expect.objectContaining({ id: "dotnet-sdk-implementation" }),
+            expect.objectContaining({
+              id: "semantic-sccp-circuit-attestation",
+            }),
+            expect.objectContaining({
+              id: "trusted-setup-ceremony-attestation",
+            }),
+            expect.objectContaining({
+              id: "reproducible-groth16-build-attestation",
+            }),
+            expect.objectContaining({ id: "audit-circuit-security" }),
+            expect.objectContaining({ id: "audit-native-implementation" }),
+            expect.objectContaining({ id: "audit-reproducible-build" }),
+            expect.objectContaining({ id: "audit-no-wasm-no-remote-scan" }),
+          ]),
+        );
+        const proofCommands = proofAction?.commands ?? [];
+        const findProofCommand = (needle) =>
+          proofCommands.find((command) => command.includes(needle));
+        expect(findProofCommand("source-parity-attestation")).toContain(
+          "source-parity-attestation --bsc-network testnet",
+        );
+        const materializeCommand = findProofCommand(
+          "groth16-material materialize",
+        );
+        expect(materializeCommand).toContain(
+          "groth16-material materialize --bsc-network testnet",
+        );
+        for (const flag of [
+          "--ptau <powersOfTau28_hez_final_22.ptau>",
+          "--witness-wasm <production-circuit.wasm>",
+          "--snarkjs-bin <snarkjs>",
+        ]) {
+          expect(materializeCommand).toContain(flag);
+        }
+        const proofSelfTestCommand = findProofCommand(
+          "groth16-material proof-self-test",
+        );
+        expect(proofSelfTestCommand).toContain(
+          "groth16-material proof-self-test --manifest <production-ready-groth16-material.manifest.json>",
+        );
+        expect(proofSelfTestCommand).toContain(
+          "--witness-wasm <production-circuit.wasm>",
+        );
+        expect(proofSelfTestCommand).toContain("--snarkjs-bin <snarkjs>");
+        const requestCommand = findProofCommand(
+          "groth16-material attestation-request",
+        );
+        expect(requestCommand).toContain(
+          "groth16-material attestation-request --manifest <candidate-groth16-material.manifest.json>",
+        );
+        expect(requestCommand).toContain(
+          "--semantic-review-evidence <semantic-review-evidence.json>",
+        );
+        expect(requestCommand).toContain(
+          "--circuit-security-audit-evidence <circuit-security-audit-evidence.json>",
+        );
+        expect(requestCommand).not.toContain("--toolchain-sha256");
+        const handoffCommand = findProofCommand(
+          "groth16-material handoff-bundle",
+        );
+        expect(handoffCommand).toContain(
+          "groth16-material handoff-bundle --manifest <candidate-groth16-material.manifest.json>",
+        );
+        expect(handoffCommand).toContain(
+          "--transcript-template-package <transcript-template-package.json>",
+        );
+        expect(handoffCommand).toContain(
+          "--evidence-template-package <evidence-template-package.json>",
+        );
+        expect(handoffCommand).toContain(
+          "--request <attestation-request.json>",
+        );
+        expect(handoffCommand).toContain("--out <attestation-handoff.json>");
+        const inventoryCommand = findProofCommand(
+          "groth16-material attestation-inventory",
+        );
+        expect(inventoryCommand).toContain(
+          "groth16-material attestation-inventory --request <attestation-request.json>",
+        );
+        expect(inventoryCommand).toContain(
+          "--scan-dir <native-prover-artifact-root>",
+        );
+        expect(inventoryCommand).toContain(
+          "--trusted-attestation-signer <0x...>",
+        );
+        const finalizeCommand = findProofCommand(
+          "groth16-material finalize-attestations",
+        );
+        expect(finalizeCommand).toContain(
+          "groth16-material finalize-attestations --request <attestation-request.json>",
+        );
+        for (const flag of [
+          "--semantic-attestation <semantic-sccp-circuit-attestation.json>",
+          "--circuit-security-attestation <circuit-security-audit.json>",
+          "--trusted-setup-attestation <trusted-setup-ceremony.json>",
+          "--reproducible-build-attestation <reproducible-build-attestation.json>",
+          "--trusted-attestation-signer <0x...>",
+        ]) {
+          expect(finalizeCommand).toContain(flag);
+        }
+        const nativeBundleCommand = findProofCommand(
+          "native-prover-bundle --bsc-network testnet",
+        );
+        expect(nativeBundleCommand).toContain(
+          "native-prover-bundle --bsc-network testnet",
+        );
+        for (const flag of [
+          "--proof-artifact <relative-circuit.r1cs>",
+          "--proving-key <relative-circuit.zkey>",
+          "--verifier-key <production-verifier-key.json>",
+          "--groth16-material-manifest <relative-groth16-material-manifest.json>",
+          "--groth16-proof-self-test <relative-groth16-proof-self-test.json>",
+          "--snarkjs-bin <snarkjs>",
+          "--trusted-attestation-signer <0x...>",
+          "--cross-sdk-parity <relative-cross-sdk-parity.json>",
+          "--native-prover-self-test <relative-native-self-test.json>",
+          "--javascript-implementation <relative-javascript-implementation>",
+          "--swift-implementation <relative-swift-implementation>",
+          "--kotlin-implementation <relative-kotlin-implementation>",
+          "--java-android-implementation <relative-java-android-implementation>",
+          "--dotnet-implementation <relative-dotnet-implementation>",
+          "--audit-circuit-security <hex-or-relative-file>",
+          "--audit-native-implementation <source-parity-attestation.json>",
+          "--audit-reproducible-build <hex-or-relative-file>",
+          "--audit-no-wasm-no-remote-scan <hex-or-relative-file>",
+        ]) {
+          expect(nativeBundleCommand).toContain(flag);
+        }
+        for (const command of proofCommands) {
+          expect(command).not.toMatch(/\{bscNetwork\}/u);
+        }
+        expect(report.missingProductionInputs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "production-route-manifest",
+              blockedByActions: ["publish-production-route-artifacts"],
+            }),
+            expect.objectContaining({
+              id: "offline-full-toml-evidence",
+              blockedByActions: ["publish-production-route-artifacts"],
+            }),
+            expect.objectContaining({
+              id: "cross-sdk-parity-report",
+              blockedByActions: ["publish-production-proof-material"],
+            }),
+            expect.objectContaining({
+              id: "audit-no-wasm-no-remote-scan",
+              blockedByActions: ["publish-production-proof-material"],
+            }),
+          ]),
+        );
+      } finally {
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
+
+  it("does not include arbitrary files only because an ancestor path names SCCP BSC", async () => {
+    const root = await mkdtemp(
+      path.join(repoRoot, "output", "sccp-bsc-production-broad-filter-"),
     );
-    const fixture = await createReadyFixture({ rootDir: parent });
     try {
+      const broadDir = path.join(root, "sccp-bsc-production");
+      await mkdir(broadDir, { recursive: true });
+      await writeFile(
+        path.join(broadDir, "powersOfTau28_hez_final_22.ptau"),
+        "not scanned",
+      );
+      await writeFile(
+        path.join(broadDir, "sccp-bsc-full-message-v1.sym"),
+        "not scanned",
+      );
+      await writeFile(
+        path.join(broadDir, "taira-bsc-xor-route.manifest.draft.json"),
+        JSON.stringify(
+          {
+            routeId: SCCP_BSC_XOR_ROUTE_ID,
+            assetKey: SCCP_BSC_XOR_ASSET_KEY,
+            productionReady: false,
+            disabledReason: "draft only",
+          },
+          null,
+          2,
+        ),
+      );
+
       const report = await evaluateBscSccpProductionMaterialInventory({
-        scanPaths: [parent],
-        routeReport: fixture.routeReport,
-        bscNetwork: fixture.profile.key,
-        destinationModuleUrl: fixture.destinationModuleUrl,
-        sourceModuleUrl: fixture.sourceModuleUrl,
+        scanPaths: [root],
+        routeReport: routeReport(),
+        bscNetwork: "testnet",
         generatedAt: "2026-06-06T00:00:00.000Z",
       });
+      const paths = report.files.map((entry) => entry.path);
 
-      expect(report.ready).toBe(false);
-      expect(report.counts.skippedGeneratedDirectories).toBe(1);
-      expect(report.skippedGeneratedDirectories[0]).toContain(
-        "sccp-bsc-material-inventory-test-",
+      expect(paths.some((entry) => entry.endsWith(".ptau"))).toBe(false);
+      expect(paths.some((entry) => entry.endsWith(".sym"))).toBe(false);
+      expect(paths).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/taira-bsc-xor-route\.manifest\.draft\.json$/u),
+        ]),
       );
-      expect(report.counts.productionRouteArtifacts).toBe(0);
-      expect(report.counts.productionVerifierArtifacts).toBe(0);
-      expect(report.counts.productionNativeProverBundles).toBe(0);
       expect(
-        report.checks.find((entry) => entry.id === "production-route-artifact")
-          ?.ok,
-      ).toBe(false);
-      expect(report.nextActions.map((action) => action.id)).toContain(
-        "publish-production-route-artifacts",
-      );
-      const routeAction = report.nextActions.find(
-        (action) => action.id === "publish-production-route-artifacts",
-      );
-      expect(routeAction?.requiredInputs).toEqual(
+        report.files
+          .flatMap((entry) => entry.findings)
+          .map((entry) => entry.id),
+      ).not.toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ id: "testnet-bsc-deployment-evidence" }),
-          expect.objectContaining({ id: "taira-burn-record-contract" }),
-          expect.objectContaining({
-            id: "canonical-settlement-asset-definition-id",
-          }),
-          expect.objectContaining({ id: "burn-record-proof-artifact" }),
-          expect.objectContaining({ id: "burn-record-proving-key" }),
-          expect.objectContaining({ id: "native-evm-prover-bundle" }),
-          expect.objectContaining({ id: "post-deploy-live-evidence" }),
-          expect.objectContaining({ id: "deployed-taira-base-config" }),
-        ]),
-      );
-      expect(routeAction?.commands[0]).toContain(
-        "--evidence <testnet-deployment-evidence.json>",
-      );
-      expect(routeAction?.commands[0]).toContain(
-        "--taira-contract <taira-burn-record.contract.json>",
-      );
-      expect(routeAction?.commands[0]).toContain(
-        "--native-prover-bundle <native-evm-prover-bundle.json>",
-      );
-      expect(routeAction?.commands[0]).toContain(
-        "--offline-full-toml-evidence <offline-full-toml-evidence.json>",
-      );
-      expect(routeAction?.commands[0]).toContain(
-        "--confirm-testnet taira_bsc_xor",
-      );
-      expect(routeAction?.commands[0]).not.toMatch(/\{bscNetwork\}/u);
-      expect(routeAction?.commands[0]).not.toMatch(
-        /\{routeManifestConfirmationArgs\}/u,
-      );
-      expect(routeAction?.commands[1]).toContain(
-        "route-config --manifest <production-route.manifest.json>",
-      );
-      expect(routeAction?.commands[1]).toContain(
-        "--out <production-route.production-ready.torii.toml>",
-      );
-      expect(routeAction?.commands[1]).toContain(
-        "--write-offline-full-toml-evidence <offline-full-toml-evidence.json>",
-      );
-      const proofAction = report.nextActions.find(
-        (action) => action.id === "publish-production-proof-material",
-      );
-      expect(proofAction?.requiredInputs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ id: "native-prover-artifact-root" }),
-          expect.objectContaining({ id: "native-prover-snarkjs-verifier" }),
-          expect.objectContaining({ id: "groth16-circom-compiler" }),
-          expect.objectContaining({
-            id: "production-groth16-verifier-key-json",
-          }),
-          expect.objectContaining({ id: "burn-record-proof-artifact" }),
-          expect.objectContaining({ id: "burn-record-proving-key" }),
-          expect.objectContaining({ id: "groth16-powers-of-tau" }),
-          expect.objectContaining({ id: "groth16-witness-wasm" }),
-          expect.objectContaining({ id: "groth16-material-manifest" }),
-          expect.objectContaining({
-            id: "candidate-groth16-material-manifest",
-          }),
-          expect.objectContaining({
-            id: "groth16-attestation-request-package",
-          }),
-          expect.objectContaining({ id: "signed-groth16-role-attestations" }),
-          expect.objectContaining({ id: "groth16-proof-self-test-report" }),
-          expect.objectContaining({
-            id: "trusted-groth16-attestation-signer",
-          }),
-          expect.objectContaining({ id: "trusted-setup-transcript" }),
-          expect.objectContaining({ id: "reproducible-build-transcript" }),
-          expect.objectContaining({ id: "cross-sdk-parity-report" }),
-          expect.objectContaining({ id: "native-prover-self-test-report" }),
-          expect.objectContaining({ id: "javascript-sdk-implementation" }),
-          expect.objectContaining({ id: "swift-sdk-implementation" }),
-          expect.objectContaining({ id: "kotlin-sdk-implementation" }),
-          expect.objectContaining({ id: "java-android-sdk-implementation" }),
-          expect.objectContaining({ id: "dotnet-sdk-implementation" }),
-          expect.objectContaining({
-            id: "semantic-sccp-circuit-attestation",
-          }),
-          expect.objectContaining({
-            id: "trusted-setup-ceremony-attestation",
-          }),
-          expect.objectContaining({
-            id: "reproducible-groth16-build-attestation",
-          }),
-          expect.objectContaining({ id: "audit-circuit-security" }),
-          expect.objectContaining({ id: "audit-native-implementation" }),
-          expect.objectContaining({ id: "audit-reproducible-build" }),
-          expect.objectContaining({ id: "audit-no-wasm-no-remote-scan" }),
-        ]),
-      );
-      const proofCommands = proofAction?.commands ?? [];
-      const findProofCommand = (needle) =>
-        proofCommands.find((command) => command.includes(needle));
-      expect(findProofCommand("source-parity-attestation")).toContain(
-        "source-parity-attestation --bsc-network testnet",
-      );
-      const materializeCommand = findProofCommand(
-        "groth16-material materialize",
-      );
-      expect(materializeCommand).toContain(
-        "groth16-material materialize --bsc-network testnet",
-      );
-      for (const flag of [
-        "--ptau <powersOfTau28_hez_final_22.ptau>",
-        "--witness-wasm <production-circuit.wasm>",
-        "--snarkjs-bin <snarkjs>",
-      ]) {
-        expect(materializeCommand).toContain(flag);
-      }
-      const proofSelfTestCommand = findProofCommand(
-        "groth16-material proof-self-test",
-      );
-      expect(proofSelfTestCommand).toContain(
-        "groth16-material proof-self-test --manifest <production-ready-groth16-material.manifest.json>",
-      );
-      expect(proofSelfTestCommand).toContain(
-        "--witness-wasm <production-circuit.wasm>",
-      );
-      expect(proofSelfTestCommand).toContain("--snarkjs-bin <snarkjs>");
-      const requestCommand = findProofCommand(
-        "groth16-material attestation-request",
-      );
-      expect(requestCommand).toContain(
-        "groth16-material attestation-request --manifest <candidate-groth16-material.manifest.json>",
-      );
-      expect(requestCommand).toContain(
-        "--semantic-review-evidence <semantic-review-evidence.json>",
-      );
-      expect(requestCommand).toContain(
-        "--circuit-security-audit-evidence <circuit-security-audit-evidence.json>",
-      );
-      expect(requestCommand).not.toContain("--toolchain-sha256");
-      const handoffCommand = findProofCommand(
-        "groth16-material handoff-bundle",
-      );
-      expect(handoffCommand).toContain(
-        "groth16-material handoff-bundle --manifest <candidate-groth16-material.manifest.json>",
-      );
-      expect(handoffCommand).toContain(
-        "--transcript-template-package <transcript-template-package.json>",
-      );
-      expect(handoffCommand).toContain(
-        "--evidence-template-package <evidence-template-package.json>",
-      );
-      expect(handoffCommand).toContain("--request <attestation-request.json>");
-      expect(handoffCommand).toContain("--out <attestation-handoff.json>");
-      const inventoryCommand = findProofCommand(
-        "groth16-material attestation-inventory",
-      );
-      expect(inventoryCommand).toContain(
-        "groth16-material attestation-inventory --request <attestation-request.json>",
-      );
-      expect(inventoryCommand).toContain(
-        "--scan-dir <native-prover-artifact-root>",
-      );
-      expect(inventoryCommand).toContain(
-        "--trusted-attestation-signer <0x...>",
-      );
-      const finalizeCommand = findProofCommand(
-        "groth16-material finalize-attestations",
-      );
-      expect(finalizeCommand).toContain(
-        "groth16-material finalize-attestations --request <attestation-request.json>",
-      );
-      for (const flag of [
-        "--semantic-attestation <semantic-sccp-circuit-attestation.json>",
-        "--circuit-security-attestation <circuit-security-audit.json>",
-        "--trusted-setup-attestation <trusted-setup-ceremony.json>",
-        "--reproducible-build-attestation <reproducible-build-attestation.json>",
-        "--trusted-attestation-signer <0x...>",
-      ]) {
-        expect(finalizeCommand).toContain(flag);
-      }
-      const nativeBundleCommand = findProofCommand(
-        "native-prover-bundle --bsc-network testnet",
-      );
-      expect(nativeBundleCommand).toContain(
-        "native-prover-bundle --bsc-network testnet",
-      );
-      for (const flag of [
-        "--proof-artifact <relative-circuit.r1cs>",
-        "--proving-key <relative-circuit.zkey>",
-        "--verifier-key <production-verifier-key.json>",
-        "--groth16-material-manifest <relative-groth16-material-manifest.json>",
-        "--groth16-proof-self-test <relative-groth16-proof-self-test.json>",
-        "--snarkjs-bin <snarkjs>",
-        "--trusted-attestation-signer <0x...>",
-        "--cross-sdk-parity <relative-cross-sdk-parity.json>",
-        "--native-prover-self-test <relative-native-self-test.json>",
-        "--javascript-implementation <relative-javascript-implementation>",
-        "--swift-implementation <relative-swift-implementation>",
-        "--kotlin-implementation <relative-kotlin-implementation>",
-        "--java-android-implementation <relative-java-android-implementation>",
-        "--dotnet-implementation <relative-dotnet-implementation>",
-        "--audit-circuit-security <hex-or-relative-file>",
-        "--audit-native-implementation <source-parity-attestation.json>",
-        "--audit-reproducible-build <hex-or-relative-file>",
-        "--audit-no-wasm-no-remote-scan <hex-or-relative-file>",
-      ]) {
-        expect(nativeBundleCommand).toContain(flag);
-      }
-      for (const command of proofCommands) {
-        expect(command).not.toMatch(/\{bscNetwork\}/u);
-      }
-      expect(report.missingProductionInputs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "production-route-manifest",
-            blockedByActions: ["publish-production-route-artifacts"],
-          }),
-          expect.objectContaining({
-            id: "offline-full-toml-evidence",
-            blockedByActions: ["publish-production-route-artifacts"],
-          }),
-          expect.objectContaining({
-            id: "cross-sdk-parity-report",
-            blockedByActions: ["publish-production-proof-material"],
-          }),
-          expect.objectContaining({
-            id: "audit-no-wasm-no-remote-scan",
-            blockedByActions: ["publish-production-proof-material"],
-          }),
+          "oversized-material-inventory-file",
+          "oversized-proof-material-file",
         ]),
       );
     } finally {
-      await rm(parent, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 
-  it("rejects configured local browser prover sidecars as production prover evidence", async () => {
-    const fixture = await createReadyFixture();
-    try {
-      const destinationModuleBytes = await readFile(
-        fixture.destinationModulePath,
-      );
-      await writeJson(`${fixture.destinationModulePath}.manifest.json`, {
-        schema: "iroha-demo-sccp-bsc-browser-prover-local-sidecar/v1",
-        moduleUrl: fixture.destinationModuleUrl,
-        moduleSha256: sha256Hex(destinationModuleBytes),
-        exports: ["bscSccpProve", "bscSccpNativeProverSelfTest"],
-      });
-
-      const report = await evaluateFixture(fixture);
-
-      expect(report.ready).toBe(false);
-      expect(report.counts.browserProverSidecars).toBe(2);
-      expect(report.browserProvers.destination).toMatchObject({
-        ok: false,
-        detail: expect.stringMatching(/retired local-only sidecar schema/u),
-        sidecar: {
-          ok: false,
-          manifest: null,
-        },
-      });
-      expect(
-        report.files.find(
-          (entry) =>
-            entry.path ===
-            relativeModuleUrl(`${fixture.destinationModulePath}.manifest.json`),
-        ),
-      ).toMatchObject({
-        browserProverSidecar: {
+  it(
+    "rejects configured local browser prover sidecars as production prover evidence",
+    async () => {
+      const fixture = await createReadyFixture();
+      try {
+        const destinationModuleBytes = await readFile(
+          fixture.destinationModulePath,
+        );
+        await writeJson(`${fixture.destinationModulePath}.manifest.json`, {
           schema: "iroha-demo-sccp-bsc-browser-prover-local-sidecar/v1",
-          valid: false,
-        },
-        findings: expect.arrayContaining([
-          expect.objectContaining({
-            severity: "critical",
-            id: "invalid-browser-prover-sidecar",
-            message: expect.stringMatching(/local-only/u),
-          }),
-        ]),
-      });
-      expect(
-        report.checks.find((entry) => entry.id === "destination-browser-prover")
-          ?.detail,
-      ).toMatch(/retired local-only sidecar schema/u);
-      const proverAction = report.nextActions.find(
-        (action) => action.id === "publish-browser-prover-modules",
-      );
-      expect(proverAction).toMatchObject({
-        blockedByChecks: ["destination-browser-prover"],
-      });
-      expect(report.missingProductionInputs).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: "testnet-destination-browser-prover-module",
-            blockedByActions: ["publish-browser-prover-modules"],
-          }),
-        ]),
-      );
-      expect(JSON.stringify(proverAction)).not.toContain("{bscNetwork}");
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  });
+          moduleUrl: fixture.destinationModuleUrl,
+          moduleSha256: sha256Hex(destinationModuleBytes),
+          exports: ["bscSccpProve", "bscSccpNativeProverSelfTest"],
+        });
+
+        const report = await evaluateFixture(fixture);
+
+        expect(report.ready).toBe(false);
+        expect(report.counts.browserProverSidecars).toBe(2);
+        expect(report.browserProvers.destination).toMatchObject({
+          ok: false,
+          detail: expect.stringMatching(/retired local-only sidecar schema/u),
+          sidecar: {
+            ok: false,
+            manifest: null,
+          },
+        });
+        expect(
+          report.files.find(
+            (entry) =>
+              entry.path ===
+              relativeModuleUrl(
+                `${fixture.destinationModulePath}.manifest.json`,
+              ),
+          ),
+        ).toMatchObject({
+          browserProverSidecar: {
+            schema: "iroha-demo-sccp-bsc-browser-prover-local-sidecar/v1",
+            valid: false,
+          },
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              severity: "critical",
+              id: "invalid-browser-prover-sidecar",
+              message: expect.stringMatching(/local-only/u),
+            }),
+          ]),
+        });
+        expect(
+          report.checks.find(
+            (entry) => entry.id === "destination-browser-prover",
+          )?.detail,
+        ).toMatch(/retired local-only sidecar schema/u);
+        const proverAction = report.nextActions.find(
+          (action) => action.id === "publish-browser-prover-modules",
+        );
+        expect(proverAction).toMatchObject({
+          blockedByChecks: ["destination-browser-prover"],
+        });
+        expect(report.missingProductionInputs).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: "testnet-destination-browser-prover-module",
+              blockedByActions: ["publish-browser-prover-modules"],
+            }),
+          ]),
+        );
+        expect(JSON.stringify(proverAction)).not.toContain("{bscNetwork}");
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+    FULL_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
   it("requires generated offline full TOML evidence to match the public route", async () => {
     const fixture = await createReadyFixture();
@@ -5781,7 +6359,7 @@ describe("BSC SCCP production material inventory", () => {
       ).toMatchObject({
         valid: true,
         bscNetwork: "mainnet",
-        inputCount: 41,
+        inputCount: 43,
         contractMatchesExpected: true,
       });
       expect(JSON.stringify(report)).not.toContain(
@@ -5851,7 +6429,7 @@ describe("BSC SCCP production material inventory", () => {
       expect(requirementsFile?.productionRequirements).toMatchObject({
         valid: false,
         bscNetwork: "mainnet",
-        inputCount: 41,
+        inputCount: 43,
         contractMatchesExpected: true,
       });
       expect(JSON.stringify(requirementsFile)).toMatch(
@@ -5918,7 +6496,7 @@ describe("BSC SCCP production material inventory", () => {
       expect(requirementsFile?.productionRequirements).toMatchObject({
         valid: false,
         bscNetwork: "testnet",
-        inputCount: 37,
+        inputCount: 39,
         contractMatchesExpected: false,
       });
       expect(JSON.stringify(requirementsFile)).toMatch(
@@ -5950,7 +6528,7 @@ describe("BSC SCCP production material inventory", () => {
       expect(requirementsFile?.productionRequirements).toMatchObject({
         valid: false,
         bscNetwork: "testnet",
-        inputCount: 41,
+        inputCount: 43,
         contractMatchesExpected: true,
       });
       expect(JSON.stringify(requirementsFile)).toMatch(
@@ -5985,7 +6563,7 @@ describe("BSC SCCP production material inventory", () => {
       expect(requirementsFile?.productionRequirements).toMatchObject({
         valid: false,
         bscNetwork: "testnet",
-        inputCount: 41,
+        inputCount: 43,
         contractMatchesExpected: true,
       });
       expect(JSON.stringify(requirementsFile)).toMatch(
@@ -6111,7 +6689,7 @@ describe("BSC SCCP production material inventory", () => {
         contractMatchesExpected: true,
       });
       expect(JSON.stringify(requirementsFile)).toMatch(
-        /production requirements inputs\[41\] must be an object/u,
+        /production requirements inputs\[43\] must be an object/u,
       );
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
@@ -6250,6 +6828,7 @@ describe("BSC SCCP production material inventory", () => {
 
       expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(true);
       expect(report.counts.productionRouteArtifacts).toBe(1);
+      expect(report.counts.routeManifestPublicationArtifacts).toBe(1);
       expect(report.counts.productionVerifierArtifacts).toBe(1);
       expect(verifierFile).toMatchObject({
         kind: "verifier",
@@ -8080,6 +8659,108 @@ describe("BSC SCCP production material inventory", () => {
       await rm(fixture.root, { recursive: true, force: true });
     }
   });
+
+  it("classifies route manifest ISI publication artifacts without treating compatibility aliases as route artifacts", async () => {
+    const fixture = await createReadyFixture();
+    try {
+      await writeJson(
+        path.join(fixture.root, "taira-bsc-xor-route.upsert-isi.json"),
+        routeManifestIsiArtifact(fixture, {
+          submission: routeManifestIsiSubmission(fixture),
+        }),
+      );
+
+      const report = await evaluateFixture(fixture);
+      const upsert = report.files.find((entry) =>
+        entry.path.endsWith("taira-bsc-xor-route.upsert-isi.json"),
+      );
+      const findingIds = report.files
+        .flatMap((entry) => entry.findings)
+        .map((entry) => entry.id);
+
+      expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(true);
+      expect(report.counts.productionRouteArtifacts).toBe(1);
+      expect(report.counts.routeManifestPublicationArtifacts).toBe(1);
+      expect(report.counts.productionVerifierArtifacts).toBe(1);
+      expect(upsert).toMatchObject({
+        kind: "route-manifest-isi",
+        routeManifestUpsertIsi: {
+          valid: true,
+          routeId: SCCP_BSC_XOR_ROUTE_ID,
+          assetKey: SCCP_BSC_XOR_ASSET_KEY,
+          chain: BSC_PROFILES.testnet.chain,
+          chainIdHex: BSC_PROFILES.testnet.chainIdHex,
+          networkIdHex: BSC_PROFILES.testnet.networkIdHex,
+          counterpartyDomain: 2,
+          requiredPermission: "CanManageSccpRouteManifests",
+          productionReady: true,
+          submission: {
+            submitted: true,
+            chainId: BSC_TAIRA_CHAIN_ID,
+            hash: HASH_77,
+            submittedHash: HASH_77,
+            statusKind: "Applied",
+            gasAssetId: fixture.routeDeployment.settlementAssetDefinitionId,
+            waitForCommit: true,
+          },
+        },
+      });
+      expect(upsert?.route).toBeUndefined();
+      expect(upsert?.verifier).toBeUndefined();
+      expect(findingIds).not.toContain("conflicting-route-material");
+      expect(findingIds).not.toContain("conflicting-verifier-material");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    [
+      "mismatched submitted hash",
+      { submittedHash: HASH_88 },
+      /submission\.hash must match submission\.submittedHash/u,
+    ],
+    [
+      "rejected committed status",
+      { statusKind: "Rejected" },
+      /submission\.statusKind must be Applied when waitForCommit is true/u,
+    ],
+    [
+      "alias gas asset",
+      { gasAssetId: "xor#universal" },
+      /submission\.gasAssetId must be a canonical Base58 TAIRA asset definition id/u,
+    ],
+  ])(
+    "rejects route manifest ISI artifacts with %s",
+    async (_label, submissionOverrides, expectedMessage) => {
+      const fixture = await createReadyFixture();
+      try {
+        await writeJson(
+          path.join(fixture.root, "taira-bsc-xor-route.upsert-isi.json"),
+          routeManifestIsiArtifact(fixture, {
+            submission: routeManifestIsiSubmission(
+              fixture,
+              submissionOverrides,
+            ),
+          }),
+        );
+
+        const report = await evaluateFixture(fixture);
+        const upsert = report.files.find((entry) =>
+          entry.path.endsWith("taira-bsc-xor-route.upsert-isi.json"),
+        );
+        const findingIds = upsert?.findings.map((entry) => entry.id) ?? [];
+        const findingText = JSON.stringify(upsert?.findings ?? []);
+
+        expect(report.ready).toBe(false);
+        expect(upsert?.routeManifestUpsertIsi?.valid).toBe(false);
+        expect(findingIds).toContain("invalid-route-manifest-isi");
+        expect(findingText).toMatch(expectedMessage);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("rejects production route artifacts whose proof-role hashes collide", async () => {
     const fixture = await createReadyFixture();

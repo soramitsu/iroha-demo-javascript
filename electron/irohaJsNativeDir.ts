@@ -9,6 +9,7 @@ const REQUIRED_NATIVE_EXPORTS = [
   "buildConfidentialTransferProofV2",
   "buildConfidentialUnshieldProofV2",
   "buildConfidentialUnshieldProofV3",
+  "buildIvmProvedTransaction",
 ] as const;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
@@ -127,4 +128,46 @@ export const configureIrohaJsNativeDir = (
     env.IROHA_JS_NATIVE_DIR = resolved;
   }
   return resolved;
+};
+
+export const loadIrohaJsNativeBinding = (
+  moduleUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+  loadNativeModule: LoadNativeModule = defaultLoadNativeModule,
+): NativeModuleLike => {
+  const nativeDir =
+    configureIrohaJsNativeDir(moduleUrl, env) ??
+    resolveIrohaJsNativeDir(moduleUrl);
+  if (!nativeDir) {
+    throw new Error(
+      "The @iroha/iroha-js native binding is required. Run npm install in this app and npm run build:native inside ../iroha/javascript/iroha_js.",
+    );
+  }
+
+  const nativeModule = loadNativeModule(
+    moduleUrl,
+    join(nativeDir, NATIVE_MODULE_FILENAME),
+  );
+  if (!hasRequiredIrohaJsNativeExports(nativeModule)) {
+    throw new Error(
+      "The @iroha/iroha-js native binding is stale or incomplete; rebuild ../iroha/javascript/iroha_js so SCCP proved transaction signing is available.",
+    );
+  }
+  return nativeModule;
+};
+
+export const installGlobalIrohaJsNativeBinding = (
+  moduleUrl: string,
+  env: NodeJS.ProcessEnv = process.env,
+  loadNativeModule: LoadNativeModule = defaultLoadNativeModule,
+): NativeModuleLike => {
+  const globalWithNative = globalThis as typeof globalThis & {
+    __IROHA_NATIVE_BINDING__?: unknown;
+  };
+  if (hasRequiredIrohaJsNativeExports(globalWithNative.__IROHA_NATIVE_BINDING__)) {
+    return globalWithNative.__IROHA_NATIVE_BINDING__;
+  }
+  const nativeModule = loadIrohaJsNativeBinding(moduleUrl, env, loadNativeModule);
+  globalWithNative.__IROHA_NATIVE_BINDING__ = nativeModule;
+  return nativeModule;
 };

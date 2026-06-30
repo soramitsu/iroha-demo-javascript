@@ -227,6 +227,22 @@ const unwrapNrt0Frame = (payload: Buffer) => {
 const versionedPayload = (payload: Buffer) =>
   Buffer.concat([Buffer.from([0x01]), unwrapNrt0Frame(payload)]);
 
+const nativeVersionedPayload = (
+  payload: Buffer,
+  nativeBinding: unknown,
+): Buffer => {
+  const native = nativeBinding as
+    | { encodeSignedTransactionNorito?: (payload: Buffer) => Buffer | Uint8Array }
+    | undefined;
+  if (typeof native?.encodeSignedTransactionNorito === "function") {
+    return Buffer.concat([
+      Buffer.from([0x01]),
+      Buffer.from(native.encodeSignedTransactionNorito(unwrapNrt0Frame(payload))),
+    ]);
+  }
+  return versionedPayload(payload);
+};
+
 type MockStoredAccountSecret =
   | string
   | {
@@ -267,6 +283,7 @@ const mocks = vi.hoisted(() => ({
   governanceProposeDeployContractMock: vi.fn(),
   getVerifyingKeyTypedMock: vi.fn(),
   nodeFetchMock: vi.fn(),
+  installGlobalIrohaJsNativeBindingMock: vi.fn(),
   buildKaigiRosterJoinProofMock: vi.fn(
     (input?: { rosterRootHex?: string | null }) => ({
       commitment: Buffer.from("01".repeat(32), "hex"),
@@ -470,6 +487,20 @@ vi.mock("../electron/faucetApi", async () => {
   };
 });
 
+vi.mock("../electron/irohaJsNativeDir", async () => {
+  const actual = await vi.importActual<
+    typeof import("../electron/irohaJsNativeDir")
+  >("../electron/irohaJsNativeDir");
+  return {
+    ...actual,
+    configureIrohaJsNativeDir: vi.fn(() => "/mock/native"),
+    installGlobalIrohaJsNativeBinding: (
+      moduleUrl: string,
+      env?: NodeJS.ProcessEnv,
+    ) => mocks.installGlobalIrohaJsNativeBindingMock(moduleUrl, env),
+  };
+});
+
 vi.mock("@iroha/iroha-js", async () => {
   const actual =
     await vi.importActual<typeof import("@iroha/iroha-js")>("@iroha/iroha-js");
@@ -533,7 +564,10 @@ vi.mock("@iroha/iroha-js", async () => {
     submitTransaction(...args: unknown[]) {
       const [payload, ...rest] = args;
       return mocks.submitTransactionMock(
-        versionedPayload(payload as Buffer),
+        nativeVersionedPayload(
+          payload as Buffer,
+          (this.options as { __nativeBinding?: unknown }).__nativeBinding,
+        ),
         ...rest,
       );
     }
@@ -867,6 +901,16 @@ describe("preload Kaigi bridge", () => {
     mocks.governanceProposeDeployContractMock.mockReset();
     mocks.getVerifyingKeyTypedMock.mockReset();
     mocks.nodeFetchMock.mockReset();
+    mocks.installGlobalIrohaJsNativeBindingMock.mockReset();
+    mocks.installGlobalIrohaJsNativeBindingMock.mockReturnValue({
+      encodeSignedTransactionNorito: (payload: Buffer) =>
+        Buffer.from(`native-${payload.toString("hex")}`, "utf8"),
+      encodeSignedTransactionVersioned: (payload: Buffer) =>
+        Buffer.concat([
+          Buffer.from([0x01]),
+          Buffer.from(`versioned-${payload.toString("hex")}`, "utf8"),
+        ]),
+    });
     mocks.buildKaigiRosterJoinProofMock.mockClear();
     mocks.buildShieldTransactionMock.mockClear();
     mocks.buildUnshieldTransactionMock.mockClear();
@@ -1295,6 +1339,14 @@ describe("preload Kaigi bridge", () => {
             height: 1,
           });
         }
+        if (method === "POST" && href.endsWith("/v1/pipeline/transactions")) {
+          return jsonResponse(
+            {
+              accepted: true,
+            },
+            202,
+          );
+        }
         if (
           method === "POST" &&
           href.endsWith("/v1/confidential/relay/submit")
@@ -1661,11 +1713,42 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.buildIvmProvedTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         authority: ALICE_ACCOUNT_ID,
+        creationTimeMs: expect.any(Number),
         privateKey: Buffer.from(privateKeyHex, "hex"),
+        ttlMs: 10 * 60 * 1000,
       }),
     );
+    expect(mocks.installGlobalIrohaJsNativeBindingMock).toHaveBeenCalledWith(
+      expect.stringMatching(/preload/u),
+      undefined,
+    );
+    const pipelineCall = mocks.nodeFetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/v1/pipeline/transactions"),
+    );
+    expect(pipelineCall).toBeDefined();
+    expect(pipelineCall?.[1]).toMatchObject({
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-norito",
+      },
+    });
+    expect(pipelineCall?.[1]?.body).toEqual(
+      Buffer.concat([
+        Buffer.from([0x01]),
+        Buffer.from(
+          `versioned-${Buffer.from(`ivm-proved-${privateKeyHex}`, "utf8").toString("hex")}`,
+          "utf8",
+        ),
+      ]),
+    );
+    expect(mocks.submitTransactionMock).not.toHaveBeenCalled();
     expect(
-      JSON.stringify(mocks.submitTransactionMock.mock.calls),
+      mocks.nodeFetchMock.mock.calls.some(([input]) =>
+        String(input).includes("/v1/ledger/headers"),
+      ),
+    ).toBe(false);
+    expect(
+      JSON.stringify([pipelineCall]),
     ).not.toContain(privateKeyHex);
   });
 
@@ -2197,7 +2280,7 @@ describe("preload Kaigi bridge", () => {
 
     expect(mocks.nodeFetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      "https://bsc-testnet-rpc.publicnode.com",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({
@@ -2486,7 +2569,7 @@ describe("preload Kaigi bridge", () => {
       }),
     ).rejects.toThrow(/EVM logs response entry 2 must be an object/);
     expect(mocks.nodeFetchMock).toHaveBeenCalledWith(
-      "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+      "https://bsc-testnet-rpc.publicnode.com",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({

@@ -41,6 +41,11 @@ import {
   MAX_VIDEO_ARTIFACT_BYTES,
   REQUIRED_SCCP_BSC_VIDEO_TRANSACTION_SLOTS,
   SCCP_BSC_VIDEO_COMPLETE_OPERATOR_NOTES,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+  SCCP_BSC_WALLETCONNECT_NAMESPACE,
+  SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+  sccpBscWalletConnectCaipChainId,
 } from "../scripts/e2e/sccp-bsc-live-video.mjs";
 import {
   SCCP_BSC_BROWSER_MANIFEST_MAX_BYTES,
@@ -1147,11 +1152,12 @@ const materialInventoryReport = (overrides = {}) => {
       }),
     },
     counts: {
-      files: 20,
-      relevantFilesSeen: 20,
+      files: 21,
+      relevantFilesSeen: 21,
       maxFiles: 2000,
       truncated: false,
       productionRouteArtifacts: 1,
+      routeManifestPublicationArtifacts: 1,
       productionOfflineFullTomlEvidenceArtifacts: 1,
       productionDeploymentEvidenceArtifacts: 1,
       productionTairaBurnRecordContracts: 1,
@@ -1190,6 +1196,8 @@ const materialInventoryReport = (overrides = {}) => {
           provingKeyHash: HASH_66,
           nativeEvmProverBundleHash: HASH_99,
           destinationBindingHash: HASH_33,
+          settlementAssetDefinitionId: deployment({ bscNetwork: profile.key })
+            .settlementAssetDefinitionId,
           bridgeAddress: BSC_BRIDGE_ADDRESS,
           tokenAddress: BSC_TOKEN_ADDRESS,
           sourceBridgeAddress: BSC_SOURCE_BRIDGE_ADDRESS,
@@ -1203,6 +1211,38 @@ const materialInventoryReport = (overrides = {}) => {
           burnRecordArtifactSha256: HASH_12,
           disabled: false,
           publicDeploymentMatches: true,
+        },
+        findings: [],
+      },
+      {
+        path: "./output/sccp-bsc-production/taira-bsc-xor-route.upsert-isi.json",
+        kind: "route-manifest-isi",
+        sizeBytes: 4096,
+        sha256: HASH_17,
+        routeManifestUpsertIsi: {
+          valid: true,
+          schema: "iroha-sccp-route-manifest-isi/v1",
+          routeId: SCCP_BSC_XOR_ROUTE_ID,
+          assetKey: SCCP_BSC_XOR_ASSET_KEY,
+          chain: profile.chain,
+          chainIdHex: profile.chainIdHex,
+          networkIdHex: profile.networkIdHex,
+          counterpartyDomain: 2,
+          requiredPermission: "CanManageSccpRouteManifests",
+          manifestSha256: HASH_18,
+          productionReady: true,
+          submission: {
+            submitted: true,
+            toriiUrl: "https://taira.sora.org",
+            chainId: BSC_TAIRA_CHAIN_ID,
+            authority: "testuRouteManifestPublisher",
+            hash: HASH_77,
+            submittedHash: HASH_77,
+            statusKind: "Applied",
+            gasAssetId: deployment({ bscNetwork: profile.key })
+              .settlementAssetDefinitionId,
+            waitForCommit: true,
+          },
         },
         findings: [],
       },
@@ -1226,7 +1266,7 @@ const materialInventoryReport = (overrides = {}) => {
           entrypoint: "burn_and_record",
           permission: "AssetTransferRole",
           paramSignature:
-            "sender:AccountId,settlement_asset:AssetDefinitionId,amount:int,record_instruction:Blob",
+            "sender:AccountId,settlement_asset:AssetDefinitionId,amount:Amount,record_instruction:bytes",
           executable: "IvmProved",
           forceZkMode: true,
           settlementInstruction: "Burn<Numeric, Asset>",
@@ -1246,7 +1286,7 @@ const materialInventoryReport = (overrides = {}) => {
           routeId: SCCP_BSC_XOR_ROUTE_ID,
           assetKey: SCCP_BSC_XOR_ASSET_KEY,
           bscNetwork: profile.key,
-          inputCount: 41,
+          inputCount: 43,
           requiredReportCount: 5,
           deniedVerifierKeyHashCount: 1,
           contractHash: requirementsContractHash,
@@ -1750,9 +1790,11 @@ const emptyVideoMissingEvidence = () => ({
   duplicateExplorerScreenshotSlots: [],
   invalidExplorerScreenshotSlots: [],
   unexpectedExplorerScreenshotKinds: [],
+  invalidTransactionLinks: [],
   readiness: [],
   videoArtifacts: [],
   videoTimeline: [],
+  walletApproval: [],
 });
 const videoEvidence = () => ({
   proofComplete: true,
@@ -1762,6 +1804,7 @@ const videoEvidence = () => ({
   duplicateExplorerScreenshotSlots: [],
   invalidExplorerScreenshotSlots: [],
   unexpectedExplorerScreenshotKinds: [],
+  invalidTransactionLinkEntries: [],
   readinessEvidence: {
     ready: true,
     missingReadinessEvidence: [],
@@ -1788,6 +1831,15 @@ const videoEvidence = () => ({
     durationMs: 60_000,
     missingVideoTimeline: [],
   },
+});
+
+const walletApprovalEvidence = (bscNetwork = "testnet") => ({
+  mode: SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+  productionReady: true,
+  walletConnectNamespace: SCCP_BSC_WALLETCONNECT_NAMESPACE,
+  walletConnectMethod: SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+  walletConnectChainId: sccpBscWalletConnectCaipChainId(bscNetwork),
+  e2eWalletHarness: false,
 });
 
 const videoTranscript = (overrides = {}) => {
@@ -1864,6 +1916,7 @@ const videoTranscript = (overrides = {}) => {
       screenshotProof("bscBurnTx", bscTx(VIDEO_HASH_CC, profile.key)),
       screenshotProof("tairaSettlementTx", tairaTx(VIDEO_HASH_DD)),
     ],
+    walletApprovalEvidence: walletApprovalEvidence(profile.key),
     evidence: videoEvidence(),
     operatorNotes: SCCP_BSC_VIDEO_COMPLETE_OPERATOR_NOTES,
     missingEvidence: emptyVideoMissingEvidence(),
@@ -2115,8 +2168,7 @@ const writeFileBackedPeerAuditReports = async (
   for (const [index, peer] of peerAuditReport().peers.entries()) {
     const source = sources[index] ?? `stanzas/peer${index}.toml`;
     const cleanBytes = Buffer.from(
-      peerContents[index] ??
-        `[[zk.sccp_route_manifests]]\nroute_id = "${SCCP_BSC_XOR_ROUTE_ID}"\nasset_key = "${SCCP_BSC_XOR_ASSET_KEY}"\n`,
+      peerContents[index] ?? "# no local BSC SCCP route stanzas\n",
     );
     const expectedHash = sha256Hex(cleanBytes);
     if (
@@ -2825,12 +2877,15 @@ describe("BSC SCCP aggregate production gate", () => {
       { path: "./output/sccp-bsc-production", ok: true, kind: "directory" },
       { path: "./public/sccp-bsc", ok: true, kind: "directory" },
     ]);
-    expect(report.materialInventory?.counts?.relevantFilesSeen).toBe(20);
+    expect(report.materialInventory?.counts?.relevantFilesSeen).toBe(21);
     expect(report.materialInventory?.counts?.maxFiles).toBe(2000);
     expect(report.materialInventory?.counts?.truncated).toBe(false);
     expect(report.materialInventory?.counts?.warningFindings).toBe(0);
     expect(report.materialInventory?.counts?.browserProverSidecars).toBe(2);
     expect(report.materialInventory?.counts?.compiledContractArtifacts).toBe(4);
+    expect(
+      report.materialInventory?.counts?.routeManifestPublicationArtifacts,
+    ).toBe(1);
     expect(
       report.materialInventory?.counts
         ?.productionOfflineFullTomlEvidenceArtifacts,
@@ -2862,7 +2917,7 @@ describe("BSC SCCP aggregate production gate", () => {
             routeId: SCCP_BSC_XOR_ROUTE_ID,
             assetKey: SCCP_BSC_XOR_ASSET_KEY,
             bscNetwork: "testnet",
-            inputCount: 41,
+            inputCount: 43,
             requiredReportCount: 5,
             deniedVerifierKeyHashCount: 1,
             contractHash: bscProductionRequirementsContractHash("testnet"),
@@ -2877,6 +2932,30 @@ describe("BSC SCCP aggregate production gate", () => {
             valid: true,
             key: "bridge",
             contractName: "TairaXorBscSccpBridge",
+          }),
+        }),
+        expect.objectContaining({
+          kind: "route-manifest-isi",
+          routeManifestUpsertIsi: expect.objectContaining({
+            valid: true,
+            schema: "iroha-sccp-route-manifest-isi/v1",
+            routeId: SCCP_BSC_XOR_ROUTE_ID,
+            assetKey: SCCP_BSC_XOR_ASSET_KEY,
+            chain: "bsc-testnet",
+            chainIdHex: "0x61",
+            networkIdHex: BSC_TESTNET_NETWORK_ID_HEX,
+            counterpartyDomain: 2,
+            requiredPermission: "CanManageSccpRouteManifests",
+            productionReady: true,
+            submission: expect.objectContaining({
+              submitted: true,
+              chainId: BSC_TAIRA_CHAIN_ID,
+              hash: HASH_77,
+              submittedHash: HASH_77,
+              statusKind: "Applied",
+              gasAssetId: deployment().settlementAssetDefinitionId,
+              waitForCommit: true,
+            }),
           }),
         }),
         expect.objectContaining({
@@ -2954,6 +3033,26 @@ describe("BSC SCCP aggregate production gate", () => {
     expect(report.nextActions).toEqual([]);
     expect(report.missingProductionInputs).toEqual([]);
     expect(JSON.stringify(report)).not.toMatch(/private|seed|mnemonic/iu);
+  });
+
+  it("accepts a video readiness check taken during recording after the smoke report", () => {
+    const recordingReadinessCheckedAt = new Date(NOW_MS - 30_000).toISOString();
+    const report = evaluate({
+      smokeReadinessReport: smokeReadinessReport({
+        checkedAt: new Date(NOW_MS - 120_000).toISOString(),
+      }),
+      videoTranscript: videoTranscript({
+        readinessBinding: {
+          ...videoTranscript().readinessBinding,
+          checkedAt: recordingReadinessCheckedAt,
+        },
+      }),
+    });
+
+    expect(report.ready, JSON.stringify(report.reasons, null, 2)).toBe(true);
+    expect(report.videoProof?.readinessBinding?.checkedAt).toBe(
+      recordingReadinessCheckedAt,
+    );
   });
 
   it("rejects route preflight reports that omit route-bound browser prover refs", () => {
@@ -3629,7 +3728,7 @@ describe("BSC SCCP aggregate production gate", () => {
         expect.objectContaining({
           id: "walletconnect-project-id",
           blockedByActions: expect.arrayContaining([
-            "publish-bsc-prover-modules",
+            "configure-bsc-walletconnect",
           ]),
           blockedBySmokeActions: ["configure-bsc-walletconnect"],
         }),
@@ -4018,6 +4117,7 @@ describe("BSC SCCP aggregate production gate", () => {
         counts: {
           files: 1,
           productionRouteArtifacts: 0,
+          routeManifestPublicationArtifacts: 0,
           productionVerifierArtifacts: 0,
           productionNativeProverBundles: 0,
           proofArtifacts: 0,
@@ -4108,6 +4208,9 @@ describe("BSC SCCP aggregate production gate", () => {
         "video-artifact-captured",
         "video-proof-complete",
       ]),
+    );
+    expect(actions["record-live-video-proof"].commands[0]).toContain(
+      "--walletconnect-project-id <walletconnect-project-id>",
     );
     expect(
       report.nextActions.every(
@@ -4314,15 +4417,16 @@ describe("BSC SCCP aggregate production gate", () => {
           placeholder: "<testnet-source-prover-module-url>",
         }),
         expect.objectContaining({
-          id: "walletconnect-project-id",
-        }),
-        expect.objectContaining({
           id: "testnet-runtime-prover-config",
         }),
       ]),
     );
     expect(actions["record-live-video-proof"].requiredInputs).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: "walletconnect-project-id",
+          placeholder: "<walletconnect-project-id>",
+        }),
         expect.objectContaining({
           id: "funded-taira-wallet",
           kind: "secure-wallet",
@@ -4394,6 +4498,10 @@ describe("BSC SCCP aggregate production gate", () => {
           id: "sccp-ui-proof-video",
           blockedByActions: ["record-live-video-proof"],
         }),
+        expect.objectContaining({
+          id: "walletconnect-project-id",
+          blockedByActions: ["record-live-video-proof"],
+        }),
       ]),
     );
     expect(JSON.stringify(report.missingProductionInputs)).not.toContain(
@@ -4421,8 +4529,23 @@ describe("BSC SCCP aggregate production gate", () => {
         "video-proof-complete",
       ]),
     );
+    expect(recordAction.commands[0]).toContain(
+      "--walletconnect-project-id <walletconnect-project-id>",
+    );
+    expect(recordAction.requiredInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "walletconnect-project-id",
+          placeholder: "<walletconnect-project-id>",
+        }),
+      ]),
+    );
     expect(report.missingProductionInputs).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          id: "walletconnect-project-id",
+          blockedByActions: ["record-live-video-proof"],
+        }),
         expect.objectContaining({
           id: "sccp-ui-proof-video",
           blockedByActions: ["record-live-video-proof"],
@@ -5680,7 +5803,7 @@ describe("BSC SCCP aggregate production gate", () => {
         {
           routeReport: routeReport({
             bscContractReadback: {
-              endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+              endpoint: "https://bsc-testnet-rpc.publicnode.com",
               chainIdHex: "0x61",
               codePresent: {
                 token: true,
@@ -5715,7 +5838,7 @@ describe("BSC SCCP aggregate production gate", () => {
         {
           routeReport: routeReport({
             bscContractReadback: {
-              endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+              endpoint: "https://bsc-testnet-rpc.publicnode.com",
               chainIdHex: "0x61",
               codePresent: {
                 token: true,
@@ -5750,7 +5873,7 @@ describe("BSC SCCP aggregate production gate", () => {
         {
           routeReport: routeReport({
             bscContractReadback: {
-              endpoint: "https://data-seed-prebsc-1-s1.bnbchain.org:8545",
+              endpoint: "https://bsc-testnet-rpc.publicnode.com",
               chainIdHex: "0x61",
               codePresent: {
                 token: true,
@@ -7026,7 +7149,7 @@ describe("BSC SCCP aggregate production gate", () => {
     expect(JSON.stringify(hostileDetail)).not.toContain(uniqueSecretMarker);
   });
 
-  it("routes missing WalletConnect and BSC prover setup into prover publication", () => {
+  it("routes missing WalletConnect and BSC prover setup into separate actions", () => {
     const baseSmoke = smokeReadinessReport();
     const failingSmokeChecks = new Set([
       "walletconnect-project-id",
@@ -7071,10 +7194,12 @@ describe("BSC SCCP aggregate production gate", () => {
     );
     expect(publishProvers?.blockedByChecks).toEqual(
       expect.arrayContaining([
-        "smoke-walletconnect-configured",
         "smoke-destination-prover-configured",
         "smoke-source-prover-configured",
       ]),
+    );
+    expect(publishProvers?.blockedByChecks).not.toContain(
+      "smoke-walletconnect-configured",
     );
     expect(publishProvers?.blockedByChecks).not.toContain(
       "smoke-readiness-ready",
@@ -7082,11 +7207,32 @@ describe("BSC SCCP aggregate production gate", () => {
     expect(publishProvers?.blockedByChecks).not.toContain(
       "smoke-readiness-binding",
     );
-    expect(publishProvers?.requiredInputs.map((input) => input.id)).toContain(
-      "testnet-runtime-prover-config",
+    expect(publishProvers?.requiredInputs.map((input) => input.id)).toEqual(
+      expect.arrayContaining([
+        "testnet-destination-browser-prover-module",
+        "testnet-destination-browser-prover-manifest",
+        "testnet-source-browser-prover-module",
+        "testnet-source-browser-prover-manifest",
+      ]),
+    );
+    expect(
+      publishProvers?.requiredInputs.map((input) => input.id),
+    ).not.toContain("testnet-runtime-prover-config");
+    const configureWalletConnect = report.nextActions.find(
+      (action) => action.id === "configure-bsc-walletconnect",
+    );
+    expect(configureWalletConnect?.blockedByChecks).toEqual([
+      "smoke-walletconnect-configured",
+    ]);
+    expect(
+      configureWalletConnect?.requiredInputs.map((input) => input.id),
+    ).toEqual(["walletconnect-project-id"]);
+    expect(configureWalletConnect?.commands.join("\n")).toContain(
+      "VITE_WALLETCONNECT_PROJECT_ID=<walletconnect-project-id>",
     );
     expect(report.nextActions.map((action) => action.id)).toEqual(
       expect.arrayContaining([
+        "configure-bsc-walletconnect",
         "publish-bsc-prover-modules",
         "record-live-video-proof",
       ]),
@@ -7095,7 +7241,10 @@ describe("BSC SCCP aggregate production gate", () => {
       expect.arrayContaining([
         expect.objectContaining({
           id: "walletconnect-project-id",
-          blockedByActions: ["publish-bsc-prover-modules"],
+          blockedByActions: expect.arrayContaining([
+            "configure-bsc-walletconnect",
+            "record-live-video-proof",
+          ]),
         }),
         expect.objectContaining({
           id: "testnet-destination-browser-prover-module",
@@ -7107,6 +7256,68 @@ describe("BSC SCCP aggregate production gate", () => {
         }),
       ]),
     );
+  });
+
+  it("does not ask for prover publication when only WalletConnect is missing from smoke readiness", () => {
+    const baseSmoke = smokeReadinessReport();
+    const report = evaluate({
+      smokeReadinessReport: smokeReadinessReport({
+        ready: false,
+        checks: baseSmoke.checks.map((entry) =>
+          entry.id === "walletconnect-project-id"
+            ? {
+                ...entry,
+                status: "fail",
+                message:
+                  "VITE_WALLETCONNECT_PROJECT_ID is required for BSC WalletConnect signing.",
+              }
+            : entry,
+        ),
+      }),
+    });
+
+    expect(report.ready).toBe(false);
+    expect(
+      failedCheck(report, "smoke-walletconnect-configured")?.detail,
+    ).toMatch(/VITE_WALLETCONNECT_PROJECT_ID is required/u);
+    expect(
+      failedCheck(report, "smoke-destination-prover-configured"),
+    ).toBeUndefined();
+    expect(
+      failedCheck(report, "smoke-source-prover-configured"),
+    ).toBeUndefined();
+    expect(
+      failedCheck(report, "smoke-runtime-prover-configured"),
+    ).toBeUndefined();
+    expect(report.nextActions.map((action) => action.id)).toContain(
+      "configure-bsc-walletconnect",
+    );
+    expect(report.nextActions.map((action) => action.id)).not.toContain(
+      "publish-bsc-prover-modules",
+    );
+    expect(report.nextActions.map((action) => action.id)).not.toContain(
+      "refresh-readiness-evidence",
+    );
+    expect(report.missingProductionInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "walletconnect-project-id",
+          blockedByActions: expect.arrayContaining([
+            "configure-bsc-walletconnect",
+            "record-live-video-proof",
+          ]),
+        }),
+      ]),
+    );
+    const missingIds = report.missingProductionInputs.map((input) => input.id);
+    expect(missingIds).not.toContain(
+      "testnet-destination-browser-prover-module",
+    );
+    expect(missingIds).not.toContain("testnet-source-browser-prover-module");
+    expect(missingIds).not.toContain("testnet-runtime-prover-config");
+    expect(missingIds).not.toContain("public-route-report");
+    expect(missingIds).not.toContain("testnet-public-route-report");
+    expect(missingIds).not.toContain("testnet-peer-config-audit-report");
   });
 
   it("routes missing material-inventory prover evidence into prover publication", () => {
@@ -11247,6 +11458,30 @@ describe("BSC SCCP aggregate production gate", () => {
         /production-ready route artifact count does not match file summaries/u,
       ],
       [
+        "route manifest publication count missing",
+        {
+          materialInventoryReport: materialInventoryReport({
+            counts: {
+              ...materialInventoryReport().counts,
+              routeManifestPublicationArtifacts: undefined,
+            },
+          }),
+        },
+        /route manifest publication artifact count is missing or invalid/u,
+      ],
+      [
+        "route manifest publication count drift",
+        {
+          materialInventoryReport: materialInventoryReport({
+            counts: {
+              ...materialInventoryReport().counts,
+              routeManifestPublicationArtifacts: 2,
+            },
+          }),
+        },
+        /route manifest publication artifact count does not match file summaries/u,
+      ],
+      [
         "verifier artifact count missing",
         {
           materialInventoryReport: materialInventoryReport({
@@ -11711,6 +11946,113 @@ describe("BSC SCCP aggregate production gate", () => {
           }),
         },
         /production material inventory route file 0 contains unsupported field hiddenDeploymentOverride/u,
+      ],
+      [
+        "route manifest ISI unsupported field",
+        {
+          materialInventoryReport: materialInventoryReport({
+            files: materialInventoryReport().files.map((entry) =>
+              entry.kind === "route-manifest-isi"
+                ? {
+                    ...entry,
+                    routeManifestUpsertIsi: {
+                      ...entry.routeManifestUpsertIsi,
+                      operatorOverride: "local publication override",
+                    },
+                  }
+                : entry,
+            ),
+          }),
+        },
+        /production material inventory route manifest ISI file \d+ contains unsupported field operatorOverride/u,
+      ],
+      [
+        "route manifest ISI submission unsupported field",
+        {
+          materialInventoryReport: materialInventoryReport({
+            files: materialInventoryReport().files.map((entry) =>
+              entry.kind === "route-manifest-isi"
+                ? {
+                    ...entry,
+                    routeManifestUpsertIsi: {
+                      ...entry.routeManifestUpsertIsi,
+                      submission: {
+                        ...entry.routeManifestUpsertIsi.submission,
+                        operatorOverride: "force applied status",
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          }),
+        },
+        /production material inventory route manifest ISI file \d+ submission contains unsupported field operatorOverride/u,
+      ],
+      [
+        "route manifest ISI submission hash mismatch",
+        {
+          materialInventoryReport: materialInventoryReport({
+            files: materialInventoryReport().files.map((entry) =>
+              entry.kind === "route-manifest-isi"
+                ? {
+                    ...entry,
+                    routeManifestUpsertIsi: {
+                      ...entry.routeManifestUpsertIsi,
+                      submission: {
+                        ...entry.routeManifestUpsertIsi.submission,
+                        submittedHash: HASH_88,
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          }),
+        },
+        /production material inventory route manifest ISI file \d+ submission hash does not match submittedHash/u,
+      ],
+      [
+        "route manifest ISI rejected submission",
+        {
+          materialInventoryReport: materialInventoryReport({
+            files: materialInventoryReport().files.map((entry) =>
+              entry.kind === "route-manifest-isi"
+                ? {
+                    ...entry,
+                    routeManifestUpsertIsi: {
+                      ...entry.routeManifestUpsertIsi,
+                      submission: {
+                        ...entry.routeManifestUpsertIsi.submission,
+                        statusKind: "Rejected",
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          }),
+        },
+        /production material inventory route manifest ISI file \d+ submission\.statusKind must be Applied when waitForCommit is true/u,
+      ],
+      [
+        "route manifest ISI alias gas asset",
+        {
+          materialInventoryReport: materialInventoryReport({
+            files: materialInventoryReport().files.map((entry) =>
+              entry.kind === "route-manifest-isi"
+                ? {
+                    ...entry,
+                    routeManifestUpsertIsi: {
+                      ...entry.routeManifestUpsertIsi,
+                      submission: {
+                        ...entry.routeManifestUpsertIsi.submission,
+                        gasAssetId: "xor#universal",
+                      },
+                    },
+                  }
+                : entry,
+            ),
+          }),
+        },
+        /production material inventory route manifest ISI file \d+ submission\.gasAssetId is missing or invalid/u,
       ],
       [
         "verifier file unsupported field",
@@ -12571,7 +12913,7 @@ describe("BSC SCCP aggregate production gate", () => {
             ),
           }),
         },
-        /production requirements file \d+ inputCount must be 41/u,
+        /production requirements file \d+ inputCount must be 43/u,
       ],
       [
         "TAIRA burn-record contract route binding spoof",
@@ -13064,17 +13406,17 @@ describe("BSC SCCP aggregate production gate", () => {
         /video readiness binding check id route-preflight is duplicated/u,
       ],
       [
-        "readiness check summary rewritten",
+        "readiness check state rewritten",
         videoTranscript({
           readinessBinding: {
             ...videoTranscript().readinessBinding,
             checks: videoTranscript().readinessBinding.checks.map(
               (entry, index) =>
-                index === 0 ? { ...entry, message: "forged ready" } : entry,
+                index === 0 ? { ...entry, ok: false, status: "fail" } : entry,
             ),
           },
         }),
-        /video readiness binding check 0 message differs/u,
+        /video readiness binding check 0 ok differs/u,
       ],
       [
         "peer audit duplicate asset identity alias",
@@ -13163,14 +13505,14 @@ describe("BSC SCCP aggregate production gate", () => {
         /peer audit peerCount is invalid/u,
       ],
       [
-        "smoke timestamp drift",
+        "readiness timestamp before smoke-readiness",
         videoTranscript({
           readinessBinding: {
             ...videoTranscript().readinessBinding,
-            checkedAt: "2026-06-05T00:00:00.000Z",
+            checkedAt: new Date(NOW_MS - 30_000).toISOString(),
           },
         }),
-        /checkedAt differs from smoke-readiness report/u,
+        /checkedAt is before the smoke-readiness report/u,
       ],
       [
         "readiness timestamp before recording",
@@ -13972,6 +14314,97 @@ describe("BSC SCCP aggregate production gate", () => {
           },
         }),
         /video proof transcript timeline evidence contains unsupported field clockSource/u,
+      ],
+      [
+        "missing wallet approval evidence",
+        (() => {
+          const transcript = videoTranscript();
+          delete transcript.walletApprovalEvidence;
+          return transcript;
+        })(),
+        /wallet approval evidence is missing/u,
+      ],
+      [
+        "unsupported wallet approval evidence field",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            operatorOverride: true,
+          },
+        }),
+        /wallet approval evidence contains unsupported field operatorOverride/u,
+      ],
+      [
+        "inconsistent E2E wallet harness approval evidence",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            mode: SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE,
+            productionReady: true,
+            e2eWalletHarness: false,
+          },
+        }),
+        /E2E wallet approval must mark e2eWalletHarness true/u,
+      ],
+      [
+        "debug approval evidence marked not production ready",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            productionReady: false,
+          },
+        }),
+        /wallet approval evidence is not production-ready/u,
+      ],
+      [
+        "wallet approval wrong namespace",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            walletConnectNamespace: "tron",
+          },
+        }),
+        /wallet approval namespace must be eip155/u,
+      ],
+      [
+        "wallet approval wrong method",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            walletConnectMethod: "personal_sign",
+          },
+        }),
+        /wallet approval method must be eth_sendTransaction/u,
+      ],
+      [
+        "wallet approval wrong chain id",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            walletConnectChainId: "eip155:56",
+          },
+        }),
+        /wallet approval chain id must be eip155:97/u,
+      ],
+      [
+        "wallet approval harness flag missing",
+        videoTranscript({
+          walletApprovalEvidence: {
+            ...walletApprovalEvidence(),
+            e2eWalletHarness: null,
+          },
+        }),
+        /wallet approval must not use the E2E wallet harness/u,
+      ],
+      [
+        "missingEvidence wallet approval not empty",
+        videoTranscript({
+          missingEvidence: {
+            ...emptyVideoMissingEvidence(),
+            walletApproval: ["manualWalletConnectApproval"],
+          },
+        }),
+        /missingEvidence\.walletApproval is not empty/u,
       ],
       [
         "unsupported missingEvidence field",
@@ -17990,11 +18423,6 @@ describe("BSC SCCP aggregate production gate", () => {
       /contains unsupported sanitized route field operator_override/u,
     ],
     [
-      "no route stanza",
-      "# sanitized file intentionally emptied\n",
-      /does not contain SCCP route stanza evidence/u,
-    ],
-    [
       "wrong asset binding",
       `[[zk.sccp_route_manifests]]\nroute_id = "${SCCP_BSC_XOR_ROUTE_ID}"\nasset_key = "dot"\n`,
       /does not contain taira_bsc_xor\/xor route stanza evidence/u,
@@ -18162,9 +18590,7 @@ describe("BSC SCCP aggregate production gate", () => {
       const smokePeers = [];
       for (const [index, peer] of peerAuditReport().peers.entries()) {
         const stanzaFile = path.join(stanzaDir, `peer${index}.toml`);
-        const stanzaBytes = Buffer.from(
-          `[[zk.sccp_route_manifests]]\nroute_id = "${SCCP_BSC_XOR_ROUTE_ID}"\nasset_key = "${SCCP_BSC_XOR_ASSET_KEY}"\n`,
-        );
+        const stanzaBytes = Buffer.from("# no local BSC SCCP route stanzas\n");
         await writeFile(stanzaFile, stanzaBytes);
         const source = path.relative(process.cwd(), stanzaFile);
         const expectedHash = sha256Hex(stanzaBytes);

@@ -13,10 +13,13 @@ import { deflateSync } from "node:zlib";
 import { describe, expect, it, vi } from "vitest";
 import {
   assertExplorerPageContainsTransactionHash,
+  buildSccpBscLiveVideoElectronArgs,
   assertSccpBscLiveVideoTranscriptComplete,
+  buildSccpBscLiveVideoElectronEnv,
   buildSccpBscTransactionLinksArtifact,
   buildSccpBscVideoReadinessBinding,
   buildSccpBscLiveVideoTranscript,
+  buildSccpBscVideoWalletApprovalEvidence,
   captureExplorerProofs,
   canonicalizeSccpBscProofLinks,
   classifySccpBscProofLink,
@@ -31,13 +34,24 @@ import {
   inferSccpBscVideoTransactions,
   MAX_SCREENSHOT_ARTIFACT_BYTES,
   MAX_VIDEO_ARTIFACT_BYTES,
+  normalizeSccpBscE2eAmount,
   parseArgs,
+  parseSccpBscPrivateEnvText,
   prepareSccpBscLiveVideoRunDir,
+  readSccpBscE2eSignerEnvFile,
+  readSccpBscFundedTairaWalletFile,
   readDurationMs,
+  resolveSccpBscProverV8HeapMb,
+  resolveSccpBscLiveVideoWalletConnectProjectId,
   REQUIRED_SCCP_BSC_VIDEO_TRANSACTION_SLOTS,
   SCCP_BSC_VIDEO_COMPLETE_OPERATOR_NOTES,
   SCCP_BSC_VIDEO_INCOMPLETE_OPERATOR_NOTES,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE,
+  SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+  SCCP_BSC_WALLETCONNECT_NAMESPACE,
+  SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
   sanitizeSccpBscLiveVideoLogText,
+  sccpBscWalletConnectCaipChainId,
   summarizeSccpBscLiveVideoMissingEvidence,
 } from "../scripts/e2e/sccp-bsc-live-video.mjs";
 
@@ -146,6 +160,19 @@ const READY_MAINNET_READINESS = {
       routeCanaryExplorerUrl: `https://bscscan.com/tx/0x${"99".repeat(32)}`,
     },
   },
+};
+const READY_ONCHAIN_ONLY_PEER_AUDIT = {
+  ...READY_READINESS.peerAudit,
+  manifestFingerprint: null,
+  sanitizedStanzaFilesChecked: true,
+  peers: Array.from({ length: 4 }, (_, index) => ({
+    source: `peer${index}.toml`,
+    routeCount: 0,
+    sanitizedStanzaFileChecked: true,
+    sanitizedStanzaFileVerified: true,
+    sanitizedStanzaSha256: `0x${"ab".repeat(32)}`,
+    sanitizedStanzaFileSha256: `0x${"ab".repeat(32)}`,
+  })),
 };
 const VIDEO_ARTIFACT = {
   path: "/tmp/proof/video.webm",
@@ -479,13 +506,280 @@ describe("BSC SCCP live video proof helpers", () => {
         "--allow-incomplete",
         "--output-dir",
         "output/proof",
+        "--peer-audit-report",
+        "output/peer-audit/latest.json",
+        "--auto-flow",
+        "--e2e-signer-env-file",
+        "output/private.env",
+        "--funded-wallet-file",
+        "output/funded.json",
+        "--e2e-amount",
+        "0.0001",
       ]),
     ).toEqual({
       "duration-ms": "60000",
       "skip-preflight": true,
       "allow-incomplete": true,
       "output-dir": "output/proof",
+      "peer-audit-report": "output/peer-audit/latest.json",
+      "auto-flow": true,
+      "e2e-signer-env-file": "output/private.env",
+      "funded-wallet-file": "output/funded.json",
+      "e2e-amount": "0.0001",
     });
+  });
+
+  it("passes documented WalletConnect project id input through to the Electron renderer env", () => {
+    const envProjectId = "envprojectid1234567890";
+    const cliProjectId = "cliprojectid1234567890";
+
+    expect(
+      resolveSccpBscLiveVideoWalletConnectProjectId(
+        { "walletconnect-project-id": cliProjectId },
+        { VITE_WALLETCONNECT_PROJECT_ID: envProjectId },
+      ),
+    ).toBe(cliProjectId);
+    expect(
+      resolveSccpBscLiveVideoWalletConnectProjectId(
+        {},
+        { VITE_WALLETCONNECT_PROJECT_ID: envProjectId },
+      ),
+    ).toBe(envProjectId);
+    expect(resolveSccpBscLiveVideoWalletConnectProjectId({}, {})).toBe("");
+
+    const env = buildSccpBscLiveVideoElectronEnv({
+      args: {
+        "walletconnect-project-id": cliProjectId,
+        "destination-prover-module-url": "/sccp-bsc/destination.js",
+        "source-prover-module-url": "/sccp-bsc/source.js",
+      },
+      env: {
+        NODE_ENV: "test",
+        VITE_WALLETCONNECT_PROJECT_ID: envProjectId,
+        VITE_SCCP_BSC_NETWORK: "mainnet",
+        VITE_SCCP_BSC_E2E_WALLET: "0",
+        VITE_SCCP_BSC_PROVER_MODULE_URL: "/old-destination.js",
+        VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/old-source.js",
+      },
+      bscNetwork: "testnet",
+      autoFlow: true,
+    });
+    expect(env).toMatchObject({
+      NODE_ENV: "test",
+      VITE_WALLETCONNECT_PROJECT_ID: cliProjectId,
+      VITE_SCCP_BSC_NETWORK: "testnet",
+      VITE_SCCP_BSC_E2E_WALLET: "1",
+      VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/destination.js",
+      VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL: "/sccp-bsc/destination.js",
+      VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/source.js",
+      VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/source.js",
+    });
+
+    const mainnetEnv = buildSccpBscLiveVideoElectronEnv({
+      args: {
+        "destination-prover-module-url": "/sccp-bsc/mainnet-destination.js",
+        "source-prover-module-url": "/sccp-bsc/mainnet-source.js",
+      },
+      env: {},
+      bscNetwork: "mainnet",
+    });
+    expect(mainnetEnv).toMatchObject({
+      VITE_SCCP_BSC_NETWORK: "mainnet",
+      VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/mainnet-destination.js",
+      VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL:
+        "/sccp-bsc/mainnet-destination.js",
+      VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/mainnet-source.js",
+      VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL:
+        "/sccp-bsc/mainnet-source.js",
+    });
+    expect(mainnetEnv).not.toHaveProperty(
+      "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
+    );
+  });
+
+  it("launches Electron with a bounded SCCP prover V8 heap flag", () => {
+    expect(resolveSccpBscProverV8HeapMb({})).toBe(12288);
+    expect(
+      resolveSccpBscProverV8HeapMb({
+        SCCP_BSC_PROVER_V8_HEAP_MB: "4096",
+      }),
+    ).toBe(4096);
+    expect(
+      resolveSccpBscProverV8HeapMb({
+        SCCP_BSC_PROVER_V8_HEAP_MB: "false",
+      }),
+    ).toBeNull();
+    expect(
+      resolveSccpBscProverV8HeapMb({
+        SCCP_BSC_PROVER_V8_HEAP_MB: "1",
+      }),
+    ).toBe(1024);
+    expect(
+      resolveSccpBscProverV8HeapMb({
+        SCCP_BSC_PROVER_V8_HEAP_MB: "999999",
+      }),
+    ).toBe(32768);
+
+    expect(
+      buildSccpBscLiveVideoElectronArgs({
+        entrypoint: "/tmp/app.cjs",
+        env: { SCCP_BSC_PROVER_V8_HEAP_MB: "6144" },
+      }),
+    ).toEqual(["--js-flags=--max-old-space-size=6144", "/tmp/app.cjs"]);
+    expect(
+      buildSccpBscLiveVideoElectronArgs({
+        entrypoint: "/tmp/app.cjs",
+        env: { SCCP_BSC_PROVER_V8_HEAP_MB: "0" },
+      }),
+    ).toEqual(["/tmp/app.cjs"]);
+  });
+
+  it("rejects unsafe WalletConnect project id injection before launching Electron", () => {
+    for (const value of [
+      "https://walletconnect.example/project",
+      "project?id=abc",
+      "project/id",
+      "project\\id",
+      "project id",
+      "project\nid",
+      "short",
+      "aaaaaaaaaaaaaaaa",
+      "placeholder-walletconnect-project-id",
+      "walletconnect-project-id",
+      "<walletconnect-project-id>",
+      "todo-walletconnect-project-id",
+    ]) {
+      expect(() =>
+        resolveSccpBscLiveVideoWalletConnectProjectId(
+          { "walletconnect-project-id": value },
+          {},
+        ),
+      ).toThrow(/WalletConnect project ID/u);
+    }
+  });
+
+  it("ignores prototype-polluted WalletConnect project id values", () => {
+    const previousDescriptor = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "VITE_WALLETCONNECT_PROJECT_ID",
+    );
+    const previousCliDescriptor = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      "walletconnect-project-id",
+    );
+    try {
+      Object.defineProperty(Object.prototype, "VITE_WALLETCONNECT_PROJECT_ID", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: "pollutedenvprojectid123",
+      });
+      Object.defineProperty(Object.prototype, "walletconnect-project-id", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: "pollutedcliprojectid123",
+      });
+      expect(resolveSccpBscLiveVideoWalletConnectProjectId({}, {})).toBe("");
+      const launchEnv = buildSccpBscLiveVideoElectronEnv({
+        args: {},
+        env: {},
+        bscNetwork: "testnet",
+      });
+      expect(
+        Object.prototype.hasOwnProperty.call(
+          launchEnv,
+          "VITE_WALLETCONNECT_PROJECT_ID",
+        ),
+      ).toBe(false);
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(
+          Object.prototype,
+          "VITE_WALLETCONNECT_PROJECT_ID",
+          previousDescriptor,
+        );
+      } else {
+        delete Object.prototype.VITE_WALLETCONNECT_PROJECT_ID;
+      }
+      if (previousCliDescriptor) {
+        Object.defineProperty(
+          Object.prototype,
+          "walletconnect-project-id",
+          previousCliDescriptor,
+        );
+      } else {
+        delete Object.prototype["walletconnect-project-id"];
+      }
+    }
+  });
+
+  it("validates E2E auto-flow amount and private input files without leaking values", async () => {
+    expect(normalizeSccpBscE2eAmount(undefined)).toBe("0.0001");
+    expect(normalizeSccpBscE2eAmount("1.000000000000000001")).toBe(
+      "1.000000000000000001",
+    );
+    for (const value of ["0", "0.0", "-1", "1.0000000000000000001", "bad"]) {
+      expect(() => normalizeSccpBscE2eAmount(value)).toThrow(/amount/u);
+    }
+
+    expect(
+      parseSccpBscPrivateEnvText(`
+        # comment
+        export SCCP_BSC_DEPLOYER_PRIVATE_KEY="0x${"11".repeat(32)}"
+        SCCP_BSC_DEPLOYER_ADDRESS='0x${"22".repeat(20)}'
+      `),
+    ).toEqual({
+      SCCP_BSC_DEPLOYER_PRIVATE_KEY: `0x${"11".repeat(32)}`,
+      SCCP_BSC_DEPLOYER_ADDRESS: `0x${"22".repeat(20)}`,
+    });
+    expect(() => parseSccpBscPrivateEnvText("not valid")).toThrow(
+      /invalid assignment on line 1/u,
+    );
+
+    const baseDir = await mkdtemp(path.join(tmpdir(), "sccp-bsc-video-env-"));
+    const signerFile = path.join(baseDir, "signer.private.env");
+    await writeFile(
+      signerFile,
+      [
+        `SCCP_BSC_DEPLOYER_PRIVATE_KEY=0x${"11".repeat(32)}`,
+        `SCCP_BSC_DEPLOYER_ADDRESS=0x${"22".repeat(20)}`,
+      ].join("\n"),
+    );
+    await expect(readSccpBscE2eSignerEnvFile(signerFile)).resolves.toEqual({
+      privateKeyHex: `0x${"11".repeat(32)}`,
+      address: `0x${"22".repeat(20)}`,
+    });
+
+    const fundedFile = path.join(baseDir, "funded.json");
+    await writeFile(
+      fundedFile,
+      JSON.stringify({
+        privateKeyHex: "33".repeat(32),
+        domain: "wonderland",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      }),
+    );
+    await expect(readSccpBscFundedTairaWalletFile(fundedFile)).resolves.toEqual(
+      {
+        privateKeyHex: "33".repeat(32),
+        publicKeyHex: expect.stringMatching(/^[0-9A-F]{64}$/u),
+        domain: "wonderland",
+        assetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      },
+    );
+
+    const invalidSignerFile = path.join(baseDir, "invalid.private.env");
+    await writeFile(
+      invalidSignerFile,
+      [
+        "SCCP_BSC_DEPLOYER_PRIVATE_KEY=not-a-key",
+        `SCCP_BSC_DEPLOYER_ADDRESS=0x${"22".repeat(20)}`,
+      ].join("\n"),
+    );
+    await expect(
+      readSccpBscE2eSignerEnvFile(invalidSignerFile),
+    ).rejects.toThrow(/SCCP_BSC_DEPLOYER_PRIVATE_KEY/u);
   });
 
   it("rejects unsupported or positional CLI arguments", () => {
@@ -1068,6 +1362,10 @@ describe("BSC SCCP live video proof helpers", () => {
           })),
         },
         bscFinalize,
+        {
+          explorerHashContentTimeoutMs: 0,
+          explorerHashContentPollMs: 0,
+        },
       ),
     ).rejects.toThrow(/did not include transaction hash/);
 
@@ -1084,7 +1382,11 @@ describe("BSC SCCP live video proof helpers", () => {
       page,
       [{ label: "BSC finalize transaction", href: bscFinalize }],
       "/tmp/proof",
-      { settleMs: 0 },
+      {
+        settleMs: 0,
+        explorerHashContentTimeoutMs: 0,
+        explorerHashContentPollMs: 0,
+      },
     );
 
     expect(screenshots).toEqual([
@@ -2121,6 +2423,32 @@ describe("BSC SCCP live video proof helpers", () => {
         "peerAudit.manifestFingerprint",
       ],
     });
+    expect(
+      evaluateSccpBscVideoReadinessEvidence({
+        ...READY_READINESS,
+        peerAudit: READY_ONCHAIN_ONLY_PEER_AUDIT,
+      }),
+    ).toEqual({
+      ready: true,
+      missingReadinessEvidence: [],
+    });
+    expect(
+      evaluateSccpBscVideoReadinessEvidence({
+        ...READY_READINESS,
+        peerAudit: {
+          ...READY_ONCHAIN_ONLY_PEER_AUDIT,
+          peers: [
+            {
+              ...READY_ONCHAIN_ONLY_PEER_AUDIT.peers[0],
+              routeCount: 1,
+            },
+          ],
+        },
+      }),
+    ).toEqual({
+      ready: false,
+      missingReadinessEvidence: ["peerAuditBinding"],
+    });
     for (const [name, peerAuditOverrides] of [
       [
         "missing peer sanitized stanza evidence",
@@ -3087,7 +3415,7 @@ describe("BSC SCCP live video proof helpers", () => {
     ).toEqual({
       complete: false,
       detail:
-        "transaction slots: none; explorer screenshots: none; duplicate transactions: bscFinalizeTx+bscBurnTx:unknown-transaction; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: none; video artifacts: none; video timeline: none",
+        "transaction slots: none; explorer screenshots: none; duplicate transactions: bscFinalizeTx+bscBurnTx:unknown-transaction; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: none; video artifacts: none; video timeline: none; wallet approval: none",
     });
     expect(proofCompleteGetter).not.toHaveBeenCalled();
     expect(duplicateTransactionGetter).not.toHaveBeenCalled();
@@ -3233,6 +3561,14 @@ describe("BSC SCCP live video proof helpers", () => {
         bscBurnTx: `https://testnet.bscscan.com/tx/0x${"22".repeat(32)}`,
       },
       proofComplete: true,
+      walletApprovalEvidence: {
+        mode: SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+        productionReady: true,
+        walletConnectNamespace: SCCP_BSC_WALLETCONNECT_NAMESPACE,
+        walletConnectMethod: SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+        walletConnectChainId: "eip155:97",
+        e2eWalletHarness: false,
+      },
       videoArtifacts: [PUBLIC_VIDEO_ARTIFACT],
       readinessBinding: {
         checkedAt: READY_READINESS.checkedAt,
@@ -3252,6 +3588,7 @@ describe("BSC SCCP live video proof helpers", () => {
         invalidTransactionLinks: [],
         readiness: [],
         videoTimeline: [],
+        walletApproval: [],
       },
       evidence: {
         invalidTransactionLinkEntries: [],
@@ -3276,6 +3613,94 @@ describe("BSC SCCP live video proof helpers", () => {
         }),
       ]),
     });
+  });
+
+  it("accepts auto-flow E2E wallet harness transcripts as generated-key approval proof", () => {
+    const manualEvidence = buildSccpBscVideoWalletApprovalEvidence({
+      bscNetwork: "testnet",
+      autoFlow: false,
+    });
+    const e2eEvidence = buildSccpBscVideoWalletApprovalEvidence({
+      bscNetwork: "testnet",
+      autoFlow: true,
+    });
+
+    expect(manualEvidence).toEqual({
+      mode: SCCP_BSC_VIDEO_WALLET_APPROVAL_MANUAL_MODE,
+      productionReady: true,
+      walletConnectNamespace: SCCP_BSC_WALLETCONNECT_NAMESPACE,
+      walletConnectMethod: SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+      walletConnectChainId: sccpBscWalletConnectCaipChainId("testnet"),
+      e2eWalletHarness: false,
+    });
+    expect(e2eEvidence).toEqual({
+      mode: SCCP_BSC_VIDEO_WALLET_APPROVAL_E2E_MODE,
+      productionReady: true,
+      walletConnectNamespace: SCCP_BSC_WALLETCONNECT_NAMESPACE,
+      walletConnectMethod: SCCP_BSC_WALLETCONNECT_SEND_TRANSACTION_METHOD,
+      walletConnectChainId: "eip155:97",
+      e2eWalletHarness: true,
+    });
+
+    const transcript = buildSccpBscLiveVideoTranscript({
+      runDir: "/tmp/proof",
+      readiness: READY_READINESS,
+      autoFlow: true,
+      startedAtMs: VALID_STARTED_AT_MS,
+      endedAtMs: VALID_ENDED_AT_MS,
+      videoArtifacts: [PUBLIC_VIDEO_ARTIFACT],
+      links: [
+        {
+          label: "TAIRA source transaction",
+          href: `https://taira-explorer.sora.org/transactions/${"33".repeat(32)}`,
+        },
+        {
+          label: "BSC finalize transaction",
+          href: `https://testnet.bscscan.com/tx/0x${"11".repeat(32)}`,
+        },
+        {
+          label: "BSC transaction",
+          href: `https://testnet.bscscan.com/tx/0x${"22".repeat(32)}`,
+        },
+        {
+          label: "TAIRA settlement transaction",
+          href: `https://taira-explorer.sora.org/transactions/${"44".repeat(32)}`,
+        },
+      ],
+      explorerScreenshots: [
+        screenshotProof(
+          "tairaSourceTx",
+          `https://taira-explorer.sora.org/transactions/${"33".repeat(32)}`,
+        ),
+        screenshotProof(
+          "bscFinalizeTx",
+          `https://testnet.bscscan.com/tx/0x${"11".repeat(32)}`,
+        ),
+        screenshotProof(
+          "bscBurnTx",
+          `https://testnet.bscscan.com/tx/0x${"22".repeat(32)}`,
+        ),
+        screenshotProof(
+          "tairaSettlementTx",
+          `https://taira-explorer.sora.org/transactions/${"44".repeat(32)}`,
+        ),
+      ],
+    });
+
+    expect(transcript).toMatchObject({
+      proofComplete: true,
+      operatorNotes: SCCP_BSC_VIDEO_COMPLETE_OPERATOR_NOTES,
+      walletApprovalEvidence: e2eEvidence,
+      missingEvidence: {
+        walletApproval: [],
+      },
+    });
+    expect(summarizeSccpBscLiveVideoMissingEvidence(transcript)).toContain(
+      "wallet approval: none",
+    );
+    expect(() =>
+      assertSccpBscLiveVideoTranscriptComplete(transcript),
+    ).not.toThrow();
   });
 
   it("marks transcripts incomplete when proof link rows are malformed", () => {
@@ -3983,7 +4408,7 @@ describe("BSC SCCP live video proof helpers", () => {
       explorerScreenshots: [],
     });
     expect(summarizeSccpBscLiveVideoMissingEvidence(incompleteTranscript)).toBe(
-      "transaction slots: tairaSourceTx, bscBurnTx, tairaSettlementTx; explorer screenshots: bscFinalizeTx; duplicate transactions: none; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: smokeReadinessReady; video artifacts: none; video timeline: none",
+      "transaction slots: tairaSourceTx, bscBurnTx, tairaSettlementTx; explorer screenshots: bscFinalizeTx; duplicate transactions: none; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: smokeReadinessReady; video artifacts: none; video timeline: none; wallet approval: none",
     );
     expect(() =>
       assertSccpBscLiveVideoTranscriptComplete(incompleteTranscript, {
@@ -3999,7 +4424,7 @@ describe("BSC SCCP live video proof helpers", () => {
     ).toEqual({
       complete: false,
       detail:
-        "transaction slots: tairaSourceTx, bscBurnTx, tairaSettlementTx; explorer screenshots: bscFinalizeTx; duplicate transactions: none; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: smokeReadinessReady; video artifacts: none; video timeline: none",
+        "transaction slots: tairaSourceTx, bscBurnTx, tairaSettlementTx; explorer screenshots: bscFinalizeTx; duplicate transactions: none; duplicate explorer screenshots: none; invalid explorer screenshots: none; unexpected explorer screenshots: none; invalid transaction links: none; readiness: smokeReadinessReady; video artifacts: none; video timeline: none; wallet approval: none",
     });
   });
 });
