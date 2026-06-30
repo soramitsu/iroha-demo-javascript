@@ -59,9 +59,6 @@ import {
   SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
   SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
   SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-  SCCP_BSC_PROVER_CONFIG_URL_ENV,
-  SCCP_BSC_PROVER_MODULE_URL_ENV,
-  SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
 } from "../scripts/e2e/sccp-bsc-live-smoke-readiness.mjs";
@@ -3689,7 +3686,7 @@ const addRuntimeProverConfigToFixture = async (fixture) => {
   const backendPath = path.join(fixture.root, "runtime-backend.js");
   const runtimeConfigPath = path.join(
     fixture.root,
-    "taira-bsc-xor-prover.config.json",
+    "taira-bsc-xor-runtime.config.json",
   );
   const nativeBundle = await writeGeneratedNativeProverBundle({
     root: fixture.root,
@@ -4360,14 +4357,13 @@ describe("BSC SCCP production material inventory", () => {
     try {
       await withEnv(
         {
-          [SCCP_BSC_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-destination.js",
+          VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/generic-destination.js",
           [SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV]:
             "/sccp-bsc/mainnet-destination.js",
-          [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]:
-            "/sccp-bsc/generic-source.js",
+          VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/generic-source.js",
           [SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV]:
             "/sccp-bsc/mainnet-source.js",
-          [SCCP_BSC_PROVER_CONFIG_URL_ENV]: "/sccp-bsc/generic-config.json",
+          VITE_SCCP_BSC_PROVER_CONFIG_URL: "/sccp-bsc/generic-config.json",
           [SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV]:
             "/sccp-bsc/mainnet-config.json",
         },
@@ -4435,8 +4431,8 @@ describe("BSC SCCP production material inventory", () => {
           {
             [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]: undefined,
             [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
-            [SCCP_BSC_PROVER_MODULE_URL_ENV]: undefined,
-            [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+            VITE_SCCP_BSC_PROVER_MODULE_URL: undefined,
+            VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: undefined,
           },
           () =>
             evaluateBscSccpProductionMaterialInventory({
@@ -4486,9 +4482,9 @@ describe("BSC SCCP production material inventory", () => {
               "https://cdn.example.invalid/stale-destination.js",
             [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]:
               "https://cdn.example.invalid/stale-source.js",
-            [SCCP_BSC_PROVER_MODULE_URL_ENV]:
+            VITE_SCCP_BSC_PROVER_MODULE_URL:
               "https://user:pass@cdn.example.invalid/generic-destination.js",
-            [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]:
+            VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL:
               "https://cdn.example.invalid/generic-source.js?token=secret",
           },
           () =>
@@ -4527,8 +4523,8 @@ describe("BSC SCCP production material inventory", () => {
         {
           [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]: undefined,
           [SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
-          [SCCP_BSC_PROVER_MODULE_URL_ENV]: undefined,
-          [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: undefined,
+          VITE_SCCP_BSC_PROVER_MODULE_URL: undefined,
+          VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: undefined,
         },
         () =>
           evaluateBscSccpProductionMaterialInventory({
@@ -7081,7 +7077,7 @@ describe("BSC SCCP production material inventory", () => {
       const fetchCalls = [];
       const report = await evaluateFixture(fixture, {
         runtimeProverConfigUrl:
-          "https://cdn.example.invalid/taira-bsc-xor-prover.config.json",
+          "https://cdn.example.invalid/taira-bsc-xor-runtime.config.json",
         fetchImpl: async (url) => {
           fetchCalls.push(String(url));
           return streamingBytesResponse(512 * 1024 + 1);
@@ -7098,7 +7094,7 @@ describe("BSC SCCP production material inventory", () => {
           ?.detail,
       ).toMatch(/exceeds 524288 bytes/u);
       expect(fetchCalls).toEqual([
-        "https://cdn.example.invalid/taira-bsc-xor-prover.config.json",
+        "https://cdn.example.invalid/taira-bsc-xor-runtime.config.json",
       ]);
     } finally {
       await rm(fixture.root, { recursive: true, force: true });

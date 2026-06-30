@@ -38,6 +38,7 @@ import {
   validateBscMainnetNativeEvmProverBundle,
   validateBscTestnetNativeEvmProverBundle,
 } from "@iroha/iroha-js/sccp";
+import { normalizeSccpPackageOrRemoteModuleUrl } from "@/utils/sccpProverUrl";
 import type {
   TairaXorBscSccpBurnRecordZkIvmRequest,
   TairaXorBscSccpRecordDescriptor,
@@ -837,7 +838,10 @@ export const normalizeEvmAddress = (address: string): string => {
   return normalized;
 };
 
-const normalizeEvmAddressForLabel = (address: string, label: string): string => {
+const normalizeEvmAddressForLabel = (
+  address: string,
+  label: string,
+): string => {
   try {
     return normalizeEvmAddress(address);
   } catch (error) {
@@ -1303,13 +1307,7 @@ const readSccpBscBrowserProverModuleUrlFromManifest = (
     return "";
   }
   const prover = readFirstRecord(manifestForRead, ...keys);
-  return readFirstString(
-    prover,
-    "moduleUrl",
-    "module_url",
-    "url",
-    "href",
-  );
+  return readFirstString(prover, "moduleUrl", "module_url", "url", "href");
 };
 
 export const readSccpBscDestinationProverModuleUrl = (
@@ -1333,6 +1331,17 @@ export const readSccpBscSourceProverModuleUrl = (
     "browserSourceProver",
     "browser_source_prover",
   );
+
+export const readSccpBscRuntimeProverConfigUrl = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return "";
+  }
+  const config = readFirstRecord(manifestForRead, "runtimeProverConfig");
+  return readFirstString(config, "configUrl");
+};
 
 const readSccpBscVerifierAddressFromManifest = (
   manifest: Record<string, unknown> | null | undefined,
@@ -2630,9 +2639,7 @@ const bscNativeEvmProverBundleValidator = (network: SccpBscNetworkKey) =>
 const canonicalBscNativeEvmProverBundleHash = (
   bundle: BscNativeEvmProverBundleDescriptor,
 ): string =>
-  bytesToLowerHex(
-    sha256(new TextEncoder().encode(JSON.stringify(bundle))),
-  );
+  bytesToLowerHex(sha256(new TextEncoder().encode(JSON.stringify(bundle))));
 
 export type BscSourceProverMaterialHashBinding = {
   proofArtifactHash: string;
@@ -2642,9 +2649,9 @@ export type BscSourceProverMaterialHashBinding = {
 
 export type BscSourceProverMaterialBinding =
   BscSourceProverMaterialHashBinding & {
-  sourceVerifierMaterial: Record<string, unknown>;
-  sourceAdapterEngineDeployment: Record<string, unknown>;
-};
+    sourceVerifierMaterial: Record<string, unknown>;
+    sourceAdapterEngineDeployment: Record<string, unknown>;
+  };
 
 const cloneBscSourceLaneRecord = (
   value: Record<string, unknown>,
@@ -2717,7 +2724,8 @@ const readBscSourceAdapterEngineDeploymentRecord = (
   if (deployment) {
     return deployment;
   }
-  return engine && hasAnyOwnKey(engine, ["deploymentReceiptHash", "deployment_receipt_hash"])
+  return engine &&
+    hasAnyOwnKey(engine, ["deploymentReceiptHash", "deployment_receipt_hash"])
     ? engine
     : null;
 };
@@ -2809,12 +2817,15 @@ const requireBscSourceLaneMaterial = (
       },
     ],
   );
-  const normalizedManifestSourceBridge =
-    manifestSourceBridge ? normalizeEvmAddress(manifestSourceBridge) : "";
+  const normalizedManifestSourceBridge = manifestSourceBridge
+    ? normalizeEvmAddress(manifestSourceBridge)
+    : "";
   if (
     !normalizedManifestSourceBridge ||
-    normalizeEvmAddress(materialSourceBridge) !== normalizedManifestSourceBridge ||
-    normalizeEvmAddress(deploymentSourceBridge) !== normalizedManifestSourceBridge
+    normalizeEvmAddress(materialSourceBridge) !==
+      normalizedManifestSourceBridge ||
+    normalizeEvmAddress(deploymentSourceBridge) !==
+      normalizedManifestSourceBridge
   ) {
     throw new Error(
       "BSC source verifier material must bind the route source bridge address.",
@@ -2830,12 +2841,15 @@ const requireBscSourceLaneMaterial = (
       keys: ["sourceBridgeEmitterCodeHash", "source_bridge_emitter_code_hash"],
     },
   ]);
-  readConsistentHex32AliasString("BSC source adapter deployment verifier VK hash", [
-    {
-      record: deploymentRecord,
-      keys: ["adapterVerifierVkHash", "adapter_verifier_vk_hash"],
-    },
-  ]);
+  readConsistentHex32AliasString(
+    "BSC source adapter deployment verifier VK hash",
+    [
+      {
+        record: deploymentRecord,
+        keys: ["adapterVerifierVkHash", "adapter_verifier_vk_hash"],
+      },
+    ],
+  );
   readConsistentHex32AliasString("BSC source adapter deployment receipt hash", [
     {
       record: deploymentRecord,
@@ -4693,7 +4707,9 @@ const normalizeEvmReceiptRootIndex = (
     } else if (/^(?:0|[1-9][0-9]*)$/u.test(text)) {
       parsed = BigInt(text);
     } else {
-      throw new Error(`${label} must be an EVM hex quantity or decimal integer.`);
+      throw new Error(
+        `${label} must be an EVM hex quantity or decimal integer.`,
+      );
     }
   } else {
     throw new Error(`${label} must be an EVM hex quantity or decimal integer.`);
@@ -4885,7 +4901,9 @@ const readMatchingBscSourceEventLogs = (
     if (!topics[1]) {
       throw new Error("BSC source bridge log is missing source event digest.");
     }
-    return [{ digest: normalizeEvmTxHash(topics[1], "BSC source event digest"), log }];
+    return [
+      { digest: normalizeEvmTxHash(topics[1], "BSC source event digest"), log },
+    ];
   });
   if (matching.length === 0) {
     throw new Error(
@@ -5016,7 +5034,10 @@ const buildBscSourceProofReceipt = (
     receiptBlockNumber: string;
   },
 ): Record<string, unknown> => {
-  const receiptLogs = readBscSourceLogRecords(receipt.logs, "transaction receipt");
+  const receiptLogs = readBscSourceLogRecords(
+    receipt.logs,
+    "transaction receipt",
+  );
   const sourceMatch = readMatchingBscSourceEventLogs(
     receiptLogs,
     "transaction receipt",
@@ -5095,11 +5116,6 @@ export const bindBscSourceDataForProof = (input: {
     readRequiredText(input.tairaRecipient, "TAIRA recipient account"),
   );
   const amountTokenBaseUnits = bridgeDecimalToEvmTokenBaseUnits(
-    normalizeBridgeAmount(
-      readRequiredText(input.amountDecimal, "Bridge amount"),
-    ),
-  );
-  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(
     normalizeBridgeAmount(
       readRequiredText(input.amountDecimal, "Bridge amount"),
     ),
@@ -5412,13 +5428,14 @@ const readCodecText = (value: unknown, label: string): string => {
       ? {
           kind: record.kind,
           value: record.value ?? record.payload ?? record.bytes,
-          source: record.value !== undefined
-            ? "value"
-            : record.payload !== undefined
-              ? "payload"
-              : record.bytes !== undefined
-                ? "bytes"
-                : "",
+          source:
+            record.value !== undefined
+              ? "value"
+              : record.payload !== undefined
+                ? "payload"
+                : record.bytes !== undefined
+                  ? "bytes"
+                  : "",
         }
       : (() => {
           const entries = Object.entries(record);
@@ -5431,13 +5448,14 @@ const readCodecText = (value: unknown, label: string): string => {
             kind,
             value:
               variantBody.value ?? variantBody.payload ?? variantBody.bytes,
-            source: variantBody.value !== undefined
-              ? "value"
-              : variantBody.payload !== undefined
-                ? "payload"
-                : variantBody.bytes !== undefined
-                  ? "bytes"
-                  : "",
+            source:
+              variantBody.value !== undefined
+                ? "value"
+                : variantBody.payload !== undefined
+                  ? "payload"
+                  : variantBody.bytes !== undefined
+                    ? "bytes"
+                    : "",
           };
         })();
   if (variant.kind !== "TextUtf8") {
@@ -5532,7 +5550,10 @@ const readCodecEvmAddress = (value: unknown, label: string): string => {
   } catch (_error) {
     // Some Torii projections carry EvmHex as UTF-8 bytes during migration.
   }
-  return normalizeEvmAddressForLabel(decodeEventBytesText(address, label), label);
+  return normalizeEvmAddressForLabel(
+    decodeEventBytesText(address, label),
+    label,
+  );
 };
 
 const readTransferProjection = (
@@ -5650,7 +5671,10 @@ const readTransferTronAddressField = (
   );
 };
 
-const normalizeEvmAddressPayloadHex = (value: string, label: string): string => {
+const normalizeEvmAddressPayloadHex = (
+  value: string,
+  label: string,
+): string => {
   const normalized = normalizeHexData(value, label).slice(2);
   if (/^[0-9a-f]{40}$/u.test(normalized)) {
     return normalizeEvmAddressForLabel(`0x${normalized}`, label);
@@ -5686,7 +5710,10 @@ const readTransferEvmAddressField = (
   } catch (_error) {
     // Some Torii projections carry EvmHex as UTF-8 bytes during migration.
   }
-  return normalizeEvmAddressForLabel(decodeEventBytesText(address, label), label);
+  return normalizeEvmAddressForLabel(
+    decodeEventBytesText(address, label),
+    label,
+  );
 };
 
 const normalizeBundleTransferPayload = (
@@ -8063,7 +8090,9 @@ export const bindBscToTairaSourceProofPackage = (input: {
     bscSender,
     tairaRecipient,
     amount: amountBaseUnits,
-    ...(normalizedBridgeAddress ? { bridgeAddress: normalizedBridgeAddress } : {}),
+    ...(normalizedBridgeAddress
+      ? { bridgeAddress: normalizedBridgeAddress }
+      : {}),
   });
   requireBscSourceMessageBundleMerkleRootBinding(
     bound.messageBundle as Record<string, unknown>,
@@ -8223,9 +8252,7 @@ const readRequiredSubmitByteText = (
 };
 
 const utf8TextToSubmitHex = (value: unknown, label: string): string =>
-  bytesToLowerHex(
-    utf8TextEncoder.encode(readSubmitByteText(value, label)),
-  );
+  bytesToLowerHex(utf8TextEncoder.encode(readSubmitByteText(value, label)));
 
 const normalizeSubmitHexData = (value: string, label: string): string =>
   normalizeHexData(value, label);
@@ -9189,9 +9216,7 @@ export const mergeSccpLaneMaterialsIntoManifestSet = (
         "BSC source verifier material",
       );
     }
-    if (
-      sourceAdapterEngineDeployment
-    ) {
+    if (sourceAdapterEngineDeployment) {
       manifest.sourceAdapterEngineDeployment = cloneBscSourceLaneRecord(
         sourceAdapterEngineDeployment,
         "BSC source adapter deployment",
@@ -10191,6 +10216,24 @@ export const resolveSccpRouteReadiness = (input: {
       reasons.push(
         readSccpBscProofMaterialFailureReason(bscManifest, bscProfile.key),
       );
+    }
+    const runtimeProverConfigUrl =
+      readSccpBscRuntimeProverConfigUrl(bscManifest);
+    if (!runtimeProverConfigUrl) {
+      reasons.push("The BSC runtime prover config URL is missing.");
+    } else {
+      try {
+        normalizeSccpPackageOrRemoteModuleUrl(
+          runtimeProverConfigUrl,
+          "BSC runtime prover config URL",
+        );
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message
+            : "The BSC runtime prover config URL is invalid.",
+        );
+      }
     }
     try {
       readBscDestinationBindingInput(bscManifest, bscProfile.key);

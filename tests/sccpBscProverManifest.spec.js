@@ -483,13 +483,13 @@ describe("BSC SCCP browser prover sidecar generator", () => {
     expect(routeCheckIds(BSC_PROFILES.testnet)).toEqual(
       BSC_PROVER_SIDECAR_REQUIRED_ROUTE_CHECK_IDS,
     );
-    expect(
-      BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS,
-    ).toEqual([
-      "bsc-production-ready",
-      "bsc-destination-browser-prover",
-      "bsc-source-browser-prover",
-    ]);
+    expect(BSC_PROVER_SIDECAR_BOOTSTRAP_ALLOWED_FAILED_ROUTE_CHECK_IDS).toEqual(
+      [
+        "bsc-production-ready",
+        "bsc-destination-browser-prover",
+        "bsc-source-browser-prover",
+      ],
+    );
     expect(routeCheckIds(BSC_PROFILES.mainnet)).toContain(
       "bsc-mainnet-chain-id",
     );

@@ -1069,7 +1069,9 @@ describe("BSC SCCP route preflight", () => {
             expect.objectContaining({ id: "burn-record-proof-artifact" }),
             expect.objectContaining({ id: "burn-record-proving-key" }),
             expect.objectContaining({ id: "native-evm-prover-bundle" }),
-            expect.objectContaining({ id: "destination-browser-prover-module" }),
+            expect.objectContaining({
+              id: "destination-browser-prover-module",
+            }),
             expect.objectContaining({
               id: "destination-browser-prover-manifest",
             }),

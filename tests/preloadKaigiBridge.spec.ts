@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "crypto";
+import { createServer, type Server } from "node:http";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import {
   buildWalletConfidentialMetadata,
   createWalletConfidentialNote,
   deriveWalletConfidentialNullifierHex,
-  deriveWalletConfidentialOwnerTagHex,
   deriveWalletConfidentialReceiveAddress,
 } from "../electron/confidentialWallet";
 import {
@@ -56,6 +56,25 @@ const TRON_BROADCAST_ADDRESS_BASE58 = deriveTronTestSignerAddressFromPrivateKey(
 ).base58;
 const VALID_MNEMONIC =
   "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+const confidentialNoteFor = (
+  privateKeyHex: string,
+  amount: string,
+  createdAtMs: number,
+  seed: string,
+) => {
+  const receiveAddress = deriveWalletConfidentialReceiveAddress({
+    privateKeyHex,
+    diversifierSeedHex: seed.repeat(32),
+  });
+  return createWalletConfidentialNote({
+    assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
+    amount,
+    ownerTagHex: receiveAddress.ownerTagHex,
+    diversifierHex: receiveAddress.diversifierHex,
+    createdAtMs,
+  });
+};
 
 const hexToBytes = (hex: string): Uint8Array =>
   Uint8Array.from(
@@ -232,12 +251,18 @@ const nativeVersionedPayload = (
   nativeBinding: unknown,
 ): Buffer => {
   const native = nativeBinding as
-    | { encodeSignedTransactionNorito?: (payload: Buffer) => Buffer | Uint8Array }
+    | {
+        encodeSignedTransactionNorito?: (
+          payload: Buffer,
+        ) => Buffer | Uint8Array;
+      }
     | undefined;
   if (typeof native?.encodeSignedTransactionNorito === "function") {
     return Buffer.concat([
       Buffer.from([0x01]),
-      Buffer.from(native.encodeSignedTransactionNorito(unwrapNrt0Frame(payload))),
+      Buffer.from(
+        native.encodeSignedTransactionNorito(unwrapNrt0Frame(payload)),
+      ),
     ]);
   }
   return versionedPayload(payload);
@@ -797,6 +822,9 @@ const loadBridge = async () => {
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     submitSccpBridgeMessage: (
+      input: Record<string, unknown>,
+    ) => Promise<Record<string, unknown>>;
+    proveBscSccpProof: (
       input: Record<string, unknown>,
     ) => Promise<Record<string, unknown>>;
     submitZkIvmProvedTransaction: (
@@ -1651,6 +1679,97 @@ describe("preload Kaigi bridge", () => {
     expect(mocks.submitBridgeMessageMock).not.toHaveBeenCalled();
   });
 
+  it("rejects unsafe BSC prover module URLs before child import", async () => {
+    const bridge = await loadBridge();
+    const request = {
+      requestHash: `0x${"11".repeat(32)}`,
+      backend: "test-backend",
+    };
+
+    await expect(
+      bridge.proveBscSccpProof({
+        request,
+        proverModuleUrl: "data:text/javascript,export default () => {}",
+      }),
+    ).rejects.toThrow(/BSC SCCP prover module URL/u);
+    await expect(
+      bridge.proveBscSccpProof({
+        request,
+        proverModuleUrl: "file:///tmp/bsc-prover.js",
+      }),
+    ).rejects.toThrow(/BSC SCCP prover module URL/u);
+    await expect(
+      bridge.proveBscSccpProof({
+        request,
+        proverModuleUrl: "http://cdn.example.invalid/bsc-prover.js",
+      }),
+    ).rejects.toThrow(/BSC SCCP prover module URL/u);
+  });
+
+  it("imports remote BSC prover modules with their original module URL", async () => {
+    const server = await new Promise<Server>((resolveServer) => {
+      const nextServer = createServer((request, response) => {
+        if (request.url === "/prover.js") {
+          response.writeHead(200, { "content-type": "text/javascript" });
+          response.end(`
+            export function prove(input) {
+              const configUrl = new URL("./config.json", import.meta.url).href;
+              if (!configUrl.endsWith("/config.json")) {
+                throw new Error("bad config URL " + configUrl);
+              }
+              return {
+                proofBytes: "0x1234",
+                requestHash: input.requestHash,
+                backend: "loopback-test",
+              };
+            }
+          `);
+          return;
+        }
+        if (request.url === "/config.json") {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end("{}");
+          return;
+        }
+        response.writeHead(404, { "content-type": "text/plain" });
+        response.end("missing");
+      });
+      nextServer.listen(0, "127.0.0.1", () => resolveServer(nextServer));
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("test server did not expose a TCP port");
+      }
+      const requestHash = `0x${"11".repeat(32)}`;
+      const bridge = await loadBridge();
+
+      await expect(
+        bridge.proveBscSccpProof({
+          request: {
+            requestHash,
+            backend: "test-backend",
+          },
+          proverModuleUrl: `http://127.0.0.1:${address.port}/prover.js`,
+        }),
+      ).resolves.toMatchObject({
+        proofBytes: "0x1234",
+        requestHash,
+        backend: "loopback-test",
+      });
+    } finally {
+      await new Promise<void>((resolveClose, rejectClose) => {
+        server.close((error) => {
+          if (error) {
+            rejectClose(error);
+            return;
+          }
+          resolveClose();
+        });
+      });
+    }
+  });
+
   it("snapshots SCCP submission bundles before resolving wallet authority", async () => {
     const bridge = await loadBridge();
     const privateKeyHex = "11".repeat(32);
@@ -1747,9 +1866,7 @@ describe("preload Kaigi bridge", () => {
         String(input).includes("/v1/ledger/headers"),
       ),
     ).toBe(false);
-    expect(
-      JSON.stringify([pipelineCall]),
-    ).not.toContain(privateKeyHex);
+    expect(JSON.stringify([pipelineCall])).not.toContain(privateKeyHex);
   });
 
   it("rejects inline keys for ZK IVM proved transaction submissions before signing", async () => {
@@ -5012,15 +5129,7 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("accepts committed transaction detail when pipeline status lags at Applied", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
-      privateKeyHex: "11".repeat(32),
-    });
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "5",
-      ownerTagHex,
-      createdAtMs: Date.now(),
-    });
+    const note = confidentialNoteFor("11".repeat(32), "5", Date.now(), "11");
     const nullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -5155,15 +5264,7 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("accepts Applied unshield finality even when transaction detail also lags", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
-      privateKeyHex: "11".repeat(32),
-    });
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "5",
-      ownerTagHex,
-      createdAtMs: Date.now(),
-    });
+    const note = confidentialNoteFor("11".repeat(32), "5", Date.now(), "11");
     const nullifierHex = deriveWalletConfidentialNullifierHex({
       privateKeyHex: "11".repeat(32),
       assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
@@ -5846,15 +5947,7 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("falls back to an older compatible root from the recent root window", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
-      privateKeyHex: "11".repeat(32),
-    });
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "5",
-      ownerTagHex,
-      createdAtMs: Date.now(),
-    });
+    const note = confidentialNoteFor("11".repeat(32), "5", Date.now(), "11");
     const metadata = buildWalletConfidentialMetadata({
       outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
     });
@@ -6003,15 +6096,7 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("retries recipient shielded sends after refreshing a stale confidential root hint", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
-      privateKeyHex: "11".repeat(32),
-    });
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "5",
-      ownerTagHex,
-      createdAtMs: Date.now(),
-    });
+    const note = confidentialNoteFor("11".repeat(32), "5", Date.now(), "11");
     const metadata = buildWalletConfidentialMetadata({
       outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
     });
@@ -6155,15 +6240,7 @@ describe("preload Kaigi bridge", () => {
   });
 
   it("treats relay transfers as committed once the confidential note index includes the relay hash", async () => {
-    const ownerTagHex = deriveWalletConfidentialOwnerTagHex({
-      privateKeyHex: "11".repeat(32),
-    });
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: LIVE_CONFIDENTIAL_XOR_ASSET_DEFINITION_ID,
-      amount: "5",
-      ownerTagHex,
-      createdAtMs: Date.now(),
-    });
+    const note = confidentialNoteFor("11".repeat(32), "5", Date.now(), "11");
     const metadata = buildWalletConfidentialMetadata({
       outputs: [{ note, recipientAccountId: ALICE_ACCOUNT_ID }],
     });

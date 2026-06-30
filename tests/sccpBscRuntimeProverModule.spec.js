@@ -932,7 +932,7 @@ const writeRuntimeConfigTree = async (runtime) => {
   runtimeRoots.add(root);
   await writeDirectionRuntimeFiles(root, "destination", runtime.destination);
   await writeDirectionRuntimeFiles(root, "source", runtime.source);
-  const configPath = path.join(root, "taira-bsc-xor-prover.config.json");
+  const configPath = path.join(root, "taira-bsc-xor-runtime.config.json");
   await writeFile(configPath, `${JSON.stringify(runtime.config, null, 2)}\n`);
   return {
     root,
@@ -2302,7 +2302,7 @@ const { fetch: runtimeFetch } = globalThis;`,
   it("rejects streamed runtime configs that exceed the byte limit without content-length", async () => {
     const runtime = buildRuntimeConfig();
     const configUrl =
-      "https://cdn.example.invalid/taira-bsc-xor-prover.config.json";
+      "https://cdn.example.invalid/taira-bsc-xor-runtime.config.json";
     const calls = [];
     globalThis.IrohaSccpBscProverConfigUrl = configUrl;
     globalThis.IrohaSccpBscProverTestCalls = calls;
@@ -2328,7 +2328,7 @@ const { fetch: runtimeFetch } = globalThis;`,
   it("rejects streamed runtime material that exceeds the byte limit without content-length", async () => {
     const runtime = buildRuntimeConfig();
     const configUrl =
-      "https://cdn.example.invalid/taira-bsc-xor-prover.config.json";
+      "https://cdn.example.invalid/taira-bsc-xor-runtime.config.json";
     const bundleUrl =
       "https://cdn.example.invalid/destination/native/bundle.json";
     const calls = [];

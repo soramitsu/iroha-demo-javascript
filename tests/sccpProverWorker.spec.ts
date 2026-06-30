@@ -1028,11 +1028,11 @@ describe("SCCP prover worker", () => {
 
   it("links the browser BSC prover before generating a destination proof package", async () => {
     vi.stubEnv(
-      "VITE_SCCP_BSC_PROVER_CONFIG_URL",
-      "/sccp-bsc/taira-bsc-xor-prover.config.json",
+      "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
+      "/sccp-bsc/taira-bsc-xor-runtime.config.json",
     );
     vi.stubEnv(
-      "VITE_SCCP_BSC_PROVER_MODULE_URL",
+      "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
       "/sccp-bsc/taira-bsc-xor-prover.js",
     );
     const prove = vi.fn();
@@ -1062,14 +1062,48 @@ describe("SCCP prover worker", () => {
       prove,
     });
     expect(worker.scope.IrohaSccpBscProverConfigUrl).toBe(
-      "/sccp-bsc/taira-bsc-xor-prover.config.json",
+      "/sccp-bsc/taira-bsc-xor-runtime.config.json",
+    );
+  });
+
+  it("uses a route-published BSC runtime config ahead of stale env config", async () => {
+    vi.stubEnv(
+      "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
+      "/sccp-bsc/stale-env-config.json",
+    );
+    vi.stubEnv(
+      "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
+      "/sccp-bsc/taira-bsc-xor-prover.js",
+    );
+    const prove = vi.fn();
+    const generatedPackage = { submissionPayload: { proof: "0x12" } };
+    mocks.loadBscDestinationProver.mockResolvedValue(prove);
+    mocks.generateBscProofPackage.mockResolvedValue(generatedPackage);
+    const worker = await createWorkerHarness();
+
+    await expect(
+      worker.post({
+        id: "prove-bsc-route-config",
+        kind: "prove-bsc-proof-package",
+        input: {
+          ...bscDestinationInput,
+          proverConfigUrl: "/sccp-bsc/route-config.json",
+        },
+      }),
+    ).resolves.toEqual({
+      id: "prove-bsc-route-config",
+      ok: true,
+      result: generatedPackage,
+    });
+    expect(worker.scope.IrohaSccpBscProverConfigUrl).toBe(
+      "/sccp-bsc/route-config.json",
     );
   });
 
   it("does not reuse TRON prover module URLs for BSC destination proving", async () => {
     vi.stubEnv("VITE_SCCP_TRON_PROVER_MODULE_URL", "/tron-prover.js");
-    vi.stubEnv("VITE_SCCP_BSC_PROVER_MODULE_URL", "");
-    vi.stubEnv("VITE_SCCP_BSC_PROVER_CONFIG_URL", "");
+    vi.stubEnv("VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL", "");
+    vi.stubEnv("VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL", "");
     mocks.loadBscDestinationProver.mockResolvedValue(undefined);
     mocks.generateBscProofPackage.mockRejectedValue(new Error("missing BSC"));
     const worker = await createWorkerHarness();
@@ -1149,10 +1183,10 @@ describe("SCCP prover worker", () => {
 
   it("does not reuse the destination prover module URL for BSC source proving", async () => {
     vi.stubEnv(
-      "VITE_SCCP_BSC_PROVER_MODULE_URL",
+      "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
       "/src/utils/sccpBscDiagnosticProver.ts",
     );
-    vi.stubEnv("VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL", "");
+    vi.stubEnv("VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL", "");
     mocks.loadBscSourceProver.mockResolvedValue(undefined);
     const worker = await createWorkerHarness();
 
@@ -1202,11 +1236,11 @@ describe("SCCP prover worker", () => {
 
   it("rebinds BSC source prover output to the original receipt and recipient context", async () => {
     vi.stubEnv(
-      "VITE_SCCP_BSC_PROVER_CONFIG_URL",
-      "/sccp-bsc/taira-bsc-xor-prover.config.json",
+      "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
+      "/sccp-bsc/taira-bsc-xor-runtime.config.json",
     );
     vi.stubEnv(
-      "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
+      "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL",
       "/sccp-bsc/taira-bsc-xor-prover.js",
     );
     const rawProofPackage = bscRawSourceProofPackage({ txId: "stale" });
@@ -1254,7 +1288,7 @@ describe("SCCP prover worker", () => {
       amountDecimal: bscSourceInput.amountDecimal,
     });
     expect(worker.scope.IrohaSccpBscProverConfigUrl).toBe(
-      "/sccp-bsc/taira-bsc-xor-prover.config.json",
+      "/sccp-bsc/taira-bsc-xor-runtime.config.json",
     );
   });
 

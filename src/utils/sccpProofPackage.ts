@@ -70,6 +70,7 @@ export type BscSccpProofPackageInput = {
   destinationBinding?: EvmSccpDestinationBindingInput;
   canonicalPayloadHex?: string;
   proverModuleUrl?: string;
+  proverConfigUrl?: string;
 };
 
 export type BscSccpProofGenerationInput = BscSccpProofPackageInput & {
@@ -212,7 +213,9 @@ const readOptionalBscNativeEvmProverBundleHash = (
     return undefined;
   }
   if (typeof hash !== "string") {
-    throw new Error(`${label} nativeEvmProverBundleHash must be canonical hex.`);
+    throw new Error(
+      `${label} nativeEvmProverBundleHash must be canonical hex.`,
+    );
   }
   const normalized = hash.trim().toLowerCase();
   if (
@@ -542,7 +545,9 @@ export const buildBscSccpProofPackage = (
 export const generateBscSccpProofPackage = async (
   input: BscSccpProofGenerationInput,
 ): Promise<BscSccpProofPackage> => {
-  const { prove, proverModuleUrl: _proverModuleUrl, ...packageInput } = input;
+  const { prove, ...packageInput } = input;
+  delete packageInput.proverModuleUrl;
+  delete packageInput.proverConfigUrl;
   if (typeof prove !== "function") {
     const error = new Error(
       "BSC SCCP Groth16 prover is not linked; provide a browser-safe prove function before generating production proofs.",
@@ -566,10 +571,7 @@ export const generateBscSccpProofPackage = async (
   const safeProve: EvmSccpProveFn = async (request) =>
     snapshotProofPackageInput(
       await prove(
-        bindBscNativeEvmProverBundleHash(
-          request,
-          nativeEvmProverBundleHash,
-        ),
+        bindBscNativeEvmProverBundleHash(request, nativeEvmProverBundleHash),
       ),
       "BSC SCCP proof result",
     );

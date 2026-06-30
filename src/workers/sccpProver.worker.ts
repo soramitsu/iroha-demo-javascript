@@ -28,9 +28,9 @@ import {
   loadTronSccpProveFn,
   type BscSccpProverModule,
   type BscSccpProverGlobal,
-  type TronSccpProverModule,
   type TronSccpProverGlobal,
 } from "@/utils/sccpProverLink";
+import { normalizeSccpPackageOrRemoteModuleUrl } from "@/utils/sccpProverUrl";
 import { snapshotSccpDataValue } from "@/utils/sccpDataSnapshot";
 import { isSecretLikeTextValue } from "@/utils/secretLike";
 
@@ -83,6 +83,7 @@ type BscToTairaSourceProofWorkerInput = Omit<
   "proofArtifactHash" | "provingKeyHash" | "nativeEvmProverBundleHash"
 > & {
   proverModuleUrl?: string;
+  proverConfigUrl?: string;
 };
 
 type SccpProverWorkerResponse =
@@ -194,15 +195,10 @@ const activeBscNetworkEnvKey = (): "mainnet" | "testnet" => {
 const readBscProfileEnv = (
   testnetKey: keyof ImportMetaEnv,
   mainnetKey: keyof ImportMetaEnv,
-  fallbackKey: keyof ImportMetaEnv,
 ): string => {
   const activeKey =
     activeBscNetworkEnvKey() === "mainnet" ? mainnetKey : testnetKey;
-  return (
-    String(import.meta.env[activeKey] ?? "").trim() ||
-    String(import.meta.env[fallbackKey] ?? "").trim() ||
-    ""
-  );
+  return String(import.meta.env[activeKey] ?? "").trim();
 };
 
 const readOptionalWorkerString = (value: unknown): string =>
@@ -222,7 +218,9 @@ const resolveWorkerPublicUrl = (value: unknown): string => {
 const importWorkerPublicModule = async <TModule>(
   moduleUrl: string,
 ): Promise<TModule> =>
-  import(/* @vite-ignore */ resolveWorkerPublicUrl(moduleUrl)) as Promise<TModule>;
+  import(
+    /* @vite-ignore */ resolveWorkerPublicUrl(moduleUrl)
+  ) as Promise<TModule>;
 
 const isSccpProverWorkerRequestKind = (
   value: unknown,
@@ -318,7 +316,10 @@ const readOptionalWorkerRecordField = (
   return isRecord(selected) ? selected : undefined;
 };
 
-const normalizeWorkerUnsignedIndex = (value: unknown, label: string): string => {
+const normalizeWorkerUnsignedIndex = (
+  value: unknown,
+  label: string,
+): string => {
   let parsed: bigint;
   if (typeof value === "bigint") {
     parsed = value;
@@ -505,12 +506,11 @@ const buildBinaryBscSourceProofPackage = (
   }
   const receipt = readOptionalWorkerRecordField(inputRecord, ["receipt"]);
   const block = readOptionalWorkerRecordField(inputRecord, ["block"]);
-  const blockReceipts =
-    Array.isArray(inputRecord.blockReceipts)
-      ? inputRecord.blockReceipts
-      : Array.isArray(inputRecord.block_receipts)
-        ? inputRecord.block_receipts
-        : undefined;
+  const blockReceipts = Array.isArray(inputRecord.blockReceipts)
+    ? inputRecord.blockReceipts
+    : Array.isArray(inputRecord.block_receipts)
+      ? inputRecord.block_receipts
+      : undefined;
   const receiptRootIndex = readBscSourceReceiptRootIndex(inputRecord, receipt);
   const sourceBridgeEmitterAddress = readOptionalWorkerTextField(inputRecord, [
     "sourceBridgeEmitterAddress",
@@ -576,11 +576,16 @@ const buildBinaryBscSourceProofPackage = (
   );
 };
 
-const configureBscRuntimeProverConfigUrl = (): void => {
-  const configUrl = readBscProfileEnv(
-    "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
-    "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL",
-    "VITE_SCCP_BSC_PROVER_CONFIG_URL",
+const configureBscRuntimeProverConfigUrl = (inputConfigUrl?: unknown): void => {
+  const rawConfigUrl =
+    readOptionalWorkerString(inputConfigUrl) ||
+    readBscProfileEnv(
+      "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
+      "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL",
+    );
+  const configUrl = normalizeSccpPackageOrRemoteModuleUrl(
+    rawConfigUrl,
+    "BSC SCCP prover config URL",
   );
   const workerGlobal = self as BscRuntimeProverWorkerGlobal;
   if (configUrl) {
@@ -793,18 +798,17 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         return;
       }
       if (kind === "prove-bsc-proof-package") {
-        configureBscRuntimeProverConfigUrl();
-	        const prove = await loadBscSccpProveFn({
-	          globalScope: self as unknown as BscSccpProverGlobal,
-	          moduleUrl:
-	            readOptionalWorkerString(input.proverModuleUrl) ||
-	            readBscProfileEnv(
-	              "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
-	              "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL",
-	              "VITE_SCCP_BSC_PROVER_MODULE_URL",
-	            ),
-	          importer: importWorkerPublicModule<BscSccpProverModule>,
-	        });
+        configureBscRuntimeProverConfigUrl(input.proverConfigUrl);
+        const prove = await loadBscSccpProveFn({
+          globalScope: self as unknown as BscSccpProverGlobal,
+          moduleUrl:
+            readOptionalWorkerString(input.proverModuleUrl) ||
+            readBscProfileEnv(
+              "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
+              "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL",
+            ),
+          importer: importWorkerPublicModule<BscSccpProverModule>,
+        });
         const result = await generateBscSccpProofPackage({
           ...input,
           prove,
@@ -814,18 +818,17 @@ self.onmessage = (event: MessageEvent<unknown>) => {
       }
       if (kind !== "build-tron-proof-package") {
         if (kind === "prove-bsc-source-package") {
-          configureBscRuntimeProverConfigUrl();
-	          const proveSource = await loadBscSccpSourceProveFn({
-	            globalScope: self as unknown as BscSccpProverGlobal,
-	            moduleUrl:
-	              readOptionalWorkerString(input.proverModuleUrl) ||
-	              readBscProfileEnv(
-	                "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL",
-	                "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL",
-	                "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
-	              ),
-	            importer: importWorkerPublicModule<BscSccpProverModule>,
-	          });
+          configureBscRuntimeProverConfigUrl(input.proverConfigUrl);
+          const proveSource = await loadBscSccpSourceProveFn({
+            globalScope: self as unknown as BscSccpProverGlobal,
+            moduleUrl:
+              readOptionalWorkerString(input.proverModuleUrl) ||
+              readBscProfileEnv(
+                "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL",
+                "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL",
+              ),
+            importer: importWorkerPublicModule<BscSccpProverModule>,
+          });
           if (typeof proveSource !== "function") {
             const error = new Error(
               "BSC -> TAIRA SCCP source prover is not linked; provide a browser-safe BSC source proof module before submitting TAIRA settlement.",
@@ -838,8 +841,7 @@ self.onmessage = (event: MessageEvent<unknown>) => {
             input.manifest,
           );
           const normalizedInput = withBscSourceReceiptRootIndex(
-            input as BscToTairaSourceProofWorkerInput &
-              Record<string, unknown>,
+            input as BscToTairaSourceProofWorkerInput & Record<string, unknown>,
           );
           const materialBoundInput: BscToTairaSourceProofWorkerInput &
             BscSourceProverMaterialBinding & { receiptRootIndex?: string } = {

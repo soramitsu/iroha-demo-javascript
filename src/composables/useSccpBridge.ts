@@ -129,12 +129,19 @@ export const useSccpBridge = (
     error.value = "";
     loading.value = true;
     try {
-      const [nextCapabilities, nextManifestSet, nextParameters] =
-        await Promise.all([
-        getSccpCapabilities({ toriiUrl }),
-        getSccpProofManifests({ toriiUrl }),
-          getParameters({ toriiUrl }),
-        ]);
+      const [routeResult, parametersResult] = await Promise.allSettled([
+        Promise.all([
+          getSccpCapabilities({ toriiUrl }),
+          getSccpProofManifests({ toriiUrl }),
+        ]),
+        getParameters({ toriiUrl }),
+      ]);
+      if (routeResult.status === "rejected") {
+        throw routeResult.reason;
+      }
+      const [nextCapabilities, nextManifestSet] = routeResult.value;
+      const nextParameters =
+        parametersResult.status === "fulfilled" ? parametersResult.value : null;
       if (
         refreshSerial !== routeRefreshSerial ||
         connectionKey !== currentConnectionKey()

@@ -1166,6 +1166,9 @@ const sampleReadyBscManifestSet = () => ({
       proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
       provingKeyHash: BSC_PROVING_KEY_HASH,
       nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+      runtimeProverConfig: {
+        configUrl: "/sccp-bsc/taira-bsc-xor-runtime.config.json",
+      },
       sourceVerifierMaterial: BSC_SOURCE_VERIFIER_MATERIAL,
       sourceAdapterEngineDeployment: BSC_SOURCE_ADAPTER_ENGINE_DEPLOYMENT,
       destinationBinding: {
@@ -1714,6 +1717,29 @@ describe("SccpView", () => {
     expect(getTronAccountMock).not.toHaveBeenCalled();
   });
 
+  it("keeps loaded SCCP routes when parameters are unavailable", async () => {
+    getParametersMock.mockRejectedValueOnce(
+      new Error("parameters unavailable"),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Route ready");
+    expect(wrapper.text()).not.toContain("parameters unavailable");
+    expect(getSccpCapabilitiesMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+    });
+    expect(getSccpProofManifestsMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+    });
+    expect(listSccpRecentMessagesMock).toHaveBeenCalled();
+  });
+
   it("enables TAIRA to BSC and BSC to TAIRA route actions", async () => {
     storeConnectedBscWallet();
     getSccpProofManifestsMock.mockResolvedValue(sampleReadyBscManifestSet());
@@ -2050,11 +2076,8 @@ describe("SccpView", () => {
     const submitPayload = submitSccpBridgeMessageMock.mock.calls[0][0] as {
       messageBundle: unknown;
     };
-    const expectedMessageBundle =
-      sampleBscToTairaSourceProofPackage().messageBundle as Record<
-        string,
-        unknown
-      >;
+    const expectedMessageBundle = sampleBscToTairaSourceProofPackage()
+      .messageBundle as Record<string, unknown>;
     expect(submitPayload.messageBundle).toEqual(
       buildSccpMessageBundleSubmitPayload(expectedMessageBundle),
     );

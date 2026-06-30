@@ -56,13 +56,8 @@ import {
   SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV,
   SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_BROWSER_PROVER_MANIFEST_SCHEMA,
-  SCCP_BSC_PROVER_CONFIG_URL_ENV,
-  SCCP_BSC_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_PROVER_MODULE_URL_ENV,
   SCCP_BSC_REQUIRED_NATIVE_PROVER_SDKS,
   SCCP_BSC_RUNTIME_PROVER_MODULE_URL,
-  SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
 } from "../scripts/e2e/sccp-bsc-live-smoke-readiness.mjs";
 
 const fixtureHash = (label) =>
@@ -1008,7 +1003,7 @@ const smokeReadinessReport = (overrides = {}) => {
       },
       runtimeConfig: {
         required: true,
-        configUrl: "/sccp-bsc/taira-bsc-xor-prover.config.json",
+        configUrl: "/sccp-bsc/taira-bsc-xor-runtime.config.json",
         configSha256: HASH_55,
         manifest: {
           routeId: SCCP_BSC_XOR_ROUTE_ID,
@@ -1706,8 +1701,8 @@ const materialInventoryReport = (overrides = {}) => {
     runtimeProverConfig: {
       ok: true,
       required: true,
-      configUrl: "/sccp-bsc/taira-bsc-xor-prover.config.json",
-      path: "./public/sccp-bsc/taira-bsc-xor-prover.config.json",
+      configUrl: "/sccp-bsc/taira-bsc-xor-runtime.config.json",
+      path: "./public/sccp-bsc/taira-bsc-xor-runtime.config.json",
       sizeBytes: 4096,
       sha256: HASH_55,
       manifest: {
@@ -11284,7 +11279,7 @@ describe("BSC SCCP aggregate production gate", () => {
           materialInventoryReport: materialInventoryReport({
             runtimeProverConfig: {
               ...materialInventoryReport().runtimeProverConfig,
-              path: "./public/sccp-bsc/../taira-bsc-xor-prover.config.json",
+              path: "./public/sccp-bsc/../taira-bsc-xor-runtime.config.json",
             },
           }),
         },
@@ -11309,8 +11304,8 @@ describe("BSC SCCP aggregate production gate", () => {
             runtimeProverConfig: {
               ...materialInventoryReport().runtimeProverConfig,
               configUrl:
-                "https://cdn.example.invalid/sccp-bsc/taira-bsc-xor-prover.config.json",
-              path: "./public/sccp-bsc/taira-bsc-xor-prover.config.json",
+                "https://cdn.example.invalid/sccp-bsc/taira-bsc-xor-runtime.config.json",
+              path: "./public/sccp-bsc/taira-bsc-xor-runtime.config.json",
             },
           }),
         },
@@ -11335,7 +11330,7 @@ describe("BSC SCCP aggregate production gate", () => {
             runtimeProverConfig: {
               ...materialInventoryReport().runtimeProverConfig,
               configUrl:
-                "/sccp-bsc/%252e%252e/taira-bsc-xor-prover.config.json",
+                "/sccp-bsc/%252e%252e/taira-bsc-xor-runtime.config.json",
             },
           }),
         },
@@ -11348,7 +11343,7 @@ describe("BSC SCCP aggregate production gate", () => {
             runtimeProverConfig: {
               ...materialInventoryReport().runtimeProverConfig,
               configUrl:
-                "/sccp-bsc/%252525252e%252525252e/taira-bsc-xor-prover.config.json",
+                "/sccp-bsc/%252525252e%252525252e/taira-bsc-xor-runtime.config.json",
             },
           }),
         },
@@ -18184,21 +18179,21 @@ describe("BSC SCCP aggregate production gate", () => {
 
     await withEnv(
       {
-        [SCCP_BSC_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-destination.js",
+        VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/generic-destination.js",
         [SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV]:
           "/sccp-bsc/mainnet-destination.js",
-        [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]: "/sccp-bsc/generic-source.js",
+        VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/generic-source.js",
         [SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV]:
           "/sccp-bsc/mainnet-source.js",
-        [SCCP_BSC_PROVER_MANIFEST_URL_ENV]:
+        VITE_SCCP_BSC_PROVER_MANIFEST_URL:
           "/sccp-bsc/generic-destination.manifest.json",
         [SCCP_BSC_MAINNET_PROVER_MANIFEST_URL_ENV]:
           "/sccp-bsc/mainnet-destination.manifest.json",
-        [SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV]:
+        VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL:
           "/sccp-bsc/generic-source.manifest.json",
         [SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV]:
           "/sccp-bsc/mainnet-source.manifest.json",
-        [SCCP_BSC_PROVER_CONFIG_URL_ENV]: "/sccp-bsc/generic-config.json",
+        VITE_SCCP_BSC_PROVER_CONFIG_URL: "/sccp-bsc/generic-config.json",
         [SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV]:
           "/sccp-bsc/mainnet-config.json",
       },

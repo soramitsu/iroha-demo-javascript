@@ -3,6 +3,7 @@ import { AccountAddress } from "@iroha/iroha-js";
 import { generateKeyPair } from "@iroha/iroha-js/crypto";
 import {
   buildWalletConfidentialMetadata,
+  CONFIDENTIAL_WALLET_NOTE_SCHEMA,
   collectWalletConfidentialLedger,
   createWalletConfidentialNote,
   deriveWalletConfidentialOwnerTagHex,
@@ -25,8 +26,35 @@ const makeAccount = () => {
   };
 };
 
-const ownerTagHexFor = (privateKeyHex: string) =>
-  deriveWalletConfidentialOwnerTagHex({ privateKeyHex });
+const receiveAddressFor = (privateKeyHex: string, seed: string) =>
+  deriveWalletConfidentialReceiveAddress({
+    privateKeyHex,
+    diversifierSeedHex: seed.repeat(32),
+  });
+
+const ownerTagHexFor = (privateKeyHex: string) => {
+  const receiveAddress = receiveAddressFor(privateKeyHex, "01");
+  return deriveWalletConfidentialOwnerTagHex({
+    privateKeyHex,
+    diversifierHex: receiveAddress.diversifierHex,
+  });
+};
+
+const noteFor = (
+  account: ReturnType<typeof makeAccount>,
+  amount: string,
+  createdAtMs: number,
+  seed: string,
+) => {
+  const receiveAddress = receiveAddressFor(account.privateKeyHex, seed);
+  return createWalletConfidentialNote({
+    assetDefinitionId: ASSET_ID,
+    amount,
+    ownerTagHex: receiveAddress.ownerTagHex,
+    diversifierHex: receiveAddress.diversifierHex,
+    createdAtMs,
+  });
+};
 
 describe("confidential wallet helpers", () => {
   it("derives a stable confidential owner tag from the wallet private key", () => {
@@ -56,14 +84,84 @@ describe("confidential wallet helpers", () => {
     expect(first.ownerTagHex).not.toBe(second.ownerTagHex);
   });
 
+  it("rejects new wallet notes without a diversifier", () => {
+    const alice = makeAccount();
+    const receiveAddress = receiveAddressFor(alice.privateKeyHex, "01");
+
+    expect(() =>
+      createWalletConfidentialNote({
+        assetDefinitionId: ASSET_ID,
+        amount: "5",
+        ownerTagHex: receiveAddress.ownerTagHex,
+        diversifierHex: "",
+        createdAtMs: 1,
+      }),
+    ).toThrow(/diversifierHex must be a 32-byte hex string/u);
+    expect(() =>
+      deriveWalletConfidentialOwnerTagHex({
+        privateKeyHex: alice.privateKeyHex,
+        diversifierHex: "",
+      }),
+    ).toThrow(/diversifierHex must be a 32-byte hex string/u);
+  });
+
+  it("does not treat legacy no-diversifier note envelopes as spendable", () => {
+    const alice = makeAccount();
+    const receiveAddress = receiveAddressFor(alice.privateKeyHex, "01");
+    const currentNote = noteFor(alice, "5", 1, "02");
+    expect(currentNote.schema).toBe(CONFIDENTIAL_WALLET_NOTE_SCHEMA);
+    const legacyNote = {
+      ...currentNote,
+      schema: "iroha-demo-confidential-note/v2",
+    };
+    delete (legacyNote as Record<string, unknown>).diversifier_hex;
+    const ledger = collectWalletConfidentialLedger(
+      [
+        {
+          entrypoint_hash: "0xshield",
+          result_ok: true,
+          metadata: buildWalletConfidentialMetadata({
+            outputs: [
+              {
+                note: legacyNote as typeof currentNote,
+                recipientAccountId: alice.accountId,
+              },
+            ],
+          }),
+          instructions: [
+            {
+              zk: {
+                Shield: {
+                  asset: ASSET_ID,
+                  from: alice.accountId,
+                  amount: "5",
+                  note_commitment: currentNote.commitment_hex,
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        privateKeyHex: alice.privateKeyHex,
+        chainId: CHAIN_ID,
+        assetDefinitionIds: [ASSET_ID],
+      },
+    );
+
+    expect(receiveAddress.diversifierHex).toMatch(/^[0-9a-f]{64}$/);
+    expect(ledger).toMatchObject({
+      exact: true,
+      spendableQuantity: "0",
+    });
+    expect(ledger.notes).toHaveLength(0);
+    expect(ledger.legacyQuantity).toBe("0");
+    expect(ledger.treeCommitmentsHex).toEqual([currentNote.commitment_hex]);
+  });
+
   it("decrypts self-shield notes into spendable wallet balance", () => {
     const alice = makeAccount();
-    const note = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "5",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 1,
-    });
+    const note = noteFor(alice, "5", 1, "11");
     const ledger = collectWalletConfidentialLedger(
       [
         {
@@ -104,24 +202,9 @@ describe("confidential wallet helpers", () => {
   it("tracks spent notes, recipient notes, and change notes across shielded sends", () => {
     const alice = makeAccount();
     const bob = makeAccount();
-    const shieldNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "10",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 1,
-    });
-    const bobNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "7",
-      ownerTagHex: ownerTagHexFor(bob.privateKeyHex),
-      createdAtMs: 2,
-    });
-    const changeNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "3",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 3,
-    });
+    const shieldNote = noteFor(alice, "10", 1, "11");
+    const bobNote = noteFor(bob, "7", 2, "22");
+    const changeNote = noteFor(alice, "3", 3, "33");
     const inputNullifier = deriveWalletConfidentialNullifierHex({
       privateKeyHex: alice.privateKeyHex,
       assetDefinitionId: ASSET_ID,
@@ -213,18 +296,8 @@ describe("confidential wallet helpers", () => {
 
   it("recovers private change notes from unshield outputs", () => {
     const alice = makeAccount();
-    const shieldNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "10",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 1,
-    });
-    const changeNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "4",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 2,
-    });
+    const shieldNote = noteFor(alice, "10", 1, "11");
+    const changeNote = noteFor(alice, "4", 2, "22");
     const inputNullifier = deriveWalletConfidentialNullifierHex({
       privateKeyHex: alice.privateKeyHex,
       assetDefinitionId: ASSET_ID,
@@ -417,18 +490,8 @@ describe("confidential wallet helpers", () => {
 
   it("selects enough notes and returns the expected change", () => {
     const alice = makeAccount();
-    const firstNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "4",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 1,
-    });
-    const secondNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "6",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 2,
-    });
+    const firstNote = noteFor(alice, "4", 1, "11");
+    const secondNote = noteFor(alice, "6", 2, "22");
     const selected = selectWalletConfidentialNotes(
       [
         {
@@ -464,24 +527,9 @@ describe("confidential wallet helpers", () => {
 
   it("finds an exact one- or two-note match for unshield amounts", () => {
     const alice = makeAccount();
-    const firstNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "4",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 1,
-    });
-    const secondNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "6",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 2,
-    });
-    const thirdNote = createWalletConfidentialNote({
-      assetDefinitionId: ASSET_ID,
-      amount: "3",
-      ownerTagHex: ownerTagHexFor(alice.privateKeyHex),
-      createdAtMs: 3,
-    });
+    const firstNote = noteFor(alice, "4", 1, "11");
+    const secondNote = noteFor(alice, "6", 2, "22");
+    const thirdNote = noteFor(alice, "3", 3, "33");
     const selected = selectWalletConfidentialNotesForExactAmount(
       [
         {

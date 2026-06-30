@@ -46,13 +46,8 @@ import {
   SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV,
   SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_BROWSER_PROVER_MANIFEST_SCHEMA,
-  SCCP_BSC_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_PROVER_MODULE_URL_ENV,
-  SCCP_BSC_PROVER_CONFIG_URL_ENV,
   SCCP_BSC_REQUIRED_NATIVE_PROVER_SDKS,
   SCCP_BSC_RUNTIME_PROVER_MODULE_URL,
-  SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
@@ -15492,11 +15487,6 @@ Environment:
   SCCP_BSC_PEER_AUDIT_SSHPASS
   SCCP_BSC_PEER_AUDIT_CONNECT_TIMEOUT_SECONDS
   SCCP_BSC_MATERIAL_SCAN_PATHS
-  VITE_SCCP_BSC_PROVER_MODULE_URL
-  VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL
-  VITE_SCCP_BSC_PROVER_MANIFEST_URL
-  VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL
-  VITE_SCCP_BSC_PROVER_CONFIG_URL
   VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL
   VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL
   VITE_SCCP_BSC_TESTNET_PROVER_MANIFEST_URL
@@ -15716,7 +15706,6 @@ export const refreshBscSccpProductionGateReports = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_PROVER_MODULE_URL_ENV,
     );
   const activeSourceProverModuleUrl =
     trim(sourceProverModuleUrl) ||
@@ -15724,7 +15713,6 @@ export const refreshBscSccpProductionGateReports = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
     );
   const activeDestinationProverManifestUrl =
     trim(destinationProverManifestUrl) ||
@@ -15732,7 +15720,6 @@ export const refreshBscSccpProductionGateReports = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_MANIFEST_URL_ENV,
-      SCCP_BSC_PROVER_MANIFEST_URL_ENV,
     );
   const activeSourceProverManifestUrl =
     trim(sourceProverManifestUrl) ||
@@ -15740,7 +15727,6 @@ export const refreshBscSccpProductionGateReports = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV,
       SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
     );
   const activeRuntimeProverConfigUrl =
     trim(runtimeProverConfigUrl) ||
@@ -15748,7 +15734,6 @@ export const refreshBscSccpProductionGateReports = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
-      SCCP_BSC_PROVER_CONFIG_URL_ENV,
     );
   const selectedRouteReportPath = selectedReportPath(
     routeReportPath,

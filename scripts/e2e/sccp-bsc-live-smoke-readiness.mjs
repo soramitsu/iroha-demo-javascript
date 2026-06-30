@@ -44,9 +44,6 @@ export const bscSccpPeerConfigAuditReportPath = (bscNetwork = "testnet") =>
     "latest.json",
   );
 
-export const SCCP_BSC_PROVER_MODULE_URL_ENV = "VITE_SCCP_BSC_PROVER_MODULE_URL";
-export const SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV =
-  "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL";
 export const SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL";
 export const SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV =
@@ -55,10 +52,6 @@ export const SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL";
 export const SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV =
   "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL";
-export const SCCP_BSC_PROVER_MANIFEST_URL_ENV =
-  "VITE_SCCP_BSC_PROVER_MANIFEST_URL";
-export const SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV =
-  "VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL";
 export const SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV =
   "VITE_SCCP_BSC_TESTNET_PROVER_MANIFEST_URL";
 export const SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV =
@@ -67,7 +60,6 @@ export const SCCP_BSC_MAINNET_PROVER_MANIFEST_URL_ENV =
   "VITE_SCCP_BSC_MAINNET_PROVER_MANIFEST_URL";
 export const SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV =
   "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL";
-export const SCCP_BSC_PROVER_CONFIG_URL_ENV = "VITE_SCCP_BSC_PROVER_CONFIG_URL";
 export const SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV =
   "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL";
 export const SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV =
@@ -81,7 +73,7 @@ export const SCCP_BSC_RUNTIME_PROVER_CONFIG_SCHEMA =
 export const SCCP_BSC_RUNTIME_PROVER_MODULE_URL =
   "/sccp-bsc/taira-bsc-xor-prover.js";
 export const SCCP_BSC_RUNTIME_PROVER_CONFIG_URL =
-  "/sccp-bsc/taira-bsc-xor-prover.config.json";
+  "/sccp-bsc/taira-bsc-xor-runtime.config.json";
 export const SCCP_BSC_BROWSER_MODULE_MIN_BYTES = 1024;
 export const SCCP_BSC_BROWSER_MODULE_MAX_BYTES = 64 * 1024 * 1024;
 export const SCCP_BSC_BROWSER_MANIFEST_MAX_BYTES = 256 * 1024;
@@ -455,23 +447,16 @@ const parseBoolean = (value, label = "boolean option") => {
   throw new Error(`${label} must be true or false.`);
 };
 
-export const readBscProfileEnv = (
-  profile,
-  testnetKey,
-  mainnetKey,
-  fallbackKey,
-) => {
+export const readBscProfileEnv = (profile, testnetKey, mainnetKey) => {
   const activeKey = profile.key === "mainnet" ? mainnetKey : testnetKey;
-  return (
-    trimString(process.env[activeKey]) || trimString(process.env[fallbackKey])
-  );
+  return trimString(process.env[activeKey]);
 };
 
 export const bscProfileEnvKey = (profile, testnetKey, mainnetKey) =>
   profile.key === "mainnet" ? mainnetKey : testnetKey;
 
-const describeBscProfileEnv = (profile, testnetKey, mainnetKey, fallbackKey) =>
-  `${bscProfileEnvKey(profile, testnetKey, mainnetKey)} (or fallback ${fallbackKey})`;
+const describeBscProfileEnv = (profile, testnetKey, mainnetKey) =>
+  bscProfileEnvKey(profile, testnetKey, mainnetKey);
 
 const check = (id, label, status, detail) => ({ id, label, status, detail });
 
@@ -511,7 +496,10 @@ const scrubAllowedBscRuntimeTermsForPlaceholderScan = (text) =>
       "sccp-ethereum-mainnet-native-evm-cross-sdk-parity-v1",
     )
     .replace(/\bcross_sdk_fixture_parity\b/gu, "cross_sdk_parity")
-    .replace(/\bcross_sdk_fixture_parity_artifact\b/gu, "cross_sdk_parity_artifact")
+    .replace(
+      /\bcross_sdk_fixture_parity_artifact\b/gu,
+      "cross_sdk_parity_artifact",
+    )
     .replace(
       /\bDIAGNOSTIC_BSC_VERIFIER_KEY_HASHES\b/gu,
       "BSC_VERIFIER_KEY_HASH_DENYLIST",
@@ -1792,21 +1780,12 @@ const isBscRuntimeProverModuleUrl = (moduleUrl) => {
 };
 
 export const deriveBscRuntimeProverConfigUrl = (...moduleUrls) => {
-  const selected = moduleUrls
-    .map((moduleUrl) => trimString(moduleUrl))
-    .find(isBscRuntimeProverModuleUrl);
-  if (!selected) {
-    return null;
+  for (const moduleUrl of moduleUrls) {
+    if (isBscRuntimeProverModuleUrl(moduleUrl)) {
+      return null;
+    }
   }
-  if (selected === SCCP_BSC_RUNTIME_PROVER_MODULE_URL) {
-    return SCCP_BSC_RUNTIME_PROVER_CONFIG_URL;
-  }
-  return selected.replace(/(?:^|\/)taira-bsc-xor-prover\.js$/u, (match) =>
-    match.replace(
-      "taira-bsc-xor-prover.js",
-      "taira-bsc-xor-prover.config.json",
-    ),
-  );
+  return null;
 };
 
 const readSccpBrowserUrlBytes = async ({
@@ -4804,23 +4783,21 @@ export const validateBscSccpBrowserProverManifest = (input = {}) => {
   if (!deployment) {
     problems.push("route deployment evidence is missing.");
   } else {
-    manifestDeployment = Object.fromEntries(
+    manifestDeployment = Object.fromEntries([
+      ...expectedFields.map(([deploymentKey, ...manifestKeys]) => [
+        deploymentKey,
+        normalizeHexString(readManifestString(manifest, ...manifestKeys)) ||
+          null,
+      ]),
       [
-        ...expectedFields.map(([deploymentKey, ...manifestKeys]) => [
-          deploymentKey,
-          normalizeHexString(readManifestString(manifest, ...manifestKeys)) ||
-            null,
-        ]),
-        [
+        "settlementAssetDefinitionId",
+        readManifestString(
+          manifest,
           "settlementAssetDefinitionId",
-          readManifestString(
-            manifest,
-            "settlementAssetDefinitionId",
-            "settlement_asset_definition_id",
-          ) ?? null,
-        ],
+          "settlement_asset_definition_id",
+        ) ?? null,
       ],
-    );
+    ]);
     for (const [deploymentKey, ...manifestKeys] of expectedFields) {
       problems.push(
         ...duplicateManifestAliasProblems(
@@ -5947,7 +5924,6 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
     profile,
     SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
     SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
-    SCCP_BSC_PROVER_MODULE_URL_ENV,
   );
   const sourceProverModulePrimaryEnv = bscProfileEnvKey(
     profile,
@@ -5958,25 +5934,21 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
     profile,
     SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
     SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-    SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
   );
   const destinationProverManifestEnv = describeBscProfileEnv(
     profile,
     SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV,
     SCCP_BSC_MAINNET_PROVER_MANIFEST_URL_ENV,
-    SCCP_BSC_PROVER_MANIFEST_URL_ENV,
   );
   const sourceProverManifestEnv = describeBscProfileEnv(
     profile,
     SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV,
     SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV,
-    SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
   );
-  const runtimeProverConfigEnv = describeBscProfileEnv(
+  const runtimeProverConfigEnv = bscProfileEnvKey(
     profile,
     SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
     SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
-    SCCP_BSC_PROVER_CONFIG_URL_ENV,
   );
   const checks = [];
   const reasons = [];
@@ -6142,7 +6114,7 @@ export const evaluateBscSccpLiveSmokeReadiness = (input = {}) => {
       );
       reasons.push("BSC runtime prover config URL is missing.");
       nextSteps.push(
-        `Set ${runtimeProverConfigEnv} or publish ${SCCP_BSC_RUNTIME_PROVER_CONFIG_URL} beside the checked-in BSC runtime prover module.`,
+        `Set ${runtimeProverConfigEnv} to a route-bound runtime config URL for the selected BSC route.`,
       );
     } else if (runtimeProverConfigInspectionRecord?.ok !== true) {
       const detail =
@@ -6820,7 +6792,6 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_MANIFEST_URL_ENV,
-      SCCP_BSC_PROVER_MANIFEST_URL_ENV,
     );
   const activeSourceProverManifestUrl =
     trimString(sourceProverManifestUrl) ||
@@ -6828,15 +6799,17 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV,
       SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
     );
   const activeRuntimeProverConfigUrl =
     trimString(runtimeProverConfigUrl) ||
-    readBscProfileEnv(
-      bscProfile,
-      SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
-      SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
-      SCCP_BSC_PROVER_CONFIG_URL_ENV,
+    trimString(
+      process.env[
+        bscProfileEnvKey(
+          bscProfile,
+          SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
+          SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
+        )
+      ],
     );
   const routeReport = await runBscSccpRoutePreflight({
     toriiUrl,
@@ -6863,7 +6836,6 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_PROVER_MODULE_URL_ENV,
     );
   const activeSourceProverModuleUrl =
     trimString(sourceProverModuleUrl) ||
@@ -6872,7 +6844,6 @@ export const runBscSccpLiveSmokeReadiness = async (input = {}) => {
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
     );
   const normalizedDestinationProverModuleUrl = safeNormalize(
     () =>
@@ -7115,11 +7086,6 @@ Environment:
   BSC_RPC_URL
   SCCP_BSC_SMOKE_READINESS_OUTPUT_DIR
   VITE_WALLETCONNECT_PROJECT_ID
-  VITE_SCCP_BSC_PROVER_MODULE_URL
-  VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL
-  VITE_SCCP_BSC_PROVER_MANIFEST_URL
-  VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL
-  VITE_SCCP_BSC_PROVER_CONFIG_URL
   VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL
   VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL
   VITE_SCCP_BSC_TESTNET_PROVER_MANIFEST_URL

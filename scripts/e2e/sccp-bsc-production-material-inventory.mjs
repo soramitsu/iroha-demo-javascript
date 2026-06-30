@@ -47,9 +47,6 @@ import {
   assertBscSccpBrowserProverModuleExports,
   deriveBscRuntimeProverConfigUrl,
   readBscProfileEnv,
-  SCCP_BSC_PROVER_CONFIG_URL_ENV,
-  SCCP_BSC_PROVER_MODULE_URL_ENV,
-  SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
@@ -2387,10 +2384,7 @@ const diagnosticLike = (value, seen = new WeakSet()) => {
   return ownRecordEntries(value).some(
     ([key, entry]) =>
       (DIAGNOSTIC_KEY_PATTERN.test(key) &&
-        !(
-          PRODUCTION_PLACEHOLDER_STATUS_KEYS.has(key) &&
-          entry === false
-        )) ||
+        !(PRODUCTION_PLACEHOLDER_STATUS_KEYS.has(key) && entry === false)) ||
       diagnosticLike(entry),
   );
 };
@@ -12148,8 +12142,8 @@ const scanOneFile = async (
   const verifier =
     routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi ||
     (route.looksLikeRoute && !verifierFileByName)
-    ? { looksLikeVerifier: false, problems: [] }
-    : verifierMetadata({ filePath, text, json, bscProfile });
+      ? { looksLikeVerifier: false, problems: [] }
+      : verifierMetadata({ filePath, text, json, bscProfile });
   if (verifier.looksLikeVerifier) {
     for (const problem of verifier.problems ?? []) {
       findings.push(
@@ -14062,7 +14056,6 @@ export const evaluateBscSccpProductionMaterialInventory = async (
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_PROVER_MODULE_URL_ENV,
     );
   const activeSourceModuleUrl =
     trim(sourceModuleUrl) ||
@@ -14071,7 +14064,6 @@ export const evaluateBscSccpProductionMaterialInventory = async (
       bscProfile,
       SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL_ENV,
       SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-      SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
     );
   const activeRuntimeProverConfigUrl =
     trim(runtimeProverConfigUrl) ||
@@ -14079,7 +14071,6 @@ export const evaluateBscSccpProductionMaterialInventory = async (
       bscProfile,
       SCCP_BSC_TESTNET_PROVER_CONFIG_URL_ENV,
       SCCP_BSC_MAINNET_PROVER_CONFIG_URL_ENV,
-      SCCP_BSC_PROVER_CONFIG_URL_ENV,
     );
   const explicitScanPaths = parseList(scanPaths);
   const normalizedScanPaths = explicitScanPaths.length
@@ -15105,7 +15096,6 @@ Environment:
   SCCP_BSC_MATERIAL_INVENTORY_OUTPUT_DIR
   SCCP_BSC_PROVER_MANIFEST_PATH
   SCCP_BSC_SOURCE_PROVER_MANIFEST_PATH
-  VITE_SCCP_BSC_PROVER_CONFIG_URL
   VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL
   VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL`);
 };

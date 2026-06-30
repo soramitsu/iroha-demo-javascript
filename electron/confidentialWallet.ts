@@ -26,10 +26,6 @@ export const CONFIDENTIAL_WALLET_METADATA_SCHEMA_LEGACY =
   "iroha-demo-confidential-wallet/v1";
 export const CONFIDENTIAL_WALLET_NOTE_SCHEMA =
   "iroha-demo-confidential-note/v3";
-export const CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2 =
-  "iroha-demo-confidential-note/v2";
-export const CONFIDENTIAL_WALLET_NOTE_SCHEMA_LEGACY =
-  "iroha-demo-confidential-note/v1";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -52,32 +48,18 @@ export type WalletConfidentialTransactionLike = {
 };
 
 export type WalletConfidentialNote = {
-  schema:
-    | typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA
-    | typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2;
+  schema: typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA;
   note_id: string;
   asset_definition_id: string;
   amount: string;
   rho_hex: string;
   owner_tag_hex: string;
-  diversifier_hex?: string;
+  diversifier_hex: string;
   commitment_hex: string;
   created_at_ms: number;
 };
 
-export type WalletLegacyConfidentialNote = {
-  schema: typeof CONFIDENTIAL_WALLET_NOTE_SCHEMA_LEGACY;
-  note_id: string;
-  asset_definition_id: string;
-  amount: string;
-  rho_hex: string;
-  commitment_hex: string;
-  created_at_ms: number;
-};
-
-type WalletParsedNote =
-  | { kind: "v2"; note: WalletConfidentialNote }
-  | { kind: "legacy"; note: WalletLegacyConfidentialNote };
+type WalletParsedNote = { kind: "current"; note: WalletConfidentialNote };
 
 type WalletConfidentialMetadataRecord = {
   schema:
@@ -222,15 +204,14 @@ const extractTransactionMetadata = (
   return null;
 };
 
-const parseWalletConfidentialNoteV2 = (
+const parseWalletConfidentialNote = (
   value: unknown,
 ): WalletConfidentialNote | null => {
   if (!isPlainRecord(value)) {
     return null;
   }
   const schema = trimString(value.schema);
-  const isCurrentSchema = schema === CONFIDENTIAL_WALLET_NOTE_SCHEMA;
-  if (!isCurrentSchema && schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2) {
+  if (schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA) {
     return null;
   }
   const noteId = trimString(value.note_id ?? value.noteId);
@@ -255,8 +236,7 @@ const parseWalletConfidentialNoteV2 = (
     !/^\d+$/.test(amount) ||
     !/^[0-9a-f]{64}$/.test(rhoHex) ||
     !/^[0-9a-f]{64}$/.test(ownerTagHex) ||
-    (isCurrentSchema && !/^[0-9a-f]{64}$/.test(diversifierHex)) ||
-    (diversifierHex !== "" && !/^[0-9a-f]{64}$/.test(diversifierHex)) ||
+    !/^[0-9a-f]{64}$/.test(diversifierHex) ||
     !/^[0-9a-f]{64}$/.test(commitmentHex) ||
     !Number.isFinite(createdAtMs) ||
     createdAtMs < 0
@@ -264,74 +244,23 @@ const parseWalletConfidentialNoteV2 = (
     return null;
   }
   return {
-    schema: isCurrentSchema
-      ? CONFIDENTIAL_WALLET_NOTE_SCHEMA
-      : CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2,
+    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
     note_id: noteId,
     asset_definition_id: assetDefinitionId,
     amount,
     rho_hex: rhoHex,
     owner_tag_hex: ownerTagHex,
-    ...(diversifierHex ? { diversifier_hex: diversifierHex } : {}),
+    diversifier_hex: diversifierHex,
     commitment_hex: commitmentHex,
     created_at_ms: Math.trunc(createdAtMs),
   };
 };
 
-const parseWalletLegacyConfidentialNote = (
-  value: unknown,
-): WalletLegacyConfidentialNote | null => {
-  if (!isPlainRecord(value)) {
-    return null;
-  }
-  const schema = trimString(value.schema);
-  if (schema !== CONFIDENTIAL_WALLET_NOTE_SCHEMA_LEGACY) {
-    return null;
-  }
-  const noteId = trimString(value.note_id ?? value.noteId);
-  const assetDefinitionId = trimString(
-    value.asset_definition_id ?? value.assetDefinitionId,
-  );
-  const amount = trimString(value.amount);
-  const rhoHex = trimString(value.rho_hex ?? value.rhoHex).toLowerCase();
-  const commitmentHex = trimString(
-    value.commitment_hex ?? value.commitmentHex,
-  ).toLowerCase();
-  const createdAtMs = Number(value.created_at_ms ?? value.createdAtMs);
-  if (
-    !noteId ||
-    !assetDefinitionId ||
-    !/^\d+$/.test(amount) ||
-    !/^[0-9a-f]{64}$/.test(rhoHex) ||
-    !/^[0-9a-f]{64}$/.test(commitmentHex) ||
-    !Number.isFinite(createdAtMs) ||
-    createdAtMs < 0
-  ) {
-    return null;
-  }
-  return {
-    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA_LEGACY,
-    note_id: noteId,
-    asset_definition_id: assetDefinitionId,
-    amount,
-    rho_hex: rhoHex,
-    commitment_hex: commitmentHex,
-    created_at_ms: Math.trunc(createdAtMs),
-  };
-};
-
-const parseWalletConfidentialNote = (
+const parseWalletConfidentialNoteEnvelope = (
   value: unknown,
 ): WalletParsedNote | null => {
-  const noteV2 = parseWalletConfidentialNoteV2(value);
-  if (noteV2) {
-    return { kind: "v2", note: noteV2 };
-  }
-  const legacyNote = parseWalletLegacyConfidentialNote(value);
-  if (legacyNote) {
-    return { kind: "legacy", note: legacyNote };
-  }
-  return null;
+  const note = parseWalletConfidentialNote(value);
+  return note ? { kind: "current", note } : null;
 };
 
 const parseWalletConfidentialMetadataRecord = (
@@ -528,7 +457,7 @@ const readWalletNotesForTransaction = (
               if (!receiveKey) {
                 return null;
               }
-              return parseWalletConfidentialNote(
+              return parseWalletConfidentialNoteEnvelope(
                 decryptKaigiPayload(output.envelope, {
                   publicKeyBase64Url: receiveKey.publicKeyBase64Url,
                   privateKeyBase64Url: receiveKey.privateKeyBase64Url,
@@ -536,7 +465,7 @@ const readWalletNotesForTransaction = (
               );
             })()
           : input.privateKeyHex
-            ? parseWalletConfidentialNote(
+            ? parseWalletConfidentialNoteEnvelope(
                 decryptPayloadForAccount(output.envelope, input.privateKeyHex),
               )
             : null;
@@ -592,7 +521,7 @@ export const createWalletConfidentialNote = (input: {
   assetDefinitionId: string;
   amount: string;
   ownerTagHex: string;
-  diversifierHex?: string;
+  diversifierHex: string;
   createdAtMs?: number;
   rhoHex?: string;
 }): WalletConfidentialNote => {
@@ -606,7 +535,7 @@ export const createWalletConfidentialNote = (input: {
     throw new Error("ownerTagHex must be a 32-byte hex string.");
   }
   const diversifierHex = trimString(input.diversifierHex).toLowerCase();
-  if (diversifierHex && !/^[0-9a-f]{64}$/.test(diversifierHex)) {
+  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
     throw new Error("diversifierHex must be a 32-byte hex string.");
   }
   const createdAtMs = Math.trunc(input.createdAtMs ?? Date.now());
@@ -626,15 +555,13 @@ export const createWalletConfidentialNote = (input: {
     ownerTagHex,
   });
   return {
-    schema: diversifierHex
-      ? CONFIDENTIAL_WALLET_NOTE_SCHEMA
-      : CONFIDENTIAL_WALLET_NOTE_SCHEMA_V2,
+    schema: CONFIDENTIAL_WALLET_NOTE_SCHEMA,
     note_id: commitmentHex,
     asset_definition_id: assetDefinitionId,
     amount,
     rho_hex: rhoHex,
     owner_tag_hex: ownerTagHex,
-    ...(diversifierHex ? { diversifier_hex: diversifierHex } : {}),
+    diversifier_hex: diversifierHex,
     commitment_hex: commitmentHex,
     created_at_ms: createdAtMs,
   };
@@ -642,21 +569,20 @@ export const createWalletConfidentialNote = (input: {
 
 export const deriveWalletConfidentialOwnerTagHex = (input: {
   privateKeyHex: string;
-  diversifierHex?: string;
+  diversifierHex: string;
 }): string => {
   const privateKeyHex = trimString(input.privateKeyHex);
   if (!/^[0-9a-f]{64}$/i.test(privateKeyHex)) {
     throw new Error("privateKeyHex must be a 32-byte hex string.");
   }
   const diversifierHex = trimString(input.diversifierHex).toLowerCase();
-  if (diversifierHex && !/^[0-9a-f]{64}$/.test(diversifierHex)) {
+  if (!/^[0-9a-f]{64}$/.test(diversifierHex)) {
     throw new Error("diversifierHex must be a 32-byte hex string.");
   }
   return Buffer.from(
-    deriveConfidentialOwnerTagV2(
-      Buffer.from(privateKeyHex, "hex"),
-      diversifierHex ? { diversifierHex } : undefined,
-    ),
+    deriveConfidentialOwnerTagV2(Buffer.from(privateKeyHex, "hex"), {
+      diversifierHex,
+    }),
   ).toString("hex");
 };
 
@@ -717,7 +643,7 @@ export const deriveWalletConfidentialNullifierHex = (input: {
 export const buildWalletConfidentialMetadata = (input: {
   baseMetadata?: Record<string, unknown>;
   outputs: Array<{
-    note: WalletConfidentialNote | WalletLegacyConfidentialNote;
+    note: WalletConfidentialNote;
     receiveKeyId?: string;
     recipientPublicKeyBase64Url?: string;
     recipientAccountId?: string;
@@ -823,7 +749,7 @@ export const collectWalletConfidentialLedger = (
     .map((transaction, index) => ({ ...transaction, __index: index }))
     .sort(compareTransactionsChronologically);
   let exact = true;
-  let legacyQuantity = "0";
+  const legacyQuantity = "0";
 
   for (const transaction of txList) {
     if (transaction.result_ok === false) {
@@ -846,7 +772,7 @@ export const collectWalletConfidentialLedger = (
       const leafIndex = treeCommitmentsHex.length;
       treeCommitmentsHex.push(shield.commitment_hex);
       const decrypted = notesByCommitment.get(shield.commitment_hex);
-      if (decrypted?.kind === "v2") {
+      if (decrypted?.kind === "current") {
         const nullifierHex = deriveWalletConfidentialNullifierHex({
           privateKeyHex: input.privateKeyHex,
           assetDefinitionId: decrypted.note.asset_definition_id,
@@ -859,9 +785,6 @@ export const collectWalletConfidentialLedger = (
           source_tx_hash: txHash,
           leaf_index: leafIndex,
         });
-      } else if (decrypted?.kind === "legacy") {
-        legacyQuantity = addWholeAmounts(legacyQuantity, decrypted.note.amount);
-        exact = false;
       }
     }
 
@@ -881,7 +804,7 @@ export const collectWalletConfidentialLedger = (
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
-        if (decrypted?.kind === "v2") {
+        if (decrypted?.kind === "current") {
           recognizedOutput = true;
           const nullifierHex = deriveWalletConfidentialNullifierHex({
             privateKeyHex: input.privateKeyHex,
@@ -895,13 +818,6 @@ export const collectWalletConfidentialLedger = (
             source_tx_hash: txHash,
             leaf_index: leafIndex,
           });
-        } else if (decrypted?.kind === "legacy") {
-          recognizedOutput = true;
-          legacyQuantity = addWholeAmounts(
-            legacyQuantity,
-            decrypted.note.amount,
-          );
-          exact = false;
         }
       }
       if (
@@ -929,7 +845,7 @@ export const collectWalletConfidentialLedger = (
         const leafIndex = treeCommitmentsHex.length;
         treeCommitmentsHex.push(commitmentHex);
         const decrypted = notesByCommitment.get(commitmentHex);
-        if (decrypted?.kind === "v2") {
+        if (decrypted?.kind === "current") {
           recognizedOutput = true;
           const nullifierHex = deriveWalletConfidentialNullifierHex({
             privateKeyHex: input.privateKeyHex,
@@ -943,13 +859,6 @@ export const collectWalletConfidentialLedger = (
             source_tx_hash: txHash,
             leaf_index: leafIndex,
           });
-        } else if (decrypted?.kind === "legacy") {
-          recognizedOutput = true;
-          legacyQuantity = addWholeAmounts(
-            legacyQuantity,
-            decrypted.note.amount,
-          );
-          exact = false;
         }
       }
       if (
@@ -978,10 +887,6 @@ export const collectWalletConfidentialLedger = (
   for (const note of notes) {
     spendableQuantity = addWholeAmounts(spendableQuantity, note.amount);
   }
-  if (legacyQuantity !== "0") {
-    exact = false;
-  }
-
   return {
     exact,
     notes,

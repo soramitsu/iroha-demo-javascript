@@ -393,6 +393,7 @@ import {
   readSccpBscBridgeAddress,
   readSccpBscDestinationProverModuleUrl,
   readSccpBscRpcEndpoint,
+  readSccpBscRuntimeProverConfigUrl,
   readSccpBscSourceBridgeAddress,
   readSccpBscSourceProverModuleUrl,
   readSccpBscTokenAddress,
@@ -1060,6 +1061,7 @@ type BscSourceProofWorkerInput = Omit<
   provingKeyHash?: string;
   nativeEvmProverBundleHash?: string;
   proverModuleUrl?: string;
+  proverConfigUrl?: string;
 };
 
 type SccpOperationContext = {
@@ -1178,9 +1180,7 @@ const buildBscProofEnvelopeHash = (
   requestHash: string,
   proofBytesHex: string,
 ): string => {
-  const prefix = new TextEncoder().encode(
-    "sccp:evm:groth16-proof-envelope:v1",
-  );
+  const prefix = new TextEncoder().encode("sccp:evm:groth16-proof-envelope:v1");
   const requestHashBytes = sccpHexToBytes(requestHash, "requestHash");
   if (requestHashBytes.length !== 32) {
     throw new Error("requestHash must be 32 bytes.");
@@ -1204,6 +1204,7 @@ const runBscProofWorker = async (
     const proofResult = await electronProver({
       request: input.witness as unknown as Record<string, unknown>,
       proverModuleUrl: input.proverModuleUrl,
+      proverConfigUrl: input.proverConfigUrl,
     });
     const proofResultRecord = {
       ...(proofResult as Record<string, unknown>),
@@ -1240,14 +1241,13 @@ const runBscSourceProofWorker = async (
     return (await electronProver({
       input: input as unknown as Record<string, unknown>,
       proverModuleUrl: input.proverModuleUrl,
+      proverConfigUrl: input.proverConfigUrl,
     })) as unknown as BscToTairaSourceProofPackage;
   }
-  const {
-    proofArtifactHash: _proofArtifactHash,
-    provingKeyHash: _provingKeyHash,
-    nativeEvmProverBundleHash: _nativeEvmProverBundleHash,
-    ...workerInput
-  } = input;
+  const workerInput = { ...input };
+  delete workerInput.proofArtifactHash;
+  delete workerInput.provingKeyHash;
+  delete workerInput.nativeEvmProverBundleHash;
   return runSccpProofWorker<BscToTairaSourceProofPackage>({
     kind: "prove-bsc-source-package",
     input: workerInput,
@@ -1984,6 +1984,7 @@ const finalizeTairaMessageToBsc = async (
     destinationBinding: binding.destinationBinding,
     canonicalPayloadHex: binding.canonicalPayloadHex,
     proverModuleUrl: readSccpBscDestinationProverModuleUrl(context.manifest),
+    proverConfigUrl: readSccpBscRuntimeProverConfigUrl(context.manifest),
   });
   assertSccpOperationContextCurrent(context);
   const finalizeRequest = buildTairaXorBscFinalizeTransactionRequest({
@@ -2181,9 +2182,7 @@ const loadBscBlockReceiptsForProof = async (input: {
           txHash,
         });
         if (!receipt) {
-          throw new Error(
-            `BSC block receipt ${txHash} is not indexed yet.`,
-          );
+          throw new Error(`BSC block receipt ${txHash} is not indexed yet.`);
         }
         return receipt;
       }),
@@ -2224,6 +2223,7 @@ const finalizeBscBurnToTaira = async (
     bscNetwork: SCCP_BSC_NETWORK.key,
     ...sourceMaterialBinding,
     proverModuleUrl: readSccpBscSourceProverModuleUrl(context.manifest),
+    proverConfigUrl: readSccpBscRuntimeProverConfigUrl(context.manifest),
     bscRpcUrl:
       readSccpBscRpcEndpoint(context.manifest, SCCP_BSC_NETWORK.key) ||
       SCCP_BSC_NETWORK.rpcUrl,

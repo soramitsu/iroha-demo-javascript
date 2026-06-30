@@ -45,8 +45,8 @@ const hasControlCharacter = (value) => {
   return false;
 };
 const DEFAULT_CONFIG_RELATIVE_OUTPUT_PATH =
-  "public/sccp-bsc/taira-bsc-xor-prover.config.json";
-const DEFAULT_CONFIG_PUBLIC_URL = "/sccp-bsc/taira-bsc-xor-prover.config.json";
+  "public/sccp-bsc/taira-bsc-xor-runtime.config.json";
+const DEFAULT_CONFIG_PUBLIC_URL = "/sccp-bsc/taira-bsc-xor-runtime.config.json";
 
 export const SCCP_BSC_RUNTIME_PROVER_CONFIG_SCHEMA =
   "iroha-demo-sccp-bsc-runtime-prover/v1";

@@ -569,11 +569,11 @@ describe("BSC SCCP live video proof helpers", () => {
       VITE_WALLETCONNECT_PROJECT_ID: cliProjectId,
       VITE_SCCP_BSC_NETWORK: "testnet",
       VITE_SCCP_BSC_E2E_WALLET: "1",
-      VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/destination.js",
       VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL: "/sccp-bsc/destination.js",
-      VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/source.js",
       VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/source.js",
     });
+    expect(env).not.toHaveProperty("VITE_SCCP_BSC_PROVER_MODULE_URL");
+    expect(env).not.toHaveProperty("VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL");
 
     const mainnetEnv = buildSccpBscLiveVideoElectronEnv({
       args: {
@@ -585,13 +585,15 @@ describe("BSC SCCP live video proof helpers", () => {
     });
     expect(mainnetEnv).toMatchObject({
       VITE_SCCP_BSC_NETWORK: "mainnet",
-      VITE_SCCP_BSC_PROVER_MODULE_URL: "/sccp-bsc/mainnet-destination.js",
       VITE_SCCP_BSC_MAINNET_PROVER_MODULE_URL:
         "/sccp-bsc/mainnet-destination.js",
-      VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: "/sccp-bsc/mainnet-source.js",
       VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL:
         "/sccp-bsc/mainnet-source.js",
     });
+    expect(mainnetEnv).not.toHaveProperty("VITE_SCCP_BSC_PROVER_MODULE_URL");
+    expect(mainnetEnv).not.toHaveProperty(
+      "VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL",
+    );
     expect(mainnetEnv).not.toHaveProperty(
       "VITE_SCCP_BSC_TESTNET_PROVER_MODULE_URL",
     );

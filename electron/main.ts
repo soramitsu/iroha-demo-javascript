@@ -65,10 +65,7 @@ const configureSccpProverHeap = () => {
         Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
       )
     : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-  app.commandLine.appendSwitch(
-    "js-flags",
-    `--max-old-space-size=${heapMb}`,
-  );
+  app.commandLine.appendSwitch("js-flags", `--max-old-space-size=${heapMb}`);
 };
 
 configureSccpProverHeap();

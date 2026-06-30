@@ -1302,7 +1302,10 @@ export interface IrohaBridge {
           signingAlgorithm?: string;
         },
   ): { publicKeyHex: string; signingAlgorithm: string };
-  deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
+  deriveConfidentialOwnerTag(input: {
+    privateKeyHex: string;
+    diversifierHex: string;
+  }): { ownerTagHex: string };
   deriveConfidentialReceiveAddress(privateKeyHex: string): {
     ownerTagHex: string;
     diversifierHex: string;
@@ -1759,9 +1762,7 @@ export interface IrohaBridge {
     toriiUrl: string;
     apiToken?: string;
   }): Promise<Record<string, unknown>>;
-  getParameters(input: {
-    toriiUrl: string;
-  }): Promise<Record<string, unknown>>;
+  getParameters(input: { toriiUrl: string }): Promise<Record<string, unknown>>;
   getSccpCapabilities(input: {
     toriiUrl: string;
   }): Promise<SccpCapabilitiesResponse>;

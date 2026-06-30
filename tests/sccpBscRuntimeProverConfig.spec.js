@@ -1365,7 +1365,7 @@ const createRuntimeMaterial = async ({
     });
   }
   const paths = {
-    outputPath: path.join(publicDir, "taira-bsc-xor-prover.config.json"),
+    outputPath: path.join(publicDir, "taira-bsc-xor-runtime.config.json"),
     proofArtifact: generatedBundle.proofArtifact,
     provingKey: generatedBundle.provingKey,
     verifierKey: generatedBundle.verifierKey,
@@ -1509,7 +1509,7 @@ describe("BSC SCCP runtime prover config generator", () => {
       const written = JSON.parse(await readFile(result.outputPath, "utf8"));
 
       expect(result.publicUrl).toBe(
-        "/sccp-bsc/taira-bsc-xor-prover.config.json",
+        "/sccp-bsc/taira-bsc-xor-runtime.config.json",
       );
       expect(written).toMatchObject({
         schema: SCCP_BSC_RUNTIME_PROVER_CONFIG_SCHEMA,
@@ -1820,7 +1820,7 @@ describe("BSC SCCP runtime prover config generator", () => {
     try {
       const escapedOutputPath = path.join(
         outside,
-        "taira-bsc-xor-prover.config.json",
+        "taira-bsc-xor-runtime.config.json",
       );
 
       await expect(
@@ -1849,11 +1849,11 @@ describe("BSC SCCP runtime prover config generator", () => {
         detail: /URL or URI/u,
       },
       {
-        outputPath: "public/sccp-bsc/taira-bsc-xor-prover.config.json?x=1",
+        outputPath: "public/sccp-bsc/taira-bsc-xor-runtime.config.json?x=1",
         detail: /query strings or fragments/u,
       },
       {
-        outputPath: "public/sccp-bsc/taira-bsc-xor-prover.config.json#frag",
+        outputPath: "public/sccp-bsc/taira-bsc-xor-runtime.config.json#frag",
         detail: /query strings or fragments/u,
       },
       {
@@ -3048,9 +3048,7 @@ describe("BSC SCCP runtime prover config generator", () => {
         root: material.root,
       });
 
-      expect(config.destination.provingKeySha256).toBe(
-        sha256Hex(provingBytes),
-      );
+      expect(config.destination.provingKeySha256).toBe(sha256Hex(provingBytes));
     } finally {
       await rm(material.root, { recursive: true, force: true });
     }

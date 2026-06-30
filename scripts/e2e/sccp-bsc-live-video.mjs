@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* global BigInt */
 import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
@@ -266,7 +267,7 @@ export const buildSccpBscLiveVideoElectronEnv = ({
     bscProfile.key === "mainnet"
       ? "VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL"
       : "VITE_SCCP_BSC_TESTNET_SOURCE_PROVER_MODULE_URL";
-  return {
+  const nextEnv = {
     ...env,
     VITE_SCCP_BSC_NETWORK: bscProfile.key,
     ...(walletConnectProjectId
@@ -274,18 +275,22 @@ export const buildSccpBscLiveVideoElectronEnv = ({
       : {}),
     ...(destinationProverModuleUrl
       ? {
-          VITE_SCCP_BSC_PROVER_MODULE_URL: destinationProverModuleUrl,
           [destinationProfileModuleEnvKey]: destinationProverModuleUrl,
         }
       : {}),
     ...(sourceProverModuleUrl
       ? {
-          VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL: sourceProverModuleUrl,
           [sourceProfileModuleEnvKey]: sourceProverModuleUrl,
         }
       : {}),
     ...(autoFlow ? { VITE_SCCP_BSC_E2E_WALLET: "1" } : {}),
   };
+  delete nextEnv.VITE_SCCP_BSC_PROVER_MODULE_URL;
+  delete nextEnv.VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL;
+  delete nextEnv.VITE_SCCP_BSC_PROVER_MANIFEST_URL;
+  delete nextEnv.VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL;
+  delete nextEnv.VITE_SCCP_BSC_PROVER_CONFIG_URL;
+  return nextEnv;
 };
 
 export const resolveSccpBscProverV8HeapMb = (env = process.env) => {
@@ -2866,9 +2871,7 @@ export const assertExplorerPageContainsTransactionHash = async (
   )
     ? Math.max(0, options.explorerHashContentTimeoutMs)
     : EXPLORER_HASH_CONTENT_TIMEOUT_MS;
-  const contentPollMs = Number.isSafeInteger(
-    options.explorerHashContentPollMs,
-  )
+  const contentPollMs = Number.isSafeInteger(options.explorerHashContentPollMs)
     ? Math.max(0, options.explorerHashContentPollMs)
     : EXPLORER_HASH_CONTENT_POLL_MS;
   const deadline = Date.now() + contentTimeoutMs;

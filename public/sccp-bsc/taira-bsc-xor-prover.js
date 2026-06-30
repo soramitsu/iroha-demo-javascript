@@ -56,10 +56,6 @@ const DIAGNOSTIC_BSC_VERIFIER_KEY_HASHES = Object.freeze(
     "0x9ef8067d260532f88e60cfa4b458fe678fc46b9c242de18fc91ba646e0857fc4",
   ]),
 );
-const CONFIG_URL = new URL(
-  "./taira-bsc-xor-prover.config.json",
-  import.meta.url,
-).href;
 const MIN_PROVER_MATERIAL_BYTES = 64 * 1024;
 const PROVER_MATERIAL_SHAPE_MIN_BYTES = 4096;
 const PROVER_MATERIAL_MIN_UNIQUE_BYTES = 16;
@@ -2460,8 +2456,12 @@ const assertRuntimeMaterialRoleSeparation = (config) => {
 const readConfig = async () => {
   const moduleUrl = new URL(import.meta.url);
   const allowFileUrl = moduleUrl.protocol === "file:";
+  const configuredConfigUrl = trim(globalThis.IrohaSccpBscProverConfigUrl);
+  if (!configuredConfigUrl) {
+    fail("ERR_SCCP_BSC_RUNTIME_CONFIG", "BSC prover config URL is required");
+  }
   const configUrl = resolveUrl(
-    globalThis.IrohaSccpBscProverConfigUrl || CONFIG_URL,
+    configuredConfigUrl,
     "BSC prover config URL",
     import.meta.url,
     { allowFileUrl },
@@ -4129,11 +4129,7 @@ const bytesFromProofResult = (result) => {
       ["proofBytes", "proof_bytes"],
       "BSC destination prover proofBytes",
     ) ??
-    optionalResultField(
-      result,
-      ["proof"],
-      "BSC destination prover proofBytes",
-    );
+    optionalResultField(result, ["proof"], "BSC destination prover proofBytes");
   if (value instanceof Uint8Array) {
     return value;
   }

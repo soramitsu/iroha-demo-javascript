@@ -11,7 +11,7 @@ import {
   randomBytes,
 } from "crypto";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   ToriiClient,
@@ -118,6 +118,7 @@ import {
   type TransactionFeeLike,
 } from "../src/utils/transactionFee";
 import { isSecretLikeTextValue } from "../src/utils/secretLike";
+import { normalizeSccpPackageOrRemoteModuleUrl } from "../src/utils/sccpProverUrl";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -227,9 +228,7 @@ const readRuntimeConfigEnv = (name: string): string =>
   trimString(process.env[name]);
 
 const getRuntimeConfigSnapshot = (): RuntimeConfigResponse => ({
-  walletConnectProjectId: readRuntimeConfigEnv(
-    "VITE_WALLETCONNECT_PROJECT_ID",
-  ),
+  walletConnectProjectId: readRuntimeConfigEnv("VITE_WALLETCONNECT_PROJECT_ID"),
   sccpBscE2eWallet: readRuntimeConfigEnv("VITE_SCCP_BSC_E2E_WALLET"),
 });
 
@@ -1374,7 +1373,10 @@ type IrohaBridge = {
           signingAlgorithm?: string;
         },
   ): { publicKeyHex: string; signingAlgorithm: string };
-  deriveConfidentialOwnerTag(privateKeyHex: string): { ownerTagHex: string };
+  deriveConfidentialOwnerTag(input: {
+    privateKeyHex: string;
+    diversifierHex: string;
+  }): { ownerTagHex: string };
   deriveConfidentialReceiveAddress(privateKeyHex: string): {
     ownerTagHex: string;
     diversifierHex: string;
@@ -2084,37 +2086,6 @@ const readFaucetLedgerFinalityState = async (
     ageMs,
     height,
   };
-};
-
-const readLatestLedgerCreationTimeMs = async (
-  baseUrl: string,
-): Promise<number | null> => {
-  const endpoint = new URL(
-    "v1/ledger/headers?limit=1",
-    `${normalizeBaseUrl(baseUrl)}/`,
-  );
-  const response = await nodeFetch(endpoint.toString(), {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-  });
-  if (!response.ok) {
-    return null;
-  }
-  const payload = (await response.json().catch(() => null)) as unknown;
-  const headers = Array.isArray(payload)
-    ? payload
-    : isPlainRecord(payload) && Array.isArray(payload.items)
-      ? payload.items
-      : [];
-  const latestHeader = headers.find(isPlainRecord);
-  if (!latestHeader) {
-    return null;
-  }
-  return readNumericField(
-    latestHeader.creation_time_ms ?? latestHeader.creationTimeMs,
-  );
 };
 
 const readFaucetSumeragiState = async (
@@ -5529,19 +5500,91 @@ process.stdin.on("end", async () => {
     if (configUrl) {
       globalThis.IrohaSccpBscProverConfigUrl = configUrl;
     }
-    const importProverModule = async (specifier) => {
-      if (/^https?:\/\//iu.test(specifier)) {
-        const response = await fetch(specifier, {
+    const loopbackRemoteModuleHost = (hostname) => {
+      const normalized = String(hostname || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^\[/u, "")
+        .replace(/\]$/u, "")
+        .replace(/\.$/u, "");
+      return (
+        normalized === "localhost" ||
+        normalized === "127.0.0.1" ||
+        normalized === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/u.test(normalized)
+      );
+    };
+    const assertRemoteProverModuleUrl = (specifier) => {
+      const parsed = new URL(specifier);
+      if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+        throw new Error("BSC SCCP remote prover module URL must not include credentials, query strings, or fragments.");
+      }
+      if (parsed.protocol === "https:") {
+        return parsed.href;
+      }
+      if (parsed.protocol === "http:" && loopbackRemoteModuleHost(parsed.hostname)) {
+        return parsed.href;
+      }
+      throw new Error("BSC SCCP remote prover module URL must be HTTPS or loopback HTTP.");
+    };
+    const fetchRemoteProverModuleSource = async (specifier) => {
+      const moduleUrl = assertRemoteProverModuleUrl(specifier);
+      const response = await fetch(moduleUrl, {
           method: "GET",
           credentials: "omit",
           redirect: "error",
           cache: "no-store",
-        });
-        if (!response.ok) {
-          throw new Error("BSC SCCP prover module could not be loaded: HTTP " + response.status);
+      });
+      if (!response.ok) {
+        throw new Error("BSC SCCP prover module could not be loaded: HTTP " + response.status);
+      }
+      return { moduleUrl, source: await response.text() };
+    };
+    const importRemoteProverModule = async (specifier) => {
+      const { SourceTextModule } = await import("node:vm");
+      if (typeof SourceTextModule !== "function") {
+        throw new Error("BSC SCCP child prover runtime cannot evaluate remote modules with import.meta.url.");
+      }
+      const moduleCache = new Map();
+      const load = async (rawSpecifier, parentUrl) => {
+        const resolvedUrl = assertRemoteProverModuleUrl(
+          parentUrl ? new URL(String(rawSpecifier), parentUrl).href : String(rawSpecifier),
+        );
+        const cached = moduleCache.get(resolvedUrl);
+        if (cached) {
+          return cached;
         }
-        const source = await response.text();
-        return import("data:text/javascript;base64," + Buffer.from(source).toString("base64"));
+        const { source } = await fetchRemoteProverModuleSource(resolvedUrl);
+        const module = new SourceTextModule(source, {
+          identifier: resolvedUrl,
+          initializeImportMeta(meta) {
+            meta.url = resolvedUrl;
+          },
+          importModuleDynamically: async (childSpecifier, referencingModule) => {
+            const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
+            if (/^https?:\/\//iu.test(childUrl)) {
+              return load(childUrl);
+            }
+            return import(childUrl);
+          },
+        });
+        moduleCache.set(resolvedUrl, module);
+        await module.link(async (childSpecifier, referencingModule) => {
+          const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
+          if (/^https?:\/\//iu.test(childUrl)) {
+            return load(childUrl);
+          }
+          throw new Error("BSC SCCP remote prover module static imports must use HTTPS or loopback HTTP.");
+        });
+        await module.evaluate();
+        return module;
+      };
+      const module = await load(specifier);
+      return module.namespace;
+    };
+    const importProverModule = async (specifier) => {
+      if (/^https?:\/\//iu.test(specifier)) {
+        return importRemoteProverModule(specifier);
       }
       return import(specifier);
     };
@@ -5658,36 +5701,46 @@ const activeSccpBscNetworkKey = (): "mainnet" | "testnet" => {
 const resolveSccpBscRuntimeProverConfigUrl = (input: unknown): string => {
   const explicit = trimString(input);
   if (explicit) {
-    return explicit;
+    return resolveSccpBscPackagedOrRemoteAssetSpecifier(
+      explicit,
+      "BSC SCCP prover config URL",
+    );
   }
   const active = activeSccpBscNetworkKey();
-  return (
-    readRuntimeConfigEnv(
-      active === "mainnet"
-        ? "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL"
-        : "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
-    ) || readRuntimeConfigEnv("VITE_SCCP_BSC_PROVER_CONFIG_URL")
+  const configured = readRuntimeConfigEnv(
+    active === "mainnet"
+      ? "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL"
+      : "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
   );
+  return configured
+    ? resolveSccpBscPackagedOrRemoteAssetSpecifier(
+        configured,
+        "BSC SCCP prover config URL",
+      )
+    : "";
 };
 
-const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
-  const moduleUrl = trimString(input);
-  if (!moduleUrl) {
-    throw new Error("BSC SCCP prover module URL is required.");
+const resolveSccpBscPackagedOrRemoteAssetSpecifier = (
+  input: unknown,
+  label: string,
+): string => {
+  const assetUrl = normalizeSccpPackageOrRemoteModuleUrl(
+    trimString(input),
+    label,
+  );
+  if (!assetUrl) {
+    return "";
   }
-  if (/^https?:\/\//iu.test(moduleUrl) || moduleUrl.startsWith("data:")) {
-    return moduleUrl;
+  if (/^https?:\/\//iu.test(assetUrl)) {
+    return assetUrl;
   }
-  if (moduleUrl.startsWith("file:")) {
-    return moduleUrl;
-  }
-  const relativePath = moduleUrl.replace(/^\/+/u, "");
+  const relativePath = assetUrl.replace(/^\/+/u, "").replace(/^\.\//u, "");
   if (
     !relativePath ||
     relativePath.includes("\0") ||
     relativePath.split(/[\\/]+/u).includes("..")
   ) {
-    throw new Error("BSC SCCP prover module URL must be package-relative.");
+    throw new Error(`${label} must be package-relative.`);
   }
   const preloadDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -5698,10 +5751,21 @@ const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
   const modulePath = candidates.find((candidate) => existsSync(candidate));
   if (!modulePath) {
     throw new Error(
-      `BSC SCCP prover module was not found under public or renderer assets: ${moduleUrl}`,
+      `${label} was not found under public or renderer assets: ${assetUrl}`,
     );
   }
   return pathToFileURL(modulePath).href;
+};
+
+const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
+  const moduleSpecifier = resolveSccpBscPackagedOrRemoteAssetSpecifier(
+    input,
+    "BSC SCCP prover module URL",
+  );
+  if (!moduleSpecifier) {
+    throw new Error("BSC SCCP prover module URL is required.");
+  }
+  return moduleSpecifier;
 };
 
 const normalizeOptionalTimeoutMs = (
@@ -6144,9 +6208,7 @@ const replaceBscSourceMessageBundle = (
 
 const isByteArray = (value: unknown): value is number[] =>
   Array.isArray(value) &&
-  value.every(
-    (item) => Number.isInteger(item) && item >= 0 && item <= 255,
-  );
+  value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255);
 
 const byteArrayToLowerHex = (bytes: readonly number[]): string =>
   `0x${Buffer.from(bytes).toString("hex")}`;
@@ -6316,11 +6378,7 @@ const buildSccpNativeTransferPayload = (
   ),
   asset_id: `0x${Buffer.from(
     String(
-      readSccpNativeField(
-        value,
-        ["asset_id", "assetId"],
-        "payload.asset_id",
-      ),
+      readSccpNativeField(value, ["asset_id", "assetId"], "payload.asset_id"),
     ),
     "utf8",
   ).toString("hex")}`,
@@ -6453,7 +6511,8 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
       "Native iroha_js_host binding is missing deployment-bound BSC SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
     );
   }
-  const nativeMessageBundle = buildSccpNativeMessageBundlePayload(messageBundle);
+  const nativeMessageBundle =
+    buildSccpNativeMessageBundlePayload(messageBundle);
   const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
     laneMaterial.sourceVerifierMaterial,
     "BSC SCCP source verifier material",
@@ -6478,7 +6537,9 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
     );
   }
   if (!isPlainRecord(parsed)) {
-    throw new Error("Native BSC SCCP source proof rebuild must return an object.");
+    throw new Error(
+      "Native BSC SCCP source proof rebuild must return an object.",
+    );
   }
   const rebuiltMessageBundle = readRequiredSccpRecordField(
     parsed,
@@ -6757,8 +6818,8 @@ const bindBscSourceProofResultInNode = async (
     ? rebuildBscSourceMessageBundleWithNativeDeployment(
         {
           ...patchedProofPackage,
-          messageBundle: bindTairaXorBscToTairaSourceProofPackage(bindInput)
-            .messageBundle,
+          messageBundle:
+            bindTairaXorBscToTairaSourceProofPackage(bindInput).messageBundle,
         },
         laneMaterial,
       )
@@ -6878,7 +6939,11 @@ const readBscNodeProverNetwork = (
     "networkIdHex",
     "network_id_hex",
   ]);
-  if (rawNetworkId === undefined || rawNetworkId === null || rawNetworkId === "") {
+  if (
+    rawNetworkId === undefined ||
+    rawNetworkId === null ||
+    rawNetworkId === ""
+  ) {
     return "testnet";
   }
   if (typeof rawNetworkId !== "string") {
@@ -6932,15 +6997,22 @@ const bscEvmGroth16EnvelopeHash = (
   if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
     throw new Error("BSC SCCP proof result proofBytes must be hex.");
   }
-  const prefix = Buffer.from("sccp:evm:groth16-proof-envelope:v1", "utf8");
-  const digest = blake2b(
-    Buffer.concat([
-      prefix,
-      Buffer.from(requestHash.slice(2), "hex"),
-      Buffer.from(proofBytesHex.slice(2), "hex"),
-    ]),
-    { dkLen: 32 },
+  const prefix = Uint8Array.from(
+    Buffer.from("sccp:evm:groth16-proof-envelope:v1", "utf8"),
   );
+  const requestHashBytes = Uint8Array.from(
+    Buffer.from(requestHash.slice(2), "hex"),
+  );
+  const proofBytes = Uint8Array.from(
+    Buffer.from(proofBytesHex.slice(2), "hex"),
+  );
+  const payload = new Uint8Array(
+    prefix.byteLength + requestHashBytes.byteLength + proofBytes.byteLength,
+  );
+  payload.set(prefix, 0);
+  payload.set(requestHashBytes, prefix.byteLength);
+  payload.set(proofBytes, prefix.byteLength + requestHashBytes.byteLength);
+  const digest = blake2b(payload, { dkLen: 32 });
   return `0x${Buffer.from(digest).toString("hex")}`;
 };
 
@@ -6977,7 +7049,12 @@ const proveBscSccpProofInNode = async (
   const heapMb = resolveSccpProverHeapMb();
   const child = spawn(
     process.execPath,
-    [`--max-old-space-size=${heapMb}`, "-e", SCCP_BSC_NODE_PROVER_CHILD_SOURCE],
+    [
+      `--max-old-space-size=${heapMb}`,
+      "--experimental-vm-modules",
+      "-e",
+      SCCP_BSC_NODE_PROVER_CHILD_SOURCE,
+    ],
     {
       env: {
         ...process.env,
@@ -7010,12 +7087,13 @@ const proveBscSccpProofInNode = async (
       child.kill("SIGTERM");
     }
   });
-  const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-    (resolveExit, rejectExit) => {
-      child.once("error", rejectExit);
-      child.once("close", (code, signal) => resolveExit({ code, signal }));
-    },
-  );
+  const exit = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolveExit, rejectExit) => {
+    child.once("error", rejectExit);
+    child.once("close", (code, signal) => resolveExit({ code, signal }));
+  });
   child.stdin.end(childInput);
   const { code, signal } = await exit.finally(() => clearTimeout(timeout));
   if (outputError) {
@@ -7043,10 +7121,7 @@ const proveBscSccpProofInNode = async (
   if (code !== 0) {
     throw new Error(`BSC SCCP prover child exited with ${code ?? signal}.`);
   }
-  const result = snapshotSccpDataValue(
-    parsed.result,
-    "BSC SCCP proof result",
-  );
+  const result = snapshotSccpDataValue(parsed.result, "BSC SCCP proof result");
   if (!isPlainRecord(result)) {
     throw new Error("BSC SCCP prover child result must be an object.");
   }
@@ -7065,7 +7140,8 @@ const proveBscSccpProofInNode = async (
     proofBytes: proofBytesHex,
     proofBase64,
     backend: trimString(result.backend) || request.backend,
-    requestHash: trimString(result.requestHash) || trimString(request.requestHash),
+    requestHash:
+      trimString(result.requestHash) || trimString(request.requestHash),
     envelopeHash: bscEvmGroth16EnvelopeHash(
       trimString(result.requestHash) || trimString(request.requestHash),
       proofBytesHex,
@@ -11736,9 +11812,9 @@ const api: IrohaBridge = {
     );
     return { publicKeyHex: toHex(publicKey), signingAlgorithm };
   },
-  deriveConfidentialOwnerTag(privateKeyHex) {
+  deriveConfidentialOwnerTag(input) {
     return {
-      ownerTagHex: deriveWalletConfidentialOwnerTagHex({ privateKeyHex }),
+      ownerTagHex: deriveWalletConfidentialOwnerTagHex(input),
     };
   },
   deriveConfidentialReceiveAddress(privateKeyHex) {

@@ -164,10 +164,16 @@ export const installGlobalIrohaJsNativeBinding = (
   const globalWithNative = globalThis as typeof globalThis & {
     __IROHA_NATIVE_BINDING__?: unknown;
   };
-  if (hasRequiredIrohaJsNativeExports(globalWithNative.__IROHA_NATIVE_BINDING__)) {
+  if (
+    hasRequiredIrohaJsNativeExports(globalWithNative.__IROHA_NATIVE_BINDING__)
+  ) {
     return globalWithNative.__IROHA_NATIVE_BINDING__;
   }
-  const nativeModule = loadIrohaJsNativeBinding(moduleUrl, env, loadNativeModule);
+  const nativeModule = loadIrohaJsNativeBinding(
+    moduleUrl,
+    env,
+    loadNativeModule,
+  );
   globalWithNative.__IROHA_NATIVE_BINDING__ = nativeModule;
   return nativeModule;
 };

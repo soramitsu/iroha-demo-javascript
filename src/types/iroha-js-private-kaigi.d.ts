@@ -36,7 +36,7 @@ declare module "@iroha/iroha-js" {
     amount: string;
     rhoHex?: string;
     rho?: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>;
-    diversifierHex?: string;
+    diversifierHex: string;
     diversifier_hex?: string;
     diversifier?:
       | Buffer
@@ -190,8 +190,8 @@ declare module "@iroha/iroha-js" {
 declare module "@iroha/iroha-js/crypto" {
   export function deriveConfidentialOwnerTagV2(
     spendKey: Buffer | ArrayBuffer | ArrayBufferView | ReadonlyArray<number>,
-    options?: {
-      diversifierHex?: string;
+    options: {
+      diversifierHex: string;
       diversifier?:
         | Buffer
         | ArrayBuffer

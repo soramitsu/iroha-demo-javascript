@@ -34,13 +34,9 @@ import {
   SCCP_BSC_LOCAL_BROWSER_PROVER_SIDECAR_SCHEMA,
   SCCP_BSC_MAINNET_PROVER_MODULE_URL_ENV,
   SCCP_BSC_MAINNET_SOURCE_PROVER_MODULE_URL_ENV,
-  SCCP_BSC_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_PROVER_MODULE_URL_ENV,
   SCCP_BSC_RUNTIME_PROVER_CONFIG_SCHEMA,
   SCCP_BSC_RUNTIME_PROVER_CONFIG_URL,
   SCCP_BSC_RUNTIME_PROVER_MODULE_URL,
-  SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV,
-  SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MANIFEST_URL_ENV,
   SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV,
   SCCP_BSC_TESTNET_SOURCE_PROVER_MANIFEST_URL_ENV,
@@ -1712,8 +1708,7 @@ describe("BSC SCCP live smoke readiness", () => {
           },
           sourceBrowserProver: {
             ...readyRouteReport().deployment.sourceBrowserProver,
-            moduleUrl:
-              "http://cdn.example.invalid/source.js?token=secret#frag",
+            moduleUrl: "http://cdn.example.invalid/source.js?token=secret#frag",
           },
         },
       }),
@@ -2562,7 +2557,7 @@ describe("BSC SCCP live smoke readiness", () => {
         SCCP_BSC_RUNTIME_PROVER_MODULE_URL,
         SCCP_BSC_RUNTIME_PROVER_MODULE_URL,
       ),
-    ).toBe(SCCP_BSC_RUNTIME_PROVER_CONFIG_URL);
+    ).toBeNull();
     const baseRouteReport = readyRouteReport();
     const runtimeRouteReport = readyRouteReport({
       deployment: {
@@ -2597,10 +2592,10 @@ describe("BSC SCCP live smoke readiness", () => {
 
     expect(missingConfig.ready).toBe(false);
     expect(missingConfig.reasons).toContain(
-      "BSC runtime prover config was not checked.",
+      "BSC runtime prover config URL is missing.",
     );
     expect(missingConfig.provers.runtimeConfig).toMatchObject({
-      configUrl: SCCP_BSC_RUNTIME_PROVER_CONFIG_URL,
+      configUrl: null,
       manifest: null,
     });
 
@@ -2625,11 +2620,11 @@ describe("BSC SCCP live smoke readiness", () => {
 
     expect(forgedManifestRuntimeModule.ready).toBe(false);
     expect(forgedManifestRuntimeModule.reasons).toContain(
-      "BSC runtime prover config was not checked.",
+      "BSC runtime prover config URL is missing.",
     );
     expect(forgedManifestRuntimeModule.provers.runtimeConfig).toMatchObject({
       required: true,
-      configUrl: SCCP_BSC_RUNTIME_PROVER_CONFIG_URL,
+      configUrl: null,
       manifest: null,
     });
 
@@ -6551,13 +6546,13 @@ describe("BSC SCCP live smoke readiness", () => {
     try {
       const report = await withEnv(
         {
-          [SCCP_BSC_PROVER_MODULE_URL_ENV]:
+          VITE_SCCP_BSC_PROVER_MODULE_URL:
             "https://user:pass@cdn.example.invalid/generic-destination.js?token=secret",
-          [SCCP_BSC_SOURCE_PROVER_MODULE_URL_ENV]:
+          VITE_SCCP_BSC_SOURCE_PROVER_MODULE_URL:
             "http://cdn.example.invalid/generic-source.js?token=secret",
-          [SCCP_BSC_PROVER_MANIFEST_URL_ENV]:
+          VITE_SCCP_BSC_PROVER_MANIFEST_URL:
             "https://user:pass@cdn.example.invalid/generic-destination.manifest.json",
-          [SCCP_BSC_SOURCE_PROVER_MANIFEST_URL_ENV]:
+          VITE_SCCP_BSC_SOURCE_PROVER_MANIFEST_URL:
             "https://cdn.example.invalid/generic-source.manifest.json?token=secret",
           [SCCP_BSC_TESTNET_PROVER_MODULE_URL_ENV]:
             "https://cdn.example.invalid/stale-testnet-destination.js",

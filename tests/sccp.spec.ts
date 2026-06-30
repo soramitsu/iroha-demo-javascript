@@ -63,6 +63,7 @@ import {
   readSccpBscBridgeAddress,
   readSccpBscProofMaterial,
   readSccpBscRpcEndpoint,
+  readSccpBscRuntimeProverConfigUrl,
   readSccpBscSourceBridgeAddress,
   readSccpBscTokenAddress,
   readSccpBscVerifierAddress,
@@ -742,6 +743,9 @@ const READY_BSC_MANIFEST = {
   proofArtifactHash: BSC_PROOF_ARTIFACT_HASH,
   provingKeyHash: BSC_PROVING_KEY_HASH,
   nativeEvmProverBundle: BSC_NATIVE_EVM_PROVER_BUNDLE,
+  runtimeProverConfig: {
+    configUrl: "/sccp-bsc/taira-bsc-xor-runtime.config.json",
+  },
   sourceVerifierMaterial: BSC_SOURCE_VERIFIER_MATERIAL,
   sourceAdapterEngineDeployment: BSC_SOURCE_ADAPTER_ENGINE_DEPLOYMENT,
   destinationBinding: {
@@ -1146,7 +1150,9 @@ const sampleBscSourceData = (
     address: BSC_TOKEN_ADDRESS,
     topics: [
       bytesToHex(
-        keccak_256(new TextEncoder().encode("Transfer(address,address,uint256)")),
+        keccak_256(
+          new TextEncoder().encode("Transfer(address,address,uint256)"),
+        ),
       ),
       `0x${"0".repeat(24)}${BSC_SENDER_ADDRESS_HEX.slice(2)}`,
       `0x${"00".repeat(32)}`,
@@ -1508,6 +1514,9 @@ describe("SCCP helpers", () => {
     expect(readSccpBscTokenAddress(READY_BSC_MANIFEST)).toBe(BSC_TOKEN_ADDRESS);
     expect(readSccpBscSourceBridgeAddress(READY_BSC_MANIFEST)).toBe(
       BSC_SOURCE_BRIDGE_ADDRESS,
+    );
+    expect(readSccpBscRuntimeProverConfigUrl(READY_BSC_MANIFEST)).toBe(
+      "/sccp-bsc/taira-bsc-xor-runtime.config.json",
     );
     expect(() =>
       readSccpBscSourceBridgeAddress({
@@ -6418,9 +6427,7 @@ describe("SCCP helpers", () => {
       bscRecipient: BSC_RECIPIENT_ADDRESS,
       amountDecimal: BRIDGE_AMOUNT_DECIMAL,
     });
-    expect(bytesObjectRecipientBinding.messageId).toBe(
-      TAIRA_TO_BSC_MESSAGE_ID,
-    );
+    expect(bytesObjectRecipientBinding.messageId).toBe(TAIRA_TO_BSC_MESSAGE_ID);
 
     const summaryBindingJob = buildTairaXorBscFinalizeProofBinding({
       manifest: READY_BSC_MANIFEST,
@@ -7779,13 +7786,9 @@ describe("SCCP helpers", () => {
       payload: {
         Transfer: {
           asset_id: bytesToHex(new TextEncoder().encode("xor")),
-          sender: bytesToHex(
-            new TextEncoder().encode(VALID_TRON_ADDRESS),
-          ),
+          sender: bytesToHex(new TextEncoder().encode(VALID_TRON_ADDRESS)),
           recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)),
-          route_id: bytesToHex(
-            new TextEncoder().encode("taira_tron_xor"),
-          ),
+          route_id: bytesToHex(new TextEncoder().encode("taira_tron_xor")),
         },
       },
       finality_proof: expect.stringMatching(/^0x[0-9a-f]+$/u),
@@ -8528,9 +8531,7 @@ describe("SCCP helpers", () => {
                   new TextEncoder().encode(BSC_MIXED_RECIPIENT_ADDRESS),
                 ),
                 recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)),
-                route_id: bytesToHex(
-                  new TextEncoder().encode("taira_bsc_xor"),
-                ),
+                route_id: bytesToHex(new TextEncoder().encode("taira_bsc_xor")),
               },
             },
             finalityProof: "0x010203",
@@ -9156,9 +9157,7 @@ describe("SCCP helpers", () => {
       payload: {
         Transfer: {
           sender_codec: SCCP_CODEC_EVM_HEX,
-          sender: bytesToHex(
-            new TextEncoder().encode(BSC_SENDER_ADDRESS_HEX),
-          ),
+          sender: bytesToHex(new TextEncoder().encode(BSC_SENDER_ADDRESS_HEX)),
           recipient_codec: SCCP_CODEC_TEXT_UTF8,
           recipient: bytesToHex(new TextEncoder().encode(TAIRA_SENDER)),
           route_id: bytesToHex(new TextEncoder().encode("taira_bsc_xor")),
