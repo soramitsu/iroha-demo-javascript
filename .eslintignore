@@ -3,3 +3,4 @@ coverage/
 output/
 node_modules/
 public/sccp-bsc/taira-bsc-xor-groth16-backend.js
+public/sccp-ton/*.js

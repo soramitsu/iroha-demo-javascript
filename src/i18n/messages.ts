@@ -1129,18 +1129,23 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Bridge XOR between TAIRA and TRON mainnet.",
   "SCCP route": "SCCP route",
   TRON: "TRON",
+  TON: "TON",
+  "TON Testnet": "TON Testnet",
   "BSC testnet": "BSC testnet",
   "BSC Testnet": "BSC Testnet",
   "BSC Mainnet": "BSC Mainnet",
   "Refresh route": "Refresh route",
   "Disconnect TRON": "Disconnect TRON",
+  "Disconnect TON": "Disconnect TON",
   "Disconnect BSC": "Disconnect BSC",
   Connecting: "Connecting",
   Disconnecting: "Disconnecting",
   "Connect TRON wallet": "Connect TRON wallet",
+  "Connect TON wallet": "Connect TON wallet",
   "Connect BSC wallet": "Connect BSC wallet",
   "TAIRA account": "TAIRA account",
   "TRON wallet": "TRON wallet",
+  "TON wallet": "TON wallet",
   "BSC wallet": "BSC wallet",
   Route: "Route",
   "XOR balance": "XOR balance",
@@ -1152,22 +1157,31 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Bridge direction": "Bridge direction",
   "TAIRA -> TRON": "TAIRA -> TRON",
   "TRON -> TAIRA": "TRON -> TAIRA",
+  "TAIRA -> TON": "TAIRA -> TON",
+  "TON -> TAIRA": "TON -> TAIRA",
   "TAIRA -> BSC": "TAIRA -> BSC",
   "BSC -> TAIRA": "BSC -> TAIRA",
   "TRON recipient": "TRON recipient",
+  "TON recipient": "TON recipient",
   "BSC recipient": "BSC recipient",
   "TRON Base58Check address": "TRON Base58Check address",
+  "0:... TON raw address": "0:... TON raw address",
   "0x... BSC address": "0x... BSC address",
   "TAIRA recipient": "TAIRA recipient",
   "testu... account": "testu... account",
   "Message ID": "Message ID",
   "Optional 32-byte SCCP message id": "Optional 32-byte SCCP message id",
   "TRON transaction ID": "TRON transaction ID",
+  "TON transaction hash": "TON transaction hash",
+  "TON source transaction": "TON source transaction",
   "BSC transaction hash": "BSC transaction hash",
   "Optional TRON burn transaction id": "Optional TRON burn transaction id",
+  "Optional TON burn transaction hash": "Optional TON burn transaction hash",
   "Optional BSC burn transaction hash": "Optional BSC burn transaction hash",
   "Prepare TAIRA -> TRON": "Prepare TAIRA -> TRON",
   "Prepare TRON -> TAIRA": "Prepare TRON -> TAIRA",
+  "Prepare TAIRA -> TON": "Prepare TAIRA -> TON",
+  "Prepare TON -> TAIRA": "Prepare TON -> TAIRA",
   "Prepare TAIRA -> BSC": "Prepare TAIRA -> BSC",
   "Prepare BSC -> TAIRA": "Prepare BSC -> TAIRA",
   "Loading proof job": "Loading proof job",
@@ -1180,6 +1194,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   Message: "Message",
   "No recent SCCP messages found.": "No recent SCCP messages found.",
   "Transaction links": "Transaction links",
+  "TON source bridge": "TON source bridge",
   "Links appear after a bridge leg is submitted.":
     "Links appear after a bridge leg is submitted.",
   "No transaction links yet.": "No transaction links yet.",
@@ -1216,7 +1231,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "WalletConnect project ID is missing, so wallet connection is disabled.",
   "WalletConnect project ID is invalid, so wallet connection is disabled.":
     "WalletConnect project ID is invalid, so wallet connection is disabled.",
+  "TON wallet connector is not available in this build.":
+    "TON wallet connector is not available in this build.",
+  "TON wallet connector is misconfigured.":
+    "TON wallet connector is misconfigured.",
   "Connect a TRON wallet to continue.": "Connect a TRON wallet to continue.",
+  "Connect a TON wallet to continue.": "Connect a TON wallet to continue.",
   "Connect a BSC wallet to continue.": "Connect a BSC wallet to continue.",
   "Route readiness must be true before bridge actions are enabled.":
     "Route readiness must be true before bridge actions are enabled.",
@@ -1224,17 +1244,27 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Bridge actions will request explicit wallet approval before signing.",
   "Enter a valid TRON Base58Check recipient.":
     "Enter a valid TRON Base58Check recipient.",
+  "Enter a valid TON raw recipient address.":
+    "Enter a valid TON raw recipient address.",
   "Enter a valid BSC recipient address.":
     "Enter a valid BSC recipient address.",
+  "TON SCCP execution is blocked until taira_ton_xor SDK helpers, contracts, and proof modules are published.":
+    "TON SCCP execution is blocked until taira_ton_xor SDK helpers, contracts, and proof modules are published.",
   "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.":
     "BSC route execution is blocked until the taira_bsc_xor route manifest and BSC prover modules are published.",
   "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
     "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
+  "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.":
+    "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.",
+  "TON source transaction can be submitted, but TAIRA settlement waits for the TON source-proof package.":
+    "TON source transaction can be submitted, but TAIRA settlement waits for the TON source-proof package.",
   "Enter a TAIRA testnet account.": "Enter a TAIRA testnet account.",
   "Enter a SCCP message ID before fetching proof data.":
     "Enter a SCCP message ID before fetching proof data.",
   "Enter a TRON transaction ID before fetching proof data.":
     "Enter a TRON transaction ID before fetching proof data.",
+  "Enter a TON transaction hash before fetching proof data.":
+    "Enter a TON transaction hash before fetching proof data.",
   "Enter a BSC transaction hash before fetching proof data.":
     "Enter a BSC transaction hash before fetching proof data.",
   "Validate route": "Validate route",
@@ -1254,6 +1284,15 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "TAIRA burn-record proof request queued":
     "TAIRA burn-record proof request queued",
   "Generating TAIRA burn-record proof": "Generating TAIRA burn-record proof",
+  "Creating TON source transaction": "Creating TON source transaction",
+  "TON source transaction request created":
+    "TON source transaction request created",
+  "TON-source proof data collection requires the published source prover":
+    "TON-source proof data collection requires the published source prover",
+  "TON source transaction signed; TAIRA settlement is waiting for the TON source-proof package":
+    "TON source transaction signed; TAIRA settlement is waiting for the TON source-proof package",
+  "TON source transaction accepted; TAIRA settlement is waiting for the TON source-proof package":
+    "TON source transaction accepted; TAIRA settlement is waiting for the TON source-proof package",
   "TAIRA burn-record proof is ready": "TAIRA burn-record proof is ready",
   "Submitting TAIRA source transaction": "Submitting TAIRA source transaction",
   "TAIRA source transaction submitted; fetch the SCCP proof job after indexing":
@@ -1312,6 +1351,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "BSC finalize proof package is ready": "BSC finalize proof package is ready",
   "TRON finalize transaction": "TRON finalize transaction",
   "BSC finalize transaction": "BSC finalize transaction",
+  "TON verifier contract": "TON verifier contract",
   "Requesting BSC wallet approval": "Requesting BSC wallet approval",
   "Waiting for BSC finalize confirmation":
     "Waiting for BSC finalize confirmation",
@@ -3182,7 +3222,14 @@ const EN_TRANSLATIONS: TranslationTable = {
   "TRON transaction": "TRON transaction",
   "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.":
     "BSC -> TAIRA settlement is blocked until a browser-safe BSC source proof module is published.",
+  "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.":
+    "TON -> TAIRA is blocked until the TON source bridge and source-proof package are published.",
+  "Enter a TON transaction hash before fetching proof data.":
+    "Enter a TON transaction hash before fetching proof data.",
   "BSC finalize transaction": "BSC finalize transaction",
+  "TON verifier contract": "TON verifier contract",
+  "TON source bridge": "TON source bridge",
+  "TON source transaction": "TON source transaction",
 };
 
 const TABLES: Record<SupportedLocale, TranslationTable> = {

@@ -10,7 +10,7 @@ import {
   hkdfSync,
   randomBytes,
 } from "crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -202,6 +202,8 @@ type SigningAlgorithmOption = {
 type RuntimeConfigResponse = {
   walletConnectProjectId: string;
   sccpBscE2eWallet: string;
+  sccpTonE2eWallet: string;
+  sccpTonConnectManifestUrl: string;
 };
 const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
 const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
@@ -230,6 +232,10 @@ const readRuntimeConfigEnv = (name: string): string =>
 const getRuntimeConfigSnapshot = (): RuntimeConfigResponse => ({
   walletConnectProjectId: readRuntimeConfigEnv("VITE_WALLETCONNECT_PROJECT_ID"),
   sccpBscE2eWallet: readRuntimeConfigEnv("VITE_SCCP_BSC_E2E_WALLET"),
+  sccpTonE2eWallet: readRuntimeConfigEnv("VITE_SCCP_TON_E2E_WALLET"),
+  sccpTonConnectManifestUrl: readRuntimeConfigEnv(
+    "VITE_SCCP_TONCONNECT_MANIFEST_URL",
+  ),
 });
 
 const SECRET_LIKE_PAYLOAD_KEY_PATTERN =
@@ -1219,6 +1225,12 @@ type SccpBscSourceProofGenerateInput = {
   proverConfigUrl?: unknown;
   timeoutMs?: unknown;
 };
+type SccpSourceProofDeploymentRebuildInput = {
+  proofPackage: unknown;
+  sourceVerifierMaterial: unknown;
+  sourceAdapterEngineDeployment: unknown;
+  label?: unknown;
+};
 type SccpMessageProofBundleInput = ToriiConfig & {
   messageId: string;
 };
@@ -1673,6 +1685,12 @@ type IrohaBridge = {
   ): Promise<Record<string, unknown>>;
   proveBscSccpSourceProof(
     input: SccpBscSourceProofGenerateInput,
+  ): Promise<Record<string, unknown>>;
+  rebuildSccpMessageBundleSourceProofWithDeployment(
+    input: SccpSourceProofDeploymentRebuildInput,
+  ): Promise<Record<string, unknown>>;
+  buildTonSccpMessageBundleSourceProofWithDeployment(
+    input: SccpSourceProofDeploymentRebuildInput,
   ): Promise<Record<string, unknown>>;
   submitSccpBridgeProof(
     input: SccpBridgeProofSubmitInput,
@@ -2533,6 +2551,7 @@ const resolveOptionalPrivateKeyHex = async (input: {
 
 const formatExposedPrivateKey = (material: SigningMaterial): string => {
   const normalized = normalizeSigningMaterial(material);
+  installGlobalIrohaJsNativeBinding(import.meta.url);
   const encoded = privateKeyMultihash(
     hexToBuffer(normalized.privateKeyHex, "privateKeyHex"),
     {
@@ -2798,6 +2817,11 @@ type IrohaNativeTransactionCodec = {
 
 type IrohaNativeSccpCodec = {
   sccpRebuildMessageBundleSourceProofWithDeployment?: (
+    messageBundleJson: string,
+    sourceMaterialJson: string,
+    sourceDeploymentJson: string,
+  ) => string;
+  sccpBuildTonMessageBundleSourceProofWithDeployment?: (
     messageBundleJson: string,
     sourceMaterialJson: string,
     sourceDeploymentJson: string,
@@ -5401,6 +5425,127 @@ const submitSccpBridgeProofToTorii = async (
   return client.submitBridgeProof(payload);
 };
 
+const SCCP_SUBMIT_DEBUG_DIR = resolvePath(
+  process.cwd(),
+  "output",
+  "sccp-ton-live-proof",
+  "debug",
+);
+
+const summarizeSccpSubmitRecord = (value: unknown): Record<string, unknown> => {
+  if (!isPlainRecord(value)) {
+    return { kind: typeof value };
+  }
+  return {
+    keys: Object.keys(value).sort(),
+    route:
+      readOptionalSccpTextField(value, ["route", "route_id", "routeId"]) ??
+      undefined,
+    entrypoint:
+      readOptionalSccpTextField(value, ["entrypoint", "method"]) ?? undefined,
+    contractAlias:
+      readOptionalSccpTextField(value, ["contract_alias", "contractAlias"]) ??
+      undefined,
+    contractAddress:
+      readOptionalSccpTextField(value, [
+        "contract_address",
+        "contractAddress",
+      ]) ?? undefined,
+  };
+};
+
+const summarizeSccpMessageBundleForDebug = (
+  value: unknown,
+): Record<string, unknown> => {
+  const summary = summarizeSccpSubmitRecord(value);
+  if (!isPlainRecord(value)) {
+    return summary;
+  }
+  const commitment = isPlainRecord(value.commitment) ? value.commitment : {};
+  const payload = isPlainRecord(value.payload) ? value.payload : {};
+  const transfer = isPlainRecord(payload.Transfer)
+    ? payload.Transfer
+    : isPlainRecord(payload.value)
+      ? payload.value
+      : {};
+  const finalityProof = readOptionalSccpTextField(value, [
+    "finality_proof",
+    "finalityProof",
+  ]);
+  return {
+    ...summary,
+    version: value.version,
+    commitmentRoot: readOptionalSccpTextField(value, [
+      "commitment_root",
+      "commitmentRoot",
+    ]),
+    commitment: {
+      version: commitment.version,
+      kind: readOptionalSccpTextField(commitment, ["kind"]),
+      targetDomain: commitment.target_domain ?? commitment.targetDomain,
+      messageId: readOptionalSccpTextField(commitment, [
+        "message_id",
+        "messageId",
+      ]),
+      payloadHash: readOptionalSccpTextField(commitment, [
+        "payload_hash",
+        "payloadHash",
+      ]),
+    },
+    transfer: {
+      amount: readOptionalSccpTextField(transfer, ["amount"]),
+      senderCodec: transfer.sender_codec ?? transfer.senderCodec,
+      sender: readOptionalSccpTextField(transfer, ["sender"]),
+      recipientCodec: transfer.recipient_codec ?? transfer.recipientCodec,
+      recipient: readOptionalSccpTextField(transfer, ["recipient"]),
+      routeIdCodec: transfer.route_id_codec ?? transfer.routeIdCodec,
+      routeId: readOptionalSccpTextField(transfer, ["route_id", "routeId"]),
+      assetIdCodec: transfer.asset_id_codec ?? transfer.assetIdCodec,
+      assetId: readOptionalSccpTextField(transfer, ["asset_id", "assetId"]),
+    },
+    finalityProofBytes: finalityProof
+      ? Math.floor(finalityProof.replace(/^0x/iu, "").length / 2)
+      : 0,
+    finalityProofSha256: finalityProof
+      ? createHash("sha256").update(finalityProof).digest("hex")
+      : "",
+  };
+};
+
+const writeSccpSubmitDebugTrace = (
+  phase: string,
+  payload: Record<string, unknown>,
+  detail: Record<string, unknown> = {},
+) => {
+  try {
+    mkdirSync(SCCP_SUBMIT_DEBUG_DIR, { recursive: true });
+    const timestamp = new Date().toISOString();
+    const fileSafeTimestamp = timestamp.replace(/[:.]/g, "-");
+    const body = JSON.stringify(payload);
+    const trace = {
+      timestamp,
+      phase,
+      toriiUrl: typeof payload.toriiUrl === "string" ? payload.toriiUrl : "",
+      accountId: typeof payload.accountId === "string" ? payload.accountId : "",
+      payloadBytes: Buffer.byteLength(body),
+      messageBundle: summarizeSccpMessageBundleForDebug(payload.messageBundle),
+      messageBundleFull: isPlainRecord(payload.messageBundle)
+        ? payload.messageBundle
+        : null,
+      settlement: summarizeSccpSubmitRecord(payload.settlement),
+      receiptLane: payload.receiptLane,
+      detail,
+    };
+    writeFileSync(
+      resolvePath(SCCP_SUBMIT_DEBUG_DIR, `${fileSafeTimestamp}-${phase}.json`),
+      `${JSON.stringify(trace, null, 2)}\n`,
+      "utf8",
+    );
+  } catch {
+    // Debug tracing must never affect the bridge flow.
+  }
+};
+
 const submitSccpBridgeMessageToTorii = async (
   input: SccpBridgeMessageSubmitInput,
 ): Promise<Record<string, unknown>> => {
@@ -5429,7 +5574,31 @@ const submitSccpBridgeMessageToTorii = async (
       : {}),
   };
   const client = getClient(input.toriiUrl);
-  return client.submitBridgeMessage(payload);
+  writeSccpSubmitDebugTrace(
+    "request",
+    payload as unknown as Record<string, unknown>,
+  );
+  try {
+    const response = await client.submitBridgeMessage(payload);
+    writeSccpSubmitDebugTrace(
+      "response",
+      payload as unknown as Record<string, unknown>,
+      {
+        response,
+      },
+    );
+    return response;
+  } catch (error) {
+    writeSccpSubmitDebugTrace(
+      "error",
+      payload as unknown as Record<string, unknown>,
+      {
+        message: error instanceof Error ? error.message : String(error),
+        name: error instanceof Error ? error.name : typeof error,
+      },
+    );
+    throw error;
+  }
 };
 
 const waitForSccpTransactionCommitOnTorii = async (
@@ -6192,7 +6361,7 @@ const readBscSourceValidatorSigningConfig = (
   };
 };
 
-const replaceBscSourceMessageBundle = (
+const replaceSccpSourceMessageBundle = (
   proofPackage: Record<string, unknown>,
   messageBundle: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -6489,17 +6658,18 @@ const buildSccpNativeMessageBundlePayload = (
   };
 };
 
-const rebuildBscSourceMessageBundleWithNativeDeployment = (
+const rebuildSccpSourceMessageBundleWithNativeDeployment = (
   proofPackage: Record<string, unknown>,
   laneMaterial: {
     sourceVerifierMaterial: Record<string, unknown>;
     sourceAdapterEngineDeployment: Record<string, unknown>;
   },
+  label: string,
 ): Record<string, unknown> => {
   const messageBundle = readRequiredSccpRecordField(
     proofPackage,
     ["messageBundle", "message_bundle"],
-    "BSC SCCP source proof package messageBundle",
+    `${label} SCCP source proof package messageBundle`,
   );
   const nativeBinding = installGlobalIrohaJsNativeBinding(
     import.meta.url,
@@ -6508,18 +6678,18 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
     nativeBinding.sccpRebuildMessageBundleSourceProofWithDeployment;
   if (typeof rebuild !== "function") {
     throw new Error(
-      "Native iroha_js_host binding is missing deployment-bound BSC SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
+      `Native iroha_js_host binding is missing deployment-bound ${label} SCCP source proof support; rebuild @iroha/iroha-js native bindings.`,
     );
   }
   const nativeMessageBundle =
     buildSccpNativeMessageBundlePayload(messageBundle);
   const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
     laneMaterial.sourceVerifierMaterial,
-    "BSC SCCP source verifier material",
+    `${label} SCCP source verifier material`,
   );
   const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
     laneMaterial.sourceAdapterEngineDeployment,
-    "BSC SCCP source adapter deployment",
+    `${label} SCCP source adapter deployment`,
   );
   const outputText = rebuild(
     JSON.stringify(nativeMessageBundle),
@@ -6531,20 +6701,20 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
     parsed = JSON.parse(outputText);
   } catch (error) {
     throw new Error(
-      `Native BSC SCCP source proof rebuild returned invalid JSON: ${
+      `Native ${label} SCCP source proof rebuild returned invalid JSON: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
   if (!isPlainRecord(parsed)) {
     throw new Error(
-      "Native BSC SCCP source proof rebuild must return an object.",
+      `Native ${label} SCCP source proof rebuild must return an object.`,
     );
   }
   const rebuiltMessageBundle = readRequiredSccpRecordField(
     parsed,
     ["messageBundle", "message_bundle"],
-    "Native BSC SCCP source proof rebuild messageBundle",
+    `Native ${label} SCCP source proof rebuild messageBundle`,
   );
   const sourceProofHash = readOptionalSccpTextField(parsed, [
     "sourceProofHash",
@@ -6563,7 +6733,7 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
     "source_verifier_evidence_hash",
   ]);
   return {
-    ...replaceBscSourceMessageBundle(proofPackage, rebuiltMessageBundle),
+    ...replaceSccpSourceMessageBundle(proofPackage, rebuiltMessageBundle),
     ...(sourceProofHash ? { sourceProofHash } : {}),
     ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
     ...(sourceAdapterDeploymentReceiptHash
@@ -6571,6 +6741,181 @@ const rebuildBscSourceMessageBundleWithNativeDeployment = (
       : {}),
     ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
   };
+};
+
+const buildTonSourceMessageBundleWithNativeDeployment = (
+  proofPackage: Record<string, unknown>,
+  laneMaterial: {
+    sourceVerifierMaterial: Record<string, unknown>;
+    sourceAdapterEngineDeployment: Record<string, unknown>;
+  },
+): Record<string, unknown> => {
+  const messageBundle = readRequiredSccpRecordField(
+    proofPackage,
+    ["messageBundle", "message_bundle"],
+    "TON SCCP source proof package messageBundle",
+  );
+  const nativeBinding = installGlobalIrohaJsNativeBinding(
+    import.meta.url,
+  ) as IrohaNativeSccpCodec;
+  const build =
+    nativeBinding.sccpBuildTonMessageBundleSourceProofWithDeployment;
+  if (typeof build !== "function") {
+    throw new Error(
+      "Native iroha_js_host binding is missing deployment-bound TON SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
+    );
+  }
+  const nativeMessageBundle =
+    buildSccpNativeMessageBundlePayload(messageBundle);
+  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
+    laneMaterial.sourceVerifierMaterial,
+    "TON SCCP source verifier material",
+  );
+  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
+    laneMaterial.sourceAdapterEngineDeployment,
+    "TON SCCP source adapter deployment",
+  );
+  const outputText = build(
+    JSON.stringify(nativeMessageBundle),
+    JSON.stringify(nativeSourceVerifierMaterial),
+    JSON.stringify(nativeSourceAdapterEngineDeployment),
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(outputText);
+  } catch (error) {
+    throw new Error(
+      `Native TON SCCP source proof builder returned invalid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  if (!isPlainRecord(parsed)) {
+    throw new Error(
+      "Native TON SCCP source proof builder must return an object.",
+    );
+  }
+  const builtMessageBundle = readRequiredSccpRecordField(
+    parsed,
+    ["messageBundle", "message_bundle"],
+    "Native TON SCCP source proof builder messageBundle",
+  );
+  const sourceProofHash = readOptionalSccpTextField(parsed, [
+    "sourceProofHash",
+    "source_proof_hash",
+  ]);
+  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
+    "sourceAdapterDeploymentHash",
+    "source_adapter_deployment_hash",
+  ]);
+  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
+    "sourceAdapterDeploymentReceiptHash",
+    "source_adapter_deployment_receipt_hash",
+  ]);
+  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
+    "sourceVerifierEvidenceHash",
+    "source_verifier_evidence_hash",
+  ]);
+  return {
+    ...replaceSccpSourceMessageBundle(proofPackage, builtMessageBundle),
+    ...(sourceProofHash ? { sourceProofHash } : {}),
+    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
+    ...(sourceAdapterDeploymentReceiptHash
+      ? { sourceAdapterDeploymentReceiptHash }
+      : {}),
+    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
+  };
+};
+
+const rebuildBscSourceMessageBundleWithNativeDeployment = (
+  proofPackage: Record<string, unknown>,
+  laneMaterial: {
+    sourceVerifierMaterial: Record<string, unknown>;
+    sourceAdapterEngineDeployment: Record<string, unknown>;
+  },
+): Record<string, unknown> =>
+  rebuildSccpSourceMessageBundleWithNativeDeployment(
+    proofPackage,
+    laneMaterial,
+    "BSC",
+  );
+
+const rebuildSccpSourceProofResultInNode = (
+  input: SccpSourceProofDeploymentRebuildInput,
+): Record<string, unknown> => {
+  const request = snapshotSccpDataValue(
+    input,
+    "SCCP source proof deployment rebuild request",
+  );
+  if (!isPlainRecord(request)) {
+    throw new Error(
+      "SCCP source proof deployment rebuild request must be an object.",
+    );
+  }
+  const proofPackage = readRequiredSccpRecordField(
+    request,
+    ["proofPackage", "proof_package"],
+    "SCCP source proof deployment rebuild proofPackage",
+  );
+  const sourceVerifierMaterial = readRequiredSccpRecordField(
+    request,
+    ["sourceVerifierMaterial", "source_verifier_material"],
+    "SCCP source proof deployment rebuild sourceVerifierMaterial",
+  );
+  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
+    request,
+    [
+      "sourceAdapterEngineDeployment",
+      "source_adapter_engine_deployment",
+      "sourceAdapterDeployment",
+      "source_adapter_deployment",
+    ],
+    "SCCP source proof deployment rebuild sourceAdapterEngineDeployment",
+  );
+  const label = trimString(request.label) || "source";
+  return rebuildSccpSourceMessageBundleWithNativeDeployment(
+    proofPackage,
+    { sourceVerifierMaterial, sourceAdapterEngineDeployment },
+    label,
+  );
+};
+
+const buildTonSccpSourceProofResultInNode = (
+  input: SccpSourceProofDeploymentRebuildInput,
+): Record<string, unknown> => {
+  const request = snapshotSccpDataValue(
+    input,
+    "TON SCCP source proof deployment build request",
+  );
+  if (!isPlainRecord(request)) {
+    throw new Error(
+      "TON SCCP source proof deployment build request must be an object.",
+    );
+  }
+  const proofPackage = readRequiredSccpRecordField(
+    request,
+    ["proofPackage", "proof_package"],
+    "TON SCCP source proof deployment build proofPackage",
+  );
+  const sourceVerifierMaterial = readRequiredSccpRecordField(
+    request,
+    ["sourceVerifierMaterial", "source_verifier_material"],
+    "TON SCCP source proof deployment build sourceVerifierMaterial",
+  );
+  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
+    request,
+    [
+      "sourceAdapterEngineDeployment",
+      "source_adapter_engine_deployment",
+      "sourceAdapterDeployment",
+      "source_adapter_deployment",
+    ],
+    "TON SCCP source proof deployment build sourceAdapterEngineDeployment",
+  );
+  return buildTonSourceMessageBundleWithNativeDeployment(proofPackage, {
+    sourceVerifierMaterial,
+    sourceAdapterEngineDeployment,
+  });
 };
 
 const readBscSourceBridgeAddressForSourceProof = (
@@ -7328,11 +7673,14 @@ const deploySccpTairaInboundSettlementContractToTorii = async (
     codeB64: Buffer.from(artifactBytes).toString("base64"),
     leaseExpiryMs: normalizeOptionalLeaseExpiryMs(input.leaseExpiryMs),
   });
+  const deployedContract = response?.contracts.find(
+    (contract) => contract.contract_alias === contractAlias,
+  );
   return {
     ...(response ?? {}),
-    contract_alias: response?.contract_alias ?? contractAlias,
-    code_hash_hex: response?.code_hash_hex ?? compiledCodeHashHex,
-    abi_hash_hex: response?.abi_hash_hex ?? compiledAbiHashHex,
+    contract_alias: deployedContract?.contract_alias ?? contractAlias,
+    code_hash_hex: deployedContract?.code_hash_hex ?? compiledCodeHashHex,
+    abi_hash_hex: deployedContract?.abi_hash_hex ?? compiledAbiHashHex,
     source_name: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
   };
 };
@@ -7359,6 +7707,7 @@ type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  waitForCommit?: boolean;
   creationTimeMs?: number;
   ttlMs?: number;
   nonce?: number;
@@ -7517,12 +7866,19 @@ const submitZkIvmProvedTransactionToTorii = async (
     privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
-  const submission = await submitSignedTransactionAndWaitForCommit(
+  const submission = await submitSignedTransactionAsVersioned(
     input.toriiUrl,
     tx.signedTransaction,
     { nativeBinding, requireNativeEncoding: true },
   );
-  return transactionSubmissionResult(submission);
+  if (input.waitForCommit === false) {
+    return transactionSubmissionResult(submission);
+  }
+  const fee = await waitForTransactionCommit(input.toriiUrl, submission.hash);
+  return transactionSubmissionResult({
+    ...submission,
+    ...(fee ? { fee } : {}),
+  });
 };
 
 const parseIpv4Octets = (hostname: string): number[] | null => {
@@ -14423,6 +14779,12 @@ const api: IrohaBridge = {
   },
   proveBscSccpSourceProof(input) {
     return proveBscSccpSourceProofInNode(input);
+  },
+  rebuildSccpMessageBundleSourceProofWithDeployment(input) {
+    return Promise.resolve(rebuildSccpSourceProofResultInNode(input));
+  },
+  buildTonSccpMessageBundleSourceProofWithDeployment(input) {
+    return Promise.resolve(buildTonSccpSourceProofResultInNode(input));
   },
   submitSccpBridgeProof(input) {
     return submitSccpBridgeProofToTorii(input);

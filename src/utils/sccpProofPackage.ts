@@ -6,12 +6,16 @@ import {
   buildBscTestnetSccpDestinationProofRequest,
   buildBscTestnetSccpDestinationSubmission,
   buildEvmSccpBridgeProofSubmitPayload,
+  buildTonSccpProofRequest,
+  buildTonSccpSubmission,
   buildTronSccpBridgeProofSubmitPayload,
   buildTronSccpProofRequest,
   buildTronSccpSubmission,
+  TonSccpProver,
   TronSccpProver,
   wrapBscMainnetSccpDestinationProofResult,
   wrapBscTestnetSccpDestinationProofResult,
+  wrapTonSccpProofResult,
   wrapTronSccpProofResult,
   type BinaryLike,
   type EvmSccpBridgeProofSubmitPayloadInput,
@@ -20,6 +24,10 @@ import {
   type EvmSccpProofResult,
   type EvmSccpProveFn,
   type EvmSccpSubmission,
+  type TonSccpProofRequestInput,
+  type TonSccpProofResult,
+  type TonSccpProveFn,
+  type TonSccpSubmission,
   type TronSccpBridgeProofSubmitPayloadInput,
   type TronSccpDestinationBindingInput,
   type TronSccpProofResult,
@@ -82,6 +90,21 @@ export type BscSccpProofPackage = {
   submission: SerializedSccpValue | null;
   bridgePayload: SerializedSccpValue | null;
   canonicalPayloadHex: string | null;
+};
+
+export type TonSccpProofPackageInput = {
+  witness: TonSccpProofRequestInput;
+  proofBytes?: BinaryLike;
+  proofResult?: TonSccpProofResult;
+};
+
+export type TonSccpProofGenerationInput = TonSccpProofPackageInput & {
+  prove?: TonSccpProveFn;
+};
+
+export type TonSccpProofPackage = {
+  request: SerializedSccpValue;
+  submission: SerializedSccpValue | null;
 };
 
 const snapshotProofPackageInput = <T>(input: T, label: string): T => {
@@ -581,6 +604,78 @@ export const generateBscSccpProofPackage = async (
       : new BscTestnetSccpProver({ prove: safeProve });
   const proofResult = await prover.prove(proverWitnessSnapshot);
   return buildBscSccpProofPackage(
+    {
+      ...packageInputSnapshot,
+      proofResult,
+    },
+    false,
+  );
+};
+
+export const buildTonSccpProofPackage = (
+  input: TonSccpProofPackageInput,
+  snapshotInput = true,
+): TonSccpProofPackage => {
+  const packageInput = snapshotInput
+    ? snapshotProofPackageInput(input, "TON SCCP proof package input")
+    : input;
+  const request = buildTonSccpProofRequest(packageInput.witness);
+  if (packageInput.proofResult) {
+    if (packageInput.proofResult.requestHash !== request.requestHash) {
+      throw new Error("TON SCCP proof result must match the proof request.");
+    }
+    const submission: TonSccpSubmission = buildTonSccpSubmission({
+      ...packageInput.witness,
+      proofResult: packageInput.proofResult,
+    });
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: serializeTrustedSccpValue(submission),
+    };
+  }
+  if (!packageInput.proofBytes) {
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: null,
+    };
+  }
+
+  const proofResult = wrapTonSccpProofResult(packageInput.proofBytes, request);
+  const submission: TonSccpSubmission = buildTonSccpSubmission({
+    ...packageInput.witness,
+    proofResult,
+  });
+  return {
+    request: serializeTrustedSccpValue(request),
+    submission: serializeTrustedSccpValue(submission),
+  };
+};
+
+export const generateTonSccpProofPackage = async (
+  input: TonSccpProofGenerationInput,
+): Promise<TonSccpProofPackage> => {
+  const { prove, ...packageInput } = input;
+  if (typeof prove !== "function") {
+    const error = new Error(
+      "TON SCCP prover is not linked; provide a browser-safe prove function before generating production proofs.",
+    );
+    (error as Error & { code?: string }).code =
+      "ERR_SCCP_TON_PROVER_UNAVAILABLE";
+    throw error;
+  }
+  const packageInputSnapshot = snapshotProofPackageInput(
+    packageInput,
+    "TON SCCP proof package input",
+  );
+  const proverWitnessSnapshot = snapshotProofPackageInput(
+    packageInputSnapshot.witness,
+    "TON SCCP proof witness",
+  );
+  const safeProve: TonSccpProveFn = async (request) =>
+    snapshotProofPackageInput(await prove(request), "TON SCCP proof result");
+  const prover = new TonSccpProver({ prove: safeProve });
+  const proofResult = await prover.prove(proverWitnessSnapshot);
+  return buildTonSccpProofPackage(
     {
       ...packageInputSnapshot,
       proofResult,

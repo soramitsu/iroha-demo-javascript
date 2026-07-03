@@ -1,6 +1,11 @@
-import type { EvmSccpProveFn, TronSccpProveFn } from "@iroha/iroha-js/sccp";
+import type {
+  EvmSccpProveFn,
+  TonSccpProveFn,
+  TronSccpProveFn,
+} from "@iroha/iroha-js/sccp";
 import type {
   BscToTairaSourceProofPackageInput,
+  TonToTairaSourceProofPackageInput,
   TronToTairaSourceProofPackageInput,
 } from "@/utils/sccp";
 import { normalizeSccpProverModuleUrl } from "@/utils/sccpProverUrl";
@@ -14,6 +19,9 @@ export type TronSccpProverModule = {
   irohaSccpBscProve?: unknown;
   bscSccpProve?: unknown;
   evmSccpProve?: unknown;
+  irohaSccpTonProve?: unknown;
+  tonSccpProve?: unknown;
+  proveTon?: unknown;
   proveBsc?: unknown;
   irohaSccpTronSourceProve?: unknown;
   tronSccpSourceProve?: unknown;
@@ -21,6 +29,10 @@ export type TronSccpProverModule = {
   irohaSccpBscSourceProve?: unknown;
   bscSccpSourceProve?: unknown;
   proveBscSource?: unknown;
+  irohaSccpTonSourceProve?: unknown;
+  tonSccpSourceProve?: unknown;
+  proveTonSource?: unknown;
+  proveTonSccpSource?: unknown;
 };
 
 export type TronSccpProverGlobal = {
@@ -29,10 +41,14 @@ export type TronSccpProverGlobal = {
   irohaSccpBscProve?: unknown;
   bscSccpProve?: unknown;
   evmSccpProve?: unknown;
+  irohaSccpTonProve?: unknown;
+  tonSccpProve?: unknown;
   irohaSccpTronSourceProve?: unknown;
   tronSccpSourceProve?: unknown;
   irohaSccpBscSourceProve?: unknown;
   bscSccpSourceProve?: unknown;
+  irohaSccpTonSourceProve?: unknown;
+  tonSccpSourceProve?: unknown;
 };
 
 export type BscSccpProverModule = TronSccpProverModule;
@@ -42,12 +58,26 @@ export type BscSccpProverGlobal = Pick<
   "irohaSccpBscProve" | "bscSccpProve" | "evmSccpProve"
 >;
 
+export type TonSccpProverModule = TronSccpProverModule;
+
+export type TonSccpProverGlobal = Pick<
+  TronSccpProverGlobal,
+  | "irohaSccpTonProve"
+  | "tonSccpProve"
+  | "irohaSccpTonSourceProve"
+  | "tonSccpSourceProve"
+>;
+
 export type TronSccpSourceProveFn = (
   input: TronToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
 
 export type BscSccpSourceProveFn = (
   input: BscToTairaSourceProofPackageInput,
+) => unknown | Promise<unknown>;
+
+export type TonSccpSourceProveFn = (
+  input: TonToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
 
 type SccpProverExportName =
@@ -75,6 +105,19 @@ const readSccpProverExport = (
     throw new Error(SCCP_PROVER_EXPORT_DATA_PROPERTY_ERROR);
   }
   return descriptor.value;
+};
+
+const resolveSccpProverImportUrl = (moduleUrl: string): string => {
+  if (moduleUrl.startsWith("/") && globalThis.location?.protocol === "file:") {
+    const assetsMarker = "/assets/";
+    const markerIndex = import.meta.url.lastIndexOf(assetsMarker);
+    const rendererRoot =
+      markerIndex >= 0
+        ? import.meta.url.slice(0, markerIndex)
+        : import.meta.url.replace(/\/[^/]*$/u, "");
+    return `${rendererRoot}${moduleUrl}`;
+  }
+  return moduleUrl;
 };
 
 export const normalizeTronSccpProverModuleUrl = normalizeSccpProverModuleUrl;
@@ -111,7 +154,7 @@ export const loadTronSccpProveFn = async (input: {
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<TronSccpProverModule>);
-  const moduleExports = await importer(moduleUrl);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
   return pickTronSccpProveFn(input.globalScope, moduleExports);
 };
 
@@ -146,8 +189,44 @@ export const loadBscSccpProveFn = async (input: {
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<BscSccpProverModule>);
-  const moduleExports = await importer(moduleUrl);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
   return pickBscSccpProveFn(input.globalScope, moduleExports);
+};
+
+export const pickTonSccpProveFn = (
+  _globalScope: TonSccpProverGlobal,
+  moduleExports?: TonSccpProverModule | null,
+): TonSccpProveFn | undefined => {
+  const candidates = [
+    readSccpProverExport(moduleExports, "irohaSccpTonProve"),
+    readSccpProverExport(moduleExports, "tonSccpProve"),
+    readSccpProverExport(moduleExports, "proveTon"),
+    readSccpProverExport(moduleExports, "prove"),
+    readSccpProverExport(moduleExports, "proveFn"),
+    readSccpProverExport(moduleExports, "default"),
+    readSccpProverExport(_globalScope, "irohaSccpTonProve"),
+    readSccpProverExport(_globalScope, "tonSccpProve"),
+  ];
+  return candidates.find(
+    (candidate): candidate is TonSccpProveFn => typeof candidate === "function",
+  );
+};
+
+export const loadTonSccpProveFn = async (input: {
+  globalScope: TonSccpProverGlobal;
+  moduleUrl?: string | null;
+  importer?: (moduleUrl: string) => Promise<TonSccpProverModule>;
+}): Promise<TonSccpProveFn | undefined> => {
+  const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
+  if (!moduleUrl) {
+    return pickTonSccpProveFn(input.globalScope);
+  }
+  const importer =
+    input.importer ??
+    ((url: string) =>
+      import(/* @vite-ignore */ url) as Promise<TonSccpProverModule>);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  return pickTonSccpProveFn(input.globalScope, moduleExports);
 };
 
 export const pickTronSccpSourceProveFn = (
@@ -180,7 +259,7 @@ export const loadTronSccpSourceProveFn = async (input: {
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<TronSccpProverModule>);
-  const moduleExports = await importer(moduleUrl);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
   return pickTronSccpSourceProveFn(input.globalScope, moduleExports);
 };
 
@@ -212,6 +291,41 @@ export const loadBscSccpSourceProveFn = async (input: {
     input.importer ??
     ((url: string) =>
       import(/* @vite-ignore */ url) as Promise<TronSccpProverModule>);
-  const moduleExports = await importer(moduleUrl);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
   return pickBscSccpSourceProveFn(input.globalScope, moduleExports);
+};
+
+export const pickTonSccpSourceProveFn = (
+  globalScope: TonSccpProverGlobal,
+  moduleExports?: TonSccpProverModule | null,
+): TonSccpSourceProveFn | undefined => {
+  const candidates = [
+    readSccpProverExport(moduleExports, "proveTonSccpSource"),
+    readSccpProverExport(moduleExports, "irohaSccpTonSourceProve"),
+    readSccpProverExport(moduleExports, "tonSccpSourceProve"),
+    readSccpProverExport(moduleExports, "proveTonSource"),
+    readSccpProverExport(globalScope, "irohaSccpTonSourceProve"),
+    readSccpProverExport(globalScope, "tonSccpSourceProve"),
+  ];
+  return candidates.find(
+    (candidate): candidate is TonSccpSourceProveFn =>
+      typeof candidate === "function",
+  );
+};
+
+export const loadTonSccpSourceProveFn = async (input: {
+  globalScope: TonSccpProverGlobal;
+  moduleUrl?: string | null;
+  importer?: (moduleUrl: string) => Promise<TonSccpProverModule>;
+}): Promise<TonSccpSourceProveFn | undefined> => {
+  const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
+  if (!moduleUrl) {
+    return pickTonSccpSourceProveFn(input.globalScope);
+  }
+  const importer =
+    input.importer ??
+    ((url: string) =>
+      import(/* @vite-ignore */ url) as Promise<TonSccpProverModule>);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  return pickTonSccpSourceProveFn(input.globalScope, moduleExports);
 };

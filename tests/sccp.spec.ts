@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js";
+import { Cell } from "@ton/core";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { sha256 } from "@noble/hashes/sha256";
 import { keccak_256 } from "@noble/hashes/sha3";
@@ -8,6 +9,7 @@ import {
   bridgeDecimalToTairaBaseUnits,
   bindBscSourceDataForProof,
   bindBscToTairaSourceProofPackage,
+  bindTonToTairaSourceProofPackage,
   bindSignedTronTransactionForBroadcast,
   bindTronBroadcastResult,
   bindTronFinalitySnapshot,
@@ -28,10 +30,17 @@ import {
   buildTairaXorBscMessageProofJobQueryMaterial,
   buildTairaXorBscOutboundBurnRecordRequest,
   buildTairaXorBscOutboundPreview,
+  buildTairaXorTonFinalizeProofBinding,
+  buildTairaXorTonInboundSettlement,
+  buildTairaXorTonMessageProofJobQueryMaterial,
+  buildTairaXorTonOutboundBurnRecordRequest,
+  buildTairaXorTonOutboundPreview,
+  buildSccpTonCompactFinalizeMessageBodyBocFromBytes,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorOutboundPreview,
   buildTairaXorTokenBalanceRequest,
   canonicalEip55EvmAddress,
+  classifySccpRouteLoadFailure,
   decodeTronBase58CheckAddress,
   evmFunctionSelector,
   formatBaseUnitAmount,
@@ -41,6 +50,7 @@ import {
   isValidBscAddress,
   isValidBscTransactionHash,
   isValidSccpMessageId,
+  isValidTonRawAddress,
   isValidTronBase58CheckAddress,
   isValidTronTransactionId,
   mergeSccpLaneMaterialsIntoManifestSet,
@@ -56,6 +66,7 @@ import {
   normalizeTronTransactionId,
   normalizeTronNetworkIdHex,
   pickBscSccpManifest,
+  pickTonSccpManifest,
   pickTronSccpManifest,
   readTronAccountBalanceSun,
   readTronConstantUint256,
@@ -67,6 +78,15 @@ import {
   readSccpBscSourceBridgeAddress,
   readSccpBscTokenAddress,
   readSccpBscVerifierAddress,
+  readSccpTonBridgeAddress,
+  readSccpTonFinalizeMessageValueNano,
+  readSccpTonProofMaterial,
+  readSccpTonRpcEndpoint,
+  readSccpTonSourceProverModuleUrl,
+  readSccpTonSourceBridgeAddress,
+  readSccpTonTokenAddress,
+  readSccpTonVerifierAddress,
+  readSccpTonVerifierProtocolVersion,
   readBscSourceProverMaterialBinding,
   readSccpTronBridgeAddress,
   readSccpTronGatewayEndpoint,
@@ -74,6 +94,7 @@ import {
   readSccpTronSourceBridgeAddress,
   readSccpTronTokenAddress,
   resolveSccpRouteReadiness,
+  chunkSccpTonUploadMessages,
   tairaXorBurnToTairaAccountCallData,
   tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
@@ -90,8 +111,16 @@ import {
   SCCP_BSC_DOMAIN,
   SCCP_BSC_NETWORK,
   SCCP_SORA_DOMAIN,
+  SCCP_TON_DOMAIN,
+  SCCP_TON_COMPACT_FINALIZE_OP,
+  SCCP_TON_NETWORK,
+  SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2,
+  SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1,
+  SCCP_TON_TESTNET_SOURCE_PROVER_MODULE_URL,
+  SCCP_TON_XOR_ROUTE_ID,
   SCCP_TRON_DOMAIN,
   SCCP_TRON_NETWORK,
+  tonSccpRouteAllowlistHashFromLaneEvidence,
   TRON_MAINNET_CAIP_CHAIN_ID,
   TRON_MAINNET_CHAIN_ID_HEX,
   TRON_MAINNET_NETWORK_ID_HEX,
@@ -106,6 +135,7 @@ import {
   canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpMessageProofBundleBytes,
   SCCP_CODEC_EVM_HEX,
+  SCCP_CODEC_TON_RAW,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
@@ -124,12 +154,21 @@ import {
   tairaXorAssetKeyHash,
   evmSccpDestinationBinding,
   tronSccpDestinationBinding,
+  buildSccpTonChunkedMessageBodyBocsFromBytes,
+  buildRecordSccpMessageInstructionBytes,
+  sccpDestinationBindingHash,
+  sccpSourceAdapterEngineDeploymentHash,
+  sccpSourceVerifierMaterialHash,
+  SCCP_TON_WALLET_PAYLOAD_SAFE_BYTES_V1,
+  tonSccpRouteCanaryEvidenceHash,
   wrapBscTestnetSccpDestinationProofResult,
 } from "@iroha/iroha-js/sccp";
 import {
   buildBscSccpProofPackage,
+  buildTonSccpProofPackage,
   buildTronSccpProofPackage,
   generateBscSccpProofPackage,
+  generateTonSccpProofPackage,
   generateTronSccpProofPackage,
   serializeSccpValue,
 } from "@/utils/sccpProofPackage";
@@ -166,6 +205,14 @@ const OFFLINE_FULL_TOML_SHA256 = `0x${"99".repeat(32)}`;
 const BSC_PROOF_ARTIFACT_HASH = `0x${"77".repeat(32)}`;
 const BSC_PROVING_KEY_HASH = `0x${"88".repeat(32)}`;
 const BSC_VERIFIER_KEY_ARTIFACT_HASH = `0x${"aa".repeat(32)}`;
+const repeatedHex32 = (byteHex: string): string => {
+  const byte = byteHex.toLowerCase().padStart(2, "0");
+  return `0x${byte.repeat(32)}`;
+};
+const fixtureHash = (label: string): string =>
+  `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("")}`;
 const BSC_NATIVE_EVM_PROVER_BUNDLE_HASH =
   "0x298e0a30c391f0e2c1dbea1f1ce051011140e52fbe4524a970ff48eca360d2a8";
 const TRON_SOLID_BLOCK_NUMBER = 12;
@@ -198,6 +245,11 @@ const BSC_MIXED_RECIPIENT_ADDRESS_LOWER =
   "0x52908400098527886e0f7030069857d2e4169ee7";
 const BSC_MIXED_RECIPIENT_ADDRESS =
   "0x52908400098527886E0F7030069857D2E4169EE7";
+const TON_BRIDGE_ADDRESS = `0:${"12".repeat(32)}`;
+const TON_TOKEN_ADDRESS = `0:${"13".repeat(32)}`;
+const TON_SOURCE_BRIDGE_ADDRESS = `0:${"14".repeat(32)}`;
+const TON_VERIFIER_ADDRESS = `0:${"15".repeat(32)}`;
+const TON_RECIPIENT_ADDRESS = `0:${"16".repeat(32)}`;
 const BSC_SENDER_ADDRESS = fixtureBscAddress("renderer sccp bsc sender");
 const BSC_SENDER_ADDRESS_HEX = normalizeEvmAddress(BSC_SENDER_ADDRESS);
 const SIGNING_TRON_PRIVATE_KEY = new Uint8Array(32).fill(7);
@@ -545,6 +597,31 @@ const TAIRA_TO_BSC_PAYLOAD_HASH = sccpPayloadHash(
     value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
   }),
 );
+const TAIRA_TO_TON_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: 0,
+  dest_domain: SCCP_TON_DOMAIN,
+  nonce: "7",
+  asset_home_domain: 0,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: TAIRA_SENDER,
+  recipient_codec: SCCP_CODEC_TON_RAW,
+  recipient: TON_RECIPIENT_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: SCCP_TON_XOR_ROUTE_ID,
+};
+const TAIRA_TO_TON_MESSAGE_ID = sccpTransferMessageId(
+  TAIRA_TO_TON_TRANSFER_PAYLOAD,
+);
+const TAIRA_TO_TON_PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_TON_TRANSFER_PAYLOAD,
+  }),
+);
 const READY_TRON_MANIFEST = {
   tronNetwork: "mainnet",
   chain: "tron-mainnet",
@@ -601,6 +678,90 @@ const READY_NILE_TRON_MANIFEST = {
   },
   postDeployLiveEvidence: undefined,
 };
+const TON_SOURCE_VERIFIER_MATERIAL = {
+  sourceDomain: SCCP_TON_DOMAIN,
+  targetDomain: SCCP_SORA_DOMAIN,
+  sourceChain: "ton",
+  sourceTrustAnchorHash: fixtureHash("ton source trust anchor"),
+  consensusVerifierHash: fixtureHash("ton consensus verifier"),
+  messageInclusionVerifierHash: fixtureHash("ton message inclusion verifier"),
+  finalityPolicyHash: fixtureHash("ton finality policy"),
+  sourceStateVerifierHash: fixtureHash("ton source state verifier"),
+  sourceStateVerifierId:
+    "sccp:ton:source-state-verifier:shard-state-light-client-mainnet:v1",
+  placeholderMaterial: false,
+};
+const TON_SOURCE_ADAPTER_ENGINE_DEPLOYMENT = {
+  ...TON_SOURCE_VERIFIER_MATERIAL,
+  adapterVerifierVkHash: fixtureHash("ton source adapter verifier vk"),
+  deploymentReceiptHash: fixtureHash("ton source adapter deployment receipt"),
+  tonMasterchainConfigVerifierHash: fixtureHash(
+    "ton masterchain config verifier",
+  ),
+  tonValidatorSetTransitionVerifierHash: fixtureHash(
+    "ton validator transition verifier",
+  ),
+  tonShardAccountsDictionaryVerifierHash: fixtureHash(
+    "ton shard accounts dictionary verifier",
+  ),
+  tonFullLightClientGateHash: fixtureHash("ton full light client gate"),
+  adapterProofFamily: "stark-fri-v1",
+  adapterCircuitId: "sccp-source-adapter-v1",
+};
+const READY_TON_MANIFEST = {
+  tonNetwork: "testnet",
+  chain: "ton-testnet",
+  counterpartyDomain: SCCP_TON_DOMAIN,
+  counterpartyAccountCodecKey: "ton_raw",
+  counterpartyAccountCodec: SCCP_CODEC_TON_RAW,
+  verifierTarget: "TonContract",
+  routeId: SCCP_TON_XOR_ROUTE_ID,
+  assetKey: "xor",
+  productionReady: true,
+  tonBridgeAddress: TON_BRIDGE_ADDRESS,
+  tonTokenAddress: TON_TOKEN_ADDRESS,
+  sccpTonSourceBridgeAddress: TON_SOURCE_BRIDGE_ADDRESS,
+  tonVerifierAddress: TON_VERIFIER_ADDRESS,
+  tonFinalizeMessageValueNano: "100000000",
+  tonRpcUrl: SCCP_TON_NETWORK.rpcUrl,
+  sourceVerifierMaterial: TON_SOURCE_VERIFIER_MATERIAL,
+  sourceAdapterEngineDeployment: TON_SOURCE_ADAPTER_ENGINE_DEPLOYMENT,
+  sourceBrowserProver: {
+    moduleUrl: "/sccp-ton/source-prover.js",
+    moduleHash: fixtureHash("ton source browser prover module"),
+    manifestHash: fixtureHash("ton source browser prover manifest"),
+    boundRouteHash: HEX32_C,
+    boundProofHash: HEX32_D,
+    expectedExports: ["proveTonSccpSource"],
+  },
+  destinationBinding: {
+    version: 1,
+    key: `ton:0:${SCCP_TON_DOMAIN}:${SCCP_TON_NETWORK.networkIdHex.slice(
+      2,
+    )}:${TON_VERIFIER_ADDRESS}:${HEX32_D}:${HEX32_E}`,
+    bindingHash: HEX32_C,
+  },
+  destinationRollout: {
+    verifierIdentity: TON_VERIFIER_ADDRESS,
+    verifierCodeHash: HEX32_D,
+    verifierKeyHash: HEX32_E,
+    destinationNetworkId: SCCP_TON_NETWORK.networkIdHex,
+    destinationBindingHash: HEX32_C,
+  },
+  postDeployLiveEvidence: {
+    fullTomlReady: true,
+    offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
+    sourceBridgeConfigHash: HEX32_A,
+    sourceEventTransactionId: HEX32_B,
+    routeCanaryEvidenceHash: HEX32_C,
+    routeCanaryTransactionId: HEX32_F,
+  },
+  ...BURN_RECORD_MATERIAL,
+  tairaXorBurnRecord: {
+    ...BURN_RECORD_MATERIAL.tairaXorBurnRecord,
+    artifactSha256: BURN_RECORD_ARTIFACT_SHA256,
+  },
+};
 const BSC_DESTINATION_BINDING_KEY = `evm:0:${SCCP_BSC_DOMAIN}:${BSC_TESTNET_NETWORK_ID_HEX.slice(
   2,
 )}:${normalizeEvmAddress(BSC_VERIFIER_ADDRESS)}:${normalizeEvmAddress(BSC_BRIDGE_ADDRESS)}:${HEX32_D}:${HEX32_E}`;
@@ -632,14 +793,6 @@ const BSC_MAINNET_DESTINATION_BINDING = evmSccpDestinationBinding({
   verifierCodeHash: HEX32_D,
   verifierKeyHash: HEX32_E,
 });
-const repeatedHex32 = (byteHex: string): string => {
-  const byte = byteHex.toLowerCase().padStart(2, "0");
-  return `0x${byte.repeat(32)}`;
-};
-const fixtureHash = (label: string): string =>
-  `0x${Array.from(sha256(new TextEncoder().encode(label)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("")}`;
 const BSC_NATIVE_EVM_PROVER_BUNDLE = {
   schema: SCCP_NATIVE_EVM_PROVER_BUNDLE_SCHEMA_V1,
   bundle_id: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
@@ -933,6 +1086,90 @@ const sampleTairaToBscJob = (
       payload: {
         kind: "Transfer",
         value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+      },
+      finalityProof: "0x010203",
+    },
+    ...overrides,
+  };
+};
+
+const sampleTairaToTonJob = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => {
+  const account = TON_RECIPIENT_ADDRESS.split(":")[1];
+  const transferProjection = {
+    source_domain: 0,
+    dest_domain: SCCP_TON_DOMAIN,
+    asset_home_domain: 0,
+    asset_id: { kind: "TextUtf8", value: "xor" },
+    route_id: { kind: "TextUtf8", value: SCCP_TON_XOR_ROUTE_ID },
+    amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+    sender: { kind: "TextUtf8", value: TAIRA_SENDER },
+    recipient: {
+      kind: "TonRaw",
+      value: {
+        workchain: 0,
+        account,
+      },
+    },
+  };
+  return {
+    publicInputs: {
+      version: 1,
+      messageId: TAIRA_TO_TON_MESSAGE_ID,
+      payloadHash: TAIRA_TO_TON_PAYLOAD_HASH,
+      targetDomain: SCCP_TON_DOMAIN,
+      commitmentRoot: HEX32_C,
+      finalityHeight: 10,
+      finalityBlockHash: HEX32_F,
+      destinationBindingHash: HEX32_C,
+    },
+    destinationBinding: {
+      version: 1,
+      key: READY_TON_MANIFEST.destinationBinding.key,
+      bindingHash: HEX32_C,
+    },
+    payloadProjection: {
+      kind: "Transfer",
+      value: transferProjection,
+    },
+    submissionPackage: {
+      envelopeEncoding: "ton_message_body_boc_v1",
+      platformPayload: {
+        TonInternalMessage: {
+          messageBodyBoc: "b5ee9c72",
+          destinationBinding: {
+            version: 1,
+            key: READY_TON_MANIFEST.destinationBinding.key,
+            bindingHash: HEX32_C,
+          },
+          destinationBindingHash: HEX32_C,
+          statementHash: HEX32_E,
+        },
+      },
+      arguments: [
+        {
+          key: "message_body_boc",
+          encoding: "ton_boc",
+          bytes: "b5ee9c72",
+        },
+      ],
+      envelopeBytes: "b5ee9c72",
+    },
+    bundle: {
+      version: 1,
+      commitmentRoot: HEX32_C,
+      commitment: {
+        version: 1,
+        kind: "Transfer",
+        targetDomain: SCCP_TON_DOMAIN,
+        messageId: TAIRA_TO_TON_MESSAGE_ID,
+        payloadHash: TAIRA_TO_TON_PAYLOAD_HASH,
+      },
+      merkleProof: { steps: [] },
+      payload: {
+        kind: "Transfer",
+        value: TAIRA_TO_TON_TRANSFER_PAYLOAD,
       },
       finalityProof: "0x010203",
     },
@@ -1730,6 +1967,293 @@ describe("SCCP helpers", () => {
     );
   });
 
+  it("requires a production-ready TON testnet XOR manifest for TON route readiness", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    expect(isValidTonRawAddress(TON_RECIPIENT_ADDRESS)).toBe(true);
+    expect(isValidTonRawAddress(`0:${"00".repeat(32)}`)).toBe(false);
+    expect(
+      pickTonSccpManifest({ manifests: [READY_TON_MANIFEST] }),
+    ).toStrictEqual(READY_TON_MANIFEST);
+    expect(readSccpTonBridgeAddress(READY_TON_MANIFEST)).toBe(
+      TON_BRIDGE_ADDRESS,
+    );
+    expect(readSccpTonTokenAddress(READY_TON_MANIFEST)).toBe(TON_TOKEN_ADDRESS);
+    expect(readSccpTonSourceBridgeAddress(READY_TON_MANIFEST)).toBe(
+      TON_SOURCE_BRIDGE_ADDRESS,
+    );
+    expect(readSccpTonVerifierAddress(READY_TON_MANIFEST)).toBe(
+      TON_VERIFIER_ADDRESS,
+    );
+    expect(readSccpTonFinalizeMessageValueNano(READY_TON_MANIFEST)).toBe(
+      "100000000",
+    );
+    expect(readSccpTonRpcEndpoint(READY_TON_MANIFEST)).toBe(
+      SCCP_TON_NETWORK.rpcUrl,
+    );
+    expect(readSccpTonProofMaterial(READY_TON_MANIFEST)).toMatchObject({
+      networkIdHex: SCCP_TON_NETWORK.networkIdHex,
+      tonVerifierAddress: TON_VERIFIER_ADDRESS,
+      expectedDestinationBindingHashHex: HEX32_C,
+    });
+
+    const ready = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [READY_TON_MANIFEST, READY_TRON_MANIFEST],
+      },
+      counterparty: "ton",
+    });
+    expect(ready.ready).toBe(true);
+    expect(ready.counterparty).toBe("ton");
+    expect(ready.manifest).toStrictEqual(READY_TON_MANIFEST);
+    expect(ready.tonManifest).toStrictEqual(READY_TON_MANIFEST);
+
+    const missingRoute = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [{ ...READY_TON_MANIFEST, routeId: "taira_ton_other" }],
+      },
+      counterparty: "ton",
+    });
+    expect(missingRoute.ready).toBe(false);
+    expect(missingRoute.reasons.join(" ")).toContain(SCCP_TON_XOR_ROUTE_ID);
+
+    const endpointFailure = classifySccpRouteLoadFailure(
+      new Error("Torii responded with HTTP 502 Bad Gateway"),
+      {
+        toriiUrl: "https://taira.sora.org",
+        stage: "manifest",
+      },
+    );
+    expect(endpointFailure.kind).toBe("endpoint_unavailable");
+    expect(endpointFailure.status).toBe(502);
+    expect(endpointFailure.message).toContain("TAIRA Torii is unavailable");
+    expect(endpointFailure.message).toContain("HTTP 502 Bad Gateway");
+    const endpointUnavailable = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities: null,
+      manifestSet: null,
+      loadFailure: endpointFailure,
+      counterparty: "ton",
+    });
+    expect(endpointUnavailable.ready).toBe(false);
+    expect(endpointUnavailable.status).toBe("unavailable");
+    expect(endpointUnavailable.reasons).toEqual([endpointFailure.message]);
+    expect(endpointUnavailable.reasons.join(" ")).not.toContain(
+      "No TON SCCP manifest",
+    );
+
+    const manifestFailure = classifySccpRouteLoadFailure(
+      new Error("manifest parser rejected response"),
+      {
+        toriiUrl: "https://taira.sora.org",
+        stage: "manifest",
+      },
+    );
+    expect(manifestFailure.kind).toBe("manifest_unavailable");
+    const manifestUnavailable = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: null,
+      loadFailure: manifestFailure,
+      counterparty: "ton",
+    });
+    expect(manifestUnavailable.ready).toBe(false);
+    expect(manifestUnavailable.reasons).toEqual([manifestFailure.message]);
+    expect(manifestUnavailable.reasons.join(" ")).not.toContain(
+      "SCCP proof manifests have not been loaded",
+    );
+
+    const missingVerifierMaterial = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_TON_MANIFEST,
+            destinationRollout: {
+              ...READY_TON_MANIFEST.destinationRollout,
+              verifierCodeHash: "",
+            },
+          },
+        ],
+      },
+      counterparty: "ton",
+    });
+    expect(missingVerifierMaterial.ready).toBe(false);
+    expect(missingVerifierMaterial.reasons.join(" ")).toContain(
+      "TON SCCP verifier rollout proof material is incomplete",
+    );
+
+    const missingSourceProver = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_TON_MANIFEST,
+            sourceBrowserProver: undefined,
+          },
+        ],
+      },
+      counterparty: "ton",
+    });
+    expect(missingSourceProver.ready).toBe(false);
+    expect(missingSourceProver.reasons.join(" ")).toContain(
+      "browser-safe TON source proof module",
+    );
+
+    const repeatedSourceMaterial = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_TON_MANIFEST,
+            sourceAdapterEngineDeployment: {
+              ...READY_TON_MANIFEST.sourceAdapterEngineDeployment,
+              tonMasterchainConfigVerifierHash: repeatedHex32("42"),
+            },
+          },
+        ],
+      },
+      counterparty: "ton",
+    });
+    expect(repeatedSourceMaterial.ready).toBe(false);
+    expect(repeatedSourceMaterial.reasons.join(" ")).toContain(
+      "repeated-byte placeholder material",
+    );
+
+    const governedTonAuditMaterial = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_TON_MANIFEST,
+            sourceAdapterEngineDeployment: {
+              ...READY_TON_MANIFEST.sourceAdapterEngineDeployment,
+              tonMasterchainConfigVerifierHash: repeatedHex32("26"),
+              tonValidatorSetTransitionVerifierHash: repeatedHex32("27"),
+              tonShardAccountsDictionaryVerifierHash: repeatedHex32("28"),
+            },
+          },
+        ],
+      },
+      counterparty: "ton",
+    });
+    expect(governedTonAuditMaterial.ready).toBe(true);
+
+    const missingFinalizeValue = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: {
+        manifests: [
+          {
+            ...READY_TON_MANIFEST,
+            tonFinalizeMessageValueNano: "",
+          },
+        ],
+      },
+      counterparty: "ton",
+    });
+    expect(missingFinalizeValue.ready).toBe(true);
+    expect(
+      readSccpTonFinalizeMessageValueNano({
+        ...READY_TON_MANIFEST,
+        tonFinalizeMessageValueNano: "",
+      }),
+    ).toBe("1000000");
+    expect(missingFinalizeValue.reasons.join(" ")).not.toContain(
+      "TON finalize message value",
+    );
+  });
+
+  it("builds and binds TON -> TAIRA source packages with finality proof bytes", async () => {
+    const { proveTonSccpSource } = (await import(
+      "../src/provers/sccp-ton-source-prover.js"
+    )) as {
+      proveTonSccpSource: (input: unknown) => Promise<Record<string, unknown>>;
+    };
+
+    const proofPackage = await proveTonSccpSource({
+      txId: HEX32_A,
+      tonSender: TON_RECIPIENT_ADDRESS,
+      tairaRecipient: TAIRA_SENDER,
+      amountDecimal: "0.000001",
+      transaction: {
+        nonce: "1",
+      },
+    });
+
+    expect(
+      String(
+        (proofPackage.messageBundle as Record<string, unknown>).finalityProof,
+      ),
+    ).toMatch(/^0x[0-9a-f]+$/u);
+
+    const bound = bindTonToTairaSourceProofPackage({
+      manifest: READY_TON_MANIFEST,
+      proofPackage,
+      txId: HEX32_A,
+      tonSender: TON_RECIPIENT_ADDRESS,
+      tairaRecipient: TAIRA_SENDER,
+      amountDecimal: "0.000001",
+    });
+
+    expect(bound.amountBaseUnits).toBe("1000");
+    expect(bound.txId).toBe(HEX32_A);
+    expect(bound.messageBundle.finalityProof).toBe(
+      (proofPackage.messageBundle as Record<string, unknown>).finalityProof,
+    );
+    expect(
+      (
+        buildSccpMessageBundleSubmitPayload(bound.messageBundle) as Record<
+          string,
+          unknown
+        >
+      ).finality_proof,
+    ).toBe(
+      (proofPackage.messageBundle as Record<string, unknown>).finalityProof,
+    );
+    expect(bound.settlement).toMatchObject({
+      entrypoint: "finalize_inbound",
+      route: SCCP_TON_XOR_ROUTE_ID,
+    });
+  });
+
   it("uses on-chain SCCP lane material parameters for BSC route readiness", () => {
     const capabilities = {
       proofSubmitPath: "/v1/bridge/proofs/submit",
@@ -1784,6 +2308,224 @@ describe("SCCP helpers", () => {
       }),
       sourceAdapterEngineDeployment: expect.objectContaining({
         targetDomain: SCCP_SORA_DOMAIN,
+      }),
+    });
+  });
+
+  it("uses on-chain SCCP lane material parameters for TON route readiness", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+    };
+    const routeOnlyTonManifest: Record<string, unknown> = {
+      ...READY_TON_MANIFEST,
+    };
+    delete routeOnlyTonManifest.sourceVerifierMaterial;
+    delete routeOnlyTonManifest.sourceAdapterEngineDeployment;
+    const tonVerifierMaterialWithoutTarget: Record<string, unknown> = {
+      ...TON_SOURCE_VERIFIER_MATERIAL,
+      source_bridge_network_id: repeatedHex32("00"),
+    };
+    delete tonVerifierMaterialWithoutTarget.targetDomain;
+    const parameters = {
+      custom: {
+        sccp_lane_materials_v1: {
+          payload: {
+            sccp_source_verifier_materials: [tonVerifierMaterialWithoutTarget],
+            sccp_source_adapter_engine_deployments: [
+              {
+                ...TON_SOURCE_ADAPTER_ENGINE_DEPLOYMENT,
+                source_bridge_network_id: repeatedHex32("00"),
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    const manifestSet = mergeSccpLaneMaterialsIntoManifestSet(
+      { routes: [routeOnlyTonManifest], manifests: [READY_TRON_MANIFEST] },
+      parameters,
+      "testnet",
+      "testnet",
+    );
+    const ready = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: manifestSet as Record<string, unknown>,
+      counterparty: "ton",
+    });
+
+    expect(routeOnlyTonManifest).not.toHaveProperty("sourceVerifierMaterial");
+    expect(ready.ready).toBe(true);
+    expect(ready.tonManifest).toMatchObject({
+      sourceVerifierMaterial: expect.objectContaining({
+        sourceDomain: SCCP_TON_DOMAIN,
+      }),
+      sourceAdapterEngineDeployment: expect.objectContaining({
+        targetDomain: SCCP_SORA_DOMAIN,
+      }),
+    });
+  });
+
+  it("accepts governed TON lane material when the capability flag is stale", () => {
+    const capabilities = {
+      proofSubmitPath: "/v1/bridge/proofs/submit",
+      messageSubmitPath: "/v1/bridge/messages",
+      counterparties: [
+        {
+          domain: SCCP_TON_DOMAIN,
+          chain: "ton",
+          production_ready: false,
+          disabled_reason:
+            "disabled until real browser-safe TON source/destination prover modules and non-placeholder TON source light-client verifier hashes are published",
+        },
+      ],
+    };
+    const destinationBindingHash = sccpDestinationBindingHash(SCCP_TON_DOMAIN);
+    const tonSourceVerifierMaterial = {
+      sourceDomain: SCCP_TON_DOMAIN,
+      sourceChain: "ton",
+      sourceTrustAnchorHash:
+        "0x42a649de4e2748c764491cc750579052355b2562d8a29b77d54b979dca608067",
+      consensusVerifierHash:
+        "0xceb01f7fe0ec01de6c18ed06ab7735caeea015d0bf86113d2d7a5dcc5083d722",
+      messageInclusionVerifierHash:
+        "0xe8b8a6c88f82eb29eecda39930a7f3747761deabb9953c59f324ad51e47feb61",
+      finalityPolicyHash:
+        "0x92749b6c4bf150e6f6d78def24b42ee02db324209ce01251765e91db35ba96c5",
+      sourceStateVerifierId:
+        "sccp:ton:source-state-verifier:shard-state-light-client-mainnet:v1",
+      sourceStateVerifierHash:
+        "0xe0f1f084d4fa8205b17d339bb15d96e7351364b567e98fa03b5e69c52631836b",
+      placeholderMaterial: false,
+    };
+    const tonSourceAdapterEngineDeployment = {
+      ...tonSourceVerifierMaterial,
+      targetDomain: SCCP_SORA_DOMAIN,
+      adapterProofFamily: "stark-fri-v1",
+      adapterCircuitId: "sccp-source-adapter-v1",
+      adapterVerifierVkHash:
+        "0xf03f70e8cb504e69b0611df224c2783d04d8f4ee93beae7a62e1cd0a49703bad",
+      deploymentReceiptHash:
+        "0x7d7abf181c0882c7c6cf63a7e0e3acb1a6ea47e08cd33355ed10714f07c9de9c",
+      tonFullLightClientGateHash:
+        "0x2f2a6fec8566b2be382574cfa99f96d0d72620daf0c2832c5bb2ba3f396bf610",
+      tonMasterchainConfigVerifierHash: repeatedHex32("26"),
+      tonValidatorSetTransitionVerifierHash: repeatedHex32("27"),
+      tonShardAccountsDictionaryVerifierHash: repeatedHex32("28"),
+    };
+    const destinationRollout = {
+      domain: SCCP_TON_DOMAIN,
+      chain: "ton",
+      verifierIdentity: TON_VERIFIER_ADDRESS,
+      verifierCodeHash: HEX32_D,
+      verifierKeyHash: null,
+      destinationBindingHash,
+      tonAccountStatus: "active" as const,
+      tonAccountStateHash: fixtureHash("ton route account state"),
+      tonLastTransactionLt: "80345546000006",
+      tonLastTransactionHash: fixtureHash("ton route last tx"),
+      tonVerifierCodeBocRootHash: HEX32_D,
+    };
+    const routeAllowlistHash = tonSccpRouteAllowlistHashFromLaneEvidence({
+      sourceVerifierMaterial: tonSourceVerifierMaterial,
+      sourceAdapterEngineDeployment: tonSourceAdapterEngineDeployment,
+      destinationBindingHash,
+    });
+    const sourceVerifierMaterialHash = sccpSourceVerifierMaterialHash(
+      tonSourceVerifierMaterial,
+    );
+    const sourceAdapterEngineDeploymentHash =
+      sccpSourceAdapterEngineDeploymentHash(tonSourceAdapterEngineDeployment);
+    const routeCanaryEvidenceHash = tonSccpRouteCanaryEvidenceHash({
+      routeAllowlistHash,
+      destinationBindingHash,
+      sourceVerifierMaterialHash,
+      sourceAdapterEngineDeploymentHash,
+      verifierIdentity: destinationRollout.verifierIdentity,
+      verifierCodeHash: destinationRollout.verifierCodeHash,
+      tonAccountStatus: destinationRollout.tonAccountStatus,
+      tonAccountStateHash: destinationRollout.tonAccountStateHash,
+      tonLastTransactionLt: destinationRollout.tonLastTransactionLt,
+      tonLastTransactionHash: destinationRollout.tonLastTransactionHash,
+      tonVerifierCodeBocRootHash: destinationRollout.tonVerifierCodeBocRootHash,
+    });
+    const routeAllowlist = {
+      domain: SCCP_TON_DOMAIN,
+      chain: "ton",
+      activationPolicy: "GovernanceAllowlist",
+      routeAllowlistId: "sccp:ton:route-allowlist:ton-mainnet:v1",
+      routeAllowlistHash,
+      routeCanaryStatus: "passed",
+      routeCanaryEvidenceHash,
+      routeCanaryRouteAllowlistHash: routeAllowlistHash,
+      routeCanaryDestinationBindingHash: destinationBindingHash,
+      tonRouteCanaryAccountStateHash: destinationRollout.tonAccountStateHash,
+      tonRouteCanaryLastTransactionLt: destinationRollout.tonLastTransactionLt,
+      tonRouteCanaryLastTransactionHash:
+        destinationRollout.tonLastTransactionHash,
+      routesAllowlisted: true,
+      blockers: [],
+    };
+    const routeOnlyTonManifest: Record<string, unknown> = {
+      ...READY_TON_MANIFEST,
+      productionReady: false,
+      disabledReason:
+        "disabled until real browser-safe TON source/destination prover modules and non-placeholder TON source light-client verifier hashes are published",
+      destinationBinding: {
+        ...READY_TON_MANIFEST.destinationBinding,
+        bindingHash: destinationBindingHash,
+      },
+      destinationRollout: {
+        ...READY_TON_MANIFEST.destinationRollout,
+        destinationBindingHash,
+      },
+    };
+    delete routeOnlyTonManifest.sourceVerifierMaterial;
+    delete routeOnlyTonManifest.sourceAdapterEngineDeployment;
+    const parameters = {
+      Custom: {
+        id: "sccp_lane_materials_v1",
+        payload: {
+          sccp_source_verifier_materials: [tonSourceVerifierMaterial],
+          sccp_source_adapter_engine_deployments: [
+            tonSourceAdapterEngineDeployment,
+          ],
+          sccp_destination_rollouts: [destinationRollout],
+          sccp_route_allowlists: [routeAllowlist],
+        },
+      },
+    };
+
+    const manifestSet = mergeSccpLaneMaterialsIntoManifestSet(
+      { routes: [routeOnlyTonManifest] },
+      parameters,
+      "testnet",
+      "testnet",
+    );
+    const ready = resolveSccpRouteReadiness({
+      connection: {
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      capabilities,
+      manifestSet: manifestSet as Record<string, unknown>,
+      counterparty: "ton",
+    });
+
+    expect(ready.reasons).toEqual([]);
+    expect(ready.ready).toBe(true);
+    expect(ready.tonManifest).toMatchObject({
+      routeAllowlist: expect.objectContaining({
+        routesAllowlisted: true,
+        routeCanaryEvidenceHash,
+      }),
+      destinationRollout: expect.objectContaining({
+        tonAccountStatus: "active",
       }),
     });
   });
@@ -6011,6 +6753,163 @@ describe("SCCP helpers", () => {
     ).toThrow(/EVM address|recipientAddress|BSC/i);
   });
 
+  it("builds TAIRA to TON canonical outbound previews and burn-record requests", () => {
+    const preview = buildTairaXorTonOutboundPreview({
+      manifest: READY_TON_MANIFEST,
+      tairaSender: TAIRA_SENDER,
+      tonRecipient: TON_RECIPIENT_ADDRESS,
+      amountDecimal: "2.25",
+      nonce: "7",
+    });
+
+    expect(preview.payload).toMatchObject({
+      source_domain: SCCP_SORA_DOMAIN,
+      dest_domain: SCCP_TON_DOMAIN,
+      asset_id: "xor",
+      amount: "2250000000",
+      recipient_codec: SCCP_CODEC_TON_RAW,
+      recipient: TON_RECIPIENT_ADDRESS,
+      route_id: SCCP_TON_XOR_ROUTE_ID,
+    });
+    expect(preview.messageId).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.payloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.contractPayloadHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(preview.canonicalPayloadHex).toBe(
+      bytesToHex(
+        canonicalSccpTransferPayloadBytes({
+          version: 1,
+          source_domain: SCCP_SORA_DOMAIN,
+          dest_domain: SCCP_TON_DOMAIN,
+          nonce: "7",
+          asset_home_domain: SCCP_SORA_DOMAIN,
+          asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+          asset_id: "xor",
+          amount: "2250000000",
+          sender_codec: SCCP_CODEC_TEXT_UTF8,
+          sender: TAIRA_SENDER,
+          recipient_codec: SCCP_CODEC_TON_RAW,
+          recipient: TON_RECIPIENT_ADDRESS,
+          route_id_codec: SCCP_CODEC_TEXT_UTF8,
+          route_id: SCCP_TON_XOR_ROUTE_ID,
+        }),
+      ),
+    );
+    expect(preview.recordDescriptor).toMatchObject({
+      execution_kind: "ivm_proved_record_sccp_message_v1",
+      chain_id: TAIRA_CHAIN_ID,
+      network_prefix: TAIRA_NETWORK_PREFIX,
+      route_id: SCCP_TON_XOR_ROUTE_ID,
+      source_domain: SCCP_SORA_DOMAIN,
+      dest_domain: SCCP_TON_DOMAIN,
+      message_id: preview.messageId,
+      canonical_payload_hex: preview.canonicalPayloadHex,
+      record_instruction: {
+        kind: "RecordSccpMessage",
+        payload_bytes_hex: preview.canonicalPayloadHex,
+      },
+      execution_requirements: {
+        executable: "IvmProved",
+        overlay_instruction: "RecordSccpMessage",
+        settlement_instruction: "Burn<Numeric, Asset>",
+        settlement_asset_selector: "nexus.fees.fee_asset_id",
+        normal_transaction_supported: false,
+      },
+    });
+
+    const request = buildTairaXorTonOutboundBurnRecordRequest({
+      manifest: READY_TON_MANIFEST,
+      tairaSender: TAIRA_SENDER,
+      tonRecipient: TON_RECIPIENT_ADDRESS,
+      amountDecimal: "2.25",
+      nonce: "7",
+    });
+    expect(request.outbound.messageId).toBe(preview.messageId);
+    expect(request.zkIvmRequest).toMatchObject({
+      route_id: SCCP_TON_XOR_ROUTE_ID,
+      asset_key: "xor",
+      descriptor: {
+        route_id: SCCP_TON_XOR_ROUTE_ID,
+        dest_domain: SCCP_TON_DOMAIN,
+      },
+    });
+    expect(request.zkIvmRequest.request).toMatchObject({
+      authority: TAIRA_SENDER,
+      bytecode: BURN_RECORD_ARTIFACT_B64,
+      vkRef: {
+        backend: "halo2/ipa",
+        name: "taira-xor-burn-record-v1",
+      },
+      metadata: {
+        gas_limit: 123456,
+        contract_entrypoint: "burn_and_record",
+        contract_payload: {
+          sender: TAIRA_SENDER,
+          settlement_asset: VALID_ASSET_DEFINITION_ID,
+          amount: "2250000000",
+        },
+      },
+    });
+    const tonEnvelopePayloadHex = bytesToHex(
+      canonicalSccpPayloadEnvelopeBytes({
+        kind: "Transfer",
+        value: request.outbound.payload,
+      }),
+    );
+    expect(request.outbound.canonicalPayloadHex).not.toBe(
+      tonEnvelopePayloadHex,
+    );
+    expect(
+      (
+        request.zkIvmRequest.descriptor.record_instruction as Record<
+          string,
+          unknown
+        >
+      ).payload_bytes_hex,
+    ).toBe(tonEnvelopePayloadHex);
+    expect(
+      (
+        request.zkIvmRequest.request.metadata.contract_payload as Record<
+          string,
+          unknown
+        >
+      ).record_instruction,
+    ).toBe(
+      bytesToHex(
+        buildRecordSccpMessageInstructionBytes(
+          hexToBytes(tonEnvelopePayloadHex),
+        ),
+      ),
+    );
+    expect(
+      String(
+        (
+          request.zkIvmRequest.request.metadata.contract_payload as Record<
+            string,
+            unknown
+          >
+        ).record_instruction,
+      ),
+    ).toMatch(/^0x4e525430[0-9a-f]+$/u);
+    expect(() =>
+      buildTairaXorTonOutboundPreview({
+        manifest: {},
+        tairaSender: TAIRA_SENDER,
+        tonRecipient: TON_RECIPIENT_ADDRESS,
+        amountDecimal: "2.25",
+        nonce: "7",
+      }),
+    ).toThrow(/TON bridge deployment address/);
+    expect(() =>
+      buildTairaXorTonOutboundBurnRecordRequest({
+        manifest: READY_TON_MANIFEST,
+        tairaSender: TAIRA_SENDER,
+        tonRecipient: `0:${"00".repeat(32)}`,
+        amountDecimal: "2.25",
+        nonce: "7",
+      }),
+    ).toThrow(/TON raw address account hash|TON raw recipient address/);
+  });
+
   it("binds TAIRA message proof jobs to TRON finalize proof requests", () => {
     const binding = buildTairaXorFinalizeProofBinding({
       manifest: READY_TRON_MANIFEST,
@@ -6216,6 +7115,248 @@ describe("SCCP helpers", () => {
         messageId: HEX32_D,
       }),
     ).toThrow(/requested message id/);
+  });
+
+  it("builds TON query material for TAIRA message proof jobs", () => {
+    const bundle = sampleTairaToTonJob().bundle as Record<string, unknown>;
+    expect(
+      buildTairaXorTonMessageProofJobQueryMaterial({
+        manifest: READY_TON_MANIFEST,
+        messageBundle: bundle,
+        messageId: TAIRA_TO_TON_MESSAGE_ID,
+      }),
+    ).toStrictEqual({});
+
+    expect(() =>
+      buildTairaXorTonMessageProofJobQueryMaterial({
+        manifest: READY_TON_MANIFEST,
+        messageBundle: bundle,
+        messageId: HEX32_D,
+      }),
+    ).toThrow(/requested message id/);
+
+    expect(
+      buildTairaXorTonMessageProofJobQueryMaterial({
+        manifest: {
+          ...READY_TON_MANIFEST,
+          tonFinalizeMessageValueNano: "",
+        },
+        messageBundle: bundle,
+        messageId: TAIRA_TO_TON_MESSAGE_ID,
+      }),
+    ).toStrictEqual({});
+  });
+
+  it("reads top-level TON settlement contract aliases from route manifests", () => {
+    expect(
+      buildTairaXorTonInboundSettlement({
+        manifest: {
+          ...READY_TON_MANIFEST,
+          settlementContractAlias: "taira_ton_xor_burn_record",
+        },
+      }),
+    ).toEqual({
+      entrypoint: "finalize_inbound",
+      route: SCCP_TON_XOR_ROUTE_ID,
+      contract_alias: "taira_ton_xor_burn_record::universal",
+    });
+  });
+
+  it("binds TAIRA message proof jobs to TON internal-message finalize requests", () => {
+    const binding = buildTairaXorTonFinalizeProofBinding({
+      manifest: READY_TON_MANIFEST,
+      job: sampleTairaToTonJob(),
+      messageId: TAIRA_TO_TON_MESSAGE_ID,
+      tairaSender: TAIRA_SENDER,
+      tonRecipient: TON_RECIPIENT_ADDRESS,
+      amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+    });
+
+    expect(binding).toMatchObject({
+      amountBaseUnits: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+      messageId: TAIRA_TO_TON_MESSAGE_ID,
+      payloadHash: TAIRA_TO_TON_PAYLOAD_HASH,
+      statementHash: HEX32_E,
+      destinationBindingHash: HEX32_C,
+      messageBodyBocHex: "0xb5ee9c72",
+      destinationBinding: {
+        key: READY_TON_MANIFEST.destinationBinding.key,
+        bindingHash: HEX32_C,
+      },
+    });
+    expect(binding.messageBundle.payload).toMatchObject({
+      kind: "Transfer",
+      value: {
+        recipient_codec: SCCP_CODEC_TON_RAW,
+        recipient: TON_RECIPIENT_ADDRESS,
+      },
+    });
+
+    expect(() =>
+      buildTairaXorTonFinalizeProofBinding({
+        manifest: READY_TON_MANIFEST,
+        job: sampleTairaToTonJob({
+          submissionPackage: {
+            ...(sampleTairaToTonJob().submissionPackage as Record<
+              string,
+              unknown
+            >),
+            arguments: [
+              {
+                key: "message_body_boc",
+                encoding: "ton_boc",
+                bytes: "b5ee9c73",
+              },
+            ],
+          },
+        }),
+        messageId: TAIRA_TO_TON_MESSAGE_ID,
+        tairaSender: TAIRA_SENDER,
+        tonRecipient: TON_RECIPIENT_ADDRESS,
+        amountDecimal: BRIDGE_AMOUNT_DECIMAL,
+      }),
+    ).toThrow(/message_body_boc argument does not match/);
+  });
+
+  it("splits oversized TON SCCP finalize payloads into wallet-safe chunk payloads", () => {
+    const body = new Uint8Array(188 * 1024);
+    body.set([0xb5, 0xee, 0x9c, 0x72]);
+    const plan = buildSccpTonChunkedMessageBodyBocsFromBytes({
+      messageBodyBocBytes: body,
+      messageId: TAIRA_TO_TON_MESSAGE_ID,
+      statementHash: HEX32_E,
+      destinationBindingHash: HEX32_C,
+    });
+
+    expect(plan.protocol).toBe("ton_sccp_chunked_message_body_boc_v1");
+    expect(plan.totalBytes).toBe(body.length);
+    expect(plan.chunkCount).toBeGreaterThan(1);
+    expect(plan.uploadMessages).toHaveLength(plan.chunkCount);
+    expect(plan.bodyHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(plan.chunkRoot).toMatch(/^0x[0-9a-f]{64}$/u);
+    for (const message of plan.uploadMessages) {
+      expect(message.payloadBocHex).toMatch(/^0xb5ee9c72/u);
+      expect(message.payloadBocBytes.length).toBeLessThanOrEqual(
+        SCCP_TON_WALLET_PAYLOAD_SAFE_BYTES_V1,
+      );
+    }
+    expect(plan.finalizeMessage.payloadBocHex).toMatch(/^0xb5ee9c72/u);
+    expect(plan.finalizeMessage.payloadBocBytes.length).toBeLessThanOrEqual(
+      SCCP_TON_WALLET_PAYLOAD_SAFE_BYTES_V1,
+    );
+  });
+
+  it("builds compact TON SCCP finalize payloads for protocol v2", () => {
+    const body = new Uint8Array(188 * 1024);
+    body.set([0xb5, 0xee, 0x9c, 0x72]);
+    const plan = buildSccpTonCompactFinalizeMessageBodyBocFromBytes({
+      messageBodyBocBytes: body,
+      messageId: TAIRA_TO_TON_MESSAGE_ID,
+      statementHash: HEX32_E,
+      destinationBindingHash: HEX32_C,
+    });
+
+    expect(plan.protocol).toBe("ton_sccp_compact_finalize_boc_v2");
+    expect(plan.protocolVersion).toBe(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2);
+    expect(plan.op).toBe(SCCP_TON_COMPACT_FINALIZE_OP);
+    expect(plan.totalBytes).toBe(body.length);
+    expect(plan.payloadBocBytes.length).toBeLessThan(512);
+    expect(plan.payloadBocHex).toMatch(/^0xb5ee9c72/u);
+    expect(plan.bodyHash).toMatch(/^0x[0-9a-f]{64}$/u);
+    expect(plan.proofDigest).toMatch(/^0x[0-9a-f]{64}$/u);
+
+    const [cell] = Cell.fromBoc(Buffer.from(plan.payloadBocBytes));
+    const slice = cell.beginParse();
+    expect(slice.loadUint(32)).toBe(SCCP_TON_COMPACT_FINALIZE_OP);
+    expect(slice.loadUintBig(64).toString()).toBe(plan.queryId);
+    expect(slice.loadUint(16)).toBe(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2);
+    expect(`0x${slice.loadUintBig(256).toString(16).padStart(64, "0")}`).toBe(
+      TAIRA_TO_TON_MESSAGE_ID,
+    );
+    expect(`0x${slice.loadUintBig(256).toString(16).padStart(64, "0")}`).toBe(
+      plan.bodyHash,
+    );
+    const details = slice.loadRef().beginParse();
+    expect(`0x${details.loadUintBig(256).toString(16).padStart(64, "0")}`).toBe(
+      HEX32_E,
+    );
+    expect(`0x${details.loadUintBig(256).toString(16).padStart(64, "0")}`).toBe(
+      HEX32_C,
+    );
+    expect(`0x${details.loadUintBig(256).toString(16).padStart(64, "0")}`).toBe(
+      plan.proofDigest,
+    );
+    expect(details.loadUint(32)).toBe(body.length);
+  });
+
+  it("defaults TON verifier protocol to chunked v1 and accepts compact v2", () => {
+    expect(readSccpTonVerifierProtocolVersion(READY_TON_MANIFEST)).toBe(
+      SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1,
+    );
+    expect(
+      readSccpTonVerifierProtocolVersion({
+        ...READY_TON_MANIFEST,
+        destinationRollout: {
+          ...READY_TON_MANIFEST.destinationRollout,
+          verifierProtocolVersion: SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2,
+        },
+      }),
+    ).toBe(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2);
+    expect(() =>
+      readSccpTonVerifierProtocolVersion({
+        ...READY_TON_MANIFEST,
+      tonVerifierProtocolVersion: 9,
+    }),
+  ).toThrow(/protocol version must be 1 or 2/u);
+    expect(
+      readSccpTonVerifierProtocolVersion({
+        ...READY_TON_MANIFEST,
+        destinationRollout: {
+          ...READY_TON_MANIFEST.destinationRollout,
+          verifierCodeHash:
+            "0x84ab53f938152334f4b02a6af0a7b6af0d1d8e591f1ce24defe6f955865432bf",
+        },
+      }),
+    ).toBe(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2);
+    expect(
+      readSccpTonVerifierProtocolVersion({
+        ...READY_TON_MANIFEST,
+        destinationRollout: undefined,
+        destination_verifier_address:
+          "0:259a28e21ab5b549cf253baa0ca3eb683a34674e04f46b32fca5c2bda4c0b58b",
+      }),
+    ).toBe(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2);
+  });
+
+  it("packs current TON proof chunks into TON-safe wallet approval batches", () => {
+    const uploadMessages = Array.from({ length: 8 }, (_, index) => ({
+      index,
+      payloadSizeBytes: index === 7 ? 17 * 1024 : 25 * 1024,
+    }));
+
+    const batches = chunkSccpTonUploadMessages(uploadMessages, 2, 56 * 1024);
+
+    expect(batches).toHaveLength(4);
+    expect(batches.map((batch) => batch.map((entry) => entry.index))).toEqual([
+      [0, 1],
+      [2, 3],
+      [4, 5],
+      [6, 7],
+    ]);
+  });
+
+  it("rewrites the deployed TON source prover dev path to the packaged module", () => {
+    expect(
+      readSccpTonSourceProverModuleUrl({
+        ...READY_TON_MANIFEST,
+        sourceBrowserProver: {
+          moduleUrl: "./src/provers/sccp-ton-source-prover.js",
+        },
+      }),
+    ).toBe(SCCP_TON_TESTNET_SOURCE_PROVER_MODULE_URL);
+    expect(readSccpTonSourceProverModuleUrl(READY_TON_MANIFEST)).toBe(
+      "/sccp-ton/source-prover.js",
+    );
   });
 
   it("binds TAIRA message proof jobs to BSC finalize proof requests", () => {
@@ -7810,7 +8951,7 @@ describe("SCCP helpers", () => {
     ).toEqual({
       entrypoint: "finalize_inbound",
       route: "taira_tron_xor",
-      contract_alias: "sccp.taira_xor",
+      contract_alias: "sccp.taira_xor::universal",
       gas_limit: 1000,
     });
     expect(
@@ -7865,7 +9006,7 @@ describe("SCCP helpers", () => {
             string,
             unknown
           >;
-          settlement.contract_alias = manifestSettlementAlias;
+          settlement.contract_alias = `${manifestSettlementAlias}::universal`;
         }),
         txId: TRON_TX_ID,
         tronSender: VALID_TRON_ADDRESS,
@@ -7875,7 +9016,7 @@ describe("SCCP helpers", () => {
     ).toMatchObject({
       entrypoint: "finalize_inbound",
       route: "taira_tron_xor",
-      contract_alias: manifestSettlementAlias,
+      contract_alias: `${manifestSettlementAlias}::universal`,
     });
 
     expect(() =>
@@ -8302,7 +9443,7 @@ describe("SCCP helpers", () => {
     ).toEqual({
       entrypoint: "finalize_inbound",
       route: "taira_bsc_xor",
-      contract_alias: manifestSettlementAlias,
+      contract_alias: `${manifestSettlementAlias}::universal`,
     });
     const accessorBscManifest = { ...READY_BSC_MANIFEST };
     const bscManifestReads: string[] = [];
@@ -8343,7 +9484,7 @@ describe("SCCP helpers", () => {
             string,
             unknown
           >;
-          settlement.contract_alias = manifestSettlementAlias;
+          settlement.contract_alias = `${manifestSettlementAlias}::universal`;
         }),
         txId: BSC_SOURCE_TX_HASH,
         bscSender: BSC_SENDER_ADDRESS,
@@ -8351,7 +9492,7 @@ describe("SCCP helpers", () => {
         amountDecimal: BRIDGE_AMOUNT_DECIMAL,
       }).settlement,
     ).toMatchObject({
-      contract_alias: manifestSettlementAlias,
+      contract_alias: `${manifestSettlementAlias}::universal`,
       route: "taira_bsc_xor",
       entrypoint: "finalize_inbound",
     });
@@ -9420,7 +10561,24 @@ describe("SCCP proof package helpers", () => {
     const transferPayload =
       targetDomain === SCCP_BSC_DOMAIN
         ? TAIRA_TO_BSC_TRANSFER_PAYLOAD
-        : TAIRA_TO_TRON_TRANSFER_PAYLOAD;
+        : targetDomain === SCCP_TON_DOMAIN
+          ? {
+              version: 1,
+              source_domain: SCCP_SORA_DOMAIN,
+              dest_domain: SCCP_TON_DOMAIN,
+              nonce: "7",
+              asset_home_domain: SCCP_SORA_DOMAIN,
+              asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+              asset_id: "xor",
+              amount: "2250000000",
+              sender_codec: SCCP_CODEC_TEXT_UTF8,
+              sender: TAIRA_SENDER,
+              recipient_codec: SCCP_CODEC_TON_RAW,
+              recipient: TON_RECIPIENT_ADDRESS,
+              route_id_codec: SCCP_CODEC_TEXT_UTF8,
+              route_id: SCCP_TON_XOR_ROUTE_ID,
+            }
+          : TAIRA_TO_TRON_TRANSFER_PAYLOAD;
     const payload = {
       kind: "Transfer" as const,
       value: transferPayload,
@@ -9478,6 +10636,15 @@ describe("SCCP proof package helpers", () => {
     statementHash: HEX32_E,
     destinationBinding: BSC_DESTINATION_BINDING,
     destinationBindingHash: BSC_DESTINATION_BINDING.bindingHash,
+  });
+
+  const tonPackageWitness = () => ({
+    ...destinationProofBundleFixture(SCCP_TON_DOMAIN),
+    statementHash: HEX32_E,
+    destinationBindingHash: HEX32_C,
+    sourceStateVerifierHash: HEX32_A,
+    sourceAdapterDeploymentHash: HEX32_B,
+    sourceAdapterDeploymentReceiptHash: HEX32_D,
   });
 
   const wrappedBscProofResult = (
@@ -9700,6 +10867,24 @@ describe("SCCP proof package helpers", () => {
     expect(nativeBoundResult.request).toMatchObject({
       nativeEvmProverBundleHash:
         BSC_SOURCE_PROVER_MATERIAL_BINDING.nativeEvmProverBundleHash,
+    });
+  });
+
+  it("builds canonical TON proof requests before proof bytes are available", () => {
+    const witness = tonPackageWitness();
+    const result = buildTonSccpProofPackage({
+      witness,
+    });
+
+    expect(result.submission).toBeNull();
+    expect(result.request).toMatchObject({
+      version: 1,
+      targetDomain: SCCP_TON_DOMAIN,
+      bundleBytes: bytesToHex(witness.bundleBytes),
+      sourceProofBytes: "0x",
+      statementHash: HEX32_E,
+      destinationBindingHash: HEX32_C,
+      sourceStateVerifierHash: HEX32_A,
     });
   });
 
@@ -9926,6 +11111,16 @@ describe("SCCP proof package helpers", () => {
       }),
     ).rejects.toMatchObject({
       code: "ERR_SCCP_BSC_PROVER_UNAVAILABLE",
+    });
+  });
+
+  it("reports missing browser-safe TON prover before proof generation", async () => {
+    await expect(
+      generateTonSccpProofPackage({
+        witness: tonPackageWitness(),
+      }),
+    ).rejects.toMatchObject({
+      code: "ERR_SCCP_TON_PROVER_UNAVAILABLE",
     });
   });
 

@@ -1,0 +1,56 @@
+{
+  "submitted": true,
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "authority": "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "hash": "321708181825d5d3c84a9d4404c4f57090f0ee7f1d06c4b5988c4957b7d9e185",
+  "statusKind": "Queued",
+  "status": {
+    "local": {
+      "hash": "321708181825d5d3c84a9d4404c4f57090f0ee7f1d06c4b5988c4957b7d9e185",
+      "status": {
+        "kind": "Queued",
+        "content": null
+      },
+      "summary": "Queued",
+      "scope": "local",
+      "resolved_from": "cache",
+      "routes": [],
+      "kind": "Transaction",
+      "content": {
+        "hash": "321708181825d5d3c84a9d4404c4f57090f0ee7f1d06c4b5988c4957b7d9e185",
+        "status": {
+          "kind": "Queued",
+          "content": null
+        }
+      }
+    },
+    "global": null,
+    "auto": null
+  },
+  "receipt": {
+    "payload": {
+      "tx_hash": "hash:321708181825D5D3C84A9D4404C4F57090F0EE7F1D06C4B5988C4957B7D9E185#A682",
+      "entrypoint_hash": "hash:321708181825D5D3C84A9D4404C4F57090F0EE7F1D06C4B5988C4957B7D9E185#A682",
+      "signed_transaction_hash": "hash:321708181825D5D3C84A9D4404C4F57090F0EE7F1D06C4B5988C4957B7D9E185#A682",
+      "submitted_at_ms": 1783040207174,
+      "submitted_at_height": 906,
+      "signer": "e70121037A89603F2D6F521A05596C166FF96EF447F7DCD9B3230BD57C1BCEF0064E7B0E"
+    },
+    "signature": "B77819D7D29070D8EDFCBE64D17E6AB44588D6562B87EDC46EEE26E8791F06B408549E5DB2061A7FE16B9EB6C1EB22FA04DD2AD14907454CEAEA228A916BE363"
+  },
+  "encoding": "application/x-norito",
+  "submitError": null,
+  "isiPath": "artifacts/sccp-ton/testnet-taira-xor-route.upsert-isi.json",
+  "metadata": {
+    "action": "publish_sccp_route_manifest",
+    "route_id": "taira_ton_xor",
+    "asset_key": "xor",
+    "gas_asset_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    "gas_limit": 5000000
+  },
+  "ttlMs": 900000,
+  "nonce": 729820809,
+  "waitForCommit": true,
+  "commitTimeoutMs": 240000
+}

@@ -1,0 +1,23 @@
+{
+  "submitted": false,
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "authority": "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "hash": "beea0d539521d669df5b85c403f72bef5c34faf5d90d794e5c372b616fedfc51",
+  "statusKind": null,
+  "status": null,
+  "receipt": null,
+  "submitError": "Torii responded with HTTP 400 (expected 200, 201, 202, 204): NRT0\u0000\u0000y?\u0011v�v��p�z�u,�\u0000�\u0000\u0000\u0000\u0000\u0000\u0000\u0000M�}]\rb]�\u0002\u001c\u001binvalid_transaction_payload~}transaction payload could not be decoded: Could not decode versioned request: Norito (de)serialization issue: length mismatch\u0001\u0000",
+  "isiPath": "artifacts/sccp-ton/testnet-taira-xor-route.upsert-isi.json",
+  "metadata": {
+    "action": "publish_sccp_route_manifest",
+    "route_id": "taira_ton_xor",
+    "asset_key": "xor",
+    "gas_asset_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    "gas_limit": 2000000
+  },
+  "ttlMs": 600000,
+  "nonce": 425972240,
+  "waitForCommit": true,
+  "commitTimeoutMs": 180000
+}

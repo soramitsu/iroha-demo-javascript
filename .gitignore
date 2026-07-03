@@ -34,3 +34,17 @@ yarn-error.log*
 /native/**/build-sign-test*
 /native/**/xcode-derived-data*
 /native/**/*.xcodeproj
+
+# Acton related files
+.acton/
+gen/
+build/
+lcov.info
+libraries.toml
+global.libraries.toml
+
+# Mnemonic and wallet files
+.env
+*.mnemonic
+wallets.toml
+global.wallets.toml

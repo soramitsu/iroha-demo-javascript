@@ -1,0 +1,46 @@
+{
+  "submitted": true,
+  "toriiUrl": "http://208.83.1.62:29080",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "authority": "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "hash": "8a2e2d015f09c2d94713e16782874f4b418f71fc05484647740f53dfd2a7214d",
+  "statusKind": "Queued",
+  "status": {
+    "local": {
+      "hash": "8a2e2d015f09c2d94713e16782874f4b418f71fc05484647740f53dfd2a7214d",
+      "status": {
+        "kind": "Queued",
+        "content": null
+      },
+      "summary": "Queued",
+      "scope": "local",
+      "resolved_from": "cache",
+      "routes": [],
+      "kind": "Transaction",
+      "content": {
+        "hash": "8a2e2d015f09c2d94713e16782874f4b418f71fc05484647740f53dfd2a7214d",
+        "status": {
+          "kind": "Queued",
+          "content": null
+        }
+      }
+    },
+    "global": null,
+    "auto": null
+  },
+  "receipt": null,
+  "encoding": "application/json",
+  "submitError": null,
+  "parameterPath": "artifacts/sccp-ton/testnet-taira-ton-lane-material.parameter.json",
+  "metadata": {
+    "action": "publish_sccp_ton_lane_materials",
+    "route_id": "taira_ton_xor",
+    "asset_key": "xor",
+    "gas_asset_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    "gas_limit": 5000000
+  },
+  "ttlMs": 1200000,
+  "nonce": 2011885805,
+  "waitForCommit": true,
+  "commitTimeoutMs": 600000
+}

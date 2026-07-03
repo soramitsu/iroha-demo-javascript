@@ -1717,6 +1717,32 @@ describe("SccpView", () => {
     expect(getTronAccountMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces TAIRA endpoint outages instead of reporting a missing route", async () => {
+    getSccpCapabilitiesMock.mockRejectedValueOnce(
+      new Error("Torii responded with HTTP 502 Bad Gateway"),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("TAIRA Torii is unavailable");
+    expect(wrapper.text()).toContain("HTTP 502 Bad Gateway");
+    expect(wrapper.text()).not.toContain("No TRON SCCP manifest");
+    expect(wrapper.text()).not.toContain(
+      "SCCP capabilities have not been loaded",
+    );
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> TRON"));
+    expect(prepareButton).toBeTruthy();
+    expect(prepareButton!.attributes("disabled")).toBeDefined();
+    expect(listSccpRecentMessagesMock).not.toHaveBeenCalled();
+  });
+
   it("keeps loaded SCCP routes when parameters are unavailable", async () => {
     getParametersMock.mockRejectedValueOnce(
       new Error("parameters unavailable"),
@@ -4023,11 +4049,11 @@ describe("SccpView", () => {
     expect(wrapper.text()).toContain("Waiting for SCCP proof job indexing");
     expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(250);
     await flushPromises();
     expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(2);
 
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(250);
     await submitPromise;
     await vi.dynamicImportSettled();
     await flushPromises();
@@ -4102,14 +4128,14 @@ describe("SccpView", () => {
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
 
-    for (let attempt = 1; attempt < 80; attempt += 1) {
+    for (let attempt = 1; attempt < 130; attempt += 1) {
       await vi.advanceTimersByTimeAsync(3_000);
       await flushPromises();
     }
     await submitPromise;
     await flushPromises();
 
-    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(80);
+    expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(110);
     expect(wrapper.text()).toContain(
       "Timed out waiting for Torii to index the SCCP proof job.",
     );
@@ -4234,11 +4260,26 @@ describe("SccpView", () => {
     await vi.dynamicImportSettled();
     await flushPromises();
 
+    expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
+    expect(startZkIvmProveJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        authority: TAIRA_ACCOUNT_ID,
+      }),
+    );
+    const proveRequest = startZkIvmProveJobMock.mock.calls.at(-1)?.[0] as
+      | Record<string, unknown>
+      | undefined;
+    expect(proveRequest).not.toHaveProperty("proved");
+    expect(wrapper.text()).toContain("TAIRA proof job queue");
+    expect(wrapper.text()).toContain("TAIRA proof generation");
+
     expect(submitZkIvmProvedTransactionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         chainId: TAIRA_CHAIN_ID,
         accountId: TAIRA_ACCOUNT_ID,
+        waitForCommit: false,
       }),
     );
     expect(getSccpMessageProofJobMock).toHaveBeenCalledWith(

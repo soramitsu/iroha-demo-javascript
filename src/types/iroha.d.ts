@@ -899,6 +899,13 @@ export interface SccpBscSourceProofGenerateInput {
   timeoutMs?: number;
 }
 
+export interface SccpSourceProofDeploymentRebuildInput {
+  proofPackage: Record<string, unknown>;
+  sourceVerifierMaterial: Record<string, unknown>;
+  sourceAdapterEngineDeployment: Record<string, unknown>;
+  label?: string;
+}
+
 export interface SccpBridgeProofSubmitInput
   extends SccpDestinationProofMaterialInput {
   toriiUrl: string;
@@ -956,6 +963,7 @@ export interface ZkIvmProvedTransactionSubmitInput {
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  waitForCommit?: boolean;
   creationTimeMs?: number;
   ttlMs?: number;
   nonce?: number;
@@ -1261,6 +1269,8 @@ export interface SigningAlgorithmOption {
 export interface RuntimeConfigResponse {
   walletConnectProjectId: string;
   sccpBscE2eWallet: string;
+  sccpTonE2eWallet: string;
+  sccpTonConnectManifestUrl: string;
 }
 
 export interface IrohaBridge {
@@ -1786,6 +1796,12 @@ export interface IrohaBridge {
   ): Promise<Record<string, unknown>>;
   proveBscSccpSourceProof(
     input: SccpBscSourceProofGenerateInput,
+  ): Promise<Record<string, unknown>>;
+  rebuildSccpMessageBundleSourceProofWithDeployment(
+    input: SccpSourceProofDeploymentRebuildInput,
+  ): Promise<Record<string, unknown>>;
+  buildTonSccpMessageBundleSourceProofWithDeployment(
+    input: SccpSourceProofDeploymentRebuildInput,
   ): Promise<Record<string, unknown>>;
   submitSccpBridgeProof(
     input: SccpBridgeProofSubmitInput,

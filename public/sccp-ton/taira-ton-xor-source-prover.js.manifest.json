@@ -1,0 +1,23 @@
+{
+  "schema": "iroha-sccp-ton-source-browser-prover-manifest/v1",
+  "moduleUrl": "/sccp-ton/taira-ton-xor-source-prover.js",
+  "kind": "ton-source",
+  "direction": "ton-to-taira",
+  "exports": [
+    "proveTonSccpSource",
+    "irohaSccpTonSourceProve",
+    "tonSccpSourceProve",
+    "proveTonSource"
+  ],
+  "routeId": "taira_ton_xor",
+  "assetKey": "xor",
+  "tairaChainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "tairaNetworkPrefix": 369,
+  "tonNetwork": "testnet",
+  "tonChain": "ton-testnet",
+  "tonChainIdHex": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd",
+  "moduleSha256": "0x9086444ed76b601f9c82544866ec2fd9092d7b8c18ea9bc66131e8ecf3bf8fd4",
+  "boundRouteHash": "0x8651c1b818973f92050f69e66e8491e9681d23db1cb37393b9ea15c5e7e02799",
+  "boundProofHash": "0x0f1aa16d7496e1c04ebc773f62616c3f2df4c85839f4f825d95255f229f7d824",
+  "manifestSha256": "0xd58c87c1990cba84a39312a3772ef72099f1674e0dc66c1873527e5a90738e42"
+}

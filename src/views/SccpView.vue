@@ -34,6 +34,14 @@
             >
               {{ routeBscNetworkLabel }}
             </button>
+            <button
+              type="button"
+              class="secondary"
+              :class="{ active: selectedCounterparty === 'ton' }"
+              @click="selectCounterparty('ton')"
+            >
+              {{ routeTonNetworkLabel }}
+            </button>
           </div>
           <button
             type="button"
@@ -53,23 +61,27 @@
             {{
               activeWalletDisconnecting
                 ? t("Disconnecting")
-                : isBscRoute
-                  ? t("Disconnect BSC")
-                  : t("Disconnect TRON")
+                : isTonRoute
+                  ? t("Disconnect TON")
+                  : isBscRoute
+                    ? t("Disconnect BSC")
+                    : t("Disconnect TRON")
             }}
           </button>
           <button
             v-else
             type="button"
-            :disabled="tronConnectDisabled"
+            :disabled="counterpartyConnectDisabled"
             @click="connectCounterparty"
           >
             {{
               activeWalletConnecting
                 ? t("Connecting")
-                : isBscRoute
-                  ? t("Connect BSC wallet")
-                  : t("Connect TRON wallet")
+                : isTonRoute
+                  ? t("Connect TON wallet")
+                  : isBscRoute
+                    ? t("Connect BSC wallet")
+                    : t("Connect TRON wallet")
             }}
           </button>
         </div>
@@ -179,11 +191,18 @@
             :placeholder="t('TRON Base58Check address')"
           />
           <input
-            v-else
+            v-else-if="isBscRoute"
             v-model.trim="bscRecipient"
             type="text"
             autocomplete="off"
             :placeholder="t('0x... BSC address')"
+          />
+          <input
+            v-else
+            v-model.trim="tonRecipient"
+            type="text"
+            autocomplete="off"
+            :placeholder="t('0:... TON raw address')"
           />
         </label>
         <label v-else>
@@ -251,9 +270,19 @@
             :class="phase.state"
           >
             <span>{{ t(phase.label) }}</span>
-            <small>{{ t(phase.detail) }}</small>
+            <small>{{ formatProofPhaseDetail(phase) }}</small>
           </li>
         </ol>
+        <ul v-if="proofTimingRows.length" class="sccp-timing-list">
+          <li
+            v-for="timing in proofTimingRows"
+            :key="timing.key"
+            :class="timing.state"
+          >
+            <span>{{ t(timing.label) }}</span>
+            <small>{{ formatProofTimingRow(timing) }}</small>
+          </li>
+        </ul>
       </section>
 
       <section class="card sccp-activity-card">
@@ -313,12 +342,23 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { blake2b } from "@noble/hashes/blake2b";
+import {
+  buildSccpTonChunkedMessageBodyBocsFromBytes,
+  canonicalSccpPayloadEnvelopeBytes,
+  sccpMerkleRootFromCommitment,
+  sccpPayloadHash,
+  tairaXorTonToTairaTransferMessageId,
+  buildTairaXorTonToTairaTransferPayload,
+} from "@iroha/iroha-js/sccp";
+import { beginCell } from "@ton/core";
+import { CHAIN, toUserFriendlyAddress } from "@tonconnect/sdk";
 import { useSessionStore } from "@/stores/session";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSccpBridge } from "@/composables/useSccpBridge";
 import { useBscWalletConnect } from "@/composables/useBscWalletConnect";
+import { useTonWalletConnect } from "@/composables/useTonWalletConnect";
 import { useTronWalletConnect } from "@/composables/useTronWalletConnect";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import {
@@ -352,8 +392,10 @@ import {
   isLikelyTairaAccount,
   isTairaSccpNetwork,
   normalizeBscAddress,
+  normalizeTonRawAddress,
   normalizeTronAddress,
   isValidBscAddress,
+  isValidTonRawAddress,
   isValidTronBase58CheckAddress,
   bindTronFinalitySnapshot,
   bindSignedTronTransactionForBroadcast,
@@ -362,9 +404,13 @@ import {
   bindTronToTairaSourceProofPackage,
   bindBscSourceDataForProof,
   bindBscToTairaSourceProofPackage,
+  bindTonToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
+  readTonSourceProverMaterialBinding,
   bindUnsignedTronSmartContractTransaction,
   buildSccpMessageBundleSubmitPayload,
+  buildSccpTonCompactFinalizeMessageBodyBocFromBytes,
+  chunkSccpTonUploadMessages,
   buildTairaExplorerTransactionUrl,
   buildTairaXorBurnTriggerRequest,
   buildTairaXorBscBurnTransactionRequest,
@@ -372,6 +418,9 @@ import {
   buildTairaXorBscFinalizeTransactionRequest,
   buildTairaXorBscMessageProofJobQueryMaterial,
   buildTairaXorBscOutboundBurnRecordRequest,
+  buildTairaXorTonFinalizeProofBinding,
+  buildTairaXorTonMessageProofJobQueryMaterial,
+  buildTairaXorTonOutboundBurnRecordRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
   evmFunctionSelector,
@@ -386,6 +435,7 @@ import {
   normalizeBscTransactionHash,
   normalizeSccpMessageId,
   normalizeTairaTransactionHash,
+  normalizeTonTransactionHash,
   normalizeTronTransactionId,
   readTronAccountBalanceSun,
   readTronConstantUint256,
@@ -397,11 +447,24 @@ import {
   readSccpBscSourceBridgeAddress,
   readSccpBscSourceProverModuleUrl,
   readSccpBscTokenAddress,
+  readSccpTairaBurnRecordMaterial,
+  readSccpTonBridgeAddress,
+  readSccpTonFinalizeMessageValueNano,
+  readSccpTonProofMaterial,
+  readSccpTonSourceBridgeAddress,
+  readSccpTonSourceProverModuleUrl,
+  readSccpTonTokenAddress,
+  readSccpTonVerifierAddress,
+  readSccpTonVerifierProtocolVersion,
   readSccpTronGatewayEndpoint,
   SCCP_EVM_SOURCE_EVENT_TOPIC,
   SCCP_BSC_NETWORK,
   SCCP_BSC_TOKEN_SYMBOL,
   SCCP_ROUTE_PROFILES,
+  SCCP_TON_DOMAIN,
+  SCCP_TON_NETWORK,
+  SCCP_TON_TOKEN_SYMBOL,
+  SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2,
   SCCP_TRON_NETWORK,
   SCCP_XOR_ASSET_KEY,
   SCCP_TRON_TOKEN_SYMBOL,
@@ -411,6 +474,8 @@ import {
   type SccpBridgeDirection,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
+  type TonToTairaSourceProofPackage,
+  type TonToTairaSourceProofPackageInput,
   type TronToTairaSourceProofPackage,
   type TronToTairaSourceProofPackageInput,
 } from "@/utils/sccp";
@@ -431,11 +496,13 @@ const activeRoute = computed(
 const bridge = useSccpBridge(activeRoute);
 const tron = useTronWalletConnect();
 const bsc = useBscWalletConnect();
+const ton = useTonWalletConnect();
 
 const direction = ref<SccpBridgeDirection>("taira-to-tron");
 const amount = ref("");
 const tronRecipient = ref("");
 const bscRecipient = ref("");
+const tonRecipient = ref("");
 const tairaRecipient = ref(session.activeAccount?.accountId ?? "");
 const messageId = ref("");
 const tronTxId = ref("");
@@ -450,71 +517,151 @@ const bscBalanceLoading = ref(false);
 const bscBnbBalanceWei = ref<string | null>(null);
 const bscXorBalanceBaseUnits = ref<string | null>(null);
 const bscBalanceError = ref("");
+const tonBalanceError = ref("");
 const transactionLinks = ref<Array<{ label: string; href: string }>>([]);
-const proofPhases = ref([
+type ProofPhaseState = "pending" | "active" | "complete" | "failed";
+
+type ProofPhase = {
+  phaseId: string;
+  label: string;
+  detail: string;
+  state: ProofPhaseState;
+  startedAtMs?: number;
+  completedAtMs?: number;
+  durationMs?: number;
+};
+
+type ProofTimingEvent = {
+  phaseId: string;
+  label: string;
+  detail: string;
+  state: "active" | "complete" | "failed" | "skipped";
+  startedAtMs: number;
+  completedAtMs?: number;
+  durationMs?: number;
+  metadata?: Record<string, unknown>;
+};
+
+const createInitialProofPhases = (): ProofPhase[] => [
   {
+    phaseId: "validate-route",
     label: "Validate route",
     detail: "Waiting for route readiness",
     state: "pending",
   },
   {
+    phaseId: "gather-chain-data",
     label: "Gather chain data",
     detail: "Waiting for source transaction data",
     state: "pending",
   },
   {
+    phaseId: "generate-proof",
     label: "Generate proof",
     detail: "Worker idle",
     state: "pending",
   },
   {
+    phaseId: "submit-target-leg",
     label: "Submit target leg",
     detail: "Waiting for wallet approval",
     state: "pending",
   },
-]);
+];
+
+const proofPhases = ref<ProofPhase[]>(createInitialProofPhases());
+const proofTimings = ref<ProofTimingEvent[]>([]);
+const proofTimingNowMs = ref(Date.now());
+let proofTimingTicker: number | null = null;
 const SCCP_PROOF_WORKER_TIMEOUT_MS = 120_000;
-const SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS = 80;
-const SCCP_PROOF_JOB_INDEXING_POLL_MS = 3_000;
+const SCCP_PROOF_JOB_INDEXING_POLL_ATTEMPTS = 110;
+const SCCP_PROOF_JOB_INDEXING_FAST_POLL_MS = 250;
+const SCCP_PROOF_JOB_INDEXING_MEDIUM_POLL_MS = 1_000;
+const SCCP_PROOF_JOB_INDEXING_SLOW_POLL_MS = 3_000;
+const SCCP_ZK_IVM_PROOF_FAST_POLL_MS = 500;
+const SCCP_ZK_IVM_PROOF_MEDIUM_POLL_MS = 1_000;
+const SCCP_ZK_IVM_PROOF_SLOW_POLL_MS = 3_000;
 const SCCP_TRON_SOURCE_DATA_POLL_ATTEMPTS = 40;
 const SCCP_TRON_SOURCE_DATA_POLL_MS = 3_000;
 const SCCP_BSC_CONFIRMATION_POLL_ATTEMPTS = 40;
 const SCCP_BSC_CONFIRMATION_POLL_MS = 3_000;
 const SCCP_BSC_SOURCE_DATA_POLL_ATTEMPTS = 40;
 const SCCP_BSC_SOURCE_DATA_POLL_MS = 3_000;
+const SCCP_TON_SOURCE_MESSAGE_VALUE_NANO = "250000";
+const SCCP_TON_CHUNK_UPLOAD_MESSAGE_VALUE_NANO = "250000";
+const SCCP_TON_CHUNK_SIZE_BYTES = 24 * 1024;
+const SCCP_TON_UPLOAD_APPROVAL_MAX_MESSAGES = 2;
+const SCCP_TON_UPLOAD_APPROVAL_MAX_PAYLOAD_BYTES = 56 * 1024;
+const SCCP_TON_SOURCE_RECORD_OP = 0x53434353;
 
 const isTairaRoute = computed(() => isTairaSccpNetwork(session.connection));
 const isTronRoute = computed(() => selectedCounterparty.value === "tron");
 const isBscRoute = computed(() => selectedCounterparty.value === "bsc");
+const isTonRoute = computed(() => selectedCounterparty.value === "ton");
 const routeBscNetworkLabel = computed(() => t(SCCP_BSC_NETWORK.label));
+const routeTonNetworkLabel = computed(() => t(SCCP_TON_NETWORK.label));
 const routeNetworkLabel = computed(() =>
-  isBscRoute.value ? SCCP_BSC_NETWORK.label : SCCP_TRON_NETWORK.label,
+  isTonRoute.value
+    ? SCCP_TON_NETWORK.label
+    : isBscRoute.value
+      ? SCCP_BSC_NETWORK.label
+      : SCCP_TRON_NETWORK.label,
 );
 const activeWalletLabel = computed(() =>
-  isBscRoute.value ? t("BSC wallet") : t("TRON wallet"),
+  isTonRoute.value
+    ? t("TON wallet")
+    : isBscRoute.value
+      ? t("BSC wallet")
+      : t("TRON wallet"),
 );
 const activeWalletShortAddress = computed(() =>
-  isBscRoute.value ? bsc.shortAddress.value : tron.shortAddress.value,
+  isTonRoute.value
+    ? ton.shortAddress.value
+    : isBscRoute.value
+      ? bsc.shortAddress.value
+      : tron.shortAddress.value,
 );
 const activeProjectConfigured = computed(() =>
-  isBscRoute.value ? bsc.projectConfigured.value : tron.projectConfigured.value,
+  isTonRoute.value
+    ? ton.projectConfigured.value
+    : isBscRoute.value
+      ? bsc.projectConfigured.value
+      : tron.projectConfigured.value,
 );
 const activeProjectConfigurationError = computed(() =>
-  isBscRoute.value
-    ? bsc.projectConfigurationError.value
-    : tron.projectConfigurationError.value,
+  isTonRoute.value
+    ? ton.projectConfigurationError.value
+    : isBscRoute.value
+      ? bsc.projectConfigurationError.value
+      : tron.projectConfigurationError.value,
 );
 const activeWalletConnected = computed(() =>
-  isBscRoute.value ? bsc.connected.value : tron.connected.value,
+  isTonRoute.value
+    ? ton.connected.value
+    : isBscRoute.value
+      ? bsc.connected.value
+      : tron.connected.value,
 );
 const activeWalletConnecting = computed(() =>
-  isBscRoute.value ? bsc.connecting.value : tron.connecting.value,
+  isTonRoute.value
+    ? ton.connecting.value
+    : isBscRoute.value
+      ? bsc.connecting.value
+      : tron.connecting.value,
 );
 const activeWalletDisconnecting = computed(() =>
-  isBscRoute.value ? bsc.disconnecting.value : tron.disconnecting.value,
+  isTonRoute.value
+    ? ton.disconnecting.value
+    : isBscRoute.value
+      ? bsc.disconnecting.value
+      : tron.disconnecting.value,
 );
 const activeWalletError = computed(() =>
-  isBscRoute.value ? bsc.error.value : tron.error.value,
+  isTonRoute.value
+    ? ton.error.value
+    : isBscRoute.value
+      ? bsc.error.value
+      : tron.error.value,
 );
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(
@@ -527,7 +674,7 @@ const routeStatusLabel = computed(() => {
   if (!isTairaRoute.value) {
     return t("Unavailable on this network");
   }
-  if (bridge.readiness.value.ready) {
+  if (routeReadyForAction.value) {
     return t("Route ready");
   }
   if (bridge.loading.value) {
@@ -536,14 +683,24 @@ const routeStatusLabel = computed(() => {
   return t("Route not ready");
 });
 const routeTone = computed(() => ({
-  positive: bridge.readiness.value.ready,
-  warning: !bridge.readiness.value.ready && isTairaRoute.value,
+  positive: routeReadyForAction.value,
+  warning: !routeReadyForAction.value && isTairaRoute.value,
 }));
 const routeMessages = computed(() => {
   if (!isTairaRoute.value) {
     return ["SCCP bridging is enabled only on TAIRA testnet."];
   }
-  return bridge.readiness.value.reasons;
+  if (
+    isTonRoute.value &&
+    direction.value === "taira-to-ton" &&
+    routeReadyForAction.value &&
+    bridge.readiness.value.reasons.length > 0
+  ) {
+    return [
+      "TON destination leg is ready for TAIRA -> TON. The TON -> TAIRA tab will stay unavailable until the source proof lane is live.",
+    ];
+  }
+  return routeBlockingMessages.value;
 });
 const xorBalanceLabel = computed(() => {
   const balance = bridge.balances.value.find((item) =>
@@ -602,45 +759,287 @@ const bscXorBalanceLabel = computed(() => {
   }
   return `${formatBaseUnitAmount(bscXorBalanceBaseUnits.value)} ${SCCP_BSC_TOKEN_SYMBOL}`;
 });
+const tonTonBalanceLabel = computed(() =>
+  ton.connected.value ? t("Not loaded") : t("Not connected"),
+);
+const tonXorBalanceLabel = computed(() =>
+  ton.connected.value ? t("Not loaded") : t("Not connected"),
+);
 const counterpartyGasBalanceLabel = computed(() =>
-  isBscRoute.value ? bscBnbBalanceLabel.value : tronTrxBalanceLabel.value,
+  isTonRoute.value
+    ? tonTonBalanceLabel.value
+    : isBscRoute.value
+      ? bscBnbBalanceLabel.value
+      : tronTrxBalanceLabel.value,
 );
 const counterpartyXorBalanceLabel = computed(() =>
-  isBscRoute.value ? bscXorBalanceLabel.value : tronXorBalanceLabel.value,
+  isTonRoute.value
+    ? tonXorBalanceLabel.value
+    : isBscRoute.value
+      ? bscXorBalanceLabel.value
+      : tronXorBalanceLabel.value,
 );
 const counterpartyGasSymbol = computed(() =>
-  isBscRoute.value ? "BNB" : "TRX",
+  isTonRoute.value ? "TON" : isBscRoute.value ? "BNB" : "TRX",
 );
 const counterpartyTokenSymbol = computed(() =>
-  isBscRoute.value ? SCCP_BSC_TOKEN_SYMBOL : SCCP_TRON_TOKEN_SYMBOL,
+  isTonRoute.value
+    ? SCCP_TON_TOKEN_SYMBOL
+    : isBscRoute.value
+      ? SCCP_BSC_TOKEN_SYMBOL
+      : SCCP_TRON_TOKEN_SYMBOL,
 );
 const counterpartyBalanceError = computed(() =>
-  isBscRoute.value ? bscBalanceError.value : tronBalanceError.value,
+  isTonRoute.value
+    ? tonBalanceError.value
+    : isBscRoute.value
+      ? bscBalanceError.value
+      : tronBalanceError.value,
 );
+const tonSourceLaneCapability = computed(() => {
+  const counterparties = bridge.capabilities.value?.counterparties;
+  if (!Array.isArray(counterparties)) {
+    return null;
+  }
+  return (
+    counterparties.find((entry) => {
+      const record = entry as Record<string, unknown>;
+      const domain = Number(record.domain ?? record.counterparty_domain);
+      const chain = String(record.chain ?? "")
+        .trim()
+        .toLowerCase();
+      return domain === SCCP_TON_DOMAIN || chain === "ton";
+    }) ?? null
+  );
+});
+const tonSourceProverModuleUrl = computed(() => {
+  const manifest = bridge.readiness.value.tonManifest;
+  return (
+    import.meta.env.VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL ||
+    readSccpTonSourceProverModuleUrl(manifest) ||
+    ""
+  ).trim();
+});
+const isRouteRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const hasRouteRecord = (
+  manifest: Record<string, unknown>,
+  ...keys: string[]
+): boolean => keys.some((key) => isRouteRecord(manifest[key]));
+const readCapabilityString = (
+  record: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+): string => {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+};
+const readTonForwardReadinessReasons = (
+  manifest: Record<string, unknown> | null,
+): string[] => {
+  const reasons: string[] = [];
+  const capabilities = bridge.capabilities.value;
+  const loadFailure = bridge.routeLoadFailure.value;
+  if (!isTairaRoute.value) {
+    reasons.push("Switch to the TAIRA testnet profile.");
+  }
+  if (loadFailure) {
+    reasons.push(loadFailure.message);
+  }
+  if (!capabilities) {
+    if (!loadFailure) {
+      reasons.push("SCCP capabilities have not been loaded.");
+    }
+  } else if (
+    !readCapabilityString(
+      capabilities,
+      "proofSubmitPath",
+      "proof_submit_path",
+      "proofSubmitEndpoint",
+      "proof_submit_endpoint",
+    ) ||
+    !readCapabilityString(
+      capabilities,
+      "messageSubmitPath",
+      "message_submit_path",
+      "messageSubmitEndpoint",
+      "message_submit_endpoint",
+    )
+  ) {
+    reasons.push("This Torii endpoint is missing SCCP submit endpoints.");
+  }
+  if (!isRouteRecord(manifest)) {
+    if (!loadFailure) {
+      reasons.push("No TON SCCP manifest is advertised by this endpoint.");
+    }
+    return reasons;
+  }
+  const addressChecks: Array<[string, string]> = [
+    ["TON bridge deployment address", readSccpTonBridgeAddress(manifest)],
+    ["TON TairaXOR token address", readSccpTonTokenAddress(manifest)],
+    ["TON verifier address", readSccpTonVerifierAddress(manifest)],
+  ];
+  for (const [label, address] of addressChecks) {
+    if (!address) {
+      reasons.push(`${label} is missing.`);
+      continue;
+    }
+    try {
+      normalizeTonRawAddress(address, label);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? `${label} is invalid: ${error.message}`
+          : `${label} is invalid.`,
+      );
+    }
+  }
+  try {
+    if (!readSccpTonProofMaterial(manifest, SCCP_TON_NETWORK.key)) {
+      reasons.push(
+        "The TON SCCP verifier rollout proof material is incomplete.",
+      );
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "The TON SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  try {
+    if (!readSccpTonFinalizeMessageValueNano(manifest)) {
+      reasons.push("The TON finalize message value is missing.");
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "The TON finalize message value is invalid.",
+    );
+  }
+  try {
+    if (!readSccpTairaBurnRecordMaterial(manifest)) {
+      reasons.push("The TAIRA burn-record ZK contract material is missing.");
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "The TAIRA burn-record ZK contract material is missing.",
+    );
+  }
+  return reasons;
+};
+const tonForwardReadinessReasons = computed(() =>
+  isTonRoute.value && direction.value === "taira-to-ton"
+    ? readTonForwardReadinessReasons(bridge.readiness.value.tonManifest)
+    : [],
+);
+const routeReadyForDirection = (candidate: SccpBridgeDirection): boolean =>
+  isTonRoute.value && candidate === "taira-to-ton"
+    ? readTonForwardReadinessReasons(bridge.readiness.value.tonManifest)
+        .length === 0
+    : bridge.readiness.value.ready;
+const routeReadyForAction = computed(() =>
+  routeReadyForDirection(direction.value),
+);
+const routeBlockingMessages = computed(() =>
+  isTonRoute.value && direction.value === "taira-to-ton"
+    ? tonForwardReadinessReasons.value
+    : bridge.readiness.value.reasons,
+);
+const tonConcreteSourceLaneReady = computed(() => {
+  const manifest = bridge.readiness.value.tonManifest;
+  if (!bridge.readiness.value.ready || !isRouteRecord(manifest)) {
+    return false;
+  }
+  return (
+    Boolean(readSccpTonSourceBridgeAddress(manifest)) &&
+    hasRouteRecord(
+      manifest,
+      "sourceVerifierMaterial",
+      "source_verifier_material",
+    ) &&
+    hasRouteRecord(
+      manifest,
+      "sourceAdapterEngineDeployment",
+      "source_adapter_engine_deployment",
+    )
+  );
+});
+const tonReturnBlocker = computed(() => {
+  if (!isTonRoute.value || direction.value !== "ton-to-taira") {
+    return "";
+  }
+  const counterparties = bridge.capabilities.value?.counterparties;
+  if (Array.isArray(counterparties) && !tonConcreteSourceLaneReady.value) {
+    const capability = tonSourceLaneCapability.value;
+    if (!capability) {
+      return "TAIRA SCCP capabilities do not advertise an active TON source lane.";
+    }
+    if (!capability.productionReady) {
+      return (
+        capability.disabledReason ||
+        "TAIRA has not activated the TON source proof lane yet."
+      );
+    }
+  }
+  if (!tonSourceProverModuleUrl.value) {
+    return "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.";
+  }
+  return "";
+});
 const isForwardDirection = computed(
   () =>
-    direction.value === "taira-to-tron" || direction.value === "taira-to-bsc",
+    direction.value === "taira-to-tron" ||
+    direction.value === "taira-to-bsc" ||
+    direction.value === "taira-to-ton",
 );
 const isReturnDirection = computed(
   () =>
-    direction.value === "tron-to-taira" || direction.value === "bsc-to-taira",
+    direction.value === "tron-to-taira" ||
+    direction.value === "bsc-to-taira" ||
+    direction.value === "ton-to-taira",
 );
 const forwardDirectionLabel = computed(() =>
-  isBscRoute.value ? "TAIRA -> BSC" : "TAIRA -> TRON",
+  isTonRoute.value
+    ? "TAIRA -> TON"
+    : isBscRoute.value
+      ? "TAIRA -> BSC"
+      : "TAIRA -> TRON",
 );
 const returnDirectionLabel = computed(() =>
-  isBscRoute.value ? "BSC -> TAIRA" : "TRON -> TAIRA",
+  isTonRoute.value
+    ? "TON -> TAIRA"
+    : isBscRoute.value
+      ? "BSC -> TAIRA"
+      : "TRON -> TAIRA",
 );
 const counterpartyRecipientLabel = computed(() =>
-  isBscRoute.value ? "BSC recipient" : "TRON recipient",
+  isTonRoute.value
+    ? "TON recipient"
+    : isBscRoute.value
+      ? "BSC recipient"
+      : "TRON recipient",
 );
 const counterpartyTransactionIdLabel = computed(() =>
-  isBscRoute.value ? "BSC transaction hash" : "TRON transaction ID",
+  isTonRoute.value
+    ? "TON transaction hash"
+    : isBscRoute.value
+      ? "BSC transaction hash"
+      : "TRON transaction ID",
 );
 const counterpartyTransactionIdPlaceholder = computed(() =>
-  isBscRoute.value
-    ? "Optional BSC burn transaction hash"
-    : "Optional TRON burn transaction id",
+  isTonRoute.value
+    ? "Optional TON burn transaction hash"
+    : isBscRoute.value
+      ? "Optional BSC burn transaction hash"
+      : "Optional TRON burn transaction id",
 );
 const amountValid = computed(() => {
   try {
@@ -654,18 +1053,21 @@ const destinationValid = computed(() =>
     ? isValidTronBase58CheckAddress(tronRecipient.value)
     : direction.value === "taira-to-bsc"
       ? isValidBscAddress(bscRecipient.value)
-      : isLikelyTairaAccount(tairaRecipient.value),
+      : direction.value === "taira-to-ton"
+        ? isValidTonRawAddress(tonRecipient.value)
+        : isLikelyTairaAccount(tairaRecipient.value),
 );
 const submitDisabled = computed(
   () =>
-    !bridge.readiness.value.ready ||
+    !routeReadyForAction.value ||
+    Boolean(tonReturnBlocker.value) ||
     !activeProjectConfigured.value ||
     !activeWalletConnected.value ||
     !amountValid.value ||
     !destinationValid.value ||
     proofLoading.value,
 );
-const tronConnectDisabled = computed(
+const counterpartyConnectDisabled = computed(
   () =>
     !isTairaRoute.value ||
     !activeProjectConfigured.value ||
@@ -673,10 +1075,13 @@ const tronConnectDisabled = computed(
 );
 const proofFetchDisabled = computed(
   () =>
-    (direction.value === "taira-to-tron" || direction.value === "taira-to-bsc"
+    (direction.value === "taira-to-tron" ||
+    direction.value === "taira-to-bsc" ||
+    direction.value === "taira-to-ton"
       ? !messageId.value
       : !tronTxId.value) ||
-    !bridge.readiness.value.ready ||
+    !routeReadyForAction.value ||
+    Boolean(tonReturnBlocker.value) ||
     !activeProjectConfigured.value ||
     !activeWalletConnected.value ||
     !amountValid.value ||
@@ -690,17 +1095,25 @@ const primaryActionLabel = computed(() =>
       ? "Prepare TRON -> TAIRA"
       : direction.value === "taira-to-bsc"
         ? "Prepare TAIRA -> BSC"
-        : "Prepare BSC -> TAIRA",
+        : direction.value === "bsc-to-taira"
+          ? "Prepare BSC -> TAIRA"
+          : direction.value === "taira-to-ton"
+            ? "Prepare TAIRA -> TON"
+            : "Prepare TON -> TAIRA",
 );
 const walletConnectMissingMessage = computed(() =>
-  isBscRoute.value
-    ? "WalletConnect project ID is missing, so wallet connection is disabled."
-    : "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
+  isTonRoute.value
+    ? "TON wallet connector is not available in this build."
+    : isBscRoute.value
+      ? "WalletConnect project ID is missing, so wallet connection is disabled."
+      : "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
 );
 const walletConnectInvalidMessage = computed(() =>
-  isBscRoute.value
-    ? "WalletConnect project ID is invalid, so wallet connection is disabled."
-    : "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+  isTonRoute.value
+    ? "TON wallet connector is misconfigured."
+    : isBscRoute.value
+      ? "WalletConnect project ID is invalid, so wallet connection is disabled."
+      : "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
 );
 const actionHint = computed(() => {
   if (!isTairaRoute.value) {
@@ -713,12 +1126,17 @@ const actionHint = computed(() => {
     return t(walletConnectMissingMessage.value);
   }
   if (!activeWalletConnected.value) {
-    return isBscRoute.value
-      ? t("Connect a BSC wallet to continue.")
-      : t("Connect a TRON wallet to continue.");
+    return isTonRoute.value
+      ? t("Connect a TON wallet to continue.")
+      : isBscRoute.value
+        ? t("Connect a BSC wallet to continue.")
+        : t("Connect a TRON wallet to continue.");
   }
-  if (!bridge.readiness.value.ready) {
+  if (!routeReadyForAction.value) {
     return t("Route readiness must be true before bridge actions are enabled.");
+  }
+  if (tonReturnBlocker.value) {
+    return t(tonReturnBlocker.value);
   }
   return t(
     "Bridge actions will request explicit wallet approval before signing.",
@@ -726,11 +1144,19 @@ const actionHint = computed(() => {
 });
 
 const setForwardDirection = () => {
-  direction.value = isBscRoute.value ? "taira-to-bsc" : "taira-to-tron";
+  direction.value = isTonRoute.value
+    ? "taira-to-ton"
+    : isBscRoute.value
+      ? "taira-to-bsc"
+      : "taira-to-tron";
 };
 
 const setReturnDirection = () => {
-  direction.value = isBscRoute.value ? "bsc-to-taira" : "tron-to-taira";
+  direction.value = isTonRoute.value
+    ? "ton-to-taira"
+    : isBscRoute.value
+      ? "bsc-to-taira"
+      : "tron-to-taira";
 };
 
 const selectCounterparty = (counterparty: SccpCounterpartyKey) => {
@@ -783,6 +1209,161 @@ const readJobId = (value: Record<string, unknown>): string => {
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => window.setTimeout(resolve, ms));
 
+const proofNow = (): number => Date.now();
+
+const formatProofDuration = (durationMs: number | undefined): string => {
+  if (!Number.isFinite(durationMs)) {
+    return "";
+  }
+  const normalized = Math.max(0, Math.round(durationMs ?? 0));
+  if (normalized < 1000) {
+    return `${n(normalized)} ms`;
+  }
+  const seconds = normalized / 1000;
+  return `${n(Number(seconds.toFixed(seconds < 10 ? 1 : 0)))} s`;
+};
+
+const formatProofPhaseDetail = (phase: ProofPhase): string => {
+  const detail = t(phase.detail);
+  const duration =
+    phase.state === "active" && phase.startedAtMs !== undefined
+      ? proofTimingNowMs.value - phase.startedAtMs
+      : phase.durationMs;
+  const formatted = formatProofDuration(duration);
+  return formatted ? `${detail} (${formatted})` : detail;
+};
+
+const proofTimingRows = computed(() =>
+  proofTimings.value.map((timing, index) => ({
+    ...timing,
+    key: `${timing.phaseId}-${index}`,
+  })),
+);
+
+const formatProofTimingRow = (
+  timing: ProofTimingEvent & { key: string },
+): string => {
+  const duration =
+    timing.completedAtMs === undefined
+      ? proofTimingNowMs.value - timing.startedAtMs
+      : timing.durationMs;
+  const formatted = formatProofDuration(duration);
+  return formatted ? `${t(timing.detail)} (${formatted})` : t(timing.detail);
+};
+
+const proofTimingSnapshot = computed(() =>
+  proofTimings.value.map((timing) => ({
+    phaseId: timing.phaseId,
+    label: timing.label,
+    detail: timing.detail,
+    state: timing.state,
+    startedAtMs: timing.startedAtMs,
+    completedAtMs: timing.completedAtMs ?? null,
+    durationMs:
+      timing.durationMs ??
+      (timing.completedAtMs === undefined
+        ? proofTimingNowMs.value - timing.startedAtMs
+        : null),
+    metadata: timing.metadata ?? {},
+  })),
+);
+
+const exposeProofTimingsForAutomation = () => {
+  if (typeof window === "undefined") {
+    return;
+  }
+  (
+    window as unknown as {
+      __sccpProofTimings?: Array<Record<string, unknown>>;
+    }
+  ).__sccpProofTimings = proofTimingSnapshot.value as Array<
+    Record<string, unknown>
+  >;
+};
+
+const startProofTimingTicker = () => {
+  if (proofTimingTicker) {
+    return;
+  }
+  proofTimingNowMs.value = proofNow();
+  proofTimingTicker = window.setInterval(() => {
+    proofTimingNowMs.value = proofNow();
+    exposeProofTimingsForAutomation();
+  }, 500);
+};
+
+const stopProofTimingTicker = () => {
+  if (!proofTimingTicker) {
+    return;
+  }
+  window.clearInterval(proofTimingTicker);
+  proofTimingTicker = null;
+  proofTimingNowMs.value = proofNow();
+  exposeProofTimingsForAutomation();
+};
+
+const beginProofTiming = (
+  phaseId: string,
+  label: string,
+  detail: string,
+  metadata?: Record<string, unknown>,
+) => {
+  const startedAtMs = proofNow();
+  proofTimingNowMs.value = startedAtMs;
+  proofTimings.value = [
+    ...proofTimings.value,
+    {
+      phaseId,
+      label,
+      detail,
+      state: "active",
+      startedAtMs,
+      ...(metadata ? { metadata } : {}),
+    },
+  ];
+  exposeProofTimingsForAutomation();
+};
+
+const finishProofTiming = (
+  phaseId: string,
+  state: ProofTimingEvent["state"] = "complete",
+  detail?: string,
+  metadata?: Record<string, unknown>,
+) => {
+  const completedAtMs = proofNow();
+  proofTimingNowMs.value = completedAtMs;
+  const next = [...proofTimings.value];
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    const timing = next[index];
+    if (timing?.phaseId !== phaseId || timing.completedAtMs !== undefined) {
+      continue;
+    }
+    next[index] = {
+      ...timing,
+      state,
+      detail: detail ?? timing.detail,
+      completedAtMs,
+      durationMs: completedAtMs - timing.startedAtMs,
+      metadata: {
+        ...(timing.metadata ?? {}),
+        ...(metadata ?? {}),
+      },
+    };
+    proofTimings.value = next;
+    exposeProofTimingsForAutomation();
+    return;
+  }
+};
+
+const failActiveProofTimings = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  for (const timing of proofTimings.value) {
+    if (timing.completedAtMs === undefined) {
+      finishProofTiming(timing.phaseId, "failed", message);
+    }
+  }
+};
+
 const isRetryableSccpProofJobError = (error: unknown): boolean => {
   const message = (error instanceof Error ? error.message : String(error))
     .trim()
@@ -790,6 +1371,29 @@ const isRetryableSccpProofJobError = (error: unknown): boolean => {
   return /(?:404|408|425|429|5\d\d|bad gateway|gateway timeout|service unavailable|not found|not ready|not indexed|indexing|pending|timeout|timed out|fetch failed|network|unavailable)/u.test(
     message,
   );
+};
+
+const sccpProofJobIndexingPollMs = (attempt: number): number => {
+  if (attempt < 20) {
+    return SCCP_PROOF_JOB_INDEXING_FAST_POLL_MS;
+  }
+  if (attempt < 32) {
+    return 500;
+  }
+  if (attempt < 56) {
+    return SCCP_PROOF_JOB_INDEXING_MEDIUM_POLL_MS;
+  }
+  return SCCP_PROOF_JOB_INDEXING_SLOW_POLL_MS;
+};
+
+const zkIvmProofPollMs = (elapsedMs: number): number => {
+  if (elapsedMs < 15_000) {
+    return SCCP_ZK_IVM_PROOF_FAST_POLL_MS;
+  }
+  if (elapsedMs < 90_000) {
+    return SCCP_ZK_IVM_PROOF_MEDIUM_POLL_MS;
+  }
+  return SCCP_ZK_IVM_PROOF_SLOW_POLL_MS;
 };
 
 const retryableChainReadErrorMessage = (error: unknown): string =>
@@ -1049,6 +1653,14 @@ type SccpProofWorkerRequest =
       input: TronToTairaSourceProofPackageInput;
     }
   | {
+      kind: "prewarm-ton-source-prover";
+      input: { proverModuleUrl?: string };
+    }
+  | {
+      kind: "prove-ton-source-package";
+      input: TonSourceProofWorkerInput;
+    }
+  | {
       kind: "prove-bsc-source-package";
       input: BscSourceProofWorkerInput;
     };
@@ -1064,6 +1676,10 @@ type BscSourceProofWorkerInput = Omit<
   proverConfigUrl?: string;
 };
 
+type TonSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
+  proverModuleUrl?: string;
+};
+
 type SccpOperationContext = {
   direction: SccpBridgeDirection;
   toriiUrl: string;
@@ -1072,9 +1688,11 @@ type SccpOperationContext = {
   accountId: string;
   tronAddress: string;
   bscAddress: string;
+  tonAddress: string;
   amountDecimal: string;
   tronRecipient: string;
   bscRecipient: string;
+  tonRecipient: string;
   tairaRecipient: string;
   manifest: Record<string, unknown>;
   tronGatewayEndpoint: string;
@@ -1083,6 +1701,7 @@ type SccpOperationContext = {
   messageId?: string;
   tronTxId?: string;
   bscTxId?: string;
+  tonTxId?: string;
 };
 
 const SCCP_CONTEXT_CHANGED_ERROR =
@@ -1152,6 +1771,121 @@ function runSccpProofWorker<Result>(
   });
 }
 
+type PersistentSccpWorkerPending = {
+  resolve: (value: Record<string, unknown>) => void;
+  reject: (reason?: unknown) => void;
+  timeout: number;
+};
+
+let tonSourceProofWorker: Worker | null = null;
+const tonSourceProofWorkerPending = new Map<
+  string,
+  PersistentSccpWorkerPending
+>();
+
+const closeTonSourceProofWorker = (reason?: unknown) => {
+  if (tonSourceProofWorker) {
+    tonSourceProofWorker.terminate();
+    tonSourceProofWorker = null;
+  }
+  const error =
+    reason instanceof Error
+      ? reason
+      : new Error(
+          typeof reason === "string" && reason.trim()
+            ? reason
+            : "TON source proof worker stopped.",
+        );
+  for (const pending of tonSourceProofWorkerPending.values()) {
+    window.clearTimeout(pending.timeout);
+    pending.reject(error);
+  }
+  tonSourceProofWorkerPending.clear();
+};
+
+const getTonSourceProofWorker = (): Worker => {
+  if (typeof Worker === "undefined") {
+    throw new Error("Browser proof worker is unavailable in this environment.");
+  }
+  if (tonSourceProofWorker) {
+    return tonSourceProofWorker;
+  }
+  const worker = new Worker(
+    new URL("../workers/sccpProver.worker.ts", import.meta.url),
+    { type: "module" },
+  );
+  worker.onmessage = (
+    event: MessageEvent<{
+      id: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }>,
+  ) => {
+    const pending = tonSourceProofWorkerPending.get(event.data.id);
+    if (!pending) {
+      return;
+    }
+    tonSourceProofWorkerPending.delete(event.data.id);
+    window.clearTimeout(pending.timeout);
+    if (event.data.ok) {
+      if (
+        event.data.result &&
+        typeof event.data.result === "object" &&
+        !Array.isArray(event.data.result)
+      ) {
+        pending.resolve(event.data.result as Record<string, unknown>);
+        return;
+      }
+      pending.reject(
+        new Error("SCCP proof worker returned an invalid proof package."),
+      );
+      return;
+    }
+    pending.reject(new Error(event.data.error || "SCCP proof worker failed."));
+  };
+  worker.onerror = (event) => {
+    closeTonSourceProofWorker(
+      new Error(event.message || "SCCP proof worker failed."),
+    );
+  };
+  worker.onmessageerror = () => {
+    closeTonSourceProofWorker(
+      new Error("SCCP proof worker returned an unreadable response."),
+    );
+  };
+  tonSourceProofWorker = worker;
+  return worker;
+};
+
+const runPersistentTonSourceProofWorker = <
+  Result extends Record<string, unknown>,
+>(
+  request: Extract<
+    SccpProofWorkerRequest,
+    { kind: "prewarm-ton-source-prover" | "prove-ton-source-package" }
+  >,
+): Promise<Result> => {
+  const worker = getTonSourceProofWorker();
+  return new Promise((resolve, reject) => {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timeout = window.setTimeout(() => {
+      tonSourceProofWorkerPending.delete(id);
+      reject(
+        new Error(
+          "SCCP proof worker timed out before returning a bound proof package.",
+        ),
+      );
+    }, SCCP_PROOF_WORKER_TIMEOUT_MS);
+    tonSourceProofWorkerPending.set(id, {
+      resolve: (value) => resolve(value as Result),
+      reject,
+      timeout,
+    });
+    worker.postMessage({ id, ...request });
+  });
+};
+
 const runTronProofWorker = (
   kind: "build-tron-proof-package" | "prove-tron-proof-package",
   input: TronSccpProofPackageInput,
@@ -1175,6 +1909,16 @@ const sccpHexToBytes = (value: string, label: string): Uint8Array => {
 
 const sccpBytesToHex = (bytes: Uint8Array): string =>
   `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+const sccpBytesToBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.slice(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
 
 const buildBscProofEnvelopeHash = (
   requestHash: string,
@@ -1233,6 +1977,33 @@ const runTronSourceProofWorker = (
     input,
   });
 
+const runTonSourceProofWorker = async (
+  input: TonSourceProofWorkerInput,
+): Promise<TonToTairaSourceProofPackage> => {
+  const proofPackage =
+    await runPersistentTonSourceProofWorker<TonToTairaSourceProofPackage>({
+      kind: "prove-ton-source-package",
+      input,
+    });
+  const buildWithDeployment =
+    window.iroha?.buildTonSccpMessageBundleSourceProofWithDeployment;
+  if (typeof buildWithDeployment !== "function") {
+    throw new Error(
+      "TON -> TAIRA deployment-bound source proofs require the Electron native proof bridge.",
+    );
+  }
+  const sourceMaterialBinding = readTonSourceProverMaterialBinding(
+    input.manifest,
+  );
+  return (await buildWithDeployment({
+    proofPackage: proofPackage as unknown as Record<string, unknown>,
+    sourceVerifierMaterial: sourceMaterialBinding.sourceVerifierMaterial,
+    sourceAdapterEngineDeployment:
+      sourceMaterialBinding.sourceAdapterEngineDeployment,
+    label: "TON",
+  })) as unknown as TonToTairaSourceProofPackage;
+};
+
 const runBscSourceProofWorker = async (
   input: BscSourceProofWorkerInput,
 ): Promise<BscToTairaSourceProofPackage> => {
@@ -1252,6 +2023,49 @@ const runBscSourceProofWorker = async (
     kind: "prove-bsc-source-package",
     input: workerInput,
   });
+};
+
+let tonSourceProverPrewarmKey = "";
+let tonSourceProverPrewarmPromise: Promise<void> | null = null;
+
+const prewarmTonSourceProver = async (
+  moduleUrl = tonSourceProverModuleUrl.value,
+): Promise<void> => {
+  const normalizedModuleUrl = moduleUrl.trim();
+  if (!normalizedModuleUrl) {
+    throw new Error(
+      t(
+        "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.",
+      ),
+    );
+  }
+  if (
+    tonSourceProverPrewarmPromise &&
+    tonSourceProverPrewarmKey === normalizedModuleUrl
+  ) {
+    await tonSourceProverPrewarmPromise;
+    return;
+  }
+  tonSourceProverPrewarmKey = normalizedModuleUrl;
+  tonSourceProverPrewarmPromise = runPersistentTonSourceProofWorker<{
+    ready?: boolean;
+  }>({
+    kind: "prewarm-ton-source-prover",
+    input: { proverModuleUrl: normalizedModuleUrl },
+  }).then((result) => {
+    if (result.ready !== true) {
+      throw new Error("TON source proof worker did not confirm readiness.");
+    }
+  });
+  try {
+    await tonSourceProverPrewarmPromise;
+  } catch (error) {
+    if (tonSourceProverPrewarmKey === normalizedModuleUrl) {
+      tonSourceProverPrewarmKey = "";
+      tonSourceProverPrewarmPromise = null;
+    }
+    throw error;
+  }
 };
 
 const cloneSccpManifestSnapshot = (
@@ -1285,13 +2099,42 @@ const readCurrentBscTransactionHash = (): string => {
   }
 };
 
+const readCurrentTonTransactionHash = (): string => {
+  try {
+    return normalizeTonTransactionHash(tronTxId.value);
+  } catch (_error) {
+    return "";
+  }
+};
+
+const readCurrentTonAddress = (): string => {
+  try {
+    return normalizeTonRawAddress(ton.address.value);
+  } catch (_error) {
+    return "";
+  }
+};
+
+const readCurrentTonRecipient = (): string => {
+  try {
+    return normalizeTonRawAddress(tonRecipient.value);
+  } catch (_error) {
+    return tonRecipient.value.trim();
+  }
+};
+
 const createSccpOperationContext = (
-  ids: Pick<SccpOperationContext, "messageId" | "tronTxId" | "bscTxId"> = {},
+  ids: Pick<
+    SccpOperationContext,
+    "messageId" | "tronTxId" | "bscTxId" | "tonTxId"
+  > = {},
 ): SccpOperationContext => {
-  const manifest = isBscRoute.value
-    ? bridge.readiness.value.bscManifest
-    : bridge.readiness.value.tronManifest;
-  if (!bridge.readiness.value.ready || !manifest) {
+  const manifest = isTonRoute.value
+    ? bridge.readiness.value.tonManifest
+    : isBscRoute.value
+      ? bridge.readiness.value.bscManifest
+      : bridge.readiness.value.tronManifest;
+  if (!routeReadyForDirection(direction.value) || !manifest) {
     throw new Error(
       routeMessages.value[0] ||
         "Route readiness must be true before bridge actions are enabled.",
@@ -1299,25 +2142,36 @@ const createSccpOperationContext = (
   }
   const manifestSnapshot = cloneSccpManifestSnapshot(manifest);
   const activeBscRoute = isBscRoute.value;
+  const activeTonRoute = isTonRoute.value;
   return {
     direction: direction.value,
     toriiUrl: session.connection.toriiUrl,
     chainId: session.connection.chainId,
     networkPrefix: session.connection.networkPrefix,
     accountId: session.activeAccount?.accountId ?? "",
-    tronAddress: activeBscRoute ? "" : normalizeTronAddress(tron.address.value),
+    tronAddress:
+      activeBscRoute || activeTonRoute
+        ? ""
+        : normalizeTronAddress(tron.address.value),
     bscAddress: activeBscRoute ? normalizeBscAddress(bsc.address.value) : "",
+    tonAddress: activeTonRoute ? normalizeTonRawAddress(ton.address.value) : "",
     amountDecimal: normalizeBridgeAmount(amount.value),
-    tronRecipient: tronRecipient.value.trim(),
+    tronRecipient:
+      activeBscRoute || activeTonRoute ? "" : tronRecipient.value.trim(),
     bscRecipient:
       activeBscRoute && direction.value === "taira-to-bsc"
         ? normalizeBscAddress(bscRecipient.value)
         : bscRecipient.value.trim(),
+    tonRecipient:
+      activeTonRoute && direction.value === "taira-to-ton"
+        ? normalizeTonRawAddress(tonRecipient.value)
+        : tonRecipient.value.trim(),
     tairaRecipient: tairaRecipient.value.trim(),
     manifest: manifestSnapshot,
-    tronGatewayEndpoint: activeBscRoute
-      ? ""
-      : readSccpTronGatewayEndpoint(manifestSnapshot, SCCP_TRON_NETWORK.key),
+    tronGatewayEndpoint:
+      activeBscRoute || activeTonRoute
+        ? ""
+        : readSccpTronGatewayEndpoint(manifestSnapshot, SCCP_TRON_NETWORK.key),
     bscRpcEndpoint: activeBscRoute
       ? readSccpBscRpcEndpoint(manifestSnapshot, SCCP_BSC_NETWORK.key)
       : "",
@@ -1332,29 +2186,46 @@ const assertSccpOperationContextCurrent = (
   const contextIsBsc =
     context.direction === "taira-to-bsc" ||
     context.direction === "bsc-to-taira";
+  const contextIsTon =
+    context.direction === "taira-to-ton" ||
+    context.direction === "ton-to-taira";
   const currentManifest = contextIsBsc
     ? bridge.readiness.value.bscManifest
-    : bridge.readiness.value.tronManifest;
+    : contextIsTon
+      ? bridge.readiness.value.tonManifest
+      : bridge.readiness.value.tronManifest;
   if (
-    !bridge.readiness.value.ready ||
+    !routeReadyForDirection(context.direction) ||
     !currentManifest ||
     context.direction !== direction.value ||
     context.toriiUrl !== session.connection.toriiUrl ||
     context.chainId !== session.connection.chainId ||
     context.networkPrefix !== session.connection.networkPrefix ||
     context.accountId !== (session.activeAccount?.accountId ?? "") ||
-    (!contextIsBsc && context.tronAddress !== tron.address.value) ||
+    (!contextIsBsc &&
+      !contextIsTon &&
+      context.tronAddress !== tron.address.value) ||
     (contextIsBsc && context.bscAddress !== readCurrentBscAddress()) ||
+    (contextIsTon && context.tonAddress !== readCurrentTonAddress()) ||
     context.amountDecimal !== normalizeBridgeAmount(amount.value) ||
-    (!contextIsBsc && context.tronRecipient !== tronRecipient.value.trim()) ||
+    (!contextIsBsc &&
+      !contextIsTon &&
+      context.tronRecipient !== tronRecipient.value.trim()) ||
     (contextIsBsc &&
       context.direction === "taira-to-bsc" &&
       context.bscRecipient !== readCurrentBscRecipient()) ||
     (contextIsBsc &&
       context.direction !== "taira-to-bsc" &&
       context.bscRecipient !== bscRecipient.value.trim()) ||
+    (contextIsTon &&
+      context.direction === "taira-to-ton" &&
+      context.tonRecipient !== readCurrentTonRecipient()) ||
+    (contextIsTon &&
+      context.direction !== "taira-to-ton" &&
+      context.tonRecipient !== tonRecipient.value.trim()) ||
     context.tairaRecipient !== tairaRecipient.value.trim() ||
     (!contextIsBsc &&
+      !contextIsTon &&
       context.tronGatewayEndpoint !==
         readSccpTronGatewayEndpoint(currentManifest, SCCP_TRON_NETWORK.key)) ||
     (contextIsBsc &&
@@ -1366,7 +2237,9 @@ const assertSccpOperationContextCurrent = (
     (context.tronTxId !== undefined &&
       context.tronTxId !== tronTxId.value.trim().toLowerCase()) ||
     (context.bscTxId !== undefined &&
-      context.bscTxId !== readCurrentBscTransactionHash())
+      context.bscTxId !== readCurrentBscTransactionHash()) ||
+    (context.tonTxId !== undefined &&
+      context.tonTxId !== readCurrentTonTransactionHash())
   ) {
     throw new Error(SCCP_CONTEXT_CHANGED_ERROR);
   }
@@ -1376,14 +2249,21 @@ const loadTairaMessageProofJob = async (
   context: SccpOperationContext,
   input: { pollForIndexing?: boolean } = {},
 ): Promise<Record<string, unknown>> => {
+  type SccpMessageProofJobRequest = Parameters<
+    typeof getSccpMessageProofJob
+  >[0];
   const baseRequest = {
     toriiUrl: context.toriiUrl,
     messageId: context.messageId ?? messageId.value,
   };
+  let cachedRequest: SccpMessageProofJobRequest | null = null;
   const buildRequest = async () => {
+    if (cachedRequest) {
+      return cachedRequest;
+    }
     const messageBundle = await getSccpMessageProofBundle(baseRequest);
     assertSccpOperationContextCurrent(context);
-    return {
+    cachedRequest = {
       ...baseRequest,
       ...(context.direction === "taira-to-bsc"
         ? buildTairaXorBscMessageProofJobQueryMaterial({
@@ -1392,20 +2272,62 @@ const loadTairaMessageProofJob = async (
             messageId: baseRequest.messageId,
             bscNetwork: SCCP_BSC_NETWORK.key,
           })
-        : buildTairaXorMessageProofJobQueryMaterial({
-            manifest: context.manifest,
-            messageBundle,
-            messageId: baseRequest.messageId,
-            tronNetwork: SCCP_TRON_NETWORK.key,
-          })),
-    };
+        : context.direction === "taira-to-ton"
+          ? buildTairaXorTonMessageProofJobQueryMaterial({
+              manifest: context.manifest,
+              messageBundle,
+              messageId: baseRequest.messageId,
+              tonNetwork: SCCP_TON_NETWORK.key,
+            })
+          : buildTairaXorMessageProofJobQueryMaterial({
+              manifest: context.manifest,
+              messageBundle,
+              messageId: baseRequest.messageId,
+              tronNetwork: SCCP_TRON_NETWORK.key,
+            })),
+    } as SccpMessageProofJobRequest;
+    return cachedRequest;
   };
   if (!input.pollForIndexing) {
     assertSccpOperationContextCurrent(context);
+    beginProofTiming(
+      "sccp-proof-job-indexing",
+      "SCCP proof job indexing",
+      "Loading SCCP proof job",
+      {
+        messageId: baseRequest.messageId,
+      },
+    );
     const request = await buildRequest();
     assertSccpOperationContextCurrent(context);
-    return getSccpMessageProofJob(request);
+    try {
+      const job = await getSccpMessageProofJob(request);
+      finishProofTiming(
+        "sccp-proof-job-indexing",
+        "complete",
+        "SCCP proof job loaded",
+        {
+          messageId: baseRequest.messageId,
+        },
+      );
+      return job;
+    } catch (error) {
+      finishProofTiming(
+        "sccp-proof-job-indexing",
+        "failed",
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   }
+  beginProofTiming(
+    "sccp-proof-job-indexing",
+    "SCCP proof job indexing",
+    "Waiting for Torii to index the SCCP message",
+    {
+      messageId: baseRequest.messageId,
+    },
+  );
   let lastError: unknown = null;
   for (
     let attempt = 0;
@@ -1416,7 +2338,17 @@ const loadTairaMessageProofJob = async (
       assertSccpOperationContextCurrent(context);
       const request = await buildRequest();
       assertSccpOperationContextCurrent(context);
-      return await getSccpMessageProofJob(request);
+      const job = await getSccpMessageProofJob(request);
+      finishProofTiming(
+        "sccp-proof-job-indexing",
+        "complete",
+        "Torii returned the SCCP proof job",
+        {
+          messageId: baseRequest.messageId,
+          attempts: attempt + 1,
+        },
+      );
+      return job;
     } catch (error) {
       lastError = error;
       if (
@@ -1426,12 +2358,22 @@ const loadTairaMessageProofJob = async (
         break;
       }
       markPhase(1, "active", "Waiting for SCCP proof job indexing");
-      await wait(SCCP_PROOF_JOB_INDEXING_POLL_MS);
+      await wait(sccpProofJobIndexingPollMs(attempt));
     }
   }
   if (lastError && !isRetryableSccpProofJobError(lastError)) {
+    finishProofTiming(
+      "sccp-proof-job-indexing",
+      "failed",
+      lastError instanceof Error ? lastError.message : String(lastError),
+    );
     throw lastError;
   }
+  finishProofTiming(
+    "sccp-proof-job-indexing",
+    "failed",
+    "Timed out waiting for Torii to index the SCCP proof job.",
+  );
   throw new Error("Timed out waiting for Torii to index the SCCP proof job.");
 };
 
@@ -1628,6 +2570,7 @@ const waitForZkIvmProof = async (
   attachment: Record<string, unknown>;
 }> => {
   const maxAttempts = 600;
+  const startedAtMs = proofNow();
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     assertSccpOperationContextCurrent(context);
     let job: Record<string, unknown>;
@@ -1643,7 +2586,7 @@ const waitForZkIvmProof = async (
         /ZK IVM prove job .*404 .*prove job not found/iu.test(message)
       ) {
         markPhase(2, "active", "Waiting for TAIRA burn-record proof job");
-        await wait(1000);
+        await wait(zkIvmProofPollMs(proofNow() - startedAtMs));
         continue;
       }
       throw error;
@@ -1661,10 +2604,77 @@ const waitForZkIvmProof = async (
       );
     }
     if (attempt < maxAttempts - 1) {
-      await wait(1000);
+      await wait(zkIvmProofPollMs(proofNow() - startedAtMs));
     }
   }
   throw new Error("Timed out waiting for the ZK IVM proof job.");
+};
+
+const isRetryableZkIvmProveStartError = (error: unknown): boolean => {
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:HTTP\s+50[234]|50[234]\s+Gateway|Gateway Time-out|endpoint is unavailable|Failed to fetch|NetworkError)/iu.test(
+    message,
+  );
+};
+
+const startZkIvmProveJobWithRetry = async (
+  context: SccpOperationContext,
+  input: Parameters<typeof startZkIvmProveJob>[0],
+): Promise<Record<string, unknown>> => {
+  const maxAttempts = 4;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    assertSccpOperationContextCurrent(context);
+    try {
+      return await startZkIvmProveJob(input);
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableZkIvmProveStartError(error) ||
+        attempt >= maxAttempts - 1
+      ) {
+        throw error;
+      }
+      markPhase(1, "active", "Proof service timed out; retrying request");
+      await wait(2000 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(String(lastError ?? "ZK IVM prove request failed."));
+};
+
+const queueZkIvmProveJob = async (
+  context: SccpOperationContext,
+  input: Parameters<typeof startZkIvmProveJob>[0],
+): Promise<Record<string, unknown>> => {
+  beginProofTiming(
+    "taira-zk-prove-queue",
+    "TAIRA proof job queue",
+    "Queueing burn-record proof request",
+    {
+      usedDerivedPayload: false,
+    },
+  );
+  try {
+    const proveJob = await startZkIvmProveJobWithRetry(context, input);
+    finishProofTiming(
+      "taira-zk-prove-queue",
+      "complete",
+      "TAIRA proof job accepted",
+      {
+        usedDerivedPayload: false,
+      },
+    );
+    return proveJob;
+  } catch (error) {
+    finishProofTiming(
+      "taira-zk-prove-queue",
+      "failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    throw error;
+  }
 };
 
 const clearTronBalances = () => {
@@ -1677,6 +2687,10 @@ const clearBscBalances = () => {
   bscBnbBalanceWei.value = null;
   bscXorBalanceBaseUnits.value = null;
   bscBalanceError.value = "";
+};
+
+const clearTonBalances = () => {
+  tonBalanceError.value = "";
 };
 
 const refreshTronBalances = async () => {
@@ -1786,10 +2800,13 @@ const refreshAll = async () => {
     bridge.resetState();
     clearTronBalances();
     clearBscBalances();
+    clearTonBalances();
     return;
   }
   await Promise.all([bridge.refreshRoute(), bridge.refreshBalances()]);
-  if (isBscRoute.value) {
+  if (isTonRoute.value) {
+    clearTonBalances();
+  } else if (isBscRoute.value) {
     await refreshBscBalances();
   } else {
     await refreshTronBalances();
@@ -1801,7 +2818,10 @@ const connectCounterparty = async () => {
     formError.value = t("SCCP bridging is enabled only on TAIRA testnet.");
     return;
   }
-  if (isBscRoute.value) {
+  if (isTonRoute.value) {
+    await ton.connect();
+    clearTonBalances();
+  } else if (isBscRoute.value) {
     await bsc.connect();
     await refreshBscBalances();
   } else {
@@ -1811,7 +2831,10 @@ const connectCounterparty = async () => {
 };
 
 const disconnectCounterparty = async () => {
-  if (isBscRoute.value) {
+  if (isTonRoute.value) {
+    await ton.disconnect();
+    clearTonBalances();
+  } else if (isBscRoute.value) {
     await bsc.disconnect();
     await refreshBscBalances();
   } else {
@@ -1822,26 +2845,51 @@ const disconnectCounterparty = async () => {
 
 const resetProofPhases = () => {
   proofReady.value = false;
-  proofPhases.value = proofPhases.value.map((phase) => ({
-    ...phase,
-    state: "pending",
-  }));
+  proofPhases.value = createInitialProofPhases();
+  proofTimings.value = [];
+  proofTimingNowMs.value = proofNow();
+  exposeProofTimingsForAutomation();
 };
 
-const markPhase = (index: number, state: string, detail: string) => {
+const markPhase = (index: number, state: ProofPhaseState, detail: string) => {
+  const current = proofPhases.value[index];
+  if (!current) {
+    return;
+  }
+  const timestamp = proofNow();
+  const startedAtMs =
+    state === "active"
+      ? current.state === "active" && current.startedAtMs !== undefined
+        ? current.startedAtMs
+        : timestamp
+      : current.startedAtMs;
+  const completedAtMs =
+    state === "complete" || state === "failed" ? timestamp : undefined;
+  const durationMs =
+    completedAtMs !== undefined && startedAtMs !== undefined
+      ? completedAtMs - startedAtMs
+      : undefined;
   proofPhases.value[index] = {
-    ...proofPhases.value[index],
+    ...current,
     state,
     detail,
+    startedAtMs,
+    completedAtMs,
+    durationMs,
   };
+  proofTimingNowMs.value = timestamp;
+  exposeProofTimingsForAutomation();
 };
 
 const validateForm = () => {
-  if (!bridge.readiness.value.ready) {
+  if (!routeReadyForAction.value) {
     throw new Error(
       routeMessages.value[0] ||
         t("Route readiness must be true before bridge actions are enabled."),
     );
+  }
+  if (tonReturnBlocker.value) {
+    throw new Error(t(tonReturnBlocker.value));
   }
   if (activeProjectConfigurationError.value) {
     throw new Error(t(walletConnectInvalidMessage.value));
@@ -1851,9 +2899,11 @@ const validateForm = () => {
   }
   if (!activeWalletConnected.value) {
     throw new Error(
-      isBscRoute.value
-        ? t("Connect a BSC wallet to continue.")
-        : t("Connect a TRON wallet to continue."),
+      isTonRoute.value
+        ? t("Connect a TON wallet to continue.")
+        : isBscRoute.value
+          ? t("Connect a BSC wallet to continue.")
+          : t("Connect a TRON wallet to continue."),
     );
   }
   try {
@@ -1867,7 +2917,9 @@ const validateForm = () => {
         ? isBscRoute.value
           ? t("Enter a valid BSC recipient address.")
           : t("Enter a valid TRON Base58Check recipient.")
-        : t("Enter a TAIRA testnet account."),
+        : direction.value === "taira-to-ton"
+          ? t("Enter a valid TON raw recipient address.")
+          : t("Enter a TAIRA testnet account."),
     );
   }
 };
@@ -2029,6 +3081,553 @@ const finalizeTairaMessageToBsc = async (
   assertSccpOperationContextCurrent(context);
   proofReady.value = true;
   markPhase(3, "complete", "BSC finalize transaction confirmed");
+};
+
+const readTonWalletSignedBoc = (value: unknown): string => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return "";
+  }
+  const boc = String((value as Record<string, unknown>).boc ?? "").trim();
+  return boc && boc.length <= 200_000 ? boc : "";
+};
+
+const readTonWalletTransactionHash = (
+  value: unknown,
+  fallback: string,
+): string => {
+  if (fallback.trim()) {
+    return normalizeTonTransactionHash(fallback);
+  }
+  const record =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null;
+  const candidate = String(
+    record?.hash ??
+      record?.txHash ??
+      record?.tx_hash ??
+      record?.transactionHash ??
+      record?.transaction_hash ??
+      record?.txId ??
+      record?.tx_id ??
+      record?.transactionId ??
+      record?.transaction_id ??
+      "",
+  ).trim();
+  if (candidate) {
+    return normalizeTonTransactionHash(candidate);
+  }
+  throw new Error(
+    "TON wallet did not return a source transaction hash; enter the TON transaction hash after it appears in the explorer, then fetch proof data.",
+  );
+};
+
+const buildTonToTairaSourceRecord = (context: SccpOperationContext) => {
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(context.amountDecimal);
+  const nonce = Date.now().toString();
+  const payloadInput = {
+    tonSender: context.tonAddress,
+    tairaRecipient: context.tairaRecipient,
+    amount: amountBaseUnits,
+    nonce,
+  };
+  const transferPayload = buildTairaXorTonToTairaTransferPayload(payloadInput);
+  const messageId = tairaXorTonToTairaTransferMessageId(payloadInput);
+  const payloadHash = sccpPayloadHash(
+    canonicalSccpPayloadEnvelopeBytes({
+      kind: "Transfer",
+      value: transferPayload,
+    }),
+  );
+  const commitmentRoot = sccpMerkleRootFromCommitment(
+    {
+      version: 1,
+      kind: "Transfer",
+      target_domain: 0,
+      message_id: messageId,
+      payload_hash: payloadHash,
+    },
+    { steps: [] },
+  );
+  const payloadBocBytes = beginCell()
+    .storeUint(SCCP_TON_SOURCE_RECORD_OP, 32)
+    .storeUint(BigInt(Date.now()), 64)
+    .storeUint(1, 16)
+    .storeUint(BigInt(messageId), 256)
+    .storeUint(BigInt(payloadHash), 256)
+    .storeUint(BigInt(commitmentRoot), 256)
+    .storeUint(BigInt(amountBaseUnits), 128)
+    .endCell()
+    .toBoc({ idx: false });
+  return {
+    amountBaseUnits,
+    commitmentRoot,
+    messageId,
+    nonce,
+    payloadBocBytes,
+    payloadHash,
+  };
+};
+
+const finalizeTairaMessageToTon = async (
+  context: SccpOperationContext,
+  input: { pollForIndexing?: boolean } = {},
+) => {
+  const job = await loadTairaMessageProofJob(context, input);
+  markPhase(0, "complete", "Route and message id accepted");
+  markPhase(1, "complete", "Torii returned a TON SCCP proof job");
+  const binding = buildTairaXorTonFinalizeProofBinding({
+    manifest: context.manifest,
+    job,
+    messageId: context.messageId ?? messageId.value,
+    tairaSender: context.accountId,
+    tonRecipient: context.tonRecipient,
+    amountDecimal: context.amountDecimal,
+    tonNetwork: SCCP_TON_NETWORK.key,
+  });
+  const verifierRawAddress = readSccpTonVerifierAddress(context.manifest);
+  const verifierWalletAddress = toUserFriendlyAddress(
+    normalizeTonRawAddress(verifierRawAddress, "TON verifier address"),
+    true,
+  );
+  const messageValueNano = readSccpTonFinalizeMessageValueNano(
+    context.manifest,
+  );
+  const verifierProtocolVersion = readSccpTonVerifierProtocolVersion(
+    context.manifest,
+  );
+  assertSccpOperationContextCurrent(context);
+  const verifierLink = {
+    label: t("TON verifier contract"),
+    href: `${SCCP_TON_NETWORK.explorerUrl}/address/${verifierWalletAddress}`,
+  };
+  transactionLinks.value = [
+    ...transactionLinks.value.filter((link) => link.href !== verifierLink.href),
+    verifierLink,
+  ];
+  if (verifierProtocolVersion === SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2) {
+    const compactPlan = buildSccpTonCompactFinalizeMessageBodyBocFromBytes({
+      messageBodyBocHex: binding.messageBodyBocHex,
+      messageId: binding.messageId,
+      statementHash: binding.statementHash,
+      destinationBindingHash: binding.destinationBindingHash,
+    });
+    markPhase(
+      2,
+      "complete",
+      `TON compact proof commitment built for ${compactPlan.totalBytes} proof bytes`,
+    );
+    beginProofTiming(
+      "ton-proof-upload",
+      "TON proof upload",
+      "Compact verifier protocol skips chunk upload",
+      {
+        protocolVersion: verifierProtocolVersion,
+        originalPayloadBytes: compactPlan.totalBytes,
+        compactPayloadBytes: compactPlan.payloadBocBytes.length,
+        bodyHash: compactPlan.bodyHash,
+        proofDigest: compactPlan.proofDigest,
+      },
+    );
+    finishProofTiming(
+      "ton-proof-upload",
+      "skipped",
+      "Compact verifier protocol sent a single proof commitment",
+      {
+        protocolVersion: verifierProtocolVersion,
+        originalPayloadBytes: compactPlan.totalBytes,
+        compactPayloadBytes: compactPlan.payloadBocBytes.length,
+      },
+    );
+    beginProofTiming(
+      "ton-finalize",
+      "TON finalization",
+      "Submitting compact verifier finalization transaction",
+      {
+        protocolVersion: verifierProtocolVersion,
+        originalPayloadBytes: compactPlan.totalBytes,
+        compactPayloadBytes: compactPlan.payloadBocBytes.length,
+      },
+    );
+    markPhase(
+      3,
+      "active",
+      "Requesting TON wallet approval for compact finalization",
+    );
+    assertSccpOperationContextCurrent(context);
+    const sendResult = await ton.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 600,
+      network: CHAIN.TESTNET,
+      from: context.tonAddress,
+      messages: [
+        {
+          address: verifierWalletAddress,
+          amount: messageValueNano,
+          payload: sccpBytesToBase64(compactPlan.payloadBocBytes),
+        },
+      ],
+    });
+    assertSccpOperationContextCurrent(context);
+    const signedBoc = readTonWalletSignedBoc(sendResult);
+    proofReady.value = true;
+    markPhase(
+      3,
+      "complete",
+      signedBoc
+        ? "TON wallet returned a signed compact finalize transaction"
+        : "TON wallet accepted the compact finalize transaction request",
+    );
+    finishProofTiming(
+      "ton-finalize",
+      "complete",
+      signedBoc
+        ? "TON wallet returned signed compact finalization"
+        : "TON wallet accepted compact finalization",
+      {
+        protocolVersion: verifierProtocolVersion,
+        bodyHash: compactPlan.bodyHash,
+      },
+    );
+    return;
+  }
+  const chunkPlan = buildSccpTonChunkedMessageBodyBocsFromBytes({
+    messageBodyBocHex: binding.messageBodyBocHex,
+    messageId: binding.messageId,
+    statementHash: binding.statementHash,
+    destinationBindingHash: binding.destinationBindingHash,
+    chunkSize: SCCP_TON_CHUNK_SIZE_BYTES,
+  });
+  markPhase(
+    2,
+    "complete",
+    `TON proof payload split into ${chunkPlan.chunkCount} bounded chunks`,
+  );
+  const uploadMessages = chunkPlan.uploadMessages.map((upload) => ({
+    chunkIndex: upload.index,
+    message: {
+      address: verifierWalletAddress,
+      amount: SCCP_TON_CHUNK_UPLOAD_MESSAGE_VALUE_NANO,
+      payload: sccpBytesToBase64(upload.payloadBocBytes),
+    },
+    payloadSizeBytes: upload.payloadBocBytes.length,
+  }));
+  const walletMaxMessages = await ton.resolveMaxMessages();
+  const uploadBatchSize = Math.max(
+    1,
+    Math.min(
+      walletMaxMessages,
+      SCCP_TON_UPLOAD_APPROVAL_MAX_MESSAGES,
+      uploadMessages.length,
+    ),
+  );
+  const uploadBatches = chunkSccpTonUploadMessages(
+    uploadMessages,
+    uploadBatchSize,
+    SCCP_TON_UPLOAD_APPROVAL_MAX_PAYLOAD_BYTES,
+  );
+  beginProofTiming(
+    "ton-proof-upload",
+    "TON proof upload",
+    "Uploading proof chunks to the TON verifier",
+    {
+      protocolVersion: verifierProtocolVersion,
+      chunkCount: chunkPlan.chunkCount,
+      batchCount: uploadBatches.length,
+      uploadBatchSize,
+      maxPayloadBytes: SCCP_TON_UPLOAD_APPROVAL_MAX_PAYLOAD_BYTES,
+    },
+  );
+  markPhase(
+    3,
+    "active",
+    `Requesting TON wallet approval for ${uploadBatches.length} proof chunk batch(es)`,
+  );
+  for (let batchIndex = 0; batchIndex < uploadBatches.length; batchIndex += 1) {
+    const batch = uploadBatches[batchIndex] ?? [];
+    const firstChunk = (batch[0]?.chunkIndex ?? 0) + 1;
+    const lastChunk = (batch.at(-1)?.chunkIndex ?? firstChunk - 1) + 1;
+    const batchMessages = batch.map((entry) => entry.message);
+    markPhase(
+      3,
+      "active",
+      `Requesting TON wallet approval for proof chunks ${firstChunk}-${lastChunk}/${chunkPlan.chunkCount}`,
+    );
+    assertSccpOperationContextCurrent(context);
+    await ton.sendTransaction({
+      validUntil: Math.floor(Date.now() / 1000) + 600,
+      network: CHAIN.TESTNET,
+      from: context.tonAddress,
+      messages: batchMessages,
+    });
+    assertSccpOperationContextCurrent(context);
+    markPhase(
+      3,
+      "active",
+      `TON proof chunks ${firstChunk}-${lastChunk}/${chunkPlan.chunkCount} accepted by wallet`,
+    );
+  }
+  finishProofTiming(
+    "ton-proof-upload",
+    "complete",
+    "TON verifier accepted proof chunks",
+    {
+      protocolVersion: verifierProtocolVersion,
+      chunkCount: chunkPlan.chunkCount,
+      batchCount: uploadBatches.length,
+    },
+  );
+  beginProofTiming(
+    "ton-finalize",
+    "TON finalization",
+    "Submitting verifier finalization transaction",
+    {
+      protocolVersion: verifierProtocolVersion,
+      chunkCount: chunkPlan.chunkCount,
+    },
+  );
+  markPhase(3, "active", "Requesting TON wallet approval for finalization");
+  const sendResult = await ton.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: CHAIN.TESTNET,
+    from: context.tonAddress,
+    messages: [
+      {
+        address: verifierWalletAddress,
+        amount: messageValueNano,
+        payload: sccpBytesToBase64(chunkPlan.finalizeMessage.payloadBocBytes),
+      },
+    ],
+  });
+  assertSccpOperationContextCurrent(context);
+  const signedBoc = readTonWalletSignedBoc(sendResult);
+  proofReady.value = true;
+  markPhase(
+    3,
+    "complete",
+    signedBoc
+      ? "TON wallet returned a signed chunked finalize transaction"
+      : "TON wallet accepted the chunked finalize transaction request",
+  );
+  finishProofTiming(
+    "ton-finalize",
+    "complete",
+    signedBoc
+      ? "TON wallet returned signed finalization"
+      : "TON wallet accepted finalization",
+  );
+};
+
+const finalizeTonBurnToTaira = async (
+  context: SccpOperationContext,
+  input: { sourceRecord?: ReturnType<typeof buildTonToTairaSourceRecord> } = {},
+) => {
+  if (tonReturnBlocker.value) {
+    throw new Error(t(tonReturnBlocker.value));
+  }
+  markPhase(1, "active", "Collecting TON source transaction data");
+  const txId = normalizeTonTransactionHash(context.tonTxId ?? tronTxId.value);
+  markPhase(1, "complete", "TON source transaction hash accepted");
+  markPhase(2, "active", "Generating TON source proof package");
+  assertSccpOperationContextCurrent(context);
+  beginProofTiming(
+    "ton-source-proof-package",
+    "TON source proof package",
+    "Building deployment-bound TON source proof package",
+    {
+      txId,
+      moduleUrl: tonSourceProverModuleUrl.value,
+    },
+  );
+  let proofPackage: TonToTairaSourceProofPackage;
+  try {
+    proofPackage = await runTonSourceProofWorker({
+      manifest: context.manifest,
+      proverModuleUrl: tonSourceProverModuleUrl.value,
+      txId,
+      transaction: {
+        hash: txId,
+        ...(input.sourceRecord
+          ? {
+              amountBaseUnits: input.sourceRecord.amountBaseUnits,
+              commitmentRoot: input.sourceRecord.commitmentRoot,
+              messageId: input.sourceRecord.messageId,
+              nonce: input.sourceRecord.nonce,
+              payloadHash: input.sourceRecord.payloadHash,
+            }
+          : {}),
+      },
+      receipt: null,
+      finality: null,
+      proofMaterial: null,
+      tonSender: context.tonAddress,
+      tairaRecipient: context.tairaRecipient,
+      amountDecimal: context.amountDecimal,
+    });
+    finishProofTiming(
+      "ton-source-proof-package",
+      "complete",
+      "TON source proof package is bound",
+      { txId },
+    );
+  } catch (error) {
+    finishProofTiming(
+      "ton-source-proof-package",
+      "failed",
+      error instanceof Error ? error.message : String(error),
+      { txId },
+    );
+    throw error;
+  }
+  assertSccpOperationContextCurrent(context);
+  const boundProofPackage = bindTonToTairaSourceProofPackage({
+    manifest: context.manifest,
+    proofPackage,
+    txId,
+    tonSender: context.tonAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+  });
+  messageId.value = boundProofPackage.messageId;
+  markPhase(2, "complete", "TON source proof package is ready");
+  markPhase(3, "active", "Submitting TAIRA settlement");
+  assertSccpOperationContextCurrent(context);
+  const response = await submitSccpBridgeMessage({
+    toriiUrl: context.toriiUrl,
+    accountId: context.accountId,
+    messageBundle: buildSccpMessageBundleSubmitPayload(
+      boundProofPackage.messageBundle,
+    ),
+    settlement: boundProofPackage.settlement,
+  });
+  const tairaTxHash = String(
+    response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
+  ).trim();
+  const normalizedTairaTxHash = normalizeTairaTransactionHash(tairaTxHash);
+  const tairaTxHref = buildTairaExplorerTransactionUrl(
+    TAIRA_EXPLORER_URL,
+    normalizedTairaTxHash,
+  );
+  markPhase(3, "active", "Waiting for TAIRA settlement confirmation");
+  await waitForSccpTransactionCommit({
+    toriiUrl: context.toriiUrl,
+    hashHex: normalizedTairaTxHash,
+  });
+  assertSccpOperationContextCurrent(context);
+  proofReady.value = true;
+  markPhase(3, "complete", "TAIRA settlement confirmed");
+  if (tairaTxHref) {
+    transactionLinks.value = [
+      ...transactionLinks.value.filter((link) => link.href !== tairaTxHref),
+      {
+        label: t("TAIRA settlement transaction"),
+        href: tairaTxHref,
+      },
+    ];
+  }
+};
+
+const ensureTonSourceProverAvailable = async () => {
+  const moduleUrl = tonSourceProverModuleUrl.value;
+  if (!moduleUrl) {
+    throw new Error(
+      t(
+        "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.",
+      ),
+    );
+  }
+  beginProofTiming(
+    "ton-source-prover-prewarm",
+    "TON source prover prewarm",
+    "Loading TON source proof module in the worker",
+    {
+      moduleUrl,
+    },
+  );
+  try {
+    await prewarmTonSourceProver(moduleUrl);
+    finishProofTiming(
+      "ton-source-prover-prewarm",
+      "complete",
+      "TON source proof module is ready in the worker",
+      { moduleUrl },
+    );
+  } catch (error) {
+    finishProofTiming(
+      "ton-source-prover-prewarm",
+      "failed",
+      error instanceof Error ? error.message : String(error),
+      { moduleUrl },
+    );
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `TON -> TAIRA source proof module is not available: ${detail}`,
+    );
+  }
+};
+
+const submitTonBurnToTaira = async (context: SccpOperationContext) => {
+  if (tonReturnBlocker.value) {
+    throw new Error(t(tonReturnBlocker.value));
+  }
+  markPhase(2, "active", "Checking TON source proof module");
+  await ensureTonSourceProverAvailable();
+  assertSccpOperationContextCurrent(context);
+  markPhase(2, "complete", "TON source proof module is available");
+  markPhase(1, "active", "Creating TON source transaction");
+  const sourceBridgeRawAddress = readSccpTonSourceBridgeAddress(
+    context.manifest,
+  );
+  const sourceBridgeWalletAddress = toUserFriendlyAddress(
+    normalizeTonRawAddress(sourceBridgeRawAddress, "TON source bridge address"),
+    true,
+  );
+  const sourceRecord = buildTonToTairaSourceRecord(context);
+  messageId.value = sourceRecord.messageId;
+  markPhase(1, "complete", "TON source transaction request created");
+  markPhase(
+    2,
+    "complete",
+    "TON source proof data collection can begin after broadcast",
+  );
+  markPhase(3, "active", "Requesting TON wallet approval");
+  assertSccpOperationContextCurrent(context);
+  const sendResult = await ton.sendTransaction({
+    validUntil: Math.floor(Date.now() / 1000) + 600,
+    network: CHAIN.TESTNET,
+    from: context.tonAddress,
+    messages: [
+      {
+        address: sourceBridgeWalletAddress,
+        amount: SCCP_TON_SOURCE_MESSAGE_VALUE_NANO,
+        payload: sccpBytesToBase64(sourceRecord.payloadBocBytes),
+      },
+    ],
+  });
+  assertSccpOperationContextCurrent(context);
+  const txId = readTonWalletTransactionHash(sendResult, tronTxId.value);
+  const sourceBridgeLink = {
+    label: t("TON source bridge"),
+    href: `${SCCP_TON_NETWORK.explorerUrl}/address/${sourceBridgeWalletAddress}`,
+  };
+  transactionLinks.value = [
+    {
+      label: t("TON source transaction"),
+      href: `${SCCP_TON_NETWORK.explorerUrl}/tx/${txId}`,
+    },
+    ...transactionLinks.value.filter(
+      (link) => link.href !== sourceBridgeLink.href,
+    ),
+    sourceBridgeLink,
+  ];
+  tronTxId.value = txId;
+  markPhase(3, "complete", "TON source transaction broadcast");
+  await finalizeTonBurnToTaira(
+    {
+      ...context,
+      tonTxId: txId,
+    },
+    { sourceRecord },
+  );
 };
 
 const finalizeTronBurnToTaira = async (
@@ -2302,43 +3901,73 @@ const prepareBridge = async () => {
     markPhase(0, "complete", "Route and wallet are ready");
     if (
       direction.value === "taira-to-tron" ||
-      direction.value === "taira-to-bsc"
+      direction.value === "taira-to-bsc" ||
+      direction.value === "taira-to-ton"
     ) {
       const nonce = Date.now().toString();
       const request =
-        direction.value === "taira-to-bsc"
-          ? buildTairaXorBscOutboundBurnRecordRequest({
+        direction.value === "taira-to-ton"
+          ? buildTairaXorTonOutboundBurnRecordRequest({
               manifest: operationContext.manifest,
               tairaSender: operationContext.accountId,
-              bscRecipient: operationContext.bscRecipient,
+              tonRecipient: operationContext.tonRecipient,
               amountDecimal: operationContext.amountDecimal,
               nonce,
             })
-          : buildTairaXorOutboundBurnRecordRequest({
-              manifest: operationContext.manifest,
-              tairaSender: operationContext.accountId,
-              tronRecipient: operationContext.tronRecipient,
-              amountDecimal: operationContext.amountDecimal,
-              nonce,
-            });
+          : direction.value === "taira-to-bsc"
+            ? buildTairaXorBscOutboundBurnRecordRequest({
+                manifest: operationContext.manifest,
+                tairaSender: operationContext.accountId,
+                bscRecipient: operationContext.bscRecipient,
+                amountDecimal: operationContext.amountDecimal,
+                nonce,
+              })
+            : buildTairaXorOutboundBurnRecordRequest({
+                manifest: operationContext.manifest,
+                tairaSender: operationContext.accountId,
+                tronRecipient: operationContext.tronRecipient,
+                amountDecimal: operationContext.amountDecimal,
+                nonce,
+              });
       messageId.value = request.outbound.messageId;
       const tairaSourceContext = {
         ...operationContext,
         messageId: request.outbound.messageId,
       };
       markPhase(1, "active", "Queueing TAIRA burn-record proof request");
-      markPhase(2, "active", "Generating TAIRA burn-record proof");
-      const proveJob = await startZkIvmProveJob({
+      const proveJob = await queueZkIvmProveJob(tairaSourceContext, {
         toriiUrl: operationContext.toriiUrl,
         ...request.zkIvmRequest.request,
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
       markPhase(1, "complete", "TAIRA burn-record proof request queued");
       const jobId = readJobId(proveJob);
+      markPhase(2, "active", "Generating TAIRA burn-record proof");
+      beginProofTiming(
+        "taira-zk-proof-generation",
+        "TAIRA proof generation",
+        "Waiting for burn-record proof",
+        {
+          jobId,
+        },
+      );
       const proof = await waitForZkIvmProof(tairaSourceContext, jobId);
+      finishProofTiming(
+        "taira-zk-proof-generation",
+        "complete",
+        "Burn-record proof ready",
+        {
+          jobId,
+        },
+      );
       assertSccpOperationContextCurrent(tairaSourceContext);
       markPhase(2, "complete", "TAIRA burn-record proof is ready");
       markPhase(3, "active", "Submitting TAIRA source transaction");
+      beginProofTiming(
+        "taira-source-submit",
+        "TAIRA source submission",
+        "Submitting proved burn-record transaction",
+      );
       const submission = await submitZkIvmProvedTransaction({
         toriiUrl: operationContext.toriiUrl,
         chainId: operationContext.chainId,
@@ -2349,11 +3978,20 @@ const prepareBridge = async () => {
           ...request.zkIvmRequest.request.metadata,
           gas_asset_id: request.material.settlementAssetDefinitionId,
         },
+        waitForCommit: false,
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
       const tairaTxHash = String(
         submission.tx_hash_hex ?? submission.txHashHex ?? submission.hash ?? "",
       ).trim();
+      finishProofTiming(
+        "taira-source-submit",
+        "complete",
+        "TAIRA source transaction accepted",
+        {
+          txHash: tairaTxHash,
+        },
+      );
       const tairaTxHref = buildTairaExplorerTransactionUrl(
         TAIRA_EXPLORER_URL,
         tairaTxHash,
@@ -2375,11 +4013,20 @@ const prepareBridge = async () => {
         await finalizeTairaMessageToBsc(tairaSourceContext, {
           pollForIndexing: true,
         });
+      } else if (direction.value === "taira-to-ton") {
+        await finalizeTairaMessageToTon(tairaSourceContext, {
+          pollForIndexing: true,
+        });
       } else {
         await finalizeTairaMessageToTron(tairaSourceContext, {
           pollForIndexing: true,
         });
       }
+      return;
+    }
+
+    if (direction.value === "ton-to-taira") {
+      await submitTonBurnToTaira(operationContext);
       return;
     }
 
@@ -2498,6 +4145,7 @@ const prepareBridge = async () => {
       pollForFinality: true,
     });
   } catch (error) {
+    failActiveProofTimings(error);
     formError.value = error instanceof Error ? error.message : String(error);
   } finally {
     proofLoading.value = false;
@@ -2507,11 +4155,13 @@ const prepareBridge = async () => {
 const fetchMessageJob = async () => {
   proofLoading.value = true;
   formError.value = "";
+  resetProofPhases();
   try {
     validateForm();
     if (
       direction.value === "taira-to-tron" ||
-      direction.value === "taira-to-bsc"
+      direction.value === "taira-to-bsc" ||
+      direction.value === "taira-to-ton"
     ) {
       if (!messageId.value.trim()) {
         throw new Error(
@@ -2522,24 +4172,37 @@ const fetchMessageJob = async () => {
     } else {
       if (!tronTxId.value.trim()) {
         throw new Error(
-          isBscRoute.value
-            ? t("Enter a BSC transaction hash before fetching proof data.")
-            : t("Enter a TRON transaction ID before fetching proof data."),
+          isTonRoute.value
+            ? t("Enter a TON transaction hash before fetching proof data.")
+            : isBscRoute.value
+              ? t("Enter a BSC transaction hash before fetching proof data.")
+              : t("Enter a TRON transaction ID before fetching proof data."),
         );
       }
       tronTxId.value =
-        direction.value === "bsc-to-taira"
-          ? normalizeBscTransactionHash(tronTxId.value)
-          : normalizeTronTransactionId(tronTxId.value);
+        direction.value === "ton-to-taira"
+          ? normalizeTonTransactionHash(tronTxId.value)
+          : direction.value === "bsc-to-taira"
+            ? normalizeBscTransactionHash(tronTxId.value)
+            : normalizeTronTransactionId(tronTxId.value);
     }
     const operationContext = createSccpOperationContext({
       ...(direction.value === "taira-to-tron" ||
-      direction.value === "taira-to-bsc"
+      direction.value === "taira-to-bsc" ||
+      direction.value === "taira-to-ton"
         ? { messageId: messageId.value }
         : direction.value === "bsc-to-taira"
           ? { bscTxId: tronTxId.value }
-          : { tronTxId: tronTxId.value }),
+          : direction.value === "ton-to-taira"
+            ? { tonTxId: tronTxId.value }
+            : { tronTxId: tronTxId.value }),
     });
+    if (direction.value === "ton-to-taira") {
+      markPhase(0, "complete", "Route and TON transaction hash accepted");
+      await finalizeTonBurnToTaira(operationContext);
+      return;
+    }
+
     if (direction.value === "bsc-to-taira") {
       markPhase(0, "complete", "Route and BSC transaction hash accepted");
       await finalizeBscBurnToTaira(operationContext);
@@ -2557,8 +4220,14 @@ const fetchMessageJob = async () => {
       return;
     }
 
+    if (direction.value === "taira-to-ton") {
+      await finalizeTairaMessageToTon(operationContext);
+      return;
+    }
+
     await finalizeTairaMessageToTron(operationContext);
   } catch (error) {
+    failActiveProofTimings(error);
     formError.value = error instanceof Error ? error.message : String(error);
   } finally {
     proofLoading.value = false;
@@ -2591,4 +4260,36 @@ watch(
     void refreshAll();
   },
 );
+
+watch(
+  () => [isTonRoute.value, direction.value, tonSourceProverModuleUrl.value],
+  ([tonSelected, selectedDirection, moduleUrl]) => {
+    if (
+      tonSelected &&
+      selectedDirection === "ton-to-taira" &&
+      typeof moduleUrl === "string" &&
+      moduleUrl.trim()
+    ) {
+      void prewarmTonSourceProver(moduleUrl).catch(() => {
+        // The submit path reports the concrete load error and remains fail-closed.
+      });
+    }
+  },
+  { immediate: true },
+);
+
+watch(proofLoading, (loading) => {
+  if (loading) {
+    startProofTimingTicker();
+  } else {
+    stopProofTimingTicker();
+  }
+});
+
+watch(proofTimingSnapshot, exposeProofTimingsForAutomation, { deep: true });
+
+onUnmounted(() => {
+  stopProofTimingTicker();
+  closeTonSourceProofWorker();
+});
 </script>

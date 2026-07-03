@@ -1,9 +1,13 @@
+import "@/polyfills";
 import {
   buildBscSccpProofPackage,
+  buildTonSccpProofPackage,
   buildTronSccpProofPackage,
   generateBscSccpProofPackage,
+  generateTonSccpProofPackage,
   generateTronSccpProofPackage,
   type BscSccpProofPackageInput,
+  type TonSccpProofPackageInput,
   type TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
 import {
@@ -13,21 +17,29 @@ import {
 } from "@iroha/iroha-js/sccp";
 import {
   bindBscToTairaSourceProofPackage,
+  bindTonToTairaSourceProofPackage,
   bindTronToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
   type BscSourceProverMaterialBinding,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
+  type TonToTairaSourceProofPackage,
+  type TonToTairaSourceProofPackageInput,
   type TronToTairaSourceProofPackage,
   type TronToTairaSourceProofPackageInput,
 } from "@/utils/sccp";
 import {
   loadBscSccpProveFn,
   loadBscSccpSourceProveFn,
+  loadTonSccpProveFn,
+  loadTonSccpSourceProveFn,
   loadTronSccpSourceProveFn,
   loadTronSccpProveFn,
   type BscSccpProverModule,
   type BscSccpProverGlobal,
+  type TonSccpProverGlobal,
+  type TonSccpProverModule,
+  type TonSccpSourceProveFn,
   type TronSccpProverGlobal,
 } from "@/utils/sccpProverLink";
 import { normalizeSccpPackageOrRemoteModuleUrl } from "@/utils/sccpProverUrl";
@@ -41,9 +53,13 @@ type BscRuntimeProverWorkerGlobal = typeof self & {
 type SccpProverWorkerRequestKind =
   | "build-bsc-proof-package"
   | "prove-bsc-proof-package"
+  | "build-ton-proof-package"
+  | "prove-ton-proof-package"
   | "build-tron-proof-package"
   | "prove-tron-proof-package"
   | "prove-tron-source-package"
+  | "prewarm-ton-source-prover"
+  | "prove-ton-source-package"
   | "prove-bsc-source-package";
 
 type SccpProverWorkerRequest =
@@ -56,6 +72,16 @@ type SccpProverWorkerRequest =
       id: string;
       kind: "prove-bsc-proof-package";
       input: BscSccpProofPackageInput;
+    }
+  | {
+      id: string;
+      kind: "build-ton-proof-package";
+      input: TonSccpProofPackageInput;
+    }
+  | {
+      id: string;
+      kind: "prove-ton-proof-package";
+      input: TonSccpProofPackageInput;
     }
   | {
       id: string;
@@ -74,6 +100,16 @@ type SccpProverWorkerRequest =
     }
   | {
       id: string;
+      kind: "prewarm-ton-source-prover";
+      input: { proverModuleUrl?: string };
+    }
+  | {
+      id: string;
+      kind: "prove-ton-source-package";
+      input: TonToTairaSourceProofWorkerInput;
+    }
+  | {
+      id: string;
       kind: "prove-bsc-source-package";
       input: BscToTairaSourceProofWorkerInput;
     };
@@ -86,15 +122,22 @@ type BscToTairaSourceProofWorkerInput = Omit<
   proverConfigUrl?: string;
 };
 
+type TonToTairaSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
+  proverModuleUrl?: string;
+};
+
 type SccpProverWorkerResponse =
   | {
       id: string;
       ok: true;
       result:
         | ReturnType<typeof buildBscSccpProofPackage>
+        | ReturnType<typeof buildTonSccpProofPackage>
         | ReturnType<typeof buildTronSccpProofPackage>
         | BscToTairaSourceProofPackage
-        | TronToTairaSourceProofPackage;
+        | TonToTairaSourceProofPackage
+        | TronToTairaSourceProofPackage
+        | Record<string, unknown>;
     }
   | {
       id: string;
@@ -222,14 +265,48 @@ const importWorkerPublicModule = async <TModule>(
     /* @vite-ignore */ resolveWorkerPublicUrl(moduleUrl)
   ) as Promise<TModule>;
 
+let tonSourceProverCache: {
+  moduleUrl: string;
+  promise: Promise<TonSccpSourceProveFn | undefined>;
+} | null = null;
+
+const resolveTonSourceProverModuleUrl = (moduleUrl?: unknown): string =>
+  readOptionalWorkerString(moduleUrl) ||
+  import.meta.env.VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL ||
+  "";
+
+const loadCachedTonSourceProveFn = (
+  moduleUrl?: unknown,
+): Promise<TonSccpSourceProveFn | undefined> => {
+  const resolvedModuleUrl = resolveTonSourceProverModuleUrl(moduleUrl);
+  if (
+    !tonSourceProverCache ||
+    tonSourceProverCache.moduleUrl !== resolvedModuleUrl
+  ) {
+    tonSourceProverCache = {
+      moduleUrl: resolvedModuleUrl,
+      promise: loadTonSccpSourceProveFn({
+        globalScope: self as unknown as TonSccpProverGlobal,
+        moduleUrl: resolvedModuleUrl,
+        importer: importWorkerPublicModule<TonSccpProverModule>,
+      }),
+    };
+  }
+  return tonSourceProverCache.promise;
+};
+
 const isSccpProverWorkerRequestKind = (
   value: unknown,
 ): value is SccpProverWorkerRequestKind =>
   value === "build-bsc-proof-package" ||
   value === "prove-bsc-proof-package" ||
+  value === "build-ton-proof-package" ||
+  value === "prove-ton-proof-package" ||
   value === "build-tron-proof-package" ||
   value === "prove-tron-proof-package" ||
   value === "prove-tron-source-package" ||
+  value === "prewarm-ton-source-prover" ||
+  value === "prove-ton-source-package" ||
   value === "prove-bsc-source-package";
 
 const normalizeSccpProverWorkerRequestId = (value: unknown): string => {
@@ -758,6 +835,22 @@ export const normalizeSccpProverWorkerRequest = (
     };
   }
 
+  if (snapshot.kind === "prewarm-ton-source-prover") {
+    return {
+      id,
+      kind: snapshot.kind,
+      input: snapshot.input as { proverModuleUrl?: string },
+    };
+  }
+
+  if (snapshot.kind === "prove-ton-source-package") {
+    return {
+      id,
+      kind: snapshot.kind,
+      input: snapshot.input as unknown as TonToTairaSourceProofWorkerInput,
+    };
+  }
+
   if (snapshot.kind === "prove-bsc-source-package") {
     assertNoCallerSuppliedBscSourceProofMaterial(snapshot.input);
     return {
@@ -776,6 +869,17 @@ export const normalizeSccpProverWorkerRequest = (
       id,
       kind: snapshot.kind,
       input: snapshot.input as unknown as BscSccpProofPackageInput,
+    };
+  }
+
+  if (
+    snapshot.kind === "build-ton-proof-package" ||
+    snapshot.kind === "prove-ton-proof-package"
+  ) {
+    return {
+      id,
+      kind: snapshot.kind,
+      input: snapshot.input as unknown as TonSccpProofPackageInput,
     };
   }
 
@@ -816,7 +920,92 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         postSccpProverWorkerSuccess(id, result);
         return;
       }
+      if (kind === "build-ton-proof-package") {
+        const result = buildTonSccpProofPackage(
+          input as unknown as TonSccpProofPackageInput,
+        );
+        postSccpProverWorkerSuccess(id, result);
+        return;
+      }
+      if (kind === "prove-ton-proof-package") {
+        const prove = await loadTonSccpProveFn({
+          globalScope: self as unknown as TonSccpProverGlobal,
+          moduleUrl: import.meta.env.VITE_SCCP_TON_PROVER_MODULE_URL,
+          importer: importWorkerPublicModule<TonSccpProverModule>,
+        });
+        const result = await generateTonSccpProofPackage({
+          ...(input as unknown as TonSccpProofPackageInput),
+          prove,
+        });
+        postSccpProverWorkerSuccess(id, result);
+        return;
+      }
       if (kind !== "build-tron-proof-package") {
+        if (kind === "prewarm-ton-source-prover") {
+          let proveSource: TonSccpSourceProveFn | undefined;
+          let loadError: unknown;
+          try {
+            proveSource = await loadCachedTonSourceProveFn(
+              input.proverModuleUrl,
+            );
+          } catch (error) {
+            loadError = error;
+            proveSource = undefined;
+          }
+          if (typeof proveSource !== "function") {
+            const detail =
+              loadError instanceof Error && loadError.message
+                ? ` ${loadError.message}`
+                : "";
+            throw new Error(
+              `TON -> TAIRA source proof module is not available.${detail}`,
+            );
+          }
+          postSccpProverWorkerSuccess(id, {
+            ready: true,
+            moduleUrl: resolveTonSourceProverModuleUrl(input.proverModuleUrl),
+          });
+          return;
+        }
+        if (kind === "prove-ton-source-package") {
+          let proveSource: TonSccpSourceProveFn | undefined;
+          let loadError: unknown;
+          try {
+            proveSource = await loadCachedTonSourceProveFn(
+              input.proverModuleUrl,
+            );
+          } catch (error) {
+            loadError = error;
+            proveSource = undefined;
+          }
+          if (typeof proveSource !== "function") {
+            const detail =
+              loadError instanceof Error && loadError.message
+                ? ` ${loadError.message}`
+                : "";
+            throw new Error(
+              `TON -> TAIRA needs an available TON source proof module before settlement.${detail}`,
+            );
+          }
+          const bindInput = snapshotSccpProverWorkerInput(
+            input,
+            "TON -> TAIRA SCCP source proof input",
+          );
+          const proveInput = snapshotSccpProverWorkerInput(
+            input,
+            "TON -> TAIRA SCCP source prove input",
+          );
+          const result = bindTonToTairaSourceProofPackage({
+            manifest: bindInput.manifest,
+            proofPackage: await proveSource(proveInput),
+            txId: bindInput.txId,
+            tonSender: bindInput.tonSender,
+            tairaRecipient: bindInput.tairaRecipient,
+            amountDecimal: bindInput.amountDecimal,
+          });
+          postSccpProverWorkerSuccess(id, result);
+          return;
+        }
         if (kind === "prove-bsc-source-package") {
           configureBscRuntimeProverConfigUrl(input.proverConfigUrl);
           const proveSource = await loadBscSccpSourceProveFn({

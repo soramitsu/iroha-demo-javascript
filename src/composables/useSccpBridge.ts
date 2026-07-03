@@ -8,10 +8,12 @@ import {
   listSccpRecentMessages,
 } from "@/services/iroha";
 import {
+  classifySccpRouteLoadFailure,
   mergeSccpLaneMaterialsIntoManifestSet,
   resolveSccpRouteReadiness,
   SCCP_XOR_ROUTE,
   type SccpRouteConfig,
+  type SccpRouteLoadFailure,
   type SccpRouteReadiness,
 } from "@/utils/sccp";
 import type {
@@ -25,6 +27,7 @@ export type SccpBridgeState = {
   readiness: SccpRouteReadiness;
   capabilities: SccpCapabilitiesResponse | null;
   manifestSet: SccpProofManifestSetResponse | null;
+  routeLoadFailure: SccpRouteLoadFailure | null;
   parameters: Record<string, unknown> | null;
   recentMessages: Record<string, unknown>[];
   balances: AccountAssetItem[];
@@ -39,6 +42,7 @@ export const useSccpBridge = (
   const session = useSessionStore();
   const capabilities = ref<SccpCapabilitiesResponse | null>(null);
   const manifestSet = ref<SccpProofManifestSetResponse | null>(null);
+  const routeLoadFailure = ref<SccpRouteLoadFailure | null>(null);
   const parameters = ref<Record<string, unknown> | null>(null);
   const recentMessages = ref<Record<string, unknown>[]>([]);
   const balances = ref<AccountAssetItem[]>([]);
@@ -60,6 +64,7 @@ export const useSccpBridge = (
     balanceRefreshSerial += 1;
     capabilities.value = null;
     manifestSet.value = null;
+    routeLoadFailure.value = null;
     parameters.value = null;
     recentMessages.value = [];
     balances.value = [];
@@ -76,8 +81,11 @@ export const useSccpBridge = (
         manifestSet.value,
         parameters.value,
         import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
+        import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
       ) as Record<string, unknown> | null,
       route: unref(route),
+      loadFailure: routeLoadFailure.value,
+      tonNetwork: import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
     }),
   );
 
@@ -86,6 +94,7 @@ export const useSccpBridge = (
     readiness: readiness.value,
     capabilities: capabilities.value,
     manifestSet: manifestSet.value,
+    routeLoadFailure: routeLoadFailure.value,
     parameters: parameters.value,
     recentMessages: recentMessages.value,
     balances: balances.value,
@@ -127,19 +136,29 @@ export const useSccpBridge = (
     const connectionKey = currentConnectionKey();
     const toriiUrl = session.connection.toriiUrl;
     error.value = "";
+    routeLoadFailure.value = null;
     loading.value = true;
     try {
-      const [routeResult, parametersResult] = await Promise.allSettled([
-        Promise.all([
+      const [capabilitiesResult, manifestsResult, parametersResult] =
+        await Promise.allSettled([
           getSccpCapabilities({ toriiUrl }),
           getSccpProofManifests({ toriiUrl }),
-        ]),
-        getParameters({ toriiUrl }),
-      ]);
-      if (routeResult.status === "rejected") {
-        throw routeResult.reason;
+          getParameters({ toriiUrl }),
+        ]);
+      if (capabilitiesResult.status === "rejected") {
+        throw classifySccpRouteLoadFailure(capabilitiesResult.reason, {
+          toriiUrl,
+          stage: "capabilities",
+        });
       }
-      const [nextCapabilities, nextManifestSet] = routeResult.value;
+      if (manifestsResult.status === "rejected") {
+        throw classifySccpRouteLoadFailure(manifestsResult.reason, {
+          toriiUrl,
+          stage: "manifest",
+        });
+      }
+      const nextCapabilities = capabilitiesResult.value;
+      const nextManifestSet = manifestsResult.value;
       const nextParameters =
         parametersResult.status === "fulfilled" ? parametersResult.value : null;
       if (
@@ -150,6 +169,7 @@ export const useSccpBridge = (
       }
       capabilities.value = nextCapabilities;
       manifestSet.value = nextManifestSet;
+      routeLoadFailure.value = null;
       parameters.value = nextParameters;
       void refreshRecentMessages(refreshSerial, connectionKey);
     } catch (routeError) {
@@ -161,10 +181,19 @@ export const useSccpBridge = (
       }
       capabilities.value = null;
       manifestSet.value = null;
+      routeLoadFailure.value =
+        routeError &&
+        typeof routeError === "object" &&
+        "kind" in routeError &&
+        "message" in routeError
+          ? (routeError as SccpRouteLoadFailure)
+          : classifySccpRouteLoadFailure(routeError, {
+              toriiUrl,
+              stage: "capabilities",
+            });
       parameters.value = null;
       recentMessages.value = [];
-      error.value =
-        routeError instanceof Error ? routeError.message : String(routeError);
+      error.value = "";
     } finally {
       if (
         refreshSerial === routeRefreshSerial &&
@@ -225,6 +254,7 @@ export const useSccpBridge = (
   return {
     capabilities,
     manifestSet,
+    routeLoadFailure,
     parameters,
     recentMessages,
     balances,

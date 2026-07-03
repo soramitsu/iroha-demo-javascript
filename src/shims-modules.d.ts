@@ -17,6 +17,11 @@ interface ImportMetaEnv {
   readonly VITE_SCCP_BSC_MAINNET_PROVER_MANIFEST_URL?: string;
   readonly VITE_SCCP_BSC_MAINNET_SOURCE_PROVER_MANIFEST_URL?: string;
   readonly VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL?: string;
+  readonly VITE_SCCP_TON_NETWORK?: string;
+  readonly VITE_SCCP_TON_E2E_WALLET?: string;
+  readonly VITE_SCCP_TONCONNECT_MANIFEST_URL?: string;
+  readonly VITE_SCCP_TON_PROVER_MODULE_URL?: string;
+  readonly VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL?: string;
 }
 
 interface ImportMeta {

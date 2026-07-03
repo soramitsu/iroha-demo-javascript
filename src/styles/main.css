@@ -4010,6 +4010,50 @@ button:not(.secondary):hover {
   list-style: none;
 }
 
+.sccp-timing-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sccp-timing-list li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.sccp-timing-list li.active {
+  border-color: rgba(255, 79, 124, 0.45);
+}
+
+.sccp-timing-list li.complete {
+  border-color: rgba(61, 220, 151, 0.38);
+}
+
+.sccp-timing-list li.failed {
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
+.sccp-timing-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.sccp-timing-list small {
+  color: var(--iroha-muted);
+  overflow-wrap: anywhere;
+}
+
 .sccp-progress-list li,
 .sccp-activity-item {
   display: grid;
@@ -4132,6 +4176,7 @@ button:not(.secondary):hover {
 :root[data-demo-recording="sccp"] .chip-sub,
 :root[data-demo-recording="sccp"] .helper,
 :root[data-demo-recording="sccp"] .sccp-progress-list small,
+:root[data-demo-recording="sccp"] .sccp-timing-list small,
 :root[data-demo-recording="sccp"] .sccp-activity-item small {
   color: #42526e;
 }

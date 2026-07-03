@@ -1,0 +1,110 @@
+{
+  "submitted": true,
+  "toriiUrl": "https://taira.sora.org",
+  "chainId": "809574f5-fee7-5e69-bfcf-52451e42d50f",
+  "authority": "testuﾛ1PﾉｳﾇmEｴWｵebHﾑ6ﾔﾙｲヰiwuCWErJ7uｽoPGｱﾔnjﾑKﾋTCW2PV",
+  "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+  "statusKind": "Applied",
+  "status": {
+    "local": {
+      "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+      "status": {
+        "kind": "Applied",
+        "block_height": 9,
+        "content": {
+          "block_height": 9
+        }
+      },
+      "summary": "Applied",
+      "scope": "local",
+      "resolved_from": "state",
+      "routes": [],
+      "kind": "Transaction",
+      "content": {
+        "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+        "status": {
+          "kind": "Applied",
+          "block_height": 9,
+          "content": {
+            "block_height": 9
+          }
+        }
+      }
+    },
+    "global": {
+      "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+      "status": {
+        "kind": "Applied",
+        "block_height": 9,
+        "content": {
+          "block_height": 9
+        }
+      },
+      "summary": "Applied",
+      "scope": "global",
+      "resolved_from": "state",
+      "routes": [],
+      "kind": "Transaction",
+      "content": {
+        "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+        "status": {
+          "kind": "Applied",
+          "block_height": 9,
+          "content": {
+            "block_height": 9
+          }
+        }
+      }
+    },
+    "auto": {
+      "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+      "status": {
+        "kind": "Applied",
+        "block_height": 9,
+        "content": {
+          "block_height": 9
+        }
+      },
+      "summary": "Applied",
+      "scope": "global",
+      "resolved_from": "state",
+      "routes": [],
+      "kind": "Transaction",
+      "content": {
+        "hash": "3e7bbbf10a5bf9c38028e6e11c9028371b3af536d8a73253b1ce2025bc91a2df",
+        "status": {
+          "kind": "Applied",
+          "block_height": 9,
+          "content": {
+            "block_height": 9
+          }
+        }
+      }
+    }
+  },
+  "receipt": {
+    "payload": {
+      "tx_hash": "hash:3E7BBBF10A5BF9C38028E6E11C9028371B3AF536D8A73253B1CE2025BC91A2DF#696B",
+      "entrypoint_hash": "hash:3E7BBBF10A5BF9C38028E6E11C9028371B3AF536D8A73253B1CE2025BC91A2DF#696B",
+      "signed_transaction_hash": "hash:3E7BBBF10A5BF9C38028E6E11C9028371B3AF536D8A73253B1CE2025BC91A2DF#696B",
+      "submitted_at_ms": 1782994941043,
+      "submitted_at_height": 8,
+      "signer": "e7012102B6E25CCF6F947AB7DF54756F40BE4BA2564C9B37276989424A6F7F31401D9301"
+    },
+    "signature": "0D791B4E29F376D1887709E3C78F971BD89086878E9F2138360DAF6DD57D1CCB4966DFBB514B18D4359230DEF2D2F0246D88C1DCC060E75DF3184E220FE70476"
+  },
+  "encoding": "application/x-norito",
+  "submitError": null,
+  "isiPath": "artifacts/sccp-ton/testnet-taira-xor-route.upsert-isi.json",
+  "metadata": {
+    "action": "publish_sccp_route_manifest",
+    "route_id": "taira_ton_xor",
+    "asset_key": "xor",
+    "gas_asset_id": "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+    "gas_limit": 2000000
+  },
+  "ttlMs": 600000,
+  "nonce": 349184810,
+  "waitForCommit": true,
+  "commitTimeoutMs": 180000
+}

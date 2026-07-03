@@ -1,10 +1,14 @@
 import { sha256 } from "@noble/hashes/sha256";
+import { blake2b } from "@noble/hashes/blake2";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
+import { beginCell } from "@ton/core";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   buildTairaXorBscSccpRecordDescriptor,
   buildTairaXorBscSccpBurnRecordZkIvmRequest,
+  buildTairaXorTonSccpRecordDescriptor as sdkBuildTairaXorTonSccpRecordDescriptor,
+  buildTairaXorTonSccpBurnRecordZkIvmRequest as sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest,
   buildTairaXorSccpRecordDescriptor,
   buildTairaXorSccpBurnRecordZkIvmRequest,
   canonicalSccpTransferPayloadBytes,
@@ -13,18 +17,22 @@ import {
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
+  buildSccpTonMessageBodyBocFromBytes,
   tronSccpDestinationBinding,
   SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1,
+  SCCP_TAIRA_TON_XOR_ROUTE_ID_V1,
   SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1,
   SCCP_TAIRA_XOR_ASSET_KEY_V1,
   TAIRA_XOR_FINALIZE_FROM_TAIRA_ABI_V1,
   TAIRA_XOR_BURN_TO_TAIRA_ABI_V1,
   bindTairaXorBscToTairaSourceProofPackage,
+  bindTairaXorTonToTairaSourceProofPackage,
   bindTairaXorTronBurnStartedEvent,
   bindTairaXorTronToTairaSourceProofPackage,
   evmSccpDestinationBinding,
   parseTronTriggerSmartContractRawData,
   SCCP_CODEC_EVM_HEX,
+  SCCP_CODEC_TON_RAW,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   tairaXorBurnSourceEventDigest,
@@ -34,7 +42,11 @@ import {
   tairaXorBurnToTairaCallData,
   tairaXorFinalizeFromTairaCallData,
   SCCP_SUBMIT_MESSAGE_PROOF_ABI_V1,
+  buildRecordSccpMessageInstructionBytes,
   tairaXorTransferPayloadHash,
+  sccpSourceVerifierMaterialHash,
+  sccpSourceAdapterEngineDeploymentHash,
+  tonSccpRouteCanaryEvidenceHash,
   validateBscMainnetNativeEvmProverBundle,
   validateBscTestnetNativeEvmProverBundle,
 } from "@iroha/iroha-js/sccp";
@@ -42,11 +54,15 @@ import { normalizeSccpPackageOrRemoteModuleUrl } from "@/utils/sccpProverUrl";
 import type {
   TairaXorBscSccpBurnRecordZkIvmRequest,
   TairaXorBscSccpRecordDescriptor,
+  TairaXorTonSccpBurnRecordZkIvmRequest,
+  TairaXorTonSccpRecordDescriptor,
   TairaXorSccpBurnRecordZkIvmRequest,
   TairaXorSccpRecordDescriptor,
   SccpTransferPayload,
   EvmSccpDestinationBindingInput,
   EvmSccpProofRequestInput,
+  SccpSourceAdapterEngineDeploymentInput,
+  SccpSourceVerifierMaterialInput,
   TronSccpDestinationBindingInput,
   TronSccpProofRequestInput,
 } from "@iroha/iroha-js/sccp";
@@ -70,13 +86,48 @@ export const WALLETCONNECT_TRON_NAMESPACE = "tron";
 export const WALLETCONNECT_TRON_SIGN_METHOD = "tron_signTransaction";
 export const WALLETCONNECT_TRON_METHOD_VERSION = "v1";
 export const SCCP_TRON_DOMAIN = 5;
+
+export const chunkSccpTonUploadMessages = <
+  T extends { payloadSizeBytes: number },
+>(
+  items: T[],
+  maxMessages: number,
+  maxPayloadBytes: number,
+): T[][] => {
+  const normalizedMaxMessages = Math.max(1, Math.floor(maxMessages));
+  const normalizedMaxPayloadBytes = Math.max(1, Math.floor(maxPayloadBytes));
+  const batches: T[][] = [];
+  let currentBatch: T[] = [];
+  let currentPayloadBytes = 0;
+  for (const item of items) {
+    const itemPayloadBytes = Math.max(0, Math.floor(item.payloadSizeBytes));
+    if (
+      currentBatch.length > 0 &&
+      (currentBatch.length >= normalizedMaxMessages ||
+        currentPayloadBytes + itemPayloadBytes > normalizedMaxPayloadBytes)
+    ) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentPayloadBytes = 0;
+    }
+    currentBatch.push(item);
+    currentPayloadBytes += itemPayloadBytes;
+  }
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+  return batches;
+};
 export const SCCP_BSC_DOMAIN = 2;
+export const SCCP_TON_DOMAIN = 4;
 export const SCCP_SORA_DOMAIN = 0;
 export const SCCP_XOR_ROUTE_ID = SCCP_TAIRA_TRON_XOR_ROUTE_ID_V1;
 export const SCCP_BSC_XOR_ROUTE_ID = SCCP_TAIRA_BSC_XOR_ROUTE_ID_V1;
+export const SCCP_TON_XOR_ROUTE_ID = SCCP_TAIRA_TON_XOR_ROUTE_ID_V1;
 export const SCCP_XOR_ASSET_KEY = SCCP_TAIRA_XOR_ASSET_KEY_V1;
 export const SCCP_TRON_TOKEN_SYMBOL = "TairaXOR";
 export const SCCP_BSC_TOKEN_SYMBOL = "TairaXOR";
+export const SCCP_TON_TOKEN_SYMBOL = "TairaXOR";
 export const SCCP_XOR_DECIMALS = 18;
 export const SCCP_TAIRA_XOR_DECIMALS = 9;
 export const SCCP_EVM_XOR_DECIMALS = 18;
@@ -94,6 +145,26 @@ export const BSC_MAINNET_NETWORK_ID_HEX =
   "0x0000000000000000000000000000000000000000000000000000000000000038";
 export const BSC_MAINNET_RPC_URL = "https://bsc-dataseed.bnbchain.org";
 export const BSC_MAINNET_EXPLORER_URL = "https://bscscan.com";
+export const TON_TESTNET_CAIP_CHAIN_ID = "ton:testnet";
+export const TON_TESTNET_NETWORK_ID_HEX =
+  "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd";
+export const TON_TESTNET_RPC_URL =
+  "https://testnet.toncenter.com/api/v2/jsonRPC";
+export const TON_TESTNET_EXPLORER_URL = "https://testnet.tonscan.org";
+export const SCCP_TON_DEFAULT_FINALIZE_MESSAGE_VALUE_NANO = "1000000";
+export const SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1 = 1;
+export const SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2 = 2;
+export const SCCP_TON_COMPACT_FINALIZE_OP = 0x53434354;
+export const SCCP_TON_COMPACT_V2_VERIFIER_CODE_HASHES = new Set<string>([
+  "0x84ab53f938152334f4b02a6af0a7b6af0d1d8e591f1ce24defe6f955865432bf",
+  "0x84387bdf2558972ed83cfe398ec1c4c9ab1df7f3335a6f5c3941cfb791644e6a",
+]);
+export const SCCP_TON_COMPACT_V2_VERIFIER_ADDRESSES = new Set<string>([
+  "0:259a28e21ab5b549cf253baa0ca3eb683a34674e04f46b32fca5c2bda4c0b58b",
+  "0:a471a70c5b487edbf8f83ef37fc534e942d5fb6ee7445f3df79227082c483fc9",
+]);
+export const SCCP_TON_TESTNET_SOURCE_PROVER_MODULE_URL =
+  "/sccp-ton/taira-ton-xor-source-prover.js";
 export const SCCP_BSC_DIAGNOSTIC_VERIFIER_KEY_HASHES = new Set<string>([
   "0x9ef8067d260532f88e60cfa4b458fe678fc46b9c242de18fc91ba646e0857fc4",
 ]);
@@ -144,13 +215,15 @@ const SCCP_TRON_TRANSACTION_SIGNING_HELPER_INPUT_ERROR =
 const SCCP_MANIFEST_SECRET_KEY_PATTERN =
   /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
 
-export type SccpCounterpartyKey = "tron" | "bsc";
+export type SccpCounterpartyKey = "tron" | "bsc" | "ton";
 
 export type SccpBridgeDirection =
   | "taira-to-tron"
   | "tron-to-taira"
   | "taira-to-bsc"
-  | "bsc-to-taira";
+  | "bsc-to-taira"
+  | "taira-to-ton"
+  | "ton-to-taira";
 
 export type SccpTronNetworkKey = "mainnet" | "nile";
 
@@ -171,6 +244,17 @@ export type SccpBscNetworkProfile = {
   label: string;
   caipChainId: `eip155:${number}`;
   chainIdHex: `0x${string}`;
+  networkIdHex: `0x${string}`;
+  rpcUrl: string;
+  explorerUrl: string;
+};
+
+export type SccpTonNetworkKey = "testnet";
+
+export type SccpTonNetworkProfile = {
+  key: SccpTonNetworkKey;
+  label: string;
+  caipChainId: string;
   networkIdHex: `0x${string}`;
   rpcUrl: string;
   explorerUrl: string;
@@ -228,6 +312,34 @@ export const resolveSccpBscNetworkProfile = (
 ): SccpBscNetworkProfile =>
   SCCP_BSC_NETWORK_PROFILES[normalizeSccpBscNetworkKey(value)];
 
+export const SCCP_TON_NETWORK_PROFILES = {
+  testnet: {
+    key: "testnet",
+    label: "TON Testnet",
+    caipChainId: TON_TESTNET_CAIP_CHAIN_ID,
+    networkIdHex: TON_TESTNET_NETWORK_ID_HEX,
+    rpcUrl: TON_TESTNET_RPC_URL,
+    explorerUrl: TON_TESTNET_EXPLORER_URL,
+  },
+} satisfies Record<SccpTonNetworkKey, SccpTonNetworkProfile>;
+
+export const normalizeSccpTonNetworkKey = (
+  value: unknown,
+): SccpTonNetworkKey => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (!normalized || normalized === "testnet" || normalized === "ton-testnet") {
+    return "testnet";
+  }
+  throw new Error("SCCP TON network must be testnet.");
+};
+
+export const resolveSccpTonNetworkProfile = (
+  value: unknown,
+): SccpTonNetworkProfile =>
+  SCCP_TON_NETWORK_PROFILES[normalizeSccpTonNetworkKey(value)];
+
 export const SCCP_TRON_NETWORK_PROFILES = {
   mainnet: {
     key: "mainnet",
@@ -281,6 +393,10 @@ export const SCCP_BSC_NETWORK = resolveSccpBscNetworkProfile(
   import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
 );
 
+export const SCCP_TON_NETWORK = resolveSccpTonNetworkProfile(
+  import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
+);
+
 export type SccpRouteConfig = {
   id: string;
   assetKey: string;
@@ -329,9 +445,24 @@ export const SCCP_BSC_XOR_ROUTE: SccpRouteConfig = {
   tokenSymbol: SCCP_BSC_TOKEN_SYMBOL,
 };
 
+export const SCCP_TON_XOR_ROUTE: SccpRouteConfig = {
+  id: SCCP_TON_XOR_ROUTE_ID,
+  assetKey: SCCP_XOR_ASSET_KEY,
+  label: "XOR / TairaXOR",
+  localDomain: SCCP_SORA_DOMAIN,
+  counterparty: "ton",
+  counterpartyDomain: SCCP_TON_DOMAIN,
+  caipChainId: SCCP_TON_NETWORK.caipChainId,
+  networkIdHex: SCCP_TON_NETWORK.networkIdHex,
+  explorerUrl: SCCP_TON_NETWORK.explorerUrl,
+  rpcUrl: SCCP_TON_NETWORK.rpcUrl,
+  tokenSymbol: SCCP_TON_TOKEN_SYMBOL,
+};
+
 export const SCCP_ROUTE_PROFILES = {
   tron: SCCP_XOR_ROUTE,
   bsc: SCCP_BSC_XOR_ROUTE,
+  ton: SCCP_TON_XOR_ROUTE,
 } satisfies Record<SccpCounterpartyKey, SccpRouteConfig>;
 
 export const normalizeSccpCounterpartyKey = (
@@ -354,7 +485,10 @@ export const normalizeSccpCounterpartyKey = (
   ) {
     return "bsc";
   }
-  throw new Error("SCCP counterparty must be TRON or BSC.");
+  if (normalized === "ton" || normalized === "ton-testnet") {
+    return "ton";
+  }
+  throw new Error("SCCP counterparty must be TRON, BSC, or TON.");
 };
 
 export const resolveSccpRouteProfile = (value: unknown): SccpRouteConfig =>
@@ -365,22 +499,44 @@ export type SccpNetworkSnapshot = {
   networkPrefix?: number | string | null;
 };
 
+export type SccpRouteLoadFailureKind =
+  | "endpoint_unavailable"
+  | "capabilities_unavailable"
+  | "manifest_unavailable";
+
+export type SccpRouteLoadStage = "capabilities" | "manifest";
+
+export type SccpRouteLoadFailure = {
+  kind: SccpRouteLoadFailureKind;
+  stage: SccpRouteLoadStage;
+  message: string;
+  detail: string;
+  toriiUrl: string;
+  status?: number;
+  statusText?: string;
+};
+
 export type SccpRouteReadiness = {
   ready: boolean;
   status: "ready" | "disabled" | "unavailable" | "incomplete";
   reasons: string[];
+  loadFailure: SccpRouteLoadFailure | null;
   counterparty: SccpCounterpartyKey;
   manifest: Record<string, unknown> | null;
   tronManifest: Record<string, unknown> | null;
   bscManifest: Record<string, unknown> | null;
+  tonManifest: Record<string, unknown> | null;
 };
 
 export type WalletConnectSessionSnapshot = {
   topic: string | null;
   address: string | null;
   chainId: string;
-  namespace: typeof WALLETCONNECT_TRON_NAMESPACE | "eip155";
-  methodVersion: typeof WALLETCONNECT_TRON_METHOD_VERSION | "eip155-v1";
+  namespace: typeof WALLETCONNECT_TRON_NAMESPACE | "eip155" | "ton";
+  methodVersion:
+    | typeof WALLETCONNECT_TRON_METHOD_VERSION
+    | "eip155-v1"
+    | "tonconnect-v1";
   connectedAtMs: number;
 };
 
@@ -476,8 +632,36 @@ export type TronSccpProofMaterial = {
   expectedDestinationBindingHashHex: string;
 };
 
+export type TonSccpProofMaterial = {
+  networkIdHex: string;
+  tonVerifierAddress: string;
+  verifierCodeHashHex: string;
+  verifierKeyHashHex: string;
+  expectedDestinationBindingHashHex: string;
+};
+
 export type TronSccpProofQueryMaterial = TronSccpProofMaterial & {
   proofBytesHex: string;
+};
+
+export type TonSccpDestinationBindingInput = {
+  key: string;
+  bindingHash: string;
+};
+
+export type SccpTonCompactFinalizeMessageBodyPlan = {
+  protocol: "ton_sccp_compact_finalize_boc_v2";
+  protocolVersion: typeof SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2;
+  op: typeof SCCP_TON_COMPACT_FINALIZE_OP;
+  queryId: string;
+  messageId: string;
+  statementHash: string;
+  destinationBindingHash: string;
+  bodyHash: string;
+  proofDigest: string;
+  totalBytes: number;
+  payloadBocHex: string;
+  payloadBocBytes: Uint8Array;
 };
 
 export type TairaXorOutboundPreview = {
@@ -485,7 +669,8 @@ export type TairaXorOutboundPreview = {
   canonicalPayloadHex: string;
   recordDescriptor:
     | TairaXorSccpRecordDescriptor
-    | TairaXorBscSccpRecordDescriptor;
+    | TairaXorBscSccpRecordDescriptor
+    | TairaXorTonSccpRecordDescriptor;
   messageId: string;
   payloadHash: string;
   contractPayloadHash: string;
@@ -513,7 +698,8 @@ export type TairaXorOutboundBurnRecordRequest = {
   material: TairaXorBurnRecordMaterial;
   zkIvmRequest:
     | TairaXorSccpBurnRecordZkIvmRequest
-    | TairaXorBscSccpBurnRecordZkIvmRequest;
+    | TairaXorBscSccpBurnRecordZkIvmRequest
+    | TairaXorTonSccpBurnRecordZkIvmRequest;
 };
 
 export type TairaXorFinalizeFromTairaProofBinding = {
@@ -534,6 +720,18 @@ export type TairaXorBscFinalizeFromTairaProofBinding = {
   amountBaseUnits: string;
   messageId: string;
   payloadHash: string;
+};
+
+export type TairaXorTonFinalizeFromTairaProofBinding = {
+  destinationBinding: TonSccpDestinationBindingInput;
+  messageBundle: Record<string, unknown>;
+  canonicalPayloadHex: string;
+  amountBaseUnits: string;
+  messageId: string;
+  payloadHash: string;
+  statementHash: string;
+  destinationBindingHash: string;
+  messageBodyBocHex: string;
 };
 
 export type TairaXorBscFinalizeTransactionRequest = {
@@ -603,7 +801,28 @@ export type BscToTairaSourceProofPackageInput = {
   amountBaseUnits?: string;
 };
 
+export type TonToTairaSourceProofPackageInput = {
+  manifest: Record<string, unknown> | null | undefined;
+  txId: string;
+  transaction?: Record<string, unknown> | null;
+  receipt?: Record<string, unknown> | null;
+  finality?: Record<string, unknown> | null;
+  proofMaterial?: Record<string, unknown> | null;
+  tonSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+};
+
 export type TronToTairaSourceProofPackage = {
+  messageBundle: Record<string, unknown>;
+  settlement: Record<string, unknown>;
+  sourceEventDigest: string;
+  txId: string;
+  messageId: string;
+  amountBaseUnits: string;
+};
+
+export type TonToTairaSourceProofPackage = {
   messageBundle: Record<string, unknown>;
   settlement: Record<string, unknown>;
   sourceEventDigest: string;
@@ -917,6 +1136,58 @@ export const isValidBscTransactionHash = (value: string): boolean => {
   }
 };
 
+export const normalizeTonRawAddress = (
+  value: string,
+  label = "TON raw address",
+): string => {
+  const normalized = value.trim().toLowerCase();
+  const match = normalized.match(/^(-?(?:0|[1-9]\d*)):([0-9a-f]{64})$/u);
+  if (!match) {
+    throw new Error(`${label} must use workchain:32-byte-hex form.`);
+  }
+  const workchain = Number.parseInt(match[1], 10);
+  if (!Number.isSafeInteger(workchain) || workchain < -1 || workchain > 255) {
+    throw new Error(`${label} workchain is outside the supported range.`);
+  }
+  if (/^0{64}$/u.test(match[2])) {
+    throw new Error(`${label} account hash must be non-zero.`);
+  }
+  return `${workchain}:${match[2]}`;
+};
+
+export const isValidTonRawAddress = (value: string): boolean => {
+  try {
+    normalizeTonRawAddress(value);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+};
+
+export const normalizeTonTransactionHash = (
+  value: string,
+  label = "TON transaction hash",
+): string => {
+  const normalized = value.trim().toLowerCase();
+  const hex = normalized.startsWith("0x") ? normalized : `0x${normalized}`;
+  if (!/^0x[0-9a-f]{64}$/u.test(hex)) {
+    throw new Error(`${label} must be a 0x-prefixed 32-byte hex hash.`);
+  }
+  if (/^0x0{64}$/u.test(hex)) {
+    throw new Error(`${label} must be non-zero.`);
+  }
+  return hex;
+};
+
+export const isValidTonTransactionHash = (value: string): boolean => {
+  try {
+    normalizeTonTransactionHash(value);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+};
+
 export const normalizeBridgeAmount = (value: string): string => {
   const normalized = value.trim();
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/u.test(normalized)) {
@@ -1179,6 +1450,235 @@ export const readSccpTronProofMaterial = (
   }
 };
 
+export const readSccpTonBridgeAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifest);
+  return (
+    readString(manifest, "tairaXorBridgeAddress") ||
+    readString(manifest, "taira_xor_bridge_address") ||
+    readString(manifest, "tonBridgeAddress") ||
+    readString(manifest, "ton_bridge_address") ||
+    readString(manifest, "bridgeAddress") ||
+    readString(manifest, "bridge_address") ||
+    readString(manifest, "destinationBridgeAddress") ||
+    readString(manifest, "destination_bridge_address") ||
+    readString(rollout ?? {}, "destinationBridgeAddress") ||
+    readString(rollout ?? {}, "destination_bridge_address")
+  );
+};
+
+export const readSccpTonTokenAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  return (
+    readString(manifest, "tairaXorTokenAddress") ||
+    readString(manifest, "taira_xor_token_address") ||
+    readString(manifest, "tonTokenAddress") ||
+    readString(manifest, "ton_token_address") ||
+    readString(manifest, "tonJettonMasterAddress") ||
+    readString(manifest, "ton_jetton_master_address") ||
+    readString(manifest, "tokenAddress") ||
+    readString(manifest, "token_address")
+  );
+};
+
+export const readSccpTonSourceBridgeAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  return (
+    readString(manifest, "sccpTonSourceBridgeAddress") ||
+    readString(manifest, "sccp_ton_source_bridge_address") ||
+    readString(manifest, "tonSourceBridgeAddress") ||
+    readString(manifest, "ton_source_bridge_address") ||
+    readString(manifest, "sccpTronSourceBridgeAddress") ||
+    readString(manifest, "sccp_tron_source_bridge_address") ||
+    readString(manifest, "sourceBridgeAddress") ||
+    readString(manifest, "source_bridge_address")
+  );
+};
+
+export const readSccpTonVerifierAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifest);
+  return (
+    readString(manifest, "tonVerifierAddress") ||
+    readString(manifest, "ton_verifier_address") ||
+    readString(manifest, "sccp_ton_destination_verifier_address") ||
+    readString(manifest, "destinationVerifierAddress") ||
+    readString(manifest, "destination_verifier_address") ||
+    readString(manifest, "tronVerifierAddress") ||
+    readString(manifest, "tron_verifier_address") ||
+    readString(manifest, "verifierAddress") ||
+    readString(manifest, "verifier_address") ||
+    readString(rollout ?? {}, "verifierIdentity") ||
+    readString(rollout ?? {}, "verifier_identity")
+  );
+};
+
+export const readSccpTonFinalizeMessageValueNano = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  if (!manifest) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifest);
+  const value =
+    readString(manifest, "tonFinalizeMessageValueNano") ||
+    readString(manifest, "ton_finalize_message_value_nano") ||
+    readString(manifest, "tonVerifierMessageValueNano") ||
+    readString(manifest, "ton_verifier_message_value_nano") ||
+    readString(manifest, "tonInternalMessageValueNano") ||
+    readString(manifest, "ton_internal_message_value_nano") ||
+    readString(rollout ?? {}, "finalizeMessageValueNano") ||
+    readString(rollout ?? {}, "finalize_message_value_nano") ||
+    readString(rollout ?? {}, "verifierMessageValueNano") ||
+    readString(rollout ?? {}, "verifier_message_value_nano") ||
+    readString(rollout ?? {}, "internalMessageValueNano") ||
+    readString(rollout ?? {}, "internal_message_value_nano");
+  if (!value) {
+    return SCCP_TON_DEFAULT_FINALIZE_MESSAGE_VALUE_NANO;
+  }
+  return normalizePositiveBaseUnitString(value, "TON finalize message value");
+};
+
+export const readSccpTonVerifierProtocolVersion = (
+  manifest: Record<string, unknown> | null | undefined,
+): number => {
+  if (!manifest) {
+    return SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1;
+  }
+  const rollout = readDestinationRollout(manifest);
+  const value =
+    readNumber(manifest, "tonVerifierProtocolVersion") ??
+    readNumber(manifest, "ton_verifier_protocol_version") ??
+    readNumber(manifest, "tonFinalizeProtocolVersion") ??
+    readNumber(manifest, "ton_finalize_protocol_version") ??
+    readNumber(rollout ?? {}, "verifierProtocolVersion") ??
+    readNumber(rollout ?? {}, "verifier_protocol_version") ??
+    readNumber(rollout ?? {}, "finalizeProtocolVersion") ??
+    readNumber(rollout ?? {}, "finalize_protocol_version") ??
+    readNumber(rollout ?? {}, "tonVerifierProtocolVersion") ??
+    readNumber(rollout ?? {}, "ton_verifier_protocol_version");
+  if (
+    value != null &&
+    value !== SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1 &&
+    value !== SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2
+  ) {
+    throw new Error("TON verifier protocol version must be 1 or 2.");
+  }
+  const verifierCodeHash = (
+    readString(manifest, "tonVerifierCodeHash") ||
+    readString(manifest, "ton_verifier_code_hash") ||
+    readString(manifest, "verifierCodeHash") ||
+    readString(manifest, "verifier_code_hash") ||
+    readString(rollout ?? {}, "verifierCodeHash") ||
+    readString(rollout ?? {}, "verifier_code_hash")
+  ).toLowerCase();
+  if (SCCP_TON_COMPACT_V2_VERIFIER_CODE_HASHES.has(verifierCodeHash)) {
+    return SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2;
+  }
+  const verifierAddressCandidates = [
+    readString(manifest, "tonVerifierAddress"),
+    readString(manifest, "ton_verifier_address"),
+    readString(manifest, "sccp_ton_destination_verifier_address"),
+    readString(manifest, "destinationVerifierAddress"),
+    readString(manifest, "destination_verifier_address"),
+    readString(manifest, "verifierAddress"),
+    readString(manifest, "verifier_address"),
+    readString(rollout ?? {}, "verifierIdentity"),
+    readString(rollout ?? {}, "verifier_identity"),
+  ].filter(Boolean);
+  for (const candidate of verifierAddressCandidates) {
+    try {
+      const verifierAddress = normalizeTonRawAddress(
+        candidate,
+        "TON verifier address",
+      );
+      if (SCCP_TON_COMPACT_V2_VERIFIER_ADDRESSES.has(verifierAddress)) {
+        return SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2;
+      }
+    } catch (_error) {
+      // Ignore non-raw aliases here; address validation happens elsewhere.
+    }
+  }
+  if (value != null) {
+    return value;
+  }
+  return SCCP_TON_VERIFIER_PROTOCOL_CHUNKED_V1;
+};
+
+export const readSccpTonProofMaterial = (
+  manifest: Record<string, unknown> | null | undefined,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
+): TonSccpProofMaterial | null => {
+  if (!manifest) {
+    return null;
+  }
+  const selectedNetwork =
+    readManifestTonNetworkKey(manifest) ??
+    normalizeSccpTonNetworkKey(tonNetwork);
+  const profile = SCCP_TON_NETWORK_PROFILES[selectedNetwork];
+  const rollout = readDestinationRollout(manifest);
+  const networkId =
+    readString(manifest, "networkIdHex") ||
+    readString(manifest, "network_id_hex") ||
+    readString(rollout ?? {}, "destinationNetworkId") ||
+    readString(rollout ?? {}, "destination_network_id") ||
+    profile.networkIdHex;
+  const verifierCodeHash =
+    readString(manifest, "verifierCodeHashHex") ||
+    readString(manifest, "verifier_code_hash_hex") ||
+    readString(rollout ?? {}, "verifierCodeHash") ||
+    readString(rollout ?? {}, "verifier_code_hash");
+  const verifierKeyHash =
+    readString(manifest, "verifierKeyHashHex") ||
+    readString(manifest, "verifier_key_hash_hex") ||
+    readString(rollout ?? {}, "verifierKeyHash") ||
+    readString(rollout ?? {}, "verifier_key_hash");
+  const destinationBindingHash =
+    readString(manifest, "expectedDestinationBindingHashHex") ||
+    readString(manifest, "expected_destination_binding_hash_hex") ||
+    readString(rollout ?? {}, "destinationBindingHash") ||
+    readString(rollout ?? {}, "destination_binding_hash");
+  try {
+    return {
+      networkIdHex: normalizeHex32(networkId, "TON network id"),
+      tonVerifierAddress: normalizeTonRawAddress(
+        readSccpTonVerifierAddress(manifest),
+        "TON verifier address",
+      ),
+      verifierCodeHashHex: normalizeHex32(
+        verifierCodeHash,
+        "TON verifier code hash",
+      ),
+      verifierKeyHashHex: normalizeHex32(
+        verifierKeyHash,
+        "TON verifier key hash",
+      ),
+      expectedDestinationBindingHashHex: normalizeHex32(
+        destinationBindingHash,
+        "TON destination binding hash",
+      ),
+    };
+  } catch (_error) {
+    return null;
+  }
+};
+
 const cloneSccpRouteManifestForRead = (
   manifest: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> | null =>
@@ -1331,6 +1831,24 @@ export const readSccpBscSourceProverModuleUrl = (
     "browserSourceProver",
     "browser_source_prover",
   );
+
+export const readSccpTonSourceProverModuleUrl = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  const moduleUrl = readSccpBscBrowserProverModuleUrlFromManifest(
+    manifest,
+    "sourceBrowserProver",
+    "source_browser_prover",
+    "browserSourceProver",
+    "browser_source_prover",
+  )
+    .trim()
+    .replace(/\\/gu, "/");
+  return moduleUrl === "./src/provers/sccp-ton-source-prover.js" ||
+    moduleUrl === "src/provers/sccp-ton-source-prover.js"
+    ? SCCP_TON_TESTNET_SOURCE_PROVER_MODULE_URL
+    : moduleUrl;
+};
 
 export const readSccpBscRuntimeProverConfigUrl = (
   manifest: Record<string, unknown> | null | undefined,
@@ -2167,6 +2685,196 @@ export const buildTairaXorBscOutboundPreview = (input: {
   };
 };
 
+export const buildTairaXorTonSccpRecordDescriptor = (input: {
+  chainId?: string;
+  networkPrefix?: number;
+  tairaSender: string;
+  tonRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+  expectedMessageId?: string;
+  expectedCanonicalPayloadHex?: string;
+}): TairaXorTonSccpRecordDescriptor => {
+  const recipient = normalizeTonRawAddress(input.tonRecipient);
+  if (!recipient) {
+    throw new Error("Enter a valid TON raw recipient address.");
+  }
+  const amount = bridgeDecimalToTairaBaseUnits(
+    normalizeBridgeAmount(input.amountDecimal),
+  );
+  const descriptorInput: Parameters<
+    typeof sdkBuildTairaXorTonSccpRecordDescriptor
+  >[0] = {
+    chainId: input.chainId ?? TAIRA_CHAIN_ID,
+    networkPrefix: input.networkPrefix ?? TAIRA_NETWORK_PREFIX,
+    tairaSender: normalizeTairaAccountId(input.tairaSender),
+    recipientAddress: recipient,
+    amount,
+    nonce: input.nonce,
+  };
+  if (input.expectedMessageId) {
+    descriptorInput.expectedMessageId = input.expectedMessageId;
+  }
+  if (input.expectedCanonicalPayloadHex) {
+    descriptorInput.expectedCanonicalPayloadHex =
+      input.expectedCanonicalPayloadHex;
+  }
+  return sdkBuildTairaXorTonSccpRecordDescriptor(
+    descriptorInput,
+  ) as TairaXorTonSccpRecordDescriptor;
+};
+
+export const buildTairaXorTonOutboundPreview = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  tonRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+}): TairaXorOutboundPreview => {
+  const bridgeAddress = readSccpTonBridgeAddress(input.manifest);
+  if (!bridgeAddress) {
+    throw new Error("The TON bridge deployment address is missing.");
+  }
+  normalizeTonRawAddress(bridgeAddress);
+  const recordDescriptor = buildTairaXorTonSccpRecordDescriptor({
+    chainId: TAIRA_CHAIN_ID,
+    networkPrefix: TAIRA_NETWORK_PREFIX,
+    tairaSender: input.tairaSender,
+    tonRecipient: input.tonRecipient,
+    amountDecimal: input.amountDecimal,
+    nonce: input.nonce,
+  });
+  const payload = recordDescriptor.payload as unknown as Record<
+    string,
+    unknown
+  >;
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: payload,
+  });
+  return {
+    payload,
+    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
+    recordDescriptor,
+    messageId: recordDescriptor.message_id,
+    payloadHash: sccpPayloadHash(canonicalPayloadEnvelopeBytes),
+    contractPayloadHash: sccpPayloadHash(
+      recordDescriptor.canonicalPayloadBytes,
+    ),
+    amountBaseUnits: String(recordDescriptor.payload.amount),
+  };
+};
+
+const buildTairaXorTonSccpBurnRecordZkIvmRequest = (input: {
+  descriptor: TairaXorTonSccpRecordDescriptor;
+  settlementAssetDefinitionId: string;
+  authority?: string;
+  vkRef: TairaXorBurnRecordMaterial["vkRef"];
+  bytecode: string;
+  gasLimit?: number;
+}): TairaXorTonSccpBurnRecordZkIvmRequest => {
+  const requestInput: Parameters<
+    typeof sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest
+  >[0] = {
+    descriptor: input.descriptor,
+    sender: String(input.descriptor.payload.sender),
+    recipientAddress: String(input.descriptor.payload.recipient),
+    amount: String(input.descriptor.payload.amount),
+    nonce: String(input.descriptor.payload.nonce),
+    settlementAssetDefinitionId: input.settlementAssetDefinitionId,
+    vkRef: input.vkRef,
+    bytecode: input.bytecode,
+  };
+  if (input.authority) {
+    requestInput.authority = input.authority;
+  }
+  if (input.gasLimit !== undefined) {
+    requestInput.gasLimit = input.gasLimit;
+  }
+  return sdkBuildTairaXorTonSccpBurnRecordZkIvmRequest(
+    requestInput,
+  ) as TairaXorTonSccpBurnRecordZkIvmRequest;
+};
+
+const patchTairaXorTonBurnRecordEnvelopePayload = (
+  request: TairaXorTonSccpBurnRecordZkIvmRequest,
+): TairaXorTonSccpBurnRecordZkIvmRequest => {
+  const descriptor = request.descriptor as unknown as Record<string, unknown>;
+  const payload = descriptor.payload as Record<string, unknown>;
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: payload,
+  });
+  const canonicalPayloadEnvelopeHex = bytesToLowerHex(
+    canonicalPayloadEnvelopeBytes,
+  );
+  const recordInstructionHex = bytesToLowerHex(
+    buildRecordSccpMessageInstructionBytes(canonicalPayloadEnvelopeBytes),
+  );
+  const patchedDescriptor = {
+    ...descriptor,
+    record_instruction: {
+      kind: "RecordSccpMessage",
+      payload_bytes_hex: canonicalPayloadEnvelopeHex,
+    },
+  };
+  const contract = request.contract as unknown as Record<string, unknown>;
+  const contractPayload = {
+    ...(contract.payload as Record<string, unknown>),
+    record_instruction: recordInstructionHex,
+  };
+  const patchedContract = {
+    ...contract,
+    descriptor: patchedDescriptor,
+    payload: contractPayload,
+    record_instruction_hex: recordInstructionHex,
+  };
+  return {
+    ...request,
+    descriptor: patchedDescriptor,
+    contract: patchedContract,
+    request: {
+      ...request.request,
+      metadata: {
+        ...request.request.metadata,
+        contract_payload: contractPayload,
+      },
+    },
+  } as unknown as TairaXorTonSccpBurnRecordZkIvmRequest;
+};
+
+export const buildTairaXorTonOutboundBurnRecordRequest = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  tonRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+  authority?: string;
+}): TairaXorOutboundBurnRecordRequest => {
+  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
+  const material = materialResult.material;
+  if (!material) {
+    throw new Error(
+      materialResult.reason ??
+        "The TAIRA burn-record ZK contract material is missing.",
+    );
+  }
+  const outbound = buildTairaXorTonOutboundPreview(input);
+  const zkIvmRequest = buildTairaXorTonSccpBurnRecordZkIvmRequest({
+    descriptor: outbound.recordDescriptor as TairaXorTonSccpRecordDescriptor,
+    settlementAssetDefinitionId: material.settlementAssetDefinitionId,
+    authority: input.authority,
+    vkRef: material.vkRef,
+    bytecode: material.contractArtifactB64,
+    gasLimit: material.gasLimit,
+  });
+  return {
+    outbound,
+    material,
+    zkIvmRequest: patchTairaXorTonBurnRecordEnvelopePayload(zkIvmRequest),
+  };
+};
+
 export const buildTairaXorOutboundBurnRecordRequest = (input: {
   manifest: Record<string, unknown> | null | undefined;
   tairaSender: string;
@@ -2573,6 +3281,31 @@ const normalizeNonZeroHex32Loose = (value: string, label: string): string => {
   return `0x${normalized}`;
 };
 
+const REPEATED_BYTE_HEX32_PATTERN = /^0x([0-9a-f]{2})\1{31}$/u;
+const TON_GOVERNED_SOURCE_ADAPTER_AUDIT_HASHES = new Set<string>([
+  `0x${"26".repeat(32)}`,
+  `0x${"27".repeat(32)}`,
+  `0x${"28".repeat(32)}`,
+]);
+
+const normalizeTonProductionHash = (
+  value: string,
+  label: string,
+  options: { allowGovernedTonAuditHash?: boolean } = {},
+): string => {
+  const normalized = normalizeNonZeroHex32Loose(value, label);
+  if (
+    REPEATED_BYTE_HEX32_PATTERN.test(normalized) &&
+    !(
+      options.allowGovernedTonAuditHash === true &&
+      TON_GOVERNED_SOURCE_ADAPTER_AUDIT_HASHES.has(normalized)
+    )
+  ) {
+    throw new Error(`${label} must not be repeated-byte placeholder material.`);
+  }
+  return normalized;
+};
+
 const readBscRouteNativeProverHashMaterial = (
   manifest: Record<string, unknown>,
 ): { proofArtifactHash: string; provingKeyHash: string } => {
@@ -2653,7 +3386,7 @@ export type BscSourceProverMaterialBinding =
     sourceAdapterEngineDeployment: Record<string, unknown>;
   };
 
-const cloneBscSourceLaneRecord = (
+const cloneSccpSourceLaneRecord = (
   value: Record<string, unknown>,
   label: string,
 ): Record<string, unknown> => {
@@ -2863,11 +3596,11 @@ const requireBscSourceLaneMaterial = (
   ]);
 
   return {
-    sourceVerifierMaterial: cloneBscSourceLaneRecord(
+    sourceVerifierMaterial: cloneSccpSourceLaneRecord(
       materialRecord,
       "BSC source verifier material",
     ),
-    sourceAdapterEngineDeployment: cloneBscSourceLaneRecord(
+    sourceAdapterEngineDeployment: cloneSccpSourceLaneRecord(
       deploymentRecord,
       "BSC source adapter deployment",
     ),
@@ -2951,6 +3684,108 @@ export const readBscSourceProverMaterialBinding = (
     provingKeyHash: routeHashes.provingKeyHash,
     nativeEvmProverBundleHash: selectedHash,
     ...sourceLaneMaterial,
+  };
+};
+
+export type TonSourceProverMaterialBinding = {
+  sourceVerifierMaterial: Record<string, unknown>;
+  sourceAdapterEngineDeployment: Record<string, unknown>;
+};
+
+const readTonSourceVerifierMaterialRecord = (
+  manifest: Record<string, unknown>,
+): Record<string, unknown> | null =>
+  readFirstRecord(
+    manifest,
+    "sourceVerifierMaterial",
+    "source_verifier_material",
+    "tonSourceVerifierMaterial",
+    "ton_source_verifier_material",
+  );
+
+const readTonSourceAdapterEngineDeploymentRecord = (
+  manifest: Record<string, unknown>,
+): Record<string, unknown> | null =>
+  readFirstRecord(
+    manifest,
+    "sourceAdapterEngineDeployment",
+    "source_adapter_engine_deployment",
+    "sourceAdapterDeployment",
+    "source_adapter_deployment",
+    "tonSourceAdapterEngineDeployment",
+    "ton_source_adapter_engine_deployment",
+    "tonSourceAdapterDeployment",
+    "ton_source_adapter_deployment",
+  );
+
+const requireTonSourceDomain = (
+  record: Record<string, unknown>,
+  label: string,
+): void => {
+  const sourceDomain = readConsistentAliasInteger(
+    record,
+    ["sourceDomain", "source_domain", "domain"],
+    `${label}.source_domain`,
+  );
+  if (sourceDomain !== SCCP_TON_DOMAIN) {
+    throw new Error(`${label}.source_domain must be the TON domain.`);
+  }
+};
+
+export const readTonSourceProverMaterialBinding = (
+  manifest: Record<string, unknown> | null | undefined,
+): TonSourceProverMaterialBinding => {
+  if (!isPlainRecord(manifest)) {
+    throw new Error("The TON SCCP source prover manifest is missing.");
+  }
+  const manifestForRead = cloneSccpJsonRouteManifest(manifest);
+  const materialRecord = readTonSourceVerifierMaterialRecord(manifestForRead);
+  if (!materialRecord) {
+    throw new Error(
+      "The TON SCCP source verifier material is missing from the route manifest.",
+    );
+  }
+  const deploymentRecord =
+    readTonSourceAdapterEngineDeploymentRecord(manifestForRead);
+  if (!deploymentRecord) {
+    throw new Error(
+      "The TON SCCP source adapter engine deployment is missing from the route manifest.",
+    );
+  }
+  requireTonSourceDomain(materialRecord, "TON source verifier material");
+  requireTonSourceDomain(deploymentRecord, "TON source adapter deployment");
+  const targetDomain = readConsistentAliasInteger(
+    deploymentRecord,
+    ["targetDomain", "target_domain"],
+    "TON source adapter deployment.target_domain",
+  );
+  if (targetDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error(
+      "TON source adapter deployment.target_domain must target SORA.",
+    );
+  }
+  const materialChain = readConsistentAliasString(
+    materialRecord,
+    ["sourceChain", "source_chain", "chain"],
+    "TON source verifier material.source_chain",
+  ).toLowerCase();
+  const deploymentChain = readConsistentAliasString(
+    deploymentRecord,
+    ["sourceChain", "source_chain", "chain"],
+    "TON source adapter deployment.source_chain",
+  ).toLowerCase();
+  if (materialChain !== "ton" || deploymentChain !== "ton") {
+    throw new Error("TON source material must declare source_chain=ton.");
+  }
+  return {
+    sourceVerifierMaterial: cloneSccpSourceLaneRecord(
+      materialRecord,
+      "TON source verifier material",
+    ),
+    sourceAdapterEngineDeployment: cloneSccpSourceLaneRecord(
+      deploymentRecord,
+      "TON source adapter deployment",
+    ),
   };
 };
 
@@ -3194,6 +4029,17 @@ const bytesToLowerHex = (bytes: Uint8Array): string =>
 
 const bytesToBigInt = (bytes: Uint8Array): bigint =>
   BigInt(bytesToLowerHex(bytes));
+
+const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+};
 
 const BN254_G1_GENERATOR_WORDS = [1n, 2n] as const;
 const BN254_G2_GENERATOR_WORDS = [
@@ -5556,6 +6402,80 @@ const readCodecEvmAddress = (value: unknown, label: string): string => {
   );
 };
 
+const readCodecTonRawAddress = (value: unknown, label: string): string => {
+  const record = requireRecord(value, label);
+  const variant =
+    typeof record.kind === "string"
+      ? {
+          kind: record.kind,
+          value: record.value ?? record.payload ?? record.bytes ?? record,
+        }
+      : (() => {
+          const entries = Object.entries(record);
+          if (entries.length !== 1) {
+            const direct = readFirstString(
+              record,
+              "value",
+              "payload",
+              "bytes",
+              "address",
+            );
+            if (direct) {
+              return {
+                kind: "TonRaw",
+                value: direct,
+              };
+            }
+            throw new Error(`${label} must contain exactly one codec variant.`);
+          }
+          const [[kind, body]] = entries;
+          return {
+            kind,
+            value: body,
+          };
+        })();
+  if (variant.kind !== "TonRaw" && variant.kind !== "ton_raw") {
+    throw new Error(`${label} must be a TonRaw SCCP codec value.`);
+  }
+  if (
+    typeof variant.value === "object" &&
+    variant.value !== null &&
+    !Array.isArray(variant.value)
+  ) {
+    const body = variant.value as Record<string, unknown>;
+    const direct = readFirstString(
+      body,
+      "value",
+      "payload",
+      "bytes",
+      "address",
+    );
+    if (direct) {
+      return normalizeTonRawAddress(direct, label);
+    }
+    const workchainText = readScalarText(body, "workchain");
+    const account =
+      readFirstString(body, "account", "accountHash", "account_hash") ||
+      readFirstString(
+        readRecord(body, "account") ?? {},
+        "value",
+        "payload",
+        "bytes",
+      );
+    if (!workchainText || !account) {
+      throw new Error(`${label} TonRaw payload is incomplete.`);
+    }
+    return normalizeTonRawAddress(
+      `${workchainText}:${account.trim().toLowerCase().replace(/^0x/u, "")}`,
+      label,
+    );
+  }
+  return normalizeTonRawAddress(
+    readCodecScalarText(variant.value, label),
+    label,
+  );
+};
+
 const readTransferProjection = (
   job: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -5716,6 +6636,30 @@ const readTransferEvmAddressField = (
   );
 };
 
+const readTransferTonRawAddressField = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): string => {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    throw new Error(`${label} is missing from the SCCP transfer payload.`);
+  }
+  if (typeof value === "object" && !Array.isArray(value)) {
+    return readCodecTonRawAddress(value, label);
+  }
+  const codec = readTransferCodecId(record, `${key}_codec`, label);
+  if (codec !== null && codec !== SCCP_CODEC_TON_RAW) {
+    throw new Error(`${label} must use the TonRaw SCCP codec.`);
+  }
+  const address = readRequiredTransferScalar(record, key, label);
+  try {
+    return normalizeTonRawAddress(address, label);
+  } catch (_error) {
+    return normalizeTonRawAddress(decodeEventBytesText(address, label), label);
+  }
+};
+
 const normalizeBundleTransferPayload = (
   transfer: Record<string, unknown>,
   targetDomain = SCCP_TRON_DOMAIN,
@@ -5745,7 +6689,9 @@ const normalizeBundleTransferPayload = (
   recipient_codec:
     targetDomain === SCCP_BSC_DOMAIN
       ? SCCP_CODEC_EVM_HEX
-      : SCCP_CODEC_TRON_BASE58CHECK,
+      : targetDomain === SCCP_TON_DOMAIN
+        ? SCCP_CODEC_TON_RAW
+        : SCCP_CODEC_TRON_BASE58CHECK,
   recipient:
     targetDomain === SCCP_BSC_DOMAIN
       ? canonicalEip55EvmAddress(
@@ -5755,7 +6701,17 @@ const normalizeBundleTransferPayload = (
             "Bundle recipient",
           ),
         )
-      : readTransferTronAddressField(transfer, "recipient", "Bundle recipient"),
+      : targetDomain === SCCP_TON_DOMAIN
+        ? readTransferTonRawAddressField(
+            transfer,
+            "recipient",
+            "Bundle recipient",
+          )
+        : readTransferTronAddressField(
+            transfer,
+            "recipient",
+            "Bundle recipient",
+          ),
   route_id_codec: SCCP_CODEC_TEXT_UTF8,
   route_id: readTransferTextField(transfer, "route_id", "Bundle route id"),
 });
@@ -6087,6 +7043,125 @@ const readBscDestinationBindingInput = (
   return input;
 };
 
+const readTonDestinationBindingInput = (
+  manifest: Record<string, unknown>,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
+): TonSccpDestinationBindingInput => {
+  const selectedNetwork =
+    readManifestTonNetworkKey(manifest) ??
+    normalizeSccpTonNetworkKey(tonNetwork);
+  const proofMaterial = readSccpTonProofMaterial(manifest, selectedNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The TON SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  const manifestBinding =
+    readRecord(manifest, "destinationBinding") ??
+    readRecord(manifest, "destination_binding");
+  const rollout = readDestinationRollout(manifest);
+  const manifestBindingKey = readConsistentAliasString(
+    manifestBinding ?? {},
+    ["key", "bindingKey", "binding_key"],
+    "TON destination binding key",
+  );
+  const rolloutBindingKey = readConsistentAliasString(
+    rollout ?? {},
+    ["destinationBindingKey", "destination_binding_key"],
+    "TON destination binding key",
+  );
+  if (
+    manifestBindingKey &&
+    rolloutBindingKey &&
+    manifestBindingKey !== rolloutBindingKey
+  ) {
+    throw new Error(
+      "TON destination binding key aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const key = manifestBindingKey || rolloutBindingKey;
+  if (!key) {
+    throw new Error("The TON SCCP destination binding key is missing.");
+  }
+  const version =
+    readNumber(manifestBinding ?? {}, "version") ??
+    readNumber(rollout ?? {}, "version") ??
+    1;
+  if (version !== 1) {
+    throw new Error("The TON SCCP destination binding version must be 1.");
+  }
+  const manifestSourceDomain = readConsistentAliasInteger(
+    manifestBinding ?? {},
+    ["sourceDomain", "source_domain"],
+    "TON destination binding source domain",
+  );
+  const rolloutSourceDomain = readConsistentAliasInteger(
+    rollout ?? {},
+    ["sourceDomain", "source_domain"],
+    "TON destination binding source domain",
+  );
+  if (
+    manifestSourceDomain !== null &&
+    rolloutSourceDomain !== null &&
+    manifestSourceDomain !== rolloutSourceDomain
+  ) {
+    throw new Error(
+      "TON destination binding source domain aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const sourceDomain =
+    manifestSourceDomain !== null ? manifestSourceDomain : rolloutSourceDomain;
+  const manifestTargetDomain = readConsistentAliasInteger(
+    manifestBinding ?? {},
+    ["targetDomain", "target_domain"],
+    "TON destination binding target domain",
+  );
+  const rolloutTargetDomain = readConsistentAliasInteger(
+    rollout ?? {},
+    ["targetDomain", "target_domain"],
+    "TON destination binding target domain",
+  );
+  if (
+    manifestTargetDomain !== null &&
+    rolloutTargetDomain !== null &&
+    manifestTargetDomain !== rolloutTargetDomain
+  ) {
+    throw new Error(
+      "TON destination binding target domain aliases disagree between destinationBinding and destinationRollout.",
+    );
+  }
+  const targetDomain =
+    manifestTargetDomain !== null ? manifestTargetDomain : rolloutTargetDomain;
+  if (sourceDomain !== null && sourceDomain !== SCCP_SORA_DOMAIN) {
+    throw new Error("The TON SCCP destination binding source domain is wrong.");
+  }
+  if (targetDomain !== null && targetDomain !== SCCP_TON_DOMAIN) {
+    throw new Error("The TON SCCP destination binding target domain is wrong.");
+  }
+  const explicitBindingHash = readConsistentAliasString(
+    manifestBinding ?? {},
+    ["bindingHash", "binding_hash"],
+    "TON destination binding hash",
+    (value) => normalizeHex32(value, "TON destination binding hash"),
+  );
+  if (
+    explicitBindingHash &&
+    normalizeHex32(explicitBindingHash, "TON destination binding hash") !==
+      proofMaterial.expectedDestinationBindingHashHex
+  ) {
+    throw new Error(
+      "The TON SCCP destination binding hash does not match the verifier rollout material.",
+    );
+  }
+  return {
+    key,
+    bindingHash:
+      (explicitBindingHash
+        ? normalizeHex32(explicitBindingHash, "TON destination binding hash")
+        : "") || proofMaterial.expectedDestinationBindingHashHex,
+  };
+};
+
 export const buildTairaXorMessageProofJobQueryMaterial = (input: {
   manifest: Record<string, unknown> | null | undefined;
   messageBundle: Record<string, unknown> | null | undefined;
@@ -6211,6 +7286,67 @@ export const buildTairaXorBscMessageProofJobQueryMaterial = (input: {
       commitmentRoot,
     }),
   };
+};
+
+export const buildTairaXorTonMessageProofJobQueryMaterial = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  messageBundle: Record<string, unknown> | null | undefined;
+  messageId?: string;
+  tonNetwork?: unknown;
+}): Record<string, never> => {
+  const manifest = requireRecord(input.manifest, "SCCP TON manifest");
+  const bundle = requireRecord(input.messageBundle, "SCCP message bundle");
+  const tonNetwork = input.tonNetwork ?? SCCP_TON_NETWORK.key;
+  const proofMaterial = readSccpTonProofMaterial(manifest, tonNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The TON SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  readTonDestinationBindingInput(manifest, tonNetwork);
+  if (!readSccpTonFinalizeMessageValueNano(manifest)) {
+    throw new Error("The TON finalize message value is missing.");
+  }
+
+  const commitment = requireRecord(
+    bundle.commitment,
+    "SCCP message commitment",
+  );
+  const messageId = normalizeSccpMessageId(
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "TON SCCP message commitment messageId",
+      normalizeSccpMessageId,
+    ),
+  );
+  if (input.messageId) {
+    const expectedMessageId = normalizeSccpMessageId(input.messageId);
+    if (messageId !== expectedMessageId) {
+      throw new Error(
+        "SCCP message bundle does not match the requested message id.",
+      );
+    }
+  }
+  const commitmentTargetDomain = readConsistentAliasInteger(
+    commitment,
+    ["targetDomain", "target_domain"],
+    "SCCP message commitment targetDomain",
+  );
+  if (commitmentTargetDomain !== SCCP_TON_DOMAIN) {
+    throw new Error("SCCP message bundle must target TON.");
+  }
+  normalizeHex32(
+    readConsistentAliasString(
+      bundle,
+      ["commitmentRoot", "commitment_root"],
+      "TON SCCP commitment root",
+      (value) => normalizeHex32(value, "TON SCCP commitment root"),
+    ),
+    "TON SCCP commitment root",
+  );
+
+  return {};
 };
 
 export const buildTairaXorFinalizeProofBinding = (input: {
@@ -6740,6 +7876,606 @@ export const buildTairaXorBscFinalizeProofBinding = (input: {
   };
 };
 
+const normalizePlatformPayloadKind = (value: string): string =>
+  value
+    .trim()
+    .replace(/[_\-\s]+/gu, "")
+    .toLowerCase();
+
+const readSccpPlatformPayloadVariant = (
+  record: Record<string, unknown>,
+): { kind: string; value: Record<string, unknown> } | null => {
+  const submissionPackage =
+    readRecord(record, "submissionPackage") ??
+    readRecord(record, "submission_package");
+  const platformPayload =
+    readRecord(submissionPackage ?? {}, "platformPayload") ??
+    readRecord(submissionPackage ?? {}, "platform_payload") ??
+    readRecord(record, "platformPayload") ??
+    readRecord(record, "platform_payload");
+  if (!platformPayload) {
+    return null;
+  }
+  if (typeof platformPayload.kind === "string") {
+    const value =
+      readRecord(platformPayload, "value") ??
+      readRecord(platformPayload, "payload") ??
+      platformPayload;
+    return { kind: platformPayload.kind, value };
+  }
+  if (typeof platformPayload.platform === "string") {
+    const value =
+      readRecord(platformPayload, "value") ??
+      readRecord(platformPayload, "payload") ??
+      platformPayload;
+    return { kind: platformPayload.platform, value };
+  }
+  const entries = Object.entries(platformPayload);
+  if (entries.length === 1) {
+    const [[kind, body]] = entries;
+    return {
+      kind,
+      value: requireRecord(body, `SCCP platform payload.${kind}`),
+    };
+  }
+  if (
+    readFirstString(platformPayload, "messageBodyBoc", "message_body_boc") ||
+    readRecord(platformPayload, "destinationBinding") ||
+    readRecord(platformPayload, "destination_binding")
+  ) {
+    return {
+      kind: "TonInternalMessage",
+      value: platformPayload,
+    };
+  }
+  return null;
+};
+
+const readTonMessageBodyBocArgumentHex = (
+  submissionPackage: Record<string, unknown> | null,
+): string => {
+  const args = submissionPackage?.arguments;
+  if (!Array.isArray(args)) {
+    return "";
+  }
+  for (const [index, arg] of args.entries()) {
+    const record = requireRecord(arg, `TON submission argument ${index}`);
+    if (readFirstString(record, "key") !== "message_body_boc") {
+      continue;
+    }
+    const encoding = readFirstString(record, "encoding");
+    if (encoding && encoding !== "ton_boc") {
+      throw new Error(
+        "TON submission message_body_boc argument is not ton_boc.",
+      );
+    }
+    return normalizeHexData(
+      readFirstString(record, "bytes", "value", "payload"),
+      "TON internal message body BOC",
+    );
+  }
+  return "";
+};
+
+const buildLocalTonMessageBodyBocHex = (
+  payload: Record<string, unknown>,
+  expectedDestinationBinding: TonSccpDestinationBindingInput,
+): string => {
+  const publicInputsBytes = readFirstString(
+    payload,
+    "publicInputsBytes",
+    "public_inputs_bytes",
+  );
+  const proofBytes = readFirstString(payload, "proofBytes", "proof_bytes");
+  const bundleBytes = readFirstString(payload, "bundleBytes", "bundle_bytes");
+  const queryId = readFirstString(payload, "queryId", "query_id");
+  const statementHash = readFirstString(
+    payload,
+    "statementHash",
+    "statement_hash",
+  );
+  const destinationBindingHash =
+    readFirstString(
+      payload,
+      "destinationBindingHash",
+      "destination_binding_hash",
+    ) || expectedDestinationBinding.bindingHash;
+  if (
+    !publicInputsBytes ||
+    !proofBytes ||
+    !bundleBytes ||
+    !queryId ||
+    !statementHash
+  ) {
+    return "";
+  }
+  const metadataBytes = readFirstString(
+    payload,
+    "metadataBytes",
+    "metadata_bytes",
+  );
+  return bytesToLowerHex(
+    buildSccpTonMessageBodyBocFromBytes({
+      publicInputsBytes,
+      proofBytes,
+      bundleBytes,
+      ...(metadataBytes ? { metadataBytes } : {}),
+      queryId,
+      statementHash,
+      destinationBindingHash,
+    }),
+  );
+};
+
+const readTonInternalMessageBodyBocHex = (
+  job: Record<string, unknown>,
+  expectedDestinationBinding: TonSccpDestinationBindingInput,
+): string => {
+  const submissionPackage =
+    readRecord(job, "submissionPackage") ??
+    readRecord(job, "submission_package");
+  const envelopeEncoding =
+    readFirstString(
+      submissionPackage,
+      "envelopeEncoding",
+      "envelope_encoding",
+    ) || readFirstString(job, "envelopeEncoding", "envelope_encoding");
+  if (envelopeEncoding && envelopeEncoding !== "ton_message_body_boc_v1") {
+    throw new Error("TON proof job must use ton_message_body_boc_v1.");
+  }
+  const platformVariant = readSccpPlatformPayloadVariant(job);
+  if (
+    !platformVariant ||
+    normalizePlatformPayloadKind(platformVariant.kind) !== "toninternalmessage"
+  ) {
+    throw new Error(
+      "SCCP proof job must carry a TON internal message payload.",
+    );
+  }
+  const payload = platformVariant.value;
+  const payloadBoc = readFirstString(
+    payload,
+    "messageBodyBoc",
+    "message_body_boc",
+  );
+  const argumentBoc = readTonMessageBodyBocArgumentHex(submissionPackage);
+  const envelopeBoc = readFirstString(
+    submissionPackage,
+    "envelopeHex",
+    "envelope_hex",
+    "envelopeBytes",
+    "envelope_bytes",
+  );
+  const messageBodyBocHex =
+    payloadBoc || argumentBoc || envelopeBoc
+      ? normalizeHexData(
+          payloadBoc || argumentBoc || envelopeBoc,
+          "TON internal message body BOC",
+        )
+      : "";
+  if (
+    argumentBoc &&
+    normalizeHexData(argumentBoc, "TON message_body_boc argument") !==
+      messageBodyBocHex
+  ) {
+    throw new Error(
+      "TON proof job message_body_boc argument does not match the platform payload.",
+    );
+  }
+  if (
+    envelopeBoc &&
+    normalizeHexData(envelopeBoc, "TON submission envelope bytes") !==
+      messageBodyBocHex
+  ) {
+    throw new Error(
+      "TON proof job envelope bytes do not match the platform payload.",
+    );
+  }
+  const payloadDestinationBinding =
+    readRecord(payload, "destinationBinding") ??
+    readRecord(payload, "destination_binding");
+  const payloadBindingHash = readConsistentAliasString(
+    payload,
+    ["destinationBindingHash", "destination_binding_hash"],
+    "TON platform payload destination binding hash",
+    (value) =>
+      normalizeHex32(value, "TON platform payload destination binding hash"),
+  );
+  const nestedBindingHash = readConsistentAliasString(
+    payloadDestinationBinding ?? {},
+    ["bindingHash", "binding_hash"],
+    "TON platform payload destination binding hash",
+    (value) =>
+      normalizeHex32(value, "TON platform payload destination binding hash"),
+  );
+  const effectivePayloadBindingHash = payloadBindingHash || nestedBindingHash;
+  if (
+    effectivePayloadBindingHash &&
+    normalizeHex32(
+      effectivePayloadBindingHash,
+      "TON platform payload destination binding hash",
+    ) !== expectedDestinationBinding.bindingHash
+  ) {
+    throw new Error(
+      "TON proof job destination binding does not match the route manifest.",
+    );
+  }
+  const nestedBindingKey = readConsistentAliasString(
+    payloadDestinationBinding ?? {},
+    ["key", "bindingKey", "binding_key"],
+    "TON platform payload destination binding key",
+  );
+  if (nestedBindingKey && nestedBindingKey !== expectedDestinationBinding.key) {
+    throw new Error(
+      "TON proof job destination binding key does not match the route manifest.",
+    );
+  }
+  if (messageBodyBocHex) {
+    if (!messageBodyBocHex.startsWith("0xb5ee9c72")) {
+      throw new Error("TON internal message body must be a BOC payload.");
+    }
+    return messageBodyBocHex;
+  }
+  const localMessageBodyBocHex = buildLocalTonMessageBodyBocHex(
+    payload,
+    expectedDestinationBinding,
+  );
+  if (!localMessageBodyBocHex.startsWith("0xb5ee9c72")) {
+    throw new Error("TON internal message body must be a BOC payload.");
+  }
+  return localMessageBodyBocHex;
+};
+
+export const buildSccpTonCompactFinalizeMessageBodyBocFromBytes = (input: {
+  messageBodyBocHex?: string;
+  messageBodyBocBytes?: Uint8Array;
+  messageId: string;
+  statementHash: string;
+  destinationBindingHash: string;
+}): SccpTonCompactFinalizeMessageBodyPlan => {
+  const messageBodyBocBytes = input.messageBodyBocBytes
+    ? new Uint8Array(input.messageBodyBocBytes)
+    : hexDataToBytes(
+        input.messageBodyBocHex ?? "",
+        "TON internal message body BOC",
+      );
+  if (
+    messageBodyBocBytes.length < 4 ||
+    messageBodyBocBytes[0] !== 0xb5 ||
+    messageBodyBocBytes[1] !== 0xee ||
+    messageBodyBocBytes[2] !== 0x9c ||
+    messageBodyBocBytes[3] !== 0x72
+  ) {
+    throw new Error("TON compact finalize input must be a BOC payload.");
+  }
+  if (messageBodyBocBytes.length > 0xffff_ffff) {
+    throw new Error("TON compact finalize input is too large.");
+  }
+  const messageId = normalizeHex32(input.messageId, "messageId");
+  const statementHash = normalizeHex32(input.statementHash, "statementHash");
+  const destinationBindingHash = normalizeHex32(
+    input.destinationBindingHash,
+    "destinationBindingHash",
+  );
+  const bodyHash = bytesToLowerHex(sha256(messageBodyBocBytes));
+  const lengthBytes = new Uint8Array(4);
+  new DataView(lengthBytes.buffer).setUint32(0, messageBodyBocBytes.length);
+  const compactTranscript = concatBytes(
+    new TextEncoder().encode("sccp:ton:compact-finalize:v2"),
+    hexDataToBytes(messageId, "messageId"),
+    hexDataToBytes(bodyHash, "TON compact body hash"),
+    hexDataToBytes(statementHash, "statementHash"),
+    hexDataToBytes(destinationBindingHash, "destinationBindingHash"),
+    lengthBytes,
+  );
+  const proofDigest = bytesToLowerHex(
+    blake2b(compactTranscript, { dkLen: 32 }),
+  );
+  const queryId = bytesToBigInt(
+    blake2b(
+      concatBytes(
+        new TextEncoder().encode("sccp:ton:compact-finalize:query:v2"),
+        hexDataToBytes(messageId, "messageId"),
+      ),
+      { dkLen: 8 },
+    ),
+  );
+  const details = beginCell()
+    .storeUint(BigInt(statementHash), 256)
+    .storeUint(BigInt(destinationBindingHash), 256)
+    .storeUint(BigInt(proofDigest), 256)
+    .storeUint(messageBodyBocBytes.length, 32)
+    .endCell();
+  const payloadBocBytes = beginCell()
+    .storeUint(SCCP_TON_COMPACT_FINALIZE_OP, 32)
+    .storeUint(queryId, 64)
+    .storeUint(SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2, 16)
+    .storeUint(BigInt(messageId), 256)
+    .storeUint(BigInt(bodyHash), 256)
+    .storeRef(details)
+    .endCell()
+    .toBoc({ idx: false });
+  return {
+    protocol: "ton_sccp_compact_finalize_boc_v2",
+    protocolVersion: SCCP_TON_VERIFIER_PROTOCOL_COMPACT_V2,
+    op: SCCP_TON_COMPACT_FINALIZE_OP,
+    queryId: queryId.toString(),
+    messageId,
+    statementHash,
+    destinationBindingHash,
+    bodyHash,
+    proofDigest,
+    totalBytes: messageBodyBocBytes.length,
+    payloadBocHex: bytesToLowerHex(payloadBocBytes),
+    payloadBocBytes,
+  };
+};
+
+export const buildTairaXorTonFinalizeProofBinding = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  job: Record<string, unknown>;
+  messageId: string;
+  tairaSender: string;
+  tonRecipient: string;
+  amountDecimal: string;
+  tonNetwork?: unknown;
+}): TairaXorTonFinalizeFromTairaProofBinding => {
+  const manifest = requireRecord(input.manifest, "SCCP TON manifest");
+  const job = requireRecord(input.job, "SCCP proof job");
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const expectedMessageId = normalizeHex32(input.messageId, "messageId");
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(input.amountDecimal);
+  const expectedRecipient = normalizeTonRawAddress(input.tonRecipient);
+  const destinationBinding = readTonDestinationBindingInput(
+    manifest,
+    input.tonNetwork ?? SCCP_TON_NETWORK.key,
+  );
+  const publicInputs = requireRecord(
+    job.publicInputs ?? job.public_inputs,
+    "SCCP job publicInputs",
+  );
+  const publicInputMessageId = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "publicInputs.messageId",
+      (value) => normalizeHex32(value, "publicInputs.messageId"),
+    ),
+    "publicInputs.messageId",
+  );
+  if (publicInputMessageId !== expectedMessageId) {
+    throw new Error(
+      "SCCP proof job message id does not match this bridge request.",
+    );
+  }
+  const publicInputTargetDomain = readConsistentAliasInteger(
+    publicInputs,
+    ["targetDomain", "target_domain"],
+    "SCCP proof job public inputs targetDomain",
+  );
+  if (publicInputTargetDomain !== SCCP_TON_DOMAIN) {
+    throw new Error("SCCP proof job must target TON.");
+  }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    destinationBinding.bindingHash,
+    "SCCP proof job public inputs",
+  );
+
+  const bundle = requireRecord(job.bundle, "SCCP proof job bundle");
+  const commitment = requireRecord(
+    bundle.commitment,
+    "SCCP message commitment",
+  );
+  const commitmentMessageId = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["messageId", "message_id"],
+      "bundle.commitment.messageId",
+      (value) => normalizeHex32(value, "bundle.commitment.messageId"),
+    ),
+    "bundle.commitment.messageId",
+  );
+  if (commitmentMessageId !== expectedMessageId) {
+    throw new Error("SCCP message bundle does not match this bridge request.");
+  }
+  const payloadHash = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["payloadHash", "payload_hash"],
+      "publicInputs.payloadHash",
+      (value) => normalizeHex32(value, "publicInputs.payloadHash"),
+    ),
+    "publicInputs.payloadHash",
+  );
+  const commitmentPayloadHash = normalizeHex32(
+    readConsistentAliasString(
+      commitment,
+      ["payloadHash", "payload_hash"],
+      "bundle.commitment.payloadHash",
+      (value) => normalizeHex32(value, "bundle.commitment.payloadHash"),
+    ),
+    "bundle.commitment.payloadHash",
+  );
+  if (payloadHash !== commitmentPayloadHash) {
+    throw new Error(
+      "SCCP message bundle payload hash does not match public inputs.",
+    );
+  }
+
+  const transfer = readTransferProjection(job);
+  compareOptionalScalar(
+    transfer,
+    "source_domain",
+    SCCP_SORA_DOMAIN,
+    "Source domain",
+  );
+  compareOptionalScalar(
+    transfer,
+    "dest_domain",
+    SCCP_TON_DOMAIN,
+    "Destination domain",
+  );
+  compareOptionalScalar(
+    transfer,
+    "asset_home_domain",
+    SCCP_SORA_DOMAIN,
+    "Asset home domain",
+  );
+  if (
+    readCodecText(transfer.asset_id, "payload.asset_id") !== SCCP_XOR_ASSET_KEY
+  ) {
+    throw new Error("SCCP proof job asset key must be XOR.");
+  }
+  if (
+    readCodecText(transfer.route_id, "payload.route_id") !==
+    SCCP_TON_XOR_ROUTE_ID
+  ) {
+    throw new Error("SCCP proof job route id must be taira_ton_xor.");
+  }
+  if (readScalarText(transfer, "amount") !== amountBaseUnits) {
+    throw new Error(
+      "SCCP proof job amount does not match this bridge request.",
+    );
+  }
+  if (readCodecText(transfer.sender, "payload.sender") !== tairaSender) {
+    throw new Error(
+      "SCCP proof job sender does not match the active TAIRA account.",
+    );
+  }
+  if (
+    readTransferTonRawAddressField(
+      transfer,
+      "recipient",
+      "payload.recipient",
+    ) !== expectedRecipient
+  ) {
+    throw new Error(
+      "SCCP proof job recipient does not match this bridge request.",
+    );
+  }
+
+  const bundleTransfer = readBundleTransferPayload(bundle, SCCP_TON_DOMAIN);
+  compareOptionalScalar(
+    bundleTransfer,
+    "source_domain",
+    SCCP_SORA_DOMAIN,
+    "Bundle source domain",
+  );
+  compareOptionalScalar(
+    bundleTransfer,
+    "dest_domain",
+    SCCP_TON_DOMAIN,
+    "Bundle destination domain",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "asset_id",
+    SCCP_XOR_ASSET_KEY,
+    "Bundle asset key",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "route_id",
+    SCCP_TON_XOR_ROUTE_ID,
+    "Bundle route id",
+  );
+  compareOptionalText(
+    bundleTransfer,
+    "amount",
+    amountBaseUnits,
+    "Bundle amount",
+  );
+  compareOptionalText(bundleTransfer, "sender", tairaSender, "Bundle sender");
+  if (
+    readTransferTonRawAddressField(
+      bundleTransfer,
+      "recipient",
+      "Bundle recipient",
+    ) !== expectedRecipient
+  ) {
+    throw new Error(
+      "Bundle recipient must match the selected TAIRA/TON route.",
+    );
+  }
+  const canonicalPayloadBytes = canonicalSccpTransferPayloadBytes(
+    bundleTransfer as unknown as SccpTransferPayload,
+  );
+  const canonicalPayloadHex = bytesToLowerHex(canonicalPayloadBytes);
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: bundleTransfer,
+  });
+  if (
+    sccpTransferMessageId(bundleTransfer as unknown as SccpTransferPayload) !==
+    expectedMessageId
+  ) {
+    throw new Error(
+      "SCCP message id does not match the canonical transfer payload.",
+    );
+  }
+  if (sccpPayloadHash(canonicalPayloadEnvelopeBytes) !== payloadHash) {
+    throw new Error(
+      "SCCP proof job payload hash does not match the canonical SCCP payload envelope.",
+    );
+  }
+  const platformDestinationBinding = readSccpPlatformDestinationBinding(job);
+  const jobDestinationBinding =
+    readRecord(job, "destinationBinding") ??
+    readRecord(job, "destination_binding");
+  const jobBindingHash = readConsistentAliasString(
+    platformDestinationBinding ?? jobDestinationBinding ?? {},
+    ["bindingHash", "binding_hash"],
+    "SCCP proof job destination binding hash",
+    (value) => normalizeHex32(value, "SCCP proof job destination binding hash"),
+  );
+  if (
+    jobBindingHash &&
+    normalizeHex32(jobBindingHash, "job.destinationBinding.bindingHash") !==
+      destinationBinding.bindingHash
+  ) {
+    throw new Error(
+      "SCCP proof job destination binding does not match the TON route manifest.",
+    );
+  }
+  const messageBodyBocHex = readTonInternalMessageBodyBocHex(
+    job,
+    destinationBinding,
+  );
+  const submissionPackage =
+    readRecord(job, "submissionPackage") ??
+    readRecord(job, "submission_package");
+  const platformVariant = readSccpPlatformPayloadVariant(job);
+  const statementHash = normalizeHex32(
+    readFirstString(submissionPackage, "statementHash", "statement_hash") ||
+      readFirstString(
+        platformVariant?.value,
+        "statementHash",
+        "statement_hash",
+      ),
+    "TON SCCP proof job statement hash",
+  );
+  const normalizedBundle = {
+    ...bundle,
+    payload: {
+      kind: "Transfer",
+      value: bundleTransfer,
+    },
+  };
+
+  return {
+    destinationBinding,
+    messageBundle: normalizedBundle,
+    canonicalPayloadHex,
+    amountBaseUnits,
+    messageId: expectedMessageId,
+    payloadHash,
+    statementHash,
+    destinationBindingHash: destinationBinding.bindingHash,
+    messageBodyBocHex,
+  };
+};
+
 export const buildTairaXorFinalizeTriggerRequest = (input: {
   manifest: Record<string, unknown> | null | undefined;
   proofPackage: Record<string, unknown>;
@@ -7074,6 +8810,40 @@ export const buildTairaXorBscFinalizeTransactionRequest = (input: {
   };
 };
 
+const normalizeTairaSettlementContractAliasForSubmit = (
+  value: string,
+): string => {
+  const alias = value.trim();
+  if (!alias) {
+    return "";
+  }
+  return alias.includes("::") ? alias : `${alias}::universal`;
+};
+
+const readTairaSettlementContractAlias = (
+  manifest: Record<string, unknown>,
+  settlement: Record<string, unknown>,
+): string =>
+  normalizeTairaSettlementContractAliasForSubmit(
+    readFirstString(settlement, "contractAlias", "contract_alias") ||
+      readFirstString(
+        manifest,
+        "settlementContractAlias",
+        "settlement_contract_alias",
+      ),
+  );
+
+const readTairaSettlementContractAddress = (
+  manifest: Record<string, unknown>,
+  settlement: Record<string, unknown>,
+): string =>
+  readFirstString(settlement, "contractAddress", "contract_address") ||
+  readFirstString(
+    manifest,
+    "settlementContractAddress",
+    "settlement_contract_address",
+  );
+
 export const buildTairaXorInboundSettlement = (input: {
   manifest: Record<string, unknown> | null | undefined;
   gasLimit?: number;
@@ -7085,16 +8855,11 @@ export const buildTairaXorInboundSettlement = (input: {
     : {};
   const settlement =
     readFirstRecord(manifest, "settlement", "tairaSettlement") ?? {};
-  const contractAddress = readFirstString(
+  const contractAddress = readTairaSettlementContractAddress(
+    manifest,
     settlement,
-    "contractAddress",
-    "contract_address",
   );
-  const contractAlias = readFirstString(
-    settlement,
-    "contractAlias",
-    "contract_alias",
-  );
+  const contractAlias = readTairaSettlementContractAlias(manifest, settlement);
   if (
     input.gasLimit !== undefined &&
     (!Number.isSafeInteger(input.gasLimit) || input.gasLimit <= 0)
@@ -7125,16 +8890,11 @@ export const buildTairaXorBscInboundSettlement = (input: {
     : {};
   const settlement =
     readFirstRecord(manifest, "settlement", "tairaSettlement") ?? {};
-  const contractAddress = readFirstString(
+  const contractAddress = readTairaSettlementContractAddress(
+    manifest,
     settlement,
-    "contractAddress",
-    "contract_address",
   );
-  const contractAlias = readFirstString(
-    settlement,
-    "contractAlias",
-    "contract_alias",
-  );
+  const contractAlias = readTairaSettlementContractAlias(manifest, settlement);
   if (
     input.gasLimit !== undefined &&
     (!Number.isSafeInteger(input.gasLimit) || input.gasLimit <= 0)
@@ -7146,6 +8906,41 @@ export const buildTairaXorBscInboundSettlement = (input: {
   return {
     entrypoint: "finalize_inbound",
     route: SCCP_BSC_XOR_ROUTE_ID,
+    ...(contractAlias ? { contract_alias: contractAlias } : {}),
+    ...(!contractAlias && contractAddress
+      ? { contract_address: contractAddress }
+      : {}),
+    ...(input.gasLimit ? { gas_limit: input.gasLimit } : {}),
+  };
+};
+
+export const buildTairaXorTonInboundSettlement = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  gasLimit?: number;
+}): Record<string, unknown> => {
+  const manifest = input.manifest
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP TON manifest"),
+      )
+    : {};
+  const settlement =
+    readFirstRecord(manifest, "settlement", "tairaSettlement") ?? {};
+  const contractAddress = readTairaSettlementContractAddress(
+    manifest,
+    settlement,
+  );
+  const contractAlias = readTairaSettlementContractAlias(manifest, settlement);
+  if (
+    input.gasLimit !== undefined &&
+    (!Number.isSafeInteger(input.gasLimit) || input.gasLimit <= 0)
+  ) {
+    throw new Error(
+      "TAIRA settlement gas limit must be a positive safe integer.",
+    );
+  }
+  return {
+    entrypoint: "finalize_inbound",
+    route: SCCP_TON_XOR_ROUTE_ID,
     ...(contractAlias ? { contract_alias: contractAlias } : {}),
     ...(!contractAlias && contractAddress
       ? { contract_address: contractAddress }
@@ -7188,6 +8983,42 @@ const requireTronToTairaSourceSettlement = (
     ) !== SCCP_XOR_ROUTE_ID
   ) {
     throw new Error("TRON -> TAIRA settlement route must be taira_tron_xor.");
+  }
+  return settlement;
+};
+
+const requireTonToTairaSourceSettlement = (
+  proofPackage: Record<string, unknown>,
+): Record<string, unknown> => {
+  if (
+    proofPackage.settlement === undefined ||
+    proofPackage.settlement === null
+  ) {
+    throw new Error("TON -> TAIRA source proof package settlement is missing.");
+  }
+  const settlement = requireRecord(
+    proofPackage.settlement,
+    "TON -> TAIRA source proof package settlement",
+  );
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["entrypoint"],
+      "TON -> TAIRA settlement entrypoint",
+    ) !== "finalize_inbound"
+  ) {
+    throw new Error(
+      "TON -> TAIRA settlement entrypoint must be finalize_inbound.",
+    );
+  }
+  if (
+    readConsistentAliasString(
+      settlement,
+      ["route", "route_id"],
+      "TON -> TAIRA settlement route",
+    ) !== SCCP_TON_XOR_ROUTE_ID
+  ) {
+    throw new Error("TON -> TAIRA settlement route must be taira_ton_xor.");
   }
   return settlement;
 };
@@ -7253,6 +9084,50 @@ export const bindTronToTairaSourceProofPackage = (input: {
     }
   }
 
+  return {
+    messageBundle: bound.messageBundle as Record<string, unknown>,
+    settlement: bound.settlement as Record<string, unknown>,
+    sourceEventDigest: bound.sourceEventDigest,
+    txId: bound.txId,
+    messageId: bound.messageId,
+    amountBaseUnits,
+  };
+};
+
+export const bindTonToTairaSourceProofPackage = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  proofPackage: unknown;
+  txId: string;
+  tonSender: string;
+  tairaRecipient: string;
+  amountDecimal: string;
+}): TonToTairaSourceProofPackage => {
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(input.amountDecimal);
+  const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
+  const tonSender = normalizeTonRawAddress(input.tonSender, "TON sender");
+  const manifest = input.manifest
+    ? cloneSccpJsonRouteManifest(
+        requireRecord(input.manifest, "SCCP TON manifest"),
+      )
+    : null;
+  const proofPackage = requireRecord(
+    snapshotSccpDataValue(
+      input.proofPackage,
+      "TON -> TAIRA source proof package",
+    ),
+    "TON -> TAIRA source proof package",
+  );
+  const settlement = requireTonToTairaSourceSettlement(proofPackage);
+  const settlementDefaults = buildTairaXorTonInboundSettlement({ manifest });
+  requireTonToTairaSettlementTargetBinding(settlement, settlementDefaults);
+  const bound = bindTairaXorTonToTairaSourceProofPackage({
+    proofPackage,
+    settlementDefaults,
+    txId: input.txId,
+    tonSender,
+    tairaRecipient,
+    amount: amountBaseUnits,
+  });
   return {
     messageBundle: bound.messageBundle as Record<string, unknown>,
     settlement: bound.settlement as Record<string, unknown>,
@@ -7455,6 +9330,68 @@ const requireTronToTairaSettlementTargetBinding = (
   if (packageAddress && packageAddress !== expectedAddress) {
     throw new Error(
       "TRON -> TAIRA source proof package settlement contract address must match the TRON manifest.",
+    );
+  }
+};
+
+const requireTonToTairaSettlementTargetBinding = (
+  settlement: Record<string, unknown>,
+  settlementDefaults: Record<string, unknown>,
+): void => {
+  const expectedAlias = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_alias", "contractAlias"],
+    "TON -> TAIRA manifest settlement contract alias",
+  );
+  const expectedAddress = readConsistentStringAlias(
+    settlementDefaults,
+    ["contract_address", "contractAddress"],
+    "TON -> TAIRA manifest settlement contract address",
+  );
+  const packageAlias = readConsistentStringAlias(
+    settlement,
+    ["contract_alias", "contractAlias"],
+    "TON -> TAIRA source proof package settlement contract alias",
+  );
+  const packageAddress = readConsistentStringAlias(
+    settlement,
+    ["contract_address", "contractAddress"],
+    "TON -> TAIRA source proof package settlement contract address",
+  );
+  if (packageAlias && packageAddress) {
+    throw new Error(
+      "TON -> TAIRA source proof package settlement must not declare both contract alias and contract address.",
+    );
+  }
+  if (!expectedAlias && !expectedAddress) {
+    if (packageAlias || packageAddress) {
+      throw new Error(
+        "TON -> TAIRA source proof package settlement target must come from the TON manifest.",
+      );
+    }
+    return;
+  }
+  if (expectedAlias) {
+    if (packageAddress) {
+      throw new Error(
+        "TON -> TAIRA source proof package settlement must not override the manifest contract alias with a contract address.",
+      );
+    }
+    if (packageAlias && packageAlias !== expectedAlias) {
+      throw new Error(
+        "TON -> TAIRA source proof package settlement contract alias must match the TON manifest.",
+      );
+    }
+    return;
+  }
+  if (packageAlias) {
+    throw new Error(
+      "TON -> TAIRA source proof package settlement must not override the manifest contract address with a contract alias.",
+    );
+  }
+  if (packageAddress && packageAddress !== expectedAddress) {
+    throw new Error(
+      "TON -> TAIRA source proof package settlement contract address must match the TON manifest.",
     );
   }
 };
@@ -8870,6 +10807,31 @@ const manifestTargetsBsc = (manifest: Record<string, unknown>): boolean => {
   );
 };
 
+const manifestTargetsTon = (manifest: Record<string, unknown>): boolean => {
+  const counterpartyDomain = readConsistentRouteAliasInteger(
+    manifest,
+    ["counterpartyDomain", "counterparty_domain"],
+    "counterpartyDomain",
+  );
+  const verifierTarget = readConsistentRouteAliasString(
+    manifest,
+    ["verifierTarget", "verifier_target"],
+    "verifierTarget",
+  );
+  const chain = readString(manifest, "chain").toLowerCase();
+  const codec = readConsistentRouteAliasString(
+    manifest,
+    ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
+    "counterpartyAccountCodecKey",
+  );
+  return (
+    counterpartyDomain === SCCP_TON_DOMAIN ||
+    chain.includes("ton") ||
+    verifierTarget === "TonContract" ||
+    codec === "ton_raw"
+  );
+};
+
 const normalizeManifestTronNetworkKey = (
   value: string,
 ): SccpTronNetworkKey | null => {
@@ -8956,6 +10918,53 @@ const readManifestBscNetworkKey = (
   return selectedKey;
 };
 
+const normalizeManifestTonNetworkKey = (
+  value: string,
+): SccpTonNetworkKey | null => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === "ton") {
+    return "testnet";
+  }
+  try {
+    return normalizeSccpTonNetworkKey(normalized);
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readManifestTonNetworkKey = (
+  manifest: Record<string, unknown>,
+): SccpTonNetworkKey | null => {
+  let selectedKey: SccpTonNetworkKey | null = null;
+  let selectedField = "";
+  let selectedValue = "";
+  for (const field of ["tonNetwork", "ton_network", "network", "chain"]) {
+    if (!Object.prototype.hasOwnProperty.call(manifest, field)) {
+      continue;
+    }
+    const value = readString(manifest, field);
+    const key = normalizeManifestTonNetworkKey(value);
+    if (!key) {
+      continue;
+    }
+    if (!selectedKey) {
+      selectedKey = key;
+      selectedField = field;
+      selectedValue = value;
+      continue;
+    }
+    if (selectedKey !== key) {
+      throw new Error(
+        `TON network aliases disagree: ${selectedField}=${selectedValue} but ${field}=${value}.`,
+      );
+    }
+  }
+  return selectedKey;
+};
+
 const resolveManifestBscNetworkProfile = (
   manifest: Record<string, unknown> | null | undefined,
   bscNetwork: unknown = SCCP_BSC_NETWORK.key,
@@ -9004,6 +11013,27 @@ export const readSccpBscRpcEndpoint = (
   return configuredRpc || profile.rpcUrl;
 };
 
+export const readSccpTonRpcEndpoint = (
+  manifest: Record<string, unknown> | null | undefined,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
+): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  const declaredNetwork = manifestForRead
+    ? readManifestTonNetworkKey(manifestForRead)
+    : null;
+  const profile = declaredNetwork
+    ? SCCP_TON_NETWORK_PROFILES[declaredNetwork]
+    : resolveSccpTonNetworkProfile(tonNetwork);
+  const configuredRpc = manifestForRead
+    ? readConsistentAliasString(
+        manifestForRead,
+        ["tonRpcUrl", "ton_rpc_url"],
+        "TON RPC endpoint",
+      )
+    : "";
+  return configuredRpc || profile.rpcUrl;
+};
+
 const manifestMatchesTronNetworkProfile = (
   manifest: Record<string, unknown>,
   tronNetwork: unknown = SCCP_TRON_NETWORK.key,
@@ -9034,6 +11064,23 @@ const manifestMatchesBscNetworkProfile = (
     return declaredNetwork === profile.key;
   }
   return Boolean(readSccpBscProofMaterial(manifest, profile.key));
+};
+
+const manifestMatchesTonNetworkProfile = (
+  manifest: Record<string, unknown>,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
+): boolean => {
+  const profile = resolveSccpTonNetworkProfile(tonNetwork);
+  let declaredNetwork: SccpTonNetworkKey | null = null;
+  try {
+    declaredNetwork = readManifestTonNetworkKey(manifest);
+  } catch (_error) {
+    return false;
+  }
+  if (declaredNetwork) {
+    return declaredNetwork === profile.key;
+  }
+  return Boolean(readSccpTonProofMaterial(manifest, profile.key));
 };
 
 const manifestMatchesRoute = (
@@ -9081,6 +11128,20 @@ export const pickBscSccpManifest = (
 const hasAnyBscManifest = (manifestSet: unknown): boolean =>
   manifestRecords(manifestSet).some(manifestTargetsBsc);
 
+export const pickTonSccpManifest = (
+  manifestSet: unknown,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
+): Record<string, unknown> | null =>
+  manifestRecords(manifestSet).find(
+    (manifest) =>
+      manifestTargetsTon(manifest) &&
+      manifestMatchesRoute(manifest, SCCP_TON_XOR_ROUTE) &&
+      manifestMatchesTonNetworkProfile(manifest, tonNetwork),
+  ) ?? null;
+
+const hasAnyTonManifest = (manifestSet: unknown): boolean =>
+  manifestRecords(manifestSet).some(manifestTargetsTon);
+
 const SCCP_LANE_MATERIAL_PARAMETER_KEYS = [
   "sccp_lane_materials_v1",
   "sccpLaneMaterialsV1",
@@ -9097,9 +11158,14 @@ const readSccpLaneMaterialPayload = (
     return null;
   }
   const root = parameters as Record<string, unknown>;
-  const custom = readFirstRecord(root, "custom") ?? root;
+  const custom = readFirstRecord(root, "custom", "Custom") ?? root;
+  const customId = readFirstString(custom, "id");
+  const customIsLaneMaterials =
+    customId !== "" &&
+    SCCP_LANE_MATERIAL_PARAMETER_KEYS.some((key) => key === customId);
   const container =
     readFirstRecord(custom, ...SCCP_LANE_MATERIAL_PARAMETER_KEYS) ??
+    (customIsLaneMaterials ? custom : null) ??
     readFirstRecord(root, ...SCCP_LANE_MATERIAL_PARAMETER_KEYS);
   return readFirstRecord(container, "payload") ?? container;
 };
@@ -9119,6 +11185,27 @@ const readSccpLaneMaterialRecords = (
     }
   }
   return [];
+};
+
+const isSccpLaneMaterialFieldPresent = (value: unknown): boolean =>
+  value !== null && value !== undefined && value !== "";
+
+const mergeSccpSupplementalLaneRecord = (
+  existing: Record<string, unknown> | null | undefined,
+  supplemental: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> => {
+  const base = existing ? cloneSccpSourceLaneRecord(existing, label) : {};
+  const patch = cloneSccpSourceLaneRecord(supplemental, label);
+  for (const [key, value] of Object.entries(patch)) {
+    if (
+      isSccpLaneMaterialFieldPresent(value) ||
+      !isSccpLaneMaterialFieldPresent(base[key])
+    ) {
+      base[key] = value;
+    }
+  }
+  return base;
 };
 
 const sourceLaneRecordMatchesBscNetwork = (
@@ -9169,10 +11256,100 @@ const sourceAdapterDeploymentMatchesBscNetwork = (
   return targetDomain === null || targetDomain === SCCP_SORA_DOMAIN;
 };
 
+const sourceLaneRecordMatchesTonNetwork = (
+  record: Record<string, unknown>,
+  tonProfile: SccpTonNetworkProfile,
+): boolean => {
+  const sourceDomain = readConsistentRouteAliasInteger(
+    record,
+    ["sourceDomain", "source_domain", "domain"],
+    "sourceDomain",
+  );
+  if (sourceDomain !== SCCP_TON_DOMAIN) {
+    return false;
+  }
+  const sourceChain = readConsistentRouteAliasString(
+    record,
+    ["sourceChain", "source_chain", "chain"],
+    "sourceChain",
+  ).toLowerCase();
+  const networkId = readConsistentRouteAliasString(
+    record,
+    [
+      "sourceBridgeNetworkId",
+      "source_bridge_network_id",
+      "networkIdHex",
+      "network_id_hex",
+    ],
+    "sourceBridgeNetworkId",
+  ).toLowerCase();
+  const zeroNetworkId = `0x${"0".repeat(64)}`;
+  return (
+    sourceChain === "ton" &&
+    (!networkId ||
+      networkId === zeroNetworkId ||
+      networkId === tonProfile.networkIdHex.toLowerCase())
+  );
+};
+
+const sourceAdapterDeploymentMatchesTonNetwork = (
+  record: Record<string, unknown>,
+  tonProfile: SccpTonNetworkProfile,
+): boolean => {
+  if (!sourceLaneRecordMatchesTonNetwork(record, tonProfile)) {
+    return false;
+  }
+  const targetDomain = readConsistentRouteAliasInteger(
+    record,
+    ["targetDomain", "target_domain"],
+    "targetDomain",
+  );
+  return targetDomain === SCCP_SORA_DOMAIN;
+};
+
+const destinationRolloutMatchesTonNetwork = (
+  record: Record<string, unknown>,
+): boolean => {
+  const domain = readConsistentRouteAliasInteger(
+    record,
+    ["domain", "counterpartyDomain", "counterparty_domain"],
+    "domain",
+  );
+  if (domain !== SCCP_TON_DOMAIN) {
+    return false;
+  }
+  const chain = readConsistentRouteAliasString(
+    record,
+    ["chain", "sourceChain", "source_chain"],
+    "chain",
+  ).toLowerCase();
+  return chain === "ton" || chain === "ton-testnet";
+};
+
+const routeAllowlistMatchesTonNetwork = (
+  record: Record<string, unknown>,
+): boolean => {
+  const domain = readConsistentRouteAliasInteger(
+    record,
+    ["domain", "counterpartyDomain", "counterparty_domain"],
+    "domain",
+  );
+  if (domain !== SCCP_TON_DOMAIN) {
+    return false;
+  }
+  const chain = readConsistentRouteAliasString(
+    record,
+    ["chain", "sourceChain", "source_chain"],
+    "chain",
+  ).toLowerCase();
+  return chain === "ton" || chain === "ton-testnet";
+};
+
 export const mergeSccpLaneMaterialsIntoManifestSet = (
   manifestSet: unknown,
   parameters: unknown,
   bscNetwork: unknown = SCCP_BSC_NETWORK.key,
+  tonNetwork: unknown = SCCP_TON_NETWORK.key,
 ): unknown => {
   if (!manifestSet || !parameters) {
     return manifestSet;
@@ -9182,44 +11359,125 @@ export const mergeSccpLaneMaterialsIntoManifestSet = (
     return manifestSet;
   }
   const bscProfile = resolveSccpBscNetworkProfile(bscNetwork);
-  const sourceVerifierMaterial = readSccpLaneMaterialRecords(
+  const tonProfile = resolveSccpTonNetworkProfile(tonNetwork);
+  const sourceVerifierMaterialRecords = readSccpLaneMaterialRecords(
     payload,
     "sccpSourceVerifierMaterials",
     "sccp_source_verifier_materials",
     "sourceVerifierMaterials",
     "source_verifier_materials",
-  ).find((record) => sourceLaneRecordMatchesBscNetwork(record, bscProfile));
-  const sourceAdapterEngineDeployment = readSccpLaneMaterialRecords(
+  );
+  const sourceAdapterEngineDeploymentRecords = readSccpLaneMaterialRecords(
     payload,
     "sccpSourceAdapterEngineDeployments",
     "sccp_source_adapter_engine_deployments",
     "sourceAdapterEngineDeployments",
     "source_adapter_engine_deployments",
-  ).find((record) =>
-    sourceAdapterDeploymentMatchesBscNetwork(record, bscProfile),
   );
-  if (!sourceVerifierMaterial && !sourceAdapterEngineDeployment) {
+  const destinationRolloutRecords = readSccpLaneMaterialRecords(
+    payload,
+    "sccpDestinationRollouts",
+    "sccp_destination_rollouts",
+    "destinationRollouts",
+    "destination_rollouts",
+  );
+  const routeAllowlistRecords = readSccpLaneMaterialRecords(
+    payload,
+    "sccpRouteAllowlists",
+    "sccp_route_allowlists",
+    "routeAllowlists",
+    "route_allowlists",
+  );
+  const sourceVerifierMaterial = sourceVerifierMaterialRecords.find((record) =>
+    sourceLaneRecordMatchesBscNetwork(record, bscProfile),
+  );
+  const sourceAdapterEngineDeployment =
+    sourceAdapterEngineDeploymentRecords.find((record) =>
+      sourceAdapterDeploymentMatchesBscNetwork(record, bscProfile),
+    );
+  const tonSourceVerifierMaterial = sourceVerifierMaterialRecords.find(
+    (record) => sourceLaneRecordMatchesTonNetwork(record, tonProfile),
+  );
+  const tonSourceAdapterEngineDeployment =
+    sourceAdapterEngineDeploymentRecords.find((record) =>
+      sourceAdapterDeploymentMatchesTonNetwork(record, tonProfile),
+    );
+  const tonDestinationRollout = destinationRolloutRecords.find((record) =>
+    destinationRolloutMatchesTonNetwork(record),
+  );
+  const tonRouteAllowlist = routeAllowlistRecords.find((record) =>
+    routeAllowlistMatchesTonNetwork(record),
+  );
+  if (
+    !sourceVerifierMaterial &&
+    !sourceAdapterEngineDeployment &&
+    !tonSourceVerifierMaterial &&
+    !tonSourceAdapterEngineDeployment &&
+    !tonDestinationRollout &&
+    !tonRouteAllowlist
+  ) {
     return manifestSet;
   }
   const cloned = cloneSccpJsonManifestSet(manifestSet);
   for (const manifest of manifestRecords(cloned)) {
-    if (
-      !manifestTargetsBsc(manifest) ||
-      !manifestMatchesRoute(manifest, SCCP_BSC_XOR_ROUTE) ||
-      !manifestMatchesBscNetworkProfile(manifest, bscProfile.key)
-    ) {
+    const isBscManifest =
+      manifestTargetsBsc(manifest) &&
+      manifestMatchesRoute(manifest, SCCP_BSC_XOR_ROUTE) &&
+      manifestMatchesBscNetworkProfile(manifest, bscProfile.key);
+    const isTonManifest =
+      manifestTargetsTon(manifest) &&
+      manifestMatchesRoute(manifest, SCCP_TON_XOR_ROUTE) &&
+      manifestMatchesTonNetworkProfile(manifest, tonProfile.key);
+
+    if (!isBscManifest && !isTonManifest) {
       continue;
     }
-    if (sourceVerifierMaterial) {
-      manifest.sourceVerifierMaterial = cloneBscSourceLaneRecord(
+    if (isBscManifest && sourceVerifierMaterial) {
+      manifest.sourceVerifierMaterial = cloneSccpSourceLaneRecord(
         sourceVerifierMaterial,
         "BSC source verifier material",
       );
     }
-    if (sourceAdapterEngineDeployment) {
-      manifest.sourceAdapterEngineDeployment = cloneBscSourceLaneRecord(
+    if (isBscManifest && sourceAdapterEngineDeployment) {
+      manifest.sourceAdapterEngineDeployment = cloneSccpSourceLaneRecord(
         sourceAdapterEngineDeployment,
         "BSC source adapter deployment",
+      );
+    }
+    if (isTonManifest && tonSourceVerifierMaterial) {
+      manifest.sourceVerifierMaterial = mergeSccpSupplementalLaneRecord(
+        readFirstRecord(
+          manifest,
+          "sourceVerifierMaterial",
+          "source_verifier_material",
+        ),
+        tonSourceVerifierMaterial,
+        "TON source verifier material",
+      );
+    }
+    if (isTonManifest && tonSourceAdapterEngineDeployment) {
+      manifest.sourceAdapterEngineDeployment = mergeSccpSupplementalLaneRecord(
+        readFirstRecord(
+          manifest,
+          "sourceAdapterEngineDeployment",
+          "source_adapter_engine_deployment",
+        ),
+        tonSourceAdapterEngineDeployment,
+        "TON source adapter deployment",
+      );
+    }
+    if (isTonManifest && tonDestinationRollout) {
+      manifest.destinationRollout = mergeSccpSupplementalLaneRecord(
+        readDestinationRollout(manifest),
+        tonDestinationRollout,
+        "TON destination rollout",
+      );
+    }
+    if (isTonManifest && tonRouteAllowlist) {
+      manifest.routeAllowlist = mergeSccpSupplementalLaneRecord(
+        readFirstRecord(manifest, "routeAllowlist", "route_allowlist"),
+        tonRouteAllowlist,
+        "TON route allowlist",
       );
     }
   }
@@ -9830,14 +12088,787 @@ const manifestAllowsSelectedTestnetRoute = (
   readManifestTronNetworkKey(manifest) === profile.key &&
   Boolean(readSccpTronProofMaterial(manifest, profile.key));
 
+const TON_SOURCE_STATE_VERIFIER_ID =
+  "sccp:ton:source-state-verifier:shard-state-light-client-mainnet:v1";
+const SCCP_TON_ROUTE_ALLOWLIST_ID = "sccp:ton:route-allowlist:ton-mainnet:v1";
+const SCCP_ROUTE_ALLOWLIST_LABEL_V1 = "sccp:route-allowlist:lane-evidence:v1";
+const TON_GOVERNED_SOURCE_ADAPTER_AUDIT_FIELDS = new Set<string>([
+  "tonMasterchainConfigVerifierHash",
+  "tonValidatorSetTransitionVerifierHash",
+  "tonShardAccountsDictionaryVerifierHash",
+]);
+
+type SccpHashBytes = Uint8Array<ArrayBufferLike>;
+
+const appendBytes = (
+  left: SccpHashBytes,
+  right: SccpHashBytes,
+): SccpHashBytes => {
+  const combined = new Uint8Array(left.length + right.length);
+  combined.set(left);
+  combined.set(right, left.length);
+  return combined;
+};
+
+const appendU8 = (target: SccpHashBytes, value: number): SccpHashBytes =>
+  appendBytes(target, Uint8Array.of(value & 0xff));
+
+const appendU32Le = (target: SccpHashBytes, value: number): SccpHashBytes => {
+  const bytes = new Uint8Array(4);
+  new DataView(bytes.buffer).setUint32(0, value, true);
+  return appendBytes(target, bytes);
+};
+
+const appendLengthPrefixedBytes = (
+  target: SccpHashBytes,
+  value: SccpHashBytes,
+): SccpHashBytes => appendBytes(appendU32Le(target, value.length), value);
+
+const hex32Bytes = (value: string, label: string): Uint8Array => {
+  const normalized = normalizeNonZeroHex32Loose(value, label);
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < 32; index += 1) {
+    bytes[index] = Number.parseInt(
+      normalized.slice(2 + index * 2, 4 + index * 2),
+      16,
+    );
+  }
+  return bytes;
+};
+
+const omitEmptyStringFields = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => omitEmptyStringFields(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== "")
+        .map(([key, entry]) => [key, omitEmptyStringFields(entry)]),
+    );
+  }
+  return value;
+};
+
+const tonSccpLaneEvidenceHashes = (input: {
+  sourceVerifierMaterial: Record<string, unknown>;
+  sourceAdapterEngineDeployment: Record<string, unknown>;
+  destinationBindingHash: string;
+}): {
+  sourceVerifierMaterialHash: string;
+  sourceAdapterEngineDeploymentHash: string;
+  routeAllowlistHash: string;
+} => {
+  const sourceVerifierMaterialHash = sccpSourceVerifierMaterialHash(
+    omitEmptyStringFields(
+      input.sourceVerifierMaterial,
+    ) as SccpSourceVerifierMaterialInput,
+  );
+  const sourceAdapterEngineDeploymentHash =
+    sccpSourceAdapterEngineDeploymentHash(
+      omitEmptyStringFields(
+        input.sourceAdapterEngineDeployment,
+      ) as SccpSourceAdapterEngineDeploymentInput,
+    );
+  let payload: SccpHashBytes = new Uint8Array();
+  payload = appendU8(payload, 1);
+  payload = appendU32Le(payload, SCCP_TON_DOMAIN);
+  payload = appendLengthPrefixedBytes(payload, utf8TextEncoder.encode("ton"));
+  payload = appendLengthPrefixedBytes(
+    payload,
+    utf8TextEncoder.encode("GovernanceAllowlist"),
+  );
+  payload = appendLengthPrefixedBytes(
+    payload,
+    utf8TextEncoder.encode(SCCP_TON_ROUTE_ALLOWLIST_ID),
+  );
+  payload = appendBytes(
+    payload,
+    hex32Bytes(sourceVerifierMaterialHash, "TON source verifier material hash"),
+  );
+  payload = appendBytes(
+    payload,
+    hex32Bytes(
+      sourceAdapterEngineDeploymentHash,
+      "TON source adapter deployment hash",
+    ),
+  );
+  payload = appendBytes(
+    payload,
+    hex32Bytes(input.destinationBindingHash, "TON destination binding hash"),
+  );
+  const routeAllowlistHash = bytesToLowerHex(
+    blake2b(
+      appendBytes(
+        utf8TextEncoder.encode(SCCP_ROUTE_ALLOWLIST_LABEL_V1),
+        payload,
+      ),
+      {
+        dkLen: 32,
+      },
+    ),
+  );
+  return {
+    sourceVerifierMaterialHash,
+    sourceAdapterEngineDeploymentHash,
+    routeAllowlistHash,
+  };
+};
+
+export const tonSccpRouteAllowlistHashFromLaneEvidence = (input: {
+  sourceVerifierMaterial: Record<string, unknown>;
+  sourceAdapterEngineDeployment: Record<string, unknown>;
+  destinationBindingHash: string;
+}): string => {
+  return tonSccpLaneEvidenceHashes(input).routeAllowlistHash;
+};
+
+const readTonSourceLaneRecord = (
+  manifest: Record<string, unknown>,
+  ...keys: string[]
+): Record<string, unknown> | null => readFirstRecord(manifest, ...keys);
+
+const pushTonSourceMaterialHashReason = (
+  record: Record<string, unknown>,
+  label: string,
+  keys: string[],
+  reasons: string[],
+  options: { allowGovernedTonAuditHash?: boolean } = {},
+): void => {
+  const value = readFirstString(record, ...keys);
+  const fieldLabel = `${label}.${keys[0]}`;
+  if (!value) {
+    reasons.push(`${fieldLabel} is missing.`);
+    return;
+  }
+  try {
+    normalizeTonProductionHash(value, fieldLabel, options);
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : `${fieldLabel} is not production TON proof material.`,
+    );
+  }
+};
+
+const pushTonSourceLaneMaterialReasons = (
+  record: Record<string, unknown> | null,
+  label: string,
+  hashFields: string[][],
+  reasons: string[],
+  requireTargetDomain = true,
+): void => {
+  if (!record) {
+    reasons.push(`${label} is missing.`);
+    return;
+  }
+  const sourceDomain = readReadinessAliasInteger(
+    record,
+    ["sourceDomain", "source_domain", "domain"],
+    `${label}.sourceDomain`,
+    reasons,
+  );
+  if (sourceDomain !== SCCP_TON_DOMAIN) {
+    reasons.push(`${label}.sourceDomain must be TON domain 4.`);
+  }
+  const targetDomain = readReadinessAliasInteger(
+    record,
+    ["targetDomain", "target_domain"],
+    `${label}.targetDomain`,
+    reasons,
+  );
+  if (
+    (requireTargetDomain && targetDomain !== SCCP_SORA_DOMAIN) ||
+    (!requireTargetDomain &&
+      targetDomain !== null &&
+      targetDomain !== SCCP_SORA_DOMAIN)
+  ) {
+    reasons.push(`${label}.targetDomain must target SORA domain 0.`);
+  }
+  const sourceChain = readReadinessAliasString(
+    record,
+    ["sourceChain", "source_chain", "chain"],
+    `${label}.sourceChain`,
+    reasons,
+  )
+    .trim()
+    .toLowerCase();
+  if (sourceChain !== "ton") {
+    reasons.push(`${label}.sourceChain must be canonical "ton".`);
+  }
+  try {
+    if (
+      readConsistentAliasBoolean(
+        record,
+        ["placeholderMaterial", "placeholder_material"],
+        `${label}.placeholderMaterial`,
+      ) === true
+    ) {
+      reasons.push(`${label}.placeholderMaterial must be false.`);
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : `${label}.placeholderMaterial must be boolean.`,
+    );
+  }
+  for (const keys of hashFields) {
+    pushTonSourceMaterialHashReason(record, label, keys, reasons, {
+      allowGovernedTonAuditHash:
+        label === "TON source adapter deployment" &&
+        TON_GOVERNED_SOURCE_ADAPTER_AUDIT_FIELDS.has(keys[0]),
+    });
+  }
+};
+
+const tonSourceProofReadinessReasons = (
+  manifest: Record<string, unknown>,
+): string[] => {
+  const reasons: string[] = [];
+  const sourceVerifierMaterial = readTonSourceLaneRecord(
+    manifest,
+    "sourceVerifierMaterial",
+    "source_verifier_material",
+  );
+  const sourceAdapterDeployment = readTonSourceLaneRecord(
+    manifest,
+    "sourceAdapterEngineDeployment",
+    "source_adapter_engine_deployment",
+    "sourceAdapterDeployment",
+    "source_adapter_deployment",
+  );
+  pushTonSourceLaneMaterialReasons(
+    sourceVerifierMaterial,
+    "TON source verifier material",
+    [
+      ["sourceTrustAnchorHash", "source_trust_anchor_hash"],
+      ["consensusVerifierHash", "consensus_verifier_hash"],
+      ["messageInclusionVerifierHash", "message_inclusion_verifier_hash"],
+      ["finalityPolicyHash", "finality_policy_hash"],
+      ["sourceStateVerifierHash", "source_state_verifier_hash"],
+    ],
+    reasons,
+    false,
+  );
+  if (sourceVerifierMaterial) {
+    const sourceStateVerifierId = readReadinessAliasString(
+      sourceVerifierMaterial,
+      ["sourceStateVerifierId", "source_state_verifier_id"],
+      "TON source verifier material.sourceStateVerifierId",
+      reasons,
+    );
+    if (sourceStateVerifierId !== TON_SOURCE_STATE_VERIFIER_ID) {
+      reasons.push(
+        "TON source verifier material has the wrong source-state verifier id.",
+      );
+    }
+  }
+  pushTonSourceLaneMaterialReasons(
+    sourceAdapterDeployment,
+    "TON source adapter deployment",
+    [
+      ["sourceTrustAnchorHash", "source_trust_anchor_hash"],
+      ["consensusVerifierHash", "consensus_verifier_hash"],
+      ["messageInclusionVerifierHash", "message_inclusion_verifier_hash"],
+      ["finalityPolicyHash", "finality_policy_hash"],
+      ["sourceStateVerifierHash", "source_state_verifier_hash"],
+      ["adapterVerifierVkHash", "adapter_verifier_vk_hash"],
+      ["deploymentReceiptHash", "deployment_receipt_hash"],
+      [
+        "tonMasterchainConfigVerifierHash",
+        "ton_masterchain_config_verifier_hash",
+      ],
+      [
+        "tonValidatorSetTransitionVerifierHash",
+        "ton_validator_set_transition_verifier_hash",
+      ],
+      [
+        "tonShardAccountsDictionaryVerifierHash",
+        "ton_shard_accounts_dictionary_verifier_hash",
+      ],
+      ["tonFullLightClientGateHash", "ton_full_light_client_gate_hash"],
+    ],
+    reasons,
+  );
+  if (sourceAdapterDeployment) {
+    const adapterProofFamily = readReadinessAliasString(
+      sourceAdapterDeployment,
+      ["adapterProofFamily", "adapter_proof_family"],
+      "TON source adapter deployment.adapterProofFamily",
+      reasons,
+    );
+    if (adapterProofFamily !== "stark-fri-v1") {
+      reasons.push("TON source adapter deployment must use stark-fri-v1.");
+    }
+    const adapterCircuitId = readReadinessAliasString(
+      sourceAdapterDeployment,
+      ["adapterCircuitId", "adapter_circuit_id"],
+      "TON source adapter deployment.adapterCircuitId",
+      reasons,
+    );
+    if (adapterCircuitId !== "sccp-source-adapter-v1") {
+      reasons.push(
+        "TON source adapter deployment has the wrong adapter circuit.",
+      );
+    }
+  }
+  const sourceProverModuleUrl = readSccpTonSourceProverModuleUrl(manifest);
+  if (!sourceProverModuleUrl) {
+    reasons.push(
+      "The TON route is missing a browser-safe TON source proof module.",
+    );
+  } else {
+    try {
+      normalizeSccpPackageOrRemoteModuleUrl(
+        sourceProverModuleUrl,
+        "TON source proof module URL",
+      );
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "TON source proof module URL is invalid.",
+      );
+    }
+  }
+  return reasons;
+};
+
+const tonGovernedLaneReadinessReasons = (
+  manifest: Record<string, unknown>,
+): string[] => {
+  const reasons: string[] = [];
+  const sourceVerifierMaterial = readTonSourceLaneRecord(
+    manifest,
+    "sourceVerifierMaterial",
+    "source_verifier_material",
+  );
+  const sourceAdapterDeployment = readTonSourceLaneRecord(
+    manifest,
+    "sourceAdapterEngineDeployment",
+    "source_adapter_engine_deployment",
+    "sourceAdapterDeployment",
+    "source_adapter_deployment",
+  );
+  const destinationRollout = readFirstRecord(
+    manifest,
+    "destinationRollout",
+    "destination_rollout",
+  );
+  const routeAllowlist = readFirstRecord(
+    manifest,
+    "routeAllowlist",
+    "route_allowlist",
+    "sccpRouteAllowlist",
+    "sccp_route_allowlist",
+  );
+  if (!sourceVerifierMaterial) {
+    reasons.push("TON governed lane source verifier material is missing.");
+  }
+  if (!sourceAdapterDeployment) {
+    reasons.push("TON governed lane source adapter deployment is missing.");
+  }
+  if (!destinationRollout) {
+    reasons.push("TON governed lane destination rollout is missing.");
+  }
+  if (!routeAllowlist) {
+    reasons.push("TON governed route allowlist is missing.");
+  }
+  if (
+    !sourceVerifierMaterial ||
+    !sourceAdapterDeployment ||
+    !destinationRollout ||
+    !routeAllowlist
+  ) {
+    return reasons;
+  }
+
+  const routeAllowlistDomain = readReadinessAliasInteger(
+    routeAllowlist,
+    ["domain", "counterpartyDomain", "counterparty_domain"],
+    "TON route allowlist.domain",
+    reasons,
+  );
+  if (routeAllowlistDomain !== SCCP_TON_DOMAIN) {
+    reasons.push("TON route allowlist.domain must be TON domain 4.");
+  }
+  const routeAllowlistChain = readReadinessAliasString(
+    routeAllowlist,
+    ["chain", "sourceChain", "source_chain"],
+    "TON route allowlist.chain",
+    reasons,
+  ).toLowerCase();
+  if (routeAllowlistChain !== "ton") {
+    reasons.push('TON route allowlist.chain must be "ton".');
+  }
+  const activationPolicy = readReadinessAliasString(
+    routeAllowlist,
+    ["activationPolicy", "activation_policy"],
+    "TON route allowlist.activationPolicy",
+    reasons,
+  );
+  if (activationPolicy !== "GovernanceAllowlist") {
+    reasons.push(
+      "TON route allowlist.activationPolicy must be GovernanceAllowlist.",
+    );
+  }
+  try {
+    const routesAllowlisted = readConsistentAliasBoolean(
+      routeAllowlist,
+      ["routesAllowlisted", "routes_allowlisted"],
+      "TON route allowlist.routesAllowlisted",
+    );
+    if (routesAllowlisted !== true) {
+      reasons.push("TON route allowlist.routesAllowlisted must be true.");
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "TON route allowlist.routesAllowlisted must be boolean true.",
+    );
+  }
+  const blockers = Array.isArray(routeAllowlist.blockers)
+    ? routeAllowlist.blockers.filter((entry) => Boolean(entry))
+    : [];
+  if (blockers.length > 0) {
+    reasons.push("TON route allowlist.blockers must be empty.");
+  }
+  const destinationBindingHash = readReadinessAliasString(
+    destinationRollout,
+    ["destinationBindingHash", "destination_binding_hash"],
+    "TON destination rollout.destinationBindingHash",
+    reasons,
+  );
+  const routeAllowlistHash = readReadinessAliasString(
+    routeAllowlist,
+    ["routeAllowlistHash", "route_allowlist_hash"],
+    "TON route allowlist.routeAllowlistHash",
+    reasons,
+  );
+  const routeCanaryStatus = readReadinessAliasString(
+    routeAllowlist,
+    ["routeCanaryStatus", "route_canary_status"],
+    "TON route allowlist.routeCanaryStatus",
+    reasons,
+  );
+  if (routeCanaryStatus !== "passed") {
+    reasons.push("TON route allowlist.routeCanaryStatus must be passed.");
+  }
+  const routeCanaryEvidenceHash = readReadinessAliasString(
+    routeAllowlist,
+    ["routeCanaryEvidenceHash", "route_canary_evidence_hash"],
+    "TON route allowlist.routeCanaryEvidenceHash",
+    reasons,
+  );
+  const routeCanaryRouteAllowlistHash = readReadinessAliasString(
+    routeAllowlist,
+    ["routeCanaryRouteAllowlistHash", "route_canary_route_allowlist_hash"],
+    "TON route allowlist.routeCanaryRouteAllowlistHash",
+    reasons,
+  );
+  const routeCanaryDestinationBindingHash = readReadinessAliasString(
+    routeAllowlist,
+    [
+      "routeCanaryDestinationBindingHash",
+      "route_canary_destination_binding_hash",
+    ],
+    "TON route allowlist.routeCanaryDestinationBindingHash",
+    reasons,
+  );
+  const accountStatus = readReadinessAliasString(
+    destinationRollout,
+    ["tonAccountStatus", "ton_account_status", "accountStatus"],
+    "TON destination rollout.tonAccountStatus",
+    reasons,
+  );
+  const accountStateHash = readReadinessAliasString(
+    routeAllowlist,
+    ["tonRouteCanaryAccountStateHash", "ton_route_canary_account_state_hash"],
+    "TON route allowlist.tonRouteCanaryAccountStateHash",
+    reasons,
+  );
+  const lastTransactionLt = readReadinessAliasString(
+    routeAllowlist,
+    ["tonRouteCanaryLastTransactionLt", "ton_route_canary_last_transaction_lt"],
+    "TON route allowlist.tonRouteCanaryLastTransactionLt",
+    reasons,
+  );
+  const lastTransactionHash = readReadinessAliasString(
+    routeAllowlist,
+    [
+      "tonRouteCanaryLastTransactionHash",
+      "ton_route_canary_last_transaction_hash",
+    ],
+    "TON route allowlist.tonRouteCanaryLastTransactionHash",
+    reasons,
+  );
+  const verifierIdentity = readReadinessAliasString(
+    destinationRollout,
+    ["verifierIdentity", "verifier_identity"],
+    "TON destination rollout.verifierIdentity",
+    reasons,
+  );
+  const verifierCodeHash = readReadinessAliasString(
+    destinationRollout,
+    ["verifierCodeHash", "verifier_code_hash"],
+    "TON destination rollout.verifierCodeHash",
+    reasons,
+  );
+  const verifierCodeBocRootHash = readReadinessAliasString(
+    destinationRollout,
+    ["tonVerifierCodeBocRootHash", "ton_verifier_code_boc_root_hash"],
+    "TON destination rollout.tonVerifierCodeBocRootHash",
+    reasons,
+  );
+  if (!destinationBindingHash || !routeAllowlistHash) {
+    return reasons;
+  }
+  try {
+    const normalizedDestinationBindingHash = normalizeNonZeroHex32Loose(
+      destinationBindingHash,
+      "TON destination binding hash",
+    );
+    const hashes = tonSccpLaneEvidenceHashes({
+      sourceVerifierMaterial,
+      sourceAdapterEngineDeployment: sourceAdapterDeployment,
+      destinationBindingHash: normalizedDestinationBindingHash,
+    });
+    if (
+      normalizeNonZeroHex32Loose(
+        routeAllowlistHash,
+        "TON route allowlist hash",
+      ) !== hashes.routeAllowlistHash
+    ) {
+      reasons.push(
+        "TON route allowlist hash does not match the canonical governed lane evidence.",
+      );
+    }
+    if (
+      routeCanaryRouteAllowlistHash &&
+      normalizeNonZeroHex32Loose(
+        routeCanaryRouteAllowlistHash,
+        "TON route canary route allowlist hash",
+      ) !== hashes.routeAllowlistHash
+    ) {
+      reasons.push(
+        "TON route canary route allowlist hash does not match the governed lane evidence.",
+      );
+    }
+    if (
+      routeCanaryDestinationBindingHash &&
+      normalizeNonZeroHex32Loose(
+        routeCanaryDestinationBindingHash,
+        "TON route canary destination binding hash",
+      ) !== normalizedDestinationBindingHash
+    ) {
+      reasons.push(
+        "TON route canary destination binding hash does not match the destination rollout.",
+      );
+    }
+    const activeTonAccountStatus =
+      accountStatus === "active" ? ("active" as const) : null;
+    if (
+      routeCanaryEvidenceHash &&
+      activeTonAccountStatus &&
+      accountStateHash &&
+      lastTransactionLt &&
+      lastTransactionHash &&
+      verifierIdentity &&
+      verifierCodeHash &&
+      verifierCodeBocRootHash
+    ) {
+      const expectedCanaryHash = tonSccpRouteCanaryEvidenceHash({
+        route_allowlist_hash: hashes.routeAllowlistHash,
+        destination_binding_hash: normalizedDestinationBindingHash,
+        source_verifier_material_hash: hashes.sourceVerifierMaterialHash,
+        source_adapter_engine_deployment_hash:
+          hashes.sourceAdapterEngineDeploymentHash,
+        verifier_identity: verifierIdentity,
+        verifier_code_hash: verifierCodeHash,
+        ton_account_status: activeTonAccountStatus,
+        ton_account_state_hash: accountStateHash,
+        ton_last_transaction_lt: lastTransactionLt,
+        ton_last_transaction_hash: lastTransactionHash,
+        ton_verifier_code_boc_root_hash: verifierCodeBocRootHash,
+      });
+      if (
+        normalizeNonZeroHex32Loose(
+          routeCanaryEvidenceHash,
+          "TON route canary evidence hash",
+        ) !== expectedCanaryHash
+      ) {
+        reasons.push(
+          "TON route canary evidence hash does not match the live TON destination rollout.",
+        );
+      }
+    } else {
+      reasons.push("TON route canary live account evidence is incomplete.");
+    }
+  } catch (error) {
+    reasons.push(
+      error instanceof Error
+        ? error.message
+        : "TON governed lane evidence is invalid.",
+    );
+  }
+  return reasons;
+};
+
+const SCCP_ROUTE_LOAD_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
+
+const isRecordLike = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const readErrorField = (
+  value: unknown,
+  ...keys: string[]
+): unknown | undefined => {
+  if (!isRecordLike(value)) {
+    return undefined;
+  }
+  for (const key of keys) {
+    if (value[key] !== undefined) {
+      return value[key];
+    }
+  }
+  return undefined;
+};
+
+const readErrorStatus = (error: unknown): number | null => {
+  for (const candidate of [
+    readErrorField(error, "status", "statusCode"),
+    readErrorField(readErrorField(error, "response"), "status", "statusCode"),
+    readErrorField(readErrorField(error, "cause"), "status", "statusCode"),
+  ]) {
+    const parsed =
+      typeof candidate === "number" ? candidate : Number(candidate ?? NaN);
+    if (Number.isInteger(parsed) && parsed >= 100 && parsed <= 599) {
+      return parsed;
+    }
+  }
+  const match =
+    /\bHTTP\s+([1-5]\d{2})\b/iu.exec(
+      String(error instanceof Error ? error.message : error),
+    ) ??
+    /\bstatus(?:\s+code)?\s+([1-5]\d{2})\b/iu.exec(
+      String(error instanceof Error ? error.message : error),
+    );
+  return match ? Number(match[1]) : null;
+};
+
+const readErrorStatusText = (error: unknown): string => {
+  for (const candidate of [
+    readErrorField(error, "statusText"),
+    readErrorField(readErrorField(error, "response"), "statusText"),
+    readErrorField(readErrorField(error, "cause"), "statusText"),
+  ]) {
+    const trimmed = String(candidate ?? "").trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  const message = String(error instanceof Error ? error.message : error);
+  return (
+    /\bHTTP\s+[1-5]\d{2}\s+([A-Za-z][A-Za-z ]{1,40})\b/u
+      .exec(message)?.[1]
+      ?.trim() ?? ""
+  );
+};
+
+const readErrorDetailText = (error: unknown): string => {
+  const parts: string[] = [];
+  const append = (value: unknown) => {
+    const trimmed = String(value ?? "")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (trimmed && !parts.includes(trimmed)) {
+      parts.push(trimmed);
+    }
+  };
+  append(error instanceof Error ? error.message : error);
+  append(readErrorField(error, "detail"));
+  const response = readErrorField(error, "response");
+  append(readErrorField(response, "statusText"));
+  const responseData = readErrorField(response, "data");
+  if (typeof responseData === "string") {
+    append(responseData.replace(/<[^>]*>/gu, " "));
+  }
+  const cause = readErrorField(error, "cause");
+  if (cause) {
+    append(cause instanceof Error ? cause.message : cause);
+  }
+  return parts.join(" | ").slice(0, 1000);
+};
+
+const isEndpointUnavailableError = (
+  error: unknown,
+  status: number | null,
+): boolean => {
+  if (status !== null && SCCP_ROUTE_LOAD_UNAVAILABLE_STATUSES.has(status)) {
+    return true;
+  }
+  const detail = readErrorDetailText(error).toLowerCase();
+  return /\b(?:econnrefused|enotfound|etimedout|eai_again|socket hang up|network error|failed to fetch|request timed out|aborted)\b/u.test(
+    detail,
+  );
+};
+
+export const classifySccpRouteLoadFailure = (
+  error: unknown,
+  input: {
+    toriiUrl: string;
+    stage: SccpRouteLoadStage;
+  },
+): SccpRouteLoadFailure => {
+  const status = readErrorStatus(error);
+  const statusText = readErrorStatusText(error);
+  const detail = readErrorDetailText(error) || "request failed";
+  if (isEndpointUnavailableError(error, status)) {
+    const statusSummary =
+      status === null
+        ? detail
+        : `HTTP ${status}${statusText ? ` ${statusText}` : ""}`;
+    return {
+      kind: "endpoint_unavailable",
+      stage: input.stage,
+      message: `TAIRA Torii is unavailable: ${statusSummary} from ${input.toriiUrl}. Bridge actions are disabled until the endpoint recovers.`,
+      detail,
+      toriiUrl: input.toriiUrl,
+      ...(status === null ? {} : { status }),
+      ...(statusText ? { statusText } : {}),
+    };
+  }
+  const label =
+    input.stage === "capabilities"
+      ? "SCCP capabilities"
+      : "SCCP proof manifests";
+  return {
+    kind:
+      input.stage === "capabilities"
+        ? "capabilities_unavailable"
+        : "manifest_unavailable",
+    stage: input.stage,
+    message: `${label} could not be loaded from ${input.toriiUrl}: ${detail}. Bridge actions are disabled until route data loads.`,
+    detail,
+    toriiUrl: input.toriiUrl,
+    ...(status === null ? {} : { status }),
+    ...(statusText ? { statusText } : {}),
+  };
+};
+
 export const resolveSccpRouteReadiness = (input: {
   connection: SccpNetworkSnapshot;
   capabilities?: Record<string, unknown> | null;
   manifestSet?: Record<string, unknown> | null;
+  loadFailure?: SccpRouteLoadFailure | null;
   counterparty?: unknown;
   route?: SccpRouteConfig;
   tronNetwork?: unknown;
   bscNetwork?: unknown;
+  tonNetwork?: unknown;
 }): SccpRouteReadiness => {
   const reasons: string[] = [];
   const route =
@@ -9849,8 +12880,15 @@ export const resolveSccpRouteReadiness = (input: {
   const bscProfile = resolveSccpBscNetworkProfile(
     input.bscNetwork ?? SCCP_BSC_NETWORK.key,
   );
+  const tonProfile = resolveSccpTonNetworkProfile(
+    input.tonNetwork ?? SCCP_TON_NETWORK.key,
+  );
+  const loadFailure = input.loadFailure ?? null;
   if (!isTairaSccpNetwork(input.connection)) {
     reasons.push("Switch to the TAIRA testnet profile.");
+  }
+  if (loadFailure) {
+    reasons.push(loadFailure.message);
   }
 
   const capabilities = input.capabilities;
@@ -9869,7 +12907,9 @@ export const resolveSccpRouteReadiness = (input: {
     }
   }
   if (!capabilities) {
-    reasons.push("SCCP capabilities have not been loaded.");
+    if (!loadFailure) {
+      reasons.push("SCCP capabilities have not been loaded.");
+    }
   } else if (capabilityPathError) {
     reasons.push(capabilityPathError);
   } else if (!proofSubmitPath || !messageSubmitPath) {
@@ -9914,15 +12954,26 @@ export const resolveSccpRouteReadiness = (input: {
     route.counterparty === "bsc" && !manifestJsonReason
       ? pickBscSccpManifest(manifestSetForReadiness, bscProfile.key)
       : null;
-  const manifest = route.counterparty === "bsc" ? bscManifest : tronManifest;
+  const tonManifest =
+    route.counterparty === "ton" && !manifestJsonReason
+      ? pickTonSccpManifest(manifestSetForReadiness, tonProfile.key)
+      : null;
+  const manifest =
+    route.counterparty === "bsc"
+      ? bscManifest
+      : route.counterparty === "ton"
+        ? tonManifest
+        : tronManifest;
   const manifestSecretReason = manifest
     ? unsafeSccpManifestSecretReason(manifest)
     : null;
   const manifestContainsSecretLikeMaterial = Boolean(manifestSecretReason);
-  if (!input.manifestSet) {
+  if (!input.manifestSet && !loadFailure) {
     reasons.push("SCCP proof manifests have not been loaded.");
   } else if (manifestJsonReason) {
     reasons.push(manifestJsonReason);
+  } else if (loadFailure) {
+    // The load failure already explains why route data cannot be evaluated.
   } else if (route.counterparty === "tron" && !tronManifest) {
     reasons.push(
       hasAnyTronManifest(manifestSetForReadiness)
@@ -9934,6 +12985,12 @@ export const resolveSccpRouteReadiness = (input: {
       hasAnyBscManifest(manifestSetForReadiness)
         ? `No ${SCCP_BSC_XOR_ROUTE_ID} BSC testnet SCCP manifest is advertised by this endpoint.`
         : "No BSC SCCP manifest is advertised by this endpoint.",
+    );
+  } else if (route.counterparty === "ton" && !tonManifest) {
+    reasons.push(
+      hasAnyTonManifest(manifestSetForReadiness)
+        ? `No ${SCCP_TON_XOR_ROUTE_ID} TON testnet SCCP manifest is advertised by this endpoint.`
+        : "No TON SCCP manifest is advertised by this endpoint.",
     );
   } else if (manifestSecretReason) {
     reasons.push("SCCP route manifest contains secret-like material.");
@@ -10354,6 +13411,176 @@ export const resolveSccpRouteReadiness = (input: {
     ) {
       reasons.push("BSC deployment contract addresses must be distinct.");
     }
+  } else if (tonManifest) {
+    const productionReady = readProductionReadyFlag(tonManifest);
+    const governedLaneReasons = productionReady.ready
+      ? []
+      : tonGovernedLaneReadinessReasons(tonManifest);
+    const allowGovernedTonRoute =
+      !productionReady.ready && governedLaneReasons.length === 0;
+    const disabledReason = readReadinessAliasString(
+      tonManifest,
+      ["disabledReason", "disabled_reason"],
+      "disabledReason",
+      reasons,
+    );
+    if (productionReady.invalid) {
+      reasons.push(
+        productionReady.reason ??
+          "The TON SCCP route production-ready flag is invalid.",
+      );
+    } else if (productionReady.ready && disabledReason) {
+      reasons.push(
+        "The TON SCCP route is marked production-ready but also carries a disabled reason.",
+      );
+    } else if (!productionReady.ready && !allowGovernedTonRoute) {
+      reasons.push(
+        disabledReason || "The TON SCCP route is not production-ready.",
+      );
+      reasons.push(...governedLaneReasons);
+    }
+    const codecKey = readReadinessAliasString(
+      tonManifest,
+      ["counterpartyAccountCodecKey", "counterparty_account_codec_key"],
+      "counterpartyAccountCodecKey",
+      reasons,
+    );
+    const codecId = readReadinessAliasInteger(
+      tonManifest,
+      ["counterpartyAccountCodec", "counterparty_account_codec"],
+      "counterpartyAccountCodec",
+      reasons,
+    );
+    if (codecKey && codecKey !== "ton_raw") {
+      reasons.push("The TON route must use the ton_raw account codec.");
+    }
+    if (codecId !== null && codecId !== SCCP_CODEC_TON_RAW) {
+      reasons.push("The TON route must use the TON raw account codec id.");
+    }
+    const bridgeAddress = readSccpTonBridgeAddress(tonManifest);
+    if (!bridgeAddress) {
+      reasons.push("The TON bridge deployment address is missing.");
+    } else {
+      try {
+        normalizeTonRawAddress(bridgeAddress, "TON bridge deployment address");
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TON bridge deployment address is invalid: ${error.message}`
+            : "The TON bridge deployment address is invalid.",
+        );
+      }
+    }
+    const tokenAddress = readSccpTonTokenAddress(tonManifest);
+    if (!tokenAddress) {
+      reasons.push("The TON TairaXOR token deployment address is missing.");
+    } else {
+      try {
+        normalizeTonRawAddress(tokenAddress, "TON TairaXOR token address");
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TON TairaXOR token deployment address is invalid: ${error.message}`
+            : "The TON TairaXOR token deployment address is invalid.",
+        );
+      }
+    }
+    const sourceBridgeAddress = readSccpTonSourceBridgeAddress(tonManifest);
+    if (!sourceBridgeAddress) {
+      reasons.push("The TON source bridge deployment address is missing.");
+    } else {
+      try {
+        normalizeTonRawAddress(
+          sourceBridgeAddress,
+          "TON source bridge deployment address",
+        );
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TON source bridge deployment address is invalid: ${error.message}`
+            : "The TON source bridge deployment address is invalid.",
+        );
+      }
+    }
+    const verifierAddress = readSccpTonVerifierAddress(tonManifest);
+    if (!verifierAddress) {
+      reasons.push("The TON verifier deployment address is missing.");
+    } else {
+      try {
+        normalizeTonRawAddress(verifierAddress, "TON verifier address");
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? `The TON verifier deployment address is invalid: ${error.message}`
+            : "The TON verifier deployment address is invalid.",
+        );
+      }
+    }
+    if (!readSccpTonProofMaterial(tonManifest, tonProfile.key)) {
+      reasons.push(
+        "The TON SCCP verifier rollout proof material is incomplete.",
+      );
+    }
+    reasons.push(...tonSourceProofReadinessReasons(tonManifest));
+    try {
+      if (!readSccpTonFinalizeMessageValueNano(tonManifest)) {
+        reasons.push("The TON finalize message value is missing.");
+      }
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The TON finalize message value is invalid.",
+      );
+    }
+    try {
+      readSccpTonVerifierProtocolVersion(tonManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The TON verifier protocol version is invalid.",
+      );
+    }
+    if (productionReady.ready || hasPostDeployLiveEvidence(tonManifest)) {
+      try {
+        validatePostDeployLiveEvidence(tonManifest);
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message.replace(/TRON/gu, "TON")
+            : "The TON SCCP post-deploy live evidence is incomplete.",
+        );
+      }
+    }
+    const burnRecordMaterial =
+      readSccpTairaBurnRecordMaterialResult(tonManifest);
+    if (!burnRecordMaterial.material) {
+      reasons.push(
+        burnRecordMaterial.reason ??
+          "The TAIRA burn-record ZK contract material is missing.",
+      );
+    }
+    const distinctDeploymentAddresses = [
+      bridgeAddress,
+      tokenAddress,
+      sourceBridgeAddress,
+      verifierAddress,
+    ]
+      .map((address) => {
+        try {
+          return address ? normalizeTonRawAddress(address) : "";
+        } catch (_error) {
+          return "";
+        }
+      })
+      .filter(Boolean);
+    if (
+      distinctDeploymentAddresses.length === 4 &&
+      new Set(distinctDeploymentAddresses).size !== 4
+    ) {
+      reasons.push("TON deployment contract addresses must be distinct.");
+    }
   }
 
   return {
@@ -10361,16 +13588,20 @@ export const resolveSccpRouteReadiness = (input: {
     status:
       reasons.length === 0
         ? "ready"
-        : manifest && capabilities
-          ? "disabled"
-          : capabilities || input.manifestSet
-            ? "incomplete"
-            : "unavailable",
+        : loadFailure?.kind === "endpoint_unavailable"
+          ? "unavailable"
+          : manifest && capabilities
+            ? "disabled"
+            : capabilities || input.manifestSet
+              ? "incomplete"
+              : "unavailable",
     reasons,
+    loadFailure,
     counterparty: route.counterparty,
     manifest: manifestContainsSecretLikeMaterial ? null : manifest,
     tronManifest: manifestContainsSecretLikeMaterial ? null : tronManifest,
     bscManifest: manifestContainsSecretLikeMaterial ? null : bscManifest,
+    tonManifest: manifestContainsSecretLikeMaterial ? null : tonManifest,
   };
 };
 
@@ -10397,5 +13628,18 @@ export const bscWalletConnectSessionFromAddress = (
   chainId,
   namespace: "eip155",
   methodVersion: "eip155-v1",
+  connectedAtMs: Date.now(),
+});
+
+export const tonWalletConnectSessionFromAddress = (
+  address: string,
+  topic: string | null = null,
+  chainId = SCCP_TON_NETWORK.caipChainId,
+): WalletConnectSessionSnapshot => ({
+  topic,
+  address: normalizeTonRawAddress(address),
+  chainId,
+  namespace: "ton",
+  methodVersion: "tonconnect-v1",
   connectedAtMs: Date.now(),
 });
