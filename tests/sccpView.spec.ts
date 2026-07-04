@@ -577,6 +577,43 @@ const mountView = (connection: {
   });
 };
 
+const findResumeActionButton = (wrapper: ReturnType<typeof mountView>) =>
+  wrapper
+    .findAll("button")
+    .find(
+      (button) => button.attributes("data-testid") === "sccp-resume-action",
+    );
+
+const setBridgeAmount = async (
+  wrapper: ReturnType<typeof mountView>,
+  value: string,
+) => {
+  await wrapper.get('[data-testid="sccp-amount-input"]').setValue(value);
+};
+
+const setBridgeRecipient = async (
+  wrapper: ReturnType<typeof mountView>,
+  value: string,
+) => {
+  await wrapper.get('[data-testid="sccp-recipient-input"]').setValue(value);
+};
+
+const setBridgeMessageId = async (
+  wrapper: ReturnType<typeof mountView>,
+  value: string,
+) => {
+  await wrapper.get('[data-testid="sccp-message-id-input"]').setValue(value);
+};
+
+const setSourceTransactionId = async (
+  wrapper: ReturnType<typeof mountView>,
+  value: string,
+) => {
+  await wrapper
+    .get('[data-testid="sccp-source-transaction-input"]')
+    .setValue(value);
+};
+
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -1683,13 +1720,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     expect(fetchButton!.attributes("disabled")).toBeDefined();
     await fetchButton!.trigger("click");
@@ -1715,6 +1749,65 @@ describe("SccpView", () => {
     });
     expect(listSccpRecentMessagesMock).toHaveBeenCalled();
     expect(getTronAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps message ids editable only for TAIRA-origin resume flows", async () => {
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="sccp-message-id-input"]').exists()).toBe(
+      true,
+    );
+    expect(
+      wrapper.find('[data-testid="sccp-source-transaction-input"]').exists(),
+    ).toBe(false);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    expect(findResumeActionButton(wrapper)?.text()).toContain(
+      "Resume with message ID",
+    );
+
+    const returnButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TRON -> TAIRA"));
+    expect(returnButton).toBeTruthy();
+    await returnButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="sccp-message-id-input"]').exists()).toBe(
+      false,
+    );
+    expect(
+      wrapper.find('[data-testid="sccp-generated-message-id"]').exists(),
+    ).toBe(false);
+    expect(wrapper.text()).not.toContain(MESSAGE_ID);
+    expect(
+      wrapper.find('[data-testid="sccp-source-transaction-input"]').exists(),
+    ).toBe(true);
+    expect(findResumeActionButton(wrapper)?.text()).toContain(
+      "Resume from source transaction",
+    );
+
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const forwardButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("TAIRA -> TRON"));
+    expect(forwardButton).toBeTruthy();
+    await forwardButton!.trigger("click");
+    await flushPromises();
+
+    expect(
+      wrapper.find('[data-testid="sccp-source-transaction-input"]').exists(),
+    ).toBe(false);
+    expect(
+      (
+        wrapper.get('[data-testid="sccp-message-id-input"]')
+          .element as HTMLInputElement
+      ).value,
+    ).toBe("");
   });
 
   it("surfaces TAIRA endpoint outages instead of reporting a missing route", async () => {
@@ -1793,17 +1886,14 @@ describe("SccpView", () => {
       "Bridge actions will request explicit wallet approval before signing.",
     );
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_BSC_ADDRESS);
     await flushPromises();
 
     const prepareButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Prepare TAIRA -> BSC"));
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    const fetchButton = findResumeActionButton(wrapper);
     expect(prepareButton).toBeTruthy();
     expect(fetchButton).toBeTruthy();
     expect(prepareButton!.attributes("disabled")).toBeUndefined();
@@ -1892,9 +1982,8 @@ describe("SccpView", () => {
     await bscRouteButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_BSC_ADDRESS);
     const submitPromise = wrapper.find("form").trigger("submit");
     await vi.dynamicImportSettled();
     await flushPromises();
@@ -2004,9 +2093,8 @@ describe("SccpView", () => {
     await bscRouteButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_BSC_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_BSC_ADDRESS);
     await wrapper.find("form").trigger("submit");
     await vi.dynamicImportSettled();
     await flushPromises();
@@ -2046,9 +2134,8 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     await wrapper.find("form").trigger("submit");
     await vi.dynamicImportSettled();
     await flushPromises();
@@ -2146,13 +2233,10 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(BSC_TX_HASH);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, BSC_TX_HASH);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await vi.dynamicImportSettled();
@@ -2212,9 +2296,8 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await vi.dynamicImportSettled();
     await flushPromises();
@@ -2282,9 +2365,8 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -2361,9 +2443,8 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -2429,13 +2510,10 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(BSC_TX_HASH.toUpperCase());
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, BSC_TX_HASH.toUpperCase());
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -2480,13 +2558,10 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(BSC_TX_HASH);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, BSC_TX_HASH);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -2533,13 +2608,10 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(BSC_TX_HASH.slice(2));
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, BSC_TX_HASH.slice(2));
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -2578,13 +2650,10 @@ describe("SccpView", () => {
     await returnButton!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(`0x${"0".repeat(64)}`);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, `0x${"0".repeat(64)}`);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -2630,17 +2699,14 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
 
     const prepareButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Prepare TAIRA -> TRON"));
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    const fetchButton = findResumeActionButton(wrapper);
     expect(prepareButton).toBeTruthy();
     expect(fetchButton).toBeTruthy();
     expect(prepareButton!.attributes("disabled")).toBeDefined();
@@ -2676,10 +2742,9 @@ describe("SccpView", () => {
 
     expect(wrapper.text()).toContain("WalletConnect misconfigured");
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
 
     const prepareButton = wrapper
       .findAll("button")
@@ -2910,13 +2975,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -2973,13 +3035,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     const clickPromise = fetchButton!.trigger("click");
     await flushPromises();
@@ -3013,13 +3072,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await vi.dynamicImportSettled();
@@ -3071,13 +3127,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue(MESSAGE_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3126,9 +3179,8 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
     await wrapper.find("form").trigger("submit");
     await flushPromises();
 
@@ -3151,13 +3203,10 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
-    await inputs[2].setValue("not-a-message-id");
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
+    await setBridgeMessageId(wrapper, "not-a-message-id");
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3172,13 +3221,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const tronInputs = wrapper.findAll("input");
-    await tronInputs[0].setValue("0.0001");
-    await tronInputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await tronInputs[3].setValue("0x1234");
-    const tronFetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, "0x1234");
+    const tronFetchButton = findResumeActionButton(wrapper);
     expect(tronFetchButton).toBeTruthy();
     await tronFetchButton!.trigger("click");
     await flushPromises();
@@ -3209,13 +3255,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const tronInputs = wrapper.findAll("input");
-    await tronInputs[0].setValue("0.0001");
-    await tronInputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await tronInputs[3].setValue(TRON_TX_ID);
-    const tronFetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const tronFetchButton = findResumeActionButton(wrapper);
     expect(tronFetchButton).toBeTruthy();
     await tronFetchButton!.trigger("click");
     await flushPromises();
@@ -3252,9 +3295,8 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     await wrapper.find("form").trigger("submit");
     await flushPromises();
 
@@ -3308,13 +3350,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3375,13 +3414,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     const clickPromise = fetchButton!.trigger("click");
     await flushPromises();
@@ -3434,13 +3470,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3494,13 +3527,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3556,13 +3586,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3603,13 +3630,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3677,13 +3701,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3735,13 +3756,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3760,6 +3778,9 @@ describe("SccpView", () => {
     });
     expect(wrapper.text()).toContain("TAIRA settlement confirmed");
     expect(wrapper.text()).toContain("TAIRA settlement transaction");
+    expect(
+      wrapper.find('[data-testid="sccp-generated-message-id"]').text(),
+    ).toContain(String(proofPackage.messageId));
     const settlementLink = wrapper
       .findAll("a")
       .find((link) => link.text() === "TAIRA settlement transaction");
@@ -3789,13 +3810,10 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
-    await inputs[3].setValue(TRON_TX_ID);
-    const fetchButton = wrapper
-      .findAll("button")
-      .find((button) => button.text().includes("Fetch proof job"));
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
+    await setSourceTransactionId(wrapper, TRON_TX_ID);
+    const fetchButton = findResumeActionButton(wrapper);
     expect(fetchButton).toBeTruthy();
     await fetchButton!.trigger("click");
     await flushPromises();
@@ -3837,9 +3855,8 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -3906,9 +3923,8 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -3959,9 +3975,8 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -4003,9 +4018,8 @@ describe("SccpView", () => {
     await directionTab!.trigger("click");
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(TAIRA_ACCOUNT_ID);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, TAIRA_ACCOUNT_ID);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     await vi.dynamicImportSettled();
@@ -4040,9 +4054,8 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(1);
@@ -4084,9 +4097,8 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
     expect(getSccpMessageProofJobMock).toHaveBeenCalledTimes(1);
@@ -4122,9 +4134,8 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
     const submitPromise = wrapper.find("form").trigger("submit");
     await flushPromises();
 
@@ -4248,9 +4259,8 @@ describe("SccpView", () => {
     });
     await flushPromises();
 
-    const inputs = wrapper.findAll("input");
-    await inputs[0].setValue("0.0001");
-    await inputs[1].setValue(VALID_TRON_ADDRESS);
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, VALID_TRON_ADDRESS);
     const prepareButton = wrapper
       .findAll("button")
       .find((button) => button.text().includes("Prepare TAIRA -> TRON"));

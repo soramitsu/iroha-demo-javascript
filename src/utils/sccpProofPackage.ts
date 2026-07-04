@@ -6,13 +6,17 @@ import {
   buildBscTestnetSccpDestinationProofRequest,
   buildBscTestnetSccpDestinationSubmission,
   buildEvmSccpBridgeProofSubmitPayload,
+  buildSolanaSccpProofRequest,
+  buildSolanaSccpSubmission,
   buildTonSccpProofRequest,
   buildTonSccpSubmission,
   buildTronSccpBridgeProofSubmitPayload,
   buildTronSccpProofRequest,
   buildTronSccpSubmission,
+  SolanaSccpProver,
   TonSccpProver,
   TronSccpProver,
+  wrapSolanaSccpProofResult,
   wrapBscMainnetSccpDestinationProofResult,
   wrapBscTestnetSccpDestinationProofResult,
   wrapTonSccpProofResult,
@@ -24,6 +28,12 @@ import {
   type EvmSccpProofResult,
   type EvmSccpProveFn,
   type EvmSccpSubmission,
+  type SccpMessageTransparentPublicInputsInput,
+  type SolanaSccpProofContextInput,
+  type SolanaSccpProofResult,
+  type SolanaSccpProveFn,
+  type SolanaSccpSubmission,
+  type SolanaSccpWitnessInput,
   type TonSccpProofRequestInput,
   type TonSccpProofResult,
   type TonSccpProveFn,
@@ -103,6 +113,28 @@ export type TonSccpProofGenerationInput = TonSccpProofPackageInput & {
 };
 
 export type TonSccpProofPackage = {
+  request: SerializedSccpValue;
+  submission: SerializedSccpValue | null;
+};
+
+export type SolanaSccpProofPackageInput = {
+  witness: SolanaSccpWitnessInput;
+  publicInputs: SccpMessageTransparentPublicInputsInput;
+  bundleBytes: BinaryLike;
+  proofBytes?: BinaryLike;
+  proofResult?: SolanaSccpProofResult;
+  statementHash?: string;
+  destinationBindingHash?: string;
+  proofContextHash?: string;
+  proofContext?: SolanaSccpProofContextInput;
+  proverModuleUrl?: string;
+};
+
+export type SolanaSccpProofGenerationInput = SolanaSccpProofPackageInput & {
+  prove?: SolanaSccpProveFn;
+};
+
+export type SolanaSccpProofPackage = {
   request: SerializedSccpValue;
   submission: SerializedSccpValue | null;
 };
@@ -676,6 +708,113 @@ export const generateTonSccpProofPackage = async (
   const prover = new TonSccpProver({ prove: safeProve });
   const proofResult = await prover.prove(proverWitnessSnapshot);
   return buildTonSccpProofPackage(
+    {
+      ...packageInputSnapshot,
+      proofResult,
+    },
+    false,
+  );
+};
+
+const assertSolanaProofResultMatchesRequest = (
+  proofResult: SolanaSccpProofResult,
+  request: ReturnType<typeof buildSolanaSccpProofRequest>,
+): void => {
+  if (proofResult.witnessHash !== request.witnessHash) {
+    throw new Error("Solana SCCP proof result must match the proof request.");
+  }
+  if (proofResult.proofContextHash !== request.proofContextHash) {
+    throw new Error("Solana SCCP proof result must match the proof context.");
+  }
+  if (
+    proofResult.sourceAdapterDeploymentBindingHash !==
+    request.sourceAdapterDeploymentBindingHash
+  ) {
+    throw new Error(
+      "Solana SCCP proof result must match the source adapter deployment binding.",
+    );
+  }
+};
+
+const buildSolanaSubmission = (
+  packageInput: SolanaSccpProofPackageInput,
+  proofResult: SolanaSccpProofResult,
+): SolanaSccpSubmission =>
+  buildSolanaSccpSubmission({
+    publicInputs: packageInput.publicInputs,
+    proofResult,
+    bundleBytes: packageInput.bundleBytes,
+    statementHash: packageInput.statementHash,
+    destinationBindingHash: packageInput.destinationBindingHash,
+    proofContextHash: packageInput.proofContextHash,
+    proofContext: packageInput.proofContext,
+  });
+
+export const buildSolanaSccpProofPackage = (
+  input: SolanaSccpProofPackageInput,
+  snapshotInput = true,
+): SolanaSccpProofPackage => {
+  const packageInput = snapshotInput
+    ? snapshotProofPackageInput(input, "Solana SCCP proof package input")
+    : input;
+  const request = buildSolanaSccpProofRequest(packageInput.witness);
+  if (packageInput.proofResult) {
+    assertSolanaProofResultMatchesRequest(packageInput.proofResult, request);
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: serializeTrustedSccpValue(
+        buildSolanaSubmission(packageInput, packageInput.proofResult),
+      ),
+    };
+  }
+  if (!packageInput.proofBytes) {
+    return {
+      request: serializeTrustedSccpValue(request),
+      submission: null,
+    };
+  }
+
+  const proofResult = wrapSolanaSccpProofResult(
+    packageInput.proofBytes,
+    request,
+  );
+  return {
+    request: serializeTrustedSccpValue(request),
+    submission: serializeTrustedSccpValue(
+      buildSolanaSubmission(packageInput, proofResult),
+    ),
+  };
+};
+
+export const generateSolanaSccpProofPackage = async (
+  input: SolanaSccpProofGenerationInput,
+): Promise<SolanaSccpProofPackage> => {
+  const { prove, ...packageInput } = input;
+  delete packageInput.proverModuleUrl;
+  if (typeof prove !== "function") {
+    const error = new Error(
+      "Solana SCCP prover is not linked; provide a browser-safe prove function before generating production proofs.",
+    );
+    (error as Error & { code?: string }).code =
+      "ERR_SCCP_SOLANA_PROVER_UNAVAILABLE";
+    throw error;
+  }
+  const packageInputSnapshot = snapshotProofPackageInput(
+    packageInput,
+    "Solana SCCP proof package input",
+  );
+  const proverWitnessSnapshot = snapshotProofPackageInput(
+    packageInputSnapshot.witness,
+    "Solana SCCP proof witness",
+  );
+  const safeProve: SolanaSccpProveFn = async (request, options) =>
+    snapshotProofPackageInput(
+      await prove(request, options),
+      "Solana SCCP proof result",
+    );
+  const prover = new SolanaSccpProver({ prove: safeProve });
+  const proofResult = await prover.prove(proverWitnessSnapshot);
+  return buildSolanaSccpProofPackage(
     {
       ...packageInputSnapshot,
       proofResult,

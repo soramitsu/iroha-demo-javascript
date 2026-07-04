@@ -42,6 +42,14 @@
             >
               {{ routeTonNetworkLabel }}
             </button>
+            <button
+              type="button"
+              class="secondary"
+              :class="{ active: selectedCounterparty === 'solana' }"
+              @click="selectCounterparty('solana')"
+            >
+              {{ routeSolanaNetworkLabel }}
+            </button>
           </div>
           <button
             type="button"
@@ -65,7 +73,9 @@
                   ? t("Disconnect TON")
                   : isBscRoute
                     ? t("Disconnect BSC")
-                    : t("Disconnect TRON")
+                    : isSolanaRoute
+                      ? t("Disconnect Solana")
+                      : t("Disconnect TRON")
             }}
           </button>
           <button
@@ -81,7 +91,9 @@
                   ? t("Connect TON wallet")
                   : isBscRoute
                     ? t("Connect BSC wallet")
-                    : t("Connect TRON wallet")
+                    : isSolanaRoute
+                      ? t("Connect Solana wallet")
+                      : t("Connect TRON wallet")
             }}
           </button>
         </div>
@@ -116,7 +128,7 @@
         </div>
       </div>
 
-      <div class="sccp-route-strip">
+      <div class="sccp-route-strip" :aria-label="t('Operational status')">
         <span class="pill" :class="routeTone">{{ routeStatusLabel }}</span>
         <span class="pill" :class="{ positive: activeProjectConfigured }">
           {{
@@ -149,6 +161,14 @@
     </section>
 
     <section class="card sccp-bridge-card">
+      <header class="sccp-transfer-header">
+        <div>
+          <h2>{{ t("Bridge transfer") }}</h2>
+          <p class="helper">{{ t(transferHelperText) }}</p>
+        </div>
+        <span class="pill">{{ t(transferModeLabel) }}</span>
+      </header>
+
       <div
         class="sccp-direction-tabs"
         role="tablist"
@@ -171,21 +191,23 @@
       </div>
 
       <form class="sccp-form" @submit.prevent="prepareBridge">
-        <label>
+        <label class="sccp-field">
           <span>{{ t("Amount (XOR)") }}</span>
           <input
             v-model.trim="amount"
+            data-testid="sccp-amount-input"
             type="text"
             inputmode="decimal"
             autocomplete="off"
             :placeholder="t('0.0001')"
           />
         </label>
-        <label v-if="isForwardDirection">
+        <label v-if="isForwardDirection" class="sccp-field">
           <span>{{ t(counterpartyRecipientLabel) }}</span>
           <input
             v-if="isTronRoute"
             v-model.trim="tronRecipient"
+            data-testid="sccp-recipient-input"
             type="text"
             autocomplete="off"
             :placeholder="t('TRON Base58Check address')"
@@ -193,45 +215,76 @@
           <input
             v-else-if="isBscRoute"
             v-model.trim="bscRecipient"
+            data-testid="sccp-recipient-input"
             type="text"
             autocomplete="off"
             :placeholder="t('0x... BSC address')"
           />
           <input
-            v-else
+            v-else-if="isTonRoute"
             v-model.trim="tonRecipient"
+            data-testid="sccp-recipient-input"
             type="text"
             autocomplete="off"
             :placeholder="t('0:... TON raw address')"
           />
+          <input
+            v-else
+            v-model.trim="solanaRecipient"
+            data-testid="sccp-recipient-input"
+            type="text"
+            autocomplete="off"
+            :placeholder="t('Solana Base58 address')"
+          />
         </label>
-        <label v-else>
+        <label v-else class="sccp-field">
           <span>{{ t("TAIRA recipient") }}</span>
           <input
             v-model.trim="tairaRecipient"
+            data-testid="sccp-recipient-input"
             type="text"
             autocomplete="off"
             :placeholder="t('testu... account')"
           />
         </label>
-        <label>
+        <label v-if="showMessageIdInput" class="sccp-field sccp-resume-field">
           <span>{{ t("Message ID") }}</span>
           <input
             v-model.trim="messageId"
+            data-testid="sccp-message-id-input"
             type="text"
             autocomplete="off"
             :placeholder="t('Optional 32-byte SCCP message id')"
           />
+          <small class="sccp-field-hint">
+            {{
+              t(
+                "Use this only to resume a TAIRA-origin message after it was submitted.",
+              )
+            }}
+          </small>
         </label>
-        <label v-if="isReturnDirection">
+        <label v-if="isReturnDirection" class="sccp-field">
           <span>{{ t(counterpartyTransactionIdLabel) }}</span>
           <input
             v-model.trim="tronTxId"
+            data-testid="sccp-source-transaction-input"
             type="text"
             autocomplete="off"
             :placeholder="t(counterpartyTransactionIdPlaceholder)"
           />
         </label>
+        <div
+          v-if="showGeneratedMessageId"
+          class="sccp-generated-id"
+          data-testid="sccp-generated-message-id"
+        >
+          <span>{{ t("Generated message ID") }}</span>
+          <code>{{ messageId }}</code>
+          <small>{{
+            t("Generated after the source-chain proof is bound.")
+          }}</small>
+        </div>
 
         <div class="sccp-form-actions">
           <button type="submit" :disabled="submitDisabled">
@@ -240,10 +293,11 @@
           <button
             type="button"
             class="secondary"
+            data-testid="sccp-resume-action"
             :disabled="proofFetchDisabled"
             @click="fetchMessageJob"
           >
-            {{ proofLoading ? t("Loading proof job") : t("Fetch proof job") }}
+            {{ t(proofFetchActionLabel) }}
           </button>
         </div>
       </form>
@@ -256,7 +310,7 @@
       <section class="card sccp-progress-card">
         <header class="card-header">
           <div>
-            <h2>{{ t("Proof progress") }}</h2>
+            <h2>{{ t("Proof and transactions") }}</h2>
             <p class="helper">{{ t("Frontend proof orchestration status") }}</p>
           </div>
           <span class="pill" :class="{ positive: proofReady }">
@@ -283,6 +337,26 @@
             <small>{{ formatProofTimingRow(timing) }}</small>
           </li>
         </ul>
+        <div class="sccp-progress-links">
+          <div>
+            <h3>{{ t("Transaction links") }}</h3>
+            <p class="helper">
+              {{ t("Links appear after a bridge leg is submitted.") }}
+            </p>
+          </div>
+          <div v-if="transactionLinks.length" class="sccp-link-list">
+            <a
+              v-for="link in transactionLinks"
+              :key="link.href"
+              :href="link.href"
+              target="_blank"
+              rel="noreferrer"
+            >
+              {{ link.label }}
+            </a>
+          </div>
+          <p v-else class="helper">{{ t("No transaction links yet.") }}</p>
+        </div>
       </section>
 
       <section class="card sccp-activity-card">
@@ -315,29 +389,6 @@
         <p v-else class="helper">{{ t("No recent SCCP messages found.") }}</p>
       </section>
     </section>
-
-    <section class="card sccp-links-card">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Transaction links") }}</h2>
-          <p class="helper">
-            {{ t("Links appear after a bridge leg is submitted.") }}
-          </p>
-        </div>
-      </header>
-      <div v-if="transactionLinks.length" class="sccp-link-list">
-        <a
-          v-for="link in transactionLinks"
-          :key="link.href"
-          :href="link.href"
-          target="_blank"
-          rel="noreferrer"
-        >
-          {{ link.label }}
-        </a>
-      </div>
-      <p v-else class="helper">{{ t("No transaction links yet.") }}</p>
-    </section>
   </div>
 </template>
 
@@ -358,11 +409,13 @@ import { useSessionStore } from "@/stores/session";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSccpBridge } from "@/composables/useSccpBridge";
 import { useBscWalletConnect } from "@/composables/useBscWalletConnect";
+import { useSolanaWalletConnect } from "@/composables/useSolanaWalletConnect";
 import { useTonWalletConnect } from "@/composables/useTonWalletConnect";
 import { useTronWalletConnect } from "@/composables/useTronWalletConnect";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import {
   broadcastTronTransaction,
+  buildSolanaTransaction,
   callEvmRpc,
   callEvmContract,
   getEvmBalance,
@@ -371,6 +424,10 @@ import {
   getEvmLogs,
   getEvmTransaction,
   getEvmTransactionReceipt,
+  getSolanaBalance,
+  getSolanaSignatureStatus,
+  getSolanaTokenBalance,
+  getSolanaTransaction,
   getSccpMessageProofBundle,
   getSccpMessageProofJob,
   getTronAccount,
@@ -395,6 +452,7 @@ import {
   normalizeTonRawAddress,
   normalizeTronAddress,
   isValidBscAddress,
+  isValidSolanaAddress,
   isValidTonRawAddress,
   isValidTronBase58CheckAddress,
   bindTronFinalitySnapshot,
@@ -404,6 +462,7 @@ import {
   bindTronToTairaSourceProofPackage,
   bindBscSourceDataForProof,
   bindBscToTairaSourceProofPackage,
+  bindSolanaToTairaSourceProofPackage,
   bindTonToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
   readTonSourceProverMaterialBinding,
@@ -421,6 +480,9 @@ import {
   buildTairaXorTonFinalizeProofBinding,
   buildTairaXorTonMessageProofJobQueryMaterial,
   buildTairaXorTonOutboundBurnRecordRequest,
+  buildTairaXorSolanaBurnTransactionRequest,
+  buildTairaXorSolanaFinalizeTransactionRequest,
+  buildTairaXorSolanaMessageProofJobQueryMaterial,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
   evmFunctionSelector,
@@ -433,6 +495,8 @@ import {
   formatTronSunBalance,
   normalizeBridgeAmount,
   normalizeBscTransactionHash,
+  normalizeSolanaAddress,
+  normalizeSolanaTransactionSignature,
   normalizeSccpMessageId,
   normalizeTairaTransactionHash,
   normalizeTonTransactionHash,
@@ -447,6 +511,11 @@ import {
   readSccpBscSourceBridgeAddress,
   readSccpBscSourceProverModuleUrl,
   readSccpBscTokenAddress,
+  readSccpSolanaRpcEndpoint,
+  readSccpSolanaSourceBridgeAddress,
+  readSccpSolanaSourceProverModuleUrl,
+  readSccpSolanaSourceStateAddress,
+  readSccpSolanaTokenAddress,
   readSccpTairaBurnRecordMaterial,
   readSccpTonBridgeAddress,
   readSccpTonFinalizeMessageValueNano,
@@ -461,6 +530,8 @@ import {
   SCCP_BSC_NETWORK,
   SCCP_BSC_TOKEN_SYMBOL,
   SCCP_ROUTE_PROFILES,
+  SCCP_SOLANA_NETWORK,
+  SCCP_SOLANA_TOKEN_SYMBOL,
   SCCP_TON_DOMAIN,
   SCCP_TON_NETWORK,
   SCCP_TON_TOKEN_SYMBOL,
@@ -474,6 +545,8 @@ import {
   type SccpBridgeDirection,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
+  type SolanaToTairaSourceProofPackage,
+  type SolanaToTairaSourceProofPackageInput,
   type TonToTairaSourceProofPackage,
   type TonToTairaSourceProofPackageInput,
   type TronToTairaSourceProofPackage,
@@ -497,12 +570,14 @@ const bridge = useSccpBridge(activeRoute);
 const tron = useTronWalletConnect();
 const bsc = useBscWalletConnect();
 const ton = useTonWalletConnect();
+const solana = useSolanaWalletConnect();
 
 const direction = ref<SccpBridgeDirection>("taira-to-tron");
 const amount = ref("");
 const tronRecipient = ref("");
 const bscRecipient = ref("");
 const tonRecipient = ref("");
+const solanaRecipient = ref("");
 const tairaRecipient = ref(session.activeAccount?.accountId ?? "");
 const messageId = ref("");
 const tronTxId = ref("");
@@ -518,6 +593,14 @@ const bscBnbBalanceWei = ref<string | null>(null);
 const bscXorBalanceBaseUnits = ref<string | null>(null);
 const bscBalanceError = ref("");
 const tonBalanceError = ref("");
+const solanaBalanceLoading = ref(false);
+const solanaSolBalanceLamports = ref<string | null>(null);
+const solanaXorBalanceBaseUnits = ref<string | null>(null);
+const solanaXorDecimals = ref<number | null>(null);
+const solanaXorTokenAccounts = ref<Array<{ pubkey: string; amount: string }>>(
+  [],
+);
+const solanaBalanceError = ref("");
 const transactionLinks = ref<Array<{ label: string; href: string }>>([]);
 type ProofPhaseState = "pending" | "active" | "complete" | "failed";
 
@@ -598,70 +681,90 @@ const isTairaRoute = computed(() => isTairaSccpNetwork(session.connection));
 const isTronRoute = computed(() => selectedCounterparty.value === "tron");
 const isBscRoute = computed(() => selectedCounterparty.value === "bsc");
 const isTonRoute = computed(() => selectedCounterparty.value === "ton");
+const isSolanaRoute = computed(() => selectedCounterparty.value === "solana");
 const routeBscNetworkLabel = computed(() => t(SCCP_BSC_NETWORK.label));
 const routeTonNetworkLabel = computed(() => t(SCCP_TON_NETWORK.label));
+const routeSolanaNetworkLabel = computed(() => t(SCCP_SOLANA_NETWORK.label));
 const routeNetworkLabel = computed(() =>
-  isTonRoute.value
-    ? SCCP_TON_NETWORK.label
-    : isBscRoute.value
-      ? SCCP_BSC_NETWORK.label
-      : SCCP_TRON_NETWORK.label,
+  isSolanaRoute.value
+    ? SCCP_SOLANA_NETWORK.label
+    : isTonRoute.value
+      ? SCCP_TON_NETWORK.label
+      : isBscRoute.value
+        ? SCCP_BSC_NETWORK.label
+        : SCCP_TRON_NETWORK.label,
 );
 const activeWalletLabel = computed(() =>
-  isTonRoute.value
-    ? t("TON wallet")
-    : isBscRoute.value
-      ? t("BSC wallet")
-      : t("TRON wallet"),
+  isSolanaRoute.value
+    ? t("Solana wallet")
+    : isTonRoute.value
+      ? t("TON wallet")
+      : isBscRoute.value
+        ? t("BSC wallet")
+        : t("TRON wallet"),
 );
 const activeWalletShortAddress = computed(() =>
-  isTonRoute.value
-    ? ton.shortAddress.value
-    : isBscRoute.value
-      ? bsc.shortAddress.value
-      : tron.shortAddress.value,
+  isSolanaRoute.value
+    ? solana.shortAddress.value
+    : isTonRoute.value
+      ? ton.shortAddress.value
+      : isBscRoute.value
+        ? bsc.shortAddress.value
+        : tron.shortAddress.value,
 );
 const activeProjectConfigured = computed(() =>
-  isTonRoute.value
-    ? ton.projectConfigured.value
-    : isBscRoute.value
-      ? bsc.projectConfigured.value
-      : tron.projectConfigured.value,
+  isSolanaRoute.value
+    ? solana.projectConfigured.value
+    : isTonRoute.value
+      ? ton.projectConfigured.value
+      : isBscRoute.value
+        ? bsc.projectConfigured.value
+        : tron.projectConfigured.value,
 );
 const activeProjectConfigurationError = computed(() =>
-  isTonRoute.value
-    ? ton.projectConfigurationError.value
-    : isBscRoute.value
-      ? bsc.projectConfigurationError.value
-      : tron.projectConfigurationError.value,
+  isSolanaRoute.value
+    ? solana.projectConfigurationError.value
+    : isTonRoute.value
+      ? ton.projectConfigurationError.value
+      : isBscRoute.value
+        ? bsc.projectConfigurationError.value
+        : tron.projectConfigurationError.value,
 );
 const activeWalletConnected = computed(() =>
-  isTonRoute.value
-    ? ton.connected.value
-    : isBscRoute.value
-      ? bsc.connected.value
-      : tron.connected.value,
+  isSolanaRoute.value
+    ? solana.connected.value
+    : isTonRoute.value
+      ? ton.connected.value
+      : isBscRoute.value
+        ? bsc.connected.value
+        : tron.connected.value,
 );
 const activeWalletConnecting = computed(() =>
-  isTonRoute.value
-    ? ton.connecting.value
-    : isBscRoute.value
-      ? bsc.connecting.value
-      : tron.connecting.value,
+  isSolanaRoute.value
+    ? solana.connecting.value
+    : isTonRoute.value
+      ? ton.connecting.value
+      : isBscRoute.value
+        ? bsc.connecting.value
+        : tron.connecting.value,
 );
 const activeWalletDisconnecting = computed(() =>
-  isTonRoute.value
-    ? ton.disconnecting.value
-    : isBscRoute.value
-      ? bsc.disconnecting.value
-      : tron.disconnecting.value,
+  isSolanaRoute.value
+    ? solana.disconnecting.value
+    : isTonRoute.value
+      ? ton.disconnecting.value
+      : isBscRoute.value
+        ? bsc.disconnecting.value
+        : tron.disconnecting.value,
 );
 const activeWalletError = computed(() =>
-  isTonRoute.value
-    ? ton.error.value
-    : isBscRoute.value
-      ? bsc.error.value
-      : tron.error.value,
+  isSolanaRoute.value
+    ? solana.error.value
+    : isTonRoute.value
+      ? ton.error.value
+      : isBscRoute.value
+        ? bsc.error.value
+        : tron.error.value,
 );
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(
@@ -765,36 +868,71 @@ const tonTonBalanceLabel = computed(() =>
 const tonXorBalanceLabel = computed(() =>
   ton.connected.value ? t("Not loaded") : t("Not connected"),
 );
+const solanaSolBalanceLabel = computed(() => {
+  if (!solana.connected.value) {
+    return t("Not connected");
+  }
+  if (solanaSolBalanceLamports.value === null || solanaBalanceLoading.value) {
+    return t("Not loaded");
+  }
+  return `${formatBaseUnitAmount(solanaSolBalanceLamports.value, 9)} SOL`;
+});
+const solanaXorBalanceLabel = computed(() => {
+  if (!solana.connected.value) {
+    return t("Not connected");
+  }
+  if (solanaXorBalanceBaseUnits.value === null || solanaBalanceLoading.value) {
+    return t("Not loaded");
+  }
+  return `${formatBaseUnitAmount(
+    solanaXorBalanceBaseUnits.value,
+    solanaXorDecimals.value ?? 9,
+  )} ${SCCP_SOLANA_TOKEN_SYMBOL}`;
+});
 const counterpartyGasBalanceLabel = computed(() =>
-  isTonRoute.value
-    ? tonTonBalanceLabel.value
-    : isBscRoute.value
-      ? bscBnbBalanceLabel.value
-      : tronTrxBalanceLabel.value,
+  isSolanaRoute.value
+    ? solanaSolBalanceLabel.value
+    : isTonRoute.value
+      ? tonTonBalanceLabel.value
+      : isBscRoute.value
+        ? bscBnbBalanceLabel.value
+        : tronTrxBalanceLabel.value,
 );
 const counterpartyXorBalanceLabel = computed(() =>
-  isTonRoute.value
-    ? tonXorBalanceLabel.value
-    : isBscRoute.value
-      ? bscXorBalanceLabel.value
-      : tronXorBalanceLabel.value,
+  isSolanaRoute.value
+    ? solanaXorBalanceLabel.value
+    : isTonRoute.value
+      ? tonXorBalanceLabel.value
+      : isBscRoute.value
+        ? bscXorBalanceLabel.value
+        : tronXorBalanceLabel.value,
 );
 const counterpartyGasSymbol = computed(() =>
-  isTonRoute.value ? "TON" : isBscRoute.value ? "BNB" : "TRX",
+  isSolanaRoute.value
+    ? "SOL"
+    : isTonRoute.value
+      ? "TON"
+      : isBscRoute.value
+        ? "BNB"
+        : "TRX",
 );
 const counterpartyTokenSymbol = computed(() =>
-  isTonRoute.value
-    ? SCCP_TON_TOKEN_SYMBOL
-    : isBscRoute.value
-      ? SCCP_BSC_TOKEN_SYMBOL
-      : SCCP_TRON_TOKEN_SYMBOL,
+  isSolanaRoute.value
+    ? SCCP_SOLANA_TOKEN_SYMBOL
+    : isTonRoute.value
+      ? SCCP_TON_TOKEN_SYMBOL
+      : isBscRoute.value
+        ? SCCP_BSC_TOKEN_SYMBOL
+        : SCCP_TRON_TOKEN_SYMBOL,
 );
 const counterpartyBalanceError = computed(() =>
-  isTonRoute.value
-    ? tonBalanceError.value
-    : isBscRoute.value
-      ? bscBalanceError.value
-      : tronBalanceError.value,
+  isSolanaRoute.value
+    ? solanaBalanceError.value
+    : isTonRoute.value
+      ? tonBalanceError.value
+      : isBscRoute.value
+        ? bscBalanceError.value
+        : tronBalanceError.value,
 );
 const tonSourceLaneCapability = computed(() => {
   const counterparties = bridge.capabilities.value?.counterparties;
@@ -998,48 +1136,81 @@ const isForwardDirection = computed(
   () =>
     direction.value === "taira-to-tron" ||
     direction.value === "taira-to-bsc" ||
-    direction.value === "taira-to-ton",
+    direction.value === "taira-to-ton" ||
+    direction.value === "taira-to-solana",
 );
 const isReturnDirection = computed(
   () =>
     direction.value === "tron-to-taira" ||
     direction.value === "bsc-to-taira" ||
-    direction.value === "ton-to-taira",
+    direction.value === "ton-to-taira" ||
+    direction.value === "solana-to-taira",
 );
 const forwardDirectionLabel = computed(() =>
-  isTonRoute.value
-    ? "TAIRA -> TON"
-    : isBscRoute.value
-      ? "TAIRA -> BSC"
-      : "TAIRA -> TRON",
+  isSolanaRoute.value
+    ? "TAIRA -> Solana"
+    : isTonRoute.value
+      ? "TAIRA -> TON"
+      : isBscRoute.value
+        ? "TAIRA -> BSC"
+        : "TAIRA -> TRON",
 );
 const returnDirectionLabel = computed(() =>
-  isTonRoute.value
-    ? "TON -> TAIRA"
-    : isBscRoute.value
-      ? "BSC -> TAIRA"
-      : "TRON -> TAIRA",
+  isSolanaRoute.value
+    ? "Solana -> TAIRA"
+    : isTonRoute.value
+      ? "TON -> TAIRA"
+      : isBscRoute.value
+        ? "BSC -> TAIRA"
+        : "TRON -> TAIRA",
 );
 const counterpartyRecipientLabel = computed(() =>
-  isTonRoute.value
-    ? "TON recipient"
-    : isBscRoute.value
-      ? "BSC recipient"
-      : "TRON recipient",
+  isSolanaRoute.value
+    ? "Solana recipient"
+    : isTonRoute.value
+      ? "TON recipient"
+      : isBscRoute.value
+        ? "BSC recipient"
+        : "TRON recipient",
 );
 const counterpartyTransactionIdLabel = computed(() =>
-  isTonRoute.value
-    ? "TON transaction hash"
-    : isBscRoute.value
-      ? "BSC transaction hash"
-      : "TRON transaction ID",
+  isSolanaRoute.value
+    ? "Solana transaction signature"
+    : isTonRoute.value
+      ? "TON transaction hash"
+      : isBscRoute.value
+        ? "BSC transaction hash"
+        : "TRON transaction ID",
 );
 const counterpartyTransactionIdPlaceholder = computed(() =>
-  isTonRoute.value
-    ? "Optional TON burn transaction hash"
-    : isBscRoute.value
-      ? "Optional BSC burn transaction hash"
-      : "Optional TRON burn transaction id",
+  isSolanaRoute.value
+    ? "Optional Solana burn transaction signature"
+    : isTonRoute.value
+      ? "Optional TON burn transaction hash"
+      : isBscRoute.value
+        ? "Optional BSC burn transaction hash"
+        : "Optional TRON burn transaction id",
+);
+const transferModeLabel = computed(() =>
+  isForwardDirection.value ? "TAIRA source" : "Source-chain return",
+);
+const transferHelperText = computed(() =>
+  isForwardDirection.value
+    ? "Send XOR from TAIRA, then finalize it on the selected destination chain."
+    : "Burn on the source chain, then settle the bound proof on TAIRA.",
+);
+const showMessageIdInput = computed(() => isForwardDirection.value);
+const showGeneratedMessageId = computed(
+  () => isReturnDirection.value && Boolean(messageId.value.trim()),
+);
+const proofFetchActionLabel = computed(() =>
+  proofLoading.value
+    ? isForwardDirection.value
+      ? "Loading proof job"
+      : "Loading proof data"
+    : isForwardDirection.value
+      ? "Resume with message ID"
+      : "Resume from source transaction",
 );
 const amountValid = computed(() => {
   try {
@@ -1055,7 +1226,9 @@ const destinationValid = computed(() =>
       ? isValidBscAddress(bscRecipient.value)
       : direction.value === "taira-to-ton"
         ? isValidTonRawAddress(tonRecipient.value)
-        : isLikelyTairaAccount(tairaRecipient.value),
+        : direction.value === "taira-to-solana"
+          ? isValidSolanaAddress(solanaRecipient.value)
+          : isLikelyTairaAccount(tairaRecipient.value),
 );
 const submitDisabled = computed(
   () =>
@@ -1077,7 +1250,8 @@ const proofFetchDisabled = computed(
   () =>
     (direction.value === "taira-to-tron" ||
     direction.value === "taira-to-bsc" ||
-    direction.value === "taira-to-ton"
+    direction.value === "taira-to-ton" ||
+    direction.value === "taira-to-solana"
       ? !messageId.value
       : !tronTxId.value) ||
     !routeReadyForAction.value ||
@@ -1099,21 +1273,29 @@ const primaryActionLabel = computed(() =>
           ? "Prepare BSC -> TAIRA"
           : direction.value === "taira-to-ton"
             ? "Prepare TAIRA -> TON"
-            : "Prepare TON -> TAIRA",
+            : direction.value === "ton-to-taira"
+              ? "Prepare TON -> TAIRA"
+              : direction.value === "taira-to-solana"
+                ? "Prepare TAIRA -> Solana"
+                : "Prepare Solana -> TAIRA",
 );
 const walletConnectMissingMessage = computed(() =>
-  isTonRoute.value
-    ? "TON wallet connector is not available in this build."
-    : isBscRoute.value
-      ? "WalletConnect project ID is missing, so wallet connection is disabled."
-      : "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
+  isSolanaRoute.value
+    ? "WalletConnect project ID is missing, so wallet connection is disabled."
+    : isTonRoute.value
+      ? "TON wallet connector is not available in this build."
+      : isBscRoute.value
+        ? "WalletConnect project ID is missing, so wallet connection is disabled."
+        : "WalletConnect project ID is missing, so TRON wallet connection is disabled.",
 );
 const walletConnectInvalidMessage = computed(() =>
-  isTonRoute.value
-    ? "TON wallet connector is misconfigured."
-    : isBscRoute.value
-      ? "WalletConnect project ID is invalid, so wallet connection is disabled."
-      : "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
+  isSolanaRoute.value
+    ? "WalletConnect project ID is invalid, so wallet connection is disabled."
+    : isTonRoute.value
+      ? "TON wallet connector is misconfigured."
+      : isBscRoute.value
+        ? "WalletConnect project ID is invalid, so wallet connection is disabled."
+        : "WalletConnect project ID is invalid, so TRON wallet connection is disabled.",
 );
 const actionHint = computed(() => {
   if (!isTairaRoute.value) {
@@ -1126,11 +1308,13 @@ const actionHint = computed(() => {
     return t(walletConnectMissingMessage.value);
   }
   if (!activeWalletConnected.value) {
-    return isTonRoute.value
-      ? t("Connect a TON wallet to continue.")
-      : isBscRoute.value
-        ? t("Connect a BSC wallet to continue.")
-        : t("Connect a TRON wallet to continue.");
+    return isSolanaRoute.value
+      ? t("Connect a Solana wallet to continue.")
+      : isTonRoute.value
+        ? t("Connect a TON wallet to continue.")
+        : isBscRoute.value
+          ? t("Connect a BSC wallet to continue.")
+          : t("Connect a TRON wallet to continue.");
   }
   if (!routeReadyForAction.value) {
     return t("Route readiness must be true before bridge actions are enabled.");
@@ -1143,20 +1327,45 @@ const actionHint = computed(() => {
   );
 });
 
+const clearDirectionalResumeState = () => {
+  messageId.value = "";
+  tronTxId.value = "";
+  transactionLinks.value = [];
+  formError.value = "";
+  proofReady.value = false;
+  resetProofPhases();
+};
+
+const setBridgeDirection = (nextDirection: SccpBridgeDirection) => {
+  if (direction.value === nextDirection) {
+    return;
+  }
+  direction.value = nextDirection;
+  clearDirectionalResumeState();
+};
+
 const setForwardDirection = () => {
-  direction.value = isTonRoute.value
-    ? "taira-to-ton"
-    : isBscRoute.value
-      ? "taira-to-bsc"
-      : "taira-to-tron";
+  setBridgeDirection(
+    isSolanaRoute.value
+      ? "taira-to-solana"
+      : isTonRoute.value
+        ? "taira-to-ton"
+        : isBscRoute.value
+          ? "taira-to-bsc"
+          : "taira-to-tron",
+  );
 };
 
 const setReturnDirection = () => {
-  direction.value = isTonRoute.value
-    ? "ton-to-taira"
-    : isBscRoute.value
-      ? "bsc-to-taira"
-      : "tron-to-taira";
+  setBridgeDirection(
+    isSolanaRoute.value
+      ? "solana-to-taira"
+      : isTonRoute.value
+        ? "ton-to-taira"
+        : isBscRoute.value
+          ? "bsc-to-taira"
+          : "tron-to-taira",
+  );
 };
 
 const selectCounterparty = (counterparty: SccpCounterpartyKey) => {
@@ -1165,7 +1374,6 @@ const selectCounterparty = (counterparty: SccpCounterpartyKey) => {
   }
   selectedCounterparty.value = counterparty;
   setForwardDirection();
-  resetProofPhases();
   bridge.resetState();
   void refreshAll();
 };
@@ -1615,6 +1823,77 @@ const waitForBscTransactionSuccess = async (
   throw new Error(`Timed out waiting for ${label} confirmation.`);
 };
 
+const isRetryableSolanaConfirmationError = (error: unknown): boolean => {
+  const message = retryableChainReadErrorMessage(error);
+  return (
+    isRetryableChainReadErrorMessage(message) ||
+    /(?:signature status is not indexed|not confirmed|not finalized)/u.test(
+      message,
+    )
+  );
+};
+
+const waitForSolanaTransactionSuccess = async (
+  context: SccpOperationContext,
+  signature: string,
+  label: string,
+): Promise<Record<string, unknown>> => {
+  const normalizedSignature = normalizeSolanaTransactionSignature(signature);
+  let lastError: unknown = null;
+  for (
+    let attempt = 0;
+    attempt < SCCP_BSC_CONFIRMATION_POLL_ATTEMPTS;
+    attempt += 1
+  ) {
+    try {
+      assertSccpOperationContextCurrent(context);
+      const status = await getSolanaSignatureStatus({
+        endpoint: context.solanaRpcEndpoint,
+        signature: normalizedSignature,
+      });
+      if (!status) {
+        throw new Error(`${label} signature status is not indexed yet.`);
+      }
+      if (status.err !== null && status.err !== undefined) {
+        throw new Error(`${label} failed on Solana.`);
+      }
+      const confirmationStatus = String(status.confirmationStatus ?? "").trim();
+      if (
+        confirmationStatus === "confirmed" ||
+        confirmationStatus === "finalized"
+      ) {
+        return status;
+      }
+      throw new Error(`${label} is not confirmed yet.`);
+    } catch (error) {
+      lastError = error;
+      if (
+        !isRetryableSolanaConfirmationError(error) ||
+        attempt >= SCCP_BSC_CONFIRMATION_POLL_ATTEMPTS - 1
+      ) {
+        break;
+      }
+      markPhase(3, "active", `Waiting for ${label} confirmation`);
+      await wait(SCCP_BSC_CONFIRMATION_POLL_MS);
+    }
+  }
+  if (lastError && !isRetryableSolanaConfirmationError(lastError)) {
+    throw lastError;
+  }
+  throw new Error(`Timed out waiting for ${label} confirmation.`);
+};
+
+const buildSolanaExplorerTransactionUrl = (signature: string): string => {
+  const normalizedSignature = normalizeSolanaTransactionSignature(signature);
+  try {
+    const url = new URL(SCCP_SOLANA_NETWORK.explorerUrl);
+    url.pathname = `/tx/${normalizedSignature}`;
+    return url.toString();
+  } catch (_error) {
+    return `https://explorer.solana.com/tx/${normalizedSignature}?cluster=testnet`;
+  }
+};
+
 const readBscWalletTransactionHash = (
   sendResult: unknown,
   label: string,
@@ -1661,6 +1940,10 @@ type SccpProofWorkerRequest =
       input: TonSourceProofWorkerInput;
     }
   | {
+      kind: "prove-solana-source-package";
+      input: SolanaSourceProofWorkerInput;
+    }
+  | {
       kind: "prove-bsc-source-package";
       input: BscSourceProofWorkerInput;
     };
@@ -1680,6 +1963,10 @@ type TonSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
   proverModuleUrl?: string;
 };
 
+type SolanaSourceProofWorkerInput = SolanaToTairaSourceProofPackageInput & {
+  proverModuleUrl?: string;
+};
+
 type SccpOperationContext = {
   direction: SccpBridgeDirection;
   toriiUrl: string;
@@ -1689,19 +1976,23 @@ type SccpOperationContext = {
   tronAddress: string;
   bscAddress: string;
   tonAddress: string;
+  solanaAddress: string;
   amountDecimal: string;
   tronRecipient: string;
   bscRecipient: string;
   tonRecipient: string;
+  solanaRecipient: string;
   tairaRecipient: string;
   manifest: Record<string, unknown>;
   tronGatewayEndpoint: string;
   bscRpcEndpoint: string;
+  solanaRpcEndpoint: string;
   manifestFingerprint: string;
   messageId?: string;
   tronTxId?: string;
   bscTxId?: string;
   tonTxId?: string;
+  solanaTxId?: string;
 };
 
 const SCCP_CONTEXT_CHANGED_ERROR =
@@ -2004,6 +2295,14 @@ const runTonSourceProofWorker = async (
   })) as unknown as TonToTairaSourceProofPackage;
 };
 
+const runSolanaSourceProofWorker = (
+  input: SolanaSourceProofWorkerInput,
+): Promise<SolanaToTairaSourceProofPackage> =>
+  runSccpProofWorker<SolanaToTairaSourceProofPackage>({
+    kind: "prove-solana-source-package",
+    input,
+  });
+
 const runBscSourceProofWorker = async (
   input: BscSourceProofWorkerInput,
 ): Promise<BscToTairaSourceProofPackage> => {
@@ -2123,17 +2422,43 @@ const readCurrentTonRecipient = (): string => {
   }
 };
 
+const readCurrentSolanaAddress = (): string => {
+  try {
+    return normalizeSolanaAddress(solana.address.value);
+  } catch (_error) {
+    return "";
+  }
+};
+
+const readCurrentSolanaRecipient = (): string => {
+  try {
+    return normalizeSolanaAddress(solanaRecipient.value);
+  } catch (_error) {
+    return solanaRecipient.value.trim();
+  }
+};
+
+const readCurrentSolanaTransactionSignature = (): string => {
+  try {
+    return normalizeSolanaTransactionSignature(tronTxId.value);
+  } catch (_error) {
+    return "";
+  }
+};
+
 const createSccpOperationContext = (
   ids: Pick<
     SccpOperationContext,
-    "messageId" | "tronTxId" | "bscTxId" | "tonTxId"
+    "messageId" | "tronTxId" | "bscTxId" | "tonTxId" | "solanaTxId"
   > = {},
 ): SccpOperationContext => {
-  const manifest = isTonRoute.value
-    ? bridge.readiness.value.tonManifest
-    : isBscRoute.value
-      ? bridge.readiness.value.bscManifest
-      : bridge.readiness.value.tronManifest;
+  const manifest = isSolanaRoute.value
+    ? bridge.readiness.value.solanaManifest
+    : isTonRoute.value
+      ? bridge.readiness.value.tonManifest
+      : isBscRoute.value
+        ? bridge.readiness.value.bscManifest
+        : bridge.readiness.value.tronManifest;
   if (!routeReadyForDirection(direction.value) || !manifest) {
     throw new Error(
       routeMessages.value[0] ||
@@ -2141,6 +2466,7 @@ const createSccpOperationContext = (
     );
   }
   const manifestSnapshot = cloneSccpManifestSnapshot(manifest);
+  const activeSolanaRoute = isSolanaRoute.value;
   const activeBscRoute = isBscRoute.value;
   const activeTonRoute = isTonRoute.value;
   return {
@@ -2150,14 +2476,25 @@ const createSccpOperationContext = (
     networkPrefix: session.connection.networkPrefix,
     accountId: session.activeAccount?.accountId ?? "",
     tronAddress:
-      activeBscRoute || activeTonRoute
+      activeSolanaRoute || activeBscRoute || activeTonRoute
         ? ""
         : normalizeTronAddress(tron.address.value),
-    bscAddress: activeBscRoute ? normalizeBscAddress(bsc.address.value) : "",
-    tonAddress: activeTonRoute ? normalizeTonRawAddress(ton.address.value) : "",
+    bscAddress:
+      activeBscRoute && !activeSolanaRoute
+        ? normalizeBscAddress(bsc.address.value)
+        : "",
+    tonAddress:
+      activeTonRoute && !activeSolanaRoute
+        ? normalizeTonRawAddress(ton.address.value)
+        : "",
+    solanaAddress: activeSolanaRoute
+      ? normalizeSolanaAddress(solana.address.value)
+      : "",
     amountDecimal: normalizeBridgeAmount(amount.value),
     tronRecipient:
-      activeBscRoute || activeTonRoute ? "" : tronRecipient.value.trim(),
+      activeSolanaRoute || activeBscRoute || activeTonRoute
+        ? ""
+        : tronRecipient.value.trim(),
     bscRecipient:
       activeBscRoute && direction.value === "taira-to-bsc"
         ? normalizeBscAddress(bscRecipient.value)
@@ -2166,14 +2503,21 @@ const createSccpOperationContext = (
       activeTonRoute && direction.value === "taira-to-ton"
         ? normalizeTonRawAddress(tonRecipient.value)
         : tonRecipient.value.trim(),
+    solanaRecipient:
+      activeSolanaRoute && direction.value === "taira-to-solana"
+        ? normalizeSolanaAddress(solanaRecipient.value)
+        : solanaRecipient.value.trim(),
     tairaRecipient: tairaRecipient.value.trim(),
     manifest: manifestSnapshot,
     tronGatewayEndpoint:
-      activeBscRoute || activeTonRoute
+      activeSolanaRoute || activeBscRoute || activeTonRoute
         ? ""
         : readSccpTronGatewayEndpoint(manifestSnapshot, SCCP_TRON_NETWORK.key),
     bscRpcEndpoint: activeBscRoute
       ? readSccpBscRpcEndpoint(manifestSnapshot, SCCP_BSC_NETWORK.key)
+      : "",
+    solanaRpcEndpoint: activeSolanaRoute
+      ? readSccpSolanaRpcEndpoint(manifestSnapshot, SCCP_SOLANA_NETWORK.key)
       : "",
     manifestFingerprint: fingerprintSccpManifest(manifestSnapshot),
     ...ids,
@@ -2189,11 +2533,16 @@ const assertSccpOperationContextCurrent = (
   const contextIsTon =
     context.direction === "taira-to-ton" ||
     context.direction === "ton-to-taira";
+  const contextIsSolana =
+    context.direction === "taira-to-solana" ||
+    context.direction === "solana-to-taira";
   const currentManifest = contextIsBsc
     ? bridge.readiness.value.bscManifest
     : contextIsTon
       ? bridge.readiness.value.tonManifest
-      : bridge.readiness.value.tronManifest;
+      : contextIsSolana
+        ? bridge.readiness.value.solanaManifest
+        : bridge.readiness.value.tronManifest;
   if (
     !routeReadyForDirection(context.direction) ||
     !currentManifest ||
@@ -2202,13 +2551,16 @@ const assertSccpOperationContextCurrent = (
     context.chainId !== session.connection.chainId ||
     context.networkPrefix !== session.connection.networkPrefix ||
     context.accountId !== (session.activeAccount?.accountId ?? "") ||
-    (!contextIsBsc &&
+    (!contextIsSolana &&
+      !contextIsBsc &&
       !contextIsTon &&
       context.tronAddress !== tron.address.value) ||
     (contextIsBsc && context.bscAddress !== readCurrentBscAddress()) ||
     (contextIsTon && context.tonAddress !== readCurrentTonAddress()) ||
+    (contextIsSolana && context.solanaAddress !== readCurrentSolanaAddress()) ||
     context.amountDecimal !== normalizeBridgeAmount(amount.value) ||
-    (!contextIsBsc &&
+    (!contextIsSolana &&
+      !contextIsBsc &&
       !contextIsTon &&
       context.tronRecipient !== tronRecipient.value.trim()) ||
     (contextIsBsc &&
@@ -2223,14 +2575,24 @@ const assertSccpOperationContextCurrent = (
     (contextIsTon &&
       context.direction !== "taira-to-ton" &&
       context.tonRecipient !== tonRecipient.value.trim()) ||
+    (contextIsSolana &&
+      context.direction === "taira-to-solana" &&
+      context.solanaRecipient !== readCurrentSolanaRecipient()) ||
+    (contextIsSolana &&
+      context.direction !== "taira-to-solana" &&
+      context.solanaRecipient !== solanaRecipient.value.trim()) ||
     context.tairaRecipient !== tairaRecipient.value.trim() ||
-    (!contextIsBsc &&
+    (!contextIsSolana &&
+      !contextIsBsc &&
       !contextIsTon &&
       context.tronGatewayEndpoint !==
         readSccpTronGatewayEndpoint(currentManifest, SCCP_TRON_NETWORK.key)) ||
     (contextIsBsc &&
       context.bscRpcEndpoint !==
         readSccpBscRpcEndpoint(currentManifest, SCCP_BSC_NETWORK.key)) ||
+    (contextIsSolana &&
+      context.solanaRpcEndpoint !==
+        readSccpSolanaRpcEndpoint(currentManifest, SCCP_SOLANA_NETWORK.key)) ||
     context.manifestFingerprint !== fingerprintSccpManifest(currentManifest) ||
     (context.messageId !== undefined &&
       context.messageId !== messageId.value.trim().toLowerCase()) ||
@@ -2239,7 +2601,9 @@ const assertSccpOperationContextCurrent = (
     (context.bscTxId !== undefined &&
       context.bscTxId !== readCurrentBscTransactionHash()) ||
     (context.tonTxId !== undefined &&
-      context.tonTxId !== readCurrentTonTransactionHash())
+      context.tonTxId !== readCurrentTonTransactionHash()) ||
+    (context.solanaTxId !== undefined &&
+      context.solanaTxId !== readCurrentSolanaTransactionSignature())
   ) {
     throw new Error(SCCP_CONTEXT_CHANGED_ERROR);
   }
@@ -2279,12 +2643,19 @@ const loadTairaMessageProofJob = async (
               messageId: baseRequest.messageId,
               tonNetwork: SCCP_TON_NETWORK.key,
             })
-          : buildTairaXorMessageProofJobQueryMaterial({
-              manifest: context.manifest,
-              messageBundle,
-              messageId: baseRequest.messageId,
-              tronNetwork: SCCP_TRON_NETWORK.key,
-            })),
+          : context.direction === "taira-to-solana"
+            ? buildTairaXorSolanaMessageProofJobQueryMaterial({
+                manifest: context.manifest,
+                messageBundle,
+                messageId: baseRequest.messageId,
+                solanaNetwork: SCCP_SOLANA_NETWORK.key,
+              })
+            : buildTairaXorMessageProofJobQueryMaterial({
+                manifest: context.manifest,
+                messageBundle,
+                messageId: baseRequest.messageId,
+                tronNetwork: SCCP_TRON_NETWORK.key,
+              })),
     } as SccpMessageProofJobRequest;
     return cachedRequest;
   };
@@ -2693,6 +3064,14 @@ const clearTonBalances = () => {
   tonBalanceError.value = "";
 };
 
+const clearSolanaBalances = () => {
+  solanaSolBalanceLamports.value = null;
+  solanaXorBalanceBaseUnits.value = null;
+  solanaXorDecimals.value = null;
+  solanaXorTokenAccounts.value = [];
+  solanaBalanceError.value = "";
+};
+
 const refreshTronBalances = async () => {
   clearTronBalances();
   if (!tron.connected.value) {
@@ -2795,16 +3174,102 @@ const refreshBscBalances = async () => {
   }
 };
 
+const readSolanaTokenAmount = (
+  value: Record<string, unknown>,
+): {
+  amount: string;
+  decimals: number | null;
+  accounts: Array<{ pubkey: string; amount: string }>;
+} => {
+  const amountText = String(value.amount ?? "").trim();
+  if (!/^(?:0|[1-9]\d*)$/u.test(amountText)) {
+    throw new Error("Solana SPL token balance must be an unsigned integer.");
+  }
+  const decimals =
+    value.decimals === null || value.decimals === undefined
+      ? null
+      : Number(value.decimals);
+  if (
+    decimals !== null &&
+    (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > 36)
+  ) {
+    throw new Error("Solana SPL token decimals are invalid.");
+  }
+  const rawAccounts = Array.isArray(value.accounts) ? value.accounts : [];
+  const accounts = rawAccounts.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`Solana SPL token account ${index + 1} is invalid.`);
+    }
+    const record = entry as Record<string, unknown>;
+    const pubkey = normalizeSolanaAddress(
+      String(record.pubkey ?? ""),
+      `Solana SPL token account ${index + 1}`,
+    );
+    const amount = String(record.amount ?? "").trim();
+    if (!/^(?:0|[1-9]\d*)$/u.test(amount)) {
+      throw new Error(
+        `Solana SPL token account ${index + 1} amount is invalid.`,
+      );
+    }
+    return { pubkey, amount };
+  });
+  return { amount: amountText, decimals, accounts };
+};
+
+const refreshSolanaBalances = async () => {
+  clearSolanaBalances();
+  if (!solana.connected.value) {
+    return;
+  }
+  solanaBalanceLoading.value = true;
+  try {
+    const manifest = bridge.readiness.value.solanaManifest;
+    const endpoint = manifest
+      ? readSccpSolanaRpcEndpoint(manifest, SCCP_SOLANA_NETWORK.key)
+      : SCCP_SOLANA_NETWORK.rpcUrl;
+    const tokenAddress = manifest ? readSccpSolanaTokenAddress(manifest) : "";
+    const [nativeBalance, tokenBalance] = await Promise.all([
+      getSolanaBalance({ endpoint, address: solana.address.value }),
+      bridge.readiness.value.ready && tokenAddress
+        ? getSolanaTokenBalance({
+            endpoint,
+            ownerAddress: solana.address.value,
+            mintAddress: tokenAddress,
+          })
+        : Promise.resolve(null),
+    ]);
+    solanaSolBalanceLamports.value = nativeBalance;
+    if (tokenBalance) {
+      const tokenAmount = readSolanaTokenAmount(tokenBalance);
+      solanaXorBalanceBaseUnits.value = tokenAmount.amount;
+      solanaXorDecimals.value = tokenAmount.decimals;
+      solanaXorTokenAccounts.value = tokenAmount.accounts;
+    }
+  } catch (error) {
+    solanaSolBalanceLamports.value = null;
+    solanaXorBalanceBaseUnits.value = null;
+    solanaXorDecimals.value = null;
+    solanaXorTokenAccounts.value = [];
+    solanaBalanceError.value =
+      error instanceof Error ? error.message : String(error);
+  } finally {
+    solanaBalanceLoading.value = false;
+  }
+};
+
 const refreshAll = async () => {
   if (!isTairaRoute.value) {
     bridge.resetState();
     clearTronBalances();
     clearBscBalances();
     clearTonBalances();
+    clearSolanaBalances();
     return;
   }
   await Promise.all([bridge.refreshRoute(), bridge.refreshBalances()]);
-  if (isTonRoute.value) {
+  if (isSolanaRoute.value) {
+    await refreshSolanaBalances();
+  } else if (isTonRoute.value) {
     clearTonBalances();
   } else if (isBscRoute.value) {
     await refreshBscBalances();
@@ -2818,7 +3283,10 @@ const connectCounterparty = async () => {
     formError.value = t("SCCP bridging is enabled only on TAIRA testnet.");
     return;
   }
-  if (isTonRoute.value) {
+  if (isSolanaRoute.value) {
+    await solana.connect();
+    await refreshSolanaBalances();
+  } else if (isTonRoute.value) {
     await ton.connect();
     clearTonBalances();
   } else if (isBscRoute.value) {
@@ -2831,7 +3299,10 @@ const connectCounterparty = async () => {
 };
 
 const disconnectCounterparty = async () => {
-  if (isTonRoute.value) {
+  if (isSolanaRoute.value) {
+    await solana.disconnect();
+    clearSolanaBalances();
+  } else if (isTonRoute.value) {
     await ton.disconnect();
     clearTonBalances();
   } else if (isBscRoute.value) {
@@ -2899,11 +3370,13 @@ const validateForm = () => {
   }
   if (!activeWalletConnected.value) {
     throw new Error(
-      isTonRoute.value
-        ? t("Connect a TON wallet to continue.")
-        : isBscRoute.value
-          ? t("Connect a BSC wallet to continue.")
-          : t("Connect a TRON wallet to continue."),
+      isSolanaRoute.value
+        ? t("Connect a Solana wallet to continue.")
+        : isTonRoute.value
+          ? t("Connect a TON wallet to continue.")
+          : isBscRoute.value
+            ? t("Connect a BSC wallet to continue.")
+            : t("Connect a TRON wallet to continue."),
     );
   }
   try {
@@ -2919,7 +3392,9 @@ const validateForm = () => {
           : t("Enter a valid TRON Base58Check recipient.")
         : direction.value === "taira-to-ton"
           ? t("Enter a valid TON raw recipient address.")
-          : t("Enter a TAIRA testnet account."),
+          : direction.value === "taira-to-solana"
+            ? t("Enter a valid Solana Base58 recipient address.")
+            : t("Enter a TAIRA testnet account."),
     );
   }
 };
@@ -3010,6 +3485,239 @@ const finalizeTairaMessageToTron = async (
   }
   proofReady.value = true;
   markPhase(3, "complete", "TRON finalize transaction confirmed");
+};
+
+const SOLANA_TRANSACTION_BUILDER_BLOCKER =
+  "Solana SCCP source burn is connected, but the production Solana source proof executor and TAIRA settlement proof payloads are not available in this app build. Keep settlement fail-closed until the deployed route publishes governed Solana source proof material.";
+
+const finalizeTairaMessageToSolana = async (
+  context: SccpOperationContext,
+  input: { pollForIndexing?: boolean } = {},
+) => {
+  const job = await loadTairaMessageProofJob(context, input);
+  markPhase(0, "complete", "Route and message id accepted");
+  markPhase(1, "complete", "Torii returned an SCCP proof job");
+  const finalizeRequest = buildTairaXorSolanaFinalizeTransactionRequest({
+    manifest: context.manifest,
+    job,
+    ownerAddress: context.solanaAddress,
+    tairaSender: context.accountId,
+    solanaRecipient: context.solanaRecipient,
+    amountDecimal: context.amountDecimal,
+    messageId: context.messageId ?? messageId.value,
+    solanaNetwork: SCCP_SOLANA_NETWORK.key,
+  });
+  messageId.value = finalizeRequest.messageId;
+  markPhase(2, "complete", "Solana verifier instruction is ready");
+  markPhase(3, "active", "Requesting Solana wallet approval");
+  assertSccpOperationContextCurrent(context);
+  const transactionB64 = await buildSolanaTransaction(
+    finalizeRequest.transaction,
+  );
+  assertSccpOperationContextCurrent(context);
+  const signature = normalizeSolanaTransactionSignature(
+    await solana.signAndSendTransaction(transactionB64),
+  );
+  const solanaContext = {
+    ...context,
+    solanaTxId: signature,
+  };
+  tronTxId.value = signature;
+  const finalizeLink = {
+    label: t("Solana finalize transaction"),
+    href: buildSolanaExplorerTransactionUrl(signature),
+  };
+  transactionLinks.value = [
+    ...transactionLinks.value.filter((link) => link.href !== finalizeLink.href),
+    finalizeLink,
+  ];
+  markPhase(3, "active", "Waiting for Solana finalize confirmation");
+  await waitForSolanaTransactionSuccess(
+    solanaContext,
+    signature,
+    "Solana finalize transaction",
+  );
+  assertSccpOperationContextCurrent(solanaContext);
+  proofReady.value = true;
+  markPhase(3, "complete", "Solana finalize transaction confirmed");
+};
+
+const submitTairaToSolana = async (
+  context: SccpOperationContext,
+): Promise<void> => {
+  assertSccpOperationContextCurrent(context);
+  markPhase(1, "failed", "Solana TAIRA burn-record builder is unavailable");
+  throw new Error(SOLANA_TRANSACTION_BUILDER_BLOCKER);
+};
+
+const selectSolanaTokenAccountForBurn = (amountBaseUnits: string): string => {
+  const required = BigInt(amountBaseUnits);
+  const account = solanaXorTokenAccounts.value.find((entry) => {
+    try {
+      return BigInt(entry.amount) >= required;
+    } catch (_error) {
+      return false;
+    }
+  });
+  if (!account) {
+    throw new Error(
+      "No Solana TairaXOR token account has enough balance for this burn.",
+    );
+  }
+  return account.pubkey;
+};
+
+const submitSolanaBurnToTaira = async (
+  context: SccpOperationContext,
+): Promise<void> => {
+  assertSccpOperationContextCurrent(context);
+  markPhase(1, "active", "Refreshing Solana token accounts");
+  await refreshSolanaBalances();
+  assertSccpOperationContextCurrent(context);
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(context.amountDecimal);
+  const sourceTokenAddress = selectSolanaTokenAccountForBurn(amountBaseUnits);
+  const burnRequest = buildTairaXorSolanaBurnTransactionRequest({
+    manifest: context.manifest,
+    ownerAddress: context.solanaAddress,
+    sourceTokenAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+    nonce: `${Date.now()}`,
+    solanaNetwork: SCCP_SOLANA_NETWORK.key,
+  });
+  markPhase(1, "complete", "Unsigned Solana burn transaction created");
+  markPhase(
+    2,
+    "complete",
+    "Solana-source proof data collection can begin after broadcast",
+  );
+  markPhase(3, "active", "Requesting Solana wallet approval");
+  assertSccpOperationContextCurrent(context);
+  const transactionB64 = await buildSolanaTransaction(burnRequest.transaction);
+  assertSccpOperationContextCurrent(context);
+  const signature = normalizeSolanaTransactionSignature(
+    await solana.signAndSendTransaction(transactionB64),
+  );
+  tronTxId.value = signature;
+  const solanaSourceContext = {
+    ...context,
+    solanaTxId: signature,
+  };
+  transactionLinks.value = [
+    {
+      label: t("Solana burn transaction"),
+      href: buildSolanaExplorerTransactionUrl(signature),
+    },
+  ];
+  markPhase(3, "complete", "Solana burn transaction broadcast");
+  await finalizeSolanaBurnToTaira(solanaSourceContext, {
+    pollForFinality: true,
+  });
+};
+
+const finalizeSolanaBurnToTaira = async (
+  context: SccpOperationContext,
+  input: { pollForFinality?: boolean } = {},
+) => {
+  const signature = context.solanaTxId ?? tronTxId.value;
+  if (!signature) {
+    throw new Error("Solana transaction signature is required.");
+  }
+  const normalizedSignature = normalizeSolanaTransactionSignature(signature);
+  markPhase(1, "active", "Checking Solana transaction finality");
+  const signatureStatus = input.pollForFinality
+    ? await waitForSolanaTransactionSuccess(
+        context,
+        normalizedSignature,
+        "Solana burn transaction",
+      )
+    : await getSolanaSignatureStatus({
+        endpoint: context.solanaRpcEndpoint,
+        signature: normalizedSignature,
+      });
+  if (!signatureStatus) {
+    throw new Error("Solana burn transaction signature status is not indexed.");
+  }
+  if (signatureStatus.err !== null && signatureStatus.err !== undefined) {
+    throw new Error("Solana burn transaction failed on Solana.");
+  }
+  const transaction = await getSolanaTransaction({
+    endpoint: context.solanaRpcEndpoint,
+    signature: normalizedSignature,
+  });
+  if (!transaction) {
+    throw new Error("Solana burn transaction is not indexed yet.");
+  }
+  markPhase(1, "complete", "Solana source transaction data collected");
+  markPhase(2, "active", "Generating Solana source proof package");
+  assertSccpOperationContextCurrent(context);
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(context.amountDecimal);
+  const proofPackage = await runSolanaSourceProofWorker({
+    manifest: context.manifest,
+    solanaNetwork: SCCP_SOLANA_NETWORK.key,
+    proverModuleUrl: readSccpSolanaSourceProverModuleUrl(context.manifest),
+    solanaRpcUrl:
+      readSccpSolanaRpcEndpoint(context.manifest, SCCP_SOLANA_NETWORK.key) ||
+      SCCP_SOLANA_NETWORK.rpcUrl,
+    sourceBridgeAddress: readSccpSolanaSourceBridgeAddress(context.manifest),
+    sourceStateAddress: readSccpSolanaSourceStateAddress(context.manifest),
+    tokenMintAddress: readSccpSolanaTokenAddress(context.manifest),
+    txId: normalizedSignature,
+    transaction,
+    signatureStatus,
+    finality: signatureStatus,
+    solanaSender: context.solanaAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+    amountBaseUnits,
+  });
+  assertSccpOperationContextCurrent(context);
+  const boundProofPackage = bindSolanaToTairaSourceProofPackage({
+    manifest: context.manifest,
+    proofPackage,
+    txId: normalizedSignature,
+    solanaSender: context.solanaAddress,
+    tairaRecipient: context.tairaRecipient,
+    amountDecimal: context.amountDecimal,
+    amountBaseUnits,
+  });
+  messageId.value = boundProofPackage.messageId;
+  markPhase(2, "complete", "Solana source proof package is ready");
+  markPhase(3, "active", "Submitting TAIRA settlement");
+  assertSccpOperationContextCurrent(context);
+  const response = await submitSccpBridgeMessage({
+    toriiUrl: context.toriiUrl,
+    accountId: context.accountId,
+    messageBundle: buildSccpMessageBundleSubmitPayload(
+      boundProofPackage.messageBundle,
+    ),
+    settlement: boundProofPackage.settlement,
+  });
+  const tairaTxHash = String(
+    response.tx_hash_hex ?? response.txHashHex ?? response.hash ?? "",
+  ).trim();
+  const normalizedTairaTxHash = normalizeTairaTransactionHash(tairaTxHash);
+  const tairaTxHref = buildTairaExplorerTransactionUrl(
+    TAIRA_EXPLORER_URL,
+    normalizedTairaTxHash,
+  );
+  markPhase(3, "active", "Waiting for TAIRA settlement confirmation");
+  await waitForSccpTransactionCommit({
+    toriiUrl: context.toriiUrl,
+    hashHex: normalizedTairaTxHash,
+  });
+  assertSccpOperationContextCurrent(context);
+  proofReady.value = true;
+  markPhase(3, "complete", "TAIRA settlement confirmed");
+  if (tairaTxHref) {
+    transactionLinks.value = [
+      ...transactionLinks.value.filter((link) => link.href !== tairaTxHref),
+      {
+        label: t("TAIRA settlement transaction"),
+        href: tairaTxHref,
+      },
+    ];
+  }
 };
 
 const finalizeTairaMessageToBsc = async (
@@ -3902,9 +4610,14 @@ const prepareBridge = async () => {
     if (
       direction.value === "taira-to-tron" ||
       direction.value === "taira-to-bsc" ||
-      direction.value === "taira-to-ton"
+      direction.value === "taira-to-ton" ||
+      direction.value === "taira-to-solana"
     ) {
       const nonce = Date.now().toString();
+      if (direction.value === "taira-to-solana") {
+        await submitTairaToSolana(operationContext);
+        return;
+      }
       const request =
         direction.value === "taira-to-ton"
           ? buildTairaXorTonOutboundBurnRecordRequest({
@@ -4027,6 +4740,11 @@ const prepareBridge = async () => {
 
     if (direction.value === "ton-to-taira") {
       await submitTonBurnToTaira(operationContext);
+      return;
+    }
+
+    if (direction.value === "solana-to-taira") {
+      await submitSolanaBurnToTaira(operationContext);
       return;
     }
 
@@ -4161,7 +4879,8 @@ const fetchMessageJob = async () => {
     if (
       direction.value === "taira-to-tron" ||
       direction.value === "taira-to-bsc" ||
-      direction.value === "taira-to-ton"
+      direction.value === "taira-to-ton" ||
+      direction.value === "taira-to-solana"
     ) {
       if (!messageId.value.trim()) {
         throw new Error(
@@ -4176,7 +4895,11 @@ const fetchMessageJob = async () => {
             ? t("Enter a TON transaction hash before fetching proof data.")
             : isBscRoute.value
               ? t("Enter a BSC transaction hash before fetching proof data.")
-              : t("Enter a TRON transaction ID before fetching proof data."),
+              : isSolanaRoute.value
+                ? t(
+                    "Enter a Solana transaction signature before fetching proof data.",
+                  )
+                : t("Enter a TRON transaction ID before fetching proof data."),
         );
       }
       tronTxId.value =
@@ -4184,19 +4907,32 @@ const fetchMessageJob = async () => {
           ? normalizeTonTransactionHash(tronTxId.value)
           : direction.value === "bsc-to-taira"
             ? normalizeBscTransactionHash(tronTxId.value)
-            : normalizeTronTransactionId(tronTxId.value);
+            : direction.value === "solana-to-taira"
+              ? normalizeSolanaTransactionSignature(tronTxId.value)
+              : normalizeTronTransactionId(tronTxId.value);
     }
     const operationContext = createSccpOperationContext({
       ...(direction.value === "taira-to-tron" ||
       direction.value === "taira-to-bsc" ||
-      direction.value === "taira-to-ton"
+      direction.value === "taira-to-ton" ||
+      direction.value === "taira-to-solana"
         ? { messageId: messageId.value }
         : direction.value === "bsc-to-taira"
           ? { bscTxId: tronTxId.value }
           : direction.value === "ton-to-taira"
             ? { tonTxId: tronTxId.value }
-            : { tronTxId: tronTxId.value }),
+            : direction.value === "solana-to-taira"
+              ? { solanaTxId: tronTxId.value }
+              : { tronTxId: tronTxId.value }),
     });
+    if (direction.value === "solana-to-taira") {
+      markPhase(0, "complete", "Route and Solana signature accepted");
+      await finalizeSolanaBurnToTaira(operationContext, {
+        pollForFinality: true,
+      });
+      return;
+    }
+
     if (direction.value === "ton-to-taira") {
       markPhase(0, "complete", "Route and TON transaction hash accepted");
       await finalizeTonBurnToTaira(operationContext);
@@ -4222,6 +4958,11 @@ const fetchMessageJob = async () => {
 
     if (direction.value === "taira-to-ton") {
       await finalizeTairaMessageToTon(operationContext);
+      return;
+    }
+
+    if (direction.value === "taira-to-solana") {
+      await finalizeTairaMessageToSolana(operationContext);
       return;
     }
 

@@ -3885,7 +3885,7 @@ button:not(.secondary):hover {
 
 .sccp-shell {
   display: grid;
-  gap: 18px;
+  gap: 16px;
 }
 
 .sccp-command-header,
@@ -3900,30 +3900,35 @@ button:not(.secondary):hover {
 .sccp-command-header {
   align-items: flex-start;
   justify-content: space-between;
+  margin-bottom: 16px;
 }
 
 .sccp-command-actions {
   justify-content: flex-end;
+  align-items: flex-start;
 }
 
 .sccp-route-toggle {
   display: grid;
-  grid-template-columns: repeat(2, minmax(82px, 1fr));
-  gap: 6px;
-  padding: 3px;
+  grid-template-columns: repeat(4, minmax(76px, 1fr));
+  gap: 4px;
+  padding: 4px;
   border: 1px solid var(--panel-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--surface-soft);
 }
 
 .sccp-route-toggle button {
-  min-height: 36px;
+  min-height: 38px;
+  border-radius: 11px;
+  padding-inline: 12px;
 }
 
 .sccp-route-toggle button.active {
   background: var(--surface-strong);
   border-color: var(--panel-border);
   color: var(--iroha-accent);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
 }
 
 .sccp-status-grid,
@@ -3934,11 +3939,11 @@ button:not(.secondary):hover {
 }
 
 .sccp-lower-grid {
-  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
 }
 
 .sccp-route-strip {
-  margin-top: 14px;
+  margin-top: 16px;
 }
 
 .sccp-reasons {
@@ -3947,10 +3952,22 @@ button:not(.secondary):hover {
   margin-top: 12px;
 }
 
+.sccp-transfer-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+
+.sccp-transfer-header h2 {
+  margin: 0 0 6px;
+}
+
 .sccp-direction-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+  gap: 4px;
   padding: 4px;
   border: 1px solid var(--panel-border);
   border-radius: 16px;
@@ -3961,13 +3978,15 @@ button:not(.secondary):hover {
   border-color: transparent;
   background: transparent;
   color: inherit;
-  min-height: 44px;
+  min-height: 46px;
+  border-radius: 12px;
 }
 
 .sccp-direction-tabs button.active {
   background: var(--surface-strong);
   border-color: var(--panel-border);
   color: var(--iroha-accent);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
 }
 
 .sccp-form {
@@ -3977,12 +3996,13 @@ button:not(.secondary):hover {
   margin-top: 18px;
 }
 
-.sccp-form label {
+.sccp-field {
   display: grid;
   gap: 7px;
 }
 
-.sccp-form label > span {
+.sccp-field > span,
+.sccp-generated-id > span {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--iroha-muted);
@@ -3992,9 +4012,47 @@ button:not(.secondary):hover {
   min-width: 0;
 }
 
+.sccp-field-hint,
+.sccp-generated-id small {
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.sccp-resume-field {
+  padding: 12px;
+  border: 1px dashed var(--panel-border);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sccp-generated-id {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: var(--surface-soft);
+}
+
+.sccp-generated-id code {
+  display: block;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.08);
+  color: inherit;
+  font: 0.82rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  overflow-wrap: anywhere;
+}
+
 .sccp-form-actions {
   grid-column: 1 / -1;
   align-items: center;
+  padding-top: 2px;
 }
 
 .sccp-progress-list,
@@ -4097,8 +4155,24 @@ button:not(.secondary):hover {
 }
 
 .sccp-link-list a {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
   color: var(--iroha-accent);
   overflow-wrap: anywhere;
+}
+
+.sccp-progress-links {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.sccp-progress-links h3 {
+  margin: 0 0 4px;
+  font-size: 0.92rem;
 }
 
 :root[data-demo-recording="sccp"] {
@@ -4270,7 +4344,8 @@ button:not(.secondary):hover {
 
 @media (max-width: 720px) {
   .sccp-command-header,
-  .sccp-command-actions {
+  .sccp-command-actions,
+  .sccp-transfer-header {
     flex-direction: column;
     align-items: stretch;
   }
@@ -4280,6 +4355,10 @@ button:not(.secondary):hover {
   .sccp-form,
   .sccp-direction-tabs {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sccp-route-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sccp-form-actions button {

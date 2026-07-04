@@ -1,10 +1,12 @@
 import type {
   EvmSccpProveFn,
+  SolanaSccpProveFn,
   TonSccpProveFn,
   TronSccpProveFn,
 } from "@iroha/iroha-js/sccp";
 import type {
   BscToTairaSourceProofPackageInput,
+  SolanaToTairaSourceProofPackageInput,
   TonToTairaSourceProofPackageInput,
   TronToTairaSourceProofPackageInput,
 } from "@/utils/sccp";
@@ -33,6 +35,14 @@ export type TronSccpProverModule = {
   tonSccpSourceProve?: unknown;
   proveTonSource?: unknown;
   proveTonSccpSource?: unknown;
+  irohaSccpSolanaProve?: unknown;
+  solanaSccpProve?: unknown;
+  proveSolana?: unknown;
+  proveSolanaSccpDestination?: unknown;
+  irohaSccpSolanaSourceProve?: unknown;
+  solanaSccpSourceProve?: unknown;
+  proveSolanaSource?: unknown;
+  proveSolanaSccpSource?: unknown;
 };
 
 export type TronSccpProverGlobal = {
@@ -49,6 +59,10 @@ export type TronSccpProverGlobal = {
   bscSccpSourceProve?: unknown;
   irohaSccpTonSourceProve?: unknown;
   tonSccpSourceProve?: unknown;
+  irohaSccpSolanaProve?: unknown;
+  solanaSccpProve?: unknown;
+  irohaSccpSolanaSourceProve?: unknown;
+  solanaSccpSourceProve?: unknown;
 };
 
 export type BscSccpProverModule = TronSccpProverModule;
@@ -68,6 +82,16 @@ export type TonSccpProverGlobal = Pick<
   | "tonSccpSourceProve"
 >;
 
+export type SolanaSccpProverModule = TronSccpProverModule;
+
+export type SolanaSccpProverGlobal = Pick<
+  TronSccpProverGlobal,
+  | "irohaSccpSolanaProve"
+  | "solanaSccpProve"
+  | "irohaSccpSolanaSourceProve"
+  | "solanaSccpSourceProve"
+>;
+
 export type TronSccpSourceProveFn = (
   input: TronToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
@@ -78,6 +102,10 @@ export type BscSccpSourceProveFn = (
 
 export type TonSccpSourceProveFn = (
   input: TonToTairaSourceProofPackageInput,
+) => unknown | Promise<unknown>;
+
+export type SolanaSccpSourceProveFn = (
+  input: SolanaToTairaSourceProofPackageInput,
 ) => unknown | Promise<unknown>;
 
 type SccpProverExportName =
@@ -229,6 +257,44 @@ export const loadTonSccpProveFn = async (input: {
   return pickTonSccpProveFn(input.globalScope, moduleExports);
 };
 
+export const pickSolanaSccpProveFn = (
+  globalScope: SolanaSccpProverGlobal,
+  moduleExports?: SolanaSccpProverModule | null,
+): SolanaSccpProveFn | undefined => {
+  const candidates = [
+    readSccpProverExport(moduleExports, "proveSolanaSccpDestination"),
+    readSccpProverExport(moduleExports, "irohaSccpSolanaProve"),
+    readSccpProverExport(moduleExports, "solanaSccpProve"),
+    readSccpProverExport(moduleExports, "proveSolana"),
+    readSccpProverExport(moduleExports, "prove"),
+    readSccpProverExport(moduleExports, "proveFn"),
+    readSccpProverExport(moduleExports, "default"),
+    readSccpProverExport(globalScope, "irohaSccpSolanaProve"),
+    readSccpProverExport(globalScope, "solanaSccpProve"),
+  ];
+  return candidates.find(
+    (candidate): candidate is SolanaSccpProveFn =>
+      typeof candidate === "function",
+  );
+};
+
+export const loadSolanaSccpProveFn = async (input: {
+  globalScope: SolanaSccpProverGlobal;
+  moduleUrl?: string | null;
+  importer?: (moduleUrl: string) => Promise<SolanaSccpProverModule>;
+}): Promise<SolanaSccpProveFn | undefined> => {
+  const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
+  if (!moduleUrl) {
+    return pickSolanaSccpProveFn(input.globalScope);
+  }
+  const importer =
+    input.importer ??
+    ((url: string) =>
+      import(/* @vite-ignore */ url) as Promise<SolanaSccpProverModule>);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  return pickSolanaSccpProveFn(input.globalScope, moduleExports);
+};
+
 export const pickTronSccpSourceProveFn = (
   globalScope: TronSccpProverGlobal,
   moduleExports?: TronSccpProverModule | null,
@@ -328,4 +394,39 @@ export const loadTonSccpSourceProveFn = async (input: {
       import(/* @vite-ignore */ url) as Promise<TonSccpProverModule>);
   const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
   return pickTonSccpSourceProveFn(input.globalScope, moduleExports);
+};
+
+export const pickSolanaSccpSourceProveFn = (
+  globalScope: SolanaSccpProverGlobal,
+  moduleExports?: SolanaSccpProverModule | null,
+): SolanaSccpSourceProveFn | undefined => {
+  const candidates = [
+    readSccpProverExport(moduleExports, "proveSolanaSccpSource"),
+    readSccpProverExport(moduleExports, "irohaSccpSolanaSourceProve"),
+    readSccpProverExport(moduleExports, "solanaSccpSourceProve"),
+    readSccpProverExport(moduleExports, "proveSolanaSource"),
+    readSccpProverExport(globalScope, "irohaSccpSolanaSourceProve"),
+    readSccpProverExport(globalScope, "solanaSccpSourceProve"),
+  ];
+  return candidates.find(
+    (candidate): candidate is SolanaSccpSourceProveFn =>
+      typeof candidate === "function",
+  );
+};
+
+export const loadSolanaSccpSourceProveFn = async (input: {
+  globalScope: SolanaSccpProverGlobal;
+  moduleUrl?: string | null;
+  importer?: (moduleUrl: string) => Promise<SolanaSccpProverModule>;
+}): Promise<SolanaSccpSourceProveFn | undefined> => {
+  const moduleUrl = normalizeSccpProverModuleUrl(input.moduleUrl);
+  if (!moduleUrl) {
+    return pickSolanaSccpSourceProveFn(input.globalScope);
+  }
+  const importer =
+    input.importer ??
+    ((url: string) =>
+      import(/* @vite-ignore */ url) as Promise<SolanaSccpProverModule>);
+  const moduleExports = await importer(resolveSccpProverImportUrl(moduleUrl));
+  return pickSolanaSccpSourceProveFn(input.globalScope, moduleExports);
 };

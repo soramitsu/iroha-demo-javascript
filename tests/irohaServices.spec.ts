@@ -5,6 +5,8 @@ import {
   connectVpn,
   disconnectVpn,
   deploySccpTairaInboundSettlementContract,
+  buildSolanaTransaction,
+  broadcastSolanaTransaction,
   enactGovernanceProposal,
   fetchAccountAssets,
   fetchAccountTransactions,
@@ -37,6 +39,7 @@ import {
   listVpnReceipts,
   repairVpn,
   proposeGovernanceDeployContract,
+  proposeGovernanceSccpRouteManifest,
   registerCitizen,
   registerPublicLaneValidator,
   resolveAccountAlias,
@@ -57,6 +60,11 @@ import {
   getEvmLogs,
   getEvmTransaction,
   getEvmTransactionReceipt,
+  callSolanaRpc,
+  getSolanaBalance,
+  getSolanaSignatureStatus,
+  getSolanaTokenBalance,
+  getSolanaTransaction,
   getSigningAlgorithms,
   generateKeyPair,
   derivePublicKey,
@@ -965,6 +973,25 @@ describe("iroha services bridge", () => {
       proposal_id: "0x".padEnd(66, "3"),
       tx_instructions: [],
     });
+    const proposeGovernanceSccpRouteManifestMock = vi.fn().mockResolvedValue({
+      ok: true,
+      proposal_id: "0x".padEnd(66, "4"),
+      tx_instructions: [],
+    });
+    const callSolanaRpcMock = vi.fn().mockResolvedValue({ result: "ok" });
+    const getSolanaBalanceMock = vi.fn().mockResolvedValue("123");
+    const getSolanaTokenBalanceMock = vi.fn().mockResolvedValue({
+      amount: "456",
+      decimals: 9,
+    });
+    const getSolanaSignatureStatusMock = vi
+      .fn()
+      .mockResolvedValue({ confirmationStatus: "confirmed", err: null });
+    const getSolanaTransactionMock = vi.fn().mockResolvedValue({ slot: 1234 });
+    const buildSolanaTransactionMock = vi.fn().mockResolvedValue("AQID");
+    const broadcastSolanaTransactionMock = vi
+      .fn()
+      .mockResolvedValue("3".repeat(64));
 
     (window as any).iroha = {
       listAccountPermissions: listAccountPermissionsMock,
@@ -979,6 +1006,15 @@ describe("iroha services bridge", () => {
       getGovernanceUnlockStats: getGovernanceUnlockStatsMock,
       getGovernanceCouncilCurrent: getGovernanceCouncilCurrentMock,
       proposeGovernanceDeployContract: proposeGovernanceDeployContractMock,
+      proposeGovernanceSccpRouteManifest:
+        proposeGovernanceSccpRouteManifestMock,
+      callSolanaRpc: callSolanaRpcMock,
+      getSolanaBalance: getSolanaBalanceMock,
+      getSolanaTokenBalance: getSolanaTokenBalanceMock,
+      getSolanaSignatureStatus: getSolanaSignatureStatusMock,
+      getSolanaTransaction: getSolanaTransactionMock,
+      buildSolanaTransaction: buildSolanaTransactionMock,
+      broadcastSolanaTransaction: broadcastSolanaTransactionMock,
       submitGovernancePlainBallot: submitGovernancePlainBallotMock,
       finalizeGovernanceReferendum: finalizeGovernanceReferendumMock,
       enactGovernanceProposal: enactGovernanceProposalMock,
@@ -1015,6 +1051,15 @@ describe("iroha services bridge", () => {
       window: null,
       limits: null,
     };
+    const sccpRouteManifestProposalInput = {
+      toriiUrl: "http://localhost:8080",
+      manifest: {
+        route: "taira_sol_xor",
+        verifier: { target: "SolanaProgram" },
+      },
+      mode: "Zk" as const,
+      window: { lower: 10, upper: 42 },
+    };
     const ballotInput = {
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
@@ -1034,6 +1079,45 @@ describe("iroha services bridge", () => {
       toriiUrl: "http://localhost:8080",
       proposalId: "0x".padEnd(66, "d"),
     };
+    const solanaRpcInput = {
+      endpoint: "https://api.testnet.solana.com",
+      method: "getHealth",
+      params: [],
+    };
+    const solanaBalanceInput = {
+      endpoint: "https://api.testnet.solana.com",
+      address: "11111111111111111111111111111112",
+    };
+    const solanaTokenBalanceInput = {
+      endpoint: "https://api.testnet.solana.com",
+      ownerAddress: "11111111111111111111111111111112",
+      mintAddress: "11111111111111111111111111111113",
+    };
+    const solanaTransactionInput = {
+      endpoint: "https://api.testnet.solana.com",
+      signature: "3".repeat(64),
+    };
+    const solanaBroadcastInput = {
+      endpoint: "https://api.testnet.solana.com",
+      transactionB64: "AQ==",
+    };
+    const solanaBuildTransactionInput = {
+      endpoint: "https://api.testnet.solana.com",
+      feePayer: "11111111111111111111111111111112",
+      instructions: [
+        {
+          programId: "11111111111111111111111111111113",
+          accounts: [
+            {
+              pubkey: "11111111111111111111111111111112",
+              isSigner: true,
+              isWritable: false,
+            },
+          ],
+          dataHex: "0x0102",
+        },
+      ],
+    };
 
     await listAccountPermissions(permissionsInput);
     await getGovernanceCitizenStatus({
@@ -1050,6 +1134,14 @@ describe("iroha services bridge", () => {
     await getGovernanceUnlockStats("http://localhost:8080");
     await getGovernanceCouncilCurrent("http://localhost:8080");
     await proposeGovernanceDeployContract(deployProposalInput);
+    await proposeGovernanceSccpRouteManifest(sccpRouteManifestProposalInput);
+    await callSolanaRpc(solanaRpcInput);
+    await getSolanaBalance(solanaBalanceInput);
+    await getSolanaTokenBalance(solanaTokenBalanceInput);
+    await getSolanaSignatureStatus(solanaTransactionInput);
+    await getSolanaTransaction(solanaTransactionInput);
+    await buildSolanaTransaction(solanaBuildTransactionInput);
+    await broadcastSolanaTransaction(solanaBroadcastInput);
     await submitGovernancePlainBallot(ballotInput);
     await finalizeGovernanceReferendum(finalizeInput);
     await enactGovernanceProposal(enactInput);
@@ -1078,6 +1170,26 @@ describe("iroha services bridge", () => {
     });
     expect(proposeGovernanceDeployContractMock).toHaveBeenCalledWith(
       deployProposalInput,
+    );
+    expect(proposeGovernanceSccpRouteManifestMock).toHaveBeenCalledWith(
+      sccpRouteManifestProposalInput,
+    );
+    expect(callSolanaRpcMock).toHaveBeenCalledWith(solanaRpcInput);
+    expect(getSolanaBalanceMock).toHaveBeenCalledWith(solanaBalanceInput);
+    expect(getSolanaTokenBalanceMock).toHaveBeenCalledWith(
+      solanaTokenBalanceInput,
+    );
+    expect(getSolanaSignatureStatusMock).toHaveBeenCalledWith(
+      solanaTransactionInput,
+    );
+    expect(getSolanaTransactionMock).toHaveBeenCalledWith(
+      solanaTransactionInput,
+    );
+    expect(buildSolanaTransactionMock).toHaveBeenCalledWith(
+      solanaBuildTransactionInput,
+    );
+    expect(broadcastSolanaTransactionMock).toHaveBeenCalledWith(
+      solanaBroadcastInput,
     );
     expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith(ballotInput);
     expect(finalizeGovernanceReferendumMock).toHaveBeenCalledWith(

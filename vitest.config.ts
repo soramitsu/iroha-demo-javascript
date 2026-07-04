@@ -20,7 +20,7 @@ export default defineConfig({
     setupFiles: ["./vitest.setup.ts"],
     coverage: {
       clean: true,
-      enabled: true,
+      enabled: process.env.VITEST_COVERAGE === "1",
       provider: "v8",
       reporter: ["text", "html", "lcov"],
     },

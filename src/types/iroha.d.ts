@@ -1070,6 +1070,53 @@ export interface EvmLogsInput extends EvmRpcInput {
   topics?: Array<string | string[] | null>;
 }
 
+export interface SolanaRpcInput {
+  endpoint?: string;
+}
+
+export interface SolanaRpcCallInput extends SolanaRpcInput {
+  method: string;
+  params?: unknown[];
+}
+
+export interface SolanaAddressInput extends SolanaRpcInput {
+  address: string;
+}
+
+export interface SolanaTokenBalanceInput extends SolanaRpcInput {
+  ownerAddress: string;
+  mintAddress: string;
+}
+
+export interface SolanaTransactionInput extends SolanaRpcInput {
+  signature: string;
+}
+
+export interface SolanaBroadcastInput extends SolanaRpcInput {
+  transactionB64: string;
+  skipPreflight?: boolean;
+}
+
+export interface SolanaInstructionAccountMetaInput {
+  pubkey: string;
+  isSigner?: boolean;
+  signer?: boolean;
+  isWritable?: boolean;
+  writable?: boolean;
+}
+
+export interface SolanaInstructionInput {
+  programId: string;
+  accounts?: SolanaInstructionAccountMetaInput[];
+  dataHex: string;
+}
+
+export interface SolanaBuildTransactionInput extends SolanaRpcInput {
+  feePayer: string;
+  instructions: SolanaInstructionInput[];
+  recentBlockhash?: string;
+}
+
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
 
 export interface GovernanceProposalResult {
@@ -1269,6 +1316,7 @@ export interface SigningAlgorithmOption {
 export interface RuntimeConfigResponse {
   walletConnectProjectId: string;
   sccpBscE2eWallet: string;
+  sccpSolanaE2eWallet: string;
   sccpTonE2eWallet: string;
   sccpTonConnectManifestUrl: string;
 }
@@ -1516,6 +1564,12 @@ export interface IrohaBridge {
   proposeGovernanceDeployContract(
     input: GovernanceDeployContractProposalInput,
   ): Promise<GovernanceDraftResponse>;
+  proposeGovernanceSccpRouteManifest(input: {
+    toriiUrl: string;
+    manifest: Record<string, unknown>;
+    mode?: "Plain" | "Zk" | null;
+    window?: { lower: number; upper: number } | null;
+  }): Promise<GovernanceDraftResponse>;
   submitGovernancePlainBallot(input: {
     toriiUrl: string;
     chainId: string;
@@ -1878,6 +1932,19 @@ export interface IrohaBridge {
     fullTransactions?: boolean;
   }): Promise<Record<string, unknown> | null>;
   getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
+  callSolanaRpc(input: SolanaRpcCallInput): Promise<unknown>;
+  getSolanaBalance(input: SolanaAddressInput): Promise<string>;
+  getSolanaTokenBalance(
+    input: SolanaTokenBalanceInput,
+  ): Promise<Record<string, unknown>>;
+  getSolanaSignatureStatus(
+    input: SolanaTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  getSolanaTransaction(
+    input: SolanaTransactionInput,
+  ): Promise<Record<string, unknown> | null>;
+  buildSolanaTransaction(input: SolanaBuildTransactionInput): Promise<string>;
+  broadcastSolanaTransaction(input: SolanaBroadcastInput): Promise<string>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;

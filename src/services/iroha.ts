@@ -254,6 +254,11 @@ export const proposeGovernanceDeployContract = (
 ): Promise<GovernanceDraftResponse> =>
   bridge().proposeGovernanceDeployContract(input);
 
+export const proposeGovernanceSccpRouteManifest = (
+  input: Parameters<IrohaBridge["proposeGovernanceSccpRouteManifest"]>[0],
+): Promise<GovernanceDraftResponse> =>
+  bridge().proposeGovernanceSccpRouteManifest(input);
+
 export const submitGovernancePlainBallot = (
   input: Parameters<IrohaBridge["submitGovernancePlainBallot"]>[0],
 ) => bridge().submitGovernancePlainBallot(input);
@@ -605,6 +610,36 @@ export const getEvmBlockByHash = (
 export const getEvmLogs = (
   input: Parameters<IrohaBridge["getEvmLogs"]>[0],
 ): Promise<Record<string, unknown>[]> => bridge().getEvmLogs(input);
+
+export const callSolanaRpc = (
+  input: Parameters<IrohaBridge["callSolanaRpc"]>[0],
+): Promise<unknown> => bridge().callSolanaRpc(input);
+
+export const getSolanaBalance = (
+  input: Parameters<IrohaBridge["getSolanaBalance"]>[0],
+): Promise<string> => bridge().getSolanaBalance(input);
+
+export const getSolanaTokenBalance = (
+  input: Parameters<IrohaBridge["getSolanaTokenBalance"]>[0],
+): Promise<Record<string, unknown>> => bridge().getSolanaTokenBalance(input);
+
+export const getSolanaSignatureStatus = (
+  input: Parameters<IrohaBridge["getSolanaSignatureStatus"]>[0],
+): Promise<Record<string, unknown> | null> =>
+  bridge().getSolanaSignatureStatus(input);
+
+export const getSolanaTransaction = (
+  input: Parameters<IrohaBridge["getSolanaTransaction"]>[0],
+): Promise<Record<string, unknown> | null> =>
+  bridge().getSolanaTransaction(input);
+
+export const buildSolanaTransaction = (
+  input: Parameters<IrohaBridge["buildSolanaTransaction"]>[0],
+): Promise<string> => bridge().buildSolanaTransaction(input);
+
+export const broadcastSolanaTransaction = (
+  input: Parameters<IrohaBridge["broadcastSolanaTransaction"]>[0],
+): Promise<string> => bridge().broadcastSolanaTransaction(input);
 
 export type { SubscriptionStatusView };
 

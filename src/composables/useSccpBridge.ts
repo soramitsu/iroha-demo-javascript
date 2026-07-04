@@ -82,10 +82,13 @@ export const useSccpBridge = (
         parameters.value,
         import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
         import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
+        import.meta.env.VITE_SCCP_SOLANA_NETWORK || "testnet",
       ) as Record<string, unknown> | null,
       route: unref(route),
       loadFailure: routeLoadFailure.value,
+      bscNetwork: import.meta.env.VITE_SCCP_BSC_NETWORK || "testnet",
       tonNetwork: import.meta.env.VITE_SCCP_TON_NETWORK || "testnet",
+      solanaNetwork: import.meta.env.VITE_SCCP_SOLANA_NETWORK || "testnet",
     }),
   );
 

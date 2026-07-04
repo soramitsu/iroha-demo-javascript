@@ -1,28 +1,34 @@
 import "@/polyfills";
 import {
   buildBscSccpProofPackage,
+  buildSolanaSccpProofPackage,
   buildTonSccpProofPackage,
   buildTronSccpProofPackage,
   generateBscSccpProofPackage,
+  generateSolanaSccpProofPackage,
   generateTonSccpProofPackage,
   generateTronSccpProofPackage,
   type BscSccpProofPackageInput,
+  type SolanaSccpProofPackageInput,
   type TonSccpProofPackageInput,
   type TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
 import {
-  buildBscPlaceholderSourceChainProofEnvelope,
-  type BscPlaceholderSourceChainProofEnvelopeInput,
-  type BscPlaceholderSourceChainProofEnvelopeResult,
+  buildBscSourceChainProofEnvelope,
+  type BscSourceChainProofEnvelopeInput,
+  type BscSourceChainProofEnvelopeResult,
 } from "@iroha/iroha-js/sccp";
 import {
   bindBscToTairaSourceProofPackage,
+  bindSolanaToTairaSourceProofPackage,
   bindTonToTairaSourceProofPackage,
   bindTronToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
   type BscSourceProverMaterialBinding,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
+  type SolanaToTairaSourceProofPackage,
+  type SolanaToTairaSourceProofPackageInput,
   type TonToTairaSourceProofPackage,
   type TonToTairaSourceProofPackageInput,
   type TronToTairaSourceProofPackage,
@@ -31,12 +37,16 @@ import {
 import {
   loadBscSccpProveFn,
   loadBscSccpSourceProveFn,
+  loadSolanaSccpProveFn,
+  loadSolanaSccpSourceProveFn,
   loadTonSccpProveFn,
   loadTonSccpSourceProveFn,
   loadTronSccpSourceProveFn,
   loadTronSccpProveFn,
   type BscSccpProverModule,
   type BscSccpProverGlobal,
+  type SolanaSccpProverGlobal,
+  type SolanaSccpProverModule,
   type TonSccpProverGlobal,
   type TonSccpProverModule,
   type TonSccpSourceProveFn,
@@ -55,11 +65,14 @@ type SccpProverWorkerRequestKind =
   | "prove-bsc-proof-package"
   | "build-ton-proof-package"
   | "prove-ton-proof-package"
+  | "build-solana-proof-package"
+  | "prove-solana-proof-package"
   | "build-tron-proof-package"
   | "prove-tron-proof-package"
   | "prove-tron-source-package"
   | "prewarm-ton-source-prover"
   | "prove-ton-source-package"
+  | "prove-solana-source-package"
   | "prove-bsc-source-package";
 
 type SccpProverWorkerRequest =
@@ -82,6 +95,16 @@ type SccpProverWorkerRequest =
       id: string;
       kind: "prove-ton-proof-package";
       input: TonSccpProofPackageInput;
+    }
+  | {
+      id: string;
+      kind: "build-solana-proof-package";
+      input: SolanaSccpProofPackageInput;
+    }
+  | {
+      id: string;
+      kind: "prove-solana-proof-package";
+      input: SolanaSccpProofPackageInput;
     }
   | {
       id: string;
@@ -110,6 +133,11 @@ type SccpProverWorkerRequest =
     }
   | {
       id: string;
+      kind: "prove-solana-source-package";
+      input: SolanaToTairaSourceProofWorkerInput;
+    }
+  | {
+      id: string;
       kind: "prove-bsc-source-package";
       input: BscToTairaSourceProofWorkerInput;
     };
@@ -126,15 +154,22 @@ type TonToTairaSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
   proverModuleUrl?: string;
 };
 
+type SolanaToTairaSourceProofWorkerInput =
+  SolanaToTairaSourceProofPackageInput & {
+    proverModuleUrl?: string;
+  };
+
 type SccpProverWorkerResponse =
   | {
       id: string;
       ok: true;
       result:
         | ReturnType<typeof buildBscSccpProofPackage>
+        | ReturnType<typeof buildSolanaSccpProofPackage>
         | ReturnType<typeof buildTonSccpProofPackage>
         | ReturnType<typeof buildTronSccpProofPackage>
         | BscToTairaSourceProofPackage
+        | SolanaToTairaSourceProofPackage
         | TonToTairaSourceProofPackage
         | TronToTairaSourceProofPackage
         | Record<string, unknown>;
@@ -302,11 +337,14 @@ const isSccpProverWorkerRequestKind = (
   value === "prove-bsc-proof-package" ||
   value === "build-ton-proof-package" ||
   value === "prove-ton-proof-package" ||
+  value === "build-solana-proof-package" ||
+  value === "prove-solana-proof-package" ||
   value === "build-tron-proof-package" ||
   value === "prove-tron-proof-package" ||
   value === "prove-tron-source-package" ||
   value === "prewarm-ton-source-prover" ||
   value === "prove-ton-source-package" ||
+  value === "prove-solana-source-package" ||
   value === "prove-bsc-source-package";
 
 const normalizeSccpProverWorkerRequestId = (value: unknown): string => {
@@ -499,7 +537,7 @@ const withBscSourceReceiptRootIndex = <T extends Record<string, unknown>>(
 
 const replaceBscSourcePackageFinalityProof = (
   proofPackage: Record<string, unknown>,
-  sourceProof: BscPlaceholderSourceChainProofEnvelopeResult,
+  sourceProof: BscSourceChainProofEnvelopeResult,
 ): Record<string, unknown> => {
   const messageBundle = readRequiredWorkerRecordField(
     proofPackage,
@@ -526,7 +564,7 @@ const replaceBscSourcePackageFinalityProof = (
 const withBscSourcePublicInputFinality = (
   proofPackage: Record<string, unknown>,
   sourceProof: Pick<
-    BscPlaceholderSourceChainProofEnvelopeResult,
+    BscSourceChainProofEnvelopeResult,
     "finalityHeight" | "finalityBlockHash"
   >,
 ): Record<string, unknown> => {
@@ -611,7 +649,7 @@ const buildBinaryBscSourceProofPackage = (
     "finalityBlockHash",
     "finality_block_hash",
   ]);
-  const sourceProofInput: BscPlaceholderSourceChainProofEnvelopeInput = {
+  const sourceProofInput: BscSourceChainProofEnvelopeInput = {
     messageId: readRequiredWorkerTextField(
       commitment,
       ["message_id", "messageId"],
@@ -645,8 +683,7 @@ const buildBinaryBscSourceProofPackage = (
         }
       : {}),
   };
-  const sourceProof =
-    buildBscPlaceholderSourceChainProofEnvelope(sourceProofInput);
+  const sourceProof = buildBscSourceChainProofEnvelope(sourceProofInput);
   return withBscSourcePublicInputFinality(
     replaceBscSourcePackageFinalityProof(packageRecord, sourceProof),
     sourceProof,
@@ -851,6 +888,14 @@ export const normalizeSccpProverWorkerRequest = (
     };
   }
 
+  if (snapshot.kind === "prove-solana-source-package") {
+    return {
+      id,
+      kind: snapshot.kind,
+      input: snapshot.input as unknown as SolanaToTairaSourceProofWorkerInput,
+    };
+  }
+
   if (snapshot.kind === "prove-bsc-source-package") {
     assertNoCallerSuppliedBscSourceProofMaterial(snapshot.input);
     return {
@@ -880,6 +925,17 @@ export const normalizeSccpProverWorkerRequest = (
       id,
       kind: snapshot.kind,
       input: snapshot.input as unknown as TonSccpProofPackageInput,
+    };
+  }
+
+  if (
+    snapshot.kind === "build-solana-proof-package" ||
+    snapshot.kind === "prove-solana-proof-package"
+  ) {
+    return {
+      id,
+      kind: snapshot.kind,
+      input: snapshot.input as unknown as SolanaSccpProofPackageInput,
     };
   }
 
@@ -935,6 +991,29 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         });
         const result = await generateTonSccpProofPackage({
           ...(input as unknown as TonSccpProofPackageInput),
+          prove,
+        });
+        postSccpProverWorkerSuccess(id, result);
+        return;
+      }
+      if (kind === "build-solana-proof-package") {
+        const result = buildSolanaSccpProofPackage(
+          input as unknown as SolanaSccpProofPackageInput,
+        );
+        postSccpProverWorkerSuccess(id, result);
+        return;
+      }
+      if (kind === "prove-solana-proof-package") {
+        const solanaInput = input as unknown as SolanaSccpProofPackageInput;
+        const prove = await loadSolanaSccpProveFn({
+          globalScope: self as unknown as SolanaSccpProverGlobal,
+          moduleUrl:
+            readOptionalWorkerString(solanaInput.proverModuleUrl) ||
+            import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
+          importer: importWorkerPublicModule<SolanaSccpProverModule>,
+        });
+        const result = await generateSolanaSccpProofPackage({
+          ...solanaInput,
           prove,
         });
         postSccpProverWorkerSuccess(id, result);
@@ -1002,6 +1081,44 @@ self.onmessage = (event: MessageEvent<unknown>) => {
             tonSender: bindInput.tonSender,
             tairaRecipient: bindInput.tairaRecipient,
             amountDecimal: bindInput.amountDecimal,
+          });
+          postSccpProverWorkerSuccess(id, result);
+          return;
+        }
+        if (kind === "prove-solana-source-package") {
+          const solanaInput =
+            input as unknown as SolanaToTairaSourceProofWorkerInput;
+          const proveSource = await loadSolanaSccpSourceProveFn({
+            globalScope: self as unknown as SolanaSccpProverGlobal,
+            moduleUrl:
+              readOptionalWorkerString(solanaInput.proverModuleUrl) ||
+              import.meta.env.VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
+            importer: importWorkerPublicModule<SolanaSccpProverModule>,
+          });
+          if (typeof proveSource !== "function") {
+            const error = new Error(
+              "Solana -> TAIRA SCCP source prover is not linked; provide a browser-safe Solana source proof module before submitting TAIRA settlement.",
+            );
+            (error as Error & { code?: string }).code =
+              "ERR_SCCP_SOLANA_SOURCE_PROVER_UNAVAILABLE";
+            throw error;
+          }
+          const bindInput = snapshotSccpProverWorkerInput(
+            solanaInput,
+            "Solana -> TAIRA SCCP source proof input",
+          );
+          const proveInput = snapshotSccpProverWorkerInput(
+            solanaInput,
+            "Solana -> TAIRA SCCP source prove input",
+          );
+          const result = bindSolanaToTairaSourceProofPackage({
+            manifest: bindInput.manifest,
+            proofPackage: await proveSource(proveInput),
+            txId: bindInput.txId,
+            solanaSender: bindInput.solanaSender,
+            tairaRecipient: bindInput.tairaRecipient,
+            amountDecimal: bindInput.amountDecimal,
+            amountBaseUnits: bindInput.amountBaseUnits,
           });
           postSccpProverWorkerSuccess(id, result);
           return;

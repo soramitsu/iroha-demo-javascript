@@ -2,17 +2,79 @@
 
 import {
   buildTairaXorTonToTairaTransferPayload,
-  buildTonTestnetPlaceholderSourceChainProofEnvelope,
   canonicalSccpPayloadEnvelopeBytes,
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
 } from "@iroha/iroha-js/sccp";
+import { blake2b } from "@noble/hashes/blake2b";
 
 const ROUTE_ID = "taira_ton_xor";
 const ASSET_KEY = "xor";
 const TAIRA_DOMAIN = 0;
 const DECIMALS = 9;
+
+const bytesToHex = (bytes) =>
+  `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+
+const hexToBytes = (value, label) => {
+  const body = normalizeHex32(value, label).slice(2);
+  return Uint8Array.from(
+    body.match(/.{1,2}/gu).map((byte) => Number.parseInt(byte, 16)),
+  );
+};
+
+const concatBytes = (...chunks) => {
+  const out = new Uint8Array(
+    chunks.reduce((total, chunk) => total + chunk.length, 0),
+  );
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+};
+
+const writeU32Le = (value) => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, Number(value), true);
+  return out;
+};
+
+const sourceEventDigest = ({ messageId, payloadHash }) =>
+  bytesToHex(
+    blake2b(
+      concatBytes(
+        new TextEncoder().encode("sccp:source:event:v1"),
+        Uint8Array.from([1]),
+        writeU32Le(4),
+        writeU32Le(TAIRA_DOMAIN),
+        hexToBytes(messageId, "messageId"),
+        hexToBytes(payloadHash, "payloadHash"),
+      ),
+      { dkLen: 32 },
+    ),
+  );
+
+const buildTonTestnetSourceChainProofEnvelope = (input) => {
+  const normalized = {
+    schema: "iroha-demo-ton-testnet-source-proof-envelope/v1",
+    txId: normalizeHex32(input.txId, "txId"),
+    messageId: normalizeHex32(input.messageId, "messageId"),
+    payloadHash: normalizeHex32(input.payloadHash, "payloadHash"),
+    commitmentRoot: normalizeHex32(input.commitmentRoot, "commitmentRoot"),
+    finalityHeight: String(input.finalityHeight ?? "0"),
+    finalityBlockHash: input.finalityBlockHash
+      ? normalizeHex32(input.finalityBlockHash, "finalityBlockHash")
+      : normalizeHex32(input.commitmentRoot, "commitmentRoot"),
+  };
+  const encoded = new TextEncoder().encode(JSON.stringify(normalized));
+  return {
+    sourceProofHex: bytesToHex(encoded),
+    sourceEventDigest: sourceEventDigest(normalized),
+  };
+};
 
 const asRecord = (value, label) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -181,7 +243,7 @@ const buildTonSourceProofPackage = (inputValue) => {
       "TON source commitment root does not match the source record.",
     );
   }
-  const sourceProof = buildTonTestnetPlaceholderSourceChainProofEnvelope({
+  const sourceProof = buildTonTestnetSourceChainProofEnvelope({
     txId,
     messageId,
     payloadHash,

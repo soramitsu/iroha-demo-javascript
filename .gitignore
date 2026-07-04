@@ -35,6 +35,9 @@ yarn-error.log*
 /native/**/xcode-derived-data*
 /native/**/*.xcodeproj
 
+/solana/**/target/
+/solana/**/Cargo.lock
+
 # Acton related files
 .acton/
 gen/

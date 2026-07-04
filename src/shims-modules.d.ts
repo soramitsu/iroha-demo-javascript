@@ -22,6 +22,9 @@ interface ImportMetaEnv {
   readonly VITE_SCCP_TONCONNECT_MANIFEST_URL?: string;
   readonly VITE_SCCP_TON_PROVER_MODULE_URL?: string;
   readonly VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL?: string;
+  readonly VITE_SCCP_SOLANA_NETWORK?: string;
+  readonly VITE_SCCP_SOLANA_E2E_WALLET?: string;
+  readonly VITE_SCCP_SOLANA_PROVER_MODULE_URL?: string;
 }
 
 interface ImportMeta {

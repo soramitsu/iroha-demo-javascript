@@ -565,7 +565,9 @@ async function waitForActiveContract(ton, address, label) {
       return state;
     }
   }
-  throw new Error(`${label} did not become active; state=${state?.state ?? "unknown"}.`);
+  throw new Error(
+    `${label} did not become active; state=${state?.state ?? "unknown"}.`,
+  );
 }
 
 function cloneJson(value) {

@@ -15,11 +15,9 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import { describe, expect, it, vi } from "vitest";
 import {
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
-  SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
   SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
-  SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
   SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
@@ -188,6 +186,10 @@ const BSC_GROTH16_PROOF_SELF_TEST_SCHEMA =
   "iroha-sccp-bsc-groth16-proof-self-test/v1";
 const BSC_NATIVE_EVM_NO_WASM_NO_REMOTE_SCAN_SCHEMA =
   "iroha-sccp-bsc-native-evm-no-wasm-no-remote-scan/v1";
+const LEGACY_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 =
+  "sccp-bsc-testnet-native-evm-cross-sdk-fixture-parity-v1";
+const LEGACY_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 =
+  "sccp-bsc-mainnet-native-evm-cross-sdk-fixture-parity-v1";
 const BSC_FULL_SCCP_CIRCUIT_PROFILE = "sccp-bsc-full-message-v1";
 const BSC_GROTH16_PUBLIC_SIGNAL_NAMES = Object.freeze([
   "message_id",
@@ -211,7 +213,7 @@ const BSC_PROFILES = Object.freeze({
     bundleId: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
     paritySchema: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
     legacyParityFixtureSchema:
-      SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
+      LEGACY_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
     selfTestSchema: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
     validateBundle: validateBscTestnetNativeEvmProverBundle,
     nativeBundleFile: "bsc-testnet-native-evm-prover-bundle.json",
@@ -226,7 +228,7 @@ const BSC_PROFILES = Object.freeze({
     bundleId: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
     paritySchema: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
     legacyParityFixtureSchema:
-      SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
+      LEGACY_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
     selfTestSchema: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
     validateBundle: validateBscMainnetNativeEvmProverBundle,
     nativeBundleFile: "bsc-mainnet-native-evm-prover-bundle.json",

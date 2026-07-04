@@ -1,0 +1,12 @@
+[package]
+name = "sccp-taira-xor"
+version = "0.1.0"
+edition = "2021"
+description = "Solana testnet SCCP verifier surface for TAIRA XOR route evidence"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+solana-program = "4.0.0"

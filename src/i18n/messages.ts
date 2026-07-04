@@ -1032,6 +1032,20 @@ const ZH_TW_TRANSLATIONS: TranslationTable = {
   ...ZH_TW_MANUAL_TRANSLATIONS,
 };
 const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
+  "Connect a Solana wallet to continue.":
+    "Connect a Solana wallet to continue.",
+  "Connect Solana wallet": "Connect Solana wallet",
+  "Disconnect Solana": "Disconnect Solana",
+  "Enter a Solana transaction signature before fetching proof data.":
+    "Enter a Solana transaction signature before fetching proof data.",
+  "Enter a valid Solana Base58 recipient address.":
+    "Enter a valid Solana Base58 recipient address.",
+  "Solana Base58 address": "Solana Base58 address",
+  "Solana burn transaction": "Solana burn transaction",
+  "Solana finalize transaction": "Solana finalize transaction",
+  "Solana wallet": "Solana wallet",
+  "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.":
+    "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.",
   "Quick actions": "Quick actions",
   "Open wallet": "Open wallet",
   "Start setup": "Start setup",
@@ -1127,6 +1141,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Bridge XOR between TAIRA and {network}.",
   "Bridge XOR between TAIRA and TRON mainnet.":
     "Bridge XOR between TAIRA and TRON mainnet.",
+  "Operational status": "Operational status",
   "SCCP route": "SCCP route",
   TRON: "TRON",
   TON: "TON",
@@ -1154,6 +1169,13 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "WalletConnect misconfigured": "WalletConnect misconfigured",
   "TAIRA enabled": "TAIRA enabled",
   "TAIRA only": "TAIRA only",
+  "Bridge transfer": "Bridge transfer",
+  "TAIRA source": "TAIRA source",
+  "Source-chain return": "Source-chain return",
+  "Send XOR from TAIRA, then finalize it on the selected destination chain.":
+    "Send XOR from TAIRA, then finalize it on the selected destination chain.",
+  "Burn on the source chain, then settle the bound proof on TAIRA.":
+    "Burn on the source chain, then settle the bound proof on TAIRA.",
   "Bridge direction": "Bridge direction",
   "TAIRA -> TRON": "TAIRA -> TRON",
   "TRON -> TAIRA": "TRON -> TAIRA",
@@ -1171,6 +1193,11 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "testu... account": "testu... account",
   "Message ID": "Message ID",
   "Optional 32-byte SCCP message id": "Optional 32-byte SCCP message id",
+  "Use this only to resume a TAIRA-origin message after it was submitted.":
+    "Use this only to resume a TAIRA-origin message after it was submitted.",
+  "Generated message ID": "Generated message ID",
+  "Generated after the source-chain proof is bound.":
+    "Generated after the source-chain proof is bound.",
   "TRON transaction ID": "TRON transaction ID",
   "TON transaction hash": "TON transaction hash",
   "TON source transaction": "TON source transaction",
@@ -1185,8 +1212,12 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Prepare TAIRA -> BSC": "Prepare TAIRA -> BSC",
   "Prepare BSC -> TAIRA": "Prepare BSC -> TAIRA",
   "Loading proof job": "Loading proof job",
+  "Loading proof data": "Loading proof data",
   "Fetch proof job": "Fetch proof job",
+  "Resume with message ID": "Resume with message ID",
+  "Resume from source transaction": "Resume from source transaction",
   "Proof progress": "Proof progress",
+  "Proof and transactions": "Proof and transactions",
   "Frontend proof orchestration status": "Frontend proof orchestration status",
   "Proof package ready": "Proof package ready",
   "Route activity": "Route activity",

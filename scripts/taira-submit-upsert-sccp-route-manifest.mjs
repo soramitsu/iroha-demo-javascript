@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 const DEFAULT_TORII_URL = "https://taira.sora.org";
+const DEFAULT_MCP_URL = "https://taira.sora.org/v1/mcp";
 const DEFAULT_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const DEFAULT_GAS_ASSET_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const DEFAULT_GAS_LIMIT = 2_000_000;
@@ -14,6 +15,8 @@ const usage = `Usage:
 
 Options:
   --torii-url              Default: ${DEFAULT_TORII_URL}
+  --mcp-url                Default: ${DEFAULT_MCP_URL}
+  --submit-via             mcp|torii, default mcp
   --chain-id               Default: ${DEFAULT_CHAIN_ID}
   --gas-asset-id           Default: ${DEFAULT_GAS_ASSET_ID}
   --gas-limit              Default: ${DEFAULT_GAS_LIMIT}
@@ -216,6 +219,68 @@ async function submitSignedTransaction(client, toriiUrl, signedTransaction) {
   }
 }
 
+async function callMcpTool(mcpUrl, name, args) {
+  const response = await fetch(mcpUrl, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(
+      `MCP ${name} failed with HTTP ${response.status}: ${text.slice(0, 512)}`,
+    );
+  }
+  const payload = text ? JSON.parse(text) : null;
+  if (payload?.error) {
+    throw new Error(
+      `MCP ${name} failed: ${payload.error.message ?? JSON.stringify(payload.error)}`,
+    );
+  }
+  return payload?.result ?? null;
+}
+
+async function submitSignedTransactionViaMcp({
+  mcpUrl,
+  signedTransaction,
+  hash,
+  timeoutMs,
+  waitForCommit,
+}) {
+  const bodyBase64 = Buffer.from(signedTransaction).toString("base64");
+  const result = await callMcpTool(
+    mcpUrl,
+    waitForCommit
+      ? "iroha.transactions.submit_and_wait"
+      : "iroha.transactions.submit",
+    {
+      body_base64: bodyBase64,
+      ...(waitForCommit
+        ? {
+            hash,
+            timeout_ms: timeoutMs,
+            poll_interval_ms: 500,
+            terminal_statuses: ["Applied"],
+          }
+        : {}),
+    },
+  );
+  return {
+    receipt: result,
+    encoding: waitForCommit
+      ? "mcp:iroha.transactions.submit_and_wait"
+      : "mcp:iroha.transactions.submit",
+  };
+}
+
 async function canonicalizeDecodedSignedTransactionAccountIds(
   value,
   accountChainDiscriminant,
@@ -275,6 +340,11 @@ async function main() {
   const authority = requireText(options, "authority");
   const out = requireText(options, "out");
   const toriiUrl = String(options["torii-url"] ?? DEFAULT_TORII_URL).trim();
+  const mcpUrl = String(options["mcp-url"] ?? DEFAULT_MCP_URL).trim();
+  const submitVia = String(options["submit-via"] ?? "mcp").trim();
+  if (!["mcp", "torii"].includes(submitVia)) {
+    throw new Error("--submit-via must be mcp or torii.");
+  }
   const chainId = String(options["chain-id"] ?? DEFAULT_CHAIN_ID).trim();
   const gasAssetId = String(
     options["gas-asset-id"] ?? DEFAULT_GAS_ASSET_ID,
@@ -336,6 +406,8 @@ async function main() {
     const wrote = await writeJson(out, {
       submitted: false,
       dryRun: true,
+      submitVia,
+      mcpUrl,
       toriiUrl,
       chainId,
       authority,
@@ -357,11 +429,20 @@ async function main() {
   let encoding = null;
   let submitError = null;
   try {
-    const submission = await submitSignedTransaction(
-      client,
-      toriiUrl,
-      transaction.signedTransaction,
-    );
+    const submission =
+      submitVia === "mcp"
+        ? await submitSignedTransactionViaMcp({
+            mcpUrl,
+            signedTransaction: transaction.signedTransaction,
+            hash,
+            timeoutMs: commitTimeoutMs,
+            waitForCommit,
+          })
+        : await submitSignedTransaction(
+            client,
+            toriiUrl,
+            transaction.signedTransaction,
+          );
     receipt = submission.receipt;
     encoding = submission.encoding;
   } catch (error) {
@@ -369,17 +450,20 @@ async function main() {
   }
 
   let status = null;
-  if (!submitError && waitForCommit) {
+  if (!submitError && waitForCommit && submitVia === "torii") {
     status = await waitForStatus(client, hash, commitTimeoutMs);
   }
   const statusKind =
+    (!submitError && waitForCommit && submitVia === "mcp" ? "Applied" : null) ??
     transactionStatusKind(status?.global) ??
     transactionStatusKind(status?.auto) ??
     transactionStatusKind(status?.local) ??
     transactionStatusKind(status);
   const submissionArtifact = {
     submitted: !submitError,
+    submitVia,
     toriiUrl,
+    mcpUrl,
     chainId,
     authority,
     hash,
