@@ -85,11 +85,10 @@ const goToRegistration = () => {
   display: grid;
   gap: 10px;
   padding: 14px 16px;
-  border-radius: 18px;
-  border: 1px solid var(--panel-border);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 70%),
-    var(--surface-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-control);
   width: 100%;
 }
 

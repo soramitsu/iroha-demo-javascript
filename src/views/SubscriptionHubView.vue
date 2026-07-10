@@ -1,22 +1,25 @@
 <template>
   <div class="subscriptions-shell">
+    <RouteHeaderAction>
+      <AppButton
+        variant="secondary"
+        :disabled="subscriptions.loading"
+        @click="refresh"
+      >
+        {{ subscriptions.loading ? t("Refreshing…") : t("Refresh") }}
+      </AppButton>
+    </RouteHeaderAction>
+
     <section class="card subscriptions-summary-card">
       <header class="card-header">
         <div>
-          <h2>{{ t("Subscription Hub") }}</h2>
+          <h2>{{ t("Active subscriptions") }}</h2>
           <p class="helper">
             {{ t("Live subscription NFTs and plan metadata from Torii.") }}
           </p>
         </div>
         <div class="subscription-header-actions">
           <span class="pill positive">{{ t("Live Torii data") }}</span>
-          <button
-            class="secondary"
-            :disabled="subscriptions.loading"
-            @click="refresh"
-          >
-            {{ subscriptions.loading ? t("Refreshing…") : t("Refresh") }}
-          </button>
         </div>
       </header>
       <div class="subscriptions-overview">
@@ -61,7 +64,27 @@
       </p>
     </section>
 
-    <section class="card subscriptions-form-card">
+    <InlineAlert
+      v-if="subscriptions.loading"
+      tone="neutral"
+      :title="t('Loading subscriptions…')"
+    >
+      <p class="helper">{{ t("Reading live plans and wallet records.") }}</p>
+    </InlineAlert>
+
+    <SegmentedControl
+      v-model="workspaceMode"
+      :label="t('Subscription workspace')"
+      :options="[
+        { value: 'current', label: t('All subscriptions') },
+        { value: 'add', label: t('Subscribe to plan') },
+      ]"
+    />
+
+    <section
+      v-if="workspaceMode === 'add'"
+      class="card subscriptions-form-card"
+    >
       <header class="card-header">
         <div>
           <h2>{{ t("Subscribe to plan") }}</h2>
@@ -117,6 +140,7 @@
         <button
           type="submit"
           class="subscription-submit"
+          data-ui-primary-action
           :disabled="actionBusy === 'create'"
         >
           {{
@@ -162,7 +186,7 @@
       </div>
     </section>
 
-    <section class="card subscriptions-list-card">
+    <section v-else class="card subscriptions-list-card">
       <header class="card-header">
         <div>
           <h2>{{ t("All subscriptions") }}</h2>
@@ -279,9 +303,19 @@
           </div>
         </article>
       </div>
-      <p v-else class="helper subscription-empty">
-        {{ t("This account has no subscriptions on the active network.") }}
-      </p>
+      <EmptyState
+        v-else
+        :title="t('No subscriptions yet')"
+        :description="
+          t('This account has no subscriptions on the active network.')
+        "
+      >
+        <template #actions>
+          <AppButton @click="workspaceMode = 'add'">
+            {{ t("Subscribe to plan") }}
+          </AppButton>
+        </template>
+      </EmptyState>
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
     </section>
   </div>
@@ -290,6 +324,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import {
+  AppButton,
+  EmptyState,
+  InlineAlert,
+  RouteHeaderAction,
+  SegmentedControl,
+} from "@/components/ui";
 import { useSubscriptionStore } from "@/stores/subscriptions";
 import { useSessionStore } from "@/stores/session";
 import type {
@@ -330,6 +371,7 @@ const form = reactive({
 const formError = ref("");
 const actionBusy = ref("");
 const actionMessage = ref("");
+const workspaceMode = ref<"current" | "add">("current");
 
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
@@ -689,3 +731,20 @@ onMounted(() => {
   void refresh();
 });
 </script>
+
+<style scoped>
+.subscriptions-summary-card,
+.subscriptions-form-card,
+.subscriptions-list-card {
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.subscriptions-summary-grid,
+.subscriptions-next-panel {
+  background: var(--frost-panel-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+</style>

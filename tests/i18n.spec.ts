@@ -12,6 +12,7 @@ import {
   SUPPORTED_LOCALES,
   translate,
 } from "@/i18n/messages";
+import { QUIET_SAKURA_TRANSLATION_KEYS } from "@/i18n/quietSakuraTranslations";
 import { useLocaleStore } from "@/stores/locale";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { SUBSCRIPTION_I18N_KEYS } from "@/utils/subscriptions";
@@ -259,6 +260,22 @@ describe("i18n messages", () => {
         missing,
         `${locale} is missing translations for ${missing.join(", ")}`,
       ).toEqual([]);
+    }
+  });
+
+  it("uses locale-specific copy for every Quiet Sakura UI key", () => {
+    const nonEnglishLocales = SUPPORTED_LOCALES.filter(
+      (locale) => locale !== "en-US",
+    );
+
+    for (const locale of nonEnglishLocales) {
+      for (const key of QUIET_SAKURA_TRANSLATION_KEYS) {
+        expect(hasLocaleTranslation(locale, key)).toBe(true);
+        expect(
+          translate(locale, key),
+          `${locale} should translate ${key}`,
+        ).not.toBe(key);
+      }
     }
   });
 

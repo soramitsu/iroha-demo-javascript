@@ -5,7 +5,6 @@ import {
   buildTonSccpProofPackage,
   buildTronSccpProofPackage,
   generateBscSccpProofPackage,
-  generateSolanaSccpProofPackage,
   generateTonSccpProofPackage,
   generateTronSccpProofPackage,
   type BscSccpProofPackageInput,
@@ -24,6 +23,13 @@ import {
   bindTonToTairaSourceProofPackage,
   bindTronToTairaSourceProofPackage,
   readBscSourceProverMaterialBinding,
+  readSccpSolanaDestinationProverModuleHash,
+  readSccpSolanaDestinationProverModuleUrl,
+  readSccpSolanaSourceProverModuleHash,
+  readSccpSolanaSourceProverModuleUrl,
+  SCCP_SOLANA_SOURCE_PROOF_BACKEND,
+  SOLANA_TESTNET_GENESIS_HASH,
+  SOLANA_TESTNET_NETWORK_ID,
   type BscSourceProverMaterialBinding,
   type BscToTairaSourceProofPackage,
   type BscToTairaSourceProofPackageInput,
@@ -154,10 +160,7 @@ type TonToTairaSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
   proverModuleUrl?: string;
 };
 
-type SolanaToTairaSourceProofWorkerInput =
-  SolanaToTairaSourceProofPackageInput & {
-    proverModuleUrl?: string;
-  };
+type SolanaToTairaSourceProofWorkerInput = SolanaToTairaSourceProofPackageInput;
 
 type SccpProverWorkerResponse =
   | {
@@ -241,11 +244,43 @@ const SCCP_WORKER_BSC_BUILD_PROOF_MATERIAL_INPUT_ERROR =
   "BSC destination proof requests must not include caller-supplied proof material; proof material must come from the configured BSC prover module.";
 const SCCP_WORKER_BSC_SOURCE_PROOF_MATERIAL_INPUT_ERROR =
   "BSC source proof requests must not include caller-supplied proof material; proof hashes are derived from the route manifest inside the worker.";
+const SCCP_WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_INPUT_ERROR =
+  "Solana destination proof requests must not include caller-supplied proof material; proof material must come from the configured Solana prover module.";
+const SCCP_WORKER_SOLANA_SOURCE_PROOF_MATERIAL_INPUT_ERROR =
+  "Solana source proof requests must not include caller-supplied proof material; proof packages must come from the configured Solana source prover module.";
+const SCCP_WORKER_SOLANA_PROVER_OVERRIDE_INPUT_ERROR =
+  "Solana proof requests must not override prover module URLs or hashes; the governed route manifest is authoritative.";
 const SCCP_WORKER_BSC_BUILD_PROOF_MATERIAL_KEYS = new Set([
   "proofBytes",
   "proof_bytes",
   "proofResult",
   "proof_result",
+]);
+const SCCP_WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_KEYS = new Set([
+  "proofBytes",
+  "proof_bytes",
+  "proofResult",
+  "proof_result",
+]);
+const SCCP_WORKER_SOLANA_PROVER_OVERRIDE_KEYS = new Set([
+  "proverModuleUrl",
+  "prover_module_url",
+  "proverModuleHash",
+  "prover_module_hash",
+]);
+const SCCP_WORKER_SOLANA_SOURCE_PROOF_MATERIAL_KEYS = new Set([
+  "proofBytes",
+  "proof_bytes",
+  "proofResult",
+  "proof_result",
+  "proofPackage",
+  "proof_package",
+  "messageBundle",
+  "message_bundle",
+  "settlement",
+  "submission",
+  "submissionPayload",
+  "submission_payload",
 ]);
 const SCCP_WORKER_BSC_SOURCE_PROOF_MATERIAL_KEYS = new Set([
   "proofArtifactHash",
@@ -309,6 +344,107 @@ const resolveTonSourceProverModuleUrl = (moduleUrl?: unknown): string =>
   readOptionalWorkerString(moduleUrl) ||
   import.meta.env.VITE_SCCP_TON_SOURCE_PROVER_MODULE_URL ||
   "";
+
+const readWorkerManifest = (input: {
+  manifest?: unknown;
+}): Record<string, unknown> | undefined =>
+  isRecord(input.manifest) ? input.manifest : undefined;
+
+const requireSolanaProverBuildUrlAgreement = ({
+  manifestUrl,
+  configuredUrls,
+  label,
+}: {
+  manifestUrl: string;
+  configuredUrls: Array<{ key: string; value: unknown }>;
+  label: string;
+}): string => {
+  const normalizedManifestUrl = normalizeSccpPackageOrRemoteModuleUrl(
+    manifestUrl,
+    `${label} route-manifest URL`,
+  );
+  const normalizedConfiguredUrls = configuredUrls
+    .map(({ key, value }) => ({ key, value: readOptionalWorkerString(value) }))
+    .filter(({ value }) => Boolean(value))
+    .map(({ key, value }) => ({
+      key,
+      value:
+        normalizeSccpPackageOrRemoteModuleUrl(
+          value,
+          `${label} build URL ${key}`,
+        ) ?? "",
+    }));
+  const configuredValues = new Set(
+    normalizedConfiguredUrls.map(({ value }) => value),
+  );
+  if (configuredValues.size > 1) {
+    throw new Error(
+      `${label} build URL aliases must normalize and agree exactly: ${normalizedConfiguredUrls
+        .map(({ key, value }) => `${key}=${value}`)
+        .join(", ")}.`,
+    );
+  }
+  const normalizedConfiguredUrl = normalizedConfiguredUrls[0]?.value ?? "";
+  if (!normalizedConfiguredUrl) {
+    return normalizedManifestUrl ?? "";
+  }
+  if (
+    !normalizedManifestUrl ||
+    normalizedConfiguredUrl !== normalizedManifestUrl
+  ) {
+    throw new Error(
+      `${label} build URL must exactly match the governed route-manifest URL.`,
+    );
+  }
+  return normalizedManifestUrl;
+};
+
+const resolveSolanaDestinationProverModuleUrl = (
+  input: SolanaSccpProofPackageInput,
+): string =>
+  requireSolanaProverBuildUrlAgreement({
+    manifestUrl: readSccpSolanaDestinationProverModuleUrl(
+      readWorkerManifest(input),
+    ),
+    configuredUrls: [
+      {
+        key: "VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL",
+        value: import.meta.env.VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL,
+      },
+      {
+        key: "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
+        value: import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
+      },
+    ],
+    label: "Solana destination prover",
+  });
+
+const resolveSolanaDestinationProverModuleHash = (
+  input: SolanaSccpProofPackageInput,
+): string =>
+  readSccpSolanaDestinationProverModuleHash(readWorkerManifest(input));
+
+const resolveSolanaSourceProverModuleUrl = (
+  input: SolanaToTairaSourceProofWorkerInput,
+): string =>
+  requireSolanaProverBuildUrlAgreement({
+    manifestUrl: readSccpSolanaSourceProverModuleUrl(readWorkerManifest(input)),
+    configuredUrls: [
+      {
+        key: "VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL",
+        value: import.meta.env.VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
+      },
+      {
+        key: "VITE_SCCP_SOLANA_PROVER_MODULE_URL",
+        value: import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
+      },
+    ],
+    label: "Solana source prover",
+  });
+
+const resolveSolanaSourceProverModuleHash = (
+  input: SolanaToTairaSourceProofWorkerInput,
+): string => readSccpSolanaSourceProverModuleHash(readWorkerManifest(input));
 
 const loadCachedTonSourceProveFn = (
   moduleUrl?: unknown,
@@ -778,6 +914,56 @@ const assertNoCallerSuppliedBscSourceProofMaterial = (
   }
 };
 
+const assertNoCallerSuppliedSolanaDestinationProofMaterial = (
+  value: Record<string, unknown>,
+): void => {
+  for (const key of SCCP_WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new Error(
+        SCCP_WORKER_SOLANA_DESTINATION_PROOF_MATERIAL_INPUT_ERROR,
+      );
+    }
+  }
+};
+
+const assertNoCallerSuppliedSolanaProverOverrides = (
+  value: Record<string, unknown>,
+): void => {
+  for (const key of SCCP_WORKER_SOLANA_PROVER_OVERRIDE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new Error(SCCP_WORKER_SOLANA_PROVER_OVERRIDE_INPUT_ERROR);
+    }
+  }
+};
+
+const assertCanonicalSolanaSourceProfile = (
+  input: Record<string, unknown>,
+): void => {
+  const expected = [
+    ["solanaNetwork", "testnet"],
+    ["solanaNetworkId", SOLANA_TESTNET_NETWORK_ID],
+    ["solanaGenesisHash", SOLANA_TESTNET_GENESIS_HASH],
+    ["sourceProofBackend", SCCP_SOLANA_SOURCE_PROOF_BACKEND],
+  ] as const;
+  for (const [key, required] of expected) {
+    if (readOptionalWorkerString(input[key]) !== required) {
+      throw new Error(
+        "Solana source proof requests must use the canonical Solana testnet source profile.",
+      );
+    }
+  }
+};
+
+const assertNoCallerSuppliedSolanaSourceProofMaterial = (
+  value: Record<string, unknown>,
+): void => {
+  for (const key of SCCP_WORKER_SOLANA_SOURCE_PROOF_MATERIAL_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      throw new Error(SCCP_WORKER_SOLANA_SOURCE_PROOF_MATERIAL_INPUT_ERROR);
+    }
+  }
+};
+
 const assertBscBuildOnlyResultHasNoProofMaterial = (
   result: ReturnType<typeof buildBscSccpProofPackage>,
 ): void => {
@@ -889,6 +1075,9 @@ export const normalizeSccpProverWorkerRequest = (
   }
 
   if (snapshot.kind === "prove-solana-source-package") {
+    assertNoCallerSuppliedSolanaProverOverrides(snapshot.input);
+    assertNoCallerSuppliedSolanaSourceProofMaterial(snapshot.input);
+    assertCanonicalSolanaSourceProfile(snapshot.input);
     return {
       id,
       kind: snapshot.kind,
@@ -932,6 +1121,8 @@ export const normalizeSccpProverWorkerRequest = (
     snapshot.kind === "build-solana-proof-package" ||
     snapshot.kind === "prove-solana-proof-package"
   ) {
+    assertNoCallerSuppliedSolanaProverOverrides(snapshot.input);
+    assertNoCallerSuppliedSolanaDestinationProofMaterial(snapshot.input);
     return {
       id,
       kind: snapshot.kind,
@@ -1007,15 +1198,28 @@ self.onmessage = (event: MessageEvent<unknown>) => {
         const solanaInput = input as unknown as SolanaSccpProofPackageInput;
         const prove = await loadSolanaSccpProveFn({
           globalScope: self as unknown as SolanaSccpProverGlobal,
-          moduleUrl:
-            readOptionalWorkerString(solanaInput.proverModuleUrl) ||
-            import.meta.env.VITE_SCCP_SOLANA_PROVER_MODULE_URL,
+          moduleUrl: resolveSolanaDestinationProverModuleUrl(solanaInput),
+          moduleHash: resolveSolanaDestinationProverModuleHash(solanaInput),
           importer: importWorkerPublicModule<SolanaSccpProverModule>,
         });
-        const result = await generateSolanaSccpProofPackage({
-          ...solanaInput,
-          prove,
-        });
+        if (typeof prove !== "function") {
+          throw new Error(
+            "Solana SCCP destination prover is not linked; provide the governed browser-safe destination prover before generating production proofs.",
+          );
+        }
+        const proverInput = snapshotSccpDataValue(
+          solanaInput,
+          "Solana destination proof input",
+        );
+        const result = await prove(
+          proverInput.witness as unknown as Parameters<typeof prove>[0],
+          proverInput as unknown as Parameters<typeof prove>[1],
+        );
+        if (!isRecord(result) || !isRecord(result.submission)) {
+          throw new Error(
+            "Solana destination prover must return a browser-generated proof package with a submission.",
+          );
+        }
         postSccpProverWorkerSuccess(id, result);
         return;
       }
@@ -1090,9 +1294,8 @@ self.onmessage = (event: MessageEvent<unknown>) => {
             input as unknown as SolanaToTairaSourceProofWorkerInput;
           const proveSource = await loadSolanaSccpSourceProveFn({
             globalScope: self as unknown as SolanaSccpProverGlobal,
-            moduleUrl:
-              readOptionalWorkerString(solanaInput.proverModuleUrl) ||
-              import.meta.env.VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL,
+            moduleUrl: resolveSolanaSourceProverModuleUrl(solanaInput),
+            moduleHash: resolveSolanaSourceProverModuleHash(solanaInput),
             importer: importWorkerPublicModule<SolanaSccpProverModule>,
           });
           if (typeof proveSource !== "function") {
@@ -1114,7 +1317,18 @@ self.onmessage = (event: MessageEvent<unknown>) => {
           const result = bindSolanaToTairaSourceProofPackage({
             manifest: bindInput.manifest,
             proofPackage: await proveSource(proveInput),
+            solanaNetwork: bindInput.solanaNetwork,
+            solanaNetworkId: bindInput.solanaNetworkId,
+            solanaGenesisHash: bindInput.solanaGenesisHash,
+            sourceProofBackend: bindInput.sourceProofBackend,
+            solanaRpcUrl: bindInput.solanaRpcUrl,
+            sourceBridgeAddress: bindInput.sourceBridgeAddress,
+            sourceStateAddress: bindInput.sourceStateAddress,
+            tokenMintAddress: bindInput.tokenMintAddress,
             txId: bindInput.txId,
+            transaction: bindInput.transaction,
+            signatureStatus: bindInput.signatureStatus,
+            finality: bindInput.finality,
             solanaSender: bindInput.solanaSender,
             tairaRecipient: bindInput.tairaRecipient,
             amountDecimal: bindInput.amountDecimal,

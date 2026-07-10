@@ -16,8 +16,8 @@
   "tonNetwork": "testnet",
   "tonChain": "ton-testnet",
   "tonChainIdHex": "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd",
-  "moduleSha256": "0x9086444ed76b601f9c82544866ec2fd9092d7b8c18ea9bc66131e8ecf3bf8fd4",
+  "moduleSha256": "0x39bf31b7c80088a0252d3751704652068a4994ebdffb4b7a540c74aa9ab016fc",
   "boundRouteHash": "0x8651c1b818973f92050f69e66e8491e9681d23db1cb37393b9ea15c5e7e02799",
   "boundProofHash": "0x0f1aa16d7496e1c04ebc773f62616c3f2df4c85839f4f825d95255f229f7d824",
-  "manifestSha256": "0xd58c87c1990cba84a39312a3772ef72099f1674e0dc66c1873527e5a90738e42"
+  "manifestSha256": "0x5919bb39327b5719146992a638cba2344ac7b16e5fe3c62c37a837b8a73f8e46"
 }

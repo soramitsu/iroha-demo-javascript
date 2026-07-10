@@ -207,6 +207,31 @@ describe("ReceiveView", () => {
     );
   });
 
+  it("keeps the QR and its actions primary while details stay disclosed", async () => {
+    createConfidentialPaymentAddressMock.mockResolvedValue({
+      schema: "iroha-confidential-payment-address/v3",
+      receiveKeyId: "alice-key",
+      receivePublicKeyBase64Url: "alicePublicKey",
+      shieldedOwnerTagHex: "11".repeat(32),
+      shieldedDiversifierHex: "33".repeat(32),
+      recoveryHint: "one-time-receive-key",
+    });
+    qrToStringMock.mockResolvedValue("<svg></svg>");
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const workspace = wrapper.get(".receive-qr-workspace");
+    expect(workspace.find(".qr-panel").exists()).toBe(true);
+    expect(workspace.findAll(".receive-actions button")).toHaveLength(2);
+    expect(wrapper.get(".receive-address-details").attributes("open")).toBe(
+      undefined,
+    );
+    expect(wrapper.get(".receive-wallet-details").attributes("open")).toBe(
+      undefined,
+    );
+  });
+
   it("requests a fresh confidential payment address for the active account", async () => {
     createConfidentialPaymentAddressMock.mockResolvedValue({
       schema: "iroha-confidential-payment-address/v3",

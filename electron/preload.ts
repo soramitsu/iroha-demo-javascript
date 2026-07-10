@@ -15,9 +15,11 @@ import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   PublicKey,
+  SystemProgram,
   Transaction,
   TransactionInstruction,
 } from "@solana/web3.js";
+import { bindSignedSolanaTransactionForBroadcast } from "./solanaTransaction";
 import {
   ToriiClient,
   buildPrivateCreateKaigiTransaction,
@@ -1365,12 +1367,17 @@ type SolanaTokenBalanceInput = SolanaRpcInput & {
   ownerAddress: string;
   mintAddress: string;
 };
+type SolanaAssociatedTokenAccountInput = SolanaRpcInput & {
+  payerAddress: string;
+  ownerAddress: string;
+  mintAddress: string;
+};
 type SolanaTransactionInput = SolanaRpcInput & {
   signature: string;
 };
 type SolanaBroadcastInput = SolanaRpcInput & {
   transactionB64: string;
-  skipPreflight?: boolean;
+  expectedUnsignedTransactionB64: string;
 };
 type SolanaInstructionAccountMetaInput = {
   pubkey: string;
@@ -1388,6 +1395,11 @@ type SolanaBuildTransactionInput = SolanaRpcInput & {
   feePayer: string;
   instructions: SolanaInstructionInput[];
   recentBlockhash?: string;
+};
+type SolanaPreparedAssociatedTokenAccount = {
+  associatedTokenAddress: string;
+  exists: boolean;
+  createInstruction: SolanaInstructionInput | null;
 };
 type TronEventsInput = TronGatewayInput & {
   txId: string;
@@ -1821,6 +1833,9 @@ type IrohaBridge = {
   getSolanaTokenBalance(
     input: SolanaTokenBalanceInput,
   ): Promise<Record<string, unknown>>;
+  prepareSolanaAssociatedTokenAccount(
+    input: SolanaAssociatedTokenAccountInput,
+  ): Promise<SolanaPreparedAssociatedTokenAccount>;
   getSolanaSignatureStatus(
     input: SolanaTransactionInput,
   ): Promise<Record<string, unknown> | null>;
@@ -9403,6 +9418,12 @@ const getEvmLogsFromRpc = async (
 };
 
 const DEFAULT_SOLANA_TESTNET_RPC_URL = "https://api.testnet.solana.com";
+const SOLANA_SPL_TOKEN_PROGRAM_ID = new PublicKey(
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+);
+const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+);
 const SOLANA_BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SOLANA_ALLOWED_RPC_METHODS = new Set([
@@ -9684,6 +9705,99 @@ const getSolanaTokenBalanceFromRpc = async (
   };
 };
 
+const prepareSolanaAssociatedTokenAccountFromRpc = async (
+  input: SolanaAssociatedTokenAccountInput,
+): Promise<SolanaPreparedAssociatedTokenAccount> => {
+  const payerAddress = new PublicKey(
+    normalizeSolanaRpcAddress(input.payerAddress, "Solana payer address"),
+  );
+  const ownerAddress = new PublicKey(
+    normalizeSolanaRpcAddress(input.ownerAddress, "Solana token owner address"),
+  );
+  const mintAddress = new PublicKey(
+    normalizeSolanaRpcAddress(input.mintAddress, "Solana mint address"),
+  );
+  const [associatedTokenAddress] = PublicKey.findProgramAddressSync(
+    [
+      ownerAddress.toBuffer(),
+      SOLANA_SPL_TOKEN_PROGRAM_ID.toBuffer(),
+      mintAddress.toBuffer(),
+    ],
+    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  const accountInfo = await callSolanaRpcOnGateway({
+    endpoint: input.endpoint,
+    method: "getAccountInfo",
+    params: [
+      associatedTokenAddress.toBase58(),
+      { encoding: "base64", commitment: "confirmed" },
+    ],
+  });
+  if (!isPlainRecord(accountInfo)) {
+    throw new Error("Solana getAccountInfo response must be an object.");
+  }
+  const value = accountInfo.value;
+  if (value !== null && value !== undefined) {
+    if (!isPlainRecord(value)) {
+      throw new Error("Solana associated token account info is invalid.");
+    }
+    const owner = normalizeSolanaRpcAddress(
+      value.owner,
+      "Solana associated token account owner",
+    );
+    if (owner !== SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58()) {
+      throw new Error(
+        "Solana associated token account is not owned by the SPL token program.",
+      );
+    }
+    return {
+      associatedTokenAddress: associatedTokenAddress.toBase58(),
+      exists: true,
+      createInstruction: null,
+    };
+  }
+  return {
+    associatedTokenAddress: associatedTokenAddress.toBase58(),
+    exists: false,
+    createInstruction: {
+      programId: SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),
+      accounts: [
+        {
+          pubkey: payerAddress.toBase58(),
+          isSigner: true,
+          isWritable: true,
+        },
+        {
+          pubkey: associatedTokenAddress.toBase58(),
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: ownerAddress.toBase58(),
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: mintAddress.toBase58(),
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: SystemProgram.programId.toBase58(),
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58(),
+          isSigner: false,
+          isWritable: false,
+        },
+      ],
+      dataHex: "0x01",
+    },
+  };
+};
+
 const getSolanaSignatureStatusFromRpc = async (
   input: SolanaTransactionInput,
 ): Promise<Record<string, unknown> | null> => {
@@ -9712,7 +9826,7 @@ const getSolanaTransactionFromRpc = async (
     params: [
       signature,
       {
-        commitment: "confirmed",
+        commitment: "finalized",
         encoding: "json",
         maxSupportedTransactionVersion: 0,
       },
@@ -9828,19 +9942,40 @@ const buildSolanaTransactionFromInstructions = async (
 const broadcastSolanaTransactionToRpc = async (
   input: SolanaBroadcastInput,
 ): Promise<string> => {
+  const controlled = bindSignedSolanaTransactionForBroadcast({
+    expectedUnsignedTransactionB64: normalizeSolanaTransactionB64(
+      input.expectedUnsignedTransactionB64,
+    ),
+    signedTransactionB64: normalizeSolanaTransactionB64(input.transactionB64),
+  });
   const result = await callSolanaRpcOnGateway({
     endpoint: input.endpoint,
     method: "sendTransaction",
     params: [
-      normalizeSolanaTransactionB64(input.transactionB64),
+      controlled.transactionB64,
       {
         encoding: "base64",
         preflightCommitment: "confirmed",
-        skipPreflight: input.skipPreflight === true,
+        skipPreflight: false,
       },
     ],
   });
-  return normalizeSolanaRpcSignature(result);
+  const signature = normalizeSolanaRpcSignature(result);
+  const broadcastSignature = decodeSolanaBase58(
+    signature,
+    "Solana broadcast transaction signature",
+  );
+  if (
+    broadcastSignature.length !== controlled.signatureBytes.length ||
+    broadcastSignature.some(
+      (byte, index) => byte !== controlled.signatureBytes[index],
+    )
+  ) {
+    throw new Error(
+      "Solana RPC returned a signature for a different transaction.",
+    );
+  }
+  return signature;
 };
 
 const fetchExplorerAssetDefinitionSnapshot = async (
@@ -15415,6 +15550,9 @@ const api: IrohaBridge = {
   },
   getSolanaTokenBalance(input) {
     return getSolanaTokenBalanceFromRpc(input);
+  },
+  prepareSolanaAssociatedTokenAccount(input) {
+    return prepareSolanaAssociatedTokenAccountFromRpc(input);
   },
   getSolanaSignatureStatus(input) {
     return getSolanaSignatureStatusFromRpc(input);

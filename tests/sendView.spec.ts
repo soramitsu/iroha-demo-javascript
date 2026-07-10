@@ -19,11 +19,19 @@ const BOB_RECEIVE_PUBLIC_KEY_BASE64_URL = "bobReceivePublicKey";
 const MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL = "malloryReceivePublicKey";
 const DESTINATION_ACCOUNT_SELECTOR =
   'input[data-testid="destination-account-input"]';
+const SEND_MODE_PRIVATE_SELECTOR =
+  '[data-testid="send-mode-control"] .ui-segmented-option:nth-child(2)';
+const SEND_MODE_STANDARD_SELECTOR =
+  '[data-testid="send-mode-control"] .ui-segmented-option:nth-child(1)';
+const SEND_REVIEW_SELECTOR = '[data-testid="send-review-button"]';
+const SEND_CONFIRM_SELECTOR = '[data-testid="send-confirm-button"]';
 
 const fetchAccountAssetsMock = vi.fn();
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
 const resolveAccountAliasMock = vi.fn();
+const qrStartMock = vi.fn();
+const qrStopMock = vi.fn();
 type QrDecodeHandler = (payload: string) => void;
 let qrDecodeHandler: QrDecodeHandler | null = null;
 
@@ -45,7 +53,8 @@ vi.mock("@/composables/useQrScanner", async () => {
         message: ref(""),
         videoRef: ref<HTMLVideoElement | null>(null),
         fileInputRef: ref<HTMLInputElement | null>(null),
-        start: vi.fn(),
+        start: qrStartMock,
+        stop: qrStopMock,
         openFilePicker: vi.fn(),
         decodeFile: vi.fn(),
       };
@@ -58,11 +67,16 @@ const t = (key: string, params?: Record<string, string | number>) =>
 
 describe("SendView", () => {
   beforeEach(() => {
+    document.body
+      .querySelectorAll("dialog.ui-dialog")
+      .forEach((dialog) => dialog.remove());
     localStorage.clear();
     fetchAccountAssetsMock.mockReset();
     transferAssetMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
     resolveAccountAliasMock.mockReset();
+    qrStartMock.mockReset();
+    qrStopMock.mockReset();
     qrDecodeHandler = null;
     resolveAccountAliasMock.mockImplementation(
       async (input: { alias?: string }) => ({
@@ -129,7 +143,24 @@ describe("SendView", () => {
     });
   };
 
-  it("forwards shielded send payloads when checkbox is enabled", async () => {
+  const enablePrivateMode = async (wrapper: ReturnType<typeof mountView>) => {
+    await wrapper.get(SEND_MODE_PRIVATE_SELECTOR).trigger("click");
+  };
+
+  const reviewTransfer = async (wrapper: ReturnType<typeof mountView>) => {
+    await wrapper.get(SEND_REVIEW_SELECTOR).trigger("click");
+    await flushPromises();
+  };
+
+  const reviewAndConfirmTransfer = async (
+    wrapper: ReturnType<typeof mountView>,
+  ) => {
+    await reviewTransfer(wrapper);
+    await wrapper.get(SEND_CONFIRM_SELECTOR).trigger("click");
+    await flushPromises();
+  };
+
+  it("forwards shielded send payloads after private mode review", async () => {
     transferAssetMock.mockResolvedValue({ hash: "0xabc" });
     const wrapper = mountView();
     await flushPromises();
@@ -138,7 +169,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("10");
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
@@ -150,10 +181,11 @@ describe("SendView", () => {
       }),
     );
     await flushPromises();
-    expect(wrapper.text()).toContain(t("Private transfer"));
+    expect(
+      wrapper.get(SEND_MODE_PRIVATE_SELECTOR).attributes("aria-pressed"),
+    ).toBe("true");
 
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(transferAssetMock).toHaveBeenCalledTimes(1);
     expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith({
@@ -190,8 +222,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(wrapper.text()).toContain(
       t("Transaction submitted: {hash}", { hash: "0x123" }),
@@ -203,6 +234,53 @@ describe("SendView", () => {
       "send-status-success",
     );
     expect(wrapper.get(".send-status").attributes("role")).toBe("status");
+  });
+
+  it("requires review before a valid transfer is submitted", async () => {
+    transferAssetMock.mockResolvedValue({ hash: "0xreviewed" });
+    const wrapper = mountView();
+    await flushPromises();
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("2");
+
+    await reviewTransfer(wrapper);
+
+    expect(transferAssetMock).not.toHaveBeenCalled();
+    expect(wrapper.find(SEND_CONFIRM_SELECTOR).exists()).toBe(true);
+    expect(wrapper.get(".send-review-list").text()).toContain(
+      BOB_I105_ACCOUNT_ID,
+    );
+
+    await wrapper.get(SEND_CONFIRM_SELECTOR).trigger("click");
+    await flushPromises();
+
+    expect(transferAssetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the camera scanner on demand and stops it when closed", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const scanButton = wrapper
+      .findAll(".send-tools button")
+      .find((button) => button.text().includes(t("Scan payment QR")));
+    await scanButton?.trigger("click");
+    await flushPromises();
+
+    const dialog = document.body.querySelector<HTMLDialogElement>(
+      "dialog.ui-dialog[open]",
+    );
+    expect(dialog).not.toBeNull();
+    expect(qrStartMock).toHaveBeenCalledTimes(1);
+
+    dialog?.querySelector<HTMLButtonElement>(".ui-dialog-close")?.click();
+    await flushPromises();
+
+    expect(qrStopMock).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector("dialog.ui-dialog[open]")).toBeNull();
   });
 
   it("refreshes the displayed balance after successful transparent sends", async () => {
@@ -235,8 +313,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(2);
     expect(wrapper.text()).toContain("40");
@@ -253,8 +330,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     const status = wrapper.get(".send-status");
     expect(status.text()).toContain(rejectedMessage);
@@ -270,7 +346,7 @@ describe("SendView", () => {
     expect(wrapper.text()).toContain(t("Private"));
     expect(wrapper.text()).not.toContain(t("Shield policy mode: {mode}."));
 
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
 
     expect(wrapper.text()).toContain(
       t(
@@ -288,8 +364,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(` ${BOB_I105_ACCOUNT_ID} `);
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -312,8 +387,7 @@ describe("SendView", () => {
 
     await wrapper.get(DESTINATION_ACCOUNT_SELECTOR).setValue("bob@universal");
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(resolveAccountAliasMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
@@ -346,8 +420,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue("missing@universal");
     await wrapper.get('input[type="number"]').setValue("2");
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewTransfer(wrapper);
 
     expect(transferAssetMock).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain(
@@ -362,14 +435,17 @@ describe("SendView", () => {
     await wrapper
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
 
     const destinationInput = wrapper.get(DESTINATION_ACCOUNT_SELECTOR);
     expect((destinationInput.element as HTMLInputElement).value).toBe(
       BOB_I105_ACCOUNT_ID,
     );
     expect((destinationInput.element as HTMLInputElement).disabled).toBe(false);
-    expect(wrapper.find(".actions button").text()).toBe(t("Send privately"));
+    expect(
+      wrapper.get(SEND_MODE_PRIVATE_SELECTOR).attributes("aria-pressed"),
+    ).toBe("true");
+    expect(wrapper.get(SEND_REVIEW_SELECTOR).text()).toBe(t("Review"));
   });
 
   it("switches amount input step when shield mode changes", async () => {
@@ -379,10 +455,10 @@ describe("SendView", () => {
     const amountInput = wrapper.get('input[type="number"]');
     expect(amountInput.attributes("step")).toBe("0.01");
 
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     expect(amountInput.attributes("step")).toBe("1");
 
-    await wrapper.get('input[type="checkbox"]').setValue(false);
+    await wrapper.get(SEND_MODE_STANDARD_SELECTOR).trigger("click");
     expect(amountInput.attributes("step")).toBe("0.01");
   });
 
@@ -415,7 +491,7 @@ describe("SendView", () => {
       accountId: ALICE_I105_ACCOUNT_ID,
       limit: 200,
     });
-    expect(wrapper.text()).toContain(t("Balance"));
+    expect(wrapper.text()).toContain(t("Available balance"));
     expect(wrapper.text()).toContain("25000");
     expect(wrapper.text()).toContain("XOR");
     expect(wrapper.text()).toContain(
@@ -452,7 +528,7 @@ describe("SendView", () => {
       .get(DESTINATION_ACCOUNT_SELECTOR)
       .setValue(BOB_I105_ACCOUNT_ID);
     await wrapper.get('input[type="number"]').setValue("4");
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
@@ -464,8 +540,7 @@ describe("SendView", () => {
       }),
     );
     await flushPromises();
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -481,7 +556,7 @@ describe("SendView", () => {
     await flushPromises();
 
     expect(typeof qrDecodeHandler).toBe("function");
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
@@ -501,8 +576,7 @@ describe("SendView", () => {
     expect(wrapper.text()).toContain(t("QR decoded successfully."));
 
     transferAssetMock.mockResolvedValue({ hash: "0xqrshield" });
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
@@ -534,13 +608,12 @@ describe("SendView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(t("Private payment address loaded."));
-    expect(wrapper.get(".actions button").attributes("disabled")).toBe(
+    expect(wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled")).toBe(
       undefined,
     );
 
     transferAssetMock.mockResolvedValue({ hash: "0xpasted" });
-    await wrapper.get(".actions button").trigger("click");
-    await flushPromises();
+    await reviewAndConfirmTransfer(wrapper);
 
     expect(resolveAccountAliasMock).not.toHaveBeenCalledWith(
       expect.objectContaining({
@@ -566,7 +639,7 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v2",
@@ -587,7 +660,9 @@ describe("SendView", () => {
       (wrapper.get(DESTINATION_ACCOUNT_SELECTOR).element as HTMLInputElement)
         .value,
     ).toBe("");
-    expect(wrapper.get(".actions button").attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled"),
+    ).toBeDefined();
   });
 
   it("applies qr destination payload when shield mode is disabled", async () => {
@@ -643,8 +718,8 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const checkbox = wrapper.get('input[type="checkbox"]');
-    expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
+    const privateMode = wrapper.get(SEND_MODE_PRIVATE_SELECTOR);
+    expect((privateMode.element as HTMLButtonElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
       t("{operation} is unavailable: effective policy mode is {mode}.", {
         operation: "Shielded send",
@@ -660,8 +735,8 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const checkbox = wrapper.get('input[type="checkbox"]');
-    expect((checkbox.element as HTMLInputElement).disabled).toBe(false);
+    const privateMode = wrapper.get(SEND_MODE_PRIVATE_SELECTOR);
+    expect((privateMode.element as HTMLButtonElement).disabled).toBe(false);
     expect(wrapper.text()).toContain(
       t(
         "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
@@ -679,8 +754,8 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const checkbox = wrapper.get('input[type="checkbox"]');
-    expect((checkbox.element as HTMLInputElement).disabled).toBe(true);
+    const privateMode = wrapper.get(SEND_MODE_PRIVATE_SELECTOR);
+    expect((privateMode.element as HTMLButtonElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
       t("{operation} is unavailable for the current asset definition.", {
         operation: "Shielded send",
@@ -707,9 +782,11 @@ describe("SendView", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get('input[type="checkbox"]').setValue(true);
+    await enablePrivateMode(wrapper);
     await wrapper.get('input[type="number"]').setValue("10.5");
 
-    expect(wrapper.get(".actions button").attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled"),
+    ).toBeDefined();
   });
 });

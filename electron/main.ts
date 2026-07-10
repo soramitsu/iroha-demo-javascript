@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  protocol,
   session,
   systemPreferences,
 } from "electron";
@@ -19,6 +20,12 @@ import {
   registerDisplayMediaRequestHandler,
   registerMediaPermissionHandlers,
 } from "./mediaPermissions";
+import {
+  RENDERER_PROTOCOL_PRIVILEGES,
+  RENDERER_PROTOCOL_SCHEME,
+  readRendererProtocolAsset,
+  resolveRendererEntryUrl,
+} from "./rendererProtocol";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,6 +42,11 @@ const getSystemMediaAccessStatus = isMac
   ? (kind: "camera" | "microphone") =>
       systemPreferences.getMediaAccessStatus(kind)
   : undefined;
+const getTrustedRendererUrl = () =>
+  resolveRendererEntryUrl({
+    isPackaged: app.isPackaged,
+    environmentUrl: process.env["ELECTRON_RENDERER_URL"],
+  });
 let mainWindow: BrowserWindow | null = null;
 let pendingKaigiHashRoute: string | null = extractKaigiDeepLinkFromArgv(
   process.argv,
@@ -69,6 +81,13 @@ const configureSccpProverHeap = () => {
 };
 
 configureSccpProverHeap();
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: RENDERER_PROTOCOL_SCHEME,
+    privileges: RENDERER_PROTOCOL_PRIVILEGES,
+  },
+]);
 
 if (!app.isPackaged) {
   const scopedUserDataPath = join(
@@ -128,6 +147,32 @@ const registerKaigiProtocol = () => {
   app.setAsDefaultProtocolClient("iroha");
 };
 
+const registerRendererProtocol = () => {
+  const rendererRoot = join(__dirname, "../renderer");
+  protocol.handle(RENDERER_PROTOCOL_SCHEME, async (request) => {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      return new Response("Method not allowed", { status: 405 });
+    }
+    try {
+      const asset = await readRendererProtocolAsset({
+        requestUrl: request.url,
+        rendererRoot,
+      });
+      const body =
+        request.method === "HEAD" ? null : Uint8Array.from(asset.bytes).buffer;
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "Content-Type": asset.contentType,
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    } catch {
+      return new Response("Invalid renderer asset path", { status: 400 });
+    }
+  });
+};
+
 app.on("second-instance", (_event, argv) => {
   queueKaigiHashRoute(extractKaigiDeepLinkFromArgv(argv));
 });
@@ -166,12 +211,7 @@ const createWindow = () => {
     }
   });
 
-  const rendererUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (rendererUrl) {
-    window.loadURL(rendererUrl);
-  } else {
-    window.loadFile(join(__dirname, "../renderer/index.html"));
-  }
+  window.loadURL(getTrustedRendererUrl());
   mainWindow = window;
   return window;
 };
@@ -232,16 +272,19 @@ const registerVaultHandlers = () => {
 };
 
 app.whenReady().then(() => {
+  registerRendererProtocol();
   registerVpnHandlers();
   registerVaultHandlers();
   registerMediaPermissionHandlers(
     session.defaultSession,
-    () => process.env["ELECTRON_RENDERER_URL"],
+    getTrustedRendererUrl,
     requestSystemMediaAccess,
     getSystemMediaAccessStatus,
   );
-  registerDisplayMediaRequestHandler(session.defaultSession, () =>
-    desktopCapturer.getSources({ types: ["screen", "window"] }),
+  registerDisplayMediaRequestHandler(
+    session.defaultSession,
+    () => desktopCapturer.getSources({ types: ["screen", "window"] }),
+    getTrustedRendererUrl,
   );
   registerKaigiProtocol();
   createWindow();

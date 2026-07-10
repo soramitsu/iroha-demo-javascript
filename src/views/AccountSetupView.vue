@@ -3,12 +3,19 @@
     <section class="account-wizard-intro">
       <div class="account-wizard-copy">
         <p class="section-label">{{ t("Account Setup") }}</p>
-        <h2>{{ t("Create wallet") }}</h2>
+        <h2>{{ t("Wallet identity") }}</h2>
         <p class="helper">{{ accountSetupHelperText }}</p>
+        <SegmentedControl
+          class="account-flow-choice"
+          :model-value="accountFlowMode"
+          :label="t('Account Setup')"
+          :options="accountFlowOptions"
+          @update:model-value="selectAccountFlow"
+        />
       </div>
       <div class="account-wizard-chips">
-        <span class="pill positive">{{ t("Network ready") }}</span>
-        <span class="pill">{{ t("Secure backup") }}</span>
+        <StatusBadge tone="success" dot>{{ t("Network ready") }}</StatusBadge>
+        <StatusBadge>{{ t("Secure backup") }}</StatusBadge>
       </div>
     </section>
 
@@ -142,29 +149,6 @@
             >
               {{
                 generating ? t("Generating…") : t("Generate recovery phrase")
-              }}
-            </button>
-            <button
-              v-else
-              class="secondary"
-              :disabled="
-                generating || restoring || signingAlgorithmsUnavailable
-              "
-              @click="startNewRegistration"
-            >
-              {{ t("Create recovery phrase") }}
-            </button>
-            <button
-              class="secondary"
-              :disabled="generating || restoring"
-              @click="toggleRestorePanel"
-            >
-              {{
-                showRestorePanel
-                  ? t("Hide restore")
-                  : generatedKeys && isRestoreMode
-                    ? t("Edit recovery phrase")
-                    : t("Restore wallet")
               }}
             </button>
             <button
@@ -303,13 +287,32 @@
   </div>
 
   <div v-else class="card-grid account-grid">
-    <section class="card account-primary">
+    <SegmentedControl
+      v-model="savedWorkspaceMode"
+      class="account-workspace-choice"
+      :label="t('Saved Wallets')"
+      :options="[
+        { value: 'wallets', label: t('Saved Wallets') },
+        { value: 'add', label: t('Add another wallet') },
+      ]"
+    />
+
+    <section v-if="savedWorkspaceMode === 'add'" class="card account-primary">
       <header class="card-header">
         <div>
-          <h2>{{ t("Create wallet") }}</h2>
+          <h2>
+            {{ isRestoreMode ? t("Restore wallet") : t("Create wallet") }}
+          </h2>
           <p class="helper">{{ accountSetupHelperText }}</p>
         </div>
       </header>
+      <SegmentedControl
+        class="account-flow-choice"
+        :model-value="accountFlowMode"
+        :label="t('Account Setup')"
+        :options="accountFlowOptions"
+        @update:model-value="selectAccountFlow"
+      />
 
       <div class="form-grid wizard-form-grid">
         <label>
@@ -372,35 +375,14 @@
 
       <div class="actions">
         <button
-          v-if="!isRestoreMode"
+          v-if="!isRestoreMode && !generatedKeys"
           :disabled="generating || restoring || signingAlgorithmsUnavailable"
           @click="generateRecovery"
         >
           {{ generating ? t("Generating…") : t("Generate recovery phrase") }}
         </button>
         <button
-          v-else
-          class="secondary"
-          :disabled="generating || restoring || signingAlgorithmsUnavailable"
-          @click="startNewRegistration"
-        >
-          {{ t("Create recovery phrase") }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="generating || restoring"
-          @click="toggleRestorePanel"
-        >
-          {{
-            showRestorePanel
-              ? t("Hide restore")
-              : generatedKeys && isRestoreMode
-                ? t("Edit recovery phrase")
-                : t("Restore wallet")
-          }}
-        </button>
-        <button
-          class="secondary"
+          v-if="generatedKeys"
           :disabled="!canSaveGenerated"
           @click="saveGeneratedIdentity"
         >
@@ -476,23 +458,12 @@
       </div>
     </section>
 
-    <section class="card account-saved">
+    <section v-else class="account-saved account-section">
       <header class="card-header">
         <div>
           <h2>{{ t("Saved Wallets") }}</h2>
         </div>
       </header>
-      <div class="registration-steps">
-        <div
-          v-for="item in registrationChecklist"
-          :key="item.label"
-          class="reg-step"
-          :class="{ done: item.done }"
-        >
-          <span class="reg-dot"></span>
-          <span>{{ item.label }}</span>
-        </div>
-      </div>
       <div v-if="session.accounts.length" class="account-roster">
         <article
           v-for="account in session.accounts"
@@ -510,18 +481,20 @@
             </p>
           </div>
           <div class="account-actions">
-            <span
-              class="pill"
-              :class="{
-                positive: account.accountId === session.activeAccountId,
-              }"
+            <StatusBadge
+              :tone="
+                account.accountId === session.activeAccountId
+                  ? 'success'
+                  : 'neutral'
+              "
+              dot
             >
               {{
                 account.accountId === session.activeAccountId
                   ? t("Active")
                   : t("Available")
               }}
-            </span>
+            </StatusBadge>
             <button
               class="secondary"
               @click="setActiveAccount(account.accountId)"
@@ -545,180 +518,189 @@
         </p>
       </div>
       <div class="actions">
-        <button class="secondary" @click="startNewRegistration">
+        <button class="secondary" @click="openNewWalletSetup">
           {{ t("Add another wallet") }}
         </button>
       </div>
     </section>
 
-    <section class="card account-connect">
-      <header class="card-header">
-        <h2>{{ t("Phone pairing") }}</h2>
-      </header>
-      <p class="helper">
-        {{
-          t(
-            "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
-          )
-        }}
-      </p>
-      <div v-if="connectPreview" class="connect-preview">
-        <img
-          v-if="connectQr"
-          :src="connectQr"
-          :alt="t('IrohaConnect pairing QR')"
-          class="connect-qr"
-        />
-        <details class="technical-details compact">
-          <summary>{{ t("Pairing details") }}</summary>
-          <div class="kv monospace">
-            <span class="kv-label">{{ t("Session ID") }}</span>
-            <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
-          </div>
-          <div v-if="connectPreview.tokenWallet" class="kv monospace">
-            <span class="kv-label">{{ t("Wallet Token") }}</span>
-            <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
-          </div>
-        </details>
-      </div>
-      <div class="connect-reader">
-        <div class="actions connect-reader-actions">
-          <button class="secondary" type="button" @click="toggleConnectScanner">
-            {{
-              connectScanner.scanning ? t("Stop scan") : "Scan IrohaConnect QR"
-            }}
-          </button>
-          <button
-            class="secondary"
-            type="button"
-            @click="connectScanner.openFilePicker"
-          >
-            {{ t("Upload QR image") }}
-          </button>
-          <input
-            ref="connectScanner.fileInputRef"
-            type="file"
-            accept="image/*"
-            class="sr-only"
-            @change="connectScanner.decodeFile"
-          />
-        </div>
-
-        <div v-if="connectScanner.scanning" class="connect-scanner">
-          <video ref="connectScanner.videoRef" autoplay muted playsinline />
-        </div>
-
-        <div v-if="scannedConnectSession" class="connect-scanned">
-          <div class="kv">
-            <span class="kv-label">{{ t("Approval") }}</span>
-            <span class="kv-value">
-              {{
-                connectApprovalLoading
-                  ? t("Approving…")
-                  : connectApprovalStatus || t("Ready")
-              }}
-            </span>
-          </div>
-          <div class="kv monospace">
-            <span class="kv-label">{{ t("Session ID") }}</span>
-            <span class="kv-value">{{ scannedConnectSession.sid }}</span>
-          </div>
-          <div v-if="scannedConnectSession.chainId" class="kv monospace">
-            <span class="kv-label">{{ t("Chain ID") }}</span>
-            <span class="kv-value">{{ scannedConnectSession.chainId }}</span>
-          </div>
-          <div v-if="scannedConnectSession.node" class="kv monospace">
-            <span class="kv-label">{{ t("Endpoint") }}</span>
-            <span class="kv-value">{{ scannedConnectSession.node }}</span>
-          </div>
-          <div class="actions">
-            <button
-              class="secondary"
-              type="button"
-              @click="copyScannedConnectUri"
-            >
-              {{ scannedConnectCopied ? "Copied" : "Copy URI" }}
-            </button>
-          </div>
-        </div>
-
-        <p
-          v-if="connectScanError || connectScanner.message"
-          class="helper"
-          :class="{ error: connectScanError }"
-        >
-          {{ connectScanError || connectScanner.message }}
-        </p>
-      </div>
-      <div class="actions">
-        <button :disabled="connectLoading" @click="startConnectPairing">
-          {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="!connectPreview"
-          @click="resetConnect"
-        >
-          {{ t("Reset") }}
-        </button>
-      </div>
-      <p v-if="connectError" class="helper error">{{ connectError }}</p>
-    </section>
-
-    <div v-if="pendingConnectSession" class="connect-modal-backdrop">
-      <section
-        class="card connect-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="connect-approval-title"
-      >
-        <p class="connect-modal-label">{{ t("IrohaConnect connection") }}</p>
-        <h2 id="connect-approval-title">{{ t("Approve connection?") }}</h2>
+    <TechnicalDisclosure
+      class="account-connect account-pairing-disclosure"
+      :summary="t('Phone pairing')"
+    >
+      <div class="account-connect-content">
         <p class="helper">
           {{
             t(
-              "Review the requesting app details before allowing it to send wallet requests.",
+              "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
             )
           }}
         </p>
-        <div class="connect-modal-grid">
-          <div
-            v-for="detail in pendingConnectionDetails"
-            :key="detail.label"
-            class="kv"
-            :class="{ monospace: detail.monospace }"
-          >
-            <span class="kv-label">{{ detail.label }}</span>
-            <span class="kv-value">{{ detail.value }}</span>
+        <div v-if="connectPreview" class="connect-preview">
+          <img
+            v-if="connectQr"
+            :src="connectQr"
+            :alt="t('IrohaConnect pairing QR')"
+            class="connect-qr"
+          />
+          <details class="technical-details compact">
+            <summary>{{ t("Pairing details") }}</summary>
+            <div class="kv monospace">
+              <span class="kv-label">{{ t("Session ID") }}</span>
+              <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
+            </div>
+            <div v-if="connectPreview.tokenWallet" class="kv monospace">
+              <span class="kv-label">{{ t("Wallet Token") }}</span>
+              <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
+            </div>
+          </details>
+        </div>
+        <div class="connect-reader">
+          <div class="actions connect-reader-actions">
+            <button
+              class="secondary"
+              type="button"
+              data-testid="account-connect-scan"
+              @click="toggleConnectScanner"
+            >
+              {{
+                connectScanner.scanning
+                  ? t("Stop scan")
+                  : "Scan IrohaConnect QR"
+              }}
+            </button>
+            <button
+              class="secondary"
+              type="button"
+              @click="connectScanner.openFilePicker"
+            >
+              {{ t("Upload QR image") }}
+            </button>
+            <input
+              ref="connectScanner.fileInputRef"
+              type="file"
+              accept="image/*"
+              class="sr-only"
+              :aria-label="t('Upload QR image')"
+              @change="connectScanner.decodeFile"
+            />
           </div>
+
+          <div v-if="connectScanner.scanning" class="connect-scanner">
+            <video ref="connectScanner.videoRef" autoplay muted playsinline />
+          </div>
+
+          <div v-if="scannedConnectSession" class="connect-scanned">
+            <div class="kv">
+              <span class="kv-label">{{ t("Approval") }}</span>
+              <span class="kv-value">
+                {{
+                  connectApprovalLoading
+                    ? t("Approving…")
+                    : connectApprovalStatus || t("Ready")
+                }}
+              </span>
+            </div>
+            <div class="kv monospace">
+              <span class="kv-label">{{ t("Session ID") }}</span>
+              <span class="kv-value">{{ scannedConnectSession.sid }}</span>
+            </div>
+            <div v-if="scannedConnectSession.chainId" class="kv monospace">
+              <span class="kv-label">{{ t("Chain ID") }}</span>
+              <span class="kv-value">{{ scannedConnectSession.chainId }}</span>
+            </div>
+            <div v-if="scannedConnectSession.node" class="kv monospace">
+              <span class="kv-label">{{ t("Endpoint") }}</span>
+              <span class="kv-value">{{ scannedConnectSession.node }}</span>
+            </div>
+            <div class="actions">
+              <button
+                class="secondary"
+                type="button"
+                @click="copyScannedConnectUri"
+              >
+                {{ scannedConnectCopied ? "Copied" : "Copy URI" }}
+              </button>
+            </div>
+          </div>
+
+          <p
+            v-if="connectScanError || connectScanner.message"
+            class="helper"
+            :class="{ error: connectScanError }"
+          >
+            {{ connectScanError || connectScanner.message }}
+          </p>
         </div>
-        <div class="actions-row connect-modal-actions">
+        <div class="actions">
+          <button :disabled="connectLoading" @click="startConnectPairing">
+            {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
+          </button>
           <button
-            type="button"
             class="secondary"
-            :disabled="connectApprovalLoading"
-            @click="rejectPendingConnection"
+            :disabled="!connectPreview"
+            @click="resetConnect"
           >
-            {{ t("Reject") }}
-          </button>
-          <button
-            type="button"
-            :disabled="connectApprovalLoading"
-            @click="approvePendingConnection"
-          >
-            {{
-              connectApprovalLoading ? t("Approving…") : t("Approve connection")
-            }}
+            {{ t("Reset") }}
           </button>
         </div>
-      </section>
-    </div>
+        <p v-if="connectError" class="helper error">{{ connectError }}</p>
+      </div>
+    </TechnicalDisclosure>
+
+    <AppDialog
+      :open="Boolean(pendingConnectSession)"
+      :eyebrow="t('IrohaConnect connection')"
+      :title="t('Approve connection?')"
+      :description="
+        t(
+          'Review the requesting app details before allowing it to send wallet requests.',
+        )
+      "
+      :busy="connectApprovalLoading"
+      :show-close="false"
+      initial-focus-selector="[data-testid='account-connect-reject']"
+      @close="rejectPendingConnection"
+    >
+      <div class="connect-modal-grid">
+        <div
+          v-for="detail in pendingConnectionDetails"
+          :key="detail.label"
+          class="kv"
+          :class="{ monospace: detail.monospace }"
+        >
+          <span class="kv-label">{{ detail.label }}</span>
+          <span class="kv-value">{{ detail.value }}</span>
+        </div>
+      </div>
+      <template #actions>
+        <button
+          type="button"
+          class="secondary"
+          data-testid="account-connect-reject"
+          :disabled="connectApprovalLoading"
+          @click="rejectPendingConnection"
+        >
+          {{ t("Reject") }}
+        </button>
+        <button
+          type="button"
+          :disabled="connectApprovalLoading"
+          @click="approvePendingConnection"
+        >
+          {{
+            connectApprovalLoading ? t("Approving…") : t("Approve connection")
+          }}
+        </button>
+      </template>
+    </AppDialog>
   </div>
   <input
     ref="backupFileInput"
     type="file"
     accept=".json,application/json"
     style="display: none"
+    :aria-label="t('Import backup JSON')"
     @change="handleBackupFileSelection"
   />
 </template>
@@ -727,6 +709,10 @@
 import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import QRCode from "qrcode";
+import AppDialog from "@/components/ui/AppDialog.vue";
+import SegmentedControl from "@/components/ui/SegmentedControl.vue";
+import StatusBadge from "@/components/ui/StatusBadge.vue";
+import TechnicalDisclosure from "@/components/ui/TechnicalDisclosure.vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useQrScanner } from "@/composables/useQrScanner";
 import { useSessionStore } from "@/stores/session";
@@ -893,6 +879,7 @@ const restorePhraseInput = ref("");
 const backupConfirmed = ref(false);
 const showRestorePanel = ref(false);
 const accountFlowMode = ref<"generate" | "restore">("generate");
+const savedWorkspaceMode = ref<"wallets" | "add">("wallets");
 const generating = ref(false);
 const restoring = ref(false);
 const generateError = ref("");
@@ -906,6 +893,10 @@ const pendingConfidentialWalletBackup =
 const hasSavedAccounts = computed(() => session.accounts.length > 0);
 const isFirstLaunch = computed(() => !hasSavedAccounts.value);
 const isRestoreMode = computed(() => accountFlowMode.value === "restore");
+const accountFlowOptions = computed(() => [
+  { value: "generate", label: t("Create wallet") },
+  { value: "restore", label: t("Restore from recovery phrase") },
+]);
 const accountSetupHelperText = computed(() =>
   isRestoreMode.value
     ? t("Restore your wallet from a recovery phrase and save it locally.")
@@ -997,22 +988,6 @@ const copyableRecoveryPhrase = computed(() =>
     mnemonicWords.value.join(" ") || recoveryMnemonic.value,
   ),
 );
-const registrationChecklist = computed(() => [
-  {
-    label: t("Network connection ready"),
-    done: Boolean(connectionForm.toriiUrl && connectionForm.chainId),
-  },
-  {
-    label: recoveryStepLabel.value,
-    done:
-      backupConfirmed.value &&
-      (isRestoreMode.value || mnemonicWords.value.length > 0),
-  },
-  {
-    label: t("Account saved"),
-    done: Boolean(onboardingStatus.value || session.hasAccount),
-  },
-]);
 const hasPendingSetupState = computed(() =>
   Boolean(
     generatedKeys.value ||
@@ -1048,6 +1023,28 @@ const startNewRegistration = () => {
   pendingConfidentialWalletBackup.value = null;
 };
 
+const openNewWalletSetup = () => {
+  startNewRegistration();
+  savedWorkspaceMode.value = "add";
+};
+
+const selectAccountFlow = (mode: string) => {
+  if (mode !== "generate" && mode !== "restore") {
+    return;
+  }
+  if (
+    mode === accountFlowMode.value &&
+    (mode === "generate" || showRestorePanel.value)
+  ) {
+    return;
+  }
+  startNewRegistration();
+  if (mode === "restore") {
+    accountFlowMode.value = "restore";
+    showRestorePanel.value = true;
+  }
+};
+
 const applyBackupMetadata = (payload: {
   displayName?: string;
   domain?: string;
@@ -1064,16 +1061,6 @@ const applyBackupMetadata = (payload: {
     selectedSigningAlgorithm.value = payload.signingAlgorithm;
   }
   pendingConfidentialWalletBackup.value = payload.confidentialWallet ?? null;
-};
-
-const toggleRestorePanel = () => {
-  if (showRestorePanel.value) {
-    startNewRegistration();
-    return;
-  }
-  startNewRegistration();
-  accountFlowMode.value = "restore";
-  showRestorePanel.value = true;
 };
 
 const openBackupImportPicker = () => {
@@ -1672,19 +1659,64 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.account-grid {
-  grid-template-columns: minmax(420px, 1.08fr) minmax(320px, 0.92fr);
-  align-items: start;
-}
-
-.account-saved {
+.account-workspace-choice {
   grid-column: 1 / -1;
 }
 
-.account-primary,
-.account-connect,
+.account-wizard-intro,
+.wizard-stage.card,
+.account-primary.card,
 .account-saved {
-  min-height: 100%;
+  border-color: var(--frost-border);
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.account-wizard-rail {
+  border-color: var(--frost-border);
+  background: var(--frost-panel);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+
+.account-grid {
+  grid-template-columns: minmax(440px, 1.15fr) minmax(300px, 0.85fr);
+  grid-template-areas:
+    "primary saved"
+    "pairing saved";
+  align-items: start;
+  gap: 24px 32px;
+}
+
+.account-primary {
+  grid-area: primary;
+}
+
+.account-saved {
+  grid-area: saved;
+  padding: var(--space-5);
+  border: 1px solid var(--frost-border);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-raised);
+}
+
+.account-connect {
+  grid-area: pairing;
+}
+
+.account-section {
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.account-flow-choice {
+  margin-top: 18px;
+}
+
+.account-connect-content {
+  display: grid;
+  gap: 16px;
 }
 
 .keygen-form {
@@ -1702,26 +1734,26 @@ onBeforeUnmount(() => {
 .backup-panel {
   margin-top: 16px;
   padding: 18px;
-  border-radius: 18px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(130deg, rgba(255, 255, 255, 0.08), transparent 70%),
-    rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
 }
 
 .mnemonic-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 10px;
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono-font);
   margin-bottom: 12px;
 }
 
 .mnemonic-grid span {
   padding: 10px 12px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-control);
 }
 
 .backup-actions {
@@ -1744,11 +1776,11 @@ onBeforeUnmount(() => {
 }
 
 .error {
-  color: #b91c1c;
+  color: var(--color-danger);
 }
 
 .success {
-  color: #16a34a;
+  color: var(--color-success);
 }
 
 .connect-preview {
@@ -1762,11 +1794,11 @@ onBeforeUnmount(() => {
   width: min(220px, 100%);
   aspect-ratio: 1 / 1;
   object-fit: contain;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-control);
+  background: var(--color-qr-surface);
   padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-control);
 }
 
 .connect-reader {
@@ -1774,11 +1806,10 @@ onBeforeUnmount(() => {
   gap: 12px;
   margin-bottom: 16px;
   padding: 14px;
-  border-radius: 18px;
-  border: 1px solid var(--panel-border);
-  background:
-    linear-gradient(130deg, rgba(255, 255, 255, 0.08), transparent 70%),
-    rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
 }
 
 .connect-reader-actions {
@@ -1787,9 +1818,9 @@ onBeforeUnmount(() => {
 
 .connect-scanner {
   overflow: hidden;
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-media-stage);
 }
 
 .connect-scanner video {
@@ -1797,56 +1828,17 @@ onBeforeUnmount(() => {
   width: 100%;
   min-height: 220px;
   object-fit: cover;
-  background: #000;
+  background: var(--color-media-stage);
 }
 
 .connect-scanned {
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(255, 118, 118, 0.42);
-  border-radius: 16px;
-  background: rgba(255, 76, 102, 0.08);
-}
-
-.connect-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(18, 18, 26, 0.58);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-}
-
-.connect-modal {
-  width: min(640px, 100%);
-  max-height: min(82vh, 720px);
-  overflow: auto;
-  display: grid;
-  gap: 14px;
-  padding: 22px;
-  border-radius: 18px;
-  box-shadow: var(--shadow-strong);
-}
-
-.connect-modal-label,
-.connect-modal h2 {
-  margin: 0;
-}
-
-.connect-modal-label {
-  color: var(--iroha-muted);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.connect-modal h2 {
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
+  border: 1px solid
+    color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+  border-radius: var(--radius-control);
+  background: var(--color-accent-soft);
 }
 
 .connect-modal-grid {
@@ -1863,55 +1855,20 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-.connect-modal-actions {
-  justify-content: flex-end;
-  margin-top: 2px;
-}
-
 .monospace {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono-font);
   word-break: break-all;
-}
-
-.registration-steps {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.reg-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.82);
-}
-
-.reg-step.done {
-  border-color: rgba(255, 118, 118, 0.8);
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.reg-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--panel-border);
-}
-
-.reg-step.done .reg-dot {
-  background: var(--iroha-accent);
-  box-shadow: 0 0 0 3px rgba(255, 76, 102, 0.25);
 }
 
 .account-roster {
   display: grid;
-  gap: 12px;
+  gap: 0;
+  padding-inline: var(--space-4);
+  border-block: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  overflow: hidden;
 }
 
 .account-row {
@@ -1919,10 +1876,13 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+}
+
+.account-row:last-child {
+  border-bottom: 0;
 }
 
 .account-name {
@@ -1947,6 +1907,10 @@ onBeforeUnmount(() => {
 @media (max-width: 1080px) {
   .account-grid {
     grid-template-columns: 1fr;
+    grid-template-areas:
+      "saved"
+      "primary"
+      "pairing";
   }
 
   .keygen-form {
@@ -1956,13 +1920,9 @@ onBeforeUnmount(() => {
   .keygen-form label:last-child {
     grid-column: auto;
   }
-
-  .registration-steps {
-    grid-template-columns: 1fr;
-  }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .account-row {
     grid-template-columns: 1fr;
   }
@@ -1971,18 +1931,12 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
-  .connect-modal-backdrop {
-    align-items: end;
-    padding: 12px;
-  }
-
-  .connect-modal {
-    max-height: 88vh;
-    padding: 18px;
-  }
-
   .connect-modal-grid {
     grid-template-columns: 1fr;
+  }
+
+  .account-flow-choice {
+    width: 100%;
   }
 }
 </style>

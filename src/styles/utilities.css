@@ -1,0 +1,51 @@
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.tight {
+  margin: 0;
+}
+
+.mono,
+.monospace {
+  font-family: var(--mono-font);
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+}
+
+.error-text {
+  color: var(--color-danger);
+}
+
+.success-text {
+  color: var(--color-success);
+}
+
+.warning-text {
+  color: var(--color-warning);
+}
+
+:root[dir="rtl"] .nav-caret,
+:root[dir="rtl"] .ui-disclosure-caret,
+:root[dir="rtl"] .technical-details > summary::after {
+  transform: scaleX(-1) rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

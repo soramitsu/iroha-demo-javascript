@@ -12140,6 +12140,7 @@ const scanOneFile = async (
 
   const verifierFileByName = isVerifierKeyLikePath(filePath);
   const verifier =
+    browserProverSidecar.looksLikeBrowserProverSidecar ||
     routeManifestUpsertIsi.looksLikeRouteManifestUpsertIsi ||
     (route.looksLikeRoute && !verifierFileByName)
       ? { looksLikeVerifier: false, problems: [] }

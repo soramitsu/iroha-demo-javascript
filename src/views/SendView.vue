@@ -1,180 +1,239 @@
 <template>
-  <section class="card send-shell">
-    <header class="card-header send-header">
-      <div>
-        <h2>{{ t("Send") }}</h2>
-        <p class="helper send-account-copy">
+  <section class="send-shell">
+    <header class="send-header">
+      <p class="send-account-copy">
+        <span>{{ t("From") }}</span>
+        <strong>
           {{
             activeAccount?.displayName ||
             activeAccount?.i105AccountId ||
             activeAccount?.accountId ||
             t("Configure account first")
           }}
-        </p>
-      </div>
+        </strong>
+      </p>
       <div class="actions-row send-tools">
-        <button class="icon-cta" @click="toggleScanner">
+        <button
+          type="button"
+          class="icon-cta secondary"
+          :aria-expanded="scannerSheetOpen"
+          @click="toggleScanner"
+        >
           <img :src="sendIcon" alt="" />
           <span>{{
-            scanner.scanning ? t("Stop scanner") : t("Scan payment QR")
+            scannerSheetOpen ? t("Stop scanner") : t("Scan payment QR")
           }}</span>
         </button>
-        <button class="icon-cta secondary" @click="scanner.openFilePicker">
+        <button
+          type="button"
+          class="icon-cta secondary"
+          @click="scanner.openFilePicker"
+        >
           <img :src="sendIcon" alt="" />
           <span>{{ t("Upload QR image") }}</span>
         </button>
         <input
-          ref="scanner.fileInputRef"
+          ref="scannerFileInputRef"
           type="file"
           accept="image/*"
           class="sr-only"
+          :aria-label="t('Upload QR image')"
           @change="scanner.decodeFile"
         />
       </div>
     </header>
-    <div class="send-layout">
-      <div class="send-context">
-        <div class="send-kpis">
-          <div class="kv">
-            <span class="kv-label">{{ t("From") }}</span>
-            <span class="kv-value">{{
-              activeAccountDisplayId || t("Configure account first")
-            }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Asset") }}</span>
-            <span class="kv-value">{{ activeAssetLabel }}</span>
-            <span v-if="activeAssetAlias" class="send-kpi-sub">
-              {{ activeAssetCanonicalLabel }}
-            </span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Balance") }}</span>
-            <span class="kv-value">{{ activeAssetBalance }}</span>
-            <span class="send-kpi-sub">{{ activeAssetLabel }}</span>
-          </div>
-        </div>
-        <div
-          class="scanner-frame"
-          :class="{ active: scanner.scanning, idle: !scanner.scanning }"
-        >
-          <div v-if="scanner.scanning" class="scanner">
-            <video ref="scanner.videoRef" autoplay muted playsinline></video>
-          </div>
-          <div v-else class="scanner-idle">
-            <span class="scanner-title">{{ t("Scan payment QR") }}</span>
-            <span class="scanner-sub">{{ t("or upload a QR image") }}</span>
-          </div>
+
+    <QrScannerSheet
+      :open="scannerSheetOpen"
+      :title="t('Scan payment QR')"
+      :description="t('or upload a QR image')"
+      :close-label="t('Cancel')"
+      @close="closeScanner"
+    >
+      <div class="scanner-frame active">
+        <div class="scanner">
+          <video ref="scannerVideoRef" autoplay muted playsinline></video>
         </div>
       </div>
+    </QrScannerSheet>
+
+    <div class="send-layout">
+      <aside class="send-context">
+        <div class="send-balance">
+          <span class="send-balance-label">{{ t("Available balance") }}</span>
+          <strong class="send-balance-value">{{ activeAssetBalance }}</strong>
+          <span class="send-balance-asset">{{ activeAssetLabel }}</span>
+        </div>
+        <details class="technical-details compact send-source-details">
+          <summary>{{ t("Payment details") }}</summary>
+          <dl class="send-data-list">
+            <div>
+              <dt>{{ t("From") }}</dt>
+              <dd>
+                {{ activeAccountDisplayId || t("Configure account first") }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Asset") }}</dt>
+              <dd>{{ activeAssetLabel }}</dd>
+              <dd v-if="activeAssetAlias" class="send-kpi-sub">
+                {{ activeAssetCanonicalLabel }}
+              </dd>
+            </div>
+          </dl>
+        </details>
+      </aside>
 
       <div class="send-form-pane">
-        <div
-          class="payment-mode-toggle"
-          role="group"
-          :aria-label="t('Send mode')"
-        >
-          <button
-            type="button"
-            class="secondary"
-            :class="{ active: !form.shielded }"
-            @click="form.shielded = false"
-          >
-            {{ t("Standard") }}
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            :class="{ active: form.shielded }"
-            :disabled="!shieldSupported"
-            @click="form.shielded = true"
-          >
-            {{ t("Private") }}
-          </button>
-        </div>
-        <div class="form-grid send-form">
-          <label>
-            {{ t("Recipient") }}
-            <input
-              v-model="form.destination"
-              data-testid="destination-account-input"
-              :placeholder="
-                form.shielded
-                  ? t(
-                      'Paste private address, scan a Receive QR, or enter your own wallet to make funds private.',
-                    )
-                  : ''
-              "
-            />
-          </label>
-          <label>
-            {{ t("Amount") }}
-            <input
-              v-model="form.quantity"
-              type="number"
-              min="0"
-              :step="form.shielded ? '1' : '0.01'"
-            />
-          </label>
-          <label v-if="!form.shielded">
-            {{ t("Memo (optional)") }}
-            <input v-model="form.memo" />
-          </label>
-          <p v-else class="helper send-note">
-            {{
-              t(
-                "Private transfers use a recipient private address or Receive QR and do not include memos.",
+        <template v-if="!reviewing">
+          <SegmentedControl
+            class="payment-mode-toggle"
+            data-testid="send-mode-control"
+            :model-value="sendMode"
+            :label="t('Send mode')"
+            :options="sendModeOptions"
+            @update:model-value="setSendMode"
+          />
+
+          <div class="form-grid send-form">
+            <label>
+              {{ t("Recipient") }}
+              <input
+                v-model="form.destination"
+                data-testid="destination-account-input"
+                :placeholder="
+                  form.shielded
+                    ? t(
+                        'Paste private address, scan a Receive QR, or enter your own wallet to make funds private.',
+                      )
+                    : ''
+                "
+              />
+              <span
+                v-if="destinationResolutionMessage"
+                class="field-feedback recipient-resolution"
+                :class="{ error: destinationResolution.error }"
+              >
+                {{ destinationResolutionMessage }}
+              </span>
+              <span
+                v-else-if="
+                  form.shielded &&
+                  !destinationIsSelf &&
+                  !hasShieldedPaymentAddress
+                "
+                class="field-feedback"
+              >
+                {{
+                  t(
+                    "Paste a private address or scan a Receive QR before sending privately.",
+                  )
+                }}
+              </span>
+            </label>
+            <label>
+              {{ t("Amount") }}
+              <input
+                v-model="form.quantity"
+                type="number"
+                min="0"
+                :step="form.shielded ? '1' : '0.01'"
+              />
+            </label>
+            <label v-if="!form.shielded">
+              {{ t("Memo (optional)") }}
+              <input v-model="form.memo" />
+            </label>
+            <p v-else class="helper private-mode-note">
+              {{
+                t(
+                  "Private transfers use a recipient private address or Receive QR and do not include memos.",
+                )
+              }}
+            </p>
+          </div>
+
+          <p class="transaction-fee-note">
+            <span>{{ t("Fee") }}</span>
+            <strong>{{
+              formatTransactionFee(
+                transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                t,
               )
-            }}
+            }}</strong>
           </p>
-          <label class="shield-option">
-            <input
-              v-model="form.shielded"
-              type="checkbox"
-              :disabled="!shieldSupported"
-            />
-            <span>{{ t("Private transfer") }}</span>
-          </label>
-        </div>
-        <p class="transaction-fee-note">
-          <span>{{ t("Fee") }}</span>
-          <strong>{{
-            formatTransactionFee(
-              transactionFeeHintForEndpoint(session.connection.toriiUrl),
-              t,
-            )
-          }}</strong>
-        </p>
-        <div class="actions">
-          <button :disabled="sending || !isValid" @click="handleSend">
-            {{ sending ? t("Submitting…") : submitActionLabel }}
-          </button>
-        </div>
+          <div class="actions send-primary-actions">
+            <button
+              data-testid="send-review-button"
+              data-ui-primary-action
+              :disabled="sending || !isValid"
+              @click="openReview"
+            >
+              {{ t("Review") }}
+            </button>
+          </div>
+        </template>
+
+        <section v-else class="send-review" :aria-label="t('Review')">
+          <header class="send-review-header">
+            <p class="send-review-kicker">{{ t("Review") }}</p>
+            <h2>{{ submitActionLabel }}</h2>
+          </header>
+          <dl class="send-review-list">
+            <div>
+              <dt>{{ t("Send mode") }}</dt>
+              <dd>{{ form.shielded ? t("Private") : t("Standard") }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Recipient") }}</dt>
+              <dd>{{ reviewDestinationLabel }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Amount") }}</dt>
+              <dd>{{ normalizedQuantity }} {{ activeAssetLabel }}</dd>
+            </div>
+            <div v-if="!form.shielded && form.memo">
+              <dt>{{ t("Memo (optional)") }}</dt>
+              <dd>{{ form.memo }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Fee") }}</dt>
+              <dd>
+                {{
+                  formatTransactionFee(
+                    transactionFeeHintForEndpoint(session.connection.toriiUrl),
+                    t,
+                  )
+                }}
+              </dd>
+            </div>
+          </dl>
+          <div class="actions send-review-actions">
+            <button
+              type="button"
+              class="secondary"
+              :disabled="sending"
+              @click="reviewing = false"
+            >
+              {{ t("Back") }}
+            </button>
+            <button
+              data-testid="send-confirm-button"
+              data-ui-primary-action
+              :disabled="sending || !isValid"
+              @click="handleSend"
+            >
+              {{ sending ? t("Submitting…") : submitActionLabel }}
+            </button>
+          </div>
+        </section>
+
         <div class="send-feedback">
-          <p v-if="scanMessage || scanner.message" class="helper send-note">
-            {{ scanMessage || scanner.message }}
+          <p v-if="scanMessage || scannerMessage" class="helper send-note">
+            {{ scanMessage || scannerMessage }}
           </p>
           <p v-if="shieldCapabilityMessage" class="helper send-note">
             {{ shieldCapabilityMessage }}
-          </p>
-          <p
-            v-if="destinationResolutionMessage"
-            class="helper send-note recipient-resolution"
-            :class="{ error: destinationResolution.error }"
-          >
-            {{ destinationResolutionMessage }}
-          </p>
-          <p
-            v-if="
-              form.shielded && !destinationIsSelf && !hasShieldedPaymentAddress
-            "
-            class="helper send-note"
-          >
-            {{
-              t(
-                "Paste a private address or scan a Receive QR before sending privately.",
-              )
-            }}
           </p>
           <p
             v-if="statusMessage"
@@ -202,6 +261,7 @@ import {
   watch,
 } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { QrScannerSheet, SegmentedControl } from "@/components/ui";
 import {
   fetchAccountAssets,
   resolveAccountAlias,
@@ -256,6 +316,7 @@ const form = reactive({
   shieldedAddressAccountId: "",
 });
 const sending = ref(false);
+const reviewing = ref(false);
 const statusMessage = ref("");
 const statusTone = ref<"neutral" | "success" | "error">("neutral");
 const scanMessage = ref("");
@@ -335,8 +396,10 @@ const applyShieldedPaymentAddress = (
   shieldedPaymentAddressText.value =
     source === "address-input" ? rawAddressText.trim() : "";
 };
+const scannerSheetOpen = ref(false);
 const scanner = useQrScanner(
   (payload) => {
+    scannerSheetOpen.value = false;
     const paymentAddress = parseConfidentialPaymentAddressText(payload);
     if (paymentAddress.ok) {
       applyShieldedPaymentAddress(paymentAddress.payload, "qr");
@@ -381,7 +444,19 @@ const scanner = useQrScanner(
   },
   { translate: t },
 );
+const scannerMessage = scanner.message;
+const scannerVideoRef = scanner.videoRef;
+const scannerFileInputRef = scanner.fileInputRef;
 const sendIcon = SendIcon;
+
+const sendMode = computed(() => (form.shielded ? "private" : "standard"));
+const sendModeOptions = computed(() => [
+  { value: "standard", label: t("Standard") },
+  { value: "private", label: t("Private"), disabled: !shieldSupported.value },
+]);
+const setSendMode = (mode: string) => {
+  form.shielded = mode === "private";
+};
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
@@ -405,6 +480,16 @@ const destinationAccountIdForSubmit = computed(() =>
     ? form.shieldedAddressAccountId.trim()
     : resolvedDestinationAccountId.value || destinationValue.value,
 );
+const reviewDestinationLabel = computed(() => {
+  if (form.shielded && hasShieldedPaymentAddress.value) {
+    return (
+      form.shieldedAddressAccountId.trim() ||
+      resolvedDestinationAccountId.value ||
+      t("Private address")
+    );
+  }
+  return destinationAccountIdForSubmit.value || destinationValue.value;
+});
 const destinationResolutionMessage = computed(() => {
   if (!destinationResolutionMatchesInput.value) {
     return "";
@@ -626,6 +711,13 @@ watch(
   handleDestinationInputChange,
 );
 
+watch(
+  () => [form.destination, form.quantity, form.memo, form.shielded],
+  () => {
+    reviewing.value = false;
+  },
+);
+
 const refreshSendAssets = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
@@ -692,6 +784,34 @@ const isValid = computed(() =>
   ),
 );
 
+const openReview = async () => {
+  if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
+    statusMessage.value = t("Configure Torii + account first.");
+    statusTone.value = "error";
+    return;
+  }
+  if (form.shielded && !shieldSupported.value) {
+    statusMessage.value =
+      shieldCapabilityMessage.value || t("Shield mode is unavailable.");
+    statusTone.value = "error";
+    return;
+  }
+  const shouldResolveDestination =
+    Boolean(destinationValue.value) && !destinationIsShieldedAddressInput.value;
+  if (shouldResolveDestination) {
+    const resolvedDestination = await resolveDestinationNow();
+    if (!resolvedDestination) {
+      statusMessage.value =
+        destinationResolution.error || t("Unable to resolve recipient.");
+      statusTone.value = "error";
+      return;
+    }
+  }
+  statusMessage.value = "";
+  statusTone.value = "neutral";
+  reviewing.value = true;
+};
+
 const handleSend = async () => {
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
     statusMessage.value = t("Configure Torii + account first.");
@@ -722,7 +842,12 @@ const handleSend = async () => {
   try {
     const shouldResolveDestination =
       Boolean(destinationValue.value) &&
-      !destinationIsShieldedAddressInput.value;
+      !destinationIsShieldedAddressInput.value &&
+      !(
+        destinationResolutionMatchesInput.value &&
+        resolvedDestinationAccountId.value &&
+        !destinationResolution.error
+      );
     const resolvedDestination = shouldResolveDestination
       ? await resolveDestinationNow()
       : "";
@@ -790,6 +915,7 @@ const handleSend = async () => {
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
     statusTone.value = "success";
+    reviewing.value = false;
     void refreshSendAssets();
   } catch (error) {
     statusMessage.value = toUserFacingErrorMessage(
@@ -804,15 +930,37 @@ const handleSend = async () => {
 
 const toggleScanner = async () => {
   scanMessage.value = "";
+  if (scannerSheetOpen.value) {
+    scanner.stop();
+    scannerSheetOpen.value = false;
+    return;
+  }
+  scannerSheetOpen.value = true;
   await nextTick();
   scanner.message.value = "";
-  scanner.start();
+  await scanner.start();
+};
+
+const closeScanner = () => {
+  scanner.stop();
+  scannerSheetOpen.value = false;
 };
 </script>
 
 <style scoped>
+.send-shell {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
 .send-header {
-  align-items: flex-start;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .send-tools {
@@ -832,15 +980,29 @@ const toggleScanner = async () => {
 }
 
 .send-account-copy {
-  margin-top: 4px;
-  word-break: break-all;
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  min-width: 0;
+}
+
+.send-account-copy span {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.send-account-copy strong {
+  overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
 
 .send-layout {
   display: grid;
-  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
-  gap: 20px;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(360px, 1.28fr);
+  gap: clamp(28px, 5vw, 72px);
   align-items: start;
   min-width: 0;
 }
@@ -853,59 +1015,116 @@ const toggleScanner = async () => {
   min-width: 0;
 }
 
-.send-kpis {
+.send-context {
+  position: sticky;
+  top: 20px;
+}
+
+.send-balance {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 12px;
+  gap: 6px;
+  padding: 8px 0 22px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.send-balance-label {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.send-balance-value {
+  font-size: clamp(2.2rem, 5vw, 3.6rem);
+  font-weight: 650;
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+}
+
+.send-balance-asset {
+  color: var(--color-text-muted);
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 .send-kpi-sub {
   min-width: 0;
-  color: var(--iroha-muted);
+  color: var(--color-text-muted);
   font-size: 0.78rem;
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
 }
 
+.send-source-details {
+  margin-top: 0;
+  background: transparent;
+}
+
+.send-data-list,
+.send-review-list {
+  display: grid;
+  gap: 0;
+  margin-block: 0;
+}
+
+.send-data-list > div,
+.send-review-list > div {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.42fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.send-data-list > div:last-child,
+.send-review-list > div:last-child {
+  border-bottom: 0;
+}
+
+.send-data-list dt,
+.send-review-list dt {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.send-data-list dd,
+.send-review-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: end;
+  unicode-bidi: plaintext;
+}
+
+.scanner-drawer {
+  width: min(100%, 720px);
+  justify-self: end;
+  animation: send-reveal 160ms ease-out;
+}
+
 .scanner-frame {
-  min-height: 248px;
-  border-radius: 20px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 68%),
-    rgba(0, 0, 0, 0.18);
+  min-height: 280px;
+  border-radius: var(--radius-panel);
+  border: 1px solid var(--color-border);
+  background: var(--color-media-stage);
   overflow: hidden;
   display: grid;
   place-items: center;
 }
 
 .scanner-frame.active {
-  border-color: rgba(255, 76, 102, 0.42);
-  box-shadow: 0 18px 36px rgba(255, 76, 102, 0.14);
+  border-color: color-mix(
+    in srgb,
+    var(--color-accent) 46%,
+    var(--color-border)
+  );
 }
 
 .scanner {
   width: 100%;
   height: 100%;
-  min-height: 248px;
-}
-
-.scanner-idle {
-  display: grid;
-  gap: 8px;
-  justify-items: center;
-  text-align: center;
-  padding: 24px;
-  color: var(--iroha-muted);
-}
-
-.scanner-title {
-  font-weight: 700;
-  color: inherit;
-}
-
-.scanner-sub {
-  font-size: 0.84rem;
+  min-height: 280px;
 }
 
 video {
@@ -913,11 +1132,11 @@ video {
   height: 100%;
   object-fit: cover;
   display: block;
-  background: black;
+  background: var(--color-media-stage);
 }
 
 .send-form {
-  gap: 14px;
+  gap: 18px;
 }
 
 .send-form label,
@@ -929,49 +1148,43 @@ video {
   width: 100%;
 }
 
+.send-form-pane {
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
 .payment-mode-toggle {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  padding: 6px;
-  border-radius: 18px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.payment-mode-toggle button {
-  box-shadow: none;
-}
-
-.payment-mode-toggle button.active {
-  color: #fff;
-  border-color: transparent;
-  background: linear-gradient(
-    120deg,
-    rgba(255, 75, 75, 0.92),
-    rgba(255, 102, 139, 0.88)
-  );
-  box-shadow: 0 12px 22px rgba(255, 76, 102, 0.22);
-}
-
-.shield-option {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 14px;
+  gap: 4px;
+  padding: 4px;
   border-radius: 14px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
 }
 
-.shield-option input[type="checkbox"] {
-  width: 18px;
-  height: 18px;
-  margin: 0;
-  padding: 0;
-  border-radius: 6px;
-  box-shadow: none;
+.field-feedback {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.field-feedback.error {
+  color: var(--color-danger);
+}
+
+.private-mode-note {
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid
+    color-mix(in srgb, var(--color-accent) 62%, transparent);
 }
 
 .send-feedback {
@@ -982,9 +1195,9 @@ video {
 
 .send-note {
   padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--panel-border);
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-soft);
   max-width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
@@ -993,39 +1206,21 @@ video {
 }
 
 .send-status {
-  color: var(--iroha-muted);
+  color: var(--color-text-muted);
 }
 
 .send-status-success {
-  color: #bbf7d0;
-  border-color: rgba(34, 197, 94, 0.46);
-  background:
-    linear-gradient(135deg, rgba(34, 197, 94, 0.16), transparent 70%),
-    rgba(34, 197, 94, 0.08);
-  box-shadow: inset 3px 0 0 rgba(34, 197, 94, 0.72);
+  color: var(--color-success);
+  border-color: color-mix(in srgb, currentColor 38%, var(--color-border));
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  box-shadow: inset 3px 0 0 currentColor;
 }
 
 .send-status-error {
-  color: #fecdd3;
-  border-color: rgba(255, 93, 113, 0.62);
-  background:
-    linear-gradient(135deg, rgba(255, 76, 102, 0.2), transparent 70%),
-    rgba(255, 76, 102, 0.1);
-  box-shadow: inset 3px 0 0 rgba(255, 76, 102, 0.82);
-}
-
-:global(:root[data-theme="light"]) .send-status-success {
-  color: #166534;
-  background:
-    linear-gradient(135deg, rgba(22, 163, 74, 0.12), transparent 70%),
-    rgba(22, 163, 74, 0.08);
-}
-
-:global(:root[data-theme="light"]) .send-status-error {
-  color: #9f1239;
-  background:
-    linear-gradient(135deg, rgba(225, 29, 72, 0.12), transparent 70%),
-    rgba(225, 29, 72, 0.08);
+  color: var(--color-danger);
+  border-color: color-mix(in srgb, currentColor 38%, var(--color-border));
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  box-shadow: inset 3px 0 0 currentColor;
 }
 
 .recipient-resolution {
@@ -1034,16 +1229,67 @@ video {
 }
 
 .recipient-resolution.error {
-  border-color: rgba(255, 93, 113, 0.5);
+  color: var(--color-danger);
 }
 
-@media (max-width: 1080px) {
-  .send-layout {
-    grid-template-columns: 1fr;
+.send-primary-actions button {
+  width: 100%;
+}
+
+.send-review {
+  display: grid;
+  gap: 20px;
+  animation: send-reveal 160ms ease-out;
+}
+
+.send-review-header {
+  display: grid;
+  gap: 6px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.send-review-kicker {
+  margin: 0;
+  color: var(--color-accent);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.send-review-header h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 3vw, 1.8rem);
+}
+
+.send-review-actions {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr);
+}
+
+@keyframes send-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
   }
 
-  .send-form-pane {
-    order: -1;
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 960px) {
+  .send-layout {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  .send-context {
+    position: static;
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr);
+    align-items: start;
   }
 
   .send-tools {
@@ -1051,9 +1297,11 @@ video {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 760px) {
   .send-header {
     gap: 14px;
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .send-tools {
@@ -1066,21 +1314,20 @@ video {
   .send-tools .icon-cta {
     width: 100%;
     justify-content: center;
-    min-height: 56px;
+    min-height: 48px;
     padding-inline: 12px;
     text-align: center;
   }
 
-  .send-kpis {
-    grid-template-columns: 1fr;
-  }
-
   .send-context {
-    gap: 12px;
+    grid-template-columns: 1fr;
+    order: 2;
   }
 
-  .scanner-frame.idle {
-    display: none;
+  .send-form-pane {
+    order: 1;
+    padding: 18px;
+    border-radius: 18px;
   }
 
   .scanner-frame,
@@ -1090,6 +1337,17 @@ video {
 
   .send-note {
     padding: 10px 12px;
+  }
+
+  .send-review-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .send-review,
+  .scanner-drawer {
+    animation: none;
   }
 }
 </style>

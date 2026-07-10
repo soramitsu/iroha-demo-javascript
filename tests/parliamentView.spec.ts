@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { defineComponent } from "vue";
 import ParliamentView from "@/views/ParliamentView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
@@ -66,8 +67,23 @@ const PROPOSAL_CODE_HASH_INPUT_SELECTOR =
 const PROPOSAL_ABI_HASH_INPUT_SELECTOR =
   'input[data-testid="proposal-abi-hash-input"]';
 
+const ParliamentViewHarness = defineComponent({
+  components: { ParliamentView },
+  template: `
+    <div data-testid="parliament-view-harness">
+      <header aria-label="Route header">
+        <div id="route-header-actions"></div>
+      </header>
+      <main><ParliamentView /></main>
+    </div>
+  `,
+});
+
+const mountedWrappers: Array<{ unmount: () => void }> = [];
+
 describe("ParliamentView", () => {
   beforeEach(() => {
+    document.body.replaceChildren();
     localStorage.clear();
     fetchAccountAssetsMock.mockReset();
     listAccountPermissionsMock.mockReset();
@@ -178,6 +194,13 @@ describe("ParliamentView", () => {
     setActivePinia(createPinia());
   });
 
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      wrapper.unmount();
+    }
+    document.body.replaceChildren();
+  });
+
   const mountView = (options?: {
     account?: Partial<{
       displayName: string;
@@ -217,11 +240,14 @@ describe("ParliamentView", () => {
       accounts: [account],
       activeAccountId: account.accountId,
     });
-    return mount(ParliamentView, {
+    const wrapper = mount(ParliamentViewHarness, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
     });
+    mountedWrappers.push(wrapper);
+    return wrapper;
   };
 
   const findButtonByText = (
@@ -236,6 +262,27 @@ describe("ParliamentView", () => {
     }
     return match;
   };
+
+  it("renders one refresh action in the route header without an inline title", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const headerActions = wrapper.get("#route-header-actions");
+    const refreshButtons = wrapper
+      .findAll("button")
+      .filter((button) => button.text() === t("Refresh"));
+
+    expect(refreshButtons).toHaveLength(1);
+    expect(headerActions.get("button").text()).toBe(t("Refresh"));
+    expect(
+      wrapper.find(".parliament-shell > .ui-route-header-action").exists(),
+    ).toBe(false);
+    expect(wrapper.find(".parliament-shell h1").exists()).toBe(false);
+
+    await headerActions.get("button").trigger("click");
+    await flushPromises();
+    expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(2);
+  });
 
   it("submits the fixed 10,000 XOR citizenship bond", async () => {
     const wrapper = mountView();
@@ -1544,5 +1591,28 @@ describe("ParliamentView", () => {
     expect(wrapper.text()).toContain(
       "Ballot amount exceeds the available XOR balance.",
     );
+  });
+
+  it("groups proposal reading and voting with keyboard-operable tabs", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    expect(wrapper.findAll(".parliament-decision-workspace")).toHaveLength(1);
+    const tablist = wrapper.get('.parliament-mobile-tabs[role="tablist"]');
+    const summaryTab = wrapper.get("#parliament-tab-summary");
+    const stageTab = wrapper.get("#parliament-tab-stage");
+    expect(summaryTab.attributes("aria-selected")).toBe("true");
+    expect(summaryTab.attributes("aria-controls")).toBe(
+      "parliament-panel-summary",
+    );
+
+    await tablist.trigger("keydown", { key: "ArrowRight" });
+    expect(stageTab.attributes("aria-selected")).toBe("true");
+    expect(stageTab.attributes("tabindex")).toBe("0");
+    expect(
+      wrapper
+        .get('[data-testid="parliament-advanced-drawer"]')
+        .attributes("open"),
+    ).toBeUndefined();
   });
 });

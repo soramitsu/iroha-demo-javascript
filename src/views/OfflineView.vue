@@ -1,372 +1,458 @@
 <template>
   <div class="offline-shell">
-    <section class="card offline-hardware-card">
-      <header class="card-header">
-        <h2>{{ t("1. Set up device wallet") }}</h2>
-        <span class="status-pill" :class="{ ok: hardwareStatus.ok }">
-          {{ hardwareStatus.label }}
-        </span>
-      </header>
-      <div class="form-grid">
+    <section class="offline-overview" :aria-label="t('Offline wallet')">
+      <div class="offline-balance">
+        <span>{{ t("Offline balance") }}</span>
+        <strong>{{ offline.wallet.balance }}</strong>
+        <small>{{ activeOfflineAssetLabel }}</small>
+      </div>
+      <dl class="offline-readiness">
         <div>
-          <p class="meta-label">{{ t("Status") }}</p>
-          <p class="meta-value">{{ hardwareStatus.detail }}</p>
+          <dt>{{ t("Status") }}</dt>
+          <dd>
+            <StatusBadge :tone="hardwareStatus.ok ? 'success' : 'warning'" dot>
+              {{ hardwareStatus.label }}
+            </StatusBadge>
+          </dd>
         </div>
         <div>
-          <p class="meta-label">{{ t("Registered") }}</p>
-          <p class="meta-value">
+          <dt>{{ t("Last sync") }}</dt>
+          <dd>{{ formatDate(offline.wallet.syncedAtMs) || t("Never") }}</dd>
+        </div>
+        <div>
+          <dt>{{ t("Offline history") }}</dt>
+          <dd>{{ t("{count} entries", { count: reversedHistory.length }) }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <SegmentedControl
+      class="offline-mode-control"
+      data-testid="offline-mode-control"
+      :model-value="activeMode"
+      :label="t('Offline')"
+      :options="offlineModeOptions"
+      @update:model-value="setActiveMode"
+    />
+
+    <div class="offline-workspace">
+      <section
+        v-show="activeMode === 'setup'"
+        class="card offline-task"
+        data-testid="offline-mode-setup"
+        aria-labelledby="offline-setup-heading"
+      >
+        <header class="offline-task-header">
+          <div>
+            <p class="section-label">{{ t("Ready") }}</p>
+            <h2 id="offline-setup-heading">{{ t("Offline wallet") }}</h2>
+            <p class="helper">{{ hardwareStatus.detail }}</p>
+          </div>
+          <StatusBadge
+            :tone="offline.hasHardwareWallet ? 'success' : 'neutral'"
+          >
             {{
               offline.hasHardwareWallet
-                ? t("Yes · {date}", {
-                    date: formatDate(offline.hardware.registeredAtMs),
-                  })
-                : t("Not registered")
+                ? t("Registered")
+                : t("Fallback to software keys")
             }}
-          </p>
-        </div>
-      </div>
-      <div class="actions">
-        <button
-          :disabled="hardwareBusy || !hardwareStatus.ok"
-          @click="registerHardware"
-        >
-          {{
-            hardwareBusy
-              ? t("Registering…")
-              : t("Register secure offline wallet")
-          }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="hardwareBusy"
-          @click="checkHardware"
-        >
-          {{ t("Recheck") }}
-        </button>
-      </div>
-      <p v-if="hardwareMessage" class="helper">{{ hardwareMessage }}</p>
-    </section>
-
-    <section class="card offline-balance-card">
-      <header class="card-header">
-        <h2>{{ t("2. Sync offline funds") }}</h2>
-        <span
-          class="pill"
-          :class="{ positive: Number(offline.wallet.balance) > 0 }"
-        >
-          {{ t("{balance} units", { balance: offline.wallet.balance }) }}
-        </span>
-      </header>
-      <div class="form-grid">
-        <div>
-          <p class="meta-label">{{ t("Last sync") }}</p>
-          <p class="meta-value">
-            {{ formatDate(offline.wallet.syncedAtMs) || t("Never") }}
-          </p>
-        </div>
-        <div>
-          <p class="meta-label">{{ t("Next policy expiry") }}</p>
-          <p class="meta-value">
-            {{ formatDate(offline.wallet.nextPolicyExpiryMs) || t("—") }}
-          </p>
-        </div>
-        <div>
-          <p class="meta-label">{{ t("Policy refresh") }}</p>
-          <p class="meta-value">
-            {{ formatDate(offline.wallet.nextRefreshMs) || t("—") }}
-          </p>
-        </div>
-      </div>
-      <div class="actions">
-        <button
-          :disabled="syncingAllowances || !canSync"
-          @click="syncAllowances"
-        >
-          {{ syncingAllowances ? t("Syncing…") : t("Sync offline allowance") }}
-        </button>
-      </div>
-      <p v-if="syncMessage" class="helper">{{ syncMessage }}</p>
-    </section>
-
-    <section class="card offline-allowances-card">
-      <details class="technical-details">
-        <summary>{{ t("Offline limits") }}</summary>
-        <header class="card-header">
-          <span class="pill">{{
-            t("{count} entries", { count: allowances.length })
-          }}</span>
+          </StatusBadge>
         </header>
-        <div v-if="allowances.length" class="table-wrap">
-          <table class="table">
-            <thead>
-              <tr>
-                <th>{{ t("Asset") }}</th>
-                <th>{{ t("Remaining") }}</th>
-                <th>{{ t("Policy expires") }}</th>
-                <th>{{ t("Refresh at") }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="item in allowances" :key="item.certificate_id_hex">
-                <td>{{ formatAssetReferenceLabel(item.asset_id, t("—")) }}</td>
-                <td>{{ item.remaining_amount }}</td>
-                <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
-                <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
-      </details>
-    </section>
 
-    <section class="card offline-request-card">
-      <header class="card-header">
-        <h2>{{ t("3. Request payment") }}</h2>
-        <button
-          class="secondary icon-cta"
-          :disabled="!canGenerateInvoice"
-          @click="generateInvoice"
-        >
-          <span>{{ t("Generate invoice") }}</span>
-        </button>
-      </header>
-      <div class="form-grid">
-        <label>
-          {{ t("Amount") }}
-          <input v-model="invoiceForm.amount" type="text" />
-        </label>
-        <label>
-          {{ t("Memo (optional)") }}
-          <input v-model="invoiceForm.memo" />
-        </label>
-        <label>
-          {{ t("Validity (minutes)") }}
-          <input
-            v-model.number="invoiceForm.validityMinutes"
-            type="number"
-            min="1"
-            max="1440"
-          />
-        </label>
-      </div>
-      <div v-if="invoicePayload" class="qr-panel">
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div v-if="invoiceQr" class="qr" v-html="invoiceQr"></div>
-        <div class="actions">
-          <button class="secondary" @click="copyInvoicePayload">
-            {{ t("Copy invoice JSON") }}
-          </button>
+        <div class="offline-setup-summary">
+          <div>
+            <span class="meta-label">{{ t("Wallet status") }}</span>
+            <strong>
+              {{
+                offline.hasHardwareWallet
+                  ? t("Yes · {date}", {
+                      date: formatDate(offline.hardware.registeredAtMs),
+                    })
+                  : t("Not registered")
+              }}
+            </strong>
+          </div>
+          <div>
+            <span class="meta-label">{{ t("Offline limits") }}</span>
+            <strong>{{
+              t("{count} entries", { count: allowances.length })
+            }}</strong>
+          </div>
         </div>
-        <details class="technical-details compact">
-          <summary>{{ t("Invoice details") }}</summary>
-          <pre class="qr-payload">{{ invoicePayloadPreview }}</pre>
-        </details>
-      </div>
-      <p v-if="invoiceMessage" class="helper">{{ invoiceMessage }}</p>
-    </section>
 
-    <section class="card offline-send-card">
-      <header class="card-header">
-        <h2>{{ t("4. Pay an invoice") }}</h2>
-        <div class="actions-row">
-          <button class="icon-cta secondary" @click="toggleInvoiceScanner">
-            <span>{{
-              invoiceScanner.scanning ? t("Stop scan") : t("Scan invoice")
-            }}</span>
-          </button>
-          <button
-            class="icon-cta secondary"
-            @click="invoiceScanner.openFilePicker"
+        <div class="actions offline-task-actions">
+          <AppButton
+            v-if="shouldOfferHardwareRegistration"
+            data-testid="offline-primary-action"
+            :loading="hardwareBusy"
+            :disabled="hardwareBusy"
+            @click="registerHardware"
           >
-            <span>{{ t("Upload invoice QR") }}</span>
-          </button>
-          <input
-            ref="invoiceScanner.fileInputRef"
-            type="file"
-            accept="image/*"
-            class="sr-only"
-            @change="invoiceScanner.decodeFile"
-          />
-        </div>
-      </header>
-      <div v-if="invoiceScanner.scanning" class="scanner">
-        <video ref="invoiceScanner.videoRef" autoplay muted playsinline></video>
-      </div>
-      <label>
-        {{ t("Invoice payload") }}
-        <textarea v-model="invoiceInput" rows="3"></textarea>
-      </label>
-      <label>
-        {{ t("Memo (optional)") }}
-        <input v-model="paymentMemo" />
-      </label>
-      <div class="actions">
-        <button
-          :disabled="!invoiceInput || sendingPayment"
-          @click="createPayment"
-        >
-          {{ sendingPayment ? t("Building…") : t("Create payment") }}
-        </button>
-      </div>
-      <p v-if="paymentMessage || invoiceScanner.message" class="helper">
-        {{ paymentMessage || invoiceScanner.message }}
-      </p>
-      <div v-if="paymentPayload" class="qr-panel">
-        <!-- eslint-disable-next-line vue/no-v-html -->
-        <div v-if="paymentQr" class="qr" v-html="paymentQr"></div>
-        <div class="actions">
-          <button class="secondary" @click="copyPaymentPayload">
-            {{ t("Copy payment JSON") }}
-          </button>
-        </div>
-        <details class="technical-details compact">
-          <summary>{{ t("Payment details") }}</summary>
-          <pre class="qr-payload">{{ paymentPayloadPreview }}</pre>
-        </details>
-      </div>
-    </section>
-
-    <section class="card offline-accept-card">
-      <header class="card-header">
-        <h2>{{ t("5. Accept payment") }}</h2>
-        <div class="actions-row">
-          <button class="icon-cta secondary" @click="togglePaymentScanner">
-            <span>{{
-              paymentScanner.scanning ? t("Stop scan") : t("Scan payment")
-            }}</span>
-          </button>
-          <button
-            class="icon-cta secondary"
-            @click="paymentScanner.openFilePicker"
+            {{ t("Register secure offline wallet") }}
+          </AppButton>
+          <AppButton
+            v-else
+            data-testid="offline-primary-action"
+            :loading="syncingAllowances"
+            :disabled="syncingAllowances || !canSync"
+            @click="syncAllowances"
           >
-            <span>{{ t("Upload payment QR") }}</span>
-          </button>
-          <input
-            ref="paymentScanner.fileInputRef"
-            type="file"
-            accept="image/*"
-            class="sr-only"
-            @change="paymentScanner.decodeFile"
-          />
+            {{ t("Sync offline allowance") }}
+          </AppButton>
+          <AppButton
+            variant="ghost"
+            :disabled="hardwareBusy"
+            @click="checkHardware"
+          >
+            {{ t("Recheck") }}
+          </AppButton>
         </div>
-      </header>
-      <div v-if="paymentScanner.scanning" class="scanner">
-        <video ref="paymentScanner.videoRef" autoplay muted playsinline></video>
-      </div>
-      <label>
-        {{ t("Payment payload") }}
-        <textarea v-model="paymentInput" rows="3"></textarea>
-      </label>
-      <div class="actions">
-        <button
-          :disabled="!paymentInput || acceptingPayment"
-          @click="acceptPayment"
+        <p
+          v-if="hardwareMessage || syncMessage"
+          class="offline-message"
+          role="status"
         >
-          {{ acceptingPayment ? t("Recording…") : t("Accept payment") }}
-        </button>
-      </div>
-      <p v-if="acceptMessage || paymentScanner.message" class="helper">
-        {{ acceptMessage || paymentScanner.message }}
-      </p>
-    </section>
+          {{ hardwareMessage || syncMessage }}
+        </p>
+      </section>
 
-    <section class="card offline-move-card">
-      <header class="card-header">
-        <h2>{{ t("Move to online wallet") }}</h2>
-      </header>
-      <div class="form-grid">
-        <label>
-          {{ t("Amount (blank = all)") }}
-          <input v-model="onlineForm.amount" type="text" />
-        </label>
-        <label>
-          {{ t("Destination Account") }}
-          <input
-            v-model="onlineForm.receiver"
-            data-testid="offline-online-destination-input"
-            :disabled="onlineDestinationLocked"
-          />
-        </label>
-        <label v-if="!onlineForm.shielded">
-          {{ t("Memo (optional)") }}
-          <input v-model="onlineForm.memo" />
-        </label>
-        <label class="shield-option">
-          <input
-            v-model="onlineForm.shielded"
-            type="checkbox"
-            :disabled="!onlineShieldSupported"
-          />
-          <span>{{ t("Private exit") }}</span>
-        </label>
-      </div>
-      <p class="transaction-fee-note">
-        <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-            t,
-          )
-        }}</strong>
-      </p>
-      <div class="actions">
-        <button
-          :disabled="movingOnline || !canSubmitOnlineMove"
-          @click="moveToOnline"
+      <section
+        v-show="activeMode === 'request'"
+        class="card offline-task offline-request-card"
+        data-testid="offline-mode-request"
+        aria-labelledby="offline-request-heading"
+      >
+        <header class="offline-task-header">
+          <div>
+            <p class="section-label">{{ t("Receive") }}</p>
+            <h2 id="offline-request-heading">
+              {{ t("Request offline payment") }}
+            </h2>
+            <p class="helper">{{ t("Generate invoice") }}</p>
+          </div>
+        </header>
+        <div class="form-grid offline-form-grid">
+          <label>
+            {{ t("Amount") }}
+            <input v-model="invoiceForm.amount" type="text" />
+          </label>
+          <label>
+            {{ t("Memo (optional)") }}
+            <input v-model="invoiceForm.memo" />
+          </label>
+          <label>
+            {{ t("Validity (minutes)") }}
+            <input
+              v-model.number="invoiceForm.validityMinutes"
+              type="number"
+              min="1"
+              max="1440"
+            />
+          </label>
+        </div>
+        <div class="actions offline-task-actions">
+          <AppButton
+            class="icon-cta"
+            data-testid="offline-primary-action"
+            :disabled="!canGenerateInvoice"
+            @click="generateInvoice"
+          >
+            {{ t("Generate invoice") }}
+          </AppButton>
+        </div>
+        <div v-if="invoicePayload" class="offline-result">
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div v-if="invoiceQr" class="qr" v-html="invoiceQr"></div>
+          <div class="offline-result-copy">
+            <StatusBadge tone="success" dot>{{ t("Ready") }}</StatusBadge>
+            <AppButton variant="secondary" @click="copyInvoicePayload">
+              {{ t("Copy invoice JSON") }}
+            </AppButton>
+          </div>
+          <TechnicalDisclosure :summary="t('Invoice details')">
+            <pre class="qr-payload">{{ invoicePayloadPreview }}</pre>
+          </TechnicalDisclosure>
+        </div>
+        <p v-if="invoiceMessage" class="offline-message" role="status">
+          {{ invoiceMessage }}
+        </p>
+      </section>
+
+      <section
+        v-show="activeMode === 'pay'"
+        class="card offline-task offline-send-card"
+        data-testid="offline-mode-pay"
+        aria-labelledby="offline-pay-heading"
+      >
+        <header class="offline-task-header">
+          <div>
+            <p class="section-label">{{ t("Send") }}</p>
+            <h2 id="offline-pay-heading">{{ t("Create payment") }}</h2>
+            <p class="helper">{{ t("Invoice payload") }}</p>
+          </div>
+          <div class="offline-scan-actions">
+            <AppButton variant="secondary" @click="openScannerSheet('invoice')">
+              {{ t("Scan invoice") }}
+            </AppButton>
+            <AppButton variant="ghost" @click="invoiceScanner.openFilePicker">
+              {{ t("Upload invoice QR") }}
+            </AppButton>
+          </div>
+        </header>
+        <div class="form-grid offline-form-grid">
+          <label class="offline-wide-field">
+            {{ t("Invoice payload") }}
+            <textarea v-model="invoiceInput" rows="4"></textarea>
+          </label>
+          <label>
+            {{ t("Memo (optional)") }}
+            <input v-model="paymentMemo" />
+          </label>
+        </div>
+        <div class="actions offline-task-actions">
+          <AppButton
+            data-testid="offline-primary-action"
+            :loading="sendingPayment"
+            :disabled="!invoiceInput || sendingPayment"
+            @click="createPayment"
+          >
+            {{ t("Create payment") }}
+          </AppButton>
+        </div>
+        <p
+          v-if="paymentMessage || invoiceScanner.message"
+          class="offline-message"
+          role="status"
         >
-          {{
-            movingOnline
-              ? t("Transferring…")
-              : onlineForm.shielded
+          {{ paymentMessage || invoiceScanner.message }}
+        </p>
+        <div v-if="paymentPayload" class="offline-result">
+          <!-- eslint-disable-next-line vue/no-v-html -->
+          <div v-if="paymentQr" class="qr" v-html="paymentQr"></div>
+          <div class="offline-result-copy">
+            <StatusBadge tone="success" dot>{{ t("Ready") }}</StatusBadge>
+            <AppButton variant="secondary" @click="copyPaymentPayload">
+              {{ t("Copy payment JSON") }}
+            </AppButton>
+          </div>
+          <TechnicalDisclosure :summary="t('Payment details')">
+            <pre class="qr-payload">{{ paymentPayloadPreview }}</pre>
+          </TechnicalDisclosure>
+        </div>
+      </section>
+
+      <section
+        v-show="activeMode === 'accept'"
+        class="card offline-task offline-accept-card"
+        data-testid="offline-mode-accept"
+        aria-labelledby="offline-accept-heading"
+      >
+        <header class="offline-task-header">
+          <div>
+            <p class="section-label">{{ t("Receive") }}</p>
+            <h2 id="offline-accept-heading">
+              {{ t("Accept offline payment") }}
+            </h2>
+            <p class="helper">{{ t("Payment payload") }}</p>
+          </div>
+          <div class="offline-scan-actions">
+            <AppButton variant="secondary" @click="openScannerSheet('payment')">
+              {{ t("Scan payment") }}
+            </AppButton>
+            <AppButton variant="ghost" @click="paymentScanner.openFilePicker">
+              {{ t("Upload payment QR") }}
+            </AppButton>
+          </div>
+        </header>
+        <label class="offline-payload-field">
+          {{ t("Payment payload") }}
+          <textarea v-model="paymentInput" rows="4"></textarea>
+        </label>
+        <div class="actions offline-task-actions">
+          <AppButton
+            data-testid="offline-primary-action"
+            :loading="acceptingPayment"
+            :disabled="!paymentInput || acceptingPayment"
+            @click="acceptPayment"
+          >
+            {{ t("Accept payment") }}
+          </AppButton>
+        </div>
+        <p
+          v-if="acceptMessage || paymentScanner.message"
+          class="offline-message"
+          role="status"
+        >
+          {{ acceptMessage || paymentScanner.message }}
+        </p>
+      </section>
+
+      <section
+        v-show="activeMode === 'online'"
+        class="card offline-task offline-move-card"
+        data-testid="offline-mode-online"
+        aria-labelledby="offline-online-heading"
+      >
+        <header class="offline-task-header">
+          <div>
+            <p class="section-label">{{ t("Offline") }}</p>
+            <h2 id="offline-online-heading">
+              {{ t("Move funds to online wallet") }}
+            </h2>
+          </div>
+          <StatusBadge>{{
+            t("{balance} units", { balance: offline.wallet.balance })
+          }}</StatusBadge>
+        </header>
+        <div class="form-grid offline-form-grid">
+          <label>
+            {{ t("Amount (blank = all)") }}
+            <input v-model="onlineForm.amount" type="text" />
+          </label>
+          <label>
+            {{ t("Destination Account") }}
+            <input
+              v-model="onlineForm.receiver"
+              data-testid="offline-online-destination-input"
+              :disabled="onlineDestinationLocked"
+            />
+          </label>
+          <label v-if="!onlineForm.shielded">
+            {{ t("Memo (optional)") }}
+            <input v-model="onlineForm.memo" />
+          </label>
+          <label class="shield-option">
+            <input
+              v-model="onlineForm.shielded"
+              type="checkbox"
+              :disabled="!onlineShieldSupported"
+            />
+            <span>{{ t("Private exit") }}</span>
+          </label>
+        </div>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
+        </p>
+        <div class="actions offline-task-actions">
+          <AppButton
+            data-testid="offline-primary-action"
+            :loading="movingOnline"
+            :disabled="movingOnline || !canSubmitOnlineMove"
+            @click="moveToOnline"
+          >
+            {{
+              onlineForm.shielded
                 ? t("Unshield to wallet")
                 : t("Send to online wallet")
+            }}
+          </AppButton>
+        </div>
+        <p v-if="onlineShieldCapabilityMessage" class="offline-message">
+          {{ onlineShieldCapabilityMessage }}
+        </p>
+        <p
+          v-else-if="
+            onlineForm.shielded &&
+            onlineShieldSupported &&
+            onlineShieldPolicyMode
+          "
+          class="offline-message"
+        >
+          {{
+            t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
           }}
-        </button>
-      </div>
-      <p v-if="onlineShieldCapabilityMessage" class="helper">
-        {{ onlineShieldCapabilityMessage }}
-      </p>
-      <p
-        v-else-if="
-          onlineForm.shielded && onlineShieldSupported && onlineShieldPolicyMode
-        "
-        class="helper"
-      >
-        {{
-          t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
-        }}
-      </p>
-      <p v-if="onlineForm.shielded && onlineShieldSupported" class="helper">
-        {{
-          t(
-            "Private exits do not publish memos. Leave memo blank when unshielding.",
-          )
-        }}
-      </p>
-      <p
-        v-else-if="
-          !onlineForm.shielded &&
-          onlineShieldSupported &&
-          onlineShieldPolicyMode
-        "
-        class="helper"
-      >
-        {{
-          t(
-            "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
-          )
-        }}
-      </p>
-      <p v-if="moveMessage" class="helper">{{ moveMessage }}</p>
-    </section>
+        </p>
+        <p
+          v-if="onlineForm.shielded && onlineShieldSupported"
+          class="offline-message"
+        >
+          {{
+            t(
+              "Private exits do not publish memos. Leave memo blank when unshielding.",
+            )
+          }}
+        </p>
+        <p
+          v-else-if="
+            !onlineForm.shielded &&
+            onlineShieldSupported &&
+            onlineShieldPolicyMode
+          "
+          class="offline-message"
+        >
+          {{
+            t(
+              "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
+            )
+          }}
+        </p>
+        <p v-if="moveMessage" class="offline-message" role="status">
+          {{ moveMessage }}
+        </p>
+      </section>
+    </div>
 
-    <section class="card offline-history-card">
-      <header class="card-header">
-        <h2>{{ t("Offline history") }}</h2>
-      </header>
-      <div v-if="offline.wallet.history.length" class="table-wrap">
-        <table class="table">
+    <div class="offline-disclosures">
+      <TechnicalDisclosure :summary="t('Diagnostics')">
+        <dl class="offline-diagnostics">
+          <div>
+            <dt>{{ t("Status") }}</dt>
+            <dd>{{ hardwareStatus.detail }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("I105 Account ID") }}</dt>
+            <dd class="mono">{{ activeAccountDisplayId || t("—") }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("Asset") }}</dt>
+            <dd class="mono">{{ activeOfflineAssetLabel }}</dd>
+          </div>
+          <div>
+            <dt>{{ t("Next policy expiry") }}</dt>
+            <dd>
+              {{ formatDate(offline.wallet.nextPolicyExpiryMs) || t("—") }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t("Policy refresh") }}</dt>
+            <dd>{{ formatDate(offline.wallet.nextRefreshMs) || t("—") }}</dd>
+          </div>
+        </dl>
+        <p class="section-label offline-limits-label">
+          {{ t("Offline limits") }}
+        </p>
+        <ResponsiveTable v-if="allowances.length" :label="t('Offline limits')">
+          <thead>
+            <tr>
+              <th>{{ t("Asset") }}</th>
+              <th>{{ t("Remaining") }}</th>
+              <th>{{ t("Policy expires") }}</th>
+              <th>{{ t("Refresh at") }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in allowances" :key="item.certificate_id_hex">
+              <td>{{ formatAssetReferenceLabel(item.asset_id, t("—")) }}</td>
+              <td>{{ item.remaining_amount }}</td>
+              <td>{{ formatDate(item.policy_expires_at_ms) || t("—") }}</td>
+              <td>{{ formatDate(item.refresh_at_ms) || t("—") }}</td>
+            </tr>
+          </tbody>
+        </ResponsiveTable>
+        <p v-else class="helper">{{ t("No allowances synced yet.") }}</p>
+      </TechnicalDisclosure>
+
+      <TechnicalDisclosure :summary="t('Offline history')">
+        <ResponsiveTable
+          v-if="offline.wallet.history.length"
+          :label="t('Offline history')"
+        >
           <thead>
             <tr>
               <th>{{ t("Direction") }}</th>
@@ -379,12 +465,13 @@
           <tbody>
             <tr v-for="record in reversedHistory" :key="record.txId">
               <td>
-                <span
-                  class="pill"
-                  :class="{ positive: record.direction === 'incoming' }"
+                <StatusBadge
+                  :tone="
+                    record.direction === 'incoming' ? 'success' : 'neutral'
+                  "
                 >
                   {{ record.direction }}
-                </span>
+                </StatusBadge>
               </td>
               <td>{{ record.amount }}</td>
               <td>{{ record.peer }}</td>
@@ -392,10 +479,60 @@
               <td>{{ formatDate(record.timestampMs) || t("—") }}</td>
             </tr>
           </tbody>
-        </table>
+        </ResponsiveTable>
+        <p v-else class="helper">{{ t("No offline transfers yet.") }}</p>
+      </TechnicalDisclosure>
+    </div>
+
+    <QrScannerSheet
+      :open="Boolean(activeScanner)"
+      :title="scannerSheetTitle"
+      :description="t('or upload a QR image')"
+      :close-label="t('Cancel')"
+      @close="closeScannerSheet"
+    >
+      <div class="offline-scanner-frame">
+        <video
+          v-if="activeScanner === 'invoice'"
+          ref="invoiceScanner.videoRef"
+          autoplay
+          muted
+          playsinline
+        ></video>
+        <video
+          v-else-if="activeScanner === 'payment'"
+          ref="paymentScanner.videoRef"
+          autoplay
+          muted
+          playsinline
+        ></video>
       </div>
-      <p v-else class="helper">{{ t("No offline transfers yet.") }}</p>
-    </section>
+      <p v-if="activeScannerMessage" class="offline-message" role="status">
+        {{ activeScannerMessage }}
+      </p>
+      <template #actions>
+        <AppButton variant="secondary" @click="openActiveScannerFilePicker">
+          {{ t("Upload QR image") }}
+        </AppButton>
+      </template>
+    </QrScannerSheet>
+
+    <input
+      ref="invoiceScanner.fileInputRef"
+      type="file"
+      accept="image/*"
+      class="sr-only"
+      :aria-label="t('Upload QR image')"
+      @change="invoiceScanner.decodeFile"
+    />
+    <input
+      ref="paymentScanner.fileInputRef"
+      type="file"
+      accept="image/*"
+      class="sr-only"
+      :aria-label="t('Upload QR image')"
+      @change="paymentScanner.decodeFile"
+    />
   </div>
 </template>
 
@@ -412,6 +549,14 @@ import {
   watch,
 } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import {
+  AppButton,
+  QrScannerSheet,
+  ResponsiveTable,
+  SegmentedControl,
+  StatusBadge,
+  TechnicalDisclosure,
+} from "@/components/ui";
 import { useSessionStore } from "@/stores/session";
 import { useOfflineStore } from "@/stores/offline";
 import { fetchOfflineAllowances } from "@/services/offline";
@@ -453,6 +598,28 @@ const activeOfflineAssetId = computed(() =>
   session.connection.assetDefinitionId.trim(),
 );
 const { localeStore, t } = useAppI18n();
+type OfflineMode = "setup" | "request" | "pay" | "accept" | "online";
+type OfflineScannerKind = "invoice" | "payment";
+
+const activeMode = ref<OfflineMode>(
+  Number(offline.wallet.balance) > 0 ? "request" : "setup",
+);
+const activeScanner = ref<OfflineScannerKind | null>(null);
+const offlineModeOptions = computed(() => [
+  { value: "setup", label: t("Wallet") },
+  { value: "request", label: t("Request offline payment") },
+  { value: "pay", label: t("Create payment") },
+  { value: "accept", label: t("Accept offline payment") },
+  { value: "online", label: t("Move funds to online wallet") },
+]);
+const activeOfflineAssetLabel = computed(() =>
+  activeOfflineAssetId.value
+    ? formatAssetDefinitionLabel(
+        activeOfflineAssetId.value,
+        activeOfflineAssetId.value,
+      )
+    : t("Asset not set"),
+);
 const canSync = computed(() =>
   Boolean(
     session.connection.toriiUrl &&
@@ -475,6 +642,9 @@ const hardwareStatus = ref({
   detail: t("Pending detection"),
 });
 const hardwareMessage = ref("");
+const shouldOfferHardwareRegistration = computed(
+  () => hardwareStatus.value.ok && !offline.hasHardwareWallet,
+);
 
 const invoiceForm = reactive({
   amount: "",
@@ -550,6 +720,7 @@ const invoiceScanner = useQrScanner(
   (payload) => {
     invoiceInput.value = payload;
     paymentMessage.value = t("Invoice scanned.");
+    activeScanner.value = null;
   },
   { translate: t },
 );
@@ -557,9 +728,66 @@ const paymentScanner = useQrScanner(
   (payload) => {
     paymentInput.value = payload;
     acceptMessage.value = t("Payment scanned.");
+    activeScanner.value = null;
   },
   { translate: t },
 );
+
+const activeScannerMessage = computed(() =>
+  activeScanner.value === "invoice"
+    ? invoiceScanner.message.value
+    : activeScanner.value === "payment"
+      ? paymentScanner.message.value
+      : "",
+);
+const scannerSheetTitle = computed(() =>
+  activeScanner.value === "payment" ? t("Scan payment") : t("Scan invoice"),
+);
+const closeScannerSheet = () => {
+  if (activeScanner.value === "invoice") {
+    invoiceScanner.stop();
+  } else if (activeScanner.value === "payment") {
+    paymentScanner.stop();
+  }
+  activeScanner.value = null;
+};
+const openScannerSheet = async (kind: OfflineScannerKind) => {
+  closeScannerSheet();
+  activeScanner.value = kind;
+  if (kind === "invoice") {
+    paymentMessage.value = "";
+    invoiceScanner.message.value = "";
+  } else {
+    acceptMessage.value = "";
+    paymentScanner.message.value = "";
+  }
+  await nextTick();
+  if (activeScanner.value === "invoice") {
+    await invoiceScanner.start();
+  } else if (activeScanner.value === "payment") {
+    await paymentScanner.start();
+  }
+};
+const openActiveScannerFilePicker = () => {
+  if (activeScanner.value === "invoice") {
+    invoiceScanner.openFilePicker();
+  } else if (activeScanner.value === "payment") {
+    paymentScanner.openFilePicker();
+  }
+};
+const setActiveMode = (value: string) => {
+  if (
+    value !== "setup" &&
+    value !== "request" &&
+    value !== "pay" &&
+    value !== "accept" &&
+    value !== "online"
+  ) {
+    return;
+  }
+  closeScannerSheet();
+  activeMode.value = value;
+};
 
 const reversedHistory = computed(() => [...offline.wallet.history].reverse());
 const formatPayloadPreview = (payload: string) => {
@@ -835,7 +1063,7 @@ const generateInvoice = async () => {
     invoiceQr.value = await QRCode.toString(invoicePayload.value, {
       type: "svg",
       width: 240,
-      color: { dark: "#ffffff", light: "#00000000" },
+      color: { dark: "#15161b", light: "#ffffff" },
     });
     invoiceMessage.value = t(
       "Invoice ready. Share the QR or copy the JSON payload.",
@@ -885,7 +1113,7 @@ const createPayment = async () => {
     paymentQr.value = await QRCode.toString(paymentPayload.value, {
       type: "svg",
       width: 240,
-      color: { dark: "#ffffff", light: "#00000000" },
+      color: { dark: "#15161b", light: "#ffffff" },
     });
     paymentMessage.value = t("Payment payload created and recorded locally.");
   } catch (error) {
@@ -1008,20 +1236,6 @@ const moveToOnline = async () => {
   }
 };
 
-const toggleInvoiceScanner = async () => {
-  paymentMessage.value = "";
-  await nextTick();
-  invoiceScanner.message.value = "";
-  invoiceScanner.start();
-};
-
-const togglePaymentScanner = async () => {
-  acceptMessage.value = "";
-  await nextTick();
-  paymentScanner.message.value = "";
-  paymentScanner.start();
-};
-
 watch(
   () => session.activeAccount,
   () => {
@@ -1040,39 +1254,272 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.offline-grid {
-  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+.offline-shell {
+  display: grid;
+  gap: 18px;
+  max-width: 1080px;
+  margin-inline: auto;
 }
 
-.qr-panel {
-  margin-top: 12px;
+.offline-overview {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.6fr);
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
-.qr svg {
-  width: 220px;
+.offline-balance {
+  display: grid;
+  align-content: center;
+  min-height: 136px;
+  padding: 24px 28px;
+  border-inline-end: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-accent-soft) 48%, transparent);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+
+.offline-balance > span,
+.offline-balance > small,
+.offline-readiness dt {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.offline-balance > strong {
+  margin-block: 3px;
+  font-size: clamp(2.15rem, 5vw, 3.6rem);
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.offline-balance > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.offline-readiness {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+  padding: 20px 22px;
+}
+
+.offline-readiness > div {
+  min-width: 0;
+  padding: 8px 18px;
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.offline-readiness > div:first-child {
+  border-inline-start: 0;
+}
+
+.offline-readiness dt,
+.offline-readiness dd {
+  margin: 0;
+}
+
+.offline-readiness dd {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  font-weight: 650;
+}
+
+.offline-mode-control {
+  width: min(100%, 760px);
+  margin-inline: auto;
+}
+
+.offline-mode-control :deep(.ui-segmented-option) {
+  min-width: 104px;
+}
+
+.offline-workspace {
+  min-width: 0;
+}
+
+.offline-task {
+  min-height: 380px;
+  margin: 0;
+  border-color: var(--color-border);
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.offline-task-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.offline-task-header h2,
+.offline-task-header p {
+  margin: 0;
+}
+
+.offline-task-header h2 {
+  margin-top: 4px;
+}
+
+.offline-task-header .helper {
+  margin-top: 7px;
+}
+
+.offline-setup-summary,
+.offline-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-border);
+}
+
+.offline-setup-summary > div,
+.offline-diagnostics > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--color-surface-raised);
+}
+
+.offline-setup-summary strong,
+.offline-diagnostics dd {
+  overflow-wrap: anywhere;
+}
+
+.offline-diagnostics {
+  margin: 0;
+}
+
+.offline-diagnostics dt,
+.offline-diagnostics dd {
+  margin: 0;
+}
+
+.offline-diagnostics dt {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+.offline-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.offline-wide-field,
+.offline-payload-field {
+  grid-column: 1 / -1;
+}
+
+.offline-payload-field {
+  display: grid;
+  gap: 7px;
+}
+
+.offline-task-actions {
+  justify-content: flex-end;
+  margin-top: 22px;
+}
+
+.offline-scan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.offline-message {
+  margin: 14px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.offline-result {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.62fr) minmax(0, 1.38fr);
+  gap: 22px;
+  align-items: center;
+  margin-top: 24px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.offline-result-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.offline-result :deep(.ui-disclosure) {
+  grid-column: 2;
+}
+
+.qr :deep(svg) {
+  width: min(100%, 240px);
   height: auto;
   display: block;
-  margin-bottom: 12px;
+  margin-inline: auto;
 }
 
 .qr-payload {
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 12px;
-  padding: 12px;
-  max-height: 200px;
+  max-height: 220px;
+  margin: 0;
   overflow: auto;
+  border-radius: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.scanner {
-  border-radius: 16px;
+.offline-disclosures {
+  display: grid;
+  gap: 10px;
+}
+
+.offline-limits-label {
+  margin: 20px 0 10px;
+}
+
+.offline-scanner-frame {
+  aspect-ratio: 4 / 3;
   overflow: hidden;
-  border: 1px solid var(--panel-border);
-  margin-bottom: 12px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-panel);
+  background: var(--color-media-stage);
 }
 
-video {
+.offline-scanner-frame video {
   width: 100%;
-  background: black;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  background: var(--color-media-stage);
 }
 
 .shield-option {
@@ -1088,6 +1535,77 @@ video {
   margin: 0;
   padding: 0;
   border-radius: 6px;
-  box-shadow: none;
+}
+
+@media (max-width: 760px) {
+  .offline-overview,
+  .offline-result {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .offline-balance {
+    min-height: 116px;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .offline-readiness {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 10px 18px;
+  }
+
+  .offline-readiness > div {
+    padding: 12px 4px;
+    border-inline-start: 0;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .offline-readiness > div:first-child {
+    border-top: 0;
+  }
+
+  .offline-mode-control {
+    width: 100%;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .offline-mode-control :deep(.ui-segmented-option) {
+    min-width: 0;
+  }
+
+  .offline-task {
+    min-height: 0;
+  }
+
+  .offline-task-header {
+    flex-direction: column;
+  }
+
+  .offline-scan-actions,
+  .offline-task-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .offline-scan-actions :deep(.ui-button),
+  .offline-task-actions :deep(.ui-button) {
+    flex: 1 1 100%;
+  }
+
+  .offline-setup-summary,
+  .offline-diagnostics,
+  .offline-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .offline-result :deep(.ui-disclosure) {
+    grid-column: 1;
+  }
+
+  .offline-result-copy {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 </style>

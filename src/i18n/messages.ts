@@ -28,6 +28,7 @@ import { UR_AUTO_TRANSLATIONS } from "@/i18n/urAuto";
 import { VI_AUTO_TRANSLATIONS } from "@/i18n/viAuto";
 import { ZH_AUTO_TRANSLATIONS } from "@/i18n/zhAuto";
 import { ZH_TW_AUTO_TRANSLATIONS } from "@/i18n/zhTwAuto";
+import { QUIET_SAKURA_TRANSLATIONS } from "@/i18n/quietSakuraTranslations";
 
 export const SUPPORTED_LOCALES = [
   "en-US",
@@ -1047,6 +1048,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.":
     "TON -> TAIRA needs a browser-safe TON source proof module before any TON source transaction is broadcast.",
   "Quick actions": "Quick actions",
+  Daily: "Daily",
+  Grow: "Grow",
+  Services: "Services",
+  "Skip to content": "Skip to content",
   "Open wallet": "Open wallet",
   "Start setup": "Start setup",
   "Network details": "Network details",
@@ -3263,7 +3268,7 @@ const EN_TRANSLATIONS: TranslationTable = {
   "TON source transaction": "TON source transaction",
 };
 
-const TABLES: Record<SupportedLocale, TranslationTable> = {
+const BASE_TABLES: Record<SupportedLocale, TranslationTable> = {
   "en-US": EN_TRANSLATIONS,
   "ar-SA": AR_TRANSLATIONS,
   "az-AZ": AZ_TRANSLATIONS,
@@ -3296,6 +3301,16 @@ const TABLES: Record<SupportedLocale, TranslationTable> = {
   "zh-CN": ZH_TRANSLATIONS,
   "zh-TW": ZH_TW_TRANSLATIONS,
 };
+
+const TABLES = Object.fromEntries(
+  SUPPORTED_LOCALES.map((locale) => [
+    locale,
+    {
+      ...BASE_TABLES[locale],
+      ...(locale === "en-US" ? {} : QUIET_SAKURA_TRANSLATIONS[locale]),
+    },
+  ]),
+) as Record<SupportedLocale, TranslationTable>;
 
 export const DEFAULT_LOCALE: SupportedLocale = "en-US";
 

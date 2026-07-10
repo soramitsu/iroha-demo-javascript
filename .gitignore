@@ -36,7 +36,10 @@ yarn-error.log*
 /native/**/*.xcodeproj
 
 /solana/**/target/
+/native/**/target/
 /solana/**/Cargo.lock
+!/solana/sccp-taira-xor/Cargo.lock
+!/solana/sccp-native-recursive-verifier/Cargo.lock
 
 # Acton related files
 .acton/

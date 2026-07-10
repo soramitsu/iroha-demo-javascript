@@ -228,6 +228,17 @@ const getButtonByText = (wrapper: ReturnType<typeof mount>, text: string) => {
   return button;
 };
 
+const getTeleportedButtonByText = (text: string) => {
+  const matches = Array.from(document.body.querySelectorAll("button")).filter(
+    (button) => button.textContent?.includes(text),
+  );
+  const button = matches[matches.length - 1];
+  if (!button) {
+    throw new Error(`Teleported button not found: ${text}`);
+  }
+  return button;
+};
+
 const buildInviteHash = (options?: { live?: boolean }) => {
   const nowMs = Date.now();
   const invite: KaigiInvitePayload = {
@@ -470,21 +481,13 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain("Show raw packets");
   });
 
-  it("puts the call stage before meeting setup", () => {
+  it("keeps the empty call stage out of the pre-call setup", () => {
     const wrapper = mountView();
     const layout = wrapper.get(".kaigi-layout").element;
     const firstSection = layout.firstElementChild;
 
-    expect(firstSection?.classList.contains("kaigi-call-card")).toBe(true);
-    expect(wrapper.find(".kaigi-stage").exists()).toBe(true);
-    expect(
-      wrapper.get(".kaigi-call-card").find(".kaigi-control-row").exists(),
-    ).toBe(true);
-    expect(
-      wrapper
-        .get(".kaigi-stage")
-        .element.firstElementChild?.classList.contains("kaigi-remote-video"),
-    ).toBe(true);
+    expect(firstSection?.classList.contains("kaigi-overview-card")).toBe(true);
+    expect(wrapper.find(".kaigi-stage").exists()).toBe(false);
   });
 
   it("creates a live meeting link and copies the invite", async () => {
@@ -587,7 +590,7 @@ describe("KaigiView", () => {
     expect(wrapper.find(".kaigi-media-setup").text()).toContain(
       "Using FaceTime HD Camera.",
     );
-    expect(wrapper.find(".kaigi-call-status").text()).toBe(
+    expect(wrapper.find(".kaigi-status-copy").text()).toBe(
       "Local media is ready.",
     );
   });
@@ -721,17 +724,17 @@ describe("KaigiView", () => {
     await getButtonByText(wrapper, "Create meeting link").trigger("click");
     await flushPromises();
 
-    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Host checklist");
-    expect(wrapper.text()).toContain("Keep this host window open");
+    expect(document.body.querySelector(".ui-dialog[open]")).toBeTruthy();
+    expect(document.body.textContent).toContain("Host checklist");
+    expect(document.body.textContent).toContain("Keep this host window open");
     expect(
       (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
     ).toBe(false);
 
-    await getButtonByText(wrapper, "Show Advanced signaling").trigger("click");
+    getTeleportedButtonByText("Show Advanced signaling").click();
     await flushPromises();
 
-    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
+    expect(document.body.querySelector(".ui-dialog[open]")).toBeFalsy();
     expect(
       (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
     ).toBe(true);
@@ -747,18 +750,17 @@ describe("KaigiView", () => {
     await createButton.trigger("click");
     await flushPromises();
 
-    const primaryAction = getButtonByText(
-      wrapper,
+    const primaryAction = getTeleportedButtonByText(
       "I will keep this window open",
     );
-    expect(document.activeElement).toBe(primaryAction.element);
+    expect(document.activeElement).toBe(primaryAction);
 
-    await wrapper
-      .get(".kaigi-host-modal-backdrop")
-      .trigger("keydown", { key: "Escape" });
+    document.body
+      .querySelector(".ui-dialog[open]")
+      ?.dispatchEvent(new Event("cancel", { cancelable: true }));
     await flushPromises();
 
-    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
+    expect(document.body.querySelector(".ui-dialog[open]")).toBeFalsy();
     expect(document.activeElement).toBe(createButton.element);
   });
 
@@ -1111,19 +1113,19 @@ describe("KaigiView", () => {
     await getButtonByText(wrapper, "Paste from clipboard").trigger("click");
     await flushPromises();
 
-    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(true);
-    expect(wrapper.text()).toContain("Participant answer ready");
-    expect(wrapper.text()).toContain(
+    expect(document.body.querySelector(".ui-dialog[open]")).toBeTruthy();
+    expect(document.body.textContent).toContain("Participant answer ready");
+    expect(document.body.textContent).toContain(
       "The guest answer packet is ready. Apply it now so audio and video can start.",
     );
 
-    await getButtonByText(wrapper, "Apply answer packet").trigger("click");
+    getTeleportedButtonByText("Apply answer packet").click();
     await flushPromises();
 
     expect(FakePeerConnection.instances[0]?.remoteDescription).toEqual({
       type: "answer",
       sdp: "manual-answer-sdp",
     });
-    expect(wrapper.find(".kaigi-host-modal-backdrop").exists()).toBe(false);
+    expect(document.body.querySelector(".ui-dialog[open]")).toBeFalsy();
   });
 });

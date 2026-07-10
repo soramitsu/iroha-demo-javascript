@@ -713,6 +713,23 @@ const handleRegister = async () => {
 </script>
 
 <style scoped>
+.setup-connection-card,
+.setup-identity-card,
+.setup-register-card {
+  border-color: var(--frost-border);
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.setup-asset-literal {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -723,7 +740,7 @@ const handleRegister = async () => {
 .helper {
   margin-top: 12px;
   font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--color-text-muted);
 }
 
 .chain-picker {
@@ -739,9 +756,10 @@ const handleRegister = async () => {
 }
 
 .preset-chip {
-  border: 1px solid var(--panel-border);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-control);
   padding: 10px 12px;
   min-width: 140px;
   text-align: start;
@@ -752,8 +770,10 @@ const handleRegister = async () => {
 }
 
 .preset-chip.active {
-  border-color: var(--iroha-accent);
-  box-shadow: 0 8px 24px rgba(255, 76, 102, 0.24);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: var(--shadow-inset);
 }
 
 .preset-chip.fixed {
@@ -766,6 +786,6 @@ const handleRegister = async () => {
 
 .chip-sub {
   font-size: 0.82rem;
-  color: var(--iroha-muted);
+  color: var(--color-text-muted);
 }
 </style>

@@ -118,6 +118,21 @@ describe("SoraCloudView", () => {
     return wrapper;
   };
 
+  const openLaunchWorkspace = async (
+    wrapper: Awaited<ReturnType<typeof mountView>>,
+  ) => {
+    const launchWorkspaceButton = wrapper
+      .findAll("button")
+      .find(
+        (button) =>
+          button.text() === "Launch instance" &&
+          button.attributes("aria-pressed") !== undefined,
+      );
+    expect(launchWorkspaceButton).toBeDefined();
+    await launchWorkspaceButton!.trigger("click");
+    await flushPromises();
+  };
+
   it("renders endpoint-unavailable without fake KPIs or disabled-action copy", async () => {
     vi.mocked(getSoraCloudStatus).mockResolvedValue(unavailableStatus);
 
@@ -138,11 +153,16 @@ describe("SoraCloudView", () => {
     const wrapper = await mountView();
 
     expect(wrapper.text()).toContain("Launch instance");
-    expect(wrapper.text()).toContain("Choose model");
     expect(wrapper.text()).toContain(
       "No SoraCloud services found on this endpoint.",
     );
     expect(wrapper.text()).not.toContain("No local deployment records");
+
+    await openLaunchWorkspace(wrapper);
+    expect(wrapper.text()).toContain("Choose model");
+    expect(wrapper.text()).not.toContain(
+      "No SoraCloud services found on this endpoint.",
+    );
 
     await wrapper.findAll("input")[0].setValue("OpenAI/Demo Model");
     await flushPromises();
@@ -155,6 +175,8 @@ describe("SoraCloudView", () => {
     vi.mocked(getSoraCloudStatus).mockResolvedValue(availableStatus);
 
     const wrapper = await mountView({ assetDefinitionId: "xor#universal" });
+
+    await openLaunchWorkspace(wrapper);
 
     await wrapper
       .findAll("button")
@@ -190,6 +212,7 @@ describe("SoraCloudView", () => {
     });
 
     const wrapper = await mountView();
+    await openLaunchWorkspace(wrapper);
     await wrapper.findAll("input")[0].setValue("OpenAI/Demo Model");
     await flushPromises();
 
@@ -224,6 +247,17 @@ describe("SoraCloudView", () => {
         baseFeeNanos: "10000",
       }),
     );
+
+    const servicesWorkspaceButton = wrapper
+      .findAll("button")
+      .find(
+        (button) =>
+          button.text() === "Live services" &&
+          button.attributes("aria-pressed") !== undefined,
+      );
+    expect(servicesWorkspaceButton).toBeDefined();
+    await servicesWorkspaceButton!.trigger("click");
+    await flushPromises();
     expect(wrapper.text()).toContain("demo-hf");
     expect(wrapper.findAll(".soracloud-deployment-row")).toHaveLength(1);
   });

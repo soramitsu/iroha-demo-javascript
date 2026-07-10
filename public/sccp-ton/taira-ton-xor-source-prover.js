@@ -133,14 +133,14 @@ var require_base64_js = __commonJS({
 var require_ieee754 = __commonJS({
   "node_modules/ieee754/index.js"(exports) {
     init_esbuild_buffer_shim();
-    exports.read = function(buffer, offset, isLE2, mLen, nBytes) {
+    exports.read = function(buffer, offset, isLE3, mLen, nBytes) {
       var e, m;
       var eLen = nBytes * 8 - mLen - 1;
       var eMax = (1 << eLen) - 1;
       var eBias = eMax >> 1;
       var nBits = -7;
-      var i = isLE2 ? nBytes - 1 : 0;
-      var d = isLE2 ? -1 : 1;
+      var i = isLE3 ? nBytes - 1 : 0;
+      var d = isLE3 ? -1 : 1;
       var s = buffer[offset + i];
       i += d;
       e = s & (1 << -nBits) - 1;
@@ -163,14 +163,14 @@ var require_ieee754 = __commonJS({
       }
       return (s ? -1 : 1) * m * Math.pow(2, e - mLen);
     };
-    exports.write = function(buffer, value, offset, isLE2, mLen, nBytes) {
+    exports.write = function(buffer, value, offset, isLE3, mLen, nBytes) {
       var e, m, c;
       var eLen = nBytes * 8 - mLen - 1;
       var eMax = (1 << eLen) - 1;
       var eBias = eMax >> 1;
       var rt = mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0;
-      var i = isLE2 ? 0 : nBytes - 1;
-      var d = isLE2 ? 1 : -1;
+      var i = isLE3 ? 0 : nBytes - 1;
+      var d = isLE3 ? 1 : -1;
       var s = value < 0 || value === 0 && 1 / value < 0 ? 1 : 0;
       value = Math.abs(value);
       if (isNaN(value) || value === Infinity) {
@@ -535,7 +535,7 @@ var require_buffer = __commonJS({
             return len;
           case "utf8":
           case "utf-8":
-            return utf8ToBytes2(string).length;
+            return utf8ToBytes3(string).length;
           case "ucs2":
           case "ucs-2":
           case "utf16le":
@@ -547,7 +547,7 @@ var require_buffer = __commonJS({
             return base64ToBytes(string).length;
           default:
             if (loweredCase) {
-              return mustMatch ? -1 : utf8ToBytes2(string).length;
+              return mustMatch ? -1 : utf8ToBytes3(string).length;
             }
             encoding = ("" + encoding).toLowerCase();
             loweredCase = true;
@@ -843,7 +843,7 @@ var require_buffer = __commonJS({
       return i;
     }
     function utf8Write(buf, string, offset, length) {
-      return blitBuffer(utf8ToBytes2(string, buf.length - offset), buf, offset, length);
+      return blitBuffer(utf8ToBytes3(string, buf.length - offset), buf, offset, length);
     }
     function asciiWrite(buf, string, offset, length) {
       return blitBuffer(asciiToBytes(string), buf, offset, length);
@@ -1689,7 +1689,7 @@ var require_buffer = __commonJS({
       }
       return str;
     }
-    function utf8ToBytes2(string, units) {
+    function utf8ToBytes3(string, units) {
       units = units || Infinity;
       let codePoint;
       const length = string.length;
@@ -2177,17 +2177,17 @@ var BSIGMA = /* @__PURE__ */ Uint8Array.from([
 
 // ../iroha/javascript/iroha_js/node_modules/@noble/hashes/esm/_md.js
 init_esbuild_buffer_shim();
-function setBigUint64(view, byteOffset, value, isLE2) {
+function setBigUint64(view, byteOffset, value, isLE3) {
   if (typeof view.setBigUint64 === "function")
-    return view.setBigUint64(byteOffset, value, isLE2);
-  const _32n2 = BigInt(32);
+    return view.setBigUint64(byteOffset, value, isLE3);
+  const _32n3 = BigInt(32);
   const _u32_max = BigInt(4294967295);
-  const wh = Number(value >> _32n2 & _u32_max);
+  const wh = Number(value >> _32n3 & _u32_max);
   const wl = Number(value & _u32_max);
-  const h = isLE2 ? 4 : 0;
-  const l = isLE2 ? 0 : 4;
-  view.setUint32(byteOffset + h, wh, isLE2);
-  view.setUint32(byteOffset + l, wl, isLE2);
+  const h = isLE3 ? 4 : 0;
+  const l = isLE3 ? 0 : 4;
+  view.setUint32(byteOffset + h, wh, isLE3);
+  view.setUint32(byteOffset + l, wl, isLE3);
 }
 function Chi(a, b, c) {
   return a & b ^ ~a & c;
@@ -2196,7 +2196,7 @@ function Maj(a, b, c) {
   return a & b ^ a & c ^ b & c;
 }
 var HashMD = class extends Hash {
-  constructor(blockLen, outputLen, padOffset, isLE2) {
+  constructor(blockLen, outputLen, padOffset, isLE3) {
     super();
     this.finished = false;
     this.length = 0;
@@ -2205,7 +2205,7 @@ var HashMD = class extends Hash {
     this.blockLen = blockLen;
     this.outputLen = outputLen;
     this.padOffset = padOffset;
-    this.isLE = isLE2;
+    this.isLE = isLE3;
     this.buffer = new Uint8Array(blockLen);
     this.view = createView(this.buffer);
   }
@@ -2239,7 +2239,7 @@ var HashMD = class extends Hash {
     aexists(this);
     aoutput(out, this);
     this.finished = true;
-    const { buffer, view, blockLen, isLE: isLE2 } = this;
+    const { buffer, view, blockLen, isLE: isLE3 } = this;
     let { pos } = this;
     buffer[pos++] = 128;
     clean(this.buffer.subarray(pos));
@@ -2249,7 +2249,7 @@ var HashMD = class extends Hash {
     }
     for (let i = pos; i < blockLen; i++)
       buffer[i] = 0;
-    setBigUint64(view, blockLen - 8, BigInt(this.length * 8), isLE2);
+    setBigUint64(view, blockLen - 8, BigInt(this.length * 8), isLE3);
     this.process(view, 0);
     const oview = createView(out);
     const len = this.outputLen;
@@ -2260,7 +2260,7 @@ var HashMD = class extends Hash {
     if (outLen > state.length)
       throw new Error("_sha2: outputLen bigger than state");
     for (let i = 0; i < outLen; i++)
-      oview.setUint32(4 * i, state[i], isLE2);
+      oview.setUint32(4 * i, state[i], isLE3);
   }
   digest() {
     const { buffer, outputLen } = this;
@@ -3080,9 +3080,9 @@ function blake2bDigest(data, outputLength, options = {}) {
   if (remainder > 0) {
     const lastBlock = new Uint8Array(BLAKE2B_BLOCK_LEN);
     lastBlock.set(input.subarray(offset));
-    const add2 = BigInt(remainder);
-    t0 = t0 + add2 & UINT64_MASK;
-    if (t0 < add2) {
+    const add3 = BigInt(remainder);
+    t0 = t0 + add3 & UINT64_MASK;
+    if (t0 < add3) {
       t1 = t1 + 1n & UINT64_MASK;
     }
     blake2bCompress(state, lastBlock, t0, t1, UINT64_MASK);
@@ -4608,15 +4608,12 @@ var SCCP_SOURCE_STATE_MAX_PROOF_BYTES = 2 * 1024 * 1024;
 var SCCP_NATIVE_RECURSIVE_MAX_PROOF_BYTES = 2 * 1024 * 1024;
 var SCCP_EVM_GROTH16_BN254_PROOF_BACKEND_V1 = "evm-groth16-bn254-v1";
 var SCCP_ETH_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1 = "sccp-ethereum-mainnet-native-evm-cross-sdk-parity-v1";
-var SCCP_ETH_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 = "sccp-ethereum-mainnet-native-evm-cross-sdk-fixture-parity-v1";
 var SCCP_ETH_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1 = "sccp-ethereum-mainnet-native-evm-prover-self-test-v1";
 var SCCP_ETH_NATIVE_EVM_PROVER_BUNDLE_ID_V1 = "sccp:eth:native-evm-groth16-prover:ethereum-mainnet:v1";
 var SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1 = "sccp-bsc-testnet-native-evm-cross-sdk-parity-v1";
-var SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 = "sccp-bsc-testnet-native-evm-cross-sdk-fixture-parity-v1";
 var SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1 = "sccp-bsc-testnet-native-evm-prover-self-test-v1";
 var SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1 = "sccp:bsc:native-evm-groth16-prover:bsc-testnet:v1";
 var SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1 = "sccp-bsc-mainnet-native-evm-cross-sdk-parity-v1";
-var SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1 = "sccp-bsc-mainnet-native-evm-cross-sdk-fixture-parity-v1";
 var SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1 = "sccp-bsc-mainnet-native-evm-prover-self-test-v1";
 var SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1 = "sccp:bsc:native-evm-groth16-prover:bsc-mainnet:v1";
 var SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1 = Object.freeze({
@@ -4627,15 +4624,60 @@ var SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1 = Object.freeze({
   dotnet: "native-csharp"
 });
 var SCCP_SUBMIT_MESSAGE_PROOF_ABI_V1 = "submitSccpMessageProof(bytes,bytes32[6],bytes32)";
+var SCCP_SOLANA_RECURSIVE_PROOF_BACKEND_V1 = "sccp-solana-recursive-mainnet-v1";
+var SCCP_SOLANA_TESTNET_RECURSIVE_PROOF_BACKEND_V1 = "sccp-solana-recursive-testnet-v1";
 var SCCP_SOLANA_ACCOUNTS_LT_HASH_OPEN_VERIFY_CIRCUIT_ID_V1 = "sccp-solana-accounts-lt-hash-v1";
 var SCCP_SOLANA_TOWER_REPLAY_OPEN_VERIFY_CIRCUIT_ID_V1 = "sccp-solana-tower-replay-v1";
 var SCCP_SOLANA_FULL_ACCOUNTSDB_LATTICE_OPEN_VERIFY_CIRCUIT_ID_V1 = "sccp-solana-full-accountsdb-lattice-v1";
 var SCCP_SOLANA_BANK_FORK_CHOICE_OPEN_VERIFY_CIRCUIT_ID_V1 = "sccp-solana-bank-fork-choice-v1";
+var SCCP_SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+var SCCP_SOLANA_TESTNET_GENESIS_HASH = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
+var SCCP_SOLANA_MAINNET_ACCOUNTS_DB_VERIFIER_ID_V1 = "sccp:sol:accounts-db-verifier:accounts-lt-hash-mainnet-beta:v1";
+var SCCP_SOLANA_TESTNET_ACCOUNTS_DB_VERIFIER_ID_V1 = "sccp:sol:accounts-db-verifier:accounts-lt-hash-testnet:v1";
+var SCCP_SOLANA_MAINNET_SOURCE_NETWORK_V1 = "solana-mainnet-beta";
+var SCCP_SOLANA_TESTNET_SOURCE_NETWORK_V1 = "solana-testnet";
+var SCCP_SOLANA_SOURCE_PROFILES_V1 = Object.freeze({
+  [SCCP_SOLANA_MAINNET_SOURCE_NETWORK_V1]: Object.freeze({
+    network: SCCP_SOLANA_MAINNET_SOURCE_NETWORK_V1,
+    backend: SCCP_SOLANA_RECURSIVE_PROOF_BACKEND_V1,
+    genesisHash: SCCP_SOLANA_MAINNET_GENESIS_HASH,
+    sourceStateVerifierId: SCCP_SOLANA_MAINNET_ACCOUNTS_DB_VERIFIER_ID_V1,
+    sourceTrustAnchorId: "sccp:sol:source-trust-anchor:solana-mainnet-beta-genesis:v1",
+    consensusVerifierId: "sccp:sol:consensus-verifier:finalized-slot-bankhash-mainnet-beta:v1",
+    messageInclusionVerifierId: "sccp:sol:message-inclusion-verifier:transaction-status-root-branch:v1",
+    finalityPolicyId: "sccp:sol:finality-policy:finalized-slot-mainnet-beta:v1",
+    towerReplayVerifierId: "sccp:sol:light-client:tower-replay-mainnet-beta:v1",
+    fullAccountsdbLatticeVerifierId: "sccp:sol:light-client:full-accountsdb-lattice-mainnet-beta:v1",
+    bankForkChoiceVerifierId: "sccp:sol:light-client:bank-fork-choice-mainnet-beta:v1",
+    transcriptDomain: "sccp:solana:source-profile:mainnet-beta:v1",
+    genesisPublicInputDomain: "sccp:solana:mainnet-genesis:v1"
+  }),
+  [SCCP_SOLANA_TESTNET_SOURCE_NETWORK_V1]: Object.freeze({
+    network: SCCP_SOLANA_TESTNET_SOURCE_NETWORK_V1,
+    backend: SCCP_SOLANA_TESTNET_RECURSIVE_PROOF_BACKEND_V1,
+    genesisHash: SCCP_SOLANA_TESTNET_GENESIS_HASH,
+    sourceStateVerifierId: SCCP_SOLANA_TESTNET_ACCOUNTS_DB_VERIFIER_ID_V1,
+    sourceTrustAnchorId: "sccp:sol:source-trust-anchor:solana-testnet-genesis:v1",
+    consensusVerifierId: "sccp:sol:consensus-verifier:finalized-slot-bankhash-testnet:v1",
+    messageInclusionVerifierId: "sccp:sol:message-inclusion-verifier:transaction-status-root-branch-testnet:v1",
+    finalityPolicyId: "sccp:sol:finality-policy:finalized-slot-testnet:v1",
+    towerReplayVerifierId: "sccp:sol:light-client:tower-replay-testnet:v1",
+    fullAccountsdbLatticeVerifierId: "sccp:sol:light-client:full-accountsdb-lattice-testnet:v1",
+    bankForkChoiceVerifierId: "sccp:sol:light-client:bank-fork-choice-testnet:v1",
+    transcriptDomain: "sccp:solana:source-profile:testnet:v1",
+    genesisPublicInputDomain: "sccp:solana:testnet-genesis:v1"
+  })
+});
 var SCCP_SOLANA_TEMPLATE_SOURCE_TRUST_ANCHOR_HASH_V1 = "0x113bdb7601d84f2098daec386346a7123857d181b3ac5bd23df50fa9e1b2cbe3";
 var SCCP_SOLANA_TEMPLATE_CONSENSUS_VERIFIER_HASH_V1 = "0x97ea89019e6c79305d06dfc27640ee14a6b42ba6eaf86e1835ee9b433dba48ba";
 var SCCP_SOLANA_TEMPLATE_MESSAGE_INCLUSION_VERIFIER_HASH_V1 = "0xb8358bfef1e428a6a7e9115687cb2b88d9c21dad4021bea3e11d43489eb3dcb0";
 var SCCP_SOLANA_TEMPLATE_SOURCE_STATE_VERIFIER_HASH_V1 = "0x6b4e4106bbb6b343ae1a4a36c9c68756d4454d2167c9b8b2ee3225e39fb0a48b";
 var SCCP_SOLANA_TEMPLATE_FINALITY_POLICY_HASH_V1 = "0x9df7ea90cf1bbba036788b14804f63f4be1e908390be89524fd4486f74344f56";
+var SCCP_SOLANA_TESTNET_TEMPLATE_SOURCE_TRUST_ANCHOR_HASH_V1 = "0xe347ad172f57ea9941878da12d078fe56af7dae7ad5a820a21802e89388b6f7d";
+var SCCP_SOLANA_TESTNET_TEMPLATE_CONSENSUS_VERIFIER_HASH_V1 = "0xb054bb688200cd5adc3938f17e7b34a00c19e5e2db239bb083c552592b9467af";
+var SCCP_SOLANA_TESTNET_TEMPLATE_MESSAGE_INCLUSION_VERIFIER_HASH_V1 = "0xb15e66a84c1b74b1936dd57d208e906c634cc1ecbace9b51d8173fbf6170934b";
+var SCCP_SOLANA_TESTNET_TEMPLATE_SOURCE_STATE_VERIFIER_HASH_V1 = "0xdeff79aa347b438c97693d361a5518a1d67291d2a61bd6f8231f6eaf35cfd641";
+var SCCP_SOLANA_TESTNET_TEMPLATE_FINALITY_POLICY_HASH_V1 = "0x3d678aa3504c259140b75e853ccf5bf0834a8cb3e9e0e45a3e666cff50ece364";
 var SCCP_SOLANA_MAINNET_TOWER_REPLAY_VERIFIER_ID_V1 = "sccp:sol:light-client:tower-replay-mainnet-beta:v1";
 var SCCP_SOLANA_MAINNET_FULL_ACCOUNTSDB_LATTICE_VERIFIER_ID_V1 = "sccp:sol:light-client:full-accountsdb-lattice-mainnet-beta:v1";
 var SCCP_SOLANA_MAINNET_BANK_FORK_CHOICE_VERIFIER_ID_V1 = "sccp:sol:light-client:bank-fork-choice-mainnet-beta:v1";
@@ -4674,9 +4716,6 @@ var SCCP_EVM_DESTINATION_BINDING_LABEL_V1 = "iroha:sccp:evm-destination-binding:
 var SCCP_ETH_MAINNET_SLOTS_PER_EPOCH = 32;
 var SCCP_ETH_MAINNET_EPOCHS_PER_SYNC_COMMITTEE_PERIOD = 256;
 var SCCP_ETH_MAINNET_SLOTS_PER_SYNC_COMMITTEE_PERIOD = SCCP_ETH_MAINNET_SLOTS_PER_EPOCH * SCCP_ETH_MAINNET_EPOCHS_PER_SYNC_COMMITTEE_PERIOD;
-var SCCP_SOURCE_HEADER_PREFIX_V1 = "sccp:source:header:v1";
-var SCCP_SOURCE_EVENT_LEAF_PREFIX_V1 = "sccp:source:event-leaf:v1";
-var SCCP_SOURCE_NODE_PREFIX_V1 = "sccp:source:node:v1";
 var SCCP_SOLANA_LT_HASH_ELEMENTS = 1024;
 var SCCP_SOLANA_ACCOUNTS_LT_HASH_BYTES = SCCP_SOLANA_LT_HASH_ELEMENTS * 2;
 var SCCP_SOLANA_STAKE_STATE_V2_LEGACY_WARMUP_COOLDOWN_RATE_BYTES = new Uint8Array([0, 0, 0, 0, 0, 0, 208, 63]);
@@ -4724,9 +4763,33 @@ var SCCP_SOLANA_TEMPLATE_COMPONENT_HASHES_V1 = /* @__PURE__ */ new Map([
 var SCCP_SOLANA_TEMPLATE_SOURCE_MATERIAL_HASHES_V1 = new Set(
   SCCP_SOLANA_TEMPLATE_COMPONENT_HASHES_V1.values()
 );
+var SCCP_SOLANA_TESTNET_TEMPLATE_COMPONENT_HASHES_V1 = /* @__PURE__ */ new Map([
+  [
+    "sourceTrustAnchorHash",
+    SCCP_SOLANA_TESTNET_TEMPLATE_SOURCE_TRUST_ANCHOR_HASH_V1
+  ],
+  [
+    "consensusVerifierHash",
+    SCCP_SOLANA_TESTNET_TEMPLATE_CONSENSUS_VERIFIER_HASH_V1
+  ],
+  [
+    "messageInclusionVerifierHash",
+    SCCP_SOLANA_TESTNET_TEMPLATE_MESSAGE_INCLUSION_VERIFIER_HASH_V1
+  ],
+  [
+    "sourceStateVerifierHash",
+    SCCP_SOLANA_TESTNET_TEMPLATE_SOURCE_STATE_VERIFIER_HASH_V1
+  ],
+  [
+    "finalityPolicyHash",
+    SCCP_SOLANA_TESTNET_TEMPLATE_FINALITY_POLICY_HASH_V1
+  ]
+]);
+for (const hash of SCCP_SOLANA_TESTNET_TEMPLATE_COMPONENT_HASHES_V1.values()) {
+  SCCP_SOLANA_TEMPLATE_SOURCE_MATERIAL_HASHES_V1.add(hash);
+}
 var SCCP_TON_BOC_MAGIC = Uint8Array.from([181, 238, 156, 114]);
 var SCCP_TON_MAX_BOC_BYTES = 64 * 1024;
-var SCCP_MAX_SOURCE_MERKLE_BRANCH_NODES = 64;
 var SCCP_ETH_BEACON_REST_MAX_RESPONSE_BYTES = 1024 * 1024;
 var SCCP_ETH_MAINNET_SYNC_COMMITTEE_AUTHORITIES = 512;
 var SCCP_ETH_MAX_SYNC_COMMITTEE_AUTHORITIES = SCCP_ETH_MAINNET_SYNC_COMMITTEE_AUTHORITIES;
@@ -4747,10 +4810,7 @@ var SCCP_TRON_MAX_TRANSACTION_BYTES = 64 * 1024;
 var SCCP_U64_MAX = (1n << 64n) - 1n;
 var SCCP_U128_MAX = (1n << 128n) - 1n;
 var SCCP_I64_MAX = (1n << 63n) - 1n;
-var NORITO_COMPACT_LEN_FLAG = 2;
 var NORITO_CRC64_REFLECTED_POLY = 0xc96c5795d7870f42n;
-var SCCP_SOURCE_CHAIN_PROOF_ENVELOPE_SCHEMA_HASH_HEX = "7a27db10248ac178129ff7397f9a1ce7";
-var SCCP_SOURCE_EVENT_DIGEST_PREFIX_V1 = "sccp:source:event:v1";
 var NORITO_CRC64_TABLE = (() => {
   const table = new Array(256);
   for (let index = 0; index < 256; index += 1) {
@@ -4910,7 +4970,6 @@ var bytesEqual2 = (left, right) => {
   }
   return diff === 0;
 };
-var copyBytes = (bytes) => new Uint8Array(bytes);
 var sourceStateProverRequestByteFields = Object.freeze(
   /* @__PURE__ */ new Set([
     "statementBytes",
@@ -4927,28 +4986,27 @@ var sourceStateProverRequestByteFields = Object.freeze(
 );
 var writeU8 = (target, value) => {
   const out = new Uint8Array(1);
-  out[0] = value;
+  out[0] = Number(normalizeUnsignedBigIntMax(value, "u8", 255n, "u8"));
   return concatBytes2(target, out);
 };
 var writeU32Le = (target, value) => {
   const out = new Uint8Array(4);
-  new DataView(out.buffer).setUint32(0, Number(value), true);
+  new DataView(out.buffer).setUint32(
+    0,
+    Number(normalizeUnsignedBigIntMax(value, "u32", 4294967295n, "u32")),
+    true
+  );
   return concatBytes2(target, out);
 };
 var writeU64Le = (target, value) => {
   const out = new Uint8Array(8);
   const view = new DataView(out.buffer);
-  view.setBigUint64(0, normalizeUnsignedBigInt(value, "u64"), true);
-  return concatBytes2(target, out);
-};
-var readU64LeAt = (bytes, offset, label) => {
-  if (offset + 8 > bytes.length) {
-    throw new TypeError(`${label} is too short`);
-  }
-  return new DataView(bytes.buffer, bytes.byteOffset + offset, 8).getBigUint64(
+  view.setBigUint64(
     0,
+    normalizeUnsignedBigIntMax(value, "u64", SCCP_U64_MAX, "u64"),
     true
   );
+  return concatBytes2(target, out);
 };
 var abiWordU32 = (value, label = "u32") => {
   const out = new Uint8Array(32);
@@ -5174,23 +5232,6 @@ var messageKindCode = (kind) => {
       return 6;
     default:
       throw new TypeError(`unsupported SCCP message kind: ${kind}`);
-  }
-};
-var SCCP_SUPPORTED_DOMAINS = [
-  SCCP_DOMAIN_SORA,
-  SCCP_DOMAIN_ETH,
-  SCCP_DOMAIN_BSC,
-  SCCP_DOMAIN_SOL,
-  SCCP_DOMAIN_TON,
-  SCCP_DOMAIN_TRON
-];
-var isSupportedSccpDomain = (domainId) => {
-  try {
-    return SCCP_SUPPORTED_DOMAINS.includes(
-      normalizeSccpDomainId(domainId, "domainId")
-    );
-  } catch (_error) {
-    return false;
   }
 };
 var normalizeSccpCodecId = (value, label) => Number(normalizeUnsignedBigIntMax(value, label, 255n, "u8"));
@@ -5539,418 +5580,6 @@ var buildTairaXorTonToTairaTransferPayload = (input) => {
     route_id_codec: SCCP_CODEC_TEXT_UTF8,
     route_id: routeId
   });
-};
-var noritoU64Le = (value, label = "u64") => {
-  const normalized = normalizeUnsignedBigIntMax(
-    value,
-    label,
-    SCCP_U64_MAX,
-    "u64"
-  );
-  const out = new Uint8Array(8);
-  new DataView(out.buffer).setBigUint64(0, normalized, true);
-  return out;
-};
-var noritoUnsignedLeb128 = (value, label = "length") => {
-  let remaining = normalizeUnsignedBigIntMax(value, label, SCCP_U64_MAX, "u64");
-  const out = [];
-  do {
-    let byte = Number(remaining & 0x7fn);
-    remaining >>= 7n;
-    if (remaining !== 0n) {
-      byte |= 128;
-    }
-    out.push(byte);
-  } while (remaining !== 0n);
-  return Uint8Array.from(out);
-};
-var noritoLengthBytes = (length, compact, label = "length") => compact ? noritoUnsignedLeb128(length, label) : noritoU64Le(length, label);
-var noritoField = (payload, compact, label = "field") => {
-  const bytes = toBytes2(payload, label);
-  return concatBytes2(
-    noritoLengthBytes(bytes.length, compact, `${label}.length`),
-    bytes
-  );
-};
-var noritoStringValue = (value, compact, label) => noritoField(textEncoder.encode(value), compact, label);
-var noritoCrc64Ecma = (payload) => {
-  let crc = SCCP_U64_MAX;
-  for (const byte of payload) {
-    const index = Number((crc ^ BigInt(byte)) & 0xffn);
-    crc = NORITO_CRC64_TABLE[index] ^ crc >> 8n;
-  }
-  return BigInt.asUintN(64, crc ^ SCCP_U64_MAX);
-};
-var noritoFrame = (payload, schemaHashHex, flags = 0) => concatBytes2(
-  textEncoder.encode("NRT0"),
-  Uint8Array.from([0, 0]),
-  hexToBytes2(schemaHashHex, "Norito schema hash", 16),
-  Uint8Array.from([0]),
-  noritoU64Le(payload.length, "Norito payload length"),
-  noritoU64Le(noritoCrc64Ecma(payload), "Norito payload CRC64"),
-  Uint8Array.from([flags & 255]),
-  payload
-);
-var noritoFramePayload = (data, expectedSchemaHashHex, label) => {
-  const bytes = toBytes2(data, label);
-  const headerLength = 40;
-  if (bytes.length < headerLength) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  const magic = textEncoder.encode("NRT0");
-  if (!bytesEqual2(bytes.slice(0, 4), magic) || bytes[4] !== 0 || bytes[5] !== 0) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  const schemaHash = bytes.slice(6, 22);
-  if (!bytesEqual2(schemaHash, hexToBytes2(expectedSchemaHashHex, "Norito schema hash", 16))) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  const compression = bytes[22];
-  if (compression !== 0) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  const payloadLength = readU64LeAt(bytes, 23, `${label}.payload_length`);
-  if (payloadLength > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new TypeError(`${label} payload is too large`);
-  }
-  const payloadLengthNumber = Number(payloadLength);
-  const checksum = readU64LeAt(bytes, 31, `${label}.checksum`);
-  const flags = bytes[39];
-  const supportedFlags = 1 | 2 | 4 | 32;
-  if ((flags & ~supportedFlags) !== 0 || (flags & 32) !== 0 && (flags & 6) !== 6) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  const payloadStart = bytes.length - payloadLengthNumber;
-  if (payloadStart < headerLength) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  for (const byte of bytes.slice(headerLength, payloadStart)) {
-    if (byte !== 0) {
-      throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-    }
-  }
-  const payload = bytes.slice(payloadStart);
-  if (noritoCrc64Ecma(payload) !== checksum) {
-    throw new TypeError(`${label} must decode as SccpSourceChainProofEnvelopeV1`);
-  }
-  return { payload, flags };
-};
-var noritoReader = (bytes, flags) => ({
-  bytes,
-  flags,
-  offset: 0
-});
-var noritoReaderRemaining = (reader) => reader.bytes.length - reader.offset;
-var noritoReadBytes = (reader, count, label) => {
-  if (count < 0 || reader.offset + count > reader.bytes.length) {
-    throw new TypeError(`${label} is too short`);
-  }
-  const out = reader.bytes.slice(reader.offset, reader.offset + count);
-  reader.offset += count;
-  return out;
-};
-var noritoReadU8 = (reader, label) => noritoReadBytes(reader, 1, label)[0];
-var noritoReadU32 = (reader, label) => {
-  const raw = noritoReadBytes(reader, 4, label);
-  return new DataView(raw.buffer, raw.byteOffset, 4).getUint32(0, true);
-};
-var noritoReadU64 = (reader, label) => {
-  const raw = noritoReadBytes(reader, 8, label);
-  return new DataView(raw.buffer, raw.byteOffset, 8).getBigUint64(0, true);
-};
-var noritoReadVarint = (reader, label) => {
-  let shift = 0n;
-  let result = 0n;
-  for (let index = 0; index < 10; index += 1) {
-    const byte = noritoReadU8(reader, label);
-    result |= BigInt(byte & 127) << shift;
-    if ((byte & 128) === 0) {
-      return result;
-    }
-    shift += 7n;
-  }
-  throw new TypeError(`${label} length is invalid`);
-};
-var noritoReadLength = (reader, compact, label) => compact ? noritoReadVarint(reader, label) : noritoReadU64(reader, label);
-var noritoCheckedLength = (value, label) => {
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new TypeError(`${label} is too large`);
-  }
-  return Number(value);
-};
-var noritoReadField = (reader, label, readPayload) => {
-  const length = noritoCheckedLength(
-    noritoReadLength(reader, (reader.flags & NORITO_COMPACT_LEN_FLAG) !== 0, `${label}.length`),
-    label
-  );
-  const child = noritoReader(noritoReadBytes(reader, length, label), reader.flags);
-  const value = readPayload(child);
-  if (noritoReaderRemaining(child) !== 0) {
-    throw new TypeError(`${label} must not contain trailing bytes`);
-  }
-  return value;
-};
-var noritoReadString = (reader, label) => {
-  const length = noritoCheckedLength(
-    noritoReadLength(reader, (reader.flags & NORITO_COMPACT_LEN_FLAG) !== 0, `${label}.length`),
-    label
-  );
-  const raw = noritoReadBytes(reader, length, label);
-  const value = textDecoder.decode(raw);
-  if (!bytesEqual2(textEncoder.encode(value), raw)) {
-    throw new TypeError(`${label} must be canonical UTF-8`);
-  }
-  return value;
-};
-var noritoReadRawByteVec = (reader, label) => {
-  const length = noritoCheckedLength(noritoReadLength(reader, false, `${label}.length`), label);
-  return noritoReadBytes(reader, length, label);
-};
-var noritoReadRawByteVecSequence = (reader, label) => {
-  const count = noritoCheckedLength(noritoReadLength(reader, false, `${label}.length`), label);
-  const values = [];
-  for (let index = 0; index < count; index += 1) {
-    values.push(
-      noritoReadField(
-        reader,
-        `${label}[${index}]`,
-        (child) => noritoReadRawByteVec(child, `${label}[${index}]`)
-      )
-    );
-  }
-  return values;
-};
-var sccpSourceChainKeyForDomain = (domain) => {
-  switch (domain) {
-    case SCCP_DOMAIN_SORA:
-      return "sora";
-    case SCCP_DOMAIN_ETH:
-      return "eth";
-    case SCCP_DOMAIN_BSC:
-      return "bsc";
-    case SCCP_DOMAIN_SOL:
-      return "sol";
-    case SCCP_DOMAIN_TON:
-      return "ton";
-    case SCCP_DOMAIN_TRON:
-      return "tron";
-    default:
-      throw new TypeError("SCCP domain must be supported");
-  }
-};
-var sccpSourceProofPlanCodeForDomain = (domain) => {
-  switch (domain) {
-    case SCCP_DOMAIN_ETH:
-      return 1;
-    case SCCP_DOMAIN_BSC:
-      return 2;
-    case SCCP_DOMAIN_SOL:
-      return 3;
-    case SCCP_DOMAIN_TON:
-      return 4;
-    case SCCP_DOMAIN_TRON:
-      return 5;
-    default:
-      throw new TypeError("SCCP source domain must support source proofs");
-  }
-};
-var sccpFinalityModelCodeForDomain = (domain) => {
-  switch (domain) {
-    case SCCP_DOMAIN_ETH:
-      return 0;
-    case SCCP_DOMAIN_BSC:
-      return 1;
-    case SCCP_DOMAIN_SOL:
-      return 2;
-    case SCCP_DOMAIN_TON:
-      return 3;
-    case SCCP_DOMAIN_TRON:
-      return 4;
-    default:
-      throw new TypeError("SCCP source domain must support source proofs");
-  }
-};
-var sccpSourceEventDigest = (sourceDomain, targetDomain, messageId, payloadHash) => bytesToHex2(
-  prefixedBlake2b(
-    SCCP_SOURCE_EVENT_DIGEST_PREFIX_V1,
-    concatBytes2(
-      Uint8Array.from([1]),
-      writeU32Le(new Uint8Array(), sourceDomain),
-      writeU32Le(new Uint8Array(), targetDomain),
-      hexToBytes2(messageId, "sourceProofBytes.message_id", 32),
-      hexToBytes2(payloadHash, "sourceProofBytes.payload_hash", 32)
-    )
-  )
-);
-var decodeSccpSourceChainProofSummary = (sourceProofBytes, label) => {
-  const { payload, flags } = noritoFramePayload(
-    sourceProofBytes,
-    SCCP_SOURCE_CHAIN_PROOF_ENVELOPE_SCHEMA_HASH_HEX,
-    label
-  );
-  const reader = noritoReader(payload, flags);
-  const version = noritoReadField(
-    reader,
-    `${label}.version`,
-    (child) => noritoReadU8(child, `${label}.version`)
-  );
-  if (version !== 1) {
-    throw new TypeError(`${label}.version must be 1`);
-  }
-  const sourceDomain = noritoReadField(
-    reader,
-    `${label}.source_domain`,
-    (child) => noritoReadU32(child, `${label}.source_domain`)
-  );
-  const targetDomain = noritoReadField(
-    reader,
-    `${label}.target_domain`,
-    (child) => noritoReadU32(child, `${label}.target_domain`)
-  );
-  const sourceChain = noritoReadField(
-    reader,
-    `${label}.source_chain`,
-    (child) => noritoReadString(child, `${label}.source_chain`)
-  );
-  const sourceProofPlan = noritoReadField(
-    reader,
-    `${label}.source_proof_plan`,
-    (child) => noritoReadU32(child, `${label}.source_proof_plan`)
-  );
-  const finalityModel = noritoReadField(
-    reader,
-    `${label}.finality_model`,
-    (child) => noritoReadU32(child, `${label}.finality_model`)
-  );
-  const messageId = noritoReadField(
-    reader,
-    `${label}.message_id`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.message_id`))
-  );
-  const payloadHash = noritoReadField(
-    reader,
-    `${label}.payload_hash`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.payload_hash`))
-  );
-  const sourceEventDigest = noritoReadField(
-    reader,
-    `${label}.source_event_digest`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.source_event_digest`))
-  );
-  const commitmentRoot = noritoReadField(
-    reader,
-    `${label}.commitment_root`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.commitment_root`))
-  );
-  const finalityHeight = noritoReadField(
-    reader,
-    `${label}.finality_height`,
-    (child) => noritoReadU64(child, `${label}.finality_height`)
-  );
-  const finalityBlockHash = noritoReadField(
-    reader,
-    `${label}.finality_block_hash`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.finality_block_hash`))
-  );
-  const finalizedHeaderHash = noritoReadField(
-    reader,
-    `${label}.finalized_header_hash`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.finalized_header_hash`))
-  );
-  const receiptOrMessageRoot = noritoReadField(
-    reader,
-    `${label}.receipt_or_message_root`,
-    (child) => bytesToHex2(noritoReadBytes(child, 32, `${label}.receipt_or_message_root`))
-  );
-  const consensusProof = noritoReadField(
-    reader,
-    `${label}.consensus_proof`,
-    (child) => noritoReadRawByteVec(child, `${label}.consensus_proof`)
-  );
-  const messageInclusionProof = noritoReadField(
-    reader,
-    `${label}.message_inclusion_proof`,
-    (child) => noritoReadRawByteVec(child, `${label}.message_inclusion_proof`)
-  );
-  const inclusionBranch = noritoReadField(
-    reader,
-    `${label}.inclusion_branch`,
-    (child) => noritoReadRawByteVecSequence(child, `${label}.inclusion_branch`)
-  );
-  if (noritoReaderRemaining(reader) !== 0) {
-    throw new TypeError(`${label} must not contain trailing bytes`);
-  }
-  if (sourceDomain === SCCP_DOMAIN_SORA) {
-    throw new TypeError(`${label}.source_domain must not be SORA`);
-  }
-  if (!isSupportedSccpDomain(sourceDomain)) {
-    throw new TypeError(`${label}.source_domain must be a supported SCCP domain`);
-  }
-  if (!isSupportedSccpDomain(targetDomain)) {
-    throw new TypeError(`${label}.target_domain must be a supported SCCP domain`);
-  }
-  if (sourceDomain === targetDomain) {
-    throw new TypeError(`${label}.target_domain must differ from source_domain`);
-  }
-  if (sourceChain !== sccpSourceChainKeyForDomain(sourceDomain)) {
-    throw new TypeError(`${label}.source_chain must match source_domain`);
-  }
-  if (sourceProofPlan !== sccpSourceProofPlanCodeForDomain(sourceDomain)) {
-    throw new TypeError(`${label}.source_proof_plan must match source_domain`);
-  }
-  if (finalityModel !== sccpFinalityModelCodeForDomain(sourceDomain)) {
-    throw new TypeError(`${label}.finality_model must match source_domain`);
-  }
-  if (finalityHeight === 0n) {
-    throw new TypeError(`${label}.finality_height must not be zero`);
-  }
-  for (const [field, value] of [
-    ["message_id", messageId],
-    ["payload_hash", payloadHash],
-    ["source_event_digest", sourceEventDigest],
-    ["commitment_root", commitmentRoot],
-    ["finality_block_hash", finalityBlockHash],
-    ["finalized_header_hash", finalizedHeaderHash],
-    ["receipt_or_message_root", receiptOrMessageRoot]
-  ]) {
-    normalizeNonZeroHex32(value, `${label}.${field}`);
-  }
-  if (consensusProof.length === 0) {
-    throw new TypeError(`${label}.consensus_proof must not be empty`);
-  }
-  if (messageInclusionProof.length === 0) {
-    throw new TypeError(`${label}.message_inclusion_proof must not be empty`);
-  }
-  if (inclusionBranch.length === 0) {
-    throw new TypeError(`${label}.inclusion_branch must not be empty`);
-  }
-  if (inclusionBranch.length > SCCP_MAX_SOURCE_MERKLE_BRANCH_NODES) {
-    throw new TypeError(`${label}.inclusion_branch is too deep`);
-  }
-  inclusionBranch.forEach((sibling, index) => {
-    if (sibling.length !== 32) {
-      throw new TypeError(`${label}.inclusion_branch[${index}] must be 32 bytes`);
-    }
-  });
-  const genericSourceEventDigest = sccpSourceEventDigest(
-    sourceDomain,
-    targetDomain,
-    messageId,
-    payloadHash
-  );
-  const acceptsRouteSpecificSourceEventDigest = sourceDomain === SCCP_DOMAIN_BSC && targetDomain === SCCP_DOMAIN_SORA;
-  if (sourceEventDigest !== genericSourceEventDigest && !acceptsRouteSpecificSourceEventDigest) {
-    throw new TypeError(`${label}.source_event_digest must match source domains and message`);
-  }
-  return {
-    sourceDomain,
-    targetDomain,
-    messageId,
-    payloadHash,
-    commitmentRoot,
-    finalityHeight,
-    finalityBlockHash
-  };
 };
 var canonicalSccpTokenAddPayloadBytes = (payload) => {
   if (!payload || typeof payload !== "object") {
@@ -6552,7 +6181,6 @@ var nativeEvmProverBundleProfiles = Object.freeze({
     chain: "eth",
     bundleId: SCCP_ETH_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
     paritySchema: SCCP_ETH_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
-    parityFixtureSchema: SCCP_ETH_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
     selfTestFixtureSchema: SCCP_ETH_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
     destinationBinding: ethereumMainnetSccpDestinationBinding,
     unavailableCode: "ERR_SCCP_ETH_NATIVE_PROVER_ARTIFACTS_UNAVAILABLE",
@@ -6569,7 +6197,6 @@ var nativeEvmProverBundleProfiles = Object.freeze({
     networkIdHex: SCCP_BSC_TESTNET_NETWORK_ID,
     bundleId: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
     paritySchema: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
-    parityFixtureSchema: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
     selfTestFixtureSchema: SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
     destinationBinding: bscTestnetSccpDestinationBinding,
     unavailableCode: "ERR_SCCP_BSC_TESTNET_NATIVE_PROVER_ARTIFACTS_UNAVAILABLE",
@@ -6585,7 +6212,6 @@ var nativeEvmProverBundleProfiles = Object.freeze({
     networkIdHex: SCCP_BSC_MAINNET_NETWORK_ID,
     bundleId: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
     paritySchema: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_SCHEMA_V1,
-    parityFixtureSchema: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_PARITY_FIXTURE_SCHEMA_V1,
     selfTestFixtureSchema: SCCP_BSC_MAINNET_NATIVE_EVM_PROVER_SELF_TEST_SCHEMA_V1,
     destinationBinding: bscMainnetSccpDestinationBinding,
     unavailableCode: "ERR_SCCP_BSC_MAINNET_NATIVE_PROVER_ARTIFACTS_UNAVAILABLE",
@@ -6901,220 +6527,6 @@ var SCCP_SOURCE_CONSENSUS_PROOF_SCHEMA_HASH_HEX = sccpNoritoSchemaHashHex(
 var SCCP_SOURCE_MESSAGE_INCLUSION_PROOF_SCHEMA_HASH_HEX = sccpNoritoSchemaHashHex(
   "iroha_sccp::SccpSourceMessageInclusionProofV1"
 );
-var noritoStructValue = (fields) => concatBytes2(...fields.map((field) => noritoField(field, false)));
-var noritoU8 = (value) => Uint8Array.from([value & 255]);
-var noritoU32Value = (value) => writeU32Le(new Uint8Array(), value);
-var noritoU64Value = (value) => noritoU64Le(value);
-var noritoRawByteVecValue = (value, label) => {
-  const bytes = toBytes2(value, label);
-  return concatBytes2(noritoU64Le(bytes.length), bytes);
-};
-var noritoByteVecSequenceValue = (items, label) => {
-  if (!Array.isArray(items)) {
-    throw new TypeError(`${label} must be an array`);
-  }
-  return concatBytes2(
-    noritoU64Le(items.length),
-    ...items.map(
-      (item, index) => noritoField(
-        noritoRawByteVecValue(item, `${label}[${index}]`),
-        false,
-        `${label}[${index}]`
-      )
-    )
-  );
-};
-function buildTonTestnetPlaceholderSourceChainProofEnvelope(input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    throw new TypeError("TON testnet placeholder source-chain proof input must be an object");
-  }
-  const optionalInput = (label, ...names) => {
-    const selected = strictOptionalResultField(input, label, ...names);
-    return selected === SCCP_OPTIONAL_FIELD_MISSING ? void 0 : selected;
-  };
-  const messageId = normalizeNonZeroHex32(
-    strictResultField(input, "messageId", "messageId", "message_id"),
-    "messageId"
-  );
-  const payloadHash = normalizeNonZeroHex32(
-    strictResultField(input, "payloadHash", "payloadHash", "payload_hash"),
-    "payloadHash"
-  );
-  const commitmentRoot = normalizeNonZeroHex32(
-    strictResultField(
-      input,
-      "commitmentRoot",
-      "commitmentRoot",
-      "commitment_root"
-    ),
-    "commitmentRoot"
-  );
-  const sourceEventDigest = sccpSourceEventDigest(
-    SCCP_DOMAIN_TON,
-    SCCP_DOMAIN_SORA,
-    messageId,
-    payloadHash
-  );
-  const sourceEventLeafHash = sccpSourceEventLeafHash(sourceEventDigest);
-  const branchSeed = prefixedBlake2b(
-    "sccp:ton:testnet-placeholder-source-branch:v1",
-    concatBytes2(
-      hexToBytes2(sourceEventDigest, "sourceEventDigest", 32),
-      hexToBytes2(commitmentRoot, "commitmentRoot", 32)
-    )
-  );
-  const inclusionBranch = Object.freeze([bytesToHex2(branchSeed)]);
-  const receiptOrMessageRoot = sccpSourceMessageRootFromBranch(
-    sourceEventLeafHash,
-    0,
-    inclusionBranch
-  );
-  const txIdInput = optionalInput(
-    "txId",
-    "txId",
-    "txID",
-    "transactionHash",
-    "transaction_hash",
-    "transactionId",
-    "transaction_id"
-  ) ?? messageId;
-  const txId = normalizeNonZeroHex32(txIdInput, "txId");
-  const finalityHeight = normalizeUnsignedBigIntMax(
-    optionalInput("finalityHeight", "finalityHeight", "finality_height") ?? new DataView(
-      hexToBytes2(txId, "txId", 32).buffer,
-      0,
-      8
-    ).getBigUint64(0, false),
-    "finalityHeight",
-    SCCP_U64_MAX,
-    "u64"
-  );
-  if (finalityHeight === 0n) {
-    throw new TypeError("finalityHeight must not be zero");
-  }
-  const finalityBlockHash = optionalInput(
-    "finalityBlockHash",
-    "finalityBlockHash",
-    "finality_block_hash",
-    "blockHash",
-    "block_hash"
-  ) ?? bytesToHex2(
-    prefixedBlake2b(
-      "sccp:ton:testnet-placeholder-finality-block:v1",
-      concatBytes2(
-        hexToBytes2(txId, "txId", 32),
-        hexToBytes2(sourceEventDigest, "sourceEventDigest", 32)
-      )
-    )
-  );
-  const normalizedFinalityBlockHash = normalizeNonZeroHex32(
-    finalityBlockHash,
-    "finalityBlockHash"
-  );
-  const finalizedHeaderHash = sccpSourceFinalizedHeaderHash({
-    sourceDomain: SCCP_DOMAIN_TON,
-    finalityModelCanonical: 4,
-    finalityHeight,
-    finalityBlockHash: normalizedFinalityBlockHash,
-    receiptOrMessageRoot
-  });
-  const consensusProof = concatBytes2(
-    textEncoder.encode("sccp:ton:testnet-placeholder-consensus:v1"),
-    hexToBytes2(txId, "txId", 32),
-    hexToBytes2(sourceEventDigest, "sourceEventDigest", 32)
-  );
-  const messageInclusionProof = concatBytes2(
-    textEncoder.encode("sccp:ton:testnet-placeholder-inclusion:v1"),
-    hexToBytes2(sourceEventLeafHash, "sourceEventLeafHash", 32),
-    hexToBytes2(receiptOrMessageRoot, "receiptOrMessageRoot", 32)
-  );
-  const sourceProofBytes = noritoFrame(
-    noritoStructValue([
-      noritoU8(1),
-      noritoU32Value(SCCP_DOMAIN_TON),
-      noritoU32Value(SCCP_DOMAIN_SORA),
-      noritoStringValue("ton", false, "sourceChain"),
-      noritoU32Value(4),
-      noritoU32Value(3),
-      hexToBytes2(messageId, "messageId", 32),
-      hexToBytes2(payloadHash, "payloadHash", 32),
-      hexToBytes2(sourceEventDigest, "sourceEventDigest", 32),
-      hexToBytes2(commitmentRoot, "commitmentRoot", 32),
-      noritoU64Value(finalityHeight),
-      hexToBytes2(normalizedFinalityBlockHash, "finalityBlockHash", 32),
-      hexToBytes2(finalizedHeaderHash, "finalizedHeaderHash", 32),
-      hexToBytes2(receiptOrMessageRoot, "receiptOrMessageRoot", 32),
-      noritoRawByteVecValue(consensusProof, "consensusProof"),
-      noritoRawByteVecValue(messageInclusionProof, "messageInclusionProof"),
-      noritoByteVecSequenceValue(inclusionBranch, "inclusionBranch")
-    ]),
-    SCCP_SOURCE_CHAIN_PROOF_ENVELOPE_SCHEMA_HASH_HEX
-  );
-  decodeSccpSourceChainProofSummary(sourceProofBytes, "sourceProofBytes");
-  return Object.freeze({
-    sourceProofHex: bytesToHex2(sourceProofBytes),
-    sourceProofBytes: copyBytes(sourceProofBytes),
-    sourceEventDigest,
-    sourceEventLeafHash,
-    receiptOrMessageRoot,
-    finalityHeight: finalityHeight.toString(),
-    finalityBlockHash: normalizedFinalityBlockHash,
-    finalizedHeaderHash,
-    txId
-  });
-}
-var sccpSourceEventLeafHash = (sourceEventDigest) => bytesToHex2(
-  prefixedBlake2b(
-    SCCP_SOURCE_EVENT_LEAF_PREFIX_V1,
-    nonZeroHex32Bytes(sourceEventDigest, "sourceEventDigest")
-  )
-);
-var hashSccpSourceMerkleNode = (left, right) => bytesToHex2(
-  prefixedBlake2b(
-    SCCP_SOURCE_NODE_PREFIX_V1,
-    concatBytes2(
-      hexToBytes2(left, "sourceMerkle.left", 32),
-      hexToBytes2(right, "sourceMerkle.right", 32)
-    )
-  )
-);
-var sccpSourceMessageRootFromBranch = (leafHash, leafIndex, branch) => {
-  let current = normalizeNonZeroHex32(leafHash, "sourceEventLeafHash");
-  let index = normalizeUnsignedBigIntMax(
-    leafIndex,
-    "leafIndex",
-    SCCP_U64_MAX,
-    "u64"
-  );
-  for (const [branchIndex, siblingValue] of branch.entries()) {
-    const sibling = normalizeNonZeroHex32(
-      siblingValue,
-      `inclusionBranch[${branchIndex}]`
-    );
-    current = (index & 1n) === 0n ? hashSccpSourceMerkleNode(current, sibling) : hashSccpSourceMerkleNode(sibling, current);
-    index >>= 1n;
-  }
-  return current;
-};
-var sccpSourceFinalizedHeaderHash = ({
-  sourceDomain,
-  finalityModelCanonical,
-  finalityHeight,
-  finalityBlockHash,
-  receiptOrMessageRoot
-}) => {
-  let out = new Uint8Array();
-  out = writeU8(out, 1);
-  out = writeU32Le(out, sourceDomain);
-  out = writeU8(out, finalityModelCanonical);
-  out = writeU64Le(out, finalityHeight);
-  out = concatBytes2(
-    out,
-    hexToBytes2(finalityBlockHash, "finalityBlockHash", 32),
-    hexToBytes2(receiptOrMessageRoot, "receiptOrMessageRoot", 32)
-  );
-  return bytesToHex2(prefixedBlake2b(SCCP_SOURCE_HEADER_PREFIX_V1, out));
-};
 var normalizeTonRawAddress = (value, label) => {
   if (typeof value !== "string" || value.trim() !== value) {
     throw new TypeError(`${label} must not contain whitespace`);
@@ -7595,11 +7007,711 @@ function toBytes2(value, label) {
   throw new TypeError(`${label} must be bytes or hex`);
 }
 
+// node_modules/@noble/hashes/esm/blake2b.js
+init_esbuild_buffer_shim();
+
+// node_modules/@noble/hashes/esm/blake2.js
+init_esbuild_buffer_shim();
+
+// node_modules/@noble/hashes/esm/_blake.js
+init_esbuild_buffer_shim();
+
+// node_modules/@noble/hashes/esm/utils.js
+init_esbuild_buffer_shim();
+function isBytes2(a) {
+  return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array";
+}
+function anumber2(n) {
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new Error("positive integer expected, got " + n);
+}
+function abytes2(b, ...lengths) {
+  if (!isBytes2(b))
+    throw new Error("Uint8Array expected");
+  if (lengths.length > 0 && !lengths.includes(b.length))
+    throw new Error("Uint8Array expected of length " + lengths + ", got length=" + b.length);
+}
+function aexists2(instance, checkFinished = true) {
+  if (instance.destroyed)
+    throw new Error("Hash instance has been destroyed");
+  if (checkFinished && instance.finished)
+    throw new Error("Hash#digest() has already been called");
+}
+function aoutput2(out, instance) {
+  abytes2(out);
+  const min = instance.outputLen;
+  if (out.length < min) {
+    throw new Error("digestInto() expects output buffer of length at least " + min);
+  }
+}
+function u322(arr) {
+  return new Uint32Array(arr.buffer, arr.byteOffset, Math.floor(arr.byteLength / 4));
+}
+function clean2(...arrays) {
+  for (let i = 0; i < arrays.length; i++) {
+    arrays[i].fill(0);
+  }
+}
+var isLE2 = /* @__PURE__ */ (() => new Uint8Array(new Uint32Array([287454020]).buffer)[0] === 68)();
+function byteSwap2(word) {
+  return word << 24 & 4278190080 | word << 8 & 16711680 | word >>> 8 & 65280 | word >>> 24 & 255;
+}
+var swap8IfBE2 = isLE2 ? (n) => n : (n) => byteSwap2(n);
+function byteSwap322(arr) {
+  for (let i = 0; i < arr.length; i++) {
+    arr[i] = byteSwap2(arr[i]);
+  }
+  return arr;
+}
+var swap32IfBE2 = isLE2 ? (u) => u : byteSwap322;
+function utf8ToBytes2(str) {
+  if (typeof str !== "string")
+    throw new Error("string expected");
+  return new Uint8Array(new TextEncoder().encode(str));
+}
+function toBytes3(data) {
+  if (typeof data === "string")
+    data = utf8ToBytes2(data);
+  abytes2(data);
+  return data;
+}
+var Hash2 = class {
+};
+function createOptHasher2(hashCons) {
+  const hashC = (msg, opts) => hashCons(opts).update(toBytes3(msg)).digest();
+  const tmp = hashCons({});
+  hashC.outputLen = tmp.outputLen;
+  hashC.blockLen = tmp.blockLen;
+  hashC.create = (opts) => hashCons(opts);
+  return hashC;
+}
+
+// node_modules/@noble/hashes/esm/_blake.js
+var BSIGMA2 = /* @__PURE__ */ Uint8Array.from([
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  14,
+  10,
+  4,
+  8,
+  9,
+  15,
+  13,
+  6,
+  1,
+  12,
+  0,
+  2,
+  11,
+  7,
+  5,
+  3,
+  11,
+  8,
+  12,
+  0,
+  5,
+  2,
+  15,
+  13,
+  10,
+  14,
+  3,
+  6,
+  7,
+  1,
+  9,
+  4,
+  7,
+  9,
+  3,
+  1,
+  13,
+  12,
+  11,
+  14,
+  2,
+  6,
+  5,
+  10,
+  4,
+  0,
+  15,
+  8,
+  9,
+  0,
+  5,
+  7,
+  2,
+  4,
+  10,
+  15,
+  14,
+  1,
+  11,
+  12,
+  6,
+  8,
+  3,
+  13,
+  2,
+  12,
+  6,
+  10,
+  0,
+  11,
+  8,
+  3,
+  4,
+  13,
+  7,
+  5,
+  15,
+  14,
+  1,
+  9,
+  12,
+  5,
+  1,
+  15,
+  14,
+  13,
+  4,
+  10,
+  0,
+  7,
+  6,
+  3,
+  9,
+  2,
+  8,
+  11,
+  13,
+  11,
+  7,
+  14,
+  12,
+  1,
+  3,
+  9,
+  5,
+  0,
+  15,
+  4,
+  8,
+  6,
+  2,
+  10,
+  6,
+  15,
+  14,
+  9,
+  11,
+  3,
+  0,
+  8,
+  12,
+  2,
+  13,
+  7,
+  1,
+  4,
+  10,
+  5,
+  10,
+  2,
+  8,
+  4,
+  7,
+  6,
+  1,
+  5,
+  15,
+  11,
+  9,
+  14,
+  3,
+  12,
+  13,
+  0,
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  14,
+  10,
+  4,
+  8,
+  9,
+  15,
+  13,
+  6,
+  1,
+  12,
+  0,
+  2,
+  11,
+  7,
+  5,
+  3,
+  // Blake1, unused in others
+  11,
+  8,
+  12,
+  0,
+  5,
+  2,
+  15,
+  13,
+  10,
+  14,
+  3,
+  6,
+  7,
+  1,
+  9,
+  4,
+  7,
+  9,
+  3,
+  1,
+  13,
+  12,
+  11,
+  14,
+  2,
+  6,
+  5,
+  10,
+  4,
+  0,
+  15,
+  8,
+  9,
+  0,
+  5,
+  7,
+  2,
+  4,
+  10,
+  15,
+  14,
+  1,
+  11,
+  12,
+  6,
+  8,
+  3,
+  13,
+  2,
+  12,
+  6,
+  10,
+  0,
+  11,
+  8,
+  3,
+  4,
+  13,
+  7,
+  5,
+  15,
+  14,
+  1,
+  9
+]);
+
+// node_modules/@noble/hashes/esm/_u64.js
+init_esbuild_buffer_shim();
+var U32_MASK642 = /* @__PURE__ */ BigInt(2 ** 32 - 1);
+var _32n2 = /* @__PURE__ */ BigInt(32);
+function fromBig2(n, le = false) {
+  if (le)
+    return { h: Number(n & U32_MASK642), l: Number(n >> _32n2 & U32_MASK642) };
+  return { h: Number(n >> _32n2 & U32_MASK642) | 0, l: Number(n & U32_MASK642) | 0 };
+}
+var rotrSH2 = (h, l, s) => h >>> s | l << 32 - s;
+var rotrSL2 = (h, l, s) => h << 32 - s | l >>> s;
+var rotrBH2 = (h, l, s) => h << 64 - s | l >>> s - 32;
+var rotrBL2 = (h, l, s) => h >>> s - 32 | l << 64 - s;
+var rotr32H2 = (_h, l) => l;
+var rotr32L2 = (h, _l) => h;
+function add2(Ah, Al, Bh, Bl) {
+  const l = (Al >>> 0) + (Bl >>> 0);
+  return { h: Ah + Bh + (l / 2 ** 32 | 0) | 0, l: l | 0 };
+}
+var add3L2 = (Al, Bl, Cl) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0);
+var add3H2 = (low, Ah, Bh, Ch) => Ah + Bh + Ch + (low / 2 ** 32 | 0) | 0;
+
+// node_modules/@noble/hashes/esm/blake2.js
+var B2B_IV2 = /* @__PURE__ */ Uint32Array.from([
+  4089235720,
+  1779033703,
+  2227873595,
+  3144134277,
+  4271175723,
+  1013904242,
+  1595750129,
+  2773480762,
+  2917565137,
+  1359893119,
+  725511199,
+  2600822924,
+  4215389547,
+  528734635,
+  327033209,
+  1541459225
+]);
+var BBUF2 = /* @__PURE__ */ new Uint32Array(32);
+function G1b2(a, b, c, d, msg, x) {
+  const Xl = msg[x], Xh = msg[x + 1];
+  let Al = BBUF2[2 * a], Ah = BBUF2[2 * a + 1];
+  let Bl = BBUF2[2 * b], Bh = BBUF2[2 * b + 1];
+  let Cl = BBUF2[2 * c], Ch = BBUF2[2 * c + 1];
+  let Dl = BBUF2[2 * d], Dh = BBUF2[2 * d + 1];
+  let ll = add3L2(Al, Bl, Xl);
+  Ah = add3H2(ll, Ah, Bh, Xh);
+  Al = ll | 0;
+  ({ Dh, Dl } = { Dh: Dh ^ Ah, Dl: Dl ^ Al });
+  ({ Dh, Dl } = { Dh: rotr32H2(Dh, Dl), Dl: rotr32L2(Dh, Dl) });
+  ({ h: Ch, l: Cl } = add2(Ch, Cl, Dh, Dl));
+  ({ Bh, Bl } = { Bh: Bh ^ Ch, Bl: Bl ^ Cl });
+  ({ Bh, Bl } = { Bh: rotrSH2(Bh, Bl, 24), Bl: rotrSL2(Bh, Bl, 24) });
+  BBUF2[2 * a] = Al, BBUF2[2 * a + 1] = Ah;
+  BBUF2[2 * b] = Bl, BBUF2[2 * b + 1] = Bh;
+  BBUF2[2 * c] = Cl, BBUF2[2 * c + 1] = Ch;
+  BBUF2[2 * d] = Dl, BBUF2[2 * d + 1] = Dh;
+}
+function G2b2(a, b, c, d, msg, x) {
+  const Xl = msg[x], Xh = msg[x + 1];
+  let Al = BBUF2[2 * a], Ah = BBUF2[2 * a + 1];
+  let Bl = BBUF2[2 * b], Bh = BBUF2[2 * b + 1];
+  let Cl = BBUF2[2 * c], Ch = BBUF2[2 * c + 1];
+  let Dl = BBUF2[2 * d], Dh = BBUF2[2 * d + 1];
+  let ll = add3L2(Al, Bl, Xl);
+  Ah = add3H2(ll, Ah, Bh, Xh);
+  Al = ll | 0;
+  ({ Dh, Dl } = { Dh: Dh ^ Ah, Dl: Dl ^ Al });
+  ({ Dh, Dl } = { Dh: rotrSH2(Dh, Dl, 16), Dl: rotrSL2(Dh, Dl, 16) });
+  ({ h: Ch, l: Cl } = add2(Ch, Cl, Dh, Dl));
+  ({ Bh, Bl } = { Bh: Bh ^ Ch, Bl: Bl ^ Cl });
+  ({ Bh, Bl } = { Bh: rotrBH2(Bh, Bl, 63), Bl: rotrBL2(Bh, Bl, 63) });
+  BBUF2[2 * a] = Al, BBUF2[2 * a + 1] = Ah;
+  BBUF2[2 * b] = Bl, BBUF2[2 * b + 1] = Bh;
+  BBUF2[2 * c] = Cl, BBUF2[2 * c + 1] = Ch;
+  BBUF2[2 * d] = Dl, BBUF2[2 * d + 1] = Dh;
+}
+function checkBlake2Opts2(outputLen, opts = {}, keyLen, saltLen, persLen) {
+  anumber2(keyLen);
+  if (outputLen < 0 || outputLen > keyLen)
+    throw new Error("outputLen bigger than keyLen");
+  const { key, salt, personalization } = opts;
+  if (key !== void 0 && (key.length < 1 || key.length > keyLen))
+    throw new Error("key length must be undefined or 1.." + keyLen);
+  if (salt !== void 0 && salt.length !== saltLen)
+    throw new Error("salt must be undefined or " + saltLen);
+  if (personalization !== void 0 && personalization.length !== persLen)
+    throw new Error("personalization must be undefined or " + persLen);
+}
+var BLAKE22 = class extends Hash2 {
+  constructor(blockLen, outputLen) {
+    super();
+    this.finished = false;
+    this.destroyed = false;
+    this.length = 0;
+    this.pos = 0;
+    anumber2(blockLen);
+    anumber2(outputLen);
+    this.blockLen = blockLen;
+    this.outputLen = outputLen;
+    this.buffer = new Uint8Array(blockLen);
+    this.buffer32 = u322(this.buffer);
+  }
+  update(data) {
+    aexists2(this);
+    data = toBytes3(data);
+    abytes2(data);
+    const { blockLen, buffer, buffer32 } = this;
+    const len = data.length;
+    const offset = data.byteOffset;
+    const buf = data.buffer;
+    for (let pos = 0; pos < len; ) {
+      if (this.pos === blockLen) {
+        swap32IfBE2(buffer32);
+        this.compress(buffer32, 0, false);
+        swap32IfBE2(buffer32);
+        this.pos = 0;
+      }
+      const take = Math.min(blockLen - this.pos, len - pos);
+      const dataOffset = offset + pos;
+      if (take === blockLen && !(dataOffset % 4) && pos + take < len) {
+        const data32 = new Uint32Array(buf, dataOffset, Math.floor((len - pos) / 4));
+        swap32IfBE2(data32);
+        for (let pos32 = 0; pos + blockLen < len; pos32 += buffer32.length, pos += blockLen) {
+          this.length += blockLen;
+          this.compress(data32, pos32, false);
+        }
+        swap32IfBE2(data32);
+        continue;
+      }
+      buffer.set(data.subarray(pos, pos + take), this.pos);
+      this.pos += take;
+      this.length += take;
+      pos += take;
+    }
+    return this;
+  }
+  digestInto(out) {
+    aexists2(this);
+    aoutput2(out, this);
+    const { pos, buffer32 } = this;
+    this.finished = true;
+    clean2(this.buffer.subarray(pos));
+    swap32IfBE2(buffer32);
+    this.compress(buffer32, 0, true);
+    swap32IfBE2(buffer32);
+    const out32 = u322(out);
+    this.get().forEach((v, i) => out32[i] = swap8IfBE2(v));
+  }
+  digest() {
+    const { buffer, outputLen } = this;
+    this.digestInto(buffer);
+    const res = buffer.slice(0, outputLen);
+    this.destroy();
+    return res;
+  }
+  _cloneInto(to) {
+    const { buffer, length, finished, destroyed, outputLen, pos } = this;
+    to || (to = new this.constructor({ dkLen: outputLen }));
+    to.set(...this.get());
+    to.buffer.set(buffer);
+    to.destroyed = destroyed;
+    to.finished = finished;
+    to.length = length;
+    to.pos = pos;
+    to.outputLen = outputLen;
+    return to;
+  }
+  clone() {
+    return this._cloneInto();
+  }
+};
+var BLAKE2b2 = class extends BLAKE22 {
+  constructor(opts = {}) {
+    const olen = opts.dkLen === void 0 ? 64 : opts.dkLen;
+    super(128, olen);
+    this.v0l = B2B_IV2[0] | 0;
+    this.v0h = B2B_IV2[1] | 0;
+    this.v1l = B2B_IV2[2] | 0;
+    this.v1h = B2B_IV2[3] | 0;
+    this.v2l = B2B_IV2[4] | 0;
+    this.v2h = B2B_IV2[5] | 0;
+    this.v3l = B2B_IV2[6] | 0;
+    this.v3h = B2B_IV2[7] | 0;
+    this.v4l = B2B_IV2[8] | 0;
+    this.v4h = B2B_IV2[9] | 0;
+    this.v5l = B2B_IV2[10] | 0;
+    this.v5h = B2B_IV2[11] | 0;
+    this.v6l = B2B_IV2[12] | 0;
+    this.v6h = B2B_IV2[13] | 0;
+    this.v7l = B2B_IV2[14] | 0;
+    this.v7h = B2B_IV2[15] | 0;
+    checkBlake2Opts2(olen, opts, 64, 16, 16);
+    let { key, personalization, salt } = opts;
+    let keyLength = 0;
+    if (key !== void 0) {
+      key = toBytes3(key);
+      keyLength = key.length;
+    }
+    this.v0l ^= this.outputLen | keyLength << 8 | 1 << 16 | 1 << 24;
+    if (salt !== void 0) {
+      salt = toBytes3(salt);
+      const slt = u322(salt);
+      this.v4l ^= swap8IfBE2(slt[0]);
+      this.v4h ^= swap8IfBE2(slt[1]);
+      this.v5l ^= swap8IfBE2(slt[2]);
+      this.v5h ^= swap8IfBE2(slt[3]);
+    }
+    if (personalization !== void 0) {
+      personalization = toBytes3(personalization);
+      const pers = u322(personalization);
+      this.v6l ^= swap8IfBE2(pers[0]);
+      this.v6h ^= swap8IfBE2(pers[1]);
+      this.v7l ^= swap8IfBE2(pers[2]);
+      this.v7h ^= swap8IfBE2(pers[3]);
+    }
+    if (key !== void 0) {
+      const tmp = new Uint8Array(this.blockLen);
+      tmp.set(key);
+      this.update(tmp);
+    }
+  }
+  // prettier-ignore
+  get() {
+    let { v0l, v0h, v1l, v1h, v2l, v2h, v3l, v3h, v4l, v4h, v5l, v5h, v6l, v6h, v7l, v7h } = this;
+    return [v0l, v0h, v1l, v1h, v2l, v2h, v3l, v3h, v4l, v4h, v5l, v5h, v6l, v6h, v7l, v7h];
+  }
+  // prettier-ignore
+  set(v0l, v0h, v1l, v1h, v2l, v2h, v3l, v3h, v4l, v4h, v5l, v5h, v6l, v6h, v7l, v7h) {
+    this.v0l = v0l | 0;
+    this.v0h = v0h | 0;
+    this.v1l = v1l | 0;
+    this.v1h = v1h | 0;
+    this.v2l = v2l | 0;
+    this.v2h = v2h | 0;
+    this.v3l = v3l | 0;
+    this.v3h = v3h | 0;
+    this.v4l = v4l | 0;
+    this.v4h = v4h | 0;
+    this.v5l = v5l | 0;
+    this.v5h = v5h | 0;
+    this.v6l = v6l | 0;
+    this.v6h = v6h | 0;
+    this.v7l = v7l | 0;
+    this.v7h = v7h | 0;
+  }
+  compress(msg, offset, isLast) {
+    this.get().forEach((v, i) => BBUF2[i] = v);
+    BBUF2.set(B2B_IV2, 16);
+    let { h, l } = fromBig2(BigInt(this.length));
+    BBUF2[24] = B2B_IV2[8] ^ l;
+    BBUF2[25] = B2B_IV2[9] ^ h;
+    if (isLast) {
+      BBUF2[28] = ~BBUF2[28];
+      BBUF2[29] = ~BBUF2[29];
+    }
+    let j = 0;
+    const s = BSIGMA2;
+    for (let i = 0; i < 12; i++) {
+      G1b2(0, 4, 8, 12, msg, offset + 2 * s[j++]);
+      G2b2(0, 4, 8, 12, msg, offset + 2 * s[j++]);
+      G1b2(1, 5, 9, 13, msg, offset + 2 * s[j++]);
+      G2b2(1, 5, 9, 13, msg, offset + 2 * s[j++]);
+      G1b2(2, 6, 10, 14, msg, offset + 2 * s[j++]);
+      G2b2(2, 6, 10, 14, msg, offset + 2 * s[j++]);
+      G1b2(3, 7, 11, 15, msg, offset + 2 * s[j++]);
+      G2b2(3, 7, 11, 15, msg, offset + 2 * s[j++]);
+      G1b2(0, 5, 10, 15, msg, offset + 2 * s[j++]);
+      G2b2(0, 5, 10, 15, msg, offset + 2 * s[j++]);
+      G1b2(1, 6, 11, 12, msg, offset + 2 * s[j++]);
+      G2b2(1, 6, 11, 12, msg, offset + 2 * s[j++]);
+      G1b2(2, 7, 8, 13, msg, offset + 2 * s[j++]);
+      G2b2(2, 7, 8, 13, msg, offset + 2 * s[j++]);
+      G1b2(3, 4, 9, 14, msg, offset + 2 * s[j++]);
+      G2b2(3, 4, 9, 14, msg, offset + 2 * s[j++]);
+    }
+    this.v0l ^= BBUF2[0] ^ BBUF2[16];
+    this.v0h ^= BBUF2[1] ^ BBUF2[17];
+    this.v1l ^= BBUF2[2] ^ BBUF2[18];
+    this.v1h ^= BBUF2[3] ^ BBUF2[19];
+    this.v2l ^= BBUF2[4] ^ BBUF2[20];
+    this.v2h ^= BBUF2[5] ^ BBUF2[21];
+    this.v3l ^= BBUF2[6] ^ BBUF2[22];
+    this.v3h ^= BBUF2[7] ^ BBUF2[23];
+    this.v4l ^= BBUF2[8] ^ BBUF2[24];
+    this.v4h ^= BBUF2[9] ^ BBUF2[25];
+    this.v5l ^= BBUF2[10] ^ BBUF2[26];
+    this.v5h ^= BBUF2[11] ^ BBUF2[27];
+    this.v6l ^= BBUF2[12] ^ BBUF2[28];
+    this.v6h ^= BBUF2[13] ^ BBUF2[29];
+    this.v7l ^= BBUF2[14] ^ BBUF2[30];
+    this.v7h ^= BBUF2[15] ^ BBUF2[31];
+    clean2(BBUF2);
+  }
+  destroy() {
+    this.destroyed = true;
+    clean2(this.buffer32);
+    this.set(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  }
+};
+var blake2b3 = /* @__PURE__ */ createOptHasher2((opts) => new BLAKE2b2(opts));
+
+// node_modules/@noble/hashes/esm/blake2b.js
+var blake2b4 = blake2b3;
+
 // src/provers/sccp-ton-source-prover.js
 var ROUTE_ID = "taira_ton_xor";
 var ASSET_KEY = "xor";
 var TAIRA_DOMAIN = 0;
 var DECIMALS = 9;
+var bytesToHex3 = (bytes) => `0x${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+var hexToBytes3 = (value, label) => {
+  const body = normalizeHex32(value, label).slice(2);
+  return Uint8Array.from(
+    body.match(/.{1,2}/gu).map((byte) => Number.parseInt(byte, 16))
+  );
+};
+var concatBytes3 = (...chunks) => {
+  const out = new Uint8Array(
+    chunks.reduce((total, chunk) => total + chunk.length, 0)
+  );
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+};
+var writeU32Le2 = (value) => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, Number(value), true);
+  return out;
+};
+var sourceEventDigest = ({ messageId, payloadHash }) => bytesToHex3(
+  blake2b4(
+    concatBytes3(
+      new TextEncoder().encode("sccp:source:event:v1"),
+      Uint8Array.from([1]),
+      writeU32Le2(4),
+      writeU32Le2(TAIRA_DOMAIN),
+      hexToBytes3(messageId, "messageId"),
+      hexToBytes3(payloadHash, "payloadHash")
+    ),
+    { dkLen: 32 }
+  )
+);
+var buildTonTestnetSourceChainProofEnvelope = (input) => {
+  const normalized = {
+    schema: "iroha-demo-ton-testnet-source-proof-envelope/v1",
+    txId: normalizeHex32(input.txId, "txId"),
+    messageId: normalizeHex32(input.messageId, "messageId"),
+    payloadHash: normalizeHex32(input.payloadHash, "payloadHash"),
+    commitmentRoot: normalizeHex32(input.commitmentRoot, "commitmentRoot"),
+    finalityHeight: String(input.finalityHeight ?? "0"),
+    finalityBlockHash: input.finalityBlockHash ? normalizeHex32(input.finalityBlockHash, "finalityBlockHash") : normalizeHex32(input.commitmentRoot, "commitmentRoot")
+  };
+  const encoded = new TextEncoder().encode(JSON.stringify(normalized));
+  return {
+    sourceProofHex: bytesToHex3(encoded),
+    sourceEventDigest: sourceEventDigest(normalized)
+  };
+};
 var asRecord = (value, label) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object.`);
@@ -7744,7 +7856,7 @@ var buildTonSourceProofPackage = (inputValue) => {
       "TON source commitment root does not match the source record."
     );
   }
-  const sourceProof = buildTonTestnetPlaceholderSourceChainProofEnvelope({
+  const sourceProof = buildTonTestnetSourceChainProofEnvelope({
     txId,
     messageId,
     payloadHash,

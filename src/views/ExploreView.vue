@@ -1,65 +1,43 @@
 <template>
+  <RouteHeaderAction>
+    <AppButton
+      variant="secondary"
+      :loading="loading"
+      data-testid="explore-refresh"
+      @click="refresh"
+    >
+      {{ t("Refresh") }}
+    </AppButton>
+  </RouteHeaderAction>
+
   <div class="explore-layout">
-    <section class="card explore-metrics-card">
+    <section
+      class="card explore-metrics-card"
+      :aria-busy="loading || undefined"
+    >
       <header class="card-header">
-        <h2>{{ t("Network health") }}</h2>
-        <button class="secondary" :disabled="loading" @click="refresh">
-          {{ t("Refresh") }}
-        </button>
+        <div>
+          <p class="eyebrow">{{ t("Live network status") }}</p>
+          <h2>{{ t("Network health") }}</h2>
+        </div>
       </header>
-      <div v-if="metrics" class="grid-2 explore-metrics-grid">
-        <div class="kv">
-          <span class="kv-label">{{ t("Block Height") }}</span>
-          <span class="kv-value">{{ metrics.blockHeight ?? t("—") }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Finalized Height") }}</span>
-          <span class="kv-value">{{
-            metrics.finalizedBlockHeight ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Tx Accepted") }}</span>
-          <span class="kv-value">{{
-            metrics.transactionsAccepted ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Tx Rejected") }}</span>
-          <span class="kv-value">{{
-            metrics.transactionsRejected ?? t("—")
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Peers") }}</span>
-          <span class="kv-value">{{ metrics.peers ?? t("—") }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Assets") }}</span>
-          <span class="kv-value">{{ metrics.assets ?? t("—") }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Avg Commit Time") }}</span>
-          <span class="kv-value">{{
-            formatMs(metrics.averageCommitTimeMs)
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Avg Block Time") }}</span>
-          <span class="kv-value">{{
-            formatMs(metrics.averageBlockTimeMs)
-          }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Last Block At") }}</span>
-          <span class="kv-value">{{
-            formatDate(metrics.blockCreatedAt) || t("—")
-          }}</span>
-        </div>
-      </div>
-      <p v-else class="helper explore-empty">
-        {{ t("Metrics unavailable. Check Torii status.") }}
-      </p>
+
+      <InlineAlert
+        v-if="loading && !metrics && !metricsError"
+        :title="t('Network health')"
+      >
+        {{ t("Querying explorer and status surfaces.") }}
+      </InlineAlert>
+
+      <InlineAlert
+        v-else-if="metricsError"
+        tone="danger"
+        :title="t('Metrics unavailable. Check Torii status.')"
+      >
+        {{ t("Unable to load network stats.") }}
+      </InlineAlert>
+
+      <MetricList v-else-if="metrics" :items="metricItems" />
     </section>
 
     <section class="card explore-qr-card">
@@ -74,7 +52,7 @@
             }}
           </p>
         </div>
-        <div class="explorer-actions">
+        <div class="explorer-actions" :aria-label="t('Explorer QR')">
           <a
             class="secondary explorer-link"
             :href="DEFAULT_EXPLORER_URL"
@@ -89,13 +67,16 @@
         </div>
       </header>
       <div v-if="accountQr" class="qr-layout">
-        <div class="qr-preview">
+        <div class="qr-preview" data-testid="explorer-qr">
           <img
             v-if="accountQr.svg"
             class="qr-image"
             :src="`data:image/svg+xml;utf8,${encodeURIComponent(accountQr.svg)}`"
             :alt="t('Explorer account QR')"
           />
+        </div>
+
+        <TechnicalDisclosure :summary="t('QR details')">
           <div class="qr-meta">
             <div class="kv">
               <span class="kv-label">{{ t("I105 Account ID") }}</span>
@@ -110,15 +91,21 @@
               <span class="kv-value">v{{ accountQr.qrVersion }}</span>
             </div>
           </div>
-        </div>
-        <details class="technical-details compact">
-          <summary>{{ t("QR details") }}</summary>
           <pre class="qr-payload">{{ formattedQr }}</pre>
-        </details>
+        </TechnicalDisclosure>
       </div>
-      <p v-else class="helper explore-empty">
+
+      <InlineAlert v-else-if="qrError" tone="warning" :title="t('Explorer QR')">
         {{ t("No QR payload yet. Connect to Torii and pick an account.") }}
-      </p>
+      </InlineAlert>
+
+      <EmptyState
+        v-else
+        :title="t('Explorer QR')"
+        :description="
+          t('No QR payload yet. Connect to Torii and pick an account.')
+        "
+      />
     </section>
   </div>
 </template>
@@ -126,6 +113,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import {
+  AppButton,
+  EmptyState,
+  InlineAlert,
+  MetricList,
+  RouteHeaderAction,
+  TechnicalDisclosure,
+} from "@/components/ui";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
 import { DEFAULT_EXPLORER_URL } from "@/constants/chains";
@@ -147,14 +142,22 @@ const { localeStore, t } = useAppI18n();
 const metrics = ref<ExplorerMetricsResponse | null>(null);
 const accountQr = ref<ExplorerAccountQrResponse | null>(null);
 const loading = ref(false);
+const metricsError = ref(false);
+const qrError = ref(false);
 const requestGeneration = ref(0);
 
 const formatDate = (value?: string | null) => {
   if (!value) return "";
-  return new Intl.DateTimeFormat(localeStore.current, {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat(localeStore.current, {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(date);
+  } catch {
+    return "";
+  }
 };
 
 const formatMs = (value?: number | null) => {
@@ -168,6 +171,39 @@ const resetExplorerState = () => {
   accountQr.value = null;
 };
 
+const metricItems = computed(() => {
+  if (!metrics.value) return [];
+  return [
+    { label: t("Block Height"), value: metrics.value.blockHeight ?? t("—") },
+    {
+      label: t("Finalized Height"),
+      value: metrics.value.finalizedBlockHeight ?? t("—"),
+    },
+    {
+      label: t("Tx Accepted"),
+      value: metrics.value.transactionsAccepted ?? t("—"),
+    },
+    {
+      label: t("Tx Rejected"),
+      value: metrics.value.transactionsRejected ?? t("—"),
+    },
+    { label: t("Peers"), value: metrics.value.peers ?? t("—") },
+    { label: t("Assets"), value: metrics.value.assets ?? t("—") },
+    {
+      label: t("Avg Commit Time"),
+      value: formatMs(metrics.value.averageCommitTimeMs),
+    },
+    {
+      label: t("Avg Block Time"),
+      value: formatMs(metrics.value.averageBlockTimeMs),
+    },
+    {
+      label: t("Last Block At"),
+      value: formatDate(metrics.value.blockCreatedAt) || t("—"),
+    },
+  ];
+});
+
 const refresh = async () => {
   const toriiUrl = session.connection.toriiUrl;
   const accountId = requestAccountId.value;
@@ -175,11 +211,15 @@ const refresh = async () => {
     requestGeneration.value += 1;
     loading.value = false;
     resetExplorerState();
+    metricsError.value = true;
+    qrError.value = false;
     return;
   }
   const currentGeneration = requestGeneration.value + 1;
   requestGeneration.value = currentGeneration;
   loading.value = true;
+  metricsError.value = false;
+  qrError.value = false;
   try {
     const [metricsResult, qrResult] = await Promise.allSettled([
       Promise.resolve().then(() => getExplorerMetrics(toriiUrl)),
@@ -201,7 +241,9 @@ const refresh = async () => {
     }
     metrics.value =
       metricsResult.status === "fulfilled" ? metricsResult.value : null;
+    metricsError.value = metricsResult.status === "rejected" || !metrics.value;
     const qrPayload = qrResult.status === "fulfilled" ? qrResult.value : null;
+    qrError.value = qrResult.status === "rejected";
     if (!qrPayload) {
       accountQr.value = null;
       return;
@@ -243,24 +285,30 @@ watch(
 <style scoped>
 .explore-layout {
   display: grid;
-  grid-template-columns: minmax(360px, 0.95fr) minmax(420px, 1.05fr);
-  gap: 20px;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(420px, 1.1fr);
+  gap: var(--space-5);
   align-items: start;
 }
 
 .explore-metrics-card,
 .explore-qr-card {
   min-height: 100%;
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
-.explore-metrics-grid {
-  align-items: stretch;
+.explore-metrics-card {
+  display: grid;
+  align-content: start;
+  gap: var(--space-4);
 }
 
 .explorer-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
@@ -270,55 +318,51 @@ watch(
 
 .qr-layout {
   display: grid;
-  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
+  gap: var(--space-4);
 }
 
 .qr-preview {
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 72%),
-    rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
-  padding: 16px;
-  display: grid;
-  gap: 12px;
+  width: min(100%, 340px);
+  justify-self: center;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel-soft);
+  box-shadow: var(--shadow-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
 }
 
 .qr-image {
   width: 100%;
-  max-width: 240px;
+  max-width: 308px;
   aspect-ratio: 1 / 1;
-  border-radius: 16px;
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.2);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
-  justify-self: center;
+  display: block;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-qr-surface);
 }
 
 .qr-meta {
   display: grid;
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-block-end: var(--space-4);
 }
 
 .qr-payload {
-  background: rgba(0, 0, 0, 0.3);
-  border-radius: 18px;
-  padding: 16px;
-  max-height: 360px;
-  overflow: auto;
+  max-height: 280px;
   margin: 0;
+  padding: var(--space-4);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
   white-space: pre-wrap;
   word-break: break-word;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.explore-empty {
-  min-height: 180px;
-  display: grid;
-  place-items: center;
-  text-align: center;
+  unicode-bidi: plaintext;
 }
 
 @media (max-width: 1080px) {
@@ -327,13 +371,18 @@ watch(
   }
 }
 
-@media (max-width: 720px) {
-  .qr-layout {
-    grid-template-columns: 1fr;
+@media (max-width: 760px) {
+  .explore-layout {
+    gap: var(--space-4);
   }
 
-  .qr-image {
-    justify-self: center;
+  .explorer-actions,
+  .explorer-actions > * {
+    width: 100%;
+  }
+
+  .qr-meta {
+    grid-template-columns: 1fr;
   }
 }
 </style>

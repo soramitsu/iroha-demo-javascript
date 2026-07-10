@@ -253,4 +253,20 @@ describe("SettingsView", () => {
     );
     expect(wrapper.text()).toContain(t("Default endpoint restored."));
   });
+
+  it("keeps the unchecked save path in Advanced and one dominant action", () => {
+    const wrapper = mountView("http://localhost:8080");
+    const advanced = wrapper.get(".settings-advanced");
+
+    expect(advanced.attributes("open")).toBeUndefined();
+    expect(
+      advanced
+        .findAll("button")
+        .some((button) => button.text() === t("Save without checking")),
+    ).toBe(true);
+    expect(wrapper.get(".settings-primary").text()).toBe(t("Check & Save"));
+    expect(getButtonByText(wrapper, t("Reset to default")).classes()).toContain(
+      "ghost",
+    );
+  });
 });

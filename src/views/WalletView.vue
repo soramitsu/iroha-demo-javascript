@@ -1,48 +1,51 @@
 <template>
   <div class="wallet-layout">
-    <section class="card wallet-summary-card">
-      <header class="card-header wallet-summary-header">
+    <RouteHeaderAction>
+      <AppButton variant="secondary" :disabled="loading" @click="refresh">
+        {{ loading ? t("Refreshing…") : t("Refresh") }}
+      </AppButton>
+    </RouteHeaderAction>
+
+    <section class="wallet-summary-card">
+      <header class="wallet-summary-header">
         <div>
           <h2>{{ t("Balances") }}</h2>
           <p class="helper wallet-account-copy">{{ activeAccountLabel }}</p>
         </div>
-        <button class="secondary" :disabled="loading" @click="refresh">
-          {{ loading ? t("Refreshing…") : t("Refresh") }}
-        </button>
       </header>
       <div class="wallet-balance-band">
-        <p class="wallet-balance-label">{{ t("Available balance") }}</p>
-        <p class="wallet-balance-value">{{ primaryAssetQuantity }}</p>
-        <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
-      </div>
-      <div
-        class="wallet-citizenship-panel"
-        :class="{ 'wallet-citizenship-panel-positive': walletIsCitizen }"
-      >
         <div>
-          <p class="wallet-faucet-label">{{ t("Citizenship") }}</p>
-          <p class="wallet-citizenship-title">
-            {{ walletCitizenshipHeadline }}
-          </p>
-          <p class="helper">{{ walletCitizenshipDetail }}</p>
+          <p class="wallet-balance-label">{{ t("Available balance") }}</p>
+          <p class="wallet-balance-value">{{ primaryAssetQuantity }}</p>
+          <p class="wallet-balance-asset">{{ primaryAssetLabel }}</p>
         </div>
-        <div class="wallet-citizenship-meta">
-          <a class="secondary wallet-citizenship-link" href="#/governance">
-            {{ t("Governance") }}
+        <div class="wallet-quick-actions">
+          <a class="secondary wallet-action-link" href="#/receive">
+            {{ t("Receive") }}
+          </a>
+          <a
+            class="secondary wallet-action-link"
+            :class="{ 'wallet-action-link-disabled': !canSendAssets }"
+            :href="canSendAssets ? '#/send' : undefined"
+            :aria-disabled="!canSendAssets"
+            :tabindex="canSendAssets ? undefined : -1"
+          >
+            {{ t("Send") }}
           </a>
         </div>
       </div>
-      <div
-        v-if="!faucetDisabled"
-        class="wallet-faucet-panel"
-        :class="{ 'wallet-faucet-panel-priority': showFundingPriority }"
-      >
-        <div>
-          <p class="wallet-faucet-label">{{ t("Starter funds") }}</p>
-          <p
-            class="helper"
-            :class="{ 'wallet-faucet-copy-priority': showFundingPriority }"
-          >
+
+      <div class="wallet-next-step" aria-live="polite">
+        <InlineAlert
+          v-if="
+            !faucetDisabled &&
+            (showFundingPriority || faucetUnavailableOnActiveNetwork)
+          "
+          class="wallet-faucet-panel"
+          tone="accent"
+          :title="t('Starter funds')"
+        >
+          <p class="helper wallet-context-copy">
             {{
               faucetUnavailableOnActiveNetwork
                 ? t(
@@ -51,55 +54,57 @@
                 : t("Request starter XOR from the active network faucet.")
             }}
           </p>
-          <p
-            v-if="faucetUnavailableOnActiveNetwork"
-            class="transaction-fee-note"
-          >
-            <span>{{ t("Network") }}</span>
-            <strong>{{ t("TAIRA Testnet") }}</strong>
-          </p>
-          <p v-else class="transaction-fee-note">
-            <span>{{ t("Fee") }}</span>
-            <strong>{{
-              formatTransactionFee(
-                transactionFeeHintForEndpoint(session.connection.toriiUrl),
-                t,
-              )
-            }}</strong>
-          </p>
-        </div>
-        <button
-          :class="
-            showFundingPriority
-              ? 'wallet-faucet-button'
-              : 'secondary wallet-faucet-button'
-          "
-          :disabled="faucetLoading || !canUseFaucetAction"
-          @click="requestStarterFundsFromAvailableFaucet"
+          <template #action>
+            <AppButton
+              class="wallet-faucet-button"
+              :disabled="faucetLoading || !canUseFaucetAction"
+              @click="requestStarterFundsFromAvailableFaucet"
+            >
+              {{
+                faucetLoading
+                  ? t("Requesting…")
+                  : faucetUnavailableOnActiveNetwork
+                    ? t("Use TAIRA faucet")
+                    : t("Request XOR")
+              }}
+            </AppButton>
+          </template>
+        </InlineAlert>
+
+        <InlineAlert
+          v-else
+          class="wallet-citizenship-panel"
+          :class="{
+            'wallet-citizenship-panel-positive': walletIsCitizen,
+          }"
+          :tone="walletIsCitizen ? 'success' : 'neutral'"
+          :title="walletCitizenshipHeadline"
         >
-          {{
-            faucetLoading
-              ? t("Requesting…")
-              : faucetUnavailableOnActiveNetwork
-                ? t("Use TAIRA faucet")
-                : t("Request XOR")
-          }}
-        </button>
+          <p class="helper wallet-context-copy">
+            {{ walletCitizenshipDetail }}
+          </p>
+          <template #action>
+            <div class="wallet-context-actions">
+              <AppButton
+                v-if="!faucetDisabled"
+                class="wallet-faucet-button"
+                variant="secondary"
+                :disabled="faucetLoading || !canUseFaucetAction"
+                @click="requestStarterFundsFromAvailableFaucet"
+              >
+                {{ faucetLoading ? t("Requesting…") : t("Request XOR") }}
+              </AppButton>
+              <a
+                class="ui-button ui-button-secondary ui-button-md"
+                href="#/governance"
+              >
+                {{ t("Governance") }}
+              </a>
+            </div>
+          </template>
+        </InlineAlert>
       </div>
-      <div class="wallet-quick-actions">
-        <a class="secondary wallet-action-link" href="#/receive">
-          {{ t("Receive") }}
-        </a>
-        <a
-          class="secondary wallet-action-link"
-          :class="{ 'wallet-action-link-disabled': !canSendAssets }"
-          :href="canSendAssets ? '#/send' : undefined"
-          :aria-disabled="!canSendAssets"
-          :tabindex="canSendAssets ? undefined : -1"
-        >
-          {{ t("Send") }}
-        </a>
-      </div>
+
       <div v-if="showShieldSection" class="wallet-shield-panel">
         <div class="wallet-shield-header">
           <div>
@@ -145,48 +150,23 @@
             )
           }}</strong>
         </p>
-        <details class="technical-details compact wallet-shield-details">
-          <summary>{{ t("Private balance details") }}</summary>
-          <div class="wallet-shield-recovery-row">
-            <p class="helper wallet-shield-note">
-              {{ shieldedXorRecoveryMessage }}
-            </p>
-            <button
-              class="secondary"
-              :disabled="shieldScanLoading || !canScanShieldedXor"
-              @click="rescanShieldedXor"
-            >
-              {{
-                shieldScanLoading
-                  ? t("Scanning shielded notes…")
-                  : t("Rescan private balance")
-              }}
-            </button>
-          </div>
-          <p
-            v-if="shieldedXorCapabilityMessage"
-            class="helper wallet-shield-note"
-          >
-            {{ shieldedXorCapabilityMessage }}
+        <div class="wallet-shield-recovery-row">
+          <p class="helper wallet-shield-note">
+            {{ shieldedXorRecoveryMessage }}
           </p>
-          <p
-            v-else-if="shieldedXorPolicyMode"
-            class="helper wallet-shield-note"
+          <AppButton
+            class="secondary"
+            variant="secondary"
+            :disabled="shieldScanLoading || !canScanShieldedXor"
+            @click="rescanShieldedXor"
           >
             {{
-              t("Shield policy mode: {mode}.", {
-                mode: shieldedXorPolicyMode,
-              })
+              shieldScanLoading
+                ? t("Scanning shielded notes…")
+                : t("Rescan private balance")
             }}
-          </p>
-          <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
-            {{
-              t(
-                "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
-              )
-            }}
-          </p>
-        </details>
+          </AppButton>
+        </div>
         <p v-if="shieldMessage" class="wallet-faucet-message">
           {{ shieldMessage }}
         </p>
@@ -219,12 +199,38 @@
       <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
         {{ walletError }}
       </p>
-      <details
+      <TechnicalDisclosure
         v-if="assets.length || visibleAccountId"
-        class="technical-details wallet-details-section"
+        class="wallet-details-section"
+        :summary="t('Wallet technical details')"
       >
-        <summary>{{ t("Asset and account details") }}</summary>
-        <div v-if="assets.length" class="table-wrap wallet-table-wrap">
+        <p
+          v-if="shieldedXorCapabilityMessage"
+          class="helper wallet-shield-note"
+        >
+          {{ shieldedXorCapabilityMessage }}
+        </p>
+        <p v-else-if="shieldedXorPolicyMode" class="helper wallet-shield-note">
+          {{
+            t("Shield policy mode: {mode}.", {
+              mode: shieldedXorPolicyMode,
+            })
+          }}
+        </p>
+        <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
+          {{
+            t(
+              "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
+            )
+          }}
+        </p>
+        <div
+          v-if="assets.length"
+          class="table-wrap wallet-table-wrap"
+          tabindex="0"
+          role="region"
+          :aria-label="t('Assets')"
+        >
           <table class="table">
             <thead>
               <tr>
@@ -246,7 +252,7 @@
           </span>
           <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
         </p>
-      </details>
+      </TechnicalDisclosure>
       <div v-else class="wallet-empty">
         <p class="wallet-empty-title">
           {{ t("No assets found for this account.") }}
@@ -256,47 +262,29 @@
           {{ t("Transfer assets via Torii") }}
         </p>
       </div>
-      <div v-if="faucetLoading" class="wallet-faucet-modal-backdrop">
-        <div
-          class="card wallet-faucet-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-live="polite"
-          aria-atomic="true"
-          aria-busy="true"
-        >
-          <span class="wallet-faucet-spinner" aria-hidden="true"></span>
-          <p class="wallet-faucet-modal-label">
-            {{ t("Faucet request in progress") }}
-          </p>
-          <h2 id="wallet-faucet-modal-title" class="wallet-faucet-modal-title">
-            {{ faucetStatusMessage }}
-          </h2>
-          <p
-            id="wallet-faucet-modal-detail"
-            class="helper wallet-faucet-modal-detail"
-          >
-            {{ faucetStatusDetail }}
-          </p>
-          <div class="wallet-faucet-modal-actions">
-            <button
-              type="button"
-              class="secondary"
-              :disabled="faucetCanceling"
-              @click="cancelStarterFundsRequest"
-            >
-              {{ faucetCanceling ? t("Canceling…") : t("Cancel") }}
-            </button>
-          </div>
-        </div>
-      </div>
+      <ProgressDialog
+        :open="faucetLoading"
+        :title="faucetStatusMessage"
+        :description="t('Faucet request in progress')"
+        :detail="faucetStatusDetail"
+        :cancelable="!faucetCanceling"
+        :cancel-label="t('Cancel')"
+        :close-label="t('Cancel')"
+        @cancel="cancelStarterFundsRequest"
+      />
     </section>
 
-    <section class="card wallet-transactions-card">
-      <header class="card-header">
+    <section class="wallet-transactions-card">
+      <header class="wallet-transactions-header">
         <h2>{{ t("Latest Transactions") }}</h2>
       </header>
-      <div v-if="transactions.length" class="table-wrap">
+      <div
+        v-if="transactions.length"
+        class="table-wrap"
+        tabindex="0"
+        role="region"
+        :aria-label="t('Latest Transactions')"
+      >
         <table class="table">
           <thead>
             <tr>
@@ -335,6 +323,13 @@
 <script setup lang="ts">
 import { computed, reactive, ref, toRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import {
+  AppButton,
+  InlineAlert,
+  ProgressDialog,
+  RouteHeaderAction,
+  TechnicalDisclosure,
+} from "@/components/ui";
 import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import {
   cancelFaucetRequest,
@@ -1426,393 +1421,297 @@ watch(
 
 <style scoped>
 .wallet-layout {
-  position: relative;
   display: grid;
-  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
+  gap: var(--space-6);
+  max-width: 1180px;
+  margin-inline: auto;
 }
 
 .wallet-summary-card,
 .wallet-transactions-card {
-  min-height: 100%;
+  min-width: 0;
+  padding: clamp(var(--space-4), 3vw, var(--space-6));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
-.wallet-summary-header {
+.wallet-summary-header,
+.wallet-transactions-header {
+  display: flex;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+
+.wallet-summary-header h2,
+.wallet-transactions-header h2 {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.wallet-account-copy {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 .wallet-balance-band {
   display: grid;
-  gap: 6px;
-  padding: 18px 20px;
-  border-radius: 22px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 70%),
-    linear-gradient(135deg, var(--menu-highlight), transparent 52%),
-    var(--surface-soft);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--shadow-soft);
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-5);
+  padding: clamp(var(--space-5), 4vw, var(--space-7));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-inset);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
-.wallet-balance-label {
+.wallet-balance-label,
+.wallet-faucet-label,
+.wallet-account-id-label {
   margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  color: var(--color-text-muted);
   font-size: 0.72rem;
-  color: var(--iroha-muted);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .wallet-balance-value {
-  margin: 0;
-  font-size: clamp(2rem, 5vw, 2.7rem);
-  line-height: 0.95;
-  font-weight: 700;
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-strong);
+  font-size: clamp(3.4rem, 9vw, 6.5rem);
+  font-weight: 650;
+  letter-spacing: -0.07em;
+  line-height: 0.86;
 }
 
-.wallet-balance-asset {
-  margin: 0;
-  color: var(--iroha-muted);
-  word-break: break-word;
-  unicode-bidi: plaintext;
-}
-
-.wallet-citizenship-panel {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 16px;
-  padding: 16px 18px;
-  border-radius: 18px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 70%),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent-danger) 12%, transparent),
-      transparent 58%
-    ),
-    var(--surface-soft);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.wallet-citizenship-panel-positive {
-  border-color: color-mix(in srgb, #22c55e 54%, var(--glass-border));
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 72%),
-    linear-gradient(135deg, rgba(34, 197, 94, 0.18), transparent 60%),
-    var(--surface-soft);
-}
-
-.wallet-citizenship-title {
-  margin: 6px 0 0;
-  font-size: clamp(1.2rem, 3vw, 1.55rem);
-  font-weight: 700;
-  line-height: 1.05;
-}
-
-.wallet-citizenship-panel .helper {
-  margin-top: 8px;
-}
-
-.wallet-citizenship-meta {
-  display: grid;
-  gap: 10px;
-  min-width: 142px;
-}
-
-.wallet-citizenship-link {
-  min-height: 40px;
-  padding: 9px 12px;
+.wallet-balance-asset,
+.wallet-shield-asset {
+  margin: var(--space-3) 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
 }
 
 .wallet-quick-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 16px;
-}
-
-.wallet-shield-panel {
   display: grid;
-  gap: 14px;
-  margin-top: 18px;
-  padding: 18px 20px;
-  border-radius: 22px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(145deg, var(--glass-veil), transparent 78%),
-    linear-gradient(135deg, rgba(255, 198, 112, 0.16), transparent 55%),
-    var(--surface-soft);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--shadow-soft);
-}
-
-.wallet-shield-header {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.wallet-shield-recovery-row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.wallet-shield-recovery-row .wallet-shield-note {
-  flex: 1 1 260px;
-}
-
-.wallet-shield-balance {
-  margin: 6px 0 0;
-  font-size: clamp(1.35rem, 3vw, 1.8rem);
-  font-weight: 700;
-  line-height: 1;
-}
-
-.wallet-shield-asset {
-  margin: 4px 0 0;
-  font-weight: 600;
-  word-break: break-word;
-  unicode-bidi: plaintext;
-}
-
-.wallet-shield-kpi {
-  display: grid;
-  gap: 4px;
-  min-width: 150px;
-}
-
-.wallet-shield-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: end;
-}
-
-.wallet-shield-input {
-  display: grid;
-  gap: 6px;
-  flex: 1 1 200px;
-}
-
-.wallet-shield-input input {
-  width: 100%;
-}
-
-.wallet-shield-note {
-  margin: 0;
+  grid-template-columns: repeat(2, minmax(116px, 1fr));
+  gap: var(--space-2);
 }
 
 .wallet-action-link {
-  flex: 1 1 180px;
+  min-height: 46px;
+  padding: 0 var(--space-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-control);
+  text-decoration: none;
+  transition:
+    color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    transform var(--duration-fast) var(--ease-standard);
+}
+
+.wallet-action-link:hover,
+.wallet-action-link:focus-visible {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+  transform: translateY(-1px);
 }
 
 .wallet-action-link-disabled {
+  color: var(--color-text-muted);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
+  cursor: not-allowed;
   pointer-events: none;
 }
 
-.wallet-faucet-panel {
+.wallet-next-step {
+  margin-top: var(--space-5);
+}
+
+.wallet-faucet-panel,
+.wallet-citizenship-panel {
+  margin: 0;
+}
+
+.wallet-context-copy {
+  margin: 0;
+}
+
+.wallet-context-actions {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
   flex-wrap: wrap;
-  align-items: flex-start;
-  justify-content: space-between;
-  margin-top: 16px;
-  padding: 16px 18px;
-  border-radius: 20px;
-  border: 1px solid var(--glass-border);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--menu-highlight) 16%, transparent),
-    color-mix(in srgb, var(--glass-veil) 78%, transparent)
-  );
 }
 
-.wallet-faucet-panel-priority {
-  padding: 20px 22px;
-  background:
-    radial-gradient(
-      circle at 0% 50%,
-      color-mix(in srgb, var(--iroha-accent) 18%, transparent),
-      transparent 48%
-    ),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--glass-veil) 90%, transparent),
-      color-mix(in srgb, var(--menu-highlight) 42%, transparent)
-    );
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    0 18px 40px color-mix(in srgb, var(--iroha-accent) 12%, transparent);
-}
-
-.wallet-faucet-panel > :first-child {
-  flex: 1 1 260px;
+.wallet-next-step :deep(.ui-alert-action) {
+  align-self: center;
 }
 
 .wallet-faucet-button {
   flex: 0 0 auto;
 }
 
-.wallet-faucet-copy-priority {
-  font-size: 0.98rem;
-  color: inherit;
+.wallet-shield-panel {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+  padding: clamp(var(--space-4), 3vw, var(--space-5));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--frost-panel-soft);
+  box-shadow: var(--shadow-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
 }
 
-.wallet-faucet-panel .helper {
-  margin: 4px 0 0;
+.wallet-shield-header {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.wallet-faucet-label {
+.wallet-shield-kpi {
+  min-width: 0;
+  padding-inline-start: var(--space-5);
+  border-inline-start: 1px solid var(--color-border);
+}
+
+.wallet-shield-balance,
+.wallet-shield-kpi .kv-value {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-strong);
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
+.wallet-shield-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) auto;
+  align-items: end;
+  gap: var(--space-3);
+}
+
+.wallet-shield-input {
+  display: grid;
+  gap: 6px;
+  color: var(--color-text);
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.wallet-shield-input input {
+  width: 100%;
+}
+
+.wallet-shield-recovery-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.wallet-shield-recovery-row .wallet-shield-note {
+  flex: 1;
+}
+
+.wallet-shield-note {
   margin: 0;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--iroha-muted);
 }
 
-.wallet-faucet-message {
-  margin: 12px 0 0;
-  color: inherit;
-}
-
+.wallet-faucet-message,
 .wallet-local-account-note {
-  margin: 12px 0 0;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
+  overflow-wrap: anywhere;
 }
 
 .wallet-faucet-error {
-  color: var(--accent-danger);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
 }
 
-.wallet-account-id-note {
-  margin: 18px 0 0;
-  display: grid;
-  gap: 4px;
-}
-
-.wallet-account-id-label {
-  display: inline-block;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-  color: var(--iroha-muted);
-}
-
-.wallet-account-id-value {
-  display: block;
-  color: inherit;
-  word-break: break-all;
-  unicode-bidi: plaintext;
-}
-
-.wallet-faucet-modal-backdrop {
-  position: absolute;
-  inset: 0;
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  border-radius: inherit;
-  pointer-events: auto;
-  background: color-mix(in srgb, var(--surface-base) 40%, transparent);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-}
-
-.wallet-faucet-modal {
-  width: min(100%, 420px);
-  display: grid;
-  justify-items: center;
-  gap: 14px;
-  padding: 28px 24px;
-  text-align: center;
-  z-index: 1;
-  pointer-events: auto;
-}
-
-.wallet-faucet-spinner {
-  width: 54px;
-  height: 54px;
-  border-radius: 999px;
-  border: 3px solid color-mix(in srgb, var(--glass-border) 88%, transparent);
-  border-top-color: var(--accent-primary);
-  box-shadow: 0 0 24px
-    color-mix(in srgb, var(--accent-primary) 24%, transparent);
-  animation: wallet-faucet-spin 0.85s linear infinite;
-}
-
-.wallet-faucet-modal-label {
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.72rem;
-  color: var(--iroha-muted);
-}
-
-.wallet-faucet-modal-title {
-  margin: 0;
-  font-size: clamp(1.2rem, 3vw, 1.5rem);
-}
-
-.wallet-faucet-modal-detail {
-  margin: 0;
-  max-width: 32ch;
-}
-
-.wallet-faucet-modal-actions {
-  display: flex;
-  justify-content: center;
-  margin-top: 4px;
-}
-
-.wallet-kpi-account .kv-value {
-  word-break: break-all;
-  unicode-bidi: plaintext;
-}
-
-.wallet-account-copy {
-  margin-top: 4px;
-  word-break: break-all;
-  unicode-bidi: plaintext;
+.wallet-details-section {
+  margin-top: var(--space-4);
 }
 
 .wallet-table-wrap {
-  margin-top: 18px;
+  margin-top: var(--space-3);
+}
+
+.wallet-account-id-note {
+  margin: var(--space-4) 0 0;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.wallet-account-id-value {
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
 }
 
 .wallet-empty {
-  min-height: 136px;
+  min-height: 116px;
+  padding: var(--space-5) 0 var(--space-1);
   display: grid;
   align-content: center;
-  justify-items: start;
-  gap: 8px;
-  padding: 8px 0;
+  justify-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
   text-align: center;
 }
 
 .wallet-empty-title {
   margin: 0;
+  color: var(--color-text-strong);
   font-weight: 700;
 }
 
 .wallet-ledger-empty {
-  justify-items: center;
+  min-height: 180px;
 }
 
-@keyframes wallet-faucet-spin {
-  to {
-    transform: rotate(360deg);
-  }
+.wallet-transactions-card {
+  min-height: 240px;
+}
+
+.wallet-transactions-card .table-wrap {
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
 }
 
 .wallet-transactions-card .table td:last-child,
@@ -1820,43 +1719,83 @@ watch(
   white-space: nowrap;
 }
 
-@media (max-width: 1080px) {
-  .wallet-layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 @media (max-width: 720px) {
+  .wallet-layout {
+    gap: var(--space-5);
+  }
+
+  .wallet-summary-card,
+  .wallet-transactions-card {
+    padding: var(--space-4);
+  }
+
   .wallet-balance-band {
-    padding: 16px;
-  }
-
-  .wallet-faucet-panel {
+    grid-template-columns: minmax(0, 1fr);
     align-items: stretch;
+    padding: var(--space-5) var(--space-4);
   }
 
+  .wallet-balance-value {
+    font-size: clamp(3.2rem, 20vw, 5.4rem);
+  }
+
+  .wallet-quick-actions {
+    width: 100%;
+  }
+
+  .wallet-faucet-panel,
   .wallet-citizenship-panel {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .wallet-citizenship-meta {
-    min-width: 0;
+  .wallet-next-step :deep(.ui-alert-action) {
+    width: 100%;
   }
 
+  .wallet-context-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wallet-context-actions > *,
   .wallet-faucet-button {
     width: 100%;
   }
 
-  .wallet-quick-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
+  .wallet-shield-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
   }
 
+  .wallet-shield-kpi {
+    padding: var(--space-4) 0 0;
+    border-inline-start: 0;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .wallet-shield-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wallet-shield-actions > button {
+    width: 100%;
+  }
+
+  .wallet-shield-recovery-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .wallet-shield-recovery-row :deep(.ui-button) {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .wallet-action-link {
-    min-width: 0;
-    padding-inline: 12px;
+    transition: none;
   }
 }
 </style>

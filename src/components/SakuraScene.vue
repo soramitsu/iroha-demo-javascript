@@ -1,5 +1,5 @@
 <template>
-  <canvas ref="canvas" class="sakura-layer"></canvas>
+  <canvas ref="canvas" class="sakura-layer" aria-hidden="true"></canvas>
 </template>
 
 <script setup lang="ts">
@@ -26,7 +26,17 @@ interface Petal {
 let ctx: CanvasRenderingContext2D | null = null;
 let petals: Petal[] = [];
 let frameId = 0;
+let pointerFrameId = 0;
+let lastFrameTime = 0;
+let viewportWidth = 0;
+let viewportHeight = 0;
+let parallaxX = 0;
+let parallaxY = 0;
+let pendingPointer: { x: number; y: number } | null = null;
+let reducedMotionQuery: MediaQueryList | null = null;
+let reducedMotion = false;
 const MAX_PETALS = 55;
+const MIN_PETALS = 16;
 const petalColor = () =>
   theme.current === "dark"
     ? "rgba(252, 181, 212, 0.9)"
@@ -46,15 +56,55 @@ const createPetal = (width: number, height: number): Petal => ({
   stickSide: null,
 });
 
+const targetPetalCount = (width: number, height: number) => {
+  if (reducedMotion) {
+    return Math.min(18, MAX_PETALS);
+  }
+  return Math.max(
+    MIN_PETALS,
+    Math.min(MAX_PETALS, Math.round((width * height) / 26_000)),
+  );
+};
+
+const syncPetalCount = (width: number, height: number) => {
+  const count = targetPetalCount(width, height);
+  if (petals.length > count) {
+    petals = petals.slice(0, count);
+    return;
+  }
+  while (petals.length < count) {
+    petals.push(createPetal(width, height));
+  }
+};
+
 const resizeCanvas = () => {
   const el = canvas.value;
   if (!el) return;
-  el.width = window.innerWidth;
-  el.height = window.innerHeight;
-  if (petals.length === 0) {
-    petals = Array.from({ length: MAX_PETALS }, () =>
-      createPetal(el.width, el.height),
+  viewportWidth = window.innerWidth;
+  viewportHeight = window.innerHeight;
+  const devicePixelRatio = window.devicePixelRatio;
+  const pixelRatio =
+    Number.isFinite(devicePixelRatio) && devicePixelRatio > 0
+      ? Math.min(Math.max(devicePixelRatio, 1), 2)
+      : 1;
+  el.width = Math.round(viewportWidth * pixelRatio);
+  el.height = Math.round(viewportHeight * pixelRatio);
+  el.style.width = `${viewportWidth}px`;
+  el.style.height = `${viewportHeight}px`;
+  ctx?.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+  syncPetalCount(viewportWidth, viewportHeight);
+  petals.forEach((petal) => {
+    petal.x = Math.min(
+      Math.max(petal.x, -petal.size),
+      viewportWidth + petal.size,
     );
+    petal.y = Math.min(
+      Math.max(petal.y, -petal.size),
+      viewportHeight + petal.size,
+    );
+  });
+  if (reducedMotion) {
+    drawFrame(false, 0);
   }
 };
 
@@ -131,18 +181,21 @@ const updatePetal = (
   width: number,
   height: number,
   parallaxX: number,
+  frameScale: number,
 ) => {
   const wind = parallaxX * 1.5;
   if (petal.stuck) {
-    petal.y += petal.speedY * 1.4;
+    petal.y += petal.speedY * 1.4 * frameScale;
     petal.x = petal.stickSide === "left" ? petal.size : width - petal.size;
     if (Math.abs(parallaxX) < 0.12) {
       petal.stuck = false;
       petal.stickSide = null;
     }
   } else {
-    petal.y += petal.speedY;
-    petal.x += petal.speedX + wind + Math.sin(petal.y / 40) * petal.sway * 0.3;
+    petal.y += petal.speedY * frameScale;
+    petal.x +=
+      (petal.speedX + wind + Math.sin(petal.y / 40) * petal.sway * 0.3) *
+      frameScale;
     if (Math.abs(parallaxX) > 0.2) {
       if (petal.x < petal.size * 1.5 && parallaxX < 0) {
         petal.stuck = true;
@@ -155,7 +208,7 @@ const updatePetal = (
       }
     }
   }
-  petal.rotation += petal.rotationSpeed;
+  petal.rotation += petal.rotationSpeed * frameScale;
   if (petal.y > height + petal.size) {
     petal.y = -petal.size;
     petal.x = Math.random() * width;
@@ -171,25 +224,15 @@ const updatePetal = (
   }
 };
 
-const render = () => {
+const drawFrame = (advance: boolean, frameScale: number) => {
   const el = canvas.value;
   const context = ctx;
   if (!context || !el) return;
-  context.clearRect(0, 0, el.width, el.height);
-  const parallaxX =
-    parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue(
-        "--parallax-x",
-      ),
-    ) || 0;
-  const parallaxY =
-    parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue(
-        "--parallax-y",
-      ),
-    ) || 0;
+  context.clearRect(0, 0, viewportWidth, viewportHeight);
   petals.forEach((petal) => {
-    updatePetal(petal, el.width, el.height, parallaxX);
+    if (advance) {
+      updatePetal(petal, viewportWidth, viewportHeight, parallaxX, frameScale);
+    }
     const offsetX = parallaxX * 20 * (petal.stuck ? 0.2 : 1);
     const offsetY = parallaxY * 15 * (petal.stuck ? 0.3 : 1);
     context.save();
@@ -197,28 +240,126 @@ const render = () => {
     drawPetal(petal);
     context.restore();
   });
+};
+
+const render = (timestamp: number) => {
+  if (document.hidden || reducedMotion) {
+    frameId = 0;
+    lastFrameTime = 0;
+    return;
+  }
+  const delta = lastFrameTime ? timestamp - lastFrameTime : 1000 / 60;
+  lastFrameTime = timestamp;
+  drawFrame(true, Math.min(Math.max(delta / (1000 / 60), 0.25), 3));
   frameId = requestAnimationFrame(render);
+};
+
+const startAnimation = () => {
+  if (frameId || document.hidden || reducedMotion) {
+    return;
+  }
+  lastFrameTime = 0;
+  frameId = requestAnimationFrame(render);
+};
+
+const stopAnimation = () => {
+  if (frameId) {
+    cancelAnimationFrame(frameId);
+    frameId = 0;
+  }
+  lastFrameTime = 0;
+};
+
+const updatePointer = (event: PointerEvent) => {
+  if (reducedMotion) {
+    return;
+  }
+  pendingPointer = { x: event.clientX, y: event.clientY };
+  if (pointerFrameId) {
+    return;
+  }
+  pointerFrameId = requestAnimationFrame(() => {
+    pointerFrameId = 0;
+    if (!pendingPointer) {
+      return;
+    }
+    parallaxX = pendingPointer.x / Math.max(viewportWidth, 1) - 0.5;
+    parallaxY = pendingPointer.y / Math.max(viewportHeight, 1) - 0.5;
+    pendingPointer = null;
+    document.documentElement.style.setProperty(
+      "--parallax-x",
+      parallaxX.toFixed(3),
+    );
+    document.documentElement.style.setProperty(
+      "--parallax-y",
+      parallaxY.toFixed(3),
+    );
+  });
+};
+
+const handleVisibilityChange = () => {
+  if (document.hidden) {
+    stopAnimation();
+    return;
+  }
+  if (reducedMotion) {
+    drawFrame(false, 0);
+    return;
+  }
+  startAnimation();
+};
+
+const handleReducedMotionChange = (event: MediaQueryListEvent) => {
+  reducedMotion = event.matches;
+  parallaxX = 0;
+  parallaxY = 0;
+  document.documentElement.style.setProperty("--parallax-x", "0");
+  document.documentElement.style.setProperty("--parallax-y", "0");
+  syncPetalCount(viewportWidth, viewportHeight);
+  if (reducedMotion) {
+    stopAnimation();
+    drawFrame(false, 0);
+    return;
+  }
+  startAnimation();
 };
 
 onMounted(() => {
   const el = canvas.value;
   if (!el) return;
   ctx = el.getContext("2d");
+  reducedMotionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+  reducedMotion = reducedMotionQuery.matches;
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
-  frameId = requestAnimationFrame(render);
+  window.addEventListener("pointermove", updatePointer, { passive: true });
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  reducedMotionQuery.addEventListener("change", handleReducedMotionChange);
+  if (reducedMotion) {
+    drawFrame(false, 0);
+  } else {
+    startAnimation();
+  }
 });
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resizeCanvas);
-  cancelAnimationFrame(frameId);
+  window.removeEventListener("pointermove", updatePointer);
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+  reducedMotionQuery?.removeEventListener("change", handleReducedMotionChange);
+  stopAnimation();
+  if (pointerFrameId) {
+    cancelAnimationFrame(pointerFrameId);
+  }
 });
 
 watch(
   () => theme.current,
   () => {
-    // force redraw with new palette
     petals = petals.map((petal) => ({ ...petal }));
+    if (reducedMotion) {
+      drawFrame(false, 0);
+    }
   },
 );
 </script>

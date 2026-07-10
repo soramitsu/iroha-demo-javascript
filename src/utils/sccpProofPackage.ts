@@ -118,6 +118,7 @@ export type TonSccpProofPackage = {
 };
 
 export type SolanaSccpProofPackageInput = {
+  manifest?: Record<string, unknown>;
   witness: SolanaSccpWitnessInput;
   publicInputs: SccpMessageTransparentPublicInputsInput;
   bundleBytes: BinaryLike;
@@ -127,7 +128,9 @@ export type SolanaSccpProofPackageInput = {
   destinationBindingHash?: string;
   proofContextHash?: string;
   proofContext?: SolanaSccpProofContextInput;
+  destinationRequest?: Record<string, unknown>;
   proverModuleUrl?: string;
+  proverModuleHash?: string;
 };
 
 export type SolanaSccpProofGenerationInput = SolanaSccpProofPackageInput & {
@@ -791,6 +794,7 @@ export const generateSolanaSccpProofPackage = async (
 ): Promise<SolanaSccpProofPackage> => {
   const { prove, ...packageInput } = input;
   delete packageInput.proverModuleUrl;
+  delete packageInput.proverModuleHash;
   if (typeof prove !== "function") {
     const error = new Error(
       "Solana SCCP prover is not linked; provide a browser-safe prove function before generating production proofs.",

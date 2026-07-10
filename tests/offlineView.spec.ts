@@ -14,6 +14,8 @@ const ONLINE_DESTINATION_SELECTOR =
 
 const transferAssetMock = vi.fn();
 const getConfidentialAssetPolicyMock = vi.fn();
+const qrScannerStartMock = vi.hoisted(() => vi.fn());
+const qrScannerStopMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/services/iroha", () => ({
   getConfidentialAssetPolicy: (input: unknown) =>
@@ -33,7 +35,8 @@ vi.mock("@/composables/useQrScanner", async () => {
       message: ref(""),
       videoRef: ref<HTMLVideoElement | null>(null),
       fileInputRef: ref<HTMLInputElement | null>(null),
-      start: vi.fn(),
+      start: qrScannerStartMock,
+      stop: qrScannerStopMock,
       openFilePicker: vi.fn(),
       decodeFile: vi.fn(),
     }),
@@ -48,6 +51,8 @@ describe("OfflineView move-to-online shield mode", () => {
     localStorage.clear();
     transferAssetMock.mockReset();
     getConfidentialAssetPolicyMock.mockReset();
+    qrScannerStartMock.mockReset();
+    qrScannerStopMock.mockReset();
     getConfidentialAssetPolicyMock.mockResolvedValue({
       asset_id: "norito:abcdef0123456789",
       block_height: 1,
@@ -66,7 +71,10 @@ describe("OfflineView move-to-online shield mode", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (assetDefinitionId = "norito:abcdef0123456789") => {
+  const mountView = (
+    assetDefinitionId = "norito:abcdef0123456789",
+    offlineBalance = "25",
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -92,7 +100,7 @@ describe("OfflineView move-to-online shield mode", () => {
     });
     offline.$patch({
       wallet: {
-        balance: "25",
+        balance: offlineBalance,
         nextCounter: 0,
         replayLog: [],
         history: [],
@@ -353,7 +361,7 @@ describe("OfflineView move-to-online shield mode", () => {
     const wrapper = mountView();
     await flushPromises();
 
-    const paymentSection = getSection(wrapper, t("4. Pay an invoice"));
+    const paymentSection = getSection(wrapper, t("Create payment"));
     await paymentSection.get("textarea").setValue(
       JSON.stringify({
         invoice_id: "inv-1",
@@ -414,5 +422,102 @@ describe("OfflineView move-to-online shield mode", () => {
     expect(acceptSection.text()).toContain(
       t("Payment asset does not match the active offline asset."),
     );
+  });
+
+  it("shows one active workflow and removes numbered task headings", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const modeSections = wrapper.findAll(
+      'section[data-testid^="offline-mode-"]',
+    );
+    expect(modeSections).toHaveLength(5);
+    expect(
+      modeSections
+        .filter((section) => section.isVisible())
+        .map((section) => section.attributes("data-testid")),
+    ).toEqual(["offline-mode-request"]);
+    expect(
+      wrapper
+        .findAll("h2")
+        .map((heading) => heading.text())
+        .some((title) => /^[1-5]\./u.test(title)),
+    ).toBe(false);
+    expect(
+      wrapper
+        .findAll('[data-testid="offline-primary-action"]')
+        .filter((button) => button.isVisible()),
+    ).toHaveLength(1);
+
+    const payMode = wrapper
+      .findAll(".ui-segmented-option")
+      .find((button) => button.text() === t("Create payment"));
+    expect(payMode).toBeDefined();
+    await payMode?.trigger("click");
+
+    expect(
+      wrapper.get('[data-testid="offline-mode-pay"]').attributes("style") ?? "",
+    ).not.toContain("display: none");
+    expect(
+      wrapper
+        .findAll('[data-testid="offline-primary-action"]')
+        .filter((button) => button.isVisible()),
+    ).toHaveLength(1);
+  });
+
+  it("opens readiness first for an unfunded offline wallet", async () => {
+    const wrapper = mountView(undefined, "0");
+    await flushPromises();
+
+    expect(
+      wrapper.get('[data-testid="offline-mode-setup"]').attributes("style") ??
+        "",
+    ).not.toContain("display: none");
+    expect(
+      wrapper
+        .findAll('[data-testid="offline-primary-action"]')
+        .filter((button) => button.isVisible()),
+    ).toHaveLength(1);
+  });
+
+  it("keeps diagnostics and history collapsed by default", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const disclosures = wrapper.findAll(".offline-disclosures details");
+    expect(disclosures).toHaveLength(2);
+    expect(disclosures.map((details) => details.attributes("open"))).toEqual([
+      undefined,
+      undefined,
+    ]);
+    expect(disclosures.map((details) => details.get("summary").text())).toEqual(
+      [t("Diagnostics"), t("Offline history")],
+    );
+  });
+
+  it("opens invoice scanning in the shared sheet and stops it on mode change", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const payMode = wrapper
+      .findAll(".ui-segmented-option")
+      .find((button) => button.text() === t("Create payment"));
+    await payMode?.trigger("click");
+    const paySection = wrapper.get('[data-testid="offline-mode-pay"]');
+    const scanButton = paySection
+      .findAll("button")
+      .find((button) => button.text() === t("Scan invoice"));
+    expect(scanButton).toBeDefined();
+
+    await scanButton?.trigger("click");
+    await flushPromises();
+    expect(qrScannerStartMock).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector(".ui-scanner-sheet")).not.toBeNull();
+
+    const requestMode = wrapper
+      .findAll(".ui-segmented-option")
+      .find((button) => button.text() === t("Request offline payment"));
+    await requestMode?.trigger("click");
+    expect(qrScannerStopMock).toHaveBeenCalled();
   });
 });

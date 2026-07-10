@@ -4,6 +4,8 @@ This app releases through GitHub Actions from an existing `v*` tag. The workflow
 
 The Windows release jobs apply small CI-only patches to the checked-out Iroha SDK so the pinned commit builds under MSVC: `ivm` does not enable the `sha2` assembly backend for MSVC, the Windows `gpu_zstd` FFI block is marked as `unsafe extern`, `iroha_futures` uses a Windows `ctrl_c` shutdown listener instead of Unix signals, and Norito's binding-sync guard is skipped after those CI-only source edits.
 
+The Ubuntu verification job also installs `cargo-build-sbf 4.1.0` and runs `npm run verify:sccp-solana-sbf-validator-production`. That mandatory gate rebuilds both reviewed Solana SBF programs and the release x86_64 Linux validator helper, requires compiled JIT plus embedded source/Cargo/rustc provenance, rejects corrupt/fake/substituted helpers and artifacts, and fails rather than skipping when any production prerequisite is absent. Its local result is structural preflight only; live rollback-sentinel simulation remains the exact-cluster admission authority.
+
 ## Platforms
 
 - macOS x64: `dmg`, `zip`

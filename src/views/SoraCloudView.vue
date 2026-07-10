@@ -1,9 +1,15 @@
 <template>
   <div class="soracloud-shell">
+    <RouteHeaderAction>
+      <AppButton variant="secondary" :disabled="cloud.loading" @click="refresh">
+        {{ cloud.loading ? t("Refreshing") : t("Refresh") }}
+      </AppButton>
+    </RouteHeaderAction>
+
     <section class="card soracloud-command-card">
       <header class="card-header soracloud-command-header">
         <div>
-          <h2>{{ t("SoraCloud") }}</h2>
+          <h2>{{ t("Service status") }}</h2>
           <p class="helper">
             {{ t("Launch and monitor live services") }}
           </p>
@@ -13,9 +19,6 @@
           <span class="pill" :class="availabilityTone">
             {{ availabilityLabel }}
           </span>
-          <button type="button" :disabled="cloud.loading" @click="refresh">
-            {{ cloud.loading ? t("Refreshing") : t("Refresh") }}
-          </button>
         </div>
       </header>
 
@@ -74,8 +77,20 @@
       </div>
     </section>
 
+    <SegmentedControl
+      v-model="consoleMode"
+      :label="t('SoraCloud workspace')"
+      :options="[
+        { value: 'services', label: t('Live services') },
+        { value: 'launch', label: t('Launch instance') },
+      ]"
+    />
+
     <section class="soracloud-console">
-      <section class="card soracloud-launch-card">
+      <section
+        v-if="consoleMode === 'launch'"
+        class="card soracloud-launch-card"
+      >
         <header class="card-header">
           <div>
             <h2>{{ t("Launch instance") }}</h2>
@@ -306,6 +321,7 @@
             <button
               v-else
               type="submit"
+              data-ui-primary-action
               :disabled="launchDisabled || cloud.launching"
             >
               {{ cloud.launching ? t("Launching") : t("Launch live instance") }}
@@ -314,7 +330,7 @@
         </form>
       </section>
 
-      <section class="card soracloud-list-card">
+      <section v-else class="card soracloud-list-card">
         <header class="card-header">
           <div>
             <h2>{{ t("Live services") }}</h2>
@@ -396,17 +412,11 @@
         </div>
       </section>
 
-      <aside class="card soracloud-inspector-card">
-        <header class="card-header">
-          <div>
-            <h2>{{ t("Diagnostics") }}</h2>
-            <p class="helper mono">{{ session.connection.toriiUrl }}</p>
-          </div>
-          <span class="pill" :class="availabilityTone">{{
-            availabilityLabel
-          }}</span>
-        </header>
-
+      <TechnicalDisclosure
+        class="soracloud-inspector-card"
+        :summary="t('Diagnostics')"
+      >
+        <p class="helper mono">{{ session.connection.toriiUrl }}</p>
         <div class="soracloud-inspector-grid">
           <div class="kv">
             <span class="kv-label">{{ t("API") }}</span>
@@ -432,11 +442,10 @@
           </div>
         </div>
 
-        <details class="technical-details compact">
-          <summary>{{ t("Status payload") }}</summary>
+        <TechnicalDisclosure :summary="t('Status payload')">
           <pre>{{ diagnosticsPayload }}</pre>
-        </details>
-      </aside>
+        </TechnicalDisclosure>
+      </TechnicalDisclosure>
     </section>
   </div>
 </template>
@@ -444,6 +453,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
+import {
+  AppButton,
+  RouteHeaderAction,
+  SegmentedControl,
+  TechnicalDisclosure,
+} from "@/components/ui";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useSessionStore } from "@/stores/session";
 import { useSoraCloudStore } from "@/stores/soracloud";
@@ -468,6 +483,7 @@ type LaunchStep = "model" | "lease" | "review";
 const { t, n, d } = useAppI18n();
 const session = useSessionStore();
 const cloud = useSoraCloudStore();
+const consoleMode = ref<"services" | "launch">("services");
 
 const launchSteps: Array<{ id: LaunchStep; index: number; label: string }> = [
   { id: "model", index: 1, label: "Choose model" },
@@ -672,3 +688,21 @@ onMounted(() => {
   void refresh();
 });
 </script>
+
+<style scoped>
+.soracloud-command-card,
+.soracloud-launch-card,
+.soracloud-list-card {
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.soracloud-kpi-grid,
+.soracloud-state,
+.soracloud-stepper {
+  background: var(--frost-panel-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+</style>

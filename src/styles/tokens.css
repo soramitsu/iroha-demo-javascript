@@ -1,0 +1,297 @@
+:root {
+  --parallax-x: 0;
+  --parallax-y: 0;
+
+  --font-sans:
+    "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --mono-font: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 40px;
+
+  --radius-control: 12px;
+  --radius-panel: 18px;
+  --radius-shell: 22px;
+  --radius-round: 999px;
+
+  --duration-fast: 150ms;
+  --duration-route: 180ms;
+  --ease-standard: cubic-bezier(0.2, 0.75, 0.25, 1);
+
+  /* Compatibility aliases are semantic, not theme definitions. */
+  --qs-space-1: var(--space-1);
+  --qs-space-2: var(--space-2);
+  --qs-space-3: var(--space-3);
+  --qs-space-4: var(--space-4);
+  --qs-space-5: var(--space-5);
+  --qs-space-6: var(--space-6);
+  --qs-radius-control: var(--radius-control);
+  --qs-radius-panel: var(--radius-panel);
+  --qs-radius-shell: var(--radius-shell);
+  --qs-duration-fast: var(--duration-fast);
+  --qs-duration: var(--duration-route);
+  --qs-ease: var(--ease-standard);
+  --radius-lg: var(--radius-panel);
+  --radius-xl: var(--radius-shell);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-background: #05060b;
+  --color-surface: #101219;
+  --color-surface-raised: #171a22;
+  --color-surface-soft: #1d2029;
+  --color-surface-inset: #0b0d12;
+  --color-text: #e7ebf6;
+  --color-text-strong: #f8f5f3;
+  --color-text-muted: #a9acb8;
+  --color-text-on-accent: #ffffff;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-border-strong: rgba(255, 255, 255, 0.17);
+
+  --color-accent: #ff6468;
+  --color-accent-raw: #ff4b4b;
+  --color-accent-strong: #ff4b4b;
+  --color-accent-fill: #b92735;
+  --color-accent-fill-hover: #a51d2b;
+  --color-accent-soft: rgba(255, 75, 75, 0.14);
+  --color-success: #70d6aa;
+  --color-success-soft: rgba(112, 214, 170, 0.13);
+  --color-warning: #f1bd6b;
+  --color-warning-soft: rgba(241, 189, 107, 0.14);
+  --color-danger: #ff928d;
+  --color-danger-soft: rgba(255, 146, 141, 0.14);
+  --color-focus: #9bbcff;
+  --color-overlay: rgba(3, 4, 8, 0.76);
+  --color-qr-surface: #ffffff;
+  --color-media-stage: #050506;
+
+  --frost-filter-shell: blur(28px) saturate(150%);
+  --frost-filter-panel: blur(20px) saturate(142%);
+  --frost-filter-soft: blur(14px) saturate(132%);
+  --frost-shell: rgba(13, 15, 22, 0.52);
+  --frost-panel: rgba(11, 13, 19, 0.4);
+  --frost-panel-raised: rgba(23, 26, 34, 0.5);
+  --frost-panel-soft: rgba(29, 32, 41, 0.44);
+  --frost-panel-inset: rgba(8, 10, 15, 0.66);
+  --frost-border: rgba(255, 255, 255, 0.18);
+  --shell-glass: var(--frost-shell);
+  --shell-rim: rgba(255, 255, 255, 0.15);
+
+  /*
+   * Global illumination is directional: a cool key from the upper-left,
+   * coral bounce from the upper-right, and a quiet fill rising from below.
+   * These colors are shared by every elevation tier so the whole workspace
+   * reads as one sculpted material rather than a collection of local effects.
+   */
+  --gi-key-light: rgba(255, 255, 255, 0.105);
+  --gi-fill-light: rgba(118, 133, 174, 0.1);
+  --gi-occlusion: rgba(0, 0, 0, 0.66);
+  --gi-coral-bounce: rgba(255, 75, 75, 0.16);
+  --gi-rim-light: rgba(255, 255, 255, 0.14);
+  --gi-hover: rgba(255, 75, 75, 0.22);
+  --gi-pressed: rgba(0, 0, 0, 0.58);
+
+  /* Compatibility aliases for existing scoped surfaces. */
+  --gi-rim: var(--gi-rim-light);
+  --gi-highlight: var(--gi-key-light);
+  --gi-shadow: var(--gi-occlusion);
+  --gi-accent: var(--gi-coral-bounce);
+  --background-illumination:
+    radial-gradient(circle at -6% -10%, var(--gi-key-light), transparent 38%),
+    radial-gradient(circle at 96% 2%, var(--gi-coral-bounce), transparent 34%),
+    radial-gradient(circle at 52% 116%, var(--gi-fill-light), transparent 45%),
+    #05060b;
+
+  --shadow-inset:
+    inset 4px 4px 10px var(--gi-pressed),
+    inset -3px -3px 9px var(--gi-key-light),
+    inset 0 1px 0 color-mix(in srgb, var(--gi-coral-bounce) 28%, transparent);
+  --shadow-pressed:
+    inset 5px 5px 12px var(--gi-pressed),
+    inset -4px -4px 10px var(--gi-key-light),
+    inset 0 2px 5px color-mix(in srgb, var(--gi-coral-bounce) 38%, transparent);
+  --shadow-control:
+    -3px -3px 9px var(--gi-key-light), 5px 6px 14px var(--gi-occlusion),
+    0 7px 20px color-mix(in srgb, var(--gi-coral-bounce) 42%, transparent),
+    inset 0 1px 0 var(--gi-rim-light);
+  --shadow-hover:
+    -4px -4px 12px var(--gi-key-light), 7px 9px 20px var(--gi-occlusion),
+    0 10px 28px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-control-hover: var(--shadow-hover);
+  --shadow-control-pressed: var(--shadow-pressed);
+  --shadow-raised:
+    -8px -8px 22px var(--gi-key-light), 12px 15px 36px var(--gi-occlusion),
+    0 18px 48px var(--gi-coral-bounce), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-raised-hover:
+    -10px -10px 28px var(--gi-key-light), 15px 19px 44px var(--gi-occlusion),
+    0 22px 58px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-shell:
+    -9px -9px 28px color-mix(in srgb, var(--gi-key-light) 72%, transparent),
+    16px 20px 48px var(--gi-occlusion), 0 20px 58px var(--gi-coral-bounce),
+    inset 0 1px 0 var(--shell-rim), inset 1px 0 0 var(--gi-rim-light);
+  --shadow-overlay:
+    -12px -12px 34px var(--gi-key-light), 22px 28px 78px rgba(0, 0, 0, 0.76),
+    0 24px 72px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-background: #f4f1ed;
+  --color-surface: #faf8f5;
+  --color-surface-raised: #fffdfb;
+  --color-surface-soft: #ede9e4;
+  --color-surface-inset: #e4dfda;
+  --color-text: #202126;
+  --color-text-strong: #15161a;
+  /*
+   * Muted copy is still information, not disabled decoration. Keep it dark
+   * enough to clear 4.5:1 on the darkest porcelain inset surface as well as
+   * on raised cards. This single token covers labels, hints, read-only values,
+   * inactive segmented controls, and secondary chrome.
+   */
+  --color-text-muted: #565962;
+  --color-text-on-accent: #ffffff;
+  --color-border: rgba(42, 35, 39, 0.1);
+  --color-border-strong: rgba(42, 35, 39, 0.17);
+
+  --color-accent: #c41b27;
+  --color-accent-raw: #ff4b4b;
+  --color-accent-strong: #a91523;
+  --color-accent-fill: #b51e2c;
+  --color-accent-fill-hover: #9f1725;
+  --color-accent-soft: #f7e4e3;
+  --color-success: #12643f;
+  --color-success-soft: #e6eee8;
+  --color-warning: #805300;
+  --color-warning-soft: #f2e9d8;
+  --color-danger: #a93239;
+  --color-danger-soft: #f4e4e3;
+  --color-focus: #24579f;
+  --color-overlay: rgba(31, 26, 29, 0.48);
+  --color-qr-surface: #ffffff;
+  --color-media-stage: #050506;
+
+  --frost-filter-shell: blur(18px) saturate(155%);
+  --frost-filter-panel: blur(12px) saturate(150%);
+  --frost-filter-soft: blur(8px) saturate(140%);
+  --frost-shell: rgba(255, 253, 250, 0.42);
+  --frost-panel: rgba(255, 252, 249, 0.28);
+  --frost-panel-raised: rgba(255, 253, 251, 0.38);
+  --frost-panel-soft: rgba(244, 239, 235, 0.32);
+  --frost-panel-inset: rgba(235, 229, 225, 0.56);
+  --frost-border: rgba(255, 255, 255, 0.72);
+  --shell-glass: var(--frost-shell);
+  --shell-rim: rgba(255, 255, 255, 0.96);
+
+  --gi-key-light: rgba(255, 255, 255, 0.98);
+  --gi-fill-light: rgba(222, 214, 218, 0.68);
+  --gi-occlusion: rgba(73, 55, 64, 0.23);
+  --gi-coral-bounce: rgba(255, 75, 75, 0.15);
+  --gi-rim-light: rgba(255, 255, 255, 0.96);
+  --gi-hover: rgba(255, 75, 75, 0.2);
+  --gi-pressed: rgba(73, 55, 64, 0.18);
+
+  --gi-rim: var(--gi-rim-light);
+  --gi-highlight: var(--gi-key-light);
+  --gi-shadow: var(--gi-occlusion);
+  --gi-accent: var(--gi-coral-bounce);
+  --background-illumination:
+    radial-gradient(circle at -6% -10%, var(--gi-key-light), transparent 39%),
+    radial-gradient(circle at 96% 2%, var(--gi-coral-bounce), transparent 34%),
+    radial-gradient(circle at 52% 116%, var(--gi-fill-light), transparent 46%),
+    #f4f1ed;
+
+  --shadow-inset:
+    inset 4px 4px 10px var(--gi-pressed),
+    inset -4px -4px 10px rgba(255, 255, 255, 0.9),
+    inset 0 1px 0 color-mix(in srgb, var(--gi-coral-bounce) 24%, transparent);
+  --shadow-pressed:
+    inset 5px 5px 12px var(--gi-pressed),
+    inset -4px -4px 11px var(--gi-key-light),
+    inset 0 2px 5px color-mix(in srgb, var(--gi-coral-bounce) 34%, transparent);
+  --shadow-control:
+    -4px -4px 10px var(--gi-key-light), 5px 6px 14px var(--gi-occlusion),
+    0 7px 20px color-mix(in srgb, var(--gi-coral-bounce) 48%, transparent),
+    inset 0 1px 0 var(--gi-rim-light);
+  --shadow-hover:
+    -6px -6px 14px var(--gi-key-light), 8px 10px 22px var(--gi-occlusion),
+    0 11px 30px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-control-hover: var(--shadow-hover);
+  --shadow-control-pressed: var(--shadow-pressed);
+  --shadow-raised:
+    -10px -10px 26px var(--gi-key-light), 13px 16px 36px var(--gi-occlusion),
+    0 18px 48px var(--gi-coral-bounce), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-raised-hover:
+    -12px -12px 32px var(--gi-key-light), 16px 20px 46px var(--gi-occlusion),
+    0 23px 60px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+  --shadow-shell:
+    -11px -11px 30px var(--gi-key-light), 17px 21px 48px var(--gi-occlusion),
+    0 21px 60px var(--gi-coral-bounce), inset 0 1px 0 var(--shell-rim),
+    inset 1px 0 0 var(--gi-rim-light);
+  --shadow-overlay:
+    -14px -14px 38px var(--gi-key-light), 24px 30px 80px rgba(64, 47, 55, 0.32),
+    0 26px 74px var(--gi-hover), inset 0 1px 0 var(--gi-rim-light);
+}
+
+:root[data-theme="dark"],
+:root[data-theme="light"] {
+  --qs-background: var(--color-background);
+  --qs-surface: var(--color-surface);
+  --qs-surface-raised: var(--color-surface-raised);
+  --qs-surface-soft: var(--color-surface-soft);
+  --qs-text: var(--color-text);
+  --qs-text-muted: var(--color-text-muted);
+  --qs-border: var(--color-border);
+  --qs-border-strong: var(--color-border-strong);
+  --qs-accent: var(--color-accent);
+  --qs-accent-strong: var(--color-accent-strong);
+  --qs-accent-soft: var(--color-accent-soft);
+  --qs-success: var(--color-success);
+  --qs-success-soft: var(--color-success-soft);
+  --qs-warning: var(--color-warning);
+  --qs-warning-soft: var(--color-warning-soft);
+  --qs-danger: var(--color-danger);
+  --qs-danger-soft: var(--color-danger-soft);
+  --qs-focus: var(--color-focus);
+  --qs-overlay: var(--color-overlay);
+  --qs-shadow-card: var(--shadow-raised);
+  --qs-shadow-overlay: var(--shadow-overlay);
+
+  --iroha-accent: var(--color-accent);
+  --iroha-accent-dark: var(--color-accent-strong);
+  --iroha-muted: var(--color-text-muted);
+  --iroha-text: var(--color-text);
+  --iroha-strong: var(--color-text-strong);
+  --surface: var(--color-surface);
+  --surface-strong: var(--color-surface-raised);
+  --surface-raised: var(--color-surface-raised);
+  --surface-soft: var(--color-surface-soft);
+  --surface-base: var(--color-background);
+  --panel-border: var(--color-border);
+  --border-subtle: var(--color-border);
+  --accent-primary: var(--color-accent);
+  --accent-danger: var(--color-danger);
+  --accent-success: var(--color-success);
+}
+
+@media (color-gamut: p3) {
+  :root[data-theme="dark"] {
+    --color-accent-raw: color(display-p3 1 0.29 0.3);
+    --color-accent: color(display-p3 1 0.38 0.4);
+    --color-accent-strong: color(display-p3 1 0.29 0.3);
+  }
+
+  :root[data-theme="light"] {
+    --color-accent-raw: color(display-p3 1 0.29 0.3);
+    --color-accent: color(display-p3 0.72 0.08 0.13);
+    --color-accent-strong: color(display-p3 0.61 0.06 0.11);
+  }
+}

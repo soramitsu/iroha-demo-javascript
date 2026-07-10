@@ -1099,7 +1099,8 @@ describe("iroha services bridge", () => {
     };
     const solanaBroadcastInput = {
       endpoint: "https://api.testnet.solana.com",
-      transactionB64: "AQ==",
+      transactionB64: "Ag==",
+      expectedUnsignedTransactionB64: "AQ==",
     };
     const solanaBuildTransactionInput = {
       endpoint: "https://api.testnet.solana.com",

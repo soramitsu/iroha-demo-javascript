@@ -1,14 +1,45 @@
 #!/usr/bin/env node
-import { randomInt } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomInt } from "node:crypto";
+import {
+  constants as fsConstants,
+  mkdir,
+  open,
+  rename,
+  rm,
+} from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseTairaMcpJsonRpcResponseText } from "./taira-mcp-json-rpc.mjs";
 
-const DEFAULT_TORII_URL = "https://taira.sora.org";
-const DEFAULT_MCP_URL = "https://taira.sora.org/v1/mcp";
+const DEFAULT_TORII_URL = "https://taira-validator-1.sora.org";
+const DEFAULT_MCP_URL = "https://taira-validator-1.sora.org/v1/mcp";
 const DEFAULT_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
 const DEFAULT_GAS_ASSET_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const DEFAULT_GAS_LIMIT = 2_000_000;
 const DEFAULT_PRIVATE_KEY_ENV = "SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY";
+const SOLANA_ROUTE_ID = "taira_sol_xor";
+const SOLANA_ASSET_KEY = "xor";
+const SOLANA_ISI_SCHEMA = "iroha-sccp-route-manifest-isi/v1";
+const HASH32 = /^0x[0-9a-f]{64}$/u;
+const TAIRA_VALIDATOR_HOST = /^taira-validator-[1-4]\.sora\.org$/u;
+const ALLOWED_OPTIONS = new Set([
+  "isi",
+  "authority",
+  "out",
+  "torii-url",
+  "mcp-url",
+  "submit-via",
+  "chain-id",
+  "gas-asset-id",
+  "gas-limit",
+  "private-key-env",
+  "wait-for-commit",
+  "commit-timeout-ms",
+  "ttl-ms",
+  "nonce",
+  "dry-run",
+  "expected-isi-sha256",
+]);
 
 const usage = `Usage:
   node scripts/taira-submit-upsert-sccp-route-manifest.mjs --isi <route.upsert-isi.json> --authority <account-id> --out <submission.json>
@@ -21,6 +52,7 @@ Options:
   --gas-asset-id           Default: ${DEFAULT_GAS_ASSET_ID}
   --gas-limit              Default: ${DEFAULT_GAS_LIMIT}
   --private-key-env        Default: ${DEFAULT_PRIVATE_KEY_ENV}
+  --expected-isi-sha256    Required independent hash of the exact reviewed ISI object
   --wait-for-commit        true|false, default true
   --commit-timeout-ms      Default: 180000
   --ttl-ms                 Default: 600000
@@ -28,7 +60,7 @@ Options:
   --dry-run                Build and hash the transaction without submitting it
 `;
 
-function parseArgs(argv) {
+export function parseTairaRouteManifestSubmitArgs(argv) {
   const out = {};
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
@@ -37,18 +69,129 @@ function parseArgs(argv) {
       continue;
     }
     if (!token.startsWith("--")) {
-      throw new Error(`Unexpected argument: ${token}`);
+      throw new Error("Unexpected positional argument.");
     }
     const key = token.slice(2);
+    if (!ALLOWED_OPTIONS.has(key)) {
+      throw new Error("Unknown route-manifest submit option.");
+    }
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      throw new Error("Duplicate route-manifest submit option.");
+    }
     const next = argv[index + 1];
     if (next === undefined || next.startsWith("--")) {
-      out[key] = "true";
-      continue;
+      throw new Error(
+        "Every route-manifest submit option requires an explicit value.",
+      );
     }
     out[key] = next;
     index += 1;
   }
   return out;
+}
+
+export const canonicalTairaRouteManifestIsiSha256 = (artifact) =>
+  `0x${createHash("sha256").update(JSON.stringify(artifact)).digest("hex")}`;
+
+const normalizeHash32 = (value, label) => {
+  if (
+    typeof value !== "string" ||
+    !HASH32.test(value) ||
+    /^0x0{64}$/u.test(value) ||
+    /^0x([0-9a-f]{2})\1{31}$/u.test(value)
+  ) {
+    throw new Error(`${label} must be a canonical lowercase SHA-256 hash.`);
+  }
+  return value;
+};
+
+export function validateTairaRouteManifestSubmitEndpoints({
+  toriiUrl,
+  mcpUrl,
+} = {}) {
+  let torii;
+  let mcp;
+  try {
+    torii = new URL(toriiUrl);
+    mcp = new URL(mcpUrl);
+  } catch {
+    throw new Error("TAIRA route publication endpoints must be valid URLs.");
+  }
+  const common = (url) =>
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    !url.port &&
+    !url.search &&
+    !url.hash &&
+    TAIRA_VALIDATOR_HOST.test(url.hostname);
+  if (
+    !common(torii) ||
+    !common(mcp) ||
+    (torii.pathname !== "/" && torii.pathname !== "") ||
+    mcp.pathname !== "/v1/mcp" ||
+    torii.origin !== mcp.origin
+  ) {
+    throw new Error(
+      "TAIRA route publication requires one matching canonical validator HTTPS root and /v1/mcp endpoint.",
+    );
+  }
+  return {
+    toriiUrl: torii.origin,
+    mcpUrl: `${mcp.origin}/v1/mcp`,
+  };
+}
+
+export function validateTairaRouteManifestIsiArtifact({
+  artifact,
+  expectedSha256,
+} = {}) {
+  if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) {
+    throw new Error("Route manifest ISI artifact must be an object.");
+  }
+  const expected = normalizeHash32(expectedSha256, "--expected-isi-sha256");
+  const actual = canonicalTairaRouteManifestIsiSha256(artifact);
+  if (actual !== expected) {
+    throw new Error(
+      "Route manifest ISI artifact no longer matches the independently pinned reviewed object.",
+    );
+  }
+  if (
+    artifact.schema !== SOLANA_ISI_SCHEMA ||
+    artifact.routeId !== SOLANA_ROUTE_ID ||
+    artifact.assetKey !== SOLANA_ASSET_KEY ||
+    artifact.productionReady !== true
+  ) {
+    throw new Error(
+      "Route manifest ISI artifact identity is not canonical taira_sol_xor production material.",
+    );
+  }
+  const instruction = artifact.instruction;
+  const manifest = instruction?.UpsertSccpRouteManifest?.manifest;
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error(
+      "Route manifest ISI artifact must contain one UpsertSccpRouteManifest instruction.",
+    );
+  }
+  if (
+    manifest.route_id !== SOLANA_ROUTE_ID ||
+    manifest.asset_key !== SOLANA_ASSET_KEY ||
+    manifest.production_ready !== true
+  ) {
+    throw new Error(
+      "Embedded route manifest identity is not canonical taira_sol_xor production material.",
+    );
+  }
+  const manifestSha256 = canonicalTairaRouteManifestIsiSha256(manifest);
+  if (
+    artifact.manifestSha256 !== manifestSha256 ||
+    artifact.instructionManifestSha256 !== manifestSha256
+  ) {
+    throw new Error(
+      "Embedded route manifest bytes do not match the ISI manifest hash pins.",
+    );
+  }
+  return { instruction, manifest, actualSha256: actual };
 }
 
 function requireText(options, key) {
@@ -75,20 +218,50 @@ function parsePositiveInteger(value, label, fallback) {
 }
 
 async function readJson(path, label) {
+  let handle = null;
   try {
-    return JSON.parse(await readFile(resolve(path), "utf8"));
-  } catch (error) {
-    throw new Error(
-      `failed to read ${label}: ${error instanceof Error ? error.message : String(error)}`,
+    handle = await open(
+      resolve(path),
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
     );
+    const stats = await handle.stat();
+    if (!stats.isFile()) {
+      throw new Error("not-regular");
+    }
+    return JSON.parse(await handle.readFile("utf8"));
+  } catch (error) {
+    const code =
+      typeof error?.code === "string" && /^[A-Z0-9_]+$/u.test(error.code)
+        ? ` (${error.code})`
+        : "";
+    throw new Error(`failed to read ${label}${code}.`);
+  } finally {
+    await handle?.close();
   }
 }
 
-async function writeJson(path, value) {
+export async function writeTairaRouteManifestSubmissionJson(path, value) {
   const out = resolve(path);
   await mkdir(dirname(out), { recursive: true });
-  await writeFile(out, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  return out;
+  const temporary = `${out}.tmp-${process.pid}-${randomInt(1, 0x7fffffff)}`;
+  let handle = null;
+  try {
+    handle = await open(
+      temporary,
+      fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY,
+      0o600,
+    );
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temporary, out);
+    return out;
+  } catch (error) {
+    await handle?.close().catch(() => {});
+    await rm(temporary, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 function readPrivateKeyFromEnv(envName) {
@@ -106,13 +279,64 @@ function readPrivateKeyFromEnv(envName) {
   );
 }
 
-function transactionStatusKind(status) {
-  return (
-    status?.status?.kind ??
-    status?.kind ??
-    status?.content?.status?.kind ??
-    null
-  );
+export function transactionStatusKind(status, seen = new WeakSet()) {
+  if (typeof status === "string") {
+    const trimmed = status.trim();
+    if (
+      /^(?:Applied|Rejected|Expired|Queued|Validating|Committed)$/u.test(
+        trimmed,
+      )
+    ) {
+      return trimmed;
+    }
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return transactionStatusKind(JSON.parse(trimmed), seen);
+      } catch (_error) {
+        return null;
+      }
+    }
+    return null;
+  }
+  if (!status || typeof status !== "object") {
+    return null;
+  }
+  if (seen.has(status)) {
+    return null;
+  }
+  seen.add(status);
+  if (
+    typeof status.kind === "string" &&
+    /^(?:Applied|Rejected|Expired|Queued|Validating|Committed)$/u.test(
+      status.kind,
+    )
+  ) {
+    return status.kind;
+  }
+  const nestedCandidates = [
+    status.status,
+    status.content,
+    status.body,
+    status.receipt,
+    status.structuredContent,
+    status.structured_content,
+    status.result,
+    status.output,
+  ];
+  for (const candidate of nestedCandidates) {
+    const kind = transactionStatusKind(candidate, seen);
+    if (kind) return kind;
+  }
+  if (Array.isArray(status.content)) {
+    for (const item of status.content) {
+      const kind = transactionStatusKind(item?.text ?? item, seen);
+      if (kind) return kind;
+    }
+  }
+  return null;
 }
 
 async function sleep(ms) {
@@ -239,7 +463,7 @@ async function callMcpTool(mcpUrl, name, args) {
       `MCP ${name} failed with HTTP ${response.status}: ${text.slice(0, 512)}`,
     );
   }
-  const payload = text ? JSON.parse(text) : null;
+  const payload = parseTairaMcpJsonRpcResponseText(text);
   if (payload?.error) {
     throw new Error(
       `MCP ${name} failed: ${payload.error.message ?? JSON.stringify(payload.error)}`,
@@ -278,6 +502,7 @@ async function submitSignedTransactionViaMcp({
     encoding: waitForCommit
       ? "mcp:iroha.transactions.submit_and_wait"
       : "mcp:iroha.transactions.submit",
+    status: waitForCommit ? result : null,
   };
 }
 
@@ -319,18 +544,8 @@ async function canonicalizeDecodedSignedTransactionAccountIds(
   return visit(value);
 }
 
-function upsertInstruction(artifact) {
-  const instruction = artifact?.instruction;
-  if (!instruction?.UpsertSccpRouteManifest?.manifest) {
-    throw new Error(
-      "--isi must contain instruction.UpsertSccpRouteManifest.manifest.",
-    );
-  }
-  return instruction;
-}
-
 async function main() {
-  const options = parseArgs(process.argv.slice(2));
+  const options = parseTairaRouteManifestSubmitArgs(process.argv.slice(2));
   if (options.help) {
     process.stdout.write(usage);
     return;
@@ -339,16 +554,27 @@ async function main() {
   const isiPath = requireText(options, "isi");
   const authority = requireText(options, "authority");
   const out = requireText(options, "out");
-  const toriiUrl = String(options["torii-url"] ?? DEFAULT_TORII_URL).trim();
-  const mcpUrl = String(options["mcp-url"] ?? DEFAULT_MCP_URL).trim();
+  const endpointSelection = validateTairaRouteManifestSubmitEndpoints({
+    toriiUrl: String(options["torii-url"] ?? DEFAULT_TORII_URL).trim(),
+    mcpUrl: String(options["mcp-url"] ?? DEFAULT_MCP_URL).trim(),
+  });
+  const { toriiUrl, mcpUrl } = endpointSelection;
   const submitVia = String(options["submit-via"] ?? "mcp").trim();
   if (!["mcp", "torii"].includes(submitVia)) {
     throw new Error("--submit-via must be mcp or torii.");
   }
   const chainId = String(options["chain-id"] ?? DEFAULT_CHAIN_ID).trim();
+  if (chainId !== DEFAULT_CHAIN_ID) {
+    throw new Error("--chain-id must be the canonical TAIRA chain id.");
+  }
   const gasAssetId = String(
     options["gas-asset-id"] ?? DEFAULT_GAS_ASSET_ID,
   ).trim();
+  if (gasAssetId !== DEFAULT_GAS_ASSET_ID) {
+    throw new Error(
+      "--gas-asset-id must be the canonical TAIRA route-publication fee asset.",
+    );
+  }
   const gasLimit = parsePositiveInteger(
     options["gas-limit"],
     "--gas-limit",
@@ -357,6 +583,9 @@ async function main() {
   const privateKeyEnv = String(
     options["private-key-env"] ?? DEFAULT_PRIVATE_KEY_ENV,
   ).trim();
+  if (!/^[A-Z][A-Z0-9_]{0,127}$/u.test(privateKeyEnv)) {
+    throw new Error("--private-key-env must be a canonical environment name.");
+  }
   const waitForCommit = parseBoolean(options["wait-for-commit"], true);
   const dryRun = parseBoolean(options["dry-run"], false);
   const ttlMs = parsePositiveInteger(options["ttl-ms"], "--ttl-ms", 600_000);
@@ -372,8 +601,10 @@ async function main() {
   );
 
   const artifact = await readJson(isiPath, "route manifest ISI artifact");
-  const instruction = upsertInstruction(artifact);
-  const privateKey = readPrivateKeyFromEnv(privateKeyEnv);
+  const { instruction } = validateTairaRouteManifestIsiArtifact({
+    artifact,
+    expectedSha256: options["expected-isi-sha256"],
+  });
   const metadata = {
     action: "publish_sccp_route_manifest",
     route_id: artifact.routeId ?? artifact.route_id ?? "unknown",
@@ -389,21 +620,26 @@ async function main() {
     "../../iroha/javascript/iroha_js/src/toriiClient.js"
   );
 
-  const transaction = buildTransaction({
-    chainId,
-    authority,
-    instructions: [instruction],
-    metadata,
-    ttlMs,
-    nonce,
-    privateKey,
-  });
-  privateKey.fill(0);
+  const privateKey = readPrivateKeyFromEnv(privateKeyEnv);
+  let transaction;
+  try {
+    transaction = buildTransaction({
+      chainId,
+      authority,
+      instructions: [instruction],
+      metadata,
+      ttlMs,
+      nonce,
+      privateKey,
+    });
+  } finally {
+    privateKey.fill(0);
+  }
 
   const client = new ToriiClient(toriiUrl);
   const hash = transaction.hash.toString("hex");
   if (dryRun) {
-    const wrote = await writeJson(out, {
+    const wrote = await writeTairaRouteManifestSubmissionJson(out, {
       submitted: false,
       dryRun: true,
       submitVia,
@@ -450,15 +686,22 @@ async function main() {
   }
 
   let status = null;
+  let statusKindSource = null;
   if (!submitError && waitForCommit && submitVia === "torii") {
     status = await waitForStatus(client, hash, commitTimeoutMs);
   }
-  const statusKind =
-    (!submitError && waitForCommit && submitVia === "mcp" ? "Applied" : null) ??
+  if (!submitError && waitForCommit && submitVia === "mcp") {
+    status = receipt;
+  }
+  const parsedStatusKind =
     transactionStatusKind(status?.global) ??
     transactionStatusKind(status?.auto) ??
     transactionStatusKind(status?.local) ??
     transactionStatusKind(status);
+  const statusKind = parsedStatusKind;
+  if (parsedStatusKind) {
+    statusKindSource = "receipt";
+  }
   const submissionArtifact = {
     submitted: !submitError,
     submitVia,
@@ -468,6 +711,7 @@ async function main() {
     authority,
     hash,
     statusKind,
+    statusKindSource,
     status,
     receipt,
     encoding,
@@ -479,7 +723,10 @@ async function main() {
     waitForCommit,
     commitTimeoutMs,
   };
-  const wrote = await writeJson(out, submissionArtifact);
+  const wrote = await writeTairaRouteManifestSubmissionJson(
+    out,
+    submissionArtifact,
+  );
   if (submitError) {
     throw new Error(`failed to submit transaction: ${submitError}`);
   }
@@ -491,9 +738,14 @@ async function main() {
   );
 }
 
-main().catch((error) => {
-  process.stderr.write(
-    `${error instanceof Error ? error.message : String(error)}\n`,
-  );
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

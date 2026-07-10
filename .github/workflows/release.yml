@@ -66,6 +66,13 @@ jobs:
         working-directory: iroha-demo-javascript
         run: npm run verify
 
+      - name: Install pinned Solana SBF build tool
+        run: cargo install cargo-build-sbf --version 4.1.0 --locked
+
+      - name: Verify production Solana SBF validator and reviewed programs
+        working-directory: iroha-demo-javascript
+        run: npm run verify:sccp-solana-sbf-validator-production
+
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
     needs: verify

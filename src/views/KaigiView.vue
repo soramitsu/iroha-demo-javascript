@@ -1,9 +1,9 @@
 <template>
   <div class="kaigi-layout">
-    <section class="card kaigi-call-card">
+    <section v-if="showCallStage" class="card kaigi-call-card">
       <header class="card-header kaigi-call-header">
         <div>
-          <h2>{{ t("Kaigi") }}</h2>
+          <h2>{{ t("Meeting link") }}</h2>
           <p class="helper kaigi-call-status">{{ statusMessage }}</p>
         </div>
         <div class="kaigi-summary-pills">
@@ -98,18 +98,24 @@
           >
             {{ t("Stop preview") }}
           </button>
-          <button type="button" class="warn" :disabled="busy" @click="hangUp">
+          <button
+            type="button"
+            class="warn"
+            data-ui-primary-action
+            :disabled="busy"
+            @click="hangUp"
+          >
             {{ t("Hang up") }}
           </button>
         </div>
       </div>
-
-      <p v-if="errorMessage" class="helper kaigi-error">
-        {{ errorMessage }}
-      </p>
     </section>
 
-    <section class="card kaigi-overview-card">
+    <p v-if="errorMessage" class="helper kaigi-error" role="alert">
+      {{ errorMessage }}
+    </p>
+
+    <section v-if="!showCallStage" class="card kaigi-overview-card">
       <header class="card-header kaigi-header">
         <div>
           <h2>
@@ -455,6 +461,21 @@
                 {{ mediaSetupStatusLabel }}
               </span>
             </div>
+            <p
+              v-if="!showCallStage"
+              class="helper kaigi-status-copy"
+              role="status"
+              aria-live="polite"
+            >
+              {{ statusMessage }}
+            </p>
+            <div class="kaigi-precall-preview">
+              <video ref="localVideoRef" autoplay muted playsinline></video>
+              <div v-if="!localStream" class="kaigi-precall-preview-empty">
+                <span>{{ t("Camera preview") }}</span>
+                <small class="helper">{{ t("Preview appears here") }}</small>
+              </div>
+            </div>
             <div class="kaigi-device-grid">
               <label>
                 {{ t("Camera") }}
@@ -518,6 +539,7 @@
             <button
               v-if="callMode === 'start'"
               type="button"
+              data-ui-primary-action
               :disabled="busy"
               @click="createMeetingLink"
             >
@@ -530,6 +552,7 @@
             <button
               v-else
               type="button"
+              data-ui-primary-action
               :disabled="busy || !parsedInvite || inviteExpired"
               @click="joinLoadedMeeting"
             >
@@ -612,7 +635,7 @@
       </div>
     </section>
 
-    <section class="card kaigi-signal-card">
+    <section v-if="!showCallStage" class="card kaigi-signal-card">
       <details
         class="kaigi-advanced"
         :open="advancedSignalsOpen"
@@ -710,65 +733,53 @@
       </details>
     </section>
 
-    <div
-      v-if="hostPromptVisible"
-      class="kaigi-host-modal-backdrop"
-      @click.self="dismissHostPrompt"
-      @keydown.esc.stop.prevent="dismissHostPrompt"
+    <AppDialog
+      :open="hostPromptVisible"
+      :title="hostPromptTitle"
+      :description="hostPromptDetail"
+      :eyebrow="t('Host prompt')"
+      :close-label="t('Later')"
+      :show-close="!busy"
+      :close-on-backdrop="!busy"
+      :busy="busy"
+      initial-focus-selector="[data-kaigi-prompt-primary]"
+      @close="dismissHostPrompt"
     >
-      <div
-        class="card kaigi-host-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="kaigi-host-modal-title"
-        aria-describedby="kaigi-host-modal-detail"
-        tabindex="-1"
-      >
-        <p class="kaigi-host-modal-label">{{ t("Host prompt") }}</p>
-        <h2 id="kaigi-host-modal-title" class="kaigi-host-modal-title">
-          {{ hostPromptTitle }}
-        </h2>
-        <p id="kaigi-host-modal-detail" class="helper kaigi-host-modal-detail">
-          {{ hostPromptDetail }}
-        </p>
-        <div class="actions-row kaigi-host-modal-actions">
-          <button
-            v-if="hostPromptKind === 'answerReady'"
-            ref="hostPromptPrimaryButton"
-            type="button"
-            :disabled="busy"
-            @click="applyAnswerPacket"
-          >
-            {{
-              signalBusy
-                ? t("Applying remote answer…")
-                : t("Apply answer packet")
-            }}
-          </button>
-          <button
-            v-else
-            ref="hostPromptPrimaryButton"
-            type="button"
-            :disabled="busy"
-            @click="dismissHostPrompt"
-          >
-            {{ t("I will keep this window open") }}
-          </button>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="busy"
-            @click="openAdvancedSignaling"
-          >
-            {{
-              hostPromptKind === "answerReady"
-                ? t("Later")
-                : t("Show Advanced signaling")
-            }}
-          </button>
-        </div>
-      </div>
-    </div>
+      <template #actions>
+        <button
+          v-if="hostPromptKind === 'answerReady'"
+          type="button"
+          data-kaigi-prompt-primary
+          :disabled="busy"
+          @click="applyAnswerPacket"
+        >
+          {{
+            signalBusy ? t("Applying remote answer…") : t("Apply answer packet")
+          }}
+        </button>
+        <button
+          v-else
+          type="button"
+          data-kaigi-prompt-primary
+          :disabled="busy"
+          @click="dismissHostPrompt"
+        >
+          {{ t("I will keep this window open") }}
+        </button>
+        <button
+          type="button"
+          class="secondary"
+          :disabled="busy"
+          @click="openAdvancedSignaling"
+        >
+          {{
+            hostPromptKind === "answerReady"
+              ? t("Later")
+              : t("Show Advanced signaling")
+          }}
+        </button>
+      </template>
+    </AppDialog>
   </div>
 </template>
 
@@ -783,6 +794,7 @@ import {
   watch,
 } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { AppDialog } from "@/components/ui";
 import {
   createKaigiMeeting,
   endKaigiMeeting,
@@ -943,7 +955,6 @@ const parsedInvite = shallowRef<LoadedKaigiInvite | null>(null);
 const advancedSignalsOpen = ref(false);
 const hostPromptKind = ref<HostPromptKind | null>(null);
 const lastHostPromptedAnswerPacket = ref("");
-const hostPromptPrimaryButton = ref<HTMLButtonElement | null>(null);
 
 const localVideoRef = ref<HTMLVideoElement | null>(null);
 const remoteVideoRef = ref<HTMLVideoElement | null>(null);
@@ -984,7 +995,6 @@ const peerConnectionState = ref<RTCPeerConnectionState | "idle" | "closed">(
 
 let hostSignalPollBusy = false;
 let hostSignalWatchId: string | null = null;
-let hostPromptPreviousFocus: HTMLElement | null = null;
 const seenHostSignalHashes = new Set<string>();
 
 const participantName = computed({
@@ -1011,6 +1021,13 @@ const busy = computed(
     privateKaigiShieldBusy.value,
 );
 const localStreamReady = computed(() => Boolean(localStream.value));
+const callStageActive = ref(false);
+const showCallStage = computed(
+  () =>
+    callStageActive.value ||
+    Boolean(remoteStream.value) ||
+    peerConnectionState.value === "connected",
+);
 const mediaPreviewWarning = computed(
   () => lastMediaErrorKind.value === "preview",
 );
@@ -1144,23 +1161,6 @@ const hostPromptDetail = computed(() => {
     : t(
         "Keep this host window open after sharing the invite. When the guest joins, open Advanced signaling and apply the answer packet they send you.",
       );
-});
-
-watch(hostPromptVisible, async (visible) => {
-  if (visible) {
-    hostPromptPreviousFocus =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    await nextTick();
-    hostPromptPrimaryButton.value?.focus();
-    return;
-  }
-
-  const previousFocus = hostPromptPreviousFocus;
-  hostPromptPreviousFocus = null;
-  await nextTick();
-  previousFocus?.focus();
 });
 
 watch([localVideoRef, localStream], ([videoElement, stream]) => {
@@ -1708,6 +1708,7 @@ const toLoadedInviteFromMeetingView = (
 });
 
 const resetSignalState = () => {
+  callStageActive.value = false;
   const peer = peerConnection.value;
   if (peer) {
     peer.onicecandidate = null;
@@ -2039,6 +2040,7 @@ const applyRemoteAnswerDescription = async (
     throw new Error(t("Create a meeting link first."));
   }
   await peer.setRemoteDescription(description);
+  callStageActive.value = true;
   syncPeerStateRefs(peer);
   if (
     options?.participantName ||
@@ -2691,9 +2693,11 @@ const joinLoadedMeeting = async () => {
           );
         }
       }
+      callStageActive.value = true;
       return;
     }
 
+    callStageActive.value = true;
     setStatus(t("Answer packet ready. Send it to the host manually."));
   } catch (error) {
     setError(toUserFacingErrorMessage(error, t("Unable to create an answer.")));
@@ -2809,6 +2813,7 @@ const hangUp = async () => {
     Boolean(hostMeetingCallId.value);
 
   clearHostSignalPolling();
+  callStageActive.value = false;
   resetSignalState();
   advancedSignalsOpen.value = false;
   manualRoomId.value = parsedInvite.value?.callId || DEFAULT_ROOM_ID;
@@ -2886,7 +2891,6 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  hostPromptPreviousFocus = null;
   window.removeEventListener("hashchange", loadInviteFromLocationHash);
   clearHostSignalPolling();
   resetSignalState();
@@ -2896,276 +2900,234 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .kaigi-layout {
+  min-width: 0;
   display: grid;
-  gap: 1.4rem;
-  --kaigi-ink: #151f2a;
-  --kaigi-indigo: #1f3454;
-  --kaigi-vermilion: #d94332;
-  --kaigi-brass: #b9a16d;
-  --kaigi-brass-dark: #816b45;
-  --kaigi-panel-bg:
-    linear-gradient(
-      135deg,
-      rgba(255, 254, 246, 0.95),
-      rgba(236, 222, 194, 0.84) 58%,
-      rgba(245, 240, 225, 0.9)
-    ),
-    repeating-linear-gradient(
-      90deg,
-      rgba(31, 52, 84, 0.045) 0 1px,
-      transparent 1px 9px
-    ),
-    #f4ecda;
-  --kaigi-panel-border: rgba(169, 145, 98, 0.78);
-  --kaigi-panel-shadow:
-    0 26px 46px rgba(37, 30, 20, 0.18), 0 10px 24px rgba(149, 34, 35, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  --kaigi-control-bg:
-    linear-gradient(
-      180deg,
-      rgba(255, 252, 239, 0.94),
-      rgba(220, 204, 167, 0.86)
-    ),
-    #eadfca;
-  --kaigi-control-border: rgba(143, 119, 74, 0.68);
-  --kaigi-field-bg:
-    linear-gradient(
-      180deg,
-      rgba(255, 250, 238, 0.98),
-      rgba(233, 224, 205, 0.92)
-    ),
-    #f4ead7;
-  --kaigi-stage-bg:
-    repeating-linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.055) 0 1px,
-      transparent 1px 7px
-    ),
-    linear-gradient(135deg, #273243, #0b1018 64%, #05070d);
-}
-
-:global(:root[data-theme="dark"]) .kaigi-layout {
-  --kaigi-ink: #f3ead7;
-  --kaigi-indigo: #3f5f8f;
-  --kaigi-brass: #c4aa73;
-  --kaigi-brass-dark: #7b6742;
-  --kaigi-panel-bg:
-    linear-gradient(145deg, rgba(21, 28, 40, 0.96), rgba(23, 18, 23, 0.92)),
-    repeating-linear-gradient(
-      90deg,
-      rgba(224, 195, 132, 0.06) 0 1px,
-      transparent 1px 9px
-    ),
-    rgba(10, 14, 22, 0.94);
-  --kaigi-panel-border: rgba(194, 169, 112, 0.24);
-  --kaigi-panel-shadow:
-    0 26px 52px rgba(0, 0, 0, 0.42), 0 10px 26px rgba(217, 67, 50, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  --kaigi-control-bg:
-    linear-gradient(180deg, rgba(37, 45, 56, 0.94), rgba(22, 26, 34, 0.92)),
-    #1b222d;
-  --kaigi-control-border: rgba(194, 169, 112, 0.26);
-  --kaigi-field-bg:
-    linear-gradient(180deg, rgba(28, 35, 45, 0.96), rgba(13, 18, 26, 0.92)),
-    #151d29;
-  --kaigi-stage-bg:
-    repeating-linear-gradient(
-      90deg,
-      rgba(255, 255, 255, 0.04) 0 1px,
-      transparent 1px 7px
-    ),
-    linear-gradient(135deg, #1a2330, #070a10 64%, #030408);
+  gap: var(--space-4);
 }
 
 .kaigi-call-card,
-.kaigi-overview-card,
+.kaigi-overview-card {
+  min-width: 0;
+  border-color: var(--color-border);
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
 .kaigi-signal-card {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  background: var(--kaigi-panel-bg);
-  border-color: var(--kaigi-panel-border);
-  box-shadow: var(--kaigi-panel-shadow);
-}
-
-.kaigi-call-card::before,
-.kaigi-overview-card::before,
-.kaigi-signal-card::before {
-  content: "";
-  position: absolute;
-  inset: 0.55rem;
-  z-index: 0;
-  border-radius: 6px;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      circle at 0.7rem 0.7rem,
-      rgba(51, 43, 31, 0.82) 0 2px,
-      rgba(221, 202, 153, 0.92) 2px 5px,
-      transparent 5.5px
-    ),
-    radial-gradient(
-      circle at calc(100% - 0.7rem) 0.7rem,
-      rgba(51, 43, 31, 0.82) 0 2px,
-      rgba(221, 202, 153, 0.92) 2px 5px,
-      transparent 5.5px
-    ),
-    radial-gradient(
-      circle at 0.7rem calc(100% - 0.7rem),
-      rgba(51, 43, 31, 0.72) 0 2px,
-      rgba(221, 202, 153, 0.82) 2px 5px,
-      transparent 5.5px
-    ),
-    radial-gradient(
-      circle at calc(100% - 0.7rem) calc(100% - 0.7rem),
-      rgba(51, 43, 31, 0.72) 0 2px,
-      rgba(221, 202, 153, 0.82) 2px 5px,
-      transparent 5.5px
-    );
-  opacity: 0.78;
-}
-
-.kaigi-call-card > *,
-.kaigi-overview-card > *,
-.kaigi-signal-card > * {
-  position: relative;
-  z-index: 1;
+  min-width: 0;
+  border-color: var(--color-border);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-raised);
 }
 
 .kaigi-call-card {
-  display: grid;
-  gap: 1rem;
-  padding: 1.12rem;
-  border-width: 1px;
+  padding: 0;
+  overflow: hidden;
 }
 
-.kaigi-call-header {
-  padding: 0.35rem 0.5rem 0.8rem;
-  border-bottom: 1px solid rgba(143, 119, 74, 0.28);
+.kaigi-call-header,
+.kaigi-header {
+  margin: 0;
+  padding: var(--space-5);
+  align-items: flex-start;
+  border-block-end: 1px solid var(--color-border);
+}
+
+.kaigi-call-header h2,
+.kaigi-header h2 {
+  margin: 0;
 }
 
 .kaigi-call-status {
-  max-width: 72ch;
-}
-
-.kaigi-header {
-  align-items: flex-start;
-  gap: 1rem;
+  max-width: 70ch;
+  margin-block-start: var(--space-1);
 }
 
 .kaigi-summary-pills {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
   flex-wrap: wrap;
-  gap: 0.65rem;
 }
 
-.kaigi-summary-pills .pill {
-  border-radius: 6px;
-  border-color: rgba(22, 31, 42, 0.34);
-  background:
-    linear-gradient(180deg, rgba(15, 24, 34, 0.96), rgba(6, 10, 15, 0.94)),
-    #0d131b;
-  color: #f7dfaa;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    inset 0 -1px 8px rgba(0, 0, 0, 0.5);
+.kaigi-stage {
+  position: relative;
+  isolation: isolate;
+  min-height: clamp(28rem, 62vh, 46rem);
+  overflow: hidden;
+  border-block: 1px solid var(--color-border);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
 }
 
-.kaigi-summary-pills .pill::before {
-  content: "";
-  width: 0.48rem;
-  height: 0.48rem;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #7d6b45;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+.kaigi-video-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
 }
 
-.kaigi-summary-pills .pill.positive {
-  color: #ffd9b5;
-  border-color: rgba(217, 67, 50, 0.45);
-  background:
-    linear-gradient(180deg, rgba(41, 18, 17, 0.96), rgba(14, 8, 8, 0.96)),
-    #160b0b;
+.kaigi-remote-video {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 0;
 }
 
-.kaigi-summary-pills .pill.positive::before {
-  background: #ff5a3f;
-  box-shadow:
-    0 0 10px rgba(255, 90, 63, 0.85),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+.kaigi-local-video {
+  position: absolute;
+  inset-inline-end: var(--space-4);
+  inset-block-end: var(--space-4);
+  z-index: 4;
+  width: clamp(14rem, 28%, 21rem);
+  aspect-ratio: 16 / 9;
+  box-shadow: var(--shadow-overlay);
+}
+
+.kaigi-video-shell video,
+.kaigi-precall-preview video {
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  object-fit: cover;
+  background: var(--color-surface-inset);
+}
+
+.kaigi-video-meta {
+  position: absolute;
+  inset-block-start: var(--space-3);
+  inset-inline: var(--space-3);
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+.kaigi-video-meta > span {
+  min-height: 30px;
+  max-width: min(30rem, 58%);
+  padding: 6px 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-round);
+  color: var(--color-text-strong);
+  background: color-mix(in srgb, var(--color-surface-raised) 88%, transparent);
+  box-shadow: var(--shadow-control);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kaigi-video-meta .helper {
+  color: var(--color-text-muted);
+}
+
+.kaigi-video-empty,
+.kaigi-precall-preview-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  color: var(--color-text);
+  background: var(--color-surface-inset);
+  text-align: center;
+}
+
+.kaigi-video-empty p,
+.kaigi-precall-preview-empty span,
+.kaigi-precall-preview-empty small {
+  margin: 0;
+}
+
+.kaigi-call-control-bar {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-block-start: 1px solid var(--color-border);
+  background: var(--frost-panel-soft);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+
+.kaigi-call-control-bar .kaigi-control-row {
+  justify-content: center;
+}
+
+.kaigi-control-row button {
+  min-width: 8.5rem;
+  min-height: 44px;
+}
+
+.kaigi-error {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-danger) 34%, var(--color-border));
+  border-radius: var(--radius-control);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  box-shadow: var(--shadow-inset);
 }
 
 .kaigi-config-grid {
   display: grid;
-  gap: 1.2rem;
-  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(20rem, 0.7fr);
+  gap: var(--space-5);
+  align-items: start;
 }
 
 .kaigi-config-pane,
 .kaigi-status-pane {
+  min-width: 0;
   display: grid;
-  gap: 1rem;
+  gap: var(--space-4);
 }
 
-.kaigi-mode-toggle .secondary.active {
-  border-color: rgba(136, 46, 39, 0.72);
-  background:
-    linear-gradient(180deg, #ef7464, #d94332 70%, #a82d26),
-    var(--kaigi-vermilion);
-  color: #fffaf0;
-  text-shadow: 0 1px 0 rgba(55, 14, 12, 0.45);
+.kaigi-status-pane {
+  position: sticky;
+  inset-block-start: 0;
+  align-self: start;
 }
 
 .kaigi-mode-toggle {
   width: fit-content;
-  padding: 0.28rem;
-  border: 1px solid var(--kaigi-control-border);
-  border-radius: 8px;
-  background: var(--kaigi-control-bg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.44),
-    inset 0 -1px 0 rgba(92, 72, 45, 0.22),
-    0 10px 18px rgba(37, 30, 20, 0.08);
 }
 
-.kaigi-mode-toggle .secondary {
-  min-height: 2.25rem;
-  border-radius: 6px;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-
-.kaigi-config-form input[readonly],
-.kaigi-config-form textarea[readonly] {
-  opacity: 0.88;
+.kaigi-config-form {
+  align-items: start;
 }
 
 .kaigi-config-form label,
-.kaigi-device-grid label {
-  font-weight: 700;
+.kaigi-device-grid label,
+.kaigi-packet-field,
+.kaigi-link-field {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
 }
 
 .kaigi-config-form input,
 .kaigi-config-form select,
-.kaigi-device-grid select {
+.kaigi-config-form textarea,
+.kaigi-device-grid select,
+.kaigi-link-field textarea,
+.kaigi-packet-field textarea {
   width: 100%;
-  border-color: var(--kaigi-control-border);
-  border-radius: 8px;
-  background: var(--kaigi-field-bg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.46),
-    inset 0 2px 6px rgba(64, 45, 20, 0.08),
-    0 10px 22px rgba(39, 56, 96, 0.08);
 }
 
-.kaigi-wide-field,
-.kaigi-link-field,
-.kaigi-packet-field {
-  display: grid;
-  gap: 0.55rem;
+.kaigi-config-form input[readonly],
+.kaigi-config-form textarea[readonly],
+.kaigi-link-field textarea[readonly] {
+  color: var(--color-text-muted);
 }
 
 .kaigi-wide-field {
@@ -3173,431 +3135,135 @@ onBeforeUnmount(() => {
 }
 
 .kaigi-input-with-action {
+  min-width: 0;
   display: grid;
-  gap: 0.65rem;
   grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
   align-items: center;
 }
 
 .kaigi-inline-actions,
 .kaigi-primary-actions,
-.kaigi-control-row,
 .kaigi-signal-actions {
-  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
-.kaigi-link-box {
+.kaigi-link-box,
+.kaigi-media-setup,
+.kaigi-private-funding-box {
+  min-width: 0;
+  padding: var(--space-4);
   display: grid;
-  gap: 0.85rem;
-  padding: 1rem 1.1rem;
-  border: 1px solid var(--kaigi-control-border);
-  border-radius: 8px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.24), transparent 52%),
-    var(--kaigi-control-bg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 -1px 0 rgba(82, 63, 37, 0.16);
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.kaigi-link-box,
+.kaigi-media-setup {
+  background: var(--frost-panel-soft);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
 }
 
 .kaigi-link-box-header {
+  min-width: 0;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1rem;
+  gap: var(--space-3);
 }
 
-.kaigi-link-box h3 {
+.kaigi-link-box-header h3 {
   margin: 0;
 }
 
-.kaigi-link-box p {
-  margin: 0.35rem 0 0;
-}
-
-.kaigi-host-modal-backdrop {
-  position: fixed;
-  inset: 16px;
-  z-index: 30;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  border-radius: 32px;
-  background: color-mix(in srgb, var(--surface-base) 42%, transparent);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
-  overscroll-behavior: contain;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--glass-border) 72%, transparent),
-    0 22px 48px color-mix(in srgb, #000 24%, transparent);
-}
-
-.kaigi-host-modal {
-  width: min(100%, 460px);
-  display: grid;
-  gap: 0.9rem;
-  padding: 1.4rem;
-}
-
-.kaigi-host-modal-label,
-.kaigi-host-modal-title,
-.kaigi-host-modal-detail {
-  margin: 0;
-}
-
-.kaigi-host-modal-label {
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.72rem;
-  color: var(--iroha-muted);
-}
-
-.kaigi-host-modal-title {
-  font-size: clamp(1.25rem, 3vw, 1.55rem);
-}
-
-.kaigi-host-modal-detail {
-  max-width: 38ch;
-}
-
-.kaigi-host-modal-actions {
-  flex-wrap: wrap;
-}
-
-.kaigi-link-field textarea,
-.kaigi-config-form textarea,
-.kaigi-packet-field textarea {
-  width: 100%;
-  resize: vertical;
-  border-radius: 8px;
-  border: 1px solid var(--kaigi-control-border);
-  background: var(--kaigi-field-bg);
-  color: inherit;
-  padding: 0.9rem 1rem;
-  font: inherit;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  line-height: 1.45;
+.kaigi-link-box-header p {
+  margin-block: var(--space-1) 0;
 }
 
 .kaigi-kpis {
+  min-width: 0;
   display: grid;
-  gap: 0.85rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 var(--space-3);
+  border-block: 1px solid var(--color-border);
 }
 
-.kaigi-media-setup {
-  display: grid;
-  gap: 0.85rem;
-  padding: 1rem;
-  border: 1px solid var(--kaigi-control-border);
-  border-radius: 8px;
-  background:
-    repeating-linear-gradient(
-      0deg,
-      rgba(21, 31, 42, 0.035) 0 1px,
-      transparent 1px 8px
-    ),
-    var(--kaigi-control-bg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.44),
-    inset 0 -1px 0 rgba(92, 72, 45, 0.18);
+.kaigi-kpis .kv {
+  min-width: 0;
+  padding-inline: var(--space-2);
 }
 
 .kaigi-media-setup h3 {
   margin: 0;
 }
 
+.kaigi-status-copy {
+  margin: 0;
+}
+
+.kaigi-precall-preview {
+  position: relative;
+  width: 100%;
+  min-height: 12rem;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
 .kaigi-device-grid {
   display: grid;
-  gap: 0.8rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.kaigi-primary-actions {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.kaigi-device-grid label {
-  display: grid;
-  gap: 0.35rem;
-}
-
-.kaigi-device-grid select {
-  min-width: 0;
-}
-
-.kaigi-status-copy,
-.kaigi-error {
-  margin: 0;
+.kaigi-primary-actions button {
+  width: 100%;
+  min-height: 44px;
 }
 
 .kaigi-private-funding-box {
-  display: grid;
-  gap: 0.65rem;
-  padding: 0.9rem 1rem;
-  border-radius: 1rem;
-  border: 1px solid rgba(255, 208, 140, 0.28);
-  background: rgba(39, 26, 8, 0.42);
-}
-
-.kaigi-error {
-  color: var(--accent-danger, #ff8a80);
-}
-
-.kaigi-packet-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.kaigi-stage {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  min-height: clamp(28rem, 62vh, 46rem);
-  padding: 1.08rem;
-  border-radius: 8px;
-  background: var(--kaigi-stage-bg);
-  border: 1px solid rgba(22, 31, 42, 0.72);
-  box-shadow:
-    inset 0 0 0 4px rgba(221, 202, 153, 0.28),
-    inset 0 0 0 7px rgba(7, 10, 15, 0.84),
-    inset 0 18px 22px rgba(255, 255, 255, 0.08),
-    inset 0 -20px 28px rgba(0, 0, 0, 0.52),
-    0 24px 44px rgba(20, 16, 10, 0.28);
-}
-
-.kaigi-stage::before {
-  content: "";
-  position: absolute;
-  inset: 1.08rem;
-  z-index: 4;
-  pointer-events: none;
-  border-radius: 6px;
-  background:
-    linear-gradient(
-      118deg,
-      rgba(255, 255, 255, 0.2),
-      transparent 18%,
-      transparent 68%,
-      rgba(255, 255, 255, 0.08)
-    ),
-    repeating-linear-gradient(
-      0deg,
-      rgba(255, 255, 255, 0.055) 0 1px,
-      transparent 1px 4px
-    ),
-    radial-gradient(circle at 50% 45%, transparent 56%, rgba(0, 0, 0, 0.34));
-  mix-blend-mode: screen;
-  opacity: 0.56;
-}
-
-.kaigi-stage::after {
-  content: "";
-  position: absolute;
-  top: 1.55rem;
-  bottom: 1.55rem;
-  left: 0.42rem;
-  z-index: 3;
-  width: 0.38rem;
-  border-radius: 999px;
-  background: repeating-linear-gradient(
-    180deg,
-    rgba(225, 207, 160, 0.72) 0 5px,
-    rgba(78, 63, 41, 0.52) 5px 9px
+  border-color: color-mix(
+    in srgb,
+    var(--color-warning) 34%,
+    var(--color-border)
   );
+  background: var(--color-warning-soft);
 }
 
-.kaigi-video-shell {
-  position: relative;
-  overflow: hidden;
-  min-height: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background:
-    radial-gradient(
-      circle at top right,
-      rgba(255, 76, 102, 0.16),
-      transparent 36%
-    ),
-    linear-gradient(180deg, rgba(12, 18, 32, 0.86), rgba(5, 7, 13, 0.96));
-}
-
-.kaigi-remote-video {
-  position: absolute;
-  inset: 1.08rem;
-  border-color: rgba(255, 255, 255, 0.16);
-  box-shadow:
-    inset 0 0 18px rgba(0, 0, 0, 0.68),
-    0 0 0 1px rgba(222, 203, 156, 0.18);
-}
-
-.kaigi-local-video {
-  position: absolute;
-  right: 2rem;
-  bottom: 2rem;
-  z-index: 6;
-  width: min(28%, 22rem);
-  min-width: 13rem;
-  min-height: 8.2rem;
-  aspect-ratio: 16 / 10;
-  border: 4px solid #121a26;
-  box-shadow:
-    0 0 0 2px rgba(222, 203, 156, 0.66),
-    0 18px 32px rgba(0, 0, 0, 0.38),
-    inset 0 0 18px rgba(0, 0, 0, 0.48);
-}
-
-.kaigi-video-meta {
-  position: absolute;
-  top: 1rem;
-  left: 1rem;
-  right: 1rem;
-  z-index: 2;
-  display: flex;
-  justify-content: space-between;
-  gap: 0.8rem;
-  align-items: center;
-  color: #fff;
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
-}
-
-.kaigi-video-meta > span {
-  max-width: min(28rem, 48%);
-  padding: 0.38rem 0.58rem;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
-    linear-gradient(180deg, rgba(20, 25, 32, 0.88), rgba(5, 8, 12, 0.78)),
-    rgba(0, 0, 0, 0.34);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.kaigi-video-meta .helper {
-  color: rgba(255, 255, 255, 0.76);
-}
-
-.kaigi-video-shell video {
-  width: 100%;
-  min-height: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  background: rgba(4, 6, 12, 0.82);
-}
-
-.kaigi-local-video .kaigi-video-meta {
-  top: 0.65rem;
-  left: 0.7rem;
-  right: 0.7rem;
-  font-size: 0.78rem;
-}
-
-.kaigi-local-video .kaigi-video-meta .helper {
-  display: none;
-}
-
-.kaigi-video-empty {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 0.45rem;
-  padding: 1.5rem;
-  text-align: center;
-  color: #fff;
-  background:
-    radial-gradient(
-      circle at center,
-      rgba(255, 255, 255, 0.08),
-      transparent 52%
-    ),
-    linear-gradient(180deg, rgba(14, 18, 28, 0.88), rgba(7, 10, 16, 0.94));
-}
-
-.kaigi-video-empty .helper {
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.kaigi-video-empty p {
+.kaigi-private-funding-box p {
   margin: 0;
 }
 
-.kaigi-local-video .kaigi-video-empty {
-  padding: 1rem;
-  font-size: 0.82rem;
-}
-
-.kaigi-local-video .kaigi-video-empty .helper {
-  display: none;
-}
-
-.kaigi-call-control-bar {
-  display: flex;
-  justify-content: center;
-  padding: 0.15rem 0.2rem 0.25rem;
-}
-
-.kaigi-call-control-bar .kaigi-control-row {
-  justify-content: center;
-  gap: 0.45rem;
-  padding: 0.62rem;
-  border: 1px solid var(--kaigi-control-border);
-  border-radius: 8px;
-  background: var(--kaigi-control-bg);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.46),
-    inset 0 -2px 0 rgba(74, 57, 34, 0.22),
-    0 12px 26px rgba(16, 24, 44, 0.12);
-}
-
-.kaigi-control-row button {
-  border-radius: 6px;
-  border-color: rgba(123, 100, 64, 0.6);
-  background: linear-gradient(180deg, #fff8e7, #dac89f 68%, #ac9870), #dac89f;
-  color: #172230;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.48);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.76),
-    inset 0 -1px 0 rgba(78, 61, 37, 0.22),
-    0 3px 0 rgba(107, 86, 55, 0.8),
-    0 8px 16px rgba(35, 28, 20, 0.16);
-}
-
-.kaigi-control-row button:active:not(:disabled) {
-  transform: translateY(2px);
-  box-shadow:
-    inset 0 2px 5px rgba(73, 55, 30, 0.24),
-    0 1px 0 rgba(107, 86, 55, 0.8);
-}
-
-.kaigi-control-row .warn {
-  border-color: rgba(126, 32, 26, 0.88);
-  background:
-    linear-gradient(180deg, #ff806e, #d94332 68%, #98261f),
-    var(--kaigi-vermilion);
-  color: #fffaf0;
-  text-shadow: 0 1px 0 rgba(55, 14, 12, 0.45);
-}
-
 .kaigi-signal-card {
-  overflow: hidden;
   padding: 0;
+  overflow: hidden;
 }
 
 .kaigi-advanced {
-  display: block;
+  min-width: 0;
 }
 
 .kaigi-advanced-summary {
+  min-height: 64px;
+  padding: var(--space-4) var(--space-5);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
-  padding: 1.15rem 1.25rem;
-  cursor: pointer;
+  gap: var(--space-4);
   list-style: none;
-  user-select: none;
+  cursor: pointer;
 }
 
 .kaigi-advanced-summary::-webkit-details-marker {
@@ -3607,27 +3273,27 @@ onBeforeUnmount(() => {
 .kaigi-advanced-copy {
   min-width: 0;
   display: grid;
-  gap: 0.35rem;
+  gap: 3px;
 }
 
 .kaigi-advanced-title {
-  color: inherit;
+  color: var(--color-text-strong);
   font-weight: 700;
 }
 
-.kaigi-advanced-summary .helper {
-  margin: 0;
+.kaigi-advanced-copy .helper {
+  max-width: 74ch;
 }
 
 .kaigi-advanced-caret {
-  width: 0.6rem;
-  height: 0.6rem;
-  flex: 0 0 auto;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  color: var(--iroha-muted);
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  color: var(--color-text-muted);
   transform: rotate(45deg);
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-fast) var(--ease-standard);
 }
 
 .kaigi-advanced[open] .kaigi-advanced-caret {
@@ -3635,516 +3301,76 @@ onBeforeUnmount(() => {
 }
 
 .kaigi-advanced-body {
+  padding: var(--space-5);
   display: grid;
-  gap: 1rem;
-  padding: 0 1.25rem 1.25rem;
-  border-top: 1px solid var(--kaigi-control-border);
+  gap: var(--space-4);
+  border-block-start: 1px solid var(--color-border);
+  background: var(--color-surface);
 }
 
-.kaigi-advanced[open] .kaigi-advanced-summary {
-  padding-bottom: 1rem;
+.kaigi-packet-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.kaigi-packet-field textarea {
+  min-height: 18rem;
+  font-family: var(--mono-font);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  unicode-bidi: plaintext;
 }
 
 @media (max-width: 1120px) {
-  .kaigi-config-grid,
-  .kaigi-packet-grid {
-    grid-template-columns: 1fr;
+  .kaigi-config-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kaigi-status-pane {
+    position: static;
+    grid-row: 1;
+  }
+
+  .kaigi-config-pane {
+    grid-row: 2;
+  }
+
+  .kaigi-media-setup {
+    order: -1;
   }
 }
 
-@media (max-width: 720px) {
-  .kaigi-kpis,
-  .kaigi-device-grid,
-  .kaigi-input-with-action {
-    grid-template-columns: 1fr;
-  }
-
-  .kaigi-link-box-header,
-  .kaigi-video-meta {
+@media (max-width: 760px) {
+  .kaigi-call-header,
+  .kaigi-header,
+  .kaigi-link-box-header {
+    align-items: stretch;
     flex-direction: column;
-    align-items: flex-start;
   }
 
-  .kaigi-call-card {
-    padding: 0.85rem;
+  .kaigi-summary-pills {
+    justify-content: flex-start;
   }
 
   .kaigi-stage {
-    display: grid;
-    gap: 0.75rem;
     min-height: 0;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    box-shadow: none;
-  }
-
-  .kaigi-stage::before,
-  .kaigi-stage::after {
-    display: none;
+    padding: var(--space-3);
+    display: grid;
+    gap: var(--space-3);
   }
 
   .kaigi-remote-video,
   .kaigi-local-video {
     position: relative;
     inset: auto;
-    right: auto;
-    bottom: auto;
+    z-index: auto;
     width: 100%;
     min-width: 0;
-    min-height: 14rem;
-  }
-
-  .kaigi-local-video {
     aspect-ratio: 16 / 9;
-    right: auto;
-    bottom: auto;
-  }
-
-  .kaigi-video-shell video {
-    min-height: 14rem;
-  }
-}
-
-.kaigi-layout {
-  gap: 1rem;
-  --kaigi-accent: var(--iroha-accent);
-  --kaigi-accent-soft: rgba(255, 76, 102, 0.16);
-  --kaigi-blue-soft: rgba(94, 148, 255, 0.14);
-  --kaigi-ink: inherit;
-  --kaigi-panel-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent 62%),
-    var(--menu-glass-strong);
-  --kaigi-panel-border: var(--glass-border);
-  --kaigi-panel-shadow:
-    0 18px 46px var(--gi-ambient), inset 0 1px 0 var(--glass-highlight);
-  --kaigi-control-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 65%),
-    var(--surface-soft);
-  --kaigi-control-border: var(--panel-border);
-  --kaigi-field-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 62%),
-    var(--surface-soft);
-  --kaigi-stage-bg:
-    radial-gradient(
-      circle at 76% 12%,
-      rgba(94, 148, 255, 0.22),
-      transparent 34%
-    ),
-    radial-gradient(
-      circle at 18% 78%,
-      rgba(255, 76, 102, 0.18),
-      transparent 38%
-    ),
-    linear-gradient(145deg, #171923, #080a10 62%, #030408);
-}
-
-:global(:root[data-theme="dark"]) .kaigi-layout {
-  --kaigi-panel-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 62%),
-    rgba(16, 19, 28, 0.84);
-  --kaigi-panel-border: rgba(255, 255, 255, 0.14);
-  --kaigi-panel-shadow:
-    0 22px 56px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  --kaigi-control-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.07), transparent 65%),
-    rgba(255, 255, 255, 0.05);
-  --kaigi-control-border: rgba(255, 255, 255, 0.12);
-  --kaigi-field-bg:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.08), transparent 62%),
-    rgba(255, 255, 255, 0.06);
-}
-
-.kaigi-call-card,
-.kaigi-overview-card,
-.kaigi-signal-card {
-  border-radius: 8px;
-  background: var(--kaigi-panel-bg);
-  border-color: var(--kaigi-panel-border);
-  box-shadow: var(--kaigi-panel-shadow);
-}
-
-.kaigi-call-card::before,
-.kaigi-overview-card::before,
-.kaigi-signal-card::before {
-  display: none;
-}
-
-.kaigi-call-card {
-  gap: 0;
-  padding: 0;
-  border-width: 1px;
-}
-
-.kaigi-overview-card {
-  padding: 1rem;
-}
-
-.kaigi-call-header,
-.kaigi-header {
-  align-items: center;
-  padding: 1rem 1.1rem;
-  margin: 0;
-  border-bottom: 1px solid var(--kaigi-control-border);
-}
-
-.kaigi-call-header h2,
-.kaigi-header h2 {
-  margin: 0 0 0.25rem;
-  font-size: 1rem;
-}
-
-.kaigi-call-status {
-  max-width: 70ch;
-  margin: 0;
-}
-
-.kaigi-summary-pills {
-  gap: 0.5rem;
-}
-
-.kaigi-summary-pills .pill {
-  min-height: 2rem;
-  border-radius: 999px;
-  border-color: var(--kaigi-control-border);
-  background: rgba(255, 255, 255, 0.07);
-  color: inherit;
-  font-family: inherit;
-  box-shadow: none;
-}
-
-.kaigi-summary-pills .pill::before {
-  width: 0.48rem;
-  height: 0.48rem;
-  background: var(--iroha-muted);
-  box-shadow: none;
-}
-
-.kaigi-summary-pills .pill.positive {
-  color: var(--kaigi-accent);
-  border-color: color-mix(in srgb, var(--kaigi-accent) 54%, transparent);
-  background: var(--kaigi-accent-soft);
-}
-
-.kaigi-summary-pills .pill.positive::before {
-  background: var(--kaigi-accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--kaigi-accent) 16%, transparent);
-}
-
-.kaigi-stage {
-  min-height: min(62vh, 46rem);
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: var(--kaigi-stage-bg);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-.kaigi-stage::before {
-  inset: 0;
-  z-index: 4;
-  border-radius: 0;
-  background:
-    linear-gradient(
-      130deg,
-      rgba(255, 255, 255, 0.16),
-      transparent 24%,
-      transparent 72%,
-      rgba(255, 255, 255, 0.06)
-    ),
-    radial-gradient(circle at 50% 48%, transparent 54%, rgba(0, 0, 0, 0.32));
-  opacity: 0.42;
-  mix-blend-mode: screen;
-}
-
-.kaigi-stage::after {
-  display: none;
-}
-
-.kaigi-video-shell {
-  border-radius: 0;
-  border: 0;
-  background:
-    radial-gradient(
-      circle at 76% 18%,
-      rgba(94, 148, 255, 0.2),
-      transparent 36%
-    ),
-    linear-gradient(180deg, rgba(18, 22, 31, 0.9), rgba(3, 5, 10, 0.96));
-}
-
-.kaigi-remote-video {
-  inset: 0;
-  border: 0;
-  box-shadow: none;
-}
-
-.kaigi-local-video {
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 6;
-  width: min(28%, 21rem);
-  min-width: 14rem;
-  min-height: 8.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 8px;
-  background: rgba(5, 7, 12, 0.9);
-  box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.36),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
-}
-
-.kaigi-video-meta {
-  top: 0.85rem;
-  left: 0.85rem;
-  right: 0.85rem;
-  color: #fff;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.48);
-}
-
-.kaigi-video-meta > span {
-  max-width: min(30rem, 52%);
-  border-radius: 999px;
-  border-color: rgba(255, 255, 255, 0.14);
-  background: rgba(7, 10, 16, 0.62);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
-}
-
-.kaigi-video-meta .helper {
-  color: rgba(255, 255, 255, 0.72);
-}
-
-.kaigi-video-shell video {
-  background: #05070c;
-}
-
-.kaigi-video-empty {
-  background:
-    radial-gradient(
-      circle at 50% 36%,
-      rgba(255, 255, 255, 0.08),
-      transparent 42%
-    ),
-    linear-gradient(180deg, rgba(12, 15, 23, 0.9), rgba(5, 7, 12, 0.96));
-}
-
-.kaigi-video-empty p:first-child {
-  font-weight: 700;
-}
-
-.kaigi-call-control-bar {
-  justify-content: center;
-  padding: 0.75rem 1rem 1rem;
-  border-top: 1px solid var(--kaigi-control-border);
-}
-
-.kaigi-call-control-bar .kaigi-control-row {
-  gap: 0.5rem;
-  padding: 0.35rem;
-  border-radius: 8px;
-  border-color: var(--kaigi-control-border);
-  background: var(--kaigi-control-bg);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.kaigi-control-row button {
-  min-height: 2.3rem;
-  border-radius: 8px;
-  border-color: var(--kaigi-control-border);
-  background: transparent;
-  color: inherit;
-  text-shadow: none;
-  box-shadow: none;
-}
-
-.kaigi-control-row button:hover:not(:disabled) {
-  background: var(--surface-soft);
-  box-shadow: none;
-}
-
-.kaigi-control-row button:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: none;
-}
-
-.kaigi-control-row .warn {
-  border-color: rgba(239, 68, 68, 0.34);
-  background: rgba(239, 68, 68, 0.1);
-  color: #ef4444;
-  text-shadow: none;
-}
-
-.kaigi-config-grid {
-  gap: 1rem;
-  grid-template-columns: minmax(0, 1.25fr) minmax(19rem, 0.8fr);
-}
-
-.kaigi-config-pane,
-.kaigi-status-pane {
-  gap: 0.9rem;
-}
-
-.kaigi-status-pane {
-  align-self: start;
-}
-
-.kaigi-mode-toggle {
-  width: 100%;
-  padding: 0.25rem;
-  border-color: var(--kaigi-control-border);
-  border-radius: 8px;
-  background: var(--kaigi-control-bg);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.kaigi-mode-toggle .secondary {
-  flex: 1 1 10rem;
-  min-height: 2.4rem;
-  border-radius: 6px;
-}
-
-.kaigi-mode-toggle .secondary.active {
-  border-color: color-mix(in srgb, var(--kaigi-accent) 58%, transparent);
-  background: var(--kaigi-accent);
-  color: #fff;
-  text-shadow: none;
-  box-shadow: 0 10px 24px rgba(255, 76, 102, 0.22);
-}
-
-.kaigi-config-form label,
-.kaigi-device-grid label {
-  color: inherit;
-  font-weight: 650;
-}
-
-.kaigi-config-form input,
-.kaigi-config-form select,
-.kaigi-device-grid select,
-.kaigi-link-field textarea,
-.kaigi-config-form textarea,
-.kaigi-packet-field textarea {
-  border-radius: 8px;
-  border-color: var(--kaigi-control-border);
-  background: var(--kaigi-field-bg);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.kaigi-input-with-action {
-  gap: 0.55rem;
-}
-
-.kaigi-link-box,
-.kaigi-media-setup,
-.kaigi-private-funding-box {
-  gap: 0.85rem;
-  padding: 1rem;
-  border-radius: 8px;
-  border-color: var(--kaigi-control-border);
-  background: var(--kaigi-control-bg);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.kaigi-link-box h3,
-.kaigi-media-setup h3 {
-  margin: 0;
-  font-size: 0.98rem;
-}
-
-.kaigi-link-box p {
-  margin-top: 0.25rem;
-}
-
-.kaigi-kpis {
-  gap: 0.65rem;
-}
-
-.kaigi-kpis .kv {
-  border-radius: 8px;
-  border-color: var(--kaigi-control-border);
-  background: rgba(255, 255, 255, 0.04);
-  box-shadow: inset 0 1px 0 var(--glass-highlight);
-}
-
-.kaigi-kpis .kv-label {
-  letter-spacing: 0.08em;
-}
-
-.kaigi-device-grid {
-  gap: 0.65rem;
-}
-
-.kaigi-primary-actions {
-  gap: 0.6rem;
-}
-
-.kaigi-primary-actions button {
-  flex: 1 1 13rem;
-}
-
-.kaigi-error {
-  color: #ef4444;
-}
-
-.kaigi-signal-card {
-  padding: 0;
-}
-
-.kaigi-advanced-summary {
-  padding: 1rem;
-}
-
-.kaigi-advanced-body {
-  padding: 0 1rem 1rem;
-  border-top-color: var(--kaigi-control-border);
-}
-
-.kaigi-advanced-caret {
-  color: var(--iroha-muted);
-}
-
-.kaigi-host-modal-backdrop {
-  inset: 0;
-  border-radius: 0;
-  background: color-mix(in srgb, var(--surface-base, #05060b) 34%, transparent);
-}
-
-.kaigi-host-modal {
-  border-radius: 8px;
-}
-
-@media (max-width: 1120px) {
-  .kaigi-config-grid,
-  .kaigi-packet-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  .kaigi-call-header,
-  .kaigi-header,
-  .kaigi-call-control-bar,
-  .kaigi-overview-card {
-    padding: 0.85rem;
-  }
-
-  .kaigi-summary-pills,
-  .kaigi-inline-actions,
-  .kaigi-primary-actions,
-  .kaigi-signal-actions {
-    width: 100%;
-  }
-
-  .kaigi-mode-toggle {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.25rem;
-  }
-
-  .kaigi-mode-toggle .secondary {
-    min-height: 2.55rem;
-    flex: none;
-    padding-inline: 0.65rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-control);
   }
 
   .kaigi-call-control-bar .kaigi-control-row {
@@ -4155,62 +3381,70 @@ onBeforeUnmount(() => {
 
   .kaigi-control-row button {
     min-width: 0;
-    padding-inline: 0.65rem;
+    width: 100%;
   }
 
-  .kaigi-summary-pills .pill,
-  .kaigi-inline-actions button,
-  .kaigi-primary-actions button,
-  .kaigi-signal-actions button {
-    flex: 1 1 auto;
-  }
-
+  .kaigi-mode-toggle,
   .kaigi-kpis,
   .kaigi-device-grid,
+  .kaigi-primary-actions,
+  .kaigi-packet-grid,
   .kaigi-input-with-action {
-    grid-template-columns: 1fr;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .kaigi-stage {
-    display: grid;
-    gap: 0.75rem;
-    min-height: 0;
-    padding: 0.75rem;
-    border-top: 1px solid var(--kaigi-control-border);
-    background: var(--kaigi-stage-bg);
+  .kaigi-primary-actions {
+    order: -2;
   }
 
-  .kaigi-stage::before {
-    display: none;
+  .kaigi-media-setup {
+    order: -1;
   }
 
-  .kaigi-remote-video,
-  .kaigi-local-video {
-    position: relative;
-    inset: auto;
-    right: auto;
-    bottom: auto;
+  .kaigi-config-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .kaigi-wide-field {
+    grid-column: auto;
+  }
+
+  .kaigi-inline-actions,
+  .kaigi-primary-actions,
+  .kaigi-signal-actions {
+    width: 100%;
+  }
+
+  .kaigi-inline-actions > button,
+  .kaigi-signal-actions > button {
     width: 100%;
     min-width: 0;
-    min-height: 14rem;
-    border-radius: 8px;
+    flex: 0 0 auto;
   }
 
-  .kaigi-local-video {
-    aspect-ratio: 16 / 9;
+  .kaigi-inline-actions,
+  .kaigi-signal-actions {
+    flex-wrap: nowrap;
+  }
+
+  .kaigi-advanced-summary,
+  .kaigi-advanced-body {
+    padding-inline: var(--space-4);
   }
 
   .kaigi-video-meta {
     flex-direction: column;
-    align-items: flex-start;
   }
 
   .kaigi-video-meta > span {
     max-width: 100%;
   }
+}
 
-  .kaigi-video-shell video {
-    min-height: 14rem;
+@media (max-width: 440px) {
+  .kaigi-call-control-bar .kaigi-control-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

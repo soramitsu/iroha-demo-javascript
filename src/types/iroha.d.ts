@@ -1088,13 +1088,19 @@ export interface SolanaTokenBalanceInput extends SolanaRpcInput {
   mintAddress: string;
 }
 
+export interface SolanaAssociatedTokenAccountInput extends SolanaRpcInput {
+  payerAddress: string;
+  ownerAddress: string;
+  mintAddress: string;
+}
+
 export interface SolanaTransactionInput extends SolanaRpcInput {
   signature: string;
 }
 
 export interface SolanaBroadcastInput extends SolanaRpcInput {
   transactionB64: string;
-  skipPreflight?: boolean;
+  expectedUnsignedTransactionB64: string;
 }
 
 export interface SolanaInstructionAccountMetaInput {
@@ -1115,6 +1121,12 @@ export interface SolanaBuildTransactionInput extends SolanaRpcInput {
   feePayer: string;
   instructions: SolanaInstructionInput[];
   recentBlockhash?: string;
+}
+
+export interface SolanaPreparedAssociatedTokenAccount {
+  associatedTokenAddress: string;
+  exists: boolean;
+  createInstruction: SolanaInstructionInput | null;
 }
 
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
@@ -1937,6 +1949,9 @@ export interface IrohaBridge {
   getSolanaTokenBalance(
     input: SolanaTokenBalanceInput,
   ): Promise<Record<string, unknown>>;
+  prepareSolanaAssociatedTokenAccount(
+    input: SolanaAssociatedTokenAccountInput,
+  ): Promise<SolanaPreparedAssociatedTokenAccount>;
   getSolanaSignatureStatus(
     input: SolanaTransactionInput,
   ): Promise<Record<string, unknown> | null>;

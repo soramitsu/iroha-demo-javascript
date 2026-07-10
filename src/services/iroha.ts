@@ -623,6 +623,10 @@ export const getSolanaTokenBalance = (
   input: Parameters<IrohaBridge["getSolanaTokenBalance"]>[0],
 ): Promise<Record<string, unknown>> => bridge().getSolanaTokenBalance(input);
 
+export const prepareSolanaAssociatedTokenAccount = (
+  input: Parameters<IrohaBridge["prepareSolanaAssociatedTokenAccount"]>[0],
+) => bridge().prepareSolanaAssociatedTokenAccount(input);
+
 export const getSolanaSignatureStatus = (
   input: Parameters<IrohaBridge["getSolanaSignatureStatus"]>[0],
 ): Promise<Record<string, unknown> | null> =>

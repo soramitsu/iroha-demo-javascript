@@ -3,6 +3,7 @@ import { blake2b } from "@noble/hashes/blake2";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import { keccak_256 } from "@noble/hashes/sha3";
 import { beginCell } from "@ton/core";
+import { PublicKey, SystemProgram } from "@solana/web3.js";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   buildTairaXorBscSccpRecordDescriptor,
@@ -14,6 +15,7 @@ import {
   canonicalSccpTransferPayloadBytes,
   canonicalSccpPayloadEnvelopeBytes,
   canonicalSccpMessageProofBundleBytes,
+  canonicalSccpMessageTransparentPublicInputsBytes,
   sccpMerkleRootFromCommitment,
   sccpPayloadHash,
   sccpTransferMessageId,
@@ -157,13 +159,29 @@ export const TON_TESTNET_NETWORK_ID_HEX =
 export const TON_TESTNET_RPC_URL =
   "https://testnet.toncenter.com/api/v2/jsonRPC";
 export const TON_TESTNET_EXPLORER_URL = "https://testnet.tonscan.org";
-export const SOLANA_TESTNET_CAIP_CHAIN_ID = "solana:testnet";
+export const SOLANA_TESTNET_CAIP_REFERENCE = "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3z";
+export const SOLANA_TESTNET_CAIP_CHAIN_ID = `solana:${SOLANA_TESTNET_CAIP_REFERENCE}`;
+export const SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID = "solana:testnet";
 export const SOLANA_TESTNET_NETWORK_ID = "solana-testnet";
+export const SOLANA_TESTNET_GENESIS_HASH =
+  "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY";
+export const SCCP_SOLANA_DESTINATION_PROOF_BACKEND = "solana-program-v1";
+export const SCCP_SOLANA_SOURCE_PROOF_BACKEND =
+  "sccp-solana-recursive-testnet-v1";
 export const SOLANA_TESTNET_RPC_URL = "https://api.testnet.solana.com";
 export const SOLANA_TESTNET_EXPLORER_URL =
   "https://explorer.solana.com?cluster=testnet";
 export const SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID =
   "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+export const SCCP_SOLANA_SYSTEM_PROGRAM_ID = SystemProgram.programId.toBase58();
+export const SCCP_SOLANA_MESSAGE_RECEIPT_SEED = "sccp-message-receipt";
+export const SCCP_SOLANA_SOURCE_BURN_RECEIPT_SEED = "sccp-source-burn-receipt";
+export const SCCP_SOLANA_MINT_AUTHORITY_SEED = "sccp-taira-xor-mint-authority";
+export const SCCP_SOLANA_SOURCE_BURN_ENTRYPOINT = "burn_to_taira";
+export const SCCP_SOLANA_SOURCE_BURN_EVENT_PREFIX =
+  "sccp:solana:source-burn:v1";
+export const SCCP_SOLANA_SETTLEMENT_CONTEXT_PREFIX =
+  "sccp:solana:settlement:v1";
 export const SCCP_SOLANA_PRODUCTION_ADMISSION_MODE = "governed-zk-verifier-v1";
 export const SCCP_SOLANA_DESTINATION_PROOF_SYSTEM = "stark-fri-v1";
 export const SCCP_SOLANA_SUBMIT_ENTRYPOINT = "submit_sccp_message_proof";
@@ -284,6 +302,8 @@ export type SccpSolanaNetworkProfile = {
   key: SccpSolanaNetworkKey;
   label: string;
   caipChainId: string;
+  caipReference: string;
+  walletStandardChainId: string;
   networkId: string;
   rpcUrl: string;
   explorerUrl: string;
@@ -374,6 +394,8 @@ export const SCCP_SOLANA_NETWORK_PROFILES = {
     key: "testnet",
     label: "Solana Testnet",
     caipChainId: SOLANA_TESTNET_CAIP_CHAIN_ID,
+    caipReference: SOLANA_TESTNET_CAIP_REFERENCE,
+    walletStandardChainId: SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
     networkId: SOLANA_TESTNET_NETWORK_ID,
     rpcUrl: SOLANA_TESTNET_RPC_URL,
     explorerUrl: SOLANA_TESTNET_EXPLORER_URL,
@@ -390,7 +412,9 @@ export const normalizeSccpSolanaNetworkKey = (
     !normalized ||
     normalized === "testnet" ||
     normalized === "solana-testnet" ||
-    normalized === "sol-testnet"
+    normalized === "sol-testnet" ||
+    normalized === SOLANA_TESTNET_CAIP_CHAIN_ID.toLowerCase() ||
+    normalized === SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID
   ) {
     return "testnet";
   }
@@ -734,6 +758,7 @@ export type TonSccpProofMaterial = {
 export type SolanaSccpProofMaterial = {
   networkId: string;
   solanaVerifierAddress: string;
+  nativeVerifierProgramAddress: string;
   verifierCodeHashHex: string;
   verifierKeyHashHex: string;
   expectedDestinationBindingHashHex: string;
@@ -757,10 +782,22 @@ export type TairaXorSolanaFinalizeTransactionRequest = {
   };
   amountBaseUnits: string;
   messageId: string;
+  destinationTokenAddress: string;
   canonicalPayloadHex: string;
   statementHash: string;
   destinationBindingHash: string;
   proofContextHash: string;
+};
+
+export type SolanaDestinationFinalizeTransactionBinding = {
+  txId: string;
+  finalizedSlot: string;
+  feePayer: string;
+  verifierProgramAddress: string;
+  tokenMintAddress: string;
+  destinationTokenAddress: string;
+  messageId: string;
+  amountBaseUnits: string;
 };
 
 export type TairaXorSolanaBurnTransactionRequest = {
@@ -776,6 +813,38 @@ export type TairaXorSolanaBurnTransactionRequest = {
   amountBaseUnits: string;
   tairaRecipient: string;
   nonce: string;
+};
+
+export type TairaXorSolanaSccpRecordDescriptor = {
+  version: 1;
+  kind: "TairaXorSccpRecordDescriptor";
+  execution_kind: "ivm_proved_record_sccp_message_v1";
+  chain_id: string;
+  network_prefix: number;
+  route_id: typeof SCCP_SOLANA_XOR_ROUTE_ID;
+  asset_key: typeof SCCP_XOR_ASSET_KEY;
+  message_kind: "Transfer";
+  source_domain: typeof SCCP_SORA_DOMAIN;
+  dest_domain: typeof SCCP_SOLANA_DOMAIN;
+  message_id: string;
+  canonical_payload_hex: string;
+  payload: SccpTransferPayload;
+  record_instruction: {
+    kind: "RecordSccpMessage";
+    payload_bytes_hex: string;
+  };
+  execution_requirements: {
+    executable: "IvmProved";
+    overlay_instruction: "RecordSccpMessage";
+    settlement_instruction: "Burn<Numeric, Asset>";
+    settlement_asset_selector: "nexus.fees.fee_asset_id";
+    settlement_asset_key: typeof SCCP_XOR_ASSET_KEY;
+    settlement_account_binding: "burn.destination.account == payload.sender";
+    settlement_amount_binding: "sum(whole-unit burns) >= sum(recorded amounts) per sender";
+    proof_gate: "sccp_recording_proof_verified";
+    normal_transaction_supported: false;
+  };
+  canonicalPayloadBytes: Uint8Array;
 };
 
 export type TronSccpProofQueryMaterial = TronSccpProofMaterial & {
@@ -808,7 +877,8 @@ export type TairaXorOutboundPreview = {
   recordDescriptor:
     | TairaXorSccpRecordDescriptor
     | TairaXorBscSccpRecordDescriptor
-    | TairaXorTonSccpRecordDescriptor;
+    | TairaXorTonSccpRecordDescriptor
+    | TairaXorSolanaSccpRecordDescriptor;
   messageId: string;
   payloadHash: string;
   contractPayloadHash: string;
@@ -837,7 +907,35 @@ export type TairaXorOutboundBurnRecordRequest = {
   zkIvmRequest:
     | TairaXorSccpBurnRecordZkIvmRequest
     | TairaXorBscSccpBurnRecordZkIvmRequest
-    | TairaXorTonSccpBurnRecordZkIvmRequest;
+    | TairaXorTonSccpBurnRecordZkIvmRequest
+    | TairaXorSolanaSccpBurnRecordZkIvmRequest;
+};
+
+export type TairaXorSolanaSccpBurnRecordContractPayload = {
+  version: 1;
+  entrypoint: "burn_and_record";
+  descriptor: TairaXorSolanaSccpRecordDescriptor;
+  payload: {
+    sender: string;
+    settlement_asset: string;
+    amount: string;
+    record_instruction: string;
+  };
+  record_instruction_hex: string;
+};
+
+export type TairaXorSolanaSccpBurnRecordZkIvmRequest = {
+  version: 1;
+  route_id: typeof SCCP_SOLANA_XOR_ROUTE_ID;
+  asset_key: typeof SCCP_XOR_ASSET_KEY;
+  descriptor: TairaXorSolanaSccpRecordDescriptor;
+  contract: TairaXorSolanaSccpBurnRecordContractPayload;
+  request: {
+    vkRef: TairaXorBurnRecordMaterial["vkRef"];
+    authority: string;
+    metadata: Record<string, unknown>;
+    bytecode: string;
+  };
 };
 
 export type TairaXorFinalizeFromTairaProofBinding = {
@@ -953,15 +1051,18 @@ export type TonToTairaSourceProofPackageInput = {
 
 export type SolanaToTairaSourceProofPackageInput = {
   manifest: Record<string, unknown> | null | undefined;
-  solanaNetwork?: SccpSolanaNetworkKey;
+  solanaNetwork: SccpSolanaNetworkKey;
+  solanaNetworkId: typeof SOLANA_TESTNET_NETWORK_ID;
+  solanaGenesisHash: typeof SOLANA_TESTNET_GENESIS_HASH;
+  sourceProofBackend: typeof SCCP_SOLANA_SOURCE_PROOF_BACKEND;
   solanaRpcUrl?: string;
-  sourceBridgeAddress?: string;
-  sourceStateAddress?: string;
-  tokenMintAddress?: string;
+  sourceBridgeAddress: string;
+  sourceStateAddress: string;
+  tokenMintAddress: string;
   txId: string;
-  transaction?: Record<string, unknown> | null;
-  signatureStatus?: Record<string, unknown> | null;
-  finality?: Record<string, unknown> | null;
+  transaction: Record<string, unknown>;
+  signatureStatus: Record<string, unknown>;
+  finality: Record<string, unknown>;
   solanaSender: string;
   tairaRecipient: string;
   amountDecimal: string;
@@ -993,6 +1094,32 @@ export type SolanaToTairaSourceProofPackage = {
   messageId: string;
   commitmentRoot: string;
   amountBaseUnits: string;
+  payloadHash: string;
+  sourceBridgeAddress: string;
+  sourceStateAddress: string;
+  tokenMintAddress: string;
+  sourceTokenAddress: string;
+  sourceBurnReceiptAddress: string;
+  ownerAddress: string;
+  tairaRecipient: string;
+  nonce: string;
+  sourceEventHash: string;
+  finalizedSlot: string;
+};
+
+export type SolanaSourceBurnTransactionBinding = {
+  txId: string;
+  sourceBridgeAddress: string;
+  sourceStateAddress: string;
+  tokenMintAddress: string;
+  sourceTokenAddress: string;
+  sourceBurnReceiptAddress: string;
+  ownerAddress: string;
+  tairaRecipient: string;
+  amountBaseUnits: string;
+  nonce: string;
+  sourceEventHash: string;
+  finalizedSlot: string;
 };
 
 export type BscToTairaSourceProofPackage = {
@@ -1915,7 +2042,8 @@ const normalizeSolanaNetworkId = (
     !normalized ||
     normalized === profile.key ||
     normalized === profile.networkId.toLowerCase() ||
-    normalized === profile.caipChainId.toLowerCase()
+    normalized === profile.caipChainId.toLowerCase() ||
+    normalized === profile.walletStandardChainId
   ) {
     return profile.networkId;
   }
@@ -2084,6 +2212,39 @@ export const readSccpSolanaSourceStateAddress = (
   );
 };
 
+export const readSccpSolanaVerifierStateAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifestForRead);
+  return readConsistentSolanaRouteAddressAliasString(
+    "Solana verifier state address",
+    [
+      {
+        record: manifestForRead,
+        keys: [
+          "solanaVerifierStateAddress",
+          "solana_verifier_state_address",
+          "verifierStateAddress",
+          "verifier_state_address",
+        ],
+      },
+      {
+        record: rollout,
+        keys: [
+          "solanaVerifierStateAddress",
+          "solana_verifier_state_address",
+          "verifierStateAddress",
+          "verifier_state_address",
+        ],
+      },
+    ],
+  );
+};
+
 export const readSccpSolanaVerifierAddress = (
   manifest: Record<string, unknown> | null | undefined,
 ): string => {
@@ -2115,6 +2276,71 @@ export const readSccpSolanaVerifierAddress = (
       {
         record: rollout,
         keys: ["verifierIdentity", "verifier_identity"],
+      },
+    ],
+  );
+};
+
+export const readSccpSolanaNativeVerifierAddress = (
+  manifest: Record<string, unknown> | null | undefined,
+): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return "";
+  }
+  const rollout = readDestinationRollout(manifestForRead);
+  const admission = readFirstRecord(
+    manifestForRead,
+    "destinationProofAdmission",
+    "destination_proof_admission",
+    "solanaDestinationProofAdmission",
+    "solana_destination_proof_admission",
+  );
+  const enforcement = readFirstRecord(
+    manifestForRead,
+    "verifierEnforcement",
+    "verifier_enforcement",
+  );
+  return readConsistentSolanaRouteAddressAliasString(
+    "Solana native recursive verifier program address",
+    [
+      {
+        record: manifestForRead,
+        keys: [
+          "solanaNativeVerifierProgramId",
+          "solana_native_verifier_program_id",
+          "nativeVerifierProgramId",
+          "native_verifier_program_id",
+          "nativeRecursiveVerifierProgramId",
+          "native_recursive_verifier_program_id",
+        ],
+      },
+      {
+        record: rollout,
+        keys: [
+          "nativeVerifierProgramId",
+          "native_verifier_program_id",
+          "nativeRecursiveVerifierProgramId",
+          "native_recursive_verifier_program_id",
+        ],
+      },
+      {
+        record: admission,
+        keys: [
+          "nativeVerifierProgramId",
+          "native_verifier_program_id",
+          "nativeRecursiveVerifierProgramId",
+          "native_recursive_verifier_program_id",
+        ],
+      },
+      {
+        record: enforcement,
+        keys: [
+          "nativeVerifierProgramId",
+          "native_verifier_program_id",
+          "nativeRecursiveVerifierProgramId",
+          "native_recursive_verifier_program_id",
+        ],
       },
     ],
   );
@@ -2153,6 +2379,42 @@ const SOLANA_DYNAMIC_SOURCE_TOKEN_REFERENCES = new Set([
 const isSolanaDynamicSourceTokenReference = (value: string): boolean =>
   SOLANA_DYNAMIC_SOURCE_TOKEN_REFERENCES.has(value.trim());
 
+const SOLANA_DYNAMIC_DESTINATION_TOKEN_REFERENCES = new Set([
+  "$destinationToken",
+  "$destination_token",
+  "{destinationToken}",
+  "{destination_token}",
+  "destinationToken",
+  "destination_token",
+  "destination-token",
+]);
+
+const isSolanaDynamicDestinationTokenReference = (value: string): boolean =>
+  SOLANA_DYNAMIC_DESTINATION_TOKEN_REFERENCES.has(value.trim());
+
+const SOLANA_DYNAMIC_MESSAGE_RECEIPT_REFERENCES = new Set([
+  "$messageReceipt",
+  "$message_receipt",
+]);
+
+const isSolanaDynamicMessageReceiptReference = (value: string): boolean =>
+  SOLANA_DYNAMIC_MESSAGE_RECEIPT_REFERENCES.has(value.trim());
+
+const SOLANA_DYNAMIC_SOURCE_BURN_RECEIPT_REFERENCES = new Set([
+  "$sourceBurnReceipt",
+]);
+
+const isSolanaDynamicSourceBurnReceiptReference = (value: string): boolean =>
+  SOLANA_DYNAMIC_SOURCE_BURN_RECEIPT_REFERENCES.has(value.trim());
+
+const SOLANA_DYNAMIC_SYSTEM_PROGRAM_REFERENCES = new Set([
+  "$systemProgram",
+  "$system_program",
+]);
+
+const isSolanaDynamicSystemProgramReference = (value: string): boolean =>
+  SOLANA_DYNAMIC_SYSTEM_PROGRAM_REFERENCES.has(value.trim());
+
 const readBooleanAlias = (
   record: Record<string, unknown>,
   keys: string[],
@@ -2184,45 +2446,20 @@ const readBooleanAlias = (
   return fallback;
 };
 
-export const readSccpSolanaVerifierInstructionAccounts = (
-  manifest: Record<string, unknown> | null | undefined,
-  payerAddress = "",
-): SolanaInstructionAccountMeta[] => {
-  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
-  if (!manifestForRead) {
-    return [];
-  }
-  const rollout = readDestinationRollout(manifestForRead);
-  const accountEntries =
-    readFirstArray(
-      manifestForRead,
-      "solanaVerifierInstructionAccounts",
-      "solana_verifier_instruction_accounts",
-      "solanaSubmitProofAccounts",
-      "solana_submit_proof_accounts",
-      "solanaProgramInstructionAccounts",
-      "solana_program_instruction_accounts",
-      "verifierInstructionAccounts",
-      "verifier_instruction_accounts",
-    ) ??
-    readFirstArray(
-      rollout,
-      "solanaVerifierInstructionAccounts",
-      "solana_verifier_instruction_accounts",
-      "solanaSubmitProofAccounts",
-      "solana_submit_proof_accounts",
-      "instructionAccounts",
-      "instruction_accounts",
-      "accounts",
-    );
-  if (!accountEntries) {
-    return [];
-  }
-  return accountEntries.map((entry, index) => {
-    const record = requireRecord(
-      entry,
-      `Solana verifier instruction account ${index + 1}`,
-    );
+const resolveSolanaInstructionAccounts = (
+  accountEntries: unknown[],
+  label: string,
+  input: {
+    payerAddress?: string;
+    sourceTokenAddress?: string;
+    destinationTokenAddress?: string;
+    messageReceiptAddress?: string;
+    sourceBurnReceiptAddress?: string;
+    systemProgramAddress?: string;
+  },
+): SolanaInstructionAccountMeta[] =>
+  accountEntries.map((entry, index) => {
+    const record = requireRecord(entry, `${label} ${index + 1}`);
     const role = readFirstString(
       record,
       "role",
@@ -2242,37 +2479,494 @@ export const readSccpSolanaVerifierInstructionAccounts = (
     const dynamicPayer =
       isSolanaDynamicPayerReference(pubkeyText) ||
       (!pubkeyText && isSolanaDynamicPayerReference(role));
+    const dynamicSourceToken =
+      isSolanaDynamicSourceTokenReference(pubkeyText) ||
+      (!pubkeyText && isSolanaDynamicSourceTokenReference(role));
+    const dynamicDestinationToken =
+      isSolanaDynamicDestinationTokenReference(pubkeyText) ||
+      (!pubkeyText && isSolanaDynamicDestinationTokenReference(role));
+    const dynamicMessageReceipt =
+      isSolanaDynamicMessageReceiptReference(pubkeyText) ||
+      (!pubkeyText && isSolanaDynamicMessageReceiptReference(role));
+    const dynamicSourceBurnReceipt =
+      isSolanaDynamicSourceBurnReceiptReference(pubkeyText) ||
+      (!pubkeyText && isSolanaDynamicSourceBurnReceiptReference(role));
+    const dynamicSystemProgram =
+      isSolanaDynamicSystemProgramReference(pubkeyText) ||
+      (!pubkeyText && isSolanaDynamicSystemProgramReference(role));
     const pubkey = dynamicPayer
       ? normalizeSolanaAddress(
-          payerAddress,
-          `Solana verifier instruction account ${index + 1} payer`,
+          input.payerAddress ?? "",
+          `${label} ${index + 1} payer`,
         )
-      : normalizeSolanaAddress(
-          pubkeyText,
-          `Solana verifier instruction account ${index + 1}`,
-        );
+      : dynamicSourceToken
+        ? normalizeSolanaAddress(
+            input.sourceTokenAddress ?? "",
+            `${label} ${index + 1} source token`,
+          )
+        : dynamicDestinationToken
+          ? normalizeSolanaAddress(
+              input.destinationTokenAddress ?? "",
+              `${label} ${index + 1} destination token`,
+            )
+          : dynamicMessageReceipt
+            ? normalizeSolanaAddress(
+                input.messageReceiptAddress ?? "",
+                `${label} ${index + 1} message receipt`,
+              )
+            : dynamicSourceBurnReceipt
+              ? normalizeSolanaAddress(
+                  input.sourceBurnReceiptAddress ?? "",
+                  `${label} ${index + 1} source burn receipt`,
+                )
+              : dynamicSystemProgram
+                ? (() => {
+                    const systemProgram = String(
+                      input.systemProgramAddress ?? "",
+                    ).trim();
+                    if (systemProgram !== SCCP_SOLANA_SYSTEM_PROGRAM_ID) {
+                      throw new Error(
+                        `${label} ${index + 1} system program must be the canonical Solana system program.`,
+                      );
+                    }
+                    return systemProgram;
+                  })()
+                : normalizeSolanaAddress(pubkeyText, `${label} ${index + 1}`);
     return {
       pubkey,
       isSigner: readBooleanAlias(
         record,
         ["isSigner", "is_signer", "signer"],
         dynamicPayer,
-        `Solana verifier instruction account ${index + 1} isSigner`,
+        `${label} ${index + 1} isSigner`,
       ),
       isWritable: readBooleanAlias(
         record,
         ["isWritable", "is_writable", "writable"],
-        false,
-        `Solana verifier instruction account ${index + 1} isWritable`,
+        dynamicSourceToken ||
+          dynamicDestinationToken ||
+          dynamicMessageReceipt ||
+          dynamicSourceBurnReceipt,
+        `${label} ${index + 1} isWritable`,
       ),
     };
   });
+
+const LEGACY_SOLANA_VERIFIER_ACCOUNT_KEYS = [
+  "solanaVerifierInstructionAccounts",
+  "solana_verifier_instruction_accounts",
+  "solanaSubmitProofAccounts",
+  "solana_submit_proof_accounts",
+  "solanaProgramInstructionAccounts",
+  "solana_program_instruction_accounts",
+  "verifierInstructionAccounts",
+  "verifier_instruction_accounts",
+] as const;
+
+const LEGACY_SOLANA_ROLLOUT_VERIFIER_ACCOUNT_KEYS = [
+  ...LEGACY_SOLANA_VERIFIER_ACCOUNT_KEYS,
+  "instructionAccounts",
+  "instruction_accounts",
+  "accounts",
+] as const;
+
+const assertNoLegacySolanaVerifierInstructionAccounts = (
+  manifest: Record<string, unknown>,
+): void => {
+  const rollout = readDestinationRollout(manifest);
+  const legacyKey = LEGACY_SOLANA_VERIFIER_ACCOUNT_KEYS.find((key) =>
+    Object.prototype.hasOwnProperty.call(manifest, key),
+  );
+  const rolloutLegacyKey = LEGACY_SOLANA_ROLLOUT_VERIFIER_ACCOUNT_KEYS.find(
+    (key) => Object.prototype.hasOwnProperty.call(rollout, key),
+  );
+  if (legacyKey || rolloutLegacyKey) {
+    throw new Error(
+      "Generic Solana verifier instruction accounts are unsupported; publish only the exact solanaVerifierMintInstructionAccounts nine-account settlement template.",
+    );
+  }
 };
 
-const readSccpSolanaSourceBurnInstructionAccounts = (
+const readSccpSolanaVerifierMintInstructionAccountEntries = (
+  manifest: Record<string, unknown>,
+): unknown[] | null => {
+  assertNoLegacySolanaVerifierInstructionAccounts(manifest);
+  const rollout = readDestinationRollout(manifest);
+  return (
+    readFirstArray(
+      manifest,
+      "solanaVerifierMintInstructionAccounts",
+      "solana_verifier_mint_instruction_accounts",
+      "solanaMintInstructionAccounts",
+      "solana_mint_instruction_accounts",
+      "verifierMintInstructionAccounts",
+      "verifier_mint_instruction_accounts",
+    ) ??
+    readFirstArray(
+      rollout,
+      "solanaVerifierMintInstructionAccounts",
+      "solana_verifier_mint_instruction_accounts",
+      "mintInstructionAccounts",
+      "mint_instruction_accounts",
+    )
+  );
+};
+
+const solanaHex32Bytes = (value: string, label: string): Uint8Array => {
+  const normalized = normalizeHex32(value, label).slice(2);
+  return Uint8Array.from(
+    normalized.match(/.{2}/gu)?.map((byte) => Number.parseInt(byte, 16)) ?? [],
+  );
+};
+
+const findSccpSolanaProgramDerivedAddress = (
+  seeds: Uint8Array[],
+  programAddress: string,
+): string => {
+  if (seeds.some((seed) => seed.length > 32)) {
+    throw new Error(
+      "Solana program-derived-address seeds must not exceed 32 bytes.",
+    );
+  }
+  const programBytes = new PublicKey(programAddress).toBytes();
+  const marker = new TextEncoder().encode("ProgramDerivedAddress");
+  for (let bump = 255; bump >= 0; bump -= 1) {
+    const digest = sha256(
+      concatBytes(...seeds, Uint8Array.of(bump), programBytes, marker),
+    );
+    if (!PublicKey.isOnCurve(digest)) {
+      return new PublicKey(digest).toBase58();
+    }
+  }
+  throw new Error("Unable to derive the canonical Solana program address.");
+};
+
+export const normalizeSolanaSourceBurnNonce = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[1-9]\d*$/u.test(value)) {
+    throw new Error(
+      "Solana burn nonce must be a canonical positive u64 decimal.",
+    );
+  }
+  let parsed: bigint;
+  try {
+    parsed = BigInt(value);
+  } catch {
+    throw new Error(
+      "Solana burn nonce must be a canonical positive u64 decimal.",
+    );
+  }
+  if (parsed > (1n << 64n) - 1n) {
+    throw new Error(
+      "Solana burn nonce must be a canonical positive u64 decimal.",
+    );
+  }
+  return value;
+};
+
+export const createSolanaSourceBurnNonce = (): string => {
+  const cryptoApi = globalThis.crypto;
+  if (typeof cryptoApi?.getRandomValues !== "function") {
+    throw new Error(
+      "Secure randomness is unavailable for the Solana source burn nonce.",
+    );
+  }
+  const bytes = new Uint8Array(8);
+  let nonce = 0n;
+  while (nonce === 0n) {
+    cryptoApi.getRandomValues(bytes);
+    nonce = 0n;
+    for (let index = bytes.length - 1; index >= 0; index -= 1) {
+      nonce = (nonce << 8n) | BigInt(bytes[index]);
+    }
+  }
+  bytes.fill(0);
+  return nonce.toString();
+};
+
+export const deriveSccpSolanaMessageReceiptAddress = (input: {
+  verifierProgramAddress: string;
+  verifierStateAddress: string;
+  messageId: string;
+}): string => {
+  const verifierProgramAddress = normalizeSolanaAddress(
+    input.verifierProgramAddress,
+    "Solana verifier program address",
+  );
+  const verifierStateAddress = normalizeSolanaAddress(
+    input.verifierStateAddress,
+    "Solana verifier state address",
+  );
+  return findSccpSolanaProgramDerivedAddress(
+    [
+      new TextEncoder().encode(SCCP_SOLANA_MESSAGE_RECEIPT_SEED),
+      new PublicKey(verifierStateAddress).toBytes(),
+      solanaHex32Bytes(input.messageId, "Solana SCCP message id"),
+    ],
+    verifierProgramAddress,
+  );
+};
+
+export const deriveSccpSolanaMintAuthorityAddress = (input: {
+  verifierProgramAddress: string;
+  verifierStateAddress: string;
+}): string => {
+  const verifierProgramAddress = normalizeSolanaAddress(
+    input.verifierProgramAddress,
+    "Solana verifier program address",
+  );
+  const verifierStateAddress = normalizeSolanaAddress(
+    input.verifierStateAddress,
+    "Solana verifier state address",
+  );
+  return findSccpSolanaProgramDerivedAddress(
+    [
+      new TextEncoder().encode(SCCP_SOLANA_MINT_AUTHORITY_SEED),
+      new PublicKey(verifierStateAddress).toBytes(),
+    ],
+    verifierProgramAddress,
+  );
+};
+
+export const deriveSccpSolanaSourceBurnReceiptAddress = (input: {
+  sourceBridgeProgramAddress: string;
+  sourceStateAddress: string;
+  ownerAddress: string;
+  nonce: string;
+}): string => {
+  const sourceBridgeProgramAddress = normalizeSolanaAddress(
+    input.sourceBridgeProgramAddress,
+    "Solana source bridge program address",
+  );
+  const sourceStateAddress = normalizeSolanaAddress(
+    input.sourceStateAddress,
+    "Solana source bridge state address",
+  );
+  const ownerAddress = normalizeSolanaAddress(
+    input.ownerAddress,
+    "Solana source burn owner",
+  );
+  const nonce = normalizeSolanaSourceBurnNonce(input.nonce);
+  return findSccpSolanaProgramDerivedAddress(
+    [
+      new TextEncoder().encode(SCCP_SOLANA_SOURCE_BURN_RECEIPT_SEED),
+      new PublicKey(sourceStateAddress).toBytes(),
+      new PublicKey(ownerAddress).toBytes(),
+      u64LeBytesFromDecimalText(nonce, "Solana burn nonce"),
+    ],
+    sourceBridgeProgramAddress,
+  );
+};
+
+const readSolanaInstructionAccountReference = (
+  entry: unknown,
+  label: string,
+): string => {
+  const record = requireRecord(entry, label);
+  return readFirstString(
+    record,
+    "pubkey",
+    "publicKey",
+    "public_key",
+    "address",
+    "account",
+    "role",
+    "kind",
+    "name",
+    "accountRole",
+    "account_role",
+  );
+};
+
+const requireSolanaSubmitDynamicReference = (
+  accountEntries: unknown[],
+  index: number,
+  predicate: (value: string) => boolean,
+  expected: string,
+): void => {
+  const value = readSolanaInstructionAccountReference(
+    accountEntries[index],
+    `Solana verifier mint instruction account ${index + 1}`,
+  );
+  if (!predicate(value)) {
+    throw new Error(
+      `Solana verifier mint instruction account ${index + 1} must use the canonical ${expected} placeholder.`,
+    );
+  }
+};
+
+export const readSccpSolanaVerifierMintInstructionAccounts = (
+  manifest: Record<string, unknown> | null | undefined,
+  payerAddress: string,
+  destinationTokenAddress: string,
+  messageId: string,
+): SolanaInstructionAccountMeta[] => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return [];
+  }
+  const accountEntries =
+    readSccpSolanaVerifierMintInstructionAccountEntries(manifestForRead);
+  if (!accountEntries) {
+    return [];
+  }
+  if (accountEntries.length !== 9) {
+    throw new Error(
+      "Solana verifier mint instruction accounts must use the canonical nine-account settlement layout.",
+    );
+  }
+  requireSolanaSubmitDynamicReference(
+    accountEntries,
+    0,
+    (value) => value.trim() === "$payer",
+    "$payer",
+  );
+  requireSolanaSubmitDynamicReference(
+    accountEntries,
+    3,
+    (value) => value.trim() === "$destinationToken",
+    "$destinationToken",
+  );
+  requireSolanaSubmitDynamicReference(
+    accountEntries,
+    7,
+    (value) => value.trim() === "$messageReceipt",
+    "$messageReceipt",
+  );
+  requireSolanaSubmitDynamicReference(
+    accountEntries,
+    8,
+    (value) => value.trim() === "$systemProgram",
+    "$systemProgram",
+  );
+
+  const ownerAddress = normalizeSolanaAddress(
+    payerAddress,
+    "Solana settlement payer",
+  );
+  const destinationAddress = normalizeSolanaAddress(
+    destinationTokenAddress,
+    "Solana destination token account",
+  );
+  const verifierProgramAddress = readSccpSolanaVerifierAddress(manifestForRead);
+  const verifierStateAddress =
+    readSccpSolanaVerifierStateAddress(manifestForRead);
+  const tokenMintAddress = readSccpSolanaTokenAddress(manifestForRead);
+  const nativeVerifierAddress =
+    readSccpSolanaNativeVerifierAddress(manifestForRead);
+  if (!verifierProgramAddress || !verifierStateAddress || !tokenMintAddress) {
+    throw new Error(
+      "The Solana verifier program, verifier state, and token mint are required by the settlement account layout.",
+    );
+  }
+  if (!nativeVerifierAddress) {
+    throw new Error(
+      "The Solana native recursive verifier program is required by the settlement account layout.",
+    );
+  }
+  const normalizedMessageId = normalizeHex32(
+    messageId,
+    "Solana SCCP message id",
+  );
+  const messageReceiptAddress = deriveSccpSolanaMessageReceiptAddress({
+    verifierProgramAddress,
+    verifierStateAddress,
+    messageId: normalizedMessageId,
+  });
+  const mintAuthorityAddress = deriveSccpSolanaMintAuthorityAddress({
+    verifierProgramAddress,
+    verifierStateAddress,
+  });
+  const resolved = resolveSolanaInstructionAccounts(
+    accountEntries,
+    "Solana verifier mint instruction account",
+    {
+      payerAddress: ownerAddress,
+      destinationTokenAddress: destinationAddress,
+      messageReceiptAddress,
+      systemProgramAddress: SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+    },
+  );
+  const expected: SolanaInstructionAccountMeta[] = [
+    { pubkey: ownerAddress, isSigner: true, isWritable: true },
+    {
+      pubkey: normalizeSolanaAddress(
+        verifierStateAddress,
+        "Solana verifier state address",
+      ),
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: normalizeSolanaAddress(tokenMintAddress, "Solana token mint"),
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: destinationAddress,
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: mintAuthorityAddress,
+      isSigner: false,
+      isWritable: false,
+    },
+    {
+      pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+      isSigner: false,
+      isWritable: false,
+    },
+    {
+      pubkey: normalizeSolanaAddress(
+        nativeVerifierAddress,
+        "Solana native verifier program",
+      ),
+      isSigner: false,
+      isWritable: false,
+    },
+    {
+      pubkey: messageReceiptAddress,
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+      isSigner: false,
+      isWritable: false,
+    },
+  ];
+  for (let index = 0; index < expected.length; index += 1) {
+    const actual = resolved[index];
+    const required = expected[index];
+    if (
+      actual.pubkey !== required.pubkey ||
+      actual.isSigner !== required.isSigner ||
+      actual.isWritable !== required.isWritable
+    ) {
+      throw new Error(
+        `Solana verifier mint instruction account ${index + 1} does not match the canonical settlement role, address, or privileges.`,
+      );
+    }
+  }
+  return resolved;
+};
+
+const hasSccpSolanaVerifierMintInstructionAccountTemplate = (
+  manifest: Record<string, unknown> | null | undefined,
+): boolean => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return false;
+  }
+  return !!readSccpSolanaVerifierMintInstructionAccountEntries(manifestForRead)
+    ?.length;
+};
+
+export const readSccpSolanaSourceBurnInstructionAccounts = (
   manifest: Record<string, unknown> | null | undefined,
   ownerAddress: string,
   sourceTokenAddress: string,
+  nonce: string,
 ): SolanaInstructionAccountMeta[] => {
   const manifestForRead = cloneSccpRouteManifestForRead(manifest);
   if (!manifestForRead) {
@@ -2288,87 +2982,147 @@ const readSccpSolanaSourceBurnInstructionAccounts = (
     "source_burn_instruction_accounts",
   );
   if (!accountEntries) {
-    const stateAddress = readSccpSolanaSourceStateAddress(manifestForRead);
-    const tokenAddress = readSccpSolanaTokenAddress(manifestForRead);
-    if (!stateAddress || !tokenAddress) {
-      return [];
-    }
-    return [
-      { pubkey: ownerAddress, isSigner: true, isWritable: false },
-      { pubkey: stateAddress, isSigner: false, isWritable: true },
-      { pubkey: sourceTokenAddress, isSigner: false, isWritable: true },
-      { pubkey: tokenAddress, isSigner: false, isWritable: true },
-      {
-        pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
-        isSigner: false,
-        isWritable: false,
-      },
-    ];
+    return [];
   }
-  return accountEntries.map((entry, index) => {
-    const record = requireRecord(
-      entry,
+  if (accountEntries.length !== 7) {
+    throw new Error(
+      "Solana source burn instruction accounts must use the canonical seven-account layout.",
+    );
+  }
+  const dynamicReferences: Array<[number, string]> = [
+    [0, "$owner"],
+    [2, "$sourceToken"],
+    [5, "$sourceBurnReceipt"],
+    [6, "$systemProgram"],
+  ];
+  for (const [index, expected] of dynamicReferences) {
+    const actual = readSolanaInstructionAccountReference(
+      accountEntries[index],
       `Solana source burn instruction account ${index + 1}`,
     );
-    const role = readFirstString(
-      record,
-      "role",
-      "kind",
-      "name",
-      "accountRole",
-      "account_role",
+    if (actual.trim() !== expected) {
+      throw new Error(
+        `Solana source burn instruction account ${index + 1} must use the canonical ${expected} placeholder.`,
+      );
+    }
+  }
+
+  const normalizedOwnerAddress = normalizeSolanaAddress(
+    ownerAddress,
+    "Solana source burn owner",
+  );
+  const normalizedSourceTokenAddress = normalizeSolanaAddress(
+    sourceTokenAddress,
+    "Solana source token account",
+  );
+  const sourceBridgeProgramAddress =
+    readSccpSolanaSourceBridgeAddress(manifestForRead);
+  const sourceStateAddress = readSccpSolanaSourceStateAddress(manifestForRead);
+  const tokenMintAddress = readSccpSolanaTokenAddress(manifestForRead);
+  if (!sourceBridgeProgramAddress || !sourceStateAddress || !tokenMintAddress) {
+    throw new Error(
+      "The Solana source bridge program, source state, and token mint are required by the source burn account layout.",
     );
-    const pubkeyText = readFirstString(
-      record,
-      "pubkey",
-      "publicKey",
-      "public_key",
-      "address",
-      "account",
-    );
-    const dynamicOwner =
-      isSolanaDynamicPayerReference(pubkeyText) ||
-      (!pubkeyText && isSolanaDynamicPayerReference(role));
-    const dynamicSourceToken =
-      isSolanaDynamicSourceTokenReference(pubkeyText) ||
-      (!pubkeyText && isSolanaDynamicSourceTokenReference(role));
-    const pubkey = dynamicOwner
-      ? normalizeSolanaAddress(
-          ownerAddress,
-          `Solana source burn instruction account ${index + 1} owner`,
-        )
-      : dynamicSourceToken
-        ? normalizeSolanaAddress(
-            sourceTokenAddress,
-            `Solana source burn instruction account ${index + 1} source token`,
-          )
-        : normalizeSolanaAddress(
-            pubkeyText,
-            `Solana source burn instruction account ${index + 1}`,
-          );
-    return {
-      pubkey,
-      isSigner: readBooleanAlias(
-        record,
-        ["isSigner", "is_signer", "signer"],
-        dynamicOwner,
-        `Solana source burn instruction account ${index + 1} isSigner`,
-      ),
-      isWritable: readBooleanAlias(
-        record,
-        ["isWritable", "is_writable", "writable"],
-        dynamicSourceToken,
-        `Solana source burn instruction account ${index + 1} isWritable`,
-      ),
-    };
+  }
+  const normalizedStateAddress = normalizeSolanaAddress(
+    sourceStateAddress,
+    "Solana source bridge state address",
+  );
+  const normalizedTokenMintAddress = normalizeSolanaAddress(
+    tokenMintAddress,
+    "Solana token mint",
+  );
+  const sourceBurnReceiptAddress = deriveSccpSolanaSourceBurnReceiptAddress({
+    sourceBridgeProgramAddress,
+    sourceStateAddress: normalizedStateAddress,
+    ownerAddress: normalizedOwnerAddress,
+    nonce,
   });
+  const resolved = resolveSolanaInstructionAccounts(
+    accountEntries,
+    "Solana source burn instruction account",
+    {
+      payerAddress: normalizedOwnerAddress,
+      sourceTokenAddress: normalizedSourceTokenAddress,
+      sourceBurnReceiptAddress,
+      systemProgramAddress: SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+    },
+  );
+  const expected: SolanaInstructionAccountMeta[] = [
+    { pubkey: normalizedOwnerAddress, isSigner: true, isWritable: true },
+    { pubkey: normalizedStateAddress, isSigner: false, isWritable: true },
+    {
+      pubkey: normalizedSourceTokenAddress,
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: normalizedTokenMintAddress,
+      isSigner: false,
+      isWritable: true,
+    },
+    {
+      pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+      isSigner: false,
+      isWritable: false,
+    },
+    { pubkey: sourceBurnReceiptAddress, isSigner: false, isWritable: true },
+    {
+      pubkey: SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+      isSigner: false,
+      isWritable: false,
+    },
+  ];
+  for (let index = 0; index < expected.length; index += 1) {
+    const actual = resolved[index];
+    const required = expected[index];
+    if (
+      actual.pubkey !== required.pubkey ||
+      actual.isSigner !== required.isSigner ||
+      actual.isWritable !== required.isWritable
+    ) {
+      throw new Error(
+        `Solana source burn instruction account ${index + 1} does not match the canonical source burn role, address, or privileges.`,
+      );
+    }
+  }
+  return resolved;
 };
 
 export const readSccpSolanaDestinationProverModuleUrl = (
   manifest: Record<string, unknown> | null | undefined,
 ): string =>
-  readSccpBscBrowserProverModuleUrlFromManifest(
+  readSccpSolanaBrowserProverModuleUrlFromManifest(
     manifest,
+    "Solana destination proof module URL",
+    "destinationBrowserProver",
+    "destination_browser_prover",
+    "browserDestinationProver",
+    "browser_destination_prover",
+    "solanaDestinationBrowserProver",
+    "solana_destination_browser_prover",
+  );
+
+export const readSccpSolanaDestinationProverModuleHash = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpSolanaBrowserProverModuleHashFromManifest(
+    manifest,
+    "Solana destination proof module hash",
+    "destinationBrowserProver",
+    "destination_browser_prover",
+    "browserDestinationProver",
+    "browser_destination_prover",
+    "solanaDestinationBrowserProver",
+    "solana_destination_browser_prover",
+  );
+
+export const readSccpSolanaDestinationProverSidecarHash = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpSolanaBrowserProverSidecarHashFromManifest(
+    manifest,
+    "Solana destination proof sidecar hash",
     "destinationBrowserProver",
     "destination_browser_prover",
     "browserDestinationProver",
@@ -2380,8 +3134,37 @@ export const readSccpSolanaDestinationProverModuleUrl = (
 export const readSccpSolanaSourceProverModuleUrl = (
   manifest: Record<string, unknown> | null | undefined,
 ): string =>
-  readSccpBscBrowserProverModuleUrlFromManifest(
+  readSccpSolanaBrowserProverModuleUrlFromManifest(
     manifest,
+    "Solana source proof module URL",
+    "sourceBrowserProver",
+    "source_browser_prover",
+    "browserSourceProver",
+    "browser_source_prover",
+    "solanaSourceBrowserProver",
+    "solana_source_browser_prover",
+  );
+
+export const readSccpSolanaSourceProverModuleHash = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpSolanaBrowserProverModuleHashFromManifest(
+    manifest,
+    "Solana source proof module hash",
+    "sourceBrowserProver",
+    "source_browser_prover",
+    "browserSourceProver",
+    "browser_source_prover",
+    "solanaSourceBrowserProver",
+    "solana_source_browser_prover",
+  );
+
+export const readSccpSolanaSourceProverSidecarHash = (
+  manifest: Record<string, unknown> | null | undefined,
+): string =>
+  readSccpSolanaBrowserProverSidecarHashFromManifest(
+    manifest,
+    "Solana source proof sidecar hash",
     "sourceBrowserProver",
     "source_browser_prover",
     "browserSourceProver",
@@ -2519,6 +3302,10 @@ export const readSccpSolanaProofMaterial = (
       solanaVerifierAddress: normalizeSolanaAddress(
         readSccpSolanaVerifierAddress(manifestForRead),
         "Solana verifier program address",
+      ),
+      nativeVerifierProgramAddress: normalizeSolanaAddress(
+        readSccpSolanaNativeVerifierAddress(manifestForRead),
+        "Solana native recursive verifier program address",
       ),
       verifierCodeHashHex: normalizeHex32(
         verifierCodeHash,
@@ -2668,6 +3455,118 @@ const readSccpBscBrowserProverModuleUrlFromManifest = (
   const prover = readFirstRecord(manifestForRead, ...keys);
   return readFirstString(prover, "moduleUrl", "module_url", "url", "href");
 };
+
+const readConsistentSolanaBrowserProverValueFromManifest = ({
+  manifest,
+  label,
+  proverKeys,
+  valueKeys,
+  normalize,
+}: {
+  manifest: Record<string, unknown> | null | undefined;
+  label: string;
+  proverKeys: string[];
+  valueKeys: string[];
+  normalize: (value: string) => string;
+}): string => {
+  const manifestForRead = cloneSccpRouteManifestForRead(manifest);
+  if (!manifestForRead) {
+    return "";
+  }
+  const proverRecords = proverKeys
+    .filter((key) => Object.prototype.hasOwnProperty.call(manifestForRead, key))
+    .map((key) => {
+      const record = readRecord(manifestForRead, key);
+      if (!record) {
+        throw new Error(`${label} record alias ${key} must be an object.`);
+      }
+      return { key, record };
+    });
+  let selected = "";
+  let selectedPath = "";
+  const recordsWithoutValue: string[] = [];
+  for (const { key: proverKey, record } of proverRecords) {
+    const presentValueKeys = valueKeys.filter((valueKey) =>
+      Object.prototype.hasOwnProperty.call(record, valueKey),
+    );
+    if (presentValueKeys.length === 0) {
+      recordsWithoutValue.push(proverKey);
+      continue;
+    }
+    for (const valueKey of presentValueKeys) {
+      const raw = record[valueKey];
+      if (typeof raw !== "string" || !raw.trim()) {
+        throw new Error(
+          `${label} alias ${proverKey}.${valueKey} must be a non-empty string.`,
+        );
+      }
+      const normalized = normalize(raw);
+      const valuePath = `${proverKey}.${valueKey}`;
+      if (!selected) {
+        selected = normalized;
+        selectedPath = valuePath;
+        continue;
+      }
+      if (selected !== normalized) {
+        throw new Error(
+          `${label} aliases disagree: ${selectedPath}=${selected} but ${valuePath}=${normalized}.`,
+        );
+      }
+    }
+  }
+  if (selected && recordsWithoutValue.length > 0) {
+    throw new Error(
+      `${label} must be present in every configured prover record alias; missing from ${recordsWithoutValue.join(", ")}.`,
+    );
+  }
+  return selected;
+};
+
+const readSccpSolanaBrowserProverModuleUrlFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+  label: string,
+  ...proverKeys: string[]
+): string =>
+  readConsistentSolanaBrowserProverValueFromManifest({
+    manifest,
+    label,
+    proverKeys,
+    valueKeys: ["moduleUrl", "module_url", "url", "href"],
+    normalize: (value) =>
+      normalizeSccpPackageOrRemoteModuleUrl(value, label) ?? "",
+  });
+
+const readSccpSolanaBrowserProverModuleHashFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+  label: string,
+  ...proverKeys: string[]
+): string =>
+  readConsistentSolanaBrowserProverValueFromManifest({
+    manifest,
+    label,
+    proverKeys,
+    valueKeys: [
+      "moduleHash",
+      "module_hash",
+      "sha256",
+      "sha256Hash",
+      "sha256_hash",
+    ],
+    normalize: (value) => normalizeNonZeroHex32Loose(value, label),
+  });
+
+const readSccpSolanaBrowserProverSidecarHashFromManifest = (
+  manifest: Record<string, unknown> | null | undefined,
+  label: string,
+  ...proverKeys: string[]
+): string =>
+  readConsistentSolanaBrowserProverValueFromManifest({
+    manifest,
+    label,
+    proverKeys,
+    valueKeys: ["manifestHash", "manifest_hash", "sidecarHash", "sidecar_hash"],
+    normalize: (value) => normalizeNonZeroHex32Loose(value, label),
+  });
 
 export const readSccpBscDestinationProverModuleUrl = (
   manifest: Record<string, unknown> | null | undefined,
@@ -3544,22 +4443,17 @@ export const buildTairaXorSolanaBurnTransactionRequest = (input: {
   const amountBaseUnits = bridgeDecimalToTairaBaseUnits(
     normalizeBridgeAmount(input.amountDecimal),
   );
-  const nonce = String(input.nonce ?? "").trim();
-  if (!nonce) {
-    throw new Error("Solana burn nonce is required.");
-  }
+  const nonce = normalizeSolanaSourceBurnNonce(input.nonce);
   const recipientBytes = utf8TextEncoder.encode(tairaRecipient);
   if (recipientBytes.length > 128) {
     throw new Error("TAIRA recipient is too long for Solana burn_to_taira.");
   }
-  const nonceBytes = utf8TextEncoder.encode(nonce);
-  if (nonceBytes.length > 64) {
-    throw new Error("Solana burn nonce is too long.");
-  }
+  const nonceBytes = u64LeBytesFromDecimalText(nonce, "Solana burn nonce");
   const accounts = readSccpSolanaSourceBurnInstructionAccounts(
     manifest,
     ownerAddress,
     sourceTokenAddress,
+    nonce,
   );
   if (accounts.length === 0) {
     throw new Error("The Solana source burn instruction accounts are missing.");
@@ -3586,6 +4480,163 @@ export const buildTairaXorSolanaBurnTransactionRequest = (input: {
     amountBaseUnits,
     tairaRecipient,
     nonce,
+  };
+};
+
+const normalizeSccpTransferNonce = (
+  value: string | number | bigint,
+  label: string,
+): string => {
+  let parsed: bigint;
+  if (typeof value === "bigint") {
+    parsed = value;
+  } else if (typeof value === "number") {
+    if (!Number.isSafeInteger(value)) {
+      throw new Error(`${label} must be a safe non-negative integer.`);
+    }
+    parsed = BigInt(value);
+  } else {
+    const text = value.trim();
+    if (!/^(?:0|[1-9]\d*)$/u.test(text)) {
+      throw new Error(`${label} must be an unsigned integer.`);
+    }
+    parsed = BigInt(text);
+  }
+  if (parsed < 0n || parsed > (1n << 64n) - 1n) {
+    throw new Error(`${label} must fit in an unsigned 64-bit integer.`);
+  }
+  return parsed.toString();
+};
+
+export const buildTairaXorSolanaSccpRecordDescriptor = (input: {
+  chainId?: string;
+  networkPrefix?: number;
+  tairaSender: string;
+  solanaRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+  expectedMessageId?: string;
+  expectedCanonicalPayloadHex?: string;
+}): TairaXorSolanaSccpRecordDescriptor => {
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const recipient = normalizeSolanaAddress(
+    input.solanaRecipient,
+    "Solana recipient",
+  );
+  const amount = bridgeDecimalToTairaBaseUnits(
+    normalizeBridgeAmount(input.amountDecimal),
+  );
+  if (amount === "0") {
+    throw new Error("Amount must be greater than zero.");
+  }
+  const payload: SccpTransferPayload = {
+    version: 1,
+    source_domain: SCCP_SORA_DOMAIN,
+    dest_domain: SCCP_SOLANA_DOMAIN,
+    nonce: normalizeSccpTransferNonce(input.nonce, "Solana SCCP nonce"),
+    asset_home_domain: SCCP_SORA_DOMAIN,
+    asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+    asset_id: SCCP_XOR_ASSET_KEY,
+    amount,
+    sender_codec: SCCP_CODEC_TEXT_UTF8,
+    sender: tairaSender,
+    recipient_codec: SCCP_CODEC_SOLANA_BASE58,
+    recipient,
+    route_id_codec: SCCP_CODEC_TEXT_UTF8,
+    route_id: SCCP_SOLANA_XOR_ROUTE_ID,
+  };
+  const canonicalPayloadBytes = canonicalSccpTransferPayloadBytes(payload);
+  const canonicalPayloadHex = bytesToLowerHex(canonicalPayloadBytes);
+  const messageId = sccpTransferMessageId(payload);
+  if (
+    input.expectedMessageId &&
+    normalizeHex32(input.expectedMessageId, "expectedMessageId") !== messageId
+  ) {
+    throw new Error(
+      "expectedMessageId must match the canonical TAIRA XOR Solana message id.",
+    );
+  }
+  if (
+    input.expectedCanonicalPayloadHex &&
+    input.expectedCanonicalPayloadHex.trim().toLowerCase() !==
+      canonicalPayloadHex
+  ) {
+    throw new Error(
+      "expectedCanonicalPayloadHex must match the canonical TAIRA XOR Solana payload bytes.",
+    );
+  }
+  return {
+    version: 1,
+    kind: "TairaXorSccpRecordDescriptor",
+    execution_kind: "ivm_proved_record_sccp_message_v1",
+    chain_id: input.chainId ?? TAIRA_CHAIN_ID,
+    network_prefix: input.networkPrefix ?? TAIRA_NETWORK_PREFIX,
+    route_id: SCCP_SOLANA_XOR_ROUTE_ID,
+    asset_key: SCCP_XOR_ASSET_KEY,
+    message_kind: "Transfer",
+    source_domain: SCCP_SORA_DOMAIN,
+    dest_domain: SCCP_SOLANA_DOMAIN,
+    message_id: messageId,
+    canonical_payload_hex: canonicalPayloadHex,
+    payload,
+    record_instruction: {
+      kind: "RecordSccpMessage",
+      payload_bytes_hex: canonicalPayloadHex,
+    },
+    execution_requirements: {
+      executable: "IvmProved",
+      overlay_instruction: "RecordSccpMessage",
+      settlement_instruction: "Burn<Numeric, Asset>",
+      settlement_asset_selector: "nexus.fees.fee_asset_id",
+      settlement_asset_key: SCCP_XOR_ASSET_KEY,
+      settlement_account_binding: "burn.destination.account == payload.sender",
+      settlement_amount_binding:
+        "sum(whole-unit burns) >= sum(recorded amounts) per sender",
+      proof_gate: "sccp_recording_proof_verified",
+      normal_transaction_supported: false,
+    },
+    canonicalPayloadBytes,
+  };
+};
+
+export const buildTairaXorSolanaOutboundPreview = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  solanaRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+}): TairaXorOutboundPreview => {
+  const bridgeAddress = readSccpSolanaProgramAddress(input.manifest);
+  if (!bridgeAddress) {
+    throw new Error("The Solana bridge deployment address is missing.");
+  }
+  normalizeSolanaAddress(bridgeAddress, "Solana bridge deployment address");
+  const recordDescriptor = buildTairaXorSolanaSccpRecordDescriptor({
+    chainId: TAIRA_CHAIN_ID,
+    networkPrefix: TAIRA_NETWORK_PREFIX,
+    tairaSender: input.tairaSender,
+    solanaRecipient: input.solanaRecipient,
+    amountDecimal: input.amountDecimal,
+    nonce: input.nonce,
+  });
+  const payload = recordDescriptor.payload as unknown as Record<
+    string,
+    unknown
+  >;
+  const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: recordDescriptor.payload,
+  });
+  return {
+    payload,
+    canonicalPayloadHex: recordDescriptor.canonical_payload_hex,
+    recordDescriptor,
+    messageId: recordDescriptor.message_id,
+    payloadHash: sccpPayloadHash(canonicalPayloadEnvelopeBytes),
+    contractPayloadHash: sccpPayloadHash(
+      recordDescriptor.canonicalPayloadBytes,
+    ),
+    amountBaseUnits: String(recordDescriptor.payload.amount),
   };
 };
 
@@ -3869,6 +4920,69 @@ export const buildTairaXorTonOutboundBurnRecordRequest = (input: {
     outbound,
     material,
     zkIvmRequest: patchTairaXorTonBurnRecordEnvelopePayload(zkIvmRequest),
+  };
+};
+
+export const buildTairaXorSolanaOutboundBurnRecordRequest = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  tairaSender: string;
+  solanaRecipient: string;
+  amountDecimal: string;
+  nonce: string | number | bigint;
+  authority?: string;
+}): TairaXorOutboundBurnRecordRequest => {
+  const materialResult = readSccpTairaBurnRecordMaterialResult(input.manifest);
+  const material = materialResult.material;
+  if (!material) {
+    throw new Error(
+      materialResult.reason ??
+        "The TAIRA burn-record ZK contract material is missing.",
+    );
+  }
+  const outbound = buildTairaXorSolanaOutboundPreview(input);
+  const descriptor =
+    outbound.recordDescriptor as TairaXorSolanaSccpRecordDescriptor;
+  const tairaSender = normalizeTairaAccountId(input.tairaSender);
+  const authority = input.authority
+    ? normalizeTairaAccountId(input.authority)
+    : tairaSender;
+  const recordInstructionHex = bytesToLowerHex(
+    buildRecordSccpMessageInstructionBytes(descriptor.canonicalPayloadBytes),
+  );
+  const contractPayload = {
+    sender: tairaSender,
+    settlement_asset: material.settlementAssetDefinitionId,
+    amount: outbound.amountBaseUnits,
+    record_instruction: recordInstructionHex,
+  };
+  const contract: TairaXorSolanaSccpBurnRecordContractPayload = {
+    version: 1,
+    entrypoint: "burn_and_record",
+    descriptor,
+    payload: contractPayload,
+    record_instruction_hex: recordInstructionHex,
+  };
+  const zkIvmRequest: TairaXorSolanaSccpBurnRecordZkIvmRequest = {
+    version: 1,
+    route_id: SCCP_SOLANA_XOR_ROUTE_ID,
+    asset_key: SCCP_XOR_ASSET_KEY,
+    descriptor,
+    contract,
+    request: {
+      vkRef: material.vkRef,
+      authority,
+      metadata: {
+        gas_limit: material.gasLimit ?? 2_000_000,
+        contract_entrypoint: "burn_and_record",
+        contract_payload: contractPayload,
+      },
+      bytecode: material.contractArtifactB64,
+    },
+  };
+  return {
+    outbound,
+    material,
+    zkIvmRequest,
   };
 };
 
@@ -8471,13 +9585,10 @@ export const buildTairaXorSolanaMessageProofJobQueryMaterial = (input: {
       "The Solana SCCP verifier rollout proof material is incomplete.",
     );
   }
-  if (
-    readSccpSolanaVerifierInstructionAccounts(
-      manifest,
-      proofMaterial.solanaVerifierAddress,
-    ).length === 0
-  ) {
-    throw new Error("The Solana verifier instruction accounts are missing.");
+  if (!hasSccpSolanaVerifierMintInstructionAccountTemplate(manifest)) {
+    throw new Error(
+      "The Solana verifier mint instruction accounts are missing.",
+    );
   }
 
   const commitment = requireRecord(
@@ -8521,10 +9632,333 @@ export const buildTairaXorSolanaMessageProofJobQueryMaterial = (input: {
   return {};
 };
 
+export const buildSccpSolanaSettlementProofContextHash = (input: {
+  statementHash: string;
+  destinationBindingHash: string;
+  messageId: string;
+  tokenMintAddress: string;
+  destinationTokenAddress: string;
+  ownerAddress: string;
+  amountBaseUnits: string;
+}): string => {
+  const contextBytes = concatBytes(
+    new TextEncoder().encode(SCCP_SOLANA_SETTLEMENT_CONTEXT_PREFIX),
+    solanaHex32Bytes(input.statementHash, "Solana statement hash"),
+    solanaHex32Bytes(
+      input.destinationBindingHash,
+      "Solana destination binding hash",
+    ),
+    solanaHex32Bytes(input.messageId, "Solana SCCP message id"),
+    new PublicKey(
+      normalizeSolanaAddress(input.tokenMintAddress, "Solana token mint"),
+    ).toBytes(),
+    new PublicKey(
+      normalizeSolanaAddress(
+        input.destinationTokenAddress,
+        "Solana destination token account",
+      ),
+    ).toBytes(),
+    new PublicKey(
+      normalizeSolanaAddress(input.ownerAddress, "Solana settlement owner"),
+    ).toBytes(),
+    u64LeBytesFromDecimalText(
+      input.amountBaseUnits,
+      "Solana settlement amount",
+    ),
+  );
+  return bytesToLowerHex(sha256(contextBytes));
+};
+
+export const buildTairaXorSolanaFinalizeProofBinding = (input: {
+  manifest: Record<string, unknown> | null | undefined;
+  job: Record<string, unknown>;
+  messageId: string;
+  ownerAddress: string;
+  destinationTokenAddress: string;
+  solanaRecipient: string;
+  amountDecimal: string;
+  solanaNetwork?: unknown;
+}): {
+  manifest: Record<string, unknown>;
+  witness: Record<string, unknown>;
+  publicInputs: Record<string, unknown>;
+  bundleBytes: Uint8Array;
+  statementHash: string;
+  destinationBindingHash: string;
+  proofContextHash: string;
+  proofContext: {
+    statementHash: string;
+    destinationBindingHash: string;
+  };
+  destinationRequest: {
+    routeId: string;
+    assetKey: string;
+    direction: "taira-to-solana";
+    solanaNetwork: string;
+    solanaGenesisHash: string;
+    backend: string;
+    messageId: string;
+    payloadHash: string;
+    destinationBindingHash: string;
+    statementHash: string;
+    proofContextHash: string;
+    ownerAddress: string;
+    tokenMintAddress: string;
+    destinationTokenAddress: string;
+    verifierProgramAddress: string;
+    verifierStateAddress: string;
+    messageReceiptAddress: string;
+    amountBaseUnits: string;
+  };
+} => {
+  const manifest = cloneSccpJsonRouteManifest(
+    requireRecord(input.manifest, "SCCP Solana manifest"),
+  );
+  const job = requireRecord(input.job, "SCCP proof job");
+  const solanaNetwork = input.solanaNetwork ?? SCCP_SOLANA_NETWORK.key;
+  const proofMaterial = readSccpSolanaProofMaterial(manifest, solanaNetwork);
+  if (!proofMaterial) {
+    throw new Error(
+      "The Solana SCCP verifier rollout proof material is incomplete.",
+    );
+  }
+  const ownerAddress = normalizeSolanaAddress(
+    input.ownerAddress,
+    "Solana settlement owner",
+  );
+  const solanaRecipient = normalizeSolanaAddress(
+    input.solanaRecipient,
+    "Solana settlement recipient",
+  );
+  if (ownerAddress !== solanaRecipient) {
+    throw new Error(
+      "The Solana settlement recipient must be the connected wallet that approves the mint transaction.",
+    );
+  }
+  const destinationTokenAddress = normalizeSolanaAddress(
+    input.destinationTokenAddress,
+    "Solana destination token account",
+  );
+  const tokenMintAddress = readSccpSolanaTokenAddress(manifest);
+  const verifierProgramAddress = readSccpSolanaVerifierAddress(manifest);
+  const verifierStateAddress = readSccpSolanaVerifierStateAddress(manifest);
+  if (!tokenMintAddress || !verifierProgramAddress || !verifierStateAddress) {
+    throw new Error(
+      "The Solana token mint, verifier program, and verifier state are required for destination proof binding.",
+    );
+  }
+  if (proofMaterial.solanaVerifierAddress !== verifierProgramAddress) {
+    throw new Error(
+      "The Solana destination proof material does not match the verifier program.",
+    );
+  }
+  const amountBaseUnits = bridgeDecimalToTairaBaseUnits(input.amountDecimal);
+  u64LeBytesFromDecimalText(amountBaseUnits, "Solana settlement amount");
+  const publicInputs = requireRecord(
+    job.publicInputs ?? job.public_inputs,
+    "SCCP job publicInputs",
+  );
+  const messageId = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["messageId", "message_id"],
+      "publicInputs.messageId",
+      (value) => normalizeHex32(value, "publicInputs.messageId"),
+    ),
+    "publicInputs.messageId",
+  );
+  if (messageId !== normalizeHex32(input.messageId, "messageId")) {
+    throw new Error(
+      "SCCP proof job message id does not match this bridge request.",
+    );
+  }
+  if (
+    readConsistentAliasInteger(
+      publicInputs,
+      ["targetDomain", "target_domain"],
+      "SCCP proof job public inputs targetDomain",
+    ) !== SCCP_SOLANA_DOMAIN
+  ) {
+    throw new Error("SCCP proof job must target Solana.");
+  }
+  requireOptionalDestinationBindingHashMatch(
+    publicInputs,
+    proofMaterial.expectedDestinationBindingHashHex,
+    "SCCP proof job public inputs",
+  );
+  const bundle = requireRecord(job.bundle, "SCCP proof job bundle");
+  const witness = requireRecord(
+    job.solanaDestinationWitness ?? job.solana_destination_witness,
+    "SCCP proof job Solana destination witness",
+  );
+  if (
+    readConsistentAliasString(
+      witness,
+      ["direction"],
+      "Solana destination witness direction",
+    ) !== "taira-to-solana"
+  ) {
+    throw new Error(
+      "Solana destination witness must be explicitly bound to taira-to-solana.",
+    );
+  }
+  if (
+    readConsistentAliasString(
+      witness,
+      ["solanaNetwork", "solana_network"],
+      "Solana destination witness network",
+    ) !== SCCP_SOLANA_NETWORK.networkId ||
+    readConsistentAliasString(
+      witness,
+      ["solanaGenesisHash", "solana_genesis_hash"],
+      "Solana destination witness genesis hash",
+    ) !== SOLANA_TESTNET_GENESIS_HASH ||
+    readConsistentAliasString(
+      witness,
+      ["proofBackend", "proof_backend"],
+      "Solana destination witness proof backend",
+    ) !== SCCP_SOLANA_DESTINATION_PROOF_BACKEND
+  ) {
+    throw new Error(
+      "Solana destination witness must match the governed testnet destination proof profile.",
+    );
+  }
+  const platformValue = readSccpPlatformPayloadValue(job);
+  const submissionMetadata =
+    readRecord(job, "submissionPackage") ??
+    readRecord(job, "submission_package");
+  const statementHash = normalizeHex32(
+    readFirstString(platformValue, "statementHash", "statement_hash") ||
+      readFirstString(submissionMetadata, "statementHash", "statement_hash"),
+    "Solana proof job statement hash",
+  );
+  const destinationBindingHash =
+    proofMaterial.expectedDestinationBindingHashHex;
+  const payloadHash = normalizeHex32(
+    readConsistentAliasString(
+      publicInputs,
+      ["payloadHash", "payload_hash"],
+      "publicInputs.payloadHash",
+      (value) => normalizeHex32(value, "publicInputs.payloadHash"),
+    ),
+    "publicInputs.payloadHash",
+  );
+  const proofContextHash = buildSccpSolanaSettlementProofContextHash({
+    statementHash,
+    destinationBindingHash,
+    messageId,
+    tokenMintAddress,
+    destinationTokenAddress,
+    ownerAddress,
+    amountBaseUnits,
+  });
+  const messageReceiptAddress = deriveSccpSolanaMessageReceiptAddress({
+    verifierProgramAddress,
+    verifierStateAddress,
+    messageId,
+  });
+  return {
+    manifest,
+    witness,
+    publicInputs,
+    bundleBytes: canonicalSccpMessageProofBundleBytes(bundle),
+    statementHash,
+    destinationBindingHash,
+    proofContextHash,
+    proofContext: { statementHash, destinationBindingHash },
+    destinationRequest: {
+      routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+      assetKey: SCCP_XOR_ASSET_KEY,
+      direction: "taira-to-solana",
+      solanaNetwork: SCCP_SOLANA_NETWORK.networkId,
+      solanaGenesisHash: SOLANA_TESTNET_GENESIS_HASH,
+      backend: SCCP_SOLANA_DESTINATION_PROOF_BACKEND,
+      messageId,
+      payloadHash,
+      destinationBindingHash,
+      statementHash,
+      proofContextHash,
+      ownerAddress,
+      tokenMintAddress: normalizeSolanaAddress(
+        tokenMintAddress,
+        "Solana token mint",
+      ),
+      destinationTokenAddress,
+      verifierProgramAddress: normalizeSolanaAddress(
+        verifierProgramAddress,
+        "Solana verifier program address",
+      ),
+      verifierStateAddress: normalizeSolanaAddress(
+        verifierStateAddress,
+        "Solana verifier state address",
+      ),
+      messageReceiptAddress,
+      amountBaseUnits,
+    },
+  };
+};
+
+const parseSolanaBorshInstructionEnvelope = (
+  value: string,
+): { entrypoint: string; args: Uint8Array[] } => {
+  const bytes = hexDataToBytes(value, "Solana verifier instruction data");
+  let offset = 0;
+  const readVec = (label: string): Uint8Array => {
+    if (offset + 4 > bytes.length) {
+      throw new Error(`Solana verifier instruction ${label} is truncated.`);
+    }
+    const length =
+      bytes[offset] |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
+    offset += 4;
+    if (length < 0 || offset + length > bytes.length) {
+      throw new Error(
+        `Solana verifier instruction ${label} has an invalid length.`,
+      );
+    }
+    const out = bytes.slice(offset, offset + length);
+    offset += length;
+    return out;
+  };
+  const entrypointBytes = readVec("entrypoint");
+  let entrypoint = "";
+  try {
+    entrypoint = new TextDecoder("utf-8", { fatal: true }).decode(
+      entrypointBytes,
+    );
+  } catch (_error) {
+    throw new Error("Solana verifier instruction entrypoint must be UTF-8.");
+  }
+  const args: Uint8Array[] = [];
+  while (offset < bytes.length) {
+    if (args.length >= 16) {
+      throw new Error("Solana verifier instruction has too many arguments.");
+    }
+    args.push(readVec(`argument ${args.length + 1}`));
+  }
+  return { entrypoint, args };
+};
+
+const requireSolanaInstructionArgumentBytes = (
+  actual: Uint8Array,
+  expected: Uint8Array,
+  label: string,
+): void => {
+  if (!bytesEqual(actual, expected)) {
+    throw new Error(
+      `Browser-generated Solana instruction ${label} does not match the bound settlement request.`,
+    );
+  }
+};
+
 export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
   manifest: Record<string, unknown> | null | undefined;
   job: Record<string, unknown>;
+  proofPackage: Record<string, unknown>;
   ownerAddress: string;
+  destinationTokenAddress: string;
   tairaSender: string;
   solanaRecipient: string;
   amountDecimal: string;
@@ -8558,10 +9992,20 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
   }
   const tairaSender = normalizeTairaAccountId(input.tairaSender);
   const expectedRecipient = normalizeSolanaAddress(input.solanaRecipient);
+  if (expectedRecipient !== ownerAddress) {
+    throw new Error(
+      "The Solana settlement recipient must be the connected wallet that approves the mint transaction.",
+    );
+  }
+  const destinationTokenAddress = normalizeSolanaAddress(
+    input.destinationTokenAddress,
+    "Solana destination token account",
+  );
   const expectedMessageId = input.messageId
     ? normalizeHex32(input.messageId, "messageId")
     : "";
   const amountBaseUnits = bridgeDecimalToTairaBaseUnits(input.amountDecimal);
+  u64LeBytesFromDecimalText(amountBaseUnits, "Solana settlement amount");
   const publicInputs = requireRecord(
     job.publicInputs ?? job.public_inputs,
     "SCCP job publicInputs",
@@ -8749,11 +10193,134 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
     );
   }
 
-  const submissionPackage =
-    readRecord(job, "submissionPackage") ??
-    readRecord(job, "submission_package");
+  const tokenMintAddress = readSccpSolanaTokenAddress(manifest);
+  const verifierStateAddress = readSccpSolanaVerifierStateAddress(manifest);
+  if (!tokenMintAddress || !verifierStateAddress) {
+    throw new Error(
+      "The Solana token mint and verifier state are required for settlement proof binding.",
+    );
+  }
+  const expectedPlatformValue = readSccpPlatformPayloadValue(job);
+  const expectedStatementHash = normalizeHex32(
+    readFirstString(expectedPlatformValue, "statementHash", "statement_hash") ||
+      readFirstString(
+        readRecord(job, "submissionPackage") ??
+          readRecord(job, "submission_package"),
+        "statementHash",
+        "statement_hash",
+      ),
+    "Solana proof job statement hash",
+  );
+  const expectedProofContextHash = buildSccpSolanaSettlementProofContextHash({
+    statementHash: expectedStatementHash,
+    destinationBindingHash: proofMaterial.expectedDestinationBindingHashHex,
+    messageId: publicInputMessageId,
+    tokenMintAddress,
+    destinationTokenAddress,
+    ownerAddress,
+    amountBaseUnits,
+  });
+  const expectedMessageReceiptAddress = deriveSccpSolanaMessageReceiptAddress({
+    verifierProgramAddress: normalizedVerifierAddress,
+    verifierStateAddress,
+    messageId: publicInputMessageId,
+  });
+
+  const proofPackage = requireRecord(
+    input.proofPackage,
+    "browser-generated Solana SCCP proof package",
+  );
+  const browserProofRequest = requireRecord(
+    proofPackage.request,
+    "browser-generated Solana SCCP proof request",
+  );
+  for (const [keys, expected, label] of [
+    [["routeId", "route_id"], SCCP_SOLANA_XOR_ROUTE_ID, "route id"],
+    [["assetKey", "asset_key"], SCCP_XOR_ASSET_KEY, "asset key"],
+    [["direction"], "taira-to-solana", "direction"],
+    [
+      ["solanaNetwork", "solana_network"],
+      SCCP_SOLANA_NETWORK.networkId,
+      "network",
+    ],
+    [
+      ["solanaGenesisHash", "solana_genesis_hash"],
+      SOLANA_TESTNET_GENESIS_HASH,
+      "genesis hash",
+    ],
+    [
+      ["backend", "proofBackend", "proof_backend"],
+      SCCP_SOLANA_DESTINATION_PROOF_BACKEND,
+      "backend",
+    ],
+    [["messageId", "message_id"], publicInputMessageId, "message id"],
+    [["payloadHash", "payload_hash"], payloadHash, "payload hash"],
+    [
+      ["destinationBindingHash", "destination_binding_hash"],
+      proofMaterial.expectedDestinationBindingHashHex,
+      "destination binding hash",
+    ],
+    [
+      ["statementHash", "statement_hash"],
+      expectedStatementHash,
+      "statement hash",
+    ],
+    [
+      ["proofContextHash", "proof_context_hash"],
+      expectedProofContextHash,
+      "proof context hash",
+    ],
+    [
+      ["ownerAddress", "owner_address", "payerAddress", "payer_address"],
+      ownerAddress,
+      "settlement owner",
+    ],
+    [
+      ["tokenMintAddress", "token_mint_address"],
+      normalizeSolanaAddress(tokenMintAddress, "Solana token mint"),
+      "token mint",
+    ],
+    [
+      ["destinationTokenAddress", "destination_token_address"],
+      destinationTokenAddress,
+      "destination token account",
+    ],
+    [
+      ["verifierProgramAddress", "verifier_program_address"],
+      normalizedVerifierAddress,
+      "verifier program",
+    ],
+    [
+      ["verifierStateAddress", "verifier_state_address"],
+      normalizeSolanaAddress(
+        verifierStateAddress,
+        "Solana verifier state address",
+      ),
+      "verifier state",
+    ],
+    [
+      ["messageReceiptAddress", "message_receipt_address"],
+      expectedMessageReceiptAddress,
+      "message receipt",
+    ],
+    [["amountBaseUnits", "amount_base_units"], amountBaseUnits, "amount"],
+  ] as const) {
+    const observed = readConsistentAliasString(
+      browserProofRequest,
+      [...keys],
+      `browser-generated Solana proof request ${label}`,
+    );
+    if (observed !== expected) {
+      throw new Error(
+        `Browser-generated Solana proof request ${label} does not match this testnet bridge request.`,
+      );
+    }
+  }
+  const submissionPackage = readRecord(proofPackage, "submission");
   if (!submissionPackage) {
-    throw new Error("Solana SCCP proof job is missing a submission package.");
+    throw new Error(
+      "A browser-generated Solana SCCP proof package submission is required; Torii submission bytes are not accepted.",
+    );
   }
   const envelopeEncoding = readFirstString(
     submissionPackage,
@@ -8761,7 +10328,9 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
     "envelope_encoding",
   );
   if (envelopeEncoding !== SCCP_SOLANA_BORSH_INSTRUCTION_V1) {
-    throw new Error("Solana proof job must use borsh_instruction_v1.");
+    throw new Error(
+      "Browser-generated Solana proof must use borsh_instruction_v1.",
+    );
   }
   const submissionKind = readFirstString(
     submissionPackage,
@@ -8770,7 +10339,7 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
   );
   if (submissionKind !== "program_instruction") {
     throw new Error(
-      "Solana proof job must carry a program_instruction submission.",
+      "Browser-generated Solana proof must carry a program_instruction submission.",
     );
   }
   const verifierEntrypoint = readFirstString(
@@ -8780,87 +10349,105 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
   );
   if (verifierEntrypoint !== SCCP_SOLANA_SUBMIT_MESSAGE_PROOF_ENTRYPOINT_V1) {
     throw new Error(
-      "Solana proof job verifier entrypoint is not submit_sccp_message_proof.",
+      "Browser-generated Solana proof verifier entrypoint is not submit_sccp_message_proof.",
     );
   }
-  const platformVariant = readSccpPlatformPayloadVariant(job);
-  if (
-    !platformVariant ||
-    normalizePlatformPayloadKind(platformVariant.kind) !==
-      "solanaprograminstruction"
-  ) {
-    throw new Error(
-      "SCCP proof job must carry a Solana program instruction payload.",
-    );
+  const submissionPublicInputs = requireRecord(
+    submissionPackage.publicInputs ?? submissionPackage.public_inputs,
+    "browser-generated Solana proof publicInputs",
+  );
+  for (const [keys, expected, label] of [
+    [["messageId", "message_id"], publicInputMessageId, "message id"],
+    [["payloadHash", "payload_hash"], payloadHash, "payload hash"],
+    [
+      ["commitmentRoot", "commitment_root"],
+      normalizeHex32(
+        readConsistentAliasString(
+          publicInputs,
+          ["commitmentRoot", "commitment_root"],
+          "publicInputs.commitmentRoot",
+          (value) => normalizeHex32(value, "publicInputs.commitmentRoot"),
+        ),
+        "publicInputs.commitmentRoot",
+      ),
+      "commitment root",
+    ],
+  ] as const) {
+    if (
+      normalizeHex32(
+        readConsistentAliasString(
+          submissionPublicInputs,
+          [...keys],
+          `browser-generated Solana proof ${label}`,
+          (value) => normalizeHex32(value, label),
+        ),
+        label,
+      ) !== expected
+    ) {
+      throw new Error(
+        `Browser-generated Solana proof ${label} does not match the Torii proof job.`,
+      );
+    }
   }
-  const platformPayload = platformVariant.value;
-  const payloadDestinationBinding =
-    readRecord(platformPayload, "destinationBinding") ??
-    readRecord(platformPayload, "destination_binding");
-  const payloadBindingHash = readConsistentAliasString(
-    platformPayload,
-    ["destinationBindingHash", "destination_binding_hash"],
-    "Solana platform payload destination binding hash",
-    (value) =>
-      normalizeHex32(value, "Solana platform payload destination binding hash"),
-  );
-  const nestedBindingHash = readConsistentAliasString(
-    payloadDestinationBinding ?? {},
-    ["bindingHash", "binding_hash"],
-    "Solana platform payload destination binding hash",
-    (value) =>
-      normalizeHex32(value, "Solana platform payload destination binding hash"),
-  );
-  const effectiveBindingHash = payloadBindingHash || nestedBindingHash;
   if (
-    effectiveBindingHash &&
-    normalizeHex32(
-      effectiveBindingHash,
-      "Solana platform payload destination binding hash",
-    ) !== proofMaterial.expectedDestinationBindingHashHex
+    readConsistentAliasInteger(
+      submissionPublicInputs,
+      ["targetDomain", "target_domain"],
+      "browser-generated Solana proof targetDomain",
+    ) !== SCCP_SOLANA_DOMAIN
   ) {
-    throw new Error(
-      "Solana proof job destination binding does not match the route manifest.",
-    );
+    throw new Error("Browser-generated Solana proof must target Solana.");
   }
-  const nestedBindingKey = readConsistentAliasString(
-    payloadDestinationBinding ?? {},
-    ["key", "bindingKey", "binding_key"],
-    "Solana platform payload destination binding key",
-  );
-  const manifestBindingKey = readConsistentAliasString(
-    readFirstRecord(manifest, "destinationBinding", "destination_binding") ??
-      {},
-    ["key", "bindingKey", "binding_key"],
-    "Solana manifest destination binding key",
+  const submissionBindingHash = normalizeHex32(
+    readConsistentAliasString(
+      submissionPackage,
+      ["destinationBindingHash", "destination_binding_hash"],
+      "browser-generated Solana proof destination binding hash",
+      (value) => normalizeHex32(value, "destination binding hash"),
+    ),
+    "browser-generated Solana proof destination binding hash",
   );
   if (
-    nestedBindingKey &&
-    manifestBindingKey &&
-    nestedBindingKey !== manifestBindingKey
+    submissionBindingHash !== proofMaterial.expectedDestinationBindingHashHex
   ) {
     throw new Error(
-      "Solana proof job destination binding key does not match the route manifest.",
+      "Browser-generated Solana proof destination binding does not match the route manifest.",
     );
   }
   const statementHash = normalizeHex32(
-    readFirstString(platformPayload, "statementHash", "statement_hash") ||
-      readFirstString(submissionPackage, "statementHash", "statement_hash"),
-    "Solana proof job statement hash",
+    readFirstString(submissionPackage, "statementHash", "statement_hash"),
+    "browser-generated Solana proof statement hash",
   );
+  if (statementHash !== expectedStatementHash) {
+    throw new Error(
+      "Browser-generated Solana proof statement hash does not match the Torii proof job.",
+    );
+  }
+  if (
+    readConsistentAliasString(
+      browserProofRequest,
+      ["statementHash", "statement_hash"],
+      "browser-generated Solana proof request statement hash",
+      (value) => normalizeHex32(value, "proof request statement hash"),
+    ) !== statementHash
+  ) {
+    throw new Error(
+      "Browser-generated Solana proof request statement hash does not match the Torii proof job.",
+    );
+  }
   const proofContextHash = normalizeHex32(
     readFirstString(
-      platformPayload,
+      submissionPackage,
       "proofContextHash",
       "proof_context_hash",
-    ) ||
-      readFirstString(
-        submissionPackage,
-        "proofContextHash",
-        "proof_context_hash",
-      ),
-    "Solana proof job proof context hash",
+    ),
+    "browser-generated Solana proof context hash",
   );
+  if (proofContextHash !== expectedProofContextHash) {
+    throw new Error(
+      "Browser-generated Solana proof context does not match the exact settlement accounts and amount.",
+    );
+  }
   const instructionDataHex = normalizeHexData(
     readFirstString(
       submissionPackage,
@@ -8873,12 +10460,65 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
     ),
     "Solana verifier instruction data",
   );
-  const accounts = readSccpSolanaVerifierInstructionAccounts(
+  const envelope = parseSolanaBorshInstructionEnvelope(instructionDataHex);
+  if (envelope.entrypoint !== SCCP_SOLANA_SUBMIT_MESSAGE_PROOF_ENTRYPOINT_V1) {
+    throw new Error(
+      "Browser-generated Solana instruction entrypoint is not submit_sccp_message_proof.",
+    );
+  }
+  if (envelope.args.length !== 7) {
+    throw new Error(
+      "Browser-generated Solana instruction must carry the canonical seven settlement arguments.",
+    );
+  }
+  if (envelope.args[0].length === 0 || envelope.args[0].length > 64 * 1024) {
+    throw new Error(
+      "Browser-generated Solana instruction proof bytes are empty or exceed the on-chain limit.",
+    );
+  }
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[1],
+    canonicalSccpMessageTransparentPublicInputsBytes(publicInputs),
+    "public inputs",
+  );
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[2],
+    canonicalSccpMessageProofBundleBytes(bundle),
+    "message proof bundle",
+  );
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[3],
+    solanaHex32Bytes(statementHash, "Solana statement hash"),
+    "statement hash",
+  );
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[4],
+    solanaHex32Bytes(
+      proofMaterial.expectedDestinationBindingHashHex,
+      "Solana destination binding hash",
+    ),
+    "destination binding hash",
+  );
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[5],
+    solanaHex32Bytes(expectedProofContextHash, "Solana proof context hash"),
+    "proof context hash",
+  );
+  requireSolanaInstructionArgumentBytes(
+    envelope.args[6],
+    u64LeBytesFromDecimalText(amountBaseUnits, "Solana settlement amount"),
+    "amount",
+  );
+  const accounts = readSccpSolanaVerifierMintInstructionAccounts(
     manifest,
     ownerAddress,
+    destinationTokenAddress,
+    publicInputMessageId,
   );
   if (accounts.length === 0) {
-    throw new Error("The Solana verifier instruction accounts are missing.");
+    throw new Error(
+      "The Solana verifier mint instruction accounts are missing.",
+    );
   }
 
   return {
@@ -8895,6 +10535,7 @@ export const buildTairaXorSolanaFinalizeTransactionRequest = (input: {
     },
     amountBaseUnits,
     messageId: publicInputMessageId,
+    destinationTokenAddress,
     canonicalPayloadHex,
     statementHash,
     destinationBindingHash: proofMaterial.expectedDestinationBindingHashHex,
@@ -10766,7 +12407,7 @@ const requireSolanaToTairaSourceSettlement = (
     ["asset", "assetKey", "asset_key"],
     "Solana -> TAIRA settlement asset",
   );
-  if (assetKey && assetKey !== SCCP_XOR_ASSET_KEY) {
+  if (assetKey !== SCCP_XOR_ASSET_KEY) {
     throw new Error("Solana -> TAIRA settlement asset must be XOR.");
   }
   return settlement;
@@ -10880,6 +12521,1316 @@ const readSolanaToTairaBundleTransferPayload = (
   return normalizeSolanaToTairaBundleTransferPayload(payload.value);
 };
 
+const readPositiveU64LeDecimal = (bytes: Uint8Array, label: string): string => {
+  if (bytes.length !== 8) {
+    throw new Error(`${label} must be an eight-byte little-endian u64.`);
+  }
+  let value = 0n;
+  for (let index = bytes.length - 1; index >= 0; index -= 1) {
+    value = (value << 8n) | BigInt(bytes[index]);
+  }
+  if (value === 0n) {
+    throw new Error(`${label} must be greater than zero.`);
+  }
+  return value.toString();
+};
+
+const decodeSolanaSourceBurnInstructionVectors = (
+  data: string,
+): Uint8Array[] => {
+  const normalized = data.trim();
+  const decoded = base58Decode(normalized);
+  if (
+    !normalized ||
+    !decoded ||
+    decoded.length === 0 ||
+    base58Encode(decoded) !== normalized
+  ) {
+    throw new Error(
+      "Solana source burn instruction data must be canonical base58 bytes.",
+    );
+  }
+  const vectors: Uint8Array[] = [];
+  let offset = 0;
+  while (offset < decoded.length) {
+    if (offset + 4 > decoded.length) {
+      throw new Error(
+        "Solana source burn instruction has a truncated vector length.",
+      );
+    }
+    const length =
+      decoded[offset] |
+      (decoded[offset + 1] << 8) |
+      (decoded[offset + 2] << 16) |
+      (decoded[offset + 3] << 24);
+    offset += 4;
+    if (length < 0 || length > decoded.length - offset) {
+      throw new Error(
+        "Solana source burn instruction has a truncated vector value.",
+      );
+    }
+    vectors.push(decoded.slice(offset, offset + length));
+    offset += length;
+  }
+  if (vectors.length !== 4) {
+    throw new Error(
+      "Solana source burn instruction must contain exactly the entrypoint and three arguments.",
+    );
+  }
+  return vectors;
+};
+
+const readCanonicalUtf8 = (bytes: Uint8Array, label: string): string => {
+  let decoded = "";
+  try {
+    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (_error) {
+    throw new Error(`${label} must be canonical UTF-8.`);
+  }
+  if (!decoded || !bytesEqual(new TextEncoder().encode(decoded), bytes)) {
+    throw new Error(`${label} must be canonical UTF-8.`);
+  }
+  return decoded;
+};
+
+const readSolanaTransactionAccountKey = (
+  value: unknown,
+  label: string,
+): string => {
+  if (typeof value !== "string") {
+    throw new Error(`${label} must be a raw JSON public-key string.`);
+  }
+  const normalized = value.trim();
+  let publicKey: PublicKey;
+  try {
+    publicKey = new PublicKey(normalized);
+  } catch (_error) {
+    throw new Error(`${label} must be a canonical Solana public key.`);
+  }
+  if (publicKey.toBase58() !== normalized) {
+    throw new Error(`${label} must use canonical Base58 encoding.`);
+  }
+  const isZero = publicKey.toBytes().every((byte) => byte === 0);
+  if (isZero && normalized !== SCCP_SOLANA_SYSTEM_PROGRAM_ID) {
+    throw new Error(`${label} must not be the zero public key.`);
+  }
+  return normalized;
+};
+
+const requireSolanaTransactionAccountRole = (
+  input: {
+    accountKeys: string[];
+    numRequiredSignatures: number;
+    numReadonlySignedAccounts: number;
+    numReadonlyUnsignedAccounts: number;
+  },
+  accountAddress: string,
+  expected: { signer: boolean; writable: boolean },
+  label: string,
+): void => {
+  const index = input.accountKeys.indexOf(accountAddress);
+  if (index < 0) {
+    throw new Error(`${label} is missing from the transaction account keys.`);
+  }
+  const signer = index < input.numRequiredSignatures;
+  const writable = signer
+    ? index < input.numRequiredSignatures - input.numReadonlySignedAccounts
+    : index < input.accountKeys.length - input.numReadonlyUnsignedAccounts;
+  if (signer !== expected.signer || writable !== expected.writable) {
+    throw new Error(
+      `${label} has non-canonical signer or writable privileges.`,
+    );
+  }
+};
+
+const normalizeFinalizedSolanaSlot = (
+  value: unknown,
+  label: string,
+): string => {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^(?:0|[1-9]\d*)$/u.test(value.trim())
+        ? Number(value.trim())
+        : Number.NaN;
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+  return String(parsed);
+};
+
+const readExactSafeNonNegativeInteger = (
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+): number => {
+  const value = record[key];
+  if (!Number.isSafeInteger(value) || Number(value) < 0) {
+    throw new Error(`${label} must be a safe non-negative integer.`);
+  }
+  return Number(value);
+};
+
+const requireFinalizedSolanaStatus = (
+  value: unknown,
+  expectedSlot: string,
+  label: string,
+): void => {
+  const status = requireRecord(value, label);
+  if (status.err !== null) {
+    throw new Error(`${label} must prove a successful transaction.`);
+  }
+  const confirmationStatus = status.confirmationStatus;
+  if (confirmationStatus !== "finalized") {
+    throw new Error(`${label} must be finalized.`);
+  }
+  if (
+    normalizeFinalizedSolanaSlot(status.slot, `${label} slot`) !== expectedSlot
+  ) {
+    throw new Error(`${label} slot must match the finalized transaction slot.`);
+  }
+};
+
+const readCanonicalSolanaTokenBalance = (
+  entries: unknown,
+  accountIndex: number,
+  tokenMintAddress: string,
+  ownerAddress: string,
+  label: string,
+): bigint => {
+  if (!Array.isArray(entries)) {
+    throw new Error(`${label} must be an array.`);
+  }
+  const matches = entries.filter((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return false;
+    }
+    const record = entry as Record<string, unknown>;
+    return record.accountIndex === accountIndex;
+  });
+  if (matches.length !== 1) {
+    throw new Error(`${label} must contain exactly one source-token balance.`);
+  }
+  const record = matches[0] as Record<string, unknown>;
+  if (
+    record.mint !== tokenMintAddress ||
+    record.owner !== ownerAddress ||
+    record.programId !== SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID
+  ) {
+    throw new Error(
+      `${label} must bind the canonical mint, owner, and SPL Token program.`,
+    );
+  }
+  const amountRecord = requireRecord(
+    record.uiTokenAmount,
+    `${label} uiTokenAmount`,
+  );
+  const amount = readConsistentAliasString(
+    amountRecord,
+    ["amount"],
+    `${label} amount`,
+  );
+  if (!/^(?:0|[1-9]\d*)$/u.test(amount)) {
+    throw new Error(`${label} amount must be canonical base units.`);
+  }
+  if (amountRecord.decimals !== SCCP_TAIRA_XOR_DECIMALS) {
+    throw new Error(
+      `${label} decimals must match the canonical TairaXOR mint.`,
+    );
+  }
+  return BigInt(amount);
+};
+
+const requireSuccessfulSolanaSourceBurnEffects = (input: {
+  meta: Record<string, unknown>;
+  accountKeys: string[];
+  sourceTokenAddress: string;
+  tokenMintAddress: string;
+  ownerAddress: string;
+  amountBaseUnits: string;
+}): void => {
+  const sourceTokenIndex = input.accountKeys.indexOf(input.sourceTokenAddress);
+  const tokenMintIndex = input.accountKeys.indexOf(input.tokenMintAddress);
+  const ownerIndex = input.accountKeys.indexOf(input.ownerAddress);
+  const tokenProgramIndex = input.accountKeys.indexOf(
+    SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+  );
+  if (
+    sourceTokenIndex < 0 ||
+    tokenMintIndex < 0 ||
+    ownerIndex < 0 ||
+    tokenProgramIndex < 0
+  ) {
+    throw new Error("Solana source burn effect account indices are missing.");
+  }
+  const innerGroups = input.meta.innerInstructions;
+  if (!Array.isArray(innerGroups) || innerGroups.length !== 1) {
+    throw new Error(
+      "Solana source burn transaction must carry one canonical inner-instruction group.",
+    );
+  }
+  const innerGroup = requireRecord(
+    innerGroups[0],
+    "Solana source burn inner-instruction group",
+  );
+  if (innerGroup.index !== 0 || !Array.isArray(innerGroup.instructions)) {
+    throw new Error(
+      "Solana source burn inner instructions must belong to the burn instruction.",
+    );
+  }
+  const tokenInstructions = innerGroup.instructions
+    .map((value, index) =>
+      requireRecord(value, `Solana source burn inner instruction ${index + 1}`),
+    )
+    .filter((instruction) => instruction.programIdIndex === tokenProgramIndex);
+  if (tokenInstructions.length !== 1) {
+    throw new Error(
+      "Solana source burn transaction must carry exactly one SPL Token CPI.",
+    );
+  }
+  const burnInstruction = tokenInstructions[0];
+  if (
+    Object.prototype.hasOwnProperty.call(burnInstruction, "parsed") ||
+    Object.prototype.hasOwnProperty.call(burnInstruction, "programId") ||
+    !Array.isArray(burnInstruction.accounts) ||
+    burnInstruction.accounts.length !== 3 ||
+    burnInstruction.accounts.some(
+      (value) => !Number.isSafeInteger(value) || Number(value) < 0,
+    ) ||
+    burnInstruction.accounts[0] !== sourceTokenIndex ||
+    burnInstruction.accounts[1] !== tokenMintIndex ||
+    burnInstruction.accounts[2] !== ownerIndex
+  ) {
+    throw new Error(
+      "Solana source burn SPL Token CPI accounts are not canonical.",
+    );
+  }
+  const burnDataText = readConsistentAliasString(
+    burnInstruction,
+    ["data"],
+    "Solana source burn SPL Token CPI data",
+  );
+  const burnData = base58Decode(burnDataText);
+  if (
+    !burnData ||
+    burnData.length !== 9 ||
+    base58Encode(burnData) !== burnDataText ||
+    burnData[0] !== 8 ||
+    readPositiveU64LeDecimal(
+      burnData.slice(1),
+      "Solana source burn SPL Token CPI amount",
+    ) !== input.amountBaseUnits
+  ) {
+    throw new Error(
+      "Solana source burn transaction is missing the exact SPL Token burn CPI.",
+    );
+  }
+
+  const preBalance = readCanonicalSolanaTokenBalance(
+    input.meta.preTokenBalances,
+    sourceTokenIndex,
+    input.tokenMintAddress,
+    input.ownerAddress,
+    "Solana source burn pre-token balances",
+  );
+  const postBalance = readCanonicalSolanaTokenBalance(
+    input.meta.postTokenBalances,
+    sourceTokenIndex,
+    input.tokenMintAddress,
+    input.ownerAddress,
+    "Solana source burn post-token balances",
+  );
+  const amount = BigInt(input.amountBaseUnits);
+  if (preBalance < amount || preBalance - postBalance !== amount) {
+    throw new Error(
+      "Solana source burn token balance delta does not match the burn amount.",
+    );
+  }
+};
+
+const requireSuccessfulSolanaDestinationMintEffects = (input: {
+  meta: Record<string, unknown>;
+  accountKeys: string[];
+  tokenMintAddress: string;
+  destinationTokenAddress: string;
+  mintAuthorityAddress: string;
+  ownerAddress: string;
+  amountBaseUnits: string;
+}): void => {
+  const tokenMintIndex = input.accountKeys.indexOf(input.tokenMintAddress);
+  const destinationTokenIndex = input.accountKeys.indexOf(
+    input.destinationTokenAddress,
+  );
+  const mintAuthorityIndex = input.accountKeys.indexOf(
+    input.mintAuthorityAddress,
+  );
+  const tokenProgramIndex = input.accountKeys.indexOf(
+    SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+  );
+  if (
+    tokenMintIndex < 0 ||
+    destinationTokenIndex < 0 ||
+    mintAuthorityIndex < 0 ||
+    tokenProgramIndex < 0
+  ) {
+    throw new Error(
+      "Solana destination finalize effect account indices are missing.",
+    );
+  }
+
+  const innerGroups = input.meta.innerInstructions;
+  if (!Array.isArray(innerGroups) || innerGroups.length !== 1) {
+    throw new Error(
+      "Solana destination finalize transaction must carry one canonical inner-instruction group.",
+    );
+  }
+  const innerGroup = requireRecord(
+    innerGroups[0],
+    "Solana destination finalize inner-instruction group",
+  );
+  if (innerGroup.index !== 0 || !Array.isArray(innerGroup.instructions)) {
+    throw new Error(
+      "Solana destination finalize inner instructions must belong to the verifier instruction.",
+    );
+  }
+  const tokenInstructions = innerGroup.instructions
+    .map((value, index) =>
+      requireRecord(
+        value,
+        `Solana destination finalize inner instruction ${index + 1}`,
+      ),
+    )
+    .filter((instruction) => instruction.programIdIndex === tokenProgramIndex);
+  if (tokenInstructions.length !== 1) {
+    throw new Error(
+      "Solana destination finalize transaction must carry exactly one SPL Token CPI.",
+    );
+  }
+  const mintInstruction = tokenInstructions[0];
+  if (
+    Object.prototype.hasOwnProperty.call(mintInstruction, "parsed") ||
+    Object.prototype.hasOwnProperty.call(mintInstruction, "programId") ||
+    !Array.isArray(mintInstruction.accounts) ||
+    mintInstruction.accounts.length !== 3 ||
+    mintInstruction.accounts.some(
+      (value) => !Number.isSafeInteger(value) || Number(value) < 0,
+    ) ||
+    mintInstruction.accounts[0] !== tokenMintIndex ||
+    mintInstruction.accounts[1] !== destinationTokenIndex ||
+    mintInstruction.accounts[2] !== mintAuthorityIndex
+  ) {
+    throw new Error(
+      "Solana destination finalize SPL Token CPI accounts are not canonical.",
+    );
+  }
+  const mintDataText = readConsistentAliasString(
+    mintInstruction,
+    ["data"],
+    "Solana destination finalize SPL Token CPI data",
+  );
+  const mintData = base58Decode(mintDataText);
+  if (
+    !mintData ||
+    mintData.length !== 9 ||
+    base58Encode(mintData) !== mintDataText ||
+    mintData[0] !== 7 ||
+    readPositiveU64LeDecimal(
+      mintData.slice(1),
+      "Solana destination finalize SPL Token CPI amount",
+    ) !== input.amountBaseUnits
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction is missing the exact SPL Token mintTo CPI.",
+    );
+  }
+
+  if (
+    !Array.isArray(input.meta.preTokenBalances) ||
+    input.meta.preTokenBalances.length !== 1 ||
+    !Array.isArray(input.meta.postTokenBalances) ||
+    input.meta.postTokenBalances.length !== 1
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction must report exactly one SPL token balance before and after settlement.",
+    );
+  }
+  const preBalance = readCanonicalSolanaTokenBalance(
+    input.meta.preTokenBalances,
+    destinationTokenIndex,
+    input.tokenMintAddress,
+    input.ownerAddress,
+    "Solana destination finalize pre-token balances",
+  );
+  const postBalance = readCanonicalSolanaTokenBalance(
+    input.meta.postTokenBalances,
+    destinationTokenIndex,
+    input.tokenMintAddress,
+    input.ownerAddress,
+    "Solana destination finalize post-token balances",
+  );
+  const amount = BigInt(input.amountBaseUnits);
+  if (postBalance < preBalance || postBalance - preBalance !== amount) {
+    throw new Error(
+      "Solana destination finalize token balance delta does not match the settlement amount.",
+    );
+  }
+};
+
+export const bindFinalizedTairaXorSolanaFinalizeTransaction = (input: {
+  request: TairaXorSolanaFinalizeTransactionRequest;
+  transaction: Record<string, unknown>;
+  signatureStatus: Record<string, unknown>;
+  finality: Record<string, unknown>;
+  txId: string;
+  tokenMintAddress: string;
+}): SolanaDestinationFinalizeTransactionBinding => {
+  const request = requireRecord(
+    snapshotSccpDataValue(input.request, "Solana destination finalize request"),
+    "Solana destination finalize request",
+  );
+  const requestTransaction = requireRecord(
+    request.transaction,
+    "Solana destination finalize request transaction",
+  );
+  const feePayer = normalizeSolanaAddress(
+    readConsistentAliasString(
+      requestTransaction,
+      ["feePayer"],
+      "Solana destination finalize request fee payer",
+    ),
+    "Solana destination finalize request fee payer",
+  );
+  const requestInstructions = requestTransaction.instructions;
+  if (!Array.isArray(requestInstructions) || requestInstructions.length !== 1) {
+    throw new Error(
+      "Solana destination finalize request must contain exactly one verifier instruction.",
+    );
+  }
+  const requestInstruction = requireRecord(
+    requestInstructions[0],
+    "Solana destination finalize request instruction",
+  );
+  const verifierProgramAddress = normalizeSolanaAddress(
+    readConsistentAliasString(
+      requestInstruction,
+      ["programId"],
+      "Solana destination finalize request verifier program",
+    ),
+    "Solana destination finalize request verifier program",
+  );
+  const requestAccounts = requestInstruction.accounts;
+  if (!Array.isArray(requestAccounts) || requestAccounts.length !== 9) {
+    throw new Error(
+      "Solana destination finalize request must carry exactly nine verifier account metas.",
+    );
+  }
+  const expectedAccounts = requestAccounts.map((value, index) => {
+    const account = requireRecord(
+      value,
+      `Solana destination finalize request account ${index + 1}`,
+    );
+    if (
+      typeof account.isSigner !== "boolean" ||
+      typeof account.isWritable !== "boolean"
+    ) {
+      throw new Error(
+        `Solana destination finalize request account ${index + 1} privileges must be boolean.`,
+      );
+    }
+    return {
+      pubkey: readSolanaTransactionAccountKey(
+        account.pubkey,
+        `Solana destination finalize request account ${index + 1}`,
+      ),
+      isSigner: account.isSigner,
+      isWritable: account.isWritable,
+    };
+  });
+  const canonicalPrivileges = [
+    [true, true],
+    [false, true],
+    [false, true],
+    [false, true],
+    [false, false],
+    [false, false],
+    [false, false],
+    [false, true],
+    [false, false],
+  ] as const;
+  if (
+    expectedAccounts.some(
+      (account, index) =>
+        account.isSigner !== canonicalPrivileges[index][0] ||
+        account.isWritable !== canonicalPrivileges[index][1],
+    ) ||
+    expectedAccounts[0].pubkey !== feePayer
+  ) {
+    throw new Error(
+      "Solana destination finalize request account privileges are not the canonical nine-account layout.",
+    );
+  }
+  const tokenMintAddress = normalizeSolanaAddress(
+    input.tokenMintAddress,
+    "Solana destination finalize token mint",
+  );
+  const destinationTokenAddress = normalizeSolanaAddress(
+    readConsistentAliasString(
+      request,
+      ["destinationTokenAddress"],
+      "Solana destination finalize destination token account",
+    ),
+    "Solana destination finalize destination token account",
+  );
+  const messageId = normalizeHex32(
+    readConsistentAliasString(
+      request,
+      ["messageId"],
+      "Solana destination finalize message id",
+    ),
+    "Solana destination finalize message id",
+  );
+  const amountBaseUnits = normalizePositiveBaseUnitString(
+    readConsistentAliasString(
+      request,
+      ["amountBaseUnits"],
+      "Solana destination finalize amount",
+    ),
+    "Solana destination finalize amount",
+  );
+  if (
+    expectedAccounts[2].pubkey !== tokenMintAddress ||
+    expectedAccounts[3].pubkey !== destinationTokenAddress ||
+    expectedAccounts[4].pubkey !==
+      deriveSccpSolanaMintAuthorityAddress({
+        verifierProgramAddress,
+        verifierStateAddress: expectedAccounts[1].pubkey,
+      }) ||
+    expectedAccounts[5].pubkey !== SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID ||
+    expectedAccounts[7].pubkey !==
+      deriveSccpSolanaMessageReceiptAddress({
+        verifierProgramAddress,
+        verifierStateAddress: expectedAccounts[1].pubkey,
+        messageId,
+      }) ||
+    expectedAccounts[8].pubkey !== SCCP_SOLANA_SYSTEM_PROGRAM_ID
+  ) {
+    throw new Error(
+      "Solana destination finalize request does not bind the canonical mint, destination, authority, receipt, or programs.",
+    );
+  }
+
+  const expectedInstructionData = hexDataToBytes(
+    readConsistentAliasString(
+      requestInstruction,
+      ["dataHex"],
+      "Solana destination finalize request instruction data",
+    ),
+    "Solana destination finalize request instruction data",
+  );
+  const expectedEnvelope = parseSolanaBorshInstructionEnvelope(
+    bytesToLowerHex(expectedInstructionData),
+  );
+  if (
+    expectedEnvelope.entrypoint !==
+      SCCP_SOLANA_SUBMIT_MESSAGE_PROOF_ENTRYPOINT_V1 ||
+    expectedEnvelope.args.length !== 7 ||
+    expectedEnvelope.args[1].length < 33 ||
+    expectedEnvelope.args[1][0] !== 1 ||
+    !bytesEqual(
+      expectedEnvelope.args[1].slice(1, 33),
+      solanaHex32Bytes(messageId, "Solana destination finalize message id"),
+    ) ||
+    readPositiveU64LeDecimal(
+      expectedEnvelope.args[6],
+      "Solana destination finalize instruction amount",
+    ) !== amountBaseUnits
+  ) {
+    throw new Error(
+      "Solana destination finalize request instruction does not bind the exact message id and amount.",
+    );
+  }
+
+  const transaction = requireRecord(
+    snapshotSccpDataValue(
+      input.transaction,
+      "Solana destination finalized transaction",
+    ),
+    "Solana destination finalized transaction",
+  );
+  const finalizedSlot = normalizeFinalizedSolanaSlot(
+    transaction.slot,
+    "Solana destination finalized transaction slot",
+  );
+  requireFinalizedSolanaStatus(
+    snapshotSccpDataValue(
+      input.signatureStatus,
+      "Solana destination finalize signature status",
+    ),
+    finalizedSlot,
+    "Solana destination finalize signature status",
+  );
+  requireFinalizedSolanaStatus(
+    snapshotSccpDataValue(
+      input.finality,
+      "Solana destination finalize finality",
+    ),
+    finalizedSlot,
+    "Solana destination finalize finality",
+  );
+  if (transaction.version !== "legacy") {
+    throw new Error(
+      "Solana destination finalize transaction must use the canonical legacy message format.",
+    );
+  }
+  const transactionBody = requireRecord(
+    transaction.transaction,
+    "Solana destination finalize transaction body",
+  );
+  const txId = normalizeSolanaTransactionSignature(input.txId);
+  if (
+    !Array.isArray(transactionBody.signatures) ||
+    transactionBody.signatures.length !== 1 ||
+    normalizeSolanaTransactionSignature(
+      String(transactionBody.signatures[0] ?? ""),
+    ) !== txId
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction must carry exactly the wallet-approved signature.",
+    );
+  }
+  const meta = requireRecord(
+    transaction.meta,
+    "Solana destination finalize transaction metadata",
+  );
+  if (meta.err !== null) {
+    throw new Error("Solana destination finalize transaction did not succeed.");
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, "loadedAddresses")) {
+    const loadedAddresses = requireRecord(
+      meta.loadedAddresses,
+      "Solana destination finalize loaded addresses",
+    );
+    if (
+      (["writable", "readonly"] as const).some(
+        (key) =>
+          !Array.isArray(loadedAddresses[key]) ||
+          loadedAddresses[key].length > 0,
+      )
+    ) {
+      throw new Error(
+        "Solana destination finalize transaction must not use loaded address tables.",
+      );
+    }
+  }
+  const message = requireRecord(
+    transactionBody.message,
+    "Solana destination finalize transaction message",
+  );
+  if (
+    Object.prototype.hasOwnProperty.call(message, "addressTableLookups") &&
+    (!Array.isArray(message.addressTableLookups) ||
+      message.addressTableLookups.length > 0)
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction must not use address table lookups.",
+    );
+  }
+  const rawAccountKeys = message.accountKeys;
+  if (!Array.isArray(rawAccountKeys) || rawAccountKeys.length !== 10) {
+    throw new Error(
+      "Solana destination finalize transaction must carry exactly ten static account keys.",
+    );
+  }
+  const accountKeys = rawAccountKeys.map((value, index) =>
+    readSolanaTransactionAccountKey(
+      value,
+      `Solana destination finalize transaction account key ${index + 1}`,
+    ),
+  );
+  const expectedStaticAccountKeys = [
+    expectedAccounts[0].pubkey,
+    expectedAccounts[1].pubkey,
+    expectedAccounts[2].pubkey,
+    expectedAccounts[3].pubkey,
+    expectedAccounts[7].pubkey,
+    expectedAccounts[4].pubkey,
+    expectedAccounts[5].pubkey,
+    expectedAccounts[6].pubkey,
+    expectedAccounts[8].pubkey,
+    verifierProgramAddress,
+  ];
+  if (
+    new Set(accountKeys).size !== accountKeys.length ||
+    new Set(expectedStaticAccountKeys).size !==
+      expectedStaticAccountKeys.length ||
+    accountKeys.some(
+      (accountAddress, index) =>
+        accountAddress !== expectedStaticAccountKeys[index],
+    )
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction static account-key order is not canonical.",
+    );
+  }
+  const header = requireRecord(
+    message.header,
+    "Solana destination finalize transaction header",
+  );
+  const numRequiredSignatures = readExactSafeNonNegativeInteger(
+    header,
+    "numRequiredSignatures",
+    "Solana destination finalize required signatures",
+  );
+  const numReadonlySignedAccounts = readExactSafeNonNegativeInteger(
+    header,
+    "numReadonlySignedAccounts",
+    "Solana destination finalize readonly signed accounts",
+  );
+  const numReadonlyUnsignedAccounts = readExactSafeNonNegativeInteger(
+    header,
+    "numReadonlyUnsignedAccounts",
+    "Solana destination finalize readonly unsigned accounts",
+  );
+  if (
+    numRequiredSignatures !== 1 ||
+    numReadonlySignedAccounts !== 0 ||
+    numReadonlyUnsignedAccounts !== 5 ||
+    accountKeys[0] !== feePayer
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction header is not the canonical single-payer layout.",
+    );
+  }
+  const accountRoleInput = {
+    accountKeys,
+    numRequiredSignatures,
+    numReadonlySignedAccounts,
+    numReadonlyUnsignedAccounts,
+  };
+  expectedAccounts.forEach((account, index) =>
+    requireSolanaTransactionAccountRole(
+      accountRoleInput,
+      account.pubkey,
+      { signer: account.isSigner, writable: account.isWritable },
+      `Solana destination finalize account ${index + 1}`,
+    ),
+  );
+  requireSolanaTransactionAccountRole(
+    accountRoleInput,
+    verifierProgramAddress,
+    { signer: false, writable: false },
+    "Solana destination finalize verifier program",
+  );
+
+  if (
+    !Array.isArray(message.instructions) ||
+    message.instructions.length !== 1
+  ) {
+    throw new Error(
+      "Solana destination finalize transaction must contain exactly one outer verifier instruction.",
+    );
+  }
+  const instruction = requireRecord(
+    message.instructions[0],
+    "Solana destination finalize instruction",
+  );
+  if (
+    Object.prototype.hasOwnProperty.call(instruction, "parsed") ||
+    Object.prototype.hasOwnProperty.call(instruction, "programId")
+  ) {
+    throw new Error(
+      "Solana destination finalize instruction must use the raw compiled JSON shape.",
+    );
+  }
+  const programIdIndex = readExactSafeNonNegativeInteger(
+    instruction,
+    "programIdIndex",
+    "Solana destination finalize program id index",
+  );
+  const expectedInstructionIndices = [0, 1, 2, 3, 5, 6, 7, 4, 8];
+  if (
+    programIdIndex !== 9 ||
+    accountKeys[programIdIndex] !== verifierProgramAddress ||
+    !Array.isArray(instruction.accounts) ||
+    instruction.accounts.length !== expectedInstructionIndices.length ||
+    instruction.accounts.some(
+      (value, index) =>
+        !Number.isSafeInteger(value) ||
+        Number(value) !== expectedInstructionIndices[index],
+    )
+  ) {
+    throw new Error(
+      "Solana destination finalize instruction accounts do not match the ordered nine-account ABI.",
+    );
+  }
+  const instructionDataText = readConsistentAliasString(
+    instruction,
+    ["data"],
+    "Solana destination finalize instruction data",
+  );
+  const instructionData = base58Decode(instructionDataText);
+  if (
+    !instructionData ||
+    base58Encode(instructionData) !== instructionDataText ||
+    !bytesEqual(instructionData, expectedInstructionData)
+  ) {
+    throw new Error(
+      "Solana destination finalize instruction bytes do not match the wallet-approved settlement request.",
+    );
+  }
+
+  requireSuccessfulSolanaDestinationMintEffects({
+    meta,
+    accountKeys,
+    tokenMintAddress,
+    destinationTokenAddress,
+    mintAuthorityAddress: expectedAccounts[4].pubkey,
+    ownerAddress: feePayer,
+    amountBaseUnits,
+  });
+
+  return {
+    txId,
+    finalizedSlot,
+    feePayer,
+    verifierProgramAddress,
+    tokenMintAddress,
+    destinationTokenAddress,
+    messageId,
+    amountBaseUnits,
+  };
+};
+
+const solanaSourceBurnEventHash = (input: {
+  sourceBridgeAddress: string;
+  sourceStateAddress: string;
+  tokenMintAddress: string;
+  ownerAddress: string;
+  sourceTokenAddress: string;
+  tairaRecipient: string;
+  amountBaseUnits: string;
+  nonce: string;
+  finalizedSlot: string;
+}): string => {
+  const recipientBytes = new TextEncoder().encode(input.tairaRecipient);
+  if (recipientBytes.length > 0xffff) {
+    throw new Error("Solana source burn TAIRA recipient is too long.");
+  }
+  const recipientLength = Uint8Array.of(
+    recipientBytes.length & 0xff,
+    (recipientBytes.length >>> 8) & 0xff,
+  );
+  return bytesToLowerHex(
+    sha256(
+      concatBytes(
+        new TextEncoder().encode(SCCP_SOLANA_SOURCE_BURN_EVENT_PREFIX),
+        new PublicKey(input.sourceBridgeAddress).toBytes(),
+        new PublicKey(input.sourceStateAddress).toBytes(),
+        new PublicKey(input.tokenMintAddress).toBytes(),
+        new PublicKey(input.ownerAddress).toBytes(),
+        new PublicKey(input.sourceTokenAddress).toBytes(),
+        recipientLength,
+        recipientBytes,
+        u64LeBytesFromDecimalText(
+          input.amountBaseUnits,
+          "Solana source burn amount",
+        ),
+        u64LeBytesFromDecimalText(input.nonce, "Solana source burn nonce"),
+        u64LeBytesFromDecimalText(
+          input.finalizedSlot,
+          "Solana source burn finalized slot",
+        ),
+      ),
+    ),
+  );
+};
+
+export const parseFinalizedSolanaSourceBurnTransaction = (input: {
+  transaction: Record<string, unknown>;
+  signatureStatus: Record<string, unknown>;
+  finality: Record<string, unknown>;
+  txId: string;
+  sourceBridgeAddress: string;
+  sourceStateAddress: string;
+  tokenMintAddress: string;
+  ownerAddress: string;
+  tairaRecipient: string;
+  amountBaseUnits: string;
+}): SolanaSourceBurnTransactionBinding => {
+  const transaction = requireRecord(
+    snapshotSccpDataValue(
+      input.transaction,
+      "Solana source burn finalized transaction",
+    ),
+    "Solana source burn finalized transaction",
+  );
+  const txId = normalizeSolanaTransactionSignature(input.txId);
+  const sourceBridgeAddress = normalizeSolanaAddress(
+    input.sourceBridgeAddress,
+    "Solana source bridge program",
+  );
+  const sourceStateAddress = normalizeSolanaAddress(
+    input.sourceStateAddress,
+    "Solana source bridge state",
+  );
+  const tokenMintAddress = normalizeSolanaAddress(
+    input.tokenMintAddress,
+    "Solana source burn token mint",
+  );
+  const ownerAddress = normalizeSolanaAddress(
+    input.ownerAddress,
+    "Solana source burn owner",
+  );
+  const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
+  const amountBaseUnits = normalizePositiveBaseUnitString(
+    input.amountBaseUnits,
+    "Solana source burn amount",
+  );
+  const finalizedSlot = normalizeFinalizedSolanaSlot(
+    transaction.slot,
+    "Solana source burn transaction slot",
+  );
+  const signatureStatus = requireRecord(
+    snapshotSccpDataValue(
+      input.signatureStatus,
+      "Solana source burn signature status",
+    ),
+    "Solana source burn signature status",
+  );
+  const finality = requireRecord(
+    snapshotSccpDataValue(input.finality, "Solana source burn finality"),
+    "Solana source burn finality",
+  );
+  requireFinalizedSolanaStatus(
+    signatureStatus,
+    finalizedSlot,
+    "Solana source burn signature status",
+  );
+  requireFinalizedSolanaStatus(
+    finality,
+    finalizedSlot,
+    "Solana source burn finality",
+  );
+
+  const transactionBody = requireRecord(
+    transaction.transaction,
+    "Solana source burn transaction body",
+  );
+  if (
+    Object.prototype.hasOwnProperty.call(transaction, "version") &&
+    transaction.version !== "legacy"
+  ) {
+    throw new Error(
+      "Solana source burn transaction must use the canonical legacy message format.",
+    );
+  }
+  const signatures = transactionBody.signatures;
+  if (
+    !Array.isArray(signatures) ||
+    signatures.length !== 1 ||
+    normalizeSolanaTransactionSignature(signatures[0]) !== txId
+  ) {
+    throw new Error(
+      "Solana source burn transaction must carry exactly the selected owner signature.",
+    );
+  }
+  const meta = requireRecord(transaction.meta, "Solana source burn metadata");
+  if (meta.err !== null) {
+    throw new Error("Solana source burn transaction did not succeed.");
+  }
+  if (Object.prototype.hasOwnProperty.call(meta, "loadedAddresses")) {
+    const loadedAddresses = requireRecord(
+      meta.loadedAddresses,
+      "Solana source burn loaded addresses",
+    );
+    if (
+      (["writable", "readonly"] as const).some(
+        (key) =>
+          !Array.isArray(loadedAddresses[key]) ||
+          loadedAddresses[key].length > 0,
+      )
+    ) {
+      throw new Error(
+        "Solana source burn transaction must not use loaded address tables.",
+      );
+    }
+  }
+
+  const message = requireRecord(
+    transactionBody.message,
+    "Solana source burn transaction message",
+  );
+  if (Object.prototype.hasOwnProperty.call(message, "addressTableLookups")) {
+    if (
+      !Array.isArray(message.addressTableLookups) ||
+      message.addressTableLookups.length > 0
+    ) {
+      throw new Error(
+        "Solana source burn transaction must not use address table lookups.",
+      );
+    }
+  }
+  const rawAccountKeys = message.accountKeys;
+  if (!Array.isArray(rawAccountKeys) || rawAccountKeys.length !== 8) {
+    throw new Error(
+      "Solana source burn transaction must carry exactly eight static account keys.",
+    );
+  }
+  const accountKeys = rawAccountKeys.map((value, index) =>
+    readSolanaTransactionAccountKey(
+      value,
+      `Solana source burn transaction account key ${index + 1}`,
+    ),
+  );
+  if (new Set(accountKeys).size !== accountKeys.length) {
+    throw new Error(
+      "Solana source burn transaction account keys must be distinct.",
+    );
+  }
+  const header = requireRecord(
+    message.header,
+    "Solana source burn transaction header",
+  );
+  const numRequiredSignatures = readExactSafeNonNegativeInteger(
+    header,
+    "numRequiredSignatures",
+    "Solana source burn required signatures",
+  );
+  const numReadonlySignedAccounts = readExactSafeNonNegativeInteger(
+    header,
+    "numReadonlySignedAccounts",
+    "Solana source burn readonly signed accounts",
+  );
+  const numReadonlyUnsignedAccounts = readExactSafeNonNegativeInteger(
+    header,
+    "numReadonlyUnsignedAccounts",
+    "Solana source burn readonly unsigned accounts",
+  );
+  if (
+    numRequiredSignatures !== 1 ||
+    numReadonlySignedAccounts !== 0 ||
+    numReadonlyUnsignedAccounts !== 3 ||
+    accountKeys[0] !== ownerAddress
+  ) {
+    throw new Error(
+      "Solana source burn transaction header is not the canonical single-owner layout.",
+    );
+  }
+
+  const rawInstructions = message.instructions;
+  if (!Array.isArray(rawInstructions) || rawInstructions.length !== 1) {
+    throw new Error(
+      "Solana source burn transaction must contain exactly one instruction.",
+    );
+  }
+  const instruction = requireRecord(
+    rawInstructions[0],
+    "Solana source burn instruction",
+  );
+  if (
+    Object.prototype.hasOwnProperty.call(instruction, "parsed") ||
+    Object.prototype.hasOwnProperty.call(instruction, "programId")
+  ) {
+    throw new Error(
+      "Solana source burn instruction must use the raw compiled JSON shape.",
+    );
+  }
+  const programIdIndex = readExactSafeNonNegativeInteger(
+    instruction,
+    "programIdIndex",
+    "Solana source burn program id index",
+  );
+  if (
+    programIdIndex >= accountKeys.length ||
+    accountKeys[programIdIndex] !== sourceBridgeAddress
+  ) {
+    throw new Error(
+      "Solana source burn instruction must invoke the pinned source bridge program.",
+    );
+  }
+  const rawInstructionAccounts = instruction.accounts;
+  if (
+    !Array.isArray(rawInstructionAccounts) ||
+    rawInstructionAccounts.length !== 7 ||
+    rawInstructionAccounts.some(
+      (value) =>
+        !Number.isSafeInteger(value) ||
+        Number(value) < 0 ||
+        Number(value) >= accountKeys.length,
+    )
+  ) {
+    throw new Error(
+      "Solana source burn instruction must carry exactly seven compiled account indices.",
+    );
+  }
+  const instructionAccounts = rawInstructionAccounts.map(
+    (value) => accountKeys[Number(value)],
+  );
+  const vectors = decodeSolanaSourceBurnInstructionVectors(
+    readConsistentAliasString(
+      instruction,
+      ["data"],
+      "Solana source burn instruction data",
+    ),
+  );
+  const entrypoint = readCanonicalUtf8(
+    vectors[0],
+    "Solana source burn entrypoint",
+  );
+  if (entrypoint !== SCCP_SOLANA_SOURCE_BURN_ENTRYPOINT) {
+    throw new Error(
+      `Solana source burn instruction must call ${SCCP_SOLANA_SOURCE_BURN_ENTRYPOINT}.`,
+    );
+  }
+  const instructionAmount = readPositiveU64LeDecimal(
+    vectors[1],
+    "Solana source burn instruction amount",
+  );
+  if (instructionAmount !== amountBaseUnits) {
+    throw new Error(
+      "Solana source burn instruction amount must match the bridge request.",
+    );
+  }
+  const instructionRecipient = normalizeTairaAccountId(
+    readCanonicalUtf8(vectors[2], "Solana source burn TAIRA recipient"),
+  );
+  if (instructionRecipient !== tairaRecipient) {
+    throw new Error(
+      "Solana source burn instruction recipient must match the bridge request.",
+    );
+  }
+  const nonce = normalizeSolanaSourceBurnNonce(
+    readPositiveU64LeDecimal(
+      vectors[3],
+      "Solana source burn instruction nonce",
+    ),
+  );
+  const sourceTokenAddress = normalizeSolanaAddress(
+    instructionAccounts[2],
+    "Solana source token account",
+  );
+  const sourceBurnReceiptAddress = deriveSccpSolanaSourceBurnReceiptAddress({
+    sourceBridgeProgramAddress: sourceBridgeAddress,
+    sourceStateAddress,
+    ownerAddress,
+    nonce,
+  });
+  const expectedAccounts = [
+    ownerAddress,
+    sourceStateAddress,
+    sourceTokenAddress,
+    tokenMintAddress,
+    SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+    sourceBurnReceiptAddress,
+    SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+  ];
+  if (
+    new Set(expectedAccounts).size !== expectedAccounts.length ||
+    instructionAccounts.some(
+      (accountAddress, index) => accountAddress !== expectedAccounts[index],
+    )
+  ) {
+    throw new Error(
+      "Solana source burn instruction accounts do not match the canonical source layout.",
+    );
+  }
+  const expectedStaticAccountKeys = [
+    ownerAddress,
+    sourceStateAddress,
+    sourceTokenAddress,
+    tokenMintAddress,
+    sourceBurnReceiptAddress,
+    SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+    SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+    sourceBridgeAddress,
+  ];
+  if (
+    accountKeys.some(
+      (accountAddress, index) =>
+        accountAddress !== expectedStaticAccountKeys[index],
+    )
+  ) {
+    throw new Error(
+      "Solana source burn transaction static account-key order is not canonical.",
+    );
+  }
+  const accountRoleInput = {
+    accountKeys,
+    numRequiredSignatures,
+    numReadonlySignedAccounts,
+    numReadonlyUnsignedAccounts,
+  };
+  [
+    [ownerAddress, true, true, "owner"],
+    [sourceStateAddress, false, true, "source state"],
+    [sourceTokenAddress, false, true, "source token"],
+    [tokenMintAddress, false, true, "token mint"],
+    [SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID, false, false, "SPL Token program"],
+    [sourceBurnReceiptAddress, false, true, "burn receipt"],
+    [SCCP_SOLANA_SYSTEM_PROGRAM_ID, false, false, "System program"],
+    [sourceBridgeAddress, false, false, "source bridge program"],
+  ].forEach(([address, signer, writable, role]) =>
+    requireSolanaTransactionAccountRole(
+      accountRoleInput,
+      String(address),
+      { signer: Boolean(signer), writable: Boolean(writable) },
+      `Solana source burn ${String(role)}`,
+    ),
+  );
+
+  requireSuccessfulSolanaSourceBurnEffects({
+    meta,
+    accountKeys,
+    sourceTokenAddress,
+    tokenMintAddress,
+    ownerAddress,
+    amountBaseUnits,
+  });
+
+  const sourceEventHash = solanaSourceBurnEventHash({
+    sourceBridgeAddress,
+    sourceStateAddress,
+    tokenMintAddress,
+    ownerAddress,
+    sourceTokenAddress,
+    tairaRecipient,
+    amountBaseUnits,
+    nonce,
+    finalizedSlot,
+  });
+  const sourceEventBytes =
+    sourceEventHash
+      .slice(2)
+      .match(/.{2}/gu)
+      ?.map((byte) => Number.parseInt(byte, 16)) ?? [];
+  const expectedEventLog = `burned SCCP Solana XOR for TAIRA settlement: [${sourceEventBytes.join(", ")}]`;
+  const matchingEventLogs = Array.isArray(meta.logMessages)
+    ? meta.logMessages.filter(
+        (message) =>
+          typeof message === "string" && message.endsWith(expectedEventLog),
+      )
+    : [];
+  if (matchingEventLogs.length !== 1) {
+    throw new Error(
+      "Solana source burn transaction is missing the exact committed burn event log.",
+    );
+  }
+  return {
+    txId,
+    sourceBridgeAddress,
+    sourceStateAddress,
+    tokenMintAddress,
+    sourceTokenAddress,
+    sourceBurnReceiptAddress,
+    ownerAddress,
+    tairaRecipient,
+    amountBaseUnits,
+    nonce,
+    sourceEventHash,
+    finalizedSlot,
+  };
+};
+
 const requireOptionalSolanaSourceTextMatch = (
   record: Record<string, unknown>,
   keys: string[],
@@ -10910,172 +13861,227 @@ const requireOptionalSolanaSourceAmountMatch = (
   }
 };
 
-const requireOptionalSolanaSourceTxIdMatch = (
+type SolanaSourceProofIdentity = SolanaSourceBurnTransactionBinding & {
+  messageId: string;
+  payloadHash: string;
+  commitmentRoot: string;
+};
+
+const requireSolanaSourceProofTextBinding = (
   record: Record<string, unknown>,
-  expectedTxId: string,
+  keys: string[],
+  expected: string,
   label: string,
+  normalize: (value: string) => string = (value) => value,
 ): void => {
-  const actual = readConsistentAliasString(
-    record,
-    ["txId", "tx_id", "transactionSignature", "transaction_signature"],
-    label,
-    (value) => normalizeSolanaTransactionSignature(value, label),
-  );
+  const actual = readConsistentAliasString(record, keys, label, normalize);
   if (!actual) {
-    return;
+    throw new Error(`${label} is required.`);
   }
-  if (normalizeSolanaTransactionSignature(actual, label) !== expectedTxId) {
-    throw new Error(`${label} must match the Solana burn transaction.`);
+  if (normalize(actual) !== expected) {
+    throw new Error(`${label} does not match the finalized Solana burn.`);
   }
 };
 
-const requireSolanaSourceProofPublicInputsBinding = (input: {
-  proofPackage: Record<string, unknown>;
-  messageId: string;
-  commitmentRoot: string;
-  txId: string;
-  solanaSender: string;
-  tairaRecipient: string;
-  amountBaseUnits: string;
-}): void => {
-  const publicInputs = requireRecord(
-    readConsistentAliasRecord(
-      input.proofPackage,
-      ["publicInputs", "public_inputs"],
-      "Solana source proof package publicInputs",
-    ),
-    "Solana source proof package publicInputs",
+const requireSolanaSourceProofIdentityBinding = (
+  record: Record<string, unknown>,
+  expected: SolanaSourceProofIdentity,
+  label: string,
+): void => {
+  const version = readConsistentAliasInteger(
+    record,
+    ["version"],
+    `${label} version`,
   );
+  if (version !== 1) {
+    throw new Error(`${label} version must be 1.`);
+  }
   const sourceDomain = readConsistentAliasInteger(
-    publicInputs,
+    record,
     ["sourceDomain", "source_domain"],
-    "Solana source proof package publicInputs sourceDomain",
+    `${label} sourceDomain`,
   );
   const targetDomain = readConsistentAliasInteger(
-    publicInputs,
+    record,
     ["targetDomain", "target_domain"],
-    "Solana source proof package publicInputs targetDomain",
+    `${label} targetDomain`,
   );
   if (
     sourceDomain !== SCCP_SOLANA_DOMAIN ||
     targetDomain !== SCCP_SORA_DOMAIN
   ) {
-    throw new Error(
-      "Solana source proof package publicInputs must bind Solana -> TAIRA.",
-    );
+    throw new Error(`${label} must bind Solana -> TAIRA.`);
   }
-  requireOptionalSolanaSourceTextMatch(
-    publicInputs,
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["solanaNetwork", "solana_network", "network"],
+    SOLANA_TESTNET_NETWORK_ID,
+    `${label} network`,
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["solanaGenesisHash", "solana_genesis_hash", "genesisHash"],
+    SOLANA_TESTNET_GENESIS_HASH,
+    `${label} genesis hash`,
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["backend", "proofBackend", "proof_backend"],
+    SCCP_SOLANA_SOURCE_PROOF_BACKEND,
+    `${label} backend`,
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
     ["routeId", "route_id", "route"],
     SCCP_SOLANA_XOR_ROUTE_ID,
-    "Solana source proof package publicInputs route",
+    `${label} route`,
   );
-  requireOptionalSolanaSourceTextMatch(
-    publicInputs,
+  requireSolanaSourceProofTextBinding(
+    record,
     ["asset", "assetKey", "asset_key"],
     SCCP_XOR_ASSET_KEY,
-    "Solana source proof package publicInputs asset",
+    `${label} asset`,
   );
-  requireOptionalSolanaSourceTxIdMatch(
-    publicInputs,
-    input.txId,
-    "Solana source proof package publicInputs txId",
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["txId", "tx_id", "transactionSignature", "transaction_signature"],
+    expected.txId,
+    `${label} txId`,
+    (value) => normalizeSolanaTransactionSignature(value, `${label} txId`),
   );
-  const sender = readConsistentAliasString(
-    publicInputs,
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["messageId", "message_id"],
+    expected.messageId,
+    `${label} messageId`,
+    (value) => normalizeHex32(value, `${label} messageId`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["payloadHash", "payload_hash"],
+    expected.payloadHash,
+    `${label} payloadHash`,
+    (value) => normalizeHex32(value, `${label} payloadHash`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["commitmentRoot", "commitment_root"],
+    expected.commitmentRoot,
+    `${label} commitmentRoot`,
+    (value) => normalizeHex32(value, `${label} commitmentRoot`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["amount", "amountBaseUnits", "amount_base_units"],
+    expected.amountBaseUnits,
+    `${label} amount`,
+    (value) => normalizePositiveBaseUnitString(value, `${label} amount`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["sourceBridgeAddress", "source_bridge_address", "sourceBridgeProgramId"],
+    expected.sourceBridgeAddress,
+    `${label} source bridge`,
+    (value) => normalizeSolanaAddress(value, `${label} source bridge`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["sourceStateAddress", "source_state_address"],
+    expected.sourceStateAddress,
+    `${label} source state`,
+    (value) => normalizeSolanaAddress(value, `${label} source state`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["tokenMintAddress", "token_mint_address", "mintAddress", "mint_address"],
+    expected.tokenMintAddress,
+    `${label} token mint`,
+    (value) => normalizeSolanaAddress(value, `${label} token mint`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
     [
+      "sourceTokenAddress",
+      "source_token_address",
+      "sourceTokenAccount",
+      "source_token_account",
+    ],
+    expected.sourceTokenAddress,
+    `${label} source token`,
+    (value) => normalizeSolanaAddress(value, `${label} source token`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    [
+      "sourceBurnReceiptAddress",
+      "source_burn_receipt_address",
+      "burnReceiptAddress",
+      "burn_receipt_address",
+    ],
+    expected.sourceBurnReceiptAddress,
+    `${label} source burn receipt`,
+    (value) => normalizeSolanaAddress(value, `${label} source burn receipt`),
+  );
+  requireSolanaSourceProofTextBinding(
+    record,
+    [
+      "ownerAddress",
+      "owner_address",
+      "owner",
       "solanaSender",
       "solana_sender",
       "sender",
-      "sourceAddress",
-      "source_address",
-      "owner",
-      "ownerAddress",
-      "owner_address",
     ],
-    "Solana source proof package publicInputs sender",
-    (value) =>
-      normalizeSolanaAddress(
-        value,
-        "Solana source proof package publicInputs sender",
-      ),
+    expected.ownerAddress,
+    `${label} owner`,
+    (value) => normalizeSolanaAddress(value, `${label} owner`),
   );
-  if (
-    sender &&
-    normalizeSolanaAddress(
-      sender,
-      "Solana source proof package publicInputs sender",
-    ) !== input.solanaSender
-  ) {
-    throw new Error(
-      "Solana source proof package publicInputs sender must match the selected Solana account.",
-    );
-  }
-  requireOptionalSolanaSourceTextMatch(
-    publicInputs,
+  requireSolanaSourceProofTextBinding(
+    record,
     ["tairaRecipient", "taira_recipient", "recipient"],
-    input.tairaRecipient,
-    "Solana source proof package publicInputs recipient",
+    expected.tairaRecipient,
+    `${label} recipient`,
+    (value) => normalizeTairaAccountId(value),
   );
-  requireOptionalSolanaSourceAmountMatch(
-    publicInputs,
-    ["amount", "amountBaseUnits", "amount_base_units"],
-    input.amountBaseUnits,
-    "Solana source proof package publicInputs amount",
+  requireSolanaSourceProofTextBinding(
+    record,
+    ["nonce", "sourceNonce", "source_nonce"],
+    expected.nonce,
+    `${label} nonce`,
+    (value) => normalizeSolanaSourceBurnNonce(value),
   );
-  const publicMessageId = readConsistentAliasString(
-    publicInputs,
-    ["messageId", "message_id"],
-    "Solana source proof package publicInputs messageId",
-    (value) =>
-      normalizeHex32(
-        value,
-        "Solana source proof package publicInputs messageId",
-      ),
+  requireSolanaSourceProofTextBinding(
+    record,
+    [
+      "sourceEventHash",
+      "source_event_hash",
+      "sourceBurnHash",
+      "source_burn_hash",
+    ],
+    expected.sourceEventHash,
+    `${label} source event hash`,
+    (value) => normalizeHex32(value, `${label} source event hash`),
   );
-  if (
-    publicMessageId &&
-    normalizeHex32(
-      publicMessageId,
-      "Solana source proof package publicInputs messageId",
-    ) !== input.messageId
-  ) {
-    throw new Error(
-      "Solana source proof package publicInputs messageId must match the SCCP bundle.",
-    );
+  const finalizedSlot = readConsistentAliasInteger(
+    record,
+    ["finalizedSlot", "finalized_slot", "slot"],
+    `${label} finalized slot`,
+  );
+  if (finalizedSlot === null) {
+    throw new Error(`${label} finalized slot is required.`);
   }
-  const publicCommitmentRoot = readConsistentAliasString(
-    publicInputs,
-    ["commitmentRoot", "commitment_root"],
-    "Solana source proof package publicInputs commitmentRoot",
-    (value) =>
-      normalizeHex32(
-        value,
-        "Solana source proof package publicInputs commitmentRoot",
-      ),
-  );
-  if (
-    publicCommitmentRoot &&
-    normalizeHex32(
-      publicCommitmentRoot,
-      "Solana source proof package publicInputs commitmentRoot",
-    ) !== input.commitmentRoot
-  ) {
+  if (String(finalizedSlot) !== expected.finalizedSlot) {
     throw new Error(
-      "Solana source proof package publicInputs commitmentRoot must match the SCCP bundle.",
+      `${label} finalized slot does not match the finalized Solana burn.`,
     );
   }
 };
 
-export const bindSolanaToTairaSourceProofPackage = (input: {
-  manifest: Record<string, unknown> | null | undefined;
-  proofPackage: unknown;
-  txId: string;
-  solanaSender: string;
-  tairaRecipient: string;
-  amountDecimal: string;
-  amountBaseUnits?: string;
-}): SolanaToTairaSourceProofPackage => {
+export const bindSolanaToTairaSourceProofPackage = (
+  input: SolanaToTairaSourceProofPackageInput & {
+    proofPackage: unknown;
+  },
+): SolanaToTairaSourceProofPackage => {
   const amountBaseUnits = input.amountBaseUnits
     ? normalizePositiveBaseUnitString(
         input.amountBaseUnits,
@@ -11088,11 +14094,54 @@ export const bindSolanaToTairaSourceProofPackage = (input: {
     "Solana sender",
   );
   const tairaRecipient = normalizeTairaAccountId(input.tairaRecipient);
-  const manifest = input.manifest
-    ? cloneSccpJsonRouteManifest(
-        requireRecord(input.manifest, "SCCP Solana manifest"),
-      )
-    : null;
+  if (
+    input.solanaNetwork !== SCCP_SOLANA_NETWORK.key ||
+    input.solanaNetworkId !== SOLANA_TESTNET_NETWORK_ID ||
+    input.solanaGenesisHash !== SOLANA_TESTNET_GENESIS_HASH ||
+    input.sourceProofBackend !== SCCP_SOLANA_SOURCE_PROOF_BACKEND
+  ) {
+    throw new Error(
+      "Solana source proof input must use the canonical finalized testnet profile.",
+    );
+  }
+  const manifest = cloneSccpJsonRouteManifest(
+    requireRecord(input.manifest, "SCCP Solana manifest"),
+  );
+  const manifestSourceBridgeAddress = normalizeSolanaAddress(
+    readSccpSolanaSourceBridgeAddress(manifest),
+    "Solana manifest source bridge",
+  );
+  const manifestSourceStateAddress = normalizeSolanaAddress(
+    readSccpSolanaSourceStateAddress(manifest),
+    "Solana manifest source state",
+  );
+  const manifestTokenMintAddress = normalizeSolanaAddress(
+    readSccpSolanaTokenAddress(manifest),
+    "Solana manifest token mint",
+  );
+  if (
+    normalizeSolanaAddress(input.sourceBridgeAddress) !==
+      manifestSourceBridgeAddress ||
+    normalizeSolanaAddress(input.sourceStateAddress) !==
+      manifestSourceStateAddress ||
+    normalizeSolanaAddress(input.tokenMintAddress) !== manifestTokenMintAddress
+  ) {
+    throw new Error(
+      "Solana source proof input deployment addresses must match the route manifest.",
+    );
+  }
+  const sourceBurn = parseFinalizedSolanaSourceBurnTransaction({
+    transaction: input.transaction,
+    signatureStatus: input.signatureStatus,
+    finality: input.finality,
+    txId,
+    sourceBridgeAddress: manifestSourceBridgeAddress,
+    sourceStateAddress: manifestSourceStateAddress,
+    tokenMintAddress: manifestTokenMintAddress,
+    ownerAddress: solanaSender,
+    tairaRecipient,
+    amountBaseUnits,
+  });
   const proofPackage = requireRecord(
     snapshotSccpDataValue(
       input.proofPackage,
@@ -11100,17 +14149,36 @@ export const bindSolanaToTairaSourceProofPackage = (input: {
     ),
     "Solana -> TAIRA source proof package",
   );
-  requireOptionalSolanaSourceTxIdMatch(
+  const sourceNetwork = readConsistentAliasString(
     proofPackage,
-    txId,
-    "Solana source proof package txId",
+    ["solanaNetwork", "solana_network", "network"],
+    "Solana source proof package network",
   );
-  requireOptionalSolanaSourceAmountMatch(
+  if (sourceNetwork !== SOLANA_TESTNET_NETWORK_ID) {
+    throw new Error(
+      "Solana source proof package network must be solana-testnet.",
+    );
+  }
+  const sourceGenesisHash = readConsistentAliasString(
     proofPackage,
-    ["amount", "amountBaseUnits", "amount_base_units"],
-    amountBaseUnits,
-    "Solana source proof package amount",
+    ["solanaGenesisHash", "solana_genesis_hash"],
+    "Solana source proof package genesis hash",
   );
+  if (sourceGenesisHash !== SOLANA_TESTNET_GENESIS_HASH) {
+    throw new Error(
+      "Solana source proof package genesis hash must match Solana testnet.",
+    );
+  }
+  const sourceProofBackend = readConsistentAliasString(
+    proofPackage,
+    ["backend", "proofBackend", "proof_backend"],
+    "Solana source proof package backend",
+  );
+  if (sourceProofBackend !== SCCP_SOLANA_SOURCE_PROOF_BACKEND) {
+    throw new Error(
+      `Solana source proof package backend must be ${SCCP_SOLANA_SOURCE_PROOF_BACKEND}.`,
+    );
+  }
   const settlement = requireSolanaToTairaSourceSettlement(proofPackage);
   const settlementDefaults = buildTairaXorSolanaInboundSettlement({
     manifest,
@@ -11174,6 +14242,14 @@ export const bindSolanaToTairaSourceProofPackage = (input: {
     tairaRecipient,
     "Bundle recipient",
   );
+  const bundleNonce = normalizeSolanaSourceBurnNonce(
+    readConsistentAliasString(bundleTransfer, ["nonce"], "Bundle nonce"),
+  );
+  if (bundleNonce !== sourceBurn.nonce) {
+    throw new Error(
+      "Bundle nonce must match the finalized Solana source burn nonce.",
+    );
+  }
 
   const canonicalPayloadEnvelopeBytes = canonicalSccpPayloadEnvelopeBytes({
     kind: "Transfer",
@@ -11274,50 +14350,30 @@ export const bindSolanaToTairaSourceProofPackage = (input: {
       "Solana source proof package messageBundle commitment_root must match the commitment Merkle proof.",
     );
   }
-  const packageMessageId = readConsistentAliasString(
-    proofPackage,
-    ["messageId", "message_id"],
-    "Solana source proof package messageId",
-    (value) => normalizeHex32(value, "Solana source proof package messageId"),
-  );
-  if (
-    packageMessageId &&
-    normalizeHex32(
-      packageMessageId,
-      "Solana source proof package messageId",
-    ) !== canonicalMessageId
-  ) {
-    throw new Error(
-      "Solana source proof package messageId must match the SCCP bundle.",
-    );
-  }
-  const packageCommitmentRoot = readConsistentAliasString(
-    proofPackage,
-    ["commitmentRoot", "commitment_root"],
-    "Solana source proof package commitmentRoot",
-    (value) =>
-      normalizeHex32(value, "Solana source proof package commitmentRoot"),
-  );
-  if (
-    packageCommitmentRoot &&
-    normalizeHex32(
-      packageCommitmentRoot,
-      "Solana source proof package commitmentRoot",
-    ) !== commitmentRoot
-  ) {
-    throw new Error(
-      "Solana source proof package commitmentRoot must match the SCCP bundle.",
-    );
-  }
-  requireSolanaSourceProofPublicInputsBinding({
-    proofPackage,
+  const identity: SolanaSourceProofIdentity = {
+    ...sourceBurn,
     messageId: canonicalMessageId,
+    payloadHash: canonicalPayloadHash,
     commitmentRoot,
-    txId,
-    solanaSender,
-    tairaRecipient,
-    amountBaseUnits,
-  });
+  };
+  requireSolanaSourceProofIdentityBinding(
+    proofPackage,
+    identity,
+    "Solana source proof package",
+  );
+  const publicInputs = requireRecord(
+    readConsistentAliasRecord(
+      proofPackage,
+      ["publicInputs", "public_inputs"],
+      "Solana source proof package publicInputs",
+    ),
+    "Solana source proof package publicInputs",
+  );
+  requireSolanaSourceProofIdentityBinding(
+    publicInputs,
+    identity,
+    "Solana source proof package publicInputs",
+  );
 
   return {
     messageBundle: sourceMessageBundle,
@@ -11326,6 +14382,17 @@ export const bindSolanaToTairaSourceProofPackage = (input: {
     messageId: canonicalMessageId,
     commitmentRoot,
     amountBaseUnits,
+    payloadHash: canonicalPayloadHash,
+    sourceBridgeAddress: sourceBurn.sourceBridgeAddress,
+    sourceStateAddress: sourceBurn.sourceStateAddress,
+    tokenMintAddress: sourceBurn.tokenMintAddress,
+    sourceTokenAddress: sourceBurn.sourceTokenAddress,
+    sourceBurnReceiptAddress: sourceBurn.sourceBurnReceiptAddress,
+    ownerAddress: sourceBurn.ownerAddress,
+    tairaRecipient: sourceBurn.tairaRecipient,
+    nonce: sourceBurn.nonce,
+    sourceEventHash: sourceBurn.sourceEventHash,
+    finalizedSlot: sourceBurn.finalizedSlot,
   };
 };
 
@@ -13387,7 +16454,12 @@ const manifestMatchesSolanaNetworkProfile = (
     ["networkId", "network_id", "networkIdHex", "network_id_hex"],
     "networkId",
   ).toLowerCase();
-  return !networkId || networkId === profile.networkId.toLowerCase();
+  return (
+    !networkId ||
+    networkId === profile.networkId.toLowerCase() ||
+    networkId === profile.caipChainId.toLowerCase() ||
+    networkId === profile.walletStandardChainId
+  );
 };
 
 const manifestMatchesRoute = (
@@ -13702,7 +16774,8 @@ const sourceLaneRecordMatchesSolanaNetwork = (
     (!networkId ||
       networkId === solanaProfile.key ||
       networkId === solanaProfile.networkId ||
-      networkId === solanaProfile.caipChainId)
+      networkId === solanaProfile.caipChainId.toLowerCase() ||
+      networkId === solanaProfile.walletStandardChainId)
   );
 };
 
@@ -15337,8 +18410,13 @@ const solanaSourceProofReadinessReasons = (
       "Solana source adapter deployment.adapterProofFamily",
       reasons,
     );
-    if (adapterProofFamily && adapterProofFamily !== "groth16-v1") {
-      reasons.push("Solana source adapter deployment must use groth16-v1.");
+    if (
+      adapterProofFamily &&
+      adapterProofFamily !== SCCP_SOLANA_DESTINATION_PROOF_SYSTEM
+    ) {
+      reasons.push(
+        `Solana source adapter deployment must use ${SCCP_SOLANA_DESTINATION_PROOF_SYSTEM}.`,
+      );
     }
     const adapterCircuitId = readReadinessAliasString(
       sourceAdapterDeployment,
@@ -15368,6 +18446,25 @@ const solanaSourceProofReadinessReasons = (
         error instanceof Error
           ? error.message
           : "Solana source proof module URL is invalid.",
+      );
+    }
+  }
+  const sourceProverModuleHash = readSccpSolanaSourceProverModuleHash(manifest);
+  if (!sourceProverModuleHash) {
+    reasons.push(
+      "The Solana route is missing a browser-safe Solana source proof module hash.",
+    );
+  } else {
+    try {
+      normalizeNonZeroHex32Loose(
+        sourceProverModuleHash,
+        "Solana source proof module hash",
+      );
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "Solana source proof module hash is invalid.",
       );
     }
   }
@@ -16646,20 +19743,40 @@ export const resolveSccpRouteReadiness = (input: {
     if (!verifierAddress) {
       reasons.push("The Solana verifier program address is missing.");
     }
+    let nativeVerifierAddress = "";
     try {
-      const verifierInstructionAccounts =
-        readSccpSolanaVerifierInstructionAccounts(
+      nativeVerifierAddress =
+        readSccpSolanaNativeVerifierAddress(solanaManifest);
+    } catch (error) {
+      reasons.push(
+        error instanceof Error
+          ? error.message
+          : "The Solana native recursive verifier program address aliases are invalid.",
+      );
+    }
+    if (!nativeVerifierAddress) {
+      reasons.push(
+        "The Solana native recursive verifier program address is missing.",
+      );
+    }
+    try {
+      const verifierMintInstructionAccounts =
+        readSccpSolanaVerifierMintInstructionAccounts(
           solanaManifest,
           verifierAddress || bridgeAddress,
+          tokenAddress || sourceStateAddress,
+          `0x${"01".repeat(32)}`,
         );
-      if (verifierInstructionAccounts.length === 0) {
-        reasons.push("The Solana verifier instruction accounts are missing.");
+      if (verifierMintInstructionAccounts.length === 0) {
+        reasons.push(
+          "The Solana verifier mint instruction accounts are missing.",
+        );
       }
     } catch (error) {
       reasons.push(
         error instanceof Error
           ? error.message
-          : "The Solana verifier instruction accounts are invalid.",
+          : "The Solana verifier mint instruction accounts are invalid.",
       );
     }
     try {
@@ -16668,6 +19785,7 @@ export const resolveSccpRouteReadiness = (input: {
           solanaManifest,
           sourceBridgeAddress || bridgeAddress,
           tokenAddress || sourceStateAddress,
+          "1",
         );
       if (sourceBurnInstructionAccounts.length === 0) {
         reasons.push(
@@ -16710,6 +19828,26 @@ export const resolveSccpRouteReadiness = (input: {
           error instanceof Error
             ? error.message
             : "Solana destination proof module URL is invalid.",
+        );
+      }
+    }
+    const destinationProverModuleHash =
+      readSccpSolanaDestinationProverModuleHash(solanaManifest);
+    if (!destinationProverModuleHash) {
+      reasons.push(
+        "The Solana route is missing a browser-safe Solana destination proof module hash.",
+      );
+    } else {
+      try {
+        normalizeNonZeroHex32Loose(
+          destinationProverModuleHash,
+          "Solana destination proof module hash",
+        );
+      } catch (error) {
+        reasons.push(
+          error instanceof Error
+            ? error.message
+            : "Solana destination proof module hash is invalid.",
         );
       }
     }

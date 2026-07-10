@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { defineComponent } from "vue";
 import VpnView from "@/views/VpnView.vue";
 import { useSessionStore } from "@/stores/session";
 import { useVpnStore } from "@/stores/vpn";
@@ -92,8 +93,25 @@ const idleStatus = {
   lastReceipt: null,
 };
 
+const VpnViewHarness = defineComponent({
+  components: { VpnView },
+  template: `
+    <div data-testid="vpn-view-harness">
+      <header aria-label="Route header">
+        <div>
+          <h1>Sora VPN</h1>
+          <p>Connect, disconnect, and inspect Sora VPN sessions</p>
+        </div>
+        <div id="route-header-actions"></div>
+      </header>
+      <main><VpnView /></main>
+    </div>
+  `,
+});
+
 describe("VpnView", () => {
   beforeEach(() => {
+    document.body.replaceChildren();
     vi.useFakeTimers();
     localStorage.clear();
     setActivePinia(createPinia());
@@ -121,6 +139,7 @@ describe("VpnView", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    document.body.replaceChildren();
   });
 
   const mountView = async (options?: {
@@ -160,7 +179,8 @@ describe("VpnView", () => {
       activeAccountId: account.accountId,
     });
 
-    const wrapper = mount(VpnView, {
+    const wrapper = mount(VpnViewHarness, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
@@ -199,7 +219,11 @@ describe("VpnView", () => {
       accountId: "alice@wonderland",
       networkPrefix: 369,
     });
-    expect(wrapper.text()).toContain("Sora VPN");
+    expect(wrapper.get('header[aria-label="Route header"] h1').text()).toBe(
+      "Sora VPN",
+    );
+    expect(wrapper.find(".vpn-layout h1").exists()).toBe(false);
+    expect(wrapper.get("#vpn-heading").text()).toBe("Connection");
     expect(wrapper.text()).toContain(defaultProfile.relayEndpoint);
     expect(wrapper.text()).toContain("Recent VPN receipts");
     expect(wrapper.text()).toContain("utun7");
@@ -211,7 +235,9 @@ describe("VpnView", () => {
   it("submits connect requests with the active wallet credentials", async () => {
     const wrapper = await mountView();
 
-    await wrapper.get("button:not(.secondary)").trigger("click");
+    await wrapper
+      .get(".vpn-primary-actions [data-ui-primary-action]")
+      .trigger("click");
     await flushPromises();
 
     expect(connectVpnMock).toHaveBeenCalledWith({
@@ -245,7 +271,9 @@ describe("VpnView", () => {
       networkPrefix: 369,
     });
 
-    await wrapper.get("button:not(.secondary)").trigger("click");
+    await wrapper
+      .get(".vpn-primary-actions [data-ui-primary-action]")
+      .trigger("click");
     await flushPromises();
 
     expect(connectVpnMock).toHaveBeenCalledWith({
@@ -301,7 +329,9 @@ describe("VpnView", () => {
     });
     const wrapper = await mountView();
 
-    const connectButton = wrapper.get("button:not(.secondary)");
+    const connectButton = wrapper.get(
+      ".vpn-primary-actions [data-ui-primary-action]",
+    );
     expect((connectButton.element as HTMLButtonElement).disabled).toBe(true);
     expect(wrapper.text()).toContain("SORANET_VPN_INTERFACE");
     wrapper.unmount();
@@ -333,6 +363,36 @@ describe("VpnView", () => {
       accountId: "alice@wonderland",
       networkPrefix: 369,
     });
+    wrapper.unmount();
+  });
+
+  it("presents one control surface, one contextual action, and collapsed diagnostics", async () => {
+    const wrapper = await mountView();
+
+    expect(wrapper.findAll(".vpn-control-surface")).toHaveLength(1);
+    expect(wrapper.find(".vpn-control-surface.card").exists()).toBe(false);
+    expect(
+      wrapper.findAll(".vpn-primary-actions [data-ui-primary-action]"),
+    ).toHaveLength(1);
+
+    const headerActions = wrapper.get("#route-header-actions");
+    expect(headerActions.findAll("button")).toHaveLength(1);
+    expect(headerActions.get("button").text()).toBe("Refresh");
+    expect(wrapper.find(".vpn-layout > .ui-route-header-action").exists()).toBe(
+      false,
+    );
+
+    const diagnostics = wrapper.get(".vpn-diagnostics");
+    const sections = diagnostics.findAll(".vpn-diagnostic-section");
+    expect(sections).toHaveLength(3);
+    expect(
+      sections.every((section) => section.attributes("open") === undefined),
+    ).toBe(true);
+    expect(sections.map((section) => section.get("summary").text())).toEqual([
+      "Session details",
+      "Network profile",
+      "Recent VPN receipts",
+    ]);
     wrapper.unmount();
   });
 });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import HeaderIrohaConnectButton from "@/components/HeaderIrohaConnectButton.vue";
@@ -125,6 +125,8 @@ vi.mock("@/composables/useQrScanner", async () => {
 });
 
 describe("HeaderIrohaConnectButton", () => {
+  const mountedWrappers: Array<ReturnType<typeof mount>> = [];
+
   beforeEach(() => {
     connectQrDecodeHandler = null;
     FakeWebSocket.instances = [];
@@ -135,6 +137,13 @@ describe("HeaderIrohaConnectButton", () => {
     });
     buildUranaiPrivateTradeProofMock.mockReset();
     setActivePinia(createPinia());
+  });
+
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      wrapper.unmount();
+    }
+    vi.unstubAllGlobals();
   });
 
   const mountComponent = () => {
@@ -158,11 +167,14 @@ describe("HeaderIrohaConnectButton", () => {
       ],
       activeAccountId: EXAMPLE_ACCOUNT_ID,
     });
-    return mount(HeaderIrohaConnectButton, {
+    const wrapper = mount(HeaderIrohaConnectButton, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
     });
+    mountedWrappers.push(wrapper);
+    return wrapper;
   };
 
   const scanConnectQr = async (payload: string) => {
@@ -173,15 +185,15 @@ describe("HeaderIrohaConnectButton", () => {
     await flushPromises();
   };
 
-  const getButtonByText = (
-    wrapper: ReturnType<typeof mount>,
-    label: string,
-  ) => {
-    const button = wrapper
-      .findAll("button")
-      .find((node) => node.text() === label);
+  const getOpenDialog = () =>
+    document.body.querySelector<HTMLDialogElement>("dialog.ui-dialog[open]");
+
+  const getDialogButtonByText = (label: string) => {
+    const button = Array.from(
+      getOpenDialog()?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+    ).find((node) => node.textContent?.trim() === label);
     if (!button) {
-      throw new Error(`Button not found: ${label}`);
+      throw new Error(`Dialog button not found: ${label}`);
     }
     return button;
   };
@@ -255,7 +267,7 @@ describe("HeaderIrohaConnectButton", () => {
     );
   };
 
-  const approveConnection = async (wrapper: ReturnType<typeof mount>) => {
+  const approveConnection = async () => {
     const relayNode = "https://relay.example";
     const walletToken = "wallet-token-1";
     const appKeyPair = generateWalletConnectKeyPair();
@@ -266,8 +278,11 @@ describe("HeaderIrohaConnectButton", () => {
     );
 
     expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(wrapper.find(".header-connect-modal-backdrop").exists()).toBe(true);
-    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    expect(getOpenDialog()).not.toBeNull();
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="header-connect-reject"]'),
+    );
+    getDialogButtonByText(t("Approve connection")).click();
     expect(FakeWebSocket.instances).toHaveLength(1);
 
     const socket = FakeWebSocket.instances[0];
@@ -328,7 +343,7 @@ describe("HeaderIrohaConnectButton", () => {
   it("opens a connection approval modal before sending the approval frame", async () => {
     const wrapper = mountComponent();
 
-    const { approvalFrame } = await approveConnection(wrapper);
+    const { approvalFrame } = await approveConnection();
 
     expect(approvalFrame.kind).toBe("control");
     expect(approvalFrame.direction).toBe("wallet_to_app");
@@ -340,9 +355,37 @@ describe("HeaderIrohaConnectButton", () => {
     expect(wrapper.text()).toContain(t("IrohaConnect approved."));
   });
 
-  it("does not sign an IrohaConnect transaction request until the user approves it", async () => {
+  it("rejects connection approval on Escape and returns focus", async () => {
     const wrapper = mountComponent();
-    const { socket, keys } = await approveConnection(wrapper);
+    const panel = wrapper.get("details.header-connect")
+      .element as HTMLDetailsElement;
+    panel.open = true;
+    const scanButton = wrapper.get('[data-testid="header-connect-scan-screen"]')
+      .element as HTMLButtonElement;
+    scanButton.focus();
+    expect(document.activeElement).toBe(scanButton);
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+    );
+
+    const dialog = getOpenDialog();
+    expect(dialog).not.toBeNull();
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="header-connect-reject"]'),
+    );
+    dialog?.dispatchEvent(new Event("cancel", { cancelable: true }));
+    await flushPromises();
+
+    expect(getOpenDialog()).toBeNull();
+    expect(document.activeElement).toBe(scanButton);
+    expect(wrapper.text()).toContain(t("IrohaConnect connection rejected."));
+    expect(FakeWebSocket.instances).toHaveLength(0);
+  });
+
+  it("does not sign an IrohaConnect transaction request until the user approves it", async () => {
+    mountComponent();
+    const { socket, keys } = await approveConnection();
     const signingMessageB64 = Buffer.from("transfer 10 XOR").toString("base64");
 
     emitBinaryMessage(
@@ -356,10 +399,15 @@ describe("HeaderIrohaConnectButton", () => {
     await flushPromises();
 
     expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain(t("Approve transaction signature?"));
-    expect(wrapper.text()).toContain("transfer 10 XOR");
+    expect(getOpenDialog()?.textContent).toContain(
+      t("Approve transaction signature?"),
+    );
+    expect(getOpenDialog()?.textContent).toContain("transfer 10 XOR");
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="header-connect-request-reject"]'),
+    );
 
-    await getButtonByText(wrapper, t("Approve and sign")).trigger("click");
+    getDialogButtonByText(t("Approve and sign")).click();
     await flushPromises();
 
     expect(signIrohaConnectMessageMock).toHaveBeenCalledWith({
@@ -372,8 +420,8 @@ describe("HeaderIrohaConnectButton", () => {
   });
 
   it("returns the selected signing algorithm metadata in IrohaConnect signature responses", async () => {
-    const wrapper = mountComponent();
-    const { socket, keys } = await approveConnection(wrapper);
+    mountComponent();
+    const { socket, keys } = await approveConnection();
     const signingMessageB64 =
       Buffer.from("transfer with secp").toString("base64");
     signIrohaConnectMessageMock.mockResolvedValueOnce({
@@ -393,7 +441,7 @@ describe("HeaderIrohaConnectButton", () => {
       }),
     );
     await flushPromises();
-    await getButtonByText(wrapper, t("Approve and sign")).trigger("click");
+    getDialogButtonByText(t("Approve and sign")).click();
     await flushPromises();
 
     const envelope = decodeLatestWalletEnvelope(socket, keys.walletKey);
@@ -408,8 +456,8 @@ describe("HeaderIrohaConnectButton", () => {
   });
 
   it("rejects an IrohaConnect transaction request without signing", async () => {
-    const wrapper = mountComponent();
-    const { socket, keys } = await approveConnection(wrapper);
+    mountComponent();
+    const { socket, keys } = await approveConnection();
 
     emitBinaryMessage(
       socket,
@@ -421,7 +469,7 @@ describe("HeaderIrohaConnectButton", () => {
     );
     await flushPromises();
 
-    await getButtonByText(wrapper, t("Reject")).trigger("click");
+    getDialogButtonByText(t("Reject")).click();
     await flushPromises();
 
     expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
@@ -434,8 +482,8 @@ describe("HeaderIrohaConnectButton", () => {
   });
 
   it("signs encrypted IrohaConnect requests with the approved account after wallet switching", async () => {
-    const wrapper = mountComponent();
-    const { socket, keys } = await approveConnection(wrapper);
+    mountComponent();
+    const { socket, keys } = await approveConnection();
     const session = useSessionStore();
     session.$patch({
       accounts: [
@@ -466,7 +514,7 @@ describe("HeaderIrohaConnectButton", () => {
     );
     await flushPromises();
 
-    await getButtonByText(wrapper, t("Approve and sign")).trigger("click");
+    getDialogButtonByText(t("Approve and sign")).click();
     await flushPromises();
 
     expect(signIrohaConnectMessageMock).toHaveBeenCalledWith({

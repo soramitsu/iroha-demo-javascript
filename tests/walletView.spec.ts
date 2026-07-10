@@ -76,7 +76,13 @@ const confidentialBalanceFixture = (
 });
 
 describe("WalletView", () => {
+  const getOpenDialog = () =>
+    document.body.querySelector<HTMLDialogElement>("dialog.ui-dialog[open]");
+
   beforeEach(() => {
+    document.body
+      .querySelectorAll("dialog.ui-dialog")
+      .forEach((dialog) => dialog.remove());
     fetchAccountAssetsMock.mockReset();
     fetchAccountTransactionsMock.mockReset();
     getConfidentialAssetBalanceMock.mockReset();
@@ -270,6 +276,15 @@ describe("WalletView", () => {
   });
 
   it("shows citizenship status without a network citizen count on the wallet screen", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "42",
+        },
+      ],
+      total: 1,
+    });
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
       accountId: "alice@wonderland",
       isCitizen: true,
@@ -297,6 +312,19 @@ describe("WalletView", () => {
     });
   });
 
+  it("keeps primary payment actions with the dominant balance and one contextual next step", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const balanceBand = wrapper.get(".wallet-balance-band");
+    expect(balanceBand.find(".wallet-quick-actions").exists()).toBe(true);
+    expect(balanceBand.findAll(".wallet-action-link")).toHaveLength(2);
+
+    const nextSteps = wrapper.findAll(".wallet-next-step .ui-alert");
+    expect(nextSteps).toHaveLength(1);
+    expect(nextSteps[0]?.text()).toContain(t("Starter funds"));
+  });
+
   it("updates the visible balance before transaction and private scans finish", async () => {
     let resolveTransactions: (value: unknown) => void = () => {};
     fetchAccountAssetsMock.mockResolvedValueOnce({
@@ -318,9 +346,6 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
-    expect(wrapper.get(".wallet-summary-header button").text()).toBe(
-      t("Refresh"),
-    );
     expect(getConfidentialAssetBalanceMock).not.toHaveBeenCalled();
 
     resolveTransactions({ items: [], total: 0 });
@@ -356,9 +381,6 @@ describe("WalletView", () => {
       }),
     );
     expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
-    expect(wrapper.get(".wallet-summary-header button").text()).toBe(
-      t("Refresh"),
-    );
 
     resolveCitizenship({
       accountId: "alice@wonderland",
@@ -496,6 +518,13 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain("xor#universal");
     expect(wrapper.text()).toContain("22");
     expect(wrapper.text()).toContain("9");
+    const scrollableTables = wrapper.findAll(
+      '.table-wrap[role="region"][tabindex="0"]',
+    );
+    expect(scrollableTables).toHaveLength(2);
+    expect(
+      scrollableTables.map((region) => region.attributes("aria-label")),
+    ).toEqual([t("Assets"), t("Latest Transactions")]);
   });
 
   it("keeps the faucet action ahead of shielding controls in the wallet summary", async () => {
@@ -513,9 +542,9 @@ describe("WalletView", () => {
     await flushPromises();
 
     const summaryHtml = wrapper.get(".wallet-summary-card").html();
-    expect(summaryHtml.indexOf("wallet-faucet-panel")).toBeGreaterThan(-1);
+    expect(summaryHtml.indexOf("wallet-next-step")).toBeGreaterThan(-1);
     expect(summaryHtml.indexOf("wallet-shield-panel")).toBeGreaterThan(-1);
-    expect(summaryHtml.indexOf("wallet-faucet-panel")).toBeLessThan(
+    expect(summaryHtml.indexOf("wallet-next-step")).toBeLessThan(
       summaryHtml.indexOf("wallet-shield-panel"),
     );
   });
@@ -1259,9 +1288,13 @@ describe("WalletView", () => {
       .trigger("click");
     await flushPromises();
 
-    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(true);
-    expect(wrapper.text()).toContain(t("Faucet request in progress"));
-    expect(wrapper.text()).toContain(t("Solving faucet proof-of-work…"));
+    expect(getOpenDialog()).not.toBeNull();
+    expect(getOpenDialog()?.textContent).toContain(
+      t("Faucet request in progress"),
+    );
+    expect(getOpenDialog()?.textContent).toContain(
+      t("Solving faucet proof-of-work…"),
+    );
 
     resolveFaucet({
       account_id: "alice@wonderland",
@@ -1275,7 +1308,7 @@ describe("WalletView", () => {
     await vi.advanceTimersByTimeAsync(1_500);
     await flushPromises();
 
-    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(false);
+    expect(getOpenDialog()).toBeNull();
   });
 
   it("lets the user cancel an in-flight faucet request", async () => {
@@ -1305,17 +1338,17 @@ describe("WalletView", () => {
     await flushPromises();
 
     const requestId = requestFaucetFundsMock.mock.calls[0][0].requestId;
-    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(true);
-    expect(wrapper.text()).toContain(t("Cancel"));
+    expect(getOpenDialog()).not.toBeNull();
+    expect(getOpenDialog()?.textContent).toContain(t("Cancel"));
 
-    await wrapper
-      .findAll("button")
-      .find((button) => button.text().includes(t("Cancel")))!
-      .trigger("click");
+    const cancelButton = Array.from(
+      getOpenDialog()?.querySelectorAll("button") ?? [],
+    ).find((button) => button.textContent?.includes(t("Cancel")));
+    cancelButton?.click();
     await flushPromises();
 
     expect(cancelFaucetRequestMock).toHaveBeenCalledWith({ requestId });
-    expect(wrapper.find(".wallet-faucet-modal-backdrop").exists()).toBe(false);
+    expect(getOpenDialog()).toBeNull();
     expect(wrapper.text()).toContain(t("Faucet request canceled."));
     expect(wrapper.text()).not.toContain(t("Failed to request faucet funds."));
   });

@@ -77,16 +77,36 @@ const isTrustedAppUrl = (value: string | undefined, rendererUrl?: string) => {
   }
   try {
     const parsed = new URL(raw);
-    if (parsed.protocol === "file:") {
-      return true;
-    }
     if (!rendererUrl) {
       return false;
     }
-    return parsed.origin === new URL(rendererUrl).origin;
+    const trusted = new URL(rendererUrl);
+    return (
+      !parsed.username &&
+      !parsed.password &&
+      !trusted.username &&
+      !trusted.password &&
+      parsed.protocol === trusted.protocol &&
+      parsed.hostname === trusted.hostname &&
+      parsed.port === trusted.port
+    );
   } catch (_error) {
     return false;
   }
+};
+
+const hasOnlyTrustedAppUrls = (
+  values: Array<string | undefined>,
+  rendererUrl?: string,
+): boolean => {
+  const supplied = values.filter(
+    (value): value is string =>
+      typeof value === "string" && value.trim() !== "",
+  );
+  return (
+    supplied.length > 0 &&
+    supplied.every((candidate) => isTrustedAppUrl(candidate, rendererUrl))
+  );
 };
 
 export const shouldGrantMediaPermission = ({
@@ -113,19 +133,19 @@ export const shouldGrantMediaPermission = ({
   ) {
     return false;
   }
-  return [
-    details?.securityOrigin,
-    details?.requestingUrl,
-    requestingOrigin,
-  ].some((candidate) => isTrustedAppUrl(candidate, rendererUrl));
+  return hasOnlyTrustedAppUrls(
+    [details?.securityOrigin, details?.requestingUrl, requestingOrigin],
+    rendererUrl,
+  );
 };
 
 export const shouldGrantDisplayCaptureRequest = (
   request: DisplayMediaRequest,
   rendererUrl?: string,
 ): boolean =>
-  [request.frame?.url, request.securityOrigin, request.requestingUrl].some(
-    (candidate) => isTrustedAppUrl(candidate, rendererUrl),
+  hasOnlyTrustedAppUrls(
+    [request.frame?.url, request.securityOrigin, request.requestingUrl],
+    rendererUrl,
   );
 
 export const resolveSystemMediaPermission = async (

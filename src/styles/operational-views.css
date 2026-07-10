@@ -1,0 +1,1042 @@
+/* Account and setup */
+
+.account-wizard,
+.setup-shell,
+.parliament-shell,
+.subscriptions-shell,
+.soracloud-shell,
+.sccp-shell,
+.vpn-shell {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.account-wizard-intro {
+  padding: clamp(22px, 4vw, 38px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+
+.account-wizard-copy {
+  max-width: 62ch;
+}
+
+.account-wizard-copy h2 {
+  margin: 0;
+  font-size: clamp(1.45rem, 3vw, 2rem);
+}
+
+.account-wizard-copy .helper {
+  margin-top: var(--space-2);
+}
+
+.account-wizard-chips {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.account-wizard-shell {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.34fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.account-wizard-rail {
+  position: sticky;
+  top: 0;
+  padding: var(--space-3);
+  display: grid;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-raised);
+}
+
+.account-wizard-panel,
+.wizard-stage {
+  min-width: 0;
+}
+
+.account-step-list {
+  display: grid;
+  gap: 5px;
+}
+
+.account-step {
+  min-height: 44px;
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+}
+
+.account-step.current {
+  border-color: color-mix(
+    in srgb,
+    var(--color-accent-raw) 28%,
+    var(--color-border)
+  );
+  color: var(--color-text-strong);
+  background: var(--color-accent-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.account-step.done {
+  color: var(--color-success);
+}
+
+.account-step-number {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.account-step.current .account-step-number,
+.account-step.done .account-step-number {
+  border-color: currentColor;
+}
+
+.account-step-label {
+  min-width: 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.account-wizard-summary,
+.wizard-summary-row {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.wizard-summary-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account-wizard-flow {
+  min-width: 0;
+}
+
+.wizard-stage {
+  display: none;
+}
+
+.wizard-stage.current,
+.wizard-stage.complete {
+  display: block;
+}
+
+.wizard-review-grid,
+.account-review-grid,
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.wizard-review-item {
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.wizard-field-compact {
+  max-width: 24rem;
+}
+
+.wizard-field-wide {
+  grid-column: 1 / -1;
+}
+
+.account-roster-empty {
+  min-height: 150px;
+  display: grid;
+  place-content: center;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.setup-shell,
+.parliament-shell {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+
+.setup-connection-card,
+.setup-identity-card,
+.setup-register-card,
+.parliament-status-card,
+.parliament-lookup-card,
+.parliament-proposal-card,
+.parliament-ballot-card,
+.parliament-council-card {
+  grid-column: span 6;
+}
+
+.setup-connection-card,
+.parliament-status-card {
+  grid-column: 1 / -1;
+}
+
+.permission-stack,
+.history-stack,
+.payload-stack,
+.member-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.history-chips,
+.history-actions,
+.preset-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.history-chip,
+.preset-chip {
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-control);
+}
+
+.preset-chip.active {
+  border-color: color-mix(
+    in srgb,
+    var(--color-accent-raw) 30%,
+    var(--color-border)
+  );
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.chip-title,
+.chip-sub {
+  display: block;
+}
+
+.chip-sub {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.payload {
+  max-width: 100%;
+  max-height: 320px;
+  padding: var(--space-3);
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  font-family: var(--mono-font);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.member-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.member-list li {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+}
+
+.chain-picker {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.shield-option {
+  min-height: 44px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+}
+
+/* Subscriptions */
+
+.subscriptions-summary-card,
+.subscriptions-form-card,
+.subscriptions-list-card {
+  min-width: 0;
+}
+
+.subscription-header-actions,
+.subscription-actions,
+.soracloud-command-actions,
+.soracloud-state-actions,
+.soracloud-form-actions,
+.sccp-command-actions,
+.sccp-form-actions,
+.sccp-route-strip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.subscriptions-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 0.7fr);
+  gap: var(--space-4);
+  align-items: stretch;
+}
+
+.subscriptions-summary-grid {
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.subscriptions-summary-grid .kv {
+  padding: var(--space-3);
+  border: 0;
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.subscriptions-next-panel {
+  padding: var(--space-4);
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.subscriptions-next-label {
+  margin: 0;
+  color: var(--color-text-strong);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+.subscription-span-2 {
+  grid-column: 1 / -1;
+}
+
+.subscription-submit {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.subscription-plan-list,
+.subscription-stack {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.subscription-plan-list {
+  grid-column: 1 / -1;
+  margin-top: var(--space-4);
+}
+
+.subscription-stack.compact {
+  gap: var(--space-2);
+}
+
+.subscription-card {
+  min-width: 0;
+  padding: var(--space-4);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-control);
+}
+
+.subscription-card.compact {
+  grid-template-columns: minmax(0, 1fr);
+  padding: var(--space-3);
+}
+
+.subscription-card-main,
+.subscription-headline {
+  min-width: 0;
+}
+
+.subscription-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.subscription-header h3 {
+  margin: 0;
+}
+
+.subscription-meta {
+  margin-top: var(--space-2);
+  display: flex;
+  gap: var(--space-2) var(--space-4);
+  flex-wrap: wrap;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.subscription-actions {
+  min-width: 148px;
+  justify-content: flex-end;
+}
+
+.subscription-actions button {
+  flex: 1 1 auto;
+}
+
+/* SoraCloud */
+
+.soracloud-console {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.soracloud-command-header {
+  align-items: center;
+}
+
+.soracloud-command-actions {
+  justify-content: flex-end;
+}
+
+.soracloud-kpi-grid,
+.soracloud-review-grid,
+.soracloud-inspector-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.soracloud-kpi-grid .kv,
+.soracloud-review-grid .kv,
+.soracloud-inspector-grid .kv {
+  padding: var(--space-3);
+  border-bottom: 0;
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.soracloud-state {
+  min-height: 190px;
+  padding: var(--space-5);
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  text-align: center;
+}
+
+.soracloud-state p {
+  margin: 0;
+}
+
+.soracloud-stepper {
+  margin-bottom: var(--space-4);
+  padding: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.soracloud-stepper button {
+  min-width: 0;
+  color: var(--color-text-muted);
+  background: transparent;
+  box-shadow: none;
+}
+
+.soracloud-stepper button span {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  font-size: 0.7rem;
+}
+
+.soracloud-stepper button.active {
+  color: var(--color-accent);
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-control);
+}
+
+.soracloud-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.soracloud-form fieldset,
+.soracloud-step-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.soracloud-span-2 {
+  grid-column: 1 / -1;
+}
+
+.soracloud-form-actions {
+  justify-content: flex-end;
+}
+
+.soracloud-launch-result {
+  padding: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  border: 1px solid
+    color-mix(in srgb, var(--color-success) 28%, var(--color-border));
+  border-radius: var(--radius-control);
+  background: var(--color-success-soft);
+}
+
+.soracloud-launch-fee {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.soracloud-deployment-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.soracloud-deployment-row {
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-control);
+}
+
+.soracloud-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  box-shadow: 0 0 0 6px
+    color-mix(in srgb, var(--color-text-muted) 10%, transparent);
+}
+
+.soracloud-status-dot.positive {
+  background: var(--color-success);
+  box-shadow: 0 0 0 6px var(--color-success-soft);
+}
+
+.soracloud-status-dot.warning {
+  background: var(--color-warning);
+  box-shadow: 0 0 0 6px var(--color-warning-soft);
+}
+
+.soracloud-status-dot.error {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 6px var(--color-danger-soft);
+}
+
+.soracloud-row-main,
+.soracloud-row-side {
+  min-width: 0;
+}
+
+.soracloud-row-title,
+.soracloud-row-meta {
+  margin: 0;
+}
+
+.soracloud-row-title {
+  color: var(--color-text-strong);
+  font-weight: 700;
+}
+
+.soracloud-row-meta {
+  margin-top: 3px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+}
+
+.soracloud-row-side {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.soracloud-service-link {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* VPN generic layout; route-local styles may refine the controller states. */
+
+.vpn-layout {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+}
+
+.vpn-kpis,
+.vpn-profile-columns,
+.vpn-details-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.vpn-controls,
+.vpn-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.vpn-field {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.vpn-field-label {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+
+.vpn-detail {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+/* SCCP */
+
+.sccp-command-header,
+.sccp-transfer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.sccp-command-actions {
+  justify-content: flex-end;
+}
+
+.sccp-route-toggle {
+  grid-template-columns: repeat(4, minmax(68px, 1fr));
+  grid-auto-flow: row;
+}
+
+.sccp-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.sccp-status-grid .kv {
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  border-inline-end: 1px solid var(--color-border);
+}
+
+.sccp-route-strip {
+  margin-top: var(--space-3);
+}
+
+.sccp-reasons,
+.sccp-readiness-alert {
+  margin-top: var(--space-3);
+  padding: 12px 14px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-warning) 30%, var(--color-border));
+  border-radius: var(--radius-control);
+  background: var(--color-warning-soft);
+  box-shadow: var(--shadow-inset);
+}
+
+.sccp-reasons p,
+.sccp-readiness-alert p {
+  margin: 0;
+}
+
+.sccp-transfer-header {
+  margin-bottom: var(--space-4);
+}
+
+.sccp-direction-tabs {
+  margin-bottom: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-flow: row;
+}
+
+.sccp-form {
+  align-items: start;
+}
+
+.sccp-field-hint,
+.sccp-generated-id small {
+  color: var(--color-text-muted);
+  font-size: 0.74rem;
+}
+
+.sccp-resume-field,
+.sccp-generated-id,
+.sccp-form-actions {
+  grid-column: 1 / -1;
+}
+
+.sccp-generated-id {
+  min-width: 0;
+  padding: var(--space-3);
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.sccp-generated-id code {
+  max-width: 100%;
+  overflow-x: auto;
+  color: var(--color-text-strong);
+}
+
+.sccp-form-actions {
+  justify-content: flex-end;
+}
+
+.sccp-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.sccp-progress-list,
+.sccp-timing-list,
+.sccp-activity-list,
+.sccp-link-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.sccp-progress-list,
+.sccp-timing-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sccp-progress-list li,
+.sccp-timing-list li,
+.sccp-activity-item {
+  position: relative;
+  min-width: 0;
+  padding: var(--space-3);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  color: var(--color-text-muted);
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
+.sccp-progress-list li::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -5px;
+  inset-block-start: 50%;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  transform: translateY(-50%);
+}
+
+.sccp-progress-list li.complete::before,
+.sccp-timing-list li.complete {
+  color: var(--color-success);
+}
+
+.sccp-progress-list li.complete::before {
+  background: var(--color-success);
+}
+
+.sccp-progress-list li.active::before,
+.sccp-timing-list li.active {
+  color: var(--color-accent);
+}
+
+.sccp-progress-list li.active::before {
+  background: var(--color-accent);
+  box-shadow: 0 0 0 5px var(--color-accent-soft);
+}
+
+.sccp-timing-list li.failed {
+  color: var(--color-danger);
+}
+
+.sccp-progress-list small,
+.sccp-timing-list small,
+.sccp-activity-item small {
+  color: inherit;
+  text-align: end;
+}
+
+.sccp-progress-links {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.sccp-progress-links h3 {
+  margin: 0;
+}
+
+.sccp-link-list {
+  margin-top: var(--space-3);
+}
+
+.sccp-link-list a {
+  min-height: 44px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+  box-shadow: var(--shadow-control);
+}
+
+.sccp-progress-disclosure > summary,
+.sccp-activity-disclosure > summary {
+  min-height: 44px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.sccp-progress-disclosure > summary::-webkit-details-marker,
+.sccp-activity-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.sccp-activity-summary {
+  margin-bottom: 0;
+}
+
+.sccp-activity-disclosure[open] > .sccp-activity-summary {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+@media (max-width: 1120px) {
+  .setup-shell,
+  .parliament-shell {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  .setup-shell > *,
+  .parliament-shell > * {
+    grid-column: 1 / -1;
+  }
+
+  .soracloud-kpi-grid,
+  .soracloud-review-grid,
+  .soracloud-inspector-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .account-wizard-shell,
+  .subscriptions-overview,
+  .vpn-layout,
+  .sccp-lower-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .account-wizard-rail {
+    position: static;
+  }
+
+  .account-step-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .subscription-card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .subscription-actions {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 760px) {
+  .account-wizard-intro,
+  .sccp-command-header,
+  .sccp-transfer-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .account-wizard-chips,
+  .sccp-command-actions {
+    justify-content: flex-start;
+  }
+
+  .account-step-list,
+  .wizard-review-grid,
+  .account-review-grid,
+  .account-grid,
+  .soracloud-step-panel,
+  .vpn-kpis,
+  .vpn-profile-columns,
+  .vpn-details-grid,
+  .sccp-status-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .subscription-span-2,
+  .subscription-submit,
+  .soracloud-span-2,
+  .sccp-resume-field,
+  .sccp-generated-id,
+  .sccp-form-actions {
+    grid-column: auto;
+  }
+
+  .subscription-submit,
+  .soracloud-form-actions > *,
+  .sccp-form-actions > * {
+    width: 100%;
+  }
+
+  .subscription-header,
+  .soracloud-command-header,
+  .soracloud-deployment-row {
+    align-items: stretch;
+  }
+
+  .subscription-header,
+  .soracloud-command-header {
+    flex-direction: column;
+  }
+
+  .soracloud-command-actions,
+  .soracloud-state-actions,
+  .soracloud-form-actions,
+  .sccp-form-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .soracloud-deployment-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .soracloud-row-side {
+    grid-column: 1 / -1;
+    justify-items: start;
+  }
+
+  .soracloud-stepper {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sccp-route-toggle {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sccp-progress-list li,
+  .sccp-timing-list li,
+  .sccp-activity-item {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sccp-progress-list small,
+  .sccp-timing-list small,
+  .sccp-activity-item small {
+    text-align: start;
+  }
+}

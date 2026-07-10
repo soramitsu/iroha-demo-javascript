@@ -1,70 +1,88 @@
 <template>
   <div class="vpn-layout">
-    <section class="card vpn-hero-card">
-      <header class="card-header vpn-hero-header">
+    <RouteHeaderAction>
+      <AppButton
+        variant="secondary"
+        :disabled="loading || actionPending"
+        @click="refreshAll"
+      >
+        {{ loading ? t("Refreshing…") : t("Refresh") }}
+      </AppButton>
+    </RouteHeaderAction>
+
+    <section
+      class="vpn-control-surface"
+      :data-state="status.state"
+      aria-labelledby="vpn-heading"
+      :aria-busy="loading || actionPending"
+    >
+      <header class="vpn-control-header">
         <div>
-          <h2>{{ t("Sora VPN") }}</h2>
-          <p class="helper">
-            {{ availabilityMessage }}
-          </p>
+          <p class="vpn-kicker">{{ t(connectionStateLabel) }}</p>
+          <h2 id="vpn-heading">{{ t("Connection") }}</h2>
+          <p class="helper">{{ availabilityMessage }}</p>
         </div>
-        <div class="vpn-hero-actions">
+        <div class="vpn-primary-actions">
           <button
             v-if="status.repairRequired || availability?.repairRequired"
-            class="secondary"
+            type="button"
+            data-ui-primary-action
             :disabled="loading || actionPending"
             @click="handleRepair"
           >
             {{ actionPending ? t("Repairing…") : t("Repair VPN") }}
           </button>
           <button
+            v-else-if="status.state === 'connected'"
+            type="button"
             class="secondary"
-            :disabled="loading || actionPending"
-            @click="refreshAll"
-          >
-            {{ loading ? t("Refreshing…") : t("Refresh") }}
-          </button>
-          <button
-            v-if="status.state === 'connected'"
-            class="secondary"
+            data-ui-primary-action
             :disabled="actionPending || !canOperate"
             @click="handleDisconnect"
           >
             {{ actionPending ? t("Disconnecting…") : t("Disconnect VPN") }}
           </button>
-          <button v-else :disabled="actionDisabled" @click="handleConnect">
+          <button
+            v-else
+            type="button"
+            data-ui-primary-action
+            :disabled="actionDisabled"
+            @click="handleConnect"
+          >
             {{ actionPending ? t("Connecting…") : t("Connect VPN") }}
           </button>
         </div>
       </header>
 
-      <div class="vpn-kpis">
-        <div class="kv">
+      <div class="vpn-state-panel">
+        <div class="vpn-state-mark" aria-hidden="true">
+          <span></span>
+        </div>
+        <div class="vpn-state-copy" role="status" aria-live="polite">
           <span class="kv-label">{{ t("Connection state") }}</span>
-          <span class="kv-value">{{ t(connectionStateLabel) }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Session duration") }}</span>
-          <span class="kv-value">{{ formatDuration(status.durationMs) }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("VPN Lease") }}</span>
-          <span class="kv-value">{{ leaseLabel }}</span>
+          <strong>{{ t(connectionStateLabel) }}</strong>
+          <span class="vpn-relay mono">{{ relayLabel }}</span>
         </div>
       </div>
-      <details class="technical-details compact">
-        <summary>{{ t("VPN details") }}</summary>
-        <div class="vpn-kpis">
-          <div class="kv">
-            <span class="kv-label">{{ t("VPN Helper") }}</span>
-            <span class="kv-value">{{ helperLabel }}</span>
-          </div>
-          <div class="kv">
-            <span class="kv-label">{{ t("Controller") }}</span>
-            <span class="kv-value">{{ controllerLabel }}</span>
-          </div>
+
+      <dl class="vpn-kpis">
+        <div class="kv">
+          <dt class="kv-label">{{ t("Session duration") }}</dt>
+          <dd class="kv-value">{{ formatDuration(status.durationMs) }}</dd>
         </div>
-      </details>
+        <div class="kv">
+          <dt class="kv-label">{{ t("VPN Lease") }}</dt>
+          <dd class="kv-value">{{ leaseLabel }}</dd>
+        </div>
+        <div class="kv">
+          <dt class="kv-label">{{ t("Traffic in") }}</dt>
+          <dd class="kv-value">{{ formatBytes(status.bytesIn) }}</dd>
+        </div>
+        <div class="kv">
+          <dt class="kv-label">{{ t("Traffic out") }}</dt>
+          <dd class="kv-value">{{ formatBytes(status.bytesOut) }}</dd>
+        </div>
+      </dl>
 
       <div class="vpn-controls">
         <label class="vpn-field">
@@ -83,44 +101,43 @@
             </option>
           </select>
         </label>
-        <div class="vpn-inline-meta">
-          <span
-            class="pill"
-            :class="{ positive: availability?.actionsEnabled }"
-          >
+        <div
+          class="vpn-readiness"
+          :class="{ 'is-ready': availability?.actionsEnabled }"
+        >
+          <span class="vpn-readiness-dot" aria-hidden="true"></span>
+          <span>
             {{
               availability?.actionsEnabled
                 ? t("VPN ready")
                 : t("VPN unavailable")
             }}
           </span>
-          <span class="pill">{{ relayLabel }}</span>
-          <span class="pill">{{ billingLabel }}</span>
+          <span class="vpn-billing">{{ billingLabel }}</span>
         </div>
       </div>
 
-      <p v-if="canOperate" class="transaction-fee-note">
-        <span>{{ t("Fee") }}</span>
-        <strong>{{
-          formatTransactionFee(
-            transactionFeeHintForEndpoint(session.connection.toriiUrl),
-            t,
-          )
-        }}</strong>
-      </p>
-      <p v-if="actionError" class="wallet-faucet-message wallet-faucet-error">
-        {{ actionError }}
-      </p>
-      <p
-        v-else-if="loadError"
-        class="wallet-faucet-message wallet-faucet-error"
-      >
-        {{ loadError }}
-      </p>
+      <div class="vpn-control-footer">
+        <p v-if="canOperate" class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{
+            formatTransactionFee(
+              transactionFeeHintForEndpoint(session.connection.toriiUrl),
+              t,
+            )
+          }}</strong>
+        </p>
+        <p v-if="actionError" class="vpn-error" role="alert">
+          {{ actionError }}
+        </p>
+        <p v-else-if="loadError" class="vpn-error" role="alert">
+          {{ loadError }}
+        </p>
+      </div>
     </section>
 
-    <section class="card vpn-details-card">
-      <details class="technical-details">
+    <section class="vpn-diagnostics" :aria-label="t('VPN details')">
+      <details class="vpn-diagnostic-section">
         <summary>{{ t("Session details") }}</summary>
         <div class="vpn-details-grid">
           <div class="vpn-detail">
@@ -165,12 +182,18 @@
             <span class="helper">{{ t("Primary network service") }}</span>
             <span>{{ systemTunnelServiceLabel }}</span>
           </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("VPN Helper") }}</span>
+            <span>{{ helperLabel }}</span>
+          </div>
+          <div class="vpn-detail">
+            <span class="helper">{{ t("Controller") }}</span>
+            <span>{{ controllerLabel }}</span>
+          </div>
         </div>
       </details>
-    </section>
 
-    <section class="card vpn-profile-card">
-      <details class="technical-details">
+      <details class="vpn-diagnostic-section">
         <summary>{{ t("Network profile") }}</summary>
         <div class="vpn-profile-columns">
           <div>
@@ -230,10 +253,8 @@
           </div>
         </div>
       </details>
-    </section>
 
-    <section class="card vpn-receipts-card">
-      <details class="technical-details">
+      <details class="vpn-diagnostic-section">
         <summary>{{ t("Recent VPN receipts") }}</summary>
         <div v-if="receipts.length" class="table-wrap">
           <table class="table">
@@ -272,6 +293,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { AppButton, RouteHeaderAction } from "@/components/ui";
 import {
   connectVpn,
   disconnectVpn,
@@ -716,3 +738,387 @@ onBeforeUnmount(() => {
   }
 });
 </script>
+
+<style scoped>
+.vpn-layout {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 24px;
+  max-width: 1100px;
+}
+
+.vpn-control-surface {
+  display: grid;
+  gap: 24px;
+  padding: clamp(20px, 3vw, 34px);
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 22px;
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.vpn-control-header,
+.vpn-primary-actions,
+.vpn-controls,
+.vpn-readiness,
+.vpn-control-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vpn-control-header,
+.vpn-controls {
+  justify-content: space-between;
+}
+
+.vpn-control-header {
+  align-items: flex-start;
+}
+
+.vpn-control-header h2 {
+  margin: 4px 0 8px;
+}
+
+.vpn-control-header .helper {
+  max-width: 58ch;
+}
+
+.vpn-kicker {
+  margin: 0;
+  color: var(--iroha-accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.vpn-primary-actions {
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.vpn-primary-actions button {
+  min-height: 44px;
+}
+
+.vpn-primary-actions .ghost {
+  background: transparent;
+  box-shadow: none;
+}
+
+.vpn-state-panel {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-height: 132px;
+  padding: clamp(18px, 3vw, 28px);
+  border-block: 1px solid var(--panel-border);
+  background: var(--frost-panel-soft);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+
+.vpn-state-mark {
+  display: grid;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border: 1px solid var(--panel-border);
+  border-radius: 50%;
+  background: var(--surface-strong);
+}
+
+.vpn-state-mark span {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--iroha-muted);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--iroha-muted) 13%, transparent);
+}
+
+.vpn-control-surface[data-state="connected"] .vpn-state-mark span {
+  background: var(--color-success);
+  box-shadow: 0 0 0 6px
+    color-mix(in srgb, var(--color-success) 15%, transparent);
+}
+
+.vpn-control-surface:is(
+    [data-state="connecting"],
+    [data-state="reconciling"],
+    [data-state="disconnecting"]
+  )
+  .vpn-state-mark
+  span {
+  background: var(--iroha-accent);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--iroha-accent) 15%, transparent);
+}
+
+.vpn-control-surface:is([data-state="error"], [data-state="repair-needed"])
+  .vpn-state-mark
+  span {
+  background: var(--color-danger);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-danger) 15%, transparent);
+}
+
+.vpn-state-copy {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.vpn-state-copy strong {
+  font-size: clamp(1.25rem, 2.8vw, 1.8rem);
+}
+
+.vpn-relay {
+  color: var(--iroha-muted);
+  overflow-wrap: anywhere;
+}
+
+.vpn-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid var(--panel-border);
+}
+
+.vpn-kpis .kv {
+  min-width: 0;
+  padding: 15px 18px;
+}
+
+.vpn-kpis .kv + .kv {
+  border-inline-start: 1px solid var(--panel-border);
+}
+
+.vpn-kpis dd {
+  margin: 5px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.vpn-controls {
+  gap: 24px;
+}
+
+.vpn-field {
+  display: grid;
+  flex: 0 1 320px;
+  gap: 7px;
+}
+
+.vpn-field-label {
+  color: var(--iroha-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.vpn-readiness {
+  min-width: 0;
+  justify-content: flex-end;
+  color: var(--iroha-muted);
+  font-size: 0.82rem;
+}
+
+.vpn-readiness-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--iroha-muted);
+}
+
+.vpn-readiness.is-ready .vpn-readiness-dot {
+  background: var(--color-success);
+}
+
+.vpn-billing {
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--panel-border);
+  overflow-wrap: anywhere;
+}
+
+.vpn-control-footer {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.vpn-control-footer .transaction-fee-note {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.vpn-error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.84rem;
+  text-align: end;
+}
+
+.vpn-diagnostics {
+  overflow: hidden;
+  border-block: 1px solid var(--panel-border);
+}
+
+.vpn-diagnostic-section {
+  margin: 0;
+  border: 0;
+  background: transparent;
+}
+
+.vpn-diagnostic-section + .vpn-diagnostic-section {
+  border-top: 1px solid var(--panel-border);
+}
+
+.vpn-diagnostic-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 12px 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 750;
+  list-style: none;
+}
+
+.vpn-diagnostic-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.vpn-diagnostic-section > summary::after {
+  content: "+";
+  color: var(--iroha-muted);
+  font-size: 1.1rem;
+  font-weight: 400;
+}
+
+.vpn-diagnostic-section[open] > summary::after {
+  content: "−";
+}
+
+.vpn-details-grid,
+.vpn-profile-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 0 4px 24px;
+}
+
+.vpn-detail,
+.vpn-profile-columns > div {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.vpn-detail span:last-child,
+.vpn-profile-columns li {
+  overflow-wrap: anywhere;
+}
+
+.vpn-profile-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.vpn-list {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+}
+
+.vpn-diagnostic-section > .table-wrap,
+.vpn-diagnostic-section > .wallet-empty {
+  margin-bottom: 24px;
+}
+
+.mono {
+  unicode-bidi: plaintext;
+}
+
+@media (max-width: 860px) {
+  .vpn-control-header,
+  .vpn-controls,
+  .vpn-control-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .vpn-primary-actions,
+  .vpn-readiness {
+    justify-content: flex-start;
+  }
+
+  .vpn-field {
+    flex-basis: auto;
+  }
+
+  .vpn-kpis,
+  .vpn-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .vpn-kpis .kv:nth-child(3) {
+    border-inline-start: 0;
+  }
+
+  .vpn-kpis .kv:nth-child(n + 3) {
+    border-top: 1px solid var(--panel-border);
+  }
+
+  .vpn-error {
+    text-align: start;
+  }
+}
+
+@media (max-width: 560px) {
+  .vpn-control-surface {
+    padding-inline: 18px;
+  }
+
+  .vpn-primary-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .vpn-state-panel {
+    align-items: flex-start;
+    gap: 16px;
+    padding-inline: 14px;
+  }
+
+  .vpn-state-mark {
+    width: 48px;
+    height: 48px;
+  }
+
+  .vpn-readiness {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .vpn-billing {
+    flex-basis: 100%;
+    padding: 8px 0 0;
+    border: 0;
+  }
+
+  .vpn-details-grid,
+  .vpn-profile-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

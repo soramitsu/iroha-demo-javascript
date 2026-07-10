@@ -33,6 +33,7 @@
         <button
           type="button"
           class="header-connect-button"
+          data-testid="header-connect-scan-screen"
           :disabled="connectBusy"
           @click="scanScreenQr"
         >
@@ -61,6 +62,7 @@
           type="file"
           accept="image/*"
           class="sr-only"
+          :aria-label="t('Upload QR image')"
           @change="connectScanner.decodeFile"
         />
       </div>
@@ -100,120 +102,109 @@
     </div>
   </details>
 
-  <div v-if="pendingConnectSession" class="header-connect-modal-backdrop">
-    <section
-      class="card header-connect-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="header-connect-approval-title"
-    >
-      <p class="header-connect-modal-label">
-        {{ t("IrohaConnect connection") }}
-      </p>
-      <h2 id="header-connect-approval-title">
-        {{ t("Approve connection?") }}
-      </h2>
-      <p class="helper">
+  <AppDialog
+    :open="Boolean(pendingConnectSession)"
+    :eyebrow="t('IrohaConnect connection')"
+    :title="t('Approve connection?')"
+    :description="
+      t(
+        'Review the requesting app details before allowing it to send wallet requests.',
+      )
+    "
+    :busy="connectApprovalLoading"
+    :show-close="false"
+    initial-focus-selector="[data-testid='header-connect-reject']"
+    @close="rejectPendingConnection"
+  >
+    <div class="header-connect-modal-grid">
+      <div
+        v-for="detail in pendingConnectionDetails"
+        :key="detail.label"
+        class="kv"
+        :class="{ monospace: detail.monospace }"
+      >
+        <span class="kv-label">{{ detail.label }}</span>
+        <span class="kv-value">{{ detail.value }}</span>
+      </div>
+    </div>
+    <template #actions>
+      <button
+        type="button"
+        class="secondary"
+        data-testid="header-connect-reject"
+        :disabled="connectApprovalLoading"
+        @click="rejectPendingConnection"
+      >
+        {{ t("Reject") }}
+      </button>
+      <button
+        type="button"
+        :disabled="connectApprovalLoading"
+        @click="approvePendingConnection"
+      >
         {{
-          t(
-            "Review the requesting app details before allowing it to send wallet requests.",
-          )
+          connectApprovalLoading ? t("Approving...") : t("Approve connection")
         }}
-      </p>
-      <div class="header-connect-modal-grid">
-        <div
-          v-for="detail in pendingConnectionDetails"
-          :key="detail.label"
-          class="kv"
-          :class="{ monospace: detail.monospace }"
-        >
-          <span class="kv-label">{{ detail.label }}</span>
-          <span class="kv-value">{{ detail.value }}</span>
-        </div>
-      </div>
-      <div class="actions-row header-connect-modal-actions">
-        <button
-          type="button"
-          class="secondary"
-          :disabled="connectApprovalLoading"
-          @click="rejectPendingConnection"
-        >
-          {{ t("Reject") }}
-        </button>
-        <button
-          type="button"
-          :disabled="connectApprovalLoading"
-          @click="approvePendingConnection"
-        >
-          {{
-            connectApprovalLoading ? t("Approving...") : t("Approve connection")
-          }}
-        </button>
-      </div>
-    </section>
-  </div>
+      </button>
+    </template>
+  </AppDialog>
 
-  <div v-if="pendingConnectRequest" class="header-connect-modal-backdrop">
-    <section
-      class="card header-connect-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="header-connect-request-title"
-    >
-      <p class="header-connect-modal-label">
-        {{ pendingConnectRequest.label }}
-      </p>
-      <h2 id="header-connect-request-title">
-        {{ pendingConnectRequest.title }}
-      </h2>
-      <p class="helper">
+  <AppDialog
+    :open="Boolean(pendingConnectRequest)"
+    :eyebrow="pendingConnectRequest?.label"
+    :title="pendingConnectRequest?.title || t('IrohaConnect')"
+    :description="
+      t(
+        'This request will not be signed or answered unless you approve it here.',
+      )
+    "
+    :busy="pendingRequestLoading"
+    :show-close="false"
+    initial-focus-selector="[data-testid='header-connect-request-reject']"
+    @close="rejectPendingConnectRequest"
+  >
+    <div class="header-connect-modal-grid">
+      <div
+        v-for="detail in pendingConnectRequest?.details || []"
+        :key="detail.label"
+        class="kv"
+        :class="{ monospace: detail.monospace }"
+      >
+        <span class="kv-label">{{ detail.label }}</span>
+        <span class="kv-value">{{ detail.value }}</span>
+      </div>
+    </div>
+    <p v-if="pendingRequestError" class="helper error">
+      {{ pendingRequestError }}
+    </p>
+    <template #actions>
+      <button
+        type="button"
+        class="secondary"
+        data-testid="header-connect-request-reject"
+        :disabled="pendingRequestLoading"
+        @click="rejectPendingConnectRequest"
+      >
+        {{ t("Reject") }}
+      </button>
+      <button
+        type="button"
+        :disabled="pendingRequestLoading"
+        @click="approvePendingConnectRequest"
+      >
         {{
-          t(
-            "This request will not be signed or answered unless you approve it here.",
-          )
+          pendingRequestLoading
+            ? t("Approving...")
+            : pendingConnectRequest?.approveLabel
         }}
-      </p>
-      <div class="header-connect-modal-grid">
-        <div
-          v-for="detail in pendingConnectRequest.details"
-          :key="detail.label"
-          class="kv"
-          :class="{ monospace: detail.monospace }"
-        >
-          <span class="kv-label">{{ detail.label }}</span>
-          <span class="kv-value">{{ detail.value }}</span>
-        </div>
-      </div>
-      <p v-if="pendingRequestError" class="helper error">
-        {{ pendingRequestError }}
-      </p>
-      <div class="actions-row header-connect-modal-actions">
-        <button
-          type="button"
-          class="secondary"
-          :disabled="pendingRequestLoading"
-          @click="rejectPendingConnectRequest"
-        >
-          {{ t("Reject") }}
-        </button>
-        <button
-          type="button"
-          :disabled="pendingRequestLoading"
-          @click="approvePendingConnectRequest"
-        >
-          {{
-            pendingRequestLoading
-              ? t("Approving...")
-              : pendingConnectRequest.approveLabel
-          }}
-        </button>
-      </div>
-    </section>
-  </div>
+      </button>
+    </template>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
+import AppDialog from "@/components/ui/AppDialog.vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useQrScanner } from "@/composables/useQrScanner";
 import {
@@ -1140,46 +1131,6 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.header-connect-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 120;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(18, 18, 26, 0.58);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-}
-
-.header-connect-modal {
-  width: min(640px, 100%);
-  max-height: min(82vh, 720px);
-  overflow: auto;
-  display: grid;
-  gap: 14px;
-  padding: 22px;
-  border-radius: 18px;
-  box-shadow: var(--shadow-strong);
-}
-
-.header-connect-modal-label,
-.header-connect-modal h2 {
-  margin: 0;
-}
-
-.header-connect-modal-label {
-  color: var(--iroha-muted);
-  font-size: 0.76rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.header-connect-modal h2 {
-  font-size: clamp(1.35rem, 2vw, 1.75rem);
-}
-
 .header-connect-modal-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1194,31 +1145,16 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
-.header-connect-modal-actions {
-  justify-content: flex-end;
-  margin-top: 2px;
-}
-
 .monospace {
-  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono-font);
   word-break: break-all;
 }
 
 .error {
-  color: #b91c1c;
+  color: var(--color-danger);
 }
 
 @media (max-width: 640px) {
-  .header-connect-modal-backdrop {
-    align-items: end;
-    padding: 12px;
-  }
-
-  .header-connect-modal {
-    max-height: 88vh;
-    padding: 18px;
-  }
-
   .header-connect-modal-grid {
     grid-template-columns: 1fr;
   }

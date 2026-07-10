@@ -1,10 +1,10 @@
 <template>
   <div class="settings-shell">
-    <section class="card settings-endpoint-card">
-      <header class="card-header">
+    <section class="settings-endpoint-card" aria-labelledby="torii-heading">
+      <header class="settings-heading">
         <div>
-          <p class="section-label">{{ t("Settings") }}</p>
-          <h2>{{ t("Torii endpoint") }}</h2>
+          <p class="settings-eyebrow">{{ endpointModeLabel }}</p>
+          <h2 id="torii-heading">{{ t("Torii endpoint") }}</h2>
           <p class="helper">
             {{
               t(
@@ -13,23 +13,21 @@
             }}
           </p>
         </div>
-        <span class="status-pill" :class="{ ok: isDefaultEndpoint }">
-          {{ endpointModeLabel }}
-        </span>
+        <button
+          type="button"
+          class="ghost settings-reset"
+          :disabled="checkingEndpoint || isDefaultEndpoint"
+          @click="handleResetEndpoint"
+        >
+          {{ t("Reset to default") }}
+        </button>
       </header>
 
-      <div class="settings-endpoint-summary">
-        <div class="settings-summary-item">
-          <p class="meta-label">{{ t("Current endpoint") }}</p>
-          <p class="meta-value mono" translate="no">{{ currentEndpoint }}</p>
-        </div>
-        <div class="settings-summary-item">
-          <p class="meta-label">{{ t("Default endpoint") }}</p>
-          <p class="meta-value mono" translate="no">{{ defaultEndpoint }}</p>
-        </div>
-      </div>
-
-      <div class="form-grid settings-form-grid">
+      <form
+        class="settings-form"
+        :aria-busy="checkingEndpoint"
+        @submit.prevent="handleCheckAndSaveEndpoint"
+      >
         <label class="settings-endpoint-field">
           {{ t("Torii URL") }}
           <input
@@ -45,81 +43,113 @@
             aria-describedby="settings-endpoint-status settings-endpoint-error"
             :aria-invalid="Boolean(errorMessage)"
           />
+          <span class="field-hint">
+            {{
+              t(
+                "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.",
+              )
+            }}
+          </span>
         </label>
-        <label>
-          {{ t("Chain ID") }}
-          <input
-            :value="session.connection.chainId"
-            type="text"
-            name="chainId"
-            autocomplete="off"
-            spellcheck="false"
-            translate="no"
-            readonly
-          />
-        </label>
-        <label>
-          {{ t("Network Prefix") }}
-          <input
-            :value="session.connection.networkPrefix"
-            type="text"
-            name="networkPrefix"
-            autocomplete="off"
-            spellcheck="false"
-            translate="no"
-            readonly
-          />
-        </label>
-      </div>
-
-      <p class="helper">
-        {{
-          t(
-            "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.",
-          )
-        }}
-      </p>
-
-      <div class="actions settings-actions">
         <button
+          type="submit"
+          class="settings-primary"
+          data-ui-primary-action
           :disabled="checkingEndpoint"
-          @click="handleCheckAndSaveEndpoint"
         >
           {{ checkingEndpoint ? t("Checking…") : t("Check & Save") }}
         </button>
-        <button
-          class="secondary"
-          :disabled="checkingEndpoint"
-          @click="handleSaveEndpoint"
+      </form>
+
+      <div
+        class="settings-feedback"
+        :class="{ 'has-feedback': statusMessage || errorMessage }"
+      >
+        <p
+          v-if="statusMessage"
+          id="settings-endpoint-status"
+          class="message success"
+          role="status"
+          aria-live="polite"
         >
-          {{ t("Save without checking") }}
-        </button>
-        <button
-          class="secondary"
-          :disabled="checkingEndpoint || isDefaultEndpoint"
-          @click="handleResetEndpoint"
+          {{ statusMessage }}
+        </p>
+        <p
+          v-if="errorMessage"
+          id="settings-endpoint-error"
+          class="message error"
+          role="alert"
         >
-          {{ t("Reset to default") }}
-        </button>
+          {{ errorMessage }}
+        </p>
       </div>
 
-      <p
-        v-if="statusMessage"
-        id="settings-endpoint-status"
-        class="message success"
-        role="status"
-        aria-live="polite"
-      >
-        {{ statusMessage }}
-      </p>
-      <p
-        v-if="errorMessage"
-        id="settings-endpoint-error"
-        class="message error"
-        role="alert"
-      >
-        {{ errorMessage }}
-      </p>
+      <dl class="settings-network-facts">
+        <div>
+          <dt>{{ t("Current endpoint") }}</dt>
+          <dd class="mono" translate="no">{{ currentEndpoint }}</dd>
+        </div>
+        <div>
+          <dt>{{ t("Chain ID") }}</dt>
+          <dd>
+            <input
+              class="settings-fact-input mono"
+              :value="session.connection.chainId"
+              type="text"
+              name="chainId"
+              autocomplete="off"
+              spellcheck="false"
+              translate="no"
+              :aria-label="t('Chain ID')"
+              readonly
+            />
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Network Prefix") }}</dt>
+          <dd>
+            <input
+              class="settings-fact-input mono"
+              :value="session.connection.networkPrefix"
+              type="text"
+              name="networkPrefix"
+              autocomplete="off"
+              spellcheck="false"
+              translate="no"
+              :aria-label="t('Network Prefix')"
+              readonly
+            />
+          </dd>
+        </div>
+      </dl>
+
+      <details class="settings-advanced technical-details">
+        <summary>{{ t("Advanced") }}</summary>
+        <div class="settings-advanced-content">
+          <div>
+            <strong>{{ t("Save without checking") }}</strong>
+            <p class="helper">
+              {{
+                t(
+                  "Choose the Torii endpoint used for wallet, staking, governance, VPN, and explorer requests.",
+                )
+              }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="secondary"
+            :disabled="checkingEndpoint"
+            @click="handleSaveEndpoint"
+          >
+            {{ t("Save without checking") }}
+          </button>
+        </div>
+        <p class="settings-default-note">
+          <span>{{ t("Default endpoint") }}</span>
+          <span class="mono" translate="no">{{ defaultEndpoint }}</span>
+        </p>
+      </details>
     </section>
   </div>
 </template>
@@ -246,53 +276,193 @@ const handleCheckAndSaveEndpoint = async () => {
 
 <style scoped>
 .settings-shell {
-  display: grid;
-  gap: 20px;
+  position: relative;
+  z-index: 1;
+  max-width: 920px;
 }
 
 .settings-endpoint-card {
   display: grid;
-  gap: 18px;
+  gap: 24px;
+  padding: clamp(20px, 4vw, 40px);
+  border: 1px solid var(--frost-border);
+  border-radius: 22px;
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
-.settings-endpoint-summary {
+.settings-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.settings-heading h2 {
+  margin: 4px 0 8px;
+  font-size: clamp(1.2rem, 2vw, 1.5rem);
+}
+
+.settings-heading .helper {
+  max-width: 62ch;
+}
+
+.settings-eyebrow {
+  margin: 0;
+  color: var(--iroha-accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-reset {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding-inline: 10px;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-form {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-}
-
-.settings-summary-item {
-  min-width: 0;
-  padding: 14px 16px;
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  background: var(--surface-soft);
-}
-
-.settings-summary-item .meta-value {
-  overflow-wrap: anywhere;
-}
-
-.settings-form-grid {
-  grid-template-columns: minmax(0, 1.3fr) minmax(220px, 0.85fr) 160px;
-  align-items: start;
+  align-items: end;
 }
 
 .settings-endpoint-field {
-  grid-column: 1 / 2;
+  min-width: 0;
 }
 
-.settings-actions {
+.field-hint {
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings-primary {
+  min-width: 148px;
+}
+
+.settings-feedback:not(.has-feedback) {
+  display: none;
+}
+
+.settings-feedback .message {
+  margin: 0;
+}
+
+.settings-network-facts {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(112px, 0.4fr);
+  margin: 0;
+  border-block: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  overflow: hidden;
+}
+
+.settings-network-facts > div {
+  min-width: 0;
+  padding: 16px 18px;
+}
+
+.settings-network-facts > div + div {
+  border-inline-start: 1px solid var(--panel-border);
+}
+
+.settings-network-facts dt {
+  margin-bottom: 6px;
+  color: var(--iroha-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.settings-network-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-fact-input {
+  width: 100%;
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+}
+
+.settings-advanced {
   margin-top: 0;
 }
 
+.settings-advanced-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.settings-advanced-content .helper {
+  margin-top: 4px;
+}
+
+.settings-default-note {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 0;
+  color: var(--iroha-muted);
+  font-size: 0.78rem;
+}
+
+.settings-default-note .mono {
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 760px) {
-  .settings-form-grid {
+  .settings-endpoint-card {
+    gap: 20px;
+    padding: 20px;
+  }
+
+  .settings-heading,
+  .settings-advanced-content {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-reset {
+    align-self: flex-start;
+  }
+
+  .settings-form,
+  .settings-network-facts {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .settings-endpoint-field {
-    grid-column: auto;
+  .settings-network-facts > div {
+    padding-inline: 0;
+  }
+
+  .settings-network-facts > div + div {
+    border-inline-start: 0;
+    border-top: 1px solid var(--panel-border);
+  }
+
+  .settings-primary,
+  .settings-advanced-content button {
+    width: 100%;
   }
 }
 </style>

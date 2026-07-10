@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
+import { defineComponent } from "vue";
 import StakingView from "@/views/StakingView.vue";
 import { translate } from "@/i18n/messages";
 import { useSessionStore } from "@/stores/session";
@@ -41,8 +42,23 @@ vi.mock("@/services/iroha", () => ({
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
 
+const StakingViewHarness = defineComponent({
+  components: { StakingView },
+  template: `
+    <div data-testid="staking-view-harness">
+      <header aria-label="Route header">
+        <div id="route-header-actions"></div>
+      </header>
+      <main><StakingView /></main>
+    </div>
+  `,
+});
+
+const mountedWrappers: Array<{ unmount: () => void }> = [];
+
 describe("StakingView", () => {
   beforeEach(() => {
+    document.body.replaceChildren();
     getSumeragiStatusMock.mockReset();
     getNexusStakingPolicyMock.mockReset();
     fetchAccountAssetsMock.mockReset();
@@ -115,6 +131,13 @@ describe("StakingView", () => {
     setActivePinia(createPinia());
   });
 
+  afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      wrapper.unmount();
+    }
+    document.body.replaceChildren();
+  });
+
   const mountView = (accountId = "alice@wonderland") => {
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -137,11 +160,14 @@ describe("StakingView", () => {
       ],
       activeAccountId: accountId,
     });
-    return mount(StakingView, {
+    const wrapper = mount(StakingViewHarness, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
     });
+    mountedWrappers.push(wrapper);
+    return wrapper;
   };
 
   const switchToBob = async () => {
@@ -206,6 +232,27 @@ describe("StakingView", () => {
     }
     return input;
   };
+
+  it("renders one refresh action in the route header without an inline title", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const headerActions = wrapper.get("#route-header-actions");
+    const refreshButtons = wrapper
+      .findAll("button")
+      .filter((button) => button.text() === t("Refresh"));
+
+    expect(refreshButtons).toHaveLength(1);
+    expect(headerActions.get("button").text()).toBe(t("Refresh"));
+    expect(
+      wrapper.find(".staking-shell > .ui-route-header-action").exists(),
+    ).toBe(false);
+    expect(wrapper.find(".staking-shell h1").exists()).toBe(false);
+
+    await headerActions.get("button").trigger("click");
+    await flushPromises();
+    expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(2);
+  });
 
   it("ignores stale refresh payload after active account switch", async () => {
     let resolveAliceAssets: (value: unknown) => void = () => {};
@@ -446,5 +493,29 @@ describe("StakingView", () => {
       privateKeyHex: "cd".repeat(32),
     });
     expect(wrapper.text()).toContain("0xvalidator");
+  });
+
+  it("uses an accessible validator master-detail workspace and action tabs", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    const validatorList = wrapper.get('[role="listbox"]');
+    const selectedOption = validatorList.get('[role="option"]');
+    expect(selectedOption.attributes("aria-selected")).toBe("true");
+
+    const tablist = wrapper.get('.staking-action-tabs[role="tablist"]');
+    const tabs = tablist.findAll('[role="tab"]');
+    expect(tabs).toHaveLength(3);
+    expect(tabs[0].attributes("aria-selected")).toBe("true");
+    expect(tabs[0].attributes("tabindex")).toBe("0");
+
+    await tablist.trigger("keydown", { key: "ArrowRight" });
+    expect(tabs[1].attributes("aria-selected")).toBe("true");
+    expect(tabs[1].attributes("tabindex")).toBe("0");
+    expect(wrapper.get(".staking-advanced").attributes("open")).toBeUndefined();
+    expect(
+      wrapper.find(".staking-advanced .validator-operator-card").exists(),
+    ).toBe(true);
   });
 });

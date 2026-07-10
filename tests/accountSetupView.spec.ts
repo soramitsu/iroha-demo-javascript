@@ -160,6 +160,8 @@ vi.mock("@/composables/useQrScanner", async () => {
 });
 
 describe("AccountSetupView", () => {
+  const mountedWrappers: Array<ReturnType<typeof mount>> = [];
+
   beforeEach(() => {
     connectQrDecodeHandler = null;
     FakeWebSocket.instances = [];
@@ -225,6 +227,9 @@ describe("AccountSetupView", () => {
   });
 
   afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) {
+      wrapper.unmount();
+    }
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -270,11 +275,14 @@ describe("AccountSetupView", () => {
         activeAccountId: savedAccount.accountId,
       });
     }
-    return mount(AccountSetupView, {
+    const wrapper = mount(AccountSetupView, {
+      attachTo: document.body,
       global: {
         plugins: [pinia],
       },
     });
+    mountedWrappers.push(wrapper);
+    return wrapper;
   };
 
   const getButtonByText = (
@@ -292,6 +300,33 @@ describe("AccountSetupView", () => {
 
   const getTextInputs = (wrapper: ReturnType<typeof mount>) =>
     wrapper.findAll('input:not([type="checkbox"]):not([type="file"])');
+
+  const selectRestoreFlow = async (wrapper: ReturnType<typeof mount>) => {
+    const addWalletButton = wrapper
+      .findAll("button")
+      .find((node) => node.text() === t("Add another wallet"));
+    if (addWalletButton) {
+      await addWalletButton.trigger("click");
+      await flushPromises();
+    }
+    await getButtonByText(wrapper, t("Restore from recovery phrase")).trigger(
+      "click",
+    );
+    await flushPromises();
+  };
+
+  const getOpenDialog = () =>
+    document.body.querySelector<HTMLDialogElement>("dialog.ui-dialog[open]");
+
+  const getDialogButtonByText = (label: string) => {
+    const button = Array.from(
+      getOpenDialog()?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+    ).find((node) => node.textContent?.trim() === label);
+    if (!button) {
+      throw new Error(`Dialog button not found: ${label}`);
+    }
+    return button;
+  };
 
   const setInputFiles = (input: HTMLInputElement, files: File[]) => {
     Object.defineProperty(input, "files", {
@@ -324,6 +359,9 @@ describe("AccountSetupView", () => {
     expect(wrapper.text()).not.toContain(t("IrohaConnect Pairing"));
     expect(wrapper.text()).not.toContain(t("Saved Wallets"));
     expect(wrapper.findAll(".account-step")).toHaveLength(3);
+    expect(
+      getButtonByText(wrapper, t("Create wallet")).attributes("aria-pressed"),
+    ).toBe("true");
   });
 
   it("requests the irohaconnect launch URI for pairing QR generation", async () => {
@@ -480,10 +518,15 @@ describe("AccountSetupView", () => {
     await scanConnectQr(payload);
 
     expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
-    expect(wrapper.text()).toContain(t("Approve connection?"));
-    expect(wrapper.text()).toContain(EXAMPLE_REAL_I105_ACCOUNT_ID);
-    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    expect(getOpenDialog()).not.toBeNull();
+    expect(getOpenDialog()?.textContent).toContain(t("Approve connection?"));
+    expect(getOpenDialog()?.textContent).toContain(
+      EXAMPLE_REAL_I105_ACCOUNT_ID,
+    );
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="account-connect-reject"]'),
+    );
+    getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
 
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -529,9 +572,9 @@ describe("AccountSetupView", () => {
       )}`,
     );
 
-    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
+    expect(getOpenDialog()).not.toBeNull();
     expect(FakeWebSocket.instances).toHaveLength(0);
-    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
 
     expect(FakeWebSocket.instances).toHaveLength(0);
@@ -545,12 +588,39 @@ describe("AccountSetupView", () => {
       `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
     );
 
-    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(true);
-    await getButtonByText(wrapper, t("Reject")).trigger("click");
+    expect(getOpenDialog()).not.toBeNull();
+    getDialogButtonByText(t("Reject")).click();
     await flushPromises();
 
     expect(FakeWebSocket.instances).toHaveLength(0);
-    expect(wrapper.find(".connect-modal-backdrop").exists()).toBe(false);
+    expect(getOpenDialog()).toBeNull();
+    expect(wrapper.text()).toContain(t("IrohaConnect connection rejected."));
+  });
+
+  it("rejects pairing from the dialog backdrop and returns focus", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+    const pairingDisclosure = wrapper.get(".account-pairing-disclosure")
+      .element as HTMLDetailsElement;
+    pairingDisclosure.open = true;
+    const scanButton = wrapper.get('[data-testid="account-connect-scan"]')
+      .element as HTMLButtonElement;
+    scanButton.focus();
+    expect(document.activeElement).toBe(scanButton);
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+    );
+
+    const dialog = getOpenDialog();
+    expect(dialog).not.toBeNull();
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-testid="account-connect-reject"]'),
+    );
+    dialog?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await flushPromises();
+
+    expect(getOpenDialog()).toBeNull();
+    expect(document.activeElement).toBe(scanButton);
     expect(wrapper.text()).toContain(t("IrohaConnect connection rejected."));
   });
 
@@ -576,7 +646,7 @@ describe("AccountSetupView", () => {
       `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
     );
 
-    await getButtonByText(wrapper, t("Approve connection")).trigger("click");
+    getDialogButtonByText(t("Approve connection")).click();
     await flushPromises();
 
     expect(FakeWebSocket.instances).toHaveLength(1);
@@ -737,8 +807,7 @@ describe("AccountSetupView", () => {
 
     await getButtonByText(wrapper, "Reset").trigger("click");
     await flushPromises();
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     await wrapper.find("textarea").setValue(copiedPhrase);
     await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
@@ -951,8 +1020,7 @@ describe("AccountSetupView", () => {
     const wrapper = mountView();
     const session = useSessionStore();
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     const textarea = wrapper.find("textarea");
     expect(textarea.exists()).toBe(true);
@@ -1011,8 +1079,7 @@ describe("AccountSetupView", () => {
       value: () => Promise.resolve(backupPayload),
     });
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     const fileInput = wrapper.find('input[type="file"]');
     expect(fileInput.exists()).toBe(true);
@@ -1089,8 +1156,7 @@ describe("AccountSetupView", () => {
       value: () => Promise.resolve(backupPayload),
     });
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     const fileInput = wrapper.find('input[type="file"]');
     setInputFiles(fileInput.element as HTMLInputElement, [backupFile]);
@@ -1128,8 +1194,7 @@ describe("AccountSetupView", () => {
       value: () => Promise.resolve(invalidBackupPayload),
     });
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     const fileInput = wrapper.find('input[type="file"]');
     expect(fileInput.exists()).toBe(true);
@@ -1149,8 +1214,7 @@ describe("AccountSetupView", () => {
   it("validates restore phrases before deriving or saving", async () => {
     const wrapper = mountView();
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
     await flushPromises();
@@ -1184,8 +1248,7 @@ describe("AccountSetupView", () => {
       VALID_24_WORD_MNEMONIC,
     );
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     await wrapper.find("textarea").setValue(VALID_24_WORD_MNEMONIC);
     await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
@@ -1202,8 +1265,7 @@ describe("AccountSetupView", () => {
 
     const wrapper = mountView();
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     await wrapper.find("textarea").setValue(VALID_MNEMONIC);
     await getButtonByText(wrapper, t("Load recovery phrase")).trigger("click");
@@ -1280,8 +1342,7 @@ describe("AccountSetupView", () => {
 
     expect(session.accounts).toHaveLength(1);
 
-    await getButtonByText(wrapper, t("Restore wallet")).trigger("click");
-    await flushPromises();
+    await selectRestoreFlow(wrapper);
 
     const textarea = wrapper.find("textarea");
     await textarea.setValue(VALID_MNEMONIC);

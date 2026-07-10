@@ -1,17 +1,28 @@
 import { describe, expect, it, vi } from "vitest";
+import { sha256 } from "@noble/hashes/sha256";
 import {
   loadBscSccpProveFn,
   loadBscSccpSourceProveFn,
+  loadSolanaSccpProveFn,
+  loadSolanaSccpSourceProveFn,
   loadTronSccpProveFn,
   loadTronSccpSourceProveFn,
   normalizeTronSccpProverModuleUrl,
   pickBscSccpProveFn,
   pickBscSccpSourceProveFn,
+  pickSolanaSccpProveFn,
+  pickSolanaSccpSourceProveFn,
   pickTronSccpProveFn,
   pickTronSccpSourceProveFn,
   type BscSccpProverGlobal,
+  type SolanaSccpProverModule,
   type TronSccpProverModule,
 } from "@/utils/sccpProverLink";
+
+const sha256Hex = (value: string): string =>
+  `0x${Array.from(sha256(new TextEncoder().encode(value)))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
 
 describe("SCCP TRON prover linker", () => {
   it("prefers supported module export names before worker globals", () => {
@@ -470,6 +481,155 @@ describe("SCCP TRON prover linker", () => {
       }),
     ).resolves.toBe(proveBscSource);
     expect(importer).toHaveBeenCalledWith("/sccp-bsc-source-prover.js");
+  });
+
+  it("verifies Solana destination prover module bytes before importing", async () => {
+    const moduleBytes = "export const proveSolanaSccpDestination = () => ({});";
+    const proveSolanaSccpDestination = vi.fn();
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
+      .mockResolvedValue({ proveSolanaSccpDestination });
+    const moduleBytesFetcher = vi.fn().mockResolvedValue(moduleBytes);
+
+    await expect(
+      loadSolanaSccpProveFn({
+        globalScope: {},
+        moduleUrl: " /sccp-solana/destination-prover.js ",
+        moduleHash: sha256Hex(moduleBytes),
+        moduleBytesFetcher,
+        importer,
+      }),
+    ).resolves.toBe(proveSolanaSccpDestination);
+    expect(moduleBytesFetcher).toHaveBeenCalledWith(
+      "/sccp-solana/destination-prover.js",
+    );
+    expect(importer).toHaveBeenCalledTimes(1);
+    const immutableImportUrl = importer.mock.calls[0]?.[0] ?? "";
+    expect(immutableImportUrl).toMatch(/^data:text\/javascript;base64,/u);
+    expect(
+      Buffer.from(immutableImportUrl.split(",", 2)[1] ?? "", "base64").toString(
+        "utf8",
+      ),
+    ).toBe(moduleBytes);
+    expect(immutableImportUrl).not.toContain("/sccp-solana/");
+  });
+
+  it("executes the exact verified Solana bytes without re-importing the network URL", async () => {
+    const marker = `verified-${Date.now()}-${Math.random()}`;
+    const moduleBytes = `export const proveSolanaSccpDestination = () => ${JSON.stringify(marker)};`;
+    const moduleBytesFetcher = vi.fn().mockResolvedValue(moduleBytes);
+
+    const prove = await loadSolanaSccpProveFn({
+      globalScope: { irohaSccpSolanaProve: vi.fn() },
+      moduleUrl: "https://prover.example.invalid/destination.js",
+      moduleHash: sha256Hex(moduleBytes),
+      moduleBytesFetcher,
+    });
+
+    expect(prove).toBeTypeOf("function");
+    expect(await prove?.({} as never)).toBe(marker);
+    expect(moduleBytesFetcher).toHaveBeenCalledTimes(1);
+    expect(moduleBytesFetcher).toHaveBeenCalledWith(
+      "https://prover.example.invalid/destination.js",
+    );
+  });
+
+  it("requires both governed Solana module URLs and hashes", async () => {
+    const importer = vi.fn();
+    const moduleBytesFetcher = vi.fn();
+
+    await expect(
+      loadSolanaSccpProveFn({
+        globalScope: { irohaSccpSolanaProve: vi.fn() },
+        moduleHash: `0x${"11".repeat(32)}`,
+        importer,
+        moduleBytesFetcher,
+      }),
+    ).rejects.toThrow(/destination prover module URL is required/u);
+    await expect(
+      loadSolanaSccpSourceProveFn({
+        globalScope: { solanaSccpSourceProve: vi.fn() },
+        moduleUrl: "/sccp-solana/source-prover.js",
+        importer,
+        moduleBytesFetcher,
+      }),
+    ).rejects.toThrow(/source prover module hash is required/u);
+    expect(moduleBytesFetcher).not.toHaveBeenCalled();
+    expect(importer).not.toHaveBeenCalled();
+  });
+
+  it("uses only the exact governed Solana prover exports", () => {
+    const destination = vi.fn();
+    const source = vi.fn();
+    expect(
+      pickSolanaSccpProveFn(
+        { irohaSccpSolanaProve: vi.fn(), solanaSccpProve: vi.fn() },
+        { proveSolanaSccpDestination: destination },
+      ),
+    ).toBe(destination);
+    expect(
+      pickSolanaSccpSourceProveFn(
+        {
+          irohaSccpSolanaSourceProve: vi.fn(),
+          solanaSccpSourceProve: vi.fn(),
+        },
+        { proveSolanaSccpSource: source },
+      ),
+    ).toBe(source);
+
+    for (const legacyDestinationExport of [
+      "irohaSccpSolanaProve",
+      "solanaSccpProve",
+      "proveSolana",
+      "prove",
+      "proveFn",
+      "default",
+    ] as const) {
+      expect(
+        pickSolanaSccpProveFn(
+          { irohaSccpSolanaProve: vi.fn(), solanaSccpProve: vi.fn() },
+          { [legacyDestinationExport]: vi.fn() },
+        ),
+      ).toBeUndefined();
+    }
+    for (const legacySourceExport of [
+      "irohaSccpSolanaSourceProve",
+      "solanaSccpSourceProve",
+      "proveSolanaSource",
+    ] as const) {
+      expect(
+        pickSolanaSccpSourceProveFn(
+          {
+            irohaSccpSolanaSourceProve: vi.fn(),
+            solanaSccpSourceProve: vi.fn(),
+          },
+          { [legacySourceExport]: vi.fn() },
+        ),
+      ).toBeUndefined();
+    }
+  });
+
+  it("rejects Solana source prover module hash mismatches before importing", async () => {
+    const importer = vi
+      .fn<(moduleUrl: string) => Promise<SolanaSccpProverModule>>()
+      .mockResolvedValue({ proveSolanaSccpSource: vi.fn() });
+    const moduleBytesFetcher = vi
+      .fn()
+      .mockResolvedValue("export const proveSolanaSccpSource = () => ({});");
+
+    await expect(
+      loadSolanaSccpSourceProveFn({
+        globalScope: {},
+        moduleUrl: "/sccp-solana/source-prover.js",
+        moduleHash: `0x${"00".repeat(32)}`,
+        moduleBytesFetcher,
+        importer,
+      }),
+    ).rejects.toThrow(/SCCP prover module hash mismatch/u);
+    expect(moduleBytesFetcher).toHaveBeenCalledWith(
+      "/sccp-solana/source-prover.js",
+    );
+    expect(importer).not.toHaveBeenCalled();
   });
 
   it("does not import an empty TRON source prover URL", async () => {

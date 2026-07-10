@@ -1,9 +1,19 @@
 <template>
   <div class="sccp-shell">
+    <RouteHeaderAction>
+      <AppButton
+        variant="secondary"
+        :disabled="bridge.loading.value"
+        @click="refreshAll"
+      >
+        {{ bridge.loading.value ? t("Refreshing") : t("Refresh route") }}
+      </AppButton>
+    </RouteHeaderAction>
+
     <section class="card sccp-command-card">
       <header class="card-header sccp-command-header">
         <div>
-          <h2>{{ t("SCCP Bridge") }}</h2>
+          <h2>{{ t("Operational status") }}</h2>
           <p class="helper">
             {{
               t("Bridge XOR between TAIRA and {network}.", {
@@ -15,13 +25,14 @@
         <div class="sccp-command-actions">
           <div
             class="sccp-route-toggle"
-            role="tablist"
+            role="group"
             :aria-label="t('SCCP route')"
           >
             <button
               type="button"
               class="secondary"
               :class="{ active: selectedCounterparty === 'tron' }"
+              :aria-pressed="selectedCounterparty === 'tron'"
               @click="selectCounterparty('tron')"
             >
               {{ t("TRON") }}
@@ -30,6 +41,7 @@
               type="button"
               class="secondary"
               :class="{ active: selectedCounterparty === 'bsc' }"
+              :aria-pressed="selectedCounterparty === 'bsc'"
               @click="selectCounterparty('bsc')"
             >
               {{ routeBscNetworkLabel }}
@@ -38,6 +50,7 @@
               type="button"
               class="secondary"
               :class="{ active: selectedCounterparty === 'ton' }"
+              :aria-pressed="selectedCounterparty === 'ton'"
               @click="selectCounterparty('ton')"
             >
               {{ routeTonNetworkLabel }}
@@ -46,19 +59,12 @@
               type="button"
               class="secondary"
               :class="{ active: selectedCounterparty === 'solana' }"
+              :aria-pressed="selectedCounterparty === 'solana'"
               @click="selectCounterparty('solana')"
             >
               {{ routeSolanaNetworkLabel }}
             </button>
           </div>
-          <button
-            type="button"
-            class="secondary"
-            :disabled="bridge.loading.value"
-            @click="refreshAll"
-          >
-            {{ bridge.loading.value ? t("Refreshing") : t("Refresh route") }}
-          </button>
           <button
             v-if="activeWalletConnected"
             type="button"
@@ -81,6 +87,7 @@
           <button
             v-else
             type="button"
+            data-ui-primary-action
             :disabled="counterpartyConnectDisabled"
             @click="connectCounterparty"
           >
@@ -128,7 +135,12 @@
         </div>
       </div>
 
-      <div class="sccp-route-strip" :aria-label="t('Operational status')">
+      <div
+        class="sccp-route-strip"
+        role="status"
+        aria-live="polite"
+        :aria-label="t('Operational status')"
+      >
         <span class="pill" :class="routeTone">{{ routeStatusLabel }}</span>
         <span class="pill" :class="{ positive: activeProjectConfigured }">
           {{
@@ -144,20 +156,29 @@
         </span>
       </div>
 
-      <div v-if="routeMessages.length" class="sccp-reasons">
+      <div
+        v-if="
+          routeMessages.length ||
+          activeWalletError ||
+          bridge.error.value ||
+          counterpartyBalanceError
+        "
+        class="sccp-reasons sccp-readiness-alert"
+        role="alert"
+      >
         <p v-for="message in routeMessages" :key="message" class="helper">
           {{ t(message) }}
         </p>
+        <p v-if="activeWalletError" class="helper error-text">
+          {{ activeWalletError }}
+        </p>
+        <p v-if="bridge.error.value" class="helper error-text">
+          {{ bridge.error.value }}
+        </p>
+        <p v-if="counterpartyBalanceError" class="helper error-text">
+          {{ counterpartyBalanceError }}
+        </p>
       </div>
-      <p v-if="activeWalletError" class="helper error-text">
-        {{ activeWalletError }}
-      </p>
-      <p v-if="bridge.error.value" class="helper error-text">
-        {{ bridge.error.value }}
-      </p>
-      <p v-if="counterpartyBalanceError" class="helper error-text">
-        {{ counterpartyBalanceError }}
-      </p>
     </section>
 
     <section class="card sccp-bridge-card">
@@ -171,12 +192,13 @@
 
       <div
         class="sccp-direction-tabs"
-        role="tablist"
+        role="group"
         :aria-label="t('Bridge direction')"
       >
         <button
           type="button"
           :class="{ active: isForwardDirection }"
+          :aria-pressed="isForwardDirection"
           @click="setForwardDirection"
         >
           {{ t(forwardDirectionLabel) }}
@@ -184,6 +206,7 @@
         <button
           type="button"
           :class="{ active: isReturnDirection }"
+          :aria-pressed="isReturnDirection"
           @click="setReturnDirection"
         >
           {{ t(returnDirectionLabel) }}
@@ -287,7 +310,11 @@
         </div>
 
         <div class="sccp-form-actions">
-          <button type="submit" :disabled="submitDisabled">
+          <button
+            type="submit"
+            data-ui-primary-action
+            :disabled="submitDisabled"
+          >
             {{ t(primaryActionLabel) }}
           </button>
           <button
@@ -307,8 +334,8 @@
     </section>
 
     <section class="sccp-lower-grid">
-      <section class="card sccp-progress-card">
-        <header class="card-header">
+      <details class="card sccp-progress-card sccp-progress-disclosure">
+        <summary class="card-header">
           <div>
             <h2>{{ t("Proof and transactions") }}</h2>
             <p class="helper">{{ t("Frontend proof orchestration status") }}</p>
@@ -316,7 +343,7 @@
           <span class="pill" :class="{ positive: proofReady }">
             {{ proofReady ? t("Proof package ready") : t("Waiting") }}
           </span>
-        </header>
+        </summary>
         <ol class="sccp-progress-list">
           <li
             v-for="phase in proofPhases"
@@ -357,16 +384,16 @@
           </div>
           <p v-else class="helper">{{ t("No transaction links yet.") }}</p>
         </div>
-      </section>
+      </details>
 
-      <section class="card sccp-activity-card">
-        <header class="card-header">
+      <details class="card sccp-activity-card sccp-activity-disclosure">
+        <summary class="card-header sccp-activity-summary">
           <div>
             <h2>{{ t("Route activity") }}</h2>
             <p class="helper">{{ t("Recent SCCP messages from Torii") }}</p>
           </div>
           <span class="pill">{{ n(bridge.recentMessages.value.length) }}</span>
-        </header>
+        </summary>
         <div
           v-if="bridge.recentMessages.value.length"
           class="sccp-activity-list"
@@ -387,7 +414,7 @@
           </div>
         </div>
         <p v-else class="helper">{{ t("No recent SCCP messages found.") }}</p>
-      </section>
+      </details>
     </section>
   </div>
 </template>
@@ -407,6 +434,7 @@ import { beginCell } from "@ton/core";
 import { CHAIN, toUserFriendlyAddress } from "@tonconnect/sdk";
 import { useSessionStore } from "@/stores/session";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { AppButton, RouteHeaderAction } from "@/components/ui";
 import { useSccpBridge } from "@/composables/useSccpBridge";
 import { useBscWalletConnect } from "@/composables/useBscWalletConnect";
 import { useSolanaWalletConnect } from "@/composables/useSolanaWalletConnect";
@@ -414,6 +442,7 @@ import { useTonWalletConnect } from "@/composables/useTonWalletConnect";
 import { useTronWalletConnect } from "@/composables/useTronWalletConnect";
 import { TAIRA_EXPLORER_URL } from "@/constants/chains";
 import {
+  broadcastSolanaTransaction,
   broadcastTronTransaction,
   buildSolanaTransaction,
   callEvmRpc,
@@ -436,6 +465,7 @@ import {
   getTronTransactionEvents,
   getTronTransactionReceipt,
   getZkIvmProveJob,
+  prepareSolanaAssociatedTokenAccount,
   startZkIvmProveJob,
   submitSccpBridgeMessage,
   submitZkIvmProvedTransaction,
@@ -462,8 +492,8 @@ import {
   bindTronToTairaSourceProofPackage,
   bindBscSourceDataForProof,
   bindBscToTairaSourceProofPackage,
-  bindSolanaToTairaSourceProofPackage,
   bindTonToTairaSourceProofPackage,
+  bindFinalizedTairaXorSolanaFinalizeTransaction,
   readBscSourceProverMaterialBinding,
   readTonSourceProverMaterialBinding,
   bindUnsignedTronSmartContractTransaction,
@@ -481,8 +511,11 @@ import {
   buildTairaXorTonMessageProofJobQueryMaterial,
   buildTairaXorTonOutboundBurnRecordRequest,
   buildTairaXorSolanaBurnTransactionRequest,
+  createSolanaSourceBurnNonce,
+  buildTairaXorSolanaFinalizeProofBinding,
   buildTairaXorSolanaFinalizeTransactionRequest,
   buildTairaXorSolanaMessageProofJobQueryMaterial,
+  buildTairaXorSolanaOutboundBurnRecordRequest,
   buildTairaXorOutboundBurnRecordRequest,
   buildTairaXorTokenBalanceRequest,
   evmFunctionSelector,
@@ -513,7 +546,6 @@ import {
   readSccpBscTokenAddress,
   readSccpSolanaRpcEndpoint,
   readSccpSolanaSourceBridgeAddress,
-  readSccpSolanaSourceProverModuleUrl,
   readSccpSolanaSourceStateAddress,
   readSccpSolanaTokenAddress,
   readSccpTairaBurnRecordMaterial,
@@ -531,7 +563,10 @@ import {
   SCCP_BSC_TOKEN_SYMBOL,
   SCCP_ROUTE_PROFILES,
   SCCP_SOLANA_NETWORK,
+  SCCP_SOLANA_SOURCE_PROOF_BACKEND,
   SCCP_SOLANA_TOKEN_SYMBOL,
+  SOLANA_TESTNET_GENESIS_HASH,
+  SOLANA_TESTNET_NETWORK_ID,
   SCCP_TON_DOMAIN,
   SCCP_TON_NETWORK,
   SCCP_TON_TOKEN_SYMBOL,
@@ -555,6 +590,8 @@ import {
 import type {
   BscSccpProofPackage,
   BscSccpProofPackageInput,
+  SolanaSccpProofPackage,
+  SolanaSccpProofPackageInput,
   TronSccpProofPackage,
   TronSccpProofPackageInput,
 } from "@/utils/sccpProofPackage";
@@ -1281,7 +1318,7 @@ const primaryActionLabel = computed(() =>
 );
 const walletConnectMissingMessage = computed(() =>
   isSolanaRoute.value
-    ? "WalletConnect project ID is missing, so wallet connection is disabled."
+    ? "WalletConnect project ID is missing, so Solana wallet connection is disabled."
     : isTonRoute.value
       ? "TON wallet connector is not available in this build."
       : isBscRoute.value
@@ -1290,7 +1327,7 @@ const walletConnectMissingMessage = computed(() =>
 );
 const walletConnectInvalidMessage = computed(() =>
   isSolanaRoute.value
-    ? "WalletConnect project ID is invalid, so wallet connection is disabled."
+    ? "WalletConnect project ID is invalid, so Solana wallet connection is disabled."
     : isTonRoute.value
       ? "TON wallet connector is misconfigured."
       : isBscRoute.value
@@ -1858,13 +1895,10 @@ const waitForSolanaTransactionSuccess = async (
         throw new Error(`${label} failed on Solana.`);
       }
       const confirmationStatus = String(status.confirmationStatus ?? "").trim();
-      if (
-        confirmationStatus === "confirmed" ||
-        confirmationStatus === "finalized"
-      ) {
+      if (confirmationStatus === "finalized") {
         return status;
       }
-      throw new Error(`${label} is not confirmed yet.`);
+      throw new Error(`${label} is not finalized yet.`);
     } catch (error) {
       lastError = error;
       if (
@@ -1881,6 +1915,24 @@ const waitForSolanaTransactionSuccess = async (
     throw lastError;
   }
   throw new Error(`Timed out waiting for ${label} confirmation.`);
+};
+
+const signAndBroadcastExactSolanaTransaction = async (
+  context: SccpOperationContext,
+  expectedUnsignedTransactionB64: string,
+): Promise<string> => {
+  assertSccpOperationContextCurrent(context);
+  const signedTransactionB64 = await solana.signTransaction(
+    expectedUnsignedTransactionB64,
+  );
+  assertSccpOperationContextCurrent(context);
+  return normalizeSolanaTransactionSignature(
+    await broadcastSolanaTransaction({
+      endpoint: context.solanaRpcEndpoint,
+      transactionB64: signedTransactionB64,
+      expectedUnsignedTransactionB64,
+    }),
+  );
 };
 
 const buildSolanaExplorerTransactionUrl = (signature: string): string => {
@@ -1924,6 +1976,10 @@ type SccpProofWorkerRequest =
       input: BscSccpProofPackageInput;
     }
   | {
+      kind: "prove-solana-proof-package";
+      input: SolanaSccpProofPackageInput;
+    }
+  | {
       kind: "build-tron-proof-package" | "prove-tron-proof-package";
       input: TronSccpProofPackageInput;
     }
@@ -1963,9 +2019,7 @@ type TonSourceProofWorkerInput = TonToTairaSourceProofPackageInput & {
   proverModuleUrl?: string;
 };
 
-type SolanaSourceProofWorkerInput = SolanaToTairaSourceProofPackageInput & {
-  proverModuleUrl?: string;
-};
+type SolanaSourceProofWorkerInput = SolanaToTairaSourceProofPackageInput;
 
 type SccpOperationContext = {
   direction: SccpBridgeDirection;
@@ -2300,6 +2354,14 @@ const runSolanaSourceProofWorker = (
 ): Promise<SolanaToTairaSourceProofPackage> =>
   runSccpProofWorker<SolanaToTairaSourceProofPackage>({
     kind: "prove-solana-source-package",
+    input,
+  });
+
+const runSolanaDestinationProofWorker = (
+  input: SolanaSccpProofPackageInput,
+): Promise<SolanaSccpProofPackage> =>
+  runSccpProofWorker<SolanaSccpProofPackage>({
+    kind: "prove-solana-proof-package",
     input,
   });
 
@@ -3487,9 +3549,6 @@ const finalizeTairaMessageToTron = async (
   markPhase(3, "complete", "TRON finalize transaction confirmed");
 };
 
-const SOLANA_TRANSACTION_BUILDER_BLOCKER =
-  "Solana SCCP source burn is connected, but the production Solana source proof executor and TAIRA settlement proof payloads are not available in this app build. Keep settlement fail-closed until the deployed route publishes governed Solana source proof material.";
-
 const finalizeTairaMessageToSolana = async (
   context: SccpOperationContext,
   input: { pollForIndexing?: boolean } = {},
@@ -3497,10 +3556,86 @@ const finalizeTairaMessageToSolana = async (
   const job = await loadTairaMessageProofJob(context, input);
   markPhase(0, "complete", "Route and message id accepted");
   markPhase(1, "complete", "Torii returned an SCCP proof job");
+  markPhase(2, "active", "Preparing Solana destination token account");
+  if (context.solanaRecipient !== context.solanaAddress) {
+    throw new Error(
+      "The Solana destination must be the connected wallet approving this settlement.",
+    );
+  }
+  const mintAddress = readSccpSolanaTokenAddress(context.manifest);
+  let destinationToken = await prepareSolanaAssociatedTokenAccount({
+    endpoint: context.solanaRpcEndpoint,
+    payerAddress: context.solanaAddress,
+    ownerAddress: context.solanaAddress,
+    mintAddress,
+  });
+  assertSccpOperationContextCurrent(context);
+  if (!destinationToken.exists) {
+    if (!destinationToken.createInstruction) {
+      throw new Error(
+        "Solana destination token account setup is required, but no canonical creation instruction was returned.",
+      );
+    }
+    markPhase(2, "active", "Requesting destination token account approval");
+    const createTransactionB64 = await buildSolanaTransaction({
+      endpoint: context.solanaRpcEndpoint,
+      feePayer: context.solanaAddress,
+      instructions: [destinationToken.createInstruction],
+    });
+    assertSccpOperationContextCurrent(context);
+    const createSignature = await signAndBroadcastExactSolanaTransaction(
+      context,
+      createTransactionB64,
+    );
+    await waitForSolanaTransactionSuccess(
+      context,
+      createSignature,
+      "Solana destination token account creation",
+    );
+    assertSccpOperationContextCurrent(context);
+    const refreshedDestinationToken = await prepareSolanaAssociatedTokenAccount(
+      {
+        endpoint: context.solanaRpcEndpoint,
+        payerAddress: context.solanaAddress,
+        ownerAddress: context.solanaAddress,
+        mintAddress,
+      },
+    );
+    assertSccpOperationContextCurrent(context);
+    if (
+      !refreshedDestinationToken.exists ||
+      refreshedDestinationToken.createInstruction ||
+      refreshedDestinationToken.associatedTokenAddress !==
+        destinationToken.associatedTokenAddress
+    ) {
+      throw new Error(
+        "Solana destination token account creation was finalized but could not be independently confirmed.",
+      );
+    }
+    destinationToken = refreshedDestinationToken;
+  }
+  markPhase(2, "active", "Generating browser Solana destination proof");
+  const binding = buildTairaXorSolanaFinalizeProofBinding({
+    manifest: context.manifest,
+    job,
+    messageId: context.messageId ?? messageId.value,
+    ownerAddress: context.solanaAddress,
+    destinationTokenAddress: destinationToken.associatedTokenAddress,
+    solanaRecipient: context.solanaRecipient,
+    amountDecimal: context.amountDecimal,
+    solanaNetwork: SCCP_SOLANA_NETWORK.key,
+  });
+  assertSccpOperationContextCurrent(context);
+  const proofPackage = await runSolanaDestinationProofWorker(
+    binding as unknown as SolanaSccpProofPackageInput,
+  );
+  assertSccpOperationContextCurrent(context);
   const finalizeRequest = buildTairaXorSolanaFinalizeTransactionRequest({
     manifest: context.manifest,
     job,
+    proofPackage: proofPackage as unknown as Record<string, unknown>,
     ownerAddress: context.solanaAddress,
+    destinationTokenAddress: destinationToken.associatedTokenAddress,
     tairaSender: context.accountId,
     solanaRecipient: context.solanaRecipient,
     amountDecimal: context.amountDecimal,
@@ -3508,15 +3643,20 @@ const finalizeTairaMessageToSolana = async (
     solanaNetwork: SCCP_SOLANA_NETWORK.key,
   });
   messageId.value = finalizeRequest.messageId;
-  markPhase(2, "complete", "Solana verifier instruction is ready");
+  markPhase(
+    2,
+    "complete",
+    "Browser proof and Solana verifier instruction are ready",
+  );
   markPhase(3, "active", "Requesting Solana wallet approval");
   assertSccpOperationContextCurrent(context);
   const transactionB64 = await buildSolanaTransaction(
     finalizeRequest.transaction,
   );
   assertSccpOperationContextCurrent(context);
-  const signature = normalizeSolanaTransactionSignature(
-    await solana.signAndSendTransaction(transactionB64),
+  const signature = await signAndBroadcastExactSolanaTransaction(
+    context,
+    transactionB64,
   );
   const solanaContext = {
     ...context,
@@ -3532,22 +3672,41 @@ const finalizeTairaMessageToSolana = async (
     finalizeLink,
   ];
   markPhase(3, "active", "Waiting for Solana finalize confirmation");
-  await waitForSolanaTransactionSuccess(
+  const signatureStatus = await waitForSolanaTransactionSuccess(
     solanaContext,
     signature,
     "Solana finalize transaction",
   );
   assertSccpOperationContextCurrent(solanaContext);
+  const finalizedTransaction = await getSolanaTransaction({
+    endpoint: solanaContext.solanaRpcEndpoint,
+    signature,
+  });
+  if (!finalizedTransaction) {
+    throw new Error(
+      "Solana finalize transaction is finalized but its raw transaction is not indexed yet.",
+    );
+  }
+  const independentFinality = await getSolanaSignatureStatus({
+    endpoint: solanaContext.solanaRpcEndpoint,
+    signature,
+  });
+  if (!independentFinality) {
+    throw new Error(
+      "Solana finalize transaction finality could not be independently reconfirmed.",
+    );
+  }
+  bindFinalizedTairaXorSolanaFinalizeTransaction({
+    request: finalizeRequest,
+    transaction: finalizedTransaction,
+    signatureStatus,
+    finality: independentFinality,
+    txId: signature,
+    tokenMintAddress: mintAddress,
+  });
+  assertSccpOperationContextCurrent(solanaContext);
   proofReady.value = true;
   markPhase(3, "complete", "Solana finalize transaction confirmed");
-};
-
-const submitTairaToSolana = async (
-  context: SccpOperationContext,
-): Promise<void> => {
-  assertSccpOperationContextCurrent(context);
-  markPhase(1, "failed", "Solana TAIRA burn-record builder is unavailable");
-  throw new Error(SOLANA_TRANSACTION_BUILDER_BLOCKER);
 };
 
 const selectSolanaTokenAccountForBurn = (amountBaseUnits: string): string => {
@@ -3582,7 +3741,7 @@ const submitSolanaBurnToTaira = async (
     sourceTokenAddress,
     tairaRecipient: context.tairaRecipient,
     amountDecimal: context.amountDecimal,
-    nonce: `${Date.now()}`,
+    nonce: createSolanaSourceBurnNonce(),
     solanaNetwork: SCCP_SOLANA_NETWORK.key,
   });
   markPhase(1, "complete", "Unsigned Solana burn transaction created");
@@ -3648,6 +3807,19 @@ const finalizeSolanaBurnToTaira = async (
   if (!transaction) {
     throw new Error("Solana burn transaction is not indexed yet.");
   }
+  const finality = await getSolanaSignatureStatus({
+    endpoint: context.solanaRpcEndpoint,
+    signature: normalizedSignature,
+  });
+  if (
+    !finality ||
+    finality.err !== null ||
+    String(finality.confirmationStatus ?? "").trim() !== "finalized"
+  ) {
+    throw new Error(
+      "Solana burn transaction finality could not be independently reconfirmed.",
+    );
+  }
   markPhase(1, "complete", "Solana source transaction data collected");
   markPhase(2, "active", "Generating Solana source proof package");
   assertSccpOperationContextCurrent(context);
@@ -3655,7 +3827,9 @@ const finalizeSolanaBurnToTaira = async (
   const proofPackage = await runSolanaSourceProofWorker({
     manifest: context.manifest,
     solanaNetwork: SCCP_SOLANA_NETWORK.key,
-    proverModuleUrl: readSccpSolanaSourceProverModuleUrl(context.manifest),
+    solanaNetworkId: SOLANA_TESTNET_NETWORK_ID,
+    solanaGenesisHash: SOLANA_TESTNET_GENESIS_HASH,
+    sourceProofBackend: SCCP_SOLANA_SOURCE_PROOF_BACKEND,
     solanaRpcUrl:
       readSccpSolanaRpcEndpoint(context.manifest, SCCP_SOLANA_NETWORK.key) ||
       SCCP_SOLANA_NETWORK.rpcUrl,
@@ -3665,22 +3839,14 @@ const finalizeSolanaBurnToTaira = async (
     txId: normalizedSignature,
     transaction,
     signatureStatus,
-    finality: signatureStatus,
+    finality,
     solanaSender: context.solanaAddress,
     tairaRecipient: context.tairaRecipient,
     amountDecimal: context.amountDecimal,
     amountBaseUnits,
   });
   assertSccpOperationContextCurrent(context);
-  const boundProofPackage = bindSolanaToTairaSourceProofPackage({
-    manifest: context.manifest,
-    proofPackage,
-    txId: normalizedSignature,
-    solanaSender: context.solanaAddress,
-    tairaRecipient: context.tairaRecipient,
-    amountDecimal: context.amountDecimal,
-    amountBaseUnits,
-  });
+  const boundProofPackage = proofPackage;
   messageId.value = boundProofPackage.messageId;
   markPhase(2, "complete", "Solana source proof package is ready");
   markPhase(3, "active", "Submitting TAIRA settlement");
@@ -4614,10 +4780,6 @@ const prepareBridge = async () => {
       direction.value === "taira-to-solana"
     ) {
       const nonce = Date.now().toString();
-      if (direction.value === "taira-to-solana") {
-        await submitTairaToSolana(operationContext);
-        return;
-      }
       const request =
         direction.value === "taira-to-ton"
           ? buildTairaXorTonOutboundBurnRecordRequest({
@@ -4635,13 +4797,21 @@ const prepareBridge = async () => {
                 amountDecimal: operationContext.amountDecimal,
                 nonce,
               })
-            : buildTairaXorOutboundBurnRecordRequest({
-                manifest: operationContext.manifest,
-                tairaSender: operationContext.accountId,
-                tronRecipient: operationContext.tronRecipient,
-                amountDecimal: operationContext.amountDecimal,
-                nonce,
-              });
+            : direction.value === "taira-to-solana"
+              ? buildTairaXorSolanaOutboundBurnRecordRequest({
+                  manifest: operationContext.manifest,
+                  tairaSender: operationContext.accountId,
+                  solanaRecipient: operationContext.solanaRecipient,
+                  amountDecimal: operationContext.amountDecimal,
+                  nonce,
+                })
+              : buildTairaXorOutboundBurnRecordRequest({
+                  manifest: operationContext.manifest,
+                  tairaSender: operationContext.accountId,
+                  tronRecipient: operationContext.tronRecipient,
+                  amountDecimal: operationContext.amountDecimal,
+                  nonce,
+                });
       messageId.value = request.outbound.messageId;
       const tairaSourceContext = {
         ...operationContext,
@@ -4728,6 +4898,10 @@ const prepareBridge = async () => {
         });
       } else if (direction.value === "taira-to-ton") {
         await finalizeTairaMessageToTon(tairaSourceContext, {
+          pollForIndexing: true,
+        });
+      } else if (direction.value === "taira-to-solana") {
+        await finalizeTairaMessageToSolana(tairaSourceContext, {
           pollForIndexing: true,
         });
       } else {
@@ -5034,3 +5208,18 @@ onUnmounted(() => {
   closeTonSourceProofWorker();
 });
 </script>
+
+<style scoped>
+.sccp-command-card,
+.sccp-bridge-card {
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.sccp-status-grid {
+  background: var(--frost-panel-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+</style>

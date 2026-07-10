@@ -16,13 +16,20 @@ import {
 import {
   canonicalEip55EvmAddress,
   buildSccpMessageBundleSubmitPayload,
+  buildSccpSolanaSettlementProofContextHash,
   decodeTronBase58CheckAddress,
+  deriveSccpSolanaMessageReceiptAddress,
+  deriveSccpSolanaMintAuthorityAddress,
   readBscSourceProverMaterialBinding,
   tairaXorBscBurnToTairaAccountCallData,
   tairaXorBurnToTairaCallData,
   SCCP_BSC_DOMAIN,
   SCCP_BSC_TAIRA_XOR_BURN_STARTED_TOPIC,
   SCCP_EVM_SOURCE_EVENT_TOPIC,
+  SCCP_SOLANA_DOMAIN,
+  SCCP_SOLANA_NETWORK,
+  SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+  SCCP_SOLANA_SYSTEM_PROGRAM_ID,
   SCCP_SORA_DOMAIN,
   TRON_MAINNET_NETWORK_ID_HEX,
   TRON_MAINNET_RPC_URL,
@@ -30,11 +37,14 @@ import {
 } from "@/utils/sccp";
 import {
   canonicalSccpPayloadEnvelopeBytes,
+  canonicalSccpMessageProofBundleBytes,
+  canonicalSccpMessageTransparentPublicInputsBytes,
   canonicalSccpTransferPayloadBytes,
   buildTairaXorBscToTairaTransferPayload,
   evmSccpDestinationBinding,
   SCCP_BSC_TESTNET_NATIVE_EVM_PROVER_BUNDLE_ID_V1,
   SCCP_CODEC_EVM_HEX,
+  SCCP_CODEC_SOLANA_BASE58,
   SCCP_CODEC_TEXT_UTF8,
   SCCP_CODEC_TRON_BASE58CHECK,
   SCCP_ETH_NATIVE_EVM_PROVER_REQUIRED_IMPLEMENTATIONS_V1,
@@ -67,6 +77,26 @@ const BSC_SOURCE_BRIDGE_ADDRESS = fixtureBscAddress(
   "sccp view bsc source bridge",
 );
 const BSC_VERIFIER_ADDRESS = fixtureBscAddress("sccp view bsc verifier");
+const SOLANA_WALLET_ADDRESS = "EFopJQRwoAgQcSL124wixwbTvgTvidHy1GQbEyJPQKTf";
+const SOLANA_RECIPIENT_ADDRESS = SOLANA_WALLET_ADDRESS;
+const SOLANA_BRIDGE_PROGRAM_ID = "H8iFVbmr2Yk85AuMDFcKaRv5rRPPMZaTEpj4QPntiNgf";
+const SOLANA_SOURCE_BRIDGE_PROGRAM_ID =
+  "CmGQYvNgCS9yycdp5tsKmGoDhJrwmEPg6oQrNwj64WQe";
+const SOLANA_TOKEN_MINT_ADDRESS =
+  "7x76GchSm2spUY8koAFMaFwx5x7FjoMUDJa2vSfTDmre";
+const SOLANA_VERIFIER_PROGRAM_ID =
+  "6Q3jF6UmEH5sYBYF3iU43rfFroJjZVXiejvVG88fUZ7K";
+const SOLANA_NATIVE_VERIFIER_PROGRAM_ID =
+  "ComputeBudget111111111111111111111111111111";
+const SOLANA_SOURCE_STATE_ADDRESS =
+  "433bWoeHHuaK2fLJWDJyk1EBxVhrQtp8Eie6YKkCiD6r";
+const SOLANA_VERIFIER_STATE_ADDRESS =
+  "HWaaX4WBs6iYiNQQbKUgRNR2pWBf1Ms81Q6aP58FzXQS";
+const SOLANA_DESTINATION_TOKEN_ADDRESS =
+  "GkSa6kPaHffre7H4WmhvMNL6FvDGPNutYseUk3aHb86Y";
+const SOLANA_FINALIZE_SIGNATURE =
+  "2AXDGYSE4f2sz7tvMMzyHvUfcoJmxudvdhBcmiUSo6ijwfYmfZYsKRxboQMPh3R4kUhXRVdtSXFXMheka4Rc4P2";
+const VALID_WALLETCONNECT_PROJECT_ID = "0123456789abcdef0123456789abcdef";
 const VALID_BSC_ADDRESS_HEX = VALID_BSC_ADDRESS.toLowerCase();
 const BSC_BRIDGE_ADDRESS_HEX = BSC_BRIDGE_ADDRESS.toLowerCase();
 const BSC_SOURCE_BRIDGE_ADDRESS_HEX = BSC_SOURCE_BRIDGE_ADDRESS.toLowerCase();
@@ -130,6 +160,31 @@ const BSC_PAYLOAD_HASH = sccpPayloadHash(
   canonicalSccpPayloadEnvelopeBytes({
     kind: "Transfer",
     value: TAIRA_TO_BSC_TRANSFER_PAYLOAD,
+  }),
+);
+const TAIRA_TO_SOLANA_TRANSFER_PAYLOAD = {
+  version: 1,
+  source_domain: 0,
+  dest_domain: SCCP_SOLANA_DOMAIN,
+  nonce: "7",
+  asset_home_domain: 0,
+  asset_id_codec: SCCP_CODEC_TEXT_UTF8,
+  asset_id: "xor",
+  amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+  sender_codec: SCCP_CODEC_TEXT_UTF8,
+  sender: TAIRA_ACCOUNT_ID,
+  recipient_codec: SCCP_CODEC_SOLANA_BASE58,
+  recipient: SOLANA_RECIPIENT_ADDRESS,
+  route_id_codec: SCCP_CODEC_TEXT_UTF8,
+  route_id: "taira_sol_xor",
+};
+const SOLANA_MESSAGE_ID = sccpTransferMessageId(
+  TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
+);
+const SOLANA_PAYLOAD_HASH = sccpPayloadHash(
+  canonicalSccpPayloadEnvelopeBytes({
+    kind: "Transfer",
+    value: TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
   }),
 );
 const COMMITMENT_ROOT = `0x${"33".repeat(32)}`;
@@ -352,6 +407,47 @@ const concatBytes = (...parts: Uint8Array[]): Uint8Array => {
   return out;
 };
 
+const solanaU32Le = (value: number): Uint8Array => {
+  const out = new Uint8Array(4);
+  new DataView(out.buffer).setUint32(0, value, true);
+  return out;
+};
+
+const solanaU64Le = (value: string): Uint8Array => {
+  const out = new Uint8Array(8);
+  new DataView(out.buffer).setBigUint64(0, BigInt(value), true);
+  return out;
+};
+
+const solanaBorshVec = (value: Uint8Array): Uint8Array =>
+  concatBytes(solanaU32Le(value.length), value);
+
+const solanaSubmitEnvelopeHex = (args: Uint8Array[]): string =>
+  bytesToHex(
+    concatBytes(
+      solanaBorshVec(new TextEncoder().encode("submit_sccp_message_proof")),
+      ...args.map(solanaBorshVec),
+    ),
+  );
+
+const SOLANA_BASE58_ALPHABET =
+  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+const solanaBase58Encode = (bytes: Uint8Array): string => {
+  let value = 0n;
+  for (const byte of bytes) {
+    value = (value << 8n) | BigInt(byte);
+  }
+  let encoded = "";
+  while (value > 0n) {
+    encoded = `${SOLANA_BASE58_ALPHABET[Number(value % 58n)]}${encoded}`;
+    value /= 58n;
+  }
+  const firstNonZero = bytes.findIndex((byte) => byte !== 0);
+  const leadingZeroes = firstNonZero < 0 ? bytes.length : firstNonZero;
+  return `${"1".repeat(leadingZeroes)}${encoded}`;
+};
+
 const abiBytes = (value: Uint8Array): Uint8Array => {
   const paddingLength = (32 - (value.length % 32)) % 32;
   return concatBytes(
@@ -499,6 +595,13 @@ const getEvmTransactionReceiptMock = vi.fn();
 const getEvmTransactionMock = vi.fn();
 const getEvmBlockByHashMock = vi.fn();
 const getEvmLogsMock = vi.fn();
+const getSolanaBalanceMock = vi.fn();
+const getSolanaTokenBalanceMock = vi.fn();
+const prepareSolanaAssociatedTokenAccountMock = vi.fn();
+const getSolanaSignatureStatusMock = vi.fn();
+const getSolanaTransactionMock = vi.fn();
+const buildSolanaTransactionMock = vi.fn();
+const broadcastSolanaTransactionMock = vi.fn();
 
 vi.mock("@/services/iroha", () => ({
   getSccpCapabilities: (input: unknown) => getSccpCapabilitiesMock(input),
@@ -540,6 +643,16 @@ vi.mock("@/services/iroha", () => ({
   getEvmTransaction: (input: unknown) => getEvmTransactionMock(input),
   getEvmBlockByHash: (input: unknown) => getEvmBlockByHashMock(input),
   getEvmLogs: (input: unknown) => getEvmLogsMock(input),
+  getSolanaBalance: (input: unknown) => getSolanaBalanceMock(input),
+  getSolanaTokenBalance: (input: unknown) => getSolanaTokenBalanceMock(input),
+  prepareSolanaAssociatedTokenAccount: (input: unknown) =>
+    prepareSolanaAssociatedTokenAccountMock(input),
+  getSolanaSignatureStatus: (input: unknown) =>
+    getSolanaSignatureStatusMock(input),
+  getSolanaTransaction: (input: unknown) => getSolanaTransactionMock(input),
+  buildSolanaTransaction: (input: unknown) => buildSolanaTransactionMock(input),
+  broadcastSolanaTransaction: (input: unknown) =>
+    broadcastSolanaTransactionMock(input),
 }));
 
 const mountView = (connection: {
@@ -742,6 +855,231 @@ const sampleTairaToBscMessageProofJob = (): Record<string, unknown> => ({
     finalityProof: "0x010203",
   },
 });
+
+const sampleTairaToSolanaMessageProofJob = (): Record<string, unknown> => ({
+  publicInputs: {
+    version: 1,
+    messageId: SOLANA_MESSAGE_ID,
+    payloadHash: SOLANA_PAYLOAD_HASH,
+    targetDomain: SCCP_SOLANA_DOMAIN,
+    commitmentRoot: COMMITMENT_ROOT,
+    finalityHeight: 10,
+    finalityBlockHash: FINALITY_BLOCK_HASH,
+    destinationBindingHash: BINDING_HASH,
+  },
+  destinationBinding: {
+    version: 1,
+    key: "solana:testnet:taira_sol_xor",
+    bindingHash: BINDING_HASH,
+  },
+  solanaDestinationWitness: {
+    direction: "taira-to-solana",
+    solanaNetwork: "solana-testnet",
+    solanaGenesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+    proofBackend: "solana-program-v1",
+  },
+  submissionPackage: {
+    envelopeEncoding: "borsh_instruction_v1",
+    submissionKind: "program_instruction",
+    verifierEntrypoint: "submit_sccp_message_proof",
+    platformPayload: {
+      kind: "solana_program_instruction",
+      value: {
+        statementHash: STATEMENT_HASH,
+        proofContextHash: VERIFIER_KEY_HASH,
+        destinationBinding: {
+          version: 1,
+          key: "solana:testnet:taira_sol_xor",
+          bindingHash: BINDING_HASH,
+        },
+        destinationBindingHash: BINDING_HASH,
+      },
+    },
+    envelopeBytes: "0x01000000736f6c616e612d73636370",
+  },
+  payloadProjection: {
+    kind: "Transfer",
+    value: {
+      source_domain: 0,
+      dest_domain: SCCP_SOLANA_DOMAIN,
+      asset_home_domain: 0,
+      asset_id: { kind: "TextUtf8", value: "xor" },
+      route_id: { kind: "TextUtf8", value: "taira_sol_xor" },
+      amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+      sender: { kind: "TextUtf8", value: TAIRA_ACCOUNT_ID },
+      recipient: { kind: "SolanaBase58", value: SOLANA_RECIPIENT_ADDRESS },
+    },
+  },
+  bundle: {
+    version: 1,
+    commitmentRoot: COMMITMENT_ROOT,
+    commitment: {
+      version: 1,
+      kind: "Transfer",
+      targetDomain: SCCP_SOLANA_DOMAIN,
+      messageId: SOLANA_MESSAGE_ID,
+      payloadHash: SOLANA_PAYLOAD_HASH,
+    },
+    merkleProof: { steps: [] },
+    payload: {
+      kind: "Transfer",
+      value: TAIRA_TO_SOLANA_TRANSFER_PAYLOAD,
+    },
+    finalityProof: "0x010203",
+  },
+});
+
+const sampleTairaToSolanaBrowserProofPackage = (): Record<string, unknown> => {
+  const job = sampleTairaToSolanaMessageProofJob();
+  const proofContextHash = buildSccpSolanaSettlementProofContextHash({
+    statementHash: STATEMENT_HASH,
+    destinationBindingHash: BINDING_HASH,
+    messageId: SOLANA_MESSAGE_ID,
+    tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
+    destinationTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
+    ownerAddress: SOLANA_WALLET_ADDRESS,
+    amountBaseUnits: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+  });
+  const messageReceiptAddress = deriveSccpSolanaMessageReceiptAddress({
+    verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
+    verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
+    messageId: SOLANA_MESSAGE_ID,
+  });
+  const envelopeBytes = solanaSubmitEnvelopeHex([
+    Uint8Array.of(1, 2, 3, 4),
+    canonicalSccpMessageTransparentPublicInputsBytes(
+      job.publicInputs as Parameters<
+        typeof canonicalSccpMessageTransparentPublicInputsBytes
+      >[0],
+    ),
+    canonicalSccpMessageProofBundleBytes(
+      job.bundle as Parameters<typeof canonicalSccpMessageProofBundleBytes>[0],
+    ),
+    hexToBytes(STATEMENT_HASH),
+    hexToBytes(BINDING_HASH),
+    hexToBytes(proofContextHash),
+    solanaU64Le(BSC_BRIDGE_AMOUNT_BASE_UNITS),
+  ]);
+  return {
+    request: {
+      routeId: "taira_sol_xor",
+      assetKey: "xor",
+      direction: "taira-to-solana",
+      solanaNetwork: "solana-testnet",
+      solanaGenesisHash: "4uhcVJyU9pJkvQyS88uRDiswHXSCkY3zQawwpjk2NsNY",
+      backend: "solana-program-v1",
+      messageId: SOLANA_MESSAGE_ID,
+      payloadHash: SOLANA_PAYLOAD_HASH,
+      destinationBindingHash: BINDING_HASH,
+      statementHash: STATEMENT_HASH,
+      proofContextHash,
+      ownerAddress: SOLANA_WALLET_ADDRESS,
+      tokenMintAddress: SOLANA_TOKEN_MINT_ADDRESS,
+      destinationTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
+      verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
+      verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
+      messageReceiptAddress,
+      amountBaseUnits: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+    },
+    submission: {
+      ...(job.submissionPackage as Record<string, unknown>),
+      publicInputs: job.publicInputs,
+      destinationBindingHash: BINDING_HASH,
+      statementHash: STATEMENT_HASH,
+      proofContextHash,
+      instructionDataHex: envelopeBytes,
+      envelopeBytes,
+    },
+  };
+};
+
+const sampleFinalizedSolanaFinalizeTransaction = (input: {
+  feePayer: string;
+  instructions: Array<{
+    programId: string;
+    accounts: Array<{
+      pubkey: string;
+      isSigner: boolean;
+      isWritable: boolean;
+    }>;
+    dataHex: string;
+  }>;
+}): Record<string, unknown> => {
+  const instruction = input.instructions[0];
+  const accounts = instruction.accounts;
+  const staticAccountKeys = [
+    accounts[0].pubkey,
+    accounts[1].pubkey,
+    accounts[2].pubkey,
+    accounts[3].pubkey,
+    accounts[7].pubkey,
+    accounts[4].pubkey,
+    accounts[5].pubkey,
+    accounts[6].pubkey,
+    accounts[8].pubkey,
+    instruction.programId,
+  ];
+  const preAmount = 900_000n;
+  const mintAmount = BigInt(BSC_BRIDGE_AMOUNT_BASE_UNITS);
+  const tokenBalance = (amount: bigint) => ({
+    accountIndex: 3,
+    mint: SOLANA_TOKEN_MINT_ADDRESS,
+    owner: SOLANA_WALLET_ADDRESS,
+    programId: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+    uiTokenAmount: {
+      amount: amount.toString(),
+      decimals: 9,
+      uiAmount: null,
+      uiAmountString: amount.toString(),
+    },
+  });
+  return {
+    slot: 88,
+    version: "legacy",
+    transaction: {
+      signatures: [SOLANA_FINALIZE_SIGNATURE],
+      message: {
+        header: {
+          numRequiredSignatures: 1,
+          numReadonlySignedAccounts: 0,
+          numReadonlyUnsignedAccounts: 5,
+        },
+        accountKeys: staticAccountKeys,
+        recentBlockhash: SOLANA_SOURCE_STATE_ADDRESS,
+        instructions: [
+          {
+            programIdIndex: 9,
+            accounts: [0, 1, 2, 3, 5, 6, 7, 4, 8],
+            data: solanaBase58Encode(hexToBytes(instruction.dataHex)),
+          },
+        ],
+      },
+    },
+    meta: {
+      err: null,
+      loadedAddresses: { writable: [], readonly: [] },
+      innerInstructions: [
+        {
+          index: 0,
+          instructions: [
+            {
+              programIdIndex: 6,
+              accounts: [2, 3, 5],
+              data: solanaBase58Encode(
+                concatBytes(
+                  Uint8Array.of(7),
+                  solanaU64Le(BSC_BRIDGE_AMOUNT_BASE_UNITS),
+                ),
+              ),
+            },
+          ],
+        },
+      ],
+      preTokenBalances: [tokenBalance(preAmount)],
+      postTokenBalances: [tokenBalance(preAmount + mintAmount)],
+    },
+  };
+};
 
 const sampleTairaToBscProofPackage = (): Record<string, unknown> => ({
   canonicalPayloadHex: bytesToHex(
@@ -1184,6 +1522,26 @@ const storeConnectedBscWallet = (
   );
 };
 
+const storeConnectedSolanaWallet = (
+  options: { projectConfigured?: boolean } = {},
+) => {
+  if (options.projectConfigured !== false) {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", VALID_WALLETCONNECT_PROJECT_ID);
+  }
+  const storageKey = `iroha-demo:sccp:solana-walletconnect:${SCCP_SOLANA_NETWORK.caipChainId.replace(/[^a-z0-9_-]/giu, "-")}`;
+  localStorage.setItem(
+    storageKey,
+    JSON.stringify({
+      topic: "topic-solana",
+      address: SOLANA_WALLET_ADDRESS,
+      chainId: SCCP_SOLANA_NETWORK.caipChainId,
+      namespace: "solana",
+      methodVersion: "solana-wallet-standard-v1",
+      connectedAtMs: Date.now(),
+    }),
+  );
+};
+
 const sampleReadyBscManifestSet = () => ({
   manifests: [
     {
@@ -1244,6 +1602,201 @@ const sampleReadyBscManifestSet = () => ({
         vkRef: {
           backend: "halo2/ipa",
           name: "taira-xor-bsc-burn-record-v1",
+        },
+        gasLimit: 123456,
+      },
+    },
+  ],
+});
+
+const sampleReadySolanaManifestSet = () => ({
+  manifests: [
+    {
+      solanaNetwork: "testnet",
+      chain: "solana-testnet",
+      networkId: SCCP_SOLANA_NETWORK.networkId,
+      counterpartyDomain: SCCP_SOLANA_DOMAIN,
+      counterpartyAccountCodecKey: "solana_base58",
+      counterpartyAccountCodec: SCCP_CODEC_SOLANA_BASE58,
+      verifierTarget: "SolanaProgram",
+      productionReady: true,
+      routeId: "taira_sol_xor",
+      assetKey: "xor",
+      solanaProgramId: SOLANA_BRIDGE_PROGRAM_ID,
+      solanaTokenMint: SOLANA_TOKEN_MINT_ADDRESS,
+      sccpSolanaSourceBridgeAddress: SOLANA_SOURCE_BRIDGE_PROGRAM_ID,
+      solanaSourceStateAddress: SOLANA_SOURCE_STATE_ADDRESS,
+      solanaVerifierProgramId: SOLANA_VERIFIER_PROGRAM_ID,
+      solanaNativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+      solanaVerifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
+      solanaRpcUrl: SCCP_SOLANA_NETWORK.rpcUrl,
+      solanaProgramdataAddress: "2wen6hXkK13qnjfActBxfUxiGw1ASnUMrtqoNPMva7A7",
+      solanaProgramdataSlot: 123456,
+      solanaVerifierMintInstructionAccounts: [
+        {
+          pubkey: "$payer",
+          isSigner: true,
+          isWritable: true,
+        },
+        {
+          pubkey: SOLANA_VERIFIER_STATE_ADDRESS,
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: SOLANA_TOKEN_MINT_ADDRESS,
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: "$destinationToken",
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: deriveSccpSolanaMintAuthorityAddress({
+            verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
+            verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
+          }),
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: "$messageReceipt",
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: "$systemProgram",
+          isSigner: false,
+          isWritable: false,
+        },
+      ],
+      solanaSourceBurnInstructionAccounts: [
+        {
+          pubkey: "$owner",
+          isSigner: true,
+          isWritable: true,
+        },
+        {
+          pubkey: SOLANA_SOURCE_STATE_ADDRESS,
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: "$sourceToken",
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: SOLANA_TOKEN_MINT_ADDRESS,
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+          isSigner: false,
+          isWritable: false,
+        },
+        {
+          pubkey: "$sourceBurnReceipt",
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: "$systemProgram",
+          isSigner: false,
+          isWritable: false,
+        },
+      ],
+      sourceVerifierMaterial: {
+        sourceDomain: SCCP_SOLANA_DOMAIN,
+        targetDomain: SCCP_SORA_DOMAIN,
+        sourceChain: "solana-testnet",
+        sourceTrustAnchorHash: `0x${"21".repeat(32)}`,
+        consensusVerifierHash: `0x${"22".repeat(32)}`,
+        messageInclusionVerifierHash: `0x${"23".repeat(32)}`,
+        finalityPolicyHash: `0x${"24".repeat(32)}`,
+        sourceStateVerifierHash: `0x${"25".repeat(32)}`,
+        placeholderMaterial: false,
+      },
+      sourceAdapterEngineDeployment: {
+        sourceDomain: SCCP_SOLANA_DOMAIN,
+        targetDomain: SCCP_SORA_DOMAIN,
+        sourceChain: "solana-testnet",
+        sourceTrustAnchorHash: `0x${"21".repeat(32)}`,
+        consensusVerifierHash: `0x${"22".repeat(32)}`,
+        messageInclusionVerifierHash: `0x${"23".repeat(32)}`,
+        finalityPolicyHash: `0x${"24".repeat(32)}`,
+        sourceStateVerifierHash: `0x${"25".repeat(32)}`,
+        adapterVerifierVkHash: `0x${"26".repeat(32)}`,
+        deploymentReceiptHash: `0x${"27".repeat(32)}`,
+        placeholderMaterial: false,
+      },
+      sourceBrowserProver: {
+        moduleUrl: "/sccp-solana/taira-solana-xor-source-prover.js",
+        moduleHash: `0x${"28".repeat(32)}`,
+        manifestHash: `0x${"29".repeat(32)}`,
+        expectedExports: ["proveSolanaSccpSource"],
+      },
+      destinationBrowserProver: {
+        moduleUrl: "/sccp-solana/taira-solana-xor-destination-prover.js",
+        moduleHash: `0x${"2a".repeat(32)}`,
+        manifestHash: `0x${"2b".repeat(32)}`,
+        expectedExports: ["proveSolanaSccpDestination"],
+      },
+      destinationBinding: {
+        version: 1,
+        key: "solana:testnet:taira_sol_xor",
+        bindingHash: BINDING_HASH,
+      },
+      destinationProofAdmission: {
+        admissionMode: "governed-zk-verifier-v1",
+        proofSystem: "stark-fri-v1",
+        entrypoint: "submit_sccp_message_proof",
+        verifierCodeHash: VERIFIER_CODE_HASH,
+        verifierKeyHash: VERIFIER_KEY_HASH,
+        nativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+        destinationBindingHash: BINDING_HASH,
+        shapeOnly: false,
+        acceptsUnverifiedProofs: false,
+      },
+      destinationRollout: {
+        verifierIdentity: SOLANA_VERIFIER_PROGRAM_ID,
+        nativeVerifierProgramId: SOLANA_NATIVE_VERIFIER_PROGRAM_ID,
+        verifierCodeHash: VERIFIER_CODE_HASH,
+        verifierKeyHash: VERIFIER_KEY_HASH,
+        destinationNetworkId: SCCP_SOLANA_NETWORK.networkId,
+        destinationBridgeAddress: SOLANA_BRIDGE_PROGRAM_ID,
+        destinationBindingHash: BINDING_HASH,
+      },
+      postDeployLiveEvidence: {
+        fullTomlReady: true,
+        offlineFullTomlSha256: OFFLINE_FULL_TOML_SHA256,
+        sourceBridgeConfigHash: `0x${"2c".repeat(32)}`,
+        sourceEventTransactionSignature:
+          "2d1KBhY5pyRuCBiXxoLUKmGEE9oEHRduBJKmjnFqSpEF85r8651FayJRC977ajGdjEvLvmTvTATwu53CSSTZZscR",
+        routeCanaryEvidenceHash: `0x${"2d".repeat(32)}`,
+        routeCanaryTransactionSignature:
+          "2sqsLAxG7ufxpq1nbLT7XV8qYQtjLfpPuHogdVrwkSMwBCNQ83z4NEbXY2wFA2YhyscyjmtnzczDFzpSjv2yuGLS",
+      },
+      tairaXorBurnRecord: {
+        settlementAssetDefinitionId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        contractArtifactB64: "TnJ0MGZpeHR1cmUtYnl0ZWNvZGUtbWF0ZXJpYWwtdjEhIQ==",
+        artifactSha256: BSC_BURN_RECORD_ARTIFACT_SHA256,
+        vkRef: {
+          backend: "halo2/ipa",
+          name: "taira-xor-solana-burn-record-v1",
         },
         gasLimit: 123456,
       },
@@ -1637,6 +2190,13 @@ describe("SccpView", () => {
     getEvmTransactionMock.mockReset();
     getEvmBlockByHashMock.mockReset();
     getEvmLogsMock.mockReset();
+    getSolanaBalanceMock.mockReset();
+    getSolanaTokenBalanceMock.mockReset();
+    prepareSolanaAssociatedTokenAccountMock.mockReset();
+    getSolanaSignatureStatusMock.mockReset();
+    getSolanaTransactionMock.mockReset();
+    buildSolanaTransactionMock.mockReset();
+    broadcastSolanaTransactionMock.mockReset();
     getSccpCapabilitiesMock.mockResolvedValue({
       proofSubmitPath: "/v1/bridge/proofs/submit",
       messageSubmitPath: "/v1/bridge/messages",
@@ -1675,6 +2235,21 @@ describe("SccpView", () => {
     getEvmTransactionReceiptMock.mockResolvedValue(sampleBscReceipt());
     getEvmBlockByHashMock.mockResolvedValue(sampleBscBlock());
     getEvmLogsMock.mockResolvedValue(sampleBscIndexedLogs());
+    getSolanaBalanceMock.mockResolvedValue("1000000000");
+    getSolanaTokenBalanceMock.mockResolvedValue({
+      accounts: [],
+      amount: "0",
+      decimals: 9,
+    });
+    prepareSolanaAssociatedTokenAccountMock.mockResolvedValue({
+      associatedTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
+      exists: true,
+      createInstruction: null,
+    });
+    getSolanaSignatureStatusMock.mockResolvedValue(null);
+    getSolanaTransactionMock.mockResolvedValue(null);
+    buildSolanaTransactionMock.mockResolvedValue("AQIDBA==");
+    broadcastSolanaTransactionMock.mockResolvedValue("5".repeat(88));
     getTronTransactionMock.mockResolvedValue(sampleTronTransaction());
     getTronTransactionReceiptMock.mockImplementation(
       (input: { txId?: unknown }) =>
@@ -2665,6 +3240,265 @@ describe("SccpView", () => {
     expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
   });
 
+  it("queues and submits a TAIRA burn-record proof for TAIRA -> Solana", async () => {
+    storeConnectedSolanaWallet();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadySolanaManifestSet());
+    startZkIvmProveJobMock.mockResolvedValue({
+      job_id: "11".repeat(16),
+    });
+    getZkIvmProveJobMock.mockResolvedValue({
+      status: "done",
+      proved: { overlay: [] },
+      attachment: {
+        backend: "halo2/ipa",
+        proof: {
+          backend: "halo2/ipa",
+          bytes: "0x01",
+        },
+        vk_ref: {
+          backend: "halo2/ipa",
+          name: "taira-xor-solana-burn-record-v1",
+        },
+      },
+    });
+    submitZkIvmProvedTransactionMock.mockRejectedValueOnce(
+      new Error("stop after solana source submit"),
+    );
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const solanaRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /Solana/iu.test(button.text()));
+    expect(solanaRouteButton).toBeTruthy();
+    await solanaRouteButton!.trigger("click");
+    await flushPromises();
+
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, SOLANA_RECIPIENT_ADDRESS);
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> Solana"));
+    expect(prepareButton).toBeTruthy();
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+    await vi.dynamicImportSettled();
+    await flushPromises();
+
+    expect(startZkIvmProveJobMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        authority: TAIRA_ACCOUNT_ID,
+        metadata: expect.objectContaining({
+          contract_entrypoint: "burn_and_record",
+          contract_payload: expect.objectContaining({
+            sender: TAIRA_ACCOUNT_ID,
+            settlement_asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            amount: BSC_BRIDGE_AMOUNT_BASE_UNITS,
+            record_instruction: expect.stringMatching(/^0x[0-9a-f]+$/u),
+          }),
+        }),
+      }),
+    );
+    expect(submitZkIvmProvedTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        accountId: TAIRA_ACCOUNT_ID,
+        waitForCommit: false,
+        metadata: expect.objectContaining({
+          gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+          contract_payload: expect.objectContaining({
+            record_instruction: expect.stringMatching(/^0x[0-9a-f]+$/u),
+          }),
+        }),
+      }),
+    );
+    expect(wrapper.text()).toContain("stop after solana source submit");
+    expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+    expect(buildSolanaTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("finalizes TAIRA -> Solana with destination token accounts", async () => {
+    storeConnectedSolanaWallet();
+    vi.stubEnv("VITE_SCCP_SOLANA_E2E_WALLET", "1");
+    const createInstruction = {
+      programId: "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      accounts: [
+        { pubkey: SOLANA_WALLET_ADDRESS, isSigner: true, isWritable: true },
+        {
+          pubkey: SOLANA_DESTINATION_TOKEN_ADDRESS,
+          isSigner: false,
+          isWritable: true,
+        },
+      ],
+      dataHex: "0x01",
+    };
+    const signTransactionMock = vi.fn().mockResolvedValue("BQYHCA==");
+    vi.stubGlobal("__irohaSolanaWalletHarness", {
+      signTransaction: signTransactionMock,
+    });
+    const workerCtor = vi.fn().mockImplementation(function WorkerMock(this: {
+      onmessage: ((event: { data: Record<string, unknown> }) => void) | null;
+      onerror: null;
+      onmessageerror: null;
+      terminate: () => void;
+      postMessage: (message: { id: string; kind: string }) => void;
+    }) {
+      this.onmessage = null;
+      this.onerror = null;
+      this.onmessageerror = null;
+      this.terminate = vi.fn();
+      this.postMessage = (message: { id: string; kind: string }) => {
+        expect(message.kind).toBe("prove-solana-proof-package");
+        this.onmessage?.({
+          data: {
+            id: message.id,
+            ok: true,
+            result: sampleTairaToSolanaBrowserProofPackage(),
+          },
+        });
+      };
+    });
+    vi.stubGlobal("Worker", workerCtor);
+    const proofJob = sampleTairaToSolanaMessageProofJob();
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadySolanaManifestSet());
+    getSccpMessageProofBundleMock.mockResolvedValue(proofJob.bundle);
+    getSccpMessageProofJobMock.mockResolvedValue(proofJob);
+    prepareSolanaAssociatedTokenAccountMock
+      .mockResolvedValueOnce({
+        associatedTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
+        exists: false,
+        createInstruction,
+      })
+      .mockResolvedValue({
+        associatedTokenAddress: SOLANA_DESTINATION_TOKEN_ADDRESS,
+        exists: true,
+        createInstruction: null,
+      });
+    getSolanaSignatureStatusMock.mockResolvedValue({
+      slot: 88,
+      err: null,
+      confirmationStatus: "finalized",
+    });
+    broadcastSolanaTransactionMock.mockResolvedValue(SOLANA_FINALIZE_SIGNATURE);
+    getSolanaTransactionMock.mockImplementation(() => {
+      const transaction = buildSolanaTransactionMock.mock.calls.at(-1)?.[0];
+      return Promise.resolve(
+        sampleFinalizedSolanaFinalizeTransaction(
+          transaction as Parameters<
+            typeof sampleFinalizedSolanaFinalizeTransaction
+          >[0],
+        ),
+      );
+    });
+
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const solanaRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /Solana/iu.test(button.text()));
+    expect(solanaRouteButton).toBeTruthy();
+    await solanaRouteButton!.trigger("click");
+    await flushPromises();
+
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, SOLANA_RECIPIENT_ADDRESS);
+    await setBridgeMessageId(wrapper, SOLANA_MESSAGE_ID);
+    const fetchButton = findResumeActionButton(wrapper);
+    expect(fetchButton).toBeTruthy();
+    await fetchButton!.trigger("click");
+    await flushPromises();
+
+    expect(prepareSolanaAssociatedTokenAccountMock).toHaveBeenCalledWith({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      payerAddress: SOLANA_WALLET_ADDRESS,
+      ownerAddress: SOLANA_RECIPIENT_ADDRESS,
+      mintAddress: SOLANA_TOKEN_MINT_ADDRESS,
+    });
+    expect(prepareSolanaAssociatedTokenAccountMock).toHaveBeenCalledTimes(2);
+    expect(workerCtor).toHaveBeenCalledTimes(1);
+    expect(buildSolanaTransactionMock.mock.calls[0]?.[0]).toEqual({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      feePayer: SOLANA_WALLET_ADDRESS,
+      instructions: [createInstruction],
+    });
+    const transactionInput = buildSolanaTransactionMock.mock.calls.at(
+      -1,
+    )?.[0] as Record<string, unknown> | undefined;
+    expect(transactionInput).toBeTruthy();
+    expect(transactionInput?.instructions).toHaveLength(1);
+    expect(transactionInput).toMatchObject({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      feePayer: SOLANA_WALLET_ADDRESS,
+      instructions: [
+        {
+          programId: SOLANA_VERIFIER_PROGRAM_ID,
+          accounts: expect.arrayContaining([
+            {
+              pubkey: SOLANA_DESTINATION_TOKEN_ADDRESS,
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: SCCP_SOLANA_SPL_TOKEN_PROGRAM_ID,
+              isSigner: false,
+              isWritable: false,
+            },
+            {
+              pubkey: deriveSccpSolanaMessageReceiptAddress({
+                verifierProgramAddress: SOLANA_VERIFIER_PROGRAM_ID,
+                verifierStateAddress: SOLANA_VERIFIER_STATE_ADDRESS,
+                messageId: SOLANA_MESSAGE_ID,
+              }),
+              isSigner: false,
+              isWritable: true,
+            },
+            {
+              pubkey: SCCP_SOLANA_SYSTEM_PROGRAM_ID,
+              isSigner: false,
+              isWritable: false,
+            },
+          ]),
+          dataHex: (
+            sampleTairaToSolanaBrowserProofPackage().submission as Record<
+              string,
+              unknown
+            >
+          ).envelopeBytes,
+        },
+      ],
+    });
+    expect(signTransactionMock).toHaveBeenCalledTimes(2);
+    expect(signTransactionMock).toHaveBeenNthCalledWith(1, "AQIDBA==");
+    expect(signTransactionMock).toHaveBeenNthCalledWith(2, "AQIDBA==");
+    expect(broadcastSolanaTransactionMock).toHaveBeenCalledTimes(2);
+    expect(broadcastSolanaTransactionMock).toHaveBeenCalledWith({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      transactionB64: "BQYHCA==",
+      expectedUnsignedTransactionB64: "AQIDBA==",
+    });
+    expect(getSolanaSignatureStatusMock).toHaveBeenCalledWith({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      signature: SOLANA_FINALIZE_SIGNATURE,
+    });
+    expect(getSolanaTransactionMock).toHaveBeenCalledWith({
+      endpoint: SCCP_SOLANA_NETWORK.rpcUrl,
+      signature: SOLANA_FINALIZE_SIGNATURE,
+    });
+    expect(wrapper.text()).toContain("Solana finalize transaction confirmed");
+  });
+
   it("loads connected TRON TRX and TairaXOR balances through preload", async () => {
     storeConnectedTronWallet();
 
@@ -2762,6 +3596,97 @@ describe("SccpView", () => {
     expect(getSccpMessageProofJobMock).not.toHaveBeenCalled();
     expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
     expect(triggerTronSmartContractMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Solana bridge actions disabled when WalletConnect config is missing despite stored metadata", async () => {
+    storeConnectedSolanaWallet({ projectConfigured: false });
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadySolanaManifestSet());
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const solanaRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /Solana/iu.test(button.text()));
+    expect(solanaRouteButton).toBeTruthy();
+    await solanaRouteButton!.trigger("click");
+    await flushPromises();
+
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, SOLANA_RECIPIENT_ADDRESS);
+    await setBridgeMessageId(wrapper, SOLANA_MESSAGE_ID);
+
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> Solana"));
+    const fetchButton = findResumeActionButton(wrapper);
+    expect(prepareButton).toBeTruthy();
+    expect(fetchButton).toBeTruthy();
+    expect(prepareButton!.attributes("disabled")).toBeDefined();
+    expect(fetchButton!.attributes("disabled")).toBeDefined();
+
+    await prepareButton!.trigger("click");
+    await fetchButton!.trigger("click");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "WalletConnect project ID is missing, so Solana wallet connection is disabled.",
+    );
+    expect(getSccpMessageProofJobMock).not.toHaveBeenCalled();
+    expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
+    expect(startZkIvmProveJobMock).not.toHaveBeenCalled();
+    expect(buildSolanaTransactionMock).not.toHaveBeenCalled();
+    expect(submitZkIvmProvedTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Solana bridge actions disabled when WalletConnect config is invalid", async () => {
+    storeConnectedSolanaWallet();
+    vi.stubEnv(
+      "VITE_WALLETCONNECT_PROJECT_ID",
+      "https://walletconnect.example/project",
+    );
+    getSccpProofManifestsMock.mockResolvedValue(sampleReadySolanaManifestSet());
+    const wrapper = mountView({
+      toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
+    });
+    await flushPromises();
+
+    const solanaRouteButton = wrapper
+      .findAll("button")
+      .find((button) => /Solana/iu.test(button.text()));
+    expect(solanaRouteButton).toBeTruthy();
+    await solanaRouteButton!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("WalletConnect misconfigured");
+
+    await setBridgeAmount(wrapper, "0.0001");
+    await setBridgeRecipient(wrapper, SOLANA_RECIPIENT_ADDRESS);
+    await setBridgeMessageId(wrapper, SOLANA_MESSAGE_ID);
+
+    const prepareButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("Prepare TAIRA -> Solana"));
+    expect(prepareButton).toBeTruthy();
+    expect(prepareButton!.attributes("disabled")).toBeDefined();
+
+    await prepareButton!.trigger("click");
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "WalletConnect project ID is invalid, so Solana wallet connection is disabled.",
+    );
+    expect(getSccpMessageProofJobMock).not.toHaveBeenCalled();
+    expect(deriveZkIvmPayloadMock).not.toHaveBeenCalled();
+    expect(startZkIvmProveJobMock).not.toHaveBeenCalled();
+    expect(buildSolanaTransactionMock).not.toHaveBeenCalled();
   });
 
   it("reloads SCCP route data when only the Torii URL changes", async () => {

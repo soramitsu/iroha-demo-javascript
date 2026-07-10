@@ -1,0 +1,99 @@
+#app {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  isolation: isolate;
+}
+
+::selection {
+  color: var(--color-text-strong);
+  background: var(--color-accent-soft);
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-focus) 72%, transparent);
+  outline-offset: 3px;
+}
+
+:where(button, a, input, select, textarea, summary) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--color-accent);
+  text-underline-offset: 0.18em;
+}
+
+a:hover {
+  color: var(--color-accent-strong);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--color-text-strong);
+  font-weight: 700;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+h1 {
+  font-size: clamp(1.65rem, 2.2vw, 2.15rem);
+}
+
+h2 {
+  font-size: clamp(1.05rem, 1.7vw, 1.3rem);
+}
+
+h3 {
+  font-size: 1rem;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--mono-font);
+}
+
+code,
+pre,
+.mono,
+.monospace,
+.meta-value,
+.kv-value,
+.utility-menu-account,
+.network-profile-select {
+  font-variant-numeric: tabular-nums;
+  unicode-bidi: plaintext;
+}
+
+pre {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+hr {
+  height: 1px;
+  margin: var(--space-5) 0;
+  border: 0;
+  background: var(--color-border);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--color-text-muted) 35%, transparent);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

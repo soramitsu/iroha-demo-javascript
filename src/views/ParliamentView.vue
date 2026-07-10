@@ -1,14 +1,24 @@
 <template>
   <div class="parliament-shell parliament-workbench">
-    <section class="card parliament-status-card parliament-readiness-card">
+    <RouteHeaderAction>
+      <AppButton
+        variant="secondary"
+        :disabled="loadingBootstrap"
+        @click="refresh"
+      >
+        {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
+      </AppButton>
+    </RouteHeaderAction>
+
+    <section
+      class="parliament-status-card parliament-readiness-card"
+      aria-labelledby="voting-eligibility-heading"
+    >
       <header class="card-header parliament-readiness-header">
         <div>
           <p class="parliament-kicker">{{ t("SORA Parliament") }}</p>
-          <h2>{{ t("Voting eligibility") }}</h2>
+          <h2 id="voting-eligibility-heading">{{ t("Voting eligibility") }}</h2>
         </div>
-        <button class="secondary" :disabled="loadingBootstrap" @click="refresh">
-          {{ loadingBootstrap ? t("Refreshing…") : t("Refresh") }}
-        </button>
       </header>
 
       <div
@@ -53,7 +63,12 @@
             {{ nextActionReason }}
           </p>
         </div>
-        <button :disabled="!canBondCitizen" @click="handleBondCitizen">
+        <button
+          type="button"
+          data-ui-primary-action
+          :disabled="!canBondCitizen"
+          @click="handleBondCitizen"
+        >
           {{
             actionBusy === "bond"
               ? t("Submitting…")
@@ -145,337 +160,386 @@
       </details>
     </section>
 
-    <section class="card parliament-lookup-card parliament-proposal-workspace">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Active proposal") }}</h2>
-          <p class="helper tight">{{ proposalSummaryDetail }}</p>
-        </div>
-        <button
-          class="secondary"
-          :disabled="!canLookupGovernance"
-          @click="lookupGovernance"
-        >
-          {{ lookupLoading ? t("Loading…") : t("Load") }}
-        </button>
-      </header>
-
-      <div class="form-grid">
-        <label>
-          {{ t("Referendum ID") }}
-          <input
-            v-model.trim="referendumId"
-            type="text"
-            data-testid="referendum-id-input"
-          />
-        </label>
-        <label>
-          {{ t("Proposal ID (0x...)") }}
-          <input
-            v-model.trim="proposalId"
-            type="text"
-            data-testid="proposal-id-input"
-          />
-        </label>
-      </div>
-      <p v-if="proposalIdFormatError" class="message warning">
-        {{ t("Proposal ID must be 32-byte hex (with or without 0x prefix).") }}
-      </p>
-
-      <div class="parliament-selected-record">
-        <div>
-          <span class="kv-label">{{ t("Selection") }}</span>
-          <h3>{{ proposalSummaryTitle }}</h3>
-        </div>
-        <span
-          class="pill mini"
-          :class="lifecycleSnapshot.source === 'torii' ? 'positive' : 'muted'"
-        >
-          {{
-            lifecycleSnapshot.source === "torii"
-              ? t("Lifecycle endpoint")
-              : t("Fallback lifecycle")
-          }}
-        </span>
-      </div>
-
-      <div v-if="tally?.tally" class="grid-2 parliament-tally">
-        <div class="kv">
-          <span class="kv-label">{{ t("Aye") }}</span>
-          <span class="kv-value">{{ tally.tally.approve }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Nay") }}</span>
-          <span class="kv-value">{{ tally.tally.reject }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Abstain") }}</span>
-          <span class="kv-value">{{ tally.tally.abstain }}</span>
-        </div>
-        <div class="kv">
-          <span class="kv-label">{{ t("Lock Records") }}</span>
-          <span class="kv-value">{{ lockCount }}</span>
-        </div>
-      </div>
-
-      <div class="parliament-lookup-status">
-        <p v-if="referendum" class="helper">
-          {{
-            t("Referendum found: {value}.", {
-              value: referendum.found ? t("yes") : t("no"),
-            })
-          }}
-        </p>
-        <p v-if="proposal" class="helper">
-          {{
-            t("Proposal found: {value}.", {
-              value: proposal.found ? t("yes") : t("no"),
-            })
-          }}
-        </p>
-        <p v-if="lifecycleCapabilityMessage" class="helper">
-          {{ lifecycleCapabilityMessage }}
-        </p>
-      </div>
-
-      <div
-        v-if="recentReferenda.length || recentProposals.length"
-        class="history-stack"
+    <section
+      class="parliament-decision-workspace"
+      :aria-label="t('Active proposal')"
+    >
+      <section
+        id="parliament-panel-summary"
+        class="parliament-lookup-card parliament-proposal-workspace"
+        :class="{ active: activePanel === 'summary' }"
+        role="tabpanel"
+        aria-labelledby="parliament-tab-summary"
       >
-        <div v-if="recentReferenda.length">
-          <p class="helper tight">{{ t("Recent referenda") }}</p>
-          <div class="history-chips">
-            <button
-              v-for="recentReferendumId in recentReferenda"
-              :key="`referendum-${recentReferendumId}`"
-              class="ghost history-chip"
-              type="button"
-              :title="recentReferendumId"
-              @click="applyRecentReferendum(recentReferendumId)"
-            >
-              {{ recentReferendumId }}
-            </button>
+        <header class="card-header">
+          <div>
+            <h2>{{ t("Active proposal") }}</h2>
+            <p class="helper tight">{{ proposalSummaryDetail }}</p>
           </div>
-        </div>
-        <div v-if="recentProposals.length">
-          <p class="helper tight">{{ t("Recent proposals") }}</p>
-          <div class="history-chips">
-            <button
-              v-for="recentProposalId in recentProposals"
-              :key="`proposal-${recentProposalId}`"
-              class="ghost history-chip mono"
-              type="button"
-              :title="recentProposalId"
-              @click="applyRecentProposal(recentProposalId)"
-            >
-              {{ shortenIdentifier(recentProposalId) }}
-            </button>
-          </div>
-        </div>
-        <div class="history-actions">
           <button
-            class="secondary history-clear"
             type="button"
-            @click="clearHistory"
+            class="secondary"
+            :disabled="!canLookupGovernance"
+            @click="lookupGovernance"
           >
-            {{ t("Clear history") }}
+            {{ lookupLoading ? t("Loading…") : t("Load") }}
           </button>
-        </div>
-      </div>
-    </section>
+        </header>
 
-    <section class="card parliament-lifecycle-card">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Lifecycle") }}</h2>
-          <p class="helper tight">
-            {{ t("Select a stage to inspect only the relevant evidence.") }}
+        <div class="form-grid">
+          <label>
+            {{ t("Referendum ID") }}
+            <input
+              v-model.trim="referendumId"
+              type="text"
+              data-testid="referendum-id-input"
+            />
+          </label>
+          <label>
+            {{ t("Proposal ID (0x...)") }}
+            <input
+              v-model.trim="proposalId"
+              type="text"
+              data-testid="proposal-id-input"
+            />
+          </label>
+        </div>
+        <p v-if="proposalIdFormatError" class="message warning">
+          {{
+            t("Proposal ID must be 32-byte hex (with or without 0x prefix).")
+          }}
+        </p>
+
+        <div class="parliament-selected-record">
+          <div>
+            <span class="kv-label">{{ t("Selection") }}</span>
+            <h3>{{ proposalSummaryTitle }}</h3>
+          </div>
+          <span
+            class="pill mini"
+            :class="lifecycleSnapshot.source === 'torii' ? 'positive' : 'muted'"
+          >
+            {{
+              lifecycleSnapshot.source === "torii"
+                ? t("Lifecycle endpoint")
+                : t("Fallback lifecycle")
+            }}
+          </span>
+        </div>
+
+        <div v-if="tally?.tally" class="grid-2 parliament-tally">
+          <div class="kv">
+            <span class="kv-label">{{ t("Aye") }}</span>
+            <span class="kv-value">{{ tally.tally.approve }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Nay") }}</span>
+            <span class="kv-value">{{ tally.tally.reject }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Abstain") }}</span>
+            <span class="kv-value">{{ tally.tally.abstain }}</span>
+          </div>
+          <div class="kv">
+            <span class="kv-label">{{ t("Lock Records") }}</span>
+            <span class="kv-value">{{ lockCount }}</span>
+          </div>
+        </div>
+
+        <div class="parliament-lookup-status">
+          <p v-if="referendum" class="helper">
+            {{
+              t("Referendum found: {value}.", {
+                value: referendum.found ? t("yes") : t("no"),
+              })
+            }}
+          </p>
+          <p v-if="proposal" class="helper">
+            {{
+              t("Proposal found: {value}.", {
+                value: proposal.found ? t("yes") : t("no"),
+              })
+            }}
+          </p>
+          <p v-if="lifecycleCapabilityMessage" class="helper">
+            {{ lifecycleCapabilityMessage }}
           </p>
         </div>
-      </header>
-
-      <div class="parliament-mobile-tabs" role="tablist">
-        <button
-          type="button"
-          :class="{ active: activePanel === 'summary' }"
-          @click="activePanel = 'summary'"
-        >
-          {{ t("Summary") }}
-        </button>
-        <button
-          type="button"
-          :class="{ active: activePanel === 'stage' }"
-          @click="activePanel = 'stage'"
-        >
-          {{ t("Stage") }}
-        </button>
-        <button
-          type="button"
-          :class="{ active: activePanel === 'actions' }"
-          @click="activePanel = 'actions'"
-        >
-          {{ t("Actions") }}
-        </button>
-      </div>
-
-      <div class="parliament-lifecycle-layout">
-        <nav class="parliament-stepper" aria-label="Governance lifecycle">
-          <button
-            v-for="stage in lifecycleStages"
-            :key="stage.id"
-            type="button"
-            :class="[
-              `status-${stage.status}`,
-              { active: selectedStageId === stage.id },
-            ]"
-            @click="selectedStageId = stage.id"
-          >
-            <span>{{ t(stage.labelKey) }}</span>
-            <small>{{ t(stage.status) }}</small>
-          </button>
-        </nav>
 
         <div
-          class="parliament-stage-detail"
-          :class="{ active: activePanel === 'stage' }"
+          v-if="recentReferenda.length || recentProposals.length"
+          class="history-stack"
         >
-          <span class="kv-label">{{ t("Selected stage") }}</span>
-          <h3>{{ t(activeLifecycleStage.labelKey) }}</h3>
-          <p class="helper">{{ selectedStageDetail }}</p>
-
-          <div
-            v-if="activeLifecycleStage.id === 'briefs'"
-            class="parliament-evidence-grid"
-          >
-            <div class="kv">
-              <span class="kv-label">{{ t("Expert briefs") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.briefStatus.endpointAvailable
-                  ? lifecycleSnapshot.briefStatus.submitted
-                  : t("Unavailable")
-              }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("Red-team briefs") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.briefStatus.endpointAvailable
-                  ? lifecycleSnapshot.briefStatus.redTeamSubmitted
-                  : t("Unavailable")
-              }}</span>
+          <div v-if="recentReferenda.length">
+            <p class="helper tight">{{ t("Recent referenda") }}</p>
+            <div class="history-chips">
+              <button
+                v-for="recentReferendumId in recentReferenda"
+                :key="`referendum-${recentReferendumId}`"
+                class="ghost history-chip"
+                type="button"
+                :title="recentReferendumId"
+                @click="applyRecentReferendum(recentReferendumId)"
+              >
+                {{ recentReferendumId }}
+              </button>
             </div>
           </div>
+          <div v-if="recentProposals.length">
+            <p class="helper tight">{{ t("Recent proposals") }}</p>
+            <div class="history-chips">
+              <button
+                v-for="recentProposalId in recentProposals"
+                :key="`proposal-${recentProposalId}`"
+                class="ghost history-chip mono"
+                type="button"
+                :title="recentProposalId"
+                @click="applyRecentProposal(recentProposalId)"
+              >
+                {{ shortenIdentifier(recentProposalId) }}
+              </button>
+            </div>
+          </div>
+          <div class="history-actions">
+            <button
+              class="secondary history-clear"
+              type="button"
+              @click="clearHistory"
+            >
+              {{ t("Clear history") }}
+            </button>
+          </div>
+        </div>
+      </section>
 
-          <div
-            v-else-if="activeLifecycleStage.id === 'challenge'"
-            class="parliament-evidence-grid"
+      <section class="parliament-lifecycle-card">
+        <header class="card-header">
+          <div>
+            <h2>{{ t("Lifecycle") }}</h2>
+            <p class="helper tight">
+              {{ t("Select a stage to inspect only the relevant evidence.") }}
+            </p>
+          </div>
+        </header>
+
+        <div
+          class="parliament-mobile-tabs"
+          role="tablist"
+          :aria-label="t('Lifecycle')"
+          @keydown="handlePanelTabKeydown"
+        >
+          <button
+            id="parliament-tab-summary"
+            type="button"
+            role="tab"
+            aria-controls="parliament-panel-summary"
+            :aria-selected="activePanel === 'summary'"
+            :tabindex="activePanel === 'summary' ? 0 : -1"
+            :class="{ active: activePanel === 'summary' }"
+            @click="activePanel = 'summary'"
           >
-            <div class="kv">
-              <span class="kv-label">{{ t("Challenge window") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.challengeStatus.endpointAvailable
-                  ? t(
-                      lifecycleSnapshot.challengeStatus.open
-                        ? "open"
-                        : "closed",
-                    )
-                  : t("Unavailable")
-              }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("Active challenges") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.challengeStatus.endpointAvailable
-                  ? lifecycleSnapshot.challengeStatus.activeChallenges
-                  : t("Unavailable")
-              }}</span>
-            </div>
-            <div class="kv">
-              <span class="kv-label">{{ t("Challenge bond") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.challengeStatus.endpointAvailable
-                  ? lifecycleSnapshot.challengeStatus.bondRequired
-                    ? `${lifecycleSnapshot.challengeStatus.bondRequired} XOR`
+            {{ t("Summary") }}
+          </button>
+          <button
+            id="parliament-tab-stage"
+            type="button"
+            role="tab"
+            aria-controls="parliament-panel-stage"
+            :aria-selected="activePanel === 'stage'"
+            :tabindex="activePanel === 'stage' ? 0 : -1"
+            :class="{ active: activePanel === 'stage' }"
+            @click="activePanel = 'stage'"
+          >
+            {{ t("Stage") }}
+          </button>
+          <button
+            id="parliament-tab-actions"
+            type="button"
+            role="tab"
+            aria-controls="parliament-panel-actions"
+            :aria-selected="activePanel === 'actions'"
+            :tabindex="activePanel === 'actions' ? 0 : -1"
+            :class="{ active: activePanel === 'actions' }"
+            @click="activePanel = 'actions'"
+          >
+            {{ t("Actions") }}
+          </button>
+        </div>
+
+        <div
+          id="parliament-panel-stage"
+          class="parliament-lifecycle-layout"
+          :class="{ active: activePanel === 'stage' }"
+          role="tabpanel"
+          aria-labelledby="parliament-tab-stage"
+        >
+          <nav class="parliament-stepper" :aria-label="t('Lifecycle')">
+            <button
+              v-for="stage in lifecycleStages"
+              :key="stage.id"
+              type="button"
+              :class="[
+                `status-${stage.status}`,
+                { active: selectedStageId === stage.id },
+              ]"
+              @click="selectedStageId = stage.id"
+            >
+              <span>{{ t(stage.labelKey) }}</span>
+              <small>{{ t(stage.status) }}</small>
+            </button>
+          </nav>
+
+          <div class="parliament-stage-detail">
+            <span class="kv-label">{{ t("Selected stage") }}</span>
+            <h3>{{ t(activeLifecycleStage.labelKey) }}</h3>
+            <p class="helper">{{ selectedStageDetail }}</p>
+
+            <div
+              v-if="activeLifecycleStage.id === 'briefs'"
+              class="parliament-evidence-grid"
+            >
+              <div class="kv">
+                <span class="kv-label">{{ t("Expert briefs") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.briefStatus.endpointAvailable
+                    ? lifecycleSnapshot.briefStatus.submitted
                     : t("Unavailable")
-                  : t("Unavailable")
-              }}</span>
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Red-team briefs") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.briefStatus.endpointAvailable
+                    ? lifecycleSnapshot.briefStatus.redTeamSubmitted
+                    : t("Unavailable")
+                }}</span>
+              </div>
+            </div>
+
+            <div
+              v-else-if="activeLifecycleStage.id === 'challenge'"
+              class="parliament-evidence-grid"
+            >
+              <div class="kv">
+                <span class="kv-label">{{ t("Challenge window") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.challengeStatus.endpointAvailable
+                    ? t(
+                        lifecycleSnapshot.challengeStatus.open
+                          ? "open"
+                          : "closed",
+                      )
+                    : t("Unavailable")
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Active challenges") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.challengeStatus.endpointAvailable
+                    ? lifecycleSnapshot.challengeStatus.activeChallenges
+                    : t("Unavailable")
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Challenge bond") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.challengeStatus.endpointAvailable
+                    ? lifecycleSnapshot.challengeStatus.bondRequired
+                      ? `${lifecycleSnapshot.challengeStatus.bondRequired} XOR`
+                      : t("Unavailable")
+                    : t("Unavailable")
+                }}</span>
+              </div>
+            </div>
+
+            <div
+              v-else-if="activeLifecycleStage.id === 'canary'"
+              class="parliament-evidence-grid"
+            >
+              <div class="kv">
+                <span class="kv-label">{{ t("Rollout") }}</span>
+                <span class="kv-value">{{
+                  lifecycleSnapshot.rolloutStatus.endpointAvailable
+                    ? t(lifecycleSnapshot.rolloutStatus.phase)
+                    : t("Unavailable")
+                }}</span>
+              </div>
             </div>
           </div>
+        </div>
+      </section>
 
-          <div
-            v-else-if="activeLifecycleStage.id === 'canary'"
-            class="parliament-evidence-grid"
+      <section
+        id="parliament-panel-actions"
+        class="parliament-ballot-card parliament-action-card"
+        :class="{ active: activePanel === 'actions' }"
+        role="tabpanel"
+        aria-labelledby="parliament-tab-actions"
+      >
+        <header class="card-header">
+          <div>
+            <h2>{{ t("Vote") }}</h2>
+            <p class="helper tight">
+              {{ t("Plain ballots use the current referendum and wallet.") }}
+            </p>
+          </div>
+        </header>
+        <div class="form-grid">
+          <label>
+            {{ t("Amount (XOR)") }}
+            <input
+              v-model.trim="ballotAmount"
+              type="text"
+              data-testid="ballot-amount-input"
+            />
+          </label>
+          <label>
+            {{ t("Lock duration (blocks)") }}
+            <input
+              v-model.number="durationBlocks"
+              type="number"
+              min="1"
+              step="1"
+            />
+          </label>
+          <label>
+            {{ t("Direction") }}
+            <select v-model="direction">
+              <option value="Aye">{{ t("Aye") }}</option>
+              <option value="Nay">{{ t("Nay") }}</option>
+              <option value="Abstain">{{ t("Abstain") }}</option>
+            </select>
+          </label>
+        </div>
+        <div class="actions">
+          <button
+            type="button"
+            :disabled="!canSubmitBallot"
+            @click="handleBallot"
           >
-            <div class="kv">
-              <span class="kv-label">{{ t("Rollout") }}</span>
-              <span class="kv-value">{{
-                lifecycleSnapshot.rolloutStatus.endpointAvailable
-                  ? t(lifecycleSnapshot.rolloutStatus.phase)
-                  : t("Unavailable")
-              }}</span>
-            </div>
-          </div>
+            {{
+              actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot")
+            }}
+          </button>
+          <button class="secondary" type="button" disabled>
+            {{ t("Stage ballot") }}
+          </button>
         </div>
-      </div>
-    </section>
-
-    <section class="card parliament-ballot-card parliament-action-card">
-      <header class="card-header">
-        <div>
-          <h2>{{ t("Vote") }}</h2>
-          <p class="helper tight">
-            {{ t("Plain ballots use the current referendum and wallet.") }}
-          </p>
-        </div>
-      </header>
-      <div class="form-grid">
-        <label>
-          {{ t("Amount (XOR)") }}
-          <input
-            v-model.trim="ballotAmount"
-            type="text"
-            data-testid="ballot-amount-input"
-          />
-        </label>
-        <label>
-          {{ t("Lock duration (blocks)") }}
-          <input
-            v-model.number="durationBlocks"
-            type="number"
-            min="1"
-            step="1"
-          />
-        </label>
-        <label>
-          {{ t("Direction") }}
-          <select v-model="direction">
-            <option value="Aye">{{ t("Aye") }}</option>
-            <option value="Nay">{{ t("Nay") }}</option>
-            <option value="Abstain">{{ t("Abstain") }}</option>
-          </select>
-        </label>
-      </div>
-      <div class="actions">
-        <button :disabled="!canSubmitBallot" @click="handleBallot">
-          {{ actionBusy === "ballot" ? t("Submitting…") : t("Submit ballot") }}
-        </button>
-        <button class="secondary" type="button" disabled>
-          {{ t("Stage ballot") }}
-        </button>
-      </div>
-      <p class="transaction-fee-note">
-        <span>{{ t("Fee") }}</span>
-        <strong>{{ ballotFeeLabel }}</strong>
-      </p>
-      <p v-if="ballotGate.reason" class="message warning">
-        {{ ballotGate.reason }}
-      </p>
-      <p v-if="stageBallotGate.reason" class="message warning">
-        {{ stageBallotGate.reason }}
-      </p>
+        <p class="transaction-fee-note">
+          <span>{{ t("Fee") }}</span>
+          <strong>{{ ballotFeeLabel }}</strong>
+        </p>
+        <p v-if="ballotGate.reason" class="message warning">
+          {{ ballotGate.reason }}
+        </p>
+        <p v-if="stageBallotGate.reason" class="message warning">
+          {{ stageBallotGate.reason }}
+        </p>
+      </section>
     </section>
 
     <details
-      class="card parliament-advanced-card"
+      class="parliament-advanced-card technical-details"
       data-testid="parliament-advanced-drawer"
     >
       <summary>
@@ -560,6 +624,7 @@
           </div>
           <div class="actions">
             <button
+              type="button"
               class="secondary"
               :disabled="!canPrepareDeployProposal"
               @click="handleDeployProposalDraft"
@@ -640,6 +705,7 @@
 
           <div class="actions">
             <button
+              type="button"
               class="secondary"
               :disabled="!canFinalizeDraft"
               @click="handleFinalize"
@@ -651,6 +717,7 @@
               }}
             </button>
             <button
+              type="button"
               class="secondary"
               :disabled="!canEnactDraft"
               @click="handleEnact"
@@ -715,6 +782,7 @@
 <script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { AppButton, RouteHeaderAction } from "@/components/ui";
 import { useParliamentStore } from "@/stores/parliament";
 
 const { t } = useAppI18n();
@@ -810,11 +878,32 @@ const {
   shortenIdentifier,
   summarizeDraft,
 } = parliament;
+
+const parliamentPanels = ["summary", "stage", "actions"] as const;
+const handlePanelTabKeydown = (event: KeyboardEvent) => {
+  const currentIndex = parliamentPanels.indexOf(activePanel.value);
+  let nextIndex: number | null = null;
+  if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+    nextIndex = (currentIndex + 1) % parliamentPanels.length;
+  } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+    nextIndex =
+      (currentIndex - 1 + parliamentPanels.length) % parliamentPanels.length;
+  } else if (event.key === "Home") {
+    nextIndex = 0;
+  } else if (event.key === "End") {
+    nextIndex = parliamentPanels.length - 1;
+  }
+  if (nextIndex === null) return;
+  event.preventDefault();
+  const nextPanel = parliamentPanels[nextIndex];
+  activePanel.value = nextPanel;
+  document.getElementById(`parliament-tab-${nextPanel}`)?.focus();
+};
 </script>
 
 <style scoped>
 .helper {
-  margin-top: 12px;
+  margin-top: 10px;
   font-size: 0.85rem;
   color: var(--iroha-muted);
 }
@@ -824,16 +913,28 @@ const {
 }
 
 .parliament-workbench {
-  gap: 20px;
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
 }
 
 .parliament-readiness-card,
-.parliament-proposal-workspace,
-.parliament-lifecycle-card,
-.parliament-action-card,
 .parliament-advanced-card {
-  position: relative;
-  z-index: 1;
+  min-width: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 22px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow-raised);
+}
+
+.parliament-readiness-card {
+  padding: clamp(20px, 3vw, 32px);
+  border-color: var(--frost-border);
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
 .parliament-kicker {
@@ -841,12 +942,26 @@ const {
   color: var(--iroha-muted);
   font-size: 0.76rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
 }
 
 .parliament-readiness-header {
+  display: flex;
   align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.parliament-readiness-header h2 {
+  margin: 0;
+}
+
+.parliament-readiness-header .ghost {
+  min-height: 40px;
+  padding-inline: 10px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .parliament-citizenship-panel {
@@ -854,29 +969,17 @@ const {
   gap: 18px;
   align-items: center;
   justify-content: space-between;
-  margin: 16px 0;
-  padding: 18px 20px;
-  border-radius: 18px;
-  border: 1px solid var(--glass-border);
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 70%),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent-danger) 14%, transparent),
-      transparent 58%
-    ),
-    var(--surface-soft);
-  box-shadow:
-    inset 0 1px 0 var(--glass-highlight),
-    var(--shadow-soft);
+  margin: 18px 0 0;
+  padding: 18px 0;
+  border-block: 1px solid var(--panel-border);
 }
 
 .parliament-citizenship-panel-positive {
-  border-color: color-mix(in srgb, #22c55e 55%, var(--glass-border));
-  background:
-    linear-gradient(135deg, var(--glass-veil), transparent 70%),
-    linear-gradient(135deg, rgba(34, 197, 94, 0.2), transparent 60%),
-    var(--surface-soft);
+  border-color: color-mix(
+    in srgb,
+    var(--color-success) 38%,
+    var(--color-border)
+  );
 }
 
 .parliament-citizenship-copy {
@@ -899,19 +1002,39 @@ const {
 .parliament-citizen-count {
   display: grid;
   gap: 4px;
-  min-width: 150px;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
+  min-width: 128px;
+  padding-inline-start: 20px;
+  border-inline-start: 1px solid var(--panel-border);
+}
+
+.parliament-citizen-count .kv-value {
+  font-size: 1.45rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .parliament-readiness-grid,
 .parliament-evidence-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  margin-top: 0;
+  border-radius: 14px;
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+  overflow: hidden;
+}
+
+.parliament-readiness-grid .kv {
+  min-width: 0;
+  padding: 16px 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.parliament-readiness-grid .kv + .kv {
+  border-inline-start: 1px solid var(--panel-border);
+}
+
+.parliament-readiness-grid .kv-value {
+  overflow-wrap: anywhere;
 }
 
 .parliament-next-action {
@@ -919,11 +1042,14 @@ const {
   gap: 16px;
   align-items: center;
   justify-content: space-between;
-  margin-top: 16px;
-  padding: 14px 16px;
+  margin-top: 18px;
+  padding: 18px 20px;
   border-radius: 16px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 84%, transparent);
+  border: 1px solid var(--frost-border);
+  background: var(--frost-panel-soft);
+  box-shadow: var(--shadow-inset);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
 }
 
 .parliament-next-action strong {
@@ -936,46 +1062,120 @@ const {
   gap: 14px;
   align-items: flex-start;
   justify-content: space-between;
-  margin-top: 16px;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 80%, transparent);
+  margin-top: 20px;
+  padding: 18px 0;
+  border-block: 1px solid var(--panel-border);
 }
 
 .parliament-lookup-status {
   margin-top: 8px;
 }
 
+.parliament-decision-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, 0.65fr);
+  overflow: hidden;
+  border: 1px solid var(--frost-border);
+  border-radius: 22px;
+  background: var(--frost-panel-raised);
+  box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
+}
+
+.parliament-proposal-workspace,
+.parliament-lifecycle-card,
+.parliament-action-card {
+  min-width: 0;
+  padding: clamp(18px, 2.5vw, 28px);
+}
+
+.parliament-proposal-workspace {
+  grid-column: 1 / -1;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.parliament-proposal-workspace .card-header,
+.parliament-lifecycle-card .card-header,
+.parliament-action-card .card-header,
+.parliament-advanced-grid .card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.parliament-proposal-workspace .card-header h2,
+.parliament-lifecycle-card .card-header h2,
+.parliament-action-card .card-header h2,
+.parliament-advanced-grid .card-header h2 {
+  margin: 0;
+}
+
+.parliament-proposal-workspace > .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.parliament-lifecycle-card {
+  border-inline-end: 1px solid var(--panel-border);
+}
+
+.parliament-action-card {
+  background: var(--frost-panel-soft);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
+}
+
+.parliament-action-card > .form-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.parliament-action-card .actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.parliament-action-card .actions button {
+  width: 100%;
+}
+
 .parliament-mobile-tabs {
   display: none;
   gap: 8px;
   margin: 14px 0;
-  padding: 6px;
-  border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--surface-soft) 80%, transparent);
+  padding: 0;
+  border-bottom: 1px solid var(--panel-border);
 }
 
 .parliament-mobile-tabs button {
+  position: relative;
   flex: 1 1 0;
-  min-height: 36px;
+  min-height: 44px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--iroha-muted);
   box-shadow: none;
 }
 
 .parliament-mobile-tabs button.active {
-  background: var(--surface-soft);
   color: var(--iroha-text);
+}
+
+.parliament-mobile-tabs button.active::after {
+  content: "";
+  position: absolute;
+  inset: auto 10px -1px;
+  height: 2px;
+  background: var(--iroha-accent);
 }
 
 .parliament-lifecycle-layout {
   display: grid;
-  gap: 18px;
-  grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr);
+  gap: 20px;
+  grid-template-columns: minmax(190px, 0.38fr) minmax(0, 1fr);
   align-items: start;
 }
 
@@ -990,28 +1190,19 @@ const {
   align-items: center;
   justify-content: space-between;
   min-height: 46px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: transparent;
   color: var(--iroha-text);
   box-shadow: none;
   text-align: start;
 }
 
 .parliament-stepper button.active {
-  border-color: color-mix(
-    in srgb,
-    var(--accent-primary) 54%,
-    var(--glass-border)
-  );
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent-primary) 12%, transparent),
-      transparent 70%
-    ),
-    var(--surface-soft);
+  border-bottom-color: var(--iroha-accent);
+  color: var(--iroha-accent);
 }
 
 .parliament-stepper small {
@@ -1022,25 +1213,19 @@ const {
 
 .parliament-stepper .status-unavailable,
 .parliament-stepper .status-blocked {
-  opacity: 0.72;
+  color: var(--color-text-muted);
 }
 
 .parliament-stage-detail {
-  min-height: 240px;
-  padding: 18px;
-  border-radius: 18px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
-}
-
-.parliament-action-card {
-  grid-column: span 5;
+  min-height: 220px;
+  padding-inline-start: 20px;
+  border-inline-start: 1px solid var(--panel-border);
 }
 
 .parliament-advanced-card {
-  grid-column: 1 / -1;
   padding: 0;
   overflow: hidden;
+  margin-top: 0;
 }
 
 .parliament-advanced-card > summary {
@@ -1048,7 +1233,8 @@ const {
   gap: 10px;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 20px;
+  min-height: 58px;
+  padding: 14px 20px;
   cursor: pointer;
 }
 
@@ -1062,18 +1248,20 @@ const {
 
 .parliament-advanced-grid {
   display: grid;
-  gap: 18px;
+  gap: 0;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   padding: 0 20px 20px;
+  border-top: 1px solid var(--panel-border);
 }
 
 .parliament-proposal-card,
 .parliament-council-card {
   min-width: 0;
-  padding: 18px;
-  border-radius: 18px;
-  border: 1px solid var(--glass-border);
-  background: color-mix(in srgb, var(--surface-soft) 70%, transparent);
+  padding: 22px;
+}
+
+.parliament-proposal-card {
+  border-inline-end: 1px solid var(--panel-border);
 }
 
 .permission-stack {
@@ -1092,6 +1280,13 @@ const {
   margin-top: 16px;
 }
 
+.parliament-tally {
+  padding: var(--space-3);
+  border-radius: 14px;
+  background: var(--color-surface-inset);
+  box-shadow: var(--shadow-inset);
+}
+
 .history-stack {
   margin-top: 14px;
   display: grid;
@@ -1106,8 +1301,10 @@ const {
 
 .history-chip {
   padding: 6px 10px;
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 0.76rem;
+  background: transparent;
+  box-shadow: none;
 }
 
 .history-actions {
@@ -1130,27 +1327,25 @@ const {
 }
 
 .message.success {
-  border: 1px solid rgba(34, 197, 94, 0.4);
-  background: rgba(34, 197, 94, 0.1);
-  color: #15803d;
+  border: 1px solid color-mix(in srgb, var(--color-success) 40%, transparent);
+  background: var(--color-success-soft);
+  color: var(--color-success);
 }
 
 .message.warning {
-  border: 1px solid rgba(217, 119, 6, 0.4);
-  background: rgba(217, 119, 6, 0.1);
-  color: #b45309;
+  border: 1px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  background: var(--color-warning-soft);
+  color: var(--color-warning);
 }
 
 .message.error {
-  border: 1px solid rgba(239, 68, 68, 0.5);
-  background: rgba(239, 68, 68, 0.12);
-  color: #b91c1c;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 42%, transparent);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
 }
 
 .mono {
-  font-family:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-    "Courier New", monospace;
+  font-family: var(--mono-font);
   font-size: 0.8rem;
 }
 
@@ -1158,7 +1353,7 @@ const {
   margin-top: 12px;
   border-radius: 12px;
   padding: 12px;
-  background: var(--surface-soft);
+  background: var(--color-surface-inset);
   border: 1px solid var(--panel-border);
   max-height: 240px;
   overflow: auto;
@@ -1176,19 +1371,42 @@ const {
   overflow: auto;
 }
 
-@media (max-width: 1240px) {
+@media (max-width: 1120px) {
   .parliament-readiness-grid,
   .parliament-evidence-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .parliament-advanced-grid,
-  .parliament-lifecycle-layout {
+  .parliament-readiness-grid .kv:nth-child(3) {
+    border-inline-start: 0;
+  }
+
+  .parliament-readiness-grid .kv:nth-child(n + 3) {
+    border-top: 1px solid var(--panel-border);
+  }
+
+  .parliament-decision-workspace,
+  .parliament-advanced-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .parliament-lifecycle-card,
+  .parliament-proposal-card {
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+
+  .parliament-action-card {
+    background: var(--frost-panel-soft);
   }
 }
 
 @media (max-width: 720px) {
+  .parliament-readiness-card {
+    padding: 20px;
+  }
+
+  .parliament-readiness-header,
   .parliament-citizenship-panel,
   .parliament-next-action,
   .parliament-selected-record {
@@ -1198,6 +1416,9 @@ const {
 
   .parliament-citizen-count {
     min-width: 0;
+    padding: 14px 0 0;
+    border-inline-start: 0;
+    border-top: 1px solid var(--panel-border);
   }
 
   .parliament-readiness-grid,
@@ -1206,10 +1427,40 @@ const {
   }
 
   .parliament-mobile-tabs {
-    position: sticky;
-    top: 0;
-    z-index: 2;
     display: flex;
+    order: -1;
+    padding-inline: 18px;
+    background: var(--surface-strong);
+  }
+
+  .parliament-decision-workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .parliament-lifecycle-card {
+    display: contents;
+  }
+
+  .parliament-lifecycle-card > .card-header {
+    display: none;
+  }
+
+  .parliament-proposal-workspace:not(.active),
+  .parliament-lifecycle-layout:not(.active),
+  .parliament-action-card:not(.active) {
+    display: none;
+  }
+
+  .parliament-proposal-workspace,
+  .parliament-lifecycle-layout,
+  .parliament-action-card {
+    order: 1;
+  }
+
+  .parliament-lifecycle-layout.active {
+    display: grid;
+    padding: 20px 18px;
   }
 
   .parliament-stepper {
@@ -1226,11 +1477,29 @@ const {
   }
 
   .parliament-stage-detail {
-    display: none;
+    display: block;
+    min-height: 0;
+    padding: 18px 0 0;
+    border-inline-start: 0;
+    border-top: 1px solid var(--panel-border);
   }
 
-  .parliament-stage-detail.active {
-    display: block;
+  .parliament-proposal-workspace > .form-grid,
+  .parliament-advanced-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
+
+  .parliament-proposal-card {
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+
+  .parliament-next-action button {
+    width: 100%;
+  }
+}
+
+.mono {
+  unicode-bidi: plaintext;
 }
 </style>
