@@ -443,33 +443,45 @@ async function submitSignedTransaction(client, toriiUrl, signedTransaction) {
   }
 }
 
-async function callMcpTool(mcpUrl, name, args) {
-  const response = await fetch(mcpUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "tools/call",
-      params: { name, arguments: args },
-    }),
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(
-      `MCP ${name} failed with HTTP ${response.status}: ${text.slice(0, 512)}`,
-    );
+async function callMcpTool(mcpUrl, name, args, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(mcpUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+      signal: controller.signal,
+    });
+    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `MCP ${name} failed with HTTP ${response.status}: ${text.slice(0, 512)}`,
+      );
+    }
+    const payload = parseTairaMcpJsonRpcResponseText(text);
+    if (payload?.error) {
+      throw new Error(
+        `MCP ${name} failed: ${payload.error.message ?? JSON.stringify(payload.error)}`,
+      );
+    }
+    return payload?.result ?? null;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`MCP ${name} timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  const payload = parseTairaMcpJsonRpcResponseText(text);
-  if (payload?.error) {
-    throw new Error(
-      `MCP ${name} failed: ${payload.error.message ?? JSON.stringify(payload.error)}`,
-    );
-  }
-  return payload?.result ?? null;
 }
 
 async function submitSignedTransactionViaMcp({
@@ -496,6 +508,7 @@ async function submitSignedTransactionViaMcp({
           }
         : {}),
     },
+    timeoutMs + 5_000,
   );
   return {
     receipt: result,
@@ -601,10 +614,16 @@ async function main() {
   );
 
   const artifact = await readJson(isiPath, "route manifest ISI artifact");
-  const { instruction } = validateTairaRouteManifestIsiArtifact({
+  const validatedIsi = validateTairaRouteManifestIsiArtifact({
     artifact,
     expectedSha256: options["expected-isi-sha256"],
   });
+  const { instruction } = validatedIsi;
+  const reviewedObjectHashes = {
+    isiObjectSha256: validatedIsi.actualSha256,
+    manifestObjectSha256: artifact.manifestSha256,
+    instructionManifestObjectSha256: artifact.instructionManifestSha256,
+  };
   const metadata = {
     action: "publish_sccp_route_manifest",
     route_id: artifact.routeId ?? artifact.route_id ?? "unknown",
@@ -638,6 +657,26 @@ async function main() {
 
   const client = new ToriiClient(toriiUrl);
   const hash = transaction.hash.toString("hex");
+  if (!dryRun) {
+    await writeTairaRouteManifestSubmissionJson(out, {
+      prepared: true,
+      submitted: false,
+      mutationStatus: "prepared-not-yet-submitted",
+      submitVia,
+      mcpUrl,
+      toriiUrl,
+      chainId,
+      authority,
+      hash,
+      isiPath,
+      ...reviewedObjectHashes,
+      metadata,
+      ttlMs,
+      nonce,
+      waitForCommit,
+      commitTimeoutMs,
+    });
+  }
   if (dryRun) {
     const wrote = await writeTairaRouteManifestSubmissionJson(out, {
       submitted: false,
@@ -649,6 +688,7 @@ async function main() {
       authority,
       hash,
       isiPath,
+      ...reviewedObjectHashes,
       metadata,
       ttlMs,
       nonce,
@@ -703,7 +743,13 @@ async function main() {
     statusKindSource = "receipt";
   }
   const submissionArtifact = {
+    prepared: true,
     submitted: !submitError,
+    mutationStatus: submitError
+      ? "submission-ambiguous"
+      : statusKind === "Applied"
+        ? "applied"
+        : "submitted-status-unknown",
     submitVia,
     toriiUrl,
     mcpUrl,
@@ -717,6 +763,7 @@ async function main() {
     encoding,
     submitError,
     isiPath,
+    ...reviewedObjectHashes,
     metadata,
     ttlMs,
     nonce,

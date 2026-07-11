@@ -1980,9 +1980,12 @@ watch(
 
 .staking-advanced {
   margin-top: 0;
+  border-color: var(--frost-border);
   border-radius: 18px;
-  background: var(--surface-strong);
+  background: var(--frost-panel-raised);
   box-shadow: var(--shadow-control);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
 .staking-advanced > summary small {

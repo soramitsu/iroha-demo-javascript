@@ -638,6 +638,8 @@ describe("Solana SCCP live video gate", () => {
         toriiUrl: "https://taira-validator-1.sora.org/",
         solanaRpcUrl: "https://api.testnet.solana.com/",
         skipSolanaRpc: false,
+        productionGateSnapshot: "/tmp/pre-live-production-gate.json",
+        productionGateSnapshotSha256: HASH_A,
       },
       diagnostics: canonicalSuccessDiagnostics(),
       freshPreflightCompleted: true,
@@ -739,6 +741,31 @@ describe("Solana SCCP live video gate", () => {
     ]);
   });
 
+  it("rejects caller-declared trusted chains and production-gate option bags", () => {
+    const policy = buildSolanaLiveVideoSuccessEvidencePolicy({
+      options: {
+        toriiUrl: "https://taira-validator-1.sora.org",
+        solanaRpcUrl: "https://api.testnet.solana.com",
+        skipSolanaRpc: false,
+        productionGateSnapshot: "/tmp/pre-live-production-gate.json",
+        productionGateSnapshotSha256: HASH_A,
+        trustedGeneratedChain: { activationPackage: "/tmp/forged.json" },
+        productionGateOptions: { activationPackage: "/tmp/forged.json" },
+      },
+      diagnostics: canonicalSuccessDiagnostics(),
+      freshPreflightCompleted: true,
+      freshProductionGateCompleted: true,
+    });
+
+    expect(policy.ready).toBe(false);
+    expect(policy.problems.map((problem) => problem.id)).toEqual(
+      expect.arrayContaining([
+        "caller-trusted-generated-chain",
+        "caller-production-gate-options",
+      ]),
+    );
+  });
+
   it("rejects self-attested canonical target booleans when the MCP root is mismatched", () => {
     const diagnostics = canonicalSuccessDiagnostics();
     diagnostics.publishReadiness.target.mcpUrl =
@@ -810,6 +837,38 @@ describe("Solana SCCP live video gate", () => {
       await expect(
         access(path.join(outputDir, "sccp-solana-live-video-blocked.json")),
       ).resolves.toBeUndefined();
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("preserves prior successful evidence when a later diagnostic run is blocked", async () => {
+    const outputDir = await mkdtemp(
+      path.join(os.tmpdir(), "sccp-solana-preserve-live-video-"),
+    );
+    const prior = {
+      "sccp-solana-live-video.json": "prior transcript\n",
+      "sccp-solana-live-video.vtt": "prior subtitles\n",
+      "sccp-solana-live-video.mp4": "prior video\n",
+    };
+    try {
+      await Promise.all(
+        Object.entries(prior).map(([file, contents]) =>
+          writeFile(path.join(outputDir, file), contents),
+        ),
+      );
+      const result = await runSccpSolanaLiveVideoGate({
+        outputDir,
+        toriiUrl: "https://localhost",
+        solanaRpcUrl: "http://127.0.0.1:8899",
+        skipSolanaRpc: true,
+      });
+      expect(result.ready).toBe(false);
+      for (const [file, contents] of Object.entries(prior)) {
+        await expect(
+          readFile(path.join(outputDir, file), "utf8"),
+        ).resolves.toBe(contents);
+      }
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }

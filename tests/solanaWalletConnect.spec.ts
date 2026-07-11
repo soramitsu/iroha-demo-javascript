@@ -9,6 +9,7 @@ import {
   normalizeSolanaWalletSignature,
   normalizeSolanaWalletSignedTransaction,
   readStoredSolanaWalletConnectSession,
+  solanaWalletConnectSessionMatchesSnapshot,
   solanaWalletConnectSessionSupportsRequiredSigning,
   writeStoredSolanaWalletConnectSession,
 } from "@/composables/useSolanaWalletConnect";
@@ -26,12 +27,13 @@ const SOLANA_SIGNATURE =
 const session = (
   accounts: string[],
   methods = ["solana_signTransaction", "solana_signAndSendTransaction"],
+  chains = [SCCP_SOLANA_NETWORK.caipChainId],
 ) => ({
   topic: "topic-1",
   namespaces: {
     solana: {
       accounts,
-      chains: [SCCP_SOLANA_NETWORK.caipChainId],
+      chains,
       methods,
     },
   },
@@ -65,9 +67,11 @@ describe("Solana WalletConnect helpers", () => {
   });
 
   it("accepts the Solana wallet-standard testnet account alias", () => {
-    const connected = session([
-      `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${SOLANA_ADDRESS}`,
-    ]);
+    const connected = session(
+      [`${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${SOLANA_ADDRESS}`],
+      undefined,
+      [SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID],
+    );
     expect(extractSolanaAddressFromSession(connected)).toBe(SOLANA_ADDRESS);
     expect(solanaWalletConnectSessionSupportsRequiredSigning(connected)).toBe(
       true,
@@ -104,6 +108,46 @@ describe("Solana WalletConnect helpers", () => {
         ),
       ),
     ).toBe(false);
+    const mismatchedChain = session(
+      [`${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${SOLANA_ADDRESS}`],
+      undefined,
+      [SCCP_SOLANA_NETWORK.caipChainId],
+    );
+    expect(extractSolanaAddressFromSession(mismatchedChain)).toBeNull();
+    expect(
+      solanaWalletConnectSessionSupportsRequiredSigning(mismatchedChain),
+    ).toBe(false);
+  });
+
+  it("prefers the canonical chain only when both testnet identifiers are authorized", () => {
+    const connected = session(
+      [
+        `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${SOLANA_ADDRESS}`,
+        `${SCCP_SOLANA_NETWORK.caipChainId}:${SOLANA_ADDRESS}`,
+      ],
+      undefined,
+      [
+        SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+        SCCP_SOLANA_NETWORK.caipChainId,
+      ],
+    );
+    const canonicalSnapshot = solanaWalletConnectSessionFromAddress(
+      SOLANA_ADDRESS,
+      "topic-1",
+      SCCP_SOLANA_NETWORK.caipChainId,
+    );
+    const aliasSnapshot = solanaWalletConnectSessionFromAddress(
+      SOLANA_ADDRESS,
+      "topic-1",
+      SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+    );
+
+    expect(
+      solanaWalletConnectSessionMatchesSnapshot(connected, canonicalSnapshot),
+    ).toBe(true);
+    expect(
+      solanaWalletConnectSessionMatchesSnapshot(connected, aliasSnapshot),
+    ).toBe(false);
   });
 
   it("normalizes project ids and wallet responses", () => {
@@ -130,6 +174,9 @@ describe("Solana WalletConnect helpers", () => {
         transaction: globalThis.btoa("x".repeat(1233)),
       }),
     ).toThrow(/canonical Solana transaction bytes/u);
+    expect(() =>
+      normalizeSolanaWalletSignedTransaction({ signature: SOLANA_SIGNATURE }),
+    ).toThrow(/signature-only responses are not supported/u);
   });
 
   it("builds Reown-compatible Solana signing request params", () => {
@@ -158,6 +205,7 @@ describe("Solana WalletConnect helpers", () => {
     const snapshot = solanaWalletConnectSessionFromAddress(
       SOLANA_ADDRESS,
       "topic-1",
+      SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
     );
     expect(
       isFreshSolanaWalletConnectSessionTimestamp(snapshot.connectedAtMs),
@@ -166,11 +214,17 @@ describe("Solana WalletConnect helpers", () => {
     expect(readStoredSolanaWalletConnectSession()).toMatchObject({
       address: SOLANA_ADDRESS,
       topic: "topic-1",
-      chainId: SCCP_SOLANA_NETWORK.caipChainId,
+      chainId: SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
       namespace: "solana",
     });
     expect(
       window.localStorage.getItem("iroha-demo:sccp:solana-walletconnect"),
     ).toBeNull();
+    expect(() =>
+      writeStoredSolanaWalletConnectSession({
+        ...snapshot,
+        chainId: "solana:mainnet",
+      }),
+    ).toThrow(/chain ID is not supported/u);
   });
 });

@@ -322,6 +322,8 @@ const statusTone = ref<"neutral" | "success" | "error">("neutral");
 const scanMessage = ref("");
 const destinationResolution = reactive({
   input: "",
+  toriiUrl: "",
+  networkPrefix: null as number | null,
   accountId: "",
   alias: "",
   resolved: false,
@@ -460,13 +462,21 @@ const setSendMode = (mode: string) => {
 
 const normalizedQuantity = computed(() => String(form.quantity).trim());
 const destinationValue = computed(() => form.destination.trim());
-const destinationResolutionMatchesInput = computed(
-  () => destinationResolution.input === destinationValue.value,
+const destinationResolutionMatchesContext = computed(
+  () =>
+    destinationResolution.input === destinationValue.value &&
+    destinationResolution.toriiUrl === session.connection.toriiUrl &&
+    destinationResolution.networkPrefix === session.connection.networkPrefix,
+);
+const destinationResolutionIsUsable = computed(
+  () =>
+    destinationResolutionMatchesContext.value &&
+    !destinationResolution.resolving &&
+    !destinationResolution.error &&
+    Boolean(destinationResolution.accountId),
 );
 const resolvedDestinationAccountId = computed(() =>
-  destinationResolutionMatchesInput.value
-    ? destinationResolution.accountId
-    : "",
+  destinationResolutionIsUsable.value ? destinationResolution.accountId : "",
 );
 const destinationIsShieldedAddressInput = computed(
   () =>
@@ -491,7 +501,7 @@ const reviewDestinationLabel = computed(() => {
   return destinationAccountIdForSubmit.value || destinationValue.value;
 });
 const destinationResolutionMessage = computed(() => {
-  if (!destinationResolutionMatchesInput.value) {
+  if (!destinationResolutionMatchesContext.value) {
     return "";
   }
   if (destinationResolution.resolving) {
@@ -553,7 +563,10 @@ const isDestinationValid = computed(() => {
   if (!destinationValue.value) {
     return false;
   }
-  if (destinationResolutionMatchesInput.value && destinationResolution.error) {
+  if (
+    destinationResolutionMatchesContext.value &&
+    destinationResolution.error
+  ) {
     return false;
   }
   return true;
@@ -595,6 +608,8 @@ const cancelDestinationResolution = () => {
 
 const resetDestinationResolution = () => {
   destinationResolution.input = "";
+  destinationResolution.toriiUrl = "";
+  destinationResolution.networkPrefix = null;
   destinationResolution.accountId = "";
   destinationResolution.alias = "";
   destinationResolution.resolved = false;
@@ -606,20 +621,32 @@ const resolveDestinationNow = async (input = destinationValue.value) => {
   const destination = input.trim();
   cancelDestinationResolution();
   const sequence = destinationResolveSequence;
+  const toriiUrl = session.connection.toriiUrl;
+  const networkPrefix = session.connection.networkPrefix;
   if (!destination) {
     resetDestinationResolution();
     return "";
   }
   destinationResolution.input = destination;
+  destinationResolution.toriiUrl = toriiUrl;
+  destinationResolution.networkPrefix = networkPrefix;
+  destinationResolution.accountId = "";
+  destinationResolution.alias = "";
+  destinationResolution.resolved = false;
   destinationResolution.resolving = true;
   destinationResolution.error = "";
   try {
     const result = await resolveAccountAlias({
-      toriiUrl: session.connection.toriiUrl,
+      toriiUrl,
       alias: destination,
-      networkPrefix: session.connection.networkPrefix,
+      networkPrefix,
     });
-    if (sequence !== destinationResolveSequence) {
+    if (
+      sequence !== destinationResolveSequence ||
+      destinationValue.value !== destination ||
+      session.connection.toriiUrl !== toriiUrl ||
+      session.connection.networkPrefix !== networkPrefix
+    ) {
       return "";
     }
     destinationResolution.input = destination;
@@ -629,7 +656,12 @@ const resolveDestinationNow = async (input = destinationValue.value) => {
     destinationResolution.error = "";
     return result.accountId;
   } catch (error) {
-    if (sequence !== destinationResolveSequence) {
+    if (
+      sequence !== destinationResolveSequence ||
+      destinationValue.value !== destination ||
+      session.connection.toriiUrl !== toriiUrl ||
+      session.connection.networkPrefix !== networkPrefix
+    ) {
       return "";
     }
     destinationResolution.input = destination;
@@ -642,7 +674,12 @@ const resolveDestinationNow = async (input = destinationValue.value) => {
     );
     return "";
   } finally {
-    if (sequence === destinationResolveSequence) {
+    if (
+      sequence === destinationResolveSequence &&
+      destinationResolution.input === destination &&
+      destinationResolution.toriiUrl === toriiUrl &&
+      destinationResolution.networkPrefix === networkPrefix
+    ) {
       destinationResolution.resolving = false;
     }
   }
@@ -656,6 +693,11 @@ const scheduleDestinationResolution = () => {
     return;
   }
   destinationResolution.input = destination;
+  destinationResolution.toriiUrl = session.connection.toriiUrl;
+  destinationResolution.networkPrefix = session.connection.networkPrefix;
+  destinationResolution.accountId = "";
+  destinationResolution.alias = "";
+  destinationResolution.resolved = false;
   destinationResolution.resolving = true;
   destinationResolution.error = "";
   destinationResolveTimer = setTimeout(() => {
@@ -702,13 +744,15 @@ const handleDestinationInputChange = () => {
   scheduleDestinationResolution();
 };
 
+watch(destinationValue, handleDestinationInputChange);
+
 watch(
-  [
-    destinationValue,
-    () => session.connection.toriiUrl,
-    () => session.connection.networkPrefix,
-  ],
-  handleDestinationInputChange,
+  [() => session.connection.toriiUrl, () => session.connection.networkPrefix],
+  () => {
+    reviewing.value = false;
+    handleDestinationInputChange();
+  },
+  { flush: "sync" },
 );
 
 watch(
@@ -813,6 +857,9 @@ const openReview = async () => {
 };
 
 const handleSend = async () => {
+  if (!reviewing.value) {
+    return;
+  }
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
     statusMessage.value = t("Configure Torii + account first.");
     statusTone.value = "error";
@@ -840,18 +887,13 @@ const handleSend = async () => {
   statusMessage.value = "";
   statusTone.value = "neutral";
   try {
-    const shouldResolveDestination =
+    const requiresResolvedDestination =
       Boolean(destinationValue.value) &&
-      !destinationIsShieldedAddressInput.value &&
-      !(
-        destinationResolutionMatchesInput.value &&
-        resolvedDestinationAccountId.value &&
-        !destinationResolution.error
-      );
-    const resolvedDestination = shouldResolveDestination
-      ? await resolveDestinationNow()
-      : "";
-    if (shouldResolveDestination && !resolvedDestination) {
+      !destinationIsShieldedAddressInput.value;
+    if (requiresResolvedDestination && !destinationResolutionIsUsable.value) {
+      await resolveDestinationNow();
+    }
+    if (requiresResolvedDestination && !destinationResolutionIsUsable.value) {
       statusMessage.value =
         destinationResolution.error || t("Unable to resolve recipient.");
       statusTone.value = "error";

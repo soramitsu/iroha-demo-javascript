@@ -1,4 +1,8 @@
 import type { SupportedLocale } from "@/i18n/messages";
+import {
+  EGYPTIAN_QUIET_SAKURA_TRANSLATIONS,
+  OLD_AKKADIAN_QUIET_SAKURA_TRANSLATIONS,
+} from "@/i18n/ancientTranslations";
 
 /**
  * Hand-authored translations introduced by the Quiet Sakura redesign.
@@ -126,6 +130,7 @@ export const QUIET_SAKURA_TRANSLATIONS = {
     "Subscription workspace": "Abonnement-Arbeitsbereich",
     "Wallet technical details": "Technische Wallet-Details",
   },
+  "egy-Egyp": EGYPTIAN_QUIET_SAKURA_TRANSLATIONS,
   "es-ES": {
     "Active subscriptions": "Suscripciones activas",
     "Camera preview": "Vista previa de la cámara",
@@ -313,6 +318,7 @@ export const QUIET_SAKURA_TRANSLATIONS = {
     "Subscription workspace": "サブスクリプションワークスペース",
     "Wallet technical details": "ウォレットの技術情報",
   },
+  "akk-Xsux": OLD_AKKADIAN_QUIET_SAKURA_TRANSLATIONS,
   "ko-KR": {
     "Active subscriptions": "활성 구독",
     "Camera preview": "카메라 미리보기",

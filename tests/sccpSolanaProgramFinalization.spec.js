@@ -21,6 +21,8 @@ import {
   buildSolanaProductionRequirementsReportBody,
   buildSolanaProgramFinalizationReadbackValidation,
   buildSolanaProgramFinalizationReportValidation,
+  buildSolanaOneShotMutationIntent,
+  resolveSolanaOneShotMutationIntent,
   finalizeSolanaProgramsWithRuntime,
   readExistingSolanaProgramFinalizationReportBytes,
 } from "../scripts/sccp-solana-deploy.mjs";
@@ -188,6 +190,64 @@ const runtimeDependencies = ({
       instructions,
     }),
   ),
+});
+
+const routeAbsenceAuthorization = (phase) => ({
+  schema: "iroha-demo-sccp-solana-route-absence-mutation-fence/v1",
+  checkedAt: "2026-07-10T00:00:00.000Z",
+  ready: true,
+  phase,
+  routeId: "taira_sol_xor",
+  assetKey: "xor",
+  routeAbsent: true,
+  authoritativeManifestReadReady: true,
+  quorumReady: true,
+  publicPreflightArtifactSha256: hash(`route-absence:${phase}`),
+  target: { canonicalRolloutTargetReady: true },
+  manifestReadEvidence: {
+    cacheBypassRequested: true,
+    cacheBypassVerified: true,
+    finalityBoundRead: true,
+    finalizedHeightBefore: 101,
+    manifestFinalizedHeight: 101,
+    finalizedHeightAfter: 101,
+  },
+  quorumEvidence: {
+    schema: "iroha-demo-sccp-solana-route-absence-quorum/v1",
+    ready: true,
+    requiredValidatorCount: 4,
+    observedValidatorCount: 4,
+    commonManifestFinalizedHeight: 101,
+    commonIrohaStateHash: hash("common-taira-state"),
+    validators: [1, 2, 3, 4].map((index) => ({
+      toriiUrl: `https://taira-validator-${index}.sora.org`,
+      mcpUrl: `https://taira-validator-${index}.sora.org/v1/mcp`,
+      ready: true,
+      routeAbsent: true,
+      manifestFinalizedHeight: 101,
+      finalizedHeightBefore: 101,
+      finalizedHeightAfter: 101,
+      cacheBypassVerified: true,
+      finalityBoundRead: true,
+      nodeIdentity: `taira-validator-peer-${index}`,
+      irohaStateHash: hash("common-taira-state"),
+      preflightArtifactSha256: hash(`validator-${index}-absence`),
+      blockerIds: [],
+    })),
+  },
+  blockerIds: [],
+});
+
+const beforeMutableMutation = vi.fn(async ({ phase }) =>
+  routeAbsenceAuthorization(phase),
+);
+
+const durableMutationCallbacks = () => ({
+  persistIntent: vi.fn(async () => ({ sha256: hash("durable-intent") })),
+  persistResolution: vi.fn(async () => ({
+    sha256: hash("durable-resolution"),
+  })),
+  resolveAmbiguousIntent: vi.fn(async () => ({ status: "ambiguous" })),
 });
 
 describe("Solana Loader-v3 finalization ABI", () => {
@@ -379,6 +439,144 @@ describe("Solana program finalization readback pinning", () => {
 });
 
 describe("Solana program finalization runtime orchestration", () => {
+  it("resolves only the exact locally signed one-shot packet and rejects altered finalized readback", async () => {
+    const signer = authoritySigner();
+    const programdataAddress = publicKey(11);
+    const instructionSummary = {
+      role: "outerVerifier",
+      loaderProgramId: LOADER_ID,
+      programdataAddress,
+      authorityAddress: signer.publicKey.toBase58(),
+      dataHex: SOLANA_LOADER_V3_SET_AUTHORITY_NONE_DATA_HEX,
+      metas: [
+        {
+          pubkey: programdataAddress,
+          isSigner: false,
+          isWritable: true,
+        },
+        {
+          pubkey: signer.publicKey.toBase58(),
+          isSigner: true,
+          isWritable: false,
+        },
+      ],
+    };
+    const transaction = new Transaction().add(
+      buildSolanaLoaderV3SetAuthorityNoneInstruction({
+        programdataAddress,
+        authorityAddress: signer.publicKey.toBase58(),
+      }),
+    );
+    const latestBlockhash = {
+      blockhash: publicKey(31),
+      lastValidBlockHeight: 999,
+    };
+    transaction.feePayer = signer.publicKey;
+    transaction.recentBlockhash = latestBlockhash.blockhash;
+    transaction.sign(signer);
+    const rawTransaction = transaction.serialize();
+    const mutationAuthorization = routeAbsenceAuthorization("before-broadcast");
+    const intent = buildSolanaOneShotMutationIntent({
+      operation: "program-finalization",
+      transaction,
+      rawTransaction,
+      latestBlockhash,
+      authority: signer.publicKey.toBase58(),
+      target: { outerVerifier: programdataAddress },
+      operationBinding: {
+        authority: signer.publicKey.toBase58(),
+        governanceApprovalSha256: hash("governance"),
+        artifactSha256ByRole: {
+          outerVerifier: hash("outer-artifact"),
+        },
+      },
+      bindings: {
+        governanceApprovalSha256: hash("governance"),
+        artifactSha256ByRole: { outerVerifier: hash("outer-artifact") },
+        mutableRoles: ["outerVerifier"],
+        instructionSetSha256: `0x${createHash("sha256")
+          .update(JSON.stringify([instructionSummary]))
+          .digest("hex")}`,
+        instructions: [instructionSummary],
+        routeAbsencePublicPreflightArtifactSha256:
+          mutationAuthorization.publicPreflightArtifactSha256,
+        routeAbsenceMutationAuthorization: mutationAuthorization,
+      },
+    });
+    const connection = {
+      getGenesisHash: vi.fn(async () => SOLANA_TESTNET_GENESIS_HASH),
+      getSignatureStatuses: vi.fn(async () => ({
+        value: [
+          {
+            slot: 150,
+            err: null,
+            confirmationStatus: "finalized",
+          },
+        ],
+      })),
+      getBlockHeight: vi.fn(async () => 900),
+      getTransaction: vi.fn(async () => ({
+        slot: 150,
+        meta: { err: null },
+        messageBytes: transaction.serializeMessage(),
+        transaction: { signatures: [intent.expectedSignature] },
+      })),
+    };
+    await expect(
+      resolveSolanaOneShotMutationIntent({
+        connection,
+        intent,
+        attempts: 1,
+      }),
+    ).resolves.toMatchObject({
+      status: "finalized",
+      signature: intent.expectedSignature,
+      finalizedSlot: 150,
+    });
+    const governanceSubstitution = structuredClone(intent);
+    governanceSubstitution.operationBinding.governanceApprovalSha256 = hash(
+      "substituted-governance",
+    );
+    governanceSubstitution.operationBindingSha256 = hash(
+      JSON.stringify(governanceSubstitution.operationBinding),
+    );
+    const substitutedBody = { ...governanceSubstitution };
+    delete substitutedBody.intentSha256;
+    governanceSubstitution.intentSha256 = hash(JSON.stringify(substitutedBody));
+    await expect(
+      resolveSolanaOneShotMutationIntent({
+        connection,
+        intent: governanceSubstitution,
+        attempts: 1,
+      }),
+    ).rejects.toThrow(/canonical role and instruction set/u);
+    connection.getTransaction.mockResolvedValue({
+      slot: 150,
+      meta: { err: null },
+      messageBytes: Buffer.from("altered-message"),
+      transaction: { signatures: [intent.expectedSignature] },
+    });
+    await expect(
+      resolveSolanaOneShotMutationIntent({
+        connection,
+        intent,
+        attempts: 1,
+      }),
+    ).rejects.toThrow(/readback is not exact/u);
+    connection.getSignatureStatuses.mockResolvedValue({ value: [null] });
+    connection.getBlockHeight.mockResolvedValue(1_000);
+    await expect(
+      resolveSolanaOneShotMutationIntent({
+        connection,
+        intent,
+        attempts: 1,
+      }),
+    ).resolves.toMatchObject({
+      status: "expired",
+      signature: intent.expectedSignature,
+    });
+  });
+
   it("atomically finalizes all mutable roles and zeroizes the signer", async () => {
     const approval = governanceApproval();
     const before = readbacks({ approval, immutable: false, contextSlot: 110 });
@@ -392,6 +590,8 @@ describe("Solana program finalization runtime orchestration", () => {
       reviewedAuthority: approval.pins.programFinalizationAuthority,
       confirmation: true,
       signerFactory: vi.fn(async () => signer),
+      beforeMutableMutation,
+      ...durableMutationCallbacks(),
       dependencies,
       checkedAt: "2026-07-10T00:00:00.000Z",
     });
@@ -482,6 +682,8 @@ describe("Solana program finalization runtime orchestration", () => {
         reviewedAuthority: approval.pins.programFinalizationAuthority,
         confirmation: true,
         signerFactory: async () => signer,
+        beforeMutableMutation,
+        ...durableMutationCallbacks(),
         dependencies: runtimeDependencies({
           before: readbacks({ approval, immutable: false, contextSlot: 110 }),
           after: readbacks({ approval, immutable: true, contextSlot: 160 }),
@@ -508,6 +710,8 @@ describe("Solana program finalization runtime orchestration", () => {
         reviewedAuthority: approval.pins.programFinalizationAuthority,
         confirmation: true,
         signerFactory: async () => signer,
+        beforeMutableMutation,
+        ...durableMutationCallbacks(),
         dependencies: runtimeDependencies({
           before: readbacks({ approval, immutable: false, contextSlot: 110 }),
           after,
@@ -561,6 +765,8 @@ describe("Solana program finalization runtime orchestration", () => {
       reviewedAuthority: approval.pins.programFinalizationAuthority,
       confirmation: true,
       signerFactory: async () => authoritySigner(),
+      beforeMutableMutation,
+      ...durableMutationCallbacks(),
       dependencies: runtimeDependencies({
         before: readbacks({ approval, immutable: false, contextSlot: 110 }),
         after: readbacks({ approval, immutable: true, contextSlot: 160 }),
@@ -578,6 +784,285 @@ describe("Solana program finalization runtime orchestration", () => {
         governanceApprovalValidation: approval,
       }).ready,
     ).toBe(false);
+  });
+
+  it("requires valid fresh route-absence authorization before signer loading and again before broadcast", async () => {
+    const approval = governanceApproval();
+    const signerFactory = vi.fn(async () => authoritySigner());
+    const dependencies = runtimeDependencies({
+      before: readbacks({ approval, immutable: false, contextSlot: 110 }),
+      after: readbacks({ approval, immutable: true, contextSlot: 160 }),
+    });
+    const common = {
+      connection: {},
+      governanceApprovalValidation: approval,
+      artifactSha256ByRole: artifacts(approval),
+      reviewedAuthority: approval.pins.programFinalizationAuthority,
+      confirmation: true,
+      signerFactory,
+      dependencies,
+      ...durableMutationCallbacks(),
+    };
+    await expect(finalizeSolanaProgramsWithRuntime(common)).rejects.toThrow(
+      /route-absence authorization callback/u,
+    );
+    expect(signerFactory).not.toHaveBeenCalled();
+    expect(dependencies.broadcastTransaction).not.toHaveBeenCalled();
+
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        ...common,
+        beforeMutableMutation: async ({ phase }) => ({
+          ...routeAbsenceAuthorization(phase),
+          manifestReadEvidence: {
+            ...routeAbsenceAuthorization(phase).manifestReadEvidence,
+            cacheBypassVerified: false,
+          },
+        }),
+      }),
+    ).rejects.toThrow(/at before-signer/u);
+    expect(signerFactory).not.toHaveBeenCalled();
+    expect(dependencies.broadcastTransaction).not.toHaveBeenCalled();
+
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        ...common,
+        beforeMutableMutation: async ({ phase }) => ({
+          ...routeAbsenceAuthorization(phase),
+          quorumEvidence: {
+            ...routeAbsenceAuthorization(phase).quorumEvidence,
+            observedValidatorCount: 3,
+            validators: routeAbsenceAuthorization(
+              phase,
+            ).quorumEvidence.validators.slice(0, 3),
+          },
+        }),
+      }),
+    ).rejects.toThrow(/at before-signer/u);
+    expect(signerFactory).not.toHaveBeenCalled();
+    expect(dependencies.broadcastTransaction).not.toHaveBeenCalled();
+
+    const signer = authoritySigner();
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        ...common,
+        signerFactory: async () => signer,
+        beforeMutableMutation: async ({ phase }) =>
+          phase === "before-broadcast"
+            ? { ...routeAbsenceAuthorization(phase), ready: false }
+            : routeAbsenceAuthorization(phase),
+      }),
+    ).rejects.toThrow(/at before-broadcast/u);
+    expect(dependencies.broadcastTransaction).not.toHaveBeenCalled();
+    expect(Array.from(signer.secretKey).every((byte) => byte === 0)).toBe(true);
+  });
+
+  it("durably persists the exact signed intent before broadcast and refuses mutation when persistence fails", async () => {
+    const approval = governanceApproval();
+    const signer = authoritySigner();
+    const events = [];
+    const dependencies = runtimeDependencies({
+      before: readbacks({ approval, immutable: false, contextSlot: 110 }),
+      after: readbacks({ approval, immutable: true, contextSlot: 160 }),
+    });
+    dependencies.broadcastTransaction.mockImplementation(
+      async ({ transaction, expectedSignature }) => {
+        events.push("broadcast");
+        return {
+          signature: expectedSignature,
+          confirmation: { value: { err: null } },
+          signatureStatus: {
+            slot: 150,
+            err: null,
+            confirmationStatus: "finalized",
+          },
+          transactionReadback: {
+            slot: 150,
+            meta: { err: null },
+            messageBytes: transaction.serializeMessage(),
+            transaction: { signatures: [expectedSignature] },
+          },
+        };
+      },
+    );
+    const report = await finalizeSolanaProgramsWithRuntime({
+      connection: {},
+      governanceApprovalValidation: approval,
+      artifactSha256ByRole: artifacts(approval),
+      reviewedAuthority: approval.pins.programFinalizationAuthority,
+      confirmation: true,
+      signerFactory: async () => signer,
+      beforeMutableMutation,
+      persistIntent: async ({ intent }) => {
+        events.push("intent");
+        expect(intent.expectedSignature).toMatch(/^[1-9A-HJ-NP-Za-km-z]+$/u);
+        expect(intent.packetSha256).toBe(
+          hash(Buffer.from(intent.rawTransactionBase64, "base64")),
+        );
+        return { sha256: hash("durable-intent") };
+      },
+      persistResolution: async () => {
+        events.push("resolution");
+        return { sha256: hash("durable-resolution") };
+      },
+      resolveAmbiguousIntent: async () => ({ status: "ambiguous" }),
+      dependencies,
+    });
+    expect(events).toEqual(["intent", "broadcast", "resolution"]);
+    expect(report.transaction.packetLength).toBeGreaterThan(0);
+
+    const rejectedSigner = authoritySigner();
+    const rejectedDependencies = runtimeDependencies({
+      before: readbacks({ approval, immutable: false, contextSlot: 110 }),
+      after: readbacks({ approval, immutable: true, contextSlot: 160 }),
+    });
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        connection: {},
+        governanceApprovalValidation: approval,
+        artifactSha256ByRole: artifacts(approval),
+        reviewedAuthority: approval.pins.programFinalizationAuthority,
+        confirmation: true,
+        signerFactory: async () => rejectedSigner,
+        beforeMutableMutation,
+        persistIntent: async () => {
+          throw new Error("injected intent fsync failure");
+        },
+        persistResolution: async () => ({
+          sha256: hash("unused-resolution"),
+        }),
+        resolveAmbiguousIntent: async () => ({ status: "ambiguous" }),
+        dependencies: rejectedDependencies,
+      }),
+    ).rejects.toThrow(/intent fsync failure/u);
+    expect(rejectedDependencies.broadcastTransaction).not.toHaveBeenCalled();
+    expect(
+      Array.from(rejectedSigner.secretKey).every((byte) => byte === 0),
+    ).toBe(true);
+  });
+
+  it("reconciles the locally expected signature after an accepted-then-thrown broadcast and blocks unresolved ambiguity", async () => {
+    const approval = governanceApproval();
+    const before = readbacks({ approval, immutable: false, contextSlot: 110 });
+    const after = readbacks({ approval, immutable: true, contextSlot: 160 });
+    const dependencies = runtimeDependencies({ before, after });
+    dependencies.broadcastTransaction.mockRejectedValue(
+      new Error("RPC disconnected after acceptance"),
+    );
+    const signer = authoritySigner();
+    const report = await finalizeSolanaProgramsWithRuntime({
+      connection: {},
+      governanceApprovalValidation: approval,
+      artifactSha256ByRole: artifacts(approval),
+      reviewedAuthority: approval.pins.programFinalizationAuthority,
+      confirmation: true,
+      signerFactory: async () => signer,
+      beforeMutableMutation,
+      persistIntent: async () => ({ sha256: hash("accepted-intent") }),
+      persistResolution: async () => ({
+        sha256: hash("accepted-resolution"),
+      }),
+      resolveAmbiguousIntent: async ({ intent, rawTransaction }) => {
+        const transaction = Transaction.from(rawTransaction);
+        return {
+          status: "finalized",
+          finalizedSlot: 150,
+          submittedResult: {
+            signature: intent.expectedSignature,
+            confirmation: { value: { err: null } },
+            signatureStatus: {
+              slot: 150,
+              err: null,
+              confirmationStatus: "finalized",
+            },
+            transactionReadback: {
+              slot: 150,
+              meta: { err: null },
+              messageBytes: transaction.serializeMessage(),
+              transaction: { signatures: [intent.expectedSignature] },
+            },
+          },
+        };
+      },
+      dependencies,
+    });
+    expect(report.transaction.submitted).toBe(true);
+    expect(dependencies.broadcastTransaction).toHaveBeenCalledTimes(1);
+
+    const ambiguousSigner = authoritySigner();
+    const ambiguousDependencies = runtimeDependencies({ before, after });
+    ambiguousDependencies.broadcastTransaction.mockRejectedValue(
+      new Error("RPC disconnected"),
+    );
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        connection: {},
+        governanceApprovalValidation: approval,
+        artifactSha256ByRole: artifacts(approval),
+        reviewedAuthority: approval.pins.programFinalizationAuthority,
+        confirmation: true,
+        signerFactory: async () => ambiguousSigner,
+        beforeMutableMutation,
+        persistIntent: async () => ({ sha256: hash("ambiguous-intent") }),
+        persistResolution: async () => ({
+          sha256: hash("must-not-resolve"),
+        }),
+        resolveAmbiguousIntent: async () => ({ status: "ambiguous" }),
+        dependencies: ambiguousDependencies,
+      }),
+    ).rejects.toMatchObject({
+      mutationAttempted: true,
+      mutationAmbiguous: true,
+    });
+    expect(ambiguousDependencies.broadcastTransaction).toHaveBeenCalledTimes(1);
+    expect(
+      Array.from(ambiguousSigner.secretKey).every((byte) => byte === 0),
+    ).toBe(true);
+  });
+
+  it("persists a terminal failed resolution before refusing every replacement", async () => {
+    const approval = governanceApproval();
+    const before = readbacks({ approval, immutable: false, contextSlot: 110 });
+    const after = readbacks({ approval, immutable: true, contextSlot: 160 });
+    const dependencies = runtimeDependencies({ before, after });
+    dependencies.broadcastTransaction.mockRejectedValue(
+      new Error("RPC disconnected after failed transaction acceptance"),
+    );
+    const persisted = [];
+    const signer = authoritySigner();
+    await expect(
+      finalizeSolanaProgramsWithRuntime({
+        connection: {},
+        governanceApprovalValidation: approval,
+        artifactSha256ByRole: artifacts(approval),
+        reviewedAuthority: approval.pins.programFinalizationAuthority,
+        confirmation: true,
+        signerFactory: async () => signer,
+        beforeMutableMutation,
+        persistIntent: async () => ({ sha256: hash("failed-intent") }),
+        persistResolution: async ({ resolution }) => {
+          persisted.push(structuredClone(resolution));
+          return { sha256: hash("failed-resolution") };
+        },
+        resolveAmbiguousIntent: async ({ intent }) => ({
+          status: "failed",
+          signature: intent.expectedSignature,
+          finalizedSlot: 151,
+          observedBlockHeight: 900,
+          transactionError: { InstructionError: [0, "Custom"] },
+        }),
+        dependencies,
+      }),
+    ).rejects.toMatchObject({
+      mutationAttempted: true,
+      mutationSubmitted: true,
+      mutationAmbiguous: false,
+      resolution: { status: "failed", finalizedSlot: 151 },
+    });
+    expect(persisted).toEqual([
+      expect.objectContaining({ status: "failed", finalizedSlot: 151 }),
+    ]);
+    expect(Array.from(signer.secretKey).every((byte) => byte === 0)).toBe(true);
   });
 });
 

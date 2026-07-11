@@ -1023,10 +1023,7 @@ const busy = computed(
 const localStreamReady = computed(() => Boolean(localStream.value));
 const callStageActive = ref(false);
 const showCallStage = computed(
-  () =>
-    callStageActive.value ||
-    Boolean(remoteStream.value) ||
-    peerConnectionState.value === "connected",
+  () => callStageActive.value || peerConnectionState.value === "connected",
 );
 const mediaPreviewWarning = computed(
   () => lastMediaErrorKind.value === "preview",
@@ -2655,6 +2652,7 @@ const joinLoadedMeeting = async () => {
             transactionFeeHintForEndpoint(session.connection.toriiUrl),
           ),
         );
+        callStageActive.value = true;
       } catch (error) {
         const automaticJoinError = toUserFacingErrorMessage(
           error,
@@ -2692,12 +2690,12 @@ const joinLoadedMeeting = async () => {
             },
           );
         }
+        openAdvancedSignaling();
       }
-      callStageActive.value = true;
       return;
     }
 
-    callStageActive.value = true;
+    openAdvancedSignaling();
     setStatus(t("Answer packet ready. Send it to the host manually."));
   } catch (error) {
     setError(toUserFacingErrorMessage(error, t("Unable to create an answer.")));
@@ -2917,9 +2915,11 @@ onBeforeUnmount(() => {
 
 .kaigi-signal-card {
   min-width: 0;
-  border-color: var(--color-border);
-  background: var(--color-surface-raised);
+  border-color: var(--frost-border);
+  background: var(--frost-panel-raised);
   box-shadow: var(--shadow-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
 .kaigi-call-card {
@@ -3305,7 +3305,9 @@ onBeforeUnmount(() => {
   display: grid;
   gap: var(--space-4);
   border-block-start: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background: var(--frost-panel-soft);
+  -webkit-backdrop-filter: var(--frost-filter-soft);
+  backdrop-filter: var(--frost-filter-soft);
 }
 
 .kaigi-packet-grid {

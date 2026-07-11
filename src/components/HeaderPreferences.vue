@@ -8,7 +8,7 @@
       <select
         class="header-language-full"
         data-testid="locale-select"
-        :aria-label="t('Language')"
+        :aria-label="languageControlLabel"
         :title="activeLocaleLabel"
         :value="localeStore.current"
         @change="handleLocaleChange"
@@ -84,6 +84,16 @@ const activeLocaleLabel = computed(
     localeOptions.value.find((option) => option.value === localeStore.current)
       ?.label ?? localeStore.current,
 );
+const historicalLocaleAccessibleNames: Partial<
+  Record<SupportedLocale, string>
+> = {
+  "egy-Egyp": "Ancient Egyptian",
+  "akk-Xsux": "Old Akkadian",
+};
+const languageControlLabel = computed(() => {
+  const historicalName = historicalLocaleAccessibleNames[localeStore.current];
+  return historicalName ? `Language — ${historicalName}` : t("Language");
+});
 const compactLocaleCode = computed(() =>
   localeStore.current.split("-")[0].toUpperCase(),
 );
@@ -183,6 +193,13 @@ const handleLocaleChange = (event: Event) => {
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+:global(:root:lang(egy)) .header-language-full,
+:global(:root:lang(akk)) .header-language-full {
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
 }
 
 .header-language-code {

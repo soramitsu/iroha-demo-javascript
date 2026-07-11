@@ -2228,6 +2228,116 @@ async function checkThemeLocaleAndKeyboard(page) {
     await assertAxeClean(page, `${locale} wallet`);
   }
 
+  await setLocale(page, "ur-PK");
+  await page.waitForFunction(() => document.documentElement.dir === "rtl");
+  const urduFont = await page.evaluate(async () => {
+    await document.fonts.load('400 24px "Noto Nastaliq Urdu"', "اردو");
+    return {
+      family: getComputedStyle(document.documentElement).fontFamily,
+      loaded: [...document.fonts].some(
+        (face) =>
+          face.family === "Noto Nastaliq Urdu" && face.status === "loaded",
+      ),
+    };
+  });
+  assert(
+    urduFont.family.includes("Noto Nastaliq Urdu"),
+    `Urdu locale did not select the Nastaliq stack: ${urduFont.family}`,
+  );
+  assert(urduFont.loaded, "Bundled Noto Nastaliq Urdu did not load.");
+  await assertUsableViewport(page, "Urdu Nastaliq wallet");
+  await assertAxeClean(page, "Urdu Nastaliq wallet");
+  await saveUiScreenshot(page, "quiet-sakura-urdu-nastaliq");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  await assertUsableViewport(page, "Urdu Nastaliq wallet at 390px");
+  await assertHeaderPreferenceMode(
+    page,
+    "Urdu Nastaliq header at 390px",
+    "icon",
+  );
+  await assertAxeClean(page, "Urdu Nastaliq wallet at 390px");
+  await saveUiScreenshot(page, "quiet-sakura-urdu-nastaliq-mobile");
+
+  // A 1024px Electron window reflows through a 512px CSS layout viewport at
+  // 200% browser zoom. Keep Urdu active so the tall Nastaliq metrics, RTL
+  // mirroring, and compact header are exercised together.
+  await page.setViewportSize({ width: 512, height: 360 });
+  await page.waitForTimeout(150);
+  await assertUsableViewport(page, "Urdu Nastaliq wallet at 200% zoom");
+  await assertHeaderPreferenceMode(
+    page,
+    "Urdu Nastaliq header at 200% zoom",
+    "icon",
+  );
+  await assertAxeClean(page, "Urdu Nastaliq wallet at 200% zoom");
+  await saveHeaderScreenshot(page, "quiet-sakura-urdu-nastaliq-200-percent");
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  for (const historicalLocale of [
+    {
+      family: "Noto Sans Egyptian Hieroglyphs",
+      locale: "egy-Egyp",
+      name: "Ancient Egyptian",
+      sample: "𓉐𓌉",
+      scriptPattern: "Egyptian_Hieroglyphs",
+      screenshot: "quiet-sakura-ancient-egyptian",
+    },
+    {
+      family: "Noto Sans Cuneiform",
+      locale: "akk-Xsux",
+      name: "Old Akkadian",
+      sample: "𒆬𒌓",
+      scriptPattern: "Cuneiform",
+      screenshot: "quiet-sakura-old-akkadian",
+    },
+  ]) {
+    await setLocale(page, historicalLocale.locale);
+    await page.waitForFunction(
+      (locale) =>
+        document.documentElement.lang === locale &&
+        document.documentElement.dir === "ltr",
+      historicalLocale.locale,
+    );
+    const historicalFont = await page.evaluate(async ({ family, sample }) => {
+      await document.fonts.load(`400 24px "${family}"`, sample);
+      return {
+        family: getComputedStyle(document.documentElement).fontFamily,
+        heading:
+          document.querySelector(".workspace-heading h1")?.textContent ?? "",
+        loaded: [...document.fonts].some(
+          (face) => face.family === family && face.status === "loaded",
+        ),
+      };
+    }, historicalLocale);
+    assert(
+      historicalFont.family.includes(historicalLocale.family),
+      `${historicalLocale.name} did not select ${historicalLocale.family}: ${historicalFont.family}`,
+    );
+    assert(
+      historicalFont.loaded,
+      `Bundled ${historicalLocale.family} did not load.`,
+    );
+    assert(
+      new RegExp(`\\p{Script=${historicalLocale.scriptPattern}}`, "u").test(
+        historicalFont.heading,
+      ) && !/[A-Za-z]/u.test(historicalFont.heading),
+      `${historicalLocale.name} wallet heading was not a semantic native-script label: ${historicalFont.heading}`,
+    );
+    await assertUsableViewport(page, `${historicalLocale.name} wallet`);
+    await assertHeaderPreferenceMode(
+      page,
+      `${historicalLocale.name} header`,
+      "full",
+    );
+    await assertAxeClean(page, `${historicalLocale.name} wallet`);
+    await saveUiScreenshot(page, historicalLocale.screenshot);
+  }
+
+  await setLocale(page, "en-US");
+  await page.waitForFunction(() => document.documentElement.dir === "ltr");
+
   await page.setViewportSize({ width: 390, height: 844 });
   await setLocale(page, "ar-SA");
   await page.waitForFunction(() => document.documentElement.dir === "rtl");

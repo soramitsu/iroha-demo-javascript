@@ -33,6 +33,94 @@
   color: var(--color-warning);
 }
 
+:root:lang(ur)
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    .workspace-header h1,
+    .ui-page-heading h1,
+    .ui-page-heading h2
+  ) {
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+:root:lang(ur)
+  :where(button, .ui-button, label, summary, .nav-link, .header-action) {
+  line-height: 1.65;
+}
+
+:root:lang(ur)
+  :where(
+    .nav-title,
+    .nav-group-label,
+    .section-label,
+    .meta-label,
+    .kv-label,
+    .chip-label,
+    .ui-page-eyebrow,
+    .ui-metric-item dt,
+    .ui-dialog-eyebrow,
+    .table th,
+    .ui-table th
+  ) {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+:root:lang(egy)
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    button,
+    .ui-button,
+    label,
+    summary,
+    .nav-link,
+    .header-action
+  ) {
+  line-height: 1.55;
+  letter-spacing: 0.035em;
+}
+
+:root:lang(akk)
+  :where(
+    h1,
+    h2,
+    h3,
+    h4,
+    button,
+    .ui-button,
+    label,
+    summary,
+    .nav-link,
+    .header-action
+  ) {
+  line-height: 1.45;
+  letter-spacing: 0.025em;
+}
+
+:root:is(:lang(egy), :lang(akk))
+  :where(
+    .nav-title,
+    .nav-group-label,
+    .section-label,
+    .meta-label,
+    .kv-label,
+    .chip-label,
+    .ui-page-eyebrow,
+    .ui-metric-item dt,
+    .ui-dialog-eyebrow,
+    .table th,
+    .ui-table th
+  ) {
+  text-transform: none;
+}
+
 :root[dir="rtl"] .nav-caret,
 :root[dir="rtl"] .ui-disclosure-caret,
 :root[dir="rtl"] .technical-details > summary::after {

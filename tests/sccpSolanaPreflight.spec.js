@@ -5,9 +5,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  assertSolanaManifestSetEnvelope,
   checkProverModules,
   checkSolanaRpc,
   checkDestinationProofAdmission,
+  checkManifestShape,
   checkProductionReadyFlag,
   checkSolanaLanePublication,
   checkLiveSolanaBridgeProgramPins,
@@ -23,6 +25,7 @@ import {
   parseUpgradeableProgramDataAccountData,
   readBooleanArg,
   runSccpSolanaRoutePreflight,
+  solanaRouteManifestCanonicalSha256,
   solanaExecutableBlake2b256,
   SOLANA_DESTINATION_PROOF_BACKEND,
   SOLANA_DESTINATION_VERIFIER_PLAN,
@@ -83,6 +86,49 @@ const canonicalSolanaRouteRecord = (overrides = {}) => ({
   solana_genesis_hash: SOLANA_TESTNET_GENESIS_HASH,
   production_ready: false,
   ...overrides,
+});
+
+describe("Solana route manifest canonical hash", () => {
+  it("is recursively key-order independent and changes with semantics", () => {
+    const manifest = canonicalSolanaRouteRecord({
+      nested_review: { beta: 2, alpha: { two: 2, one: 1 } },
+    });
+    const reordered = Object.fromEntries(
+      Object.entries(manifest)
+        .reverse()
+        .map(([key, value]) => [
+          key,
+          key === "nested_review"
+            ? { alpha: { one: 1, two: 2 }, beta: 2 }
+            : value,
+        ]),
+    );
+    const expected = solanaRouteManifestCanonicalSha256(manifest);
+    expect(solanaRouteManifestCanonicalSha256(reordered)).toBe(expected);
+    expect(
+      solanaRouteManifestCanonicalSha256({
+        ...manifest,
+        nested_review: { beta: 3, alpha: { two: 2, one: 1 } },
+      }),
+    ).not.toBe(expected);
+    expect(checkManifestShape(manifest)).toMatchObject({
+      manifestCanonicalSha256: expected,
+    });
+  });
+
+  it("rejects malformed or ambiguous manifest response envelopes", () => {
+    for (const value of [
+      {},
+      { manifests: {} },
+      { routes: [null] },
+      "not-json-object",
+    ]) {
+      expect(() => assertSolanaManifestSetEnvelope(value)).toThrow();
+    }
+    expect(() =>
+      assertSolanaManifestSetEnvelope({ manifests: [], routes: [] }),
+    ).not.toThrow();
+  });
 });
 
 const leU32 = (value) => {
@@ -1260,6 +1306,9 @@ describe("Solana SCCP preflight live ProgramData parsing", () => {
 
       expect(checks.get("route-manifest-shape")).toMatchObject({
         status: "pass",
+        evidence: {
+          manifestCanonicalSha256: solanaRouteManifestCanonicalSha256(manifest),
+        },
       });
       expect(checks.get("solana-deployment-addresses")).toMatchObject({
         status: "pass",

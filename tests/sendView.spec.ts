@@ -409,6 +409,97 @@ describe("SendView", () => {
     );
   });
 
+  it("invalidates a reviewed alias when the network changes", async () => {
+    const oldNetworkAccountId = "testuBobOnOldNetwork";
+    const newNetworkAccountId = "sorauBobOnNewNetwork";
+    let resolveNewNetworkAlias!: (value: {
+      alias: string;
+      accountId: string;
+      resolved: boolean;
+      source: string;
+    }) => void;
+    const newNetworkAliasResult = new Promise<{
+      alias: string;
+      accountId: string;
+      resolved: boolean;
+      source: string;
+    }>((resolve) => {
+      resolveNewNetworkAlias = resolve;
+    });
+    resolveAccountAliasMock.mockImplementation(
+      async (input: { toriiUrl: string }) => {
+        if (input.toriiUrl === "https://new-network.example") {
+          return newNetworkAliasResult;
+        }
+        return {
+          alias: "bob@universal",
+          accountId: oldNetworkAccountId,
+          resolved: true,
+          source: "on_chain",
+        };
+      },
+    );
+    transferAssetMock.mockResolvedValue({ hash: "0xnew-network" });
+    const wrapper = mountView();
+    const session = useSessionStore();
+    await flushPromises();
+
+    await wrapper.get(DESTINATION_ACCOUNT_SELECTOR).setValue("bob@universal");
+    await wrapper.get('input[type="number"]').setValue("2");
+    await reviewTransfer(wrapper);
+
+    expect(wrapper.get(".send-review-list").text()).toContain(
+      oldNetworkAccountId,
+    );
+    const staleConfirmButton = wrapper.get(SEND_CONFIRM_SELECTOR);
+
+    session.$patch({
+      connection: {
+        ...session.connection,
+        toriiUrl: "https://new-network.example",
+        chainId: "new-chain",
+        networkPrefix: 753,
+      },
+    });
+    await staleConfirmButton.trigger("click");
+
+    expect(transferAssetMock).not.toHaveBeenCalled();
+    expect(wrapper.find(SEND_CONFIRM_SELECTOR).exists()).toBe(false);
+
+    await wrapper.get(SEND_REVIEW_SELECTOR).trigger("click");
+
+    expect(resolveAccountAliasMock).toHaveBeenCalledWith({
+      toriiUrl: "https://new-network.example",
+      alias: "bob@universal",
+      networkPrefix: 753,
+    });
+    expect(transferAssetMock).not.toHaveBeenCalled();
+
+    resolveNewNetworkAlias({
+      alias: "bob@universal",
+      accountId: newNetworkAccountId,
+      resolved: true,
+      source: "on_chain",
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".send-review-list").text()).toContain(
+      newNetworkAccountId,
+    );
+    await wrapper.get(SEND_CONFIRM_SELECTOR).trigger("click");
+    await flushPromises();
+
+    expect(transferAssetMock).toHaveBeenCalledTimes(1);
+    expect(transferAssetMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "https://new-network.example",
+        chainId: "new-chain",
+        destinationAccountId: newNetworkAccountId,
+        networkPrefix: 753,
+      }),
+    );
+  });
+
   it("blocks transparent sends when an alias cannot resolve", async () => {
     resolveAccountAliasMock.mockRejectedValueOnce(
       new Error('Account alias "missing@universal" was not found.'),

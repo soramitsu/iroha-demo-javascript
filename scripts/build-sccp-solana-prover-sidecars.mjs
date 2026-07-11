@@ -12,6 +12,7 @@ import {
   SOLANA_VERIFIER_TARGET,
   buildSolanaProductionGovernanceApprovalValidation,
   buildSolanaProverSidecarBody,
+  readStablePublicSolanaUpgradeArtifact,
 } from "./sccp-solana-deploy.mjs";
 import {
   canonicalSolanaProverKnownAnswerJson,
@@ -563,11 +564,29 @@ const readJsonIfExists = async (file) => {
 export const runSolanaProverValidation = async ({
   direction,
   modulePath,
+  moduleBytes = null,
   proveExport,
   selfTestExport,
   knownAnswerMaterial,
 }) => {
-  const imported = await import(pathToFileURL(modulePath).href);
+  const selectedBytes = Buffer.isBuffer(moduleBytes)
+    ? moduleBytes
+    : (
+        await readStablePublicSolanaUpgradeArtifact({
+          file: modulePath,
+          label: `Solana ${direction} browser prover module`,
+          maxBytes: 16 * 1024 * 1024,
+        })
+      ).bytes;
+  const decoded = selectedBytes.toString("utf8");
+  if (!Buffer.from(decoded, "utf8").equals(selectedBytes)) {
+    throw new Error(
+      `Solana ${direction} browser prover module must be strict UTF-8.`,
+    );
+  }
+  const imported = await import(
+    `data:text/javascript;base64,${selectedBytes.toString("base64")}`
+  );
   if (typeof imported[proveExport] !== "function") {
     return {
       exportsOk: false,
@@ -620,7 +639,12 @@ export const buildSolanaProverSidecarForModule = async ({
   env = process.env,
 } = {}) => {
   const resolvedModulePath = resolve(modulePath);
-  const moduleHash = sha256Hex(await readFile(resolvedModulePath));
+  const moduleArtifact = await readStablePublicSolanaUpgradeArtifact({
+    file: resolvedModulePath,
+    label: `Solana ${direction} browser prover module`,
+    maxBytes: 16 * 1024 * 1024,
+  });
+  const moduleHash = moduleArtifact.sha256;
   const knownAnswerMaterial = await loadSolanaProverKnownAnswerMaterial({
     direction,
     env,
@@ -628,6 +652,7 @@ export const buildSolanaProverSidecarForModule = async ({
   const { exportsOk, selfTest, knownAnswer } = await runSolanaProverValidation({
     direction,
     modulePath: resolvedModulePath,
+    moduleBytes: moduleArtifact.bytes,
     proveExport,
     selfTestExport,
     knownAnswerMaterial,

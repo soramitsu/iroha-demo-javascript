@@ -1226,6 +1226,10 @@ const handlePanelTabKeydown = (event: KeyboardEvent) => {
   padding: 0;
   overflow: hidden;
   margin-top: 0;
+  border-color: var(--frost-border);
+  background: var(--frost-panel-raised);
+  -webkit-backdrop-filter: var(--frost-filter-panel);
+  backdrop-filter: var(--frost-filter-panel);
 }
 
 .parliament-advanced-card > summary {

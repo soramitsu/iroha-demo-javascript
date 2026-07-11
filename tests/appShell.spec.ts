@@ -415,6 +415,12 @@ describe("App shell", () => {
 
     const preferences = wrapper.get(".header-preferences");
     const localeSelect = preferences.get('[data-testid="locale-select"]');
+    const localeValues = Array.from(
+      (localeSelect.element as HTMLSelectElement).options,
+      (option) => option.value,
+    );
+    expect(localeValues).toContain("egy-Egyp");
+    expect(localeValues).toContain("akk-Xsux");
     await localeSelect.setValue("ar-SA");
 
     expect(localeStore.current).toBe("ar-SA");
@@ -428,6 +434,19 @@ describe("App shell", () => {
     expect(localStorage.getItem("iroha-demo:locale")).toBe("de-DE");
     expect(document.documentElement.getAttribute("lang")).toBe("de-DE");
     expect(document.documentElement.getAttribute("dir")).toBe("ltr");
+
+    for (const locale of ["egy-Egyp", "akk-Xsux"] as const) {
+      await localeSelect.setValue(locale);
+      expect(localeStore.current).toBe(locale);
+      expect(localStorage.getItem("iroha-demo:locale")).toBe(locale);
+      expect(document.documentElement.getAttribute("lang")).toBe(locale);
+      expect(document.documentElement.getAttribute("dir")).toBe("ltr");
+      expect(localeSelect.attributes("aria-label")).toBe(
+        locale === "egy-Egyp"
+          ? "Language — Ancient Egyptian"
+          : "Language — Old Akkadian",
+      );
+    }
   });
 
   it("exposes the desktop light and dark options as a persisted pressed-state group", async () => {

@@ -347,6 +347,9 @@ describe("Quiet Sakura style architecture", () => {
     const sharedTokens = declarationsFor(shared?.body ?? "");
     for (const token of [
       "--font-sans",
+      "--font-urdu",
+      "--font-egyptian",
+      "--font-akkadian",
       "--space-1",
       "--space-7",
       "--radius-control",
@@ -498,6 +501,95 @@ describe("Quiet Sakura style architecture", () => {
     }
   });
 
+  it("bundles a locale-scoped Nastaliq face for Urdu UI copy", () => {
+    const fontSource = withoutComments(readStyle("fonts.css"));
+    expect(fontSource).toContain('font-family: "Noto Nastaliq Urdu"');
+    expect(fontSource).toContain("NotoNastaliqUrdu-Variable.ttf");
+    expect(fontSource).toMatch(/font-weight:\s*400\s+700/u);
+    expect(fontSource).toMatch(/font-display:\s*swap/u);
+    expect(fontSource).toMatch(/unicode-range:[^;}]*U\+0600-06FF/su);
+
+    const fontPath = path.join(
+      SOURCE_ROOT,
+      "assets/fonts/noto-nastaliq-urdu/NotoNastaliqUrdu-Variable.ttf",
+    );
+    const licensePath = path.join(
+      SOURCE_ROOT,
+      "assets/fonts/noto-nastaliq-urdu/OFL.txt",
+    );
+    expect(fs.statSync(fontPath).size).toBeGreaterThan(100_000);
+    expect(fs.readFileSync(licensePath, "utf8")).toContain(
+      "SIL OPEN FONT LICENSE Version 1.1",
+    );
+
+    const tokenRules = parseCssRules(readStyle("tokens.css"));
+    const urduRule = tokenRules.find(
+      (rule) => rule.context.length === 0 && rule.selector === ":root:lang(ur)",
+    );
+    expect(declarationsFor(urduRule?.body ?? "").get("--font-sans")).toBe(
+      "var(--font-urdu)",
+    );
+    expect(readStyle("utilities.css")).toContain(":root:lang(ur)");
+  });
+
+  it("bundles locale-scoped faces for the historical script locales", () => {
+    const fontSource = withoutComments(readStyle("fonts.css"));
+    const historicalFaces = [
+      {
+        family: "Noto Sans Egyptian Hieroglyphs",
+        file: "NotoSansEgyptianHieroglyphs-Regular.ttf",
+        folder: "noto-sans-egyptian-hieroglyphs",
+        language: "egy",
+        range: "U\\+13000-1345F",
+        token: "--font-egyptian",
+      },
+      {
+        family: "Noto Sans Cuneiform",
+        file: "NotoSansCuneiform-Regular.ttf",
+        folder: "noto-sans-cuneiform",
+        language: "akk",
+        range: "U\\+12000-1254F",
+        token: "--font-akkadian",
+      },
+    ] as const;
+    const tokenRules = parseCssRules(readStyle("tokens.css"));
+
+    for (const face of historicalFaces) {
+      const faceBlock = new RegExp(
+        `@font-face\\s*\\{[^}]*font-family:\\s*"${face.family}"[^}]*\\}`,
+        "su",
+      ).exec(fontSource)?.[0];
+      expect(faceBlock, `missing ${face.family} @font-face`).toBeTruthy();
+      expect(faceBlock).toContain(face.file);
+      expect(faceBlock).toMatch(/font-weight:\s*400/u);
+      expect(faceBlock).toMatch(/font-display:\s*swap/u);
+      expect(faceBlock).toMatch(new RegExp(face.range, "u"));
+
+      const fontPath = path.join(
+        SOURCE_ROOT,
+        `assets/fonts/${face.folder}/${face.file}`,
+      );
+      const licensePath = path.join(
+        SOURCE_ROOT,
+        `assets/fonts/${face.folder}/OFL.txt`,
+      );
+      expect(fs.statSync(fontPath).size).toBeGreaterThan(100_000);
+      expect(fs.readFileSync(licensePath, "utf8")).toContain(
+        "SIL OPEN FONT LICENSE Version 1.1",
+      );
+
+      const localeRule = tokenRules.find(
+        (rule) =>
+          rule.context.length === 0 &&
+          rule.selector === `:root:lang(${face.language})`,
+      );
+      expect(declarationsFor(localeRule?.body ?? "").get("--font-sans")).toBe(
+        `var(${face.token})`,
+      );
+      expect(readStyle("utilities.css")).toContain(`:lang(${face.language})`);
+    }
+  });
+
   it("lets light glass reveal more of the sakura than dark glass", () => {
     const tokenRules = parseCssRules(readStyle("tokens.css"));
     const themeTokens = (theme: "dark" | "light"): Map<string, string> =>
@@ -625,6 +717,58 @@ describe("Quiet Sakura style architecture", () => {
     expect(
       declarationsFor(pressedControls?.body ?? "").get("box-shadow"),
     ).toContain("var(--shadow-pressed)");
+  });
+
+  it("keeps route-owned advanced panels on shared frosted material tiers", () => {
+    const declarationsForView = (
+      fileName: string,
+      selector: string,
+    ): Map<string, string> => {
+      const source = styleSources().find(
+        ({ filePath }) => relative(filePath) === `src/views/${fileName}`,
+      )?.source;
+      expect(source, `missing scoped styles for ${fileName}`).toBeTruthy();
+      const rule = parseCssRules(source ?? "").find(
+        (candidate) =>
+          candidate.context.length === 0 && candidate.selector === selector,
+      );
+      expect(rule, `missing ${selector} in ${fileName}`).toBeTruthy();
+      return declarationsFor(rule?.body ?? "");
+    };
+
+    for (const surface of [
+      { fileName: "ParliamentView.vue", selector: ".parliament-advanced-card" },
+      { fileName: "KaigiView.vue", selector: ".kaigi-signal-card" },
+      { fileName: "StakingView.vue", selector: ".staking-advanced" },
+    ]) {
+      const declarations = declarationsForView(
+        surface.fileName,
+        surface.selector,
+      );
+      expect(declarations.get("border-color"), surface.selector).toBe(
+        "var(--frost-border)",
+      );
+      expect(declarations.get("background"), surface.selector).toBe(
+        "var(--frost-panel-raised)",
+      );
+      expect(declarations.get("backdrop-filter"), surface.selector).toBe(
+        "var(--frost-filter-panel)",
+      );
+      expect(
+        declarations.get("-webkit-backdrop-filter"),
+        surface.selector,
+      ).toBe("var(--frost-filter-panel)");
+    }
+
+    const kaigiBody = declarationsForView(
+      "KaigiView.vue",
+      ".kaigi-advanced-body",
+    );
+    expect(kaigiBody.get("background")).toBe("var(--frost-panel-soft)");
+    expect(kaigiBody.get("backdrop-filter")).toBe("var(--frost-filter-soft)");
+    expect(kaigiBody.get("-webkit-backdrop-filter")).toBe(
+      "var(--frost-filter-soft)",
+    );
   });
 
   it("does not dim shared disabled or muted text below its semantic color", () => {

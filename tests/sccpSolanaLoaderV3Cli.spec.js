@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -74,15 +75,22 @@ import {
   upgradeExistingProgram,
   upgradeExistingProgramReadiness,
 } from "../scripts/sccp-solana-deploy.mjs";
+import {
+  captureAbsentLoaderV3FixtureAncestors,
+  pruneCapturedLoaderV3FixtureAncestors,
+} from "./helpers/solanaLoaderV3FixtureCleanup.js";
 
 const LOADER = new PublicKey(SOLANA_UPGRADEABLE_LOADER_ID);
 const cleanupPaths = new Set();
+const cleanupAncestorCaptures = new Set();
 
 afterEach(() => {
   for (const target of cleanupPaths) {
     rmSync(target, { recursive: true, force: true });
   }
   cleanupPaths.clear();
+  pruneCapturedLoaderV3FixtureAncestors(cleanupAncestorCaptures);
+  cleanupAncestorCaptures.clear();
 });
 
 const temporaryRoot = () => {
@@ -236,6 +244,9 @@ const fixture = () => {
   writeFileSync(targetPath, target);
   writeFileSync(evidencePath, evidenceBytes);
   const journalPaths = solanaExistingProgramUpgradeJournalPaths(normalized);
+  cleanupAncestorCaptures.add(
+    captureAbsentLoaderV3FixtureAncestors(journalPaths),
+  );
   cleanupPaths.add(journalPaths.operationDirectory);
   cleanupPaths.add(journalPaths.authorityLease);
   return {
@@ -1191,6 +1202,124 @@ const makeCompletedRecoveryCrash = async (source) => {
     journalSha256BeforeRecovery: selected.sha256,
   };
 };
+
+const testCleanupPaths = (root) => ({
+  root,
+  operationDirectory: path.join(
+    root,
+    "solana-testnet",
+    "genesis",
+    "program",
+    "operation",
+  ),
+  authorityLease: path.join(
+    root,
+    "authority-leases",
+    "genesis",
+    "authority.lock.json",
+  ),
+});
+
+const materializeTestCleanupPaths = (paths) => {
+  mkdirSync(paths.operationDirectory, { recursive: true, mode: 0o700 });
+  mkdirSync(path.dirname(paths.authorityLease), {
+    recursive: true,
+    mode: 0o700,
+  });
+  writeFileSync(paths.authorityLease, "{}\n", { mode: 0o600 });
+};
+
+const removeExactTestCleanupArtifacts = (paths) => {
+  rmSync(paths.operationDirectory, { recursive: true, force: true });
+  rmSync(paths.authorityLease, { force: true });
+};
+
+const canonicalTestCleanupContainer = () => realpathSync(temporaryRoot());
+
+describe("Loader-v3 test-only namespace cleanup", () => {
+  it("prunes only newly created empty fixture ancestors", () => {
+    const container = canonicalTestCleanupContainer();
+    const paths = testCleanupPaths(path.join(container, "runtime-upgrades"));
+    const capture = captureAbsentLoaderV3FixtureAncestors(paths);
+    materializeTestCleanupPaths(paths);
+    removeExactTestCleanupArtifacts(paths);
+
+    const result = pruneCapturedLoaderV3FixtureAncestors([capture]);
+
+    expect(result.removed).toContain(paths.root);
+    expect(existsSync(paths.root)).toBe(false);
+  });
+
+  it("preserves a preexisting ancestor and its sentinel", () => {
+    const container = canonicalTestCleanupContainer();
+    const paths = testCleanupPaths(path.join(container, "runtime-upgrades"));
+    const preexisting = path.join(paths.root, "solana-testnet");
+    const sentinel = path.join(preexisting, "preexisting.json");
+    mkdirSync(preexisting, { recursive: true, mode: 0o700 });
+    writeFileSync(sentinel, "preserve\n", { mode: 0o600 });
+    const capture = captureAbsentLoaderV3FixtureAncestors(paths);
+    materializeTestCleanupPaths(paths);
+    removeExactTestCleanupArtifacts(paths);
+
+    pruneCapturedLoaderV3FixtureAncestors([capture]);
+
+    expect(readFileSync(sentinel, "utf8")).toBe("preserve\n");
+    expect(existsSync(path.dirname(paths.operationDirectory))).toBe(false);
+  });
+
+  it("preserves a nonempty sibling operation", () => {
+    const container = canonicalTestCleanupContainer();
+    const paths = testCleanupPaths(path.join(container, "runtime-upgrades"));
+    const capture = captureAbsentLoaderV3FixtureAncestors(paths);
+    materializeTestCleanupPaths(paths);
+    const sibling = path.join(
+      path.dirname(paths.operationDirectory),
+      "sibling-operation",
+    );
+    const sentinel = path.join(sibling, "operation.journal.jsonl");
+    mkdirSync(sibling, { mode: 0o700 });
+    writeFileSync(sentinel, "sibling\n", { mode: 0o600 });
+    removeExactTestCleanupArtifacts(paths);
+
+    const result = pruneCapturedLoaderV3FixtureAncestors([capture]);
+
+    expect(result.preserved).toContain(path.dirname(paths.operationDirectory));
+    expect(readFileSync(sentinel, "utf8")).toBe("sibling\n");
+  });
+
+  it("does not follow a captured ancestor replaced by a symlink", () => {
+    const container = canonicalTestCleanupContainer();
+    const paths = testCleanupPaths(path.join(container, "runtime-upgrades"));
+    const capture = captureAbsentLoaderV3FixtureAncestors(paths);
+    const candidate = path.dirname(paths.operationDirectory);
+    const external = path.join(container, "external-sentinel");
+    const sentinel = path.join(external, "keep.json");
+    mkdirSync(external, { mode: 0o700 });
+    writeFileSync(sentinel, "outside\n", { mode: 0o600 });
+    mkdirSync(path.dirname(candidate), { recursive: true, mode: 0o700 });
+    symlinkSync(external, candidate, "dir");
+
+    const result = pruneCapturedLoaderV3FixtureAncestors([capture]);
+
+    expect(result.preserved).toContain(candidate);
+    expect(lstatSync(candidate).isSymbolicLink()).toBe(true);
+    expect(readFileSync(sentinel, "utf8")).toBe("outside\n");
+  });
+
+  it("preserves a captured ancestor whose mode is no longer trusted", () => {
+    const container = canonicalTestCleanupContainer();
+    const paths = testCleanupPaths(path.join(container, "runtime-upgrades"));
+    const capture = captureAbsentLoaderV3FixtureAncestors(paths);
+    const candidate = path.dirname(paths.operationDirectory);
+    mkdirSync(candidate, { recursive: true, mode: 0o700 });
+    chmodSync(candidate, 0o770);
+
+    const result = pruneCapturedLoaderV3FixtureAncestors([capture]);
+
+    expect(result.preserved).toContain(candidate);
+    expect(lstatSync(candidate).mode & 0o777).toBe(0o770);
+  });
+});
 
 describe("existing Loader-v3 CLI durability and fencing", () => {
   it("keeps readiness read-only and validates pinned evidence", async () => {

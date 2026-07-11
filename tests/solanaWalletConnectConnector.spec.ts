@@ -163,6 +163,14 @@ describe("Solana WalletConnect connector", () => {
     );
     const solana = useSolanaWalletConnect();
     await solana.connect();
+    expect(
+      JSON.parse(
+        localStorage.getItem(SOLANA_WALLETCONNECT_STORAGE_KEY) ?? "null",
+      ),
+    ).toMatchObject({
+      address: VALID_SOLANA_ADDRESS,
+      chainId: SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+    });
     await expect(solana.signAndSendTransaction(" AQ== ")).resolves.toBe(
       SOLANA_SIGNATURE,
     );
@@ -179,7 +187,7 @@ describe("Solana WalletConnect connector", () => {
           },
         },
       },
-      SCCP_SOLANA_NETWORK.caipChainId,
+      SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
     );
   });
 
@@ -190,9 +198,9 @@ describe("Solana WalletConnect connector", () => {
       namespaces: {
         [SOLANA_WALLETCONNECT_NAMESPACE]: {
           accounts: [
-            `${SCCP_SOLANA_NETWORK.caipChainId}:${VALID_SOLANA_ADDRESS}`,
+            `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${VALID_SOLANA_ADDRESS}`,
           ],
-          chains: [SCCP_SOLANA_NETWORK.caipChainId],
+          chains: [SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID],
           methods: [SOLANA_SIGN_AND_SEND_TRANSACTION_METHOD],
         },
       },
@@ -230,9 +238,9 @@ describe("Solana WalletConnect connector", () => {
       namespaces: {
         [SOLANA_WALLETCONNECT_NAMESPACE]: {
           accounts: [
-            `${SCCP_SOLANA_NETWORK.caipChainId}:${VALID_SOLANA_ADDRESS}`,
+            `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${VALID_SOLANA_ADDRESS}`,
           ],
-          chains: [SCCP_SOLANA_NETWORK.caipChainId],
+          chains: [SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID],
           methods: [
             SOLANA_SIGN_TRANSACTION_METHOD,
             SOLANA_SIGN_AND_SEND_TRANSACTION_METHOD,
@@ -241,7 +249,10 @@ describe("Solana WalletConnect connector", () => {
       },
     };
     const provider: { session: typeof session | null } = { session: null };
-    const requestMock = vi.fn().mockResolvedValue({ transaction: "Ag==" });
+    const requestMock = vi
+      .fn()
+      .mockResolvedValueOnce({ signature: SOLANA_SIGNATURE })
+      .mockResolvedValueOnce({ transaction: "Ag==" });
     const connectMock = vi.fn().mockImplementation(async () => {
       provider.session = session;
       return { session };
@@ -263,6 +274,9 @@ describe("Solana WalletConnect connector", () => {
     );
     const solana = useSolanaWalletConnect();
     await solana.connect();
+    await expect(solana.signTransaction(" AQ== ")).rejects.toThrow(
+      /signature-only responses are not supported/u,
+    );
     await expect(solana.signTransaction(" AQ== ")).resolves.toBe("Ag==");
 
     expect(requestMock).toHaveBeenCalledWith(
@@ -273,7 +287,165 @@ describe("Solana WalletConnect connector", () => {
           pubkey: VALID_SOLANA_ADDRESS,
         },
       },
-      SCCP_SOLANA_NETWORK.caipChainId,
+      SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
     );
+  });
+
+  it("restores and uses the exact stored session-authorized chain", async () => {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", WALLETCONNECT_PROJECT_ID);
+    localStorage.setItem(
+      SOLANA_WALLETCONNECT_STORAGE_KEY,
+      JSON.stringify({
+        topic: "topic-solana",
+        address: VALID_SOLANA_ADDRESS,
+        chainId: SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+        namespace: SOLANA_WALLETCONNECT_NAMESPACE,
+        methodVersion: "solana-wallet-standard-v1",
+        connectedAtMs: Date.now(),
+      }),
+    );
+    const session = {
+      topic: "topic-solana",
+      namespaces: {
+        [SOLANA_WALLETCONNECT_NAMESPACE]: {
+          accounts: [
+            `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${VALID_SOLANA_ADDRESS}`,
+          ],
+          chains: [SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID],
+          methods: [
+            SOLANA_SIGN_TRANSACTION_METHOD,
+            SOLANA_SIGN_AND_SEND_TRANSACTION_METHOD,
+          ],
+        },
+      },
+    };
+    const requestMock = vi.fn().mockResolvedValue({ transaction: "Ag==" });
+    const initMock = vi.fn().mockResolvedValue({
+      connect: vi.fn(),
+      disconnect: vi.fn(),
+      provider: { session },
+      request: requestMock,
+    });
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useSolanaWalletConnect } = await import(
+      "@/composables/useSolanaWalletConnect"
+    );
+    const solana = useSolanaWalletConnect();
+
+    expect(solana.connected.value).toBe(true);
+    await expect(solana.signTransaction("AQ==")).resolves.toBe("Ag==");
+    expect(requestMock).toHaveBeenCalledWith(
+      expect.objectContaining({ method: SOLANA_SIGN_TRANSACTION_METHOD }),
+      SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+    );
+  });
+
+  it("invalidates the stored session when the authorized chain drifts", async () => {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", WALLETCONNECT_PROJECT_ID);
+    const aliasSession = {
+      topic: "topic-solana",
+      namespaces: {
+        [SOLANA_WALLETCONNECT_NAMESPACE]: {
+          accounts: [
+            `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${VALID_SOLANA_ADDRESS}`,
+          ],
+          chains: [SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID],
+          methods: [
+            SOLANA_SIGN_TRANSACTION_METHOD,
+            SOLANA_SIGN_AND_SEND_TRANSACTION_METHOD,
+          ],
+        },
+      },
+    };
+    const canonicalSession = {
+      ...aliasSession,
+      namespaces: {
+        [SOLANA_WALLETCONNECT_NAMESPACE]: {
+          ...aliasSession.namespaces[SOLANA_WALLETCONNECT_NAMESPACE],
+          accounts: [
+            `${SCCP_SOLANA_NETWORK.caipChainId}:${VALID_SOLANA_ADDRESS}`,
+          ],
+          chains: [SCCP_SOLANA_NETWORK.caipChainId],
+        },
+      },
+    };
+    const provider: { session: typeof aliasSession | typeof canonicalSession } =
+      {
+        session: aliasSession,
+      };
+    const requestMock = vi.fn();
+    const initMock = vi.fn().mockResolvedValue({
+      connect: vi.fn().mockResolvedValue({ session: aliasSession }),
+      disconnect: vi.fn(),
+      provider,
+      request: requestMock,
+    });
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useSolanaWalletConnect } = await import(
+      "@/composables/useSolanaWalletConnect"
+    );
+    const solana = useSolanaWalletConnect();
+    await solana.connect();
+    provider.session = canonicalSession;
+
+    await expect(solana.signTransaction("AQ==")).rejects.toThrow(
+      /Reconnect your Solana wallet/u,
+    );
+    expect(solana.connected.value).toBe(false);
+    expect(localStorage.getItem(SOLANA_WALLETCONNECT_STORAGE_KEY)).toBeNull();
+    expect(requestMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects sessions whose account and namespace chains do not match", async () => {
+    vi.stubEnv("VITE_WALLETCONNECT_PROJECT_ID", WALLETCONNECT_PROJECT_ID);
+    const session = {
+      topic: "topic-solana",
+      namespaces: {
+        [SOLANA_WALLETCONNECT_NAMESPACE]: {
+          accounts: [
+            `${SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID}:${VALID_SOLANA_ADDRESS}`,
+          ],
+          chains: [SCCP_SOLANA_NETWORK.caipChainId],
+          methods: [
+            SOLANA_SIGN_TRANSACTION_METHOD,
+            SOLANA_SIGN_AND_SEND_TRANSACTION_METHOD,
+          ],
+        },
+      },
+    };
+    const disconnectMock = vi.fn();
+    const initMock = vi.fn().mockResolvedValue({
+      connect: vi.fn().mockResolvedValue({ session }),
+      disconnect: disconnectMock,
+      provider: { session },
+      request: vi.fn(),
+    });
+    vi.doMock("@reown/appkit-universal-connector", () => ({
+      UniversalConnector: {
+        init: initMock,
+      },
+    }));
+
+    const { useSolanaWalletConnect } = await import(
+      "@/composables/useSolanaWalletConnect"
+    );
+    const solana = useSolanaWalletConnect();
+
+    await expect(solana.connect()).rejects.toThrow(
+      /did not provide a Solana Testnet account/u,
+    );
+    expect(disconnectMock).toHaveBeenCalled();
+    expect(solana.connected.value).toBe(false);
+    expect(localStorage.getItem(SOLANA_WALLETCONNECT_STORAGE_KEY)).toBeNull();
   });
 });

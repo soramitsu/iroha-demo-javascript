@@ -866,6 +866,8 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain(
       "Your encrypted answer was posted on-chain for the host to apply automatically.",
     );
+    expect(wrapper.find(".kaigi-stage").exists()).toBe(true);
+    expect(wrapper.find(".kaigi-signal-card").exists()).toBe(false);
   });
 
   it("falls back to a manual answer when private automatic join fails", async () => {
@@ -885,6 +887,30 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain(
       "Automatic private join failed: join proof rejected. Send the manual answer packet instead; this fallback does not preserve private on-chain signaling.",
     );
+    const peer = FakePeerConnection.instances.at(-1);
+    peer?.ontrack?.({
+      streams: [
+        new FakeMediaStream([
+          new FakeMediaTrack("audio", "remote-offer-audio"),
+        ]),
+      ],
+      track: new FakeMediaTrack("audio", "remote-offer-audio"),
+    } as unknown as RTCTrackEvent);
+    await flushPromises();
+    expect(wrapper.find(".kaigi-stage").exists()).toBe(false);
+    expect(wrapper.find(".kaigi-overview-card").exists()).toBe(true);
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).not.toBe("");
+    expect(
+      getButtonByText(wrapper, "Copy packet").attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("prompts for self-shielding and retries private join", async () => {
@@ -941,6 +967,20 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain(
       "Answer packet ready. Send it to the host manually.",
     );
+    expect(wrapper.find(".kaigi-stage").exists()).toBe(false);
+    expect(wrapper.find(".kaigi-overview-card").exists()).toBe(true);
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).not.toBe("");
+    expect(
+      getButtonByText(wrapper, "Copy packet").attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("auto-applies a polled participant answer after host meeting creation", async () => {

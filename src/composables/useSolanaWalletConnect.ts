@@ -27,6 +27,10 @@ const SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS = new Set<string>([
   SOLANA_CAIP_CHAIN_ID,
   SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
 ]);
+const SOLANA_PREFERRED_WALLETCONNECT_CHAIN_IDS = [
+  SOLANA_CAIP_CHAIN_ID,
+  SOLANA_TESTNET_WALLET_STANDARD_CHAIN_ID,
+] as const;
 const SOLANA_WALLETCONNECT_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const SOLANA_WALLETCONNECT_SESSION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_WALLETCONNECT_TOPIC_LENGTH = 256;
@@ -267,21 +271,17 @@ const listWalletConnectStrings = (value: unknown): string[] =>
     ? value.filter((item): item is string => typeof item === "string")
     : [];
 
-const listActiveSolanaSessionAddresses = (
-  session: WalletConnectSessionLike | null | undefined,
-): string[] => {
-  const accounts = listWalletConnectStrings(
-    session?.namespaces?.[SOLANA_WALLETCONNECT_NAMESPACE]?.accounts,
-  );
-  const addresses = accounts
-    .map(splitSolanaWalletConnectAccount)
-    .filter(
-      (account): account is { chainId: string; address: string } =>
-        account !== null &&
-        SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS.has(account.chainId),
-    )
-    .map((account) => normalizeSolanaAddress(account.address));
-  return Array.from(new Set(addresses));
+const requireCompatibleSolanaWalletConnectChainId = (
+  value: unknown,
+  label = "Solana WalletConnect chain ID",
+): string => {
+  if (
+    typeof value !== "string" ||
+    !SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS.has(value)
+  ) {
+    throw new Error(`${label} is not supported.`);
+  }
+  return value;
 };
 
 const listUnsupportedSolanaSessionChains = (
@@ -304,35 +304,70 @@ const listUnsupportedSolanaSessionChains = (
   ).sort();
 };
 
-export const extractSolanaAddressFromSession = (
+const resolveAuthorizedSolanaSessionAccount = (
   session: WalletConnectSessionLike | null | undefined,
-): string | null => {
+): { address: string; chainId: string } | null => {
   const unsupportedChains = listUnsupportedSolanaSessionChains(session);
   if (unsupportedChains.length > 0) {
     throw new Error(
       `Connected wallet exposed unsupported Solana accounts (${unsupportedChains.join(", ")}); approve only ${SCCP_SOLANA_NETWORK.label} and reconnect.`,
     );
   }
-  const addresses = listActiveSolanaSessionAddresses(session);
+  const namespace = session?.namespaces?.[SOLANA_WALLETCONNECT_NAMESPACE];
+  const accounts = listWalletConnectStrings(namespace?.accounts)
+    .map(splitSolanaWalletConnectAccount)
+    .filter(
+      (account): account is { chainId: string; address: string } =>
+        account !== null &&
+        SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS.has(account.chainId),
+    )
+    .map((account) => ({
+      chainId: account.chainId,
+      address: normalizeSolanaAddress(account.address),
+    }));
+  const addresses = Array.from(
+    new Set(accounts.map((account) => account.address)),
+  );
   if (addresses.length > 1) {
     throw new Error(
       "Connected wallet exposed multiple Solana accounts; approve exactly one and reconnect.",
     );
   }
-  return addresses[0] ?? null;
+  const address = addresses[0];
+  if (!address) {
+    return null;
+  }
+  const namespaceChains = new Set(listWalletConnectStrings(namespace?.chains));
+  const accountChains = new Set(
+    accounts
+      .filter((account) => account.address === address)
+      .map((account) => account.chainId),
+  );
+  const chainId = SOLANA_PREFERRED_WALLETCONNECT_CHAIN_IDS.find(
+    (candidate) =>
+      namespaceChains.has(candidate) && accountChains.has(candidate),
+  );
+  return chainId ? { address, chainId } : null;
 };
+
+export const extractSolanaAddressFromSession = (
+  session: WalletConnectSessionLike | null | undefined,
+): string | null =>
+  resolveAuthorizedSolanaSessionAccount(session)?.address ?? null;
 
 export const solanaWalletConnectSessionSupportsRequiredSigning = (
   session: WalletConnectSessionLike | null | undefined,
 ): boolean => {
   const namespace = session?.namespaces?.[SOLANA_WALLETCONNECT_NAMESPACE];
   const methods = listWalletConnectStrings(namespace?.methods);
-  const chains = listWalletConnectStrings(namespace?.chains);
-  const supportsChain = chains.some((chainId) =>
-    SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS.has(chainId),
-  );
+  let authorizedAccount: { address: string; chainId: string } | null = null;
+  try {
+    authorizedAccount = resolveAuthorizedSolanaSessionAccount(session);
+  } catch (_error) {
+    return false;
+  }
   return (
-    supportsChain &&
+    authorizedAccount !== null &&
     methods.includes(SOLANA_WALLETCONNECT_SIGN_TRANSACTION_METHOD) &&
     methods.includes(SOLANA_WALLETCONNECT_SIGN_AND_SEND_TRANSACTION_METHOD)
   );
@@ -345,17 +380,19 @@ export const solanaWalletConnectSessionMatchesSnapshot = (
   if (!snapshot) {
     return false;
   }
-  let address: string | null = null;
   try {
-    address = extractSolanaAddressFromSession(session);
+    const authorizedAccount = resolveAuthorizedSolanaSessionAccount(session);
+    return (
+      authorizedAccount !== null &&
+      authorizedAccount.address === snapshot.address &&
+      authorizedAccount.chainId ===
+        requireCompatibleSolanaWalletConnectChainId(snapshot.chainId) &&
+      normalizeStoredWalletConnectTopic(session?.topic) === snapshot.topic &&
+      solanaWalletConnectSessionSupportsRequiredSigning(session)
+    );
   } catch (_error) {
     return false;
   }
-  return (
-    address === snapshot.address &&
-    normalizeStoredWalletConnectTopic(session?.topic) === snapshot.topic &&
-    solanaWalletConnectSessionSupportsRequiredSigning(session)
-  );
 };
 
 export const isFreshSolanaWalletConnectSessionTimestamp = (
@@ -404,7 +441,7 @@ export const readStoredSolanaWalletConnectSession =
       if (
         parsed.namespace !== SOLANA_WALLETCONNECT_NAMESPACE ||
         parsed.methodVersion !== "solana-wallet-standard-v1" ||
-        parsed.chainId !== SOLANA_CAIP_CHAIN_ID ||
+        !SOLANA_COMPATIBLE_WALLETCONNECT_CHAIN_IDS.has(parsed.chainId) ||
         !isFreshSolanaWalletConnectSessionTimestamp(parsed.connectedAtMs)
       ) {
         return null;
@@ -412,7 +449,7 @@ export const readStoredSolanaWalletConnectSession =
       const snapshot = solanaWalletConnectSessionFromAddress(
         normalizeSolanaAddress(String(parsed.address ?? "")),
         requireStoredWalletConnectTopic(parsed.topic),
-        SOLANA_CAIP_CHAIN_ID,
+        parsed.chainId,
       );
       snapshot.connectedAtMs = parsed.connectedAtMs;
       return snapshot;
@@ -440,7 +477,7 @@ export const writeStoredSolanaWalletConnectSession = (
   const normalized = solanaWalletConnectSessionFromAddress(
     normalizeSolanaAddress(String(snapshot.address ?? "")),
     requireStoredWalletConnectTopic(snapshot.topic),
-    SOLANA_CAIP_CHAIN_ID,
+    requireCompatibleSolanaWalletConnectChainId(snapshot.chainId),
   );
   normalized.connectedAtMs = snapshot.connectedAtMs;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
@@ -536,6 +573,15 @@ export const normalizeSolanaWalletSignedTransaction = (
     typeof value === "object" && value !== null && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : null;
+  if (
+    record?.transaction === undefined &&
+    record?.signedTransaction === undefined &&
+    record?.signature !== undefined
+  ) {
+    throw new Error(
+      "Solana wallet signature-only responses are not supported; return the complete serialized signed transaction.",
+    );
+  }
   return normalizeSolanaTransactionB64(
     record?.transaction ?? record?.signedTransaction ?? value,
     "Signed Solana transaction",
@@ -574,6 +620,7 @@ export const useSolanaWalletConnect = () => {
   const stored = readStoredSolanaWalletConnectSession();
   const address = ref(stored?.address ?? "");
   const sessionTopic = ref(stored?.topic ?? "");
+  const sessionChainId = ref(stored?.chainId ?? SOLANA_CAIP_CHAIN_ID);
   const sessionConnectedAtMs = ref(stored?.connectedAtMs ?? 0);
   const connecting = ref(false);
   const disconnecting = ref(false);
@@ -598,6 +645,7 @@ export const useSolanaWalletConnect = () => {
   const clearSession = () => {
     address.value = "";
     sessionTopic.value = "";
+    sessionChainId.value = SOLANA_CAIP_CHAIN_ID;
     sessionConnectedAtMs.value = 0;
     writeStoredSolanaWalletConnectSession(null);
   };
@@ -609,6 +657,7 @@ export const useSolanaWalletConnect = () => {
     const snapshot = solanaWalletConnectSessionFromAddress(
       address.value,
       sessionTopic.value,
+      sessionChainId.value,
     );
     snapshot.connectedAtMs = sessionConnectedAtMs.value;
     return snapshot;
@@ -649,6 +698,7 @@ export const useSolanaWalletConnect = () => {
         }
         address.value = snapshot.address ?? "";
         sessionTopic.value = snapshot.topic ?? "";
+        sessionChainId.value = snapshot.chainId;
         sessionConnectedAtMs.value = snapshot.connectedAtMs;
         persist();
         return;
@@ -658,8 +708,8 @@ export const useSolanaWalletConnect = () => {
         createSolanaWalletConnectConnectParams(),
       );
       shouldClearRejectedSession = true;
-      const nextAddress = extractSolanaAddressFromSession(session);
-      if (!nextAddress) {
+      const authorizedAccount = resolveAuthorizedSolanaSessionAccount(session);
+      if (!authorizedAccount) {
         throw new Error(
           `Connected wallet did not provide a ${SCCP_SOLANA_NETWORK.label} account.`,
         );
@@ -670,11 +720,13 @@ export const useSolanaWalletConnect = () => {
         );
       }
       const snapshot = solanaWalletConnectSessionFromAddress(
-        nextAddress,
+        authorizedAccount.address,
         requireStoredWalletConnectTopic(session.topic),
+        authorizedAccount.chainId,
       );
       address.value = snapshot.address ?? "";
       sessionTopic.value = snapshot.topic ?? "";
+      sessionChainId.value = snapshot.chainId;
       sessionConnectedAtMs.value = snapshot.connectedAtMs;
       persist();
     } catch (connectError) {
@@ -769,7 +821,7 @@ export const useSolanaWalletConnect = () => {
           snapshotAddress,
         ),
       }),
-      SCCP_SOLANA_NETWORK.caipChainId,
+      snapshot.chainId,
     );
     return normalizeSolanaWalletSignedTransaction(result);
   };
@@ -802,7 +854,7 @@ export const useSolanaWalletConnect = () => {
           snapshotAddress,
         ),
       }),
-      SCCP_SOLANA_NETWORK.caipChainId,
+      snapshot.chainId,
     );
     return normalizeSolanaWalletSignature(result);
   };

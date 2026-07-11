@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { AccountAddress } from "@iroha/iroha-js/address";
 import {
   buildSolanaProductionGateReport as buildSolanaProductionGateReportImpl,
+  buildSolanaProductionGatePreLiveInputSnapshot,
   buildSolanaProductionGateSuccessExecutionPolicy,
   checkGovernanceProgramRolePinsFresh,
   checkPublicBridgeSourceProgramdataReady,
@@ -22,7 +23,9 @@ import {
   checkSourceBurnArtifactConsistency,
   checkSourceBurnProofRequestReady,
   collectArtifactFacts,
+  SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS,
   runSccpSolanaProductionGate,
+  validateSolanaProductionGatePreLiveInputSnapshot,
 } from "../scripts/e2e/sccp-solana-production-gate.mjs";
 import { buildBlockedSolanaLiveVideoTranscript } from "../scripts/e2e/sccp-solana-live-video.mjs";
 
@@ -1875,6 +1878,36 @@ const failedIds = (report) =>
     .map((check) => check.id);
 
 describe("Solana SCCP production gate", () => {
+  it("hashes one complete canonical pre-live input snapshot and rejects tampering", () => {
+    const inputs = Object.fromEntries(
+      Object.keys(SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS).map(
+        (id) => [
+          id,
+          {
+            id,
+            path: path.resolve(`/tmp/solana-pre-live-${id}`),
+            present: false,
+            size: 0,
+            sha256: null,
+          },
+        ],
+      ),
+    );
+    const snapshot = buildSolanaProductionGatePreLiveInputSnapshot(inputs);
+    expect(() =>
+      validateSolanaProductionGatePreLiveInputSnapshot(snapshot),
+    ).not.toThrow();
+    expect(snapshot.preLiveInputSnapshotSha256).toMatch(/^0x[0-9a-f]{64}$/u);
+
+    const tampered = structuredClone(snapshot);
+    tampered.inputs.routeManifest.path = path.resolve(
+      "/tmp/substituted-route-manifest.json",
+    );
+    expect(() =>
+      validateSolanaProductionGatePreLiveInputSnapshot(tampered),
+    ).toThrow(/snapshot hash is invalid/u);
+  });
+
   it("requires a fresh canonical governance-pinned network pass for production success", () => {
     const policy = buildSolanaProductionGateSuccessExecutionPolicy({
       toriiUrl: "https://taira-validator-1.sora.org",
@@ -2005,6 +2038,24 @@ describe("Solana SCCP production gate", () => {
         preflightReportOverride: true,
         freshPreflightCompleted: false,
       });
+      expect(() =>
+        validateSolanaProductionGatePreLiveInputSnapshot(
+          report.preLiveInputSnapshot,
+        ),
+      ).not.toThrow();
+      expect(report.preLiveInputSnapshotSha256).toBe(
+        report.preLiveInputSnapshot.preLiveInputSnapshotSha256,
+      );
+      expect(Object.keys(report.preLiveInputSnapshot.inputs).sort()).toEqual(
+        Object.keys(SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS).sort(),
+      );
+      expect(report.preLiveInputSnapshot.inputs.requirements).toMatchObject({
+        path: path.join(
+          deployDir,
+          "taira-solana-xor-production-requirements.json",
+        ),
+        present: true,
+      });
       expect(
         report.successExecutionPolicy.problems.map((problem) => problem.id),
       ).toContain("fresh-public-preflight");
@@ -2035,6 +2086,36 @@ describe("Solana SCCP production gate", () => {
       expect(report.artifacts.requirementsPath).not.toContain(
         "output/sccp-solana-deploy",
       );
+    } finally {
+      rmSync(deployDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a generated handoff whose stable bytes do not match the propagated gate pin", async () => {
+    const deployDir = mkdtempSync(path.join(tmpdir(), "sccp-solana-gate-pin-"));
+    try {
+      const preflightPath = path.join(deployDir, "preflight.json");
+      writeFileSync(
+        preflightPath,
+        `${JSON.stringify(readyPreflightReport(), null, 2)}\n`,
+      );
+      const publicationPath = path.join(deployDir, "publication.json");
+      writeFileSync(
+        publicationPath,
+        `${JSON.stringify({
+          schema: "iroha-demo-sccp-solana-route-publication-request/v1",
+          routeId: "taira_sol_xor",
+          assetKey: "xor",
+        })}\n`,
+      );
+      await expect(
+        runSccpSolanaProductionGate({
+          outputDir: deployDir,
+          preflightReport: preflightPath,
+          routePublicationRequest: publicationPath,
+          routePublicationRequestSha256: `0x${"ff".repeat(32)}`,
+        }),
+      ).rejects.toThrow(/SHA-256 mismatch/u);
     } finally {
       rmSync(deployDir, { recursive: true, force: true });
     }

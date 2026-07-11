@@ -2,6 +2,7 @@
 /* global BigInt */
 import { blake2b } from "@noble/hashes/blake2b";
 import { PublicKey } from "@solana/web3.js";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -77,6 +78,29 @@ const trimString = (value) => String(value ?? "").trim();
 
 const isRecord = (value) =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const canonicalPublicJsonValue = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(canonicalPublicJsonValue);
+  }
+  if (!isRecord(value)) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalPublicJsonValue(value[key])]),
+  );
+};
+
+export const solanaRouteManifestCanonicalSha256 = (manifest) => {
+  if (!isRecord(manifest)) {
+    throw new Error("Solana route manifest must be an object before hashing.");
+  }
+  return `0x${createHash("sha256")
+    .update(JSON.stringify(canonicalPublicJsonValue(manifest)))
+    .digest("hex")}`;
+};
 
 const readRecord = (record, key) => {
   const value = record?.[key];
@@ -489,9 +513,13 @@ export const fetchJson = async (url, options = {}) => {
         ...Object.fromEntries(
           Object.entries(options).filter(
             ([key]) =>
-              !["attempts", "retryDelayMs", "signal", "timeoutMs"].includes(
-                key,
-              ),
+              ![
+                "attempts",
+                "includeResponseMetadata",
+                "retryDelayMs",
+                "signal",
+                "timeoutMs",
+              ].includes(key),
           ),
         ),
       });
@@ -503,7 +531,25 @@ export const fetchJson = async (url, options = {}) => {
         error.status = response.status;
         throw error;
       }
-      return text ? JSON.parse(text) : {};
+      const body = text ? JSON.parse(text) : {};
+      if (options.includeResponseMetadata === true) {
+        return {
+          body,
+          responseMetadata: {
+            age: response.headers.get("age"),
+            cacheControl: response.headers.get("cache-control"),
+            date: response.headers.get("date"),
+            etag: response.headers.get("etag"),
+            irohaBlockHeight: response.headers.get("x-iroha-block-height"),
+            ledgerHeight: response.headers.get("x-ledger-height"),
+            irohaStateHash: response.headers.get("x-iroha-state-hash"),
+            via: response.headers.get("via"),
+            xCache: response.headers.get("x-cache"),
+            fetchedAt: new Date().toISOString(),
+          },
+        };
+      }
+      return body;
     } catch (error) {
       const fetchError =
         controller.signal.aborted && error?.name === "AbortError"
@@ -545,6 +591,117 @@ const preflightFetchOptions = (options = {}) => {
 
 const fetchToriiJson = async (toriiUrl, pathName, options = {}) =>
   fetchJson(`${toriiUrl}${pathName}`, { attempts: 3, ...options });
+
+const tairaFinalizedHeight = (status) => {
+  for (const value of [
+    status?.blocks,
+    status?.blockHeight,
+    status?.block_height,
+    status?.height,
+    status?.ledger?.blocks,
+    status?.ledger?.height,
+  ]) {
+    const normalized =
+      typeof value === "number" && Number.isSafeInteger(value)
+        ? value
+        : typeof value === "string" && /^[1-9][0-9]*$/u.test(value)
+          ? Number(value)
+          : null;
+    if (Number.isSafeInteger(normalized) && normalized > 0) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const tairaNodeIdentity = (status) =>
+  [
+    status?.peerId,
+    status?.peer_id,
+    status?.nodeId,
+    status?.node_id,
+    status?.publicKey,
+    status?.public_key,
+    status?.sumeragi?.peerId,
+    status?.sumeragi?.peer_id,
+  ]
+    .find((value) => typeof value === "string" && value.trim())
+    ?.trim() ?? null;
+
+const normalizeIrohaStateHash = (value) => {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^0x/u, "");
+  return /^[0-9a-f]{64}$/u.test(normalized) ? `0x${normalized}` : null;
+};
+
+const assertAuthoritativeManifestResponse = ({
+  manifestBody,
+  responseMetadata,
+  statusBefore,
+  statusAfter,
+}) => {
+  const age = responseMetadata?.age;
+  if (age !== null && age !== undefined && !/^0(?:\.0+)?$/u.test(age)) {
+    throw new Error(
+      "TAIRA manifest response was served from a nonzero-age cache.",
+    );
+  }
+  if (/\bhit\b/iu.test(responseMetadata?.xCache ?? "")) {
+    throw new Error("TAIRA manifest response was reported as a cache hit.");
+  }
+  const finalizedHeightBefore = tairaFinalizedHeight(statusBefore);
+  const finalizedHeightAfter = tairaFinalizedHeight(statusAfter);
+  const manifestFinalizedHeight = tairaFinalizedHeight({
+    height:
+      responseMetadata?.irohaBlockHeight ??
+      responseMetadata?.ledgerHeight ??
+      manifestBody?.finalizedHeight ??
+      manifestBody?.finalized_height ??
+      manifestBody?.blockHeight ??
+      manifestBody?.block_height ??
+      null,
+  });
+  const nodeIdentityBefore = tairaNodeIdentity(statusBefore);
+  const nodeIdentityAfter = tairaNodeIdentity(statusAfter);
+  const irohaStateHash = normalizeIrohaStateHash(
+    responseMetadata?.irohaStateHash,
+  );
+  const cacheControl = responseMetadata?.cacheControl ?? "";
+  const responseDateMs = Date.parse(responseMetadata?.date ?? "");
+  const responseDateFresh =
+    Number.isFinite(responseDateMs) &&
+    Math.abs(Date.now() - responseDateMs) <= 60_000;
+  if (
+    !finalizedHeightBefore ||
+    !finalizedHeightAfter ||
+    finalizedHeightAfter < finalizedHeightBefore ||
+    !manifestFinalizedHeight ||
+    manifestFinalizedHeight < finalizedHeightBefore ||
+    manifestFinalizedHeight > finalizedHeightAfter ||
+    !nodeIdentityBefore ||
+    nodeIdentityBefore !== nodeIdentityAfter ||
+    !irohaStateHash ||
+    !/(?:no-store|no-cache|max-age=0)/iu.test(cacheControl) ||
+    !responseDateFresh
+  ) {
+    throw new Error(
+      "TAIRA manifest response is not cache-disabled and bound to a finalized ledger height bracket.",
+    );
+  }
+  return {
+    cacheBypassRequested: true,
+    cacheBypassVerified: true,
+    finalizedHeightBefore,
+    finalizedHeightAfter,
+    manifestFinalizedHeight,
+    nodeIdentity: nodeIdentityBefore,
+    irohaStateHash,
+    finalityBoundRead: true,
+    responseMetadata,
+  };
+};
 
 const fetchSolanaRpc = async (rpcUrl, method, params = [], options = {}) => {
   const payload = await fetchJson(rpcUrl, {
@@ -746,6 +903,51 @@ const manifestRecords = (manifestSet) => {
     return [manifestSet];
   }
   return collectionKeys.flatMap((key) => listRecords(manifestSet[key]));
+};
+
+export const assertSolanaManifestSetEnvelope = (manifestSet) => {
+  if (Array.isArray(manifestSet)) {
+    if (manifestSet.some((entry) => !isRecord(entry))) {
+      throw new Error("SCCP manifest array entries must be objects.");
+    }
+    return manifestSet;
+  }
+  if (!isRecord(manifestSet)) {
+    throw new Error("SCCP manifest response must be an object or array.");
+  }
+  const collectionKeys = ["manifests", "routes", "items", "data"];
+  const presentCollections = collectionKeys.filter((key) =>
+    Object.prototype.hasOwnProperty.call(manifestSet, key),
+  );
+  if (presentCollections.length > 0) {
+    for (const key of presentCollections) {
+      if (!Array.isArray(manifestSet[key])) {
+        throw new Error(`SCCP manifest response ${key} must be an array.`);
+      }
+      if (manifestSet[key].some((entry) => !isRecord(entry))) {
+        throw new Error(
+          `SCCP manifest response ${key} entries must be objects.`,
+        );
+      }
+    }
+    return manifestSet;
+  }
+  if (
+    ![
+      "routeId",
+      "route_id",
+      "assetKey",
+      "asset_key",
+      "counterpartyDomain",
+      "counterparty_domain",
+      "chain",
+    ].some((key) => Object.prototype.hasOwnProperty.call(manifestSet, key))
+  ) {
+    throw new Error(
+      "SCCP manifest response is neither a collection envelope nor a manifest record.",
+    );
+  }
+  return manifestSet;
 };
 
 const readOptionalConsistentString = (record, keys, label) => {
@@ -1838,6 +2040,7 @@ export const checkSolanaRouteInstancePublication = (manifest, laneManifest) => {
       false,
       "Public TAIRA exposes a generic Solana SCCP lane template, but no taira_sol_xor Solana route instance is published.",
       {
+        routeAbsent: true,
         laneTemplate: summarizeSolanaLaneManifest(laneManifest),
         expectedRouteId: SCCP_SOLANA_XOR_ROUTE_ID,
         expectedAssetKey: SCCP_XOR_ASSET_KEY,
@@ -1849,13 +2052,14 @@ export const checkSolanaRouteInstancePublication = (manifest, laneManifest) => {
     false,
     "Public TAIRA does not expose a Solana SCCP lane template or taira_sol_xor route instance.",
     {
+      routeAbsent: true,
       expectedRouteId: SCCP_SOLANA_XOR_ROUTE_ID,
       expectedAssetKey: SCCP_XOR_ASSET_KEY,
     },
   );
 };
 
-const checkManifestShape = (manifest) => {
+export const checkManifestShape = (manifest) => {
   if (!manifest) {
     throw new Error("No taira_sol_xor Solana testnet manifest found.");
   }
@@ -1955,6 +2159,7 @@ const checkManifestShape = (manifest) => {
     verifierTarget,
     destinationVerifierPlan,
     genesisHash,
+    manifestCanonicalSha256: solanaRouteManifestCanonicalSha256(manifest),
   };
 };
 
@@ -3399,6 +3604,7 @@ export const runSccpSolanaRoutePreflight = async (options = {}) => {
   let manifestSource = "public";
   let capabilitiesError = null;
   let manifestError = null;
+  let authoritativeManifestEvidence = null;
 
   pushCheck(checks, "taira-endpoint", () => ({ toriiUrl }));
 
@@ -3431,15 +3637,48 @@ export const runSccpSolanaRoutePreflight = async (options = {}) => {
         label: "Solana route manifest file",
       });
     } else {
-      manifestSet = await fetchToriiJson(
-        toriiUrl,
-        "/v1/sccp/manifests",
-        fetchOptions,
-      );
+      if (options.requireAuthoritativeManifestRead === true) {
+        const cacheBypassHeaders = {
+          "cache-control": "no-cache, no-store, max-age=0",
+          pragma: "no-cache",
+        };
+        const statusBefore = await fetchToriiJson(toriiUrl, "/status", {
+          ...fetchOptions,
+          headers: cacheBypassHeaders,
+        });
+        const manifestResponse = await fetchToriiJson(
+          toriiUrl,
+          "/v1/sccp/manifests",
+          {
+            ...fetchOptions,
+            headers: cacheBypassHeaders,
+            includeResponseMetadata: true,
+          },
+        );
+        const statusAfter = await fetchToriiJson(toriiUrl, "/status", {
+          ...fetchOptions,
+          headers: cacheBypassHeaders,
+        });
+        manifestSet = manifestResponse.body;
+        authoritativeManifestEvidence = assertAuthoritativeManifestResponse({
+          manifestBody: manifestResponse.body,
+          responseMetadata: manifestResponse.responseMetadata,
+          statusBefore,
+          statusAfter,
+        });
+      } else {
+        manifestSet = await fetchToriiJson(
+          toriiUrl,
+          "/v1/sccp/manifests",
+          fetchOptions,
+        );
+      }
     }
+    assertSolanaManifestSetEnvelope(manifestSet);
     pushCheck(checks, "sccp-manifest-load", () => ({
       source: manifestSource,
       recordCount: manifestRecords(manifestSet).length,
+      ...(authoritativeManifestEvidence ?? {}),
     }));
   } catch (error) {
     manifestError = error instanceof Error ? error.message : String(error);

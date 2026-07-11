@@ -24,6 +24,10 @@ import {
   canonicalSolanaLoaderV3RuntimeUpgradeClaimEventBytes,
   solanaLoaderV3AuthorityGlobalLeaseScope,
 } from "../scripts/solana-loader-v3-runtime.mjs";
+import {
+  captureAbsentLoaderV3FixtureAncestors,
+  pruneCapturedLoaderV3FixtureAncestors,
+} from "./helpers/solanaLoaderV3FixtureCleanup.js";
 
 const sha256 = (value) =>
   `0x${createHash("sha256").update(value).digest("hex")}`;
@@ -42,6 +46,9 @@ afterEach(async () => {
   const targets = [...cleanupTargets];
   cleanupTargets.clear();
   await Promise.all(targets.map(removeFixture));
+  pruneCapturedLoaderV3FixtureAncestors(
+    targets.map(({ cleanupCapture }) => cleanupCapture),
+  );
 });
 
 const fixture = (label) => {
@@ -72,7 +79,8 @@ const fixture = (label) => {
     extension: null,
   });
   const paths = solanaExistingProgramUpgradeJournalPaths(normalized);
-  const source = { normalized, paths };
+  const cleanupCapture = captureAbsentLoaderV3FixtureAncestors(paths);
+  const source = { normalized, paths, cleanupCapture };
   cleanupTargets.add(source);
   return source;
 };

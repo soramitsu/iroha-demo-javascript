@@ -201,7 +201,7 @@ This still does not sign, submit, or broadcast. It combines route preflight with
 
 Solana testnet SCCP is wired as a fail-closed route surface until the public TAIRA endpoint publishes a production-ready `taira_sol_xor` manifest and governed Solana proof material. The deployed Solana SBF now requires a configured native recursive verifier program and calls it over CPI before minting SPL TairaXOR; finalization gates require the CPI marker, immutable ProgramData, and absence of the old unlinked-verifier sentinel. The `/sccp` tab can select Solana, display live route readiness, connect a Solana wallet, and build the TAIRA -> Solana finalize transaction only when the route manifest and proof job are real. Solana -> TAIRA now builds and broadcasts the wallet-approved SPL burn against the deployed Solana source bridge, waits for Solana confirmation, collects transaction evidence through preload RPC, and hands it to the browser source-proof worker; TAIRA settlement is submitted only after a bound `finalize_inbound` source proof package matches the selected Solana sender, TAIRA recipient, amount, route, and message bundle.
 
-The Solana deployment operator command generates ignored Solana testnet keypairs, checks or installs the Solana CLI with Homebrew when requested, requests bounded testnet airdrops, deploys the compiled SBF program to distinct immutable verifier/bridge/source program IDs, creates a real SPL TairaXOR mint plus verifier state account, collects live ProgramData evidence, and builds the route manifest from live program evidence. Public TAIRA route publication uses a signed `UpsertSccpRouteManifest` submitted through `https://taira.sora.org/v1/mcp`; the legacy governance proposal HTTP endpoint is not required.
+The Solana operator tooling never generates, reads, migrates, or persists signer files. It reuses separately reviewed public Program/ProgramData identities, accepts mutation authority only as runtime secret bytes, and keeps new stable Program deployment disabled. Its canonical readback captures all four Loader-v3 roles, both state accounts, the mint, and the reviewed owner's complete mint-token-account set in one finalized account vector fenced by pre/post enumeration and a final testnet-identity recheck. Public TAIRA route publication uses a signed `UpsertSccpRouteManifest` submitted through the selected validator's `/v1/mcp`; the legacy governance proposal HTTP endpoint is not required.
 
 Before attempting a real Solana transfer smoke through the app, run the Solana app-side readiness gate:
 
@@ -272,6 +272,37 @@ npm run sccp:solana:deploy -- lane-activation-proposal
 npm run sccp:solana:refresh-evidence
 npm run sccp:solana:refresh-live-evidence
 ```
+
+`evidence` writes one authoritative
+`solana-program.evidence.json` document with schema
+`iroha-demo-sccp-solana-finalized-readback-evidence/v1`. Historical
+per-role evidence files are ignored and are no longer produced. The canonical
+snapshot hash covers direct finalized RPC observations plus the exact public
+deployment-config and native-verifier-config byte hashes. Manifest bytes and
+the manifest's expected source-config pin are deliberately outside that hash in
+`manifestComparison`; otherwise a manifest embedding its own evidence would
+form an impossible hash cycle. Generated route manifests contain stable live
+deployment pins only and never embed the full readback report, its context slot,
+or `canonicalSnapshotSha256`.
+
+Production consumers of an existing evidence or manifest file require both
+independently reviewed exact-byte pins:
+
+```bash
+npm run sccp:solana:deploy -- production-requirements \
+  --evidence output/sccp-solana-deploy/solana-program.evidence.json \
+  --expected-evidence-sha256 0x<sha256-of-exact-evidence-bytes> \
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<sha256-of-exact-manifest-bytes>
+```
+
+`refresh-live-evidence` and `finish-production --skip-solana-rpc false`
+capture the evidence in-process and thread those exact hashes through every
+downstream step automatically. A source-config mismatch never rewrites a
+governed pin: refresh post-deploy evidence, create the reviewable manifest
+patch evidence, draft the candidate, then regenerate
+`post-deploy-manifest-evidence` to bind the exact final manifest bytes to the
+same evidence-artifact hash and canonical snapshot.
 
 The first-release build wrapper compiles both the bridge and native recursive
 verifier into `output/sccp-solana-program-artifacts/` while placing a non-key
@@ -581,11 +612,15 @@ production-ready.
 `proof-material-bundle` writes
 `output/sccp-solana-deploy/taira-solana-xor-proof-material-bundle.json`, a
 deterministic hash manifest for the non-secret handoff/request/report files
-that the governed proof-material ceremony consumes, including the route-bound
-Solana browser prover sidecars. It records file sizes, schemas, SHA-256 hashes,
-observed deployment pins, and upstream blocker ids, and it excludes secret-like
-keypair/private/wallet paths. This manifest makes the handoff reproducible, but
-it is still not governed proof material and does not publish the TAIRA route.
+that the governed proof-material ceremony consumes, including the exact public
+deployment config, native-verifier configuration report, canonical finalized
+readback, final route manifest, manifest-conformance report, and route-bound
+browser prover sidecars. It rejects hard links, symlinks, malformed UTF-8,
+legacy evidence schemas, and any cross-artifact snapshot, evidence-byte,
+manifest-byte, source-config, or proof-request pin mismatch. The legacy
+`solana-live-evidence` summary is diagnostic and is not bundled as a second
+deployment truth. This manifest makes the handoff reproducible, but it is still
+not governed proof material and does not publish the TAIRA route.
 
 `proof-material-ceremony-package` writes
 `output/sccp-solana-deploy/taira-solana-xor-proof-material-ceremony-package.json`,
@@ -635,7 +670,10 @@ material for the governed source prover, not a production proof package.
 reviewable `postDeployLiveEvidence` patch. With `--apply true`, it updates the
 local route manifest draft with the observed source bridge config hash, route
 canary evidence hash, source-event transaction signature, and route-canary
-transaction signature. It intentionally keeps `fullTomlReady: false` unless
+transaction signature. Applying this local patch does not recapture Solana or
+advance to a different context slot: the command regenerates its conformance
+section against the same canonical snapshot and records the exact manifest and
+evidence artifact SHA-256 values. It intentionally keeps `fullTomlReady: false` unless
 `--offline-full-toml` or `--offline-full-toml-sha256` is supplied from a
 reviewed final Solana evidence TOML, so it cannot turn a partial rollout into a
 production-ready manifest.
@@ -789,17 +827,101 @@ gate in the same process, then performs fresh finalized readbacks and removes
 the upgrade authority from every still-mutable role with one atomic Loader-v3
 transaction. Both explicit confirmation flags are mandatory; a stale readiness
 report cannot authorize the irreversible operation.
+Immediately before signer loading and again before broadcast, the command
+requires cache-bypassed, finalized-height-bound route-absence reads from all
+four canonical TAIRA validator roots at one common manifest height. A
+single-node response, a lagging-height mix, or cached evidence cannot authorize
+program finalization or native-verifier configuration.
 It succeeds without submitting only when all four roles are already immutable
 and still match every governance and local-artifact pin. The runtime signer is
 zeroized, and the atomic hash-chained report is written to
 `output/sccp-solana-deploy/taira-solana-xor-program-finalization.json`.
+Before either one-shot Solana transaction is broadcast, the exact locally
+signed packet, deterministic signature, blockhash lifetime, message/packet
+hashes, governed input hashes, and route-absence artifact hash are written and
+fsynced as an exclusive public intent. Finalized status is reconciled only by
+that locally expected signature and exact transaction message, then written as
+a durable resolution. An unresolved, failed, expired, or partially written
+intent blocks every replacement signer/broadcast attempt; it is never treated
+as permission to retry. These intent/resolution files contain no secret key
+bytes.
 `finish-production` runs this step before production requirements and cannot
 complete without a valid immutable post-readback report. Its mutation order is
-pre-finalization readiness, atomic finalization, then one-shot native-verifier
+read-only prerequisites, public-route status, pre-finalization readiness,
+atomic finalization, an atomic four-role readback, then one-shot native-verifier
 state configuration against the now-immutable outer/native ProgramData
-accounts, followed by fresh linkage/evidence reads. `--submit false` is a strict
+accounts. A second atomic readback becomes the sole source for post-deploy
+evidence, the candidate manifest, final TOML, production patch, proof bundle,
+and exact manifest-conformance report. If the route is already public, any
+remaining Solana program mutation is blocked until an explicit governed
+deactivation/upgrade procedure exists. Publication is followed by a new public
+preflight; smoke, media, and production gates never reuse the pre-publication
+snapshot. `--submit false` is a strict
 chain-mutation dry-run and disables those Solana mutations as well as TAIRA
-publication while still refreshing local reports.
+publication while still refreshing local reports. `finish-production` has no
+implicit submission default: omitting `--submit`, or providing anything other
+than the exact values `true` and `false`, fails before report, endpoint, signer,
+or mutation access. The finish report records `submissionMode`,
+`mutationAuthorized`, and a structured `submission` decision. A dry-run may
+report `ready: true` when fresh evidence proves the deployment is already
+complete and no mutation is required; authorization being disabled is kept as
+an execution decision rather than a production blocker.
+Every generated post-proof handoff (publication request, route-manager access,
+lane request/proposal, operator handoff, and activation package) is atomically
+written, stable-read, and propagated with its exact byte SHA-256. Downstream
+video and production gates reopen the selected paths only with matching pins
+and reject mixed proof-bundle generations. These are first-release schemas;
+path-only legacy overrides are intentionally unsupported.
+
+Use the explicit read-only assessment form when auditing current state:
+
+```bash
+npm run sccp:solana:finish-production -- \
+  --submit false \
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256> \
+  --output-dir output/sccp-solana-deploy \
+  --torii-url https://taira-validator-1.sora.org \
+  --mcp-url https://taira-validator-1.sora.org/v1/mcp \
+  --solana-rpc-url https://api.testnet.solana.com \
+  --skip-solana-rpc false
+```
+
+The final mutation-authorized run must retain all explicit irreversible
+confirmations; a prior readiness report or an omitted flag cannot authorize
+finalization:
+
+```bash
+SCCP_TAIRA_ROUTE_MANIFEST_AUTHORITY="<taira-route-manager-account-id>" \
+SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY="<runtime-only-private-key-hex>" \
+SCCP_SOLANA_DEPLOYER_SECRET_KEY="hex:<128-hex-runtime-secret>" \
+VITE_WALLETCONNECT_PROJECT_ID="<32-hex-walletconnect-project-id>" \
+VITE_SCCP_SOLANA_DESTINATION_PROVER_MODULE_URL="<browser-safe-destination-prover-module-url>" \
+VITE_SCCP_SOLANA_SOURCE_PROVER_MODULE_URL="<browser-safe-source-prover-module-url>" \
+npm run sccp:solana:finish-production -- \
+  --submit true \
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256> \
+  --confirm-finalize-programs true \
+  --confirm-finalize-linked-verifier true \
+  --governed-native-verifier-package <reviewed-native-verifier-package.json> \
+  --expected-governed-native-verifier-package-sha256 0x<independently-reviewed-package-byte-sha256> \
+  --confirm-governed-native-verifier true \
+  --governance-approval-file <reviewed-approval.json> \
+  --expected-governance-approval-sha256 0x<independent-approval-byte-hash> \
+  --material-roots <reviewed-artifact-root> \
+  --output-dir output/sccp-solana-deploy \
+  --torii-url https://taira-validator-1.sora.org \
+  --mcp-url https://taira-validator-1.sora.org/v1/mcp \
+  --solana-rpc-url https://api.testnet.solana.com \
+  --skip-solana-rpc false
+```
+
+If the production-requirements audit finds historical file-backed Solana key
+material under `output/sccp-solana*`, it is a canonical root-cause production
+blocker. An authorized operator must rotate or revoke every affected authority,
+remove those files, and retain custody evidence before rerunning the audit;
+`finish-production` never automates that destructive remediation.
 
 To publish a reviewed production manifest, the signer must be a TAIRA testnet
 `testu...` account holding `CanManageSccpRouteManifests`, and the private key
@@ -812,26 +934,32 @@ that signs:
 export SCCP_TAIRA_ROUTE_MANIFEST_AUTHORITY="<taira-route-manager-account-id>"
 
 npm run sccp:solana:deploy -- route-manifest-isi \
-  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256>
 
 npm run sccp:solana:deploy -- publish-readiness \
   --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256> \
   --torii-url https://taira-validator-1.sora.org \
   --mcp-url https://taira-validator-1.sora.org/v1/mcp
 
 npm run sccp:solana:deploy -- route-publication-request \
-  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256>
 
 npm run sccp:solana:deploy -- route-manager-access-request \
-  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256>
 
 npm run sccp:solana:deploy -- operator-handoff \
-  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json
+  --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256>
 
 SCCP_TAIRA_ROUTE_MANIFEST_PRIVATE_KEY="<runtime-only-private-key-hex>" \
 npm run sccp:solana:deploy -- publish-route-manifest \
   --submit true \
   --manifest output/sccp-solana-deploy/taira-solana-xor-route.manifest.json \
+  --expected-manifest-sha256 0x<independently-reviewed-exact-manifest-byte-sha256> \
   --torii-url https://taira-validator-1.sora.org \
   --mcp-url https://taira-validator-1.sora.org/v1/mcp
 ```
@@ -847,6 +975,13 @@ missing transaction-submission surface. When `--authority` or
 `publish-route-manifest --submit true` reruns the same readiness audit before
 submitting and writes `taira-solana-xor-route.publish-blocked.json` instead of
 attempting a partial publication when prerequisites are missing.
+Every publication-stage command must carry the same independently reviewed
+`--expected-manifest-sha256` for the exact manifest file bytes. This pin is not
+the canonical/object manifest hash and must not be recomputed silently at the
+signing boundary. If fresh public readback proves that exact canonical manifest
+is already published, `publish-route-manifest --submit true` returns a verified
+no-op before ISI generation, route-manager permission lookup, runtime signer
+environment inspection, or signer invocation.
 Publication accepts only the canonical
 `https://taira-validator-{1,2,3,4}.sora.org` roots and requires `--mcp-url` to
 equal the selected root plus `/v1/mcp`; an arbitrary non-default URL, mixed
@@ -863,7 +998,7 @@ permissions, submit a transaction, or claim governance activation.
 
 Artifacts are written under `output/sccp-solana-deploy/`. If Solana testnet funding, the compiled program, proof material, or public TAIRA route publication is unavailable, the command writes a blocked report instead of creating placeholder deployment evidence or a fake manifest.
 `npm run sccp:solana:deploy -- deployment-video` also reads the latest app smoke-readiness report from `output/sccp-solana-smoke-readiness/latest.json` by default, or a custom path via `--smoke-readiness`. The MP4/subtitle walkthrough includes real Solana deployment evidence, the public-lane activation request, activation-package hash, route-manager handoff state, and current WalletConnect/prover/preflight blockers instead of implying a live bidirectional smoke has completed.
-`npm run sccp:solana:refresh-evidence` refreshes the non-secret Solana SCCP evidence chain in dependency order: app smoke-readiness, operator handoff, activation package, deployment walkthrough MP4, production gate, blocked live-video diagnostic MP4, and a final production-gate pass. It forwards `--walletconnect-project-id`, `--destination-prover-module-url`, `--source-prover-module-url`, and `--manifest-file` into the smoke-readiness step without storing the WalletConnect project id value in the report. It writes `output/sccp-solana-deploy/taira-solana-xor-evidence-refresh.json` so route operators can see exactly which refreshed artifacts are current and which real production blockers remain. The same implementation is also available as `npm run sccp:solana:deploy -- refresh-evidence`.
+`npm run sccp:solana:refresh-evidence` refreshes the non-secret Solana SCCP evidence chain in dependency order. With live RPC enabled it first captures one canonical atomic snapshot, derives post-deploy evidence from that in-memory result, creates manifest patch evidence, drafts the route, and regenerates exact manifest conformance before any handoff, proof bundle, lane activation, media, or production gate runs. It forwards `--walletconnect-project-id`, `--destination-prover-module-url`, `--source-prover-module-url`, and `--manifest-file` into the smoke-readiness step without storing the WalletConnect project id value in the report. It writes `output/sccp-solana-deploy/taira-solana-xor-evidence-refresh.json` so route operators can see exactly which refreshed artifacts share one evidence hash and which real production blockers remain. The same implementation is also available as `npm run sccp:solana:deploy -- refresh-evidence`.
 `npm run sccp:solana:refresh-live-evidence` runs the same chain with `--skip-solana-rpc false`, so the lane activation, production gate, smoke-readiness, and live-video diagnostics include a live Solana testnet RPC health check in addition to the public TAIRA reads.
 
 Run the Solana route preflight:
@@ -889,6 +1024,12 @@ readiness report at
 `output/sccp-solana-production-gate/sccp-solana-production-gate.json`. Use
 `-- --allow-incomplete true` during rollout to write the report without treating
 the expected blocked state as a command failure.
+Each run also records a canonical `preLiveInputSnapshot` with the resolved
+path, presence, byte length, and SHA-256 of every JSON, deployment MP4, and VTT
+input that affected the gate. The report byte SHA returned by
+`finish-production`, together with that snapshot hash, is the only custom-output
+handoff accepted by the live-video success path; a caller-supplied collection
+of allegedly trusted paths is never accepted.
 For MP4 artifacts, the gate uses `ffprobe` to verify the container has a video
 stream and an embedded subtitle stream, and checks VTT subtitle files start with
 `WEBVTT`; a renamed or subtitle-less MP4 will not satisfy the video
@@ -927,14 +1068,19 @@ schema is changed to
 ```bash
 npm run e2e:sccp:solana-video -- \
   --live-evidence <completed-solana-bidirectional-live-evidence.json> \
-  --production-gate output/sccp-solana-production-gate/sccp-solana-production-gate.json \
-  --smoke-readiness output/sccp-solana-smoke-readiness/latest.json \
-  --activation-package output/sccp-solana-deploy/taira-solana-xor-activation-package.json \
-  --operator-handoff output/sccp-solana-deploy/taira-solana-xor-operator-handoff.json \
+  --production-gate-snapshot output/sccp-solana-production-gate/sccp-solana-production-gate.json \
+  --production-gate-snapshot-sha256 0x<independently-reviewed-report-byte-sha256> \
   --skip-solana-rpc false
 ```
 
-It refuses to generate an MP4 unless the route preflight is ready, the production gate has no non-video failures, and the supplied live-evidence file proves completed TAIRA -> Solana and Solana -> TAIRA transfers. When blocked, `-- --allow-incomplete` writes a JSON transcript and VTT subtitles explaining the blocker, but still does not create a fake success video.
+It exact-loads that report and every input in its pre-live snapshot, reruns a
+fresh production gate against the same snapshot, and refuses to generate an MP4
+unless the route preflight is ready, the fresh gate has no non-video failures,
+and the supplied live-evidence file proves completed TAIRA -> Solana and Solana
+-> TAIRA transfers. A blocked or dry-run invocation preserves any prior
+successful MP4/VTT/JSON evidence. When blocked, `-- --allow-incomplete` writes a
+JSON transcript and VTT subtitles explaining the blocker, but still does not
+create a fake success video.
 The blocked transcript also summarizes the latest production-requirements,
 publish-readiness, Solana smoke-readiness, source-material handoff
 verification, and proof-material bundle reports so the production gate can show

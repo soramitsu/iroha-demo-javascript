@@ -4,6 +4,12 @@
 
   --font-sans:
     "Sora", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-urdu:
+    "Noto Nastaliq Urdu", "Sora", "Urdu Typesetting", "Noto Naskh Arabic", serif;
+  --font-egyptian:
+    "Noto Sans Egyptian Hieroglyphs", "Sora", "Segoe UI Historic", sans-serif;
+  --font-akkadian:
+    "Noto Sans Cuneiform", "Sora", "Segoe UI Historic", sans-serif;
   --mono-font: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
 
   --space-1: 4px;
@@ -38,6 +44,21 @@
   --qs-ease: var(--ease-standard);
   --radius-lg: var(--radius-panel);
   --radius-xl: var(--radius-shell);
+}
+
+:root:lang(ur) {
+  --font-sans: var(--font-urdu);
+  font-synthesis: none;
+}
+
+:root:lang(egy) {
+  --font-sans: var(--font-egyptian);
+  font-synthesis: none;
+}
+
+:root:lang(akk) {
+  --font-sans: var(--font-akkadian);
+  font-synthesis: none;
 }
 
 :root[data-theme="dark"] {

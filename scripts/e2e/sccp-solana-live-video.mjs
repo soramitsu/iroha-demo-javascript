@@ -2,7 +2,7 @@
 /* global BigInt, globalThis */
 import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
@@ -19,10 +19,12 @@ import {
 import {
   assertSafeOutputDestination,
   commitGeneratedFileSync,
+  DEFAULT_SOLANA_TEXT_MAX_BYTES,
   ensureSafeOutputDirectory,
   parseStrictCliArgs,
   readStableJsonFile,
   readStableJsonFileIfExists,
+  readStableRegularFile,
   removeGeneratedFileSync,
   writeAtomicFile,
   writeAtomicJsonFile,
@@ -226,6 +228,8 @@ export const parseArgs = (argv) => {
       "deployment-video-transcript",
       "operator-handoff",
       "production-gate",
+      "production-gate-snapshot",
+      "production-gate-snapshot-sha256",
       "output-dir",
     ],
   });
@@ -277,6 +281,10 @@ Options:
                          Consolidated operator handoff for blocked diagnostics
   --production-gate PATH
                          Production-gate snapshot for blocked diagnostics only
+  --production-gate-snapshot PATH
+                         Exact pre-live production-gate report required for success
+  --production-gate-snapshot-sha256 HASH
+                         Exact SHA-256 of --production-gate-snapshot
   --output-dir PATH      Output directory (default: output/sccp-solana-live-video)
   --allow-incomplete     Write blocked transcript/subtitles/diagnostic MP4 and exit 0
   --skip-solana-rpc      Diagnostic-only; skipped RPC checks can never produce success
@@ -314,6 +322,101 @@ const readJsonIfExists = async (file) => {
   return readStableJsonFileIfExists(path.resolve(file), {
     label: "Solana live-video JSON input",
   });
+};
+
+const readPinnedProductionGateSnapshot = async ({ file, expectedSha256 }) => {
+  if (
+    typeof file !== "string" ||
+    !file.trim() ||
+    !/^0x[0-9a-f]{64}$/u.test(String(expectedSha256 ?? "").toLowerCase())
+  ) {
+    throw new Error(
+      "Solana live-video success requires a production-gate snapshot path and exact canonical SHA-256.",
+    );
+  }
+  const resolved = path.resolve(file);
+  const bytes = await readStableRegularFile(resolved, {
+    label: "Pinned pre-live Solana production-gate report",
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+  });
+  const actual = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+  if (actual !== String(expectedSha256).toLowerCase()) {
+    throw new Error(
+      `Pinned pre-live Solana production-gate report SHA-256 mismatch: expected ${expectedSha256}, got ${actual}.`,
+    );
+  }
+  let report;
+  try {
+    report = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(
+      "Pinned pre-live Solana production-gate report is invalid JSON.",
+    );
+  }
+  return { path: resolved, sha256: actual, report };
+};
+
+const readPinnedPreLiveSnapshotJson = async (snapshot, id) => {
+  const entry = snapshot?.inputs?.[id];
+  if (!entry?.present) return null;
+  const bytes = await readStableRegularFile(entry.path, {
+    label: `Pinned Solana live-video prerequisite ${id}`,
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+  });
+  const actual = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+  if (bytes.length !== entry.size || actual !== entry.sha256) {
+    throw new Error(
+      `Pinned Solana live-video prerequisite ${id} changed after the production gate snapshot.`,
+    );
+  }
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(
+      `Pinned Solana live-video prerequisite ${id} is invalid JSON.`,
+    );
+  }
+};
+
+const productionGateOptionsFromPreLiveSnapshot = ({ snapshot, outputDir }) => {
+  const pathFor = (id) => snapshot.inputs[id].path;
+  return {
+    requirements: pathFor("requirements"),
+    postDeployEvidence: pathFor("postDeployEvidence"),
+    proverReadiness: pathFor("proverReadiness"),
+    productionMaterialInventory: pathFor("productionMaterialInventory"),
+    routeManifest: pathFor("routeManifest"),
+    publishReadiness: pathFor("publishReadiness"),
+    routePublishBlocked: pathFor("routePublishBlocked"),
+    routePublicationRequest: pathFor("routePublicationRequest"),
+    routePublicationRequestSha256:
+      snapshot.inputs.routePublicationRequest.sha256,
+    routeManagerAccess: pathFor("routeManagerAccess"),
+    routeManagerAccessSha256: snapshot.inputs.routeManagerAccess.sha256,
+    operatorHandoff: pathFor("operatorHandoff"),
+    operatorHandoffSha256: snapshot.inputs.operatorHandoff.sha256,
+    activationPackage: pathFor("activationPackage"),
+    activationPackageSha256: snapshot.inputs.activationPackage.sha256,
+    laneActivationRequest: pathFor("laneActivationRequest"),
+    laneActivationRequestSha256: snapshot.inputs.laneActivationRequest.sha256,
+    laneActivationProposal: pathFor("laneActivationProposal"),
+    laneActivationProposalSha256: snapshot.inputs.laneActivationProposal.sha256,
+    sourceMaterialHandoff: pathFor("sourceMaterialHandoff"),
+    handoffVerification: pathFor("handoffVerification"),
+    sourceBurnReadiness: pathFor("sourceBurnReadiness"),
+    sourceBurnSubmission: pathFor("sourceBurnSubmission"),
+    proofMaterialRequest: pathFor("proofMaterialRequest"),
+    proofMaterialBundle: pathFor("proofMaterialBundle"),
+    proofMaterialCeremonyPackage: pathFor("proofMaterialCeremonyPackage"),
+    smokeReadiness: pathFor("smokeReadiness"),
+    deploymentVideoTranscript: pathFor("deploymentVideoTranscript"),
+    deploymentVideoMp4: pathFor("deploymentVideoMp4"),
+    deploymentVideoVtt: pathFor("deploymentVideoVtt"),
+    liveVideoTranscript: path.join(outputDir, "sccp-solana-live-video.json"),
+    liveVideoMp4: path.join(outputDir, "sccp-solana-live-video.mp4"),
+    liveVideoVtt: path.join(outputDir, "sccp-solana-live-video.vtt"),
+    expectedPreLiveInputSnapshotSha256: snapshot.preLiveInputSnapshotSha256,
+  };
 };
 
 const readArray = (record, key) =>
@@ -1243,6 +1346,17 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
   const injectedReadbackOverride =
     ownDataValue(options, "readbacks") !== undefined ||
     ownDataValue(options, "fetchImpl") !== undefined;
+  const callerTrustedChainOverride =
+    ownDataValue(options, "trustedGeneratedChain") !== undefined;
+  const callerProductionGateOptionsOverride =
+    ownDataValue(options, "productionGateOptions") !== undefined;
+  const productionGateSnapshotReady =
+    hasSuppliedPathOption(options, "productionGateSnapshot") &&
+    /^0x[0-9a-f]{64}$/u.test(
+      String(
+        ownDataValue(options, "productionGateSnapshotSha256") ?? "",
+      ).toLowerCase(),
+    );
   const base = buildSccpSolanaSuccessNetworkPolicy({
     toriiUrl: ownDataValue(options, "toriiUrl"),
     solanaRpcUrl:
@@ -1256,6 +1370,30 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
     governancePinReady,
   });
   const problems = [...base.problems];
+  if (callerTrustedChainOverride) {
+    problems.push(
+      successProblem(
+        "caller-trusted-generated-chain",
+        "Success evidence cannot accept a caller-declared trusted generated-report chain.",
+      ),
+    );
+  }
+  if (callerProductionGateOptionsOverride) {
+    problems.push(
+      successProblem(
+        "caller-production-gate-options",
+        "Success evidence cannot accept caller-supplied production-gate path options.",
+      ),
+    );
+  }
+  if (!productionGateSnapshotReady) {
+    problems.push(
+      successProblem(
+        "pinned-production-gate-snapshot",
+        "Success evidence requires one exact-byte-pinned pre-live production-gate snapshot.",
+      ),
+    );
+  }
   if (!freshPreflightCompleted) {
     problems.push(
       successProblem(
@@ -1281,6 +1419,7 @@ export const buildSolanaLiveVideoSuccessEvidencePolicy = ({
     freshPreflightCompleted,
     freshProductionGateCompleted,
     nativeNetworkClientsUsed: !injectedReadbackOverride,
+    productionGateSnapshotReady,
     problems,
   };
 };
@@ -4047,25 +4186,37 @@ Step 6: Canonical testnet and TAIRA readbacks proved both finalized transactions
   const transcriptPath = path.join(outputDir, "sccp-solana-live-video.json");
   const subtitlesPath = path.join(outputDir, "sccp-solana-live-video.vtt");
   const videoPath = path.join(outputDir, "sccp-solana-live-video.mp4");
+  const stagingSuffix = `.next-${randomUUID()}`;
+  const stagingSubtitlesPath = `${subtitlesPath}${stagingSuffix}`;
+  const stagingVideoPath = `${videoPath}${stagingSuffix}`;
   await Promise.all(
-    [transcriptPath, subtitlesPath, videoPath].map((file) =>
-      assertSafeOutputDestination(file),
-    ),
+    [
+      transcriptPath,
+      subtitlesPath,
+      videoPath,
+      stagingSubtitlesPath,
+      stagingVideoPath,
+    ].map((file) => assertSafeOutputDestination(file)),
   );
-  await writeAtomicFile(subtitlesPath, subtitleText);
   transcript.videoArtifacts = [
     { path: videoPath, mediaType: "video/mp4" },
     { path: subtitlesPath, mediaType: "text/vtt" },
   ];
   try {
+    await writeAtomicFile(stagingSubtitlesPath, subtitleText);
     transcript.mediaVerification = renderSolanaLiveVideoMp4({
-      subtitlesPath,
-      videoPath,
+      subtitlesPath: stagingSubtitlesPath,
+      videoPath: stagingVideoPath,
       durationSeconds: 31,
       subtitleSummary: transcript.subtitleSummary,
     });
+    commitGeneratedFileSync(stagingVideoPath, videoPath);
+    await rename(stagingSubtitlesPath, subtitlesPath);
   } catch (error) {
-    await rm(subtitlesPath, { force: true }).catch(() => {});
+    await Promise.all([
+      rm(stagingSubtitlesPath, { force: true }).catch(() => {}),
+      rm(stagingVideoPath, { force: true }).catch(() => {}),
+    ]);
     throw error;
   }
   await writeAtomicJsonFile(transcriptPath, transcript);
@@ -4085,43 +4236,134 @@ export const removeStaleSuccessfulArtifacts = async (outputDir) => {
 
 export const runSccpSolanaLiveVideoGate = async (options = {}) => {
   const outputDir = path.resolve(options.outputDir || DEFAULT_OUTPUT_DIR);
-  await removeStaleSuccessfulArtifacts(outputDir);
+  let pinnedProductionGateSnapshot = null;
+  let pinnedPreLiveInputSnapshot = null;
+  if (
+    options.productionGateSnapshot !== undefined ||
+    options.productionGateSnapshotSha256 !== undefined
+  ) {
+    try {
+      pinnedProductionGateSnapshot = await readPinnedProductionGateSnapshot({
+        file: options.productionGateSnapshot,
+        expectedSha256: options.productionGateSnapshotSha256,
+      });
+      const { validateSolanaProductionGatePreLiveInputSnapshot } = await import(
+        "./sccp-solana-production-gate.mjs"
+      );
+      const report = pinnedProductionGateSnapshot.report;
+      pinnedPreLiveInputSnapshot =
+        validateSolanaProductionGatePreLiveInputSnapshot(
+          report?.preLiveInputSnapshot,
+        );
+      const nonVideoFailures = readArray(report, "failedCheckIds").filter(
+        (id) => id !== "live-bidirectional-video",
+      );
+      if (
+        report?.schema !== "iroha-demo-sccp-solana-production-gate/v1" ||
+        report?.routeId !== SCCP_SOLANA_XOR_ROUTE_ID ||
+        report?.preLiveInputSnapshotSha256 !==
+          pinnedPreLiveInputSnapshot.preLiveInputSnapshotSha256 ||
+        report?.successExecutionPolicy?.ready !== true ||
+        nonVideoFailures.length > 0
+      ) {
+        throw new Error(
+          `Pinned pre-live production gate is not success-eligible: ${
+            nonVideoFailures.join(", ") || "success-execution-policy"
+          }.`,
+        );
+      }
+    } catch (error) {
+      const reason = `Solana SCCP live video blocked: pinned production-gate snapshot validation failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      const preflightReport = {
+        schema: "iroha-demo-sccp-solana-route-preflight/v1",
+        ready: false,
+        routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+        checks: [
+          {
+            id: "pinned-production-gate-snapshot",
+            status: "fail",
+            detail: reason,
+          },
+        ],
+      };
+      const blocked = await writeBlockedArtifacts({
+        outputDir,
+        preflightReport,
+        reason,
+        diagnostics: buildSolanaLiveVideoBlockedDiagnostics({}),
+        successPrerequisiteProblems: [
+          { id: "pinned-production-gate-snapshot", detail: reason },
+        ],
+      });
+      return {
+        ready: false,
+        reason,
+        successEvidencePolicy: null,
+        preflightReportPath: null,
+        ...blocked,
+      };
+    }
+  }
+  const snapshotPath = (id, fallback) =>
+    pinnedPreLiveInputSnapshot?.inputs?.[id]?.path ?? fallback;
   const productionRequirementsPath = path.resolve(
-    options.productionRequirements || DEFAULT_PRODUCTION_REQUIREMENTS_PATH,
+    options.productionRequirements ||
+      snapshotPath("requirements", DEFAULT_PRODUCTION_REQUIREMENTS_PATH),
   );
   const publishReadinessPath = path.resolve(
-    options.publishReadiness || DEFAULT_PUBLISH_READINESS_PATH,
+    options.publishReadiness ||
+      snapshotPath("publishReadiness", DEFAULT_PUBLISH_READINESS_PATH),
   );
   const routePublicationRequestPath = path.resolve(
-    options.routePublicationRequest || DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH,
+    options.routePublicationRequest ||
+      snapshotPath(
+        "routePublicationRequest",
+        DEFAULT_ROUTE_PUBLICATION_REQUEST_PATH,
+      ),
   );
   const smokeReadinessPath = path.resolve(
-    options.smokeReadiness || DEFAULT_SMOKE_READINESS_PATH,
+    options.smokeReadiness ||
+      snapshotPath("smokeReadiness", DEFAULT_SMOKE_READINESS_PATH),
   );
   const handoffVerificationPath = path.resolve(
-    options.handoffVerification || DEFAULT_HANDOFF_VERIFICATION_PATH,
+    options.handoffVerification ||
+      snapshotPath("handoffVerification", DEFAULT_HANDOFF_VERIFICATION_PATH),
   );
   const proofMaterialBundlePath = path.resolve(
-    options.proofMaterialBundle || DEFAULT_PROOF_MATERIAL_BUNDLE_PATH,
+    options.proofMaterialBundle ||
+      snapshotPath("proofMaterialBundle", DEFAULT_PROOF_MATERIAL_BUNDLE_PATH),
   );
   const activationPackagePath = path.resolve(
-    options.activationPackage || DEFAULT_ACTIVATION_PACKAGE_PATH,
+    options.activationPackage ||
+      snapshotPath("activationPackage", DEFAULT_ACTIVATION_PACKAGE_PATH),
   );
   const deploymentVideoTranscriptPath = path.resolve(
     options.deploymentVideoTranscript ||
-      DEFAULT_DEPLOYMENT_VIDEO_TRANSCRIPT_PATH,
+      snapshotPath(
+        "deploymentVideoTranscript",
+        DEFAULT_DEPLOYMENT_VIDEO_TRANSCRIPT_PATH,
+      ),
   );
   const operatorHandoffPath = path.resolve(
-    options.operatorHandoff || DEFAULT_OPERATOR_HANDOFF_PATH,
+    options.operatorHandoff ||
+      snapshotPath("operatorHandoff", DEFAULT_OPERATOR_HANDOFF_PATH),
   );
   let productionGatePath = path.resolve(
-    options.productionGate || DEFAULT_PRODUCTION_GATE_PATH,
+    options.productionGate ||
+      pinnedProductionGateSnapshot?.path ||
+      DEFAULT_PRODUCTION_GATE_PATH,
   );
   const suppliedPreflightReportPath =
     typeof options.preflightReport === "string" &&
     options.preflightReport.trim()
       ? path.resolve(options.preflightReport)
       : null;
+  const readPrerequisite = (id, file) =>
+    pinnedPreLiveInputSnapshot
+      ? readPinnedPreLiveSnapshotJson(pinnedPreLiveInputSnapshot, id)
+      : readJsonIfExists(file);
   let [
     productionRequirementsReport,
     publishReadinessReport,
@@ -4134,16 +4376,21 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
     operatorHandoffReport,
     productionGateReport,
   ] = await Promise.all([
-    readJsonIfExists(productionRequirementsPath),
-    readJsonIfExists(publishReadinessPath),
-    readJsonIfExists(routePublicationRequestPath),
-    readJsonIfExists(smokeReadinessPath),
-    readJsonIfExists(handoffVerificationPath),
-    readJsonIfExists(proofMaterialBundlePath),
-    readJsonIfExists(activationPackagePath),
-    readJsonIfExists(deploymentVideoTranscriptPath),
-    readJsonIfExists(operatorHandoffPath),
-    readJsonIfExists(productionGatePath),
+    readPrerequisite("requirements", productionRequirementsPath),
+    readPrerequisite("publishReadiness", publishReadinessPath),
+    readPrerequisite("routePublicationRequest", routePublicationRequestPath),
+    readPrerequisite("smokeReadiness", smokeReadinessPath),
+    readPrerequisite("handoffVerification", handoffVerificationPath),
+    readPrerequisite("proofMaterialBundle", proofMaterialBundlePath),
+    readPrerequisite("activationPackage", activationPackagePath),
+    readPrerequisite(
+      "deploymentVideoTranscript",
+      deploymentVideoTranscriptPath,
+    ),
+    readPrerequisite("operatorHandoff", operatorHandoffPath),
+    pinnedProductionGateSnapshot
+      ? pinnedProductionGateSnapshot.report
+      : readJsonIfExists(productionGatePath),
   ]);
   let diagnostics = buildSolanaLiveVideoBlockedDiagnostics({
     productionRequirementsReport,
@@ -4252,6 +4499,10 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
         "./sccp-solana-production-gate.mjs"
       );
       const freshGate = await runSccpSolanaProductionGate({
+        ...productionGateOptionsFromPreLiveSnapshot({
+          snapshot: pinnedPreLiveInputSnapshot,
+          outputDir,
+        }),
         toriiUrl: options.toriiUrl,
         solanaRpcUrl: options.solanaRpcUrl || CANONICAL_SOLANA_TESTNET_RPC_URL,
         outputDir: path.join(outputDir, "fresh-production-gate"),
@@ -4259,6 +4510,22 @@ export const runSccpSolanaLiveVideoGate = async (options = {}) => {
         fetchAttempts: options.fetchAttempts,
         skipSolanaRpc: false,
       });
+      const nonVideoFailures = readArray(
+        freshGate.report,
+        "failedCheckIds",
+      ).filter((id) => id !== "live-bidirectional-video");
+      if (
+        freshGate.report?.preLiveInputSnapshotSha256 !==
+          pinnedPreLiveInputSnapshot?.preLiveInputSnapshotSha256 ||
+        freshGate.report?.successExecutionPolicy?.ready !== true ||
+        nonVideoFailures.length > 0
+      ) {
+        throw new Error(
+          `Fresh production gate did not reproduce the pinned success-eligible input snapshot: ${
+            nonVideoFailures.join(", ") || "snapshot-or-success-policy"
+          }.`,
+        );
+      }
       freshProductionGateCompleted = true;
       freshProductionGateReport = freshGate.report;
       freshProductionGatePath = freshGate.reportPath;
@@ -4485,6 +4752,8 @@ const main = async () => {
     deploymentVideoTranscript: args["deployment-video-transcript"],
     operatorHandoff: args["operator-handoff"],
     productionGate: args["production-gate"],
+    productionGateSnapshot: args["production-gate-snapshot"],
+    productionGateSnapshotSha256: args["production-gate-snapshot-sha256"],
     outputDir: args["output-dir"],
     skipSolanaRpc: args["skip-solana-rpc"],
   });

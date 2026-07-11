@@ -1,7 +1,11 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createPinia, setActivePinia } from "pinia";
 import { mount, type VueWrapper } from "@vue/test-utils";
+import { nextTick } from "vue";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SakuraScene from "@/components/SakuraScene.vue";
+import { useThemeStore } from "@/stores/theme";
 
 type MotionListener = (event: MediaQueryListEvent) => void;
 
@@ -75,6 +79,16 @@ const installMotionPreference = (initial: boolean) => {
   };
 };
 
+const sakuraSource = readFileSync(
+  resolve(process.cwd(), "src/components/SakuraScene.vue"),
+  "utf8",
+);
+
+const petalTranslations = (context: ReturnType<typeof createCanvasContext>) =>
+  context.translate.mock.calls
+    .filter((_, index) => index % 2 === 1)
+    .map(([x, y]) => [x, y]);
+
 describe("SakuraScene", () => {
   let context: ReturnType<typeof createCanvasContext>;
   let wrappers: VueWrapper[];
@@ -130,6 +144,7 @@ describe("SakuraScene", () => {
 
   afterEach(() => {
     wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
+    localStorage.removeItem("iroha-demo:theme");
     document.documentElement.style.removeProperty("--parallax-x");
     document.documentElement.style.removeProperty("--parallax-y");
     vi.restoreAllMocks();
@@ -144,7 +159,20 @@ describe("SakuraScene", () => {
     expect(canvas.width).toBe(800);
     expect(canvas.height).toBe(600);
     expect(canvas.getAttribute("aria-hidden")).toBe("true");
+    expect(canvas.classList.contains("sakura-layer")).toBe(true);
     expect(context.setTransform).toHaveBeenCalledWith(2, 0, 0, 2, 0, 0);
+  });
+
+  it("keeps the decorative canvas behind the app and outside hit testing", () => {
+    installMotionPreference(false);
+
+    const canvas = mountScene().get("canvas");
+
+    expect(canvas.attributes("aria-hidden")).toBe("true");
+    expect(canvas.classes()).toContain("sakura-layer");
+    expect(sakuraSource).toMatch(
+      /\.sakura-layer\s*{[^}]*position:\s*fixed;[^}]*inset:\s*0;[^}]*pointer-events:\s*none;[^}]*z-index:\s*0;[^}]*}/s,
+    );
   });
 
   it.each([
@@ -177,6 +205,88 @@ describe("SakuraScene", () => {
 
     expect(requestFrame).not.toHaveBeenCalled();
     expect(context.fill).toHaveBeenCalled();
+  });
+
+  it("repaints the same static composition when reduced-motion colors change", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.25);
+    installMotionPreference(true);
+    mountScene();
+    const originalComposition = petalTranslations(context).slice(-18);
+
+    context.translate.mockClear();
+    useThemeStore().setTheme("light");
+    await nextTick();
+
+    expect(requestFrame).not.toHaveBeenCalled();
+    expect(petalTranslations(context)).toEqual(originalComposition);
+    expect(context.fillStyle).toBe("rgba(247, 166, 198, 0.92)");
+  });
+
+  it.each([
+    ["dark", "rgba(252, 181, 212, 0.9)"],
+    ["light", "rgba(247, 166, 198, 0.92)"],
+  ] as const)("preserves the %s-theme sakura color", (theme, color) => {
+    localStorage.setItem("iroha-demo:theme", theme);
+    installMotionPreference(true);
+
+    mountScene();
+
+    expect(context.fillStyle).toBe(color);
+  });
+
+  it("preserves the notched, tapered sakura petal path", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    installMotionPreference(true);
+
+    mountScene();
+
+    expect(context.moveTo.mock.calls.length).toBeGreaterThanOrEqual(18);
+    expect(context.bezierCurveTo).toHaveBeenCalledTimes(
+      context.moveTo.mock.calls.length * 6,
+    );
+    const roundedMove = context.moveTo.mock.calls[0].map((value) =>
+      Number(value.toFixed(4)),
+    );
+    const roundedCurves = context.bezierCurveTo.mock.calls
+      .slice(0, 6)
+      .map((curve) => curve.map((value) => Number(value.toFixed(4))));
+
+    expect(roundedMove).toEqual([0, -6.8096]);
+    expect(roundedCurves).toEqual([
+      [1.3728, -9.1392, 3.4944, -8.2432, 4.2432, -4.8384],
+      [5.616, -0.1792, 3.8688, 4.1216, 1.3728, 8.512],
+      [0.4992, 9.9456, 0.1872, 10.752, 0, 11.0208],
+      [-0.3744, 10.3936, -0.9984, 9.408, -1.872, 8.064],
+      [-4.6176, 3.0464, -5.928, -0.5376, -4.1184, -5.1968],
+      [-3.4944, -8.2432, -1.248, -9.1392, 0, -6.8096],
+    ]);
+  });
+
+  it("sticks petals to the windward edge and releases them when wind calms", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    installMotionPreference(false);
+    mountScene();
+
+    window.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 0, clientY: 150 }),
+    );
+    runFrame(2, 1);
+    context.translate.mockClear();
+    runFrame(1, 1000 / 60);
+
+    expect(context.translate.mock.calls[0]).toEqual([-2, 0]);
+    expect(petalTranslations(context).every(([x]) => x === 8)).toBe(true);
+
+    window.dispatchEvent(
+      new MouseEvent("pointermove", { clientX: 200, clientY: 150 }),
+    );
+    runFrame(4, 20);
+    runFrame(3, 2000 / 60);
+    context.translate.mockClear();
+    runFrame(5, 3000 / 60);
+
+    expect(context.translate.mock.calls[0]).toEqual([0, 0]);
+    expect(petalTranslations(context).every(([x]) => x < 8)).toBe(true);
   });
 
   it("scales petal density and backing dimensions after a viewport resize", () => {

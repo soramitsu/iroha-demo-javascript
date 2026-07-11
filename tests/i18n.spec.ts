@@ -7,11 +7,14 @@ import {
   detectPreferredLocale,
   getLocaleDirection,
   hasLocaleTranslation,
+  HISTORICAL_UI_TRANSLATION_KEYS,
   isSupportedLocale,
+  LOCALE_LABELS,
   isRtlLocale,
   SUPPORTED_LOCALES,
   translate,
 } from "@/i18n/messages";
+import { isHistoricalTechnicalToken } from "@/i18n/ancientTranslations";
 import { QUIET_SAKURA_TRANSLATION_KEYS } from "@/i18n/quietSakuraTranslations";
 import { useLocaleStore } from "@/stores/locale";
 import { useAppI18n } from "@/composables/useAppI18n";
@@ -83,6 +86,47 @@ const collectHardcodedPlaceholders = (): Array<{
   walk(sourceRoot);
   return entries;
 };
+
+const HISTORICAL_LOCALES = ["egy-Egyp", "akk-Xsux"] as const;
+const HISTORICAL_SCRIPTS = {
+  "egy-Egyp": /\p{Script=Egyptian_Hieroglyphs}/u,
+  "akk-Xsux": /\p{Script=Cuneiform}/u,
+} as const;
+const SEMANTIC_CONNECTORS = new Set([
+  "a",
+  "an",
+  "and",
+  "as",
+  "at",
+  "by",
+  "for",
+  "from",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "the",
+  "to",
+  "via",
+  "with",
+]);
+const LATIN_OR_MACHINE_TOKEN_PATTERN =
+  /https?:\/\/[^\s]+|\/v\d+\/[^\s]+|[A-Za-z][A-Za-z0-9]*(?:[-_.:/+@#][A-Za-z0-9]+)*/g;
+
+const getTemplateParameters = (text: string): string[] =>
+  [...text.matchAll(/\{([\w]+)\}/g)].map((match) => match[1]).sort();
+
+const getVisibleLatinOrMachineTokens = (text: string): string[] =>
+  text.replace(/\{[\w]+\}/g, "").match(LATIN_OR_MACHINE_TOKEN_PATTERN) ?? [];
+
+const sourceNeedsNativeScript = (text: string): boolean =>
+  getVisibleLatinOrMachineTokens(text).some(
+    (token) =>
+      !isHistoricalTechnicalToken(token) &&
+      !SEMANTIC_CONNECTORS.has(token.toLowerCase()),
+  );
 
 describe("i18n messages", () => {
   it("falls back to key text and interpolates params", () => {
@@ -156,6 +200,8 @@ describe("i18n messages", () => {
   it("validates locale support", () => {
     expect(isSupportedLocale("en-US")).toBe(true);
     expect(isSupportedLocale("ar-SA")).toBe(true);
+    expect(isSupportedLocale("akk-Xsux")).toBe(true);
+    expect(isSupportedLocale("egy-Egyp")).toBe(true);
     expect(isSupportedLocale("fr-FR")).toBe(true);
     expect(isSupportedLocale("ja-JP")).toBe(true);
     expect(isSupportedLocale("pt-PT")).toBe(true);
@@ -171,10 +217,14 @@ describe("i18n messages", () => {
   it("exposes locale writing direction helpers", () => {
     expect(getLocaleDirection("en-US")).toBe("ltr");
     expect(getLocaleDirection("ja-JP")).toBe("ltr");
+    expect(getLocaleDirection("egy-Egyp")).toBe("ltr");
+    expect(getLocaleDirection("akk-Xsux")).toBe("ltr");
     expect(getLocaleDirection("ar-SA")).toBe("rtl");
     expect(getLocaleDirection("he-IL")).toBe("rtl");
     expect(getLocaleDirection("ur-PK")).toBe("rtl");
     expect(isRtlLocale("fa-IR")).toBe(true);
+    expect(isRtlLocale("egy-Egyp")).toBe(false);
+    expect(isRtlLocale("akk-Xsux")).toBe(false);
     expect(isRtlLocale("ru-RU")).toBe(false);
   });
 
@@ -246,6 +296,98 @@ describe("i18n messages", () => {
 
     languageSpy.mockRestore();
     languagesSpy.mockRestore();
+  });
+
+  it.each([
+    ["egy", "egy-Egyp"],
+    ["akk", "akk-Xsux"],
+  ] as const)("maps the %s language prefix", (language, expected) => {
+    const languageSpy = vi
+      .spyOn(window.navigator, "language", "get")
+      .mockReturnValue("xx-YY");
+    const languagesSpy = vi
+      .spyOn(window.navigator, "languages", "get")
+      .mockReturnValue([language, "en-US"]);
+
+    expect(detectPreferredLocale()).toBe(expected);
+
+    languageSpy.mockRestore();
+    languagesSpy.mockRestore();
+  });
+
+  it("uses semantic native-script labels for core historical-locale actions", () => {
+    const egyptian = {
+      Wallet: "𓉐𓌉",
+      Send: "𓊄𓃀𓂻",
+      Receive: "𓊏𓊪𓂡",
+    } as const;
+    const oldAkkadian = {
+      Wallet: "𒆬𒌓",
+      Send: "𒁕𒊏𒌈",
+      Receive: "𒈠𒄩𒀸",
+    } as const;
+
+    for (const [key, value] of Object.entries(egyptian)) {
+      expect(translate("egy-Egyp", key)).toBe(value);
+      expect(value).toMatch(/\p{Script=Egyptian_Hieroglyphs}/u);
+      expect(value).not.toMatch(/[A-Za-z]/u);
+    }
+    for (const [key, value] of Object.entries(oldAkkadian)) {
+      expect(translate("akk-Xsux", key)).toBe(value);
+      expect(value).toMatch(/\p{Script=Cuneiform}/u);
+      expect(value).not.toMatch(/[A-Za-z]/u);
+    }
+
+    expect(translate("egy-Egyp", "Torii URL")).toBe("Torii URL");
+    expect(translate("akk-Xsux", "Torii URL")).toBe("Torii URL");
+  });
+
+  it("materializes every historical UI key without silent English fallback", () => {
+    expect(LOCALE_LABELS["egy-Egyp"]).toMatch(HISTORICAL_SCRIPTS["egy-Egyp"]);
+    expect(LOCALE_LABELS["akk-Xsux"]).toMatch(HISTORICAL_SCRIPTS["akk-Xsux"]);
+
+    const allUiKeys = new Set([
+      ...HISTORICAL_UI_TRANSLATION_KEYS,
+      ...collectTranslationKeys(),
+    ]);
+
+    for (const locale of HISTORICAL_LOCALES) {
+      for (const key of allUiKeys) {
+        const english = translate("en-US", key);
+        const translated = translate(locale, key);
+
+        expect(hasLocaleTranslation(locale, key), `${locale}: ${key}`).toBe(
+          true,
+        );
+        expect(
+          getTemplateParameters(translated),
+          `${locale} must preserve parameters for ${key}`,
+        ).toEqual(getTemplateParameters(english));
+
+        const unsupportedLatin = getVisibleLatinOrMachineTokens(
+          translated,
+        ).filter((token) => !isHistoricalTechnicalToken(token));
+        expect(
+          unsupportedLatin,
+          `${locale} leaked English for ${key}: ${translated}`,
+        ).toEqual([]);
+
+        if (sourceNeedsNativeScript(english)) {
+          expect(
+            translated,
+            `${locale} needs native-script semantics for ${key}`,
+          ).toMatch(HISTORICAL_SCRIPTS[locale]);
+          expect(translated, `${locale} fell back on ${key}`).not.toBe(english);
+        }
+      }
+    }
+
+    expect(
+      hasLocaleTranslation("egy-Egyp", "Unregistered English sentinel"),
+    ).toBe(false);
+    expect(
+      hasLocaleTranslation("akk-Xsux", "Unregistered English sentinel"),
+    ).toBe(false);
   });
 
   it("covers all extracted translation keys for non-English locales", () => {

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { lstat } from "node:fs/promises";
+import { constants as fsConstants, existsSync } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AccountAddress } from "@iroha/iroha-js/address";
@@ -23,7 +23,6 @@ import {
 import {
   DEFAULT_SOLANA_TEXT_MAX_BYTES,
   parseStrictCliArgs,
-  readStableJsonFileIfExists,
   readStableRegularFile,
   withStableRegularFileDescriptorsSync,
   writeAtomicJsonFile,
@@ -7872,6 +7871,7 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
   freshPreflightCompleted = false,
   preflightReport = null,
   publishReadinessReport = null,
+  generatedHandoffPinsReady = true,
 } = {}) => {
   const publicEndpoint = readFirstRecord(
     publishReadinessReport,
@@ -7913,6 +7913,13 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
     governancePinReady,
   });
   const problems = [...base.problems];
+  if (!generatedHandoffPinsReady) {
+    problems.push({
+      id: "generated-handoff-byte-pins",
+      detail:
+        "Production completion requires exact byte pins for all six generated publication, access, lane, operator, and activation handoffs.",
+    });
+  }
   if (!freshPreflightCompleted) {
     problems.push({
       id: "fresh-public-preflight-completed",
@@ -7936,6 +7943,7 @@ export const buildSolanaProductionGateSuccessExecutionPolicy = ({
     schema: "iroha-demo-sccp-solana-production-gate-success-policy/v1",
     mode: "canonical-fresh-read-only-v1",
     freshPreflightCompleted,
+    generatedHandoffPinsReady,
     preflightEndpointIdentityReady,
     ready: problems.length === 0,
     problems,
@@ -8338,6 +8346,7 @@ export const buildSolanaProductionGateReport = ({
   blockedLiveVideoMp4Path = DEFAULT_BLOCKED_LIVE_VIDEO_MP4_PATH,
   blockedLiveVideoVttPath = DEFAULT_BLOCKED_LIVE_VIDEO_VTT_PATH,
   artifactFacts = {},
+  preLiveInputSnapshot = null,
   successExecutionPolicy,
   liveVideoAuthoritativeRevalidation,
   expectedLiveEvidencePackageHashes,
@@ -8628,6 +8637,7 @@ export const buildSolanaProductionGateReport = ({
     blockedLiveVideoMp4Path,
     blockedLiveVideoVttPath,
     artifactFacts,
+    preLiveInputSnapshot,
     successExecutionPolicy,
     authoritativeRevalidation: liveVideoAuthoritativeRevalidation,
     activationPackageReport,
@@ -8740,6 +8750,9 @@ export const buildSolanaProductionGateReport = ({
       publicPreflight.evidence?.publicSolanaCapability ?? null,
     publicSolanaLane: publicSolanaLane.evidence ?? null,
     routePublication: publicRoutePublication,
+    preLiveInputSnapshot,
+    preLiveInputSnapshotSha256:
+      preLiveInputSnapshot?.preLiveInputSnapshotSha256 ?? null,
     successExecutionPolicy: successExecutionPolicy ?? null,
     liveVideoAuthoritativeRevalidation:
       liveVideoAuthoritativeRevalidation ?? null,
@@ -8810,11 +8823,17 @@ export const parseArgs = (argv) =>
       "publish-readiness",
       "route-publish-blocked",
       "route-publication-request",
+      "route-publication-request-sha256",
       "route-manager-access-request",
+      "route-manager-access-request-sha256",
       "operator-handoff",
+      "operator-handoff-sha256",
       "activation-package",
+      "activation-package-sha256",
       "lane-activation-request",
+      "lane-activation-request-sha256",
       "lane-activation-proposal",
+      "lane-activation-proposal-sha256",
       "source-material-handoff",
       "handoff-verification",
       "source-burn-readiness",
@@ -8826,6 +8845,7 @@ export const parseArgs = (argv) =>
       "deployment-video-transcript",
       "deployment-video-mp4",
       "deployment-video-vtt",
+      "expected-pre-live-input-snapshot-sha256",
       "live-video-transcript",
       "live-video-mp4",
       "live-video-vtt",
@@ -8856,11 +8876,17 @@ Options:
   --publish-readiness PATH                Route publish-readiness report
   --route-publish-blocked PATH            Blocked route publish attempt report
   --route-publication-request PATH        Route-manager publication request handoff report
+  --route-publication-request-sha256 HASH Exact publication-request byte pin
   --route-manager-access-request PATH     Route-manager access/signing handoff report
+  --route-manager-access-request-sha256 HASH Exact access-request byte pin
   --operator-handoff PATH                 Consolidated Solana operator handoff report
+  --operator-handoff-sha256 HASH          Exact operator-handoff byte pin
   --activation-package PATH               TAIRA Solana activation package report
+  --activation-package-sha256 HASH        Exact activation-package byte pin
   --lane-activation-request PATH          Public Solana lane activation request package
+  --lane-activation-request-sha256 HASH   Exact lane-request byte pin
   --lane-activation-proposal PATH         Public Solana lane activation proposal package
+  --lane-activation-proposal-sha256 HASH  Exact lane-proposal byte pin
   --source-material-handoff PATH          Source-material handoff package
   --handoff-verification PATH             Source-material handoff verification report
   --source-burn-readiness PATH            Source-burn readiness report
@@ -8872,6 +8898,8 @@ Options:
   --deployment-video-transcript PATH      Deployment video transcript JSON
   --deployment-video-mp4 PATH             Deployment MP4 path
   --deployment-video-vtt PATH             Deployment subtitle VTT path
+  --expected-pre-live-input-snapshot-sha256 HASH
+                                           Require the exact prior pre-live input snapshot
   --live-video-transcript PATH            Completed bidirectional live-video transcript JSON
   --live-video-mp4 PATH                   Completed bidirectional live MP4 path
   --live-video-vtt PATH                   Completed bidirectional live subtitle VTT path
@@ -8886,17 +8914,275 @@ Options:
 `);
 };
 
-const readJsonIfExists = async (file) => {
+export const SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_SNAPSHOT_SCHEMA =
+  "iroha-demo-sccp-solana-production-gate-pre-live-input-snapshot/v1";
+
+export const SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS = Object.freeze({
+  requirements: "requirements",
+  postDeployEvidence: "postDeployEvidence",
+  proverReadiness: "proverReadiness",
+  productionMaterialInventory: "productionMaterialInventory",
+  routeManifest: "routeManifest",
+  publishReadiness: "publishReadiness",
+  routePublishBlocked: "routePublishBlocked",
+  routePublicationRequest: "routePublicationRequest",
+  routeManagerAccess: "routeManagerAccess",
+  operatorHandoff: "operatorHandoff",
+  activationPackage: "activationPackage",
+  laneActivationRequest: "laneActivationRequest",
+  laneActivationProposal: "laneActivationProposal",
+  sourceMaterialHandoff: "sourceMaterialHandoff",
+  handoffVerification: "handoffVerification",
+  sourceBurnReadiness: "sourceBurnReadiness",
+  sourceBurnSubmission: "sourceBurnSubmission",
+  proofMaterialRequest: "proofMaterialRequest",
+  proofMaterialBundle: "proofMaterialBundle",
+  proofMaterialCeremonyPackage: "proofMaterialCeremonyPackage",
+  smokeReadiness: "smokeReadiness",
+  deploymentVideoTranscript: "deploymentVideoTranscript",
+  deploymentVideoMp4: "deploymentVideoMp4",
+  deploymentVideoVtt: "deploymentVideoVtt",
+});
+
+const canonicalPreLiveInputSnapshotBody = (inputs) => ({
+  schema: SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_SNAPSHOT_SCHEMA,
+  routeId: SCCP_SOLANA_XOR_ROUTE_ID,
+  inputs: Object.fromEntries(
+    Object.entries(inputs ?? {}).sort(([left], [right]) =>
+      left.localeCompare(right),
+    ),
+  ),
+});
+
+const preLiveInputSnapshotSha256 = (body) =>
+  `0x${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
+
+export const buildSolanaProductionGatePreLiveInputSnapshot = (inputs = {}) => {
+  const body = canonicalPreLiveInputSnapshotBody(inputs);
+  return {
+    ...body,
+    preLiveInputSnapshotSha256: preLiveInputSnapshotSha256(body),
+  };
+};
+
+export const validateSolanaProductionGatePreLiveInputSnapshot = (snapshot) => {
+  if (
+    !isRecord(snapshot) ||
+    snapshot.schema !== SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_SNAPSHOT_SCHEMA ||
+    snapshot.routeId !== SCCP_SOLANA_XOR_ROUTE_ID ||
+    !isRecord(snapshot.inputs)
+  ) {
+    throw new Error(
+      "Solana production-gate pre-live input snapshot is invalid.",
+    );
+  }
+  const expectedIds = Object.keys(
+    SOLANA_PRODUCTION_GATE_PRE_LIVE_INPUT_OPTION_KEYS,
+  ).sort();
+  const observedIds = Object.keys(snapshot.inputs).sort();
+  if (JSON.stringify(expectedIds) !== JSON.stringify(observedIds)) {
+    throw new Error(
+      "Solana production-gate pre-live input snapshot has missing or extra inputs.",
+    );
+  }
+  for (const id of expectedIds) {
+    const entry = snapshot.inputs[id];
+    if (
+      !isRecord(entry) ||
+      entry.id !== id ||
+      typeof entry.path !== "string" ||
+      path.resolve(entry.path) !== entry.path ||
+      typeof entry.present !== "boolean" ||
+      !Number.isSafeInteger(entry.size) ||
+      entry.size < 0 ||
+      (entry.present
+        ? !/^0x[0-9a-f]{64}$/u.test(entry.sha256) || entry.size <= 0
+        : entry.sha256 !== null || entry.size !== 0)
+    ) {
+      throw new Error(
+        `Solana production-gate pre-live input snapshot entry ${id} is invalid.`,
+      );
+    }
+  }
+  const { preLiveInputSnapshotSha256: observedSha256, ...body } = snapshot;
+  const canonicalBody = canonicalPreLiveInputSnapshotBody(body.inputs);
+  if (
+    JSON.stringify(body) !== JSON.stringify(canonicalBody) ||
+    observedSha256 !== preLiveInputSnapshotSha256(canonicalBody)
+  ) {
+    throw new Error(
+      "Solana production-gate pre-live input snapshot hash is invalid.",
+    );
+  }
+  return snapshot;
+};
+
+const recordPreLiveInput = ({ snapshotInputs, id, file, bytes = null }) => {
+  if (!snapshotInputs || !id) return;
+  const resolved = path.resolve(file);
+  snapshotInputs[id] = {
+    id,
+    path: resolved,
+    present: bytes !== null,
+    size: bytes?.length ?? 0,
+    sha256: bytes
+      ? `0x${createHash("sha256").update(bytes).digest("hex")}`
+      : null,
+  };
+};
+
+const readJsonIfExists = async (
+  file,
+  expectedSha256 = null,
+  { requirePin = false, snapshotInputs = null, snapshotId = null } = {},
+) => {
   if (!file) {
     return null;
   }
   const resolved = normalizePath(file);
-  return readStableJsonFileIfExists(resolved, {
-    label: "Solana production-gate JSON input",
+  let bytes;
+  try {
+    bytes = await readStableRegularFile(resolved, {
+      label: "Solana production-gate JSON input",
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    });
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      recordPreLiveInput({
+        snapshotInputs,
+        id: snapshotId,
+        file: resolved,
+      });
+      return null;
+    }
+    throw error;
+  }
+  const actual = `0x${createHash("sha256").update(bytes).digest("hex")}`;
+  recordPreLiveInput({
+    snapshotInputs,
+    id: snapshotId,
+    file: resolved,
+    bytes,
   });
+  if ((expectedSha256 === null || expectedSha256 === undefined) && requirePin) {
+    throw new Error(
+      "Solana production-gate generated handoff exists without its exact SHA-256 pin.",
+    );
+  }
+  const normalizedExpected =
+    expectedSha256 === null || expectedSha256 === undefined
+      ? null
+      : String(expectedSha256).toLowerCase();
+  if (
+    normalizedExpected !== null &&
+    !/^0x[0-9a-f]{64}$/u.test(normalizedExpected)
+  ) {
+    throw new Error(
+      "Solana production-gate expected JSON SHA-256 must be a canonical 0x-prefixed hash.",
+    );
+  }
+  if (normalizedExpected !== null && actual !== normalizedExpected) {
+    throw new Error(
+      `Pinned Solana production-gate JSON input SHA-256 mismatch: expected ${normalizedExpected}, got ${actual}.`,
+    );
+  }
+  try {
+    return JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(
+      "Pinned Solana production-gate JSON input is invalid JSON.",
+    );
+  }
 };
 
 const MAX_SOLANA_EVIDENCE_MP4_BYTES = 2 * 1024 * 1024 * 1024;
+
+const recordStableFilePreLiveInput = async ({
+  snapshotInputs,
+  id,
+  file,
+  maxBytes,
+}) => {
+  const resolved = path.resolve(file);
+  let pathStat;
+  let handle = null;
+  try {
+    pathStat = await lstat(resolved);
+    if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
+      throw new Error(
+        `Solana production-gate pre-live input ${id} must be a regular non-symlink file.`,
+      );
+    }
+    handle = await open(
+      resolved,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0),
+    );
+    const before = await handle.stat();
+    if (
+      !before.isFile() ||
+      before.dev !== pathStat.dev ||
+      before.ino !== pathStat.ino ||
+      before.nlink !== 1 ||
+      before.size <= 0 ||
+      before.size > maxBytes
+    ) {
+      throw new Error(
+        `Solana production-gate pre-live input ${id} is empty, linked, or too large.`,
+      );
+    }
+    const digest = createHash("sha256");
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < before.size) {
+      const { bytesRead } = await handle.read(
+        chunk,
+        0,
+        Math.min(chunk.length, before.size - offset),
+        offset,
+      );
+      if (bytesRead <= 0) {
+        throw new Error(
+          `Solana production-gate pre-live input ${id} ended early.`,
+        );
+      }
+      digest.update(chunk.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const after = await handle.stat();
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      offset !== before.size
+    ) {
+      throw new Error(
+        `Solana production-gate pre-live input ${id} changed while hashing.`,
+      );
+    }
+    snapshotInputs[id] = {
+      id,
+      path: resolved,
+      present: true,
+      size: before.size,
+      sha256: `0x${digest.digest("hex")}`,
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      snapshotInputs[id] = {
+        id,
+        path: resolved,
+        present: false,
+        size: 0,
+        sha256: null,
+      };
+      return;
+    }
+    throw error;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+};
 
 const probeMp4Media = (file) =>
   withStableRegularFileDescriptorsSync(
@@ -9251,6 +9537,16 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
           )
         : DEFAULT_BLOCKED_LIVE_VIDEO_VTT_PATH),
   );
+  const generatedHandoffPinsReady = [
+    options.routePublicationRequestSha256,
+    options.routeManagerAccessSha256,
+    options.operatorHandoffSha256,
+    options.activationPackageSha256,
+    options.laneActivationRequestSha256,
+    options.laneActivationProposalSha256,
+  ].every((value) =>
+    /^0x[0-9a-f]{64}$/u.test(String(value ?? "").toLowerCase()),
+  );
 
   const preflightReportOverride = Boolean(options.preflightReport);
   let freshPreflightCompleted = false;
@@ -9274,57 +9570,138 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     freshPreflightCompleted = true;
   }
 
-  const requirementsReport = await readJsonIfExists(requirementsPath);
+  const preLiveInputSnapshotEntries = {};
+  const snapshotJson = (id) => ({
+    snapshotInputs: preLiveInputSnapshotEntries,
+    snapshotId: id,
+  });
+  const requirementsReport = await readJsonIfExists(
+    requirementsPath,
+    null,
+    snapshotJson("requirements"),
+  );
   const postDeployEvidenceReport = await readJsonIfExists(
     postDeployEvidencePath,
+    null,
+    snapshotJson("postDeployEvidence"),
   );
-  const proverReadinessReport = await readJsonIfExists(proverReadinessPath);
+  const proverReadinessReport = await readJsonIfExists(
+    proverReadinessPath,
+    null,
+    snapshotJson("proverReadiness"),
+  );
   const productionMaterialInventoryReport = await readJsonIfExists(
     productionMaterialInventoryPath,
+    null,
+    snapshotJson("productionMaterialInventory"),
   );
-  const routeManifestReport = await readJsonIfExists(routeManifestPath);
-  const publishReadinessReport = await readJsonIfExists(publishReadinessPath);
+  const routeManifestReport = await readJsonIfExists(
+    routeManifestPath,
+    null,
+    snapshotJson("routeManifest"),
+  );
+  const publishReadinessReport = await readJsonIfExists(
+    publishReadinessPath,
+    null,
+    snapshotJson("publishReadiness"),
+  );
   const routePublishBlockedReport = await readJsonIfExists(
     routePublishBlockedPath,
+    null,
+    snapshotJson("routePublishBlocked"),
   );
   const routePublicationRequestReport = await readJsonIfExists(
     routePublicationRequestPath,
+    options.routePublicationRequestSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("routePublicationRequest"),
+    },
   );
   const routeManagerAccessReport = await readJsonIfExists(
     routeManagerAccessPath,
+    options.routeManagerAccessSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("routeManagerAccess"),
+    },
   );
-  const operatorHandoffReport = await readJsonIfExists(operatorHandoffPath);
-  const activationPackageReport = await readJsonIfExists(activationPackagePath);
+  const operatorHandoffReport = await readJsonIfExists(
+    operatorHandoffPath,
+    options.operatorHandoffSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("operatorHandoff"),
+    },
+  );
+  const activationPackageReport = await readJsonIfExists(
+    activationPackagePath,
+    options.activationPackageSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("activationPackage"),
+    },
+  );
   const laneActivationRequestReport = await readJsonIfExists(
     laneActivationRequestPath,
+    options.laneActivationRequestSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("laneActivationRequest"),
+    },
   );
   const laneActivationProposalReport = await readJsonIfExists(
     laneActivationProposalPath,
+    options.laneActivationProposalSha256,
+    {
+      requirePin: generatedHandoffPinsReady,
+      ...snapshotJson("laneActivationProposal"),
+    },
   );
   const sourceMaterialHandoffReport = await readJsonIfExists(
     sourceMaterialHandoffPath,
+    null,
+    snapshotJson("sourceMaterialHandoff"),
   );
   const handoffVerificationReport = await readJsonIfExists(
     handoffVerificationPath,
+    null,
+    snapshotJson("handoffVerification"),
   );
   const sourceBurnReadinessReport = await readJsonIfExists(
     sourceBurnReadinessPath,
+    null,
+    snapshotJson("sourceBurnReadiness"),
   );
   const sourceBurnSubmissionReport = await readJsonIfExists(
     sourceBurnSubmissionPath,
+    null,
+    snapshotJson("sourceBurnSubmission"),
   );
   const proofMaterialRequestReport = await readJsonIfExists(
     proofMaterialRequestPath,
+    null,
+    snapshotJson("proofMaterialRequest"),
   );
   const proofMaterialBundleReport = await readJsonIfExists(
     proofMaterialBundlePath,
+    null,
+    snapshotJson("proofMaterialBundle"),
   );
   const proofMaterialCeremonyPackageReport = await readJsonIfExists(
     proofMaterialCeremonyPackagePath,
+    null,
+    snapshotJson("proofMaterialCeremonyPackage"),
   );
-  const smokeReadinessReport = await readJsonIfExists(smokeReadinessPath);
+  const smokeReadinessReport = await readJsonIfExists(
+    smokeReadinessPath,
+    null,
+    snapshotJson("smokeReadiness"),
+  );
   const deploymentVideoTranscript = await readJsonIfExists(
     deploymentVideoTranscriptPath,
+    null,
+    snapshotJson("deploymentVideoTranscript"),
   );
   const liveVideoTranscript = await readJsonIfExists(liveVideoTranscriptPath);
   const blockedLiveVideoTranscript = await readJsonIfExists(
@@ -9342,6 +9719,33 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
       blockedLiveVideoVttPath,
     }),
   );
+  await Promise.all([
+    recordStableFilePreLiveInput({
+      snapshotInputs: preLiveInputSnapshotEntries,
+      id: "deploymentVideoMp4",
+      file: deploymentVideoMp4Path,
+      maxBytes: MAX_SOLANA_EVIDENCE_MP4_BYTES,
+    }),
+    recordStableFilePreLiveInput({
+      snapshotInputs: preLiveInputSnapshotEntries,
+      id: "deploymentVideoVtt",
+      file: deploymentVideoVttPath,
+      maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+    }),
+  ]);
+  const preLiveInputSnapshot = buildSolanaProductionGatePreLiveInputSnapshot(
+    preLiveInputSnapshotEntries,
+  );
+  validateSolanaProductionGatePreLiveInputSnapshot(preLiveInputSnapshot);
+  if (
+    options.expectedPreLiveInputSnapshotSha256 !== undefined &&
+    String(options.expectedPreLiveInputSnapshotSha256).toLowerCase() !==
+      preLiveInputSnapshot.preLiveInputSnapshotSha256
+  ) {
+    throw new Error(
+      `Solana production-gate pre-live input snapshot changed: expected ${options.expectedPreLiveInputSnapshotSha256}, got ${preLiveInputSnapshot.preLiveInputSnapshotSha256}.`,
+    );
+  }
 
   const successExecutionPolicy =
     buildSolanaProductionGateSuccessExecutionPolicy({
@@ -9352,6 +9756,7 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
       freshPreflightCompleted,
       preflightReport,
       publishReadinessReport,
+      generatedHandoffPinsReady,
     });
   let liveVideoAuthoritativeRevalidation = {
     ready: false,
@@ -9486,12 +9891,23 @@ export const runSccpSolanaProductionGate = async (options = {}) => {
     blockedLiveVideoMp4Path,
     blockedLiveVideoVttPath,
     artifactFacts,
+    preLiveInputSnapshot,
     successExecutionPolicy,
     liveVideoAuthoritativeRevalidation,
     productionGateReportPath: reportPath,
   });
   await writeAtomicJsonFile(reportPath, report);
-  return { report, reportPath };
+  const reportBytes = await readStableRegularFile(reportPath, {
+    label: "Fresh Solana production-gate report",
+    maxBytes: DEFAULT_SOLANA_TEXT_MAX_BYTES,
+  });
+  return {
+    report,
+    reportPath,
+    reportArtifactSha256: `0x${createHash("sha256")
+      .update(reportBytes)
+      .digest("hex")}`,
+  };
 };
 
 const main = async () => {
@@ -9515,11 +9931,17 @@ const main = async () => {
     publishReadiness: args["publish-readiness"],
     routePublishBlocked: args["route-publish-blocked"],
     routePublicationRequest: args["route-publication-request"],
+    routePublicationRequestSha256: args["route-publication-request-sha256"],
     routeManagerAccess: args["route-manager-access-request"],
+    routeManagerAccessSha256: args["route-manager-access-request-sha256"],
     operatorHandoff: args["operator-handoff"],
+    operatorHandoffSha256: args["operator-handoff-sha256"],
     activationPackage: args["activation-package"],
+    activationPackageSha256: args["activation-package-sha256"],
     laneActivationRequest: args["lane-activation-request"],
+    laneActivationRequestSha256: args["lane-activation-request-sha256"],
     laneActivationProposal: args["lane-activation-proposal"],
+    laneActivationProposalSha256: args["lane-activation-proposal-sha256"],
     sourceMaterialHandoff: args["source-material-handoff"],
     handoffVerification: args["handoff-verification"],
     sourceBurnReadiness: args["source-burn-readiness"],
@@ -9531,6 +9953,8 @@ const main = async () => {
     deploymentVideoTranscript: args["deployment-video-transcript"],
     deploymentVideoMp4: args["deployment-video-mp4"],
     deploymentVideoVtt: args["deployment-video-vtt"],
+    expectedPreLiveInputSnapshotSha256:
+      args["expected-pre-live-input-snapshot-sha256"],
     liveVideoTranscript: args["live-video-transcript"],
     liveVideoMp4: args["live-video-mp4"],
     liveVideoVtt: args["live-video-vtt"],

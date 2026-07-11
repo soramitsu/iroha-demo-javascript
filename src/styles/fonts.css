@@ -7,6 +7,38 @@
 }
 
 @font-face {
+  font-family: "Noto Nastaliq Urdu";
+  src: url("../assets/fonts/noto-nastaliq-urdu/NotoNastaliqUrdu-Variable.ttf")
+    format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0600-06FF, U+0750-077F, U+0870-089F, U+08A0-08FF, U+200C-200D,
+    U+FB50-FDFF, U+FE70-FEFF;
+}
+
+@font-face {
+  font-family: "Noto Sans Egyptian Hieroglyphs";
+  src: url("../assets/fonts/noto-sans-egyptian-hieroglyphs/NotoSansEgyptianHieroglyphs-Regular.ttf")
+    format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+13000-1345F;
+}
+
+@font-face {
+  font-family: "Noto Sans Cuneiform";
+  src: url("../assets/fonts/noto-sans-cuneiform/NotoSansCuneiform-Regular.ttf")
+    format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+12000-1254F;
+}
+
+@font-face {
   font-family: "Sora";
   src: url("../assets/fonts/sora/Sora-Italic.ttf") format("truetype");
   font-weight: 400;

@@ -28,6 +28,11 @@ import { UR_AUTO_TRANSLATIONS } from "@/i18n/urAuto";
 import { VI_AUTO_TRANSLATIONS } from "@/i18n/viAuto";
 import { ZH_AUTO_TRANSLATIONS } from "@/i18n/zhAuto";
 import { ZH_TW_AUTO_TRANSLATIONS } from "@/i18n/zhTwAuto";
+import {
+  buildHistoricalTranslationTable,
+  EGYPTIAN_TRANSLATIONS,
+  OLD_AKKADIAN_TRANSLATIONS,
+} from "@/i18n/ancientTranslations";
 import { QUIET_SAKURA_TRANSLATIONS } from "@/i18n/quietSakuraTranslations";
 
 export const SUPPORTED_LOCALES = [
@@ -37,6 +42,7 @@ export const SUPPORTED_LOCALES = [
   "ca-ES",
   "cs-CZ",
   "de-DE",
+  "egy-Egyp",
   "es-ES",
   "fa-IR",
   "fi-FI",
@@ -47,6 +53,7 @@ export const SUPPORTED_LOCALES = [
   "id-ID",
   "it-IT",
   "ja-JP",
+  "akk-Xsux",
   "ko-KR",
   "ms-MY",
   "nb-NO",
@@ -77,6 +84,7 @@ export const LOCALE_LABELS: Record<SupportedLocale, string> = {
   "ca-ES": "Català",
   "cs-CZ": "Čeština",
   "de-DE": "Deutsch",
+  "egy-Egyp": "𓌃𓂧𓅱 𓆎𓅓𓏏",
   "es-ES": "Español",
   "fa-IR": "فارسی",
   "fi-FI": "Suomi",
@@ -87,6 +95,7 @@ export const LOCALE_LABELS: Record<SupportedLocale, string> = {
   "id-ID": "Bahasa Indonesia",
   "it-IT": "Italiano",
   "ja-JP": "日本語",
+  "akk-Xsux": "𒅴 𒀝𒅗𒁺",
   "ko-KR": "한국어",
   "ms-MY": "Bahasa Melayu",
   "nb-NO": "Norsk bokmål",
@@ -111,6 +120,7 @@ export const LOCALE_DIRECTIONS: Record<SupportedLocale, LocaleDirection> = {
   "ca-ES": "ltr",
   "cs-CZ": "ltr",
   "de-DE": "ltr",
+  "egy-Egyp": "ltr",
   "es-ES": "ltr",
   "fa-IR": "rtl",
   "fi-FI": "ltr",
@@ -121,6 +131,7 @@ export const LOCALE_DIRECTIONS: Record<SupportedLocale, LocaleDirection> = {
   "id-ID": "ltr",
   "it-IT": "ltr",
   "ja-JP": "ltr",
+  "akk-Xsux": "ltr",
   "ko-KR": "ltr",
   "ms-MY": "ltr",
   "nb-NO": "ltr",
@@ -3268,6 +3279,71 @@ const EN_TRANSLATIONS: TranslationTable = {
   "TON source transaction": "TON source transaction",
 };
 
+const HISTORICAL_KEY_SOURCE_TABLES: TranslationTable[] = [
+  SHARED_ENGLISH_FALLBACK_TRANSLATIONS,
+  EN_TRANSLATIONS,
+  EGYPTIAN_TRANSLATIONS,
+  OLD_AKKADIAN_TRANSLATIONS,
+  AR_TRANSLATIONS,
+  AZ_TRANSLATIONS,
+  CA_TRANSLATIONS,
+  CS_TRANSLATIONS,
+  DE_TRANSLATIONS,
+  ES_TRANSLATIONS,
+  FA_TRANSLATIONS,
+  FI_TRANSLATIONS,
+  FR_TRANSLATIONS,
+  HE_TRANSLATIONS,
+  HI_TRANSLATIONS,
+  HU_TRANSLATIONS,
+  ID_TRANSLATIONS,
+  IT_TRANSLATIONS,
+  JA_TRANSLATIONS,
+  KO_TRANSLATIONS,
+  MS_TRANSLATIONS,
+  NB_TRANSLATIONS,
+  NL_TRANSLATIONS,
+  PL_TRANSLATIONS,
+  PT_TRANSLATIONS,
+  RU_TRANSLATIONS,
+  SL_TRANSLATIONS,
+  SR_TRANSLATIONS,
+  TR_TRANSLATIONS,
+  UK_TRANSLATIONS,
+  UR_TRANSLATIONS,
+  VI_TRANSLATIONS,
+  ZH_TRANSLATIONS,
+  ZH_TW_TRANSLATIONS,
+  ...Object.values(QUIET_SAKURA_TRANSLATIONS),
+];
+
+const HISTORICAL_ENGLISH_SOURCE: TranslationTable = Object.fromEntries(
+  [
+    ...new Set(
+      HISTORICAL_KEY_SOURCE_TABLES.flatMap((table) => Object.keys(table)),
+    ),
+  ].map((key) => [
+    key,
+    EN_TRANSLATIONS[key] ?? SHARED_ENGLISH_FALLBACK_TRANSLATIONS[key] ?? key,
+  ]),
+);
+
+/** Every key materialized for the historical locales, exported for coverage. */
+export const HISTORICAL_UI_TRANSLATION_KEYS = Object.freeze(
+  Object.keys(HISTORICAL_ENGLISH_SOURCE),
+);
+
+const EGYPTIAN_FULL_TRANSLATIONS = buildHistoricalTranslationTable(
+  "egy-Egyp",
+  HISTORICAL_ENGLISH_SOURCE,
+  EGYPTIAN_TRANSLATIONS,
+);
+const OLD_AKKADIAN_FULL_TRANSLATIONS = buildHistoricalTranslationTable(
+  "akk-Xsux",
+  HISTORICAL_ENGLISH_SOURCE,
+  OLD_AKKADIAN_TRANSLATIONS,
+);
+
 const BASE_TABLES: Record<SupportedLocale, TranslationTable> = {
   "en-US": EN_TRANSLATIONS,
   "ar-SA": AR_TRANSLATIONS,
@@ -3275,6 +3351,7 @@ const BASE_TABLES: Record<SupportedLocale, TranslationTable> = {
   "ca-ES": CA_TRANSLATIONS,
   "cs-CZ": CS_TRANSLATIONS,
   "de-DE": DE_TRANSLATIONS,
+  "egy-Egyp": EGYPTIAN_FULL_TRANSLATIONS,
   "es-ES": ES_TRANSLATIONS,
   "fa-IR": FA_TRANSLATIONS,
   "fi-FI": FI_TRANSLATIONS,
@@ -3285,6 +3362,7 @@ const BASE_TABLES: Record<SupportedLocale, TranslationTable> = {
   "id-ID": ID_TRANSLATIONS,
   "it-IT": IT_TRANSLATIONS,
   "ja-JP": JA_TRANSLATIONS,
+  "akk-Xsux": OLD_AKKADIAN_FULL_TRANSLATIONS,
   "ko-KR": KO_TRANSLATIONS,
   "ms-MY": MS_TRANSLATIONS,
   "nb-NO": NB_TRANSLATIONS,
@@ -3313,6 +3391,8 @@ const TABLES = Object.fromEntries(
 ) as Record<SupportedLocale, TranslationTable>;
 
 export const DEFAULT_LOCALE: SupportedLocale = "en-US";
+
+const HISTORICAL_LOCALES = new Set<SupportedLocale>(["egy-Egyp", "akk-Xsux"]);
 
 const LEGACY_TERM_REPLACEMENTS: Array<[from: string, to: string]> = [
   ["IH58", "I105"],
@@ -3351,6 +3431,7 @@ export const detectPreferredLocale = (): SupportedLocale => {
     ["ca", "ca-ES"],
     ["cs", "cs-CZ"],
     ["de", "de-DE"],
+    ["egy", "egy-Egyp"],
     ["es", "es-ES"],
     ["fa", "fa-IR"],
     ["fi", "fi-FI"],
@@ -3363,6 +3444,7 @@ export const detectPreferredLocale = (): SupportedLocale => {
     ["in", "id-ID"],
     ["it", "it-IT"],
     ["ja", "ja-JP"],
+    ["akk", "akk-Xsux"],
     ["ko", "ko-KR"],
     ["ms", "ms-MY"],
     ["nb", "nb-NO"],
@@ -3403,9 +3485,13 @@ export const translate = (
   params?: Params,
 ): string => {
   const normalizedKey = TRANSLATION_KEY_ALIASES[key] ?? key;
+  const historicalBrandTranslation =
+    HISTORICAL_LOCALES.has(locale) && normalizedKey === "Iroha Wallet";
   const template =
-    LITERAL_KEY_OVERRIDES[key] ??
-    LITERAL_KEY_OVERRIDES[normalizedKey] ??
+    (historicalBrandTranslation ? undefined : LITERAL_KEY_OVERRIDES[key]) ??
+    (historicalBrandTranslation
+      ? undefined
+      : LITERAL_KEY_OVERRIDES[normalizedKey]) ??
     TABLES[locale]?.[normalizedKey] ??
     SHARED_ENGLISH_FALLBACK_TRANSLATIONS[normalizedKey] ??
     key;
@@ -3435,10 +3521,18 @@ export const hasLocaleTranslation = (
   if (locale === "en-US") {
     return true;
   }
-  if (key in LITERAL_KEY_OVERRIDES) {
+  if (
+    key in LITERAL_KEY_OVERRIDES &&
+    !(HISTORICAL_LOCALES.has(locale) && key === "Iroha Wallet")
+  ) {
     return true;
   }
   const normalizedKey = TRANSLATION_KEY_ALIASES[key] ?? key;
+  if (HISTORICAL_LOCALES.has(locale)) {
+    return (
+      normalizedKey in TABLES[locale] || normalizedKey in LITERAL_KEY_OVERRIDES
+    );
+  }
   return (
     normalizedKey in TABLES[locale] ||
     normalizedKey in SHARED_ENGLISH_FALLBACK_TRANSLATIONS ||
