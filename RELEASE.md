@@ -36,7 +36,7 @@ Windows signing:
 
 Optional repository variable:
 
-- `IROHA_REF`: Ref to check out from `hyperledger-iroha/iroha`. Defaults to `21e81d23beae46ff42344bfab771d3e311208e9d`, the local `../iroha` commit used when this release workflow was prepared.
+- `IROHA_REF`: Ref to check out from `hyperledger-iroha/iroha`. Defaults to `ddc6d8607bb2dbf9949c64aaedb271994fbc6931`, the SDK revision that exposes the SCCP API used by this wallet.
 - `SORANET_VPN_HELPER_BUNDLE_ID`: macOS VPN helper bundle ID override.
 - `SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID`: macOS PacketTunnel bundle ID override.
 - `SORANET_VPN_APP_GROUP_ID`: macOS app-group ID override.

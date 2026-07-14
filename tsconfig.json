@@ -1,10 +1,31 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.tsx", "src/**/*.vue", "tests/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.tsx",
+    "src/**/*.vue",
+    "tests/**/*.ts"
+  ],
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@iroha/iroha-js": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/address": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/connect-browser": [
+        "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
+      ],
+      "@iroha/iroha-js/crypto": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/sccp": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ]
     }
   }
 }

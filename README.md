@@ -33,6 +33,12 @@ npm run dev
 ```
 
 `@iroha/iroha-js` is sourced from the sibling local checkout at `../iroha/javascript/iroha_js`.
+The Electron/Vite build checks that checkout for the SCCP API expected by this
+wallet. If the sibling has moved to the newer first-release SCCP API, the build
+uses a git-archived, ignored cache of compatible Iroha revision
+`ddc6d8607bb2dbf9949c64aaedb271994fbc6931` under `node_modules/.cache`
+without modifying the sibling worktree. Set `IROHA_JS_SDK_ROOT` to use another
+compatible `iroha_js` checkout explicitly.
 
 The postinstall hook auto-builds the `@iroha/iroha-js` native binding when it is missing or its checksum manifest is stale. `npm run build` also refreshes the copied native bundle before staging `dist/native`. If you update the SDK manually, re-run:
 

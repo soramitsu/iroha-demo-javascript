@@ -12,14 +12,14 @@ on:
       iroha_ref:
         description: "hyperledger-iroha/iroha ref to check out beside this repo"
         required: false
-        default: "21e81d23beae46ff42344bfab771d3e311208e9d"
+        default: "ddc6d8607bb2dbf9949c64aaedb271994fbc6931"
 
 permissions:
   contents: write
 
 env:
   NODE_VERSION: "20"
-  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || '21e81d23beae46ff42344bfab771d3e311208e9d' }}
+  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || 'ddc6d8607bb2dbf9949c64aaedb271994fbc6931' }}
   APP_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
   SORANET_VPN_HELPER_BUNDLE_ID: ${{ vars.SORANET_VPN_HELPER_BUNDLE_ID }}
   SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
