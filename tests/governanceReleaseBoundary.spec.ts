@@ -86,4 +86,25 @@ describe("v2.0.1 governance release boundary", () => {
       expect(productionBoundary).not.toContain(forbidden);
     }
   });
+
+  it("loads packaged validation-fee runtime config through privileged IPC", () => {
+    const main = source("electron/main.ts");
+    const preload = source("electron/preload.ts");
+    const runtimeConfig = source("electron/governanceRuntimeConfig.ts");
+
+    expect(runtimeConfig).toContain('"sora.wallet.governance-runtime.v1"');
+    expect(runtimeConfig).toContain('"governance-runtime.json"');
+    expect(runtimeConfig).toContain(
+      "refusing to mix environment and file runtime configuration",
+    );
+    expect(main).toContain(
+      'loadGovernanceRuntimeConfig({\n      userDataPath: app.getPath("userData")',
+    );
+    expect(preload).toContain(
+      "ipcRenderer.invoke(\n    GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL",
+    );
+    expect(preload).not.toContain(
+      "return fetchCoreGovernanceValidationFeePolicy();",
+    );
+  });
 });

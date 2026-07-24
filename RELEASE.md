@@ -18,9 +18,9 @@ It needs no long-lived signing key or repository secret. The draft-release job
 alone receives `id-token: write`; build and verification jobs remain
 `contents: read`.
 
-Every distributable and `SHA256SUMS.txt` receives an adjacent
-`.sigstore.json` bundle. Before the workflow finishes, it verifies every bundle
-against this exact tagged-workflow identity:
+Every distributable, `SOURCE-IDENTITY.json`, and `SHA256SUMS.txt` receives an
+adjacent `.sigstore.json` bundle. Before the workflow finishes, it verifies
+every bundle against this exact tagged-workflow identity:
 
 ```text
 https://github.com/soramitsu/iroha-demo-javascript/.github/workflows/release.yml@refs/tags/v2.0.1
@@ -41,7 +41,7 @@ artifact. It does **not** provide macOS Developer ID signing/notarization or
 Windows Authenticode signing. The workflow and generated verification guide
 state that distinction explicitly.
 
-## Optional platform signing secrets
+## Required production platform signing secrets
 
 macOS signing and notarization:
 
@@ -62,26 +62,82 @@ Windows signing:
 - `WIN_CSC_LINK`: Base64-encoded Windows Authenticode `.pfx`.
 - `WIN_CSC_KEY_PASSWORD`: Password for the Windows signing certificate.
 
-When these secrets are absent, the operating-system packages remain unsigned
-at the OS layer, but the workflow still creates and verifies their keyless
-Sigstore provenance bundles. Do not describe those packages as notarized or
-Authenticode-signed.
+When these secrets are absent, the workflow may still prepare unsigned draft
+packages for internal diagnostics and attach keyless Sigstore provenance. Do
+not publish that draft as a production release.
+Do not describe those packages as notarized or Authenticode-signed.
 
-Optional repository variable:
+Required repository variable for tag-push releases:
 
-- `IROHA_REF`: Ref to check out from `hyperledger-iroha/iroha`. Defaults to the current `main` SDK. Pin this to the reviewed release commit before publishing production artifacts.
+- `IROHA_REF`: Exact lowercase 40-character commit SHA to check out from
+  `hyperledger-iroha/iroha`. Moving branches, tags, abbreviations, and an absent
+  value fail closed. Manual reruns require the same value through `iroha_ref`.
+
+The release tag must be covered by an active GitHub tag-protection ruleset.
+Before any build starts, the workflow requires GitHub to verify valid
+cryptographic signatures on the annotated release tag, its wallet commit, and
+the pinned Iroha commit. It also records all three immutable identities in
+`SOURCE-IDENTITY.json`, adds that file to `SHA256SUMS.txt`, and signs both with
+the release workflow's keyless Sigstore identity.
+
+Create this repository ruleset once before pushing the first release tag. The
+absence of a `creation` rule intentionally permits authorized users to create a
+new signed `v*` tag; the three listed rules prevent replacing, deleting, or
+force-moving it afterward:
+
+```bash
+gh api \
+  --method POST \
+  repos/soramitsu/iroha-demo-javascript/rulesets \
+  --input - <<'JSON'
+{
+  "name": "Immutable release tags",
+  "target": "tag",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/tags/v*"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {"type": "update"},
+    {"type": "deletion"},
+    {"type": "non_fast_forward"}
+  ]
+}
+JSON
+```
+
+Optional repository variables:
+
 - `SORANET_VPN_HELPER_BUNDLE_ID`: macOS VPN helper bundle ID override.
 - `SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID`: macOS PacketTunnel bundle ID override.
 - `SORANET_VPN_APP_GROUP_ID`: macOS app-group ID override.
 - `SORANET_VPN_MANAGER_DESCRIPTION`: macOS VPN manager display-name override.
 
-The v2.0.1 Taira governance runtime also requires these non-secret launch
-inputs:
+The v2.0.1 Taira governance runtime also requires the non-secret
+`governance-runtime.json` manifest in Electron's per-user application-data
+directory:
 
-- `GOVERNANCE_VALIDATION_FEE_CONFIG_JSON`: the exact generated
-  `{enabled, ledgerBinding, expected}` release config.
-- `CBSI_CORE_API_BASE_URL`: the credential-free HTTPS CBSI Core origin serving
-  both `/v1/validation-fee/policy` and `/v1/validation-fee/status`.
+```text
+<Electron app.getPath("userData")>/governance-runtime.json
+```
+
+Its only fields are `schema`, `validationFee`, and `cbsiCoreApiBaseUrl`.
+`schema` must be `sora.wallet.governance-runtime.v1`; `validationFee` must be
+the exact generated `{enabled, ledgerBinding, expected}` config; and
+`cbsiCoreApiBaseUrl` must be the credential-free HTTPS CBSI Core origin serving
+both `/v1/validation-fee/policy` and `/v1/validation-fee/status`. Install the
+manifest atomically before a Finder, Start-menu, or desktop-entry launch. The
+app reloads it on every policy read and fails closed if it is missing or
+invalid.
+
+`GOVERNANCE_VALIDATION_FEE_CONFIG_JSON` and `CBSI_CORE_API_BASE_URL` remain a
+strict managed-launch override. If either variable is present, both are
+required and the manifest is not used. Partial or malformed overrides fail
+closed.
 
 Do not hand-edit or synthesize the Parliament evidence in the generated config.
 Missing or mismatched inputs intentionally leave validation-fee policy writes
@@ -89,18 +145,51 @@ unavailable.
 
 ## Cutting a Release
 
-1. Make sure `package.json` and `package-lock.json` contain the intended
-   version, all release checks pass, and both repositories are committed.
-2. Pin `iroha_ref` to the reviewed immutable Iroha commit. Do not release from
-   the moving `main` ref.
-3. Create and push the tag:
+1. Make sure `package.json` and both root version fields in `package-lock.json`
+   contain the intended version, all release checks pass, both repositories are
+   clean, and both release commits have GitHub-verifiable signatures.
+2. Push the reviewed signed Iroha commit, then pin its exact SHA before creating
+   the wallet tag:
 
    ```bash
-   git tag v2.0.1
-   git push origin v2.0.1
+   release_repo='soramitsu/iroha-demo-javascript'
+   iroha_commit='<reviewed-signed-40-character-iroha-commit>'
+
+   test "${#iroha_commit}" -eq 40
+   test "$(gh api "repos/hyperledger-iroha/iroha/commits/$iroha_commit" --jq .sha)" = "$iroha_commit"
+   test "$(gh api "repos/hyperledger-iroha/iroha/commits/$iroha_commit" --jq .commit.verification.verified)" = 'true'
+   test "$(gh api "repos/hyperledger-iroha/iroha/commits/$iroha_commit" --jq .commit.verification.reason)" = 'valid'
+
+   gh variable set IROHA_REF --repo "$release_repo" --body "$iroha_commit"
+   test "$(gh variable get IROHA_REF --repo "$release_repo")" = "$iroha_commit"
    ```
 
-4. Prepare or rerun the signed draft from the tag itself:
+3. Create one signed annotated tag on the signed wallet release commit. Never
+   move, replace, delete, or force-push a release tag:
+
+   ```bash
+   release_tag='v2.0.1'
+   release_signing_key='<release-GPG-key-id>'
+   wallet_commit="$(git rev-parse HEAD)"
+
+   test -z "$(git status --porcelain=v1)"
+   git verify-commit "$wallet_commit"
+   test "$(node -p "require('./package.json').version")" = "${release_tag#v}"
+   test "$(node -p "require('./package-lock.json').version")" = "${release_tag#v}"
+   test "$(node -p "require('./package-lock.json').packages[''].version")" = "${release_tag#v}"
+
+   git tag -s -u "$release_signing_key" -a "$release_tag" "$wallet_commit" \
+     -m "SORA Wallet $release_tag"
+   git verify-tag "$release_tag"
+   test "$(git rev-list -n 1 "$release_tag")" = "$wallet_commit"
+   git push --atomic origin master "refs/tags/$release_tag"
+   ```
+
+   The tag push starts the workflow with the pinned `IROHA_REF`. Do not start a
+   duplicate manual run unless that automatic run needs to be replaced.
+
+4. To rerun the signed draft, dispatch only from the same protected tag and
+   supply the same immutable Iroha SHA explicitly:
 
    ```bash
    gh workflow run Release \
@@ -109,10 +198,11 @@ unavailable.
      -f iroha_ref=<reviewed-immutable-iroha-commit>
    ```
 
-5. Wait for the workflow to upload the draft distributables and checksums,
-   create every Sigstore bundle, verify them locally, upload the bundles and
-   `SIGSTORE-VERIFY.md`, and confirm the remote draft inventory exactly matches.
-   Any failure leaves the release unpublished.
+5. Wait for the workflow to upload the draft distributables,
+   `SOURCE-IDENTITY.json`, and checksums, create every Sigstore bundle, verify
+   them locally, upload the bundles and `SIGSTORE-VERIFY.md`, and confirm the
+   remote draft inventory exactly matches. Any failure leaves the release
+   unpublished.
 6. Download and smoke-test the draft packages. Verify an artifact and the
    checksum manifest before publishing:
 
@@ -126,6 +216,14 @@ unavailable.
 
    cosign verify-blob "$artifact" \
      --bundle "$artifact.sigstore.json" \
+     --certificate-identity "$certificate_identity" \
+     --certificate-oidc-issuer "$certificate_oidc_issuer" \
+     --certificate-github-workflow-ref "$certificate_github_workflow_ref" \
+     --certificate-github-workflow-repository "$certificate_github_workflow_repository" \
+     --certificate-github-workflow-sha "$certificate_github_workflow_sha"
+
+   cosign verify-blob SOURCE-IDENTITY.json \
+     --bundle SOURCE-IDENTITY.json.sigstore.json \
      --certificate-identity "$certificate_identity" \
      --certificate-oidc-issuer "$certificate_oidc_issuer" \
      --certificate-github-workflow-ref "$certificate_github_workflow_ref" \

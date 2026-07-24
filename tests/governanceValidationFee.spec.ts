@@ -1,8 +1,19 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  GOVERNANCE_RUNTIME_CONFIG_FILENAME,
+  GOVERNANCE_RUNTIME_CONFIG_SCHEMA,
+  governanceRuntimeConfigPath,
+  loadGovernanceRuntimeConfig,
+} from "../electron/governanceRuntimeConfig";
+import {
+  CBSI_CORE_API_BASE_URL_ENV,
   CBSI_SBD_ASSET_DEFINITION_ID,
   clearGovernanceValidationFeeFinalityObservations,
   fetchGovernanceValidationFeePolicy,
+  GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
   readCbsiCoreApiBaseUrl,
   readGovernanceValidationFeeConfig,
   TAIRA_CHAIN_ID,
@@ -120,6 +131,25 @@ const enabledConfigJson = () => ({
     },
   },
 });
+
+const runtimeConfigManifest = () => ({
+  schema: GOVERNANCE_RUNTIME_CONFIG_SCHEMA,
+  validationFee: enabledConfigJson(),
+  cbsiCoreApiBaseUrl: "https://cbsi-core.soramitsu.io",
+});
+
+const withRuntimeConfigDirectory = (
+  test: (userDataPath: string) => void,
+): void => {
+  const userDataPath = mkdtempSync(
+    join(tmpdir(), "sora-wallet-governance-runtime-"),
+  );
+  try {
+    test(userDataPath);
+  } finally {
+    rmSync(userDataPath, { recursive: true, force: true });
+  }
+};
 
 const projectionProposal = (
   value: ReturnType<typeof proposalConfig>,
@@ -310,6 +340,124 @@ describe("governance validation-fee runtime config", () => {
     expect(readCbsiCoreApiBaseUrl("https://core.example/")).toBe(
       "https://core.example",
     );
+  });
+});
+
+describe("packaged governance runtime config", () => {
+  it("loads the strict versioned manifest from the Electron user-data path", () => {
+    withRuntimeConfigDirectory((userDataPath) => {
+      const path = join(userDataPath, GOVERNANCE_RUNTIME_CONFIG_FILENAME);
+      writeFileSync(path, JSON.stringify(runtimeConfigManifest()), "utf8");
+
+      const loaded = loadGovernanceRuntimeConfig({
+        userDataPath,
+        env: {},
+      });
+
+      expect(governanceRuntimeConfigPath(userDataPath)).toBe(path);
+      expect(loaded.validationFee.enabled).toBe(true);
+      expect(loaded.validationFee.ledgerBinding.chainId).toBe(TAIRA_CHAIN_ID);
+      expect(loaded.cbsiCoreApiBaseUrl).toBe("https://cbsi-core.soramitsu.io");
+    });
+  });
+
+  it("uses only a complete strict environment override and never mixes sources", () => {
+    withRuntimeConfigDirectory((userDataPath) => {
+      writeFileSync(
+        governanceRuntimeConfigPath(userDataPath),
+        "invalid file intentionally ignored by a complete override",
+        "utf8",
+      );
+      const loaded = loadGovernanceRuntimeConfig({
+        userDataPath,
+        env: {
+          [GOVERNANCE_VALIDATION_FEE_CONFIG_ENV]:
+            JSON.stringify(enabledConfigJson()),
+          [CBSI_CORE_API_BASE_URL_ENV]: "https://override-core.soramitsu.io/",
+        },
+      });
+      expect(loaded.cbsiCoreApiBaseUrl).toBe(
+        "https://override-core.soramitsu.io",
+      );
+
+      expect(() =>
+        loadGovernanceRuntimeConfig({
+          userDataPath,
+          env: {
+            [GOVERNANCE_VALIDATION_FEE_CONFIG_ENV]:
+              JSON.stringify(enabledConfigJson()),
+          },
+        }),
+      ).toThrow(/must be set together; refusing to mix/);
+      expect(() =>
+        loadGovernanceRuntimeConfig({
+          userDataPath,
+          env: {
+            [GOVERNANCE_VALIDATION_FEE_CONFIG_ENV]: "",
+            [CBSI_CORE_API_BASE_URL_ENV]: "https://override-core.soramitsu.io",
+          },
+        }),
+      ).toThrow(/environment override is invalid/);
+    });
+  });
+
+  it("rejects unknown wrapper fields and invalid nested trust inputs", () => {
+    withRuntimeConfigDirectory((userDataPath) => {
+      const path = governanceRuntimeConfigPath(userDataPath);
+      writeFileSync(
+        path,
+        JSON.stringify({ ...runtimeConfigManifest(), legacyPolicy: {} }),
+        "utf8",
+      );
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(/fields must be exactly/);
+
+      const invalidNested = runtimeConfigManifest();
+      Object.assign(invalidNested.validationFee, {
+        governanceKeysets: [],
+      });
+      writeFileSync(path, JSON.stringify(invalidNested), "utf8");
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(/fields must be exactly/);
+
+      const invalidUrl = runtimeConfigManifest();
+      invalidUrl.cbsiCoreApiBaseUrl = "http://cbsi-core.soramitsu.io";
+      writeFileSync(path, JSON.stringify(invalidUrl), "utf8");
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(/credential-free HTTPS/);
+    });
+  });
+
+  it("fails closed when missing and reloads the manifest instead of serving stale values", () => {
+    withRuntimeConfigDirectory((userDataPath) => {
+      const path = governanceRuntimeConfigPath(userDataPath);
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(new RegExp(GOVERNANCE_RUNTIME_CONFIG_FILENAME));
+
+      const first = runtimeConfigManifest();
+      writeFileSync(path, JSON.stringify(first), "utf8");
+      expect(
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} })
+          .cbsiCoreApiBaseUrl,
+      ).toBe("https://cbsi-core.soramitsu.io");
+
+      const second = runtimeConfigManifest();
+      second.cbsiCoreApiBaseUrl = "https://replacement-core.soramitsu.io";
+      writeFileSync(path, JSON.stringify(second), "utf8");
+      expect(
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} })
+          .cbsiCoreApiBaseUrl,
+      ).toBe("https://replacement-core.soramitsu.io");
+
+      writeFileSync(path, "{", "utf8");
+      expect(() =>
+        loadGovernanceRuntimeConfig({ userDataPath, env: {} }),
+      ).toThrow(/not valid JSON/);
+    });
   });
 });
 

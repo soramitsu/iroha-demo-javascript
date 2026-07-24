@@ -170,8 +170,14 @@ import {
 } from "./irohaJsNativeDir";
 import {
   fetchGovernanceValidationFeePolicy as fetchCoreGovernanceValidationFeePolicy,
+  readCbsiCoreApiBaseUrl,
+  readGovernanceValidationFeeConfig,
   type GovernanceValidationFeePolicyView,
 } from "./governanceValidationFee";
+import {
+  GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
+  type GovernanceRuntimeConfig,
+} from "./governanceRuntimeConfig";
 import {
   assertValidationFeePayoutLifecycleDecodedInstruction,
   assertValidationFeePayoutLifecycleDraftResponse,
@@ -7711,7 +7717,15 @@ const fetchGovernanceValidationFeePolicy = async (
       "Validation-fee policy reads are available only for the exact Taira staging endpoint.",
     );
   }
-  return fetchCoreGovernanceValidationFeePolicy();
+  const runtimeConfig = (await ipcRenderer.invoke(
+    GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
+  )) as GovernanceRuntimeConfig;
+  return fetchCoreGovernanceValidationFeePolicy({
+    config: readGovernanceValidationFeeConfig(
+      JSON.stringify(runtimeConfig.validationFee),
+    ),
+    coreApiBaseUrl: readCbsiCoreApiBaseUrl(runtimeConfig.cbsiCoreApiBaseUrl),
+  });
 };
 
 const normalizeGovernanceWireId = (value: unknown) => {

@@ -26,6 +26,10 @@ import {
   readRendererProtocolAsset,
   resolveRendererEntryUrl,
 } from "./rendererProtocol";
+import {
+  GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
+  loadGovernanceRuntimeConfig,
+} from "./governanceRuntimeConfig";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -271,10 +275,19 @@ const registerVaultHandlers = () => {
   );
 };
 
+const registerGovernanceRuntimeConfigHandler = () => {
+  ipcMain.handle(GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL, () =>
+    loadGovernanceRuntimeConfig({
+      userDataPath: app.getPath("userData"),
+    }),
+  );
+};
+
 app.whenReady().then(() => {
   registerRendererProtocol();
   registerVpnHandlers();
   registerVaultHandlers();
+  registerGovernanceRuntimeConfigHandler();
   registerMediaPermissionHandlers(
     session.defaultSession,
     getTrustedRendererUrl,

@@ -10,16 +10,16 @@ on:
         description: "Existing release tag to package, for example v2.0.1"
         required: true
       iroha_ref:
-        description: "hyperledger-iroha/iroha ref to check out beside this repo"
-        required: false
-        default: "main"
+        description: "Exact 40-character hyperledger-iroha/iroha commit SHA"
+        required: true
 
 permissions:
   contents: read
 
 env:
   NODE_VERSION: "20"
-  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || 'main' }}
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  IROHA_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.iroha_ref || vars.IROHA_REF }}
   APP_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
   SORANET_VPN_HELPER_BUNDLE_ID: ${{ vars.SORANET_VPN_HELPER_BUNDLE_ID }}
   SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
@@ -29,26 +29,174 @@ env:
   HAS_WIN_SIGNING: ${{ secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' }}
 
 jobs:
+  preflight:
+    name: Verify signed immutable release sources
+    runs-on: ubuntu-24.04
+    outputs:
+      iroha_sha: ${{ steps.identity.outputs.iroha_sha }}
+      tag_object_sha: ${{ steps.identity.outputs.tag_object_sha }}
+      wallet_sha: ${{ steps.identity.outputs.wallet_sha }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate immutable release inputs
+        shell: bash
+        run: |
+          expected_ref="refs/tags/$RELEASE_TAG"
+          expected_workflow_ref="$GITHUB_REPOSITORY/.github/workflows/release.yml@$expected_ref"
+
+          if [[ "$GITHUB_REF" != "$expected_ref" ]]; then
+            echo "::error::Release workflow must run from $expected_ref; got $GITHUB_REF."
+            exit 1
+          fi
+          if [[ "$GITHUB_WORKFLOW_REF" != "$expected_workflow_ref" ]]; then
+            echo "::error::Release workflow source must be $expected_workflow_ref; got $GITHUB_WORKFLOW_REF."
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_PROTECTED" != "true" ]]; then
+            echo "::error::Release tag $RELEASE_TAG must be covered by an active GitHub tag-protection ruleset."
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag is not a supported version tag: $RELEASE_TAG"
+            exit 1
+          fi
+          if [[ -z "$IROHA_REF" ]]; then
+            echo "::error::IROHA_REF is required. Set the repository variable for tag pushes or the iroha_ref input for a manual rerun."
+            exit 1
+          fi
+          if [[ ! "$IROHA_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::IROHA_REF must be one exact lowercase 40-character commit SHA; got $IROHA_REF."
+            exit 1
+          fi
+
+      - name: Checkout wallet tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: iroha-demo-javascript
+          ref: ${{ env.APP_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout immutable Iroha SDK
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: hyperledger-iroha/iroha
+          path: iroha
+          ref: ${{ env.IROHA_REF }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify signed source and tag identities
+        id: identity
+        shell: bash
+        run: |
+          wallet_sha="$(git -C iroha-demo-javascript rev-parse HEAD)"
+          iroha_sha="$(git -C iroha rev-parse HEAD)"
+          local_tag_type="$(git -C iroha-demo-javascript cat-file -t "refs/tags/$RELEASE_TAG")"
+          local_tag_object_sha="$(git -C iroha-demo-javascript rev-parse "refs/tags/$RELEASE_TAG")"
+          local_tag_target_sha="$(git -C iroha-demo-javascript rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+
+          if [[ "$wallet_sha" != "$GITHUB_SHA" ]]; then
+            echo "::error::Checked-out wallet commit $wallet_sha does not match workflow commit $GITHUB_SHA."
+            exit 1
+          fi
+          if [[ "$iroha_sha" != "$IROHA_REF" ]]; then
+            echo "::error::Checked-out Iroha commit $iroha_sha does not match pinned commit $IROHA_REF."
+            exit 1
+          fi
+          if [[ "$local_tag_type" != "tag" ]]; then
+            echo "::error::$RELEASE_TAG must be an annotated tag object, not $local_tag_type."
+            exit 1
+          fi
+          if [[ "$local_tag_target_sha" != "$wallet_sha" ]]; then
+            echo "::error::$RELEASE_TAG targets $local_tag_target_sha, not checked-out wallet commit $wallet_sha."
+            exit 1
+          fi
+          if [[ -n "$(git -C iroha-demo-javascript status --porcelain=v1)" || -n "$(git -C iroha status --porcelain=v1)" ]]; then
+            echo "::error::Release source checkouts must be clean."
+            exit 1
+          fi
+
+          release_version="${RELEASE_TAG#v}"
+          package_version="$(jq -r '.version' iroha-demo-javascript/package.json)"
+          lock_version="$(jq -r '.version' iroha-demo-javascript/package-lock.json)"
+          lock_root_version="$(jq -r '.packages[""].version' iroha-demo-javascript/package-lock.json)"
+          if [[ "$package_version" != "$release_version" || "$lock_version" != "$release_version" || "$lock_root_version" != "$release_version" ]]; then
+            echo "::error::Tag $RELEASE_TAG does not match package.json/package-lock.json versions ($package_version, $lock_version, $lock_root_version)."
+            exit 1
+          fi
+
+          tag_ref_json="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG")"
+          tag_object_type="$(jq -r '.object.type' <<<"$tag_ref_json")"
+          tag_object_sha="$(jq -r '.object.sha' <<<"$tag_ref_json")"
+          if [[ "$tag_object_type" != "tag" || "$tag_object_sha" != "$local_tag_object_sha" ]]; then
+            echo "::error::GitHub tag ref is not the checked-out annotated tag object."
+            exit 1
+          fi
+
+          tag_json="$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$tag_object_sha")"
+          if [[ "$(jq -r '.tag' <<<"$tag_json")" != "$RELEASE_TAG" \
+            || "$(jq -r '.object.type' <<<"$tag_json")" != "commit" \
+            || "$(jq -r '.object.sha' <<<"$tag_json")" != "$wallet_sha" ]]; then
+            echo "::error::Annotated tag identity does not match $RELEASE_TAG at $wallet_sha."
+            exit 1
+          fi
+          if [[ "$(jq -r '.verification.verified' <<<"$tag_json")" != "true" \
+            || "$(jq -r '.verification.reason' <<<"$tag_json")" != "valid" ]]; then
+            echo "::error::GitHub did not verify a valid cryptographic signature on $RELEASE_TAG."
+            exit 1
+          fi
+
+          wallet_commit_json="$(gh api "repos/$GITHUB_REPOSITORY/commits/$wallet_sha")"
+          if [[ "$(jq -r '.sha' <<<"$wallet_commit_json")" != "$wallet_sha" \
+            || "$(jq -r '.commit.verification.verified' <<<"$wallet_commit_json")" != "true" \
+            || "$(jq -r '.commit.verification.reason' <<<"$wallet_commit_json")" != "valid" ]]; then
+            echo "::error::GitHub did not verify a valid cryptographic signature on wallet commit $wallet_sha."
+            exit 1
+          fi
+
+          iroha_commit_json="$(gh api "repos/hyperledger-iroha/iroha/commits/$iroha_sha")"
+          if [[ "$(jq -r '.sha' <<<"$iroha_commit_json")" != "$iroha_sha" \
+            || "$(jq -r '.commit.verification.verified' <<<"$iroha_commit_json")" != "true" \
+            || "$(jq -r '.commit.verification.reason' <<<"$iroha_commit_json")" != "valid" ]]; then
+            echo "::error::GitHub did not verify a valid cryptographic signature on Iroha commit $iroha_sha."
+            exit 1
+          fi
+
+          {
+            echo "wallet_sha=$wallet_sha"
+            echo "iroha_sha=$iroha_sha"
+            echo "tag_object_sha=$tag_object_sha"
+          } >> "$GITHUB_OUTPUT"
+
   verify:
     name: Verify
+    needs: preflight
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout wallet
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: iroha-demo-javascript
           ref: ${{ env.APP_REF }}
 
       - name: Checkout Iroha SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: hyperledger-iroha/iroha
           path: iroha
           ref: ${{ env.IROHA_REF }}
           fetch-depth: 0
 
+      - name: Verify checked-out source identities
+        shell: bash
+        run: |
+          test "$(git -C iroha-demo-javascript rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C iroha rev-parse HEAD)" = "$IROHA_REF"
+
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -89,21 +237,27 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout wallet
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: iroha-demo-javascript
           ref: ${{ env.APP_REF }}
 
       - name: Checkout Iroha SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: hyperledger-iroha/iroha
           path: iroha
           ref: ${{ env.IROHA_REF }}
           fetch-depth: 0
 
+      - name: Verify checked-out source identities
+        shell: bash
+        run: |
+          test "$(git -C iroha-demo-javascript rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C iroha rev-parse HEAD)" = "$IROHA_REF"
+
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -235,7 +389,7 @@ jobs:
           find artifact-output -type f -maxdepth 1 -print
 
       - name: Upload release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-${{ matrix.platform }}-${{ matrix.arch }}
           path: iroha-demo-javascript/artifact-output/*
@@ -243,20 +397,24 @@ jobs:
 
   publish:
     name: Prepare keyless-signed draft GitHub release
-    needs: build
+    needs:
+      - preflight
+      - build
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       id-token: write
     env:
-      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IROHA_COMMIT_SHA: ${{ needs.preflight.outputs.iroha_sha }}
+      RELEASE_TAG_OBJECT_SHA: ${{ needs.preflight.outputs.tag_object_sha }}
       SIGSTORE_CERTIFICATE_IDENTITY: "https://github.com/${{ github.workflow_ref }}"
       SIGSTORE_CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com"
+      WALLET_COMMIT_SHA: ${{ needs.preflight.outputs.wallet_sha }}
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: release-*
           path: artifacts
@@ -308,6 +466,35 @@ jobs:
             exit 1
           fi
 
+      - name: Write immutable source identity
+        shell: bash
+        run: |
+          test "$WALLET_COMMIT_SHA" = "$GITHUB_SHA"
+          test "$IROHA_COMMIT_SHA" = "$IROHA_REF"
+          jq -n \
+            --arg release_tag "$RELEASE_TAG" \
+            --arg tag_object_sha "$RELEASE_TAG_OBJECT_SHA" \
+            --arg wallet_repository "$GITHUB_REPOSITORY" \
+            --arg wallet_commit_sha "$WALLET_COMMIT_SHA" \
+            --arg iroha_repository "hyperledger-iroha/iroha" \
+            --arg iroha_commit_sha "$IROHA_COMMIT_SHA" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            '{
+              schema: "sora.wallet.release-source.v1",
+              release_tag: $release_tag,
+              tag_object_sha: $tag_object_sha,
+              wallet: {
+                repository: $wallet_repository,
+                commit_sha: $wallet_commit_sha
+              },
+              iroha: {
+                repository: $iroha_repository,
+                commit_sha: $iroha_commit_sha
+              },
+              workflow_ref: $workflow_ref
+            }' > artifacts/SOURCE-IDENTITY.json
+          test -s artifacts/SOURCE-IDENTITY.json
+
       - name: Create checksum manifest
         shell: bash
         run: |
@@ -317,7 +504,8 @@ jobs:
             -name '*.dmg' -o \
             -name '*.exe' -o \
             -name '*.rpm' -o \
-            -name '*.zip' \
+            -name '*.zip' -o \
+            -name 'SOURCE-IDENTITY.json' \
           \) -print0 | sort -z | while IFS= read -r -d '' file; do
             (cd "$(dirname "$file")" && shasum -a 256 "$(basename "$file")")
           done > artifacts/SHA256SUMS.txt
@@ -363,10 +551,11 @@ jobs:
               -name '*.zip' \
             \) -print0 | sort -z
           )
+          upload_with_retry artifacts/SOURCE-IDENTITY.json
           upload_with_retry artifacts/SHA256SUMS.txt
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v4.1.2
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign release artifacts with GitHub OIDC
         shell: bash
@@ -384,6 +573,7 @@ jobs:
               -name '*.rpm' -o \
               -name '*.zip' \
               -o -name 'SHA256SUMS.txt' \
+              -o -name 'SOURCE-IDENTITY.json' \
             \) -print0 | sort -z
           )
 
@@ -409,6 +599,7 @@ jobs:
               -name '*.rpm' -o \
               -name '*.zip' \
               -o -name 'SHA256SUMS.txt' \
+              -o -name 'SOURCE-IDENTITY.json' \
             \) -print0 | sort -z
           )
 
@@ -422,6 +613,9 @@ jobs:
           These bundles provide Sigstore keyless provenance from the tagged
           GitHub Actions release workflow. They do not provide macOS
           notarization or Windows Authenticode signing.
+
+          `SOURCE-IDENTITY.json` records the verified signed tag object, wallet
+          commit, and exact Iroha commit used for the build.
 
           Install Cosign, download an artifact and its adjacent
           `.sigstore.json` bundle, then run:
@@ -438,6 +632,14 @@ jobs:
 
           cosign verify-blob "$artifact" \
             --bundle "$artifact.sigstore.json" \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_oidc_issuer" \
+            --certificate-github-workflow-ref "$certificate_github_workflow_ref" \
+            --certificate-github-workflow-repository "$certificate_github_workflow_repository" \
+            --certificate-github-workflow-sha "$certificate_github_workflow_sha"
+
+          cosign verify-blob SOURCE-IDENTITY.json \
+            --bundle SOURCE-IDENTITY.json.sigstore.json \
             --certificate-identity "$certificate_identity" \
             --certificate-oidc-issuer "$certificate_oidc_issuer" \
             --certificate-github-workflow-ref "$certificate_github_workflow_ref" \
@@ -502,6 +704,8 @@ jobs:
             \) -print0 | sort -z
           ) > "$expected_assets"
           printf '%s\n' \
+            'SOURCE-IDENTITY.json' \
+            'SOURCE-IDENTITY.json.sigstore.json' \
             'SHA256SUMS.txt' \
             'SHA256SUMS.txt.sigstore.json' \
             'SIGSTORE-VERIFY.md' >> "$expected_assets"

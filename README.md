@@ -92,14 +92,57 @@ generated enabled config:
 }
 ```
 
-Set that object as `GOVERNANCE_VALIDATION_FEE_CONFIG_JSON` and set
-`CBSI_CORE_API_BASE_URL` to the credential-free HTTPS Core origin. Unknown
-fields are rejected at every config and projection level. The host concurrently
-reads Core's raw `/v1/validation-fee/policy` projection and
-`/v1/validation-fee/status`, requires the status wrapper to contain the exact
-same projection, checks every runtime ledger/Parliament/payout coordinate, and
-rejects rollback or same-coordinate equivocation. Any failed read clears the
-renderer state; no stale cached policy is served.
+For normal packaged launches, install that exact generated object in the
+versioned runtime manifest at:
+
+```text
+<Electron app.getPath("userData")>/governance-runtime.json
+```
+
+The manifest shape is exact:
+
+```json
+{
+  "schema": "sora.wallet.governance-runtime.v1",
+  "validationFee": {
+    "enabled": true,
+    "ledgerBinding": {
+      "schema": "cbsi.mobile-validation-fee-ledger-binding.v1",
+      "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
+      "genesisHash": "...",
+      "policyChainGenesisHash": "...",
+      "checkpoint": {
+        "height": 1,
+        "contextId": "..."
+      }
+    },
+    "expected": {
+      "...": "generated release evidence only"
+    }
+  },
+  "cbsiCoreApiBaseUrl": "https://cbsi-core.soramitsu.io"
+}
+```
+
+Provision the file with an atomic replacement before launching the packaged
+app from Finder, the Start menu, or a desktop entry. Electron's `userData`
+directory is normally under `~/Library/Application Support` on macOS,
+`%APPDATA%` on Windows, and `~/.config` on Linux. The privileged main process
+reads the file again for every validation-fee policy refresh, so deleting,
+truncating, or replacing it with invalid data immediately fails closed instead
+of serving stale policy state.
+
+For managed or diagnostic launches, `GOVERNANCE_VALIDATION_FEE_CONFIG_JSON`
+and `CBSI_CORE_API_BASE_URL` remain an all-or-nothing environment override. If
+either variable is present, both are required and the file is not used; an
+empty, partial, or malformed override fails closed. Unknown fields are rejected
+at every manifest, config, and projection level.
+
+The host concurrently reads Core's raw `/v1/validation-fee/policy` projection
+and `/v1/validation-fee/status`, requires the status wrapper to contain the
+exact same projection, checks every runtime ledger/Parliament/payout
+coordinate, and rejects rollback or same-coordinate equivocation. Any failed
+read clears the renderer state; no stale cached policy is served.
 
 ## Architecture
 
