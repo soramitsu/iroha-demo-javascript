@@ -17,7 +17,6 @@ import SubscriptionHubView from "@/views/SubscriptionHubView.vue";
 import KaigiView from "@/views/KaigiView.vue";
 import VpnView from "@/views/VpnView.vue";
 import SoraCloudView from "@/views/SoraCloudView.vue";
-import SccpView from "@/views/SccpView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import { useSessionStore } from "@/stores/session";
 import type {
@@ -152,7 +151,7 @@ const appRoutes = [
     component: ParliamentView,
     meta: appRouteMeta({
       titleKey: "Governance",
-      subtitleKey: "Citizenship, referenda, ballots, and council status",
+      subtitleKey: "Live proposals, lifecycle, and citizen decisions",
       navLabelKey: "Governance",
       navGroup: "grow",
       navOrder: 20,
@@ -171,20 +170,6 @@ const appRoutes = [
       navGroup: "grow",
       navOrder: 30,
       icon: "subscriptions",
-      requiresAccount: true,
-      navPlacement: "primary",
-    }),
-  },
-  {
-    path: "/sccp",
-    component: SccpView,
-    meta: appRouteMeta({
-      titleKey: "SCCP Bridge",
-      subtitleKey: "TAIRA, TRON, and BSC XOR bridge",
-      navLabelKey: "SCCP Bridge",
-      navGroup: "services",
-      navOrder: 70,
-      icon: "bridge",
       requiresAccount: true,
       navPlacement: "primary",
     }),

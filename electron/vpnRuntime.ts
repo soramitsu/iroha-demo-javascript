@@ -3,7 +3,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
-import { buildTransaction, ToriiClient } from "@iroha/iroha-js";
+import { quoteAndSignTransaction, ToriiClient } from "@iroha/iroha-js";
 import { normalizeCryptoAlgorithm } from "@iroha/iroha-js/crypto";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -65,7 +65,6 @@ const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 const MAX_RECEIPTS = 24;
 const VPN_PAYMENT_WAIT_TIMEOUT_MS = 60_000;
 const VPN_PAYMENT_POLL_INTERVAL_MS = 1_000;
-const VPN_PAYMENT_SUCCESS_STATUSES = ["Applied", "Committed"] as const;
 
 const emptyStatus = (overrides?: Partial<VpnStatus>): VpnStatus => ({
   state: "idle",
@@ -591,13 +590,18 @@ export class VpnRuntime {
         },
         { canonicalAuth },
       );
-      const paymentTransaction = buildTransaction({
-        chainId,
-        authority: accountId,
-        instructions: normalizeVpnTxInstructions(quote.txInstructions),
-        privateKey,
-        privateKeyAlgorithm: signingAlgorithm,
-      });
+      const paymentTransaction = await quoteAndSignTransaction(
+        client,
+        {
+          chainId,
+          authority: accountId,
+          instructions: normalizeVpnTxInstructions(quote.txInstructions),
+          feePayment: { payer: "authority", chargeLimits: [] },
+          privateKey,
+          privateKeyAlgorithm: signingAlgorithm,
+        },
+        { canonicalAuth },
+      );
       const paymentTxHash = paymentTransaction.hash.toString("hex");
       await client.submitTransactionAndWait(
         paymentTransaction.signedTransaction,
@@ -605,7 +609,6 @@ export class VpnRuntime {
           hashHex: paymentTxHash,
           timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
           intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
-          successStatuses: VPN_PAYMENT_SUCCESS_STATUSES,
         },
       );
       session = await client.createVpnSession(
@@ -901,7 +904,7 @@ export class VpnRuntime {
     const receipts = await this.getClient(auth.toriiUrl).listVpnReceipts({
       canonicalAuth: buildVpnCanonicalAuth(auth, "VPN receipt sync"),
     });
-    this.receipts = receipts
+    this.receipts = receipts.items
       .map((item) =>
         normalizeReceipt(item as unknown as VpnReceipt, auth.toriiUrl, "torii"),
       )

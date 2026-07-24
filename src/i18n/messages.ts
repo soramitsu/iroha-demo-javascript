@@ -33,6 +33,7 @@ import {
   EGYPTIAN_TRANSLATIONS,
   OLD_AKKADIAN_TRANSLATIONS,
 } from "@/i18n/ancientTranslations";
+import { GOVERNANCE_ENGLISH_FALLBACK_TRANSLATIONS } from "@/i18n/governanceTranslations";
 import { QUIET_SAKURA_TRANSLATIONS } from "@/i18n/quietSakuraTranslations";
 
 export const SUPPORTED_LOCALES = [
@@ -1044,6 +1045,7 @@ const ZH_TW_TRANSLATIONS: TranslationTable = {
   ...ZH_TW_MANUAL_TRANSLATIONS,
 };
 const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
+  ...GOVERNANCE_ENGLISH_FALLBACK_TRANSLATIONS,
   "Connect a Solana wallet to continue.":
     "Connect a Solana wallet to continue.",
   "Connect Solana wallet": "Connect Solana wallet",

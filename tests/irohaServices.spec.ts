@@ -1,1201 +1,209 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  bondPublicLaneStake,
-  claimPublicLaneRewards,
-  connectVpn,
-  disconnectVpn,
-  deploySccpTairaInboundSettlementContract,
-  buildSolanaTransaction,
-  broadcastSolanaTransaction,
-  enactGovernanceProposal,
+  confirmGovernanceAction,
   fetchAccountAssets,
-  fetchAccountTransactions,
   getChainMetadata,
-  getConfidentialAssetBalance,
-  finalizeGovernanceReferendum,
-  finalizePublicLaneUnbond,
-  getGovernanceCitizenCount,
-  getGovernanceCitizenStatus,
-  getGovernanceCouncilCurrent,
-  getGovernanceLocks,
-  getGovernanceProposal,
-  getGovernanceRegistrationPolicy,
-  getGovernanceReferendum,
-  getGovernanceTally,
-  getGovernanceUnlockStats,
-  getConfidentialAssetPolicy,
-  getExplorerAccountQr,
-  getNexusPublicLaneRewards,
-  getNexusPublicLaneStake,
-  getNexusPublicLaneValidators,
-  getNexusStakingPolicy,
-  getSumeragiStatus,
-  getVpnAvailability,
-  getVpnProfile,
-  getVpnStatus,
-  listAccountPermissions,
-  listSubscriptionPlans,
-  listSubscriptions,
-  listVpnReceipts,
-  repairVpn,
-  proposeGovernanceDeployContract,
-  proposeGovernanceSccpRouteManifest,
-  registerCitizen,
-  registerPublicLaneValidator,
-  resolveAccountAlias,
-  requestFaucetFunds,
-  schedulePublicLaneUnbond,
-  cancelSubscription,
-  chargeSubscriptionNow,
-  createSubscription,
-  getSubscription,
-  keepSubscription,
-  pauseSubscription,
-  resumeSubscription,
-  callEvmRpc,
-  getEvmBalance,
-  getEvmBlockByHash,
-  getEvmChainId,
-  getEvmCode,
-  getEvmLogs,
-  getEvmTransaction,
-  getEvmTransactionReceipt,
-  callSolanaRpc,
-  getSolanaBalance,
-  getSolanaSignatureStatus,
-  getSolanaTokenBalance,
-  getSolanaTransaction,
-  getSigningAlgorithms,
-  generateKeyPair,
-  derivePublicKey,
-  storeAccountSecret,
-  signIrohaConnectMessage,
-  submitGovernancePlainBallot,
+  getGovernanceCurrentValidationFeePolicy,
+  getGovernanceProposalDetail,
+  listGovernanceProposals,
+  prepareGovernanceCitizenRegistration,
+  prepareGovernanceEnact,
+  prepareGovernanceParliamentBallot,
+  prepareGovernancePlainBallot,
+  prepareGovernanceProposal,
   transferAsset,
 } from "@/services/iroha";
 
-describe("iroha services bridge", () => {
+const HASH = `0x${"ab".repeat(32)}`;
+const ACCOUNT = "alice@wonderland";
+
+describe("Iroha service bridge", () => {
   afterEach(() => {
-    delete (window as any).iroha;
+    delete (window as { iroha?: unknown }).iroha;
   });
 
-  it("forwards chain metadata checks to the bridge", async () => {
+  it("fails clearly when preload is unavailable", () => {
+    expect(() => getChainMetadata("http://localhost:8080")).toThrow(
+      "Iroha bridge is unavailable",
+    );
+  });
+
+  it("forwards generic reads and writes without changing their payload", async () => {
     const getChainMetadataMock = vi.fn().mockResolvedValue({
       chainId: "chain-alpha",
       networkPrefix: 42,
     });
-
+    const fetchAccountAssetsMock = vi.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+    });
+    const transferAssetMock = vi.fn().mockResolvedValue({
+      hash: HASH.slice(2),
+      status: "Committed",
+    });
     (window as any).iroha = {
       getChainMetadata: getChainMetadataMock,
-    };
-
-    await expect(getChainMetadata("http://localhost:8080")).resolves.toEqual({
-      chainId: "chain-alpha",
-      networkPrefix: 42,
-    });
-    expect(getChainMetadataMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-  });
-
-  it("forwards IrohaConnect signing requests to the bridge", async () => {
-    const signIrohaConnectMessageMock = vi.fn().mockResolvedValue({
-      publicKeyHex: "ed0120public",
-      signatureB64: "signature",
-    });
-
-    (window as any).iroha = {
-      signIrohaConnectMessage: signIrohaConnectMessageMock,
-    };
-
-    const input = {
-      accountId: "alice@wonderland",
-      signingMessageB64: "bWVzc2FnZQ==",
-    };
-    await expect(signIrohaConnectMessage(input)).resolves.toEqual({
-      publicKeyHex: "ed0120public",
-      signatureB64: "signature",
-    });
-    expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(input);
-  });
-
-  it("forwards signing algorithm selection calls to the bridge", async () => {
-    const getSigningAlgorithmsMock = vi.fn().mockResolvedValue([
-      { id: "ed25519", label: "Ed25519", isDefault: true },
-      { id: "secp256k1", label: "Secp256k1", isDefault: false },
-    ]);
-    const generateKeyPairMock = vi.fn().mockReturnValue({
-      privateKeyHex: "11".repeat(32),
-      publicKeyHex: "02" + "22".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-    const derivePublicKeyMock = vi.fn().mockReturnValue({
-      publicKeyHex: "02" + "22".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-    const storeAccountSecretMock = vi.fn().mockResolvedValue(undefined);
-    (window as any).iroha = {
-      getSigningAlgorithms: getSigningAlgorithmsMock,
-      generateKeyPair: generateKeyPairMock,
-      derivePublicKey: derivePublicKeyMock,
-      storeAccountSecret: storeAccountSecretMock,
-    };
-
-    await expect(
-      getSigningAlgorithms("https://taira.sora.org"),
-    ).resolves.toHaveLength(2);
-    expect(getSigningAlgorithmsMock).toHaveBeenCalledWith({
-      toriiUrl: "https://taira.sora.org",
-    });
-    expect(
-      generateKeyPair({
-        signingAlgorithm: "secp256k1",
-        seedHex: "33".repeat(32),
-      }),
-    ).toEqual({
-      privateKeyHex: "11".repeat(32),
-      publicKeyHex: "02" + "22".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-    expect(generateKeyPairMock).toHaveBeenCalledWith({
-      signingAlgorithm: "secp256k1",
-      seedHex: "33".repeat(32),
-    });
-    expect(
-      derivePublicKey({
-        privateKeyHex: "11".repeat(32),
-        signingAlgorithm: "secp256k1",
-      }),
-    ).toEqual({
-      publicKeyHex: "02" + "22".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-    expect(derivePublicKeyMock).toHaveBeenCalledWith({
-      privateKeyHex: "11".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-    await expect(
-      storeAccountSecret({
-        accountId: "testuSecp",
-        privateKeyHex: "11".repeat(32),
-        signingAlgorithm: "secp256k1",
-      }),
-    ).resolves.toBeUndefined();
-    expect(storeAccountSecretMock).toHaveBeenCalledWith({
-      accountId: "testuSecp",
-      privateKeyHex: "11".repeat(32),
-      signingAlgorithm: "secp256k1",
-    });
-  });
-
-  it("forwards TAIRA SCCP inbound settlement deployments to the bridge", async () => {
-    const deployMock = vi.fn().mockResolvedValue({
-      contract_alias: "taira_xor_inbound_settlement::universal",
-      contract_address: "tairac1settlement",
-    });
-    (window as any).iroha = {
-      deploySccpTairaInboundSettlementContract: deployMock,
-    };
-
-    const input = {
-      toriiUrl: "https://taira.sora.org",
-      accountId: "testuaccount",
-      contractAlias: "taira_xor_inbound_settlement::universal",
-      compiledCodeB64: "SVZNAA==",
-    };
-
-    await expect(
-      deploySccpTairaInboundSettlementContract(input),
-    ).resolves.toEqual({
-      contract_alias: "taira_xor_inbound_settlement::universal",
-      contract_address: "tairac1settlement",
-    });
-    expect(deployMock).toHaveBeenCalledWith(input);
-  });
-
-  it("forwards EVM/BSC read methods through the preload bridge", async () => {
-    const callEvmRpcMock = vi.fn().mockResolvedValue("0x61");
-    const getEvmChainIdMock = vi.fn().mockResolvedValue("0x61");
-    const getEvmBalanceMock = vi.fn().mockResolvedValue("0xde0b6b3a7640000");
-    const getEvmCodeMock = vi.fn().mockResolvedValue("0x6000");
-    const receipt = { transactionHash: "0x".padEnd(66, "1") };
-    const transaction = { hash: "0x".padEnd(66, "2") };
-    const block = { hash: "0x".padEnd(66, "3") };
-    const logs = [{ transactionHash: "0x".padEnd(66, "4") }];
-    const getEvmTransactionReceiptMock = vi.fn().mockResolvedValue(receipt);
-    const getEvmTransactionMock = vi.fn().mockResolvedValue(transaction);
-    const getEvmBlockByHashMock = vi.fn().mockResolvedValue(block);
-    const getEvmLogsMock = vi.fn().mockResolvedValue(logs);
-
-    (window as any).iroha = {
-      callEvmRpc: callEvmRpcMock,
-      getEvmChainId: getEvmChainIdMock,
-      getEvmBalance: getEvmBalanceMock,
-      getEvmCode: getEvmCodeMock,
-      getEvmTransactionReceipt: getEvmTransactionReceiptMock,
-      getEvmTransaction: getEvmTransactionMock,
-      getEvmBlockByHash: getEvmBlockByHashMock,
-      getEvmLogs: getEvmLogsMock,
-    };
-
-    const rpcInput = {
-      endpoint: "https://bsc-testnet-rpc.publicnode.com",
-      method: "eth_chainId",
-      params: [],
-    };
-    const defaultInput = {
-      endpoint: "https://bsc-testnet-rpc.publicnode.com",
-    };
-    const addressInput = {
-      ...defaultInput,
-      address: "0x1111111111111111111111111111111111111111",
-    };
-    const txInput = {
-      ...defaultInput,
-      txHash: "0x".padEnd(66, "1"),
-    };
-    const blockInput = {
-      ...defaultInput,
-      blockHash: "0x".padEnd(66, "2"),
-      fullTransactions: true,
-    };
-    const logsInput = {
-      ...defaultInput,
-      address: "0x2222222222222222222222222222222222222222",
-      fromBlock: "0x1",
-      toBlock: "latest",
-    };
-
-    await expect(callEvmRpc(rpcInput)).resolves.toBe("0x61");
-    await expect(getEvmChainId(defaultInput)).resolves.toBe("0x61");
-    await expect(getEvmBalance(addressInput)).resolves.toBe(
-      "0xde0b6b3a7640000",
-    );
-    await expect(getEvmCode(addressInput)).resolves.toBe("0x6000");
-    await expect(getEvmTransactionReceipt(txInput)).resolves.toEqual(receipt);
-    await expect(getEvmTransaction(txInput)).resolves.toEqual(transaction);
-    await expect(getEvmBlockByHash(blockInput)).resolves.toEqual(block);
-    await expect(getEvmLogs(logsInput)).resolves.toEqual(logs);
-
-    expect(callEvmRpcMock).toHaveBeenCalledWith(rpcInput);
-    expect(getEvmChainIdMock).toHaveBeenCalledWith(defaultInput);
-    expect(getEvmBalanceMock).toHaveBeenCalledWith(addressInput);
-    expect(getEvmCodeMock).toHaveBeenCalledWith(addressInput);
-    expect(getEvmTransactionReceiptMock).toHaveBeenCalledWith(txInput);
-    expect(getEvmTransactionMock).toHaveBeenCalledWith(txInput);
-    expect(getEvmBlockByHashMock).toHaveBeenCalledWith(blockInput);
-    expect(getEvmLogsMock).toHaveBeenCalledWith(logsInput);
-  });
-
-  it("forwards offset-based pagination to asset and transaction fetchers", async () => {
-    const fetchAccountAssetsMock = vi
-      .fn()
-      .mockResolvedValue({ items: [], total: 0 });
-    const fetchAccountTransactionsMock = vi
-      .fn()
-      .mockResolvedValue({ items: [], total: 0 });
-
-    (window as any).iroha = {
       fetchAccountAssets: fetchAccountAssetsMock,
-      fetchAccountTransactions: fetchAccountTransactionsMock,
+      transferAsset: transferAssetMock,
     };
 
     const assetsInput = {
       toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-      limit: 10,
-      offset: 5,
+      accountId: ACCOUNT,
+      limit: 25,
     };
-    const txInput = {
+    const transferInput = {
       toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-      privateKeyHex: "ab".repeat(32),
-      limit: 6,
-      offset: 0,
-    };
-
-    await fetchAccountAssets(assetsInput);
-    await fetchAccountTransactions(txInput);
-
-    expect(fetchAccountAssetsMock).toHaveBeenCalledWith(assetsInput);
-    expect(fetchAccountTransactionsMock).toHaveBeenCalledWith(txInput);
-  });
-
-  it("forwards confidential asset balance requests to the bridge", async () => {
-    const getConfidentialAssetBalanceMock = vi.fn().mockResolvedValue({
-      resolvedAssetId: "xor#universal",
-      quantity: "4",
-      onChainQuantity: null,
-      spendableQuantity: "4",
-      exact: false,
-    });
-    (window as any).iroha = {
-      getConfidentialAssetBalance: getConfidentialAssetBalanceMock,
-    };
-
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      privateKeyHex: "ab".repeat(32),
-      assetDefinitionId: "xor#universal",
-    };
-    const result = await getConfidentialAssetBalance(input);
-
-    expect(getConfidentialAssetBalanceMock).toHaveBeenCalledWith(input);
-    expect(result.spendableQuantity).toBe("4");
-    expect(result.exact).toBe(false);
-  });
-
-  it("returns explorer QR snapshots with svg markup", async () => {
-    const snapshot = {
-      canonicalId: "testuAliceCanonical",
-      literal: "testuAliceLiteral",
-      networkPrefix: 369,
-      errorCorrection: "Q",
-      modules: 21,
-      qrVersion: 6,
-      svg: '<svg aria-label="qr"></svg>',
-    };
-    const getExplorerAccountQrMock = vi.fn().mockResolvedValue(snapshot);
-    (window as any).iroha = {
-      getExplorerAccountQr: getExplorerAccountQrMock,
-    };
-
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      accountId: "testuAliceCanonical",
-    };
-    const result = await getExplorerAccountQr(input);
-
-    expect(getExplorerAccountQrMock).toHaveBeenCalledWith(input);
-    expect(result.svg).toBe(snapshot.svg);
-    expect(result.qrVersion).toBe(snapshot.qrVersion);
-  });
-
-  it("forwards account alias resolution to the bridge", async () => {
-    const resolution = {
-      alias: "bob@universal",
-      accountId: "testuBobResolved",
-      resolved: true,
-      source: "on_chain",
-    };
-    const resolveAccountAliasMock = vi.fn().mockResolvedValue(resolution);
-    (window as any).iroha = {
-      resolveAccountAlias: resolveAccountAliasMock,
-    };
-
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      alias: "bob@universal",
-      networkPrefix: 369,
-    };
-    await expect(resolveAccountAlias(input)).resolves.toEqual(resolution);
-    expect(resolveAccountAliasMock).toHaveBeenCalledWith(input);
-  });
-
-  it("forwards VPN bridge methods", async () => {
-    const getVpnAvailabilityMock = vi.fn().mockResolvedValue({
-      platformSupported: true,
-      helperManaged: true,
-      helperReady: true,
-      serverReachable: true,
-      profileAvailable: true,
-      actionsEnabled: true,
-      status: "ready",
-      message: "ready",
-      helperVersion: "embedded-1.0.0",
-      platform: "darwin",
-      controllerInstalled: true,
-      controllerVersion: "1.0.0",
-      controllerKind: "macos-network-extension",
-      controllerPath: "/tmp/sora-vpn-controller",
-      repairRequired: false,
-      systemTunnelConfigured: true,
-      systemTunnelActive: false,
-      systemTunnelKind: "macos-networksetup",
-      systemTunnelInterface: "utun7",
-      systemTunnelService: "Wi-Fi",
-    });
-    const getVpnProfileMock = vi.fn().mockResolvedValue({
-      available: true,
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      supportedExitClasses: ["standard", "low-latency", "high-security"],
-      defaultExitClass: "standard",
-      leaseSecs: 600,
-      dnsPushIntervalSecs: 90,
-      meterFamily: "soranet.vpn.standard",
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: ["1.1.1.1"],
-      tunnelAddresses: ["10.208.0.2/32"],
-      mtuBytes: 1280,
-      displayBillingLabel: "standard · soranet.vpn.standard",
-    });
-    const getVpnStatusMock = vi.fn().mockResolvedValue({
-      state: "idle",
-      sessionId: null,
-      exitClass: null,
-      relayEndpoint: null,
-      connectedAtMs: null,
-      expiresAtMs: null,
-      durationMs: 0,
-      bytesIn: 0,
-      bytesOut: 0,
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [],
-      mtuBytes: 0,
-      helperStatus: "idle",
-      controllerInstalled: true,
-      controllerVersion: "1.0.0",
-      controllerKind: "macos-network-extension",
-      reconcileState: null,
-      repairRequired: false,
-      remoteSessionActive: false,
-      systemTunnelActive: false,
-      systemTunnelKind: "macos-networksetup",
-      systemTunnelInterface: "utun7",
-      systemTunnelService: "Wi-Fi",
-      errorMessage: null,
-      lastReceipt: null,
-    });
-    const connectVpnMock = vi.fn().mockResolvedValue({
-      state: "connected",
-      sessionId: "sess_1",
-      exitClass: "standard",
-      relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-      connectedAtMs: 1,
-      expiresAtMs: 2,
-      durationMs: 1,
-      bytesIn: 0,
-      bytesOut: 0,
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [],
-      mtuBytes: 1280,
-      helperStatus: "embedded-connected",
-      controllerInstalled: true,
-      controllerVersion: "1.0.0",
-      controllerKind: "macos-network-extension",
-      reconcileState: null,
-      repairRequired: false,
-      remoteSessionActive: true,
-      systemTunnelActive: true,
-      systemTunnelKind: "macos-networksetup",
-      systemTunnelInterface: "utun7",
-      systemTunnelService: "Wi-Fi",
-      errorMessage: null,
-      lastReceipt: null,
-    });
-    const repairVpnMock = vi.fn().mockResolvedValue({
-      state: "idle",
-      sessionId: null,
-      exitClass: null,
-      relayEndpoint: null,
-      connectedAtMs: null,
-      expiresAtMs: null,
-      durationMs: 0,
-      bytesIn: 0,
-      bytesOut: 0,
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [],
-      mtuBytes: 0,
-      helperStatus: "idle",
-      controllerInstalled: true,
-      controllerVersion: "1.0.0",
-      controllerKind: "macos-network-extension",
-      reconcileState: null,
-      repairRequired: false,
-      remoteSessionActive: false,
-      systemTunnelActive: false,
-      systemTunnelKind: "macos-networksetup",
-      systemTunnelInterface: "utun7",
-      systemTunnelService: "Wi-Fi",
-      errorMessage: null,
-      lastReceipt: null,
-    });
-    const disconnectVpnMock = vi.fn().mockResolvedValue({
-      state: "idle",
-      sessionId: null,
-      exitClass: null,
-      relayEndpoint: null,
-      connectedAtMs: null,
-      expiresAtMs: null,
-      durationMs: 0,
-      bytesIn: 0,
-      bytesOut: 0,
-      routePushes: [],
-      excludedRoutes: [],
-      dnsServers: [],
-      tunnelAddresses: [],
-      mtuBytes: 0,
-      helperStatus: "idle",
-      controllerInstalled: true,
-      controllerVersion: "1.0.0",
-      controllerKind: "macos-network-extension",
-      reconcileState: null,
-      repairRequired: false,
-      remoteSessionActive: false,
-      systemTunnelActive: false,
-      systemTunnelKind: "macos-networksetup",
-      systemTunnelInterface: "utun7",
-      systemTunnelService: "Wi-Fi",
-      errorMessage: null,
-      lastReceipt: null,
-    });
-    const listVpnReceiptsMock = vi.fn().mockResolvedValue([
-      {
-        sessionId: "sess_1",
-        accountId: "alice@wonderland",
-        exitClass: "standard",
-        relayEndpoint: "/dns/torii.exit.example/udp/9443/quic",
-        meterFamily: "soranet.vpn.standard",
-        connectedAtMs: 1,
-        disconnectedAtMs: 2,
-        durationMs: 1,
-        bytesIn: 0,
-        bytesOut: 0,
-        status: "disconnected",
-        receiptSource: "torii",
-      },
-    ]);
-
-    (window as any).iroha = {
-      getVpnAvailability: getVpnAvailabilityMock,
-      getVpnProfile: getVpnProfileMock,
-      getVpnStatus: getVpnStatusMock,
-      connectVpn: connectVpnMock,
-      repairVpn: repairVpnMock,
-      disconnectVpn: disconnectVpnMock,
-      listVpnReceipts: listVpnReceiptsMock,
-    };
-
-    const availabilityInput = { toriiUrl: "https://taira.sora.org" };
-    const connectInput = {
-      toriiUrl: "https://taira.sora.org",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      privateKeyHex: "aa".repeat(32),
-      exitClass: "standard" as const,
-    };
-    const disconnectInput = {
-      toriiUrl: "https://taira.sora.org",
-      accountId: "alice@wonderland",
-      privateKeyHex: "aa".repeat(32),
-    };
-    const statusInput = disconnectInput;
-
-    await getVpnAvailability(availabilityInput);
-    await getVpnProfile(availabilityInput);
-    await getVpnStatus(statusInput);
-    await connectVpn(connectInput);
-    await repairVpn(statusInput);
-    await disconnectVpn(disconnectInput);
-    await listVpnReceipts(statusInput);
-
-    expect(getVpnAvailabilityMock).toHaveBeenCalledWith(availabilityInput);
-    expect(getVpnProfileMock).toHaveBeenCalledWith(availabilityInput);
-    expect(getVpnStatusMock).toHaveBeenCalledWith(statusInput);
-    expect(connectVpnMock).toHaveBeenCalledWith(connectInput);
-    expect(repairVpnMock).toHaveBeenCalledWith(statusInput);
-    expect(disconnectVpnMock).toHaveBeenCalledWith(disconnectInput);
-    expect(listVpnReceiptsMock).toHaveBeenCalledWith(statusInput);
-  });
-
-  it("forwards faucet requests", async () => {
-    const requestFaucetFundsMock = vi.fn().mockResolvedValue({
-      account_id: "alice@wonderland",
-      asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      asset_id: "norito:abcdef0123456789",
-      amount: "25000",
-      tx_hash_hex: "0xabc",
-      status: "QUEUED",
-    });
-    (window as any).iroha = {
-      requestFaucetFunds: requestFaucetFundsMock,
-    };
-
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-    };
-    const onProgress = vi.fn();
-    const result = await requestFaucetFunds(input, onProgress);
-
-    expect(requestFaucetFundsMock).toHaveBeenCalledWith(input, onProgress);
-    expect(result.asset_definition_id).toBe("61CtjvNd9T3THAR65GsMVHr82Bjc");
-    expect(result.asset_id).toBe("norito:abcdef0123456789");
-    expect(result.amount).toBe("25000");
-  });
-
-  it("forwards transfer payloads including shield flags", async () => {
-    const transferAssetMock = vi.fn().mockResolvedValue({ hash: "0xabc" });
-    (window as any).iroha = {
-      transferAsset: transferAssetMock,
-    };
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      assetDefinitionId: "norito:abcdef0123456789",
-      accountId: "alice@wonderland",
+      chainId: "chain-alpha",
+      accountId: ACCOUNT,
       destinationAccountId: "bob@wonderland",
-      quantity: "12.5",
-      privateKeyHex: "aa".repeat(32),
-      shielded: true,
+      assetDefinitionId: "xor#wonderland",
+      quantity: "1",
     };
 
-    const result = await transferAsset(input);
+    await getChainMetadata("http://localhost:8080");
+    await fetchAccountAssets(assetsInput);
+    await transferAsset(transferInput);
 
-    expect(transferAssetMock).toHaveBeenCalledWith(input);
-    expect(result.hash).toBe("0xabc");
+    expect(getChainMetadataMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith(assetsInput);
+    expect(transferAssetMock).toHaveBeenCalledWith(transferInput);
   });
 
-  it("forwards confidential policy lookups", async () => {
-    const getConfidentialAssetPolicyMock = vi.fn().mockResolvedValue({
-      asset_id: "norito:abcdef0123456789",
-      block_height: 12,
-      current_mode: "TransparentOnly",
-      effective_mode: "TransparentOnly",
-      vk_set_hash: null,
-      poseidon_params_id: null,
-      pedersen_params_id: null,
-      pending_transition: null,
+  it("forwards the live governance catalog and selected proposal reads", async () => {
+    const listGovernanceProposalsMock = vi.fn().mockResolvedValue({
+      items: [],
+      nextCursor: null,
     });
+    const getGovernanceProposalDetailMock = vi.fn().mockResolvedValue({
+      summary: { proposalId: HASH },
+    });
+    const getGovernanceCurrentValidationFeePolicyMock = vi
+      .fn()
+      .mockRejectedValue(new Error("local proof verifier unavailable"));
     (window as any).iroha = {
-      getConfidentialAssetPolicy: getConfidentialAssetPolicyMock,
+      listGovernanceProposals: listGovernanceProposalsMock,
+      getGovernanceProposalDetail: getGovernanceProposalDetailMock,
+      getGovernanceCurrentValidationFeePolicy:
+        getGovernanceCurrentValidationFeePolicyMock,
     };
 
-    const input = {
-      toriiUrl: "http://localhost:8080",
-      accountId: "testuAlice",
-      assetDefinitionId: "norito:abcdef0123456789",
-    };
-    const result = await getConfidentialAssetPolicy(input);
-
-    expect(getConfidentialAssetPolicyMock).toHaveBeenCalledWith(input);
-    expect(result.asset_id).toBe("norito:abcdef0123456789");
-  });
-
-  it("forwards staking bridge methods", async () => {
-    const getSumeragiStatusMock = vi
-      .fn()
-      .mockResolvedValue({ lane_governance: [] });
-    const getNexusPublicLaneValidatorsMock = vi
-      .fn()
-      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
-    const getNexusPublicLaneStakeMock = vi
-      .fn()
-      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
-    const getNexusPublicLaneRewardsMock = vi
-      .fn()
-      .mockResolvedValue({ lane_id: 1, total: 0, items: [] });
-    const getNexusStakingPolicyMock = vi
-      .fn()
-      .mockResolvedValue({ unbondingDelayMs: 60_000 });
-    const bondPublicLaneStakeMock = vi.fn().mockResolvedValue({ hash: "0x1" });
-    const registerPublicLaneValidatorMock = vi
-      .fn()
-      .mockResolvedValue({ hash: "0x5" });
-    const schedulePublicLaneUnbondMock = vi
-      .fn()
-      .mockResolvedValue({ hash: "0x2" });
-    const finalizePublicLaneUnbondMock = vi
-      .fn()
-      .mockResolvedValue({ hash: "0x3" });
-    const claimPublicLaneRewardsMock = vi
-      .fn()
-      .mockResolvedValue({ hash: "0x4" });
-
-    (window as any).iroha = {
-      getSumeragiStatus: getSumeragiStatusMock,
-      getNexusPublicLaneValidators: getNexusPublicLaneValidatorsMock,
-      getNexusPublicLaneStake: getNexusPublicLaneStakeMock,
-      getNexusPublicLaneRewards: getNexusPublicLaneRewardsMock,
-      getNexusStakingPolicy: getNexusStakingPolicyMock,
-      bondPublicLaneStake: bondPublicLaneStakeMock,
-      registerPublicLaneValidator: registerPublicLaneValidatorMock,
-      schedulePublicLaneUnbond: schedulePublicLaneUnbondMock,
-      finalizePublicLaneUnbond: finalizePublicLaneUnbondMock,
-      claimPublicLaneRewards: claimPublicLaneRewardsMock,
-    };
-
-    const validatorsInput = {
-      toriiUrl: "http://localhost:8080",
-      laneId: 1,
-    };
-    const stakeInput = {
-      toriiUrl: "http://localhost:8080",
-      laneId: 1,
-      validator: "validator@wonderland",
-    };
-    const rewardsInput = {
-      toriiUrl: "http://localhost:8080",
-      laneId: 1,
-      account: "alice@wonderland",
-    };
-    const bondInput = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      stakeAccountId: "alice@wonderland",
-      validator: "validator@wonderland",
-      amount: "10",
-      privateKeyHex: "aa".repeat(32),
-    };
-    const registerValidatorInput = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      laneId: 1,
-      validatorAccountId: "alice@wonderland",
-      peerId: "peer:alice",
-      selfStake: "10",
-      metadata: { endpoint: "https://validator.example" },
-      privateKeyHex: "aa".repeat(32),
-    };
-    const unbondInput = {
-      ...bondInput,
-      amount: "5",
-      requestId: "request-1",
-      releaseAtMs: 12345,
-    };
-    const finalizeInput = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      stakeAccountId: "alice@wonderland",
-      validator: "validator@wonderland",
-      requestId: "request-1",
-      privateKeyHex: "aa".repeat(32),
-    };
-    const claimInput = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      stakeAccountId: "alice@wonderland",
-      validator: "validator@wonderland",
-      privateKeyHex: "aa".repeat(32),
-    };
-
-    await getSumeragiStatus("http://localhost:8080");
-    await getNexusPublicLaneValidators(validatorsInput);
-    await getNexusPublicLaneStake(stakeInput);
-    await getNexusPublicLaneRewards(rewardsInput);
-    await getNexusStakingPolicy("http://localhost:8080");
-    await bondPublicLaneStake(bondInput);
-    await registerPublicLaneValidator(registerValidatorInput);
-    await schedulePublicLaneUnbond(unbondInput);
-    await finalizePublicLaneUnbond(finalizeInput);
-    await claimPublicLaneRewards(claimInput);
-
-    expect(getSumeragiStatusMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-    expect(getNexusPublicLaneValidatorsMock).toHaveBeenCalledWith(
-      validatorsInput,
-    );
-    expect(getNexusPublicLaneStakeMock).toHaveBeenCalledWith(stakeInput);
-    expect(getNexusPublicLaneRewardsMock).toHaveBeenCalledWith(rewardsInput);
-    expect(getNexusStakingPolicyMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-    expect(bondPublicLaneStakeMock).toHaveBeenCalledWith(bondInput);
-    expect(registerPublicLaneValidatorMock).toHaveBeenCalledWith(
-      registerValidatorInput,
-    );
-    expect(schedulePublicLaneUnbondMock).toHaveBeenCalledWith(unbondInput);
-    expect(finalizePublicLaneUnbondMock).toHaveBeenCalledWith(finalizeInput);
-    expect(claimPublicLaneRewardsMock).toHaveBeenCalledWith(claimInput);
-  });
-
-  it("forwards subscription bridge methods", async () => {
-    const listSubscriptionPlansMock = vi
-      .fn()
-      .mockResolvedValue({ items: [], total: 0 });
-    const listSubscriptionsMock = vi
-      .fn()
-      .mockResolvedValue({ items: [], total: 0 });
-    const getSubscriptionMock = vi.fn().mockResolvedValue({
-      subscription_id: "sub_1$subscriptions.universal",
-      subscription: { status: "active" },
-      invoice: null,
-      plan: null,
-    });
-    const actionResult = {
-      ok: true,
-      subscription_id: "sub_1$subscriptions.universal",
-      tx_hash_hex: "0xabc",
-    };
-    const createSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
-    const pauseSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
-    const resumeSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
-    const cancelSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
-    const keepSubscriptionMock = vi.fn().mockResolvedValue(actionResult);
-    const chargeSubscriptionNowMock = vi.fn().mockResolvedValue(actionResult);
-
-    (window as any).iroha = {
-      listSubscriptionPlans: listSubscriptionPlansMock,
-      listSubscriptions: listSubscriptionsMock,
-      getSubscription: getSubscriptionMock,
-      createSubscription: createSubscriptionMock,
-      pauseSubscription: pauseSubscriptionMock,
-      resumeSubscription: resumeSubscriptionMock,
-      cancelSubscription: cancelSubscriptionMock,
-      keepSubscription: keepSubscriptionMock,
-      chargeSubscriptionNow: chargeSubscriptionNowMock,
-    };
-
-    const plansInput = {
-      toriiUrl: "http://localhost:8080",
-      provider: "provider@commerce",
-      limit: 20,
-      offset: 0,
-    };
     const listInput = {
       toriiUrl: "http://localhost:8080",
-      ownedBy: "alice@wonderland",
-      status: "active" as const,
-      limit: 20,
+      status: "open",
+      proposer: ACCOUNT,
+      limit: 50,
     };
-    const getInput = {
+    const detailInput = {
       toriiUrl: "http://localhost:8080",
-      subscriptionId: "sub_1$subscriptions.universal",
-    };
-    const signedInput = {
-      ...getInput,
-      accountId: "alice@wonderland",
-      privateKeyHex: "aa".repeat(32),
-    };
-    const createInput = {
-      ...signedInput,
-      planId: "plan_1$subscriptions.universal",
-      firstChargeMs: 1_704_067_200_000,
-    };
-    const cancelInput = {
-      ...signedInput,
-      cancelMode: "period_end" as const,
-    };
-    const chargeInput = {
-      ...signedInput,
-      chargeAtMs: 1_704_067_200_000,
+      proposalId: HASH,
+      accountId: ACCOUNT,
     };
 
-    await listSubscriptionPlans(plansInput);
-    await listSubscriptions(listInput);
-    await getSubscription(getInput);
-    await createSubscription(createInput);
-    await pauseSubscription(signedInput);
-    await resumeSubscription(chargeInput);
-    await cancelSubscription(cancelInput);
-    await keepSubscription(signedInput);
-    await chargeSubscriptionNow(chargeInput);
+    await listGovernanceProposals(listInput);
+    await getGovernanceProposalDetail(detailInput);
+    await expect(
+      getGovernanceCurrentValidationFeePolicy("http://localhost:8080"),
+    ).rejects.toThrow("local proof verifier unavailable");
 
-    expect(listSubscriptionPlansMock).toHaveBeenCalledWith(plansInput);
-    expect(listSubscriptionsMock).toHaveBeenCalledWith(listInput);
-    expect(getSubscriptionMock).toHaveBeenCalledWith(getInput);
-    expect(createSubscriptionMock).toHaveBeenCalledWith(createInput);
-    expect(pauseSubscriptionMock).toHaveBeenCalledWith(signedInput);
-    expect(resumeSubscriptionMock).toHaveBeenCalledWith(chargeInput);
-    expect(cancelSubscriptionMock).toHaveBeenCalledWith(cancelInput);
-    expect(keepSubscriptionMock).toHaveBeenCalledWith(signedInput);
-    expect(chargeSubscriptionNowMock).toHaveBeenCalledWith(chargeInput);
+    expect(listGovernanceProposalsMock).toHaveBeenCalledWith(listInput);
+    expect(getGovernanceProposalDetailMock).toHaveBeenCalledWith(detailInput);
+    expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+    });
   });
 
-  it("forwards parliament governance bridge methods", async () => {
-    const listAccountPermissionsMock = vi
-      .fn()
-      .mockResolvedValue({ items: [], total: 0 });
-    const getGovernanceCitizenStatusMock = vi.fn().mockResolvedValue({
-      accountId: "alice@wonderland",
-      isCitizen: true,
-      amount: "10000",
-      bondedHeight: 12,
-      seatsInEpoch: 0,
-      lastEpochSeen: 0,
-      cooldownUntil: 0,
-      endpointAvailable: true,
-    });
-    const getGovernanceCitizenCountMock = vi.fn().mockResolvedValue({
-      total: 1,
-      endpointAvailable: true,
-    });
-    const registerCitizenMock = vi.fn().mockResolvedValue({ hash: "0x10" });
-    const getGovernanceRegistrationPolicyMock = vi.fn().mockResolvedValue({
-      citizenshipAssetDefinitionId: null,
-      citizenshipBondAmount: null,
-      citizenshipAssetDefinitionExists: null,
-      configurationLoaded: false,
-      configurationError: null,
-      assetDefinitionError: null,
-    });
-    const getGovernanceProposalMock = vi
-      .fn()
-      .mockResolvedValue({ found: false, proposal: null });
-    const getGovernanceReferendumMock = vi
-      .fn()
-      .mockResolvedValue({ found: false, referendum: null });
-    const getGovernanceTallyMock = vi
-      .fn()
-      .mockResolvedValue({ found: false, referendum_id: "r1", tally: null });
-    const getGovernanceLocksMock = vi
-      .fn()
-      .mockResolvedValue({ found: false, referendum_id: "r1", locks: {} });
-    const getGovernanceUnlockStatsMock = vi.fn().mockResolvedValue({
-      height_current: 10,
-      expired_locks_now: 0,
-      referenda_with_expired: 0,
-      last_sweep_height: 9,
-    });
-    const getGovernanceCouncilCurrentMock = vi.fn().mockResolvedValue({
-      epoch: 1,
-      members: [],
-      alternates: [],
-      candidate_count: 0,
-      verified: 0,
-      derived_by: "Fallback",
-    });
-    const submitGovernancePlainBallotMock = vi
-      .fn()
-      .mockResolvedValue({ hash: "0x11" });
-    const finalizeGovernanceReferendumMock = vi.fn().mockResolvedValue({
-      ok: true,
-      proposal_id: "0x".padEnd(66, "1"),
-      tx_instructions: [],
-    });
-    const enactGovernanceProposalMock = vi.fn().mockResolvedValue({
-      ok: true,
-      proposal_id: "0x".padEnd(66, "2"),
-      tx_instructions: [],
-    });
-    const proposeGovernanceDeployContractMock = vi.fn().mockResolvedValue({
-      ok: true,
-      proposal_id: "0x".padEnd(66, "3"),
-      tx_instructions: [],
-    });
-    const proposeGovernanceSccpRouteManifestMock = vi.fn().mockResolvedValue({
-      ok: true,
-      proposal_id: "0x".padEnd(66, "4"),
-      tx_instructions: [],
-    });
-    const callSolanaRpcMock = vi.fn().mockResolvedValue({ result: "ok" });
-    const getSolanaBalanceMock = vi.fn().mockResolvedValue("123");
-    const getSolanaTokenBalanceMock = vi.fn().mockResolvedValue({
-      amount: "456",
-      decimals: 9,
-    });
-    const getSolanaSignatureStatusMock = vi
-      .fn()
-      .mockResolvedValue({ confirmationStatus: "confirmed", err: null });
-    const getSolanaTransactionMock = vi.fn().mockResolvedValue({ slot: 1234 });
-    const buildSolanaTransactionMock = vi.fn().mockResolvedValue("AQID");
-    const broadcastSolanaTransactionMock = vi
-      .fn()
-      .mockResolvedValue("3".repeat(64));
-
-    (window as any).iroha = {
-      listAccountPermissions: listAccountPermissionsMock,
-      getGovernanceCitizenStatus: getGovernanceCitizenStatusMock,
-      getGovernanceCitizenCount: getGovernanceCitizenCountMock,
-      registerCitizen: registerCitizenMock,
-      getGovernanceRegistrationPolicy: getGovernanceRegistrationPolicyMock,
-      getGovernanceProposal: getGovernanceProposalMock,
-      getGovernanceReferendum: getGovernanceReferendumMock,
-      getGovernanceTally: getGovernanceTallyMock,
-      getGovernanceLocks: getGovernanceLocksMock,
-      getGovernanceUnlockStats: getGovernanceUnlockStatsMock,
-      getGovernanceCouncilCurrent: getGovernanceCouncilCurrentMock,
-      proposeGovernanceDeployContract: proposeGovernanceDeployContractMock,
-      proposeGovernanceSccpRouteManifest:
-        proposeGovernanceSccpRouteManifestMock,
-      callSolanaRpc: callSolanaRpcMock,
-      getSolanaBalance: getSolanaBalanceMock,
-      getSolanaTokenBalance: getSolanaTokenBalanceMock,
-      getSolanaSignatureStatus: getSolanaSignatureStatusMock,
-      getSolanaTransaction: getSolanaTransactionMock,
-      buildSolanaTransaction: buildSolanaTransactionMock,
-      broadcastSolanaTransaction: broadcastSolanaTransactionMock,
-      submitGovernancePlainBallot: submitGovernancePlainBallotMock,
-      finalizeGovernanceReferendum: finalizeGovernanceReferendumMock,
-      enactGovernanceProposal: enactGovernanceProposalMock,
-    };
-
-    const permissionsInput = {
-      toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
-      limit: 100,
-    };
-    const registerInput = {
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      amount: "10000",
-      privateKeyHex: "aa".repeat(32),
-    };
-    const referendumInput = {
-      toriiUrl: "http://localhost:8080",
-      referendumId: "ref-1",
-    };
-    const proposalInput = {
-      toriiUrl: "http://localhost:8080",
-      proposalId: "0x".padEnd(66, "f"),
-    };
-    const deployProposalInput = {
-      toriiUrl: "http://localhost:8080",
-      contractAddress: "tairac1contract",
-      contractAlias: null,
-      codeHash: "0x".padEnd(66, "1"),
-      abiHash: "0x".padEnd(66, "2"),
-      abiVersion: "1",
-      mode: "Plain" as const,
-      window: null,
-      limits: null,
-    };
-    const sccpRouteManifestProposalInput = {
-      toriiUrl: "http://localhost:8080",
-      manifest: {
-        route: "taira_sol_xor",
-        verifier: { target: "SolanaProgram" },
+  it("forwards every two-phase governance preparation call exactly", async () => {
+    const prepared = {
+      reviewId: "review",
+      operation: "propose",
+      title: "Review",
+      proposalId: HASH,
+      referendumId: null,
+      decodedInstruction: {},
+      fee: {
+        payer: "authority",
+        components: [],
+        nextBlockHeight: "2",
       },
-      mode: "Zk" as const,
-      window: { lower: 10, upper: 42 },
+      expiresAtMs: Date.now() + 60_000,
     };
-    const ballotInput = {
+    const mocks = {
+      prepareGovernanceCitizenRegistration: vi.fn().mockResolvedValue(prepared),
+      prepareGovernanceProposal: vi.fn().mockResolvedValue(prepared),
+      prepareGovernancePlainBallot: vi.fn().mockResolvedValue(prepared),
+      prepareGovernanceParliamentBallot: vi.fn().mockResolvedValue(prepared),
+      prepareGovernanceEnact: vi.fn().mockResolvedValue(prepared),
+    };
+    (window as any).iroha = mocks;
+
+    const context = {
       toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      referendumId: "ref-1",
+      chainId: "chain-alpha",
+      accountId: ACCOUNT,
+    };
+    const proposal = {
+      ...context,
+      kind: "ValidationFeePayoutLifecycle" as const,
+      payload: {
+        payout_binding: { contract_address: "contract:payout" },
+        referendum_window: { lower: 100, upper: 3_699 },
+      },
+    };
+    const citizen = {
+      ...context,
+      proposalId: HASH,
+      referendumId: "referendum-1",
       amount: "10",
-      durationBlocks: 120,
+      durationBlocks: "20",
       direction: "Aye" as const,
-      privateKeyHex: "bb".repeat(32),
     };
-    const finalizeInput = {
-      toriiUrl: "http://localhost:8080",
-      referendumId: "ref-1",
-      proposalId: "0x".padEnd(66, "e"),
+    const parliament = {
+      ...context,
+      proposalId: HASH,
+      body: "Review",
+      decision: "approve" as const,
     };
-    const enactInput = {
-      toriiUrl: "http://localhost:8080",
-      proposalId: "0x".padEnd(66, "d"),
-    };
-    const solanaRpcInput = {
-      endpoint: "https://api.testnet.solana.com",
-      method: "getHealth",
-      params: [],
-    };
-    const solanaBalanceInput = {
-      endpoint: "https://api.testnet.solana.com",
-      address: "11111111111111111111111111111112",
-    };
-    const solanaTokenBalanceInput = {
-      endpoint: "https://api.testnet.solana.com",
-      ownerAddress: "11111111111111111111111111111112",
-      mintAddress: "11111111111111111111111111111113",
-    };
-    const solanaTransactionInput = {
-      endpoint: "https://api.testnet.solana.com",
-      signature: "3".repeat(64),
-    };
-    const solanaBroadcastInput = {
-      endpoint: "https://api.testnet.solana.com",
-      transactionB64: "Ag==",
-      expectedUnsignedTransactionB64: "AQ==",
-    };
-    const solanaBuildTransactionInput = {
-      endpoint: "https://api.testnet.solana.com",
-      feePayer: "11111111111111111111111111111112",
-      instructions: [
-        {
-          programId: "11111111111111111111111111111113",
-          accounts: [
-            {
-              pubkey: "11111111111111111111111111111112",
-              isSigner: true,
-              isWritable: false,
-            },
-          ],
-          dataHex: "0x0102",
-        },
-      ],
-    };
+    const enact = { ...context, proposalId: HASH };
 
-    await listAccountPermissions(permissionsInput);
-    await getGovernanceCitizenStatus({
-      toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
+    await prepareGovernanceCitizenRegistration({
+      ...context,
+      amount: "100",
     });
-    await getGovernanceCitizenCount("http://localhost:8080");
-    await registerCitizen(registerInput);
-    await getGovernanceRegistrationPolicy("http://localhost:8080");
-    await getGovernanceProposal(proposalInput);
-    await getGovernanceReferendum(referendumInput);
-    await getGovernanceTally(referendumInput);
-    await getGovernanceLocks(referendumInput);
-    await getGovernanceUnlockStats("http://localhost:8080");
-    await getGovernanceCouncilCurrent("http://localhost:8080");
-    await proposeGovernanceDeployContract(deployProposalInput);
-    await proposeGovernanceSccpRouteManifest(sccpRouteManifestProposalInput);
-    await callSolanaRpc(solanaRpcInput);
-    await getSolanaBalance(solanaBalanceInput);
-    await getSolanaTokenBalance(solanaTokenBalanceInput);
-    await getSolanaSignatureStatus(solanaTransactionInput);
-    await getSolanaTransaction(solanaTransactionInput);
-    await buildSolanaTransaction(solanaBuildTransactionInput);
-    await broadcastSolanaTransaction(solanaBroadcastInput);
-    await submitGovernancePlainBallot(ballotInput);
-    await finalizeGovernanceReferendum(finalizeInput);
-    await enactGovernanceProposal(enactInput);
+    await prepareGovernanceProposal(proposal);
+    await prepareGovernancePlainBallot(citizen);
+    await prepareGovernanceParliamentBallot(parliament);
+    await prepareGovernanceEnact(enact);
 
-    expect(listAccountPermissionsMock).toHaveBeenCalledWith(permissionsInput);
-    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      accountId: "alice@wonderland",
+    expect(mocks.prepareGovernanceCitizenRegistration).toHaveBeenCalledWith({
+      ...context,
+      amount: "100",
     });
-    expect(getGovernanceCitizenCountMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
+    expect(mocks.prepareGovernanceProposal).toHaveBeenCalledWith(proposal);
+    expect(mocks.prepareGovernancePlainBallot).toHaveBeenCalledWith(citizen);
+    expect(mocks.prepareGovernanceParliamentBallot).toHaveBeenCalledWith(
+      parliament,
+    );
+    expect(mocks.prepareGovernanceEnact).toHaveBeenCalledWith(enact);
+  });
+
+  it("confirms only the opaque review identifier and current account", async () => {
+    const confirmGovernanceActionMock = vi.fn().mockResolvedValue({
+      hash: HASH.slice(2),
+      operation: "enact",
+      proposalId: HASH,
+      referendumId: null,
+      status: "committed",
     });
-    expect(registerCitizenMock).toHaveBeenCalledWith(registerInput);
-    expect(getGovernanceRegistrationPolicyMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-    expect(getGovernanceProposalMock).toHaveBeenCalledWith(proposalInput);
-    expect(getGovernanceReferendumMock).toHaveBeenCalledWith(referendumInput);
-    expect(getGovernanceTallyMock).toHaveBeenCalledWith(referendumInput);
-    expect(getGovernanceLocksMock).toHaveBeenCalledWith(referendumInput);
-    expect(getGovernanceUnlockStatsMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-    expect(getGovernanceCouncilCurrentMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
-    expect(proposeGovernanceDeployContractMock).toHaveBeenCalledWith(
-      deployProposalInput,
-    );
-    expect(proposeGovernanceSccpRouteManifestMock).toHaveBeenCalledWith(
-      sccpRouteManifestProposalInput,
-    );
-    expect(callSolanaRpcMock).toHaveBeenCalledWith(solanaRpcInput);
-    expect(getSolanaBalanceMock).toHaveBeenCalledWith(solanaBalanceInput);
-    expect(getSolanaTokenBalanceMock).toHaveBeenCalledWith(
-      solanaTokenBalanceInput,
-    );
-    expect(getSolanaSignatureStatusMock).toHaveBeenCalledWith(
-      solanaTransactionInput,
-    );
-    expect(getSolanaTransactionMock).toHaveBeenCalledWith(
-      solanaTransactionInput,
-    );
-    expect(buildSolanaTransactionMock).toHaveBeenCalledWith(
-      solanaBuildTransactionInput,
-    );
-    expect(broadcastSolanaTransactionMock).toHaveBeenCalledWith(
-      solanaBroadcastInput,
-    );
-    expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith(ballotInput);
-    expect(finalizeGovernanceReferendumMock).toHaveBeenCalledWith(
-      finalizeInput,
-    );
-    expect(enactGovernanceProposalMock).toHaveBeenCalledWith(enactInput);
+    (window as any).iroha = {
+      confirmGovernanceAction: confirmGovernanceActionMock,
+    };
+    const input = { reviewId: "opaque-review", accountId: ACCOUNT };
+
+    await confirmGovernanceAction(input);
+
+    expect(confirmGovernanceActionMock).toHaveBeenCalledWith(input);
   });
 });

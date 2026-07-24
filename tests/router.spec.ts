@@ -109,7 +109,6 @@ describe("router guard", () => {
       "VPN",
       "Kaigi",
       "Offline",
-      "SCCP Bridge",
     ]);
     expect(
       APP_NAV_ITEMS.filter((item) => item.navPlacement === "footer")

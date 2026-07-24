@@ -9,7 +9,9 @@ const REQUIRED_NATIVE_EXPORTS = [
   "buildConfidentialTransferProofV2",
   "buildConfidentialUnshieldProofV2",
   "buildConfidentialUnshieldProofV3",
-  "buildIvmProvedTransaction",
+  "buildIvmProvedTransactionPayload",
+  "signQuotedIvmProvedTransactionPayload",
+  "connectNoritoBridgeAbiVersion",
 ] as const;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
@@ -150,7 +152,7 @@ export const loadIrohaJsNativeBinding = (
   );
   if (!hasRequiredIrohaJsNativeExports(nativeModule)) {
     throw new Error(
-      "The @iroha/iroha-js native binding is stale or incomplete; rebuild ../iroha/javascript/iroha_js so SCCP proved transaction signing is available.",
+      "The @iroha/iroha-js native binding is stale or incomplete; rebuild ../iroha/javascript/iroha_js before signing transactions.",
     );
   }
   return nativeModule;

@@ -305,7 +305,6 @@ describe("session store", () => {
 
   it("upgrades legacy account ids from stored canonical literals", () => {
     const canonical = "testu1234567890abcdef1234567890";
-    const migratedCanonical = "sorau1234567890abcdef1234567890";
     const payload = {
       connection: {
         toriiUrl: "https://legacy-torii",
@@ -336,9 +335,9 @@ describe("session store", () => {
     store.hydrate();
 
     expect(store.accounts).toHaveLength(1);
-    expect(store.accounts[0]?.accountId).toBe(migratedCanonical);
-    expect(store.activeAccountId).toBe(migratedCanonical);
-    expect(store.authority.accountId).toBe(migratedCanonical);
+    expect(store.accounts[0]?.accountId).toBe(canonical);
+    expect(store.activeAccountId).toBe(canonical);
+    expect(store.authority.accountId).toBe(canonical);
   });
 
   it("derives canonical account ids from stored key material when bridge is available", () => {

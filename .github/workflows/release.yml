@@ -7,19 +7,19 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing release tag to package, for example v2.0.0"
+        description: "Existing release tag to package, for example v2.0.1"
         required: true
       iroha_ref:
         description: "hyperledger-iroha/iroha ref to check out beside this repo"
         required: false
-        default: "ddc6d8607bb2dbf9949c64aaedb271994fbc6931"
+        default: "main"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NODE_VERSION: "20"
-  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || 'ddc6d8607bb2dbf9949c64aaedb271994fbc6931' }}
+  IROHA_REF: ${{ github.event.inputs.iroha_ref || vars.IROHA_REF || 'main' }}
   APP_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
   SORANET_VPN_HELPER_BUNDLE_ID: ${{ vars.SORANET_VPN_HELPER_BUNDLE_ID }}
   SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID: ${{ vars.SORANET_VPN_PACKET_TUNNEL_BUNDLE_ID }}
@@ -45,6 +45,7 @@ jobs:
           repository: hyperledger-iroha/iroha
           path: iroha
           ref: ${{ env.IROHA_REF }}
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -65,13 +66,6 @@ jobs:
       - name: Verify
         working-directory: iroha-demo-javascript
         run: npm run verify
-
-      - name: Install pinned Solana SBF build tool
-        run: cargo install cargo-build-sbf --version 4.1.0 --locked
-
-      - name: Verify production Solana SBF validator and reviewed programs
-        working-directory: iroha-demo-javascript
-        run: npm run verify:sccp-solana-sbf-validator-production
 
   build:
     name: Build ${{ matrix.platform }} ${{ matrix.arch }}
@@ -106,63 +100,7 @@ jobs:
           repository: hyperledger-iroha/iroha
           path: iroha
           ref: ${{ env.IROHA_REF }}
-
-      - name: Patch Iroha SDK for Windows MSVC build
-        if: matrix.platform == 'win'
-        shell: pwsh
-        run: |
-          $manifestPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/ivm/Cargo.toml"
-          $manifest = Get-Content $manifestPath -Raw
-          $manifest = $manifest -replace "`r`n", "`n"
-          $from = "[target.'cfg(target_arch = `"x86_64`")'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
-          $to = "[target.'cfg(all(target_arch = `"x86_64`", not(target_env = `"msvc`")))'.dependencies]`nsha2 = { version = `"0.10.9`", features = [`"asm`"] }"
-          if (-not $manifest.Contains($from)) {
-            throw "Expected ivm sha2 asm target dependency block was not found in $manifestPath"
-          }
-          Set-Content -Path $manifestPath -Value $manifest.Replace($from, $to) -NoNewline
-
-          $gpuZstdPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/norito/src/core/gpu_zstd.rs"
-          $gpuZstd = Get-Content $gpuZstdPath -Raw
-          $externFrom = "extern `"system`" {"
-          $externTo = "unsafe extern `"system`" {"
-          if (-not $gpuZstd.Contains($externFrom)) {
-            throw "Expected Windows gpu_zstd extern block was not found in $gpuZstdPath"
-          }
-          Set-Content -Path $gpuZstdPath -Value $gpuZstd.Replace($externFrom, $externTo) -NoNewline
-
-          $supervisorPath = Join-Path $env:GITHUB_WORKSPACE "iroha/crates/iroha_futures/src/supervisor.rs"
-          $supervisor = Get-Content $supervisorPath -Raw
-          $supervisor = $supervisor -replace "`r`n", "`n"
-          $supervisorSignature = "    pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {"
-          if (-not $supervisor.Contains($supervisorSignature)) {
-            throw "Expected iroha_futures supervisor signal handler signature was not found in $supervisorPath"
-          }
-          $supervisor = $supervisor.Replace($supervisorSignature, "    #[cfg(unix)]`n$supervisorSignature")
-          $externalSignalDoc = "    /// Spawns a task that will shut down the supervisor once the external`n"
-          $windowsSignalHandler = @'
-              /// Spawns a task that will initiate supervisor shutdown on Ctrl+C.
-              /// # Errors
-              /// See [`tokio::signal::ctrl_c`] errors.
-              #[cfg(windows)]
-              pub fn setup_shutdown_on_os_signals(&mut self) -> Result<()> {
-                  let shutdown_signal = self.shutdown_signal();
-                  self.monitor(tokio::spawn(async move {
-                      if tokio::signal::ctrl_c().await.is_ok() {
-                          iroha_logger::info!("Ctrl+C received, shutting down...");
-                      }
-
-                      shutdown_signal.send();
-                  }));
-
-                  Ok(())
-              }
-          '@
-          if (-not $supervisor.Contains($externalSignalDoc)) {
-            throw "Expected iroha_futures external signal marker was not found in $supervisorPath"
-          }
-          Set-Content -Path $supervisorPath -Value $supervisor.Replace($externalSignalDoc, "$windowsSignalHandler`n`n$externalSignalDoc") -NoNewline
-
-          "NORITO_SKIP_BINDINGS_SYNC=1" >> $env:GITHUB_ENV
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -304,13 +242,18 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish draft GitHub release
+    name: Prepare keyless-signed draft GitHub release
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      SIGSTORE_CERTIFICATE_IDENTITY: "https://github.com/${{ github.workflow_ref }}"
+      SIGSTORE_CERTIFICATE_OIDC_ISSUER: "https://token.actions.githubusercontent.com"
     steps:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
@@ -319,7 +262,53 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: Create or update draft release
+      - name: Validate immutable release ref and artifact inventory
+        shell: bash
+        run: |
+          expected_ref="refs/tags/$RELEASE_TAG"
+          if [[ "$GITHUB_REF" != "$expected_ref" ]]; then
+            echo "::error::Keyless release signing requires the workflow itself to run from $expected_ref; got $GITHUB_REF."
+            exit 1
+          fi
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tag is not a supported version tag: $RELEASE_TAG"
+            exit 1
+          fi
+
+          release_version="${RELEASE_TAG#v}"
+          mapfile -d '' release_files < <(
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' \
+            \) -print0 | sort -z
+          )
+          if (( ${#release_files[@]} == 0 )); then
+            echo "::error::No distributable release artifacts were downloaded."
+            exit 1
+          fi
+
+          for file in "${release_files[@]}"; do
+            name="$(basename "$file")"
+            if [[ "$name" != "SORA-Wallet-$release_version-"* ]]; then
+              echo "::error::Artifact $name does not match release $RELEASE_TAG."
+              exit 1
+            fi
+          done
+
+          duplicate_names="$(
+            printf '%s\n' "${release_files[@]##*/}" | sort | uniq -d
+          )"
+          if [[ -n "$duplicate_names" ]]; then
+            echo "::error::Duplicate release artifact names were merged:"
+            printf '%s\n' "$duplicate_names"
+            exit 1
+          fi
+
+      - name: Create checksum manifest
         shell: bash
         run: |
           find artifacts -maxdepth 1 -type f \( \
@@ -332,8 +321,200 @@ jobs:
           \) -print0 | sort -z | while IFS= read -r -d '' file; do
             (cd "$(dirname "$file")" && shasum -a 256 "$(basename "$file")")
           done > artifacts/SHA256SUMS.txt
+          test -s artifacts/SHA256SUMS.txt
 
+      - name: Create or update draft release
+        shell: bash
+        run: |
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --draft --verify-tag --title "$RELEASE_TAG" --generate-notes
+          elif [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Refusing to replace assets on an already-published release."
+            exit 1
           fi
-          gh release upload "$RELEASE_TAG" artifacts/* --clobber
+
+      - name: Upload draft distributables and checksums
+        shell: bash
+        run: |
+          upload_with_retry() {
+            local file="$1"
+            local attempt
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$file" --clobber; then
+                return 0
+              fi
+              if (( attempt < 3 )); then
+                sleep "$((attempt * 2))"
+              fi
+            done
+            echo "::error::Failed to upload $file after 3 attempts."
+            return 1
+          }
+
+          while IFS= read -r -d '' file; do
+            upload_with_retry "$file"
+          done < <(
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' \
+            \) -print0 | sort -z
+          )
+          upload_with_retry artifacts/SHA256SUMS.txt
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign release artifacts with GitHub OIDC
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            cosign sign-blob "$file" \
+              --bundle "$file.sigstore.json" \
+              --yes
+          done < <(
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' \
+              -o -name 'SHA256SUMS.txt' \
+            \) -print0 | sort -z
+          )
+
+      - name: Verify every Sigstore bundle
+        shell: bash
+        run: |
+          while IFS= read -r -d '' file; do
+            bundle="$file.sigstore.json"
+            test -s "$bundle"
+            cosign verify-blob "$file" \
+              --bundle "$bundle" \
+              --certificate-identity "$SIGSTORE_CERTIFICATE_IDENTITY" \
+              --certificate-oidc-issuer "$SIGSTORE_CERTIFICATE_OIDC_ISSUER" \
+              --certificate-github-workflow-ref "$GITHUB_REF" \
+              --certificate-github-workflow-repository "$GITHUB_REPOSITORY" \
+              --certificate-github-workflow-sha "$GITHUB_SHA"
+          done < <(
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' \
+              -o -name 'SHA256SUMS.txt' \
+            \) -print0 | sort -z
+          )
+
+      - name: Write Sigstore verification instructions
+        shell: bash
+        run: |
+          {
+            cat <<'EOF'
+          # Verify SORA Wallet release artifacts
+
+          These bundles provide Sigstore keyless provenance from the tagged
+          GitHub Actions release workflow. They do not provide macOS
+          notarization or Windows Authenticode signing.
+
+          Install Cosign, download an artifact and its adjacent
+          `.sigstore.json` bundle, then run:
+
+          ```bash
+          EOF
+            printf "certificate_identity='%s'\n" "$SIGSTORE_CERTIFICATE_IDENTITY"
+            printf "certificate_oidc_issuer='%s'\n" "$SIGSTORE_CERTIFICATE_OIDC_ISSUER"
+            printf "certificate_github_workflow_ref='%s'\n" "$GITHUB_REF"
+            printf "certificate_github_workflow_repository='%s'\n" "$GITHUB_REPOSITORY"
+            printf "certificate_github_workflow_sha='%s'\n" "$GITHUB_SHA"
+            printf "artifact='SORA-Wallet-%s-<os>-<arch>.<ext>'\n" "${RELEASE_TAG#v}"
+            cat <<'EOF'
+
+          cosign verify-blob "$artifact" \
+            --bundle "$artifact.sigstore.json" \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_oidc_issuer" \
+            --certificate-github-workflow-ref "$certificate_github_workflow_ref" \
+            --certificate-github-workflow-repository "$certificate_github_workflow_repository" \
+            --certificate-github-workflow-sha "$certificate_github_workflow_sha"
+
+          cosign verify-blob SHA256SUMS.txt \
+            --bundle SHA256SUMS.txt.sigstore.json \
+            --certificate-identity "$certificate_identity" \
+            --certificate-oidc-issuer "$certificate_oidc_issuer" \
+            --certificate-github-workflow-ref "$certificate_github_workflow_ref" \
+            --certificate-github-workflow-repository "$certificate_github_workflow_repository" \
+            --certificate-github-workflow-sha "$certificate_github_workflow_sha"
+
+          shasum -a 256 -c SHA256SUMS.txt
+          ```
+          EOF
+          } > artifacts/SIGSTORE-VERIFY.md
+
+      - name: Upload Sigstore bundles and verification instructions
+        shell: bash
+        run: |
+          upload_with_retry() {
+            local file="$1"
+            local attempt
+            for attempt in 1 2 3; do
+              if gh release upload "$RELEASE_TAG" "$file" --clobber; then
+                return 0
+              fi
+              if (( attempt < 3 )); then
+                sleep "$((attempt * 2))"
+              fi
+            done
+            echo "::error::Failed to upload $file after 3 attempts."
+            return 1
+          }
+
+          while IFS= read -r -d '' bundle; do
+            upload_with_retry "$bundle"
+          done < <(
+            find artifacts -maxdepth 1 -type f -name '*.sigstore.json' -print0 | sort -z
+          )
+          upload_with_retry artifacts/SIGSTORE-VERIFY.md
+
+      - name: Verify draft release asset inventory
+        shell: bash
+        run: |
+          expected_assets="$(mktemp)"
+          remote_assets="$(mktemp)"
+
+          while IFS= read -r -d '' file; do
+            name="$(basename "$file")"
+            printf '%s\n' "$name" "$name.sigstore.json"
+          done < <(
+            find artifacts -maxdepth 1 -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.dmg' -o \
+              -name '*.exe' -o \
+              -name '*.rpm' -o \
+              -name '*.zip' \
+            \) -print0 | sort -z
+          ) > "$expected_assets"
+          printf '%s\n' \
+            'SHA256SUMS.txt' \
+            'SHA256SUMS.txt.sigstore.json' \
+            'SIGSTORE-VERIFY.md' >> "$expected_assets"
+          sort -u -o "$expected_assets" "$expected_assets"
+
+          gh release view "$RELEASE_TAG" --json assets \
+            --jq '.assets[].name' | sort -u > "$remote_assets"
+          if ! diff -u "$expected_assets" "$remote_assets"; then
+            echo "::error::Draft release assets do not exactly match the verified local inventory."
+            exit 1
+          fi
+
+          if [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+            echo "::error::Release must remain a draft after signing and verification."
+            exit 1
+          fi

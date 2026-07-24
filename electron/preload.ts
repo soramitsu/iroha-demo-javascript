@@ -1,8 +1,4 @@
 import { clipboard, contextBridge, ipcRenderer } from "electron";
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { blake2b } from "@noble/hashes/blake2b";
-import { keccak_256 } from "@noble/hashes/sha3";
-import { spawn } from "node:child_process";
 import {
   createCipheriv,
   createDecipheriv,
@@ -10,16 +6,6 @@ import {
   hkdfSync,
   randomBytes,
 } from "crypto";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, resolve as resolvePath } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import {
-  PublicKey,
-  SystemProgram,
-  Transaction,
-  TransactionInstruction,
-} from "@solana/web3.js";
-import { bindSignedSolanaTransactionForBroadcast } from "./solanaTransaction";
 import {
   ToriiClient,
   buildPrivateCreateKaigiTransaction,
@@ -29,36 +15,28 @@ import {
   buildConfidentialUnshieldProofV2,
   buildConfidentialUnshieldProofV3,
   buildPrivateKaigiFeeSpend,
-  buildCreateKaigiTransaction,
-  buildEndKaigiTransaction,
-  buildJoinKaigiTransaction,
-  buildShieldTransaction,
-  buildUnshieldTransaction,
-  buildZkTransferTransaction,
-  buildTransaction,
-  buildIvmProvedTransaction,
-  buildRegisterAccountAndTransferTransaction,
-  buildTransferAssetTransaction,
-  compileKotodamaProgram,
+  buildCreateKaigiInstruction,
+  buildEndKaigiInstruction,
+  buildJoinKaigiInstruction,
+  buildRegisterAccountInstruction,
+  buildShieldInstruction,
+  buildTransferAssetInstruction,
+  buildUnshieldInstruction,
+  buildZkTransferInstruction,
+  buildTransactionPayload,
+  buildIvmProvedTransactionPayload,
+  computeValidationFeePolicyProposalFingerprintV1,
+  signQuotedIvmProvedTransactionPayload,
   submitTransactionEntrypoint,
   hashSignedTransaction,
   extractPipelineStatusKind,
+  noritoDecodeInstruction,
   normalizeAssetHoldingId,
+  signQuotedTransactionPayload,
+  type FeeQuoteResponse,
   type KaigiCallView,
-  type ToriiBridgeMessageSubmitPayload,
-  type ToriiBridgeProofSubmitPayload,
-  type ToriiGovernanceDeployContractProposalRequest,
-  type ToriiSccpEvmDestinationQueryOptions,
   type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
-import {
-  bindTairaXorBscToTairaSourceProofPackage,
-  buildBscSourceChainProofEnvelope,
-  buildBscMainnetSccpDestinationProofRequest,
-  buildBscTestnetSccpDestinationProofRequest,
-  parseTronTriggerSmartContractRawData,
-  type EvmSccpProofRequestInput,
-} from "@iroha/iroha-js/sccp";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair as generateSdkKeyPair,
@@ -120,11 +98,22 @@ import {
 } from "../src/utils/chainMetadata";
 import type { NetworkStatsResponse } from "../src/types/iroha";
 import {
+  assertPlainGovernanceProposalWrite,
+  canonicalGovernanceProposalId,
+  isAccountInParliamentRoster,
+  isReferendumPlainVoteOpen,
+  normalizeGovernanceProposalDetail,
+  normalizeGovernanceProposalList,
+  plainBallotLockCoversReferendum,
+  type GovernanceParliamentDecision,
+  type GovernanceProposalDetail,
+  type GovernanceProposalList,
+  type GovernanceWritableProposalKindId,
+} from "../src/governance/model";
+import {
   readTransactionFee,
   type TransactionFeeLike,
 } from "../src/utils/transactionFee";
-import { isSecretLikeTextValue } from "../src/utils/secretLike";
-import { normalizeSccpPackageOrRemoteModuleUrl } from "../src/utils/sccpProverUrl";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
 import {
@@ -133,22 +122,25 @@ import {
   type AccountFaucetResponse,
   type FaucetRequestProgress,
 } from "./faucetApi";
+import {
+  assertFaucetCommittedHeightAdvances,
+  FaucetCommittedHeightStalledError,
+  readSumeragiCommittedHeight,
+} from "./faucetFinality";
 import { computeFaucetClaimRetryDelayMs } from "./faucetRetry";
 import {
   bootstrapPortableConnectPreviewSession,
   resolvePortableConnectLaunchUri,
 } from "./connectPreview";
 import {
-  getSccpNileTestTronSignerStatus,
-  signSccpNileTestTronTransaction,
-  type SccpNileTestTronSignerStatus,
-  type SccpNileTestTronTransactionSignInput,
-} from "./tronTestSigner";
-import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
   normalizeCompatAccountIdLiteral,
 } from "./accountAddress";
+import {
+  buildCanonicalInstructionFeeQuoteRequest,
+  resolveCanonicalInstructionWireInput,
+} from "./transactionFeeQuote";
 import {
   decryptKaigiPayload,
   decryptKaigiPayloadWithSecret,
@@ -176,6 +168,40 @@ import {
   configureIrohaJsNativeDir,
   installGlobalIrohaJsNativeBinding,
 } from "./irohaJsNativeDir";
+import {
+  fetchGovernanceValidationFeePolicy as fetchCoreGovernanceValidationFeePolicy,
+  type GovernanceValidationFeePolicyView,
+} from "./governanceValidationFee";
+import {
+  assertValidationFeePayoutLifecycleDecodedInstruction,
+  assertValidationFeePayoutLifecycleDraftResponse,
+  assertValidationFeePolicyDecodedInstruction,
+  assertValidationFeePolicyDraftResponse,
+  buildValidationFeePayoutLifecycleDraftRequest,
+  buildValidationFeePolicyDraftRequest,
+  VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT,
+  VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT,
+  VALIDATION_FEE_POLICY_DRAFT_PATH,
+  type ValidationFeePayoutLifecycleDraftRequest,
+  type ValidationFeePolicyDraftRequest,
+} from "./governanceValidationFeeDraft";
+import {
+  parseGovernanceCapabilitiesV1,
+  TAIRA_GOVERNANCE_CHAIN_ID,
+  TAIRA_GOVERNANCE_NETWORK_PREFIX,
+  type GovernanceCapabilitiesV1,
+} from "./governanceCapabilities";
+import {
+  GOVERNANCE_CAPABILITIES_PATH,
+  GOVERNANCE_CITIZEN_DRAFT_PATH,
+  GOVERNANCE_UNLOCK_STATS_PATH,
+  VALIDATION_FEE_PROPOSALS_PATH,
+  governanceLocksPath,
+  governanceProposalPath,
+  governanceReferendumPath,
+  governanceTallyPath,
+  validationFeeProposalPath,
+} from "./governanceRoutes";
 import { buildSoraCloudHfDeployRequest } from "./soraCloudDeployRequest";
 import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
@@ -186,14 +212,11 @@ import {
   type ConfidentialWalletBackupStateBoxV2,
 } from "../src/utils/walletBackup";
 import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
-import {
-  snapshotSccpDataValue,
-  snapshotSccpJsonDataValue,
-} from "../src/utils/sccpDataSnapshot";
 
 type HexString = string;
 
 configureIrohaJsNativeDir(import.meta.url);
+installGlobalIrohaJsNativeBinding(import.meta.url);
 
 type ToriiConfig = {
   toriiUrl: string;
@@ -207,14 +230,7 @@ type SigningAlgorithmOption = {
 };
 type RuntimeConfigResponse = {
   walletConnectProjectId: string;
-  sccpBscE2eWallet: string;
-  sccpSolanaE2eWallet: string;
-  sccpTonE2eWallet: string;
-  sccpTonConnectManifestUrl: string;
 };
-const DEFAULT_SCCP_PROVER_V8_HEAP_MB = 8192;
-const MIN_SCCP_PROVER_V8_HEAP_MB = 1024;
-const MAX_SCCP_PROVER_V8_HEAP_MB = 32768;
 
 const KNOWN_CHAIN_METADATA_FALLBACKS = [
   {
@@ -224,7 +240,7 @@ const KNOWN_CHAIN_METADATA_FALLBACKS = [
   },
   {
     toriiUrl: "https://taira.sora.org",
-    chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+    chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
     networkPrefix: 369,
   },
 ] as const;
@@ -238,58 +254,7 @@ const readRuntimeConfigEnv = (name: string): string =>
 
 const getRuntimeConfigSnapshot = (): RuntimeConfigResponse => ({
   walletConnectProjectId: readRuntimeConfigEnv("VITE_WALLETCONNECT_PROJECT_ID"),
-  sccpBscE2eWallet: readRuntimeConfigEnv("VITE_SCCP_BSC_E2E_WALLET"),
-  sccpSolanaE2eWallet: readRuntimeConfigEnv("VITE_SCCP_SOLANA_E2E_WALLET"),
-  sccpTonE2eWallet: readRuntimeConfigEnv("VITE_SCCP_TON_E2E_WALLET"),
-  sccpTonConnectManifestUrl: readRuntimeConfigEnv(
-    "VITE_SCCP_TONCONNECT_MANIFEST_URL",
-  ),
 });
-
-const SECRET_LIKE_PAYLOAD_KEY_PATTERN =
-  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
-const SIGNING_HELPER_PAYLOAD_KEY_PATTERN =
-  /^(?:privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
-
-const assertNoSecretLikePayloadFields = (
-  value: unknown,
-  path: string,
-  seen = new WeakSet<object>(),
-): void => {
-  if (isSecretLikeTextValue(value)) {
-    throw new Error(
-      `${path} must not contain recovery phrases or private key material before Torii submission.`,
-    );
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      return;
-    }
-    seen.add(value);
-    value.forEach((entry, index) => {
-      assertNoSecretLikePayloadFields(entry, `${path}[${index}]`, seen);
-    });
-    return;
-  }
-  if (!isPlainRecord(value)) {
-    return;
-  }
-  if (seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-  for (const [key, child] of Object.entries(value)) {
-    if (SECRET_LIKE_PAYLOAD_KEY_PATTERN.test(key)) {
-      throw new Error(`${path}.${key} must not be submitted to Torii.`);
-    }
-    if (SIGNING_HELPER_PAYLOAD_KEY_PATTERN.test(key)) {
-      throw new Error(
-        `${path}.${key} must not include detached signature helper payloads inside SCCP material.`,
-      );
-    }
-    assertNoSecretLikePayloadFields(child, `${path}.${key}`, seen);
-  }
-};
 
 const extractConfidentialFeeMetadata = (
   metadata: Record<string, unknown> | undefined,
@@ -309,7 +274,6 @@ const extractConfidentialFeeMetadata = (
   return Object.fromEntries(allowedEntries);
 };
 const withConfidentialGasMetadata = (
-  _toriiUrl: string,
   assetDefinitionId: string,
   metadata?: Record<string, unknown>,
 ): Record<string, unknown> => {
@@ -358,6 +322,7 @@ const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
 const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
 const FAUCET_CLAIM_INVISIBLE_RETRY_MS = 20_000;
 const FAUCET_FINALITY_STALE_MS = 5 * 60_000;
+const FAUCET_FINALITY_PROGRESS_OBSERVATION_MS = 3_000;
 const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
 const isSecureVaultAvailable = async (): Promise<boolean> =>
@@ -696,15 +661,6 @@ type GovernanceCitizenCountResponse = {
   endpointAvailable: boolean;
 };
 
-type GovernanceRegistrationPolicyResponse = {
-  citizenshipAssetDefinitionId: string | null;
-  citizenshipBondAmount: string | null;
-  citizenshipAssetDefinitionExists: boolean | null;
-  configurationLoaded: boolean;
-  configurationError: string | null;
-  assetDefinitionError: string | null;
-};
-
 type GovernanceCitizenStatusResponse = {
   accountId: string;
   isCitizen: boolean;
@@ -715,10 +671,6 @@ type GovernanceCitizenStatusResponse = {
   cooldownUntil: number | null;
   endpointAvailable: boolean;
 };
-
-type GovernanceDraftResponse = Awaited<
-  ReturnType<ToriiClient["governanceFinalizeReferendumTyped"]>
->;
 
 type AccountOnboardingResponse = {
   account_id: string;
@@ -1010,18 +962,6 @@ type VpnDisconnectInput = {
 
 type VpnStatusInput = Partial<VpnDisconnectInput>;
 
-type RegisterCitizenInput = {
-  toriiUrl: string;
-  chainId: string;
-  accountId: string;
-  amount: string;
-  privateKeyHex?: HexString;
-};
-
-type GovernanceRegistrationPolicyInput = {
-  toriiUrl: string;
-};
-
 type GovernanceCitizenStatusInput = {
   toriiUrl: string;
   accountId: string;
@@ -1037,45 +977,86 @@ type GovernanceReferendumLookupInput = {
   referendumId: string;
 };
 
-type GovernancePlainBallotInput = {
+type GovernanceProposalListInput = {
+  toriiUrl: string;
+  status?: string | null;
+  kind?: string | null;
+  proposer?: string | null;
+  limit?: number;
+  cursor?: string | null;
+};
+
+type GovernanceProposalDetailInput = {
+  toriiUrl: string;
+  proposalId: string;
+  accountId?: string | null;
+};
+
+type GovernanceWriteOperation =
+  | "register-citizen"
+  | "propose"
+  | "plain-ballot"
+  | "parliament-ballot"
+  | "enact";
+
+type GovernancePrepareContext = {
   toriiUrl: string;
   chainId: string;
   accountId: string;
+  networkPrefix?: number;
+};
+
+type GovernanceProposalPrepareInput = GovernancePrepareContext & {
+  kind: GovernanceWritableProposalKindId;
+  payload: Record<string, unknown>;
+};
+
+type GovernancePlainBallotPrepareInput = GovernancePrepareContext & {
+  proposalId: string;
   referendumId: string;
   amount: string;
-  durationBlocks: number;
+  durationBlocks: string;
   direction: "Aye" | "Nay" | "Abstain";
-  privateKeyHex?: HexString;
 };
 
-type GovernanceDeployContractProposalInput = {
-  toriiUrl: string;
-  contractAddress?: string | null;
-  contractAlias?: string | null;
-  codeHash: string;
-  abiHash: string;
-  abiVersion?: string | null;
-  mode?: "Plain" | "Zk" | null;
-  window?: { lower: number; upper: number } | null;
-  limits?: Record<string, unknown> | null;
+type GovernanceParliamentBallotPrepareInput = GovernancePrepareContext & {
+  proposalId: string;
+  body: string;
+  decision: GovernanceParliamentDecision;
 };
 
-type GovernanceSccpRouteManifestProposalInput = {
-  toriiUrl: string;
-  manifest: Record<string, unknown>;
-  mode?: "Plain" | "Zk" | null;
-  window?: { lower: number; upper: number } | null;
+type GovernanceCitizenRegistrationPrepareInput = GovernancePrepareContext & {
+  amount: string;
 };
 
-type GovernanceFinalizeInput = {
-  toriiUrl: string;
-  referendumId: string;
+type GovernanceEnactPrepareInput = GovernancePrepareContext & {
   proposalId: string;
 };
 
-type GovernanceEnactInput = {
-  toriiUrl: string;
-  proposalId: string;
+type GovernancePreparedActionView = {
+  reviewId: string;
+  operation: GovernanceWriteOperation;
+  title: string;
+  proposalId: string | null;
+  referendumId: string | null;
+  decodedInstruction: Record<string, unknown>;
+  fee: {
+    payer: "authority" | "sponsor";
+    components: Array<{
+      kind: string;
+      assetDefinitionId: string;
+      maxAmount: string;
+    }>;
+    nextBlockHeight: string;
+  };
+  expiresAtMs: number;
+};
+
+type GovernanceCommittedActionView = TransactionSubmissionResultView & {
+  operation: GovernanceWriteOperation;
+  proposalId: string | null;
+  referendumId: string | null;
+  status: "committed";
 };
 
 type SubscriptionStatusView =
@@ -1193,216 +1174,6 @@ type SoraCloudHfDeployResponseView = {
   rollout_stage?: string | null;
   rollout_percent?: number | null;
   raw: Record<string, unknown>;
-};
-
-type SccpCapabilitiesResponse = Awaited<
-  ReturnType<ToriiClient["getSccpCapabilities"]>
->;
-type SccpProofManifestSetResponse = Awaited<
-  ReturnType<ToriiClient["getSccpProofManifests"]>
->;
-type SccpMessageProofBundleResponse = Record<string, unknown>;
-type SccpMessageProofArtifactResponse = Awaited<
-  ReturnType<ToriiClient["getSccpMessageProofArtifact"]>
->;
-type SccpMessageProofJobResponse = Awaited<
-  ReturnType<ToriiClient["getSccpMessageProofJob"]>
->;
-type SccpRecentMessagesInput = ToriiConfig & {
-  routeId?: string;
-  limit?: number;
-  offset?: number;
-};
-type SccpRecentMessagesResponse = {
-  items: Record<string, unknown>[];
-  total: number;
-  raw: Record<string, unknown>;
-};
-type SccpDestinationProofMaterialInput = {
-  networkIdHex?: string;
-  verifierAddressHex?: string;
-  bridgeAddressHex?: string;
-  verifierCodeHashHex?: string;
-  verifierKeyHashHex?: string;
-  expectedDestinationBindingHashHex?: string;
-  tronVerifierAddress?: string;
-  proofBytesHex?: string;
-};
-type SccpBscProofGenerateInput = {
-  request: unknown;
-  proverModuleUrl?: unknown;
-  proverConfigUrl?: unknown;
-  timeoutMs?: unknown;
-};
-type SccpBscSourceProofGenerateInput = {
-  input: unknown;
-  proverModuleUrl?: unknown;
-  proverConfigUrl?: unknown;
-  timeoutMs?: unknown;
-};
-type SccpSourceProofDeploymentRebuildInput = {
-  proofPackage: unknown;
-  sourceVerifierMaterial: unknown;
-  sourceAdapterEngineDeployment: unknown;
-  label?: unknown;
-};
-type SccpMessageProofBundleInput = ToriiConfig & {
-  messageId: string;
-};
-type SccpMessageProofInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    messageId: string;
-  };
-type SccpBridgeProofSubmitInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    accountId: string;
-    burnBundle?: Record<string, unknown>;
-    messageBundle?: Record<string, unknown>;
-    publicKeyHex?: string;
-    signatureB64?: string;
-    creationTimeMs?: number | string;
-  };
-type SccpBridgeMessageSubmitInput = ToriiConfig &
-  SccpDestinationProofMaterialInput & {
-    accountId: string;
-    messageBundle: Record<string, unknown>;
-    publicKeyHex?: string;
-    signatureB64?: string;
-    receiptLane?: number | string;
-    settlement?: Record<string, unknown>;
-    creationTimeMs?: number | string;
-  };
-type SccpTransactionCommitWaitInput = ToriiConfig & {
-  hashHex: string;
-};
-type SccpTairaInboundSettlementDeployInput = ToriiConfig & {
-  accountId: string;
-  contractAlias?: string | null;
-  compiledCodeB64?: string | null;
-  leaseExpiryMs?: number | string | null;
-  privateKeyHex?: unknown;
-};
-type TronGatewayInput = {
-  endpoint?: string;
-};
-type TronTransactionInput = TronGatewayInput & {
-  txId: string;
-};
-type TronAccountInput = TronGatewayInput & {
-  address: string;
-};
-type TronBlockInput = TronGatewayInput & {
-  blockNumber?: number | string;
-};
-type TronBroadcastInput = TronGatewayInput & {
-  transaction: Record<string, unknown>;
-};
-type TronContractParameterInput =
-  | {
-      parameter: string;
-      callData?: never;
-    }
-  | {
-      callData: string;
-      parameter?: never;
-    }
-  | {
-      parameter?: undefined;
-      callData?: undefined;
-    };
-type TronTriggerSmartContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-    feeLimit?: number | string;
-    callValue?: number | string;
-    permissionId?: number | string;
-  };
-type TronConstantContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-  };
-type EvmRpcInput = {
-  endpoint?: string;
-};
-type EvmRpcCallInput = EvmRpcInput & {
-  method: string;
-  params?: unknown[];
-};
-type EvmTransactionInput = EvmRpcInput & {
-  txHash: string;
-};
-type EvmAddressInput = EvmRpcInput & {
-  address: string;
-  blockTag?: string;
-};
-type EvmCallInput = EvmRpcInput & {
-  to: string;
-  data: string;
-  from?: string;
-  value?: string;
-  blockTag?: string;
-};
-type EvmLogsInput = EvmRpcInput & {
-  address?: string | string[];
-  blockHash?: string;
-  fromBlock?: string;
-  toBlock?: string;
-  topics?: Array<string | string[] | null>;
-};
-type SolanaRpcInput = {
-  endpoint?: string;
-};
-type SolanaRpcCallInput = SolanaRpcInput & {
-  method: string;
-  params?: unknown[];
-};
-type SolanaAddressInput = SolanaRpcInput & {
-  address: string;
-};
-type SolanaTokenBalanceInput = SolanaRpcInput & {
-  ownerAddress: string;
-  mintAddress: string;
-};
-type SolanaAssociatedTokenAccountInput = SolanaRpcInput & {
-  payerAddress: string;
-  ownerAddress: string;
-  mintAddress: string;
-};
-type SolanaTransactionInput = SolanaRpcInput & {
-  signature: string;
-};
-type SolanaBroadcastInput = SolanaRpcInput & {
-  transactionB64: string;
-  expectedUnsignedTransactionB64: string;
-};
-type SolanaInstructionAccountMetaInput = {
-  pubkey: string;
-  isSigner?: boolean;
-  signer?: boolean;
-  isWritable?: boolean;
-  writable?: boolean;
-};
-type SolanaInstructionInput = {
-  programId: string;
-  accounts?: SolanaInstructionAccountMetaInput[];
-  dataHex: string;
-};
-type SolanaBuildTransactionInput = SolanaRpcInput & {
-  feePayer: string;
-  instructions: SolanaInstructionInput[];
-  recentBlockhash?: string;
-};
-type SolanaPreparedAssociatedTokenAccount = {
-  associatedTokenAddress: string;
-  exists: boolean;
-  createInstruction: SolanaInstructionInput | null;
-};
-type TronEventsInput = TronGatewayInput & {
-  txId: string;
 };
 
 type IrohaBridge = {
@@ -1557,12 +1328,9 @@ type IrohaBridge = {
   listAccountPermissions(
     input: AccountPermissionsInput,
   ): Promise<AccountPermissionsResponse>;
-  registerCitizen(
-    input: RegisterCitizenInput,
-  ): Promise<TransactionSubmissionResultView>;
-  getGovernanceRegistrationPolicy(
-    input: GovernanceRegistrationPolicyInput,
-  ): Promise<GovernanceRegistrationPolicyResponse>;
+  getGovernanceCapabilities(
+    input: ToriiConfig,
+  ): Promise<GovernanceCapabilitiesV1>;
   getGovernanceCitizenStatus(
     input: GovernanceCitizenStatusInput,
   ): Promise<GovernanceCitizenStatusResponse>;
@@ -1587,21 +1355,34 @@ type IrohaBridge = {
   getGovernanceCouncilCurrent(
     config: ToriiConfig,
   ): Promise<GovernanceCouncilResponse>;
-  proposeGovernanceDeployContract(
-    input: GovernanceDeployContractProposalInput,
-  ): Promise<GovernanceDraftResponse>;
-  proposeGovernanceSccpRouteManifest(
-    input: GovernanceSccpRouteManifestProposalInput,
-  ): Promise<GovernanceDraftResponse>;
-  submitGovernancePlainBallot(
-    input: GovernancePlainBallotInput,
-  ): Promise<TransactionSubmissionResultView>;
-  finalizeGovernanceReferendum(
-    input: GovernanceFinalizeInput,
-  ): Promise<GovernanceDraftResponse>;
-  enactGovernanceProposal(
-    input: GovernanceEnactInput,
-  ): Promise<GovernanceDraftResponse>;
+  listGovernanceProposals(
+    input: GovernanceProposalListInput,
+  ): Promise<GovernanceProposalList>;
+  getGovernanceProposalDetail(
+    input: GovernanceProposalDetailInput,
+  ): Promise<GovernanceProposalDetail>;
+  getGovernanceCurrentValidationFeePolicy(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceValidationFeePolicyView>;
+  prepareGovernanceCitizenRegistration(
+    input: GovernanceCitizenRegistrationPrepareInput,
+  ): Promise<GovernancePreparedActionView>;
+  prepareGovernanceProposal(
+    input: GovernanceProposalPrepareInput,
+  ): Promise<GovernancePreparedActionView>;
+  prepareGovernancePlainBallot(
+    input: GovernancePlainBallotPrepareInput,
+  ): Promise<GovernancePreparedActionView>;
+  prepareGovernanceParliamentBallot(
+    input: GovernanceParliamentBallotPrepareInput,
+  ): Promise<GovernancePreparedActionView>;
+  prepareGovernanceEnact(
+    input: GovernanceEnactPrepareInput,
+  ): Promise<GovernancePreparedActionView>;
+  confirmGovernanceAction(input: {
+    reviewId: string;
+    accountId: string;
+  }): Promise<GovernanceCommittedActionView>;
   getExplorerMetrics(
     config: ToriiConfig,
   ): Promise<ExplorerMetricsResponse | null>;
@@ -1730,46 +1511,6 @@ type IrohaBridge = {
     input: SoraCloudStatusInput,
   ): Promise<Record<string, unknown>>;
   getParameters(input: ToriiConfig): Promise<Record<string, unknown>>;
-  getSccpCapabilities(input: ToriiConfig): Promise<SccpCapabilitiesResponse>;
-  getSccpProofManifests(
-    input: ToriiConfig,
-  ): Promise<SccpProofManifestSetResponse>;
-  listSccpRecentMessages(
-    input: SccpRecentMessagesInput,
-  ): Promise<SccpRecentMessagesResponse>;
-  getSccpMessageProofBundle(
-    input: SccpMessageProofBundleInput,
-  ): Promise<SccpMessageProofBundleResponse>;
-  getSccpMessageProofArtifact(
-    input: SccpMessageProofInput,
-  ): Promise<SccpMessageProofArtifactResponse>;
-  getSccpMessageProofJob(
-    input: SccpMessageProofInput,
-  ): Promise<SccpMessageProofJobResponse>;
-  proveBscSccpProof(
-    input: SccpBscProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpSourceProof(
-    input: SccpBscSourceProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  rebuildSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  buildTonSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeProof(
-    input: SccpBridgeProofSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeMessage(
-    input: SccpBridgeMessageSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  waitForSccpTransactionCommit(
-    input: SccpTransactionCommitWaitInput,
-  ): Promise<Record<string, unknown>>;
-  deploySccpTairaInboundSettlementContract(
-    input: SccpTairaInboundSettlementDeployInput,
-  ): Promise<Record<string, unknown> | null>;
   deriveZkIvmPayload(
     input: ZkIvmRequestInput,
   ): Promise<Record<string, unknown>>;
@@ -1783,67 +1524,6 @@ type IrohaBridge = {
   submitZkIvmProvedTransaction(
     input: ZkIvmProvedTransactionSubmitInput,
   ): Promise<Record<string, unknown>>;
-  getTronTransaction(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
-  getTronTransactionReceipt(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransactionEvents(
-    input: TronEventsInput,
-  ): Promise<Record<string, unknown>>;
-  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
-  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
-  getTronFinalityData(
-    input?: TronGatewayInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
-  signSccpNileTestTronTransaction(
-    input: SccpNileTestTronTransactionSignInput,
-  ): Promise<Record<string, unknown>>;
-  broadcastTronTransaction(
-    input: TronBroadcastInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronSmartContract(
-    input: TronTriggerSmartContractInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronConstantContract(
-    input: TronConstantContractInput,
-  ): Promise<Record<string, unknown>>;
-  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
-  getEvmChainId(input?: EvmRpcInput): Promise<string>;
-  getEvmBalance(input: EvmAddressInput): Promise<string>;
-  getEvmCode(input: EvmAddressInput): Promise<string>;
-  callEvmContract(input: EvmCallInput): Promise<string>;
-  getEvmTransactionReceipt(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmTransaction(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmBlockByHash(input: {
-    endpoint?: string;
-    blockHash: string;
-    fullTransactions?: boolean;
-  }): Promise<Record<string, unknown> | null>;
-  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
-  callSolanaRpc(input: SolanaRpcCallInput): Promise<unknown>;
-  getSolanaBalance(input: SolanaAddressInput): Promise<string>;
-  getSolanaTokenBalance(
-    input: SolanaTokenBalanceInput,
-  ): Promise<Record<string, unknown>>;
-  prepareSolanaAssociatedTokenAccount(
-    input: SolanaAssociatedTokenAccountInput,
-  ): Promise<SolanaPreparedAssociatedTokenAccount>;
-  getSolanaSignatureStatus(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getSolanaTransaction(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  buildSolanaTransaction(input: SolanaBuildTransactionInput): Promise<string>;
-  broadcastSolanaTransaction(input: SolanaBroadcastInput): Promise<string>;
   bondPublicLaneStake(
     input: BondPublicLaneStakeInput,
   ): Promise<TransactionSubmissionResultView>;
@@ -2219,10 +1899,9 @@ const readFaucetSumeragiState = async (
   const payload = (await response.json().catch(() => null)) as unknown;
   const record = isPlainRecord(payload) ? payload : {};
   const txQueue = isPlainRecord(record.tx_queue) ? record.tx_queue : {};
-  const commitQc = isPlainRecord(record.commit_qc) ? record.commit_qc : {};
   const queueDepth = readNumericField(txQueue.depth);
   const queueSaturated = txQueue.saturated === true;
-  const committedHeight = readNumericField(commitQc.height);
+  const committedHeight = readSumeragiCommittedHeight(record);
   const laneHeights = Array.isArray(record.lane_commitments)
     ? record.lane_commitments
         .map((value) =>
@@ -2267,6 +1946,49 @@ const assertFaucetEndpointFinalizing = async (
   } catch {
     throwIfAborted(signal);
     sumeragiState = null;
+  }
+
+  try {
+    await assertFaucetCommittedHeightAdvances({
+      initial: {
+        ledgerHeight: ledgerState.height,
+        sumeragiHeight: sumeragiState?.committedHeight ?? null,
+      },
+      observationWindowMs: FAUCET_FINALITY_PROGRESS_OBSERVATION_MS,
+      wait: waitForMs,
+      signal,
+      observe: async (observationSignal) => {
+        const nextLedgerState = await readFaucetLedgerFinalityState(
+          baseUrl,
+          observationSignal,
+        );
+        if (!nextLedgerState) {
+          throw buildFaucetFinalityUnavailableError("/v1/ledger/headers");
+        }
+        let nextSumeragiState: Awaited<
+          ReturnType<typeof readFaucetSumeragiState>
+        > | null = null;
+        try {
+          nextSumeragiState = await readFaucetSumeragiState(
+            baseUrl,
+            observationSignal,
+          );
+        } catch {
+          throwIfAborted(observationSignal);
+        }
+        ledgerState = nextLedgerState;
+        sumeragiState = nextSumeragiState;
+        return {
+          ledgerHeight: nextLedgerState.height,
+          sumeragiHeight: nextSumeragiState?.committedHeight ?? null,
+        };
+      },
+    });
+    return;
+  } catch (error) {
+    if (!(error instanceof FaucetCommittedHeightStalledError)) {
+      throw error;
+    }
   }
 
   const details = [
@@ -2767,16 +2489,7 @@ const normalizeIntegerAmount = (value: string, label: string) => {
   return amount;
 };
 
-const normalizeDurationBlocks = (value: number) => {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error("durationBlocks must be a positive integer.");
-  }
-  return value;
-};
-
-const normalizeBallotDirectionCode = (
-  direction: GovernancePlainBallotInput["direction"],
-) => {
+const normalizeBallotDirectionCode = (direction: "Aye" | "Nay" | "Abstain") => {
   switch (direction) {
     case "Aye":
       return 0;
@@ -2895,19 +2608,6 @@ type IrohaNativeTransactionCodec = {
   decodeTransactionReceiptJson?: (
     payload: Buffer,
   ) => string | Buffer | Uint8Array | ArrayBuffer | ArrayBufferView;
-};
-
-type IrohaNativeSccpCodec = {
-  sccpRebuildMessageBundleSourceProofWithDeployment?: (
-    messageBundleJson: string,
-    sourceMaterialJson: string,
-    sourceDeploymentJson: string,
-  ) => string;
-  sccpBuildTonMessageBundleSourceProofWithDeployment?: (
-    messageBundleJson: string,
-    sourceMaterialJson: string,
-    sourceDeploymentJson: string,
-  ) => string;
 };
 
 const nativeCodecBytesToBuffer = (
@@ -5220,6 +4920,12 @@ const getSoraCloudStatusFromTorii = async (
   }
 };
 
+const getParametersFromTorii = (input: ToriiConfig) =>
+  fetchJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/parameters"),
+    "Network parameters",
+  );
+
 const deploySoraCloudHfOnTorii = async (
   input: SoraCloudHfDeployInput,
 ): Promise<SoraCloudHfDeployResponseView> => {
@@ -5272,2504 +4978,6 @@ const getSoraCloudHfStatusFromTorii = async (
     buildSoraCloudHeaders(input.apiToken),
   );
 
-const DEFAULT_TRON_GATEWAY_URL = "https://api.trongrid.io";
-
-const buildSccpDestinationProofOptions = (
-  input: SccpDestinationProofMaterialInput,
-): ToriiSccpEvmDestinationQueryOptions => {
-  const options: ToriiSccpEvmDestinationQueryOptions = {};
-  if (trimString(input.networkIdHex)) {
-    options.networkIdHex = trimString(input.networkIdHex);
-  }
-  if (trimString(input.verifierAddressHex)) {
-    options.verifierAddressHex = trimString(input.verifierAddressHex);
-  }
-  if (trimString(input.bridgeAddressHex)) {
-    options.bridgeAddressHex = trimString(input.bridgeAddressHex);
-  }
-  if (trimString(input.verifierCodeHashHex)) {
-    options.verifierCodeHashHex = trimString(input.verifierCodeHashHex);
-  }
-  if (trimString(input.verifierKeyHashHex)) {
-    options.verifierKeyHashHex = trimString(input.verifierKeyHashHex);
-  }
-  if (trimString(input.expectedDestinationBindingHashHex)) {
-    options.expectedDestinationBindingHashHex = trimString(
-      input.expectedDestinationBindingHashHex,
-    );
-  }
-  if (trimString(input.tronVerifierAddress)) {
-    options.tronVerifierAddress = trimString(input.tronVerifierAddress);
-  }
-  if (trimString(input.proofBytesHex)) {
-    options.proofBytesHex = trimString(input.proofBytesHex);
-  }
-  return options;
-};
-
-const normalizeSccpMessageIdPathSegment = (value: string): string => {
-  const normalized = trimString(value).toLowerCase().replace(/^0x/u, "");
-  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error("SCCP message id must be a 32-byte hex string.");
-  }
-  return normalized;
-};
-
-const getSccpMessageProofBundleFromTorii = (
-  input: SccpMessageProofBundleInput,
-): Promise<SccpMessageProofBundleResponse> =>
-  fetchJson(
-    buildNexusEndpoint(
-      input.toriiUrl,
-      `/v1/sccp/proofs/message/${normalizeSccpMessageIdPathSegment(input.messageId)}`,
-    ),
-    "SCCP message proof bundle",
-  );
-
-const SCCP_DISCOVERY_REQUEST_TIMEOUT_MS = 15_000;
-
-const withSccpDiscoveryTimeout = async <T>(
-  label: string,
-  run: (signal: AbortSignal) => Promise<T>,
-): Promise<T> => {
-  const controller = new AbortController();
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const error = new Error(`${label} request timed out.`);
-      controller.abort(error);
-      reject(error);
-    }, SCCP_DISCOVERY_REQUEST_TIMEOUT_MS);
-  });
-
-  try {
-    return await Promise.race([run(controller.signal), timeoutPromise]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
-};
-
-const getSccpCapabilitiesFromTorii = (
-  input: ToriiConfig,
-): Promise<SccpCapabilitiesResponse> =>
-  withSccpDiscoveryTimeout("SCCP capabilities", (signal) =>
-    getClient(input.toriiUrl).getSccpCapabilities({ signal }),
-  );
-
-const getParametersFromTorii = (
-  input: ToriiConfig,
-): Promise<Record<string, unknown>> =>
-  withSccpDiscoveryTimeout("Network parameters", (signal) =>
-    fetchJson(
-      buildNexusEndpoint(input.toriiUrl, "/v1/parameters"),
-      "Network parameters",
-      undefined,
-      signal,
-    ),
-  );
-
-const getSccpProofManifestsFromTorii = (
-  input: ToriiConfig,
-): Promise<SccpProofManifestSetResponse> =>
-  withSccpDiscoveryTimeout("SCCP proof manifests", (signal) =>
-    getClient(input.toriiUrl).getSccpProofManifests({ signal }),
-  );
-
-const listSccpRecentMessagesFromTorii = async (
-  input: SccpRecentMessagesInput,
-): Promise<SccpRecentMessagesResponse> => {
-  const payload = await withSccpDiscoveryTimeout(
-    "SCCP recent messages",
-    (signal) =>
-      fetchJson(
-        buildNexusEndpoint(input.toriiUrl, "/v1/sccp/messages/recent", {
-          route_id: trimString(input.routeId) || undefined,
-          limit: input.limit,
-          offset: input.offset,
-        }),
-        "SCCP recent messages",
-        undefined,
-        signal,
-      ),
-  );
-  const rawItems = Array.isArray(payload.items)
-    ? payload.items
-    : Array.isArray(payload.messages)
-      ? payload.messages
-      : [];
-  const items = rawItems.filter(
-    (entry): entry is Record<string, unknown> =>
-      isPlainRecord(entry) && !Array.isArray(entry),
-  );
-  return {
-    items,
-    total: normalizeTotal(payload.total, items.length),
-    raw: payload,
-  };
-};
-
-const normalizeSccpSubmissionRecord = (
-  value: unknown,
-  label: string,
-): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  const normalized = snapshotSccpDataValue(value, label) as Record<
-    string,
-    unknown
-  >;
-  if (!isPlainRecord(normalized)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  assertNoSecretLikePayloadFields(normalized, label);
-  return normalized;
-};
-
-const normalizeOptionalSccpSubmissionRecord = (
-  value: unknown,
-  label: string,
-): Record<string, unknown> | undefined => {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-  return normalizeSccpSubmissionRecord(value, label);
-};
-
-const buildSccpBridgeAuthorityPayload = async (
-  input: {
-    accountId: string;
-    privateKeyHex?: unknown;
-    publicKeyHex?: string;
-    signatureB64?: string;
-  },
-  operationLabel: string,
-) => {
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
-  if (trimString(input.privateKeyHex)) {
-    throw new Error(
-      "SCCP bridge submissions must use stored wallet secrets or detached signatures; inline private keys are not accepted.",
-    );
-  }
-  const publicKeyHex = trimString(input.publicKeyHex);
-  const signatureB64 = trimString(input.signatureB64);
-  if (Boolean(publicKeyHex) !== Boolean(signatureB64)) {
-    throw new Error(
-      "SCCP detached signature submissions require both publicKeyHex and signatureB64.",
-    );
-  }
-  const hasDetachedSignature = Boolean(publicKeyHex && signatureB64);
-  return {
-    authority: accountId,
-    ...(hasDetachedSignature
-      ? { publicKeyHex, signatureB64 }
-      : {
-          privateKey: formatExposedPrivateKey(
-            await resolveSigningMaterial({
-              accountId,
-              operationLabel,
-            }),
-          ),
-        }),
-  };
-};
-
-const submitSccpBridgeProofToTorii = async (
-  input: SccpBridgeProofSubmitInput,
-): Promise<Record<string, unknown>> => {
-  const burnBundle = normalizeOptionalSccpSubmissionRecord(
-    input.burnBundle,
-    "SCCP burnBundle",
-  );
-  const messageBundle = normalizeOptionalSccpSubmissionRecord(
-    input.messageBundle,
-    "SCCP messageBundle",
-  );
-  const auth = await buildSccpBridgeAuthorityPayload(
-    input,
-    "Submit SCCP bridge proof",
-  );
-  const payload: ToriiBridgeProofSubmitPayload = {
-    ...auth,
-    ...(burnBundle ? { burnBundle } : {}),
-    ...(messageBundle ? { messageBundle } : {}),
-    ...buildSccpDestinationProofOptions(input),
-    ...(input.creationTimeMs !== undefined
-      ? { creationTimeMs: input.creationTimeMs }
-      : {}),
-  };
-  const client = getClient(input.toriiUrl);
-  return client.submitBridgeProof(payload);
-};
-
-const SCCP_SUBMIT_DEBUG_DIR = resolvePath(
-  process.cwd(),
-  "output",
-  "sccp-ton-live-proof",
-  "debug",
-);
-
-const summarizeSccpSubmitRecord = (value: unknown): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    return { kind: typeof value };
-  }
-  return {
-    keys: Object.keys(value).sort(),
-    route:
-      readOptionalSccpTextField(value, ["route", "route_id", "routeId"]) ??
-      undefined,
-    entrypoint:
-      readOptionalSccpTextField(value, ["entrypoint", "method"]) ?? undefined,
-    contractAlias:
-      readOptionalSccpTextField(value, ["contract_alias", "contractAlias"]) ??
-      undefined,
-    contractAddress:
-      readOptionalSccpTextField(value, [
-        "contract_address",
-        "contractAddress",
-      ]) ?? undefined,
-  };
-};
-
-const summarizeSccpMessageBundleForDebug = (
-  value: unknown,
-): Record<string, unknown> => {
-  const summary = summarizeSccpSubmitRecord(value);
-  if (!isPlainRecord(value)) {
-    return summary;
-  }
-  const commitment = isPlainRecord(value.commitment) ? value.commitment : {};
-  const payload = isPlainRecord(value.payload) ? value.payload : {};
-  const transfer = isPlainRecord(payload.Transfer)
-    ? payload.Transfer
-    : isPlainRecord(payload.value)
-      ? payload.value
-      : {};
-  const finalityProof = readOptionalSccpTextField(value, [
-    "finality_proof",
-    "finalityProof",
-  ]);
-  return {
-    ...summary,
-    version: value.version,
-    commitmentRoot: readOptionalSccpTextField(value, [
-      "commitment_root",
-      "commitmentRoot",
-    ]),
-    commitment: {
-      version: commitment.version,
-      kind: readOptionalSccpTextField(commitment, ["kind"]),
-      targetDomain: commitment.target_domain ?? commitment.targetDomain,
-      messageId: readOptionalSccpTextField(commitment, [
-        "message_id",
-        "messageId",
-      ]),
-      payloadHash: readOptionalSccpTextField(commitment, [
-        "payload_hash",
-        "payloadHash",
-      ]),
-    },
-    transfer: {
-      amount: readOptionalSccpTextField(transfer, ["amount"]),
-      senderCodec: transfer.sender_codec ?? transfer.senderCodec,
-      sender: readOptionalSccpTextField(transfer, ["sender"]),
-      recipientCodec: transfer.recipient_codec ?? transfer.recipientCodec,
-      recipient: readOptionalSccpTextField(transfer, ["recipient"]),
-      routeIdCodec: transfer.route_id_codec ?? transfer.routeIdCodec,
-      routeId: readOptionalSccpTextField(transfer, ["route_id", "routeId"]),
-      assetIdCodec: transfer.asset_id_codec ?? transfer.assetIdCodec,
-      assetId: readOptionalSccpTextField(transfer, ["asset_id", "assetId"]),
-    },
-    finalityProofBytes: finalityProof
-      ? Math.floor(finalityProof.replace(/^0x/iu, "").length / 2)
-      : 0,
-    finalityProofSha256: finalityProof
-      ? createHash("sha256").update(finalityProof).digest("hex")
-      : "",
-  };
-};
-
-const writeSccpSubmitDebugTrace = (
-  phase: string,
-  payload: Record<string, unknown>,
-  detail: Record<string, unknown> = {},
-) => {
-  try {
-    mkdirSync(SCCP_SUBMIT_DEBUG_DIR, { recursive: true });
-    const timestamp = new Date().toISOString();
-    const fileSafeTimestamp = timestamp.replace(/[:.]/g, "-");
-    const body = JSON.stringify(payload);
-    const trace = {
-      timestamp,
-      phase,
-      toriiUrl: typeof payload.toriiUrl === "string" ? payload.toriiUrl : "",
-      accountId: typeof payload.accountId === "string" ? payload.accountId : "",
-      payloadBytes: Buffer.byteLength(body),
-      messageBundle: summarizeSccpMessageBundleForDebug(payload.messageBundle),
-      messageBundleFull: isPlainRecord(payload.messageBundle)
-        ? payload.messageBundle
-        : null,
-      settlement: summarizeSccpSubmitRecord(payload.settlement),
-      receiptLane: payload.receiptLane,
-      detail,
-    };
-    writeFileSync(
-      resolvePath(SCCP_SUBMIT_DEBUG_DIR, `${fileSafeTimestamp}-${phase}.json`),
-      `${JSON.stringify(trace, null, 2)}\n`,
-      "utf8",
-    );
-  } catch {
-    // Debug tracing must never affect the bridge flow.
-  }
-};
-
-const submitSccpBridgeMessageToTorii = async (
-  input: SccpBridgeMessageSubmitInput,
-): Promise<Record<string, unknown>> => {
-  const messageBundle = normalizeSccpSubmissionRecord(
-    input.messageBundle,
-    "SCCP messageBundle",
-  );
-  const settlement = normalizeOptionalSccpSubmissionRecord(
-    input.settlement,
-    "SCCP settlement",
-  );
-  const auth = await buildSccpBridgeAuthorityPayload(
-    input,
-    "Submit SCCP bridge message",
-  );
-  const payload: ToriiBridgeMessageSubmitPayload = {
-    ...auth,
-    messageBundle,
-    ...buildSccpDestinationProofOptions(input),
-    ...(input.receiptLane !== undefined
-      ? { receiptLane: input.receiptLane }
-      : {}),
-    ...(settlement ? { settlement } : {}),
-    ...(input.creationTimeMs !== undefined
-      ? { creationTimeMs: input.creationTimeMs }
-      : {}),
-  };
-  const client = getClient(input.toriiUrl);
-  writeSccpSubmitDebugTrace(
-    "request",
-    payload as unknown as Record<string, unknown>,
-  );
-  try {
-    const response = await client.submitBridgeMessage(payload);
-    writeSccpSubmitDebugTrace(
-      "response",
-      payload as unknown as Record<string, unknown>,
-      {
-        response,
-      },
-    );
-    return response;
-  } catch (error) {
-    writeSccpSubmitDebugTrace(
-      "error",
-      payload as unknown as Record<string, unknown>,
-      {
-        message: error instanceof Error ? error.message : String(error),
-        name: error instanceof Error ? error.name : typeof error,
-      },
-    );
-    throw error;
-  }
-};
-
-const waitForSccpTransactionCommitOnTorii = async (
-  input: SccpTransactionCommitWaitInput,
-): Promise<Record<string, unknown>> => {
-  const fee = await waitForTransactionCommit(input.toriiUrl, input.hashHex);
-  return {
-    ok: true,
-    hash_hex: input.hashHex,
-    status: "Applied",
-    ...(fee ? { fee } : {}),
-  };
-};
-
-const SCCP_BSC_NODE_PROVER_TIMEOUT_MS = 20 * 60 * 1000;
-const SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES = 8 * 1024 * 1024;
-const SCCP_BSC_NODE_PROVER_CHILD_SOURCE = String.raw`
-const chunks = [];
-process.stdin.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-process.stdin.on("end", async () => {
-  try {
-    const { readFile } = await import("node:fs/promises");
-    const { fileURLToPath } = await import("node:url");
-    const nativeFetch = globalThis.fetch?.bind(globalThis);
-    if (typeof nativeFetch !== "function") {
-      throw new Error("BSC SCCP child prover runtime does not expose fetch.");
-    }
-    globalThis.fetch = async (resource, init) => {
-      const rawUrl =
-        typeof resource === "string"
-          ? resource
-          : resource instanceof URL
-            ? resource.href
-            : typeof resource?.url === "string"
-              ? resource.url
-              : "";
-      if (/^file:/iu.test(rawUrl)) {
-        if (init?.method && String(init.method).toUpperCase() !== "GET") {
-          return new Response("file:// prover material only supports GET", { status: 405 });
-        }
-        const bytes = await readFile(fileURLToPath(rawUrl));
-        const contentType = rawUrl.endsWith(".json")
-          ? "application/json"
-          : rawUrl.endsWith(".js") || rawUrl.endsWith(".mjs")
-            ? "text/javascript"
-            : "application/octet-stream";
-        return new Response(bytes, {
-          status: 200,
-          headers: { "content-type": contentType },
-        });
-      }
-      return nativeFetch(resource, init);
-    };
-    const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-      throw new Error("BSC SCCP child prover input must be an object.");
-    }
-    const direction = input.direction === "source" ? "source" : "destination";
-    const request = input.request;
-    if (!request || typeof request !== "object" || Array.isArray(request)) {
-      throw new Error("BSC SCCP child prover request must be an object.");
-    }
-    const moduleSpecifier = String(input.moduleSpecifier || "").trim();
-    if (!moduleSpecifier) {
-      throw new Error("BSC SCCP child prover module specifier is required.");
-    }
-    const configUrl = String(input.configUrl || "").trim();
-    if (configUrl) {
-      globalThis.IrohaSccpBscProverConfigUrl = configUrl;
-    }
-    const loopbackRemoteModuleHost = (hostname) => {
-      const normalized = String(hostname || "")
-        .trim()
-        .toLowerCase()
-        .replace(/^\[/u, "")
-        .replace(/\]$/u, "")
-        .replace(/\.$/u, "");
-      return (
-        normalized === "localhost" ||
-        normalized === "127.0.0.1" ||
-        normalized === "::1" ||
-        /^127(?:\.\d{1,3}){3}$/u.test(normalized)
-      );
-    };
-    const assertRemoteProverModuleUrl = (specifier) => {
-      const parsed = new URL(specifier);
-      if (parsed.username || parsed.password || parsed.search || parsed.hash) {
-        throw new Error("BSC SCCP remote prover module URL must not include credentials, query strings, or fragments.");
-      }
-      if (parsed.protocol === "https:") {
-        return parsed.href;
-      }
-      if (parsed.protocol === "http:" && loopbackRemoteModuleHost(parsed.hostname)) {
-        return parsed.href;
-      }
-      throw new Error("BSC SCCP remote prover module URL must be HTTPS or loopback HTTP.");
-    };
-    const fetchRemoteProverModuleSource = async (specifier) => {
-      const moduleUrl = assertRemoteProverModuleUrl(specifier);
-      const response = await fetch(moduleUrl, {
-          method: "GET",
-          credentials: "omit",
-          redirect: "error",
-          cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error("BSC SCCP prover module could not be loaded: HTTP " + response.status);
-      }
-      return { moduleUrl, source: await response.text() };
-    };
-    const importRemoteProverModule = async (specifier) => {
-      const { SourceTextModule } = await import("node:vm");
-      if (typeof SourceTextModule !== "function") {
-        throw new Error("BSC SCCP child prover runtime cannot evaluate remote modules with import.meta.url.");
-      }
-      const moduleCache = new Map();
-      const load = async (rawSpecifier, parentUrl) => {
-        const resolvedUrl = assertRemoteProverModuleUrl(
-          parentUrl ? new URL(String(rawSpecifier), parentUrl).href : String(rawSpecifier),
-        );
-        const cached = moduleCache.get(resolvedUrl);
-        if (cached) {
-          return cached;
-        }
-        const { source } = await fetchRemoteProverModuleSource(resolvedUrl);
-        const module = new SourceTextModule(source, {
-          identifier: resolvedUrl,
-          initializeImportMeta(meta) {
-            meta.url = resolvedUrl;
-          },
-          importModuleDynamically: async (childSpecifier, referencingModule) => {
-            const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
-            if (/^https?:\/\//iu.test(childUrl)) {
-              return load(childUrl);
-            }
-            return import(childUrl);
-          },
-        });
-        moduleCache.set(resolvedUrl, module);
-        await module.link(async (childSpecifier, referencingModule) => {
-          const childUrl = new URL(String(childSpecifier), referencingModule.identifier).href;
-          if (/^https?:\/\//iu.test(childUrl)) {
-            return load(childUrl);
-          }
-          throw new Error("BSC SCCP remote prover module static imports must use HTTPS or loopback HTTP.");
-        });
-        await module.evaluate();
-        return module;
-      };
-      const module = await load(specifier);
-      return module.namespace;
-    };
-    const importProverModule = async (specifier) => {
-      if (/^https?:\/\//iu.test(specifier)) {
-        return importRemoteProverModule(specifier);
-      }
-      return import(specifier);
-    };
-    const moduleExports = await importProverModule(moduleSpecifier);
-    const prove =
-      direction === "source"
-        ? [
-            moduleExports.irohaSccpBscSourceProve,
-            moduleExports.bscSccpSourceProve,
-            moduleExports.proveBscSource,
-            moduleExports.proveSource,
-            moduleExports.sourceProve,
-          ].find((candidate) => typeof candidate === "function")
-        : [
-            moduleExports.irohaSccpBscProve,
-            moduleExports.bscSccpProve,
-            moduleExports.evmSccpProve,
-            moduleExports.proveBsc,
-            moduleExports.prove,
-            moduleExports.proveFn,
-            moduleExports.default,
-          ].find((candidate) => typeof candidate === "function");
-    if (typeof prove !== "function") {
-      throw new Error("BSC SCCP prover module does not export a " + direction + " prove function.");
-    }
-    const proofBytesToHex = (value) => {
-      if (typeof value === "string") {
-        return value;
-      }
-      if (value instanceof ArrayBuffer) {
-        return "0x" + Buffer.from(value).toString("hex");
-      }
-      if (ArrayBuffer.isView(value)) {
-        return "0x" + Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("hex");
-      }
-      if (Array.isArray(value)) {
-        return "0x" + Buffer.from(value).toString("hex");
-      }
-      if (value && typeof value === "object") {
-        const keys = Object.keys(value);
-        if (keys.length > 0 && keys.every((key) => /^\d+$/u.test(key))) {
-          return "0x" + Buffer.from(keys.sort((a, b) => Number(a) - Number(b)).map((key) => value[key])).toString("hex");
-        }
-      }
-      throw new Error("BSC SCCP prover result proofBytes are missing.");
-    };
-    const resultField = (record, ...names) => {
-      if (!record || typeof record !== "object" || Array.isArray(record)) {
-        return undefined;
-      }
-      for (const name of names) {
-        if (Object.prototype.hasOwnProperty.call(record, name)) {
-          return record[name];
-        }
-      }
-      return undefined;
-    };
-    const result = await prove(request);
-    if (direction === "source") {
-      process.stdout.write(JSON.stringify({ ok: true, result }));
-      return;
-    }
-    const proofBytes = proofBytesToHex(resultField(result, "proofBytes", "proof_bytes"));
-    process.stdout.write(JSON.stringify({
-      ok: true,
-      result: {
-        proofBytes,
-        requestHash: resultField(result, "requestHash", "request_hash") ?? request.requestHash ?? request.request_hash,
-        backend: resultField(result, "backend") ?? request.backend,
-      },
-    }));
-  } catch (error) {
-    process.stdout.write(JSON.stringify({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }));
-    process.exitCode = 1;
-  }
-});
-`;
-
-const resolveSccpProverHeapMb = (): number => {
-  const rawValue =
-    process.env["SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    process.env["VITE_SCCP_BSC_PROVER_V8_HEAP_MB"] ??
-    String(DEFAULT_SCCP_PROVER_V8_HEAP_MB);
-  const normalizedValue = String(rawValue).trim().toLowerCase();
-  if (
-    !normalizedValue ||
-    normalizedValue === "0" ||
-    normalizedValue === "false" ||
-    normalizedValue === "off"
-  ) {
-    return DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-  }
-  const parsed = Number(normalizedValue);
-  return Number.isFinite(parsed)
-    ? Math.min(
-        MAX_SCCP_PROVER_V8_HEAP_MB,
-        Math.max(MIN_SCCP_PROVER_V8_HEAP_MB, Math.trunc(parsed)),
-      )
-    : DEFAULT_SCCP_PROVER_V8_HEAP_MB;
-};
-
-const activeSccpBscNetworkKey = (): "mainnet" | "testnet" => {
-  const normalized = readRuntimeConfigEnv("VITE_SCCP_BSC_NETWORK")
-    .toLowerCase()
-    .replace(/_/gu, "-");
-  return ["mainnet", "bsc-mainnet", "bnb-mainnet", "bsc"].includes(normalized)
-    ? "mainnet"
-    : "testnet";
-};
-
-const resolveSccpBscRuntimeProverConfigUrl = (input: unknown): string => {
-  const explicit = trimString(input);
-  if (explicit) {
-    return resolveSccpBscPackagedOrRemoteAssetSpecifier(
-      explicit,
-      "BSC SCCP prover config URL",
-    );
-  }
-  const active = activeSccpBscNetworkKey();
-  const configured = readRuntimeConfigEnv(
-    active === "mainnet"
-      ? "VITE_SCCP_BSC_MAINNET_PROVER_CONFIG_URL"
-      : "VITE_SCCP_BSC_TESTNET_PROVER_CONFIG_URL",
-  );
-  return configured
-    ? resolveSccpBscPackagedOrRemoteAssetSpecifier(
-        configured,
-        "BSC SCCP prover config URL",
-      )
-    : "";
-};
-
-const resolveSccpBscPackagedOrRemoteAssetSpecifier = (
-  input: unknown,
-  label: string,
-): string => {
-  const assetUrl = normalizeSccpPackageOrRemoteModuleUrl(
-    trimString(input),
-    label,
-  );
-  if (!assetUrl) {
-    return "";
-  }
-  if (/^https?:\/\//iu.test(assetUrl)) {
-    return assetUrl;
-  }
-  const relativePath = assetUrl.replace(/^\/+/u, "").replace(/^\.\//u, "");
-  if (
-    !relativePath ||
-    relativePath.includes("\0") ||
-    relativePath.split(/[\\/]+/u).includes("..")
-  ) {
-    throw new Error(`${label} must be package-relative.`);
-  }
-  const preloadDir = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    resolvePath(process.cwd(), "public", relativePath),
-    resolvePath(process.cwd(), "dist/renderer", relativePath),
-    resolvePath(preloadDir, "../renderer", relativePath),
-  ];
-  const modulePath = candidates.find((candidate) => existsSync(candidate));
-  if (!modulePath) {
-    throw new Error(
-      `${label} was not found under public or renderer assets: ${assetUrl}`,
-    );
-  }
-  return pathToFileURL(modulePath).href;
-};
-
-const resolveSccpBscProverModuleSpecifier = (input: unknown): string => {
-  const moduleSpecifier = resolveSccpBscPackagedOrRemoteAssetSpecifier(
-    input,
-    "BSC SCCP prover module URL",
-  );
-  if (!moduleSpecifier) {
-    throw new Error("BSC SCCP prover module URL is required.");
-  }
-  return moduleSpecifier;
-};
-
-const normalizeOptionalTimeoutMs = (
-  value: unknown,
-  fallback: number,
-): number => {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error("BSC SCCP prover timeoutMs must be a positive integer.");
-  }
-  return Math.min(parsed, SCCP_BSC_NODE_PROVER_TIMEOUT_MS);
-};
-
-const collectLimitedChildOutput = (
-  chunks: Buffer[],
-  chunk: Buffer,
-  label: string,
-) => {
-  const current = chunks.reduce((sum, entry) => sum + entry.byteLength, 0);
-  if (current + chunk.byteLength > SCCP_BSC_NODE_PROVER_OUTPUT_MAX_BYTES) {
-    throw new Error(`${label} exceeded the maximum output size.`);
-  }
-  chunks.push(Buffer.from(chunk));
-};
-
-const SCCP_BSC_MAINNET_NETWORK_ID_HEX =
-  "0x0000000000000000000000000000000000000000000000000000000000000038";
-const SCCP_BSC_TESTNET_NETWORK_ID_HEX =
-  "0x0000000000000000000000000000000000000000000000000000000000000061";
-const SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS = [
-  "nativeEvmProverBundleHash",
-  "native_evm_prover_bundle_hash",
-] as const;
-
-const readSccpOwnField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): unknown => {
-  for (const key of keys) {
-    if (Object.prototype.hasOwnProperty.call(value, key)) {
-      return value[key];
-    }
-  }
-  return undefined;
-};
-
-const readRequiredSccpTextField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): string => {
-  const text = trimString(readSccpOwnField(value, keys));
-  if (!text) {
-    throw new Error(`${label} is required.`);
-  }
-  return text;
-};
-
-const readOptionalSccpTextField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): string | undefined => {
-  const text = trimString(readSccpOwnField(value, keys));
-  return text || undefined;
-};
-
-const readRequiredSccpRecordField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): Record<string, unknown> => {
-  const selected = readSccpOwnField(value, keys);
-  if (!isPlainRecord(selected)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return selected;
-};
-
-const readOptionalSccpRecordField = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-): Record<string, unknown> | undefined => {
-  const selected = readSccpOwnField(value, keys);
-  return isPlainRecord(selected) ? selected : undefined;
-};
-
-const normalizeSccpUnsignedIndex = (value: unknown, label: string): string => {
-  let parsed: bigint;
-  if (typeof value === "bigint") {
-    parsed = value;
-  } else if (typeof value === "number") {
-    if (!Number.isSafeInteger(value)) {
-      throw new Error(`${label} must be a safe non-negative integer.`);
-    }
-    parsed = BigInt(value);
-  } else if (typeof value === "string") {
-    const text = value.trim().toLowerCase();
-    if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(text)) {
-      parsed = BigInt(text);
-    } else if (/^(?:0|[1-9][0-9]*)$/u.test(text)) {
-      parsed = BigInt(text);
-    } else {
-      throw new Error(`${label} must be an unsigned integer.`);
-    }
-  } else {
-    throw new Error(`${label} must be an unsigned integer.`);
-  }
-  if (parsed < 0n || parsed > (1n << 64n) - 1n) {
-    throw new Error(`${label} must fit in an unsigned 64-bit integer.`);
-  }
-  return parsed.toString();
-};
-
-const readOptionalSccpUnsignedIndex = (
-  record: Record<string, unknown> | undefined,
-  keys: readonly string[],
-  label: string,
-): string | undefined => {
-  if (!record) {
-    return undefined;
-  }
-  let selectedValue = "";
-  let selectedKey = "";
-  for (const key of keys) {
-    if (!Object.prototype.hasOwnProperty.call(record, key)) {
-      continue;
-    }
-    const value = record[key];
-    if (value === undefined || value === null || value === "") {
-      continue;
-    }
-    const normalized = normalizeSccpUnsignedIndex(value, label);
-    if (!selectedValue) {
-      selectedValue = normalized;
-      selectedKey = key;
-      continue;
-    }
-    if (selectedValue !== normalized) {
-      throw new Error(
-        `${label} aliases disagree: ${selectedKey}=${selectedValue} but ${key}=${normalized}.`,
-      );
-    }
-  }
-  return selectedValue || undefined;
-};
-
-const readBscSourceReceiptRootIndex = (
-  request: Record<string, unknown>,
-  receipt: Record<string, unknown> | undefined,
-): string | undefined => {
-  const keys = [
-    "receiptRootIndex",
-    "receipt_root_index",
-    "transactionIndex",
-    "transaction_index",
-  ] as const;
-  const topLevel = readOptionalSccpUnsignedIndex(
-    request,
-    keys,
-    "BSC source receipt root index",
-  );
-  const receiptLevel = readOptionalSccpUnsignedIndex(
-    receipt,
-    keys,
-    "BSC source receipt root index",
-  );
-  if (topLevel && receiptLevel && topLevel !== receiptLevel) {
-    throw new Error(
-      "BSC source receipt root index aliases disagree between request and receipt.",
-    );
-  }
-  return topLevel || receiptLevel;
-};
-
-const withBscSourceReceiptRootIndex = <T extends Record<string, unknown>>(
-  request: T,
-): T & { receiptRootIndex?: string } => {
-  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
-  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
-  return receiptRootIndex
-    ? {
-        ...request,
-        receiptRootIndex,
-      }
-    : request;
-};
-
-const replaceBscSourceMessageBundleFinalityProof = (
-  proofPackage: Record<string, unknown>,
-  sourceProofHex: string,
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "BSC SCCP source proof package messageBundle",
-  );
-  const patchedMessageBundle: Record<string, unknown> = {
-    ...messageBundle,
-    finality_proof: sourceProofHex,
-  };
-  if (Object.prototype.hasOwnProperty.call(messageBundle, "finalityProof")) {
-    patchedMessageBundle.finalityProof = sourceProofHex;
-  }
-  const patchedPackage: Record<string, unknown> = {
-    ...proofPackage,
-    messageBundle: patchedMessageBundle,
-  };
-  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
-    patchedPackage.message_bundle = patchedMessageBundle;
-  }
-  return patchedPackage;
-};
-
-const withBscSourcePublicInputFinality = (
-  proofPackage: Record<string, unknown>,
-  sourceProof: { finalityHeight: string; finalityBlockHash: string },
-): Record<string, unknown> => {
-  const publicInputKey = isPlainRecord(proofPackage.publicInputs)
-    ? "publicInputs"
-    : isPlainRecord(proofPackage.public_inputs)
-      ? "public_inputs"
-      : null;
-  if (!publicInputKey) {
-    return proofPackage;
-  }
-  return {
-    ...proofPackage,
-    [publicInputKey]: {
-      ...(proofPackage[publicInputKey] as Record<string, unknown>),
-      finalityHeight: sourceProof.finalityHeight,
-      finalityBlockHash: sourceProof.finalityBlockHash,
-    },
-  };
-};
-
-const readBscSourceLaneMaterialForNativeProof = (
-  request: Record<string, unknown>,
-): {
-  sourceVerifierMaterial: Record<string, unknown>;
-  sourceAdapterEngineDeployment: Record<string, unknown>;
-} | null => {
-  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
-    "sourceVerifierMaterial",
-    "source_verifier_material",
-    "bscSourceVerifierMaterial",
-    "bsc_source_verifier_material",
-    "sccpSourceVerifierMaterial",
-    "sccp_source_verifier_material",
-  ]);
-  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
-    "sourceAdapterEngineDeployment",
-    "source_adapter_engine_deployment",
-    "sourceAdapterDeployment",
-    "source_adapter_deployment",
-    "bscSourceAdapterEngineDeployment",
-    "bsc_source_adapter_engine_deployment",
-    "bscSourceAdapterDeployment",
-    "bsc_source_adapter_deployment",
-  ]);
-  if (!sourceVerifierMaterial && !sourceAdapterEngineDeployment) {
-    return null;
-  }
-  if (!sourceVerifierMaterial || !sourceAdapterEngineDeployment) {
-    throw new Error(
-      "BSC source proof requires both sourceVerifierMaterial and sourceAdapterEngineDeployment.",
-    );
-  }
-  return { sourceVerifierMaterial, sourceAdapterEngineDeployment };
-};
-
-const readBscSourceProofNetworkLabel = (
-  request: Record<string, unknown>,
-): "testnet" | "mainnet" | null => {
-  const normalizeNetworkLabel = (
-    selected: string | undefined,
-  ): "testnet" | "mainnet" | null => {
-    if (!selected) return null;
-    const normalized = selected.toLowerCase().replace(/_/gu, "-");
-    if (
-      normalized === "0x61" ||
-      normalized === "97" ||
-      normalized === "eip155:97" ||
-      normalized === SCCP_BSC_TESTNET_NETWORK_ID_HEX
-    ) {
-      return "testnet";
-    }
-    if (
-      normalized === "0x38" ||
-      normalized === "56" ||
-      normalized === "eip155:56" ||
-      normalized === SCCP_BSC_MAINNET_NETWORK_ID_HEX
-    ) {
-      return "mainnet";
-    }
-    if (normalized.includes("testnet") || normalized.includes("chapel")) {
-      return "testnet";
-    }
-    if (normalized.includes("mainnet") || normalized === "bsc") {
-      return "mainnet";
-    }
-    return null;
-  };
-  const directLabel = normalizeNetworkLabel(
-    readOptionalSccpTextField(request, [
-      "bscNetwork",
-      "bsc_network",
-      "evmNetwork",
-      "evm_network",
-      "network",
-      "networkKey",
-      "network_key",
-      "chainId",
-      "chain_id",
-      "chainIdHex",
-      "chain_id_hex",
-      "networkId",
-      "network_id",
-      "networkIdHex",
-      "network_id_hex",
-    ]),
-  );
-  if (directLabel) {
-    return directLabel;
-  }
-  const sourceVerifierMaterial = readOptionalSccpRecordField(request, [
-    "sourceVerifierMaterial",
-    "source_verifier_material",
-    "bscSourceVerifierMaterial",
-    "bsc_source_verifier_material",
-  ]);
-  const sourceAdapterEngineDeployment = readOptionalSccpRecordField(request, [
-    "sourceAdapterEngineDeployment",
-    "source_adapter_engine_deployment",
-    "sourceAdapterDeployment",
-    "source_adapter_deployment",
-    "bscSourceAdapterEngineDeployment",
-    "bsc_source_adapter_engine_deployment",
-    "bscSourceAdapterDeployment",
-    "bsc_source_adapter_deployment",
-  ]);
-  for (const material of [
-    sourceVerifierMaterial,
-    sourceAdapterEngineDeployment,
-  ]) {
-    if (!material) continue;
-    const materialLabel = normalizeNetworkLabel(
-      readOptionalSccpTextField(material, [
-        "bscNetwork",
-        "bsc_network",
-        "evmNetwork",
-        "evm_network",
-        "network",
-        "networkKey",
-        "network_key",
-        "chainId",
-        "chain_id",
-        "chainIdHex",
-        "chain_id_hex",
-        "networkId",
-        "network_id",
-        "networkIdHex",
-        "network_id_hex",
-      ]),
-    );
-    if (materialLabel) {
-      return materialLabel;
-    }
-  }
-  const active = activeSccpBscNetworkKey();
-  if (active) {
-    return active;
-  }
-  return null;
-};
-
-const readBscSourceValidatorSigningConfig = (
-  request: Record<string, unknown>,
-): {
-  sourceValidatorPrivateKeys: string;
-  sourceValidatorPowers?: string[];
-} => {
-  const networkLabel = readBscSourceProofNetworkLabel(request);
-  const privateKeyEnvNames = [
-    ...(networkLabel === "testnet"
-      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
-      : []),
-    ...(networkLabel === "mainnet"
-      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_PRIVATE_KEYS"]
-      : []),
-    "SCCP_BSC_SOURCE_VALIDATOR_PRIVATE_KEYS",
-  ];
-  const sourceValidatorPrivateKeys = privateKeyEnvNames
-    .map((name) => process.env[name]?.trim())
-    .find((value): value is string => Boolean(value));
-  if (!sourceValidatorPrivateKeys) {
-    throw new Error(
-      `Deployment-bound BSC source proof requires runtime validator keys in ${privateKeyEnvNames.join(
-        " or ",
-      )}.`,
-    );
-  }
-  const powerEnvNames = [
-    ...(networkLabel === "testnet"
-      ? ["SCCP_BSC_TESTNET_SOURCE_VALIDATOR_POWERS"]
-      : []),
-    ...(networkLabel === "mainnet"
-      ? ["SCCP_BSC_MAINNET_SOURCE_VALIDATOR_POWERS"]
-      : []),
-    "SCCP_BSC_SOURCE_VALIDATOR_POWERS",
-  ];
-  const sourceValidatorPowers = powerEnvNames
-    .map((name) => process.env[name]?.trim())
-    .find((value): value is string => Boolean(value))
-    ?.split(/[\s,]+/u)
-    .filter(Boolean);
-  return {
-    sourceValidatorPrivateKeys,
-    ...(sourceValidatorPowers && sourceValidatorPowers.length > 0
-      ? { sourceValidatorPowers }
-      : {}),
-  };
-};
-
-const replaceSccpSourceMessageBundle = (
-  proofPackage: Record<string, unknown>,
-  messageBundle: Record<string, unknown>,
-): Record<string, unknown> => {
-  const patchedPackage: Record<string, unknown> = {
-    ...proofPackage,
-    messageBundle,
-  };
-  if (Object.prototype.hasOwnProperty.call(proofPackage, "message_bundle")) {
-    patchedPackage.message_bundle = messageBundle;
-  }
-  return patchedPackage;
-};
-
-const isByteArray = (value: unknown): value is number[] =>
-  Array.isArray(value) &&
-  value.every((item) => Number.isInteger(item) && item >= 0 && item <= 255);
-
-const byteArrayToLowerHex = (bytes: readonly number[]): string =>
-  `0x${Buffer.from(bytes).toString("hex")}`;
-
-const readNumericByteObject = (
-  value: Record<string, unknown>,
-): number[] | null => {
-  const keys = Object.keys(value);
-  if (
-    keys.length === 0 ||
-    !keys.every((key) => /^(?:0|[1-9]\d*)$/u.test(key))
-  ) {
-    return null;
-  }
-  const indexed = keys
-    .map((key) => Number(key))
-    .sort((left, right) => left - right);
-  if (indexed.some((index, offset) => index !== offset)) {
-    return null;
-  }
-  const bytes = indexed.map((index) => value[String(index)]);
-  return isByteArray(bytes) ? bytes : null;
-};
-
-const canonicalizeSccpNativeJsonValue = (value: unknown): unknown => {
-  if (Buffer.isBuffer(value)) {
-    return `0x${value.toString("hex")}`;
-  }
-  if (value instanceof ArrayBuffer) {
-    return `0x${Buffer.from(value).toString("hex")}`;
-  }
-  if (ArrayBuffer.isView(value)) {
-    return `0x${Buffer.from(
-      value.buffer,
-      value.byteOffset,
-      value.byteLength,
-    ).toString("hex")}`;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => canonicalizeSccpNativeJsonValue(item));
-  }
-  if (!isPlainRecord(value)) {
-    return value;
-  }
-  if (value.type === "Buffer" && isByteArray(value.data)) {
-    return byteArrayToLowerHex(value.data);
-  }
-  const numericBytes = readNumericByteObject(value);
-  if (numericBytes) {
-    return byteArrayToLowerHex(numericBytes);
-  }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [
-      key,
-      canonicalizeSccpNativeJsonValue(entryValue),
-    ]),
-  );
-};
-
-const canonicalizeSccpNativeJsonRecord = (
-  value: Record<string, unknown>,
-  label: string,
-): Record<string, unknown> => {
-  const canonical = canonicalizeSccpNativeJsonValue(value);
-  if (!isPlainRecord(canonical)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return canonical;
-};
-
-const readSccpNativeField = (
-  record: Record<string, unknown>,
-  aliases: readonly string[],
-  label: string,
-): unknown => {
-  for (const alias of aliases) {
-    if (Object.prototype.hasOwnProperty.call(record, alias)) {
-      return record[alias];
-    }
-  }
-  throw new Error(`${label} is required.`);
-};
-
-const readSccpNativeRecord = (
-  record: Record<string, unknown>,
-  aliases: readonly string[],
-  label: string,
-): Record<string, unknown> => {
-  const value = readSccpNativeField(record, aliases, label);
-  if (!isPlainRecord(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return value;
-};
-
-const readSccpNativePayloadVariant = (
-  value: unknown,
-): { kind: string; value: Record<string, unknown> } => {
-  if (!isPlainRecord(value)) {
-    throw new Error("BSC SCCP source proof package payload must be an object.");
-  }
-  if (isPlainRecord(value.Transfer)) {
-    return { kind: "Transfer", value: value.Transfer };
-  }
-  if (value.kind === "Transfer" && isPlainRecord(value.value)) {
-    return { kind: "Transfer", value: value.value };
-  }
-  throw new Error("BSC SCCP source proof package payload must be a Transfer.");
-};
-
-const buildSccpNativeMerkleProofPayload = (
-  value: unknown,
-): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error(
-      "BSC SCCP source proof package merkle_proof must be an object.",
-    );
-  }
-  const steps = Array.isArray(value.steps) ? value.steps : [];
-  return {
-    steps: steps.map((step, index) => {
-      if (!isPlainRecord(step)) {
-        throw new Error(
-          `BSC SCCP source proof package merkle_proof.steps[${index}] must be an object.`,
-        );
-      }
-      return {
-        sibling_hash: readSccpNativeField(
-          step,
-          ["sibling_hash", "siblingHash"],
-          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_hash`,
-        ),
-        sibling_is_left: readSccpNativeField(
-          step,
-          ["sibling_is_left", "siblingIsLeft"],
-          `BSC SCCP source proof package merkle_proof.steps[${index}].sibling_is_left`,
-        ),
-      };
-    }),
-  };
-};
-
-const buildSccpNativeTransferPayload = (
-  value: Record<string, unknown>,
-): Record<string, unknown> => ({
-  version: readSccpNativeField(value, ["version"], "payload.version"),
-  source_domain: readSccpNativeField(
-    value,
-    ["source_domain", "sourceDomain"],
-    "payload.source_domain",
-  ),
-  dest_domain: readSccpNativeField(
-    value,
-    ["dest_domain", "destDomain"],
-    "payload.dest_domain",
-  ),
-  nonce: readSccpNativeField(value, ["nonce"], "payload.nonce"),
-  asset_home_domain: readSccpNativeField(
-    value,
-    ["asset_home_domain", "assetHomeDomain"],
-    "payload.asset_home_domain",
-  ),
-  asset_id_codec: readSccpNativeField(
-    value,
-    ["asset_id_codec", "assetIdCodec"],
-    "payload.asset_id_codec",
-  ),
-  asset_id: `0x${Buffer.from(
-    String(
-      readSccpNativeField(value, ["asset_id", "assetId"], "payload.asset_id"),
-    ),
-    "utf8",
-  ).toString("hex")}`,
-  amount: readSccpNativeField(value, ["amount"], "payload.amount"),
-  sender_codec: readSccpNativeField(
-    value,
-    ["sender_codec", "senderCodec"],
-    "payload.sender_codec",
-  ),
-  sender: `0x${Buffer.from(
-    String(readSccpNativeField(value, ["sender"], "payload.sender")),
-    "utf8",
-  ).toString("hex")}`,
-  recipient_codec: readSccpNativeField(
-    value,
-    ["recipient_codec", "recipientCodec"],
-    "payload.recipient_codec",
-  ),
-  recipient: `0x${Buffer.from(
-    String(readSccpNativeField(value, ["recipient"], "payload.recipient")),
-    "utf8",
-  ).toString("hex")}`,
-  route_id_codec: readSccpNativeField(
-    value,
-    ["route_id_codec", "routeIdCodec"],
-    "payload.route_id_codec",
-  ),
-  route_id: `0x${Buffer.from(
-    String(
-      readSccpNativeField(value, ["route_id", "routeId"], "payload.route_id"),
-    ),
-    "utf8",
-  ).toString("hex")}`,
-});
-
-const buildSccpNativeMessageBundlePayload = (
-  messageBundle: Record<string, unknown>,
-): Record<string, unknown> => {
-  const canonicalBundle = canonicalizeSccpNativeJsonRecord(
-    messageBundle,
-    "BSC SCCP source proof package messageBundle",
-  );
-  const commitment = readSccpNativeRecord(
-    canonicalBundle,
-    ["commitment"],
-    "BSC SCCP source proof package messageBundle.commitment",
-  );
-  const payload = readSccpNativePayloadVariant(
-    readSccpNativeField(
-      canonicalBundle,
-      ["payload"],
-      "BSC SCCP source proof package messageBundle.payload",
-    ),
-  );
-  return {
-    version: readSccpNativeField(
-      canonicalBundle,
-      ["version"],
-      "BSC SCCP source proof package messageBundle.version",
-    ),
-    commitment_root: readSccpNativeField(
-      canonicalBundle,
-      ["commitment_root", "commitmentRoot"],
-      "BSC SCCP source proof package messageBundle.commitment_root",
-    ),
-    commitment: {
-      version: readSccpNativeField(
-        commitment,
-        ["version"],
-        "BSC SCCP source proof package messageBundle.commitment.version",
-      ),
-      kind: readSccpNativeField(
-        commitment,
-        ["kind"],
-        "BSC SCCP source proof package messageBundle.commitment.kind",
-      ),
-      target_domain: readSccpNativeField(
-        commitment,
-        ["target_domain", "targetDomain"],
-        "BSC SCCP source proof package messageBundle.commitment.target_domain",
-      ),
-      message_id: readSccpNativeField(
-        commitment,
-        ["message_id", "messageId"],
-        "BSC SCCP source proof package messageBundle.commitment.message_id",
-      ),
-      payload_hash: readSccpNativeField(
-        commitment,
-        ["payload_hash", "payloadHash"],
-        "BSC SCCP source proof package messageBundle.commitment.payload_hash",
-      ),
-    },
-    merkle_proof: buildSccpNativeMerkleProofPayload(
-      readSccpNativeField(
-        canonicalBundle,
-        ["merkle_proof", "merkleProof"],
-        "BSC SCCP source proof package messageBundle.merkle_proof",
-      ),
-    ),
-    payload: {
-      [payload.kind]: buildSccpNativeTransferPayload(payload.value),
-    },
-    finality_proof: readSccpNativeField(
-      canonicalBundle,
-      ["finality_proof", "finalityProof"],
-      "BSC SCCP source proof package messageBundle.finality_proof",
-    ),
-  };
-};
-
-const rebuildSccpSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-  label: string,
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    `${label} SCCP source proof package messageBundle`,
-  );
-  const nativeBinding = installGlobalIrohaJsNativeBinding(
-    import.meta.url,
-  ) as IrohaNativeSccpCodec;
-  const rebuild =
-    nativeBinding.sccpRebuildMessageBundleSourceProofWithDeployment;
-  if (typeof rebuild !== "function") {
-    throw new Error(
-      `Native iroha_js_host binding is missing deployment-bound ${label} SCCP source proof support; rebuild @iroha/iroha-js native bindings.`,
-    );
-  }
-  const nativeMessageBundle =
-    buildSccpNativeMessageBundlePayload(messageBundle);
-  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceVerifierMaterial,
-    `${label} SCCP source verifier material`,
-  );
-  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceAdapterEngineDeployment,
-    `${label} SCCP source adapter deployment`,
-  );
-  const outputText = rebuild(
-    JSON.stringify(nativeMessageBundle),
-    JSON.stringify(nativeSourceVerifierMaterial),
-    JSON.stringify(nativeSourceAdapterEngineDeployment),
-  );
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch (error) {
-    throw new Error(
-      `Native ${label} SCCP source proof rebuild returned invalid JSON: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error(
-      `Native ${label} SCCP source proof rebuild must return an object.`,
-    );
-  }
-  const rebuiltMessageBundle = readRequiredSccpRecordField(
-    parsed,
-    ["messageBundle", "message_bundle"],
-    `Native ${label} SCCP source proof rebuild messageBundle`,
-  );
-  const sourceProofHash = readOptionalSccpTextField(parsed, [
-    "sourceProofHash",
-    "source_proof_hash",
-  ]);
-  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentHash",
-    "source_adapter_deployment_hash",
-  ]);
-  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentReceiptHash",
-    "source_adapter_deployment_receipt_hash",
-  ]);
-  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
-    "sourceVerifierEvidenceHash",
-    "source_verifier_evidence_hash",
-  ]);
-  return {
-    ...replaceSccpSourceMessageBundle(proofPackage, rebuiltMessageBundle),
-    ...(sourceProofHash ? { sourceProofHash } : {}),
-    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
-    ...(sourceAdapterDeploymentReceiptHash
-      ? { sourceAdapterDeploymentReceiptHash }
-      : {}),
-    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
-  };
-};
-
-const buildTonSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-): Record<string, unknown> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "TON SCCP source proof package messageBundle",
-  );
-  const nativeBinding = installGlobalIrohaJsNativeBinding(
-    import.meta.url,
-  ) as IrohaNativeSccpCodec;
-  const build =
-    nativeBinding.sccpBuildTonMessageBundleSourceProofWithDeployment;
-  if (typeof build !== "function") {
-    throw new Error(
-      "Native iroha_js_host binding is missing deployment-bound TON SCCP source proof support; rebuild @iroha/iroha-js native bindings.",
-    );
-  }
-  const nativeMessageBundle =
-    buildSccpNativeMessageBundlePayload(messageBundle);
-  const nativeSourceVerifierMaterial = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceVerifierMaterial,
-    "TON SCCP source verifier material",
-  );
-  const nativeSourceAdapterEngineDeployment = canonicalizeSccpNativeJsonRecord(
-    laneMaterial.sourceAdapterEngineDeployment,
-    "TON SCCP source adapter deployment",
-  );
-  const outputText = build(
-    JSON.stringify(nativeMessageBundle),
-    JSON.stringify(nativeSourceVerifierMaterial),
-    JSON.stringify(nativeSourceAdapterEngineDeployment),
-  );
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(outputText);
-  } catch (error) {
-    throw new Error(
-      `Native TON SCCP source proof builder returned invalid JSON: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error(
-      "Native TON SCCP source proof builder must return an object.",
-    );
-  }
-  const builtMessageBundle = readRequiredSccpRecordField(
-    parsed,
-    ["messageBundle", "message_bundle"],
-    "Native TON SCCP source proof builder messageBundle",
-  );
-  const sourceProofHash = readOptionalSccpTextField(parsed, [
-    "sourceProofHash",
-    "source_proof_hash",
-  ]);
-  const sourceAdapterDeploymentHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentHash",
-    "source_adapter_deployment_hash",
-  ]);
-  const sourceAdapterDeploymentReceiptHash = readOptionalSccpTextField(parsed, [
-    "sourceAdapterDeploymentReceiptHash",
-    "source_adapter_deployment_receipt_hash",
-  ]);
-  const sourceVerifierEvidenceHash = readOptionalSccpTextField(parsed, [
-    "sourceVerifierEvidenceHash",
-    "source_verifier_evidence_hash",
-  ]);
-  return {
-    ...replaceSccpSourceMessageBundle(proofPackage, builtMessageBundle),
-    ...(sourceProofHash ? { sourceProofHash } : {}),
-    ...(sourceAdapterDeploymentHash ? { sourceAdapterDeploymentHash } : {}),
-    ...(sourceAdapterDeploymentReceiptHash
-      ? { sourceAdapterDeploymentReceiptHash }
-      : {}),
-    ...(sourceVerifierEvidenceHash ? { sourceVerifierEvidenceHash } : {}),
-  };
-};
-
-const rebuildBscSourceMessageBundleWithNativeDeployment = (
-  proofPackage: Record<string, unknown>,
-  laneMaterial: {
-    sourceVerifierMaterial: Record<string, unknown>;
-    sourceAdapterEngineDeployment: Record<string, unknown>;
-  },
-): Record<string, unknown> =>
-  rebuildSccpSourceMessageBundleWithNativeDeployment(
-    proofPackage,
-    laneMaterial,
-    "BSC",
-  );
-
-const rebuildSccpSourceProofResultInNode = (
-  input: SccpSourceProofDeploymentRebuildInput,
-): Record<string, unknown> => {
-  const request = snapshotSccpDataValue(
-    input,
-    "SCCP source proof deployment rebuild request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error(
-      "SCCP source proof deployment rebuild request must be an object.",
-    );
-  }
-  const proofPackage = readRequiredSccpRecordField(
-    request,
-    ["proofPackage", "proof_package"],
-    "SCCP source proof deployment rebuild proofPackage",
-  );
-  const sourceVerifierMaterial = readRequiredSccpRecordField(
-    request,
-    ["sourceVerifierMaterial", "source_verifier_material"],
-    "SCCP source proof deployment rebuild sourceVerifierMaterial",
-  );
-  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
-    request,
-    [
-      "sourceAdapterEngineDeployment",
-      "source_adapter_engine_deployment",
-      "sourceAdapterDeployment",
-      "source_adapter_deployment",
-    ],
-    "SCCP source proof deployment rebuild sourceAdapterEngineDeployment",
-  );
-  const label = trimString(request.label) || "source";
-  return rebuildSccpSourceMessageBundleWithNativeDeployment(
-    proofPackage,
-    { sourceVerifierMaterial, sourceAdapterEngineDeployment },
-    label,
-  );
-};
-
-const buildTonSccpSourceProofResultInNode = (
-  input: SccpSourceProofDeploymentRebuildInput,
-): Record<string, unknown> => {
-  const request = snapshotSccpDataValue(
-    input,
-    "TON SCCP source proof deployment build request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error(
-      "TON SCCP source proof deployment build request must be an object.",
-    );
-  }
-  const proofPackage = readRequiredSccpRecordField(
-    request,
-    ["proofPackage", "proof_package"],
-    "TON SCCP source proof deployment build proofPackage",
-  );
-  const sourceVerifierMaterial = readRequiredSccpRecordField(
-    request,
-    ["sourceVerifierMaterial", "source_verifier_material"],
-    "TON SCCP source proof deployment build sourceVerifierMaterial",
-  );
-  const sourceAdapterEngineDeployment = readRequiredSccpRecordField(
-    request,
-    [
-      "sourceAdapterEngineDeployment",
-      "source_adapter_engine_deployment",
-      "sourceAdapterDeployment",
-      "source_adapter_deployment",
-    ],
-    "TON SCCP source proof deployment build sourceAdapterEngineDeployment",
-  );
-  return buildTonSourceMessageBundleWithNativeDeployment(proofPackage, {
-    sourceVerifierMaterial,
-    sourceAdapterEngineDeployment,
-  });
-};
-
-const readBscSourceBridgeAddressForSourceProof = (
-  request: Record<string, unknown>,
-): string => {
-  const manifest = readOptionalSccpRecordField(request, ["manifest"]);
-  const address =
-    readOptionalSccpTextField(request, [
-      "sourceBridgeEmitterAddress",
-      "source_bridge_emitter_address",
-      "sourceBridgeAddress",
-      "source_bridge_address",
-      "bscSourceBridgeAddress",
-      "bsc_source_bridge_address",
-    ]) ??
-    (manifest
-      ? readOptionalSccpTextField(manifest, [
-          "sccpBscSourceBridgeAddress",
-          "sccp_bsc_source_bridge_address",
-          "bscSourceBridgeAddress",
-          "bsc_source_bridge_address",
-          "evmSourceBridgeAddress",
-          "evm_source_bridge_address",
-          "sourceBridgeAddress",
-          "source_bridge_address",
-        ])
-      : undefined);
-  if (!address) {
-    throw new Error(
-      "BSC source proof requires the manifest source bridge address.",
-    );
-  }
-  return normalizeEvmAddressHex(address, "BSC source bridge address");
-};
-
-const readBscRpcUrlForSourceProof = (
-  request: Record<string, unknown>,
-): string => {
-  const endpoint = readOptionalSccpTextField(request, [
-    "bscRpcUrl",
-    "bsc_rpc_url",
-    "evmRpcUrl",
-    "evm_rpc_url",
-    "rpcUrl",
-    "rpc_url",
-  ]);
-  if (!endpoint) {
-    throw new Error(
-      "BSC source proof requires a BSC RPC URL to read source bridge code.",
-    );
-  }
-  return endpoint;
-};
-
-const readBscSourceBridgeCodeHashForSourceProof = async (
-  request: Record<string, unknown>,
-  sourceBridgeAddress: string,
-): Promise<string> => {
-  const supplied = readOptionalSccpTextField(request, [
-    "sourceBridgeEmitterCodeHash",
-    "source_bridge_emitter_code_hash",
-    "sourceBridgeCodeHash",
-    "source_bridge_code_hash",
-  ]);
-  if (supplied) {
-    return normalizeEvmNonZeroHash(supplied, "BSC source bridge code hash");
-  }
-  const code = await getEvmCodeFromRpc({
-    endpoint: readBscRpcUrlForSourceProof(request),
-    address: sourceBridgeAddress,
-    blockTag: "latest",
-  });
-  if (code === "0x") {
-    throw new Error("BSC source bridge contract code is empty.");
-  }
-  return `0x${Buffer.from(
-    keccak_256(Buffer.from(code.slice(2), "hex")),
-  ).toString("hex")}`;
-};
-
-const buildBinaryBscSourceProofPackage = async (
-  proofPackage: Record<string, unknown>,
-  request: Record<string, unknown>,
-): Promise<Record<string, unknown>> => {
-  const messageBundle = readRequiredSccpRecordField(
-    proofPackage,
-    ["messageBundle", "message_bundle"],
-    "BSC SCCP source proof package messageBundle",
-  );
-  const commitment = readRequiredSccpRecordField(
-    messageBundle,
-    ["commitment"],
-    "BSC SCCP source proof package commitment",
-  );
-  const receipt = readOptionalSccpRecordField(request, ["receipt"]);
-  const receiptRootIndex = readBscSourceReceiptRootIndex(request, receipt);
-  const sourceBridgeEmitterAddress =
-    readBscSourceBridgeAddressForSourceProof(request);
-  const sourceBridgeEmitterCodeHash =
-    await readBscSourceBridgeCodeHashForSourceProof(
-      request,
-      sourceBridgeEmitterAddress,
-    );
-  const finalityHeight = readOptionalSccpTextField(request, [
-    "finalityHeight",
-    "finality_height",
-  ]);
-  const finalityBlockHash = readOptionalSccpTextField(request, [
-    "finalityBlockHash",
-    "finality_block_hash",
-  ]);
-  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
-  if (!laneMaterial) {
-    throw new Error(
-      "BSC source proof requires deployment-bound sourceVerifierMaterial and sourceAdapterEngineDeployment; placeholder source proofs are unsupported.",
-    );
-  }
-  const sourceValidatorSigningConfig = laneMaterial
-    ? readBscSourceValidatorSigningConfig(request)
-    : null;
-  const blockReceipts = readSccpOwnField(request, [
-    "blockReceipts",
-    "block_receipts",
-    "receiptBlockReceipts",
-    "receipt_block_receipts",
-  ]);
-  const sourceProofInput = {
-    messageId: readRequiredSccpTextField(
-      commitment,
-      ["message_id", "messageId"],
-      "BSC SCCP source proof package message id",
-    ),
-    payloadHash: readRequiredSccpTextField(
-      commitment,
-      ["payload_hash", "payloadHash"],
-      "BSC SCCP source proof package payload hash",
-    ),
-    commitmentRoot: readRequiredSccpTextField(
-      messageBundle,
-      ["commitment_root", "commitmentRoot"],
-      "BSC SCCP source proof package commitment root",
-    ),
-    sourceEventDigest: readRequiredSccpTextField(
-      proofPackage,
-      ["sourceEventDigest", "source_event_digest"],
-      "BSC SCCP source proof package source event digest",
-    ),
-    sourceBridgeEmitterAddress,
-    sourceBridgeEmitterCodeHash,
-    ...(finalityHeight ? { finalityHeight } : {}),
-    ...(finalityBlockHash ? { finalityBlockHash } : {}),
-    ...(receipt ? { receipt } : {}),
-    ...(readOptionalSccpRecordField(request, ["block"])
-      ? { block: readOptionalSccpRecordField(request, ["block"]) }
-      : {}),
-    ...(Array.isArray(blockReceipts) ? { blockReceipts } : {}),
-    ...(receiptRootIndex
-      ? {
-          receiptRootIndex,
-        }
-      : {}),
-    ...(laneMaterial
-      ? {
-          sourceVerifierMaterial: laneMaterial.sourceVerifierMaterial,
-          sourceAdapterEngineDeployment:
-            laneMaterial.sourceAdapterEngineDeployment,
-        }
-      : {}),
-    ...(sourceValidatorSigningConfig ?? {}),
-  };
-  const sourceProof = buildBscSourceChainProofEnvelope(sourceProofInput);
-  const patchedProofPackage = withBscSourcePublicInputFinality(
-    replaceBscSourceMessageBundleFinalityProof(
-      proofPackage,
-      sourceProof.sourceProofHex,
-    ),
-    sourceProof,
-  );
-  return patchedProofPackage;
-};
-
-const SCCP_BSC_SOURCE_DOMAIN_ID = 2;
-const SCCP_SORA_TARGET_DOMAIN_ID = 0;
-const SCCP_TAIRA_BSC_XOR_ROUTE_ID = "taira_bsc_xor";
-
-const bindBscSourceProofResultInNode = async (
-  input: SccpBscSourceProofGenerateInput,
-  proofPackage: Record<string, unknown>,
-): Promise<Record<string, unknown>> => {
-  const request = snapshotSccpDataValue(
-    input.input,
-    "BSC SCCP source proof request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error("BSC SCCP source proof request must be an object.");
-  }
-  const patchedProofPackage = await buildBinaryBscSourceProofPackage(
-    proofPackage,
-    request,
-  );
-  const bridgeAddress = readOptionalSccpTextField(request, [
-    "bridgeAddress",
-    "bridge_address",
-    "bscBridgeAddress",
-    "bsc_bridge_address",
-    "evmBridgeAddress",
-    "evm_bridge_address",
-  ]);
-  const bindInput = {
-    proofPackage: patchedProofPackage,
-    txId: readRequiredSccpTextField(
-      request,
-      [
-        "txId",
-        "txID",
-        "transactionHash",
-        "transaction_hash",
-        "transactionId",
-        "transaction_id",
-      ],
-      "BSC SCCP source proof request txId",
-    ),
-    bscSender: readRequiredSccpTextField(
-      request,
-      ["bscSender", "bsc_sender", "evmSender", "evm_sender", "sender"],
-      "BSC SCCP source proof request bscSender",
-    ),
-    tairaRecipient: readRequiredSccpTextField(
-      request,
-      [
-        "tairaRecipient",
-        "taira_recipient",
-        "recipient",
-        "tairaAccountId",
-        "taira_account_id",
-      ],
-      "BSC SCCP source proof request tairaRecipient",
-    ),
-    amount: readRequiredSccpTextField(
-      request,
-      ["amountBaseUnits", "amount_base_units", "amount"],
-      "BSC SCCP source proof request amountBaseUnits",
-    ),
-    ...(bridgeAddress ? { bridgeAddress } : {}),
-  };
-  const laneMaterial = readBscSourceLaneMaterialForNativeProof(request);
-  const proofPackageForBinding = laneMaterial
-    ? rebuildBscSourceMessageBundleWithNativeDeployment(
-        {
-          ...patchedProofPackage,
-          messageBundle:
-            bindTairaXorBscToTairaSourceProofPackage(bindInput).messageBundle,
-        },
-        laneMaterial,
-      )
-    : patchedProofPackage;
-  const bound = bindTairaXorBscToTairaSourceProofPackage({
-    ...bindInput,
-    proofPackage: proofPackageForBinding,
-  });
-  const boundMessageBundle = bound.messageBundle as Record<string, unknown>;
-  const boundCommitment = readRequiredSccpRecordField(
-    boundMessageBundle,
-    ["commitment"],
-    "BSC SCCP source proof package bound commitment",
-  );
-  const boundPayloadHash = readRequiredSccpTextField(
-    boundCommitment,
-    ["payload_hash", "payloadHash"],
-    "BSC SCCP source proof package bound payload hash",
-  );
-  const materialValue = (
-    packageKeys: readonly string[],
-    requestKeys: readonly string[],
-  ): string => {
-    return (
-      readOptionalSccpTextField(patchedProofPackage, packageKeys) ??
-      readOptionalSccpTextField(request, requestKeys) ??
-      ""
-    );
-  };
-  return {
-    messageBundle: boundMessageBundle,
-    settlement: bound.settlement,
-    publicInputs: {
-      sourceDomain: SCCP_BSC_SOURCE_DOMAIN_ID,
-      targetDomain: SCCP_SORA_TARGET_DOMAIN_ID,
-      messageId: bound.messageId,
-      payloadHash: boundPayloadHash,
-      commitmentRoot: bound.commitmentRoot,
-      txId: bound.txId,
-      sourceEventDigest: bound.sourceEventDigest,
-      amountBaseUnits: bound.amount,
-      sender: bindInput.bscSender,
-      recipient: bindInput.tairaRecipient,
-      routeId: SCCP_TAIRA_BSC_XOR_ROUTE_ID,
-    },
-    sourceEventDigest: bound.sourceEventDigest,
-    txId: bound.txId,
-    messageId: bound.messageId,
-    amountBaseUnits: bound.amount,
-    proofArtifactHash: materialValue(
-      ["proofArtifactHash", "proof_artifact_hash"],
-      ["proofArtifactHash", "proof_artifact_hash"],
-    ),
-    provingKeyHash: materialValue(
-      ["provingKeyHash", "proving_key_hash"],
-      ["provingKeyHash", "proving_key_hash"],
-    ),
-    nativeEvmProverBundleHash: materialValue(
-      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
-      ["nativeEvmProverBundleHash", "native_evm_prover_bundle_hash"],
-    ),
-  };
-};
-
-const readOptionalSccpHex32 = (
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): string | undefined => {
-  const raw = readSccpOwnField(value, keys);
-  if (raw === undefined || raw === null || raw === "") {
-    return undefined;
-  }
-  if (typeof raw !== "string") {
-    throw new Error(`${label} must be a canonical 32-byte hex string.`);
-  }
-  const normalized = raw.trim().toLowerCase();
-  if (
-    normalized !== raw.trim() ||
-    !/^0x[0-9a-f]{64}$/u.test(normalized) ||
-    /^0x0{64}$/u.test(normalized)
-  ) {
-    throw new Error(`${label} must be a non-zero 32-byte hex string.`);
-  }
-  return normalized;
-};
-
-const bindOptionalBscNativeEvmProverBundleHash = <
-  T extends Record<string, unknown>,
->(
-  request: T,
-  witness: Record<string, unknown>,
-): T & { nativeEvmProverBundleHash?: string } => {
-  const nativeEvmProverBundleHash = readOptionalSccpHex32(
-    witness,
-    SCCP_BSC_NATIVE_EVM_PROVER_BUNDLE_HASH_KEYS,
-    "BSC SCCP proof witness nativeEvmProverBundleHash",
-  );
-  return nativeEvmProverBundleHash
-    ? { ...request, nativeEvmProverBundleHash }
-    : request;
-};
-
-const readBscNodeProverNetwork = (
-  witness: Record<string, unknown>,
-): "mainnet" | "testnet" => {
-  const binding = readSccpOwnField(witness, [
-    "destinationBinding",
-    "destination_binding",
-  ]);
-  if (!isPlainRecord(binding)) {
-    return "testnet";
-  }
-  const rawNetworkId = readSccpOwnField(binding, [
-    "networkId",
-    "network_id",
-    "networkIdHex",
-    "network_id_hex",
-  ]);
-  if (
-    rawNetworkId === undefined ||
-    rawNetworkId === null ||
-    rawNetworkId === ""
-  ) {
-    return "testnet";
-  }
-  if (typeof rawNetworkId !== "string") {
-    throw new Error("BSC SCCP destination binding networkId must be hex.");
-  }
-  const networkId = rawNetworkId.trim().toLowerCase();
-  if (networkId === SCCP_BSC_MAINNET_NETWORK_ID_HEX) {
-    return "mainnet";
-  }
-  if (networkId === SCCP_BSC_TESTNET_NETWORK_ID_HEX) {
-    return "testnet";
-  }
-  throw new Error("BSC SCCP destination binding networkId is unsupported.");
-};
-
-const buildBscNodeProverRequest = (
-  requestOrWitness: Record<string, unknown>,
-): Record<string, unknown> => {
-  const existingRequestHash = readSccpOwnField(requestOrWitness, [
-    "requestHash",
-    "request_hash",
-  ]);
-  if (existingRequestHash !== undefined && existingRequestHash !== null) {
-    return bindOptionalBscNativeEvmProverBundleHash(
-      requestOrWitness,
-      requestOrWitness,
-    );
-  }
-  const network = readBscNodeProverNetwork(requestOrWitness);
-  const request =
-    network === "mainnet"
-      ? buildBscMainnetSccpDestinationProofRequest(
-          requestOrWitness as EvmSccpProofRequestInput,
-        )
-      : buildBscTestnetSccpDestinationProofRequest(
-          requestOrWitness as EvmSccpProofRequestInput,
-        );
-  return bindOptionalBscNativeEvmProverBundleHash(
-    request as unknown as Record<string, unknown>,
-    requestOrWitness,
-  );
-};
-
-const bscEvmGroth16EnvelopeHash = (
-  requestHash: string,
-  proofBytesHex: string,
-): string => {
-  if (!/^0x[0-9a-fA-F]{64}$/u.test(requestHash)) {
-    throw new Error("BSC SCCP proof result requestHash must be 32-byte hex.");
-  }
-  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
-    throw new Error("BSC SCCP proof result proofBytes must be hex.");
-  }
-  const prefix = Uint8Array.from(
-    Buffer.from("sccp:evm:groth16-proof-envelope:v1", "utf8"),
-  );
-  const requestHashBytes = Uint8Array.from(
-    Buffer.from(requestHash.slice(2), "hex"),
-  );
-  const proofBytes = Uint8Array.from(
-    Buffer.from(proofBytesHex.slice(2), "hex"),
-  );
-  const payload = new Uint8Array(
-    prefix.byteLength + requestHashBytes.byteLength + proofBytes.byteLength,
-  );
-  payload.set(prefix, 0);
-  payload.set(requestHashBytes, prefix.byteLength);
-  payload.set(proofBytes, prefix.byteLength + requestHashBytes.byteLength);
-  const digest = blake2b(payload, { dkLen: 32 });
-  return `0x${Buffer.from(digest).toString("hex")}`;
-};
-
-const proveBscSccpProofInNode = async (
-  input: SccpBscProofGenerateInput,
-  direction: "destination" | "source" = "destination",
-): Promise<Record<string, unknown>> => {
-  const requestOrWitness = snapshotSccpDataValue(
-    input.request,
-    "BSC SCCP proof request",
-  );
-  if (!isPlainRecord(requestOrWitness)) {
-    throw new Error("BSC SCCP proof request must be an object.");
-  }
-  assertNoSecretLikePayloadFields(requestOrWitness, "BSC SCCP proof request");
-  const request =
-    direction === "source"
-      ? withBscSourceReceiptRootIndex(requestOrWitness)
-      : buildBscNodeProverRequest(requestOrWitness);
-  const moduleSpecifier = resolveSccpBscProverModuleSpecifier(
-    input.proverModuleUrl,
-  );
-  const configUrl = resolveSccpBscRuntimeProverConfigUrl(input.proverConfigUrl);
-  const timeoutMs = normalizeOptionalTimeoutMs(
-    input.timeoutMs,
-    SCCP_BSC_NODE_PROVER_TIMEOUT_MS,
-  );
-  const childInput = JSON.stringify({
-    direction,
-    request,
-    moduleSpecifier,
-    configUrl,
-  });
-  const heapMb = resolveSccpProverHeapMb();
-  const child = spawn(
-    process.execPath,
-    [
-      `--max-old-space-size=${heapMb}`,
-      "--experimental-vm-modules",
-      "-e",
-      SCCP_BSC_NODE_PROVER_CHILD_SOURCE,
-    ],
-    {
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: "1",
-        SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
-        VITE_SCCP_BSC_PROVER_V8_HEAP_MB: String(heapMb),
-      },
-      stdio: ["pipe", "pipe", "pipe"],
-    },
-  );
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  let outputError: Error | null = null;
-  const timeout = setTimeout(() => {
-    child.kill("SIGTERM");
-  }, timeoutMs);
-  child.stdout.on("data", (chunk: Buffer) => {
-    try {
-      collectLimitedChildOutput(stdout, chunk, "BSC SCCP prover stdout");
-    } catch (error) {
-      outputError = error instanceof Error ? error : new Error(String(error));
-      child.kill("SIGTERM");
-    }
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    try {
-      collectLimitedChildOutput(stderr, chunk, "BSC SCCP prover stderr");
-    } catch (error) {
-      outputError = error instanceof Error ? error : new Error(String(error));
-      child.kill("SIGTERM");
-    }
-  });
-  const exit = new Promise<{
-    code: number | null;
-    signal: NodeJS.Signals | null;
-  }>((resolveExit, rejectExit) => {
-    child.once("error", rejectExit);
-    child.once("close", (code, signal) => resolveExit({ code, signal }));
-  });
-  child.stdin.end(childInput);
-  const { code, signal } = await exit.finally(() => clearTimeout(timeout));
-  if (outputError) {
-    throw outputError;
-  }
-  const output = Buffer.concat(stdout).toString("utf8").trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(output);
-  } catch (_error) {
-    const detail = Buffer.concat(stderr).toString("utf8").trim().slice(0, 2000);
-    throw new Error(
-      `BSC SCCP prover child returned unreadable output.${
-        detail ? ` stderr: ${detail}` : ""
-      }`,
-    );
-  }
-  if (!isPlainRecord(parsed)) {
-    throw new Error("BSC SCCP prover child returned an invalid response.");
-  }
-  if (parsed.ok !== true) {
-    const childError = trimString(parsed.error) || `exit ${code ?? signal}`;
-    throw new Error(`BSC SCCP prover child failed: ${childError}`);
-  }
-  if (code !== 0) {
-    throw new Error(`BSC SCCP prover child exited with ${code ?? signal}.`);
-  }
-  const result = snapshotSccpDataValue(parsed.result, "BSC SCCP proof result");
-  if (!isPlainRecord(result)) {
-    throw new Error("BSC SCCP prover child result must be an object.");
-  }
-  assertNoSecretLikePayloadFields(result, "BSC SCCP proof result");
-  if (direction === "source") {
-    return result;
-  }
-  const proofBytesHex = trimString(result.proofBytes ?? result.proof_bytes);
-  if (!/^0x[0-9a-fA-F]+$/u.test(proofBytesHex)) {
-    throw new Error("BSC SCCP prover child result proofBytes must be hex.");
-  }
-  const proofBase64 = Buffer.from(proofBytesHex.slice(2), "hex").toString(
-    "base64",
-  );
-  const proofResult: Record<string, unknown> = {
-    proofBytes: proofBytesHex,
-    proofBase64,
-    backend: trimString(result.backend) || request.backend,
-    requestHash:
-      trimString(result.requestHash) || trimString(request.requestHash),
-    envelopeHash: bscEvmGroth16EnvelopeHash(
-      trimString(result.requestHash) || trimString(request.requestHash),
-      proofBytesHex,
-    ),
-    proofArtifactHash: request.proofArtifactHash,
-    provingKeyHash: request.provingKeyHash,
-    nativeEvmProverBundleHash: request.nativeEvmProverBundleHash,
-    destinationBinding: request.destinationBinding,
-    destinationBindingHash: request.destinationBindingHash,
-    publicInputs: request.publicInputs,
-    publicSignalWords: request.publicSignalWords,
-    bundleBytes: request.bundleBytes,
-    sourceProofBytes: request.sourceProofBytes,
-    proofContext: request.proofContext,
-    statementHash: request.statementHash,
-    sourceDomain: request.sourceDomain,
-  };
-  for (const [key, value] of Object.entries(proofResult)) {
-    if (value === undefined || value === null) {
-      delete proofResult[key];
-    }
-  }
-  delete proofResult.envelopeHash;
-  delete proofResult.envelope_hash;
-  return proofResult;
-};
-
-const proveBscSccpSourceProofInNode = async (
-  input: SccpBscSourceProofGenerateInput,
-): Promise<Record<string, unknown>> => {
-  const request = snapshotSccpDataValue(
-    input.input,
-    "BSC SCCP source proof request",
-  );
-  if (!isPlainRecord(request)) {
-    throw new Error("BSC SCCP source proof request must be an object.");
-  }
-  const sourceRequest = withBscSourceReceiptRootIndex(request);
-  const proofPackage = await proveBscSccpProofInNode(
-    {
-      request: sourceRequest,
-      proverModuleUrl: input.proverModuleUrl,
-      proverConfigUrl: input.proverConfigUrl,
-      timeoutMs: input.timeoutMs,
-    },
-    "source",
-  );
-  return bindBscSourceProofResultInNode(
-    { ...input, input: sourceRequest },
-    proofPackage,
-  );
-};
-
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS =
-  "taira_xor_inbound_settlement::universal";
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME =
-  "contracts/taira/sccp/TairaXorSccpInboundSettlement.ko";
-const SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE = `
-seiyaku TairaXorSccpInboundSettlement {
-  kotoage fn finalize_inbound() permission(AssetManager) {
-    require(true);
-  }
-}
-`;
-
-const normalizeSccpContractAlias = (
-  value: unknown,
-  fallback: string,
-): string => {
-  const alias = trimString(value) || fallback;
-  if (!alias.includes("::")) {
-    throw new Error(
-      "TAIRA SCCP settlement contract alias must be fully qualified.",
-    );
-  }
-  return alias;
-};
-
-const normalizeOptionalLeaseExpiryMs = (value: unknown): number | undefined => {
-  if (value === undefined || value === null || value === "") {
-    return undefined;
-  }
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(
-      "Contract alias leaseExpiryMs must be a non-negative integer.",
-    );
-  }
-  return parsed;
-};
-
-const normalizeOptionalCompiledContractCodeB64 = (
-  value: unknown,
-): Uint8Array | null => {
-  const encoded = trimString(value);
-  if (!encoded) {
-    return null;
-  }
-  let decoded: Buffer;
-  try {
-    decoded = Buffer.from(encoded, "base64");
-  } catch {
-    throw new Error("compiledCodeB64 must be valid base64 contract bytecode.");
-  }
-  if (decoded.length === 0) {
-    throw new Error("compiledCodeB64 must not be empty.");
-  }
-  return Uint8Array.from(decoded);
-};
-
-const deploySccpTairaInboundSettlementContractToTorii = async (
-  input: SccpTairaInboundSettlementDeployInput,
-): Promise<Record<string, unknown> | null> => {
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
-  if (trimString(input.privateKeyHex)) {
-    throw new Error(
-      "TAIRA SCCP settlement contract deployment must use the stored wallet secret; inline private keys are not accepted.",
-    );
-  }
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    operationLabel: "Deploy TAIRA SCCP settlement contract",
-  });
-  const contractAlias = normalizeSccpContractAlias(
-    input.contractAlias,
-    SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_ALIAS,
-  );
-  const externalArtifactBytes = normalizeOptionalCompiledContractCodeB64(
-    input.compiledCodeB64,
-  );
-  let compiledCodeHashHex: string | undefined;
-  let compiledAbiHashHex: string | undefined;
-  const artifactBytes =
-    externalArtifactBytes ??
-    (() => {
-      const compiled = compileKotodamaProgram(
-        SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_CONTRACT_SOURCE,
-        {
-          sourceName: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
-        },
-      );
-      if (compiled.diagnostics.length > 0) {
-        throw new Error(
-          compiled.diagnostics
-            .map((entry) => `${entry.severity}: ${entry.message}`)
-            .join("\n"),
-        );
-      }
-      const entrypoint = compiled.manifest?.entrypoints.find(
-        (candidate) => candidate.name === "finalize_inbound",
-      );
-      const params = entrypoint?.params.map((param) => [
-        param.name,
-        param.type_name,
-      ]);
-      if (
-        !entrypoint ||
-        entrypoint.permission !== "AssetManager" ||
-        JSON.stringify(params) !== JSON.stringify([])
-      ) {
-        throw new Error(
-          "Compiled TAIRA SCCP settlement contract ABI is invalid.",
-        );
-      }
-      compiledCodeHashHex = compiled.codeHashHex;
-      compiledAbiHashHex = compiled.abiHashHex;
-      return Uint8Array.from(compiled.artifactBytes);
-    })();
-  if (artifactBytes.length === 0) {
-    throw new Error("Compiled TAIRA SCCP settlement contract is empty.");
-  }
-  const baseUrl = normalizeBaseUrl(input.toriiUrl);
-  const client = new ToriiClient(baseUrl, {
-    fetchImpl: nodeFetch,
-    allowInsecure: baseUrl.startsWith("http://"),
-  });
-  const response = await client.deployContract({
-    authority: accountId,
-    privateKey: formatExposedPrivateKey(signingMaterial),
-    contractAlias,
-    codeB64: Buffer.from(artifactBytes).toString("base64"),
-    leaseExpiryMs: normalizeOptionalLeaseExpiryMs(input.leaseExpiryMs),
-  });
-  const deployedContract = response?.contracts.find(
-    (contract) => contract.contract_alias === contractAlias,
-  );
-  return {
-    ...(response ?? {}),
-    contract_alias: deployedContract?.contract_alias ?? contractAlias,
-    code_hash_hex: deployedContract?.code_hash_hex ?? compiledCodeHashHex,
-    abi_hash_hex: deployedContract?.abi_hash_hex ?? compiledAbiHashHex,
-    source_name: SCCP_TAIRA_XOR_INBOUND_SETTLEMENT_SOURCE_NAME,
-  };
-};
-
 type ZkIvmRequestInput = {
   toriiUrl: string;
   vkRef?: unknown;
@@ -7788,9 +4996,11 @@ type ZkIvmProveJobInput = {
 type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
   chainId: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex?: unknown;
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
+  gasLimit?: string | number;
   metadata?: Record<string, unknown>;
   waitForCommit?: boolean;
   creationTimeMs?: number;
@@ -7913,9 +5123,15 @@ const submitZkIvmProvedTransactionToTorii = async (
   if (!chainId) {
     throw new Error("chainId is required.");
   }
-  const accountId = normalizeCompatAccountIdLiteral(
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId,
+    networkPrefix: input.networkPrefix,
+  });
+  const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    writeConnection.networkPrefix,
   );
   if (!isPlainRecord(input.proved)) {
     throw new Error("ZK IVM proved payload must be an object.");
@@ -7939,15 +5155,32 @@ const submitZkIvmProvedTransactionToTorii = async (
   });
   const nativeBinding = installGlobalIrohaJsNativeBinding(import.meta.url);
   const creationTimeMs = input.creationTimeMs ?? Date.now();
-  const tx = buildIvmProvedTransaction({
+  const gasLimit = normalizeIntegerAmount(
+    String(
+      input.gasLimit ?? input.proved.gas_limit ?? input.proved.gasLimit ?? "",
+    ),
+    "gasLimit",
+  );
+  const draft = buildIvmProvedTransactionPayload({
     chainId,
     authority: accountId,
     proved: input.proved,
     attachment: input.attachment,
+    feePayment: { payer: "authority", chargeLimits: [], gasLimit },
     metadata: input.metadata,
     creationTimeMs,
     ttlMs: input.ttlMs ?? 10 * 60 * 1000,
     nonce: input.nonce,
+  });
+  const quote = await getClient(input.toriiUrl).quoteFees(draft, {
+    canonicalAuth: {
+      accountId,
+      privateKey: signingMaterial.privateKeyHex,
+    },
+  });
+  const tx = signQuotedIvmProvedTransactionPayload({
+    payload: draft,
+    quotedFeePayment: quote.intent,
     privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
@@ -7964,2018 +5197,6 @@ const submitZkIvmProvedTransactionToTorii = async (
     ...submission,
     ...(fee ? { fee } : {}),
   });
-};
-
-const parseIpv4Octets = (hostname: string): number[] | null => {
-  if (!/^\d{1,3}(?:\.\d{1,3}){3}$/u.test(hostname)) {
-    return null;
-  }
-  const octets = hostname.split(".").map((part) => Number(part));
-  return octets.every(
-    (octet) => Number.isInteger(octet) && octet >= 0 && octet <= 255,
-  )
-    ? octets
-    : null;
-};
-
-const isPrivateOrReservedIpv4Octets = (octets: number[]): boolean => {
-  const [first, second] = octets;
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 0) ||
-    (first === 192 && second === 168) ||
-    (first === 198 && (second === 18 || second === 19)) ||
-    first >= 224
-  );
-};
-
-const isPrivateOrReservedIpv4 = (hostname: string): boolean => {
-  const octets = parseIpv4Octets(hostname);
-  if (!octets) {
-    return false;
-  }
-  return isPrivateOrReservedIpv4Octets(octets);
-};
-
-const parseIpv6Hextets = (hostname: string): number[] | null => {
-  if (!hostname.includes(":")) {
-    return null;
-  }
-  const parts = hostname.split("::");
-  if (parts.length > 2) {
-    return null;
-  }
-  const parseSide = (side: string): number[] =>
-    side
-      ? side.split(":").map((part) => {
-          if (!/^[0-9a-f]{1,4}$/iu.test(part)) {
-            return Number.NaN;
-          }
-          return Number.parseInt(part, 16);
-        })
-      : [];
-  const left = parseSide(parts[0]);
-  const right = parseSide(parts[1] ?? "");
-  if (
-    [...left, ...right].some((hextet) => !Number.isInteger(hextet)) ||
-    (parts.length === 1 && left.length !== 8) ||
-    left.length + right.length > 8
-  ) {
-    return null;
-  }
-  const zeroFill =
-    parts.length === 2 ? Array(8 - left.length - right.length).fill(0) : [];
-  return [...left, ...zeroFill, ...right];
-};
-
-const hextetsToIpv4Octets = (high: number, low: number): number[] => [
-  (high >> 8) & 0xff,
-  high & 0xff,
-  (low >> 8) & 0xff,
-  low & 0xff,
-];
-
-const hasPrivateOrReservedEmbeddedIpv4 = (hextets: number[]): boolean => {
-  if (hextets.length !== 8) {
-    return false;
-  }
-  const lastIpv4 = hextetsToIpv4Octets(hextets[6], hextets[7]);
-  const leadingCompatibleZeros = hextets
-    .slice(0, 6)
-    .every((part) => part === 0);
-  const leadingMappedZeros =
-    hextets.slice(0, 5).every((part) => part === 0) && hextets[5] === 0xffff;
-  const nat64WellKnownPrefix =
-    hextets[0] === 0x64 &&
-    hextets[1] === 0xff9b &&
-    hextets.slice(2, 6).every((part) => part === 0);
-  if (
-    (leadingCompatibleZeros || leadingMappedZeros || nat64WellKnownPrefix) &&
-    isPrivateOrReservedIpv4Octets(lastIpv4)
-  ) {
-    return true;
-  }
-  if (hextets[0] === 0x2002) {
-    return isPrivateOrReservedIpv4Octets(
-      hextetsToIpv4Octets(hextets[1], hextets[2]),
-    );
-  }
-  return false;
-};
-
-const isPrivateTronGatewayHost = (hostname: string): boolean => {
-  const normalized = hostname
-    .trim()
-    .toLowerCase()
-    .replace(/^\[/u, "")
-    .replace(/\]$/u, "")
-    .replace(/\.$/u, "");
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "local" ||
-    normalized === "::1" ||
-    normalized === "::"
-  ) {
-    return true;
-  }
-  if (isPrivateOrReservedIpv4(normalized)) {
-    return true;
-  }
-  const ipv4Mapped = normalized.match(
-    /(?::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/iu,
-  );
-  if (ipv4Mapped?.[1] && isPrivateOrReservedIpv4(ipv4Mapped[1])) {
-    return true;
-  }
-  if (!normalized.includes(":")) {
-    return false;
-  }
-  const hextets = parseIpv6Hextets(normalized);
-  if (!hextets) {
-    return true;
-  }
-  if (
-    hasPrivateOrReservedEmbeddedIpv4(hextets) ||
-    (hextets[0] === 0x2001 && hextets[1] === 0)
-  ) {
-    return true;
-  }
-  const firstHextet = hextets[0];
-  return (
-    (firstHextet & 0xfe00) === 0xfc00 ||
-    (firstHextet & 0xffc0) === 0xfe80 ||
-    (firstHextet & 0xff00) === 0xff00 ||
-    normalized.startsWith("2001:db8:")
-  );
-};
-
-const normalizeTronGatewayUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_TRON_GATEWAY_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error("TRON gateway endpoint must be a valid HTTPS URL.");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("TRON gateway endpoint must use HTTPS.");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("TRON gateway endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("TRON gateway endpoint must not include query or hash.");
-  }
-  if (isPrivateTronGatewayHost(parsed.hostname)) {
-    throw new Error("TRON gateway endpoint must not target a local network.");
-  }
-  return normalized;
-};
-
-const normalizeTronTxId = (txId: string): string => {
-  const normalized = trimString(txId).replace(/^0x/iu, "").toLowerCase();
-  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error("TRON transaction id must be a 32-byte hex string.");
-  }
-  return normalized;
-};
-
-const postTronJson = async (
-  input: TronGatewayInput | undefined,
-  path: string,
-  body: Record<string, unknown>,
-  label: string,
-): Promise<Record<string, unknown>> =>
-  postJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label, body);
-
-const decodeTronGatewayMessage = (value: unknown): string => {
-  const text = trimString(value);
-  const hex = text.replace(/^0x/iu, "");
-  if (hex && hex.length % 2 === 0 && /^[0-9a-f]+$/iu.test(hex)) {
-    try {
-      return Buffer.from(hex, "hex").toString("utf8");
-    } catch {
-      return text;
-    }
-  }
-  return text;
-};
-
-const assertTronGatewayAccepted = (
-  payload: Record<string, unknown>,
-  label: string,
-): void => {
-  const result = payload.result;
-  const rejected =
-    result === false ||
-    (isPlainRecord(result) && result.result === false) ||
-    Boolean(payload.Error);
-  if (!rejected) {
-    return;
-  }
-  const detail = [
-    isPlainRecord(result) ? result.code : payload.code,
-    isPlainRecord(result) ? result.message : payload.message,
-    payload.Error,
-  ]
-    .map(decodeTronGatewayMessage)
-    .filter(Boolean)
-    .join(": ");
-  throw new Error(
-    detail
-      ? `${label} was rejected by the TRON node: ${detail}`
-      : `${label} was rejected by the TRON node.`,
-  );
-};
-
-const getTronJson = async (
-  input: TronGatewayInput | undefined,
-  path: string,
-  label: string,
-): Promise<Record<string, unknown>> =>
-  fetchJson(`${normalizeTronGatewayUrl(input?.endpoint)}${path}`, label);
-
-const getTronTransactionFromGateway = (
-  input: TronTransactionInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/gettransactionbyid",
-    { value: normalizeTronTxId(input.txId) },
-    "TRON transaction",
-  );
-
-const getTronTransactionReceiptFromGateway = (
-  input: TronTransactionInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/gettransactioninfobyid",
-    { value: normalizeTronTxId(input.txId) },
-    "TRON transaction receipt",
-  );
-
-const getTronTransactionEventsFromGateway = (
-  input: TronEventsInput,
-): Promise<Record<string, unknown>> =>
-  getTronJson(
-    input,
-    `/v1/transactions/${encodeURIComponent(normalizeTronTxId(input.txId))}/events`,
-    "TRON transaction events",
-  );
-
-const getTronSolidBlockFromGateway = (
-  input?: TronBlockInput,
-): Promise<Record<string, unknown>> => {
-  if (input?.blockNumber !== undefined && input.blockNumber !== "") {
-    const parsed = Number(input.blockNumber);
-    if (!Number.isSafeInteger(parsed) || parsed < 0) {
-      throw new Error("TRON block number must be a non-negative safe integer.");
-    }
-    return postTronJson(
-      input,
-      "/walletsolidity/getblockbynum",
-      { num: parsed },
-      "TRON solid block",
-    );
-  }
-  return postTronJson(
-    input,
-    "/walletsolidity/getnowblock",
-    {},
-    "TRON solid block",
-  );
-};
-
-const getTronWitnessesFromGateway = (
-  input?: TronGatewayInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(input, "/wallet/listwitnesses", {}, "TRON witnesses");
-
-const getTronFinalityDataFromGateway = async (
-  input?: TronGatewayInput,
-): Promise<Record<string, unknown>> => {
-  const [solidBlock, witnesses, nodeInfo] = await Promise.all([
-    getTronSolidBlockFromGateway(input),
-    getTronWitnessesFromGateway(input),
-    getTronJson(input, "/wallet/getnodeinfo", "TRON node info").catch(
-      (error) => ({
-        unavailable: true,
-        message: error instanceof Error ? error.message : String(error),
-      }),
-    ),
-  ]);
-  return {
-    solidBlock,
-    witnesses,
-    nodeInfo,
-    collectedAtMs: Date.now(),
-  };
-};
-
-const TRON_BASE58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
-const decodeTronBase58CheckPayload = (value: string, label: string): Buffer => {
-  let decodedValue = 0n;
-  for (const char of value) {
-    const index = TRON_BASE58_ALPHABET.indexOf(char);
-    if (index < 0) {
-      throw new Error(`${label} must be a valid TRON Base58Check address.`);
-    }
-    decodedValue = decodedValue * 58n + BigInt(index);
-  }
-  const hexValue =
-    decodedValue === 0n
-      ? ""
-      : decodedValue
-          .toString(16)
-          .padStart(
-            decodedValue.toString(16).length +
-              (decodedValue.toString(16).length % 2),
-            "0",
-          );
-  const body = hexValue ? Buffer.from(hexValue, "hex") : Buffer.alloc(0);
-  const leadingZeros = value.match(/^1*/u)?.[0].length ?? 0;
-  const decoded = Buffer.concat([Buffer.alloc(leadingZeros), body]);
-  if (decoded.length !== 25) {
-    throw new Error(`${label} must be a valid TRON Base58Check address.`);
-  }
-  const payload = decoded.subarray(0, 21);
-  const checksum = decoded.subarray(21);
-  const expected = createHash("sha256")
-    .update(createHash("sha256").update(payload).digest())
-    .digest()
-    .subarray(0, 4);
-  if (!checksum.equals(expected)) {
-    throw new Error(`${label} has an invalid TRON Base58Check checksum.`);
-  }
-  if (payload[0] !== 0x41 || payload.subarray(1).every((byte) => byte === 0)) {
-    throw new Error(`${label} must be a non-zero TRON mainnet address.`);
-  }
-  return payload;
-};
-
-const normalizeTronGatewayAddress = (value: string, label: string): string => {
-  const normalized = trimString(value);
-  if (!normalized) {
-    throw new Error(`${label} is required.`);
-  }
-  if (!/^T[1-9A-HJ-NP-Za-km-z]{33}$/u.test(normalized)) {
-    throw new Error(`${label} must be a TRON Base58Check address.`);
-  }
-  decodeTronBase58CheckPayload(normalized, label);
-  return normalized;
-};
-
-const getTronAccountFromGateway = (
-  input: TronAccountInput,
-): Promise<Record<string, unknown>> =>
-  postTronJson(
-    input,
-    "/wallet/getaccount",
-    {
-      address: normalizeTronGatewayAddress(
-        input.address,
-        "TRON account address",
-      ),
-      visible: true,
-    },
-    "TRON account",
-  );
-
-const normalizeTronFunctionSelector = (value: string): string => {
-  const normalized = trimString(value);
-  if (!/^[A-Za-z_$][A-Za-z0-9_$]*\([^)]*\)$/u.test(normalized)) {
-    throw new Error(
-      "TRON function selector must be a Solidity function signature.",
-    );
-  }
-  return normalized;
-};
-
-const normalizeTronHexParameter = (
-  value: string | undefined,
-  label: string,
-): string => {
-  const normalized = trimString(value ?? "").replace(/^0x/iu, "");
-  if (!normalized) {
-    return "";
-  }
-  if (!/^[0-9a-fA-F]+$/u.test(normalized) || normalized.length % 2 !== 0) {
-    throw new Error(`${label} must be canonical hex.`);
-  }
-  return normalized.toLowerCase();
-};
-
-const normalizeTronSafeInteger = (
-  value: number | string | undefined,
-  label: string,
-  fallback: number,
-): number => {
-  if (value === undefined || value === "") {
-    return fallback;
-  }
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) {
-    throw new Error(`${label} must be a non-negative safe integer.`);
-  }
-  return parsed;
-};
-
-const normalizeTronContractParameter = (
-  input: {
-    callData?: string;
-    parameter?: string;
-  },
-  label: string,
-): string => {
-  const callData = normalizeTronHexParameter(
-    input.callData,
-    `${label} call data`,
-  );
-  const parameter = normalizeTronHexParameter(
-    input.parameter,
-    `${label} parameter`,
-  );
-  if (callData && parameter) {
-    throw new Error(`${label} must provide either callData or parameter.`);
-  }
-  if (parameter) {
-    return parameter;
-  }
-  if (callData && callData.length < 8) {
-    throw new Error(`${label} call data must include a 4-byte selector.`);
-  }
-  return callData ? callData.slice(8) : "";
-};
-
-const TRON_BROADCAST_SECRET_KEY_PATTERN =
-  /(?:private[_-]?key|mnemonic|recovery[_-]?phrase|seed[_-]?phrase|secret)/iu;
-const TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN =
-  /^(?:signatures?|privateSignature|private_signature|signatureB64|signature_b64|signedTransaction|signed_transaction|walletSignature|wallet_signature)$/iu;
-const SECP256K1_ORDER =
-  0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
-const SECP256K1_HALF_ORDER = SECP256K1_ORDER >> 1n;
-
-const assertNoSecretLikeTransactionFields = (
-  value: unknown,
-  path = "TRON transaction",
-  options: { allowTopLevelSignature?: boolean } = {},
-  seen = new WeakSet<object>(),
-): void => {
-  if (isSecretLikeTextValue(value)) {
-    throw new Error(
-      `${path} must not contain recovery phrases or private key material before TRON gateway submission.`,
-    );
-  }
-  if (Array.isArray(value)) {
-    if (seen.has(value)) {
-      return;
-    }
-    seen.add(value);
-    value.forEach((entry, index) => {
-      assertNoSecretLikeTransactionFields(
-        entry,
-        `${path}[${index}]`,
-        options,
-        seen,
-      );
-    });
-    return;
-  }
-  if (!isPlainRecord(value)) {
-    return;
-  }
-  if (seen.has(value)) {
-    return;
-  }
-  seen.add(value);
-  for (const [key, child] of Object.entries(value)) {
-    if (TRON_BROADCAST_SECRET_KEY_PATTERN.test(key)) {
-      throw new Error(`${path}.${key} must not be sent to the TRON gateway.`);
-    }
-    const allowedTopLevelSignature =
-      options.allowTopLevelSignature &&
-      path === "TRON broadcast transaction" &&
-      key === "signature";
-    if (
-      !allowedTopLevelSignature &&
-      TRON_BROADCAST_SIGNING_HELPER_KEY_PATTERN.test(key)
-    ) {
-      throw new Error(
-        `${path}.${key} must not include nested signatures or signing helper payloads before TRON gateway submission.`,
-      );
-    }
-    assertNoSecretLikeTransactionFields(child, `${path}.${key}`, options, seen);
-  }
-};
-
-const normalizeTronSignatureHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
-  if (!/^[0-9a-f]{130}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 65-byte secp256k1 signature.`);
-  }
-  return normalized;
-};
-
-const normalizeTronPayloadHex = (value: unknown, label: string): string => {
-  const text = trimString(value);
-  if (text.startsWith("T")) {
-    return decodeTronBase58CheckPayload(text, label).toString("hex");
-  }
-  const normalized = text.replace(/^0x/iu, "").toLowerCase();
-  if (!/^41[0-9a-f]{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be a TRON mainnet address payload.`);
-  }
-  if (/^410{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const bytesToBigInt = (bytes: Uint8Array): bigint =>
-  BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
-
-const recoverTronSignatureOwnerPayload = (
-  signatureHex: string,
-  rawDataHex: string,
-): string => {
-  const signature = Buffer.from(signatureHex, "hex");
-  const recoveryId = signature[64];
-  if (
-    !(
-      (recoveryId >= 0 && recoveryId <= 3) ||
-      (recoveryId >= 27 && recoveryId <= 30)
-    )
-  ) {
-    throw new Error(
-      "TRON broadcast signature must be a canonical recoverable signature.",
-    );
-  }
-  const r = bytesToBigInt(signature.subarray(0, 32));
-  const s = bytesToBigInt(signature.subarray(32, 64));
-  if (r <= 0n || r >= SECP256K1_ORDER || s <= 0n || s > SECP256K1_HALF_ORDER) {
-    throw new Error("TRON broadcast signature must be canonical.");
-  }
-  const normalizedRecoveryId = recoveryId >= 27 ? recoveryId - 27 : recoveryId;
-  try {
-    const rawDataHash = createHash("sha256")
-      .update(Buffer.from(rawDataHex, "hex"))
-      .digest();
-    const publicKey = secp256k1.Signature.fromCompact(
-      Uint8Array.from(signature.subarray(0, 64)),
-    )
-      .addRecoveryBit(normalizedRecoveryId)
-      .recoverPublicKey(Uint8Array.from(rawDataHash))
-      .toRawBytes(false);
-    const addressHash = keccak_256(publicKey.slice(1));
-    return `41${Buffer.from(addressHash.slice(-20)).toString("hex")}`;
-  } catch (error) {
-    throw new Error(
-      `TRON broadcast signature could not recover the transaction owner: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-};
-
-type TronBroadcastTriggerBinding = {
-  ownerPayload: string;
-  contractPayload: string;
-  dataHex: string;
-};
-
-const normalizeTronContractType = (value: unknown): string =>
-  trimString(value)
-    .replace(/[^a-z0-9]/giu, "")
-    .toLowerCase();
-
-const readTronRawDataTriggerBinding = (
-  rawData: Record<string, unknown>,
-  options: { canonicalizeDecodedFields?: boolean } = {},
-): TronBroadcastTriggerBinding => {
-  const contracts = rawData.contract;
-  if (!Array.isArray(contracts) || contracts.length !== 1) {
-    throw new Error(
-      "TRON broadcast transaction raw_data must include exactly one contract.",
-    );
-  }
-  const [contract] = contracts;
-  if (!isPlainRecord(contract)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must be an object.",
-    );
-  }
-  const parameter = contract.parameter;
-  if (!isPlainRecord(parameter)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include parameter.",
-    );
-  }
-  const value = parameter.value;
-  if (!isPlainRecord(value)) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include parameter.value.",
-    );
-  }
-  const type = normalizeTronContractType(
-    contract.type ?? contract.contractType,
-  );
-  const typeUrl = normalizeTronContractType(
-    parameter.type_url ?? parameter.typeUrl,
-  );
-  if (
-    type !== "triggersmartcontract" &&
-    !typeUrl.endsWith("triggersmartcontract")
-  ) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must be a TriggerSmartContract call.",
-    );
-  }
-  const ownerPayload = normalizeTronPayloadHex(
-    value.owner_address ?? value.ownerAddress,
-    "TRON broadcast transaction raw_data.contract[0].owner_address",
-  );
-  const contractPayload = normalizeTronPayloadHex(
-    value.contract_address ?? value.contractAddress,
-    "TRON broadcast transaction raw_data.contract[0].contract_address",
-  );
-  const dataHex = normalizeTronHexParameter(
-    trimString(value.data ?? value.call_data ?? value.callData),
-    "TRON broadcast transaction raw_data.contract[0].data",
-  );
-  if (!dataHex) {
-    throw new Error(
-      "TRON broadcast transaction raw_data.contract[0] must include smart-contract call data.",
-    );
-  }
-  if (options.canonicalizeDecodedFields) {
-    value.owner_address = ownerPayload;
-    value.contract_address = contractPayload;
-    value.data = dataHex;
-    delete value.ownerAddress;
-    delete value.contractAddress;
-    delete value.call_data;
-    delete value.callData;
-  }
-  return { ownerPayload, contractPayload, dataHex };
-};
-
-const normalizeTronBroadcastTransaction = (
-  transaction: unknown,
-): Record<string, unknown> => {
-  if (!isPlainRecord(transaction)) {
-    throw new Error("TRON broadcast transaction must be an object.");
-  }
-  const normalized = snapshotSccpJsonDataValue(
-    transaction,
-    "TRON broadcast transaction must contain only enumerable string-keyed data properties with JSON-compatible values.",
-  ) as Record<string, unknown>;
-  assertNoSecretLikeTransactionFields(
-    normalized,
-    "TRON broadcast transaction",
-    {
-      allowTopLevelSignature: true,
-    },
-  );
-  const txId = normalizeTronTxId(
-    trimString(normalized.txID ?? normalized.txid),
-  );
-  const signatures = normalized.signature;
-  if (!Array.isArray(signatures) || signatures.length !== 1) {
-    throw new Error(
-      "TRON broadcast transaction must include exactly one signature.",
-    );
-  }
-  const signature = normalizeTronSignatureHex(signatures[0], "TRON signature");
-  normalized.signature = [signature];
-
-  const rawData = normalized.raw_data;
-  const rawDataHex = trimString(normalized.raw_data_hex);
-  if (!isPlainRecord(rawData)) {
-    throw new Error(
-      "TRON broadcast transaction must include decoded raw_data.",
-    );
-  }
-  if (!rawDataHex) {
-    throw new Error("TRON broadcast transaction must include raw_data_hex.");
-  }
-  normalized.txID = txId;
-  const canonicalRawDataHex = normalizeTronHexParameter(
-    rawDataHex,
-    "TRON raw_data_hex",
-  );
-  if (!canonicalRawDataHex) {
-    throw new Error("TRON raw_data_hex is required when provided.");
-  }
-  const expectedTxId = createHash("sha256")
-    .update(Buffer.from(canonicalRawDataHex, "hex"))
-    .digest("hex");
-  if (expectedTxId !== txId) {
-    throw new Error("TRON txID must match raw_data_hex.");
-  }
-  const triggerBinding = readTronRawDataTriggerBinding(rawData, {
-    canonicalizeDecodedFields: normalized.visible !== true,
-  });
-  try {
-    parseTronTriggerSmartContractRawData(canonicalRawDataHex, {
-      expectedOwnerAddress: triggerBinding.ownerPayload,
-      expectedContractAddress: triggerBinding.contractPayload,
-      expectedCallData: triggerBinding.dataHex,
-    });
-  } catch (error) {
-    throw new Error(
-      `TRON broadcast raw_data_hex does not match decoded TriggerSmartContract: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-  }
-  const recoveredOwnerPayload = recoverTronSignatureOwnerPayload(
-    signature,
-    canonicalRawDataHex,
-  );
-  if (recoveredOwnerPayload !== triggerBinding.ownerPayload) {
-    throw new Error(
-      "TRON broadcast signature does not recover to the transaction owner.",
-    );
-  }
-  normalized.raw_data_hex = canonicalRawDataHex;
-  return normalized;
-};
-
-const broadcastTronTransactionToGateway = async (
-  input: TronBroadcastInput,
-): Promise<Record<string, unknown>> => {
-  const transaction = normalizeTronBroadcastTransaction(input.transaction);
-  const payload = await postTronJson(
-    input,
-    "/wallet/broadcasttransaction",
-    transaction,
-    "Broadcast TRON transaction",
-  );
-  if (payload.result !== true) {
-    const code = trimString(payload.code);
-    const message = trimString(payload.message);
-    const detail = [code, message].filter(Boolean).join(": ");
-    throw new Error(
-      detail
-        ? `Broadcast TRON transaction was rejected by the TRON node: ${detail}`
-        : "Broadcast TRON transaction was rejected by the TRON node.",
-    );
-  }
-  return payload;
-};
-
-const triggerTronSmartContractFromGateway = (
-  input: TronTriggerSmartContractInput,
-): Promise<Record<string, unknown>> => {
-  const parameter = normalizeTronContractParameter(
-    input,
-    "TRON smart-contract",
-  );
-  return postTronJson(
-    input,
-    "/wallet/triggersmartcontract",
-    {
-      owner_address: normalizeTronGatewayAddress(
-        input.ownerAddress,
-        "TRON owner address",
-      ),
-      contract_address: normalizeTronGatewayAddress(
-        input.contractAddress,
-        "TRON contract address",
-      ),
-      function_selector: normalizeTronFunctionSelector(input.functionSelector),
-      parameter,
-      fee_limit: normalizeTronSafeInteger(
-        input.feeLimit,
-        "TRON fee limit",
-        100_000_000,
-      ),
-      call_value: normalizeTronSafeInteger(
-        input.callValue,
-        "TRON call value",
-        0,
-      ),
-      visible: true,
-      ...(input.permissionId !== undefined && input.permissionId !== ""
-        ? {
-            permission_id: normalizeTronSafeInteger(
-              input.permissionId,
-              "TRON permission id",
-              0,
-            ),
-          }
-        : {}),
-    },
-    "Trigger TRON smart contract",
-  ).then((payload) => {
-    assertTronGatewayAccepted(payload, "Trigger TRON smart contract");
-    return payload;
-  });
-};
-
-const triggerTronConstantContractFromGateway = (
-  input: TronConstantContractInput,
-): Promise<Record<string, unknown>> => {
-  const parameter = normalizeTronContractParameter(
-    input,
-    "TRON constant-contract",
-  );
-  return postTronJson(
-    input,
-    "/wallet/triggerconstantcontract",
-    {
-      owner_address: normalizeTronGatewayAddress(
-        input.ownerAddress,
-        "TRON owner address",
-      ),
-      contract_address: normalizeTronGatewayAddress(
-        input.contractAddress,
-        "TRON contract address",
-      ),
-      function_selector: normalizeTronFunctionSelector(input.functionSelector),
-      parameter,
-      visible: true,
-    },
-    "Trigger TRON constant contract",
-  ).then((payload) => {
-    assertTronGatewayAccepted(payload, "Trigger TRON constant contract");
-    return payload;
-  });
-};
-
-const DEFAULT_BSC_TESTNET_RPC_URL = "https://bsc-testnet-rpc.publicnode.com";
-
-const isLoopbackEvmRpcHost = (hostname: string): boolean => {
-  const normalized = hostname
-    .trim()
-    .toLowerCase()
-    .replace(/^\[/u, "")
-    .replace(/\]$/u, "")
-    .replace(/\.$/u, "");
-  return (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized === "127.0.0.1" ||
-    normalized === "::1" ||
-    /^127(?:\.\d{1,3}){3}$/u.test(normalized)
-  );
-};
-
-const normalizeEvmRpcUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_BSC_TESTNET_RPC_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error(
-      "EVM RPC endpoint must be a valid HTTPS or loopback HTTP URL.",
-    );
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("EVM RPC endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("EVM RPC endpoint must not include query or hash.");
-  }
-  const loopback = isLoopbackEvmRpcHost(parsed.hostname);
-  if (parsed.protocol === "http:" && loopback) {
-    return normalized;
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(
-      "EVM RPC endpoint must use HTTPS unless it is loopback HTTP.",
-    );
-  }
-  if (isPrivateTronGatewayHost(parsed.hostname) && !loopback) {
-    throw new Error("EVM RPC endpoint must not target a private network.");
-  }
-  return normalized;
-};
-
-const normalizeEvmHash = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x[0-9a-f]{64}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 32-byte hex value.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmNonZeroHash = (value: unknown, label: string): string => {
-  const normalized = normalizeEvmHash(value, label);
-  if (/^0x0{64}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmAddressHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be a 20-byte EVM address.`);
-  }
-  if (/^0x0{40}$/u.test(normalized)) {
-    throw new Error(`${label} must be non-zero.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmDataHex = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x(?:[0-9a-f]{2})*$/u.test(normalized)) {
-    throw new Error(`${label} must be hex-encoded bytes.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmBlockTag = (
-  value: unknown,
-  label = "EVM block tag",
-): string => {
-  const normalized =
-    value === undefined ? "latest" : trimString(value).toLowerCase();
-  if (/^(?:latest|earliest|pending|safe|finalized)$/u.test(normalized)) {
-    return normalized;
-  }
-  if (/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
-    return normalized;
-  }
-  throw new Error(`${label} must be a standard EVM block tag or quantity.`);
-};
-
-const normalizeEvmQuantity = (value: unknown, label: string): string => {
-  const normalized = trimString(value).toLowerCase();
-  if (!/^0x(?:0|[1-9a-f][0-9a-f]*)$/u.test(normalized)) {
-    throw new Error(`${label} must be an EVM hex quantity.`);
-  }
-  return normalized;
-};
-
-const normalizeEvmTopic = (value: unknown, label: string): string => {
-  if (value === null || value === undefined) {
-    throw new Error(`${label} is required.`);
-  }
-  return normalizeEvmHash(value, label);
-};
-
-const EVM_READ_RPC_METHODS = new Set([
-  "eth_chainId",
-  "net_version",
-  "web3_clientVersion",
-  "eth_getBalance",
-  "eth_getCode",
-  "eth_call",
-  "eth_getTransactionReceipt",
-  "eth_getTransactionByHash",
-  "eth_getBlockByHash",
-  "eth_getBlockReceipts",
-  "eth_getLogs",
-]);
-
-const normalizeEvmRpcParamsSnapshot = (
-  params: unknown[] | undefined,
-): unknown[] => {
-  if (params === undefined) {
-    return [];
-  }
-  if (!Array.isArray(params)) {
-    throw new Error("EVM RPC params must be an array when provided.");
-  }
-  return snapshotSccpJsonDataValue(
-    params,
-    "EVM RPC params must contain only enumerable string-keyed data properties with JSON-compatible values.",
-  );
-};
-
-const requireExactEvmRpcParams = (
-  method: string,
-  params: unknown[],
-  count: number,
-): void => {
-  if (params.length !== count) {
-    throw new Error(`EVM RPC ${method} requires exactly ${count} params.`);
-  }
-};
-
-const normalizeEvmRpcCallObject = (value: unknown): Record<string, string> => {
-  if (!isPlainRecord(value)) {
-    throw new Error("EVM RPC eth_call params[0] must be an object.");
-  }
-  const allowedKeys = new Set([
-    "from",
-    "to",
-    "gas",
-    "gasPrice",
-    "maxFeePerGas",
-    "maxPriorityFeePerGas",
-    "value",
-    "data",
-  ]);
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`EVM RPC eth_call params[0] unsupported field ${key}.`);
-    }
-  }
-  const call: Record<string, string> = {
-    to: normalizeEvmAddressHex(value.to, "EVM RPC eth_call to"),
-    data: normalizeEvmDataHex(value.data, "EVM RPC eth_call data"),
-  };
-  if (value.from !== undefined) {
-    call.from = normalizeEvmAddressHex(value.from, "EVM RPC eth_call from");
-  }
-  for (const key of [
-    "gas",
-    "gasPrice",
-    "maxFeePerGas",
-    "maxPriorityFeePerGas",
-    "value",
-  ] as const) {
-    if (value[key] !== undefined) {
-      call[key] = normalizeEvmQuantity(value[key], `EVM RPC eth_call ${key}`);
-    }
-  }
-  return call;
-};
-
-const normalizeEvmRpcLogAddress = (value: unknown): string | string[] => {
-  if (Array.isArray(value)) {
-    if (value.length === 0 || value.length > 64) {
-      throw new Error(
-        "EVM RPC eth_getLogs address arrays must contain 1 to 64 addresses.",
-      );
-    }
-    return value.map((address, index) =>
-      normalizeEvmAddressHex(
-        address,
-        `EVM RPC eth_getLogs address ${index + 1}`,
-      ),
-    );
-  }
-  return normalizeEvmAddressHex(value, "EVM RPC eth_getLogs address");
-};
-
-const normalizeEvmRpcLogTopics = (
-  value: unknown,
-): Array<string | string[] | null> => {
-  if (!Array.isArray(value) || value.length > 4) {
-    throw new Error(
-      "EVM RPC eth_getLogs topics must be an array of at most four items.",
-    );
-  }
-  return value.map((topic, index) => {
-    if (topic === null) {
-      return null;
-    }
-    if (Array.isArray(topic)) {
-      if (topic.length === 0 || topic.length > 64) {
-        throw new Error(
-          `EVM RPC eth_getLogs topic ${index + 1} arrays must contain 1 to 64 topics.`,
-        );
-      }
-      return topic.map((entry, innerIndex) =>
-        normalizeEvmTopic(
-          entry,
-          `EVM RPC eth_getLogs topic ${index + 1}.${innerIndex + 1}`,
-        ),
-      );
-    }
-    return normalizeEvmTopic(topic, `EVM RPC eth_getLogs topic ${index + 1}`);
-  });
-};
-
-const normalizeEvmRpcLogsFilter = (value: unknown): Record<string, unknown> => {
-  if (!isPlainRecord(value)) {
-    throw new Error("EVM RPC eth_getLogs params[0] must be a filter object.");
-  }
-  const allowedKeys = new Set([
-    "address",
-    "fromBlock",
-    "toBlock",
-    "blockHash",
-    "topics",
-  ]);
-  for (const key of Object.keys(value)) {
-    if (!allowedKeys.has(key)) {
-      throw new Error(`EVM RPC eth_getLogs unsupported filter field ${key}.`);
-    }
-  }
-  if (
-    value.blockHash !== undefined &&
-    (value.fromBlock !== undefined || value.toBlock !== undefined)
-  ) {
-    throw new Error(
-      "EVM RPC eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
-    );
-  }
-  const filter: Record<string, unknown> = {};
-  if (value.address !== undefined) {
-    filter.address = normalizeEvmRpcLogAddress(value.address);
-  }
-  if (value.fromBlock !== undefined) {
-    filter.fromBlock = normalizeEvmBlockTag(
-      value.fromBlock,
-      "EVM RPC eth_getLogs fromBlock",
-    );
-  }
-  if (value.toBlock !== undefined) {
-    filter.toBlock = normalizeEvmBlockTag(
-      value.toBlock,
-      "EVM RPC eth_getLogs toBlock",
-    );
-  }
-  if (value.blockHash !== undefined) {
-    filter.blockHash = normalizeEvmNonZeroHash(
-      value.blockHash,
-      "EVM RPC eth_getLogs blockHash",
-    );
-  }
-  if (value.topics !== undefined) {
-    filter.topics = normalizeEvmRpcLogTopics(value.topics);
-  }
-  return filter;
-};
-
-const normalizeEvmRpcParams = (
-  method: string,
-  params: unknown[] | undefined,
-): unknown[] => {
-  const cloned = normalizeEvmRpcParamsSnapshot(params);
-  switch (method) {
-    case "eth_chainId":
-    case "net_version":
-    case "web3_clientVersion":
-      requireExactEvmRpcParams(method, cloned, 0);
-      return [];
-    case "eth_getBalance":
-    case "eth_getCode":
-      requireExactEvmRpcParams(method, cloned, 2);
-      return [
-        normalizeEvmAddressHex(cloned[0], `EVM RPC ${method} address`),
-        normalizeEvmBlockTag(cloned[1], `EVM RPC ${method} block tag`),
-      ];
-    case "eth_call":
-      requireExactEvmRpcParams(method, cloned, 2);
-      return [
-        normalizeEvmRpcCallObject(cloned[0]),
-        normalizeEvmBlockTag(cloned[1], "EVM RPC eth_call block tag"),
-      ];
-    case "eth_getTransactionReceipt":
-    case "eth_getTransactionByHash":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [normalizeEvmNonZeroHash(cloned[0], `EVM RPC ${method} hash`)];
-    case "eth_getBlockByHash":
-      requireExactEvmRpcParams(method, cloned, 2);
-      if (typeof cloned[1] !== "boolean") {
-        throw new Error(
-          "EVM RPC eth_getBlockByHash params[1] must be a boolean.",
-        );
-      }
-      return [
-        normalizeEvmNonZeroHash(cloned[0], "EVM RPC eth_getBlockByHash hash"),
-        cloned[1],
-      ];
-    case "eth_getBlockReceipts":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [
-        /^0x[0-9a-f]{64}$/iu.test(String(cloned[0] ?? "").trim())
-          ? normalizeEvmNonZeroHash(
-              cloned[0],
-              "EVM RPC eth_getBlockReceipts block hash",
-            )
-          : normalizeEvmBlockTag(
-              cloned[0],
-              "EVM RPC eth_getBlockReceipts block tag",
-            ),
-      ];
-    case "eth_getLogs":
-      requireExactEvmRpcParams(method, cloned, 1);
-      return [normalizeEvmRpcLogsFilter(cloned[0])];
-    default:
-      throw new Error("EVM RPC bridge only allows read-only methods.");
-  }
-};
-
-const callEvmRpcOnGateway = async (
-  input: EvmRpcCallInput,
-): Promise<unknown> => {
-  const method = trimString(input.method);
-  if (!/^[a-z][a-z0-9_]{1,64}$/iu.test(method)) {
-    throw new Error("EVM RPC method name is invalid.");
-  }
-  if (!EVM_READ_RPC_METHODS.has(method)) {
-    throw new Error("EVM RPC bridge only allows read-only methods.");
-  }
-  const payload = await postJson(
-    normalizeEvmRpcUrl(input.endpoint),
-    `EVM RPC ${method}`,
-    {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params: normalizeEvmRpcParams(method, input.params),
-    },
-  );
-  if (isPlainRecord(payload.error)) {
-    const code = trimString(payload.error.code);
-    const message = trimString(payload.error.message);
-    const detail = [code, message].filter(Boolean).join(": ");
-    throw new Error(
-      detail
-        ? `EVM RPC ${method} failed: ${detail}`
-        : `EVM RPC ${method} failed.`,
-    );
-  }
-  return payload.result;
-};
-
-const requireEvmRpcStringResult = async (
-  input: EvmRpcCallInput,
-  label: string,
-): Promise<string> => {
-  const result = await callEvmRpcOnGateway(input);
-  if (typeof result !== "string") {
-    throw new Error(`${label} did not return a string result.`);
-  }
-  return result;
-};
-
-const snapshotEvmRpcWrapperInput = <T>(input: T, label: string): T => {
-  const normalized = snapshotSccpJsonDataValue(
-    input,
-    `${label} must contain only enumerable string-keyed data properties with JSON-compatible values.`,
-  );
-  if (!isPlainRecord(normalized)) {
-    throw new Error(`${label} must be an object.`);
-  }
-  return normalized;
-};
-
-const getEvmChainIdFromRpc = (input?: EvmRpcInput): Promise<string> => {
-  const normalizedInput =
-    input === undefined
-      ? undefined
-      : snapshotEvmRpcWrapperInput(input, "EVM chain id input");
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput?.endpoint,
-      method: "eth_chainId",
-      params: [],
-    },
-    "EVM chain id",
-  ).then((chainId) => normalizeEvmQuantity(chainId, "EVM chain id"));
-};
-
-const getEvmBalanceFromRpc = (input: EvmAddressInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM balance input",
-  );
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_getBalance",
-      params: [
-        normalizeEvmAddressHex(normalizedInput.address, "EVM balance address"),
-        normalizeEvmBlockTag(normalizedInput.blockTag),
-      ],
-    },
-    "EVM balance",
-  ).then((balance) => normalizeEvmQuantity(balance, "EVM balance"));
-};
-
-const getEvmCodeFromRpc = (input: EvmAddressInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM code input");
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_getCode",
-      params: [
-        normalizeEvmAddressHex(normalizedInput.address, "EVM code address"),
-        normalizeEvmBlockTag(normalizedInput.blockTag),
-      ],
-    },
-    "EVM code",
-  ).then((code) => normalizeEvmDataHex(code, "EVM code"));
-};
-
-const callEvmContractFromRpc = (input: EvmCallInput): Promise<string> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM call input");
-  const call: Record<string, string> = {
-    to: normalizeEvmAddressHex(normalizedInput.to, "EVM call target"),
-    data: normalizeEvmDataHex(normalizedInput.data, "EVM call data"),
-  };
-  if (normalizedInput.from !== undefined) {
-    call.from = normalizeEvmAddressHex(normalizedInput.from, "EVM call sender");
-  }
-  if (normalizedInput.value !== undefined) {
-    call.value = normalizeEvmQuantity(normalizedInput.value, "EVM call value");
-  }
-  return requireEvmRpcStringResult(
-    {
-      endpoint: normalizedInput.endpoint,
-      method: "eth_call",
-      params: [call, normalizeEvmBlockTag(normalizedInput.blockTag)],
-    },
-    "EVM contract call",
-  ).then((result) => normalizeEvmDataHex(result, "EVM contract call result"));
-};
-
-const getEvmTransactionReceiptFromRpc = async (
-  input: EvmTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM transaction receipt input",
-  );
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getTransactionReceipt",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM transaction receipt must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmTransactionFromRpc = async (
-  input: EvmTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(
-    input,
-    "EVM transaction input",
-  );
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getTransactionByHash",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.txHash, "EVM transaction hash"),
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM transaction must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmBlockByHashFromRpc = async (input: {
-  endpoint?: string;
-  blockHash: string;
-  fullTransactions?: boolean;
-}): Promise<Record<string, unknown> | null> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM block input");
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getBlockByHash",
-    params: [
-      normalizeEvmNonZeroHash(normalizedInput.blockHash, "EVM block hash"),
-      normalizedInput.fullTransactions === true,
-    ],
-  });
-  if (result === null) {
-    return null;
-  }
-  if (!isPlainRecord(result)) {
-    throw new Error("EVM block must be an object or null.");
-  }
-  return result;
-};
-
-const getEvmLogsFromRpc = async (
-  input: EvmLogsInput,
-): Promise<Record<string, unknown>[]> => {
-  const normalizedInput = snapshotEvmRpcWrapperInput(input, "EVM logs input");
-  const filter: Record<string, unknown> = {};
-  if (
-    normalizedInput.blockHash !== undefined &&
-    (normalizedInput.fromBlock !== undefined ||
-      normalizedInput.toBlock !== undefined)
-  ) {
-    throw new Error(
-      "EVM eth_getLogs blockHash must not be combined with fromBlock or toBlock.",
-    );
-  }
-  if (normalizedInput.address !== undefined) {
-    filter.address = normalizeEvmRpcLogAddress(normalizedInput.address);
-  }
-  if (normalizedInput.blockHash !== undefined) {
-    filter.blockHash = normalizeEvmNonZeroHash(
-      normalizedInput.blockHash,
-      "EVM blockHash",
-    );
-  }
-  if (normalizedInput.fromBlock !== undefined) {
-    filter.fromBlock = normalizeEvmBlockTag(
-      normalizedInput.fromBlock,
-      "EVM fromBlock",
-    );
-  }
-  if (normalizedInput.toBlock !== undefined) {
-    filter.toBlock = normalizeEvmBlockTag(
-      normalizedInput.toBlock,
-      "EVM toBlock",
-    );
-  }
-  if (normalizedInput.topics !== undefined) {
-    filter.topics = normalizeEvmRpcLogTopics(normalizedInput.topics);
-  }
-  const result = await callEvmRpcOnGateway({
-    endpoint: normalizedInput.endpoint,
-    method: "eth_getLogs",
-    params: [filter],
-  });
-  if (!Array.isArray(result)) {
-    throw new Error("EVM logs response must be an array.");
-  }
-  for (const [index, entry] of result.entries()) {
-    if (!isPlainRecord(entry)) {
-      throw new Error(
-        `EVM logs response entry ${index + 1} must be an object.`,
-      );
-    }
-  }
-  return result as Record<string, unknown>[];
-};
-
-const DEFAULT_SOLANA_TESTNET_RPC_URL = "https://api.testnet.solana.com";
-const SOLANA_SPL_TOKEN_PROGRAM_ID = new PublicKey(
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
-);
-const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey(
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
-);
-const SOLANA_BASE58_ALPHABET =
-  "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-const SOLANA_ALLOWED_RPC_METHODS = new Set([
-  "getHealth",
-  "getBalance",
-  "getTokenAccountsByOwner",
-  "getSignatureStatuses",
-  "getTransaction",
-  "getLatestBlockhash",
-  "getAccountInfo",
-  "sendTransaction",
-]);
-
-const normalizeSolanaRpcUrl = (endpoint?: string): string => {
-  const normalized = normalizeBaseUrl(
-    trimString(endpoint) || DEFAULT_SOLANA_TESTNET_RPC_URL,
-  );
-  let parsed: URL;
-  try {
-    parsed = new URL(normalized);
-  } catch {
-    throw new Error("Solana RPC endpoint must be a valid URL.");
-  }
-  if (parsed.username || parsed.password) {
-    throw new Error("Solana RPC endpoint must not include credentials.");
-  }
-  if (parsed.search || parsed.hash) {
-    throw new Error("Solana RPC endpoint must not include query or hash.");
-  }
-  const loopback = isLoopbackEvmRpcHost(parsed.hostname);
-  if (
-    parsed.protocol !== "https:" &&
-    !(loopback && parsed.protocol === "http:")
-  ) {
-    throw new Error("Solana RPC endpoint must use HTTPS or loopback HTTP.");
-  }
-  return normalized;
-};
-
-const decodeSolanaBase58 = (value: string, label: string): Buffer => {
-  let decodedValue = 0n;
-  for (const char of value) {
-    const index = SOLANA_BASE58_ALPHABET.indexOf(char);
-    if (index < 0) {
-      throw new Error(`${label} must be valid Solana Base58.`);
-    }
-    decodedValue = decodedValue * 58n + BigInt(index);
-  }
-  const hexValue =
-    decodedValue === 0n
-      ? ""
-      : decodedValue
-          .toString(16)
-          .padStart(
-            decodedValue.toString(16).length +
-              (decodedValue.toString(16).length % 2),
-            "0",
-          );
-  const body = hexValue ? Buffer.from(hexValue, "hex") : Buffer.alloc(0);
-  const leadingZeros = value.match(/^1*/u)?.[0].length ?? 0;
-  return Buffer.concat([Buffer.alloc(leadingZeros), body]);
-};
-
-const normalizeSolanaRpcAddress = (value: unknown, label: string): string => {
-  const normalized = trimString(value);
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/u.test(normalized)) {
-    throw new Error(`${label} must be a Solana Base58 address.`);
-  }
-  const decoded = decodeSolanaBase58(normalized, label);
-  if (decoded.length !== 32 || decoded.every((byte) => byte === 0)) {
-    throw new Error(`${label} must be a non-zero 32-byte Solana address.`);
-  }
-  return normalized;
-};
-
-const normalizeSolanaRpcHexBytes = (
-  value: unknown,
-  label: string,
-  options: { allowEmpty?: boolean; maxBytes?: number } = {},
-): string => {
-  const normalized = trimString(value).replace(/^0x/iu, "").toLowerCase();
-  const maxBytes = options.maxBytes ?? 1232;
-  if (
-    (!normalized && options.allowEmpty !== true) ||
-    normalized.length % 2 !== 0 ||
-    !/^[0-9a-f]*$/u.test(normalized) ||
-    normalized.length / 2 > maxBytes
-  ) {
-    throw new Error(`${label} must be hex-encoded bytes.`);
-  }
-  return normalized;
-};
-
-const normalizeSolanaBooleanMeta = (
-  value: unknown,
-  fallback: boolean,
-  label: string,
-): boolean => {
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  if (typeof value === "boolean") {
-    return value;
-  }
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") {
-      return true;
-    }
-    if (normalized === "false") {
-      return false;
-    }
-  }
-  throw new Error(`${label} must be boolean.`);
-};
-
-const normalizeSolanaRpcSignature = (value: unknown): string => {
-  const normalized = trimString(value);
-  if (!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/u.test(normalized)) {
-    throw new Error("Solana transaction signature must be Base58.");
-  }
-  const decoded = decodeSolanaBase58(
-    normalized,
-    "Solana transaction signature",
-  );
-  if (decoded.length !== 64 || decoded.every((byte) => byte === 0)) {
-    throw new Error(
-      "Solana transaction signature must be a non-zero 64-byte value.",
-    );
-  }
-  return normalized;
-};
-
-const normalizeSolanaTransactionB64 = (value: unknown): string => {
-  const normalized = trimString(value);
-  if (
-    !normalized ||
-    normalized.length > 32 * 1024 ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(
-      normalized,
-    )
-  ) {
-    throw new Error("Solana transaction must be base64-encoded bytes.");
-  }
-  const bytes = Buffer.from(normalized, "base64");
-  if (bytes.length === 0 || bytes.length > 1232) {
-    throw new Error("Solana transaction bytes are outside Solana size limits.");
-  }
-  return normalized;
-};
-
-const callSolanaRpcOnGateway = async (
-  input: SolanaRpcCallInput,
-): Promise<unknown> => {
-  const method = trimString(input.method);
-  if (!SOLANA_ALLOWED_RPC_METHODS.has(method)) {
-    throw new Error(`Unsupported Solana RPC method: ${method || "(empty)"}.`);
-  }
-  const params = Array.isArray(input.params)
-    ? (snapshotSccpJsonDataValue(
-        input.params,
-        "Solana RPC params must be JSON-compatible.",
-      ) as unknown[])
-    : [];
-  const payload = await postJson(
-    normalizeSolanaRpcUrl(input.endpoint),
-    `Solana ${method}`,
-    {
-      jsonrpc: "2.0",
-      id: 1,
-      method,
-      params,
-    },
-  );
-  if (payload.error !== undefined && payload.error !== null) {
-    const error = isPlainRecord(payload.error) ? payload.error : {};
-    const message = trimString(error.message ?? payload.error);
-    throw new Error(
-      message
-        ? `Solana ${method} failed: ${message}`
-        : `Solana ${method} failed.`,
-    );
-  }
-  return payload.result ?? null;
-};
-
-const getSolanaBalanceFromRpc = async (
-  input: SolanaAddressInput,
-): Promise<string> => {
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getBalance",
-    params: [
-      normalizeSolanaRpcAddress(input.address, "Solana address"),
-      { commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(result)) {
-    throw new Error("Solana getBalance response must be an object.");
-  }
-  const value = Number(result.value);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new Error("Solana balance must be a non-negative integer.");
-  }
-  return value.toString(10);
-};
-
-const getSolanaTokenBalanceFromRpc = async (
-  input: SolanaTokenBalanceInput,
-): Promise<Record<string, unknown>> => {
-  const ownerAddress = normalizeSolanaRpcAddress(
-    input.ownerAddress,
-    "Solana owner address",
-  );
-  const mintAddress = normalizeSolanaRpcAddress(
-    input.mintAddress,
-    "Solana mint address",
-  );
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getTokenAccountsByOwner",
-    params: [
-      ownerAddress,
-      { mint: mintAddress },
-      { encoding: "jsonParsed", commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(result) || !Array.isArray(result.value)) {
-    throw new Error("Solana token account response must include value array.");
-  }
-  let amount = 0n;
-  let decimals: number | null = null;
-  const accounts: Array<{
-    pubkey: string;
-    amount: string;
-    decimals: number | null;
-  }> = [];
-  for (const entry of result.value) {
-    const pubkey = trimString(isPlainRecord(entry) ? entry.pubkey : null);
-    const account = isPlainRecord(entry) ? entry.account : null;
-    const data = isPlainRecord(account) ? account.data : null;
-    const parsed = isPlainRecord(data) ? data.parsed : null;
-    const info = isPlainRecord(parsed) ? parsed.info : null;
-    const tokenAmount = isPlainRecord(info) ? info.tokenAmount : null;
-    if (!isPlainRecord(tokenAmount)) {
-      continue;
-    }
-    const rawAmount = trimString(tokenAmount.amount);
-    if (!/^(?:0|[1-9]\d*)$/u.test(rawAmount)) {
-      throw new Error("Solana SPL token amount must be an unsigned integer.");
-    }
-    const accountAmount = BigInt(rawAmount);
-    amount += accountAmount;
-    const nextDecimals = Number(tokenAmount.decimals);
-    const accountDecimals =
-      Number.isSafeInteger(nextDecimals) && nextDecimals >= 0
-        ? nextDecimals
-        : null;
-    if (Number.isSafeInteger(nextDecimals) && nextDecimals >= 0) {
-      decimals = decimals === null ? nextDecimals : decimals;
-    }
-    accounts.push({
-      pubkey: normalizeSolanaRpcAddress(
-        pubkey,
-        "Solana SPL token account address",
-      ),
-      amount: accountAmount.toString(10),
-      decimals: accountDecimals,
-    });
-  }
-  return {
-    ownerAddress,
-    mintAddress,
-    amount: amount.toString(10),
-    decimals,
-    accountCount: result.value.length,
-    accounts,
-    raw: result,
-  };
-};
-
-const prepareSolanaAssociatedTokenAccountFromRpc = async (
-  input: SolanaAssociatedTokenAccountInput,
-): Promise<SolanaPreparedAssociatedTokenAccount> => {
-  const payerAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.payerAddress, "Solana payer address"),
-  );
-  const ownerAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.ownerAddress, "Solana token owner address"),
-  );
-  const mintAddress = new PublicKey(
-    normalizeSolanaRpcAddress(input.mintAddress, "Solana mint address"),
-  );
-  const [associatedTokenAddress] = PublicKey.findProgramAddressSync(
-    [
-      ownerAddress.toBuffer(),
-      SOLANA_SPL_TOKEN_PROGRAM_ID.toBuffer(),
-      mintAddress.toBuffer(),
-    ],
-    SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
-  );
-  const accountInfo = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getAccountInfo",
-    params: [
-      associatedTokenAddress.toBase58(),
-      { encoding: "base64", commitment: "confirmed" },
-    ],
-  });
-  if (!isPlainRecord(accountInfo)) {
-    throw new Error("Solana getAccountInfo response must be an object.");
-  }
-  const value = accountInfo.value;
-  if (value !== null && value !== undefined) {
-    if (!isPlainRecord(value)) {
-      throw new Error("Solana associated token account info is invalid.");
-    }
-    const owner = normalizeSolanaRpcAddress(
-      value.owner,
-      "Solana associated token account owner",
-    );
-    if (owner !== SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58()) {
-      throw new Error(
-        "Solana associated token account is not owned by the SPL token program.",
-      );
-    }
-    return {
-      associatedTokenAddress: associatedTokenAddress.toBase58(),
-      exists: true,
-      createInstruction: null,
-    };
-  }
-  return {
-    associatedTokenAddress: associatedTokenAddress.toBase58(),
-    exists: false,
-    createInstruction: {
-      programId: SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),
-      accounts: [
-        {
-          pubkey: payerAddress.toBase58(),
-          isSigner: true,
-          isWritable: true,
-        },
-        {
-          pubkey: associatedTokenAddress.toBase58(),
-          isSigner: false,
-          isWritable: true,
-        },
-        {
-          pubkey: ownerAddress.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: mintAddress.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SystemProgram.programId.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-        {
-          pubkey: SOLANA_SPL_TOKEN_PROGRAM_ID.toBase58(),
-          isSigner: false,
-          isWritable: false,
-        },
-      ],
-      dataHex: "0x01",
-    },
-  };
-};
-
-const getSolanaSignatureStatusFromRpc = async (
-  input: SolanaTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const signature = normalizeSolanaRpcSignature(input.signature);
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getSignatureStatuses",
-    params: [[signature], { searchTransactionHistory: true }],
-  });
-  if (!isPlainRecord(result) || !Array.isArray(result.value)) {
-    throw new Error(
-      "Solana signature status response must include value array.",
-    );
-  }
-  const [status] = result.value;
-  return isPlainRecord(status) ? status : null;
-};
-
-const getSolanaTransactionFromRpc = async (
-  input: SolanaTransactionInput,
-): Promise<Record<string, unknown> | null> => {
-  const signature = normalizeSolanaRpcSignature(input.signature);
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "getTransaction",
-    params: [
-      signature,
-      {
-        commitment: "finalized",
-        encoding: "json",
-        maxSupportedTransactionVersion: 0,
-      },
-    ],
-  });
-  return isPlainRecord(result) ? result : null;
-};
-
-const buildSolanaTransactionFromInstructions = async (
-  input: SolanaBuildTransactionInput,
-): Promise<string> => {
-  const feePayer = new PublicKey(
-    normalizeSolanaRpcAddress(input.feePayer, "Solana fee payer"),
-  );
-  if (!Array.isArray(input.instructions) || input.instructions.length === 0) {
-    throw new Error(
-      "Solana transaction must include at least one instruction.",
-    );
-  }
-  if (input.instructions.length > 8) {
-    throw new Error("Solana transaction instruction count is too large.");
-  }
-  const instructions = input.instructions.map((instruction, index) => {
-    if (!isPlainRecord(instruction)) {
-      throw new Error(`Solana instruction ${index + 1} must be an object.`);
-    }
-    const programId = new PublicKey(
-      normalizeSolanaRpcAddress(
-        instruction.programId,
-        `Solana instruction ${index + 1} program id`,
-      ),
-    );
-    const accounts = Array.isArray(instruction.accounts)
-      ? instruction.accounts
-      : [];
-    if (accounts.length > 32) {
-      throw new Error(
-        `Solana instruction ${index + 1} account list is too large.`,
-      );
-    }
-    const keys = accounts.map((account, accountIndex) => {
-      if (!isPlainRecord(account)) {
-        throw new Error(
-          `Solana instruction ${index + 1} account ${accountIndex + 1} must be an object.`,
-        );
-      }
-      return {
-        pubkey: new PublicKey(
-          normalizeSolanaRpcAddress(
-            account.pubkey,
-            `Solana instruction ${index + 1} account ${accountIndex + 1}`,
-          ),
-        ),
-        isSigner: normalizeSolanaBooleanMeta(
-          account.isSigner ?? account.signer,
-          false,
-          `Solana instruction ${index + 1} account ${accountIndex + 1} isSigner`,
-        ),
-        isWritable: normalizeSolanaBooleanMeta(
-          account.isWritable ?? account.writable,
-          false,
-          `Solana instruction ${index + 1} account ${accountIndex + 1} isWritable`,
-        ),
-      };
-    });
-    return new TransactionInstruction({
-      programId,
-      keys,
-      data: Buffer.from(
-        normalizeSolanaRpcHexBytes(
-          instruction.dataHex,
-          `Solana instruction ${index + 1} data`,
-          { maxBytes: 1100 },
-        ),
-        "hex",
-      ),
-    });
-  });
-  let recentBlockhash = trimString(input.recentBlockhash);
-  if (recentBlockhash) {
-    recentBlockhash = normalizeSolanaRpcAddress(
-      recentBlockhash,
-      "Solana recent blockhash",
-    );
-  } else {
-    const result = await callSolanaRpcOnGateway({
-      endpoint: input.endpoint,
-      method: "getLatestBlockhash",
-      params: [{ commitment: "confirmed" }],
-    });
-    const value = isPlainRecord(result) ? result.value : null;
-    if (!isPlainRecord(value)) {
-      throw new Error("Solana latest blockhash response is invalid.");
-    }
-    recentBlockhash = normalizeSolanaRpcAddress(
-      value.blockhash,
-      "Solana recent blockhash",
-    );
-  }
-  const transaction = new Transaction({
-    feePayer,
-    recentBlockhash,
-  });
-  transaction.add(...instructions);
-  return transaction
-    .serialize({
-      requireAllSignatures: false,
-      verifySignatures: false,
-    })
-    .toString("base64");
-};
-
-const broadcastSolanaTransactionToRpc = async (
-  input: SolanaBroadcastInput,
-): Promise<string> => {
-  const controlled = bindSignedSolanaTransactionForBroadcast({
-    expectedUnsignedTransactionB64: normalizeSolanaTransactionB64(
-      input.expectedUnsignedTransactionB64,
-    ),
-    signedTransactionB64: normalizeSolanaTransactionB64(input.transactionB64),
-  });
-  const result = await callSolanaRpcOnGateway({
-    endpoint: input.endpoint,
-    method: "sendTransaction",
-    params: [
-      controlled.transactionB64,
-      {
-        encoding: "base64",
-        preflightCommitment: "confirmed",
-        skipPreflight: false,
-      },
-    ],
-  });
-  const signature = normalizeSolanaRpcSignature(result);
-  const broadcastSignature = decodeSolanaBase58(
-    signature,
-    "Solana broadcast transaction signature",
-  );
-  if (
-    broadcastSignature.length !== controlled.signatureBytes.length ||
-    broadcastSignature.some(
-      (byte, index) => byte !== controlled.signatureBytes[index],
-    )
-  ) {
-    throw new Error(
-      "Solana RPC returned a signature for a different transaction.",
-    );
-  }
-  return signature;
 };
 
 const fetchExplorerAssetDefinitionSnapshot = async (
@@ -10361,55 +5582,6 @@ const readPipelineSubmissionResponse = async (
   return attachPipelineSubmissionRoute(null, options.route);
 };
 
-const ROUTE_UNAVAILABLE_PATTERN = /\broute_unavailable\b/i;
-const AUTHORITATIVE_BINDING_ROUTE_PATTERN =
-  /no authoritative peer binding is registered for lane\s+(\d+)\s+dataspace\s+(\d+)/i;
-const ROUTE_TARGET_PATTERN = /\blane\s+(\d+)\s*\/\s*dataspace\s+(\d+)\b/i;
-
-const stringifyErrorField = (value: unknown) => {
-  if (typeof value === "string" || typeof value === "number") {
-    return String(value);
-  }
-  if (isPlainRecord(value) || Array.isArray(value)) {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return "";
-    }
-  }
-  return "";
-};
-
-const routeUnavailableErrorText = (error: unknown) => {
-  const haystack = [
-    error instanceof Error ? error.message : null,
-    isPlainRecord(error) ? error.message : null,
-    isPlainRecord(error) ? error.code : null,
-    isPlainRecord(error) ? error.rejectCode : null,
-    isPlainRecord(error) ? error.reject_code : null,
-    isPlainRecord(error) ? error.errorMessage : null,
-    isPlainRecord(error) ? error.error : null,
-    isPlainRecord(error) ? error.detail : null,
-    isPlainRecord(error) ? error.bodyText : null,
-    isPlainRecord(error) ? error.bodyJson : null,
-  ];
-  return haystack.map(stringifyErrorField).join("\n");
-};
-
-const routeUnavailableTargetMessage = (error: unknown) => {
-  const text = routeUnavailableErrorText(error);
-  const match =
-    AUTHORITATIVE_BINDING_ROUTE_PATTERN.exec(text) ||
-    ROUTE_TARGET_PATTERN.exec(text);
-  if (!match) {
-    return "the requested lane/dataspace";
-  }
-  return `lane ${match[1]} / dataspace ${match[2]}`;
-};
-
-const isRouteUnavailableError = (error: unknown) =>
-  ROUTE_UNAVAILABLE_PATTERN.test(routeUnavailableErrorText(error));
-
 const submitSignedTransactionAsVersioned = async (
   toriiUrl: string,
   signedTransaction: Buffer,
@@ -10563,11 +5735,21 @@ const fetchGovernanceCitizenCount = async (
   }
 };
 
-const optionalNonNegativeNumber = (value: unknown): number | null => {
-  const normalized = Number(value);
-  return Number.isFinite(normalized) && normalized >= 0
-    ? Math.trunc(normalized)
-    : null;
+const optionalCanonicalGovernanceInteger = (
+  value: unknown,
+  label: string,
+): number | null => {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+    throw new Error(
+      `${label} must be a complete canonical decimal-integer string.`,
+    );
+  }
+  const parsed = BigInt(value);
+  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${label} exceeds the exactly representable UI range.`);
+  }
+  return Number(parsed);
 };
 
 const normalizeGovernanceCitizenStatusPayload = (
@@ -10575,26 +5757,82 @@ const normalizeGovernanceCitizenStatusPayload = (
   fallbackAccountId: string,
   endpointAvailable: boolean,
 ): GovernanceCitizenStatusResponse => {
-  const record = isPlainRecord(payload) ? payload : {};
-  const amount = trimString(record.amount);
+  if (!endpointAvailable) {
+    return {
+      accountId: fallbackAccountId,
+      isCitizen: false,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+      endpointAvailable: false,
+    };
+  }
+  if (!isPlainRecord(payload)) {
+    throw new Error("Governance citizenship status must be an object.");
+  }
+  const expectedKeys = [
+    "account_id",
+    "amount",
+    "bonded_height",
+    "cooldown_until",
+    "is_citizen",
+    "last_epoch_seen",
+    "seats_in_epoch",
+  ].sort();
+  const actualKeys = Object.keys(payload).sort();
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new Error(
+      "Governance citizenship status contains missing or unknown fields.",
+    );
+  }
+  const accountId = trimString(payload.account_id);
+  if (!accountId || accountId !== payload.account_id) {
+    throw new Error(
+      "Governance citizenship status.account_id must be canonical text.",
+    );
+  }
+  if (typeof payload.is_citizen !== "boolean") {
+    throw new Error(
+      "Governance citizenship status.is_citizen must be a boolean.",
+    );
+  }
+  const amount = payload.amount === null ? "" : trimString(payload.amount);
+  if (
+    amount &&
+    (typeof payload.amount !== "string" ||
+      payload.amount !== amount ||
+      !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(amount))
+  ) {
+    throw new Error(
+      "Governance citizenship status.amount must be a canonical decimal string or null.",
+    );
+  }
   return {
-    accountId:
-      trimString(record.account_id ?? record.accountId) || fallbackAccountId,
-    isCitizen: Boolean(record.is_citizen ?? record.isCitizen),
+    accountId,
+    isCitizen: payload.is_citizen,
     amount: amount || null,
-    bondedHeight: optionalNonNegativeNumber(
-      record.bonded_height ?? record.bondedHeight,
+    bondedHeight: optionalCanonicalGovernanceInteger(
+      payload.bonded_height,
+      "Governance citizenship status.bonded_height",
     ),
-    seatsInEpoch: optionalNonNegativeNumber(
-      record.seats_in_epoch ?? record.seatsInEpoch,
+    seatsInEpoch: optionalCanonicalGovernanceInteger(
+      payload.seats_in_epoch,
+      "Governance citizenship status.seats_in_epoch",
     ),
-    lastEpochSeen: optionalNonNegativeNumber(
-      record.last_epoch_seen ?? record.lastEpochSeen,
+    lastEpochSeen: optionalCanonicalGovernanceInteger(
+      payload.last_epoch_seen,
+      "Governance citizenship status.last_epoch_seen",
     ),
-    cooldownUntil: optionalNonNegativeNumber(
-      record.cooldown_until ?? record.cooldownUntil,
+    cooldownUntil: optionalCanonicalGovernanceInteger(
+      payload.cooldown_until,
+      "Governance citizenship status.cooldown_until",
     ),
-    endpointAvailable,
+    endpointAvailable: true,
   };
 };
 
@@ -10845,270 +6083,6 @@ const fetchPrivateKaigiAssetDefinition = async (
     assetDefinitionId,
     "Private Kaigi XOR asset definition",
   );
-
-const optionalTrimmedString = (value: unknown) => {
-  if (typeof value !== "string" && typeof value !== "number") {
-    return null;
-  }
-  const literal = trimString(value);
-  return literal ? literal : null;
-};
-
-const errorMessageFromUnknown = (error: unknown) =>
-  error instanceof Error ? error.message : String(error ?? "");
-
-const readNestedRecord = (
-  record: Record<string, unknown>,
-  path: string[],
-): Record<string, unknown> | null => {
-  let cursor: unknown = record;
-  for (const key of path) {
-    if (!isPlainRecord(cursor)) {
-      return null;
-    }
-    cursor = cursor[key];
-  }
-  return isPlainRecord(cursor) ? cursor : null;
-};
-
-const readFirstConfigString = (
-  record: Record<string, unknown> | null,
-  keys: string[],
-) => {
-  if (!record) {
-    return null;
-  }
-  for (const key of keys) {
-    const value = optionalTrimmedString(record[key]);
-    if (value) {
-      return value;
-    }
-  }
-  return null;
-};
-
-const readGovernanceConfigRecord = (
-  configuration: unknown,
-): Record<string, unknown> | null => {
-  if (!isPlainRecord(configuration)) {
-    return null;
-  }
-  for (const path of [
-    ["gov"],
-    ["governance"],
-    ["actual", "gov"],
-    ["actual", "governance"],
-    ["parameters", "actual", "gov"],
-    ["parameters", "actual", "governance"],
-  ]) {
-    const record = readNestedRecord(configuration, path);
-    if (record) {
-      return record;
-    }
-  }
-  return null;
-};
-
-const fetchConfigurationSnapshot = async (toriiUrl: string) => {
-  const client = getClient(toriiUrl);
-  try {
-    return await client.getConfiguration();
-  } catch (primaryError) {
-    try {
-      return await fetchJson(
-        buildNexusEndpoint(toriiUrl, "/configuration"),
-        "Configuration",
-      );
-    } catch (fallbackError) {
-      throw fallbackError || primaryError;
-    }
-  }
-};
-
-const buildDefaultGovernanceRegistrationPolicy = (
-  configurationError: string | null,
-): GovernanceRegistrationPolicyResponse => ({
-  citizenshipAssetDefinitionId: null,
-  citizenshipBondAmount: null,
-  citizenshipAssetDefinitionExists: null,
-  configurationLoaded: false,
-  configurationError,
-  assetDefinitionError: null,
-});
-
-const missingGovernanceCitizenshipAssetMessage = (assetDefinitionId: string) =>
-  `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${assetDefinitionId}. RegisterCitizen cannot choose another asset from the wallet; ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
-
-const GOVERNANCE_CITIZENSHIP_LANE_ID = 1;
-const GOVERNANCE_CITIZENSHIP_DATASPACE_ID = 1;
-const GOVERNANCE_ROUTE_OPERATOR_HINT =
-  "For TAIRA public rollout, run configs/soranexus/taira/check_mcp_rollout.sh --public-root https://taira.sora.org --write-config <runtime-only taira-canary-client.toml> and re-render validator configs from configs/soranexus/taira/validator_roster.example.toml if route_unavailable persists.";
-
-const citizenshipRouteUnavailableMessage = (error: unknown) => {
-  const target = routeUnavailableTargetMessage(error);
-  return `Citizenship bonding reached Torii, but Torii returned route_unavailable because it has no authoritative peer route for ${target}. This is endpoint lane-routing health, not a wallet or bond-amount problem. Try another healthy Torii endpoint or ask the endpoint operator to restore the authoritative peer binding for ${target}. ${GOVERNANCE_ROUTE_OPERATOR_HINT}`;
-};
-
-const readLaneGovernanceRouteNumber = (
-  lane: Record<string, unknown>,
-  keys: string[],
-) => {
-  for (const key of keys) {
-    const raw = lane[key];
-    if (typeof raw === "number" && Number.isInteger(raw)) {
-      return raw;
-    }
-    if (typeof raw === "string" && /^\d+$/u.test(raw.trim())) {
-      return Number.parseInt(raw.trim(), 10);
-    }
-  }
-  return null;
-};
-
-const assertGovernanceCitizenshipRouteReady = async (toriiUrl: string) => {
-  let status: unknown;
-  try {
-    status = await getClient(toriiUrl).getSumeragiStatusTyped();
-  } catch {
-    return;
-  }
-  if (!isPlainRecord(status) || !Array.isArray(status.lane_governance)) {
-    return;
-  }
-  const governanceLane = status.lane_governance.find((entry) => {
-    if (!isPlainRecord(entry)) {
-      return false;
-    }
-    const laneId = readLaneGovernanceRouteNumber(entry, [
-      "lane_id",
-      "laneId",
-      "lane",
-    ]);
-    const alias = trimString(entry.alias).toLowerCase();
-    return laneId === GOVERNANCE_CITIZENSHIP_LANE_ID || alias === "governance";
-  });
-  if (!isPlainRecord(governanceLane)) {
-    return;
-  }
-  const validators = Array.isArray(governanceLane.validator_ids)
-    ? governanceLane.validator_ids.map(trimString).filter(Boolean)
-    : [];
-  if (validators.length > 0) {
-    return;
-  }
-  const laneId =
-    readLaneGovernanceRouteNumber(governanceLane, [
-      "lane_id",
-      "laneId",
-      "lane",
-    ]) ?? GOVERNANCE_CITIZENSHIP_LANE_ID;
-  const dataspaceId =
-    readLaneGovernanceRouteNumber(governanceLane, [
-      "dataspace_id",
-      "dataspaceId",
-      "dataspace",
-    ]) ?? GOVERNANCE_CITIZENSHIP_DATASPACE_ID;
-  throw new Error(
-    `Citizenship bonding is blocked because this Torii endpoint currently reports no validator ids for lane ${laneId} / dataspace ${dataspaceId}. This endpoint cannot route RegisterCitizen transactions until its governance lane has authoritative peers. ${GOVERNANCE_ROUTE_OPERATOR_HINT}`,
-  );
-};
-
-const MISSING_ASSET_DEFINITION_PATTERN =
-  /Failed to find asset definition:\s*`([^`]+)`/i;
-
-const extractMissingAssetDefinitionFromError = (error: unknown) => {
-  const message = errorMessageFromUnknown(error);
-  const match = message.match(MISSING_ASSET_DEFINITION_PATTERN);
-  return match?.[1]?.trim() || null;
-};
-
-const decorateRegisterCitizenError = (error: unknown) => {
-  if (isRouteUnavailableError(error)) {
-    return new Error(citizenshipRouteUnavailableMessage(error));
-  }
-  const missingAssetDefinitionId =
-    extractMissingAssetDefinitionFromError(error);
-  if (!missingAssetDefinitionId) {
-    return error;
-  }
-  const originalMessage = errorMessageFromUnknown(error);
-  return new Error(
-    `${missingGovernanceCitizenshipAssetMessage(missingAssetDefinitionId)} Original error: ${originalMessage}`,
-  );
-};
-
-const fetchGovernanceRegistrationPolicy = async (
-  toriiUrl: string,
-): Promise<GovernanceRegistrationPolicyResponse> => {
-  let configuration: unknown;
-  try {
-    configuration = await fetchConfigurationSnapshot(toriiUrl);
-  } catch (error) {
-    return buildDefaultGovernanceRegistrationPolicy(
-      errorMessageFromUnknown(error) || null,
-    );
-  }
-
-  const governanceConfig = readGovernanceConfigRecord(configuration);
-  const rawCitizenshipAssetDefinitionId = readFirstConfigString(
-    governanceConfig,
-    [
-      "citizenship_asset_id",
-      "citizenshipAssetId",
-      "citizenship_asset_definition_id",
-      "citizenshipAssetDefinitionId",
-      "voting_asset_id",
-      "votingAssetId",
-    ],
-  );
-  const citizenshipAssetDefinitionId = rawCitizenshipAssetDefinitionId
-    ? extractAssetDefinitionId(rawCitizenshipAssetDefinitionId).trim()
-    : null;
-  const rawBondAmount = readFirstConfigString(governanceConfig, [
-    "citizenship_bond_amount",
-    "citizenshipBondAmount",
-  ]);
-  const citizenshipBondAmount =
-    rawBondAmount && /^\d+$/.test(rawBondAmount) ? rawBondAmount : null;
-
-  if (!citizenshipAssetDefinitionId) {
-    return {
-      citizenshipAssetDefinitionId: null,
-      citizenshipBondAmount,
-      citizenshipAssetDefinitionExists: null,
-      configurationLoaded: true,
-      configurationError: null,
-      assetDefinitionError: null,
-    };
-  }
-
-  try {
-    await fetchAssetDefinition(
-      toriiUrl,
-      citizenshipAssetDefinitionId,
-      "Governance citizenship asset definition",
-    );
-    return {
-      citizenshipAssetDefinitionId,
-      citizenshipBondAmount,
-      citizenshipAssetDefinitionExists: true,
-      configurationLoaded: true,
-      configurationError: null,
-      assetDefinitionError: null,
-    };
-  } catch (error) {
-    const errorMessage = errorMessageFromUnknown(error) || null;
-    return {
-      citizenshipAssetDefinitionId,
-      citizenshipBondAmount,
-      citizenshipAssetDefinitionExists:
-        isApiRequestError(error) && error.status === 404 ? false : null,
-      configurationLoaded: true,
-      configurationError: null,
-      assetDefinitionError: errorMessage,
-    };
-  }
-};
 
 const fetchConfidentialAssetRootWindow = async (
   toriiUrlRaw: string,
@@ -12166,20 +7140,23 @@ const submitConfidentialSelfConsolidation = async (input: {
     baseMetadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
     outputs: [output],
   });
-  const tx = buildZkTransferTransaction({
+  const tx = await quoteAndSignInstructionTransaction({
+    toriiUrl: input.toriiUrl,
     chainId: input.chainId,
     authority: input.accountId,
-    transfer: {
-      assetDefinitionId: materials.resolvedAssetId,
-      inputs: proofEnvelope.nullifiers,
-      outputs: proofEnvelope.outputCommitments,
-      proof: {
-        backend: verifyingKeyContext.backend,
-        proof: Buffer.from(proofEnvelope.proof),
-        verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
-      },
-      rootHint: Buffer.from(materials.latestRootHex, "hex"),
-    },
+    instructions: [
+      buildZkTransferInstruction({
+        assetDefinitionId: materials.resolvedAssetId,
+        inputs: proofEnvelope.nullifiers,
+        outputs: proofEnvelope.outputCommitments,
+        proof: {
+          backend: verifyingKeyContext.backend,
+          proof: Buffer.from(proofEnvelope.proof),
+          verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
+        },
+        rootHint: Buffer.from(materials.latestRootHex, "hex"),
+      }),
+    ],
     metadata,
     privateKey,
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -12453,34 +7430,84 @@ async function resolvePrivateKaigiConfidentialXorContext(
   };
 }
 
+const quoteAndSignInstructionTransaction = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  authority: string;
+  networkPrefix?: number;
+  instructions: object[];
+  privateKey: Buffer;
+  privateKeyAlgorithm: string;
+  metadata?: Record<string, unknown>;
+  creationTimeMs?: number;
+  ttlMs?: number;
+  nonce?: number;
+}) => {
+  const request = buildCanonicalInstructionFeeQuoteRequest({
+    chainId: input.chainId,
+    authority: input.authority,
+    networkPrefix: input.networkPrefix,
+    instructions: input.instructions,
+    privateKey: input.privateKey,
+    metadata: input.metadata,
+    creationTimeMs: input.creationTimeMs,
+    ttlMs: input.ttlMs,
+    nonce: input.nonce,
+  });
+  const quote = await getClient(input.toriiUrl).quoteFees(request.payload, {
+    canonicalAuth: request.canonicalAuth,
+  });
+  return signQuotedTransactionPayload({
+    payload: request.payload,
+    quotedFeePayment: quote.intent,
+    privateKey: input.privateKey,
+    privateKeyAlgorithm: input.privateKeyAlgorithm,
+  });
+};
+
 const submitInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
   authorityAccountId: string;
+  networkPrefix?: number;
   privateKeyHex?: string;
   signingAlgorithm?: string;
-  instruction: Record<string, unknown>;
+  instruction:
+    | Record<string, unknown>
+    | ((authority: string) => Record<string, unknown>);
 }) => {
   const chainId = input.chainId.trim();
   if (!chainId) {
     throw new Error("chainId is required.");
   }
-  const authority = normalizeCompatAccountIdLiteral(
-    input.authorityAccountId,
-    "authorityAccountId",
-  );
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId,
+    networkPrefix: input.networkPrefix,
+  });
+  const wireInput = resolveCanonicalInstructionWireInput({
+    authorityAccountId: input.authorityAccountId,
+    networkPrefix: writeConnection.networkPrefix,
+    instruction: input.instruction,
+  });
   const signingMaterial = await resolveSigningMaterial({
-    accountId: authority,
+    accountId: wireInput.authority,
     privateKeyHex: input.privateKeyHex,
     signingAlgorithm: input.signingAlgorithm,
     operationLabel: "Transaction submission",
   });
-  const tx = buildTransaction({
-    chainId,
-    authority,
-    instructions: [input.instruction],
-    metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
-    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
+  const privateKey = hexToBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+  );
+  const tx = await quoteAndSignInstructionTransaction({
+    toriiUrl: input.toriiUrl,
+    chainId: writeConnection.chainId,
+    authority: wireInput.authority,
+    networkPrefix: writeConnection.networkPrefix,
+    instructions: [wireInput.instruction],
+    metadata: {},
+    privateKey,
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
   const submission = await submitSignedTransactionAndWaitForCommit(
@@ -12488,6 +7515,915 @@ const submitInstructionTransaction = async (input: {
     tx.signedTransaction,
   );
   return transactionSubmissionResult(submission);
+};
+
+const GOVERNANCE_REVIEW_TTL_MS = 2 * 60 * 1000;
+const GOVERNANCE_REVIEW_LIMIT = 24;
+
+type PreparedGovernanceAction = {
+  view: GovernancePreparedActionView;
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  signingAlgorithm: string;
+  payload: ReturnType<typeof buildTransactionPayload>;
+  quote: FeeQuoteResponse;
+};
+
+const preparedGovernanceActions = new Map<string, PreparedGovernanceAction>();
+
+const governanceEndpoint = (toriiUrl: string, path: string) =>
+  new URL(
+    path.replace(/^\//u, ""),
+    `${normalizeBaseUrl(toriiUrl)}/`,
+  ).toString();
+
+const governanceRequestJson = async (
+  toriiUrl: string,
+  path: string,
+  options: {
+    method?: "GET" | "POST";
+    body?: Record<string, unknown>;
+    allowNotFound?: boolean;
+  } = {},
+): Promise<Record<string, unknown> | null> => {
+  const response = await nodeFetch(governanceEndpoint(toriiUrl, path), {
+    method: options.method ?? "GET",
+    headers: {
+      Accept: "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+  });
+  if (options.allowNotFound && response.status === 404) return null;
+  if (!response.ok) {
+    throw await createApiRequestError(response, `Governance ${path}`);
+  }
+  const payload = (await response.json()) as unknown;
+  return ensureObjectResponse(payload, `Governance ${path}`);
+};
+
+const fetchGovernanceCapabilities = async (
+  toriiUrl: string,
+): Promise<GovernanceCapabilitiesV1> => {
+  const payload = await governanceRequestJson(
+    toriiUrl,
+    GOVERNANCE_CAPABILITIES_PATH,
+  );
+  if (!payload) {
+    throw new Error("Governance capabilities endpoint returned no contract.");
+  }
+  return parseGovernanceCapabilitiesV1(payload);
+};
+
+const assertGovernanceWriteCapabilities = async (
+  context: GovernancePrepareContext,
+): Promise<GovernanceCapabilitiesV1> => {
+  const capabilities = await fetchGovernanceCapabilities(context.toriiUrl);
+  if (
+    context.chainId.trim() !== capabilities.chainId ||
+    (context.networkPrefix !== undefined &&
+      context.networkPrefix !== capabilities.networkPrefix) ||
+    capabilities.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
+    capabilities.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX
+  ) {
+    throw new Error(
+      "The active wallet connection does not match the reviewed Taira governance capabilities.",
+    );
+  }
+  return capabilities;
+};
+
+const governanceListLimit = (value: number | undefined) => {
+  const normalized = value ?? 20;
+  if (!Number.isInteger(normalized) || normalized < 1 || normalized > 100) {
+    throw new Error("Governance proposal limit must be between 1 and 100.");
+  }
+  return normalized;
+};
+
+const fetchGovernanceProposalList = async (
+  input: GovernanceProposalListInput,
+): Promise<GovernanceProposalList> => {
+  const payload = await governanceRequestJson(
+    input.toriiUrl,
+    VALIDATION_FEE_PROPOSALS_PATH,
+    { allowNotFound: true },
+  );
+  if (!payload) {
+    throw new Error(
+      "This Torii endpoint does not expose the typed validation-fee proposal catalog. Load a proposal with its exact 32-byte ID instead.",
+    );
+  }
+  const limit = governanceListLimit(input.limit);
+  const normalized = normalizeGovernanceProposalList(payload);
+  const status = input.status?.trim().toLowerCase();
+  const kind = input.kind?.trim().toLowerCase();
+  const proposer = input.proposer?.trim();
+  return {
+    items: normalized.items
+      .filter(
+        (proposal) =>
+          (!status || proposal.status.toLowerCase() === status) &&
+          (!kind || proposal.kindType.toLowerCase() === kind) &&
+          (!proposer || proposal.proposer === proposer),
+      )
+      .slice(0, limit),
+    nextCursor: null,
+  };
+};
+
+const fetchGovernanceProposalDetail = async (
+  input: GovernanceProposalDetailInput,
+): Promise<GovernanceProposalDetail> => {
+  const proposalId = canonicalGovernanceProposalId(input.proposalId);
+  if (!proposalId) {
+    throw new Error("proposalId must be 32-byte hex.");
+  }
+  const rawId = proposalId.slice(2);
+  const typedDetailPath = input.accountId?.trim()
+    ? `${validationFeeProposalPath(rawId)}?account_id=${encodeURIComponent(
+        normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
+      )}`
+    : validationFeeProposalPath(rawId);
+  const typedDetail = await governanceRequestJson(
+    input.toriiUrl,
+    typedDetailPath,
+    { allowNotFound: true },
+  );
+  if (typedDetail) {
+    return normalizeGovernanceProposalDetail(typedDetail, proposalId);
+  }
+
+  const proposal = await governanceRequestJson(
+    input.toriiUrl,
+    governanceProposalPath(rawId),
+    { allowNotFound: true },
+  );
+  if (!proposal || proposal.found === false) {
+    throw new Error(`Governance proposal ${proposalId} was not found.`);
+  }
+  const [referendum, tally, locks, unlockStats] = await Promise.all([
+    governanceRequestJson(input.toriiUrl, governanceReferendumPath(rawId), {
+      allowNotFound: true,
+    }),
+    governanceRequestJson(input.toriiUrl, governanceTallyPath(rawId), {
+      allowNotFound: true,
+    }),
+    governanceRequestJson(input.toriiUrl, governanceLocksPath(rawId), {
+      allowNotFound: true,
+    }),
+    governanceRequestJson(input.toriiUrl, GOVERNANCE_UNLOCK_STATS_PATH, {
+      allowNotFound: true,
+    }),
+  ]);
+  return normalizeGovernanceProposalDetail(
+    {
+      proposal_id: proposalId,
+      referendum_id: rawId,
+      proposal,
+      referendum,
+      tally,
+      locks,
+      current_height: unlockStats?.height_current,
+    },
+    proposalId,
+  );
+};
+
+const fetchGovernanceValidationFeePolicy = async (
+  toriiUrl: string,
+): Promise<GovernanceValidationFeePolicyView> => {
+  const endpoint = trimString(toriiUrl);
+  if (!endpoint) {
+    throw new Error(
+      "The active Taira endpoint is required for validation fees.",
+    );
+  }
+  let origin: string;
+  try {
+    origin = new URL(endpoint).origin;
+  } catch {
+    throw new Error("The active Taira endpoint is not a valid URL.");
+  }
+  if (origin !== "https://taira.sora.org") {
+    throw new Error(
+      "Validation-fee policy reads are available only for the exact Taira staging endpoint.",
+    );
+  }
+  return fetchCoreGovernanceValidationFeePolicy();
+};
+
+const normalizeGovernanceWireId = (value: unknown) => {
+  const wireId = trimString(value);
+  if (!wireId)
+    throw new Error("Governance draft instruction wire_id is missing.");
+  return wireId;
+};
+
+const governanceInstructionVariant = (
+  instruction: Record<string, unknown>,
+): { variant: string; payload: Record<string, unknown> } => {
+  const entries = Object.entries(instruction);
+  if (entries.length !== 1 || !isPlainRecord(entries[0][1])) {
+    throw new Error(
+      "Governance draft must decode to exactly one typed instruction variant.",
+    );
+  }
+  return {
+    variant: entries[0][0],
+    payload: entries[0][1] as Record<string, unknown>,
+  };
+};
+
+const normalizeComparableGovernanceValue = (value: unknown): unknown => {
+  if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+    return `0x${Buffer.from(value).toString("hex")}`;
+  }
+  if (
+    Array.isArray(value) &&
+    value.length === 32 &&
+    value.every(
+      (entry) =>
+        Number.isInteger(entry) && Number(entry) >= 0 && Number(entry) <= 255,
+    )
+  ) {
+    return `0x${Buffer.from(value as number[]).toString("hex")}`;
+  }
+  if (typeof value === "number" || typeof value === "bigint") {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const hash = canonicalGovernanceProposalId(value);
+    if (hash) return hash;
+    const literal = value.trim();
+    const enumAliases: Record<string, string> = {
+      RulesCommittee: "rules-committee",
+      AgendaCouncil: "agenda-council",
+      InterestPanel: "interest-panel",
+      ReviewPanel: "review-panel",
+      PolicyJury: "policy-jury",
+      OversightCommittee: "oversight-committee",
+      FmaCommittee: "fma-committee",
+      Approve: "approve",
+      Reject: "reject",
+      Abstain: "abstain",
+    };
+    return enumAliases[literal] ?? literal;
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeComparableGovernanceValue);
+  }
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [
+          key,
+          normalizeComparableGovernanceValue(entry),
+        ]),
+    );
+  }
+  return value;
+};
+
+const governanceValuesEqual = (left: unknown, right: unknown) =>
+  JSON.stringify(normalizeComparableGovernanceValue(left)) ===
+  JSON.stringify(normalizeComparableGovernanceValue(right));
+
+const findGovernanceField = (
+  value: unknown,
+  keys: ReadonlySet<string>,
+): unknown => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findGovernanceField(item, keys);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isPlainRecord(value)) return undefined;
+  for (const [key, entry] of Object.entries(value)) {
+    if (keys.has(key)) return entry;
+  }
+  for (const entry of Object.values(value)) {
+    const found = findGovernanceField(entry, keys);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
+const assertGovernanceField = (
+  decoded: Record<string, unknown>,
+  keys: string[],
+  expected: unknown,
+  label: string,
+) => {
+  const found = findGovernanceField(decoded, new Set(keys));
+  if (found === undefined || !governanceValuesEqual(found, expected)) {
+    throw new Error(`Governance draft changed the reviewed ${label}.`);
+  }
+};
+
+const decodeGovernanceDraftInstruction = (
+  draft: Record<string, unknown>,
+  expectedVariant: string,
+): Record<string, unknown> => {
+  const instructions = draft.tx_instructions;
+  if (!Array.isArray(instructions) || instructions.length !== 1) {
+    throw new Error("Governance draft must contain exactly one instruction.");
+  }
+  const item = ensureObjectResponse(
+    instructions[0],
+    "Governance draft instruction",
+  );
+  const wireId = normalizeGovernanceWireId(item.wire_id);
+  if (wireId !== expectedVariant && !wireId.endsWith(`::${expectedVariant}`)) {
+    throw new Error(
+      `Governance draft returned ${wireId}; expected ${expectedVariant}.`,
+    );
+  }
+  const payloadHex = trimString(item.payload_hex);
+  if (!/^[0-9a-f]+$/iu.test(payloadHex) || payloadHex.length % 2 !== 0) {
+    throw new Error(
+      "Governance draft instruction is missing canonical payload_hex.",
+    );
+  }
+  const decoded = noritoDecodeInstruction(Buffer.from(payloadHex, "hex"));
+  if (!isPlainRecord(decoded)) {
+    throw new Error(
+      "Governance draft instruction did not decode to an object.",
+    );
+  }
+  const variant = governanceInstructionVariant(decoded);
+  if (variant.variant !== expectedVariant) {
+    throw new Error(
+      `Governance payload decoded as ${variant.variant}; expected ${expectedVariant}.`,
+    );
+  }
+  return decoded;
+};
+
+const governanceProposalEndpoint = (
+  kind: GovernanceProposalPrepareInput["kind"],
+) => {
+  switch (kind) {
+    case "ValidationFeePayoutLifecycle":
+      return {
+        path: VALIDATION_FEE_POLICY_DRAFT_PATH,
+        wireId: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT,
+      };
+    case "ValidationFeePolicy":
+      return {
+        path: VALIDATION_FEE_POLICY_DRAFT_PATH,
+        wireId: VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT,
+      };
+  }
+};
+
+const prunePreparedGovernanceActions = () => {
+  const now = Date.now();
+  for (const [reviewId, prepared] of preparedGovernanceActions) {
+    if (prepared.view.expiresAtMs <= now) {
+      preparedGovernanceActions.delete(reviewId);
+    }
+  }
+  while (preparedGovernanceActions.size >= GOVERNANCE_REVIEW_LIMIT) {
+    const oldest = preparedGovernanceActions.keys().next().value;
+    if (typeof oldest !== "string") break;
+    preparedGovernanceActions.delete(oldest);
+  }
+};
+
+const governanceFeeView = (
+  quote: FeeQuoteResponse,
+): GovernancePreparedActionView["fee"] => ({
+  payer: quote.intent.payer,
+  components: quote.components.map((component) => ({
+    kind: component.kind.kind,
+    assetDefinitionId: component.asset_definition_id,
+    maxAmount: component.max_amount,
+  })),
+  nextBlockHeight: String(quote.observation.next_block_height),
+});
+
+const prepareGovernanceDecodedAction = async (input: {
+  context: GovernancePrepareContext;
+  operation: GovernanceWriteOperation;
+  title: string;
+  proposalId?: string | null;
+  referendumId?: string | null;
+  draft: Record<string, unknown>;
+  expectedVariant: string;
+  validate: (decoded: Record<string, unknown>) => void;
+}): Promise<GovernancePreparedActionView> => {
+  const chainId = normalizeNonEmptyString(input.context.chainId, "chainId");
+  await assertGovernanceWriteCapabilities(input.context);
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.context.toriiUrl,
+    chainId,
+    networkPrefix: input.context.networkPrefix,
+  });
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.context.accountId,
+    "accountId",
+    writeConnection.networkPrefix,
+  );
+  const decoded = decodeGovernanceDraftInstruction(
+    input.draft,
+    input.expectedVariant,
+  );
+  input.validate(decoded);
+  const signingMaterial = await resolveSigningMaterial({
+    accountId,
+    operationLabel: input.title,
+  });
+  const privateKey = hexToBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+  );
+  const payload = buildTransactionPayload({
+    chainId,
+    authority: accountId,
+    instructions: [decoded],
+    feePayment: { payer: "authority", chargeLimits: [] },
+    metadata: {},
+  });
+  const quote = await getClient(input.context.toriiUrl).quoteFees(payload, {
+    canonicalAuth: { accountId, privateKey },
+  });
+  const reviewId = randomBytes(24).toString("base64url");
+  const proposalId =
+    canonicalGovernanceProposalId(
+      input.proposalId ?? input.draft.proposal_id,
+    ) ?? null;
+  const expiresAtMs = Date.now() + GOVERNANCE_REVIEW_TTL_MS;
+  const view: GovernancePreparedActionView = {
+    reviewId,
+    operation: input.operation,
+    title: input.title,
+    proposalId,
+    referendumId: input.referendumId?.trim() || null,
+    decodedInstruction: decoded,
+    fee: governanceFeeView(quote),
+    expiresAtMs,
+  };
+  prunePreparedGovernanceActions();
+  preparedGovernanceActions.set(reviewId, {
+    view,
+    toriiUrl: input.context.toriiUrl,
+    chainId,
+    accountId,
+    signingAlgorithm: signingMaterial.signingAlgorithm,
+    payload,
+    quote,
+  });
+  return view;
+};
+
+const assertGovernanceExactKeys = (
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void => {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    actual.length !== sortedExpected.length ||
+    actual.some((key, index) => key !== sortedExpected[index])
+  ) {
+    throw new Error(`${label} contains missing or unknown fields.`);
+  }
+};
+
+const prepareGovernanceCitizenRegistrationAction = async (
+  input: GovernanceCitizenRegistrationPrepareInput,
+) => {
+  const capabilities = await assertGovernanceWriteCapabilities(input);
+  const owner = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    capabilities.networkPrefix,
+  );
+  const amount = normalizeIntegerAmount(input.amount, "amount");
+  if (amount !== capabilities.citizenshipBondAmount) {
+    throw new Error(
+      "The reviewed citizenship bond differs from the endpoint capabilities.",
+    );
+  }
+  const draft = await governanceRequestJson(
+    input.toriiUrl,
+    GOVERNANCE_CITIZEN_DRAFT_PATH,
+    {
+      method: "POST",
+      body: { version: 1, owner },
+    },
+  );
+  if (!draft) {
+    throw new Error("Governance citizenship endpoint returned no draft.");
+  }
+  assertGovernanceExactKeys(
+    draft,
+    ["amount", "owner", "tx_instructions", "version"],
+    "Governance citizenship draft",
+  );
+  if (
+    draft.version !== 1 ||
+    draft.owner !== owner ||
+    String(draft.amount) !== amount
+  ) {
+    throw new Error(
+      "Governance citizenship draft differs from the reviewed owner or bond.",
+    );
+  }
+  return prepareGovernanceDecodedAction({
+    context: input,
+    operation: "register-citizen",
+    title: "Register bonded citizen",
+    draft,
+    expectedVariant: "RegisterCitizen",
+    validate(decoded) {
+      assertGovernanceField(decoded, ["owner"], owner, "citizen owner");
+      assertGovernanceField(decoded, ["amount"], amount, "citizenship bond");
+    },
+  });
+};
+
+const prepareGovernanceProposalAction = async (
+  input: GovernanceProposalPrepareInput,
+) => {
+  await assertGovernanceWriteCapabilities(input);
+  if (!isPlainRecord(input.payload)) {
+    throw new Error("Governance proposal payload must be an object.");
+  }
+  const endpoint = governanceProposalEndpoint(input.kind);
+  const validationFeeRequest: ValidationFeePolicyDraftRequest | null =
+    input.kind === "ValidationFeePolicy"
+      ? buildValidationFeePolicyDraftRequest(input.payload)
+      : null;
+  const validationFeePayoutLifecycleRequest: ValidationFeePayoutLifecycleDraftRequest | null =
+    input.kind === "ValidationFeePayoutLifecycle"
+      ? buildValidationFeePayoutLifecycleDraftRequest(input.payload)
+      : null;
+  const expectedValidationFeeProposalId = validationFeeRequest
+    ? computeValidationFeePolicyProposalFingerprintV1(
+        validationFeeRequest.proposal.payload.policy as Parameters<
+          typeof computeValidationFeePolicyProposalFingerprintV1
+        >[0],
+        validationFeeRequest.proposal.payload.payout_lifecycle_proposal_id,
+      )
+    : null;
+  const requestPayload =
+    validationFeeRequest ?? validationFeePayoutLifecycleRequest;
+  if (!requestPayload) {
+    throw new Error(
+      "This proposal kind is not advertised by the Taira governance capabilities.",
+    );
+  }
+  const draft = await governanceRequestJson(input.toriiUrl, endpoint.path, {
+    method: "POST",
+    body: requestPayload,
+  });
+  if (!draft)
+    throw new Error("Governance proposal endpoint returned no draft.");
+  if (validationFeeRequest) {
+    assertValidationFeePolicyDraftResponse(
+      draft,
+      validationFeeRequest,
+      expectedValidationFeeProposalId as string,
+    );
+  } else if (validationFeePayoutLifecycleRequest) {
+    assertValidationFeePayoutLifecycleDraftResponse(
+      draft,
+      validationFeePayoutLifecycleRequest,
+    );
+  }
+  return prepareGovernanceDecodedAction({
+    context: input,
+    operation: "propose",
+    title: `Propose ${input.kind}`,
+    proposalId: trimString(draft.proposal_id),
+    draft,
+    expectedVariant: endpoint.wireId,
+    validate(decoded) {
+      if (validationFeeRequest) {
+        assertValidationFeePolicyDecodedInstruction(
+          decoded,
+          validationFeeRequest,
+        );
+      } else if (validationFeePayoutLifecycleRequest) {
+        assertValidationFeePayoutLifecycleDecodedInstruction(
+          decoded,
+          validationFeePayoutLifecycleRequest,
+        );
+      }
+    },
+  });
+};
+
+const assertWritableGovernanceProposalKind = (
+  proposal: GovernanceProposalDetail,
+): void => {
+  if (
+    proposal.kind.type !== "ValidationFeePayoutLifecycle" &&
+    proposal.kind.type !== "ValidationFeePolicy"
+  ) {
+    throw new Error(
+      "This proposal kind is not advertised by the Taira governance capabilities and remains inspect-only.",
+    );
+  }
+};
+
+const prepareGovernancePlainBallotAction = async (
+  input: GovernancePlainBallotPrepareInput,
+) => {
+  await assertGovernanceWriteCapabilities(input);
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const referendumId = normalizeNonEmptyString(
+    input.referendumId,
+    "referendumId",
+  );
+  const durationBlocks = normalizeIntegerAmount(
+    input.durationBlocks,
+    "durationBlocks",
+  );
+  const proposalId = canonicalGovernanceProposalId(input.proposalId);
+  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
+  const proposal = await fetchGovernanceProposalDetail({
+    toriiUrl: input.toriiUrl,
+    proposalId,
+    accountId,
+  });
+  assertWritableGovernanceProposalKind(proposal);
+  assertPlainGovernanceProposalWrite(proposal);
+  if (
+    !proposal.referendum ||
+    proposal.referendum.id !== referendumId ||
+    !isReferendumPlainVoteOpen(proposal)
+  ) {
+    throw new Error("The reviewed PLAIN referendum is not open.");
+  }
+  if (!plainBallotLockCoversReferendum(proposal, durationBlocks)) {
+    throw new Error(
+      "Citizen ballot lock duration must cover the referendum end height.",
+    );
+  }
+  const body = {
+    authority: accountId,
+    chain_id: normalizeNonEmptyString(input.chainId, "chainId"),
+    referendum_id: referendumId,
+    owner: accountId,
+    amount: normalizeIntegerAmount(input.amount, "amount"),
+    duration_blocks: durationBlocks,
+    direction: input.direction,
+  };
+  const draft = await governanceRequestJson(
+    input.toriiUrl,
+    "/v1/gov/ballots/plain",
+    { method: "POST", body },
+  );
+  if (!draft) throw new Error("Governance ballot endpoint returned no draft.");
+  return prepareGovernanceDecodedAction({
+    context: input,
+    operation: "plain-ballot",
+    title: "Submit citizen ballot",
+    proposalId,
+    referendumId,
+    draft,
+    expectedVariant: "CastPlainBallot",
+    validate(decoded) {
+      assertGovernanceField(
+        decoded,
+        ["referendum_id"],
+        referendumId,
+        "referendum",
+      );
+      assertGovernanceField(decoded, ["owner"], accountId, "ballot owner");
+      assertGovernanceField(decoded, ["amount"], body.amount, "ballot amount");
+      assertGovernanceField(
+        decoded,
+        ["duration_blocks"],
+        durationBlocks,
+        "lock duration",
+      );
+      assertGovernanceField(
+        decoded,
+        ["direction"],
+        String(normalizeBallotDirectionCode(input.direction)),
+        "ballot direction",
+      );
+    },
+  });
+};
+
+const prepareGovernanceParliamentBallotAction = async (
+  input: GovernanceParliamentBallotPrepareInput,
+) => {
+  await assertGovernanceWriteCapabilities(input);
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  const proposalId = canonicalGovernanceProposalId(input.proposalId);
+  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
+  const proposal = await fetchGovernanceProposalDetail({
+    toriiUrl: input.toriiUrl,
+    proposalId,
+    accountId,
+  });
+  assertWritableGovernanceProposalKind(proposal);
+  assertPlainGovernanceProposalWrite(proposal);
+  if (proposal.referendum?.status !== "Proposed") {
+    throw new Error(
+      "Parliament body ballots close when the citizen referendum opens.",
+    );
+  }
+  const bodyName = normalizeNonEmptyString(input.body, "body");
+  if (!isAccountInParliamentRoster(proposal, accountId, bodyName)) {
+    throw new Error(
+      "The active account is not a seated member of this Parliament body.",
+    );
+  }
+  if (
+    proposal.parliamentOutcomes.find((outcome) => outcome.body === bodyName)
+      ?.currentAccountDecision
+  ) {
+    throw new Error(
+      "The active account already cast its ballot for this Parliament body.",
+    );
+  }
+  const body = {
+    authority: accountId,
+    chain_id: normalizeNonEmptyString(input.chainId, "chainId"),
+    proposal_id: proposalId,
+    body: bodyName,
+    decision: input.decision,
+  };
+  const draft = await governanceRequestJson(
+    input.toriiUrl,
+    "/v1/gov/parliament/ballots",
+    { method: "POST", body },
+  );
+  if (!draft) {
+    throw new Error("Parliament ballot endpoint returned no draft.");
+  }
+  return prepareGovernanceDecodedAction({
+    context: input,
+    operation: "parliament-ballot",
+    title: "Submit Parliament stage ballot",
+    proposalId,
+    draft,
+    expectedVariant: "CastParliamentBallot",
+    validate(decoded) {
+      assertGovernanceField(decoded, ["proposal_id"], proposalId, "proposal");
+      assertGovernanceField(decoded, ["body"], bodyName, "Parliament body");
+      assertGovernanceField(
+        decoded,
+        ["decision"],
+        input.decision,
+        "Parliament decision",
+      );
+    },
+  });
+};
+
+const prepareGovernanceEnactAction = async (
+  input: GovernanceEnactPrepareInput,
+) => {
+  await assertGovernanceWriteCapabilities(input);
+  const proposalId = canonicalGovernanceProposalId(input.proposalId);
+  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
+  const proposal = await fetchGovernanceProposalDetail({
+    toriiUrl: input.toriiUrl,
+    proposalId,
+    accountId: input.accountId,
+  });
+  assertWritableGovernanceProposalKind(proposal);
+  assertPlainGovernanceProposalWrite(proposal);
+  if (
+    proposal.summary.status !== "Approved" ||
+    proposal.referendum?.status !== "Closed" ||
+    proposal.finalizationEvidence?.approved !== true
+  ) {
+    throw new Error(
+      "The proposal has no approved finalized PLAIN referendum evidence.",
+    );
+  }
+  const rawProposalId = proposalId.slice(2);
+  const draft = await governanceRequestJson(input.toriiUrl, "/v1/gov/enact", {
+    method: "POST",
+    body: { proposal_id: rawProposalId },
+  });
+  if (!draft) throw new Error("Governance enact endpoint returned no draft.");
+  assertGovernanceExactKeys(
+    draft,
+    [
+      "ok",
+      "proposal_id",
+      "proposal_kind",
+      "referendum_window",
+      "tx_instructions",
+    ],
+    "Governance enact draft",
+  );
+  if (
+    draft.ok !== true ||
+    draft.proposal_id !== rawProposalId ||
+    !governanceValuesEqual(draft.proposal_kind, proposal.kind.raw) ||
+    !governanceValuesEqual(draft.referendum_window, {
+      lower: proposal.referendum.hStart,
+      upper: proposal.referendum.hEnd,
+    })
+  ) {
+    throw new Error(
+      "Governance enact draft differs from the exact stored proposal or window.",
+    );
+  }
+  return prepareGovernanceDecodedAction({
+    context: input,
+    operation: "enact",
+    title: "Enact approved proposal",
+    proposalId,
+    referendumId: rawProposalId,
+    draft,
+    expectedVariant: "EnactReferendum",
+    validate(decoded) {
+      assertGovernanceField(
+        decoded,
+        ["referendum_id"],
+        rawProposalId,
+        "referendum fingerprint",
+      );
+      assertGovernanceField(
+        decoded,
+        ["preimage_hash"],
+        rawProposalId,
+        "proposal preimage hash",
+      );
+      assertGovernanceField(
+        decoded,
+        ["at_window"],
+        {
+          lower: proposal.referendum?.hStart,
+          upper: proposal.referendum?.hEnd,
+        },
+        "referendum window",
+      );
+    },
+  });
+};
+
+const confirmPreparedGovernanceAction = async (input: {
+  reviewId: string;
+  accountId: string;
+}): Promise<GovernanceCommittedActionView> => {
+  prunePreparedGovernanceActions();
+  const reviewId = normalizeNonEmptyString(input.reviewId, "reviewId");
+  const prepared = preparedGovernanceActions.get(reviewId);
+  if (!prepared) {
+    throw new Error(
+      "Governance review expired or is no longer available. Prepare it again.",
+    );
+  }
+  const accountId = normalizeCompatAccountIdLiteral(
+    input.accountId,
+    "accountId",
+  );
+  if (accountId !== prepared.accountId) {
+    preparedGovernanceActions.delete(reviewId);
+    throw new Error("Active account changed after governance review.");
+  }
+  const signingMaterial = await resolveSigningMaterial({
+    accountId,
+    operationLabel: prepared.view.title,
+  });
+  if (signingMaterial.signingAlgorithm !== prepared.signingAlgorithm) {
+    preparedGovernanceActions.delete(reviewId);
+    throw new Error(
+      "Wallet signing algorithm changed after governance review.",
+    );
+  }
+  preparedGovernanceActions.delete(reviewId);
+  const signed = signQuotedTransactionPayload({
+    payload: prepared.payload,
+    quotedFeePayment: prepared.quote.intent,
+    privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
+    privateKeyAlgorithm: signingMaterial.signingAlgorithm,
+  });
+  const submission = await submitSignedTransactionAndWaitForCommit(
+    prepared.toriiUrl,
+    signed.signedTransaction,
+  );
+  return {
+    ...transactionSubmissionResult(submission),
+    operation: prepared.view.operation,
+    proposalId: prepared.view.proposalId,
+    referendumId: prepared.view.referendumId,
+    status: "committed",
+  };
 };
 
 const createPrivateKaigiNonce = () => {
@@ -12965,16 +8901,19 @@ const api: IrohaBridge = {
       signingAlgorithm: input.authoritySigningAlgorithm,
       operationLabel: "Create on-chain account",
     });
-    const tx = buildRegisterAccountAndTransferTransaction({
+    const tx = await quoteAndSignInstructionTransaction({
+      toriiUrl: input.toriiUrl,
       chainId: input.chainId,
       authority: authorityAccountId,
-      account: {
-        accountId: normalizeCompatAccountIdLiteral(
-          input.accountId,
-          "accountId",
-        ),
-        metadata: input.metadata ?? {},
-      },
+      instructions: [
+        buildRegisterAccountInstruction({
+          accountId: normalizeCompatAccountIdLiteral(
+            input.accountId,
+            "accountId",
+          ),
+          metadata: input.metadata ?? {},
+        }),
+      ],
       metadata: withRequiredGasAssetMetadata(undefined, input.toriiUrl),
       privateKey: hexToBuffer(
         authoritySigningMaterial.privateKeyHex,
@@ -13234,25 +9173,28 @@ const api: IrohaBridge = {
               outputs: changeOutputs,
             })
           : confidentialExitMetadata;
-      const tx = buildUnshieldTransaction({
+      const tx = await quoteAndSignInstructionTransaction({
+        toriiUrl: input.toriiUrl,
         chainId,
         authority: accountId,
-        unshield: {
-          assetDefinitionId: refreshedMaterials.resolvedAssetId,
-          destinationAccountId,
-          publicAmount: normalizedAmount,
-          inputs: proofEnvelope.nullifiers,
-          outputs:
-            "outputCommitments" in proofEnvelope
-              ? proofEnvelope.outputCommitments
-              : [],
-          proof: {
-            backend: verifyingKeyContext.backend,
-            proof: Buffer.from(proofEnvelope.proof),
-            verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
-          },
-          rootHint: Buffer.from(refreshedMaterials.latestRootHex, "hex"),
-        },
+        instructions: [
+          buildUnshieldInstruction({
+            assetDefinitionId: refreshedMaterials.resolvedAssetId,
+            destinationAccountId,
+            publicAmount: normalizedAmount,
+            inputs: proofEnvelope.nullifiers,
+            outputs:
+              "outputCommitments" in proofEnvelope
+                ? proofEnvelope.outputCommitments
+                : [],
+            proof: {
+              backend: verifyingKeyContext.backend,
+              proof: Buffer.from(proofEnvelope.proof),
+              verifyingKeyRef: verifyingKeyContext.proofVerifyingKey.id,
+            },
+            rootHint: Buffer.from(refreshedMaterials.latestRootHex, "hex"),
+          }),
+        ],
         metadata,
         privateKey,
         privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13327,7 +9269,6 @@ const api: IrohaBridge = {
 
       const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
       const confidentialBaseMetadata = withConfidentialGasMetadata(
-        input.toriiUrl,
         resolvedAssetId,
         extractConfidentialFeeMetadata(
           input.metadata,
@@ -13365,27 +9306,30 @@ const api: IrohaBridge = {
             },
           ],
         });
-        const tx = buildShieldTransaction({
+        const tx = await quoteAndSignInstructionTransaction({
+          toriiUrl: input.toriiUrl,
           chainId,
           authority: accountId,
-          shield: {
-            assetDefinitionId: resolvedAssetId,
-            fromAccountId: accountId,
-            amount: normalizedAmount,
-            noteCommitment: Buffer.from(note.commitment_hex, "hex"),
-            encryptedPayload: {
-              version: 1,
-              ephemeralPublicKey: randomBytes(32),
-              nonce: randomBytes(24),
-              ciphertext: Buffer.from(
-                JSON.stringify({
-                  schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
-                  commitment_hex: note.commitment_hex,
-                }),
-                "utf8",
-              ),
-            },
-          },
+          instructions: [
+            buildShieldInstruction({
+              assetDefinitionId: resolvedAssetId,
+              fromAccountId: accountId,
+              amount: normalizedAmount,
+              noteCommitment: Buffer.from(note.commitment_hex, "hex"),
+              encryptedPayload: {
+                version: 1,
+                ephemeralPublicKey: randomBytes(32),
+                nonce: randomBytes(24),
+                ciphertext: Buffer.from(
+                  JSON.stringify({
+                    schema: CONFIDENTIAL_WALLET_METADATA_SCHEMA,
+                    commitment_hex: note.commitment_hex,
+                  }),
+                  "utf8",
+                ),
+              },
+            }),
+          ],
           metadata,
           privateKey,
           privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13597,20 +9541,23 @@ const api: IrohaBridge = {
         ),
         outputs: orderedOutputs,
       });
-      const tx = buildZkTransferTransaction({
+      const tx = await quoteAndSignInstructionTransaction({
+        toriiUrl: input.toriiUrl,
         chainId,
         authority: accountId,
-        transfer: {
-          assetDefinitionId: materials.resolvedAssetId,
-          inputs: proofEnvelope.nullifiers,
-          outputs: proofEnvelope.outputCommitments,
-          proof: {
-            backend: transferVerifyingKeyContext.backend,
-            proof: Buffer.from(proofEnvelope.proof),
-            verifyingKeyRef: transferVerifyingKeyContext.proofVerifyingKey.id,
-          },
-          rootHint: Buffer.from(selectedRootHintHex, "hex"),
-        },
+        instructions: [
+          buildZkTransferInstruction({
+            assetDefinitionId: materials.resolvedAssetId,
+            inputs: proofEnvelope.nullifiers,
+            outputs: proofEnvelope.outputCommitments,
+            proof: {
+              backend: transferVerifyingKeyContext.backend,
+              proof: Buffer.from(proofEnvelope.proof),
+              verifyingKeyRef: transferVerifyingKeyContext.proofVerifyingKey.id,
+            },
+            rootHint: Buffer.from(selectedRootHintHex, "hex"),
+          }),
+        ],
         metadata,
         privateKey,
         privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -13802,12 +9749,17 @@ const api: IrohaBridge = {
       }
     }
 
-    const tx = buildTransferAssetTransaction({
+    const tx = await quoteAndSignInstructionTransaction({
+      toriiUrl: input.toriiUrl,
       chainId,
       authority: accountId,
-      sourceAssetHoldingId,
-      quantity: input.quantity,
-      destinationAccountId,
+      instructions: [
+        buildTransferAssetInstruction({
+          sourceAssetHoldingId,
+          quantity: input.quantity,
+          destinationAccountId,
+        }),
+      ],
       metadata: withRequiredGasAssetMetadata(input.metadata, input.toriiUrl),
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -14057,48 +10009,8 @@ const api: IrohaBridge = {
       },
     );
   },
-  async registerCitizen({
-    toriiUrl,
-    chainId,
-    accountId,
-    amount,
-    privateKeyHex,
-  }) {
-    const normalizedAccount = normalizeCompatAccountIdLiteral(
-      accountId,
-      "accountId",
-    );
-    const policy = await fetchGovernanceRegistrationPolicy(toriiUrl);
-    if (
-      policy.citizenshipAssetDefinitionId &&
-      policy.citizenshipAssetDefinitionExists === false
-    ) {
-      throw new Error(
-        missingGovernanceCitizenshipAssetMessage(
-          policy.citizenshipAssetDefinitionId,
-        ),
-      );
-    }
-    await assertGovernanceCitizenshipRouteReady(toriiUrl);
-    try {
-      return await submitInstructionTransaction({
-        toriiUrl,
-        chainId,
-        authorityAccountId: normalizedAccount,
-        privateKeyHex,
-        instruction: {
-          RegisterCitizen: {
-            owner: normalizedAccount,
-            amount: normalizeIntegerAmount(amount, "amount"),
-          },
-        },
-      });
-    } catch (error) {
-      throw decorateRegisterCitizenError(error);
-    }
-  },
-  getGovernanceRegistrationPolicy({ toriiUrl }) {
-    return fetchGovernanceRegistrationPolicy(toriiUrl);
+  getGovernanceCapabilities({ toriiUrl }) {
+    return fetchGovernanceCapabilities(toriiUrl);
   },
   getGovernanceCitizenStatus({ toriiUrl, accountId }) {
     return fetchGovernanceCitizenStatus(toriiUrl, accountId);
@@ -14129,121 +10041,32 @@ const api: IrohaBridge = {
   getGovernanceCouncilCurrent(config) {
     return fetchGovernanceCouncilCurrent(config.toriiUrl);
   },
-  proposeGovernanceDeployContract({
-    toriiUrl,
-    contractAddress,
-    contractAlias,
-    codeHash,
-    abiHash,
-    abiVersion,
-    mode,
-    window,
-    limits,
-  }) {
-    const client = getClient(toriiUrl);
-    const normalizedContractAddress = contractAddress?.trim() ?? "";
-    const normalizedContractAlias = contractAlias?.trim() ?? "";
-    if (!normalizedContractAddress && !normalizedContractAlias) {
-      throw new Error("contractAddress or contractAlias is required.");
-    }
-    if (normalizedContractAddress && normalizedContractAlias) {
-      throw new Error(
-        "Provide either contractAddress or contractAlias, not both.",
-      );
-    }
-    const basePayload = {
-      codeHash: codeHash.trim(),
-      abiHash: abiHash.trim(),
-      abiVersion: abiVersion?.trim() || "1",
-    };
-    const payload: ToriiGovernanceDeployContractProposalRequest =
-      normalizedContractAddress
-        ? {
-            ...basePayload,
-            contractAddress: normalizedContractAddress,
-          }
-        : {
-            ...basePayload,
-            contractAlias: normalizedContractAlias,
-          };
-    if (mode) {
-      payload.mode = mode;
-    }
-    if (window) {
-      payload.window = window;
-    }
-    if (limits !== undefined && limits !== null) {
-      payload.limits =
-        limits as ToriiGovernanceDeployContractProposalRequest["limits"];
-    }
-    return client.governanceProposeDeployContract(payload);
+  listGovernanceProposals(input) {
+    return fetchGovernanceProposalList(input);
   },
-  proposeGovernanceSccpRouteManifest({ toriiUrl, manifest, mode, window }) {
-    const client = getClient(toriiUrl);
-    if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
-      throw new Error("manifest is required.");
-    }
-    const payload: {
-      manifest: Record<string, unknown>;
-      mode?: "Plain" | "Zk";
-      window?: { lower: number; upper: number };
-    } = {
-      manifest,
-    };
-    if (mode) {
-      payload.mode = mode;
-    }
-    if (window) {
-      payload.window = window;
-    }
-    return client.governanceProposeSccpRouteManifest(payload);
+  getGovernanceProposalDetail(input) {
+    return fetchGovernanceProposalDetail(input);
   },
-  submitGovernancePlainBallot({
-    toriiUrl,
-    chainId,
-    accountId,
-    referendumId,
-    amount,
-    durationBlocks,
-    direction,
-    privateKeyHex,
-  }) {
-    const normalizedAccount = normalizeCompatAccountIdLiteral(
-      accountId,
-      "accountId",
-    );
-    const normalizedReferendumId = referendumId.trim();
-    if (!normalizedReferendumId) {
-      throw new Error("referendumId is required.");
-    }
-    return submitInstructionTransaction({
-      toriiUrl,
-      chainId,
-      authorityAccountId: normalizedAccount,
-      privateKeyHex,
-      instruction: {
-        CastPlainBallot: {
-          referendum_id: normalizedReferendumId,
-          owner: normalizedAccount,
-          amount: normalizeIntegerAmount(amount, "amount"),
-          duration_blocks: normalizeDurationBlocks(durationBlocks),
-          direction: normalizeBallotDirectionCode(direction),
-        },
-      },
-    });
+  getGovernanceCurrentValidationFeePolicy({ toriiUrl }) {
+    return fetchGovernanceValidationFeePolicy(toriiUrl);
   },
-  finalizeGovernanceReferendum({ toriiUrl, referendumId, proposalId }) {
-    const client = getClient(toriiUrl);
-    return client.governanceFinalizeReferendumTyped({
-      referendumId,
-      proposalId,
-    });
+  prepareGovernanceCitizenRegistration(input) {
+    return prepareGovernanceCitizenRegistrationAction(input);
   },
-  enactGovernanceProposal({ toriiUrl, proposalId }) {
-    const client = getClient(toriiUrl);
-    return client.governanceEnactProposalTyped({
-      proposalId,
-    });
+  prepareGovernanceProposal(input) {
+    return prepareGovernanceProposalAction(input);
+  },
+  prepareGovernancePlainBallot(input) {
+    return prepareGovernancePlainBallotAction(input);
+  },
+  prepareGovernanceParliamentBallot(input) {
+    return prepareGovernanceParliamentBallotAction(input);
+  },
+  prepareGovernanceEnact(input) {
+    return prepareGovernanceEnactAction(input);
+  },
+  confirmGovernanceAction(input) {
+    return confirmPreparedGovernanceAction(input);
   },
   getExplorerMetrics(config) {
     const client = getClient(config.toriiUrl);
@@ -14882,19 +10705,22 @@ const api: IrohaBridge = {
       return transactionSubmissionResult(submission);
     }
 
-    const tx = buildCreateKaigiTransaction({
+    const tx = await quoteAndSignInstructionTransaction({
+      toriiUrl,
       chainId: chainId.trim(),
       authority,
-      call: {
-        id: normalizedCallId,
-        host: authority,
-        title: title?.trim() || null,
-        scheduledStartMs: normalizedScheduledStartMs,
-        privacyMode: "Transparent",
-        roomPolicy: "authenticated",
-        relayManifest: resolvedRelayManifest,
-        metadata: callMetadata,
-      },
+      instructions: [
+        buildCreateKaigiInstruction({
+          id: normalizedCallId,
+          host: authority,
+          title: title?.trim() || null,
+          scheduledStartMs: normalizedScheduledStartMs,
+          privacyMode: "Transparent",
+          roomPolicy: "authenticated",
+          relayManifest: resolvedRelayManifest,
+          metadata: callMetadata,
+        }),
+      ],
       metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -15028,13 +10854,16 @@ const api: IrohaBridge = {
       return transactionSubmissionResult(submission);
     }
 
-    const tx = buildJoinKaigiTransaction({
+    const tx = await quoteAndSignInstructionTransaction({
+      toriiUrl,
       chainId: chainId.trim(),
       authority,
-      join: {
-        callId: answerPayload.callId,
-        participant: authority,
-      },
+      instructions: [
+        buildJoinKaigiInstruction({
+          callId: answerPayload.callId,
+          participant: authority,
+        }),
+      ],
       metadata: withRequiredGasAssetMetadata(metadata, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -15254,13 +11083,16 @@ const api: IrohaBridge = {
       return transactionSubmissionResult(submission);
     }
 
-    const tx = buildEndKaigiTransaction({
+    const tx = await quoteAndSignInstructionTransaction({
+      toriiUrl,
       chainId: chainId.trim(),
       authority,
-      end: {
-        callId: normalizedCallId,
-        endedAtMs: resolvedEndedAtMs,
-      },
+      instructions: [
+        buildEndKaigiInstruction({
+          callId: normalizedCallId,
+          endedAtMs: resolvedEndedAtMs,
+        }),
+      ],
       metadata: withRequiredGasAssetMetadata(undefined, toriiUrl),
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
@@ -15414,56 +11246,6 @@ const api: IrohaBridge = {
   getParameters({ toriiUrl }) {
     return getParametersFromTorii({ toriiUrl });
   },
-  getSccpCapabilities({ toriiUrl }) {
-    return getSccpCapabilitiesFromTorii({ toriiUrl });
-  },
-  getSccpProofManifests({ toriiUrl }) {
-    return getSccpProofManifestsFromTorii({ toriiUrl });
-  },
-  listSccpRecentMessages(input) {
-    return listSccpRecentMessagesFromTorii(input);
-  },
-  getSccpMessageProofBundle(input) {
-    return getSccpMessageProofBundleFromTorii(input);
-  },
-  getSccpMessageProofArtifact(input) {
-    const client = getClient(input.toriiUrl);
-    return client.getSccpMessageProofArtifact(
-      input.messageId,
-      buildSccpDestinationProofOptions(input),
-    );
-  },
-  getSccpMessageProofJob(input) {
-    const client = getClient(input.toriiUrl);
-    return client.getSccpMessageProofJob(
-      input.messageId,
-      buildSccpDestinationProofOptions(input),
-    );
-  },
-  proveBscSccpProof(input) {
-    return proveBscSccpProofInNode(input);
-  },
-  proveBscSccpSourceProof(input) {
-    return proveBscSccpSourceProofInNode(input);
-  },
-  rebuildSccpMessageBundleSourceProofWithDeployment(input) {
-    return Promise.resolve(rebuildSccpSourceProofResultInNode(input));
-  },
-  buildTonSccpMessageBundleSourceProofWithDeployment(input) {
-    return Promise.resolve(buildTonSccpSourceProofResultInNode(input));
-  },
-  submitSccpBridgeProof(input) {
-    return submitSccpBridgeProofToTorii(input);
-  },
-  submitSccpBridgeMessage(input) {
-    return submitSccpBridgeMessageToTorii(input);
-  },
-  waitForSccpTransactionCommit(input) {
-    return waitForSccpTransactionCommitOnTorii(input);
-  },
-  deploySccpTairaInboundSettlementContract(input) {
-    return deploySccpTairaInboundSettlementContractToTorii(input);
-  },
   deriveZkIvmPayload(input) {
     return deriveZkIvmPayloadOnTorii(input);
   },
@@ -15478,93 +11260,6 @@ const api: IrohaBridge = {
   },
   submitZkIvmProvedTransaction(input) {
     return submitZkIvmProvedTransactionToTorii(input);
-  },
-  getTronTransaction(input) {
-    return getTronTransactionFromGateway(input);
-  },
-  getTronAccount(input) {
-    return getTronAccountFromGateway(input);
-  },
-  getTronTransactionReceipt(input) {
-    return getTronTransactionReceiptFromGateway(input);
-  },
-  getTronTransactionEvents(input) {
-    return getTronTransactionEventsFromGateway(input);
-  },
-  getTronSolidBlock(input) {
-    return getTronSolidBlockFromGateway(input);
-  },
-  getTronWitnesses(input) {
-    return getTronWitnessesFromGateway(input);
-  },
-  getTronFinalityData(input) {
-    return getTronFinalityDataFromGateway(input);
-  },
-  getSccpNileTestTronSigner() {
-    return getSccpNileTestTronSignerStatus();
-  },
-  signSccpNileTestTronTransaction(input) {
-    return signSccpNileTestTronTransaction(input);
-  },
-  broadcastTronTransaction(input) {
-    return broadcastTronTransactionToGateway(input);
-  },
-  triggerTronSmartContract(input) {
-    return triggerTronSmartContractFromGateway(input);
-  },
-  triggerTronConstantContract(input) {
-    return triggerTronConstantContractFromGateway(input);
-  },
-  callEvmRpc(input) {
-    return callEvmRpcOnGateway(input);
-  },
-  getEvmChainId(input) {
-    return getEvmChainIdFromRpc(input);
-  },
-  getEvmBalance(input) {
-    return getEvmBalanceFromRpc(input);
-  },
-  getEvmCode(input) {
-    return getEvmCodeFromRpc(input);
-  },
-  callEvmContract(input) {
-    return callEvmContractFromRpc(input);
-  },
-  getEvmTransactionReceipt(input) {
-    return getEvmTransactionReceiptFromRpc(input);
-  },
-  getEvmTransaction(input) {
-    return getEvmTransactionFromRpc(input);
-  },
-  getEvmBlockByHash(input) {
-    return getEvmBlockByHashFromRpc(input);
-  },
-  getEvmLogs(input) {
-    return getEvmLogsFromRpc(input);
-  },
-  callSolanaRpc(input) {
-    return callSolanaRpcOnGateway(input);
-  },
-  getSolanaBalance(input) {
-    return getSolanaBalanceFromRpc(input);
-  },
-  getSolanaTokenBalance(input) {
-    return getSolanaTokenBalanceFromRpc(input);
-  },
-  prepareSolanaAssociatedTokenAccount(input) {
-    return prepareSolanaAssociatedTokenAccountFromRpc(input);
-  },
-  getSolanaSignatureStatus(input) {
-    return getSolanaSignatureStatusFromRpc(input);
-  },
-  getSolanaTransaction(input) {
-    return getSolanaTransactionFromRpc(input);
-  },
-  buildSolanaTransaction(input) {
-    return buildSolanaTransactionFromInstructions(input);
-  },
-  broadcastSolanaTransaction(input) {
-    return broadcastSolanaTransactionToRpc(input);
   },
   bondPublicLaneStake({
     toriiUrl,

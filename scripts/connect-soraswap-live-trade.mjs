@@ -41,7 +41,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_TORII_URL = "https://taira.sora.org";
-const DEFAULT_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const DEFAULT_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const DEFAULT_GAS_LIMIT = 5000;
 const DEFAULT_SLIPPAGE_BPS = 50n;
 const DEFAULT_DERIVATION_LABEL = "default";

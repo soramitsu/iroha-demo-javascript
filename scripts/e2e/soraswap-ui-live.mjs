@@ -28,7 +28,7 @@ const testnetClientConfig = join(
   "taira.client.toml",
 );
 
-const chainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const chainId = "fc56984b-2be7-431d-840e-21514d1883f0";
 const networkPrefix = 369;
 const toriiUrl = process.env.SORASWAP_TORII_URL || "https://taira.sora.org";
 const nodeToriiUrl = process.env.SORASWAP_NODE_TORII_URL || toriiUrl;

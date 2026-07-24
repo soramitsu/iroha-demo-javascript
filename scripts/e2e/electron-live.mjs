@@ -26,7 +26,7 @@ const screenshotDir = join(projectRoot, "output", "playwright");
 const e2eStateDir = join(projectRoot, "output", "e2e");
 const fundedWalletCachePath = join(e2eStateDir, "live-funded-wallet.json");
 const tairaToriiUrl = "https://taira.sora.org";
-const tairaChainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const tairaChainId = "fc56984b-2be7-431d-840e-21514d1883f0";
 const tairaToriiHosts = new Set(["taira.sora.org", "www.taira.sora.org"]);
 
 const toriiUrl = readEnv("E2E_TORII_URL", tairaToriiUrl);
@@ -39,6 +39,16 @@ const defaultDerivationLabel = "default";
 const expectedFaucetQuantity = readEnv("E2E_EXPECTED_FAUCET_QUANTITY", "25000");
 const reuseFundedWalletCache = ["1", "true", "yes"].includes(
   String(process.env.E2E_REUSE_FUNDED_CACHE ?? "")
+    .trim()
+    .toLowerCase(),
+);
+const registerCitizenDuringNavigation = ["1", "true", "yes"].includes(
+  String(process.env.E2E_REGISTER_CITIZEN ?? "")
+    .trim()
+    .toLowerCase(),
+);
+const governanceOnly = ["1", "true", "yes"].includes(
+  String(process.env.E2E_GOVERNANCE_ONLY ?? "")
     .trim()
     .toLowerCase(),
 );
@@ -83,6 +93,12 @@ async function main() {
       privateKeyHex: fundedFlow.privateKeyHex,
       assetDefinitionId: readOnlyAssetId,
     });
+    if (governanceOnly) {
+      console.log(
+        "Live Electron governance E2E passed (funded wallet + citizenship bond).",
+      );
+      return;
+    }
     const onboardingOutcome = await runOnboardingFlow(page, onboardingAssetId);
 
     console.log(
@@ -829,6 +845,11 @@ async function runReadOnlyFlow(page, fundedAccount) {
     .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
     .waitFor({ state: "visible", timeout: 45_000 });
 
+  if (governanceOnly) {
+    await runNavigationSmokeFlow(page, fundedAccount);
+    return;
+  }
+
   const confidentialTransferProbe = await page.evaluate(
     async ({
       torii,
@@ -1486,7 +1507,7 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
 }
 
 async function runNavigationSmokeFlow(page, fundedAccount) {
-  const checks = [
+  const routeChecks = [
     {
       hash: "#/setup",
       headingOptions: ["Advanced settings", "Advanced", "Session Setup"],
@@ -1503,9 +1524,9 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       sectionText: "Stake / Unstake",
     },
     {
-      hash: "#/parliament",
+      hash: "#/governance",
       headingOptions: ["Governance", "SORA Parliament"],
-      sectionText: "Voting eligibility",
+      sectionText: "Eligibility",
     },
     {
       hash: "#/subscriptions",
@@ -1538,6 +1559,9 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       sectionText: "Network health",
     },
   ];
+  const checks = governanceOnly
+    ? routeChecks.filter((check) => check.hash === "#/governance")
+    : routeChecks;
 
   for (const check of checks) {
     await page.evaluate((hash) => {
@@ -1600,15 +1624,98 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
     }
 
-    if (check.hash === "#/parliament") {
-      await page
-        .getByRole("button", { name: "Bond 10000 XOR", exact: true })
-        .waitFor({
+    if (check.hash === "#/governance") {
+      const citizenshipAccountId =
+        fundedAccount.i105AccountId || fundedAccount.accountId;
+      const citizenshipStatus = await page.evaluate(
+        ({ torii, accountId }) =>
+          window.iroha.getGovernanceCitizenStatus({
+            toriiUrl: torii,
+            accountId,
+          }),
+        {
+          torii: toriiUrl,
+          accountId: citizenshipAccountId,
+        },
+      );
+      if (!citizenshipStatus?.isCitizen) {
+        const bondButton = page.getByRole("button", {
+          name: "Bond 10000 XOR",
+          exact: true,
+        });
+        await bondButton.waitFor({
           state: "visible",
           timeout: 45_000,
         });
+        if (registerCitizenDuringNavigation) {
+          await page
+            .waitForFunction(
+              () => {
+                const button = document.querySelector(
+                  '[data-testid="governance-bond-citizen"]',
+                );
+                return button instanceof HTMLButtonElement && !button.disabled;
+              },
+              undefined,
+              { timeout: 60_000 },
+            )
+            .catch(() => null);
+          if (await bondButton.isDisabled()) {
+            const reason =
+              (await page
+                .locator(".citizenship-action .gate-reason")
+                .textContent()
+                .catch(() => null)) ?? "unknown eligibility failure";
+            throw new Error(
+              `Live citizenship bond is disabled for a funded wallet: ${reason.trim()}`,
+            );
+          }
+          await bondButton.click();
+          const citizenshipOutcome = await Promise.race([
+            page
+              .getByText("Eligible", { exact: true })
+              .first()
+              .waitFor({ state: "visible", timeout: 120_000 })
+              .then(() => ({ kind: "committed" })),
+            page
+              .locator(".governance-shell > .message.error")
+              .waitFor({ state: "visible", timeout: 120_000 })
+              .then(async () => ({
+                kind: "rejected",
+                message:
+                  (await page
+                    .locator(".governance-shell > .message.error")
+                    .textContent()) ?? "unknown citizenship error",
+              })),
+          ]);
+          if (citizenshipOutcome.kind === "rejected") {
+            throw new Error(
+              `Live citizenship bond failed: ${citizenshipOutcome.message.trim()}`,
+            );
+          }
+          const committedCitizenshipStatus = await page.evaluate(
+            ({ torii, accountId }) =>
+              window.iroha.getGovernanceCitizenStatus({
+                toriiUrl: torii,
+                accountId,
+              }),
+            {
+              torii: toriiUrl,
+              accountId: citizenshipAccountId,
+            },
+          );
+          if (!committedCitizenshipStatus?.isCitizen) {
+            throw new Error(
+              "The governance UI reported citizenship, but the live Torii citizenship read did not confirm it.",
+            );
+          }
+          console.log(
+            `Live citizenship bond committed for ${citizenshipAccountId}.`,
+          );
+        }
+      }
       await page
-        .getByRole("button", { name: "Submit ballot", exact: true })
+        .getByRole("button", { name: "Review citizen ballot", exact: true })
         .waitFor({
           state: "visible",
           timeout: 45_000,
@@ -1900,6 +2007,10 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
       await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
     }
+  }
+
+  if (governanceOnly) {
+    return;
   }
 
   // Ensure receive page still renders a QR payload in the hydrated account flow.

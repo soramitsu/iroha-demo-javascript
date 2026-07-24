@@ -38,7 +38,7 @@ describe("packaged renderer protocol", () => {
     expect(RENDERER_PROTOCOL_PRIVILEGES).not.toHaveProperty("corsEnabled");
   });
 
-  it("maps the root and packaged prover modules inside the renderer root", () => {
+  it("maps the root and packaged assets inside the renderer root", () => {
     expect(
       resolveRendererProtocolAssetPath({
         requestUrl: `${RENDERER_PROTOCOL_ORIGIN}/`,
@@ -47,12 +47,10 @@ describe("packaged renderer protocol", () => {
     ).toBe(resolve(rendererRoot, "index.html"));
     expect(
       resolveRendererProtocolAssetPath({
-        requestUrl: `${RENDERER_PROTOCOL_ORIGIN}/sccp-solana/taira-solana-xor-source-prover.js`,
+        requestUrl: `${RENDERER_PROTOCOL_ORIGIN}/assets/wallet-icon.svg`,
         rendererRoot,
       }),
-    ).toBe(
-      resolve(rendererRoot, "sccp-solana/taira-solana-xor-source-prover.js"),
-    );
+    ).toBe(resolve(rendererRoot, "assets/wallet-icon.svg"));
   });
 
   it.each([

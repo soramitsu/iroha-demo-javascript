@@ -156,7 +156,6 @@ describe("App shell", () => {
       t("VPN"),
       t("Kaigi"),
       t("Offline"),
-      t("SCCP Bridge"),
     ]);
     expect(
       wrapper.findAll(".sidebar-footer .nav-label").map((node) => node.text()),

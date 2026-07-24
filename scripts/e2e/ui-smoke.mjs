@@ -23,7 +23,7 @@ const E2E_PUBLIC_KEY_HEX =
 const E2E_PRIVATE_KEY_HEX =
   "1111111111111111111111111111111111111111111111111111111111111111";
 const TAIRA_TORII_URL = "https://taira.sora.org";
-const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const XOR_ASSET_ID = `xor#universal#${E2E_ACCOUNT_ID}`;
 
 const routeChecks = [
@@ -33,7 +33,6 @@ const routeChecks = [
   ["/receive", "Receive"],
   ["/subscriptions", "Subscriptions"],
   ["/soracloud", "SoraCloud"],
-  ["/sccp", "SCCP Bridge"],
   ["/staking", "Stake XOR"],
   ["/governance", "Governance"],
   ["/explore", "Explore"],
@@ -50,7 +49,6 @@ const mobileRouteChecks = [
   ["/send", "Send"],
   ["/kaigi", "Kaigi"],
   ["/soracloud", "SoraCloud"],
-  ["/sccp", "SCCP Bridge"],
   ["/vpn", "Sora VPN"],
 ];
 
@@ -72,7 +70,7 @@ const responsiveViewportChecks = [
       ["/wallet", "Wallet"],
       ["/receive", "Receive"],
       ["/kaigi", "Kaigi"],
-      ["/sccp", "SCCP Bridge"],
+      ["/governance", "Governance"],
     ],
   },
   {
@@ -142,7 +140,6 @@ function buildInitScript() {
       walletFunded: true,
       confidentialMode: "convertible",
       vpnMode: "ready",
-      sccpMode: "blocked",
     };
     const now = () => Date.now();
     const txHash = (label) => "0x" + Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
@@ -244,6 +241,66 @@ function buildInitScript() {
       scanWatermarkBlock: 98760,
       recoveredNoteCount: 2,
       trackedAssetIds: ["xor#universal"],
+    });
+    const governanceProposalId = "0x" + "a".repeat(64);
+    const governanceProposalSummary = () => ({
+      proposalId: governanceProposalId,
+      referendumId: "referendum-e2e",
+      proposer: accountId,
+      createdHeight: "98700",
+      status: "Proposed",
+      referendumStatus: "Open",
+      votingMode: "Plain",
+      kindType: "ValidationFeePayoutLifecycle",
+      kindLabelKey: "Validation fee payout lifecycle",
+      currentStage: "Agenda",
+    });
+    const governanceProposalDetail = () => ({
+      summary: governanceProposalSummary(),
+      kind: {
+        type: "ValidationFeePayoutLifecycle",
+        raw: {},
+        payoutBinding: {
+          contract_address: "tairac1governancee2epayoutcontract",
+        },
+        lifecycleSeal: null,
+      },
+      referendum: {
+        id: "referendum-e2e",
+        hStart: "98700",
+        hEnd: "99000",
+        status: "Open",
+        mode: "Plain",
+      },
+      tally: { approve: "10", reject: "2", abstain: "1" },
+      locks: [],
+      pipeline: [
+        {
+          stage: "Admit",
+          startedAt: "98700",
+          deadline: null,
+          completedAt: "98700",
+          failure: null,
+        },
+        {
+          stage: "Rules",
+          startedAt: "98701",
+          deadline: null,
+          completedAt: "98701",
+          failure: null,
+        },
+        {
+          stage: "Agenda",
+          startedAt: "98702",
+          deadline: "99000",
+          completedAt: null,
+          failure: null,
+        },
+      ],
+      parliamentRosters: [],
+      parliamentOutcomes: [],
+      currentHeight: "98765",
+      raw: {},
     });
     const sumeragiStatus = () => ({
       lane_governance: [
@@ -658,6 +715,54 @@ function buildInitScript() {
           { name: "CanEnactGovernance", payload: null },
         ],
       }),
+      getGovernanceCapabilities: async () => ({
+        schema: "iroha.governance.capabilities.v1",
+        version: 1,
+        chainId,
+        genesisHash: "1".repeat(63) + "3",
+        currentHeight: 98765,
+        networkPrefix: 369,
+        abiVersion: 1,
+        dataModelVersion: 3,
+        approvalMode: "PARLIAMENT_SORTITION_JIT",
+        plainVotingEnabled: true,
+        autoFinalizePlain: true,
+        citizenshipAssetId: "xor#universal",
+        citizenshipBondAmount: "10000",
+        votingAssetId: "xor#universal",
+        minBondAmount: "1",
+        convictionStepBlocks: 720,
+        maxConviction: 6,
+        minEnactmentDelay: 600,
+        windowSpan: 3600,
+        minTurnout: "1000",
+        approvalThresholdNumerator: 1,
+        approvalThresholdDenominator: 2,
+        parliamentQuorumBps: 6700,
+        targetBodySizes: {
+          rules_committee: 7,
+          agenda_council: 9,
+          interest_panel: 11,
+          review_panel: 13,
+          policy_jury: 25,
+          oversight_committee: 7,
+          fma_committee: 5,
+        },
+        supportedProposalKinds: [
+          "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+          "VALIDATION_FEE_POLICY",
+        ],
+        supportedRoutes: [
+          "/v1/gov/capabilities",
+          "/v1/gov/citizens/draft",
+          "/v1/validation-fee/proposals",
+          "/v1/validation-fee/proposals/{proposal_id}",
+          "/v1/validation-fee/proposals/draft",
+          "/v1/gov/ballots/plain",
+          "/v1/gov/parliament/ballots",
+          "/v1/gov/enact",
+        ],
+      }),
       getGovernanceCitizenStatus: async () => ({
         accountId,
         isCitizen: false,
@@ -668,36 +773,42 @@ function buildInitScript() {
         cooldownUntil: null,
         endpointAvailable: true,
       }),
-      registerCitizen: async () => ({ hash: txHash("citizen") }),
-      getGovernanceProposal: async ({ proposalId }) => ({
-        found: true,
-        proposal: { id: proposalId, title: "E2E proposal", status: "Open" },
+      prepareGovernanceCitizenRegistration: async () => ({
+        reviewId: "governance-citizen-review",
+        operation: "register-citizen",
+        title: "Register bonded citizen",
+        proposalId: null,
+        referendumId: null,
+        decodedInstruction: {
+          RegisterCitizen: {
+            owner: accountId,
+            amount: "10000",
+          },
+        },
+        fee: {
+          payer: "authority",
+          components: [],
+          nextBlockHeight: "98766",
+        },
+        expiresAtMs: now() + 60000,
       }),
-      getGovernanceReferendum: async ({ referendumId }) => ({
-        found: true,
-        referendum: { id: referendumId, proposal_id: "0x" + "a".repeat(64) },
+      confirmGovernanceAction: async () => ({
+        hash: txHash("governance"),
+        operation: "register-citizen",
+        proposalId: null,
+        referendumId: null,
+        status: "committed",
       }),
-      getGovernanceTally: async ({ referendumId }) => ({
-        found: true,
-        referendum_id: referendumId,
-        tally: { referendum_id: referendumId, approve: 10, reject: 2, abstain: 1 },
+      listGovernanceProposals: async () => ({
+        items: [governanceProposalSummary()],
+        nextCursor: null,
       }),
-      getGovernanceLocks: async ({ referendumId }) => ({
-        found: true,
-        referendum_id: referendumId,
-        locks: { [accountId]: { owner: accountId, amount: 100, expiry_height: 1000, direction: 1, duration_blocks: 20 } },
-      }),
-      getGovernanceCouncilCurrent: async () => ({
-        epoch: 2,
-        members: [{ account_id: accountId }],
-        alternates: [],
-        candidate_count: 1,
-        verified: 1,
-        derived_by: "e2e",
-      }),
-      submitGovernancePlainBallot: async () => ({ hash: txHash("ballot") }),
-      finalizeGovernanceReferendum: async () => ({ ok: true, proposal_id: "0x" + "a".repeat(64), tx_instructions: [] }),
-      enactGovernanceProposal: async () => ({ ok: true, proposal_id: "0x" + "a".repeat(64), tx_instructions: [] }),
+      getGovernanceProposalDetail: async () => governanceProposalDetail(),
+      getGovernanceCurrentValidationFeePolicy: async () => {
+        throw new Error(
+          "Validation-fee policy state is unavailable in the deterministic UI fixture.",
+        );
+      },
       getExplorerMetrics: async () => baseMetrics,
       getNetworkStats: async () => networkStats(),
       getExplorerAccountQr: async () => accountQr(),
@@ -759,17 +870,6 @@ function buildInitScript() {
       },
       getSoraCloudHfStatus: async () => ({}),
       getParameters: async () => ({}),
-      getSccpCapabilities: async () => {
-        throw new Error(
-          fixture.sccpMode === "blocked"
-            ? "TAIRA Torii is unavailable for the deterministic blocked SCCP fixture."
-            : "The deterministic SCCP ready fixture is not configured.",
-        );
-      },
-      getSccpProofManifests: async () => {
-        throw new Error("SCCP manifest unavailable in the blocked fixture.");
-      },
-      listSccpRecentMessages: async () => ({ items: [], total: 0 }),
       getVpnAvailability: async () => {
         const unavailable = fixture.vpnMode === "unavailable";
         const repairRequired = fixture.vpnMode === "repair";
@@ -1081,7 +1181,9 @@ async function navigate(page, route, title) {
     { timeout: 5000 },
   );
   assert(
-    (await page.evaluate(() => window.location.hash)) === `#${nextRoute}`,
+    (await page.evaluate(
+      () => window.location.hash.replace(/^#/, "").split("?")[0],
+    )) === nextRoute,
     `${route} did not resolve to its canonical URL ${nextRoute}.`,
   );
   assert(
@@ -1255,7 +1357,6 @@ async function assertPrimaryActionVisibility(page, route) {
     "/governance":
       "[data-ui-primary-action], .parliament-proposal-workspace .card-header button",
     "/vpn": "[data-ui-primary-action]",
-    "/sccp": "[data-ui-primary-action]",
   };
   const selector = selectors[canonicalRoute(route)];
   if (!selector) return;
@@ -1747,14 +1848,29 @@ async function checkStaking(page) {
 
 async function checkParliament(page) {
   await navigate(page, "/governance", "Governance");
-  await page.getByTestId("referendum-id-input").fill("referendum-e2e");
-  await page.getByTestId("proposal-id-input").fill("0x" + "a".repeat(64));
-  await page.getByRole("button", { name: "Load" }).click();
-  await page
-    .getByText(/Referendum found: yes\.?/)
-    .waitFor({ state: "visible", timeout: 10000 });
-  await page.getByText(/Proposal found: yes\.?/).waitFor({ state: "visible" });
-  console.log("✓ parliament lookup works");
+  const bondButton = page.getByTestId("governance-bond-citizen");
+  await bondButton.waitFor({ state: "visible", timeout: 10000 });
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector(
+        '[data-testid="governance-bond-citizen"]',
+      );
+      return button instanceof HTMLButtonElement && !button.disabled;
+    },
+    undefined,
+    { timeout: 10000 },
+  );
+  assert(
+    await bondButton.isEnabled(),
+    "Non-citizen with sufficient XOR balance and a live bond policy cannot bond XOR.",
+  );
+  assert(
+    /Bond.*XOR/i.test((await bondButton.textContent()) || ""),
+    "Governance citizenship action is not labeled as an XOR bond.",
+  );
+  console.log(
+    "✓ governance queue renders and non-citizen XOR bonding is available",
+  );
 }
 
 async function checkVpn(page) {
@@ -2465,26 +2581,12 @@ async function checkAdversarialFixtureStates(page) {
   await navigate(page, "/vpn", "Sora VPN");
   await page.getByText("VPN unavailable").first().waitFor({ state: "visible" });
 
-  await setFixture(page, { sccpMode: "blocked" });
-  await navigate(page, "/sccp", "SCCP Bridge");
-  await page.locator(".sccp-readiness-alert").waitFor({
-    state: "visible",
-    timeout: 10000,
-  });
-  assert(
-    await page.locator("[data-ui-primary-action]").first().isDisabled(),
-    "Blocked SCCP fixture exposed an enabled primary action.",
-  );
-
   await setFixture(page, {
     walletFunded: true,
     confidentialMode: "convertible",
     vpnMode: "ready",
-    sccpMode: "blocked",
   });
-  console.log(
-    "✓ unfunded, private-send, VPN, and blocked SCCP fixtures render",
-  );
+  console.log("✓ unfunded, private-send, and VPN fixtures render");
 }
 
 function attachPageDiagnostics(page) {

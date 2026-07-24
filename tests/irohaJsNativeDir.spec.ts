@@ -11,7 +11,11 @@ const compatibleNativeModule = () => ({
   buildConfidentialTransferProofV2() {},
   buildConfidentialUnshieldProofV2() {},
   buildConfidentialUnshieldProofV3() {},
-  buildIvmProvedTransaction() {},
+  buildIvmProvedTransactionPayload() {},
+  signQuotedIvmProvedTransactionPayload() {},
+  connectNoritoBridgeAbiVersion() {
+    return 21;
+  },
 });
 
 describe("irohaJsNativeDir", () => {
@@ -69,7 +73,7 @@ describe("irohaJsNativeDir", () => {
 });
 
 describe("hasRequiredIrohaJsNativeExports", () => {
-  it("accepts binaries that expose confidential and IVM transaction helpers", () => {
+  it("accepts binaries that expose confidential and quoted IVM helpers", () => {
     expect(hasRequiredIrohaJsNativeExports(compatibleNativeModule())).toBe(
       true,
     );

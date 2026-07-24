@@ -10,6 +10,9 @@ const REQUIRED_NATIVE_EXPORTS = [
   "buildConfidentialTransferProofV2",
   "buildConfidentialUnshieldProofV2",
   "buildConfidentialUnshieldProofV3",
+  "buildIvmProvedTransactionPayload",
+  "signQuotedIvmProvedTransactionPayload",
+  "connectNoritoBridgeAbiVersion",
 ];
 
 const defaultLoadNativeModule = (nativeModulePath) => {

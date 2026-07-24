@@ -2,6 +2,12 @@ import type {
   ConfidentialWalletBackupMetadata,
   ConfidentialWalletBackupMetadataV2,
 } from "@/utils/walletBackup";
+import type {
+  GovernanceParliamentDecision,
+  GovernanceProposalDetail,
+  GovernanceProposalList,
+  GovernanceWritableProposalKindId,
+} from "@/governance/model";
 
 export type ToriiHealth = ({ status: string } & Record<string, unknown>) | null;
 
@@ -721,221 +727,6 @@ export interface SoraCloudHfDeployResponseView {
   raw: Record<string, unknown>;
 }
 
-export interface SccpCodecCapabilityView {
-  id: number;
-  key: string;
-  description: string;
-}
-
-export interface SccpCounterpartyCapabilityView {
-  domain: number;
-  chain: string;
-  verifierBackendKey: string;
-  messageBackend: string;
-  registryBackend: string;
-  counterpartyAccountCodec: number;
-  counterpartyAccountCodecKey: string;
-  destinationRollout: SccpDestinationRolloutView | null;
-  productionReady: boolean;
-  disabledReason: string | null;
-}
-
-export interface SccpCapabilitiesResponse {
-  localDomain: number;
-  localChain: string;
-  proofFamily: string;
-  burnBundlePath: string;
-  messageBundlePath: string;
-  messageProofPath: string;
-  messageJobPath: string;
-  recentMessagesPath: string;
-  proofManifestPath: string;
-  burnRegistryBackend: string;
-  proofSubmitPath: string | null;
-  messageSubmitPath: string | null;
-  messagePayloadKinds: readonly string[];
-  codecs: readonly SccpCodecCapabilityView[];
-  counterparties: readonly SccpCounterpartyCapabilityView[];
-}
-
-export interface SccpDestinationBindingView {
-  version: number;
-  key: string;
-  bindingHash: string;
-}
-
-export interface SccpDestinationRolloutView {
-  version: number;
-  verifierPlan: string;
-  immutableVerifierReady: boolean;
-  anchorsReady: boolean;
-  verifierIdentity: string | null;
-  verifierCodeHash: string | null;
-  verifierKeyHash: string | null;
-  destinationNetworkId: string | null;
-  destinationBridgeAddress: string | null;
-  destinationBindingKey: string | null;
-  destinationBindingHash: string | null;
-  anchorId: string | null;
-  blockers: readonly string[];
-}
-
-export interface SccpSubmissionArgumentView {
-  key: string;
-  description: string;
-}
-
-export interface SccpCounterpartySubmissionTemplateView {
-  version: number;
-  encoding: string;
-  submissionKind: string;
-  verifierEntrypoint: string;
-  requiredArguments: readonly SccpSubmissionArgumentView[];
-}
-
-export interface SccpTairaXorBurnRecordMaterialView {
-  settlementAssetDefinitionId: string;
-  contractArtifactB64: string;
-  artifactSha256?: string;
-  vkRef: {
-    backend: string;
-    name: string;
-  };
-  gasLimit?: number;
-}
-
-export interface SccpPostDeployLiveEvidenceView {
-  fullTomlReady: boolean;
-  sourceBridgeConfigHash: string;
-  sourceEventTransactionId: string;
-  routeCanaryEvidenceHash: string;
-  routeCanaryTransactionId: string;
-  offlineFullTomlSha256?: string;
-}
-
-export interface SccpProofManifestView {
-  version: number;
-  routeId?: string;
-  assetKey?: string;
-  localDomain: number;
-  localChain: string;
-  counterpartyDomain: number;
-  chain: string;
-  proofFamily: string;
-  securityModel: string;
-  anchorGovernance: string;
-  destinationBinding: SccpDestinationBindingView;
-  verifierBackendKey: string;
-  messageBackend: string;
-  registryBackend: string;
-  counterpartyAccountCodec: number;
-  counterpartyAccountCodecKey: string;
-  finalityModel: string;
-  verifierTarget: string;
-  manifestSeed: string;
-  requiredPublicInputs: readonly string[];
-  messagePayloadKinds: readonly string[];
-  destinationRollout: SccpDestinationRolloutView | null;
-  productionReady: boolean;
-  disabledReason: string | null;
-  tronBridgeAddress?: string;
-  tairaXorBridgeAddress?: string;
-  tairaXorTokenAddress?: string;
-  sccpTronSourceBridgeAddress?: string;
-  tronSourceBridgeAddress?: string;
-  tronVerifierAddress?: string;
-  postDeployLiveEvidence?: SccpPostDeployLiveEvidenceView;
-  submissionTemplate: SccpCounterpartySubmissionTemplateView;
-  tairaXorBurnRecord: SccpTairaXorBurnRecordMaterialView | null;
-}
-
-export interface SccpProofManifestSetResponse {
-  localDomain: number;
-  localChain: string;
-  proofFamily: string;
-  manifests: readonly SccpProofManifestView[];
-  routes?: readonly Record<string, unknown>[];
-}
-
-export interface SccpRecentMessagesResponse {
-  items: Record<string, unknown>[];
-  total: number;
-  raw: Record<string, unknown>;
-}
-
-export interface SccpDestinationProofMaterialInput {
-  networkIdHex?: string;
-  verifierAddressHex?: string;
-  bridgeAddressHex?: string;
-  verifierCodeHashHex?: string;
-  verifierKeyHashHex?: string;
-  expectedDestinationBindingHashHex?: string;
-  tronVerifierAddress?: string;
-  proofBytesHex?: string;
-}
-
-export interface SccpMessageProofInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  messageId: string;
-}
-
-export interface SccpMessageProofBundleInput {
-  toriiUrl: string;
-  messageId: string;
-}
-
-export interface SccpBscProofGenerateInput {
-  request: Record<string, unknown>;
-  proverModuleUrl?: string;
-  proverConfigUrl?: string;
-  timeoutMs?: number;
-}
-
-export interface SccpBscSourceProofGenerateInput {
-  input: Record<string, unknown>;
-  proverModuleUrl?: string;
-  proverConfigUrl?: string;
-  timeoutMs?: number;
-}
-
-export interface SccpSourceProofDeploymentRebuildInput {
-  proofPackage: Record<string, unknown>;
-  sourceVerifierMaterial: Record<string, unknown>;
-  sourceAdapterEngineDeployment: Record<string, unknown>;
-  label?: string;
-}
-
-export interface SccpBridgeProofSubmitInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  accountId: string;
-  burnBundle?: Record<string, unknown>;
-  messageBundle?: Record<string, unknown>;
-  publicKeyHex?: string;
-  signatureB64?: string;
-  creationTimeMs?: number | string;
-}
-
-export interface SccpBridgeMessageSubmitInput
-  extends SccpDestinationProofMaterialInput {
-  toriiUrl: string;
-  accountId: string;
-  messageBundle: Record<string, unknown>;
-  publicKeyHex?: string;
-  signatureB64?: string;
-  receiptLane?: number | string;
-  settlement?: Record<string, unknown>;
-  creationTimeMs?: number | string;
-}
-
-export interface SccpRecentMessagesInput {
-  toriiUrl: string;
-  routeId?: string;
-  limit?: number;
-  offset?: number;
-}
-
 export interface ZkIvmVerifyingKeyRefInput {
   backend: string;
   name: string;
@@ -959,174 +750,16 @@ export interface ZkIvmProvedTransactionSubmitInput {
   toriiUrl: string;
   chainId: string;
   accountId: string;
+  networkPrefix?: number;
   privateKeyHex?: never;
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
+  gasLimit?: string | number;
   metadata?: Record<string, unknown>;
   waitForCommit?: boolean;
   creationTimeMs?: number;
   ttlMs?: number;
   nonce?: number;
-}
-
-export interface TronGatewayInput {
-  endpoint?: string;
-}
-
-export interface TronTransactionInput extends TronGatewayInput {
-  txId: string;
-}
-
-export interface TronAccountInput extends TronGatewayInput {
-  address: string;
-}
-
-export interface TronBlockInput extends TronGatewayInput {
-  blockNumber?: number | string;
-}
-
-export interface TronEventsInput extends TronGatewayInput {
-  txId: string;
-}
-
-export interface TronBroadcastInput extends TronGatewayInput {
-  transaction: Record<string, unknown>;
-}
-
-export interface SccpNileTestTronSignerStatus {
-  enabled: boolean;
-  network: "nile";
-  address: string;
-  reason?: string;
-}
-
-export interface SccpNileTestTronTransactionSignInput {
-  transaction: Record<string, unknown>;
-  ownerAddress?: string;
-}
-
-export type TronContractParameterInput =
-  | {
-      parameter: string;
-      callData?: never;
-    }
-  | {
-      callData: string;
-      parameter?: never;
-    }
-  | {
-      parameter?: undefined;
-      callData?: undefined;
-    };
-
-export type TronTriggerSmartContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-    feeLimit?: number | string;
-    callValue?: number | string;
-    permissionId?: number | string;
-  };
-
-export type TronConstantContractInput = TronGatewayInput &
-  TronContractParameterInput & {
-    ownerAddress: string;
-    contractAddress: string;
-    functionSelector: string;
-  };
-
-export interface EvmRpcInput {
-  endpoint?: string;
-}
-
-export interface EvmRpcCallInput extends EvmRpcInput {
-  method: string;
-  params?: unknown[];
-}
-
-export interface EvmTransactionInput extends EvmRpcInput {
-  txHash: string;
-}
-
-export interface EvmAddressInput extends EvmRpcInput {
-  address: string;
-  blockTag?: string;
-}
-
-export interface EvmCallInput extends EvmRpcInput {
-  to: string;
-  data: string;
-  from?: string;
-  value?: string;
-  blockTag?: string;
-}
-
-export interface EvmLogsInput extends EvmRpcInput {
-  address?: string | string[];
-  blockHash?: string;
-  fromBlock?: string;
-  toBlock?: string;
-  topics?: Array<string | string[] | null>;
-}
-
-export interface SolanaRpcInput {
-  endpoint?: string;
-}
-
-export interface SolanaRpcCallInput extends SolanaRpcInput {
-  method: string;
-  params?: unknown[];
-}
-
-export interface SolanaAddressInput extends SolanaRpcInput {
-  address: string;
-}
-
-export interface SolanaTokenBalanceInput extends SolanaRpcInput {
-  ownerAddress: string;
-  mintAddress: string;
-}
-
-export interface SolanaAssociatedTokenAccountInput extends SolanaRpcInput {
-  payerAddress: string;
-  ownerAddress: string;
-  mintAddress: string;
-}
-
-export interface SolanaTransactionInput extends SolanaRpcInput {
-  signature: string;
-}
-
-export interface SolanaBroadcastInput extends SolanaRpcInput {
-  transactionB64: string;
-  expectedUnsignedTransactionB64: string;
-}
-
-export interface SolanaInstructionAccountMetaInput {
-  pubkey: string;
-  isSigner?: boolean;
-  signer?: boolean;
-  isWritable?: boolean;
-  writable?: boolean;
-}
-
-export interface SolanaInstructionInput {
-  programId: string;
-  accounts?: SolanaInstructionAccountMetaInput[];
-  dataHex: string;
-}
-
-export interface SolanaBuildTransactionInput extends SolanaRpcInput {
-  feePayer: string;
-  instructions: SolanaInstructionInput[];
-  recentBlockhash?: string;
-}
-
-export interface SolanaPreparedAssociatedTokenAccount {
-  associatedTokenAddress: string;
-  exists: boolean;
-  createInstruction: SolanaInstructionInput | null;
 }
 
 export type GovernanceBallotDirection = "Aye" | "Nay" | "Abstain";
@@ -1188,13 +821,35 @@ export interface GovernanceCouncilCurrentResponse {
   derived_by: string;
 }
 
-export interface GovernanceRegistrationPolicyResponse {
-  citizenshipAssetDefinitionId: string | null;
-  citizenshipBondAmount: string | null;
-  citizenshipAssetDefinitionExists: boolean | null;
-  configurationLoaded: boolean;
-  configurationError: string | null;
-  assetDefinitionError: string | null;
+export interface GovernanceCapabilitiesV1 {
+  schema: "iroha.governance.capabilities.v1";
+  version: 1;
+  chainId: string;
+  genesisHash: string;
+  currentHeight: number;
+  networkPrefix: number;
+  abiVersion: number;
+  dataModelVersion: number;
+  approvalMode: "PARLIAMENT_SORTITION_JIT";
+  plainVotingEnabled: true;
+  autoFinalizePlain: true;
+  citizenshipAssetId: string;
+  citizenshipBondAmount: string;
+  votingAssetId: string;
+  minBondAmount: string;
+  convictionStepBlocks: number;
+  maxConviction: number;
+  minEnactmentDelay: number;
+  windowSpan: number;
+  minTurnout: string;
+  approvalThresholdNumerator: number;
+  approvalThresholdDenominator: number;
+  parliamentQuorumBps: number;
+  targetBodySizes: Record<string, number>;
+  supportedProposalKinds: Array<
+    "VALIDATION_FEE_PAYOUT_LIFECYCLE" | "VALIDATION_FEE_POLICY"
+  >;
+  supportedRoutes: string[];
 }
 
 export interface GovernanceDraftInstruction {
@@ -1208,6 +863,119 @@ export interface GovernanceDraftResponse {
   tx_instructions: GovernanceDraftInstruction[];
   accepted?: boolean;
   reason?: string | null;
+}
+
+export interface GovernanceProposalListInput {
+  toriiUrl: string;
+  status?: string | null;
+  kind?: string | null;
+  proposer?: string | null;
+  limit?: number;
+  cursor?: string | null;
+}
+
+export interface GovernanceProposalDetailInput {
+  toriiUrl: string;
+  proposalId: string;
+  accountId?: string | null;
+}
+
+export type GovernanceWriteOperation =
+  | "register-citizen"
+  | "propose"
+  | "plain-ballot"
+  | "parliament-ballot"
+  | "enact";
+
+export interface GovernanceFeeQuoteView {
+  payer: "authority" | "sponsor";
+  components: Array<{
+    kind: string;
+    assetDefinitionId: string;
+    maxAmount: string;
+  }>;
+  nextBlockHeight: string;
+}
+
+export interface GovernancePreparedAction {
+  reviewId: string;
+  operation: GovernanceWriteOperation;
+  title: string;
+  proposalId: string | null;
+  referendumId: string | null;
+  decodedInstruction: Record<string, unknown>;
+  fee: GovernanceFeeQuoteView;
+  expiresAtMs: number;
+}
+
+export interface GovernancePrepareContext {
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  networkPrefix?: number;
+}
+
+export interface GovernanceProposalPrepareInput
+  extends GovernancePrepareContext {
+  kind: GovernanceWritableProposalKindId;
+  payload: Record<string, unknown>;
+}
+
+export interface GovernancePlainBallotPrepareInput
+  extends GovernancePrepareContext {
+  proposalId: string;
+  referendumId: string;
+  amount: string;
+  durationBlocks: string;
+  direction: GovernanceBallotDirection;
+}
+
+export interface GovernanceParliamentBallotPrepareInput
+  extends GovernancePrepareContext {
+  proposalId: string;
+  body: string;
+  decision: GovernanceParliamentDecision;
+}
+
+export interface GovernanceCitizenRegistrationPrepareInput
+  extends GovernancePrepareContext {
+  amount: string;
+}
+
+export interface GovernanceEnactPrepareInput extends GovernancePrepareContext {
+  proposalId: string;
+}
+
+export interface GovernanceConfirmActionInput {
+  reviewId: string;
+  accountId: string;
+}
+
+export interface GovernanceCommittedAction extends TransactionSubmissionResult {
+  operation: GovernanceWriteOperation;
+  proposalId: string | null;
+  referendumId: string | null;
+  status: "committed";
+}
+
+export interface GovernanceValidationFeePolicyView {
+  observedHeight: string;
+  effective: Record<string, unknown>;
+  latestEnacted: Record<string, unknown>;
+  scheduled: [];
+  registryHead: {
+    policyVersion: string;
+    policyHash: string;
+  };
+  verifiedProof: {
+    schema: "cbsi.validation-fee-ledger-projection.v1";
+    authorizationModel: "SORA_PARLIAMENT_V1";
+    registrySnapshotHash: string;
+    finalizedBlockHash: string;
+    finalizedContextId: string;
+    trustedCheckpointHeight: string;
+    trustedCheckpointContextId: string;
+  };
 }
 
 export type GovernanceVotingMode = "Plain" | "Zk";
@@ -1327,10 +1095,6 @@ export interface SigningAlgorithmOption {
 
 export interface RuntimeConfigResponse {
   walletConnectProjectId: string;
-  sccpBscE2eWallet: string;
-  sccpSolanaE2eWallet: string;
-  sccpTonE2eWallet: string;
-  sccpTonConnectManifestUrl: string;
 }
 
 export interface IrohaBridge {
@@ -1529,16 +1293,9 @@ export interface IrohaBridge {
     limit?: number;
     offset?: number;
   }): Promise<AccountPermissionsResponse>;
-  registerCitizen(input: {
+  getGovernanceCapabilities(input: {
     toriiUrl: string;
-    chainId: string;
-    accountId: string;
-    amount: string;
-    privateKeyHex?: string;
-  }): Promise<TransactionSubmissionResult>;
-  getGovernanceRegistrationPolicy(input: {
-    toriiUrl: string;
-  }): Promise<GovernanceRegistrationPolicyResponse>;
+  }): Promise<GovernanceCapabilitiesV1>;
   getGovernanceCitizenStatus(input: {
     toriiUrl: string;
     accountId: string;
@@ -1568,39 +1325,38 @@ export interface IrohaBridge {
   getGovernanceCouncilCurrent(input: {
     toriiUrl: string;
   }): Promise<GovernanceCouncilCurrentResponse>;
+  listGovernanceProposals(
+    input: GovernanceProposalListInput,
+  ): Promise<GovernanceProposalList>;
+  getGovernanceProposalDetail(
+    input: GovernanceProposalDetailInput,
+  ): Promise<GovernanceProposalDetail>;
+  getGovernanceCurrentValidationFeePolicy(input: {
+    toriiUrl: string;
+  }): Promise<GovernanceValidationFeePolicyView>;
+  prepareGovernanceCitizenRegistration(
+    input: GovernanceCitizenRegistrationPrepareInput,
+  ): Promise<GovernancePreparedAction>;
+  prepareGovernanceProposal(
+    input: GovernanceProposalPrepareInput,
+  ): Promise<GovernancePreparedAction>;
+  prepareGovernancePlainBallot(
+    input: GovernancePlainBallotPrepareInput,
+  ): Promise<GovernancePreparedAction>;
+  prepareGovernanceParliamentBallot(
+    input: GovernanceParliamentBallotPrepareInput,
+  ): Promise<GovernancePreparedAction>;
+  prepareGovernanceEnact(
+    input: GovernanceEnactPrepareInput,
+  ): Promise<GovernancePreparedAction>;
+  confirmGovernanceAction(
+    input: GovernanceConfirmActionInput,
+  ): Promise<GovernanceCommittedAction>;
   getGovernanceLifecycle?(input: {
     toriiUrl: string;
     proposalId?: string | null;
     referendumId?: string | null;
   }): Promise<GovernanceLifecycleSnapshot>;
-  proposeGovernanceDeployContract(
-    input: GovernanceDeployContractProposalInput,
-  ): Promise<GovernanceDraftResponse>;
-  proposeGovernanceSccpRouteManifest(input: {
-    toriiUrl: string;
-    manifest: Record<string, unknown>;
-    mode?: "Plain" | "Zk" | null;
-    window?: { lower: number; upper: number } | null;
-  }): Promise<GovernanceDraftResponse>;
-  submitGovernancePlainBallot(input: {
-    toriiUrl: string;
-    chainId: string;
-    accountId: string;
-    referendumId: string;
-    amount: string;
-    durationBlocks: number;
-    direction: GovernanceBallotDirection;
-    privateKeyHex?: string;
-  }): Promise<TransactionSubmissionResult>;
-  finalizeGovernanceReferendum(input: {
-    toriiUrl: string;
-    referendumId: string;
-    proposalId: string;
-  }): Promise<GovernanceDraftResponse>;
-  enactGovernanceProposal(input: {
-    toriiUrl: string;
-    proposalId: string;
-  }): Promise<GovernanceDraftResponse>;
   getExplorerMetrics(config: {
     toriiUrl: string;
   }): Promise<ExplorerMetricsResponse | null>;
@@ -1839,53 +1595,6 @@ export interface IrohaBridge {
     apiToken?: string;
   }): Promise<Record<string, unknown>>;
   getParameters(input: { toriiUrl: string }): Promise<Record<string, unknown>>;
-  getSccpCapabilities(input: {
-    toriiUrl: string;
-  }): Promise<SccpCapabilitiesResponse>;
-  getSccpProofManifests(input: {
-    toriiUrl: string;
-  }): Promise<SccpProofManifestSetResponse>;
-  listSccpRecentMessages(
-    input: SccpRecentMessagesInput,
-  ): Promise<SccpRecentMessagesResponse>;
-  getSccpMessageProofBundle(
-    input: SccpMessageProofBundleInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpMessageProofArtifact(
-    input: SccpMessageProofInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpMessageProofJob(
-    input: SccpMessageProofInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpProof(
-    input: SccpBscProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  proveBscSccpSourceProof(
-    input: SccpBscSourceProofGenerateInput,
-  ): Promise<Record<string, unknown>>;
-  rebuildSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  buildTonSccpMessageBundleSourceProofWithDeployment(
-    input: SccpSourceProofDeploymentRebuildInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeProof(
-    input: SccpBridgeProofSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  submitSccpBridgeMessage(
-    input: SccpBridgeMessageSubmitInput,
-  ): Promise<Record<string, unknown>>;
-  waitForSccpTransactionCommit(input: {
-    toriiUrl: string;
-    hashHex: string;
-  }): Promise<Record<string, unknown>>;
-  deploySccpTairaInboundSettlementContract(input: {
-    toriiUrl: string;
-    accountId: string;
-    contractAlias?: string | null;
-    compiledCodeB64?: string | null;
-    leaseExpiryMs?: number | string | null;
-  }): Promise<Record<string, unknown> | null>;
   deriveZkIvmPayload(
     input: ZkIvmRequestInput,
   ): Promise<Record<string, unknown>>;
@@ -1899,67 +1608,6 @@ export interface IrohaBridge {
   submitZkIvmProvedTransaction(
     input: ZkIvmProvedTransactionSubmitInput,
   ): Promise<Record<string, unknown>>;
-  getTronTransaction(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronAccount(input: TronAccountInput): Promise<Record<string, unknown>>;
-  getTronTransactionReceipt(
-    input: TronTransactionInput,
-  ): Promise<Record<string, unknown>>;
-  getTronTransactionEvents(
-    input: TronEventsInput,
-  ): Promise<Record<string, unknown>>;
-  getTronSolidBlock(input?: TronBlockInput): Promise<Record<string, unknown>>;
-  getTronWitnesses(input?: TronGatewayInput): Promise<Record<string, unknown>>;
-  getTronFinalityData(
-    input?: TronGatewayInput,
-  ): Promise<Record<string, unknown>>;
-  getSccpNileTestTronSigner(): Promise<SccpNileTestTronSignerStatus>;
-  signSccpNileTestTronTransaction(
-    input: SccpNileTestTronTransactionSignInput,
-  ): Promise<Record<string, unknown>>;
-  broadcastTronTransaction(
-    input: TronBroadcastInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronSmartContract(
-    input: TronTriggerSmartContractInput,
-  ): Promise<Record<string, unknown>>;
-  triggerTronConstantContract(
-    input: TronConstantContractInput,
-  ): Promise<Record<string, unknown>>;
-  callEvmRpc(input: EvmRpcCallInput): Promise<unknown>;
-  getEvmChainId(input?: EvmRpcInput): Promise<string>;
-  getEvmBalance(input: EvmAddressInput): Promise<string>;
-  getEvmCode(input: EvmAddressInput): Promise<string>;
-  callEvmContract(input: EvmCallInput): Promise<string>;
-  getEvmTransactionReceipt(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmTransaction(
-    input: EvmTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getEvmBlockByHash(input: {
-    endpoint?: string;
-    blockHash: string;
-    fullTransactions?: boolean;
-  }): Promise<Record<string, unknown> | null>;
-  getEvmLogs(input: EvmLogsInput): Promise<Record<string, unknown>[]>;
-  callSolanaRpc(input: SolanaRpcCallInput): Promise<unknown>;
-  getSolanaBalance(input: SolanaAddressInput): Promise<string>;
-  getSolanaTokenBalance(
-    input: SolanaTokenBalanceInput,
-  ): Promise<Record<string, unknown>>;
-  prepareSolanaAssociatedTokenAccount(
-    input: SolanaAssociatedTokenAccountInput,
-  ): Promise<SolanaPreparedAssociatedTokenAccount>;
-  getSolanaSignatureStatus(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  getSolanaTransaction(
-    input: SolanaTransactionInput,
-  ): Promise<Record<string, unknown> | null>;
-  buildSolanaTransaction(input: SolanaBuildTransactionInput): Promise<string>;
-  broadcastSolanaTransaction(input: SolanaBroadcastInput): Promise<string>;
   bondPublicLaneStake(input: {
     toriiUrl: string;
     chainId: string;

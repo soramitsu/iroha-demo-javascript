@@ -324,9 +324,16 @@ export const extractGovernanceStats = (
   const laneIds = new Set<number>();
   const dataspaceIds = new Set<number>();
   const validatorIds = new Set<string>();
+  const extendedStatus = status as
+    | (ToriiSumeragiStatus & {
+        lane_governance?: unknown;
+        dataspace_commitments?: unknown;
+      })
+    | null
+    | undefined;
 
-  const laneGovernance = Array.isArray(status?.lane_governance)
-    ? status.lane_governance
+  const laneGovernance = Array.isArray(extendedStatus?.lane_governance)
+    ? extendedStatus.lane_governance
     : [];
   for (const item of laneGovernance) {
     const itemRecord = item as unknown as Record<string, unknown>;
@@ -350,8 +357,10 @@ export const extractGovernanceStats = (
     }
   }
 
-  const dataspaceCommitments = Array.isArray(status?.dataspace_commitments)
-    ? status.dataspace_commitments
+  const dataspaceCommitments = Array.isArray(
+    extendedStatus?.dataspace_commitments,
+  )
+    ? extendedStatus.dataspace_commitments
     : [];
   for (const item of dataspaceCommitments) {
     const itemRecord = item as unknown as Record<string, unknown>;

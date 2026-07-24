@@ -10,8 +10,6 @@
     "src/utils/errorMessage.ts",
     "src/utils/mnemonic.ts",
     "src/utils/secretLike.ts",
-    "src/utils/sccpDataSnapshot.ts",
-    "src/utils/sccpProverUrl.ts",
     "src/utils/signingAlgorithms.ts",
     "src/utils/soracloud.ts",
     "src/utils/transactionFee.ts",
@@ -33,9 +31,6 @@
         "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
       ],
       "@iroha/iroha-js/crypto": [
-        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
-      ],
-      "@iroha/iroha-js/sccp": [
         "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
       ]
     }

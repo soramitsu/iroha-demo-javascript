@@ -45,6 +45,11 @@ const compatibleNativeModule = () => ({
   buildConfidentialTransferProofV2() {},
   buildConfidentialUnshieldProofV2() {},
   buildConfidentialUnshieldProofV3() {},
+  buildIvmProvedTransactionPayload() {},
+  signQuotedIvmProvedTransactionPayload() {},
+  connectNoritoBridgeAbiVersion() {
+    return 21;
+  },
 });
 
 const tempRoots: string[] = [];

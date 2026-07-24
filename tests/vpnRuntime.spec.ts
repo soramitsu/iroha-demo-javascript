@@ -14,11 +14,12 @@ const getVpnSessionMock = vi.fn();
 const deleteVpnSessionMock = vi.fn();
 const listVpnReceiptsMock = vi.fn();
 const submitTransactionAndWaitMock = vi.fn();
-const buildTransactionMock = vi.fn();
+const quoteAndSignTransactionMock = vi.fn();
 const dnsLookupMock = vi.fn();
 
 vi.mock("@iroha/iroha-js", () => ({
-  buildTransaction: (...args: unknown[]) => buildTransactionMock(...args),
+  quoteAndSignTransaction: (...args: unknown[]) =>
+    quoteAndSignTransactionMock(...args),
   ToriiClient: vi.fn(function MockToriiClient() {
     return {
       getVpnProfile: (...args: unknown[]) => getVpnProfileMock(...args),
@@ -135,7 +136,7 @@ describe("VpnRuntime", () => {
         },
       ],
     });
-    buildTransactionMock.mockReset().mockReturnValue({
+    quoteAndSignTransactionMock.mockReset().mockResolvedValue({
       signedTransaction: Buffer.from("signed-vpn-payment"),
       hash: Buffer.from("cd".repeat(32), "hex"),
     });
@@ -390,7 +391,7 @@ describe("VpnRuntime", () => {
 
     expect(createVpnQuoteMock).not.toHaveBeenCalled();
     expect(createVpnSessionMock).not.toHaveBeenCalled();
-    expect(buildTransactionMock).not.toHaveBeenCalled();
+    expect(quoteAndSignTransactionMock).not.toHaveBeenCalled();
   });
 
   it("waits for committed vpn payment finality before creating a session", async () => {
@@ -422,12 +423,8 @@ describe("VpnRuntime", () => {
       Buffer.from("signed-vpn-payment"),
       expect.objectContaining({
         hashHex: "cd".repeat(32),
-        successStatuses: ["Applied", "Committed"],
       }),
     );
-    expect(
-      submitTransactionAndWaitMock.mock.calls[0]?.[1]?.successStatuses,
-    ).not.toContain("Approved");
     expect(createVpnSessionMock).not.toHaveBeenCalled();
 
     resolvePayment({ status: "Applied" });
@@ -598,7 +595,8 @@ describe("VpnRuntime", () => {
         },
       },
     );
-    expect(buildTransactionMock).toHaveBeenCalledWith(
+    expect(quoteAndSignTransactionMock).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         chainId: "chain",
         authority: "testuLegacyVisibleAccount1234567890",
@@ -611,12 +609,17 @@ describe("VpnRuntime", () => {
         privateKey,
         privateKeyAlgorithm: "ed25519",
       }),
+      {
+        canonicalAuth: {
+          accountId: "testuLegacyVisibleAccount1234567890",
+          privateKey,
+        },
+      },
     );
     expect(submitTransactionAndWaitMock).toHaveBeenCalledWith(
       Buffer.from("signed-vpn-payment"),
       expect.objectContaining({
         hashHex: "cd".repeat(32),
-        successStatuses: ["Applied", "Committed"],
       }),
     );
     expect(createVpnSessionMock).toHaveBeenCalledWith(
