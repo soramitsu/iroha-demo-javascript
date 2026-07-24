@@ -23,6 +23,10 @@ import {
   type ValidationFeePolicyPayload,
 } from "@/governance/model";
 import {
+  assertPublicGovernanceEnactKind,
+  VALIDATION_FEE_POLICY_OPERATOR_ONLY_MESSAGE,
+} from "@/governance/enactBoundary";
+import {
   confirmGovernanceAction,
   fetchAccountAssets,
   getGovernanceCapabilities,
@@ -496,6 +500,12 @@ export const useParliamentStore = defineStore("parliament", () => {
         ),
       };
     }
+    if (detail.kind.type === "ValidationFeePolicy") {
+      return {
+        allowed: false,
+        reason: t(VALIDATION_FEE_POLICY_OPERATOR_ONLY_MESSAGE),
+      };
+    }
     if (detail.referendum?.mode !== "Plain") {
       return {
         allowed: false,
@@ -513,46 +523,6 @@ export const useParliamentStore = defineStore("parliament", () => {
         allowed: false,
         reason: t("Enact becomes available after final approval."),
       };
-    }
-    if (detail.kind.type === "ValidationFeePolicy") {
-      const timing = policyEnactmentTiming.value;
-      if (!timing || timing.status === "unavailable") {
-        return {
-          allowed: false,
-          reason: t(
-            "Validation-fee policy enactment timing is unavailable or inconsistent with the finalized referendum.",
-          ),
-        };
-      }
-      if (timing.status === "not-yet") {
-        return {
-          allowed: false,
-          reason: t(
-            "Validation-fee policy enactment is not ready: {blocks} committed blocks remain before exact target {height}.",
-            {
-              blocks: timing.blocksRemaining ?? "",
-              height: timing.targetHeight ?? "",
-            },
-          ),
-        };
-      }
-      if (timing.status === "missed") {
-        return {
-          allowed: false,
-          reason: t(
-            "Validation-fee policy enactment target {height} was missed. This proposal can no longer be enacted.",
-            { height: timing.targetHeight ?? "" },
-          ),
-        };
-      }
-      if (timing.status !== "ready") {
-        return {
-          allowed: false,
-          reason: t(
-            "Validation-fee policy enactment timing is unavailable or inconsistent with the finalized referendum.",
-          ),
-        };
-      }
     }
     return canWrite.value
       ? { allowed: true, reason: "" }
@@ -1213,7 +1183,20 @@ export const useParliamentStore = defineStore("parliament", () => {
     }
     resetActionFeedback();
     await selectProposal(proposalId);
-    if (!enactGate.value.allowed || !selectedProposal.value) {
+    if (!selectedProposal.value) {
+      actionError.value = detailError.value || enactGate.value.reason;
+      return;
+    }
+    try {
+      assertPublicGovernanceEnactKind(selectedProposal.value.kind.type);
+    } catch (error) {
+      actionError.value = toUserFacingErrorMessage(
+        error,
+        t(VALIDATION_FEE_POLICY_OPERATOR_ONLY_MESSAGE),
+      );
+      return;
+    }
+    if (!enactGate.value.allowed) {
       actionError.value = detailError.value || enactGate.value.reason;
       return;
     }

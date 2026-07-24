@@ -3,6 +3,7 @@
   "include": [
     "electron/**/*.ts",
     "src/**/*.d.ts",
+    "src/governance/enactBoundary.ts",
     "src/utils/accountId.ts",
     "src/utils/assetId.ts",
     "src/utils/chainMetadata.ts",

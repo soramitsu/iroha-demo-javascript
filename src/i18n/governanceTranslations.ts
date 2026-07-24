@@ -195,6 +195,7 @@ export const GOVERNANCE_TRANSLATION_KEYS = [
   "Validation fee payout lifecycle",
   "Validation fee policy",
   "Validation-fee proposals require an explicit referendum window.",
+  "Validation-fee policy enactment is reserved for the sole exact-height operator. This public wallet cannot prepare or submit it.",
   "Validation-fee policy enactment is not ready: {blocks} committed blocks remain before exact target {height}.",
   "Validation-fee policy enactment target {height} was missed. This proposal can no longer be enacted.",
   "Validation-fee policy enactment timing is unavailable or inconsistent with the finalized referendum.",

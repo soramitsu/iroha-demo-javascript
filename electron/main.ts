@@ -30,6 +30,10 @@ import {
   GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
   loadGovernanceRuntimeConfig,
 } from "./governanceRuntimeConfig";
+import {
+  GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
+  authorizePublicGovernanceEnactRequest,
+} from "./governanceEnactBoundary";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -283,11 +287,19 @@ const registerGovernanceRuntimeConfigHandler = () => {
   );
 };
 
+const registerGovernanceEnactBoundaryHandler = () => {
+  ipcMain.handle(
+    GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
+    (_event, input) => authorizePublicGovernanceEnactRequest(input),
+  );
+};
+
 app.whenReady().then(() => {
   registerRendererProtocol();
   registerVpnHandlers();
   registerVaultHandlers();
   registerGovernanceRuntimeConfigHandler();
+  registerGovernanceEnactBoundaryHandler();
   registerMediaPermissionHandlers(
     session.defaultSession,
     getTrustedRendererUrl,

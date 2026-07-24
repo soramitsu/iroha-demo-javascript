@@ -178,6 +178,9 @@
           </p>
         </div>
         <AppButton
+          v-if="
+            governance.selectedProposal?.kind.type !== 'ValidationFeePolicy'
+          "
           size="sm"
           :variant="primaryAction === 'enact' ? 'primary' : 'secondary'"
           :disabled="!governance.enactGate.allowed"
@@ -186,7 +189,11 @@
         >
           {{ t("Review enact") }}
         </AppButton>
-        <p v-if="!governance.enactGate.allowed" class="gate-reason">
+        <p
+          v-if="!governance.enactGate.allowed"
+          data-testid="governance-enact-gate-reason"
+          class="gate-reason"
+        >
           {{ governance.enactGate.reason }}
         </p>
       </div>

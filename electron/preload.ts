@@ -179,6 +179,11 @@ import {
   type GovernanceRuntimeConfig,
 } from "./governanceRuntimeConfig";
 import {
+  GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
+  authorizePublicGovernanceEnactRequest,
+} from "./governanceEnactBoundary";
+import type { PublicGovernanceEnactKind } from "../src/governance/enactBoundary";
+import {
   assertValidationFeePayoutLifecycleDecodedInstruction,
   assertValidationFeePayoutLifecycleDraftResponse,
   assertValidationFeePolicyDecodedInstruction,
@@ -7532,6 +7537,7 @@ type PreparedGovernanceAction = {
   chainId: string;
   accountId: string;
   signingAlgorithm: string;
+  publicEnactKind: PublicGovernanceEnactKind | null;
   payload: ReturnType<typeof buildTransactionPayload>;
   quote: FeeQuoteResponse;
 };
@@ -7921,12 +7927,29 @@ const governanceFeeView = (
   nextBlockHeight: String(quote.observation.next_block_height),
 });
 
+const authorizePublicGovernanceEnact = async (
+  proposalKind: unknown,
+): Promise<PublicGovernanceEnactKind> => {
+  authorizePublicGovernanceEnactRequest({ proposalKind });
+  const authorized = await ipcRenderer.invoke(
+    GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
+    { proposalKind },
+  );
+  if (authorized !== true) {
+    throw new Error(
+      "The main process refused public governance enact authorization.",
+    );
+  }
+  return proposalKind as PublicGovernanceEnactKind;
+};
+
 const prepareGovernanceDecodedAction = async (input: {
   context: GovernancePrepareContext;
   operation: GovernanceWriteOperation;
   title: string;
   proposalId?: string | null;
   referendumId?: string | null;
+  publicEnactKind?: PublicGovernanceEnactKind | null;
   draft: Record<string, unknown>;
   expectedVariant: string;
   validate: (decoded: Record<string, unknown>) => void;
@@ -7989,6 +8012,7 @@ const prepareGovernanceDecodedAction = async (input: {
     chainId,
     accountId,
     signingAlgorithm: signingMaterial.signingAlgorithm,
+    publicEnactKind: input.publicEnactKind ?? null,
     payload,
     quote,
   });
@@ -8317,6 +8341,9 @@ const prepareGovernanceEnactAction = async (
   });
   assertWritableGovernanceProposalKind(proposal);
   assertPlainGovernanceProposalWrite(proposal);
+  const publicEnactKind = await authorizePublicGovernanceEnact(
+    proposal.kind.type,
+  );
   if (
     proposal.summary.status !== "Approved" ||
     proposal.referendum?.status !== "Closed" ||
@@ -8362,6 +8389,7 @@ const prepareGovernanceEnactAction = async (
     title: "Enact approved proposal",
     proposalId,
     referendumId: rawProposalId,
+    publicEnactKind,
     draft,
     expectedVariant: "EnactReferendum",
     validate(decoded) {
@@ -8401,6 +8429,15 @@ const confirmPreparedGovernanceAction = async (input: {
     throw new Error(
       "Governance review expired or is no longer available. Prepare it again.",
     );
+  }
+  if (prepared.view.operation === "enact") {
+    if (!prepared.publicEnactKind) {
+      preparedGovernanceActions.delete(reviewId);
+      throw new Error(
+        "Governance enact review is missing public enact authorization.",
+      );
+    }
+    await authorizePublicGovernanceEnact(prepared.publicEnactKind);
   }
   const accountId = normalizeCompatAccountIdLiteral(
     input.accountId,

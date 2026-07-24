@@ -753,30 +753,7 @@ describe("ParliamentView", () => {
     });
   });
 
-  it("shows a stable countdown until the exact policy enactment target", async () => {
-    getGovernanceProposalDetailMock.mockResolvedValue(
-      proposalDetail({
-        status: "Approved",
-        referendumStatus: "Closed",
-        finalizationEvidence: { approved: true, finalized_height: 250 },
-        currentHeight: "3797",
-        hEnd: "200",
-        kind: validationFeePolicyKind("124760"),
-      }),
-    );
-
-    const view = await mountView(`/governance?proposal=${HASH}`);
-    const enactButton = view
-      .findAll("button")
-      .find((button) => button.text().includes("Review enact"));
-    expect(enactButton?.attributes("disabled")).toBeDefined();
-    expect(view.get(".governance-inspector").text()).toContain(
-      "2 committed blocks remain before exact target 3800",
-    );
-    expect(prepareGovernanceEnactMock).not.toHaveBeenCalled();
-  });
-
-  it("allows policy enactment only when the next committed height is the target", async () => {
+  it("hides and refuses policy enactment even at the exact target height", async () => {
     getGovernanceProposalDetailMock.mockResolvedValue(
       proposalDetail({
         status: "Approved",
@@ -792,30 +769,72 @@ describe("ParliamentView", () => {
     const enactButton = view
       .findAll("button")
       .find((button) => button.text().includes("Review enact"));
-    expect(enactButton?.attributes("disabled")).toBeUndefined();
+    expect(enactButton).toBeUndefined();
+    expect(
+      view.get('[data-testid="governance-enact-gate-reason"]').text(),
+    ).toContain("reserved for the sole exact-height operator");
+    const governance = useParliamentStore();
+    expect(governance.enactGate.allowed).toBe(false);
+    await governance.prepareEnact();
+    expect(governance.actionError).toContain(
+      "reserved for the sole exact-height operator",
+    );
+    expect(prepareGovernanceEnactMock).not.toHaveBeenCalled();
   });
 
-  it("fails policy enactment closed after the exact target is missed", async () => {
+  it("keeps PLAIN citizen voting available for validation-fee policy", async () => {
     getGovernanceProposalDetailMock.mockResolvedValue(
       proposalDetail({
-        status: "Approved",
-        referendumStatus: "Closed",
-        finalizationEvidence: { approved: true, finalized_height: 250 },
-        currentHeight: "3800",
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
         hEnd: "200",
         kind: validationFeePolicyKind("124760"),
       }),
     );
 
     const view = await mountView(`/governance?proposal=${HASH}`);
-    const enactButton = view
+    const citizenButton = view
       .findAll("button")
-      .find((button) => button.text().includes("Review enact"));
-    expect(enactButton?.attributes("disabled")).toBeDefined();
-    expect(view.get(".governance-inspector").text()).toContain(
-      "target 3800 was missed",
-    );
-    expect(prepareGovernanceEnactMock).not.toHaveBeenCalled();
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeUndefined();
+    expect(
+      view
+        .findAll("button")
+        .some((button) => button.text().includes("Review enact")),
+    ).toBe(false);
+  });
+
+  it("keeps all seven Parliament body ballots available for policy voting", async () => {
+    const detail = proposalDetail({
+      status: "Proposed",
+      referendumStatus: "Proposed",
+      kind: validationFeePolicyKind("124760"),
+    });
+    detail.parliamentRosters = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      members: [ACCOUNT],
+      alternates: [],
+    }));
+    detail.parliamentOutcomes = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      approvals: "0",
+      rejections: "0",
+      abstentions: "0",
+      required: "1",
+      currentAccountDecision: null,
+    }));
+    getGovernanceProposalDetailMock.mockResolvedValue(detail);
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const bodyButtons = view.findAll(".body-ballot button");
+    expect(bodyButtons).toHaveLength(7);
+    expect(
+      bodyButtons.every(
+        (button) => button.attributes("disabled") === undefined,
+      ),
+    ).toBe(true);
   });
 
   it("reviews the decoded instruction and ABI21 quote before commit", async () => {
