@@ -145,17 +145,62 @@ export interface ConnectFrameSummary {
   } | null;
 }
 
+export type ConnectSigningRequest = Extract<
+  ConnectEnvelopePayload,
+  { type: "sign_request_raw" | "sign_request_tx" }
+>;
+
+export const copyConnectPermissions = (
+  permissions: ConnectPermissions | null,
+): ConnectPermissions | null =>
+  permissions
+    ? {
+        methods: [...permissions.methods],
+        events: [...permissions.events],
+        resources: permissions.resources ? [...permissions.resources] : null,
+      }
+    : null;
+
+export const assertConnectSigningPermission = (
+  permissions: ConnectPermissions | null,
+  request: Pick<ConnectSigningRequest, "type"> & {
+    domainTag?: string;
+  },
+) => {
+  const method =
+    request.type === "sign_request_raw" ? "sign_raw" : "sign_transaction";
+  if (!permissions?.methods.includes(method)) {
+    throw new Error(`IrohaConnect Open permissions do not grant ${method}.`);
+  }
+  if (
+    request.type === "sign_request_raw" &&
+    (!request.domainTag || !permissions.resources?.includes(request.domainTag))
+  ) {
+    throw new Error(
+      `IrohaConnect Open permissions do not grant raw-signing domain "${request.domainTag || ""}".`,
+    );
+  }
+  if (request.type === "sign_request_tx" && permissions.resources !== null) {
+    throw new Error(
+      "IrohaConnect transaction signing requires unrestricted resources because SignRequestTx has no resource selector.",
+    );
+  }
+};
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const APPROVE_PREFIX = encoder.encode("iroha-connect|approve|");
+const APPROVE_DOMAIN = encoder.encode("iroha-connect|approve|v1");
+const RELAY_AUTH_DOMAIN = encoder.encode("iroha-connect|relay-auth|v1");
 const SALT_PREFIX = encoder.encode("iroha-connect|salt|");
 const APP_INFO = encoder.encode("iroha-connect|k_app");
 const WALLET_INFO = encoder.encode("iroha-connect|k_wallet");
+const X25519_HKDF_SALT = encoder.encode("iroha:x25519:hkdf:v1");
+const X25519_HKDF_INFO = encoder.encode("iroha:x25519:session-key");
 const NORITO_MAGIC = encoder.encode("NRT0");
 const CONNECT_AAD_PREFIX = encoder.encode("connect:v1");
 const ENVELOPE_V1_SCHEMA = Uint8Array.from([
-  0xf3, 0x50, 0x17, 0xc7, 0x74, 0x55, 0x8f, 0x19, 0xf3, 0x50, 0x17, 0xc7, 0x74,
-  0x55, 0x8f, 0x19,
+  0x69, 0x47, 0xaf, 0xe3, 0xe8, 0xa8, 0x54, 0x46, 0xd6, 0xa3, 0xee, 0x7b, 0xb1,
+  0xa3, 0x7c, 0x0a,
 ]);
 const CRC64_XZ_POLY = 0xc96c5795d7870f42n;
 const CRC64_XZ_INIT = 0xffff_ffff_ffff_ffffn;
@@ -222,9 +267,6 @@ const encodeVec = <T>(values: T[], encodeItem: (value: T) => Uint8Array) => {
 const encodeByteVec = (bytes: Uint8Array) =>
   concatBytes(encodeU64(bytes.length), bytes);
 
-const encodeLegacyByteVec = (bytes: Uint8Array) =>
-  encodeVec(Array.from(bytes), (byte) => Uint8Array.of(byte));
-
 const encodeOption = <T>(
   value: T | null | undefined,
   encodeItem: (value: T) => Uint8Array,
@@ -236,13 +278,15 @@ const encodeOption = <T>(
   return concatBytes(Uint8Array.of(1), encodeU64(payload.length), payload);
 };
 
-const encodeByteArray = (bytes: Uint8Array, length: number, label: string) => {
+const requireByteLength = (
+  bytes: Uint8Array,
+  length: number,
+  label: string,
+) => {
   if (bytes.length !== length) {
     throw new RangeError(`${label} must be ${length} bytes`);
   }
-  return concatBytes(
-    ...Array.from(bytes, (value) => encodeField(Uint8Array.of(value))),
-  );
+  return bytes;
 };
 
 const hexCharCode = (value: number) => (value < 10 ? 48 + value : 87 + value);
@@ -410,9 +454,13 @@ const encodeWalletSignaturePayload = (payload: {
   signatureBase64: string;
 }) => {
   const signatureBytes = base64ToBytes(payload.signatureBase64);
+  if (payload.algorithmCode !== 0) {
+    throw new Error("Connect wallet signatures must use Ed25519");
+  }
+  requireByteLength(signatureBytes, 64, "wallet signature");
   return encodeStruct([
-    encodeU32(payload.algorithmCode),
-    encodeLegacyByteVec(signatureBytes),
+    Uint8Array.of(payload.algorithmCode),
+    encodeByteVec(signatureBytes),
   ]);
 };
 
@@ -420,7 +468,11 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
   switch (payload.type) {
     case "open": {
       const body = encodeStruct([
-        encodeByteArray(hexToBytes(payload.appPublicKeyHex), 32, "open.app_pk"),
+        requireByteLength(
+          hexToBytes(payload.appPublicKeyHex),
+          32,
+          "open.app_pk",
+        ),
         encodeOption(payload.appMeta, (appMeta) =>
           encodeAppMetaPayload(appMeta.name, appMeta.url, appMeta.iconHash),
         ),
@@ -431,7 +483,7 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
     }
     case "approve": {
       const body = encodeStruct([
-        encodeByteArray(
+        requireByteLength(
           hexToBytes(payload.walletPublicKeyHex),
           32,
           "approve.wallet_pk",
@@ -472,9 +524,40 @@ const encodeControlPayload = (payload: ConnectControlPayload) => {
         encodeU64(16),
         encodeField(encodeU64(payload.nonce)),
       );
+    case "server_event": {
+      if (payload.eventName !== "block_proofs") {
+        throw new Error(
+          `unsupported Connect server event: ${payload.eventName}`,
+        );
+      }
+      const height = payload.payload.height;
+      const entryHash = payload.payload.entryHash;
+      const proofsJson = payload.payload.proofsJson;
+      if (
+        (typeof height !== "number" && typeof height !== "bigint") ||
+        typeof entryHash !== "string" ||
+        typeof proofsJson !== "string"
+      ) {
+        throw new Error(
+          "Connect block_proofs server event payload is malformed",
+        );
+      }
+      const eventBody = encodeStruct([
+        encodeU64(height),
+        encodeString(entryHash),
+        encodeString(proofsJson),
+      ]);
+      const event = concatBytes(
+        encodeU32(0),
+        encodeU64(eventBody.length),
+        eventBody,
+      );
+      const body = encodeStruct([event]);
+      return concatBytes(encodeU32(6), encodeU64(body.length), body);
+    }
     default:
       throw new Error(
-        `encoding for Connect control "${payload.type}" is not implemented`,
+        `encoding for Connect control "${(payload as ConnectControlPayload).type}" is not implemented`,
       );
   }
 };
@@ -487,7 +570,7 @@ export const encodeControlConnectFrame = (input: {
 }) => {
   const controlPayload = encodeControlPayload(input.control);
   return encodeStruct([
-    encodeByteArray(base64UrlToBytes(input.sid), 32, "frame.sid"),
+    requireByteLength(base64UrlToBytes(input.sid), 32, "frame.sid"),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(0), encodeU64(controlPayload.length), controlPayload),
@@ -566,11 +649,34 @@ export const encodePongConnectFrame = (
 ) =>
   encodeControlConnectFrame({
     sid,
-    direction: "app_to_wallet",
+    direction: "wallet_to_app",
     seq,
     control: {
       type: "pong",
       nonce,
+    },
+  });
+
+export const encodeServerEventConnectFrame = (input: {
+  sid: string;
+  direction: ConnectDirection;
+  seq: number;
+  height: number | bigint;
+  entryHash: string;
+  proofsJson: string;
+}) =>
+  encodeControlConnectFrame({
+    sid: input.sid,
+    direction: input.direction,
+    seq: input.seq,
+    control: {
+      type: "server_event",
+      eventName: "block_proofs",
+      payload: {
+        height: input.height,
+        entryHash: input.entryHash,
+        proofsJson: input.proofsJson,
+      },
     },
   });
 
@@ -650,45 +756,6 @@ const decodeBoolPayload = (bytes: Uint8Array, label: string) => {
   return bytes[0] !== 0;
 };
 
-const decodeFixedByteArrayPayload = (
-  bytes: Uint8Array,
-  itemCount: number,
-  label: string,
-) => {
-  if (bytes.length === itemCount) {
-    return new Uint8Array(bytes);
-  }
-  const cursor = createCursor(bytes);
-  const out = new Uint8Array(itemCount);
-  for (let index = 0; index < itemCount; index += 1) {
-    const field = readField(cursor, `${label}[${index}]`);
-    if (field.length !== 1) {
-      throw new Error(`${label}[${index}] byte payload must be 1 byte`);
-    }
-    out[index] = field[0] ?? 0;
-  }
-  ensureExact(cursor, label);
-  return out;
-};
-
-const decodeLegacyByteVecPayload = (bytes: Uint8Array, label: string) =>
-  Uint8Array.from(
-    decodeVecPayload(bytes, label, (field, itemLabel) => {
-      if (field.length !== 1) {
-        throw new Error(`${itemLabel} byte payload must be 1 byte`);
-      }
-      return field[0] ?? 0;
-    }),
-  );
-
-const decodeCompatByteVecPayload = (bytes: Uint8Array, label: string) => {
-  try {
-    return decodeByteVecPayload(bytes, label);
-  } catch {
-    return decodeLegacyByteVecPayload(bytes, label);
-  }
-};
-
 const decodeVecPayload = <T>(
   bytes: Uint8Array,
   label: string,
@@ -728,16 +795,11 @@ const decodeOptionPayload = <T>(
   if (bytes[0] !== 1)
     throw new Error(`${label} has unsupported option tag ${bytes[0]}`);
   const payload = bytes.slice(1);
-  try {
-    const cursor = createCursor(payload);
-    const length = readU64(cursor, `${label} some length`);
-    const itemBytes = readBytes(cursor, length, `${label} some payload`);
-    ensureExact(cursor, `${label} some`);
-    return decodeItem(itemBytes, label);
-  } catch {
-    // Accept the old client-side wire shape for local fixture compatibility.
-    return decodeItem(payload, label);
-  }
+  const cursor = createCursor(payload);
+  const length = readU64(cursor, `${label} some length`);
+  const itemBytes = readBytes(cursor, length, `${label} some payload`);
+  ensureExact(cursor, `${label} some`);
+  return decodeItem(itemBytes, label);
 };
 
 const decodePermissionsPayload = (
@@ -807,23 +869,19 @@ const decodeSignInProofPayload = (
 const decodeWalletSignaturePayload = (bytes: Uint8Array, label: string) => {
   const cursor = createCursor(bytes);
   const algorithmField = readField(cursor, `${label}.algorithm`);
-  let algorithmCode = 0;
-  if (algorithmField.length === 1) {
-    algorithmCode = algorithmField[0] ?? 0;
-  } else if (algorithmField.length === 4) {
-    algorithmCode = new DataView(
-      algorithmField.buffer,
-      algorithmField.byteOffset,
-      algorithmField.byteLength,
-    ).getUint32(0, true);
-  } else {
+  if (algorithmField.length !== 1) {
     throw new Error(`${label}.algorithm must be 1 byte`);
   }
-  const signatureBytes = decodeCompatByteVecPayload(
+  const algorithmCode = algorithmField[0] ?? 0;
+  const signatureBytes = decodeByteVecPayload(
     readField(cursor, `${label}.signature`),
     `${label}.signature`,
   );
   ensureExact(cursor, label);
+  if (algorithmCode !== 0) {
+    throw new Error(`${label}.algorithm must be Ed25519`);
+  }
+  requireByteLength(signatureBytes, 64, `${label}.signature`);
   return {
     algorithmCode,
     algorithmLabel: algorithmLabel(algorithmCode),
@@ -834,7 +892,7 @@ const decodeWalletSignaturePayload = (bytes: Uint8Array, label: string) => {
 
 const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   const cursor = createCursor(bytes);
-  const appPublicKey = decodeFixedByteArrayPayload(
+  const appPublicKey = requireByteLength(
     readField(cursor, "open.app_pk"),
     32,
     "open.app_pk",
@@ -890,7 +948,7 @@ const decodeOpenControlBody = (bytes: Uint8Array): ConnectControlPayload => {
 
 const decodeApproveControlBody = (bytes: Uint8Array): ConnectControlPayload => {
   const cursor = createCursor(bytes);
-  const walletPublicKey = decodeFixedByteArrayPayload(
+  const walletPublicKey = requireByteLength(
     readField(cursor, "approve.wallet_pk"),
     32,
     "approve.wallet_pk",
@@ -1195,17 +1253,20 @@ export const decodeConnectEnvelope = (
   if (!NORITO_MAGIC.every((value, index) => value === bytes[index])) {
     throw new Error("encrypted envelope has invalid Norito magic");
   }
+  if (bytes[4] !== 0 || bytes[5] !== 0) {
+    throw new Error("encrypted envelope uses an unsupported Norito version");
+  }
+  if (!ENVELOPE_V1_SCHEMA.every((value, index) => value === bytes[index + 6])) {
+    throw new Error("encrypted envelope Norito schema mismatch");
+  }
+  if (bytes[22] !== 0 || bytes[39] !== 0) {
+    throw new Error("encrypted envelope uses unsupported Norito layout flags");
+  }
   const payloadLength = new DataView(
     bytes.buffer,
     bytes.byteOffset + 23,
     8,
   ).getBigUint64(0, true);
-  const flags = bytes[39];
-  if (flags !== 0) {
-    throw new Error(
-      `unsupported Norito flags for encrypted envelope: ${flags}`,
-    );
-  }
   const payload = bytes.subarray(40);
   if (payload.length !== Number(payloadLength)) {
     throw new Error("encrypted envelope payload length mismatch");
@@ -1411,7 +1472,7 @@ export const encodeCiphertextConnectFrame = (input: {
     encodeByteVec(input.aead),
   ]);
   return encodeStruct([
-    encodeByteArray(base64UrlToBytes(input.sid), 32, "frame.sid"),
+    requireByteLength(base64UrlToBytes(input.sid), 32, "frame.sid"),
     encodeDirection(input.direction),
     encodeU64(input.seq),
     concatBytes(encodeU32(1), encodeU64(ciphertextBody.length), ciphertextBody),
@@ -1420,7 +1481,7 @@ export const encodeCiphertextConnectFrame = (input: {
 
 export const decodeConnectFrame = (bytes: Uint8Array): ConnectFrameSummary => {
   const cursor = createCursor(bytes);
-  const sidBytes = decodeFixedByteArrayPayload(
+  const sidBytes = requireByteLength(
     readField(cursor, "frame.sid"),
     32,
     "frame.sid",
@@ -1490,20 +1551,64 @@ export const buildApprovePreimage = (input: {
   appPublicKeyHex: string;
   walletPublicKeyHex: string;
   accountId: string;
+  relayToken: string;
   permissions?: ConnectPermissions | null;
   proof?: ConnectSignInProof | null;
-}) =>
-  concatBytes(
-    APPROVE_PREFIX,
+}) => {
+  if (input.permissions || input.proof) {
+    throw new Error(
+      "IrohaConnect v1 approval does not support permissions or sign-in proof payloads",
+    );
+  }
+  const taggedField = (tag: string, value: Uint8Array) => {
+    const tagBytes = encoder.encode(tag);
+    return concatBytes(
+      encodeU16(tagBytes.length),
+      tagBytes,
+      encodeU64(value.length),
+      value,
+    );
+  };
+  const sidBytes = requireByteLength(
     base64UrlToBytes(input.sid),
-    hexToBytes(input.appPublicKeyHex),
-    hexToBytes(input.walletPublicKeyHex),
-    encoder.encode(input.accountId),
-    input.permissions
-      ? hashConnectPermissions(input.permissions)
-      : new Uint8Array(),
-    input.proof ? hashConnectSignInProof(input.proof) : new Uint8Array(),
+    32,
+    "approval sid",
   );
+  const relayToken = input.relayToken.trim();
+  if (!relayToken) {
+    throw new Error("IrohaConnect approval requires the relay token");
+  }
+  const fields = [
+    taggedField("domain", APPROVE_DOMAIN),
+    taggedField("sid", sidBytes),
+    taggedField(
+      "app_pk",
+      requireByteLength(
+        hexToBytes(input.appPublicKeyHex),
+        32,
+        "approval app key",
+      ),
+    ),
+    taggedField(
+      "wallet_pk",
+      requireByteLength(
+        hexToBytes(input.walletPublicKeyHex),
+        32,
+        "approval wallet key",
+      ),
+    ),
+    taggedField("account_id", encoder.encode(input.accountId)),
+  ];
+  fields.push(
+    taggedField(
+      "relay_auth",
+      sha256(
+        concatBytes(RELAY_AUTH_DOMAIN, sidBytes, encoder.encode(relayToken)),
+      ),
+    ),
+  );
+  return concatBytes(...fields);
+};
 
 export const deriveConnectDirectionKeys = (
   preview: ConnectPreview,
@@ -1513,13 +1618,20 @@ export const deriveConnectDirectionKeys = (
     hexToBytes(preview.privateKeyHex),
     hexToBytes(walletPublicKeyHex),
   );
+  const sessionKey = hkdf(
+    sha256,
+    sharedSecret,
+    X25519_HKDF_SALT,
+    X25519_HKDF_INFO,
+    32,
+  );
   const salt = blake2b(
     concatBytes(SALT_PREFIX, base64UrlToBytes(preview.sid)),
     { dkLen: 32 },
   );
   return {
-    appKey: hkdf(sha256, sharedSecret, salt, APP_INFO, 32),
-    walletKey: hkdf(sha256, sharedSecret, salt, WALLET_INFO, 32),
+    appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
+    walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
   };
 };
 
@@ -1540,11 +1652,18 @@ export const deriveWalletConnectDirectionKeys = (input: {
     hexToBytes(input.walletPrivateKeyHex),
     hexToBytes(input.appPublicKeyHex),
   );
+  const sessionKey = hkdf(
+    sha256,
+    sharedSecret,
+    X25519_HKDF_SALT,
+    X25519_HKDF_INFO,
+    32,
+  );
   const salt = blake2b(concatBytes(SALT_PREFIX, base64UrlToBytes(input.sid)), {
     dkLen: 32,
   });
   return {
-    appKey: hkdf(sha256, sharedSecret, salt, APP_INFO, 32),
-    walletKey: hkdf(sha256, sharedSecret, salt, WALLET_INFO, 32),
+    appKey: hkdf(sha256, sessionKey, salt, APP_INFO, 32),
+    walletKey: hkdf(sha256, sessionKey, salt, WALLET_INFO, 32),
   };
 };

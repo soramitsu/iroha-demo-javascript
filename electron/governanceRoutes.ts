@@ -11,6 +11,9 @@ export const governanceProposalPath = (proposalId: string) =>
 export const validationFeeProposalPath = (proposalId: string) =>
   `${VALIDATION_FEE_PROPOSALS_PATH}/${encodedPathSegment(proposalId)}`;
 
+export const validationFeePlainBallotDraftPath = (proposalId: string) =>
+  `${validationFeeProposalPath(proposalId)}/plain-ballot/draft`;
+
 export const governanceReferendumPath = (referendumId: string) =>
   `/v1/gov/referenda/${encodedPathSegment(referendumId)}`;
 

@@ -127,6 +127,7 @@
                   type="text"
                   autocomplete="off"
                   :placeholder="t('owner/model-name')"
+                  @change="refreshHfStatus"
                 />
               </label>
               <label>
@@ -135,6 +136,7 @@
                   v-model.trim="launchForm.revision"
                   type="text"
                   autocomplete="off"
+                  @change="refreshHfStatus"
                 />
               </label>
               <label>
@@ -173,7 +175,10 @@
             >
               <label>
                 <span>{{ t("Storage class") }}</span>
-                <select v-model="launchForm.storageClass">
+                <select
+                  v-model="launchForm.storageClass"
+                  @change="refreshHfStatus"
+                >
                   <option value="warm">{{ t("Warm") }}</option>
                   <option value="hot">{{ t("Hot") }}</option>
                   <option value="cold">{{ t("Cold") }}</option>
@@ -181,7 +186,10 @@
               </label>
               <label>
                 <span>{{ t("Lease duration") }}</span>
-                <select v-model.number="launchForm.leaseTermHours">
+                <select
+                  v-model.number="launchForm.leaseTermHours"
+                  @change="refreshHfStatus"
+                >
                   <option :value="1">{{ t("1 hour") }}</option>
                   <option :value="24">{{ t("24 hours") }}</option>
                   <option :value="168">{{ t("7 days") }}</option>
@@ -209,19 +217,6 @@
                   inputmode="numeric"
                   autocomplete="off"
                 />
-              </label>
-              <label class="soracloud-span-2">
-                <span>{{ t("API token") }}</span>
-                <input
-                  v-model.trim="launchForm.apiToken"
-                  type="password"
-                  autocomplete="off"
-                />
-                <small class="helper">
-                  {{
-                    t("Optional. Used only for this request and never saved.")
-                  }}
-                </small>
               </label>
             </div>
 
@@ -265,6 +260,22 @@
                     {{ launchForm.baseFeeNanos || t("Required") }}
                   </span>
                 </div>
+                <div class="kv">
+                  <span class="kv-label">{{ t("HF source status") }}</span>
+                  <span class="kv-value">
+                    {{
+                      cloud.hfStatusLoading
+                        ? t("Checking")
+                        : cloud.hfStatusError
+                          ? t("Unavailable")
+                          : cloud.hfStatus?.found
+                            ? t("Found")
+                            : cloud.hfStatus
+                              ? t("Not found")
+                              : t("Not checked")
+                    }}
+                  </span>
+                </div>
               </div>
             </div>
           </fieldset>
@@ -285,11 +296,72 @@
             }}</strong>
           </p>
           <div v-if="cloud.launchResult" class="soracloud-launch-result">
-            <span class="pill positive">{{ t("Launch submitted") }}</span>
+            <span class="pill positive">{{
+              t(
+                cloud.launchResult.settlement_status === "confirmed"
+                  ? "Launch confirmed"
+                  : "Transaction finalized — settlement indexing",
+              )
+            }}</span>
             <span>{{ cloud.launchResult.service_name }}</span>
             <span v-if="cloud.launchResult.tx_hash_hex" class="mono">
               {{ cloud.launchResult.tx_hash_hex }}
             </span>
+            <span class="mono">
+              {{
+                t("Block {height}", {
+                  height: cloud.launchResult.finality.blockHeight,
+                })
+              }}
+              · {{ cloud.launchResult.finality.blockHash }}
+            </span>
+            <div class="soracloud-settlement-grid">
+              <div class="kv">
+                <span class="kv-label">{{ t("Storage base fee") }}</span>
+                <span class="kv-value mono">{{
+                  cloud.launchResult.storage_base_fee
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{ t("Actual storage charge") }}</span>
+                <span class="kv-value mono">{{
+                  cloud.launchResult.actual_storage_charge ??
+                  t("Pending indexing")
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{
+                  t("Maximum compute reservation charge")
+                }}</span>
+                <span class="kv-value mono">{{
+                  cloud.launchResult.max_compute_reservation_fee
+                }}</span>
+              </div>
+              <div class="kv">
+                <span class="kv-label">{{
+                  t("Actual compute reservation charge")
+                }}</span>
+                <span class="kv-value mono">{{
+                  cloud.launchResult.actual_compute_charge ??
+                  t("Pending indexing")
+                }}</span>
+              </div>
+            </div>
+            <span
+              v-if="cloud.launchResult.reconciliation_message"
+              class="soracloud-launch-reconciliation"
+            >
+              {{ cloud.launchResult.reconciliation_message }}
+            </span>
+            <button
+              v-if="cloud.launchResult.settlement_status === 'indexing'"
+              type="button"
+              class="secondary"
+              :disabled="cloud.reconciling"
+              @click="reconcileLaunch"
+            >
+              {{ cloud.reconciling ? t("Checking") : t("Refresh") }}
+            </button>
             <span class="soracloud-launch-fee">
               {{
                 formatTransactionFee(
@@ -424,15 +496,11 @@
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Status code") }}</span>
-            <span class="kv-value">{{
-              cloud.status?.statusCode ?? t("OK")
-            }}</span>
+            <span class="kv-value">{{ diagnosticStatusCode }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Audit events") }}</span>
-            <span class="kv-value">{{
-              n(cloud.status?.auditEventCount ?? 0)
-            }}</span>
+            <span class="kv-value">{{ diagnosticAuditEventCount }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Schema") }}</span>
@@ -460,6 +528,7 @@ import {
   TechnicalDisclosure,
 } from "@/components/ui";
 import { useAppI18n } from "@/composables/useAppI18n";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { useSoraCloudStore } from "@/stores/soracloud";
 import { getAccountDisplayLabel } from "@/utils/accountId";
@@ -482,6 +551,7 @@ type LaunchStep = "model" | "lease" | "review";
 
 const { t, n, d } = useAppI18n();
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const cloud = useSoraCloudStore();
 const consoleMode = ref<"services" | "launch">("services");
 
@@ -512,7 +582,6 @@ const launchForm = reactive({
     session.connection.assetDefinitionId,
   ),
   baseFeeNanos: "",
-  apiToken: "",
 });
 
 const statusLabels: Record<SoraCloudDeploymentStatus, string> = {
@@ -525,6 +594,7 @@ const statusLabels: Record<SoraCloudDeploymentStatus, string> = {
 };
 
 const activeAccount = computed(() => session.activeAccount);
+const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
 const activeAccountLabel = computed(
   () =>
     getAccountDisplayLabel(
@@ -534,7 +604,11 @@ const activeAccountLabel = computed(
     ) || t("Wallet ready"),
 );
 const canUseLauncher = computed(
-  () => cloud.availability === "available" && Boolean(activeAccount.value),
+  () =>
+    cloud.availability === "available" &&
+    Boolean(activeAccount.value) &&
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features.soraCloudDeploy.supported === true,
 );
 const sortedServices = computed(() => sortSoraCloudServices(cloud.services));
 const serviceCount = computed(() => cloud.status?.serviceCount ?? 0);
@@ -578,8 +652,23 @@ const baseFeeValid = computed(
     BigInt(launchForm.baseFeeNanos.trim()) > 0n,
 );
 const launcherDisabledReason = computed(() => {
+  if (cloud.launchResult?.settlement_status === "indexing") {
+    return cloud.launchResult.reconciliation_message || t("Pending indexing");
+  }
   if (cloud.availability !== "available") {
     return t("Select a SoraCloud-enabled endpoint before launching.");
+  }
+  if (endpointStore.state === "checking") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  if (endpointStore.inspection?.features.soraCloudDeploy.supported !== true) {
+    return t("This endpoint does not advertise POST /v1/soracloud/hf/deploy.");
   }
   if (!activeAccount.value) return t("Create or restore a wallet first.");
   if (!activeAccount.value.hasStoredSecret) {
@@ -602,16 +691,62 @@ const launchDisabled = computed(
 const diagnosticsPayload = computed(() =>
   JSON.stringify(cloud.status?.raw ?? cloud.status ?? {}, null, 2),
 );
+const diagnosticStatusCode = computed(() => {
+  if (!cloud.status) return t("Unavailable");
+  if (cloud.status.statusCode !== undefined) {
+    return String(cloud.status.statusCode);
+  }
+  return cloud.status.available ? t("OK") : t("Unavailable");
+});
+const diagnosticAuditEventCount = computed(() =>
+  cloud.status?.available ? n(cloud.status.auditEventCount) : t("Unavailable"),
+);
 
 const refresh = () =>
   cloud.refresh({
     toriiUrl: session.connection.toriiUrl,
-    apiToken: launchForm.apiToken,
+    accountId: activeAccountId.value,
   });
+
+const currentHfStatusInput = () => {
+  const toriiUrl = session.connection.toriiUrl.trim();
+  const repoId = launchForm.repoId.trim();
+  const leaseTermMs = launchForm.leaseTermHours * 60 * 60 * 1000;
+  if (
+    !toriiUrl ||
+    !repoId ||
+    !Number.isSafeInteger(leaseTermMs) ||
+    leaseTermMs <= 0
+  ) {
+    return null;
+  }
+  return {
+    toriiUrl,
+    repoId,
+    revision: launchForm.revision.trim() || undefined,
+    storageClass: launchForm.storageClass,
+    leaseTermMs,
+    accountId: activeAccountId.value || undefined,
+  };
+};
+
+const refreshHfStatus = async () => {
+  const input = currentHfStatusInput();
+  if (!input) {
+    cloud.clearHfStatus();
+    return;
+  }
+  try {
+    await cloud.refreshHfStatus(input);
+  } catch {
+    // The store exposes this read's error without disturbing live services.
+  }
+};
 
 const nextStep = () => {
   if (activeStep.value === "model") {
     activeStep.value = "lease";
+    void refreshHfStatus();
   } else if (activeStep.value === "lease") {
     activeStep.value = "review";
   }
@@ -629,6 +764,8 @@ const launch = async () => {
   if (launchDisabled.value || !activeAccount.value) return;
   await cloud.launchHf({
     toriiUrl: session.connection.toriiUrl,
+    chainId: session.connection.chainId,
+    networkPrefix: session.connection.networkPrefix,
     accountId: activeAccount.value.accountId,
     repoId: launchForm.repoId,
     revision: launchForm.revision || undefined,
@@ -639,8 +776,27 @@ const launch = async () => {
     leaseTermMs: launchForm.leaseTermHours * 60 * 60 * 1000,
     leaseAssetDefinitionId: launchForm.leaseAssetDefinitionId,
     baseFeeNanos: launchForm.baseFeeNanos,
-    apiToken: launchForm.apiToken || undefined,
   });
+};
+
+const reconcileLaunch = async () => {
+  const result = cloud.launchResult;
+  const account = activeAccount.value;
+  if (!result || result.settlement_status !== "indexing" || !account) {
+    return;
+  }
+  try {
+    await cloud.reconcileHfLaunch({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+      accountId: account.accountId,
+      transactionHash: result.tx_hash_hex,
+    });
+  } catch {
+    // The store keeps the finalized transaction visible and exposes the
+    // reconciliation error without allowing a duplicate launch.
+  }
 };
 
 const statusLabel = (status: SoraCloudDeploymentStatus) => statusLabels[status];
@@ -661,9 +817,10 @@ watch(
 );
 
 watch(
-  () => session.connection.toriiUrl,
+  () => [session.connection.toriiUrl, activeAccountId.value],
   () => {
     void refresh();
+    void refreshHfStatus();
   },
 );
 
@@ -704,5 +861,12 @@ onMounted(() => {
   background: var(--frost-panel-inset);
   -webkit-backdrop-filter: var(--frost-filter-soft);
   backdrop-filter: var(--frost-filter-soft);
+}
+
+.soracloud-settlement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.65rem;
+  width: 100%;
 }
 </style>

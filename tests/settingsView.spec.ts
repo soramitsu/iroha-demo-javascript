@@ -4,26 +4,91 @@ import { createPinia, setActivePinia } from "pinia";
 import SettingsView from "@/views/SettingsView.vue";
 import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
+import { useEndpointStore } from "@/stores/endpoint";
 import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
+import type {
+  EndpointFeature,
+  EndpointFeatureMap,
+  EndpointInspection,
+} from "@/types/endpointInspection";
 
-const getChainMetadataMock = vi.fn();
+const inspectEndpointMock = vi.fn();
 
 vi.mock("@/services/iroha", () => ({
-  getChainMetadata: (toriiUrl: string) => getChainMetadataMock(toriiUrl),
+  inspectEndpoint: (input: {
+    toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
+  }) => inspectEndpointMock(input),
 }));
 
 const t = (key: string) => translate("en-US", key);
+type EndpointInspectionInput = {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+};
+const endpointFeatures = (supported: boolean): EndpointFeatureMap => {
+  const features: EndpointFeature[] = [
+    "accountRegistration",
+    "accountOnboarding",
+    "assetTransfers",
+    "faucetClaim",
+    "confidentialTransfers",
+    "kaigiMeetings",
+    "governanceWrites",
+    "stakingWrites",
+    "subscriptionWrites",
+    "soraCloudDeploy",
+    "vpnSessions",
+    "irohaConnectSessions",
+    "zkProofJobs",
+  ];
+  return Object.fromEntries(
+    features.map((feature) => [
+      feature,
+      {
+        supported,
+        source: "openapi",
+        requiredOperations: [],
+        missingOperations: [],
+      },
+    ]),
+  ) as unknown as EndpointFeatureMap;
+};
+const matchingInspection = (
+  input: EndpointInspectionInput,
+): EndpointInspection => ({
+  schema: "iroha.wallet.endpoint-inspection.v1",
+  toriiUrl: input.toriiUrl,
+  expected: {
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+  },
+  observed: {
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+  },
+  identityStatus: "matched",
+  accessMode: "read-write",
+  checkedAtMs: 1,
+  evidence: [],
+  features: endpointFeatures(true),
+  diagnostic: {
+    code: "endpoint_identity_matched",
+    message: "Endpoint identity matches the configured network.",
+  },
+});
 
 describe("SettingsView", () => {
   let activeWrapper: ReturnType<typeof mount> | null = null;
 
   beforeEach(() => {
     localStorage.clear();
-    getChainMetadataMock.mockReset();
-    getChainMetadataMock.mockResolvedValue({
-      chainId: "loaded-chain",
-      networkPrefix: 42,
-    });
+    inspectEndpointMock.mockReset();
+    inspectEndpointMock.mockImplementation((input: EndpointInspectionInput) =>
+      matchingInspection(input),
+    );
     setActivePinia(createPinia());
   });
 
@@ -168,10 +233,18 @@ describe("SettingsView", () => {
     await getButtonByText(wrapper, t("Check & Save")).trigger("click");
     await flushPromises();
 
-    expect(getChainMetadataMock).toHaveBeenCalledWith("http://localhost:8080");
+    expect(inspectEndpointMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: DEFAULT_CHAIN_PRESET.connection.chainId,
+      networkPrefix: DEFAULT_CHAIN_PRESET.connection.networkPrefix,
+    });
     expect(session.connection.toriiUrl).toBe("http://localhost:8080");
-    expect(session.connection.chainId).toBe("loaded-chain");
-    expect(session.connection.networkPrefix).toBe(42);
+    expect(session.connection.chainId).toBe(
+      DEFAULT_CHAIN_PRESET.connection.chainId,
+    );
+    expect(session.connection.networkPrefix).toBe(
+      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
+    );
     expect(
       JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}").connection
         .toriiUrl,
@@ -179,18 +252,45 @@ describe("SettingsView", () => {
     expect(
       JSON.parse(localStorage.getItem(SESSION_STORAGE_KEY) ?? "{}").connection
         .chainId,
-    ).toBe("loaded-chain");
+    ).toBe(DEFAULT_CHAIN_PRESET.connection.chainId);
     expect(wrapper.text()).toContain(
-      t("Endpoint checked and chain settings saved."),
+      t("Endpoint identity verified and saved."),
     );
     expect(wrapper.get('[role="status"]').text()).toBe(
-      t("Endpoint checked and chain settings saved."),
+      t("Endpoint identity verified and saved."),
     );
+    expect(
+      wrapper.get('[data-testid="endpoint-diagnostics"]').text(),
+    ).toContain(t("Read and write"));
   });
 
-  it("does not save a draft endpoint when the check fails", async () => {
-    getChainMetadataMock.mockRejectedValueOnce(
-      new Error("metadata unavailable"),
+  it("keeps a mismatched endpoint configured for reads without retargeting the wallet", async () => {
+    inspectEndpointMock.mockImplementationOnce(
+      (input: {
+        toriiUrl: string;
+        chainId: string;
+        networkPrefix: number;
+      }) => ({
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: input.toriiUrl,
+        expected: {
+          chainId: input.chainId,
+          networkPrefix: input.networkPrefix,
+        },
+        observed: {
+          chainId: "archived-chain",
+          networkPrefix: input.networkPrefix,
+        },
+        identityStatus: "mismatched",
+        accessMode: "read-only",
+        checkedAtMs: 1,
+        evidence: [],
+        features: endpointFeatures(false),
+        diagnostic: {
+          code: "endpoint_identity_mismatch",
+          message: "Archived deployment mismatch. Writes are blocked.",
+        },
+      }),
     );
     const wrapper = mountView();
     const session = useSessionStore();
@@ -201,12 +301,157 @@ describe("SettingsView", () => {
     await getButtonByText(wrapper, t("Check & Save")).trigger("click");
     await flushPromises();
 
-    expect(getChainMetadataMock).toHaveBeenCalledWith("http://localhost:8080");
+    expect(session.connection.toriiUrl).toBe("http://localhost:8080");
+    expect(session.connection.chainId).toBe(
+      DEFAULT_CHAIN_PRESET.connection.chainId,
+    );
+    expect(wrapper.get('[role="status"]').text()).toContain(
+      "Endpoint saved in read-only mode: Archived deployment mismatch. Writes are blocked.",
+    );
+    expect(
+      wrapper.get('[data-testid="endpoint-diagnostics"]').text(),
+    ).toContain("archived-chain");
+  });
+
+  it("does not save a draft endpoint when the check fails", async () => {
+    inspectEndpointMock.mockRejectedValueOnce(
+      new Error("metadata unavailable"),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const endpointStore = useEndpointStore();
+    const activeInspection = matchingInspection({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    endpointStore.adoptInspection(activeInspection);
+
+    await wrapper
+      .get('[data-testid="settings-torii-url-input"]')
+      .setValue("http://localhost:8080/");
+    await getButtonByText(wrapper, t("Check & Save")).trigger("click");
+    await flushPromises();
+
+    expect(inspectEndpointMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: DEFAULT_CHAIN_PRESET.connection.chainId,
+      networkPrefix: DEFAULT_CHAIN_PRESET.connection.networkPrefix,
+    });
     expect(session.connection.toriiUrl).toBe(
       DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );
+    expect(endpointStore.inspection).toEqual(activeInspection);
+    expect(endpointStore.writeAllowed).toBe(true);
+    expect(endpointStore.error).toBe("");
     expect(wrapper.text()).toContain("metadata unavailable");
     expect(wrapper.get('[role="alert"]').text()).toBe("metadata unavailable");
+    expect(
+      wrapper.get('[data-testid="endpoint-diagnostics"]').text(),
+    ).toContain(t("Read and write"));
+  });
+
+  it("keeps active endpoint diagnostics after an unsaved candidate reports unreachable", async () => {
+    inspectEndpointMock.mockImplementationOnce(
+      (input: EndpointInspectionInput): EndpointInspection => ({
+        ...matchingInspection(input),
+        observed: null,
+        identityStatus: "unreachable",
+        accessMode: "offline",
+        features: endpointFeatures(false),
+        diagnostic: {
+          code: "endpoint_unreachable",
+          message: "Candidate endpoint is unreachable.",
+        },
+      }),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const endpointStore = useEndpointStore();
+    const activeInspection = matchingInspection({
+      toriiUrl: session.connection.toriiUrl,
+      chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
+    });
+    endpointStore.adoptInspection(activeInspection);
+
+    await wrapper
+      .get('[data-testid="settings-torii-url-input"]')
+      .setValue("http://localhost:8080/");
+    await getButtonByText(wrapper, t("Check & Save")).trigger("click");
+    await flushPromises();
+
+    expect(session.connection.toriiUrl).toBe(
+      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
+    );
+    expect(endpointStore.inspection).toEqual(activeInspection);
+    expect(endpointStore.writeAllowed).toBe(true);
+    expect(endpointStore.error).toBe("");
+    expect(wrapper.get('[role="alert"]').text()).toBe(
+      "Candidate endpoint is unreachable.",
+    );
+    expect(
+      wrapper.get('[data-testid="endpoint-diagnostics"]').text(),
+    ).toContain(t("Read and write"));
+  });
+
+  it("ignores an older candidate inspection after a newer candidate is saved", async () => {
+    const resolvers = new Map<
+      string,
+      (inspection: EndpointInspection) => void
+    >();
+    inspectEndpointMock.mockImplementation(
+      (input: EndpointInspectionInput) =>
+        new Promise<EndpointInspection>((resolve) => {
+          resolvers.set(input.toriiUrl, resolve);
+        }),
+    );
+    const wrapper = mountView();
+    const session = useSessionStore();
+    const endpointStore = useEndpointStore();
+    const endpointInput = wrapper.get(
+      '[data-testid="settings-torii-url-input"]',
+    );
+
+    await endpointInput.setValue("http://candidate-a.example/");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+    await endpointInput.setValue("http://candidate-b.example/");
+    await wrapper.get("form").trigger("submit");
+    await flushPromises();
+
+    const resolveNewer = resolvers.get("http://candidate-b.example");
+    if (!resolveNewer) throw new Error("newer candidate resolver missing");
+    resolveNewer(
+      matchingInspection({
+        toriiUrl: "http://candidate-b.example",
+        chainId: session.connection.chainId,
+        networkPrefix: session.connection.networkPrefix,
+      }),
+    );
+    await flushPromises();
+
+    expect(session.connection.toriiUrl).toBe("http://candidate-b.example");
+    expect(endpointStore.inspection?.toriiUrl).toBe(
+      "http://candidate-b.example",
+    );
+
+    const resolveOlder = resolvers.get("http://candidate-a.example");
+    if (!resolveOlder) throw new Error("older candidate resolver missing");
+    resolveOlder(
+      matchingInspection({
+        toriiUrl: "http://candidate-a.example",
+        chainId: session.connection.chainId,
+        networkPrefix: session.connection.networkPrefix,
+      }),
+    );
+    await flushPromises();
+
+    expect(session.connection.toriiUrl).toBe("http://candidate-b.example");
+    expect(endpointStore.inspection?.toriiUrl).toBe(
+      "http://candidate-b.example",
+    );
+    expect(endpointStore.writeAllowed).toBe(true);
   });
 
   it("rejects invalid draft endpoints before checking", async () => {
@@ -219,7 +464,7 @@ describe("SettingsView", () => {
     await getButtonByText(wrapper, t("Check & Save")).trigger("click");
     await flushPromises();
 
-    expect(getChainMetadataMock).not.toHaveBeenCalled();
+    expect(inspectEndpointMock).not.toHaveBeenCalled();
     expect(session.connection.toriiUrl).toBe(
       DEFAULT_CHAIN_PRESET.connection.toriiUrl,
     );

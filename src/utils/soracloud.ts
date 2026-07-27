@@ -85,31 +85,153 @@ export interface SoraCloudStatusView {
   raw: Record<string, unknown> | null;
 }
 
+export interface SoraCloudHfStatusQueryInput {
+  repoId: string;
+  revision?: string;
+  storageClass: SoraCloudStorageClass;
+  leaseTermMs: number;
+  accountId?: string;
+}
+
+export interface SoraCloudHfStatusView {
+  found: boolean;
+  statusCode?: number;
+  message?: string;
+  raw: Record<string, unknown> | null;
+}
+
 const SERVICE_NAME_FALLBACK = "hf-model-service";
 const MON_GATEWAY_HOST_SUFFIX = ".mon.taira.sora.org";
 const BASE58_ASSET_DEFINITION_RE = /^[1-9A-HJ-NP-Za-km-z]+$/u;
+const CANONICAL_QUANTITY_RE = /^(?:0|[1-9]\d*)(?:\.(?:\d{0,27}[1-9]))?$/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
-const numberOrNull = (value: unknown): number | null => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const integerOrNull = (value: unknown): number | null => {
-  const parsed = numberOrNull(value);
-  return parsed === null ? null : Math.trunc(parsed);
-};
-
-const readTaggedValue = (value: unknown): string => {
-  if (typeof value === "string") return value;
-  if (isRecord(value)) {
-    return trimString(value.status ?? value.stage ?? value.value);
+const requireRecord = (
+  value: unknown,
+  label: string,
+): Record<string, unknown> => {
+  if (!isRecord(value)) {
+    throw new Error(`${label} must be an object.`);
   }
-  return "";
+  return value;
+};
+
+const requireCanonicalText = (value: unknown, label: string): string => {
+  if (typeof value !== "string" || !value || value.trim() !== value) {
+    throw new Error(`${label} must be a canonical non-empty string.`);
+  }
+  return value;
+};
+
+const requireNonNegativeSafeInteger = (
+  value: unknown,
+  label: string,
+): number => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return value as number;
+};
+
+const optionalNonNegativeSafeInteger = (
+  value: unknown,
+  label: string,
+): number | null => {
+  if (value === undefined || value === null) return null;
+  return requireNonNegativeSafeInteger(value, label);
+};
+
+const optionalCanonicalText = (
+  value: unknown,
+  label: string,
+): string | null => {
+  if (value === undefined || value === null) return null;
+  return requireCanonicalText(value, label);
+};
+
+const optionalCanonicalQuantity = (
+  value: unknown,
+  label: string,
+): string | null => {
+  const literal = optionalCanonicalText(value, label);
+  if (literal !== null && !CANONICAL_QUANTITY_RE.test(literal)) {
+    throw new Error(`${label} must be a canonical quantity.`);
+  }
+  return literal;
+};
+
+const assertSnakeCaseFields = (
+  value: Record<string, unknown>,
+  label: string,
+) => {
+  const invalid = Object.keys(value).filter(
+    (key) => !/^[a-z][a-z0-9_]*$/u.test(key),
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `${label} contains non-canonical fields: ${invalid.join(", ")}.`,
+    );
+  }
+};
+
+const requireExactKeys = (
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string,
+) => {
+  const expected = new Set(expectedKeys);
+  const missing = expectedKeys.filter((key) => !hasOwn(value, key));
+  const unexpected = Object.keys(value).filter((key) => !expected.has(key));
+  if (missing.length > 0 || unexpected.length > 0) {
+    const detail = [
+      missing.length > 0 ? `missing ${missing.join(", ")}` : "",
+      unexpected.length > 0 ? `unexpected ${unexpected.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(`${label} has invalid fields (${detail}).`);
+  }
+};
+
+const requireAllowedKeys = (
+  value: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[],
+  label: string,
+) => {
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  const missing = requiredKeys.filter((key) => !hasOwn(value, key));
+  const unexpected = Object.keys(value).filter((key) => !allowed.has(key));
+  if (missing.length > 0 || unexpected.length > 0) {
+    const detail = [
+      missing.length > 0 ? `missing ${missing.join(", ")}` : "",
+      unexpected.length > 0 ? `unexpected ${unexpected.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join("; ");
+    throw new Error(`${label} has invalid fields (${detail}).`);
+  }
+};
+
+const readTaggedValue = (
+  value: unknown,
+  tag: "status" | "stage",
+  label: string,
+): string => {
+  const record = requireRecord(value, label);
+  assertSnakeCaseFields(record, label);
+  const allowed = new Set([tag, "value"]);
+  const unexpected = Object.keys(record).filter((key) => !allowed.has(key));
+  if (unexpected.length > 0 || !hasOwn(record, tag)) {
+    throw new Error(`${label} must use the canonical ${tag} tag.`);
+  }
+  return requireCanonicalText(record[tag], `${label}.${tag}`);
 };
 
 const serviceStatusFromSnapshot = (
@@ -117,17 +239,19 @@ const serviceStatusFromSnapshot = (
 ): SoraCloudDeploymentStatus => {
   const activeRollout = isRecord(service.active_rollout)
     ? service.active_rollout
-    : isRecord(service.activeRollout)
-      ? service.activeRollout
-      : null;
+    : null;
   const latestRevision = isRecord(service.latest_revision)
     ? service.latest_revision
-    : isRecord(service.latestRevision)
-      ? service.latestRevision
-      : null;
-  const leaseStatus = readTaggedValue(
-    service.service_lease_status ?? service.serviceLeaseStatus,
-  ).toLowerCase();
+    : null;
+  const leaseStatus =
+    service.service_lease_status === undefined ||
+    service.service_lease_status === null
+      ? ""
+      : readTaggedValue(
+          service.service_lease_status,
+          "status",
+          "SoraCloud service.service_lease_status",
+        ).toLowerCase();
 
   if (activeRollout) return "deploying";
   if (leaseStatus === "exhausted") return "failed";
@@ -174,27 +298,15 @@ export const deriveSoraCloudPublicUrls = (
 ): string[] => {
   const latestRevision = isRecord(service.latest_revision)
     ? service.latest_revision
-    : isRecord(service.latestRevision)
-      ? service.latestRevision
-      : {};
-  const routeHost = trimString(
-    latestRevision.route_host ?? latestRevision.routeHost,
-  );
+    : {};
+  const routeHost = trimString(latestRevision.route_host);
   const monRoute = deriveMonGatewayUrl(routeHost);
   return uniqueStrings([
-    normalizeUrl(service.public_discovery_url ?? service.publicDiscoveryUrl),
-    normalizeUrl(
-      service.public_discovery_cid_host_url ??
-        service.publicDiscoveryCidHostUrl,
-    ),
-    normalizeUrl(
-      latestRevision.public_discovery_url ?? latestRevision.publicDiscoveryUrl,
-    ),
-    normalizeUrl(
-      latestRevision.public_discovery_cid_host_url ??
-        latestRevision.publicDiscoveryCidHostUrl,
-    ),
-    normalizeUrl(latestRevision.base_url ?? latestRevision.baseUrl),
+    normalizeUrl(service.public_discovery_url),
+    normalizeUrl(service.public_discovery_cid_host_url),
+    normalizeUrl(latestRevision.public_discovery_url),
+    normalizeUrl(latestRevision.public_discovery_cid_host_url),
+    normalizeUrl(latestRevision.base_url),
     monRoute,
   ]);
 };
@@ -202,34 +314,84 @@ export const deriveSoraCloudPublicUrls = (
 export const normalizeSoraCloudStatusPayload = (
   payload: Record<string, unknown>,
 ): SoraCloudStatusView => {
-  const controlPlane = isRecord(payload.control_plane)
-    ? payload.control_plane
-    : isRecord(payload.controlPlane)
-      ? payload.controlPlane
-      : {};
-  const rawServices = Array.isArray(controlPlane.services)
-    ? controlPlane.services.filter(isRecord)
-    : [];
-  const services = rawServices.map(normalizeSoraCloudServiceSummary);
+  const label = "SoraCloud status response";
+  assertSnakeCaseFields(payload, label);
+  const schemaVersion = requireNonNegativeSafeInteger(
+    payload.schema_version,
+    `${label}.schema_version`,
+  );
+  if (schemaVersion !== 1) {
+    throw new Error(`${label}.schema_version must be 1.`);
+  }
+  const controlPlane = requireRecord(
+    payload.control_plane,
+    `${label}.control_plane`,
+  );
+  requireExactKeys(
+    controlPlane,
+    [
+      "schema_version",
+      "service_count",
+      "audit_event_count",
+      "services",
+      "recent_audit_events",
+    ],
+    `${label}.control_plane`,
+  );
+  if (
+    requireNonNegativeSafeInteger(
+      controlPlane.schema_version,
+      `${label}.control_plane.schema_version`,
+    ) !== 1
+  ) {
+    throw new Error(`${label}.control_plane.schema_version must be 1.`);
+  }
+  if (!Array.isArray(controlPlane.services)) {
+    throw new Error(`${label}.control_plane.services must be an array.`);
+  }
+  const services = controlPlane.services.map((service, index) =>
+    normalizeSoraCloudServiceSummary(
+      requireRecord(service, `${label}.control_plane.services[${index}]`),
+      `${label}.control_plane.services[${index}]`,
+    ),
+  );
+  const serviceCount = requireNonNegativeSafeInteger(
+    controlPlane.service_count,
+    `${label}.control_plane.service_count`,
+  );
+  if (serviceCount !== services.length) {
+    throw new Error(
+      `${label}.control_plane.service_count does not match its services.`,
+    );
+  }
+  if (!Array.isArray(controlPlane.recent_audit_events)) {
+    throw new Error(
+      `${label}.control_plane.recent_audit_events must be an array.`,
+    );
+  }
+  const recentAuditEvents = controlPlane.recent_audit_events.map(
+    (event, index) => {
+      const record = requireRecord(
+        event,
+        `${label}.control_plane.recent_audit_events[${index}]`,
+      );
+      assertSnakeCaseFields(
+        record,
+        `${label}.control_plane.recent_audit_events[${index}]`,
+      );
+      return record;
+    },
+  );
   return {
     available: true,
-    schemaVersion: integerOrNull(
-      payload.schema_version ??
-        payload.schemaVersion ??
-        controlPlane.schema_version ??
-        controlPlane.schemaVersion,
+    schemaVersion,
+    serviceCount,
+    auditEventCount: requireNonNegativeSafeInteger(
+      controlPlane.audit_event_count,
+      `${label}.control_plane.audit_event_count`,
     ),
-    serviceCount:
-      integerOrNull(controlPlane.service_count ?? controlPlane.serviceCount) ??
-      services.length,
-    auditEventCount:
-      integerOrNull(
-        controlPlane.audit_event_count ?? controlPlane.auditEventCount,
-      ) ?? 0,
     services,
-    recentAuditEvents: Array.isArray(controlPlane.recent_audit_events)
-      ? controlPlane.recent_audit_events.filter(isRecord)
-      : [],
+    recentAuditEvents,
     raw: payload,
   };
 };
@@ -249,70 +411,235 @@ export const unavailableSoraCloudStatus = (
   raw: null,
 });
 
+export const buildSoraCloudHfStatusQuery = (
+  input: SoraCloudHfStatusQueryInput,
+): Record<string, string | number | undefined> => {
+  const repoId = trimString(input.repoId);
+  if (!repoId) {
+    throw new Error("Hugging Face repo is required.");
+  }
+  if (!["hot", "warm", "cold"].includes(input.storageClass)) {
+    throw new Error("SoraCloud storage class is invalid.");
+  }
+  if (!Number.isSafeInteger(input.leaseTermMs) || input.leaseTermMs <= 0) {
+    throw new Error("Lease duration must be greater than zero.");
+  }
+  return {
+    repo_id: repoId,
+    revision: trimString(input.revision) || undefined,
+    storage_class: input.storageClass,
+    lease_term_ms: input.leaseTermMs,
+    account_id: trimString(input.accountId) || undefined,
+  };
+};
+
+export const normalizeSoraCloudHfStatusPayload = (
+  payload: Record<string, unknown>,
+): SoraCloudHfStatusView => ({
+  found: true,
+  raw: payload,
+});
+
+export const missingSoraCloudHfStatus = (
+  message: string,
+  statusCode = 404,
+): SoraCloudHfStatusView => ({
+  found: false,
+  statusCode,
+  message,
+  raw: null,
+});
+
 export const normalizeSoraCloudServiceSummary = (
   service: Record<string, unknown>,
+  label = "SoraCloud service",
 ): SoraCloudServiceSummary => {
-  const latestRevision = isRecord(service.latest_revision)
-    ? service.latest_revision
-    : isRecord(service.latestRevision)
-      ? service.latestRevision
-      : {};
-  const activeRollout = isRecord(service.active_rollout)
-    ? service.active_rollout
-    : isRecord(service.activeRollout)
-      ? service.activeRollout
-      : null;
-  const serviceName = trimString(
-    service.service_name ?? service.serviceName ?? service.name,
+  assertSnakeCaseFields(service, label);
+  requireAllowedKeys(
+    service,
+    [
+      "service_name",
+      "current_version",
+      "revision_count",
+      "config_generation",
+      "secret_generation",
+      "config_entry_count",
+      "secret_entry_count",
+      "latest_revision",
+    ],
+    [
+      "quota_class",
+      "service_lease_status",
+      "lease_expires_sequence",
+      "prepaid_runtime_balance",
+      "remaining_runtime_balance",
+      "public_discovery_content_cid",
+      "public_discovery_url",
+      "public_discovery_cid_host_url",
+      "active_rollout",
+      "last_rollout",
+    ],
+    label,
   );
+  const serviceName = requireCanonicalText(
+    service.service_name,
+    `${label}.service_name`,
+  );
+  requireNonNegativeSafeInteger(
+    service.config_generation,
+    `${label}.config_generation`,
+  );
+  requireNonNegativeSafeInteger(
+    service.secret_generation,
+    `${label}.secret_generation`,
+  );
+  optionalCanonicalText(service.quota_class, `${label}.quota_class`);
+  optionalCanonicalQuantity(
+    service.prepaid_runtime_balance,
+    `${label}.prepaid_runtime_balance`,
+  );
+  optionalCanonicalText(
+    service.public_discovery_content_cid,
+    `${label}.public_discovery_content_cid`,
+  );
+  for (const field of [
+    "public_discovery_url",
+    "public_discovery_cid_host_url",
+  ] as const) {
+    const url = optionalCanonicalText(service[field], `${label}.${field}`);
+    if (url !== null && normalizeUrl(url) === null) {
+      throw new Error(`${label}.${field} must be an absolute HTTP(S) URL.`);
+    }
+  }
+  const latestRevision =
+    service.latest_revision === null
+      ? null
+      : requireRecord(service.latest_revision, `${label}.latest_revision`);
+  if (latestRevision) {
+    assertSnakeCaseFields(latestRevision, `${label}.latest_revision`);
+    requireNonNegativeSafeInteger(
+      latestRevision.sequence,
+      `${label}.latest_revision.sequence`,
+    );
+    requireCanonicalText(
+      latestRevision.service_version,
+      `${label}.latest_revision.service_version`,
+    );
+    requireCanonicalText(
+      latestRevision.signed_by,
+      `${label}.latest_revision.signed_by`,
+    );
+    for (const field of [
+      "base_url",
+      "public_discovery_url",
+      "public_discovery_cid_host_url",
+    ] as const) {
+      const url = optionalCanonicalText(
+        latestRevision[field],
+        `${label}.latest_revision.${field}`,
+      );
+      if (url !== null && normalizeUrl(url) === null) {
+        throw new Error(
+          `${label}.latest_revision.${field} must be an absolute HTTP(S) URL.`,
+        );
+      }
+    }
+  }
+  const activeRollout =
+    service.active_rollout === undefined || service.active_rollout === null
+      ? null
+      : requireRecord(service.active_rollout, `${label}.active_rollout`);
+  if (activeRollout) {
+    assertSnakeCaseFields(activeRollout, `${label}.active_rollout`);
+  }
+  if (service.last_rollout !== undefined && service.last_rollout !== null) {
+    const lastRollout = requireRecord(
+      service.last_rollout,
+      `${label}.last_rollout`,
+    );
+    assertSnakeCaseFields(lastRollout, `${label}.last_rollout`);
+  }
   const rolloutStage = activeRollout
-    ? readTaggedValue(activeRollout.stage)
+    ? readTaggedValue(
+        activeRollout.stage,
+        "stage",
+        `${label}.active_rollout.stage`,
+      )
     : null;
+  const rolloutPercent = activeRollout
+    ? requireNonNegativeSafeInteger(
+        activeRollout.traffic_percent,
+        `${label}.active_rollout.traffic_percent`,
+      )
+    : null;
+  if (rolloutPercent !== null && rolloutPercent > 100) {
+    throw new Error(
+      `${label}.active_rollout.traffic_percent must not exceed 100.`,
+    );
+  }
+  const leaseStatus =
+    service.service_lease_status === undefined ||
+    service.service_lease_status === null
+      ? null
+      : readTaggedValue(
+          service.service_lease_status,
+          "status",
+          `${label}.service_lease_status`,
+        );
+  const remainingRuntimeBalance = optionalCanonicalQuantity(
+    service.remaining_runtime_balance,
+    `${label}.remaining_runtime_balance`,
+  );
   return {
-    id: serviceName || SERVICE_NAME_FALLBACK,
-    name: serviceName || SERVICE_NAME_FALLBACK,
+    id: serviceName,
+    name: serviceName,
     status: serviceStatusFromSnapshot(service),
-    currentVersion: trimString(
-      service.current_version ??
-        service.currentVersion ??
-        latestRevision.service_version ??
-        latestRevision.serviceVersion,
+    currentVersion: requireCanonicalText(
+      service.current_version,
+      `${label}.current_version`,
     ),
-    revisionCount:
-      integerOrNull(service.revision_count ?? service.revisionCount) ?? 0,
-    configEntryCount:
-      integerOrNull(service.config_entry_count ?? service.configEntryCount) ??
-      0,
-    secretEntryCount:
-      integerOrNull(service.secret_entry_count ?? service.secretEntryCount) ??
-      0,
+    revisionCount: requireNonNegativeSafeInteger(
+      service.revision_count,
+      `${label}.revision_count`,
+    ),
+    configEntryCount: requireNonNegativeSafeInteger(
+      service.config_entry_count,
+      `${label}.config_entry_count`,
+    ),
+    secretEntryCount: requireNonNegativeSafeInteger(
+      service.secret_entry_count,
+      `${label}.secret_entry_count`,
+    ),
     routeHost:
-      trimString(latestRevision.route_host ?? latestRevision.routeHost) || null,
+      latestRevision?.route_host === undefined ||
+      latestRevision.route_host === null
+        ? null
+        : requireCanonicalText(
+            latestRevision.route_host,
+            `${label}.latest_revision.route_host`,
+          ),
     publicUrls: deriveSoraCloudPublicUrls(service),
     rolloutStage: rolloutStage || null,
-    rolloutPercent:
-      integerOrNull(
-        activeRollout?.traffic_percent ??
-          activeRollout?.trafficPercent ??
-          activeRollout?.canary_percent ??
-          activeRollout?.canaryPercent,
-      ) ?? null,
-    leaseStatus:
-      readTaggedValue(
-        service.service_lease_status ?? service.serviceLeaseStatus,
-      ) || null,
-    leaseExpiresSequence: integerOrNull(
-      service.lease_expires_sequence ?? service.leaseExpiresSequence,
+    rolloutPercent,
+    leaseStatus,
+    leaseExpiresSequence: optionalNonNegativeSafeInteger(
+      service.lease_expires_sequence,
+      `${label}.lease_expires_sequence`,
     ),
-    remainingRuntimeBalanceNanos:
-      service.remaining_runtime_balance_nanos !== undefined
-        ? trimString(service.remaining_runtime_balance_nanos)
-        : service.remainingRuntimeBalanceNanos !== undefined
-          ? trimString(service.remainingRuntimeBalanceNanos)
-          : null,
-    latestSequence: integerOrNull(latestRevision.sequence),
+    remainingRuntimeBalanceNanos: remainingRuntimeBalance,
+    latestSequence: latestRevision
+      ? requireNonNegativeSafeInteger(
+          latestRevision.sequence,
+          `${label}.latest_revision.sequence`,
+        )
+      : null,
     signedBy:
-      trimString(latestRevision.signed_by ?? latestRevision.signedBy) || null,
+      latestRevision === null
+        ? null
+        : requireCanonicalText(
+            latestRevision.signed_by,
+            `${label}.latest_revision.signed_by`,
+          ),
     raw: service,
   };
 };

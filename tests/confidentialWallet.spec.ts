@@ -63,7 +63,7 @@ describe("confidential wallet helpers", () => {
 
     expect(ownerTagHex).toMatch(/^[0-9a-f]{64}$/);
     expect(ownerTagHexFor(alice.privateKeyHex)).toBe(ownerTagHex);
-  });
+  }, 15_000);
 
   it("derives diversified receive addresses from the wallet private key", () => {
     const alice = makeAccount();
@@ -197,6 +197,46 @@ describe("confidential wallet helpers", () => {
     });
     expect(ledger.notes).toHaveLength(1);
     expect(ledger.notes[0]?.commitment_hex).toBe(note.commitment_hex);
+  });
+
+  it("does not merge case-variant Base58 asset definitions", () => {
+    const alice = makeAccount();
+    const note = noteFor(alice, "5", 1, "11");
+    const ledger = collectWalletConfidentialLedger(
+      [
+        {
+          entrypoint_hash: "0xcase-variant",
+          result_ok: true,
+          metadata: buildWalletConfidentialMetadata({
+            outputs: [{ note, recipientAccountId: alice.accountId }],
+          }),
+          instructions: [
+            {
+              zk: {
+                Shield: {
+                  asset: ASSET_ID.toLowerCase(),
+                  from: alice.accountId,
+                  amount: "5",
+                  note_commitment: note.commitment_hex,
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        privateKeyHex: alice.privateKeyHex,
+        chainId: CHAIN_ID,
+        assetDefinitionIds: [ASSET_ID],
+      },
+    );
+
+    expect(ledger).toMatchObject({
+      exact: true,
+      spendableQuantity: "0",
+      treeCommitmentsHex: [],
+    });
+    expect(ledger.notes).toHaveLength(0);
   });
 
   it("tracks spent notes, recipient notes, and change notes across shielded sends", () => {

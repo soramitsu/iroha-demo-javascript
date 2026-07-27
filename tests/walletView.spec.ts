@@ -4,7 +4,12 @@ import { createPinia, setActivePinia } from "pinia";
 import WalletView from "@/views/WalletView.vue";
 import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
+import type {
+  EndpointFeature,
+  EndpointFeatureMap,
+} from "@/types/endpointInspection";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 
 const fetchAccountAssetsMock = vi.fn();
@@ -26,6 +31,14 @@ type FaucetResponseFixture = {
   status: string;
 };
 
+const finalityFor = (transactionHash: string) => ({
+  status: "finalized" as const,
+  transactionHash,
+  blockHeight: 17,
+  blockHash: "ef".repeat(32),
+  finalizedBlockHeight: 17,
+});
+
 vi.mock("@/services/iroha", () => ({
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
   fetchAccountTransactions: (input: unknown) =>
@@ -40,13 +53,55 @@ vi.mock("@/services/iroha", () => ({
   requestFaucetFunds: (
     input: unknown,
     onProgress?: (progress: unknown) => void,
-  ) => requestFaucetFundsMock(input, onProgress),
+  ) =>
+    Promise.resolve(requestFaucetFundsMock(input, onProgress)).then(
+      (result: FaucetResponseFixture & { finality?: unknown }) => ({
+        ...result,
+        status: "FINALIZED",
+        finality: result.finality ?? finalityFor(result.tx_hash_hex),
+      }),
+    ),
   cancelFaucetRequest: (input: unknown) => cancelFaucetRequestMock(input),
-  transferAsset: (input: unknown) => transferAssetMock(input),
+  transferAsset: (input: unknown) =>
+    Promise.resolve(transferAssetMock(input)).then(
+      (result: { hash: string; finality?: unknown }) => ({
+        ...result,
+        finality: result.finality ?? finalityFor(result.hash),
+      }),
+    ),
 }));
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
+
+const endpointFeatures = (supported: boolean): EndpointFeatureMap => {
+  const features: EndpointFeature[] = [
+    "accountRegistration",
+    "accountOnboarding",
+    "assetTransfers",
+    "faucetClaim",
+    "confidentialTransfers",
+    "kaigiMeetings",
+    "governanceWrites",
+    "stakingWrites",
+    "subscriptionWrites",
+    "soraCloudDeploy",
+    "vpnSessions",
+    "irohaConnectSessions",
+    "zkProofJobs",
+  ];
+  return Object.fromEntries(
+    features.map((feature) => [
+      feature,
+      {
+        supported,
+        source: "openapi",
+        requiredOperations: [],
+        missingOperations: [],
+      },
+    ]),
+  ) as unknown as EndpointFeatureMap;
+};
 
 const confidentialBalanceFixture = (
   overrides: Partial<{
@@ -125,14 +180,13 @@ describe("WalletView", () => {
       }),
     );
     getGovernanceCitizenStatusMock.mockResolvedValue({
+      state: "not-citizen",
       accountId: "alice@wonderland",
-      isCitizen: false,
       amount: null,
       bondedHeight: null,
       seatsInEpoch: null,
       lastEpochSeen: null,
       cooldownUntil: null,
-      endpointAvailable: true,
     });
     setActivePinia(createPinia());
   });
@@ -187,6 +241,30 @@ describe("WalletView", () => {
       accounts: [account],
       activeAccountId: account.accountId,
     });
+    useEndpointStore().$patch({
+      state: "ready",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: session.connection.toriiUrl,
+        expected: {
+          chainId: session.connection.chainId,
+          networkPrefix: session.connection.networkPrefix,
+        },
+        observed: {
+          chainId: session.connection.chainId,
+          networkPrefix: session.connection.networkPrefix,
+        },
+        identityStatus: "matched",
+        accessMode: "read-write",
+        checkedAtMs: 1,
+        evidence: [],
+        features: endpointFeatures(true),
+        diagnostic: {
+          code: "endpoint_identity_matched",
+          message: "Endpoint identity matches the configured network.",
+        },
+      },
+    });
     return mount(WalletView, {
       global: {
         plugins: [pinia],
@@ -229,7 +307,7 @@ describe("WalletView", () => {
       total: 1,
     });
 
-    const wrapper = mountView();
+    const wrapper = mountView("xor#wonderland");
     await flushPromises();
 
     await switchToBob();
@@ -252,6 +330,58 @@ describe("WalletView", () => {
 
     expect(wrapper.text()).toContain("xor#wonderland##bob@wonderland");
     expect(wrapper.text()).not.toContain("xor#wonderland##alice@wonderland");
+  });
+
+  it("ignores stale citizenship responses after the active account changes", async () => {
+    let resolveAliceCitizenship: (value: unknown) => void = () => {};
+    fetchAccountAssetsMock.mockImplementation(
+      async (input: { accountId: string }) => ({
+        items: [
+          {
+            asset_id: `xor#wonderland##${input.accountId}`,
+            quantity: "20",
+          },
+        ],
+        total: 1,
+      }),
+    );
+    getGovernanceCitizenStatusMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveAliceCitizenship = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({
+        state: "not-citizen",
+        accountId: "bob@wonderland",
+        amount: null,
+        bondedHeight: null,
+        seatsInEpoch: null,
+        lastEpochSeen: null,
+        cooldownUntil: null,
+      });
+
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain(t("Checking citizenship…"));
+
+    await switchToBob();
+    await flushPromises();
+    expect(wrapper.text()).toContain(t("Not a citizen yet"));
+
+    resolveAliceCitizenship({
+      state: "citizen",
+      accountId: "alice@wonderland",
+      amount: "10000",
+      bondedHeight: "12",
+      seatsInEpoch: "0",
+      lastEpochSeen: "0",
+      cooldownUntil: null,
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(t("Not a citizen yet"));
+    expect(wrapper.text()).not.toContain(t("You are a citizen"));
   });
 
   it("signs wallet transaction history refreshes with the active account key", async () => {
@@ -286,14 +416,13 @@ describe("WalletView", () => {
       total: 1,
     });
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "citizen",
       accountId: "alice@wonderland",
-      isCitizen: true,
       amount: "10000",
-      bondedHeight: 12,
-      seatsInEpoch: 0,
-      lastEpochSeen: 0,
+      bondedHeight: "12",
+      seatsInEpoch: "0",
+      lastEpochSeen: "0",
       cooldownUntil: null,
-      endpointAvailable: true,
     });
 
     const wrapper = mountView();
@@ -309,10 +438,39 @@ describe("WalletView", () => {
     expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       accountId: "alice@wonderland",
+      networkPrefix: 369,
     });
   });
 
-  it("keeps primary payment actions with the dominant balance and one contextual next step", async () => {
+  it("does not present an unavailable citizen read as non-citizenship", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#wonderland##alice@wonderland",
+          quantity: "20",
+        },
+      ],
+      total: 1,
+    });
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "unavailable",
+      accountId: "alice@wonderland",
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+    });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    const panel = wrapper.get(".wallet-citizenship-panel");
+    expect(panel.text()).toContain(t("Citizen status unavailable"));
+    expect(panel.text()).not.toContain(t("Not a citizen yet"));
+  });
+
+  it("shows funding and citizenship independently for an empty wallet", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -321,11 +479,150 @@ describe("WalletView", () => {
     expect(balanceBand.findAll(".wallet-action-link")).toHaveLength(2);
 
     const nextSteps = wrapper.findAll(".wallet-next-step .ui-alert");
-    expect(nextSteps).toHaveLength(1);
+    expect(nextSteps).toHaveLength(2);
     expect(nextSteps[0]?.text()).toContain(t("Starter funds"));
+    expect(nextSteps[1]?.text()).toContain(t("Not a citizen yet"));
   });
 
-  it("updates the visible balance before transaction and private scans finish", async () => {
+  it("does not suggest bonding when endpoint writes are blocked", async () => {
+    const wrapper = mountView();
+    const endpoint = useEndpointStore();
+    endpoint.$patch({
+      state: "ready",
+      inspection: {
+        ...endpoint.inspection!,
+        observed: {
+          chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+          networkPrefix: 369,
+        },
+        identityStatus: "mismatched",
+        accessMode: "read-only",
+        diagnostic: {
+          code: "endpoint_identity_mismatch",
+          message: "Archived Taira deployment; writes are blocked.",
+        },
+      },
+    });
+    await flushPromises();
+
+    const panel = wrapper.get(".wallet-citizenship-panel");
+    expect(panel.text()).toContain(
+      "Archived Taira deployment; writes are blocked.",
+    );
+    expect(panel.text()).not.toContain(
+      t("Bond citizenship and vote in governance referenda"),
+    );
+    const faucetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")));
+    expect(faucetButton?.attributes("disabled")).toBeDefined();
+  });
+
+  it("keeps only the faucet challenge available when endpoint identity is unverified and its complete surface is advertised", async () => {
+    const wrapper = mountView();
+    const endpoint = useEndpointStore();
+    endpoint.$patch({
+      state: "ready",
+      inspection: {
+        ...endpoint.inspection!,
+        observed: null,
+        identityStatus: "unverified",
+        accessMode: "read-only",
+        diagnostic: {
+          code: "endpoint_identity_unverified",
+          message: "Endpoint identity is available only from its faucet puzzle.",
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(endpoint.writeAllowed).toBe(false);
+    const faucetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")));
+    expect(faucetButton?.attributes("disabled")).toBeUndefined();
+    expect(wrapper.get(".wallet-citizenship-panel").text()).toContain(
+      "Endpoint identity is available only from its faucet puzzle.",
+    );
+  });
+
+  it("does not expose the faucet challenge on an unverified endpoint with an incomplete advertised surface", async () => {
+    const wrapper = mountView();
+    const endpoint = useEndpointStore();
+    const features = endpointFeatures(true);
+    features.faucetClaim = {
+      supported: false,
+      source: "openapi",
+      requiredOperations: ["GET /v1/accounts/faucet/puzzle"],
+      missingOperations: ["GET /v1/accounts/faucet/puzzle"],
+    };
+    endpoint.$patch({
+      state: "ready",
+      inspection: {
+        ...endpoint.inspection!,
+        observed: null,
+        identityStatus: "unverified",
+        accessMode: "read-only",
+        features,
+        diagnostic: {
+          code: "endpoint_identity_unverified",
+          message: "Endpoint identity is unverified.",
+        },
+      },
+    });
+    await flushPromises();
+
+    const faucetButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")));
+    expect(faucetButton?.attributes("disabled")).toBeDefined();
+  });
+
+  it("disables shielding and explains the endpoint prerequisite when writes are blocked", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "20",
+        },
+      ],
+      total: 1,
+    });
+    const wrapper = mountView("xor#universal");
+    await flushPromises();
+
+    const endpoint = useEndpointStore();
+    endpoint.$patch({
+      state: "ready",
+      inspection: {
+        ...endpoint.inspection!,
+        observed: {
+          chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+          networkPrefix: 369,
+        },
+        identityStatus: "mismatched",
+        accessMode: "read-only",
+        diagnostic: {
+          code: "endpoint_identity_mismatch",
+          message: "Archived Taira deployment; writes are blocked.",
+        },
+      },
+    });
+    await wrapper.get(".wallet-shield-input input").setValue("5");
+    await flushPromises();
+
+    const shieldButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Move to private balance")));
+    expect(shieldButton?.attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get('[data-testid="wallet-shield-endpoint-prerequisite"]').text(),
+    ).toContain("Archived Taira deployment; writes are blocked.");
+    await shieldButton?.trigger("click");
+    expect(transferAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("updates the visible balance while transaction and private reads continue independently", async () => {
     let resolveTransactions: (value: unknown) => void = () => {};
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
@@ -342,16 +639,159 @@ describe("WalletView", () => {
       }),
     );
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView("xor#universal");
     await flushPromises();
 
     expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
-    expect(getConfidentialAssetBalanceMock).not.toHaveBeenCalled();
+    expect(getConfidentialAssetBalanceMock).toHaveBeenCalled();
 
     resolveTransactions({ items: [], total: 0 });
     await flushPromises();
 
     expect(getConfidentialAssetBalanceMock).toHaveBeenCalled();
+  });
+
+  it("marks an account-assets failure unavailable instead of claiming zero or empty", async () => {
+    fetchAccountAssetsMock.mockRejectedValueOnce(
+      new Error("Account assets request timed out."),
+    );
+
+    const wrapper = mountView("xor#universal");
+    await flushPromises();
+
+    expect(wrapper.get(".wallet-balance-value").text()).toBe(t("Unavailable"));
+    expect(wrapper.text()).toContain("Account assets request timed out.");
+    expect(wrapper.find('[data-testid="wallet-assets-empty"]').exists()).toBe(
+      false,
+    );
+    const sendLink = wrapper
+      .findAll("a.secondary")
+      .find((link) => link.text().includes(t("Send")))!;
+    expect(sendLink.attributes("aria-disabled")).toBe("true");
+  });
+
+  it("marks a failed transaction read unavailable instead of claiming no history", async () => {
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "xor#wonderland##alice@wonderland",
+          quantity: "20",
+        },
+      ],
+      total: 1,
+    });
+    fetchAccountTransactionsMock.mockRejectedValueOnce(
+      new Error("Transaction history request timed out."),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+
+      expect(
+        wrapper.get('[data-testid="wallet-transactions-error"]').text(),
+      ).toContain("Transaction history request timed out.");
+      expect(
+        wrapper.find('[data-testid="wallet-transactions-empty"]').exists(),
+      ).toBe(false);
+      expect(wrapper.text()).not.toContain(t("No transfers recorded yet."));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("retains last-good assets and transactions with explicit refresh errors", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "42",
+          },
+        ],
+        total: 1,
+      })
+      .mockRejectedValueOnce(new Error("Asset refresh failed."));
+    fetchAccountTransactionsMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            entrypoint_hash: "0xlast-good",
+            timestamp_ms: 1_750_000_000_000,
+            result_ok: true,
+            instructions: [],
+          },
+        ],
+        total: 1,
+      })
+      .mockRejectedValueOnce(new Error("Transaction refresh failed."));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const routeHeaderTarget = document.createElement("div");
+    routeHeaderTarget.id = "route-header-actions";
+    document.body.append(routeHeaderTarget);
+
+    try {
+      const wrapper = mountView("xor#universal");
+      await flushPromises();
+
+      routeHeaderTarget.querySelector<HTMLButtonElement>("button")!.click();
+      await flushPromises();
+
+      expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
+      expect(wrapper.get(".wallet-table-wrap").text()).toContain("42");
+      expect(wrapper.text()).toContain("Asset refresh failed.");
+      expect(
+        wrapper.get('[data-testid="wallet-transactions-error"]').text(),
+      ).toContain("Transaction refresh failed.");
+      expect(
+        wrapper.find(".wallet-transactions-card .table-wrap").exists(),
+      ).toBe(true);
+    } finally {
+      routeHeaderTarget.remove();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("retains the last-good private balance when a rescan refresh fails", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "xor#universal##alice@wonderland",
+          quantity: "42",
+        },
+      ],
+      total: 1,
+    });
+    getConfidentialAssetBalanceMock
+      .mockResolvedValueOnce(
+        confidentialBalanceFixture({
+          quantity: "7",
+          onChainQuantity: "7",
+          spendableQuantity: "7",
+          recoveredNoteCount: 1,
+        }),
+      )
+      .mockRejectedValueOnce(new Error("Private balance refresh failed."));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const routeHeaderTarget = document.createElement("div");
+    routeHeaderTarget.id = "route-header-actions";
+    document.body.append(routeHeaderTarget);
+
+    try {
+      const wrapper = mountView("xor#universal");
+      await flushPromises();
+
+      routeHeaderTarget.querySelector<HTMLButtonElement>("button")!.click();
+      await flushPromises();
+      await flushPromises();
+
+      expect(wrapper.get(".wallet-shield-balance").text()).toBe("7");
+      expect(wrapper.text()).toContain("Private balance refresh failed.");
+    } finally {
+      routeHeaderTarget.remove();
+      warnSpy.mockRestore();
+    }
   });
 
   it("refreshes the primary balance with a narrow asset query before citizenship returns", async () => {
@@ -383,21 +823,20 @@ describe("WalletView", () => {
     expect(wrapper.get(".wallet-balance-value").text()).toBe("42");
 
     resolveCitizenship({
+      state: "citizen",
       accountId: "alice@wonderland",
-      isCitizen: true,
       amount: "10000",
-      bondedHeight: 12,
-      seatsInEpoch: 0,
-      lastEpochSeen: 0,
+      bondedHeight: "12",
+      seatsInEpoch: "0",
+      lastEpochSeen: "0",
       cooldownUntil: null,
-      endpointAvailable: true,
     });
     await flushPromises();
 
     expect(wrapper.text()).toContain(t("You are a citizen"));
   });
 
-  it("falls back to a full asset refresh when a stale filtered asset is missing", async () => {
+  it("does not relabel an unrelated holding when a stale filtered asset is missing", async () => {
     fetchAccountAssetsMock
       .mockRejectedValueOnce(new Error("Asset definition not found"))
       .mockResolvedValueOnce({
@@ -422,10 +861,13 @@ describe("WalletView", () => {
     expect(fetchAccountAssetsMock.mock.calls[1]?.[0]).not.toHaveProperty(
       "assetDefinitionId",
     );
-    expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("0");
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "5OldBucket1111111111111111111",
+    );
   });
 
-  it("falls back to a full asset refresh when the filtered asset page is empty", async () => {
+  it("does not relabel an unrelated holding when the filtered asset page is empty", async () => {
     fetchAccountAssetsMock
       .mockResolvedValueOnce({
         items: [],
@@ -453,7 +895,10 @@ describe("WalletView", () => {
     expect(fetchAccountAssetsMock.mock.calls[1]?.[0]).not.toHaveProperty(
       "assetDefinitionId",
     );
-    expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("0");
+    expect(useSessionStore().connection.assetDefinitionId).toBe(
+      "5OldBucket1111111111111111111",
+    );
   });
 
   it("shows on-chain shielded xor balance derived from committed history", async () => {
@@ -511,7 +956,7 @@ describe("WalletView", () => {
       exact: true,
     });
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView("xor#universal");
     await flushPromises();
 
     expect(wrapper.text()).toContain(t("Private balance"));
@@ -538,7 +983,7 @@ describe("WalletView", () => {
       total: 1,
     });
 
-    const wrapper = mountView();
+    const wrapper = mountView("xor#universal");
     await flushPromises();
 
     const summaryHtml = wrapper.get(".wallet-summary-card").html();
@@ -610,7 +1055,7 @@ describe("WalletView", () => {
       exact: false,
     });
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView("xor#universal");
     await flushPromises();
 
     expect(wrapper.text()).toContain(
@@ -631,7 +1076,7 @@ describe("WalletView", () => {
       total: 1,
     });
 
-    const wrapper = mountView("xor#wonderland");
+    const wrapper = mountView("xor#universal");
     await flushPromises();
 
     await wrapper
@@ -643,6 +1088,7 @@ describe("WalletView", () => {
     expect(scanConfidentialWalletMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      networkPrefix: 369,
       accountId: "alice@wonderland",
       privateKeyHex: "cd".repeat(32),
       assetDefinitionId: "xor#universal",
@@ -716,7 +1162,7 @@ describe("WalletView", () => {
       });
     transferAssetMock.mockResolvedValue({ hash: "0xshield" });
 
-    const wrapper = mountView("xor#wonderland", { localOnly: true });
+    const wrapper = mountView("xor#universal", { localOnly: true });
     await flushPromises();
 
     await wrapper.get(".wallet-shield-input input").setValue("5");
@@ -736,9 +1182,90 @@ describe("WalletView", () => {
     );
     expect(useSessionStore().activeAccount?.localOnly).toBe(false);
     expect(wrapper.text()).toContain(
-      t("Shield transaction committed: {hash}", { hash: "0xshield" }),
+      t("Shield transaction finalized on-chain: {hash}", {
+        hash: "0xshield",
+      }),
     );
     expect(wrapper.text()).toContain("5");
+  });
+
+  it("ignores a delayed shield completion after the active account switches", async () => {
+    let resolveBobAssets: (value: {
+      items: Array<{ asset_id: string; quantity: string }>;
+      total: number;
+    }) => void = () => {};
+    const bobAssets = new Promise<{
+      items: Array<{ asset_id: string; quantity: string }>;
+      total: number;
+    }>((resolve) => {
+      resolveBobAssets = resolve;
+    });
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "xor#universal##alice@wonderland",
+            quantity: "30",
+          },
+        ],
+        total: 1,
+      })
+      .mockReturnValueOnce(bobAssets);
+    let resolveShield!: (value: { hash: string }) => void;
+    transferAssetMock.mockReturnValueOnce(
+      new Promise<{ hash: string }>((resolve) => {
+        resolveShield = resolve;
+      }),
+    );
+
+    const wrapper = mountView("xor#universal");
+    await flushPromises();
+    await wrapper.get(".wallet-shield-input input").setValue("5");
+    await wrapper
+      .findAll("button.secondary")
+      .find((button) => button.text().includes(t("Move to private balance")))!
+      .trigger("click");
+    await flushPromises();
+
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ef".repeat(32),
+          privateKeyHex: "12".repeat(32),
+          hasStoredSecret: true,
+          localOnly: true,
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    resolveShield({ hash: "0xalice-shield" });
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.activeAccount?.accountId).toBe("bob@wonderland");
+    expect(session.activeAccount?.localOnly).toBe(true);
+    expect(wrapper.text()).not.toContain("0xalice-shield");
+
+    resolveBobAssets({
+      items: [
+        {
+          asset_id: "xor#universal##bob@wonderland",
+          quantity: "40",
+        },
+      ],
+      total: 1,
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".wallet-shield-input input").element).toHaveProperty(
+      "value",
+      "5",
+    );
   });
 
   it("uses the resolved on-chain xor asset id for wallet matching and shielding", async () => {
@@ -818,7 +1345,7 @@ describe("WalletView", () => {
     );
   });
 
-  it("shows the live Torii XOR balance instead of the cached faucet asset bucket", async () => {
+  it("keeps the exact configured asset instead of guessing from another XOR alias", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
@@ -836,11 +1363,11 @@ describe("WalletView", () => {
     const wrapper = mountView("norito:cachedbucket");
     await flushPromises();
 
-    expect(wrapper.get(".wallet-balance-value").text()).toBe("75000");
-    expect(wrapper.get(".wallet-balance-asset").text()).toBe("xor#universal");
+    expect(wrapper.get(".wallet-balance-value").text()).toBe("25000");
+    expect(wrapper.get(".wallet-balance-asset").text()).toBe("cachedbucket");
   });
 
-  it("replaces a stale configured asset definition with the live detected bucket", async () => {
+  it("does not replace a configured asset with an unrelated positive bucket", async () => {
     fetchAccountAssetsMock.mockResolvedValue({
       items: [
         {
@@ -855,7 +1382,7 @@ describe("WalletView", () => {
     await flushPromises();
 
     expect(useSessionStore().connection.assetDefinitionId).toBe(
-      "61CtjvNd9T3THAR65GsMVHr82Bjc",
+      "xor#universal",
     );
   });
 
@@ -998,6 +1525,76 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain("25000");
   });
 
+  it("ignores a delayed faucet completion after endpoint, chain, prefix, and account switch", async () => {
+    fetchAccountAssetsMock.mockImplementation(
+      async (input: { accountId: string }) => {
+        if (input.accountId === "bob@wonderland") {
+          throw new Error("Account not found");
+        }
+        return { items: [], total: 0 };
+      },
+    );
+    let resolveFaucet!: (value: FaucetResponseFixture) => void;
+    requestFaucetFundsMock.mockReturnValueOnce(
+      new Promise<FaucetResponseFixture>((resolve) => {
+        resolveFaucet = resolve;
+      }),
+    );
+
+    const wrapper = mountView("", { localOnly: true });
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text().includes(t("Request XOR")))!
+      .trigger("click");
+    await flushPromises();
+
+    const session = useSessionStore();
+    const alice = session.accounts[0];
+    session.$patch({
+      connection: {
+        toriiUrl: "https://network-b.example",
+        chainId: "chain-b",
+        assetDefinitionId: "bob-bucket",
+        networkPrefix: 753,
+      },
+      accounts: [
+        { ...alice, localOnly: true },
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ef".repeat(32),
+          privateKeyHex: "12".repeat(32),
+          hasStoredSecret: true,
+          localOnly: true,
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    resolveFaucet({
+      account_id: "alice@wonderland",
+      asset_definition_id: "alice-funded-bucket",
+      asset_id: "alice-funded-bucket",
+      amount: "25000",
+      tx_hash_hex: "0xalice-faucet",
+      status: "Committed",
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(session.connection).toMatchObject({
+      toriiUrl: "https://network-b.example",
+      chainId: "chain-b",
+      networkPrefix: 753,
+      assetDefinitionId: "bob-bucket",
+    });
+    expect(session.activeAccount?.accountId).toBe("bob@wonderland");
+    expect(session.activeAccount?.localOnly).toBe(true);
+    expect(wrapper.text()).not.toContain("0xalice-faucet");
+    expect(getOpenDialog()).toBeNull();
+  });
+
   it("switches known Minamoto faucet clicks to TAIRA before claiming", async () => {
     const fundedAssets = {
       items: [
@@ -1054,6 +1651,29 @@ describe("WalletView", () => {
       }),
       expect.any(Function),
     );
+  });
+
+  it("does not classify a hostname-only Minamoto override as the mainnet preset", async () => {
+    const wrapper = mountView("", {
+      connection: {
+        toriiUrl: MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+        chainId: "different-chain",
+        networkPrefix: 369,
+        assetDefinitionId: "",
+      },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain(
+      t(
+        "Minamoto mainnet has no faucet. Use TAIRA testnet to request starter XOR.",
+      ),
+    );
+    expect(
+      wrapper
+        .findAll("button")
+        .some((button) => button.text().includes(t("Request XOR"))),
+    ).toBe(true);
   });
 
   it("falls back to the funded asset reference when faucet omits the definition id", async () => {
@@ -1141,7 +1761,7 @@ describe("WalletView", () => {
     expect(wrapper.text()).toContain("25000");
     expect(wrapper.text()).not.toContain(
       t(
-        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+        "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.",
       ),
     );
   });
@@ -1435,7 +2055,7 @@ describe("WalletView", () => {
 
     expect(wrapper.text()).toContain(
       t(
-        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+        "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.",
       ),
     );
   });
@@ -1459,7 +2079,7 @@ describe("WalletView", () => {
     );
   });
 
-  it("keeps funded assets visible when confidential balance refresh fails", async () => {
+  it("keeps standard assets visible but marks private balance unavailable when its read fails", async () => {
     const consoleWarnSpy = vi
       .spyOn(console, "warn")
       .mockImplementation(() => undefined);
@@ -1490,8 +2110,21 @@ describe("WalletView", () => {
       expect(wrapper.text()).not.toContain(
         t("No assets found for this account."),
       );
-      expect(wrapper.text()).not.toContain(
+      expect(wrapper.get(".wallet-shield-balance").text()).toBe(
+        t("Unavailable"),
+      );
+      expect(wrapper.text()).toContain(
         "Confidential asset policy request failed",
+      );
+      expect(wrapper.text()).not.toContain(
+        t(
+          "Recovered {count} shielded note(s) from {source} through {watermark}.",
+          {
+            count: 0,
+            source: t("account history fallback"),
+            watermark: t("current available history"),
+          },
+        ),
       );
     } finally {
       consoleWarnSpy.mockRestore();

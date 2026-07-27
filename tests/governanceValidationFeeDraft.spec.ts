@@ -4,20 +4,70 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidationFeePayoutLifecycleDecodedInstruction,
   assertValidationFeePayoutLifecycleDraftResponse,
+  assertValidationFeeDraftWindowAgainstCapabilities,
   assertValidationFeePolicyDecodedInstruction,
   assertValidationFeePolicyDraftResponse,
-  buildValidationFeePayoutLifecycleDraftRequest,
-  buildValidationFeePolicyDraftRequest,
+  buildValidationFeePayoutLifecycleDraftRequest as buildValidationFeePayoutLifecycleDraftRequestWithRules,
+  buildValidationFeePolicyDraftRequest as buildValidationFeePolicyDraftRequestWithRules,
   VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
   VALIDATION_FEE_POLICY_DRAFT_PATH,
   VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
 } from "../electron/governanceValidationFeeDraft";
+import {
+  TAIRA_GOVERNANCE_XOR_ASSET_ID,
+  type GovernanceValidationFeePlainElectorateRulesV1,
+} from "../electron/governanceCapabilities";
 
 const hash = (byte: string): string => byte.repeat(64);
+const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+
+const plainElectorateRules =
+  (): GovernanceValidationFeePlainElectorateRulesV1 => ({
+    votingAssetId: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    ballotAmount: "150" as const,
+    ballotDurationBlocks: "3600" as const,
+    citizenshipAmount: "10000" as const,
+    maxMembers: "256" as const,
+    convictionStepBlocks: "100" as const,
+    maxConviction: "6" as const,
+    minTurnout: "1" as const,
+    approvalThresholdNumerator: "1" as const,
+    approvalThresholdDenominator: "2" as const,
+    eligibilityRule: {
+      rule: "proposal_operator_at_or_before_gate_others_after_gate" as const,
+      value: null,
+    },
+  });
+
+const plainElectorateRulesWire = () => ({
+  voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+  ballot_amount: "150",
+  ballot_duration_blocks: "3600",
+  citizenship_amount: "10000",
+  max_members: "256",
+  conviction_step_blocks: "100",
+  max_conviction: "6",
+  min_turnout: "1",
+  approval_threshold_numerator: "1",
+  approval_threshold_denominator: "2",
+  eligibility_rule: {
+    rule: "proposal_operator_at_or_before_gate_others_after_gate",
+    value: null,
+  },
+});
+
+const buildValidationFeePolicyDraftRequest = (value: unknown) =>
+  buildValidationFeePolicyDraftRequestWithRules(value, plainElectorateRules());
+
+const buildValidationFeePayoutLifecycleDraftRequest = (value: unknown) =>
+  buildValidationFeePayoutLifecycleDraftRequestWithRules(
+    value,
+    plainElectorateRules(),
+  );
 
 const payoutBinding = () => ({
   contract_address: "contract:validation-fee",
-  code_hash: hash("4"),
+  code_hash: hash("e"),
   entrypoint: "autonomous_validation_fee_tick",
   treasury_account_id: "treasury@cbsi",
   sbd_asset_id: "sbd#cbsi",
@@ -35,9 +85,9 @@ const payoutBinding = () => ({
 const policy = () => ({
   schema_version: 1,
   chain_id: "taira",
-  genesis_hash: hash("1"),
+  genesis_hash: hash("c"),
   policy_version: "2",
-  previous_policy_hash: hash("2"),
+  previous_policy_hash: hash("d"),
   ds_asset_id: "sbd#cbsi",
   ds_scale: 2,
   fee: "0.10",
@@ -46,7 +96,7 @@ const policy = () => ({
     charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
     value: null,
   },
-  effective_from_height: "121260",
+  effective_from_height: "121262",
   expires_after_height: null,
   exemption_classes: [] as string[],
   treasury_payout_binding: null as Record<string, unknown> | null,
@@ -60,21 +110,49 @@ const input = () => ({
 
 const response = (
   request: ReturnType<typeof buildValidationFeePolicyDraftRequest>,
-  proposalId = hash("3"),
-) => ({
-  version: 1,
-  proposal_id: proposalId,
-  proposal_kind: {
-    kind: "ValidationFeePolicy",
-    payload: request.proposal.payload,
-  },
-  tx_instructions: [
-    {
-      wire_id: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
-      payload_hex: "00",
+  proposalId = hash("a"),
+) => {
+  const policy = request.proposal.payload.policy;
+  const payoutBinding = policy.treasury_payout_binding as Record<
+    string,
+    unknown
+  > | null;
+  return {
+    version: 1,
+    proposal_id: proposalId,
+    proposal_kind: {
+      kind: "ValidationFeePolicy",
+      payload: {
+        policy: {
+          ...policy,
+          genesis_hash: (policy.genesis_hash as string).toUpperCase(),
+          previous_policy_hash:
+            policy.previous_policy_hash === null
+              ? null
+              : (policy.previous_policy_hash as string).toUpperCase(),
+          treasury_payout_binding:
+            payoutBinding === null
+              ? null
+              : {
+                  ...payoutBinding,
+                  code_hash: (payoutBinding.code_hash as string).toUpperCase(),
+                },
+        },
+        payout_lifecycle_proposal_id:
+          request.proposal.payload.payout_lifecycle_proposal_id === null
+            ? null
+            : request.proposal.payload.payout_lifecycle_proposal_id.toUpperCase(),
+        plain_electorate_rules: request.plain_electorate_rules,
+      },
     },
-  ],
-});
+    tx_instructions: [
+      {
+        wire_id: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
+        payload_hex: "00",
+      },
+    ],
+  };
+};
 
 describe("native validation-fee policy draft boundary", () => {
   it("wires the strict builder and validators into the preload signing path", () => {
@@ -96,6 +174,23 @@ describe("native validation-fee policy draft boundary", () => {
     expect(prepare).toContain("buildValidationFeePolicyDraftRequest");
     expect(prepare).toContain(
       "computeValidationFeePolicyProposalFingerprintV1",
+    );
+    expect(prepare).toContain(
+      "computeValidationFeePayoutLifecycleProposalFingerprintV1",
+    );
+    expect(prepare).toContain(
+      "computeValidationFeePolicyProposalFingerprintV1.length !== 3",
+    );
+    expect(prepare).toContain(
+      "computeValidationFeePayoutLifecycleProposalFingerprintV1.length !== 2",
+    );
+    expect(prepare).toContain(
+      "assertValidationFeeDraftWindowAgainstCapabilities",
+    );
+    expect(prepare).toContain("capabilities.validationFeePlainElectorateRules");
+    expect(prepare).toContain("validationFeeRequest.plain_electorate_rules");
+    expect(prepare).toContain(
+      "validationFeePayoutLifecycleRequest.plain_electorate_rules",
     );
     expect(prepare).toContain("assertValidationFeePolicyDraftResponse");
     expect(prepare).toContain("assertValidationFeePolicyDecodedInstruction");
@@ -119,6 +214,7 @@ describe("native validation-fee policy draft boundary", () => {
         payload: {
           policy: {
             ...policy(),
+            ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
             fee: "0.1",
           },
           payout_lifecycle_proposal_id: null,
@@ -126,7 +222,41 @@ describe("native validation-fee policy draft boundary", () => {
       },
       referendum_window: { lower: "200", upper: "300" },
       mode: "Plain",
+      plain_electorate_rules: plainElectorateRulesWire(),
     });
+  });
+
+  it("requires and canonicalizes the exact capabilities-bound PLAIN electorate rules", () => {
+    expect(() =>
+      buildValidationFeePolicyDraftRequestWithRules(
+        input(),
+        undefined as never,
+      ),
+    ).toThrow(/PLAIN electorate rules must be an object/u);
+    expect(() =>
+      buildValidationFeePayoutLifecycleDraftRequestWithRules(
+        {
+          payout_binding: payoutBinding(),
+          referendum_window: { lower: "400", upper: "3999" },
+        },
+        {
+          ...plainElectorateRules(),
+          ballotAmount: "151" as "150",
+        },
+      ),
+    ).toThrow(/exact first-release contract/u);
+    expect(() =>
+      buildValidationFeePolicyDraftRequestWithRules(input(), {
+        ...plainElectorateRules(),
+        compatibilityMode: true,
+      } as never),
+    ).toThrow(/must contain exactly/u);
+    expect(
+      buildValidationFeePolicyDraftRequestWithRules(
+        input(),
+        plainElectorateRules(),
+      ).plain_electorate_rules,
+    ).toEqual(plainElectorateRulesWire());
   });
 
   it("rejects legacy aliases, unknown fields, and incomplete integers", () => {
@@ -168,7 +298,7 @@ describe("native validation-fee policy draft boundary", () => {
 
   it("preserves complete u64 strings without JS Number coercion", () => {
     const maxU64 = (1n << 64n) - 1n;
-    const upper = maxU64 - 120_960n;
+    const upper = maxU64 - 120_962n;
     const request = buildValidationFeePolicyDraftRequest({
       ...input(),
       policy: {
@@ -191,7 +321,7 @@ describe("native validation-fee policy draft boundary", () => {
     expect(request.referendum_window.upper).toBe(upper.toString());
   });
 
-  it("requires an explicit ordered window and activation at upper + 120,960", () => {
+  it("accepts explicit post-window enactment targets with the exact 120,960-block activation delay", () => {
     expect(() =>
       buildValidationFeePolicyDraftRequest({
         ...input(),
@@ -201,9 +331,29 @@ describe("native validation-fee policy draft boundary", () => {
     expect(() =>
       buildValidationFeePolicyDraftRequest({
         ...input(),
-        policy: { ...policy(), effective_from_height: "121259" },
+        policy: { ...policy(), effective_from_height: "121260" },
       }),
-    ).toThrow(/120,960 blocks after the referendum window ends/);
+    ).toThrow(/enactment strictly after.*activation exactly 120,960/u);
+    expect(
+      buildValidationFeePolicyDraftRequest({
+        ...input(),
+        policy: { ...policy(), effective_from_height: "121261" },
+      }),
+    ).toMatchObject({
+      proposal: {
+        payload: { policy: { effective_from_height: "121261" } },
+      },
+    });
+    expect(
+      buildValidationFeePolicyDraftRequest({
+        ...input(),
+        policy: { ...policy(), effective_from_height: "123061" },
+      }),
+    ).toMatchObject({
+      proposal: {
+        payload: { policy: { effective_from_height: "123061" } },
+      },
+    });
     expect(() =>
       buildValidationFeePolicyDraftRequest({
         policy: policy(),
@@ -239,6 +389,12 @@ describe("native validation-fee policy draft boundary", () => {
         payout_lifecycle_proposal_id: hash("5"),
       }),
     ).toThrow(/without a payout binding cannot select/);
+    expect(() =>
+      buildValidationFeePolicyDraftRequest({
+        ...input(),
+        policy: { ...policy(), ds_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID },
+      }),
+    ).toThrow(/must be sbd#cbsi/);
   });
 
   it("builds and binds the prerequisite payout-lifecycle referendum", () => {
@@ -250,18 +406,32 @@ describe("native validation-fee policy draft boundary", () => {
       version: 1,
       proposal: {
         kind: "PAYOUT_LIFECYCLE",
-        payload: { payout_binding: payoutBinding() },
+        payload: {
+          payout_binding: {
+            ...payoutBinding(),
+            sbd_asset_id: NATIVE_SBD_ASSET_DEFINITION_ID,
+          },
+        },
       },
       referendum_window: { lower: "400", upper: "3999" },
       mode: "Plain",
+      plain_electorate_rules: plainElectorateRulesWire(),
     });
 
     const draft = {
       version: 1,
-      proposal_id: hash("6"),
+      proposal_id: hash("b"),
       proposal_kind: {
         kind: "ValidationFeePayoutLifecycle",
-        payload: request.proposal.payload,
+        payload: {
+          payout_binding: {
+            ...request.proposal.payload.payout_binding,
+            code_hash: (
+              request.proposal.payload.payout_binding.code_hash as string
+            ).toUpperCase(),
+          },
+          plain_electorate_rules: request.plain_electorate_rules,
+        },
       },
       tx_instructions: [
         {
@@ -271,12 +441,81 @@ describe("native validation-fee policy draft boundary", () => {
       ],
     };
     expect(
-      assertValidationFeePayoutLifecycleDraftResponse(draft, request),
+      assertValidationFeePayoutLifecycleDraftResponse(
+        draft,
+        request,
+        hash("b"),
+      ),
     ).toMatchObject({
       wire_id: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
       payload_hex: "00",
-      proposalId: hash("6"),
+      proposalId: hash("b"),
     });
+    expect(() =>
+      assertValidationFeePayoutLifecycleDraftResponse(
+        { ...draft, proposal_id: hash("c") },
+        request,
+        hash("b"),
+      ),
+    ).toThrow(/differs from the native proposal fingerprint/u);
+    expect(() =>
+      assertValidationFeePayoutLifecycleDraftResponse(
+        { ...draft, proposal_id: hash("b").toUpperCase() },
+        request,
+        hash("b"),
+      ),
+    ).toThrow(/lowercase hexadecimal/u);
+    expect(() =>
+      assertValidationFeePayoutLifecycleDraftResponse(
+        {
+          ...draft,
+          proposal_kind: {
+            ...draft.proposal_kind,
+            payload: {
+              ...draft.proposal_kind.payload,
+              payout_binding: {
+                ...draft.proposal_kind.payload.payout_binding,
+                code_hash: hash("e"),
+              },
+            },
+          },
+        },
+        request,
+        hash("b"),
+      ),
+    ).toThrow(/proposal_kind.*code_hash differs/u);
+    expect(() =>
+      assertValidationFeePayoutLifecycleDraftResponse(
+        {
+          ...draft,
+          proposal_kind: {
+            ...draft.proposal_kind,
+            payload: {
+              ...draft.proposal_kind.payload,
+              plain_electorate_rules: {
+                ...draft.proposal_kind.payload.plain_electorate_rules,
+                ballot_amount: "151",
+              },
+            },
+          },
+        },
+        request,
+        hash("b"),
+      ),
+    ).toThrow(/plain_electorate_rules.*differs/u);
+    expect(() =>
+      assertValidationFeePayoutLifecycleDecodedInstruction(
+        {
+          ProposeValidationFeePayoutLifecycle: {
+            payout_binding: request.proposal.payload.payout_binding,
+            referendum_window: request.referendum_window,
+            mode: "Plain",
+            plain_electorate_rules: request.plain_electorate_rules,
+          },
+        },
+        request,
+      ),
+    ).not.toThrow();
     expect(() =>
       assertValidationFeePayoutLifecycleDecodedInstruction(
         {
@@ -288,7 +527,39 @@ describe("native validation-fee policy draft boundary", () => {
         },
         request,
       ),
+    ).toThrow(/must contain exactly/u);
+  });
+
+  it("requires the exact f1 capability-relative referendum window", () => {
+    const capabilities = {
+      currentHeight: 100,
+      minEnactmentDelay: 600,
+      windowSpan: 3_600,
+    };
+    expect(() =>
+      assertValidationFeeDraftWindowAgainstCapabilities(
+        { lower: "701", upper: "4300" },
+        capabilities,
+      ),
     ).not.toThrow();
+    expect(() =>
+      assertValidationFeeDraftWindowAgainstCapabilities(
+        { lower: "700", upper: "4299" },
+        capabilities,
+      ),
+    ).toThrow(/earlier than current_height/u);
+    expect(() =>
+      assertValidationFeeDraftWindowAgainstCapabilities(
+        { lower: "701", upper: "4299" },
+        capabilities,
+      ),
+    ).toThrow(/exact inclusive capability window_span/u);
+    expect(() =>
+      assertValidationFeeDraftWindowAgainstCapabilities(
+        { lower: "701", upper: "4301" },
+        capabilities,
+      ),
+    ).toThrow(/exact inclusive capability window_span/u);
   });
 
   it("rejects mutated payout lifecycle recipients, bounds, fields, and mode", () => {
@@ -326,6 +597,7 @@ describe("native validation-fee policy draft boundary", () => {
             payout_binding: request.proposal.payload.payout_binding,
             referendum_window: request.referendum_window,
             mode: "Zk",
+            plain_electorate_rules: request.plain_electorate_rules,
           },
         },
         request,
@@ -342,11 +614,12 @@ describe("native validation-fee policy draft boundary", () => {
         payout_lifecycle_proposal_id: null,
         referendum_window: request.referendum_window,
         mode: "Plain",
+        plain_electorate_rules: request.plain_electorate_rules,
       },
     };
 
     expect(
-      assertValidationFeePolicyDraftResponse(draft, request, hash("3")),
+      assertValidationFeePolicyDraftResponse(draft, request, hash("a")),
     ).toEqual(draft.tx_instructions[0]);
     expect(() =>
       assertValidationFeePolicyDecodedInstruction(decoded, request),
@@ -356,7 +629,7 @@ describe("native validation-fee policy draft boundary", () => {
       assertValidationFeePolicyDraftResponse(
         { ...draft, accepted: true },
         request,
-        hash("3"),
+        hash("a"),
       ),
     ).toThrow(/response must contain exactly/);
     expect(() =>
@@ -375,11 +648,55 @@ describe("native validation-fee policy draft boundary", () => {
           },
         },
         request,
-        hash("3"),
+        hash("a"),
       ),
     ).toThrow(/proposal_kind.*fee differs/u);
     expect(() =>
-      assertValidationFeePolicyDraftResponse(draft, request, hash("4")),
+      assertValidationFeePolicyDraftResponse(
+        {
+          ...draft,
+          proposal_kind: {
+            ...draft.proposal_kind,
+            payload: {
+              ...draft.proposal_kind.payload,
+              plain_electorate_rules: {
+                ...draft.proposal_kind.payload.plain_electorate_rules,
+                min_turnout: "2",
+              },
+            },
+          },
+        },
+        request,
+        hash("a"),
+      ),
+    ).toThrow(/plain_electorate_rules.*differs/u);
+    for (const typeDrift of [
+      { schema_version: "1" },
+      { ds_scale: "2" },
+      { effective_from_height: 121262 },
+    ]) {
+      expect(() =>
+        assertValidationFeePolicyDraftResponse(
+          {
+            ...draft,
+            proposal_kind: {
+              ...draft.proposal_kind,
+              payload: {
+                ...draft.proposal_kind.payload,
+                policy: {
+                  ...draft.proposal_kind.payload.policy,
+                  ...typeDrift,
+                },
+              },
+            },
+          },
+          request,
+          hash("a"),
+        ),
+      ).toThrow(/proposal_kind.*differs/u);
+    }
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(draft, request, hash("c")),
     ).toThrow(/differs from the native proposal fingerprint/);
     expect(() =>
       assertValidationFeePolicyDraftResponse(
@@ -393,9 +710,42 @@ describe("native validation-fee policy draft boundary", () => {
           ],
         },
         request,
-        hash("3"),
+        hash("a"),
       ),
     ).toThrow(/must use iroha_data_model::isi::governance/);
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(
+        {
+          ...draft,
+          proposal_kind: {
+            ...draft.proposal_kind,
+            payload: {
+              ...draft.proposal_kind.payload,
+              policy: {
+                ...draft.proposal_kind.payload.policy,
+                genesis_hash: hash("c"),
+              },
+            },
+          },
+        },
+        request,
+        hash("a"),
+      ),
+    ).toThrow(/proposal_kind.*genesis_hash differs/u);
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(
+        { ...draft, proposal_id: hash("a").toUpperCase() },
+        request,
+        hash("a"),
+      ),
+    ).toThrow(/lowercase hexadecimal/u);
+    expect(() =>
+      assertValidationFeePolicyDraftResponse(
+        { ...draft, proposal_id: `${"a".repeat(63)}A` },
+        request,
+        hash("a"),
+      ),
+    ).toThrow(/lowercase hexadecimal/u);
     expect(() =>
       assertValidationFeePolicyDecodedInstruction(
         {
@@ -407,6 +757,19 @@ describe("native validation-fee policy draft boundary", () => {
         request,
       ),
     ).toThrow(/mode differs/);
+    expect(() =>
+      assertValidationFeePolicyDecodedInstruction(
+        {
+          ProposeValidationFeePolicy: {
+            policy: request.proposal.payload.policy,
+            payout_lifecycle_proposal_id: null,
+            referendum_window: request.referendum_window,
+            mode: "Plain",
+          },
+        },
+        request,
+      ),
+    ).toThrow(/must contain exactly/u);
     expect(() =>
       assertValidationFeePolicyDecodedInstruction(
         {

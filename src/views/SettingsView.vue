@@ -46,7 +46,7 @@
           <span class="field-hint">
             {{
               t(
-                "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.",
+                "The chain ID and account prefix are the expected wallet target. Endpoint checks never retarget them.",
               )
             }}
           </span>
@@ -123,6 +123,66 @@
         </div>
       </dl>
 
+      <dl
+        v-if="endpointStore.inspection"
+        class="settings-endpoint-diagnostics"
+        data-testid="endpoint-diagnostics"
+      >
+        <div>
+          <dt>{{ t("Access mode") }}</dt>
+          <dd>{{ accessModeLabel }}</dd>
+        </div>
+        <div>
+          <dt>{{ t("Observed chain") }}</dt>
+          <dd class="mono" translate="no">
+            {{
+              endpointStore.inspection.observed?.chainId || t("Not observed")
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Observed network prefix") }}</dt>
+          <dd class="mono" translate="no">
+            {{
+              endpointStore.inspection.observed?.networkPrefix ??
+              t("Not observed")
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Last checked") }}</dt>
+          <dd>{{ lastCheckedLabel }}</dd>
+        </div>
+      </dl>
+      <p
+        v-if="endpointStore.inspection"
+        class="message"
+        :class="
+          endpointStore.inspection.accessMode === 'read-write'
+            ? 'success'
+            : 'warning'
+        "
+      >
+        {{ endpointStore.inspection.diagnostic.message }}
+      </p>
+      <section
+        v-if="endpointStore.inspection"
+        class="settings-feature-inventory"
+        aria-labelledby="endpoint-features-heading"
+      >
+        <h3 id="endpoint-features-heading">
+          {{ t("Endpoint write features") }}
+        </h3>
+        <ul>
+          <li v-for="feature in endpointFeatureRows" :key="feature.key">
+            <span>{{ feature.label }}</span>
+            <strong :class="{ unsupported: !feature.supported }">
+              {{ feature.supported ? t("Supported") : t("Unavailable") }}
+            </strong>
+          </li>
+        </ul>
+      </section>
+
       <details class="settings-advanced technical-details">
         <summary>{{ t("Advanced") }}</summary>
         <div class="settings-advanced-content">
@@ -156,14 +216,16 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { DEFAULT_CHAIN_PRESET } from "@/constants/chains";
+import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { useAppI18n } from "@/composables/useAppI18n";
-import { getChainMetadata } from "@/services/iroha";
+import { inspectEndpoint } from "@/services/iroha";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const { t } = useAppI18n();
 const defaultEndpoint = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
 
@@ -172,6 +234,7 @@ const endpointInputRef = ref<HTMLInputElement | null>(null);
 const checkingEndpoint = ref(false);
 const statusMessage = ref("");
 const errorMessage = ref("");
+let candidateInspectionGeneration = 0;
 
 const currentEndpoint = computed(
   () => session.connection.toriiUrl || defaultEndpoint,
@@ -182,6 +245,95 @@ const isDefaultEndpoint = computed(
 const endpointModeLabel = computed(() =>
   isDefaultEndpoint.value ? t("Default endpoint") : t("Custom endpoint"),
 );
+const accessModeLabel = computed(() => {
+  switch (endpointStore.inspection?.accessMode) {
+    case "read-write":
+      return t("Read and write");
+    case "read-only":
+      return t("Read only");
+    case "offline":
+      return t("Offline");
+    default:
+      return t("Not observed");
+  }
+});
+const lastCheckedLabel = computed(() => {
+  const checkedAtMs = endpointStore.inspection?.checkedAtMs;
+  return checkedAtMs
+    ? new Date(checkedAtMs).toLocaleString()
+    : t("Not observed");
+});
+const endpointFeatureRows = computed(() => {
+  const features = endpointStore.inspection?.features;
+  if (!features) return [];
+  return [
+    {
+      key: "accountRegistration",
+      label: t("Account registration"),
+      supported: features.accountRegistration.supported,
+    },
+    {
+      key: "accountOnboarding",
+      label: t("Account onboarding"),
+      supported: features.accountOnboarding.supported,
+    },
+    {
+      key: "assetTransfers",
+      label: t("Asset transfers"),
+      supported: features.assetTransfers.supported,
+    },
+    {
+      key: "faucetClaim",
+      label: t("Faucet claims"),
+      supported: features.faucetClaim.supported,
+    },
+    {
+      key: "confidentialTransfers",
+      label: t("Confidential transfers"),
+      supported: features.confidentialTransfers.supported,
+    },
+    {
+      key: "kaigiMeetings",
+      label: t("Kaigi meetings"),
+      supported: features.kaigiMeetings.supported,
+    },
+    {
+      key: "governanceWrites",
+      label: t("Governance writes"),
+      supported: features.governanceWrites.supported,
+    },
+    {
+      key: "stakingWrites",
+      label: t("Staking writes"),
+      supported: features.stakingWrites.supported,
+    },
+    {
+      key: "subscriptionWrites",
+      label: t("Subscription writes"),
+      supported: features.subscriptionWrites.supported,
+    },
+    {
+      key: "soraCloudDeploy",
+      label: t("SoraCloud deployment"),
+      supported: features.soraCloudDeploy.supported,
+    },
+    {
+      key: "vpnSessions",
+      label: t("VPN sessions"),
+      supported: features.vpnSessions.supported,
+    },
+    {
+      key: "irohaConnectSessions",
+      label: t("IrohaConnect sessions"),
+      supported: features.irohaConnectSessions.supported,
+    },
+    {
+      key: "zkProofJobs",
+      label: t("ZK proof jobs"),
+      supported: features.zkProofJobs.supported,
+    },
+  ];
+});
 
 watch(
   () => session.connection.toriiUrl,
@@ -200,19 +352,26 @@ const clearMessages = () => {
 const formatEndpointError = (error: unknown, fallback: string) =>
   t(toUserFacingErrorMessage(error, fallback));
 
+const activeSessionEndpointContext = () =>
+  JSON.stringify([
+    session.connection.toriiUrl,
+    session.connection.chainId,
+    session.connection.networkPrefix,
+  ]);
+
 const focusEndpointInput = () => {
   endpointInputRef.value?.focus();
 };
 
 const applyEndpoint = (
   endpoint: string,
-  metadata?: { chainId: string; networkPrefix: number },
+  expected?: { chainId: string; networkPrefix: number },
 ) => {
-  const nextConnection = metadata
+  const nextConnection = expected
     ? {
         toriiUrl: endpoint,
-        chainId: metadata.chainId,
-        networkPrefix: metadata.networkPrefix,
+        chainId: expected.chainId,
+        networkPrefix: expected.networkPrefix,
       }
     : { toriiUrl: endpoint };
   session.updateConnection(nextConnection);
@@ -220,10 +379,26 @@ const applyEndpoint = (
   endpointDraft.value = session.connection.toriiUrl;
 };
 
+const expectedContextForEndpoint = (endpoint: string) => {
+  const preset = CHAIN_PRESETS.find(
+    (candidate) =>
+      normalizeEndpointUrl(candidate.connection.toriiUrl) === endpoint,
+  );
+  return {
+    toriiUrl: endpoint,
+    chainId: preset?.connection.chainId ?? session.connection.chainId,
+    networkPrefix:
+      preset?.connection.networkPrefix ?? session.connection.networkPrefix,
+  };
+};
+
 const handleSaveEndpoint = () => {
+  candidateInspectionGeneration += 1;
+  checkingEndpoint.value = false;
   clearMessages();
   try {
     applyEndpoint(normalizeDraftEndpoint());
+    endpointStore.invalidate();
     statusMessage.value = t("Endpoint saved.");
   } catch (error) {
     errorMessage.value = formatEndpointError(
@@ -235,11 +410,14 @@ const handleSaveEndpoint = () => {
 };
 
 const handleResetEndpoint = () => {
+  candidateInspectionGeneration += 1;
+  checkingEndpoint.value = false;
   clearMessages();
   applyEndpoint(defaultEndpoint, {
     chainId: DEFAULT_CHAIN_PRESET.connection.chainId,
     networkPrefix: DEFAULT_CHAIN_PRESET.connection.networkPrefix,
   });
+  endpointStore.invalidate();
   statusMessage.value = t("Default endpoint restored.");
 };
 
@@ -257,19 +435,42 @@ const handleCheckAndSaveEndpoint = async () => {
     return;
   }
 
+  const generation = ++candidateInspectionGeneration;
+  const requestDraft = endpointDraft.value;
+  const activeContext = activeSessionEndpointContext();
+  const isCurrentCandidate = () =>
+    generation === candidateInspectionGeneration &&
+    requestDraft === endpointDraft.value &&
+    activeContext === activeSessionEndpointContext();
+
   checkingEndpoint.value = true;
   try {
-    const metadata = await getChainMetadata(endpoint);
-    applyEndpoint(endpoint, metadata);
-    statusMessage.value = t("Endpoint checked and chain settings saved.");
+    const expected = expectedContextForEndpoint(endpoint);
+    const inspection = await inspectEndpoint(expected);
+    if (!isCurrentCandidate()) return;
+    if (inspection.identityStatus === "unreachable") {
+      throw new Error(inspection.diagnostic.message);
+    }
+    applyEndpoint(endpoint, expected);
+    endpointStore.adoptInspection(inspection);
+    statusMessage.value =
+      inspection.accessMode === "read-write"
+        ? t("Endpoint identity verified and saved.")
+        : t("Endpoint saved in read-only mode: {message}", {
+            message: inspection.diagnostic.message,
+          });
   } catch (error) {
-    errorMessage.value = formatEndpointError(
-      error,
-      t("Unable to load chain metadata from Torii."),
-    );
-    focusEndpointInput();
+    if (isCurrentCandidate()) {
+      errorMessage.value = formatEndpointError(
+        error,
+        t("Unable to inspect endpoint identity."),
+      );
+      focusEndpointInput();
+    }
   } finally {
-    checkingEndpoint.value = false;
+    if (generation === candidateInspectionGeneration) {
+      checkingEndpoint.value = false;
+    }
   }
 };
 </script>
@@ -369,6 +570,76 @@ const handleCheckAndSaveEndpoint = async () => {
   overflow: hidden;
 }
 
+.settings-endpoint-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: var(--panel-border);
+  overflow: hidden;
+}
+
+.settings-endpoint-diagnostics > div {
+  min-width: 0;
+  padding: 14px;
+  background: var(--color-surface-inset);
+}
+
+.settings-endpoint-diagnostics dt {
+  margin-bottom: 5px;
+  color: var(--iroha-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings-endpoint-diagnostics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-feature-inventory {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-feature-inventory h3 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.settings-feature-inventory ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-feature-inventory li {
+  min-width: 0;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--color-surface-inset);
+}
+
+.settings-feature-inventory strong {
+  color: var(--color-success);
+  font-size: 0.75rem;
+}
+
+.settings-feature-inventory strong.unsupported {
+  color: var(--color-warning);
+}
+
 .settings-network-facts > div {
   min-width: 0;
   padding: 16px 18px;
@@ -447,7 +718,9 @@ const handleCheckAndSaveEndpoint = async () => {
   }
 
   .settings-form,
-  .settings-network-facts {
+  .settings-network-facts,
+  .settings-endpoint-diagnostics,
+  .settings-feature-inventory ul {
     grid-template-columns: minmax(0, 1fr);
   }
 

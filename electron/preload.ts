@@ -25,23 +25,24 @@ import {
   buildZkTransferInstruction,
   buildTransactionPayload,
   buildIvmProvedTransactionPayload,
+  computeValidationFeePayoutLifecycleProposalFingerprintV1,
   computeValidationFeePolicyProposalFingerprintV1,
   signQuotedIvmProvedTransactionPayload,
   submitTransactionEntrypoint,
   hashSignedTransaction,
-  extractPipelineStatusKind,
+  inspectSubscriptionTriggerAction,
   noritoDecodeInstruction,
+  normalizeAssetDefinitionId,
   normalizeAssetHoldingId,
   signQuotedTransactionPayload,
   type FeeQuoteResponse,
   type KaigiCallView,
-  type ToriiSumeragiStatus,
 } from "@iroha/iroha-js";
+import { buildCanonicalJsonRequest } from "@iroha/iroha-js/canonical-request";
 import {
   buildKaigiRosterJoinProof,
   generateKeyPair as generateSdkKeyPair,
   normalizeCryptoAlgorithm,
-  privateKeyMultihash,
   publicKeyFromPrivate,
   sign,
   supportedCryptoAlgorithms,
@@ -57,17 +58,24 @@ import {
   normalizeAccountAssetListPayload,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
-  normalizeExplorerAccountQrPayload,
+  assertExplorerAccountQrMatchesRequestedAccount,
   normalizeGovernanceCitizenCountPayload,
   normalizeGovernanceCouncilCurrentPayload,
+  normalizeGovernanceUnlockStatsPayload,
+  normalizeAssetDefinitionConfidentialPolicy,
+  normalizeOfflineReadinessPayload,
+  parseNexusLifecycleJson,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
   readApiErrorDetail,
   readNexusUnbondingDelayMs,
   stripConfidentialFeeSponsor,
+  type AssetDefinitionConfidentialPolicyView,
   type ConfidentialAssetPolicyView,
   type ExplorerAccountQrResponse,
+  type NexusLifecycleView,
+  type OfflineReadinessView,
   type PublicLaneRewardsResponseView,
   type PublicLaneStakeResponseView,
   type PublicLaneValidatorsResponseView,
@@ -75,28 +83,33 @@ import {
 import {
   extractGovernanceStats,
   extractRuntimeStatsFromStatusSnapshot,
+  normalizeCurrentSumeragiTelemetry,
   normalizeExplorerAssetDefinitionEconometricsPayload,
   normalizeExplorerAssetDefinitionSnapshotPayload,
 } from "./networkStats";
 import {
-  areAssetDefinitionIdsEquivalent,
   buildAssetHoldingIdLiteral,
   extractAssetDefinitionId,
-  resolveUniqueLiveAssetDefinitionId,
 } from "../src/utils/assetId";
 import {
+  buildSoraCloudHfStatusQuery,
+  missingSoraCloudHfStatus,
+  normalizeSoraCloudHfStatusPayload,
   normalizeSoraCloudStatusPayload,
   unavailableSoraCloudStatus,
+  type SoraCloudHfStatusView,
   type SoraCloudStatusView,
   type SoraCloudStorageClass,
 } from "../src/utils/soracloud";
+import { SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL } from "./soraCloudSettlementBoundary";
 import {
-  extractChainMetadataFromPayload,
-  normalizeChainMetadata,
   type ChainMetadata,
-  type ChainMetadataDraft,
+  parseFirstReleaseChainMetadataPayload,
 } from "../src/utils/chainMetadata";
-import type { NetworkStatsResponse } from "../src/types/iroha";
+import type {
+  GovernanceCitizenStatusResponse,
+  NetworkStatsResponse,
+} from "../src/types/iroha";
 import {
   assertPlainGovernanceProposalWrite,
   canonicalGovernanceProposalId,
@@ -114,8 +127,29 @@ import {
   readTransactionFee,
   type TransactionFeeLike,
 } from "../src/utils/transactionFee";
+import {
+  waitForFinalizedTransaction,
+  type TransactionFinalityProof,
+} from "./transactionFinality";
 import { deriveOnChainShieldedBalance } from "../src/utils/confidential";
 import { nodeFetch } from "./nodeFetch";
+import {
+  assertEndpointFaucetChallengeAvailable,
+  assertEndpointFeatureOperationSupported,
+  assertEndpointFeatureSupported,
+  assertEndpointWriteAuthorized,
+  getTrustedEndpointIdentityScope,
+  inspectEndpoint as inspectEndpointIdentity,
+} from "./endpointInspector";
+import type {
+  EndpointFeature,
+  EndpointInspection,
+  EndpointNetworkContext,
+} from "../src/types/endpointInspection";
+import {
+  buildEndpointDerivedStorageKey,
+  type EndpointIdentityScopeInput,
+} from "../src/utils/endpointScope";
 import {
   readKnownTairaFaucetFundingIssue,
   requestFaucetFundsWithPuzzle,
@@ -127,11 +161,12 @@ import {
   FaucetCommittedHeightStalledError,
   readSumeragiCommittedHeight,
 } from "./faucetFinality";
-import { computeFaucetClaimRetryDelayMs } from "./faucetRetry";
 import {
-  bootstrapPortableConnectPreviewSession,
-  resolvePortableConnectLaunchUri,
-} from "./connectPreview";
+  IROHA_CONNECT_CONFIRMATION_CHANNEL,
+  IrohaConnectBoundary,
+  type IrohaConnectProcessedFrame,
+  type IrohaConnectWalletContext,
+} from "./irohaConnectBoundary";
 import {
   deriveAccountAddressView,
   normalizeCanonicalAccountIdLiteral,
@@ -151,6 +186,14 @@ import {
   type KaigiSecretBox,
   type KaigiX25519KeyPair,
 } from "./kaigiCrypto";
+import { discoverKaigiRelayManifest } from "./kaigiRelay";
+import {
+  readPrivateKaigiFeeSchedule,
+  readPrivateKaigiTransferVerifyingKey,
+  requireKaigiCallId,
+  type PrivateKaigiFeeSchedule,
+  type PrivateKaigiTransferVerifyingKeyContext,
+} from "./privateKaigiContract";
 import {
   buildWalletConfidentialMetadataV3,
   collectWalletConfidentialLedger,
@@ -164,39 +207,58 @@ import {
   type WalletConfidentialTransactionLike,
   type WalletSpendableConfidentialNote,
 } from "./confidentialWallet";
+import { parseConfidentialNoteIndexPage } from "./confidentialNoteIndex";
+import { installGlobalIrohaJsNativeBinding } from "./irohaJsNativeDir";
+import { type GovernanceValidationFeePolicyView } from "./governanceValidationFee";
+import { GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL } from "./governanceValidationFeeFinality";
 import {
-  configureIrohaJsNativeDir,
-  installGlobalIrohaJsNativeBinding,
-} from "./irohaJsNativeDir";
+  GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
+  assertGovernancePlainReferendumBallotBinding,
+  assertGovernancePlainReferendumBallotDraft,
+  type LoadedGovernancePlainReferendumContract,
+  type GovernancePlainReferendumObservedIdentity,
+} from "./governancePlainReferendum";
 import {
-  fetchGovernanceValidationFeePolicy as fetchCoreGovernanceValidationFeePolicy,
-  readCbsiCoreApiBaseUrl,
-  readGovernanceValidationFeeConfig,
-  type GovernanceValidationFeePolicyView,
-} from "./governanceValidationFee";
+  assertGovernanceCitizenDraftResponse,
+  decodeGovernanceCitizenStatus,
+  normalizeGovernanceNetworkPrefix,
+  unavailableGovernanceCitizenStatus,
+} from "./governanceCitizenStatus";
 import {
-  GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
-  type GovernanceRuntimeConfig,
-} from "./governanceRuntimeConfig";
+  parseRetryAfterMs,
+  withBoundedHttpGetFetchRetry,
+  withBoundedHttpGetRetry,
+} from "./httpReadRetry";
 import {
-  GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
-  authorizePublicGovernanceEnactRequest,
-} from "./governanceEnactBoundary";
-import type { PublicGovernanceEnactKind } from "../src/governance/enactBoundary";
+  GOVERNANCE_BALLOT_WIRE_IDS,
+  assertGovernanceBallotDraftResponse,
+  normalizeGovernanceDraftPayloadHex,
+  normalizeGovernanceDraftWireId,
+} from "./governanceBallotDraft";
+import {
+  runLocalVpnRepair,
+  runVpnConnectAfterProfileCheck,
+  runVpnDisconnectWithLocalFallback,
+} from "./vpnPreloadGuard";
+import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
 import {
   assertValidationFeePayoutLifecycleDecodedInstruction,
   assertValidationFeePayoutLifecycleDraftResponse,
+  assertValidationFeeDraftWindowAgainstCapabilities,
   assertValidationFeePolicyDecodedInstruction,
   assertValidationFeePolicyDraftResponse,
   buildValidationFeePayoutLifecycleDraftRequest,
   buildValidationFeePolicyDraftRequest,
   VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_DECODED_VARIANT,
+  VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
   VALIDATION_FEE_POLICY_DRAFT_DECODED_VARIANT,
   VALIDATION_FEE_POLICY_DRAFT_PATH,
+  VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
   type ValidationFeePayoutLifecycleDraftRequest,
   type ValidationFeePolicyDraftRequest,
 } from "./governanceValidationFeeDraft";
 import {
+  governanceCapabilitiesContractFingerprintV1,
   parseGovernanceCapabilitiesV1,
   TAIRA_GOVERNANCE_CHAIN_ID,
   TAIRA_GOVERNANCE_NETWORK_PREFIX,
@@ -205,15 +267,40 @@ import {
 import {
   GOVERNANCE_CAPABILITIES_PATH,
   GOVERNANCE_CITIZEN_DRAFT_PATH,
-  GOVERNANCE_UNLOCK_STATS_PATH,
   VALIDATION_FEE_PROPOSALS_PATH,
-  governanceLocksPath,
-  governanceProposalPath,
-  governanceReferendumPath,
-  governanceTallyPath,
+  validationFeePlainBallotDraftPath,
   validationFeeProposalPath,
 } from "./governanceRoutes";
-import { buildSoraCloudHfDeployRequest } from "./soraCloudDeployRequest";
+import {
+  buildSoraCloudHfDeployRequest,
+  soraCloudXorQuantityFromNanos,
+} from "./soraCloudDeployRequest";
+import { executeSoraCloudHfDraftToCommit } from "./soraCloudHfFlow";
+import {
+  buildSoraCloudCommittedLaunchResponse,
+  decodeMatchingSoraCloudHfStatus,
+  readSoraCloudHfLatestSequence,
+  type SoraCloudHfDeployExpectation,
+  type SoraCloudHfSettlementReview,
+} from "./soraCloudResponses";
+import {
+  decodeSubscriptionListItemResponse,
+  decodeSubscriptionListResponse,
+  decodeSubscriptionPlanListResponse,
+} from "./subscriptionResponses";
+import { executeSubscriptionMutationBoundary } from "./subscriptionMutationBoundary";
+import {
+  classifySubscriptionStateConfirmation,
+  decodeSubscriptionActionMutationDraft,
+  decodeSubscriptionCreateMutationDraft,
+  subscriptionPlanSnapshotsMatch,
+  subscriptionStateSnapshotsMatch,
+  type SubscriptionActionDraftName,
+  type SubscriptionActionMutationDraft,
+  type SubscriptionCancelMode,
+  type SubscriptionCreateMutationDraft,
+  type SubscriptionStateDraft,
+} from "./subscriptionMutationDraft";
 import { type ConfidentialReceiveKeyRecord } from "./secureVault";
 import {
   CONFIDENTIAL_WALLET_BACKUP_KDF_INFO,
@@ -226,7 +313,6 @@ import { normalizeMnemonicPhrase } from "../src/utils/mnemonic";
 
 type HexString = string;
 
-configureIrohaJsNativeDir(import.meta.url);
 installGlobalIrohaJsNativeBinding(import.meta.url);
 
 type ToriiConfig = {
@@ -242,19 +328,6 @@ type SigningAlgorithmOption = {
 type RuntimeConfigResponse = {
   walletConnectProjectId: string;
 };
-
-const KNOWN_CHAIN_METADATA_FALLBACKS = [
-  {
-    toriiUrl: "https://minamoto.sora.org",
-    chainId: "00000000-0000-0000-0000-000000000000",
-    networkPrefix: 753,
-  },
-  {
-    toriiUrl: "https://taira.sora.org",
-    chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
-    networkPrefix: 369,
-  },
-] as const;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
@@ -299,7 +372,7 @@ const withConfidentialGasMetadata = (
     gas_asset_id: gasAssetId,
   };
 };
-const SORA_XOR_GAS_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 const DEFAULT_GAS_ASSET_DISABLED_ORIGINS = new Set([
   "https://minamoto.sora.org",
 ]);
@@ -326,15 +399,12 @@ const withRequiredGasAssetMetadata = (
   }
   return {
     ...baseMetadata,
-    gas_asset_id: SORA_XOR_GAS_ASSET_DEFINITION_ID,
+    gas_asset_id: SORA_XOR_ASSET_DEFINITION_ID,
   };
 };
 const FAUCET_CLAIM_STATUS_TIMEOUT_MS = 240_000;
-const FAUCET_CLAIM_STATUS_INTERVAL_MS = 1_000;
-const FAUCET_CLAIM_INVISIBLE_RETRY_MS = 20_000;
 const FAUCET_FINALITY_STALE_MS = 5 * 60_000;
 const FAUCET_FINALITY_PROGRESS_OBSERVATION_MS = 3_000;
-const FAUCET_CLAIM_MAX_ATTEMPTS = 6;
 
 const isSecureVaultAvailable = async (): Promise<boolean> =>
   Boolean(await ipcRenderer.invoke("vault:isAvailable"));
@@ -395,10 +465,10 @@ const listConfidentialReceiveKeysForAccount = async (
 };
 
 type HealthResponse = Awaited<ReturnType<ToriiClient["getHealth"]>>;
-type StatusSnapshot = Awaited<ReturnType<ToriiClient["getStatusSnapshot"]>>;
 type RegisterAccountInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   domainId: string;
   metadata?: Record<string, unknown>;
@@ -413,7 +483,7 @@ type TransferAssetInput = {
   assetDefinitionId: string;
   accountId: string;
   destinationAccountId?: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   quantity: string;
   privateKeyHex?: HexString;
   signingAlgorithm?: string;
@@ -435,6 +505,7 @@ type TransferAssetInput = {
 type UranaiPrivateTradeProofInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   assetDefinitionId: string;
   collateralIn: string;
@@ -477,12 +548,15 @@ type AccountAliasResolutionResponse = {
 type ExportConfidentialWalletBackupInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   mnemonic: string;
 };
 
 type ImportConfidentialWalletBackupInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   accountId: string;
   mnemonic: string;
   confidentialWallet: ConfidentialWalletBackupMetadata;
@@ -610,35 +684,6 @@ type TransactionsResponse = Awaited<
   ReturnType<ToriiClient["listAccountTransactions"]>
 >;
 
-type OfflineAllowanceQuery = {
-  controllerId: string;
-  limit?: number;
-  offset?: number;
-  filter?: string | Record<string, unknown>;
-  certificateExpiresBeforeMs?: number;
-  certificateExpiresAfterMs?: number;
-  policyExpiresBeforeMs?: number;
-  policyExpiresAfterMs?: number;
-  refreshBeforeMs?: number;
-  refreshAfterMs?: number;
-  verdictIdHex?: string;
-  attestationNonceHex?: string;
-  requireVerdict?: boolean;
-  onlyMissingVerdict?: boolean;
-  includeExpired?: boolean;
-};
-
-type OfflineAllowanceResponse = {
-  items: Array<Record<string, unknown>>;
-  total: number;
-};
-
-type ToriiClientWithOfflineAllowances = ToriiClient & {
-  listOfflineAllowances(
-    input: OfflineAllowanceQuery,
-  ): Promise<OfflineAllowanceResponse>;
-};
-
 type AccountPermissionsResponse = Awaited<
   ReturnType<ToriiClient["listAccountPermissions"]>
 >;
@@ -672,39 +717,15 @@ type GovernanceCitizenCountResponse = {
   endpointAvailable: boolean;
 };
 
-type GovernanceCitizenStatusResponse = {
-  accountId: string;
-  isCitizen: boolean;
-  amount: string | null;
-  bondedHeight: number | null;
-  seatsInEpoch: number | null;
-  lastEpochSeen: number | null;
-  cooldownUntil: number | null;
-  endpointAvailable: boolean;
-};
-
 type AccountOnboardingResponse = {
   account_id: string;
   tx_hash_hex: string;
-  status: string;
-};
-
-type ConnectPreviewResponse = {
-  sidHex: string;
-  sidBase64Url: string;
-  walletUri: string | null;
-  appUri: string | null;
-  walletCanonicalUri: string | null;
-  appCanonicalUri: string | null;
-  launchProtocol: string | null;
-  tokenApp: string | null;
-  tokenWallet: string | null;
-  appPublicKeyHex: string;
-  appPrivateKeyHex: string;
+  status: "FINALIZED";
+  finality: TransactionFinalityProof;
 };
 
 type NexusStakingPolicyResponse = {
-  unbondingDelayMs: number;
+  unbondingDelayMs: number | null;
 };
 
 type KaigiSignalKeyPair = KaigiX25519KeyPair;
@@ -722,6 +743,8 @@ type KaigiAnswerDescription = {
 type KaigiCreateMeetingInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
+  assetDefinitionId: string;
   hostAccountId: string;
   privateKeyHex?: HexString;
   callId: string;
@@ -740,17 +763,14 @@ type KaigiCreateMeetingInput = {
 type KaigiJoinMeetingInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
+  assetDefinitionId: string;
   participantAccountId: string;
   privateKeyHex?: HexString;
   callId: string;
-  hostAccountId?: string;
-  hostKaigiPublicKeyBase64Url: string;
+  inviteSecretBase64Url: string;
   participantId: string;
   participantName: string;
-  walletIdentity?: string;
-  roomId?: string;
-  privacyMode?: KaigiMeetingPrivacy;
-  rosterRootHex?: string;
   answerDescription: KaigiAnswerDescription;
 };
 
@@ -773,6 +793,8 @@ type KaigiPollMeetingSignalsInput = {
 type KaigiEndMeetingInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
+  assetDefinitionId: string;
   hostAccountId: string;
   privateKeyHex?: HexString;
   callId: string;
@@ -824,14 +846,6 @@ type PrivateKaigiConfidentialXorState = {
   message?: string;
 };
 
-type PrivateKaigiFeeSchedule = {
-  enabled: boolean;
-  baseFee: string;
-  perByteFee: string;
-  perInstructionFee: string;
-  perGasUnitFee: string;
-};
-
 type PrivateKaigiConfidentialXorContext = {
   state: PrivateKaigiConfidentialXorState;
 };
@@ -839,7 +853,7 @@ type PrivateKaigiConfidentialXorContext = {
 type PrivateKaigiConfidentialXorFeeContext =
   PrivateKaigiConfidentialXorContext & {
     latestRootHex: string;
-    verifyingKey: Record<string, unknown>;
+    verifyingKey: PrivateKaigiTransferVerifyingKeyContext;
     feeSchedule: PrivateKaigiFeeSchedule;
   };
 
@@ -862,7 +876,7 @@ type PendingConfidentialWalletShadowState = {
 };
 
 type KaigiCallEvent = {
-  kind: "roster_updated" | "ended";
+  kind: "roster_updated" | "ended" | "stream_closed";
   callId: string;
   endedAtMs?: number;
 };
@@ -896,6 +910,7 @@ type NexusPublicLaneRewardsInput = NexusPublicLaneBaseInput & {
 type BondPublicLaneStakeInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   stakeAccountId: string;
   validator: string;
   amount: string;
@@ -905,6 +920,7 @@ type BondPublicLaneStakeInput = {
 type RegisterPublicLaneValidatorInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   laneId: number;
   validatorAccountId: string;
   stakeAccountId?: string;
@@ -917,6 +933,7 @@ type RegisterPublicLaneValidatorInput = {
 type SchedulePublicLaneUnbondInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   stakeAccountId: string;
   validator: string;
   amount: string;
@@ -928,6 +945,7 @@ type SchedulePublicLaneUnbondInput = {
 type FinalizePublicLaneUnbondInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   stakeAccountId: string;
   validator: string;
   requestId: string;
@@ -937,6 +955,7 @@ type FinalizePublicLaneUnbondInput = {
 type ClaimPublicLaneRewardsInput = {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   stakeAccountId: string;
   validator: string;
   privateKeyHex?: HexString;
@@ -957,7 +976,7 @@ type VpnConnectInput = {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   privateKeyHex?: HexString;
   signingAlgorithm?: string;
   exitClass: "standard" | "low-latency" | "high-security";
@@ -965,8 +984,9 @@ type VpnConnectInput = {
 
 type VpnDisconnectInput = {
   toriiUrl: string;
+  chainId: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   privateKeyHex?: HexString;
   signingAlgorithm?: string;
 };
@@ -976,6 +996,7 @@ type VpnStatusInput = Partial<VpnDisconnectInput>;
 type GovernanceCitizenStatusInput = {
   toriiUrl: string;
   accountId: string;
+  networkPrefix: number;
 };
 
 type GovernanceLookupInput = {
@@ -1014,7 +1035,7 @@ type GovernancePrepareContext = {
   toriiUrl: string;
   chainId: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
 };
 
 type GovernanceProposalPrepareInput = GovernancePrepareContext & {
@@ -1063,11 +1084,11 @@ type GovernancePreparedActionView = {
   expiresAtMs: number;
 };
 
-type GovernanceCommittedActionView = TransactionSubmissionResultView & {
+type GovernanceFinalizedActionView = TransactionSubmissionResultView & {
   operation: GovernanceWriteOperation;
   proposalId: string | null;
   referendumId: string | null;
-  status: "committed";
+  status: "finalized";
 };
 
 type SubscriptionStatusView =
@@ -1102,12 +1123,19 @@ type TransactionFeeView = TransactionFeeLike | string | number;
 type TransactionSubmissionResultView = {
   hash: string;
   fee?: TransactionFeeView | null;
+  finality: TransactionFinalityProof;
 };
+
+type SubscriptionMutationActionView = "create" | SubscriptionActionDraftName;
 
 type SubscriptionActionResponseView = {
   ok: boolean;
+  action: SubscriptionMutationActionView;
   subscription_id: string;
   tx_hash_hex: string;
+  finality: TransactionFinalityProof;
+  state_status: "confirmed" | "advanced" | "indexing";
+  reconciliation_message?: string;
   fee?: TransactionFeeView | null;
   billing_trigger_id?: string;
   usage_trigger_id?: string | null;
@@ -1137,8 +1165,9 @@ type SubscriptionGetInput = {
 
 type SubscriptionCreateInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   accountId: string;
-  privateKeyHex?: string;
   subscriptionId: string;
   planId: string;
   firstChargeMs?: number;
@@ -1146,21 +1175,74 @@ type SubscriptionCreateInput = {
 
 type SubscriptionActionInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   accountId: string;
-  privateKeyHex?: string;
   subscriptionId: string;
   chargeAtMs?: number;
-  cancelMode?: "immediate" | "period_end";
+  cancelMode?: SubscriptionCancelMode;
 };
+
+type SubscriptionReconcileInput = {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  subscriptionId: string;
+  action: SubscriptionMutationActionView;
+  transactionHash: string;
+};
+
+type PendingSubscriptionReconciliation = {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  subscriptionId: string;
+  action: SubscriptionMutationActionView;
+  transactionHash: string;
+  expected: SubscriptionStateDraft;
+  plan: Record<string, unknown> | null;
+  receipt: SubscriptionActionResponseView;
+};
+
+const pendingSubscriptionReconciliations = new Map<
+  string,
+  PendingSubscriptionReconciliation
+>();
+const inFlightSubscriptionMutations = new Set<string>();
+
+const subscriptionMutationScopeKey = (input: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  subscriptionId: string;
+}) =>
+  [
+    normalizeBaseUrl(input.toriiUrl),
+    input.chainId,
+    String(input.networkPrefix),
+    input.accountId,
+    input.subscriptionId,
+  ].join("\u001f");
 
 type SoraCloudStatusInput = {
   toriiUrl: string;
-  apiToken?: string;
+};
+
+type SoraCloudHfStatusInput = SoraCloudStatusInput & {
+  repoId: string;
+  revision?: string;
+  storageClass: SoraCloudStorageClass;
+  leaseTermMs: number;
+  accountId?: string;
 };
 
 type SoraCloudHfDeployInput = SoraCloudStatusInput & {
+  chainId: string;
+  networkPrefix: number;
   accountId: string;
-  privateKeyHex?: string;
   repoId: string;
   revision?: string;
   modelName: string;
@@ -1172,25 +1254,86 @@ type SoraCloudHfDeployInput = SoraCloudStatusInput & {
   baseFeeNanos: string;
 };
 
+type SoraCloudHfReconcileInput = SoraCloudStatusInput & {
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  transactionHash: string;
+};
+
 type SoraCloudHfDeployResponseView = {
-  ok: boolean;
-  action: string;
+  ok: true;
+  settlement_status: "confirmed" | "indexing";
+  finality: TransactionFinalityProof;
+  action: string | null;
   service_name: string;
   sequence: number | null;
   current_version?: string | null;
   revision_count?: number | null;
-  tx_hash_hex?: string | null;
+  tx_hash_hex: string;
+  storage_base_fee: string;
+  actual_storage_charge: string | null;
+  max_compute_reservation_fee: string;
+  actual_compute_charge: string | null;
+  reconciliation_message?: string;
   fee?: TransactionFeeView | null;
   rollout_handle?: string | null;
   rollout_stage?: string | null;
   rollout_percent?: number | null;
-  raw: Record<string, unknown>;
+  raw: Record<string, unknown> | null;
+};
+
+type PendingSoraCloudHfSettlement = {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  transactionHash: string;
+  statusInput: SoraCloudHfStatusInput;
+  expected: SoraCloudHfDeployExpectation;
+  settlement: SoraCloudHfSettlementReview;
+  minimumSequenceExclusive: number;
+  finality: TransactionFinalityProof;
+  fee?: TransactionFeeView | null;
+};
+
+const pendingSoraCloudHfSettlements = new Map<
+  string,
+  PendingSoraCloudHfSettlement
+>();
+
+const soraCloudSettlementKey = (input: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  transactionHash: string;
+}) =>
+  [
+    normalizeBaseUrl(input.toriiUrl),
+    input.chainId,
+    String(input.networkPrefix),
+    input.accountId,
+    input.transactionHash,
+  ].join("\u001f");
+
+const assertNoRendererSoraCloudSecrets = (input: unknown) => {
+  const record = input as Record<string, unknown>;
+  if (
+    Object.prototype.hasOwnProperty.call(record, "privateKeyHex") ||
+    Object.prototype.hasOwnProperty.call(record, "apiToken")
+  ) {
+    throw new Error(
+      "SoraCloud secrets must come from the Electron secure vault.",
+    );
+  }
 };
 
 type IrohaBridge = {
   getRuntimeConfig(): RuntimeConfigResponse;
   ping(config: ToriiConfig): Promise<HealthResponse>;
   getChainMetadata(config: ToriiConfig): Promise<ChainMetadataResponse>;
+  inspectEndpoint(config: EndpointNetworkContext): Promise<EndpointInspection>;
   getSigningAlgorithms(config?: ToriiConfig): Promise<SigningAlgorithmOption[]>;
   generateKeyPair(input?: { signingAlgorithm?: string; seedHex?: string }): {
     publicKeyHex: string;
@@ -1257,19 +1400,25 @@ type IrohaBridge = {
   transferAsset(
     input: TransferAssetInput,
   ): Promise<TransactionSubmissionResultView>;
-  buildUranaiPrivateTradeProof(
-    input: UranaiPrivateTradeProofInput,
-  ): Promise<UranaiPrivateTradeProofResponse>;
-  signIrohaConnectMessage(input: {
-    accountId: string;
-    signingMessageB64: string;
-  }): Promise<{
-    publicKeyHex: string;
-    signatureB64: string;
-    signingAlgorithm: string;
-    algorithmCode: number;
-    algorithmLabel: string;
-  }>;
+  setIrohaConnectContext(input: IrohaConnectWalletContext): void;
+  resetIrohaConnectBoundary(): void;
+  prepareIrohaConnectSession(
+    input: Parameters<IrohaConnectBoundary["prepareSession"]>[0],
+  ): ReturnType<IrohaConnectBoundary["prepareSession"]>;
+  approveIrohaConnectSession(
+    input: Parameters<IrohaConnectBoundary["approveSession"]>[0],
+  ): ReturnType<IrohaConnectBoundary["approveSession"]>;
+  processIrohaConnectFrame(input: {
+    sessionToken: string;
+    frameBase64: string;
+  }): IrohaConnectProcessedFrame;
+  approveIrohaConnectRequest(
+    input: Parameters<IrohaConnectBoundary["approveRequest"]>[0],
+  ): ReturnType<IrohaConnectBoundary["approveRequest"]>;
+  rejectIrohaConnectRequest(
+    input: Parameters<IrohaConnectBoundary["rejectRequest"]>[0],
+  ): ReturnType<IrohaConnectBoundary["rejectRequest"]>;
+  closeIrohaConnectSession(input: { sessionToken: string }): void;
   getConfidentialAssetPolicy(input: {
     toriiUrl: string;
     accountId: string;
@@ -1278,6 +1427,7 @@ type IrohaBridge = {
   getConfidentialTransferExecutionContext(input: {
     toriiUrl: string;
     chainId: string;
+    networkPrefix: number;
     accountId: string;
     privateKeyHex?: string;
     assetDefinitionId: string;
@@ -1290,6 +1440,7 @@ type IrohaBridge = {
   getConfidentialAssetBalance(input: {
     toriiUrl: string;
     chainId: string;
+    networkPrefix: number;
     accountId: string;
     privateKeyHex?: string;
     assetDefinitionId: string;
@@ -1297,6 +1448,7 @@ type IrohaBridge = {
   scanConfidentialWallet(input: {
     toriiUrl: string;
     chainId: string;
+    networkPrefix: number;
     accountId: string;
     privateKeyHex?: string;
     assetDefinitionId: string;
@@ -1305,18 +1457,24 @@ type IrohaBridge = {
   getConfidentialWalletState(input: {
     toriiUrl: string;
     chainId: string;
+    networkPrefix: number;
     accountId: string;
     privateKeyHex?: string;
     assetDefinitionId: string;
   }): Promise<ConfidentialAssetBalanceResponse>;
   getPrivateKaigiConfidentialXorState(input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     accountId: string;
+    assetDefinitionId: string;
   }): Promise<PrivateKaigiConfidentialXorState>;
   selfShieldPrivateKaigiXor(input: {
     toriiUrl: string;
     chainId: string;
+    networkPrefix: number;
     accountId: string;
+    assetDefinitionId: string;
     privateKeyHex?: string;
     amount: string;
   }): Promise<TransactionSubmissionResultView>;
@@ -1374,7 +1532,12 @@ type IrohaBridge = {
   ): Promise<GovernanceProposalDetail>;
   getGovernanceCurrentValidationFeePolicy(input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
   }): Promise<GovernanceValidationFeePolicyView>;
+  getGovernancePlainReferendumContract(
+    input: GovernancePlainReferendumObservedIdentity,
+  ): Promise<LoadedGovernancePlainReferendumContract>;
   prepareGovernanceCitizenRegistration(
     input: GovernanceCitizenRegistrationPrepareInput,
   ): Promise<GovernancePreparedActionView>;
@@ -1393,7 +1556,7 @@ type IrohaBridge = {
   confirmGovernanceAction(input: {
     reviewId: string;
     accountId: string;
-  }): Promise<GovernanceCommittedActionView>;
+  }): Promise<GovernanceFinalizedActionView>;
   getExplorerMetrics(
     config: ToriiConfig,
   ): Promise<ExplorerMetricsResponse | null>;
@@ -1411,29 +1574,17 @@ type IrohaBridge = {
   getVpnProfile(input: VpnAvailabilityInput): Promise<VpnProfileResponse>;
   getVpnStatus(input?: VpnStatusInput): Promise<VpnStatusResponse>;
   connectVpn(input: VpnConnectInput): Promise<VpnStatusResponse>;
-  disconnectVpn(input: VpnDisconnectInput): Promise<VpnStatusResponse>;
-  repairVpn(input: VpnStatusInput): Promise<VpnStatusResponse>;
+  disconnectVpn(input?: VpnDisconnectInput): Promise<VpnStatusResponse>;
+  repairVpn(): Promise<VpnStatusResponse>;
   listVpnReceipts(input?: VpnStatusInput): Promise<VpnReceiptResponse[]>;
-  listOfflineAllowances(input: {
+  getOfflineReadiness(input: {
     toriiUrl: string;
-    controllerId: string;
-    limit?: number;
-    offset?: number;
-    filter?: string | Record<string, unknown>;
-    certificateExpiresBeforeMs?: number;
-    certificateExpiresAfterMs?: number;
-    policyExpiresBeforeMs?: number;
-    policyExpiresAfterMs?: number;
-    refreshBeforeMs?: number;
-    refreshAfterMs?: number;
-    verdictIdHex?: string;
-    attestationNonceHex?: string;
-    requireVerdict?: boolean;
-    onlyMissingVerdict?: boolean;
-    includeExpired?: boolean;
-  }): Promise<OfflineAllowanceResponse>;
+    assetDefinitionId: string;
+  }): Promise<OfflineReadinessView>;
   onboardAccount(input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     alias: string;
     accountId: string;
     identity?: Record<string, unknown>;
@@ -1441,8 +1592,9 @@ type IrohaBridge = {
   requestFaucetFunds(
     input: {
       toriiUrl: string;
+      chainId: string;
       accountId: string;
-      networkPrefix?: number;
+      networkPrefix: number;
       requestId?: string;
     },
     onStatus?: FaucetStatusCallback,
@@ -1468,13 +1620,8 @@ type IrohaBridge = {
   endKaigiMeeting(
     input: KaigiEndMeetingInput,
   ): Promise<TransactionSubmissionResultView>;
-  createConnectPreview(input: {
-    toriiUrl: string;
-    chainId: string;
-    node?: string | null;
-    launchProtocol?: string | null;
-  }): Promise<ConnectPreviewResponse>;
-  getSumeragiStatus(config: ToriiConfig): Promise<ToriiSumeragiStatus>;
+  getSumeragiStatus(config: ToriiConfig): Promise<Record<string, unknown>>;
+  getNexusLifecycle(config: ToriiConfig): Promise<NexusLifecycleView>;
   getNexusPublicLaneValidators(
     input: NexusPublicLaneBaseInput,
   ): Promise<PublicLaneValidatorsResponseView>;
@@ -1514,13 +1661,19 @@ type IrohaBridge = {
   chargeSubscriptionNow(
     input: SubscriptionActionInput,
   ): Promise<SubscriptionActionResponseView>;
+  reconcileSubscriptionMutation(
+    input: SubscriptionReconcileInput,
+  ): Promise<SubscriptionActionResponseView>;
   getSoraCloudStatus(input: SoraCloudStatusInput): Promise<SoraCloudStatusView>;
   deploySoraCloudHf(
     input: SoraCloudHfDeployInput,
   ): Promise<SoraCloudHfDeployResponseView>;
+  reconcileSoraCloudHfLaunch(
+    input: SoraCloudHfReconcileInput,
+  ): Promise<SoraCloudHfDeployResponseView>;
   getSoraCloudHfStatus(
-    input: SoraCloudStatusInput,
-  ): Promise<Record<string, unknown>>;
+    input: SoraCloudHfStatusInput,
+  ): Promise<SoraCloudHfStatusView>;
   getParameters(input: ToriiConfig): Promise<Record<string, unknown>>;
   deriveZkIvmPayload(
     input: ZkIvmRequestInput,
@@ -1557,12 +1710,14 @@ class ApiRequestError extends Error {
   statusText: string;
   detail: string;
   label: string;
+  retryAfterMs: number | null;
 
   constructor(input: {
     label: string;
     status: number;
     statusText: string;
     detail?: string;
+    retryAfterMs?: number | null;
   }) {
     const detail = String(input.detail ?? "").trim();
     const statusSummary = formatHttpStatus(input.status, input.statusText);
@@ -1586,6 +1741,7 @@ class ApiRequestError extends Error {
     this.statusText = input.statusText;
     this.detail = detail;
     this.label = input.label;
+    this.retryAfterMs = input.retryAfterMs ?? null;
   }
 }
 
@@ -1598,6 +1754,7 @@ const createApiRequestError = async (
     status: response.status,
     statusText: response.statusText,
     detail: await readApiErrorDetail(response),
+    retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
   });
 
 const isApiRequestError = (error: unknown): error is ApiRequestError =>
@@ -1638,6 +1795,8 @@ const clientCache = new Map<string, ToriiClient>();
 const nativeClientCache = new Map<string, ToriiClient>();
 const kaigiCallWatchers = new Map<string, AbortController>();
 const faucetRequestControllers = new Map<string, AbortController>();
+const retryingToriiFetch: typeof fetch = (input, init) =>
+  withBoundedHttpGetFetchRetry(nodeFetch, input, init);
 
 const isLoopbackToriiBaseUrl = (baseUrl: string): boolean => {
   try {
@@ -1669,7 +1828,7 @@ const getClient = (toriiUrlRaw: string, nativeBinding?: unknown) => {
     return cached;
   }
   const clientOptions: Record<string, unknown> = {
-    fetchImpl: nodeFetch,
+    fetchImpl: retryingToriiFetch,
   };
   if (isLoopbackToriiBaseUrl(baseUrl)) {
     clientOptions.allowInsecure = true;
@@ -1727,54 +1886,10 @@ const waitForMs = (delayMs: number, signal?: AbortSignal) =>
 
 const CONFIDENTIAL_TRANSFER_ROOT_RETRY_ATTEMPTS = 3;
 const CONFIDENTIAL_TRANSFER_ROOT_RETRY_DELAY_MS = 750;
-const FAUCET_CLAIM_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
-const FAUCET_CLAIM_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
 const isConfidentialRootHintMismatchError = (error: unknown) =>
   (error instanceof Error ? error.message : String(error ?? "")).includes(
     "tree commitments do not match the supplied root_hint",
   );
-
-const hasPositiveQuantity = (value: unknown): boolean => {
-  const normalized = Number(trimString(value));
-  return Number.isFinite(normalized) && normalized > 0;
-};
-
-const faucetClaimFundedAssetIsVisible = async (
-  client: ToriiClient,
-  accountId: string,
-  assetId: string,
-  assetDefinitionId: string,
-) => {
-  const rawAssetId = trimString(assetId);
-  const normalizedAssetId = rawAssetId.toLowerCase();
-  const normalizedAssetDefinitionId = extractAssetDefinitionId(
-    trimString(assetDefinitionId) || rawAssetId,
-  )
-    .trim()
-    .toLowerCase();
-  if (!normalizedAssetId && !normalizedAssetDefinitionId) {
-    return false;
-  }
-  const payload = await client.listAccountAssets(accountId, { limit: 200 });
-  const items = Array.isArray(payload?.items) ? payload.items : [];
-  return items.some((item) => {
-    const record = isPlainRecord(item) ? item : {};
-    if (!hasPositiveQuantity(record.quantity)) {
-      return false;
-    }
-    const itemAssetId = trimString(record.asset_id).toLowerCase();
-    const itemAssetDefinitionId = extractAssetDefinitionId(
-      trimString(record.asset ?? record.asset_definition_id ?? itemAssetId),
-    )
-      .trim()
-      .toLowerCase();
-    return Boolean(
-      (normalizedAssetId && itemAssetId === normalizedAssetId) ||
-        (normalizedAssetDefinitionId &&
-          itemAssetDefinitionId === normalizedAssetDefinitionId),
-    );
-  });
-};
 
 const readNumericField = (value: unknown): number | null => {
   const normalized = Number(value);
@@ -1834,13 +1949,12 @@ const readFaucetLedgerFinalityState = async (
     "v1/ledger/headers?limit=1",
     `${normalizeBaseUrl(baseUrl)}/`,
   );
-  const response = await nodeFetch(endpoint.toString(), {
-    method: "GET",
+  const response = await fetchGetResponse(
+    endpoint.toString(),
+    "Faucet ledger finality",
+    undefined,
     signal,
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  );
   throwIfAborted(signal);
   if (!response.ok) {
     if (response.status >= 500) {
@@ -1888,13 +2002,12 @@ const readFaucetSumeragiState = async (
     "v1/sumeragi/status",
     `${normalizeBaseUrl(baseUrl)}/`,
   );
-  const response = await nodeFetch(endpoint.toString(), {
-    method: "GET",
+  const response = await fetchGetResponse(
+    endpoint.toString(),
+    "Faucet Sumeragi finality",
+    undefined,
     signal,
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  );
   throwIfAborted(signal);
   if (!response.ok) {
     if (response.status >= 500) {
@@ -2029,163 +2142,6 @@ const assertFaucetEndpointFinalizing = async (
       "; ",
     )}). Faucet requests are blocked before submission because claims cannot commit until TAIRA finality resumes. This is a TAIRA/Torii health problem, not a wallet problem.${fundingDetail}`,
   );
-};
-
-const waitForFaucetClaimFinality = async (
-  client: ToriiClient,
-  txHashHex: string,
-  accountId: string,
-  assetId: string,
-  assetDefinitionId: string,
-  signal?: AbortSignal,
-) => {
-  const deadline = Date.now() + FAUCET_CLAIM_STATUS_TIMEOUT_MS;
-  const invisibleDeadline = Date.now() + FAUCET_CLAIM_INVISIBLE_RETRY_MS;
-  let lastStatusKind: string | null = null;
-  let lastError: unknown = null;
-  let lastStatusPayload: unknown = null;
-  let sawPipelineStatus = false;
-
-  while (Date.now() <= deadline) {
-    throwIfAborted(signal);
-    try {
-      const payload = await client.getTransactionStatus(txHashHex);
-      throwIfAborted(signal);
-      lastStatusPayload = payload;
-      const statusKind = extractPipelineStatusKind(payload);
-      lastStatusKind = statusKind;
-      lastError = null;
-      if (statusKind) {
-        sawPipelineStatus = true;
-      }
-      if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
-        return {
-          statusKind,
-          statusPayload: payload,
-          timedOut: false,
-          fundedAssetVisible: false,
-          pipelineStatusInvisible: false,
-        };
-      }
-      if (statusKind && FAUCET_CLAIM_FAILURE_STATUSES.has(statusKind)) {
-        return {
-          statusKind,
-          statusPayload: payload,
-          timedOut: false,
-          fundedAssetVisible: false,
-          pipelineStatusInvisible: false,
-        };
-      }
-    } catch (error) {
-      throwIfAborted(signal);
-      lastError = error;
-    }
-
-    try {
-      throwIfAborted(signal);
-      if (
-        await faucetClaimFundedAssetIsVisible(
-          client,
-          accountId,
-          assetId,
-          assetDefinitionId,
-        )
-      ) {
-        throwIfAborted(signal);
-        return {
-          statusKind: lastStatusKind,
-          statusPayload: lastStatusPayload,
-          timedOut: false,
-          fundedAssetVisible: true,
-          pipelineStatusInvisible: !sawPipelineStatus,
-        };
-      }
-    } catch (error) {
-      throwIfAborted(signal);
-      lastError = error;
-    }
-
-    if (!sawPipelineStatus && Date.now() >= invisibleDeadline) {
-      return {
-        statusKind: lastStatusKind,
-        statusPayload: lastStatusPayload,
-        timedOut: true,
-        lastError,
-        fundedAssetVisible: false,
-        pipelineStatusInvisible: true,
-      };
-    }
-
-    if (Date.now() + FAUCET_CLAIM_STATUS_INTERVAL_MS > deadline) {
-      break;
-    }
-    await waitForMs(FAUCET_CLAIM_STATUS_INTERVAL_MS, signal);
-  }
-
-  return {
-    statusKind: lastStatusKind,
-    statusPayload: lastStatusPayload,
-    timedOut: true,
-    lastError,
-    fundedAssetVisible: false,
-    pipelineStatusInvisible: !sawPipelineStatus,
-  };
-};
-
-const buildFaucetClaimFinalityError = (
-  txHashHex: string,
-  statusKind: string | null,
-  timedOut: boolean,
-  pipelineStatusInvisible: boolean,
-  lastError?: unknown,
-) => {
-  if (statusKind === "Expired") {
-    return new Error(
-      `Faucet claim ${txHashHex} expired before the network committed it. Please retry once the faucet queue clears.`,
-    );
-  }
-  if (statusKind === "Rejected") {
-    return new Error(
-      `Faucet claim ${txHashHex} was rejected on-chain before funding the wallet.`,
-    );
-  }
-  if (pipelineStatusInvisible) {
-    return new Error(
-      `Faucet claim ${txHashHex} was accepted by TAIRA, but it never became visible in pipeline status and the funded asset did not appear in the wallet. The endpoint is likely not finalizing new blocks right now; retry after TAIRA recovers.`,
-    );
-  }
-  if (timedOut) {
-    const detail =
-      lastError instanceof Error ? trimString(lastError.message) : "";
-    return new Error(
-      detail
-        ? `Faucet claim ${txHashHex} stayed queued and did not finalize within ${Math.trunc(
-            FAUCET_CLAIM_STATUS_TIMEOUT_MS / 1000,
-          )} seconds. ${detail}`
-        : `Faucet claim ${txHashHex} stayed queued and did not finalize within ${Math.trunc(
-            FAUCET_CLAIM_STATUS_TIMEOUT_MS / 1000,
-          )} seconds.`,
-    );
-  }
-  return new Error(
-    `Faucet claim ${txHashHex} did not reach a committed state on the network.`,
-  );
-};
-
-const readFaucetClaimRetryDelayMs = (
-  attempt: number,
-  snapshot?: StatusSnapshot | null,
-) => {
-  const rawSumeragiValue = snapshot?.status?.raw?.["sumeragi"];
-  const rawSumeragi = isPlainRecord(rawSumeragiValue) ? rawSumeragiValue : null;
-  return computeFaucetClaimRetryDelayMs(attempt, {
-    queueSize: snapshot?.status?.queue_size,
-    commitTimeMs: snapshot?.status?.commit_time_ms,
-    saturated:
-      rawSumeragi && typeof rawSumeragi.tx_queue_saturated === "boolean"
-        ? rawSumeragi.tx_queue_saturated
-        : false,
-  });
 };
 
 const stripHexPrefix = (hex: string) => hex.trim().replace(/^0x/i, "");
@@ -2364,20 +2320,6 @@ const resolveOptionalPrivateKeyHex = async (input: {
   );
 };
 
-const formatExposedPrivateKey = (material: SigningMaterial): string => {
-  const normalized = normalizeSigningMaterial(material);
-  installGlobalIrohaJsNativeBinding(import.meta.url);
-  const encoded = privateKeyMultihash(
-    hexToBuffer(normalized.privateKeyHex, "privateKeyHex"),
-    {
-      algorithm: normalized.signingAlgorithm,
-    },
-  );
-  return encoded.includes(":")
-    ? encoded
-    : `${normalized.signingAlgorithm}:${encoded}`;
-};
-
 const assertEd25519SigningMaterial = (
   material: SigningMaterial,
   operationLabel: string,
@@ -2500,6 +2442,26 @@ const normalizeIntegerAmount = (value: string, label: string) => {
   return amount;
 };
 
+const GOVERNANCE_U64_MAX = (1n << 64n) - 1n;
+const GOVERNANCE_U128_MAX = (1n << 128n) - 1n;
+
+const normalizeGovernancePositiveInteger = (
+  value: string,
+  label: string,
+  maximum: bigint,
+) => {
+  const amount = value.trim();
+  if (!/^[1-9]\d*$/.test(amount)) {
+    throw new Error(
+      `${label} must be a canonical positive whole-number string.`,
+    );
+  }
+  if (BigInt(amount) > maximum) {
+    throw new Error(`${label} exceeds the supported governance range.`);
+  }
+  return amount;
+};
+
 const normalizeBallotDirectionCode = (direction: "Aye" | "Nay" | "Abstain") => {
   switch (direction) {
     case "Aye":
@@ -2521,14 +2483,11 @@ const normalizeRequestId = (value: string) => {
   return requestId;
 };
 
-const PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const PRIVATE_KAIGI_ROOT_LOOKBACK = 16;
 const PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE = 200;
 const CONFIDENTIAL_NOTE_INDEX_PAGE_SIZE = 500;
 const CONFIDENTIAL_TX_FINALITY_INTERVAL_MS = 500;
 const CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS = 600_000;
-const CONFIDENTIAL_TX_SUCCESS_STATUSES = new Set(["Applied", "Committed"]);
-const CONFIDENTIAL_TX_FAILURE_STATUSES = new Set(["Rejected", "Expired"]);
 const CONFIDENTIAL_UNSHIELD_V2_CIRCUIT_IDS = new Set([
   "halo2/pasta/ipa/anon-unshield-merkle16-poseidon",
   "halo2/pasta/ipa/anon-unshield-merkle16-poseidon-diversified",
@@ -2537,9 +2496,11 @@ const CONFIDENTIAL_UNSHIELD_V3_CIRCUIT_IDS = new Set([
   "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon",
   "halo2/pasta/ipa/anon-unshield-2in-1change-merkle16-poseidon-diversified",
 ]);
-const PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX = "iroha-demo:private-kaigi-xor:";
+const PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE = "iroha-demo:private-kaigi-xor";
 const CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX =
   "iroha-demo:confidential-wallet:";
+const CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE =
+  "iroha-demo:confidential-wallet";
 const PRIVATE_KAIGI_DEFAULT_SELF_SHIELD_AMOUNT = "1";
 const PRIVATE_KAIGI_CREATE_GAS = 420;
 const PRIVATE_KAIGI_JOIN_ZK_GAS = 1520;
@@ -2845,21 +2806,6 @@ const ceilDecimalToIntegerString = (value: string) => {
   return (remainder === 0n ? whole : whole + 1n).toString();
 };
 
-const parseNonNegativeConfigAmount = (
-  value: unknown,
-  label: string,
-): string => {
-  if (typeof value === "number") {
-    if (!Number.isFinite(value) || value < 0) {
-      throw new Error(`${label} must be a non-negative number.`);
-    }
-    return formatDecimalAmount(parseDecimalAmount(String(value), label));
-  }
-  return formatDecimalAmount(
-    parseDecimalAmount(String(value ?? "").trim(), label),
-  );
-};
-
 const newPrivateKaigiShadowState = (): PrivateKaigiXorShadowState => ({
   lastOnChainShieldedBalance: null,
   pendingShieldCredit: "0",
@@ -2875,21 +2821,52 @@ const confidentialWalletShadowStateCache = new Map<
   PendingConfidentialWalletShadowState
 >();
 
-const getPrivateKaigiShadowKey = (input: {
+type EndpointScopedStorageKeys = {
+  current: string | null;
+  legacy: string;
+};
+
+const quarantineLegacyEndpointDerivedKey = (
+  key: string,
+  cache: Map<string, unknown>,
+) => {
+  cache.delete(key);
+  try {
+    globalThis.localStorage?.removeItem(key);
+  } catch {
+    // Legacy endpoint-derived state is ignored even if storage is unavailable.
+  }
+};
+
+const getPrivateKaigiShadowKeys = (input: {
   toriiUrl: string;
   accountId: string;
   assetDefinitionId: string;
-}) =>
-  [
-    PRIVATE_KAIGI_SHADOW_STORAGE_PREFIX,
+  endpointScope?: EndpointIdentityScopeInput | null;
+}): EndpointScopedStorageKeys => ({
+  current: input.endpointScope
+    ? buildEndpointDerivedStorageKey(
+        PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE,
+        input.endpointScope,
+        [input.accountId, input.assetDefinitionId],
+      )
+    : null,
+  legacy: [
+    `${PRIVATE_KAIGI_SHADOW_STORAGE_NAMESPACE}:`,
     normalizeBaseUrl(input.toriiUrl),
     input.accountId.trim().toLowerCase(),
     input.assetDefinitionId.trim().toLowerCase(),
-  ].join("");
+  ].join(""),
+});
 
 const readPrivateKaigiShadowState = (
-  key: string,
+  keys: EndpointScopedStorageKeys,
 ): PrivateKaigiXorShadowState => {
+  quarantineLegacyEndpointDerivedKey(keys.legacy, privateKaigiShadowStateCache);
+  if (!keys.current) {
+    return newPrivateKaigiShadowState();
+  }
+  const key = keys.current;
   const cached = privateKaigiShadowStateCache.get(key);
   if (cached) {
     return { ...cached };
@@ -2932,9 +2909,14 @@ const readPrivateKaigiShadowState = (
 };
 
 const writePrivateKaigiShadowState = (
-  key: string,
+  keys: EndpointScopedStorageKeys,
   state: PrivateKaigiXorShadowState,
 ) => {
+  quarantineLegacyEndpointDerivedKey(keys.legacy, privateKaigiShadowStateCache);
+  if (!keys.current) {
+    return;
+  }
+  const key = keys.current;
   const normalized = {
     lastOnChainShieldedBalance: state.lastOnChainShieldedBalance,
     pendingShieldCredit: formatDecimalAmount(
@@ -3009,44 +2991,46 @@ const appendPrivateKaigiShieldCredit = (input: {
   toriiUrl: string;
   accountId: string;
   amount: string;
-  assetDefinitionId?: string;
+  assetDefinitionId: string;
+  endpointScope: EndpointIdentityScopeInput;
 }) => {
-  const key = getPrivateKaigiShadowKey({
+  const keys = getPrivateKaigiShadowKeys({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
-    assetDefinitionId:
-      input.assetDefinitionId ?? PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    assetDefinitionId: input.assetDefinitionId,
+    endpointScope: input.endpointScope,
   });
-  const state = readPrivateKaigiShadowState(key);
+  const state = readPrivateKaigiShadowState(keys);
   state.pendingShieldCredit = formatDecimalAmount(
     addDecimalAmounts(
       parseDecimalAmount(state.pendingShieldCredit, "pendingShieldCredit"),
       parseDecimalAmount(input.amount, "amount"),
     ),
   );
-  writePrivateKaigiShadowState(key, state);
+  writePrivateKaigiShadowState(keys, state);
 };
 
 const appendPrivateKaigiFeeDebit = (input: {
   toriiUrl: string;
   accountId: string;
   amount: string;
-  assetDefinitionId?: string;
+  assetDefinitionId: string;
+  endpointScope: EndpointIdentityScopeInput;
 }) => {
-  const key = getPrivateKaigiShadowKey({
+  const keys = getPrivateKaigiShadowKeys({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
-    assetDefinitionId:
-      input.assetDefinitionId ?? PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    assetDefinitionId: input.assetDefinitionId,
+    endpointScope: input.endpointScope,
   });
-  const state = readPrivateKaigiShadowState(key);
+  const state = readPrivateKaigiShadowState(keys);
   state.privateFeeDebit = formatDecimalAmount(
     addDecimalAmounts(
       parseDecimalAmount(state.privateFeeDebit, "privateFeeDebit"),
       parseDecimalAmount(input.amount, "amount"),
     ),
   );
-  writePrivateKaigiShadowState(key, state);
+  writePrivateKaigiShadowState(keys, state);
 };
 
 const newConfidentialWalletShadowState =
@@ -3054,15 +3038,24 @@ const newConfidentialWalletShadowState =
     transactions: [],
   });
 
-const getConfidentialWalletShadowKey = (input: {
+const getConfidentialWalletShadowKeys = (input: {
   toriiUrl: string;
   accountId: string;
-}) =>
-  [
+  endpointScope?: EndpointIdentityScopeInput | null;
+}): EndpointScopedStorageKeys => ({
+  current: input.endpointScope
+    ? buildEndpointDerivedStorageKey(
+        CONFIDENTIAL_WALLET_SHADOW_STORAGE_NAMESPACE,
+        input.endpointScope,
+        [input.accountId],
+      )
+    : null,
+  legacy: [
     CONFIDENTIAL_WALLET_SHADOW_STORAGE_PREFIX,
     normalizeBaseUrl(input.toriiUrl),
     input.accountId.trim().toLowerCase(),
-  ].join("");
+  ].join(""),
+});
 
 const normalizePendingConfidentialWalletShadowTransaction = (
   value: unknown,
@@ -3096,8 +3089,16 @@ const normalizePendingConfidentialWalletShadowTransaction = (
 };
 
 const readConfidentialWalletShadowState = (
-  key: string,
+  keys: EndpointScopedStorageKeys,
 ): PendingConfidentialWalletShadowState => {
+  quarantineLegacyEndpointDerivedKey(
+    keys.legacy,
+    confidentialWalletShadowStateCache,
+  );
+  if (!keys.current) {
+    return newConfidentialWalletShadowState();
+  }
+  const key = keys.current;
   const cached = confidentialWalletShadowStateCache.get(key);
   if (cached) {
     return {
@@ -3160,9 +3161,17 @@ const readConfidentialWalletShadowState = (
 };
 
 const writeConfidentialWalletShadowState = (
-  key: string,
+  keys: EndpointScopedStorageKeys,
   state: PendingConfidentialWalletShadowState,
 ) => {
+  quarantineLegacyEndpointDerivedKey(
+    keys.legacy,
+    confidentialWalletShadowStateCache,
+  );
+  if (!keys.current) {
+    return;
+  }
+  const key = keys.current;
   const dedupedTransactions = new Map<
     string,
     PendingConfidentialWalletShadowTransaction
@@ -3343,17 +3352,19 @@ const decryptConfidentialWalletBackupState = (
 const upsertConfidentialWalletShadowTransaction = (input: {
   toriiUrl: string;
   accountId: string;
+  endpointScope: EndpointIdentityScopeInput;
   txHash: string;
   authority: string;
   metadata?: Record<string, unknown>;
   instructions?: Array<Record<string, unknown>>;
   createdAtMs?: number;
 }) => {
-  const key = getConfidentialWalletShadowKey({
+  const keys = getConfidentialWalletShadowKeys({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
+    endpointScope: input.endpointScope,
   });
-  const state = readConfidentialWalletShadowState(key);
+  const state = readConfidentialWalletShadowState(keys);
   const hash = trimString(input.txHash).toLowerCase();
   if (!hash) {
     return;
@@ -3373,12 +3384,13 @@ const upsertConfidentialWalletShadowTransaction = (input: {
     ...state.transactions.filter((transaction) => transaction.hash !== hash),
     nextTransaction,
   ];
-  writeConfidentialWalletShadowState(key, state);
+  writeConfidentialWalletShadowState(keys, state);
 };
 
 const mergeConfidentialWalletShadowTransactions = (input: {
   toriiUrl: string;
   accountId: string;
+  endpointScope?: EndpointIdentityScopeInput | null;
   transactions: Array<WalletConfidentialTransactionLike | null | undefined>;
   includeUnmatchedShadowTransactions?: boolean;
 }): WalletConfidentialTransactionLike[] => {
@@ -3389,11 +3401,12 @@ const mergeConfidentialWalletShadowTransactions = (input: {
   if (input.includeUnmatchedShadowTransactions === false) {
     return baseTransactions;
   }
-  const key = getConfidentialWalletShadowKey({
+  const keys = getConfidentialWalletShadowKeys({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
+    endpointScope: input.endpointScope,
   });
-  const shadowState = readConfidentialWalletShadowState(key);
+  const shadowState = readConfidentialWalletShadowState(keys);
   if (!shadowState.transactions.length) {
     return baseTransactions;
   }
@@ -3534,23 +3547,7 @@ const normalizeTimestampMs = (value: number, label: string) => {
 };
 
 const normalizeKaigiCallId = (value: string, label: string) => {
-  const callId = value.trim();
-  if (!callId) {
-    throw new Error(`${label} is required.`);
-  }
-  if (!callId.includes(":")) {
-    throw new Error(`${label} must be in domain.dataspace:meeting format.`);
-  }
-  const [domainIdRaw, ...callNameParts] = callId.split(":");
-  const domainId = domainIdRaw.trim();
-  const callName = callNameParts.join(":").trim();
-  if (!domainId || !callName) {
-    throw new Error(`${label} must be in domain.dataspace:meeting format.`);
-  }
-  const qualifiedDomainId = domainId.includes(".")
-    ? domainId
-    : `${domainId}.universal`;
-  return `${qualifiedDomainId}:${callName}`;
+  return requireKaigiCallId(value, label);
 };
 
 const normalizeKaigiParticipantId = (value: string) => {
@@ -3722,7 +3719,7 @@ const splitKaigiCallId = (callId: string) => {
   const [domainId, ...callNameParts] = normalized.split(":");
   const callName = callNameParts.join(":").trim();
   if (!domainId || !callName) {
-    throw new Error("callId must be in domain:meeting format.");
+    throw new Error("callId must be in exact domain.dataspace:meeting format.");
   }
   return {
     domainId,
@@ -4036,25 +4033,58 @@ const ensureObjectResponse = (
   return payload as Record<string, unknown>;
 };
 
+const fetchGetResponse = async (
+  endpoint: string,
+  label: string,
+  headers?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<Response> =>
+  withBoundedHttpGetRetry(
+    async () => {
+      const response = await nodeFetch(endpoint, {
+        method: "GET",
+        signal,
+        headers: {
+          Accept: "application/json",
+          ...(headers ?? {}),
+        },
+      });
+      if (response.status === 429) {
+        throw await createApiRequestError(response, label);
+      }
+      return response;
+    },
+    { signal },
+  );
+
 const fetchJson = async (
   endpoint: string,
   label: string,
   headers?: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> => {
-  const response = await nodeFetch(endpoint, {
-    method: "GET",
-    signal,
-    headers: {
-      Accept: "application/json",
-      ...(headers ?? {}),
-    },
-  });
+  const response = await fetchGetResponse(endpoint, label, headers, signal);
   if (!response.ok) {
     throw await createApiRequestError(response, label);
   }
   const payload = (await response.json()) as unknown;
   return ensureObjectResponse(payload, label);
+};
+
+const fetchNexusLifecycle = async (
+  toriiUrl: string,
+  signal?: AbortSignal,
+): Promise<NexusLifecycleView> => {
+  const response = await fetchGetResponse(
+    buildNexusEndpoint(toriiUrl, "/v1/nexus/lifecycle"),
+    "Nexus lifecycle",
+    undefined,
+    signal,
+  );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Nexus lifecycle");
+  }
+  return parseNexusLifecycleJson(await response.text());
 };
 
 const NETWORK_STATS_REQUEST_TIMEOUT_MS = 3_500;
@@ -4124,46 +4154,6 @@ const postJson = async (
   return ensureObjectResponse(payload, label);
 };
 
-const CHAIN_METADATA_PATHS = [
-  "/v1/chain/metadata",
-  "/chain/metadata",
-  "/v1/network/metadata",
-  "/network/metadata",
-  "/v1/network",
-  "/network",
-  "/v1/explorer/network",
-  "/explorer/network",
-  "/v1/explorer/chain",
-  "/explorer/chain",
-  "/v1/configuration",
-  "/configuration",
-  "/v1/status",
-  "/status",
-  "/v1/explorer/accounts?limit=1",
-  "/v1/accounts?limit=1",
-] as const;
-
-const readChainMetadataHeaders = (
-  headers: Pick<Headers, "get">,
-): ChainMetadataDraft =>
-  extractChainMetadataFromPayload({
-    chain_id: headers.get("x-iroha-chain-id"),
-    chainId: headers.get("x-iroha-chain-id"),
-    network_prefix: headers.get("x-iroha-network-prefix"),
-    networkPrefix: headers.get("x-iroha-network-prefix"),
-  });
-
-const mergeChainMetadataDraft = (
-  current: ChainMetadataDraft,
-  next: ChainMetadataDraft,
-): ChainMetadataDraft => ({
-  chainId: current.chainId || next.chainId,
-  networkPrefix:
-    current.networkPrefix === undefined
-      ? next.networkPrefix
-      : current.networkPrefix,
-});
-
 const parseJsonIfAvailable = async (response: Response): Promise<unknown> => {
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.toLowerCase().includes("json")) {
@@ -4172,77 +4162,22 @@ const parseJsonIfAvailable = async (response: Response): Promise<unknown> => {
   return await response.json();
 };
 
-const resolveKnownChainMetadataFallback = (
-  toriiUrlRaw: string,
-  draft: ChainMetadataDraft,
-): ChainMetadataDraft | undefined => {
-  const endpointOrigin = new URL(normalizeBaseUrl(toriiUrlRaw)).origin;
-  for (const fallback of KNOWN_CHAIN_METADATA_FALLBACKS) {
-    const fallbackOrigin = new URL(fallback.toriiUrl).origin;
-    if (endpointOrigin === fallbackOrigin) {
-      return {
-        chainId: fallback.chainId,
-        networkPrefix: fallback.networkPrefix,
-      };
-    }
-    if (draft.networkPrefix === fallback.networkPrefix) {
-      return {
-        chainId: fallback.chainId,
-      };
-    }
-  }
-  return undefined;
-};
-
 const fetchChainMetadata = async (
   toriiUrlRaw: string,
 ): Promise<ChainMetadataResponse> => {
   const baseUrl = normalizeBaseUrl(toriiUrlRaw);
-  let draft: ChainMetadataDraft = {};
-  let reachedEndpoint = false;
-  let lastError: unknown = null;
-
-  for (const path of CHAIN_METADATA_PATHS) {
-    const endpoint = `${baseUrl}${path}`;
-    try {
-      const response = await nodeFetch(endpoint, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-      reachedEndpoint = true;
-      const headerDraft = readChainMetadataHeaders(response.headers);
-      draft = mergeChainMetadataDraft(draft, headerDraft);
-
-      if ([401, 403, 404, 503].includes(response.status)) {
-        continue;
-      }
-      if (!response.ok) {
-        throw await createApiRequestError(response, "Chain metadata");
-      }
-
-      const payload = await parseJsonIfAvailable(response);
-      draft = mergeChainMetadataDraft(
-        draft,
-        extractChainMetadataFromPayload(payload),
-      );
-      if (draft.chainId && draft.networkPrefix !== undefined) {
-        return normalizeChainMetadata(draft);
-      }
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  if (!reachedEndpoint && lastError) {
-    throw lastError;
-  }
-
-  return normalizeChainMetadata(
-    draft,
-    resolveKnownChainMetadataFallback(toriiUrlRaw, draft),
+  const response = await fetchGetResponse(
+    `${baseUrl}/v1/chain/metadata`,
+    "Chain metadata",
   );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Chain metadata");
+  }
+  const payload = await parseJsonIfAvailable(response);
+  if (payload === null) {
+    throw new Error("Chain metadata did not return JSON.");
+  }
+  return parseFirstReleaseChainMetadataPayload(payload);
 };
 
 const normalizeOptionalAccountNetworkPrefix = (value: unknown) => {
@@ -4256,18 +4191,12 @@ const normalizeOptionalAccountNetworkPrefix = (value: unknown) => {
   return normalized;
 };
 
-const createChainMetadataMismatchError = (input: {
-  expectedChainId: string;
-  configuredChainId: string;
-}) =>
-  new Error(
-    `Torii endpoint chain id mismatch: endpoint expects "${input.expectedChainId}", but the app is configured for "${input.configuredChainId}". Open Settings and use Check & Save for this endpoint before sending.`,
-  );
-
 const assertWriteConnectionMatchesEndpoint = async (input: {
   toriiUrl: string;
   chainId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
+  feature?: EndpointFeature;
+  operation?: string;
 }) => {
   const configuredChainId = String(input.chainId ?? "").trim();
   if (!configuredChainId) {
@@ -4276,47 +4205,77 @@ const assertWriteConnectionMatchesEndpoint = async (input: {
   const configuredNetworkPrefix = normalizeOptionalAccountNetworkPrefix(
     input.networkPrefix,
   );
-  let metadata: ChainMetadataResponse | null = null;
-  const knownMetadata = resolveKnownChainMetadataFallback(input.toriiUrl, {});
-
-  if (knownMetadata?.chainId && knownMetadata.networkPrefix !== undefined) {
-    metadata = normalizeChainMetadata(knownMetadata);
-  } else {
-    try {
-      metadata = await fetchChainMetadata(input.toriiUrl);
-    } catch {
-      metadata = null;
-    }
+  if (configuredNetworkPrefix === undefined) {
+    throw new Error("networkPrefix is required before writing.");
   }
-
-  if (!metadata) {
-    return {
-      chainId: configuredChainId,
-      networkPrefix: configuredNetworkPrefix,
-    };
+  const inspection = await assertEndpointWriteAuthorized({
+    toriiUrl: input.toriiUrl,
+    chainId: configuredChainId,
+    networkPrefix: configuredNetworkPrefix,
+  });
+  if (input.feature && input.operation) {
+    assertEndpointFeatureOperationSupported(
+      inspection,
+      input.feature,
+      input.operation,
+    );
+  } else if (input.feature) {
+    assertEndpointFeatureSupported(inspection, input.feature);
+  } else if (input.operation) {
+    throw new Error("Endpoint operation checks require a feature.");
   }
-
-  if (metadata.chainId !== configuredChainId) {
-    throw createChainMetadataMismatchError({
-      expectedChainId: metadata.chainId,
-      configuredChainId,
-    });
-  }
-
-  if (
-    configuredNetworkPrefix !== undefined &&
-    metadata.networkPrefix !== configuredNetworkPrefix
-  ) {
+  const endpointScope = getTrustedEndpointIdentityScope(inspection);
+  if (!endpointScope) {
     throw new Error(
-      `Torii endpoint network prefix mismatch: endpoint reports "${metadata.networkPrefix}", but the app is configured for "${configuredNetworkPrefix}". Open Settings and use Check & Save for this endpoint before sending.`,
+      "Endpoint identity is not trusted for endpoint-derived storage.",
     );
   }
 
   return {
-    chainId: configuredChainId,
-    networkPrefix: configuredNetworkPrefix ?? metadata.networkPrefix,
+    chainId: inspection.expected.chainId,
+    networkPrefix: inspection.expected.networkPrefix,
+    endpointScope,
   };
 };
+
+const assertFaucetChallengeConnectionAvailable = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+}) => {
+  const configuredChainId = String(input.chainId ?? "").trim();
+  if (!configuredChainId) {
+    throw new Error("chainId is required.");
+  }
+  const configuredNetworkPrefix = normalizeOptionalAccountNetworkPrefix(
+    input.networkPrefix,
+  );
+  if (configuredNetworkPrefix === undefined) {
+    throw new Error(
+      "networkPrefix is required before requesting faucet funds.",
+    );
+  }
+  const inspection = await assertEndpointFaucetChallengeAvailable({
+    toriiUrl: input.toriiUrl,
+    chainId: configuredChainId,
+    networkPrefix: configuredNetworkPrefix,
+  });
+  return {
+    chainId: inspection.expected.chainId,
+    networkPrefix: inspection.expected.networkPrefix,
+  };
+};
+
+const inspectEndpointDerivedScope = async (
+  input: EndpointNetworkContext,
+): Promise<EndpointIdentityScopeInput | null> =>
+  getTrustedEndpointIdentityScope(
+    await inspectEndpointIdentity({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+    }),
+  );
 
 const tryNormalizeCanonicalAccountIdLiteral = (
   value: string,
@@ -4455,54 +4414,6 @@ const fetchKaigiMeetingView = async (
   );
 };
 
-const resolveKaigiRelayManifest = async (
-  client: ToriiClient,
-  expiryMs: number,
-) => {
-  try {
-    const summaries = await client.listKaigiRelays();
-    const candidates = [...(summaries.items ?? [])]
-      .filter((item) =>
-        ["healthy", "degraded", ""].includes(String(item.status ?? "").trim()),
-      )
-      .sort((left, right) => {
-        if ((left.status ?? "") !== (right.status ?? "")) {
-          if (left.status === "healthy") return -1;
-          if (right.status === "healthy") return 1;
-        }
-        return (
-          Number(right.bandwidth_class ?? 0) - Number(left.bandwidth_class ?? 0)
-        );
-      })
-      .slice(0, 2);
-    if (candidates.length === 0) {
-      return null;
-    }
-    const details = await Promise.all(
-      candidates.map((candidate) => client.getKaigiRelay(candidate.relay_id)),
-    );
-    const hops = details
-      .filter(
-        (detail): detail is Exclude<(typeof details)[number], null> =>
-          detail !== null,
-      )
-      .map((detail, index) => ({
-        relayId: detail.relay.relay_id,
-        hpkePublicKey: detail.hpke_public_key_b64,
-        weight: Math.max(1, 2 - index),
-      }));
-    if (hops.length === 0) {
-      return null;
-    }
-    return {
-      expiryMs,
-      hops,
-    };
-  } catch (_error) {
-    return null;
-  }
-};
-
 const buildNexusEndpoint = (
   toriiUrlRaw: string,
   path: string,
@@ -4521,125 +4432,6 @@ const buildNexusEndpoint = (
   return `${baseUrl}${path}${params.size ? `?${params.toString()}` : ""}`;
 };
 
-const normalizeSubscriptionPlanListPayload = (
-  payload: Record<string, unknown>,
-): SubscriptionPlanListResponseView => {
-  const items = Array.isArray(payload.items)
-    ? payload.items.filter(isPlainRecord).map((item) => ({
-        plan_id: trimString(item.plan_id ?? item.planId ?? item.id),
-        plan: isPlainRecord(item.plan) ? item.plan : {},
-      }))
-    : [];
-  return {
-    items: items.filter((item) => item.plan_id),
-    total: normalizeTotal(payload.total, items.length),
-  };
-};
-
-const normalizeSubscriptionListItem = (
-  item: Record<string, unknown>,
-): SubscriptionListItemView | null => {
-  const subscriptionId = trimString(
-    item.subscription_id ?? item.subscriptionId ?? item.id,
-  );
-  const subscription = isPlainRecord(item.subscription)
-    ? item.subscription
-    : {};
-  if (!subscriptionId || Object.keys(subscription).length === 0) {
-    return null;
-  }
-  return {
-    subscription_id: subscriptionId,
-    subscription,
-    invoice: isPlainRecord(item.invoice) ? item.invoice : null,
-    plan: isPlainRecord(item.plan) ? item.plan : null,
-  };
-};
-
-const normalizeSubscriptionListPayload = (
-  payload: Record<string, unknown>,
-): SubscriptionListResponseView => {
-  const items = Array.isArray(payload.items)
-    ? payload.items
-        .filter(isPlainRecord)
-        .map(normalizeSubscriptionListItem)
-        .filter((item): item is SubscriptionListItemView => item !== null)
-    : [];
-  return {
-    items,
-    total: normalizeTotal(payload.total, items.length),
-  };
-};
-
-const normalizeSubscriptionGetPayload = (
-  payload: Record<string, unknown>,
-): SubscriptionListItemView => {
-  const item = normalizeSubscriptionListItem(payload);
-  if (!item) {
-    throw new Error(
-      "Subscription response did not include subscription state.",
-    );
-  }
-  return item;
-};
-
-const normalizeSubscriptionActionPayload = (
-  payload: Record<string, unknown>,
-): SubscriptionActionResponseView => ({
-  ok: Boolean(payload.ok),
-  subscription_id: trimString(
-    payload.subscription_id ?? payload.subscriptionId,
-  ),
-  tx_hash_hex: trimString(payload.tx_hash_hex ?? payload.txHashHex),
-  ...(payload.fee !== undefined
-    ? { fee: payload.fee as TransactionFeeView }
-    : payload.tx_fee !== undefined || payload.txFee !== undefined
-      ? { fee: (payload.tx_fee ?? payload.txFee) as TransactionFeeView }
-      : payload.transaction_fee !== undefined ||
-          payload.transactionFee !== undefined
-        ? {
-            fee: (payload.transaction_fee ??
-              payload.transactionFee) as TransactionFeeView,
-          }
-        : payload.network_fee !== undefined || payload.networkFee !== undefined
-          ? {
-              fee: (payload.network_fee ??
-                payload.networkFee) as TransactionFeeView,
-            }
-          : payload.fee_amount !== undefined || payload.feeAmount !== undefined
-            ? {
-                fee: {
-                  amount: (payload.fee_amount ?? payload.feeAmount) as
-                    | string
-                    | number
-                    | null,
-                  assetId: trimString(
-                    payload.fee_asset_id ??
-                      payload.feeAssetId ??
-                      payload.gas_asset_id ??
-                      payload.gasAssetId ??
-                      payload.asset_id ??
-                      payload.assetId,
-                  ),
-                },
-              }
-            : {}),
-  ...(payload.billing_trigger_id !== undefined
-    ? { billing_trigger_id: trimString(payload.billing_trigger_id) }
-    : {}),
-  ...(payload.usage_trigger_id !== undefined
-    ? { usage_trigger_id: trimString(payload.usage_trigger_id) || null }
-    : {}),
-  ...(payload.first_charge_ms !== undefined
-    ? { first_charge_ms: Number(payload.first_charge_ms) }
-    : {}),
-});
-
-const normalizeTotal = (value: unknown, fallback: number): number => {
-  const total = Number(value);
-  return Number.isFinite(total) && total >= 0 ? Math.trunc(total) : fallback;
-};
-
 const normalizeOptionalPositiveInteger = (
   value: unknown,
   label: string,
@@ -4654,34 +4446,63 @@ const normalizeOptionalPositiveInteger = (
   return parsed;
 };
 
-const normalizeSubscriptionPrivateActionBody = async (
+const normalizeFirstReleaseSubscriptionId = (value: unknown): string => {
+  const literal = trimString(value);
+  const separator = literal.indexOf("$");
+  if (
+    separator <= 0 ||
+    separator !== literal.lastIndexOf("$") ||
+    separator === literal.length - 1 ||
+    /\s/u.test(literal)
+  ) {
+    throw new Error("subscriptionId must use the exact name$domain form.");
+  }
+  return literal;
+};
+
+const buildSubscriptionActionDraftBody = (
   input: SubscriptionActionInput,
-  operationLabel: string,
+  action: SubscriptionActionDraftName,
+  authority: string,
 ) => {
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel,
-  });
-  const body: Record<string, unknown> = {
-    authority: accountId,
-    private_key: formatExposedPrivateKey(signingMaterial),
-  };
   const chargeAtMs = normalizeOptionalPositiveInteger(
     input.chargeAtMs,
     "chargeAtMs",
   );
+  const cancelMode = input.cancelMode;
+  if (
+    cancelMode !== undefined &&
+    cancelMode !== "immediate" &&
+    cancelMode !== "period_end"
+  ) {
+    throw new Error("cancelMode must be immediate or period_end.");
+  }
+  if (action === "cancel") {
+    if (!cancelMode) {
+      throw new Error("Cancel subscription requires an explicit cancelMode.");
+    }
+    if (chargeAtMs !== undefined) {
+      throw new Error("Cancel subscription does not accept chargeAtMs.");
+    }
+    return {
+      authority,
+      cancel_mode: { mode: cancelMode, value: null },
+    };
+  }
+  if (cancelMode !== undefined) {
+    throw new Error(`${action} subscription does not accept cancelMode.`);
+  }
+  if (action === "resume" || action === "charge_now") {
+    const body: Record<string, unknown> = { authority };
+    if (chargeAtMs !== undefined) {
+      body.charge_at_ms = chargeAtMs;
+    }
+    return body;
+  }
   if (chargeAtMs !== undefined) {
-    body.charge_at_ms = chargeAtMs;
+    throw new Error(`${action} subscription does not accept chargeAtMs.`);
   }
-  if (input.cancelMode) {
-    body.cancel_mode = input.cancelMode;
-  }
-  return body;
+  return { authority };
 };
 
 const listSubscriptionPlansFromTorii = async (
@@ -4694,10 +4515,11 @@ const listSubscriptionPlansFromTorii = async (
       provider: trimString(input.provider) || undefined,
       limit: input.limit,
       offset: input.offset,
+      count_mode: "exact",
     },
   );
   const payload = await fetchJson(endpoint, "Subscription plans");
-  return normalizeSubscriptionPlanListPayload(payload);
+  return decodeSubscriptionPlanListResponse(payload);
 };
 
 const listSubscriptionsFromTorii = async (
@@ -4709,94 +4531,677 @@ const listSubscriptionsFromTorii = async (
     status: trimString(input.status) || undefined,
     limit: input.limit,
     offset: input.offset,
+    count_mode: "exact",
   });
   const payload = await fetchJson(endpoint, "Subscriptions");
-  return normalizeSubscriptionListPayload(payload);
+  return decodeSubscriptionListResponse(payload);
 };
 
 const getSubscriptionFromTorii = async (
   input: SubscriptionGetInput,
 ): Promise<SubscriptionListItemView> => {
-  const subscriptionId = trimString(input.subscriptionId);
-  if (!subscriptionId) {
-    throw new Error("subscriptionId is required.");
-  }
+  const subscriptionId = normalizeFirstReleaseSubscriptionId(
+    input.subscriptionId,
+  );
   const endpoint = buildNexusEndpoint(
     input.toriiUrl,
     `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`,
   );
   const payload = await fetchJson(endpoint, "Subscription");
-  return normalizeSubscriptionGetPayload(payload);
+  const item = decodeSubscriptionListItemResponse(payload);
+  if (item.subscription_id !== subscriptionId) {
+    throw new Error(
+      "Subscription response does not match the requested subscription.",
+    );
+  }
+  return item;
+};
+
+const SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE = 100;
+const SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS = 10_000;
+const SUBSCRIPTION_STATE_CONFIRM_INTERVAL_MS = 500;
+const SUBSCRIPTION_STATE_CONFIRM_TIMEOUT_MS = 20_000;
+const SUBSCRIPTION_RESOLVED_TIME_CLOCK_SKEW_MS = 30_000;
+const POSITIVE_DECIMAL_U64 = /^[1-9][0-9]*$/u;
+const MAX_U64 = (1n << 64n) - 1n;
+
+const getSubscriptionIvmMaxCyclesFromTorii = async (
+  toriiUrl: string,
+): Promise<string> => {
+  const preflight = ensureObjectResponse(
+    await fetchJson(
+      buildNexusEndpoint(toriiUrl, "/v1/pipeline/preflight"),
+      "Pipeline preflight",
+    ),
+    "Pipeline preflight",
+  );
+  const pipeline = ensureObjectResponse(
+    preflight.pipeline,
+    "Pipeline preflight pipeline",
+  );
+  const raw = pipeline.ivm_admission_cycle_limit;
+  const literal =
+    typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0
+      ? String(raw)
+      : typeof raw === "string" && raw.trim() === raw
+        ? raw
+        : "";
+  if (!POSITIVE_DECIMAL_U64.test(literal) || BigInt(literal) > MAX_U64) {
+    throw new Error(
+      "Pipeline preflight pipeline.ivm_admission_cycle_limit must be a canonical positive u64 before subscription signing.",
+    );
+  }
+  return literal;
+};
+
+const getSubscriptionPlanFromTorii = async (
+  toriiUrl: string,
+  planId: string,
+): Promise<Record<string, unknown>> => {
+  let offset = 0;
+  while (offset <= SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
+    const page = await listSubscriptionPlansFromTorii({
+      toriiUrl,
+      limit: SUBSCRIPTION_PLAN_LOOKUP_PAGE_SIZE,
+      offset,
+    });
+    const match = page.items.find((item) => item.plan_id === planId);
+    if (match) {
+      return match.plan;
+    }
+    if (offset + page.items.length >= page.total) {
+      break;
+    }
+    if (page.items.length === 0) {
+      throw new Error(
+        "Subscription plan pagination stopped before the selected plan could be verified.",
+      );
+    }
+    offset += page.items.length;
+  }
+  if (offset > SUBSCRIPTION_PLAN_LOOKUP_MAX_ITEMS) {
+    throw new Error(
+      "Subscription plan lookup exceeded the first-release verification bound.",
+    );
+  }
+  throw new Error(
+    `Subscription plan ${planId} is not present in the live plan registry.`,
+  );
+};
+
+const decodeSubscriptionDraftInstruction = (payloadHex: string): unknown =>
+  noritoDecodeInstruction(Buffer.from(payloadHex, "hex"));
+
+const inspectSubscriptionDraftTriggerAction = (
+  encodedAction: string,
+): unknown => inspectSubscriptionTriggerAction(encodedAction);
+
+const confirmSubscriptionResultingState = async (input: {
+  toriiUrl: string;
+  subscriptionId: string;
+  networkPrefix: number;
+  expected: SubscriptionStateDraft;
+  plan: Record<string, unknown> | null;
+}): Promise<{
+  stateStatus: "confirmed" | "advanced" | "indexing";
+  reconciliationMessage?: string;
+}> => {
+  const deadline = Date.now() + SUBSCRIPTION_STATE_CONFIRM_TIMEOUT_MS;
+  let lastError: unknown = null;
+  while (Date.now() <= deadline) {
+    try {
+      const record = await getSubscriptionFromTorii({
+        toriiUrl: input.toriiUrl,
+        subscriptionId: input.subscriptionId,
+      });
+      const confirmation = classifySubscriptionStateConfirmation({
+        actual: record.subscription,
+        expected: input.expected,
+        plan: input.plan,
+        invoice: record.invoice,
+        subscriptionId: input.subscriptionId,
+        networkPrefix: input.networkPrefix,
+      });
+      if (confirmation !== null) {
+        return {
+          stateStatus: confirmation === "exact" ? "confirmed" : "advanced",
+        };
+      }
+      lastError = new Error(
+        "The indexed subscription state is neither the signed draft nor an invoice-proven immediate billing successor.",
+      );
+    } catch (error) {
+      lastError = error;
+    }
+    if (Date.now() + SUBSCRIPTION_STATE_CONFIRM_INTERVAL_MS > deadline) {
+      break;
+    }
+    await waitForMs(SUBSCRIPTION_STATE_CONFIRM_INTERVAL_MS);
+  }
+  const detail =
+    lastError instanceof Error && lastError.message
+      ? ` Last read: ${lastError.message}`
+      : "";
+  console.warn(
+    `The subscription transaction is proven in a finalized block, but its draft state or an invoice-proven immediate successor was not indexed within ${SUBSCRIPTION_STATE_CONFIRM_TIMEOUT_MS / 1000} seconds.${detail}`,
+  );
+  return {
+    stateStatus: "indexing",
+    reconciliationMessage: `The transaction is proven in a finalized block, but authoritative subscription state is still indexing. Do not resubmit; refresh subscriptions to reconcile the finalized transaction.${detail}`,
+  };
+};
+
+const buildSubscriptionMutationReceipt = (
+  draft: SubscriptionCreateMutationDraft | SubscriptionActionMutationDraft,
+  submission: {
+    hash: string;
+    fee?: TransactionFeeView | null;
+    finality: TransactionFinalityProof;
+  },
+  confirmation: {
+    stateStatus: "confirmed" | "advanced" | "indexing";
+    reconciliationMessage?: string;
+  },
+): SubscriptionActionResponseView => ({
+  ok: true,
+  action: draft.action,
+  subscription_id: draft.subscription_id,
+  tx_hash_hex: submission.hash,
+  finality: submission.finality,
+  state_status: confirmation.stateStatus,
+  ...(confirmation.reconciliationMessage
+    ? { reconciliation_message: confirmation.reconciliationMessage }
+    : {}),
+  ...(submission.fee ? { fee: submission.fee } : {}),
+  ...(draft.action === "create"
+    ? {
+        billing_trigger_id: draft.billing_trigger_id,
+        usage_trigger_id: draft.usage_trigger_id,
+        first_charge_ms: draft.first_charge_ms,
+      }
+    : {}),
+});
+
+const beginSubscriptionMutation = (scopeKey: string) => {
+  if (pendingSubscriptionReconciliations.has(scopeKey)) {
+    throw new Error(
+      "A finalized subscription transaction for this subscription is still indexing. Reconcile it before submitting another action.",
+    );
+  }
+  if (inFlightSubscriptionMutations.has(scopeKey)) {
+    throw new Error(
+      "A subscription transaction for this subscription is already in progress.",
+    );
+  }
+  inFlightSubscriptionMutations.add(scopeKey);
+};
+
+const rememberSubscriptionReconciliation = (input: {
+  scopeKey: string;
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  draft: SubscriptionCreateMutationDraft | SubscriptionActionMutationDraft;
+  plan: Record<string, unknown> | null;
+  receipt: SubscriptionActionResponseView;
+}) => {
+  if (input.receipt.state_status !== "indexing") {
+    pendingSubscriptionReconciliations.delete(input.scopeKey);
+    return;
+  }
+  pendingSubscriptionReconciliations.set(input.scopeKey, {
+    toriiUrl: normalizeBaseUrl(input.toriiUrl),
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    accountId: input.accountId,
+    subscriptionId: input.draft.subscription_id,
+    action: input.draft.action,
+    transactionHash: input.receipt.tx_hash_hex,
+    expected:
+      input.draft.action === "create"
+        ? input.draft.resulting_subscription
+        : input.draft.details.resulting_subscription,
+    plan: input.plan,
+    receipt: input.receipt,
+  });
+};
+
+const normalizeSubscriptionMutationAction = (
+  value: unknown,
+): SubscriptionMutationActionView => {
+  if (
+    value === "create" ||
+    value === "pause" ||
+    value === "resume" ||
+    value === "cancel" ||
+    value === "keep" ||
+    value === "charge_now"
+  ) {
+    return value;
+  }
+  throw new Error("Subscription reconciliation action is invalid.");
 };
 
 const createSubscriptionOnTorii = async (
   input: SubscriptionCreateInput,
 ): Promise<SubscriptionActionResponseView> => {
-  const accountId = normalizeCanonicalAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
-  const signingMaterial = await resolveSigningMaterial({
-    accountId,
-    privateKeyHex: input.privateKeyHex,
-    operationLabel: "Create subscription",
-  });
-  const subscriptionId = trimString(input.subscriptionId);
-  const planId = trimString(input.planId);
-  if (!subscriptionId) {
-    throw new Error("subscriptionId is required.");
+  let mutationScopeKey: string | null = null;
+  try {
+    return await executeSubscriptionMutationBoundary({
+      prepareDraft: async () => {
+        const writeConnection = await assertWriteConnectionMatchesEndpoint({
+          toriiUrl: input.toriiUrl,
+          chainId: input.chainId,
+          networkPrefix: input.networkPrefix,
+          feature: "subscriptionWrites",
+          operation: "POST /v1/subscriptions",
+        });
+        const accountId = normalizeCanonicalAccountIdLiteral(
+          input.accountId,
+          "accountId",
+          writeConnection.networkPrefix,
+        );
+        const subscriptionId = normalizeFirstReleaseSubscriptionId(
+          input.subscriptionId,
+        );
+        mutationScopeKey = subscriptionMutationScopeKey({
+          toriiUrl: input.toriiUrl,
+          chainId: writeConnection.chainId,
+          networkPrefix: writeConnection.networkPrefix,
+          accountId,
+          subscriptionId,
+        });
+        beginSubscriptionMutation(mutationScopeKey);
+        const planId = normalizeFirstReleaseAssetDefinitionId(input.planId);
+        const firstChargeMs = normalizeOptionalPositiveInteger(
+          input.firstChargeMs,
+          "firstChargeMs",
+        );
+        const [plan, ivmMaxCycles] = await Promise.all([
+          getSubscriptionPlanFromTorii(input.toriiUrl, planId),
+          getSubscriptionIvmMaxCyclesFromTorii(input.toriiUrl),
+        ]);
+        const body: Record<string, unknown> = {
+          authority: accountId,
+          subscription_id: subscriptionId,
+          plan_id: planId,
+        };
+        if (firstChargeMs !== undefined) {
+          body.first_charge_ms = firstChargeMs;
+        }
+        const requestStartedAtMs = Date.now();
+        const payload = await postJson(
+          buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions"),
+          "Create subscription draft",
+          body,
+        );
+        const responseReceivedAtMs = Date.now();
+        const draft = decodeSubscriptionCreateMutationDraft(
+          payload,
+          {
+            authority: accountId,
+            subscriptionId,
+            planId,
+            plan,
+            firstChargeMs,
+            resolvedChargeWindow:
+              firstChargeMs === undefined
+                ? {
+                    requestStartedAtMs,
+                    responseReceivedAtMs,
+                    clockSkewMs: SUBSCRIPTION_RESOLVED_TIME_CLOCK_SKEW_MS,
+                  }
+                : undefined,
+            ivmMaxCycles,
+            networkPrefix: writeConnection.networkPrefix,
+          },
+          decodeSubscriptionDraftInstruction,
+          inspectSubscriptionDraftTriggerAction,
+        );
+        const [freshPlan, freshIvmMaxCycles] = await Promise.all([
+          getSubscriptionPlanFromTorii(input.toriiUrl, planId),
+          getSubscriptionIvmMaxCyclesFromTorii(input.toriiUrl),
+        ]);
+        if (
+          !subscriptionPlanSnapshotsMatch(
+            plan,
+            freshPlan,
+            writeConnection.networkPrefix,
+          )
+        ) {
+          throw new Error(
+            "The live subscription plan changed while its unsigned draft was being reviewed.",
+          );
+        }
+        if (freshIvmMaxCycles !== ivmMaxCycles) {
+          throw new Error(
+            "The live IVM admission limit changed while the subscription draft was being reviewed.",
+          );
+        }
+        return {
+          draft,
+          plan: freshPlan,
+          accountId,
+          chainId: writeConnection.chainId,
+          networkPrefix: writeConnection.networkPrefix,
+        };
+      },
+      resolveSigningMaterial: ({ accountId }) =>
+        resolveSigningMaterial({
+          accountId,
+          operationLabel: "Create subscription",
+        }),
+      quoteAndSign: async (prepared, signingMaterial) =>
+        quoteAndSignInstructionTransaction({
+          toriiUrl: input.toriiUrl,
+          chainId: prepared.chainId,
+          authority: prepared.accountId,
+          networkPrefix: prepared.networkPrefix,
+          instructions: prepared.draft.decoded_instructions,
+          metadata: {},
+          privateKey: hexToBuffer(
+            signingMaterial.privateKeyHex,
+            "privateKeyHex",
+          ),
+          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
+        }),
+      submit: (_prepared, tx) =>
+        submitSignedTransactionAndWaitForFinalizedBlock(
+          input.toriiUrl,
+          tx.signedTransaction,
+        ),
+      confirmResultingState: (prepared) =>
+        confirmSubscriptionResultingState({
+          toriiUrl: input.toriiUrl,
+          subscriptionId: prepared.draft.subscription_id,
+          networkPrefix: prepared.networkPrefix,
+          expected: prepared.draft.resulting_subscription,
+          plan: prepared.plan,
+        }),
+      buildReceipt: (prepared, submission, confirmation) => {
+        const receipt = buildSubscriptionMutationReceipt(
+          prepared.draft,
+          submission,
+          confirmation,
+        );
+        rememberSubscriptionReconciliation({
+          scopeKey: mutationScopeKey!,
+          toriiUrl: input.toriiUrl,
+          chainId: prepared.chainId,
+          networkPrefix: prepared.networkPrefix,
+          accountId: prepared.accountId,
+          draft: prepared.draft,
+          plan: prepared.plan,
+          receipt,
+        });
+        return receipt;
+      },
+    });
+  } finally {
+    if (mutationScopeKey) {
+      inFlightSubscriptionMutations.delete(mutationScopeKey);
+    }
   }
-  if (!planId) {
-    throw new Error("planId is required.");
-  }
-  const firstChargeMs = normalizeOptionalPositiveInteger(
-    input.firstChargeMs,
-    "firstChargeMs",
-  );
-  const body: Record<string, unknown> = {
-    authority: accountId,
-    private_key: formatExposedPrivateKey(signingMaterial),
-    subscription_id: subscriptionId,
-    plan_id: planId,
-  };
-  if (firstChargeMs !== undefined) {
-    body.first_charge_ms = firstChargeMs;
-  }
-  const payload = await postJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/subscriptions"),
-    "Create subscription",
-    body,
-  );
-  return normalizeSubscriptionActionPayload(payload);
 };
 
 const postSubscriptionActionToTorii = async (
   input: SubscriptionActionInput,
-  action: "pause" | "resume" | "cancel" | "keep" | "charge-now",
+  routeAction: "pause" | "resume" | "cancel" | "keep" | "charge-now",
   operationLabel: string,
 ): Promise<SubscriptionActionResponseView> => {
-  const subscriptionId = trimString(input.subscriptionId);
-  if (!subscriptionId) {
-    throw new Error("subscriptionId is required.");
+  const draftAction: SubscriptionActionDraftName =
+    routeAction === "charge-now" ? "charge_now" : routeAction;
+  let mutationScopeKey: string | null = null;
+  try {
+    return await executeSubscriptionMutationBoundary({
+      prepareDraft: async () => {
+        const writeConnection = await assertWriteConnectionMatchesEndpoint({
+          toriiUrl: input.toriiUrl,
+          chainId: input.chainId,
+          networkPrefix: input.networkPrefix,
+          feature: "subscriptionWrites",
+          operation: `POST /v1/subscriptions/{subscription_id}/${routeAction}`,
+        });
+        const accountId = normalizeCanonicalAccountIdLiteral(
+          input.accountId,
+          "accountId",
+          writeConnection.networkPrefix,
+        );
+        const subscriptionId = normalizeFirstReleaseSubscriptionId(
+          input.subscriptionId,
+        );
+        mutationScopeKey = subscriptionMutationScopeKey({
+          toriiUrl: input.toriiUrl,
+          chainId: writeConnection.chainId,
+          networkPrefix: writeConnection.networkPrefix,
+          accountId,
+          subscriptionId,
+        });
+        beginSubscriptionMutation(mutationScopeKey);
+        const [current, ivmMaxCycles] = await Promise.all([
+          getSubscriptionFromTorii({
+            toriiUrl: input.toriiUrl,
+            subscriptionId,
+          }),
+          getSubscriptionIvmMaxCyclesFromTorii(input.toriiUrl),
+        ]);
+        const chargeAtMs = normalizeOptionalPositiveInteger(
+          input.chargeAtMs,
+          "chargeAtMs",
+        );
+        const body = buildSubscriptionActionDraftBody(
+          input,
+          draftAction,
+          accountId,
+        );
+        const requestStartedAtMs = Date.now();
+        const payload = await postJson(
+          buildNexusEndpoint(
+            input.toriiUrl,
+            `/v1/subscriptions/${encodeURIComponent(subscriptionId)}/${routeAction}`,
+          ),
+          `${operationLabel} draft`,
+          body,
+        );
+        const responseReceivedAtMs = Date.now();
+        const draft = decodeSubscriptionActionMutationDraft(
+          payload,
+          {
+            authority: accountId,
+            subscriptionId,
+            action: draftAction,
+            currentSubscription: current.subscription,
+            currentPlan: current.plan,
+            chargeAtMs,
+            resolvedChargeWindow:
+              chargeAtMs === undefined &&
+              (draftAction === "resume" || draftAction === "charge_now")
+                ? {
+                    requestStartedAtMs,
+                    responseReceivedAtMs,
+                    clockSkewMs: SUBSCRIPTION_RESOLVED_TIME_CLOCK_SKEW_MS,
+                  }
+                : undefined,
+            cancelMode: input.cancelMode,
+            ivmMaxCycles,
+            networkPrefix: writeConnection.networkPrefix,
+          },
+          decodeSubscriptionDraftInstruction,
+          inspectSubscriptionDraftTriggerAction,
+        );
+        const [freshCurrent, freshIvmMaxCycles] = await Promise.all([
+          getSubscriptionFromTorii({
+            toriiUrl: input.toriiUrl,
+            subscriptionId,
+          }),
+          getSubscriptionIvmMaxCyclesFromTorii(input.toriiUrl),
+        ]);
+        if (
+          !subscriptionStateSnapshotsMatch(
+            current.subscription,
+            freshCurrent.subscription,
+            writeConnection.networkPrefix,
+          )
+        ) {
+          throw new Error(
+            "The live subscription state changed while its unsigned action draft was being reviewed.",
+          );
+        }
+        const planUnchanged =
+          current.plan === null || freshCurrent.plan === null
+            ? current.plan === freshCurrent.plan
+            : subscriptionPlanSnapshotsMatch(
+                current.plan,
+                freshCurrent.plan,
+                writeConnection.networkPrefix,
+              );
+        if (!planUnchanged) {
+          throw new Error(
+            "The live subscription plan changed while its unsigned action draft was being reviewed.",
+          );
+        }
+        if (freshIvmMaxCycles !== ivmMaxCycles) {
+          throw new Error(
+            "The live IVM admission limit changed while the subscription action draft was being reviewed.",
+          );
+        }
+        return {
+          draft,
+          plan: freshCurrent.plan,
+          accountId,
+          chainId: writeConnection.chainId,
+          networkPrefix: writeConnection.networkPrefix,
+        };
+      },
+      resolveSigningMaterial: ({ accountId }) =>
+        resolveSigningMaterial({
+          accountId,
+          operationLabel,
+        }),
+      quoteAndSign: async (prepared, signingMaterial) =>
+        quoteAndSignInstructionTransaction({
+          toriiUrl: input.toriiUrl,
+          chainId: prepared.chainId,
+          authority: prepared.accountId,
+          networkPrefix: prepared.networkPrefix,
+          instructions: prepared.draft.decoded_instructions,
+          metadata: {},
+          privateKey: hexToBuffer(
+            signingMaterial.privateKeyHex,
+            "privateKeyHex",
+          ),
+          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
+        }),
+      submit: (_prepared, tx) =>
+        submitSignedTransactionAndWaitForFinalizedBlock(
+          input.toriiUrl,
+          tx.signedTransaction,
+        ),
+      confirmResultingState: (prepared) =>
+        confirmSubscriptionResultingState({
+          toriiUrl: input.toriiUrl,
+          subscriptionId: prepared.draft.subscription_id,
+          networkPrefix: prepared.networkPrefix,
+          expected: prepared.draft.details.resulting_subscription,
+          plan: prepared.plan,
+        }),
+      buildReceipt: (prepared, submission, confirmation) => {
+        const receipt = buildSubscriptionMutationReceipt(
+          prepared.draft,
+          submission,
+          confirmation,
+        );
+        rememberSubscriptionReconciliation({
+          scopeKey: mutationScopeKey!,
+          toriiUrl: input.toriiUrl,
+          chainId: prepared.chainId,
+          networkPrefix: prepared.networkPrefix,
+          accountId: prepared.accountId,
+          draft: prepared.draft,
+          plan: prepared.plan,
+          receipt,
+        });
+        return receipt;
+      },
+    });
+  } finally {
+    if (mutationScopeKey) {
+      inFlightSubscriptionMutations.delete(mutationScopeKey);
+    }
   }
-  const body = await normalizeSubscriptionPrivateActionBody(
-    input,
-    operationLabel,
-  );
-  const payload = await postJson(
-    buildNexusEndpoint(
-      input.toriiUrl,
-      `/v1/subscriptions/${encodeURIComponent(subscriptionId)}/${action}`,
-    ),
-    operationLabel,
-    body,
-  );
-  return normalizeSubscriptionActionPayload(payload);
 };
 
-const buildSoraCloudHeaders = (apiToken?: string): Record<string, string> => {
-  const token = trimString(apiToken);
-  return token ? { "x-api-token": token } : {};
+const reconcileSubscriptionMutationOnTorii = async (
+  input: SubscriptionReconcileInput,
+): Promise<SubscriptionActionResponseView> => {
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "subscriptionWrites",
+  });
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    writeConnection.networkPrefix,
+  );
+  const subscriptionId = normalizeFirstReleaseSubscriptionId(
+    input.subscriptionId,
+  );
+  const action = normalizeSubscriptionMutationAction(input.action);
+  const transactionHash = trimString(input.transactionHash);
+  if (!/^[0-9a-f]{64}$/u.test(transactionHash)) {
+    throw new Error(
+      "Subscription reconciliation transaction hash must be canonical lowercase 32-byte hex.",
+    );
+  }
+  const scopeKey = subscriptionMutationScopeKey({
+    toriiUrl: input.toriiUrl,
+    chainId: writeConnection.chainId,
+    networkPrefix: writeConnection.networkPrefix,
+    accountId,
+    subscriptionId,
+  });
+  const pending = pendingSubscriptionReconciliations.get(scopeKey);
+  if (
+    !pending ||
+    pending.action !== action ||
+    pending.transactionHash !== transactionHash
+  ) {
+    throw new Error(
+      "No pending subscription reconciliation matches this endpoint, wallet, action, subscription, and finalized transaction.",
+    );
+  }
+
+  const record = await getSubscriptionFromTorii({
+    toriiUrl: input.toriiUrl,
+    subscriptionId,
+  });
+  const confirmation = classifySubscriptionStateConfirmation({
+    actual: record.subscription,
+    expected: pending.expected,
+    plan: pending.plan,
+    invoice: record.invoice,
+    subscriptionId,
+    networkPrefix: writeConnection.networkPrefix,
+  });
+  if (confirmation === null) {
+    return {
+      ...pending.receipt,
+      state_status: "indexing",
+      reconciliation_message:
+        "The transaction remains proven in a finalized block, but the live subscription projection does not yet match its exact reviewed result or an invoice-proven successor. Do not resubmit; refresh again to reconcile it.",
+    };
+  }
+
+  const reconciled: SubscriptionActionResponseView = {
+    ...pending.receipt,
+    state_status: confirmation === "exact" ? "confirmed" : "advanced",
+  };
+  delete reconciled.reconciliation_message;
+  pendingSubscriptionReconciliations.delete(scopeKey);
+  return reconciled;
 };
 
 const normalizeSoraCloudStorageClass = (
@@ -4809,6 +5214,39 @@ const normalizeSoraCloudStorageClass = (
   throw new Error("storageClass must be hot, warm, or cold.");
 };
 
+const normalizeSoraCloudHfToken = (
+  value: unknown,
+  label: string,
+  maxBytes: number,
+): string => {
+  const normalized = trimString(value);
+  if (!normalized) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  if (Buffer.byteLength(normalized, "utf8") > maxBytes) {
+    throw new Error(`${label} exceeds ${maxBytes} UTF-8 bytes.`);
+  }
+  if (/[\p{Cc}\s]/u.test(normalized)) {
+    throw new Error(
+      `${label} must not contain whitespace or control characters.`,
+    );
+  }
+  return normalized;
+};
+
+const normalizeSoraCloudName = (value: unknown, label: string): string => {
+  const normalized = trimString(value).normalize("NFC");
+  if (!normalized) {
+    throw new Error(`${label} must not be empty.`);
+  }
+  if (/[\s@#$]/u.test(normalized)) {
+    throw new Error(
+      `${label} contains a character forbidden by the Iroha Name contract.`,
+    );
+  }
+  return normalized;
+};
+
 const normalizePositiveU64Number = (value: unknown, label: string): number => {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
@@ -4817,104 +5255,67 @@ const normalizePositiveU64Number = (value: unknown, label: string): number => {
   return parsed;
 };
 
-const normalizePositiveU128String = (value: unknown, label: string): string => {
-  const literal = trimString(value);
-  if (!/^\d+$/u.test(literal) || BigInt(literal) <= 0n) {
-    throw new Error(`${label} must be a positive integer string.`);
+const fetchSoraCloudHfStatusPayload = (
+  input: SoraCloudHfStatusInput,
+): Promise<Record<string, unknown>> =>
+  fetchJson(
+    buildNexusEndpoint(
+      input.toriiUrl,
+      "/v1/soracloud/hf/status",
+      buildSoraCloudHfStatusQuery(input),
+    ),
+    "SoraCloud HF status",
+  );
+
+const fetchOptionalSoraCloudHfStatusPayload = async (
+  input: SoraCloudHfStatusInput,
+): Promise<Record<string, unknown> | null> => {
+  try {
+    return await fetchSoraCloudHfStatusPayload(input);
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return null;
+    }
+    throw error;
   }
-  return literal;
 };
 
-const normalizeSoraCloudMutationResponse = (
-  payload: Record<string, unknown>,
-): SoraCloudHfDeployResponseView => ({
-  ok: payload.ok === undefined ? true : Boolean(payload.ok),
-  action: trimString(payload.action),
-  service_name: trimString(payload.service_name ?? payload.serviceName),
-  sequence:
-    payload.sequence === undefined || payload.sequence === null
-      ? null
-      : Number(payload.sequence),
-  current_version:
-    payload.current_version !== undefined
-      ? trimString(payload.current_version)
-      : payload.currentVersion !== undefined
-        ? trimString(payload.currentVersion)
-        : null,
-  revision_count:
-    payload.revision_count !== undefined
-      ? Number(payload.revision_count)
-      : payload.revisionCount !== undefined
-        ? Number(payload.revisionCount)
-        : null,
-  tx_hash_hex:
-    payload.tx_hash_hex !== undefined
-      ? trimString(payload.tx_hash_hex)
-      : payload.txHashHex !== undefined
-        ? trimString(payload.txHashHex)
-        : null,
-  ...(payload.fee !== undefined
-    ? { fee: payload.fee as TransactionFeeView }
-    : payload.tx_fee !== undefined || payload.txFee !== undefined
-      ? { fee: (payload.tx_fee ?? payload.txFee) as TransactionFeeView }
-      : payload.transaction_fee !== undefined ||
-          payload.transactionFee !== undefined
-        ? {
-            fee: (payload.transaction_fee ??
-              payload.transactionFee) as TransactionFeeView,
-          }
-        : payload.network_fee !== undefined || payload.networkFee !== undefined
-          ? {
-              fee: (payload.network_fee ??
-                payload.networkFee) as TransactionFeeView,
-            }
-          : payload.fee_amount !== undefined || payload.feeAmount !== undefined
-            ? {
-                fee: {
-                  amount: (payload.fee_amount ?? payload.feeAmount) as
-                    | string
-                    | number
-                    | null,
-                  assetId: trimString(
-                    payload.fee_asset_id ??
-                      payload.feeAssetId ??
-                      payload.gas_asset_id ??
-                      payload.gasAssetId ??
-                      payload.asset_id ??
-                      payload.assetId,
-                  ),
-                },
-              }
-            : {}),
-  rollout_handle:
-    payload.rollout_handle !== undefined
-      ? trimString(payload.rollout_handle)
-      : payload.rolloutHandle !== undefined
-        ? trimString(payload.rolloutHandle)
-        : null,
-  rollout_stage:
-    payload.rollout_stage !== undefined
-      ? trimString(payload.rollout_stage)
-      : payload.rolloutStage !== undefined
-        ? trimString(payload.rolloutStage)
-        : null,
-  rollout_percent:
-    payload.rollout_percent !== undefined
-      ? Number(payload.rollout_percent)
-      : payload.rolloutPercent !== undefined
-        ? Number(payload.rolloutPercent)
-        : null,
-  raw: payload,
-});
+const postCanonicalSoraCloudHfDraft = async (input: {
+  toriiUrl: string;
+  accountId: string;
+  privateKey: Buffer;
+  body: Record<string, unknown>;
+}): Promise<Record<string, unknown>> => {
+  const path = "/v1/soracloud/hf/deploy";
+  const request = await buildCanonicalJsonRequest({
+    accountId: input.accountId,
+    method: "POST",
+    path,
+    baseUrl: normalizeBaseUrl(input.toriiUrl),
+    body: input.body,
+    privateKey: input.privateKey,
+  });
+  const response = await nodeFetch(
+    buildNexusEndpoint(input.toriiUrl, path),
+    request,
+  );
+  if (!response.ok) {
+    throw await createApiRequestError(response, "Launch SoraCloud instance");
+  }
+  return ensureObjectResponse(
+    (await response.json()) as unknown,
+    "Launch SoraCloud instance",
+  );
+};
 
 const getSoraCloudStatusFromTorii = async (
   input: SoraCloudStatusInput,
 ): Promise<SoraCloudStatusView> => {
+  assertNoRendererSoraCloudSecrets(input);
   try {
     const payload = await fetchJson(
       buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/status"),
       "SoraCloud status",
-      buildSoraCloudHeaders(input.apiToken),
     );
     return normalizeSoraCloudStatusPayload(payload);
   } catch (error) {
@@ -4937,60 +5338,282 @@ const getParametersFromTorii = (input: ToriiConfig) =>
     "Network parameters",
   );
 
+const getOfflineReadinessFromTorii = async (input: {
+  toriiUrl: string;
+  assetDefinitionId: string;
+}): Promise<OfflineReadinessView> => {
+  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+    input.assetDefinitionId,
+  );
+  const payload = await fetchJson(
+    buildNexusEndpoint(input.toriiUrl, "/v1/offline/readiness", {
+      asset_definition_id: assetDefinitionId,
+    }),
+    "Offline readiness",
+  );
+  return normalizeOfflineReadinessPayload(payload, assetDefinitionId);
+};
+
 const deploySoraCloudHfOnTorii = async (
   input: SoraCloudHfDeployInput,
 ): Promise<SoraCloudHfDeployResponseView> => {
+  assertNoRendererSoraCloudSecrets(input);
+  const repoId = normalizeSoraCloudHfToken(input.repoId, "repoId", 256);
+  const revision = trimString(input.revision)
+    ? normalizeSoraCloudHfToken(input.revision, "revision", 160)
+    : undefined;
+  const resolvedRevision = revision ?? "main";
+  const modelName = normalizeSoraCloudHfToken(
+    input.modelName,
+    "modelName",
+    128,
+  );
+  const serviceName = normalizeSoraCloudName(input.serviceName, "serviceName");
+  const apartmentName = trimString(input.apartmentName)
+    ? normalizeSoraCloudName(input.apartmentName, "apartmentName")
+    : undefined;
+  const storageClass = normalizeSoraCloudStorageClass(input.storageClass);
+  const leaseTermMs = normalizePositiveU64Number(
+    input.leaseTermMs,
+    "leaseTermMs",
+  );
+  const rawLeaseAssetDefinitionId = trimString(input.leaseAssetDefinitionId);
+  const leaseAssetDefinitionId = normalizeAssetDefinitionId(
+    rawLeaseAssetDefinitionId,
+    "leaseAssetDefinitionId",
+  );
+  const baseFeeNanos = trimString(input.baseFeeNanos);
+  const baseFee = soraCloudXorQuantityFromNanos(baseFeeNanos);
+
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "soraCloudDeploy",
+  });
   const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    writeConnection.networkPrefix,
   );
+
+  const statusInput: SoraCloudHfStatusInput = {
+    toriiUrl: input.toriiUrl,
+    repoId,
+    revision: resolvedRevision,
+    storageClass,
+    leaseTermMs,
+    accountId,
+  };
+  const baselineStatus =
+    await fetchOptionalSoraCloudHfStatusPayload(statusInput);
+  const minimumSequenceExclusive = baselineStatus
+    ? readSoraCloudHfLatestSequence(baselineStatus)
+    : 0;
+
   const signingMaterial = assertEd25519SigningMaterial(
     await resolveSigningMaterial({
       accountId,
-      privateKeyHex: input.privateKeyHex,
       operationLabel: "Launch SoraCloud instance",
     }),
     "Launch SoraCloud instance",
   );
   const privateKeyHex = signingMaterial.privateKeyHex;
+  const privateKey = hexToBuffer(privateKeyHex, "privateKeyHex");
   const request = buildSoraCloudHfDeployRequest({
-    repoId: trimString(input.repoId),
-    revision: trimString(input.revision) || undefined,
-    modelName: trimString(input.modelName),
-    serviceName: trimString(input.serviceName),
-    apartmentName: trimString(input.apartmentName) || undefined,
-    storageClass: normalizeSoraCloudStorageClass(input.storageClass),
-    leaseTermMs: normalizePositiveU64Number(input.leaseTermMs, "leaseTermMs"),
-    leaseAssetDefinitionId: trimString(input.leaseAssetDefinitionId),
-    baseFeeNanos: normalizePositiveU128String(
-      input.baseFeeNanos,
-      "baseFeeNanos",
-    ),
+    repoId,
+    revision,
+    modelName,
+    serviceName,
+    apartmentName,
+    storageClass,
+    leaseTermMs,
+    leaseAssetDefinitionId,
+    baseFeeNanos,
     privateKeyHex,
   });
-  const payload = await postJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/hf/deploy"),
-    "Launch SoraCloud instance",
-    {
-      ...request,
-      authority: accountId,
+  const expected: SoraCloudHfDeployExpectation = {
+    accountId,
+    signer: request.provenance.signer,
+    joinProvenance: request.provenance,
+    generatedServiceProvenance: request.generated_service_provenance,
+    ...(request.generated_apartment_provenance
+      ? {
+          generatedApartmentProvenance: request.generated_apartment_provenance,
+        }
+      : {}),
+    repoId,
+    resolvedRevision,
+    modelName,
+    serviceName,
+    apartmentName,
+    storageClass,
+    leaseTermMs,
+    leaseAssetDefinitionId,
+    baseFee,
+  };
+
+  let reviewedSettlement: SoraCloudHfSettlementReview | null = null;
+  const result = await executeSoraCloudHfDraftToCommit({
+    expected,
+    minimumSequenceExclusive,
+    dependencies: {
+      fetchDraft: () =>
+        postCanonicalSoraCloudHfDraft({
+          toriiUrl: input.toriiUrl,
+          accountId,
+          privateKey,
+          body: request,
+        }),
+      decodeInstruction: (payload) =>
+        noritoDecodeInstruction(Buffer.from(payload)),
+      authorizeSettlement: async (settlement) => {
+        reviewedSettlement = settlement;
+        return (
+          (await ipcRenderer.invoke(SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL, {
+            accountId,
+            toriiUrl: normalizeBaseUrl(input.toriiUrl),
+            repoId,
+            resolvedRevision,
+            modelName,
+            serviceName,
+            storageClass,
+            leaseTermMs,
+            ...settlement,
+          })) === true
+        );
+      },
+      commitInstructions: async (instructions) => {
+        const tx = await quoteAndSignInstructionTransaction({
+          toriiUrl: input.toriiUrl,
+          chainId: writeConnection.chainId,
+          authority: accountId,
+          networkPrefix: writeConnection.networkPrefix,
+          instructions,
+          metadata: {},
+          privateKey,
+          privateKeyAlgorithm: signingMaterial.signingAlgorithm,
+        });
+        const submission =
+          await submitSignedTransactionAndWaitForFinalizedBlock(
+            input.toriiUrl,
+            tx.signedTransaction,
+          );
+        return {
+          hash: submission.hash,
+          finality: submission.finality,
+          ...(submission.fee ? { fee: submission.fee } : {}),
+        };
+      },
+      fetchCommittedStatus: () => fetchSoraCloudHfStatusPayload(statusInput),
+      wait: (delayMs) => waitForMs(delayMs),
     },
-    buildSoraCloudHeaders(input.apiToken),
+  });
+  const pendingKey = soraCloudSettlementKey({
+    toriiUrl: input.toriiUrl,
+    chainId: writeConnection.chainId,
+    networkPrefix: writeConnection.networkPrefix,
+    accountId,
+    transactionHash: result.tx_hash_hex,
+  });
+  if (result.settlement_status === "indexing") {
+    if (!reviewedSettlement) {
+      throw new Error(
+        "SoraCloud finalized transaction is missing its reviewed settlement context.",
+      );
+    }
+    pendingSoraCloudHfSettlements.set(pendingKey, {
+      toriiUrl: normalizeBaseUrl(input.toriiUrl),
+      chainId: writeConnection.chainId,
+      networkPrefix: writeConnection.networkPrefix,
+      accountId,
+      transactionHash: result.tx_hash_hex,
+      statusInput,
+      expected,
+      settlement: reviewedSettlement,
+      minimumSequenceExclusive,
+      finality: result.finality,
+      ...(result.fee ? { fee: result.fee } : {}),
+    });
+  } else {
+    pendingSoraCloudHfSettlements.delete(pendingKey);
+  }
+  return result;
+};
+
+const reconcileSoraCloudHfLaunchOnTorii = async (
+  input: SoraCloudHfReconcileInput,
+): Promise<SoraCloudHfDeployResponseView> => {
+  assertNoRendererSoraCloudSecrets(input);
+  const transactionHash = trimString(input.transactionHash);
+  if (!/^[0-9a-f]{64}$/u.test(transactionHash)) {
+    throw new Error(
+      "SoraCloud reconciliation transaction hash must be canonical lowercase 32-byte hex.",
+    );
+  }
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "soraCloudDeploy",
+  });
+  const accountId = normalizeCanonicalAccountIdLiteral(
+    input.accountId,
+    "accountId",
+    writeConnection.networkPrefix,
   );
-  return normalizeSoraCloudMutationResponse(payload);
+  const pendingKey = soraCloudSettlementKey({
+    toriiUrl: input.toriiUrl,
+    chainId: writeConnection.chainId,
+    networkPrefix: writeConnection.networkPrefix,
+    accountId,
+    transactionHash,
+  });
+  const pending = pendingSoraCloudHfSettlements.get(pendingKey);
+  if (!pending) {
+    throw new Error(
+      "No pending SoraCloud settlement matches this finalized transaction and wallet context.",
+    );
+  }
+  const status = decodeMatchingSoraCloudHfStatus(
+    await fetchSoraCloudHfStatusPayload(pending.statusInput),
+    pending.expected,
+    pending.settlement,
+    pending.minimumSequenceExclusive,
+  );
+  const reconciled = buildSoraCloudCommittedLaunchResponse({
+    status,
+    serviceName: pending.expected.serviceName,
+    transactionHash: pending.transactionHash,
+    finality: pending.finality,
+    ...(pending.fee ? { fee: pending.fee } : {}),
+  });
+  pendingSoraCloudHfSettlements.delete(pendingKey);
+  return reconciled;
 };
 
 const getSoraCloudHfStatusFromTorii = async (
-  input: SoraCloudStatusInput,
-): Promise<Record<string, unknown>> =>
-  fetchJson(
-    buildNexusEndpoint(input.toriiUrl, "/v1/soracloud/hf/status"),
-    "SoraCloud HF status",
-    buildSoraCloudHeaders(input.apiToken),
-  );
+  input: SoraCloudHfStatusInput,
+): Promise<SoraCloudHfStatusView> => {
+  assertNoRendererSoraCloudSecrets(input);
+  try {
+    const payload = await fetchSoraCloudHfStatusPayload(input);
+    return normalizeSoraCloudHfStatusPayload(payload);
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) {
+      return missingSoraCloudHfStatus(
+        "The requested Hugging Face source or deployment was not found.",
+        error.status,
+      );
+    }
+    throw error;
+  }
+};
 
 type ZkIvmRequestInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   vkRef?: unknown;
   vk_ref?: unknown;
   authority?: unknown;
@@ -5001,19 +5624,20 @@ type ZkIvmRequestInput = {
 
 type ZkIvmProveJobInput = {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   jobId?: unknown;
   job_id?: unknown;
 };
 type ZkIvmProvedTransactionSubmitInput = ToriiConfig & {
   chainId: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   privateKeyHex?: unknown;
   proved: Record<string, unknown>;
   attachment: Record<string, unknown>;
   gasLimit?: string | number;
   metadata?: Record<string, unknown>;
-  waitForCommit?: boolean;
   creationTimeMs?: number;
   ttlMs?: number;
   nonce?: number;
@@ -5037,6 +5661,7 @@ const normalizeZkIvmVkRef = (
 
 const buildZkIvmRequestPayload = (
   input: ZkIvmRequestInput,
+  networkPrefix: number,
 ): Record<string, unknown> => {
   const metadata =
     input.metadata === undefined
@@ -5061,6 +5686,7 @@ const buildZkIvmRequestPayload = (
     authority: normalizeCanonicalAccountIdLiteral(
       trimString(input.authority),
       "authority",
+      networkPrefix,
     ),
     metadata,
     bytecode: input.bytecode,
@@ -5076,23 +5702,37 @@ const normalizeZkIvmJobId = (input: ZkIvmProveJobInput): string => {
   return jobId;
 };
 
-const deriveZkIvmPayloadOnTorii = (
+const deriveZkIvmPayloadOnTorii = async (
   input: ZkIvmRequestInput,
-): Promise<Record<string, unknown>> =>
-  postJson(
+): Promise<Record<string, unknown>> => {
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "zkProofJobs",
+  });
+  return postJson(
     buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/derive"),
     "ZK IVM derive",
-    buildZkIvmRequestPayload(input),
+    buildZkIvmRequestPayload(input, writeConnection.networkPrefix),
   );
+};
 
-const startZkIvmProveJobOnTorii = (
+const startZkIvmProveJobOnTorii = async (
   input: ZkIvmRequestInput,
-): Promise<Record<string, unknown>> =>
-  postJson(
+): Promise<Record<string, unknown>> => {
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "zkProofJobs",
+  });
+  return postJson(
     buildNexusEndpoint(input.toriiUrl, "/v1/zk/ivm/prove"),
     "ZK IVM prove",
-    buildZkIvmRequestPayload(input),
+    buildZkIvmRequestPayload(input, writeConnection.networkPrefix),
   );
+};
 
 const getZkIvmProveJobFromTorii = (
   input: ZkIvmProveJobInput,
@@ -5108,6 +5748,12 @@ const getZkIvmProveJobFromTorii = (
 const cancelZkIvmProveJobOnTorii = async (
   input: ZkIvmProveJobInput,
 ): Promise<Record<string, unknown>> => {
+  await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: input.toriiUrl,
+    chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "zkProofJobs",
+  });
   const response = await nodeFetch(
     buildNexusEndpoint(
       input.toriiUrl,
@@ -5138,6 +5784,7 @@ const submitZkIvmProvedTransactionToTorii = async (
     toriiUrl: input.toriiUrl,
     chainId,
     networkPrefix: input.networkPrefix,
+    feature: "zkProofJobs",
   });
   const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
@@ -5200,13 +5847,14 @@ const submitZkIvmProvedTransactionToTorii = async (
     tx.signedTransaction,
     { nativeBinding, requireNativeEncoding: true },
   );
-  if (input.waitForCommit === false) {
-    return transactionSubmissionResult(submission);
-  }
-  const fee = await waitForTransactionCommit(input.toriiUrl, submission.hash);
+  const finalized = await waitForTransactionFinalizedInBlock(
+    input.toriiUrl,
+    submission.hash,
+  );
   return transactionSubmissionResult({
     ...submission,
-    ...(fee ? { fee } : {}),
+    ...(finalized.fee ? { fee: finalized.fee } : {}),
+    finality: finalized.finality,
   });
 };
 
@@ -5244,29 +5892,6 @@ const fetchExplorerAssetDefinitionEconometrics = async (
     signal,
   );
   return normalizeExplorerAssetDefinitionEconometricsPayload(payload);
-};
-
-const extractTransactionRecordStatus = (payload: unknown): string | null => {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return null;
-  }
-  const rawStatus = (payload as Record<string, unknown>).status;
-  if (typeof rawStatus === "string") {
-    const normalized = rawStatus.trim();
-    return normalized || null;
-  }
-  if (
-    rawStatus &&
-    typeof rawStatus === "object" &&
-    !Array.isArray(rawStatus) &&
-    typeof (rawStatus as Record<string, unknown>).kind === "string"
-  ) {
-    const normalized = String(
-      (rawStatus as Record<string, unknown>).kind,
-    ).trim();
-    return normalized || null;
-  }
-  return null;
 };
 
 const fetchTransactionRecordPayload = async (
@@ -5368,7 +5993,7 @@ const buildTransactionFinalityFailureError = async (
     extractTransactionRejectionReason(payload) ??
     (await fetchExplorerTransactionRejectionReason(toriiUrl, hashHex));
   return new Error(
-    `Transaction ${hashHex} ${statusKind.toLowerCase()} before it committed.${
+    `Transaction ${hashHex} ${statusKind.toLowerCase()} before finalized success.${
       reason ? ` ${reason}` : ""
     }`,
   );
@@ -5427,74 +6052,78 @@ const fetchCommittedTransactionFee = async (
 const transactionSubmissionResult = (submission: {
   hash: string;
   fee?: TransactionFeeView | null;
+  finality: TransactionFinalityProof;
 }): TransactionSubmissionResultView => ({
   hash: submission.hash,
   ...(submission.fee ? { fee: submission.fee } : {}),
+  finality: submission.finality,
 });
 
-const waitForTransactionCommit = async (toriiUrl: string, hashHex: string) => {
+const waitForTransactionFinalizedInBlock = async (
+  toriiUrl: string,
+  hashHex: string,
+  options: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
+) => {
   const client = getClient(toriiUrl);
-  const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
-  let lastStatusKind: string | null = null;
-  while (Date.now() <= deadline) {
-    const payload = await client.getTransactionStatus(hashHex);
-    const statusKind = extractPipelineStatusKind(payload);
-    lastStatusKind = statusKind;
-    if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
-      let transactionRecordPayload: Record<string, unknown> | null = null;
-      if (statusKind === "Applied") {
-        transactionRecordPayload = await fetchTransactionRecordPayload(
+  const signal = options.signal;
+  const evidence = await waitForFinalizedTransaction({
+    hashHex,
+    timeoutMs: options.timeoutMs ?? CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS,
+    intervalMs: CONFIDENTIAL_TX_FINALITY_INTERVAL_MS,
+    getGlobalStatus: () =>
+      client.getTransactionStatus(hashHex, { scope: "global", signal }),
+    getExplorerTransaction: () =>
+      fetchJson(
+        buildNexusEndpoint(
           toriiUrl,
-          hashHex,
-        );
-        const recordStatus = extractTransactionRecordStatus(
-          transactionRecordPayload,
-        );
-        if (recordStatus) {
-          lastStatusKind = recordStatus;
-        }
-        if (
-          recordStatus &&
-          CONFIDENTIAL_TX_FAILURE_STATUSES.has(recordStatus)
-        ) {
-          throw await buildTransactionFinalityFailureError(
-            toriiUrl,
-            hashHex,
-            recordStatus,
-            payload,
-          );
-        }
-      }
-      return await fetchCommittedTransactionFee(
-        toriiUrl,
-        hashHex,
-        payload,
-        transactionRecordPayload,
-      );
-    }
-    if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
-      throw await buildTransactionFinalityFailureError(
+          `/v1/explorer/transactions/${encodeURIComponent(hashHex)}`,
+        ),
+        `Explorer transaction ${hashHex}`,
+        undefined,
+        signal,
+      ),
+    getExplorerBlock: (blockHeight) =>
+      fetchJson(
+        buildNexusEndpoint(
+          toriiUrl,
+          `/v1/explorer/blocks/${encodeURIComponent(String(blockHeight))}`,
+        ),
+        `Explorer block ${blockHeight}`,
+        undefined,
+        signal,
+      ),
+    getExplorerMetrics: () =>
+      fetchJson(
+        buildNexusEndpoint(toriiUrl, "/v1/explorer/metrics"),
+        "Explorer finality metrics",
+        undefined,
+        signal,
+      ),
+    wait: (delayMs) => waitForMs(delayMs, signal),
+    buildTerminalFailure: (statusKind, payload) =>
+      buildTransactionFinalityFailureError(
         toriiUrl,
         hashHex,
         statusKind,
         payload,
-      );
-    }
-    if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
-      break;
-    }
-    await waitForMs(CONFIDENTIAL_TX_FINALITY_INTERVAL_MS);
-  }
-
-  const timeoutSeconds = Math.trunc(CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS / 1000);
-  throw new Error(
-    lastStatusKind
-      ? `Transaction ${hashHex} stayed in ${lastStatusKind} and did not commit within ${timeoutSeconds} seconds.`
-      : `Transaction ${hashHex} did not commit within ${timeoutSeconds} seconds.`,
+      ),
+  });
+  const fee = await fetchCommittedTransactionFee(
+    toriiUrl,
+    hashHex,
+    evidence.statusPayload,
+    evidence.transactionPayload,
   );
+  return {
+    fee,
+    finality: evidence.proof,
+  };
 };
 
-const submitSignedTransactionAndWaitForCommit = async (
+const submitSignedTransactionAndWaitForFinalizedBlock = async (
   toriiUrl: string,
   signedTransaction: Buffer,
   options: { nativeBinding?: unknown; requireNativeEncoding?: boolean } = {},
@@ -5504,10 +6133,14 @@ const submitSignedTransactionAndWaitForCommit = async (
     signedTransaction,
     options,
   );
-  const fee = await waitForTransactionCommit(toriiUrl, submission.hash);
+  const finalized = await waitForTransactionFinalizedInBlock(
+    toriiUrl,
+    submission.hash,
+  );
   return {
     ...submission,
-    ...(fee ? { fee } : {}),
+    ...(finalized.fee ? { fee: finalized.fee } : {}),
+    finality: finalized.finality,
   };
 };
 
@@ -5637,7 +6270,7 @@ const submitSignedTransactionAsVersioned = async (
   };
 };
 
-const submitTransactionEntrypointAndWaitForCommit = async (
+const submitTransactionEntrypointAndWaitForFinalizedBlock = async (
   toriiUrl: string,
   transactionEntrypoint: Buffer,
   hashHex: string,
@@ -5651,10 +6284,14 @@ const submitTransactionEntrypointAndWaitForCommit = async (
       hashHex,
     },
   );
-  const fee = await waitForTransactionCommit(toriiUrl, submission.hash);
+  const finalized = await waitForTransactionFinalizedInBlock(
+    toriiUrl,
+    submission.hash,
+  );
   return {
     ...submission,
-    ...(fee ? { fee } : {}),
+    ...(finalized.fee ? { fee: finalized.fee } : {}),
+    finality: finalized.finality,
   };
 };
 
@@ -5706,12 +6343,10 @@ const fetchAccountAssetsList = async (input: {
   if (input.offset !== undefined) {
     endpoint.searchParams.set("offset", String(input.offset));
   }
-  const response = await nodeFetch(endpoint.toString(), {
-    method: "GET",
-    headers: {
-      Accept: "application/json",
-    },
-  });
+  const response = await fetchGetResponse(
+    endpoint.toString(),
+    "Account assets",
+  );
   if (!response.ok) {
     throw await createApiRequestError(response, "Account assets");
   }
@@ -5746,175 +6381,52 @@ const fetchGovernanceCitizenCount = async (
   }
 };
 
-const optionalCanonicalGovernanceInteger = (
-  value: unknown,
-  label: string,
-): number | null => {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
-    throw new Error(
-      `${label} must be a complete canonical decimal-integer string.`,
-    );
-  }
-  const parsed = BigInt(value);
-  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new Error(`${label} exceeds the exactly representable UI range.`);
-  }
-  return Number(parsed);
-};
-
-const normalizeGovernanceCitizenStatusPayload = (
-  payload: unknown,
-  fallbackAccountId: string,
-  endpointAvailable: boolean,
-): GovernanceCitizenStatusResponse => {
-  if (!endpointAvailable) {
-    return {
-      accountId: fallbackAccountId,
-      isCitizen: false,
-      amount: null,
-      bondedHeight: null,
-      seatsInEpoch: null,
-      lastEpochSeen: null,
-      cooldownUntil: null,
-      endpointAvailable: false,
-    };
-  }
-  if (!isPlainRecord(payload)) {
-    throw new Error("Governance citizenship status must be an object.");
-  }
-  const expectedKeys = [
-    "account_id",
-    "amount",
-    "bonded_height",
-    "cooldown_until",
-    "is_citizen",
-    "last_epoch_seen",
-    "seats_in_epoch",
-  ].sort();
-  const actualKeys = Object.keys(payload).sort();
-  if (
-    actualKeys.length !== expectedKeys.length ||
-    actualKeys.some((key, index) => key !== expectedKeys[index])
-  ) {
-    throw new Error(
-      "Governance citizenship status contains missing or unknown fields.",
-    );
-  }
-  const accountId = trimString(payload.account_id);
-  if (!accountId || accountId !== payload.account_id) {
-    throw new Error(
-      "Governance citizenship status.account_id must be canonical text.",
-    );
-  }
-  if (typeof payload.is_citizen !== "boolean") {
-    throw new Error(
-      "Governance citizenship status.is_citizen must be a boolean.",
-    );
-  }
-  const amount = payload.amount === null ? "" : trimString(payload.amount);
-  if (
-    amount &&
-    (typeof payload.amount !== "string" ||
-      payload.amount !== amount ||
-      !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(amount))
-  ) {
-    throw new Error(
-      "Governance citizenship status.amount must be a canonical decimal string or null.",
-    );
-  }
-  return {
-    accountId,
-    isCitizen: payload.is_citizen,
-    amount: amount || null,
-    bondedHeight: optionalCanonicalGovernanceInteger(
-      payload.bonded_height,
-      "Governance citizenship status.bonded_height",
-    ),
-    seatsInEpoch: optionalCanonicalGovernanceInteger(
-      payload.seats_in_epoch,
-      "Governance citizenship status.seats_in_epoch",
-    ),
-    lastEpochSeen: optionalCanonicalGovernanceInteger(
-      payload.last_epoch_seen,
-      "Governance citizenship status.last_epoch_seen",
-    ),
-    cooldownUntil: optionalCanonicalGovernanceInteger(
-      payload.cooldown_until,
-      "Governance citizenship status.cooldown_until",
-    ),
-    endpointAvailable: true,
-  };
-};
+const GOVERNANCE_CITIZEN_READ_TIMEOUT_MS = 10_000;
 
 const fetchGovernanceCitizenStatus = async (
   toriiUrlRaw: string,
   accountId: string,
+  networkPrefix: number,
 ): Promise<GovernanceCitizenStatusResponse> => {
+  const normalizedNetworkPrefix =
+    normalizeGovernanceNetworkPrefix(networkPrefix);
   const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
     accountId,
     "accountId",
+    normalizedNetworkPrefix,
   );
   const endpoint = buildNexusEndpoint(
     toriiUrlRaw,
     `/v1/gov/citizens/${encodeURIComponent(normalizedAccountId)}`,
   );
-  try {
-    const payload = await fetchJson(endpoint, "Governance citizenship status");
-    return normalizeGovernanceCitizenStatusPayload(
-      payload,
-      normalizedAccountId,
-      true,
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(
+      new Error("Governance citizenship status request timed out."),
     );
+  }, GOVERNANCE_CITIZEN_READ_TIMEOUT_MS);
+  try {
+    const payload = await fetchJson(
+      endpoint,
+      "Governance citizenship status",
+      undefined,
+      controller.signal,
+    );
+    return decodeGovernanceCitizenStatus(payload, {
+      expectedAccountId: normalizedAccountId,
+      networkPrefix: normalizedNetworkPrefix,
+    });
   } catch (error) {
     if (isApiRequestError(error) && error.status === 404) {
-      return normalizeGovernanceCitizenStatusPayload(
-        null,
-        normalizedAccountId,
-        false,
-      );
+      return unavailableGovernanceCitizenStatus({
+        expectedAccountId: normalizedAccountId,
+        networkPrefix: normalizedNetworkPrefix,
+      });
     }
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-};
-
-const confidentialPolicyLookupSupportsLiveAssetFallback = (
-  error: unknown,
-  requestedAssetDefinitionId: string,
-) => {
-  const normalizedRequestedAssetDefinitionId = requestedAssetDefinitionId
-    .trim()
-    .toLowerCase();
-  if (!normalizedRequestedAssetDefinitionId) {
-    return false;
-  }
-  return isApiRequestError(error) && error.status === 404;
-};
-
-const CONFIDENTIAL_ASSET_DEFINITION_ID_PATTERN = /^[1-9A-HJ-NP-Za-km-z]+$/;
-
-const resolveLiveConfidentialAssetDefinitionIdForAccount = async (input: {
-  toriiUrl: string;
-  accountId: string;
-  requestedAssetDefinitionId: string;
-}) => {
-  const assetsResponse = await fetchAccountAssetsList({
-    toriiUrl: input.toriiUrl,
-    accountId: input.accountId,
-    limit: 200,
-  });
-  const resolvedAssetDefinitionId = resolveUniqueLiveAssetDefinitionId(
-    assetsResponse.items,
-    input.requestedAssetDefinitionId,
-  ).trim();
-  if (
-    !resolvedAssetDefinitionId ||
-    resolvedAssetDefinitionId.toLowerCase() ===
-      input.requestedAssetDefinitionId.trim().toLowerCase()
-  ) {
-    return "";
-  }
-  return resolvedAssetDefinitionId;
 };
 
 const fetchConfidentialAssetPolicyForAccount = async (input: {
@@ -5922,83 +6434,26 @@ const fetchConfidentialAssetPolicyForAccount = async (input: {
   accountId: string;
   assetDefinitionId: string;
 }) => {
-  const requestedAssetDefinitionId =
-    extractAssetDefinitionId(input.assetDefinitionId).trim() ||
-    trimString(input.assetDefinitionId);
-  const canonicalizePolicyResult = async (
-    policy: ConfidentialAssetPolicyView,
-  ) => {
-    const policyAssetDefinitionId =
-      extractAssetDefinitionId(trimString(policy.asset_id)).trim() ||
-      requestedAssetDefinitionId;
-    if (
-      CONFIDENTIAL_ASSET_DEFINITION_ID_PATTERN.test(policyAssetDefinitionId)
-    ) {
-      return {
-        policy,
-        requestedAssetDefinitionId,
-        resolvedAssetDefinitionId: policyAssetDefinitionId,
-      };
-    }
-    const resolvedAssetDefinitionId =
-      await resolveLiveConfidentialAssetDefinitionIdForAccount({
-        toriiUrl: input.toriiUrl,
-        accountId: input.accountId,
-        requestedAssetDefinitionId: policyAssetDefinitionId,
-      });
-    const canonicalAssetDefinitionId =
-      resolvedAssetDefinitionId || policyAssetDefinitionId;
-    return {
-      policy: {
-        ...policy,
-        asset_id: canonicalAssetDefinitionId,
-      },
-      requestedAssetDefinitionId,
-      resolvedAssetDefinitionId: canonicalAssetDefinitionId,
-    };
-  };
-  try {
-    return await canonicalizePolicyResult(
-      await fetchConfidentialAssetPolicy(
-        input.toriiUrl,
-        requestedAssetDefinitionId,
-      ),
-    );
-  } catch (error) {
-    if (
-      !confidentialPolicyLookupSupportsLiveAssetFallback(
-        error,
-        requestedAssetDefinitionId,
-      )
-    ) {
-      throw error;
-    }
-    const resolvedAssetDefinitionId =
-      await resolveLiveConfidentialAssetDefinitionIdForAccount({
-        toriiUrl: input.toriiUrl,
-        accountId: input.accountId,
-        requestedAssetDefinitionId,
-      });
-    if (!resolvedAssetDefinitionId) {
-      throw error;
-    }
-    return await canonicalizePolicyResult(
-      await fetchConfidentialAssetPolicy(
-        input.toriiUrl,
-        resolvedAssetDefinitionId,
-      ),
+  const requestedAssetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+    input.assetDefinitionId,
+  );
+  const policy = await fetchConfidentialAssetPolicy(
+    input.toriiUrl,
+    requestedAssetDefinitionId,
+  );
+  const returnedAssetDefinitionId = extractAssetDefinitionId(
+    trimString(policy.asset_id),
+  ).trim();
+  if (returnedAssetDefinitionId !== requestedAssetDefinitionId) {
+    throw new Error(
+      "Confidential asset policy returned a different asset definition.",
     );
   }
-};
-
-const accountTransactionsQuerySupportsCanonicalAuthFallback = (
-  error: unknown,
-) => {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return (
-    message.includes("HTTP 404 Not Found") ||
-    message.includes("ERR_ACCOUNT_NOT_FOUND")
-  );
+  return {
+    policy,
+    requestedAssetDefinitionId,
+    resolvedAssetDefinitionId: returnedAssetDefinitionId,
+  };
 };
 
 const listAllAccountTransactionsForPrivateKaigi = async (input: {
@@ -6016,7 +6471,7 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
       accountId: normalizedAccountId,
       privateKeyHex: input.privateKeyHex,
     })) ?? "";
-  let canonicalAuth = normalizedPrivateKeyHex
+  const canonicalAuth = normalizedPrivateKeyHex
     ? {
         accountId: normalizedAccountId,
         privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
@@ -6027,28 +6482,28 @@ const listAllAccountTransactionsForPrivateKaigi = async (input: {
   let total = Number.POSITIVE_INFINITY;
 
   while (offset < total) {
-    let page;
-    try {
-      page = await client.listAccountTransactions(normalizedAccountId, {
-        limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
-        offset,
-        ...(canonicalAuth ? { canonicalAuth } : {}),
-      });
-    } catch (error) {
-      if (
-        canonicalAuth &&
-        accountTransactionsQuerySupportsCanonicalAuthFallback(error)
-      ) {
-        canonicalAuth = null;
-        continue;
-      }
-      throw error;
+    const page = await client.listAccountTransactions(normalizedAccountId, {
+      limit: PRIVATE_KAIGI_ACCOUNT_TX_PAGE_SIZE,
+      offset,
+      ...(canonicalAuth ? { canonicalAuth } : {}),
+    });
+    if (
+      !page ||
+      typeof page !== "object" ||
+      !Array.isArray(page.items) ||
+      page.items.some((item) => !isPlainRecord(item)) ||
+      typeof page.total !== "number" ||
+      !Number.isSafeInteger(page.total) ||
+      page.total < 0 ||
+      page.total < offset + page.items.length
+    ) {
+      throw new Error(
+        "Account transaction response did not match the first-release page contract.",
+      );
     }
-    const pageItems = Array.isArray(page?.items)
-      ? (page.items as Array<Record<string, unknown>>)
-      : [];
+    const pageItems = page.items as Array<Record<string, unknown>>;
     items.push(...pageItems);
-    total = Number(page?.total ?? items.length);
+    total = page.total;
     offset += pageItems.length;
     if (
       pageItems.length === 0 ||
@@ -6177,77 +6632,10 @@ const fetchExplorerTransactionDetail = async (
     "Explorer transaction detail",
   );
 
-const hydrateAccountTransactionsWithExplorerDetails = async (input: {
-  toriiUrl: string;
-  accountId: string;
-  privateKeyHex?: string;
-}) => {
-  const transactions = await listAllAccountTransactions(input);
-  return await Promise.all(
-    transactions.map(async (transaction) => {
-      const txHash = trimString(
-        (transaction as Record<string, unknown>).entrypoint_hash ??
-          (transaction as Record<string, unknown>).hash,
-      );
-      if (!/^[0-9a-f]{64}$/i.test(txHash)) {
-        return transaction;
-      }
-      try {
-        const detail = await fetchExplorerTransactionDetail(
-          input.toriiUrl,
-          txHash,
-        );
-        return {
-          ...transaction,
-          ...detail,
-          entrypoint_hash: txHash,
-          result_ok:
-            typeof (transaction as Record<string, unknown>).result_ok ===
-            "boolean"
-              ? (transaction as Record<string, unknown>).result_ok
-              : !/^rejected$/i.test(trimString(detail.status)),
-        };
-      } catch {
-        return transaction;
-      }
-    }),
-  );
-};
-
-const normalizeConfidentialNoteIndexItem = (
-  item: unknown,
-  noteIndexOrder: number,
-): WalletConfidentialTransactionLike | null => {
-  if (!isPlainRecord(item)) {
-    return null;
-  }
-  const hash = trimString(item.entrypoint_hash ?? item.transaction_hash);
-  if (!/^[0-9a-f]{64}$/i.test(hash)) {
-    return null;
-  }
-  return {
-    entrypoint_hash: hash,
-    result_ok: item.result_ok !== false,
-    authority: trimString(item.authority),
-    block: Number.isFinite(Number(item.block))
-      ? Math.trunc(Number(item.block))
-      : undefined,
-    note_index_order: noteIndexOrder,
-    metadata: isPlainRecord(item.metadata)
-      ? (item.metadata as Record<string, unknown>)
-      : {},
-    instructions: Array.isArray(item.instructions)
-      ? (item.instructions.filter(isPlainRecord) as Array<
-          Record<string, unknown>
-        >)
-      : [],
-  };
-};
-
 const fetchConfidentialNoteIndexTransactions = async (input: {
   toriiUrl: string;
   assetDefinitionIds: string[];
-}): Promise<WalletConfidentialTransactionLike[] | null> => {
+}): Promise<WalletConfidentialTransactionLike[]> => {
   const byHash = new Map<string, WalletConfidentialTransactionLike>();
   let noteIndexOrder = 0;
   for (const assetDefinitionId of input.assetDefinitionIds) {
@@ -6271,13 +6659,10 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
           ...(cursor ? { cursor } : {}),
         },
       );
-      const response = await nodeFetch(endpoint, {
-        method: "GET",
-        headers: { Accept: "application/json" },
-      });
-      if (response.status === 404 || response.status === 405) {
-        return null;
-      }
+      const response = await fetchGetResponse(
+        endpoint,
+        "Confidential note index",
+      );
       if (!response.ok) {
         const detail = await readApiErrorDetail(response);
         throw new Error(
@@ -6285,24 +6670,18 @@ const fetchConfidentialNoteIndexTransactions = async (input: {
             `Confidential note index request failed with status ${response.status} (${response.statusText})`,
         );
       }
-      const payload = ensureObjectResponse(
+      const page = parseConfidentialNoteIndexPage(
         (await response.json()) as unknown,
-        "Confidential note index",
       );
-      const items = Array.isArray(payload.items) ? payload.items : [];
-      for (const item of items) {
-        const normalized = normalizeConfidentialNoteIndexItem(
-          item,
-          noteIndexOrder,
-        );
+      for (const item of page.items) {
+        const normalized = {
+          ...item,
+          note_index_order: noteIndexOrder,
+        };
         noteIndexOrder += 1;
-        if (!normalized) {
-          continue;
-        }
         byHash.set(normalized.entrypoint_hash ?? "", normalized);
       }
-      const nextCursor = trimString(payload.next_cursor);
-      cursor = nextCursor || null;
+      cursor = page.nextCursor;
     }
   }
   return [...byHash.values()];
@@ -6335,13 +6714,10 @@ const confidentialNoteIndexIncludesEntrypointHash = async (input: {
         ...(cursor ? { cursor } : {}),
       },
     );
-    const response = await nodeFetch(endpoint, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-    if (response.status === 404 || response.status === 405) {
-      return false;
-    }
+    const response = await fetchGetResponse(
+      endpoint,
+      "Confidential note index",
+    );
     if (!response.ok) {
       const detail = await readApiErrorDetail(response);
       throw new Error(
@@ -6349,79 +6725,56 @@ const confidentialNoteIndexIncludesEntrypointHash = async (input: {
           `Confidential note index request failed with status ${response.status} (${response.statusText})`,
       );
     }
-    const payload = ensureObjectResponse(
+    const page = parseConfidentialNoteIndexPage(
       (await response.json()) as unknown,
-      "Confidential note index",
     );
-    const items = Array.isArray(payload.items) ? payload.items : [];
-    for (const item of items) {
-      const normalized = normalizeConfidentialNoteIndexItem(item, 0);
+    for (const normalized of page.items) {
       if (
-        normalized &&
         normalized.result_ok !== false &&
         typeof normalized.entrypoint_hash === "string" &&
-        normalized.entrypoint_hash.toLowerCase() === normalizedHash
+        normalized.entrypoint_hash === normalizedHash
       ) {
         return true;
       }
     }
-    const nextCursor = trimString(payload.next_cursor);
-    cursor = nextCursor || null;
+    cursor = page.nextCursor;
   }
   return false;
 };
 
-const waitForConfidentialRelayCommit = async (input: {
+const waitForConfidentialRelayFinalizedBlock = async (input: {
   toriiUrl: string;
   assetDefinitionId: string;
   hashHex: string;
 }) => {
-  const client = getClient(input.toriiUrl);
-  const deadline = Date.now() + CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS;
-  let lastStatusKind: string | null = null;
-  while (Date.now() <= deadline) {
-    const payload = await client.getTransactionStatus(input.hashHex);
-    const statusKind = extractPipelineStatusKind(payload);
-    lastStatusKind = statusKind;
-    if (statusKind && CONFIDENTIAL_TX_SUCCESS_STATUSES.has(statusKind)) {
-      return;
-    }
-    if (statusKind && CONFIDENTIAL_TX_FAILURE_STATUSES.has(statusKind)) {
-      throw await buildTransactionFinalityFailureError(
-        input.toriiUrl,
-        input.hashHex,
-        statusKind,
-        payload,
-      );
-    }
-    if (
-      await confidentialNoteIndexIncludesEntrypointHash({
-        toriiUrl: input.toriiUrl,
-        assetDefinitionId: input.assetDefinitionId,
-        hashHex: input.hashHex,
-      })
-    ) {
-      return;
-    }
-    if (Date.now() + CONFIDENTIAL_TX_FINALITY_INTERVAL_MS > deadline) {
-      break;
-    }
-    await waitForMs(CONFIDENTIAL_TX_FINALITY_INTERVAL_MS);
-  }
-
-  const timeoutSeconds = Math.trunc(CONFIDENTIAL_TX_FINALITY_TIMEOUT_MS / 1000);
-  throw new Error(
-    lastStatusKind
-      ? `Transaction ${input.hashHex} stayed in ${lastStatusKind} and did not commit within ${timeoutSeconds} seconds.`
-      : `Transaction ${input.hashHex} did not commit within ${timeoutSeconds} seconds.`,
+  const finalized = await waitForTransactionFinalizedInBlock(
+    input.toriiUrl,
+    input.hashHex,
   );
+  try {
+    await confidentialNoteIndexIncludesEntrypointHash({
+      toriiUrl: input.toriiUrl,
+      assetDefinitionId: input.assetDefinitionId,
+      hashHex: input.hashHex,
+    });
+  } catch {
+    // The transaction has final block proof. Confidential note indexing is
+    // reconciled independently by the wallet scanner.
+  }
+  return finalized;
 };
 
 const submitConfidentialRelayTransfer = async (input: {
   toriiUrl: string;
   assetDefinitionId: string;
   signedTransaction: Buffer | ArrayBuffer | ArrayBufferView;
-}): Promise<{ hash: string; relayAuthority: string; sourceHash: string }> => {
+}): Promise<{
+  hash: string;
+  relayAuthority: string;
+  sourceHash: string;
+  fee?: TransactionFeeView | null;
+  finality: TransactionFinalityProof;
+}> => {
   const endpoint = buildNexusEndpoint(
     input.toriiUrl,
     "/v1/confidential/relay/submit",
@@ -6448,16 +6801,16 @@ const submitConfidentialRelayTransfer = async (input: {
     "Anonymous shielded relay",
   );
   const hash = trimString(payload.tx_hash_hex);
-  if (!/^[0-9a-f]{64}$/i.test(hash)) {
+  if (!/^[0-9a-f]{64}$/u.test(hash)) {
     throw new Error("Anonymous shielded relay returned an invalid hash.");
   }
   const sourceHash = trimString(payload.source_tx_hash_hex);
-  if (sourceHash && !/^[0-9a-f]{64}$/i.test(sourceHash)) {
+  if (sourceHash && !/^[0-9a-f]{64}$/u.test(sourceHash)) {
     throw new Error(
       "Anonymous shielded relay returned an invalid source hash.",
     );
   }
-  await waitForConfidentialRelayCommit({
+  const finalized = await waitForConfidentialRelayFinalizedBlock({
     toriiUrl: input.toriiUrl,
     assetDefinitionId: input.assetDefinitionId,
     hashHex: hash,
@@ -6466,22 +6819,22 @@ const submitConfidentialRelayTransfer = async (input: {
     hash,
     relayAuthority: trimString(payload.relay_authority),
     sourceHash,
+    ...(finalized.fee ? { fee: finalized.fee } : {}),
+    finality: finalized.finality,
   };
 };
 
-const readConfidentialPolicyMetadata = (
+const readAssetDefinitionConfidentialPolicy = (
   assetDefinition: Record<string, unknown>,
   label: string,
-) => {
-  const metadata = ensureObjectResponse(
-    assetDefinition.metadata ?? {},
-    `${label} asset definition metadata`,
-  );
-  const policyRecord =
-    metadata["zk.policy"] ??
-    ensureObjectResponse(metadata.zk ?? {}, "metadata.zk").policy ??
-    null;
-  return ensureObjectResponse(policyRecord ?? {}, `${label} asset zk.policy`);
+): AssetDefinitionConfidentialPolicyView => {
+  const policy = normalizeAssetDefinitionConfidentialPolicy(assetDefinition);
+  if (!policy) {
+    throw new Error(
+      `${label} asset is missing the top-level confidential_policy.`,
+    );
+  }
+  return policy;
 };
 
 const readConfidentialVkRef = (
@@ -6489,16 +6842,10 @@ const readConfidentialVkRef = (
   key: "vk_transfer" | "vk_unshield" | "vk_shield",
   label: string,
 ) => {
-  const camelKey =
-    key === "vk_transfer"
-      ? "vkTransfer"
-      : key === "vk_unshield"
-        ? "vkUnshield"
-        : "vkShield";
-  const rawVk = String(policy[key] ?? policy[camelKey] ?? "").trim();
+  const rawVk = String(policy[key] ?? "").trim();
   const match = /^([^:]+)::(.+)$/.exec(rawVk);
   if (!match) {
-    throw new Error(`${label} asset is missing metadata.zk.policy.${key}.`);
+    throw new Error(`${label} asset is missing confidential_policy.${key}.`);
   }
   return {
     backend: match[1],
@@ -6509,7 +6856,7 @@ const readConfidentialVkRef = (
 const readPrivateKaigiVkTransferRef = (
   assetDefinition: Record<string, unknown>,
 ) => {
-  const policy = readConfidentialPolicyMetadata(
+  const policy = readAssetDefinitionConfidentialPolicy(
     assetDefinition,
     "Private Kaigi XOR",
   );
@@ -6519,46 +6866,18 @@ const readPrivateKaigiVkTransferRef = (
 const readConfidentialAllowUnshield = (
   assetDefinition: Record<string, unknown>,
 ) => {
-  const policy = readConfidentialPolicyMetadata(
+  const policy = readAssetDefinitionConfidentialPolicy(
     assetDefinition,
     "Confidential",
   );
-  return policy.allow_unshield !== false && policy.allowUnshield !== false;
-};
-
-const readConfidentialAllowShield = (
-  assetDefinition: Record<string, unknown>,
-) => {
-  const policy = readConfidentialPolicyMetadata(
-    assetDefinition,
-    "Confidential",
-  );
-  return policy.allow_shield !== false && policy.allowShield !== false;
-};
-
-const readOptionalConfidentialVkLiteral = (
-  assetDefinition: Record<string, unknown>,
-  key: "vk_transfer" | "vk_unshield" | "vk_shield",
-) => {
-  const policy = readConfidentialPolicyMetadata(
-    assetDefinition,
-    "Confidential",
-  );
-  const camelKey =
-    key === "vk_transfer"
-      ? "vkTransfer"
-      : key === "vk_unshield"
-        ? "vkUnshield"
-        : "vkShield";
-  const literal = trimString(policy[key] ?? policy[camelKey]);
-  return literal || null;
+  return policy.allow_unshield ?? confidentialModeSupportsShield(policy.mode);
 };
 
 const readConfidentialVkUnshieldRef = (
   assetDefinition: Record<string, unknown>,
 ) =>
   readConfidentialVkRef(
-    readConfidentialPolicyMetadata(assetDefinition, "Confidential"),
+    readAssetDefinitionConfidentialPolicy(assetDefinition, "Confidential"),
     "vk_unshield",
     "Confidential",
   );
@@ -6567,7 +6886,7 @@ const readConfidentialVkTransferRef = (
   assetDefinition: Record<string, unknown>,
 ) =>
   readConfidentialVkRef(
-    readConfidentialPolicyMetadata(assetDefinition, "Confidential"),
+    readAssetDefinitionConfidentialPolicy(assetDefinition, "Confidential"),
     "vk_transfer",
     "Confidential",
   );
@@ -6575,20 +6894,31 @@ const readConfidentialVkTransferRef = (
 const mergeConfidentialPolicyWithAssetDefinition = (
   policy: ConfidentialAssetPolicyView,
   assetDefinition: Record<string, unknown>,
-): ConfidentialAssetPolicyView => ({
-  ...policy,
-  allow_shield: readConfidentialAllowShield(assetDefinition),
-  allow_unshield: readConfidentialAllowUnshield(assetDefinition),
-  vk_transfer:
-    readOptionalConfidentialVkLiteral(assetDefinition, "vk_transfer") ??
-    policy.vk_transfer,
-  vk_unshield:
-    readOptionalConfidentialVkLiteral(assetDefinition, "vk_unshield") ??
-    policy.vk_unshield,
-  vk_shield:
-    readOptionalConfidentialVkLiteral(assetDefinition, "vk_shield") ??
-    policy.vk_shield,
-});
+): ConfidentialAssetPolicyView => {
+  const assetPolicy = readAssetDefinitionConfidentialPolicy(
+    assetDefinition,
+    "Confidential",
+  );
+  return {
+    ...policy,
+    current_mode: assetPolicy.mode,
+    effective_mode: assetPolicy.mode,
+    allow_shield:
+      assetPolicy.allow_shield ??
+      confidentialModeSupportsShield(assetPolicy.mode),
+    allow_unshield:
+      assetPolicy.allow_unshield ??
+      confidentialModeSupportsShield(assetPolicy.mode),
+    vk_transfer: assetPolicy.vk_transfer ?? policy.vk_transfer,
+    vk_unshield: assetPolicy.vk_unshield ?? policy.vk_unshield,
+    vk_shield: assetPolicy.vk_shield ?? policy.vk_shield,
+    vk_set_hash: assetPolicy.vk_set_hash ?? policy.vk_set_hash,
+    poseidon_params_id:
+      assetPolicy.poseidon_params_id ?? policy.poseidon_params_id,
+    pedersen_params_id:
+      assetPolicy.pedersen_params_id ?? policy.pedersen_params_id,
+  };
+};
 
 const resolveTrackedConfidentialAssetIds = (input: {
   requestedAssetDefinitionId: string;
@@ -6598,11 +6928,10 @@ const resolveTrackedConfidentialAssetIds = (input: {
   return [input.requestedAssetDefinitionId, input.resolvedAssetId]
     .map((value) => extractAssetDefinitionId(String(value ?? "")).trim())
     .filter((value) => {
-      const normalized = value.toLowerCase();
-      if (!normalized || seen.has(normalized)) {
+      if (!value || seen.has(value)) {
         return false;
       }
-      seen.add(normalized);
+      seen.add(value);
       return true;
     });
 };
@@ -6610,10 +6939,19 @@ const resolveTrackedConfidentialAssetIds = (input: {
 const resolveConfidentialAssetBalance = async (input: {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   privateKeyHex?: string;
   assetDefinitionId: string;
+  endpointScope?: EndpointIdentityScopeInput | null;
 }): Promise<ConfidentialAssetBalanceResponse> => {
+  const endpointScope =
+    input.endpointScope ??
+    (await inspectEndpointDerivedScope({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+    }));
   const decryptionContext = await resolveConfidentialWalletDecryptionContext({
     accountId: input.accountId,
     privateKeyHex: input.privateKeyHex,
@@ -6634,20 +6972,12 @@ const resolveConfidentialAssetBalance = async (input: {
     toriiUrl: input.toriiUrl,
     assetDefinitionIds: trackedAssetIds,
   });
-  const committedTransactions =
-    noteIndexTransactions ??
-    (await hydrateAccountTransactionsWithExplorerDetails({
-      toriiUrl: input.toriiUrl,
-      accountId: decryptionContext.accountId,
-      privateKeyHex: decryptionContext.privateKeyHex,
-    }));
-  const scanSource =
-    noteIndexTransactions === null
-      ? "account-transactions"
-      : "global-note-index";
+  const committedTransactions = noteIndexTransactions;
+  const scanSource = "global-note-index" as const;
   const displayTransactions = mergeConfidentialWalletShadowTransactions({
     toriiUrl: input.toriiUrl,
     accountId: decryptionContext.accountId,
+    endpointScope,
     transactions: committedTransactions as WalletConfidentialTransactionLike[],
   });
   const ledger = collectWalletConfidentialLedger(displayTransactions, {
@@ -6655,7 +6985,7 @@ const resolveConfidentialAssetBalance = async (input: {
     chainId: input.chainId,
     assetDefinitionIds: trackedAssetIds,
     receiveKeys: decryptionContext.receiveKeys,
-    markUnrecognizedTransfersInexact: noteIndexTransactions === null,
+    markUnrecognizedTransfersInexact: false,
   });
   const scanWatermarkBlock = displayTransactions.reduce<number | null>(
     (maxBlock, transaction) => {
@@ -6670,38 +7000,20 @@ const resolveConfidentialAssetBalance = async (input: {
     },
     null,
   );
-  const onChainBalance =
-    noteIndexTransactions === null
-      ? deriveOnChainShieldedBalance(committedTransactions, {
-          assetDefinitionIds: trackedAssetIds,
-          accountIds: [
-            decryptionContext.accountId,
-            normalizeCanonicalAccountIdLiteral(
-              decryptionContext.accountId,
-              "accountId",
-            ),
-            normalizeCompatAccountIdLiteral(
-              decryptionContext.accountId,
-              "accountId",
-            ),
-          ],
-        })
-      : (() => {
-          const committedLedger = collectWalletConfidentialLedger(
-            committedTransactions as WalletConfidentialTransactionLike[],
-            {
-              privateKeyHex: decryptionContext.privateKeyHex,
-              chainId: input.chainId,
-              assetDefinitionIds: trackedAssetIds,
-              receiveKeys: decryptionContext.receiveKeys,
-              markUnrecognizedTransfersInexact: false,
-            },
-          );
-          return {
-            quantity: committedLedger.spendableQuantity,
-            exact: committedLedger.exact,
-          };
-        })();
+  const committedLedger = collectWalletConfidentialLedger(
+    committedTransactions,
+    {
+      privateKeyHex: decryptionContext.privateKeyHex,
+      chainId: input.chainId,
+      assetDefinitionIds: trackedAssetIds,
+      receiveKeys: decryptionContext.receiveKeys,
+      markUnrecognizedTransfersInexact: false,
+    },
+  );
+  const onChainBalance = {
+    quantity: committedLedger.spendableQuantity,
+    exact: committedLedger.exact,
+  };
   return {
     resolvedAssetId,
     quantity: ledger.spendableQuantity,
@@ -6709,11 +7021,7 @@ const resolveConfidentialAssetBalance = async (input: {
     spendableQuantity: ledger.spendableQuantity,
     exact: ledger.exact,
     scanSource,
-    scanStatus: ledger.exact
-      ? "complete"
-      : noteIndexTransactions === null
-        ? "limited"
-        : "incomplete",
+    scanStatus: ledger.exact ? "complete" : "incomplete",
     scanWatermarkBlock,
     recoveredNoteCount: ledger.notes.length,
     trackedAssetIds,
@@ -6723,9 +7031,11 @@ const resolveConfidentialAssetBalance = async (input: {
 const resolveConfidentialTransferMaterials = async (input: {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   privateKeyHex?: string;
   assetDefinitionId: string;
+  endpointScope?: EndpointIdentityScopeInput | null;
 }) => {
   const decryptionContext = await resolveConfidentialWalletDecryptionContext({
     accountId: input.accountId,
@@ -6751,11 +7061,6 @@ const resolveConfidentialTransferMaterials = async (input: {
       fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
       fetchConfidentialAssetRootWindow(input.toriiUrl, balance.resolvedAssetId),
     ]);
-  if (noteIndexTransactions === null) {
-    throw new Error(
-      "Confidential note index is unavailable for this asset; recipient shielded transfers require the global note index.",
-    );
-  }
   const ledger = collectWalletConfidentialLedger(noteIndexTransactions, {
     privateKeyHex: decryptionContext.privateKeyHex,
     chainId: input.chainId,
@@ -6781,9 +7086,11 @@ const resolveConfidentialTransferMaterials = async (input: {
 const resolveConfidentialUnshieldMaterials = async (input: {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   privateKeyHex?: string;
   assetDefinitionId: string;
+  endpointScope?: EndpointIdentityScopeInput | null;
 }) => {
   const decryptionContext = await resolveConfidentialWalletDecryptionContext({
     accountId: input.accountId,
@@ -6809,11 +7116,6 @@ const resolveConfidentialUnshieldMaterials = async (input: {
       fetchConfidentialAssetDefinition(input.toriiUrl, balance.resolvedAssetId),
       fetchConfidentialAssetRoots(input.toriiUrl, balance.resolvedAssetId),
     ]);
-  if (noteIndexTransactions === null) {
-    throw new Error(
-      "Confidential note index is unavailable for this asset; unshielding requires the global note index.",
-    );
-  }
   if (!readConfidentialAllowUnshield(assetDefinition)) {
     throw new Error("Confidential unshield is not enabled for this asset.");
   }
@@ -6905,12 +7207,16 @@ const privateTradeProofName = (prefix: string, parts: string[]) =>
     .digest("hex")
     .slice(0, 48)}`;
 
+// This legacy internal builder is intentionally not exposed to the renderer.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const buildUranaiPrivateTradeProofEnvelope = async (
   input: UranaiPrivateTradeProofInput,
 ): Promise<UranaiPrivateTradeProofResponse> => {
   const writeConnection = await assertWriteConnectionMatchesEndpoint({
     toriiUrl: input.toriiUrl,
     chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
+    feature: "confidentialTransfers",
   });
   const chainId = writeConnection.chainId;
   const accountId = normalizeCompatAccountIdLiteral(
@@ -6950,9 +7256,11 @@ const buildUranaiPrivateTradeProofEnvelope = async (
   const materials = await resolveConfidentialUnshieldMaterials({
     toriiUrl: input.toriiUrl,
     chainId,
+    networkPrefix: writeConnection.networkPrefix,
     accountId,
     privateKeyHex,
     assetDefinitionId: input.assetDefinitionId,
+    endpointScope: writeConnection.endpointScope,
   });
   if (BigInt(materials.ledger.spendableQuantity) < BigInt(spendAmount)) {
     throw new Error(
@@ -7080,6 +7388,8 @@ const buildUranaiPrivateTradeProofEnvelope = async (
 const submitConfidentialSelfConsolidation = async (input: {
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
+  endpointScope: EndpointIdentityScopeInput;
   accountId: string;
   privateKeyHex?: string;
   assetDefinitionId: string;
@@ -7091,9 +7401,11 @@ const submitConfidentialSelfConsolidation = async (input: {
   const materials = await resolveConfidentialTransferMaterials({
     toriiUrl: input.toriiUrl,
     chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
     accountId: input.accountId,
     privateKeyHex: input.privateKeyHex,
     assetDefinitionId: input.assetDefinitionId,
+    endpointScope: input.endpointScope,
   });
   const signingMaterial = assertEd25519SigningMaterial(
     await resolveSigningMaterial({
@@ -7154,6 +7466,7 @@ const submitConfidentialSelfConsolidation = async (input: {
   const tx = await quoteAndSignInstructionTransaction({
     toriiUrl: input.toriiUrl,
     chainId: input.chainId,
+    networkPrefix: input.networkPrefix,
     authority: input.accountId,
     instructions: [
       buildZkTransferInstruction({
@@ -7180,6 +7493,7 @@ const submitConfidentialSelfConsolidation = async (input: {
   upsertConfidentialWalletShadowTransaction({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
+    endpointScope: input.endpointScope,
     txHash: submission.hash,
     authority: submission.relayAuthority || "confidential-relay",
     metadata,
@@ -7204,48 +7518,10 @@ const submitConfidentialSelfConsolidation = async (input: {
   );
   return {
     hash: submission.hash,
+    finality: submission.finality,
     output,
     resolvedAssetId: materials.resolvedAssetId,
     latestRootHex,
-  };
-};
-
-const readPrivateKaigiFeeSchedule = (
-  configuration: Record<string, unknown> | null,
-) => {
-  const nexus =
-    configuration &&
-    typeof configuration.nexus === "object" &&
-    configuration.nexus &&
-    !Array.isArray(configuration.nexus)
-      ? (configuration.nexus as Record<string, unknown>)
-      : {};
-  const fees =
-    typeof nexus.fees === "object" && nexus.fees && !Array.isArray(nexus.fees)
-      ? (nexus.fees as Record<string, unknown>)
-      : {};
-  const enabled =
-    nexus.enabled === undefined || nexus.enabled === null
-      ? true
-      : Boolean(nexus.enabled);
-  return {
-    enabled,
-    baseFee: parseNonNegativeConfigAmount(
-      fees.base_fee ?? fees.baseFee ?? "0",
-      "nexus.fees.base_fee",
-    ),
-    perByteFee: parseNonNegativeConfigAmount(
-      fees.per_byte_fee ?? fees.perByteFee ?? "0",
-      "nexus.fees.per_byte_fee",
-    ),
-    perInstructionFee: parseNonNegativeConfigAmount(
-      fees.per_instruction_fee ?? fees.perInstructionFee ?? "0",
-      "nexus.fees.per_instruction_fee",
-    ),
-    perGasUnitFee: parseNonNegativeConfigAmount(
-      fees.per_gas_unit_fee ?? fees.perGasUnitFee ?? "0",
-      "nexus.fees.per_gas_unit_fee",
-    ),
   };
 };
 
@@ -7286,30 +7562,29 @@ const computePrivateKaigiFeeAmount = (input: {
   return formatDecimalAmount(fee);
 };
 
-const resolveTransparentXorBalance = (
-  items: Array<{ asset_id: string; quantity: string }>,
-  trackedAssetIds: string[],
-) => {
-  const targets = trackedAssetIds.map((value) => value.toLowerCase());
-  return (
-    items.find((asset) => {
-      const assetId = String(asset.asset_id ?? "")
-        .trim()
-        .toLowerCase();
-      return targets.some(
-        (target) =>
-          assetId === target ||
-          assetId.startsWith(`${target}##`) ||
-          assetId.includes(target),
-      );
-    })?.quantity ?? "0"
-  );
-};
+const resolveTransparentAssetBalance = (
+  items: Array<{
+    asset_id: string;
+    asset_definition_id?: string | null;
+    quantity: string;
+  }>,
+  assetDefinitionId: string,
+) =>
+  items.find((asset) => {
+    const returnedDefinitionId =
+      trimString(asset.asset_definition_id) ||
+      extractAssetDefinitionId(asset.asset_id).trim();
+    return returnedDefinitionId === assetDefinitionId;
+  })?.quantity ?? "0";
 
 async function resolvePrivateKaigiConfidentialXorContext(
   input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     accountId: string;
+    assetDefinitionId: string;
+    endpointScope?: EndpointIdentityScopeInput | null;
   },
   options: {
     includeFeeMaterials: true;
@@ -7318,7 +7593,11 @@ async function resolvePrivateKaigiConfidentialXorContext(
 async function resolvePrivateKaigiConfidentialXorContext(
   input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     accountId: string;
+    assetDefinitionId: string;
+    endpointScope?: EndpointIdentityScopeInput | null;
   },
   options?: {
     includeFeeMaterials?: boolean;
@@ -7327,7 +7606,11 @@ async function resolvePrivateKaigiConfidentialXorContext(
 async function resolvePrivateKaigiConfidentialXorContext(
   input: {
     toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
     accountId: string;
+    assetDefinitionId: string;
+    endpointScope?: EndpointIdentityScopeInput | null;
   },
   options?: {
     includeFeeMaterials?: boolean;
@@ -7335,11 +7618,21 @@ async function resolvePrivateKaigiConfidentialXorContext(
 ): Promise<
   PrivateKaigiConfidentialXorContext | PrivateKaigiConfidentialXorFeeContext
 > {
+  const endpointScope =
+    input.endpointScope ??
+    (await inspectEndpointDerivedScope({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+    }));
+  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+    input.assetDefinitionId,
+  );
   const { policy, requestedAssetDefinitionId, resolvedAssetDefinitionId } =
     await fetchConfidentialAssetPolicyForAccount({
       toriiUrl: input.toriiUrl,
       accountId: input.accountId,
-      assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+      assetDefinitionId,
     });
   const policyMode = String(
     policy.effective_mode ?? policy.current_mode ?? "",
@@ -7368,37 +7661,38 @@ async function resolvePrivateKaigiConfidentialXorContext(
       normalizeCompatAccountIdLiteral(input.accountId, "accountId"),
     ],
   });
-  const shadowKey = getPrivateKaigiShadowKey({
+  const shadowKeys = getPrivateKaigiShadowKeys({
     toriiUrl: input.toriiUrl,
     accountId: input.accountId,
     assetDefinitionId: resolvedAssetId,
+    endpointScope,
   });
-  const shadowState = readPrivateKaigiShadowState(shadowKey);
+  const shadowState = readPrivateKaigiShadowState(shadowKeys);
   let effectiveShieldedBalance: string | null = shieldedBalance.quantity;
   if (shieldedBalance.exact && shieldedBalance.quantity !== null) {
     syncPrivateKaigiShadowState(shadowState, shieldedBalance.quantity);
-    writePrivateKaigiShadowState(shadowKey, shadowState);
+    writePrivateKaigiShadowState(shadowKeys, shadowState);
     effectiveShieldedBalance = computePrivateKaigiEffectiveShieldedBalance({
       onChainShieldedBalance: shieldedBalance.quantity,
       shadowState,
     });
   }
   const state: PrivateKaigiConfidentialXorState = {
-    assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+    assetDefinitionId,
     resolvedAssetId,
     policyMode,
     shieldedBalance: effectiveShieldedBalance,
     shieldedBalanceExact: shieldedBalance.exact,
-    transparentBalance: resolveTransparentXorBalance(
+    transparentBalance: resolveTransparentAssetBalance(
       assetsResponse.items ?? [],
-      trackedAssetIds,
+      resolvedAssetId,
     ),
     canSelfShield:
       confidentialModeSupportsShield(policyMode) &&
       compareDecimalStrings(
-        resolveTransparentXorBalance(
+        resolveTransparentAssetBalance(
           assetsResponse.items ?? [],
-          trackedAssetIds,
+          resolvedAssetId,
         ),
         "0",
       ) > 0,
@@ -7415,29 +7709,38 @@ async function resolvePrivateKaigiConfidentialXorContext(
   }
 
   const client = getClient(input.toriiUrl);
-  const [assetDefinition, latestRootHex, configuration] = await Promise.all([
-    fetchPrivateKaigiAssetDefinition(input.toriiUrl, resolvedAssetId),
-    fetchPrivateKaigiRoots(input.toriiUrl, resolvedAssetId),
-    client.getConfiguration(),
-  ]);
+  const [assetDefinition, latestRootHex, lifecycle, pipelinePreflight] =
+    await Promise.all([
+      fetchPrivateKaigiAssetDefinition(input.toriiUrl, resolvedAssetId),
+      fetchPrivateKaigiRoots(input.toriiUrl, resolvedAssetId),
+      fetchNexusLifecycle(input.toriiUrl),
+      fetchJson(
+        buildNexusEndpoint(input.toriiUrl, "/v1/pipeline/preflight"),
+        "Pipeline preflight",
+      ),
+    ]);
+  const feeSchedule = readPrivateKaigiFeeSchedule(lifecycle, pipelinePreflight);
+  if (!feeSchedule.enabled) {
+    throw new Error(
+      "Private Kaigi is unavailable because the live Nexus lifecycle is disabled.",
+    );
+  }
+  if (feeSchedule.feeAssetDefinitionId !== resolvedAssetId) {
+    throw new Error(
+      `Private Kaigi fee asset ${feeSchedule.feeAssetDefinitionId} does not exactly match the configured confidential asset ${resolvedAssetId}.`,
+    );
+  }
   const vkTransferRef = readPrivateKaigiVkTransferRef(assetDefinition);
   const verifyingKey = await client.getVerifyingKeyTyped(
     vkTransferRef.backend,
     vkTransferRef.name,
   );
 
-  const configurationRecord =
-    configuration &&
-    typeof configuration === "object" &&
-    !Array.isArray(configuration)
-      ? (configuration as Record<string, unknown>)
-      : null;
-
   return {
     state,
     latestRootHex,
-    verifyingKey: verifyingKey as unknown as Record<string, unknown>,
-    feeSchedule: readPrivateKaigiFeeSchedule(configurationRecord),
+    verifyingKey: readPrivateKaigiTransferVerifyingKey(verifyingKey),
+    feeSchedule,
   };
 }
 
@@ -7445,7 +7748,7 @@ const quoteAndSignInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
   authority: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   instructions: object[];
   privateKey: Buffer;
   privateKeyAlgorithm: string;
@@ -7480,7 +7783,7 @@ const submitInstructionTransaction = async (input: {
   toriiUrl: string;
   chainId: string;
   authorityAccountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   privateKeyHex?: string;
   signingAlgorithm?: string;
   instruction:
@@ -7495,6 +7798,7 @@ const submitInstructionTransaction = async (input: {
     toriiUrl: input.toriiUrl,
     chainId,
     networkPrefix: input.networkPrefix,
+    feature: "stakingWrites",
   });
   const wireInput = resolveCanonicalInstructionWireInput({
     authorityAccountId: input.authorityAccountId,
@@ -7521,7 +7825,7 @@ const submitInstructionTransaction = async (input: {
     privateKey,
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
-  const submission = await submitSignedTransactionAndWaitForCommit(
+  const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
     input.toriiUrl,
     tx.signedTransaction,
   );
@@ -7531,13 +7835,31 @@ const submitInstructionTransaction = async (input: {
 const GOVERNANCE_REVIEW_TTL_MS = 2 * 60 * 1000;
 const GOVERNANCE_REVIEW_LIMIT = 24;
 
+type PreparedPlainReferendumBallot = {
+  contractFingerprint: string;
+  artifactSha256: string;
+  referendumId: string;
+  amount: string;
+  durationBlocks: string;
+  direction: "Aye" | "Nay" | "Abstain";
+  citizenSnapshot: BondedGovernanceCitizenSnapshot;
+};
+
+type BondedGovernanceCitizenSnapshot = Readonly<{
+  accountId: string;
+  amount: string;
+  bondedHeight: string;
+}>;
+
 type PreparedGovernanceAction = {
   view: GovernancePreparedActionView;
   toriiUrl: string;
   chainId: string;
+  networkPrefix: number;
   accountId: string;
   signingAlgorithm: string;
-  publicEnactKind: PublicGovernanceEnactKind | null;
+  governanceCapabilitiesFingerprint: string;
+  plainReferendumBallot: PreparedPlainReferendumBallot | null;
   payload: ReturnType<typeof buildTransactionPayload>;
   quote: FeeQuoteResponse;
 };
@@ -7559,14 +7881,19 @@ const governanceRequestJson = async (
     allowNotFound?: boolean;
   } = {},
 ): Promise<Record<string, unknown> | null> => {
-  const response = await nodeFetch(governanceEndpoint(toriiUrl, path), {
-    method: options.method ?? "GET",
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-    },
-    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-  });
+  const method = options.method ?? "GET";
+  const endpoint = governanceEndpoint(toriiUrl, path);
+  const response =
+    method === "GET"
+      ? await fetchGetResponse(endpoint, `Governance ${path}`)
+      : await nodeFetch(endpoint, {
+          method,
+          headers: {
+            Accept: "application/json",
+            ...(options.body ? { "Content-Type": "application/json" } : {}),
+          },
+          ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+        });
   if (options.allowNotFound && response.status === 404) return null;
   if (!response.ok) {
     throw await createApiRequestError(response, `Governance ${path}`);
@@ -7591,6 +7918,12 @@ const fetchGovernanceCapabilities = async (
 const assertGovernanceWriteCapabilities = async (
   context: GovernancePrepareContext,
 ): Promise<GovernanceCapabilitiesV1> => {
+  await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: context.toriiUrl,
+    chainId: context.chainId,
+    networkPrefix: context.networkPrefix,
+    feature: "governanceWrites",
+  });
   const capabilities = await fetchGovernanceCapabilities(context.toriiUrl);
   if (
     context.chainId.trim() !== capabilities.chainId ||
@@ -7604,6 +7937,50 @@ const assertGovernanceWriteCapabilities = async (
     );
   }
   return capabilities;
+};
+
+const assertCurrentBondedGovernanceCitizen = async (
+  context: GovernancePrepareContext,
+  capabilities: GovernanceCapabilitiesV1,
+  expected?: BondedGovernanceCitizenSnapshot,
+): Promise<BondedGovernanceCitizenSnapshot> => {
+  const status = await fetchGovernanceCitizenStatus(
+    context.toriiUrl,
+    context.accountId,
+    capabilities.networkPrefix,
+  );
+  if (status.state !== "citizen") {
+    throw new Error(
+      "A current bonded Taira citizen is required for this governance action.",
+    );
+  }
+  if (
+    status.accountId !== context.accountId ||
+    typeof status.amount !== "string" ||
+    !/^(?:0|[1-9]\d*)$/u.test(status.amount) ||
+    typeof status.bondedHeight !== "string" ||
+    !/^[1-9]\d*$/u.test(status.bondedHeight)
+  ) {
+    throw new Error(
+      "The live Taira citizen identity, exact bond, or bonded height is malformed.",
+    );
+  }
+  const snapshot: BondedGovernanceCitizenSnapshot = Object.freeze({
+    accountId: status.accountId,
+    amount: status.amount,
+    bondedHeight: status.bondedHeight,
+  });
+  if (
+    expected &&
+    (snapshot.accountId !== expected.accountId ||
+      snapshot.amount !== expected.amount ||
+      snapshot.bondedHeight !== expected.bondedHeight)
+  ) {
+    throw new Error(
+      "The live citizen account, bond amount, or bonded height changed after the immutable electorate snapshot.",
+    );
+  }
+  return snapshot;
 };
 
 const governanceListLimit = (value: number | undefined) => {
@@ -7663,83 +8040,77 @@ const fetchGovernanceProposalDetail = async (
     typedDetailPath,
     { allowNotFound: true },
   );
-  if (typedDetail) {
-    return normalizeGovernanceProposalDetail(typedDetail, proposalId);
+  if (!typedDetail) {
+    throw new Error(
+      `Typed validation-fee proposal ${proposalId} was not found.`,
+    );
   }
-
-  const proposal = await governanceRequestJson(
-    input.toriiUrl,
-    governanceProposalPath(rawId),
-    { allowNotFound: true },
-  );
-  if (!proposal || proposal.found === false) {
-    throw new Error(`Governance proposal ${proposalId} was not found.`);
-  }
-  const [referendum, tally, locks, unlockStats] = await Promise.all([
-    governanceRequestJson(input.toriiUrl, governanceReferendumPath(rawId), {
-      allowNotFound: true,
-    }),
-    governanceRequestJson(input.toriiUrl, governanceTallyPath(rawId), {
-      allowNotFound: true,
-    }),
-    governanceRequestJson(input.toriiUrl, governanceLocksPath(rawId), {
-      allowNotFound: true,
-    }),
-    governanceRequestJson(input.toriiUrl, GOVERNANCE_UNLOCK_STATS_PATH, {
-      allowNotFound: true,
-    }),
-  ]);
-  return normalizeGovernanceProposalDetail(
-    {
-      proposal_id: proposalId,
-      referendum_id: rawId,
-      proposal,
-      referendum,
-      tally,
-      locks,
-      current_height: unlockStats?.height_current,
-    },
-    proposalId,
-  );
+  return normalizeGovernanceProposalDetail(typedDetail, proposalId);
 };
 
-const fetchGovernanceValidationFeePolicy = async (
-  toriiUrl: string,
-): Promise<GovernanceValidationFeePolicyView> => {
-  const endpoint = trimString(toriiUrl);
+const fetchGovernanceValidationFeePolicy = async (input: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+}): Promise<GovernanceValidationFeePolicyView> => {
+  const endpoint = trimString(input.toriiUrl);
   if (!endpoint) {
     throw new Error(
       "The active Taira endpoint is required for validation fees.",
     );
   }
-  let origin: string;
-  try {
-    origin = new URL(endpoint).origin;
-  } catch {
-    throw new Error("The active Taira endpoint is not a valid URL.");
-  }
-  if (origin !== "https://taira.sora.org") {
+  const chainId = trimString(input.chainId);
+  const networkPrefix = normalizeOptionalAccountNetworkPrefix(
+    input.networkPrefix,
+  );
+  if (
+    chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
+    networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX
+  ) {
     throw new Error(
-      "Validation-fee policy reads are available only for the exact Taira staging endpoint.",
+      "Validation-fee policy reads require the exact Taira governance chain identity.",
     );
   }
-  const runtimeConfig = (await ipcRenderer.invoke(
-    GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL,
-  )) as GovernanceRuntimeConfig;
-  return fetchCoreGovernanceValidationFeePolicy({
-    config: readGovernanceValidationFeeConfig(
-      JSON.stringify(runtimeConfig.validationFee),
-    ),
-    coreApiBaseUrl: readCbsiCoreApiBaseUrl(runtimeConfig.cbsiCoreApiBaseUrl),
-  });
+  const capabilities = await fetchGovernanceCapabilities(endpoint);
+  if (
+    capabilities.chainId !== chainId ||
+    capabilities.networkPrefix !== networkPrefix
+  ) {
+    throw new Error(
+      "Validation-fee policy proof does not match the active endpoint governance identity.",
+    );
+  }
+  return (await ipcRenderer.invoke(
+    GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL,
+  )) as GovernanceValidationFeePolicyView;
 };
 
-const normalizeGovernanceWireId = (value: unknown) => {
-  const wireId = trimString(value);
-  if (!wireId)
-    throw new Error("Governance draft instruction wire_id is missing.");
-  return wireId;
+const fetchGovernancePlainReferendumContract = async (
+  observedIdentity: GovernancePlainReferendumObservedIdentity,
+): Promise<LoadedGovernancePlainReferendumContract> => {
+  const loaded = (await ipcRenderer.invoke(
+    GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
+    observedIdentity,
+  )) as unknown;
+  if (
+    !isPlainRecord(loaded) ||
+    !isPlainRecord(loaded.contract) ||
+    typeof loaded.contractFingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(loaded.contractFingerprint) ||
+    typeof loaded.artifactSha256 !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(loaded.artifactSha256) ||
+    !isPlainRecord(loaded.source) ||
+    typeof loaded.source.descriptorUrl !== "string" ||
+    typeof loaded.source.artifactUrl !== "string"
+  ) {
+    throw new Error(
+      "The main process returned a malformed PLAIN referendum contract.",
+    );
+  }
+  return loaded as LoadedGovernancePlainReferendumContract;
 };
+
+const normalizeGovernanceWireId = normalizeGovernanceDraftWireId;
 
 const governanceInstructionVariant = (
   instruction: Record<string, unknown>,
@@ -7776,20 +8147,7 @@ const normalizeComparableGovernanceValue = (value: unknown): unknown => {
   if (typeof value === "string") {
     const hash = canonicalGovernanceProposalId(value);
     if (hash) return hash;
-    const literal = value.trim();
-    const enumAliases: Record<string, string> = {
-      RulesCommittee: "rules-committee",
-      AgendaCouncil: "agenda-council",
-      InterestPanel: "interest-panel",
-      ReviewPanel: "review-panel",
-      PolicyJury: "policy-jury",
-      OversightCommittee: "oversight-committee",
-      FmaCommittee: "fma-committee",
-      Approve: "approve",
-      Reject: "reject",
-      Abstain: "abstain",
-    };
-    return enumAliases[literal] ?? literal;
+    return value;
   }
   if (Array.isArray(value)) {
     return value.map(normalizeComparableGovernanceValue);
@@ -7811,37 +8169,26 @@ const governanceValuesEqual = (left: unknown, right: unknown) =>
   JSON.stringify(normalizeComparableGovernanceValue(left)) ===
   JSON.stringify(normalizeComparableGovernanceValue(right));
 
-const findGovernanceField = (
-  value: unknown,
-  keys: ReadonlySet<string>,
-): unknown => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findGovernanceField(item, keys);
-      if (found !== undefined) return found;
-    }
-    return undefined;
-  }
-  if (!isPlainRecord(value)) return undefined;
-  for (const [key, entry] of Object.entries(value)) {
-    if (keys.has(key)) return entry;
-  }
-  for (const entry of Object.values(value)) {
-    const found = findGovernanceField(entry, keys);
-    if (found !== undefined) return found;
-  }
-  return undefined;
-};
-
-const assertGovernanceField = (
+const assertGovernanceDecodedVariant = (
   decoded: Record<string, unknown>,
-  keys: string[],
-  expected: unknown,
-  label: string,
+  expectedVariant: string,
+  expectedPayload: Record<string, unknown>,
 ) => {
-  const found = findGovernanceField(decoded, new Set(keys));
-  if (found === undefined || !governanceValuesEqual(found, expected)) {
-    throw new Error(`Governance draft changed the reviewed ${label}.`);
+  const { variant, payload } = governanceInstructionVariant(decoded);
+  if (variant !== expectedVariant) {
+    throw new Error(
+      `Governance draft decoded as ${variant}; expected ${expectedVariant}.`,
+    );
+  }
+  assertGovernanceExactKeys(
+    payload,
+    Object.keys(expectedPayload),
+    `Decoded ${expectedVariant} payload`,
+  );
+  if (!governanceValuesEqual(payload, expectedPayload)) {
+    throw new Error(
+      `Decoded ${expectedVariant} payload changed the exact reviewed fields.`,
+    );
   }
 };
 
@@ -7857,18 +8204,28 @@ const decodeGovernanceDraftInstruction = (
     instructions[0],
     "Governance draft instruction",
   );
+  assertGovernanceExactKeys(
+    item,
+    ["payload_hex", "wire_id"],
+    "Governance draft instruction",
+  );
   const wireId = normalizeGovernanceWireId(item.wire_id);
-  if (wireId !== expectedVariant && !wireId.endsWith(`::${expectedVariant}`)) {
+  const reviewedWireIds: Readonly<Record<string, string>> = {
+    RegisterCitizen: "iroha_data_model::isi::governance::RegisterCitizen",
+    ProposeValidationFeePolicy: VALIDATION_FEE_POLICY_DRAFT_WIRE_ID,
+    ProposeValidationFeePayoutLifecycle:
+      VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
+    CastPlainBallot: GOVERNANCE_BALLOT_WIRE_IDS.CastPlainBallot,
+    CastParliamentBallot: GOVERNANCE_BALLOT_WIRE_IDS.CastParliamentBallot,
+    EnactReferendum: "iroha_data_model::isi::governance::EnactReferendum",
+  };
+  const expectedWireId = reviewedWireIds[expectedVariant];
+  if (!expectedWireId || wireId !== expectedWireId) {
     throw new Error(
-      `Governance draft returned ${wireId}; expected ${expectedVariant}.`,
+      `Governance draft returned ${wireId}; expected exact wire id ${expectedWireId ?? "unsupported"}.`,
     );
   }
-  const payloadHex = trimString(item.payload_hex);
-  if (!/^[0-9a-f]+$/iu.test(payloadHex) || payloadHex.length % 2 !== 0) {
-    throw new Error(
-      "Governance draft instruction is missing canonical payload_hex.",
-    );
-  }
+  const payloadHex = normalizeGovernanceDraftPayloadHex(item.payload_hex);
   const decoded = noritoDecodeInstruction(Buffer.from(payloadHex, "hex"));
   if (!isPlainRecord(decoded)) {
     throw new Error(
@@ -7927,35 +8284,23 @@ const governanceFeeView = (
   nextBlockHeight: String(quote.observation.next_block_height),
 });
 
-const authorizePublicGovernanceEnact = async (
-  proposalKind: unknown,
-): Promise<PublicGovernanceEnactKind> => {
-  authorizePublicGovernanceEnactRequest({ proposalKind });
-  const authorized = await ipcRenderer.invoke(
-    GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
-    { proposalKind },
-  );
-  if (authorized !== true) {
-    throw new Error(
-      "The main process refused public governance enact authorization.",
-    );
-  }
-  return proposalKind as PublicGovernanceEnactKind;
-};
-
 const prepareGovernanceDecodedAction = async (input: {
   context: GovernancePrepareContext;
   operation: GovernanceWriteOperation;
   title: string;
   proposalId?: string | null;
   referendumId?: string | null;
-  publicEnactKind?: PublicGovernanceEnactKind | null;
+  plainReferendumBallot?: PreparedPlainReferendumBallot | null;
   draft: Record<string, unknown>;
   expectedVariant: string;
   validate: (decoded: Record<string, unknown>) => void;
 }): Promise<GovernancePreparedActionView> => {
   const chainId = normalizeNonEmptyString(input.context.chainId, "chainId");
-  await assertGovernanceWriteCapabilities(input.context);
+  const governanceCapabilities = await assertGovernanceWriteCapabilities(
+    input.context,
+  );
+  const governanceCapabilitiesFingerprint =
+    governanceCapabilitiesContractFingerprintV1(governanceCapabilities);
   const writeConnection = await assertWriteConnectionMatchesEndpoint({
     toriiUrl: input.context.toriiUrl,
     chainId,
@@ -8010,9 +8355,11 @@ const prepareGovernanceDecodedAction = async (input: {
     view,
     toriiUrl: input.context.toriiUrl,
     chainId,
+    networkPrefix: writeConnection.networkPrefix,
     accountId,
     signingAlgorithm: signingMaterial.signingAlgorithm,
-    publicEnactKind: input.publicEnactKind ?? null,
+    governanceCapabilitiesFingerprint,
+    plainReferendumBallot: input.plainReferendumBallot ?? null,
     payload,
     quote,
   });
@@ -8060,20 +8407,7 @@ const prepareGovernanceCitizenRegistrationAction = async (
   if (!draft) {
     throw new Error("Governance citizenship endpoint returned no draft.");
   }
-  assertGovernanceExactKeys(
-    draft,
-    ["amount", "owner", "tx_instructions", "version"],
-    "Governance citizenship draft",
-  );
-  if (
-    draft.version !== 1 ||
-    draft.owner !== owner ||
-    String(draft.amount) !== amount
-  ) {
-    throw new Error(
-      "Governance citizenship draft differs from the reviewed owner or bond.",
-    );
-  }
+  assertGovernanceCitizenDraftResponse(draft, { owner, amount });
   return prepareGovernanceDecodedAction({
     context: input,
     operation: "register-citizen",
@@ -8081,8 +8415,10 @@ const prepareGovernanceCitizenRegistrationAction = async (
     draft,
     expectedVariant: "RegisterCitizen",
     validate(decoded) {
-      assertGovernanceField(decoded, ["owner"], owner, "citizen owner");
-      assertGovernanceField(decoded, ["amount"], amount, "citizenship bond");
+      assertGovernanceDecodedVariant(decoded, "RegisterCitizen", {
+        owner,
+        amount,
+      });
     },
   });
 };
@@ -8090,27 +8426,71 @@ const prepareGovernanceCitizenRegistrationAction = async (
 const prepareGovernanceProposalAction = async (
   input: GovernanceProposalPrepareInput,
 ) => {
-  await assertGovernanceWriteCapabilities(input);
+  const capabilities = await assertGovernanceWriteCapabilities(input);
+  await assertCurrentBondedGovernanceCitizen(input, capabilities);
   if (!isPlainRecord(input.payload)) {
     throw new Error("Governance proposal payload must be an object.");
   }
   const endpoint = governanceProposalEndpoint(input.kind);
   const validationFeeRequest: ValidationFeePolicyDraftRequest | null =
     input.kind === "ValidationFeePolicy"
-      ? buildValidationFeePolicyDraftRequest(input.payload)
+      ? buildValidationFeePolicyDraftRequest(
+          input.payload,
+          capabilities.validationFeePlainElectorateRules,
+        )
       : null;
   const validationFeePayoutLifecycleRequest: ValidationFeePayoutLifecycleDraftRequest | null =
     input.kind === "ValidationFeePayoutLifecycle"
-      ? buildValidationFeePayoutLifecycleDraftRequest(input.payload)
+      ? buildValidationFeePayoutLifecycleDraftRequest(
+          input.payload,
+          capabilities.validationFeePlainElectorateRules,
+        )
       : null;
+  if (validationFeeRequest) {
+    assertValidationFeeDraftWindowAgainstCapabilities(
+      validationFeeRequest.referendum_window,
+      capabilities,
+    );
+  }
+  if (validationFeePayoutLifecycleRequest) {
+    assertValidationFeeDraftWindowAgainstCapabilities(
+      validationFeePayoutLifecycleRequest.referendum_window,
+      capabilities,
+    );
+  }
+  if (
+    computeValidationFeePolicyProposalFingerprintV1.length !== 3 ||
+    computeValidationFeePayoutLifecycleProposalFingerprintV1.length !== 2
+  ) {
+    throw new Error(
+      "The Iroha SDK does not expose the exact rules-bound validation-fee proposal fingerprint API.",
+    );
+  }
   const expectedValidationFeeProposalId = validationFeeRequest
-    ? computeValidationFeePolicyProposalFingerprintV1(
-        validationFeeRequest.proposal.payload.policy as Parameters<
-          typeof computeValidationFeePolicyProposalFingerprintV1
-        >[0],
+    ? (
+        computeValidationFeePolicyProposalFingerprintV1 as unknown as (
+          policy: Record<string, unknown>,
+          payoutLifecycleProposalId: string | null,
+          plainElectorateRules: Record<string, unknown>,
+        ) => string
+      )(
+        validationFeeRequest.proposal.payload.policy,
         validationFeeRequest.proposal.payload.payout_lifecycle_proposal_id,
+        validationFeeRequest.plain_electorate_rules,
       )
     : null;
+  const expectedValidationFeePayoutLifecycleProposalId =
+    validationFeePayoutLifecycleRequest
+      ? (
+          computeValidationFeePayoutLifecycleProposalFingerprintV1 as unknown as (
+            payoutBinding: Record<string, unknown>,
+            plainElectorateRules: Record<string, unknown>,
+          ) => string
+        )(
+          validationFeePayoutLifecycleRequest.proposal.payload.payout_binding,
+          validationFeePayoutLifecycleRequest.plain_electorate_rules,
+        )
+      : null;
   const requestPayload =
     validationFeeRequest ?? validationFeePayoutLifecycleRequest;
   if (!requestPayload) {
@@ -8134,6 +8514,7 @@ const prepareGovernanceProposalAction = async (
     assertValidationFeePayoutLifecycleDraftResponse(
       draft,
       validationFeePayoutLifecycleRequest,
+      expectedValidationFeePayoutLifecycleProposalId as string,
     );
   }
   return prepareGovernanceDecodedAction({
@@ -8175,19 +8556,64 @@ const assertWritableGovernanceProposalKind = (
 const prepareGovernancePlainBallotAction = async (
   input: GovernancePlainBallotPrepareInput,
 ) => {
-  await assertGovernanceWriteCapabilities(input);
-  const accountId = normalizeCompatAccountIdLiteral(
+  const capabilities = await assertGovernanceWriteCapabilities(input);
+  const accountId = normalizeCanonicalAccountIdLiteral(
     input.accountId,
     "accountId",
+    capabilities.networkPrefix,
+  );
+  const plainReferendum = await fetchGovernancePlainReferendumContract({
+    chainId: TAIRA_GOVERNANCE_CHAIN_ID,
+    networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
+    genesisHash: capabilities.genesisHash,
+  });
+  const reviewedCitizen = plainReferendum.contract.eligibleCitizens.find(
+    (citizen) => citizen.accountId === accountId,
+  );
+  if (!reviewedCitizen) {
+    throw new Error(
+      "The active account is outside the immutable eligible-citizen snapshot.",
+    );
+  }
+  const citizenSnapshot: BondedGovernanceCitizenSnapshot = Object.freeze({
+    accountId: reviewedCitizen.accountId,
+    amount: reviewedCitizen.amount,
+    bondedHeight: reviewedCitizen.bondedHeight,
+  });
+  await assertCurrentBondedGovernanceCitizen(
+    {
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      accountId,
+      networkPrefix: input.networkPrefix,
+    },
+    capabilities,
+    citizenSnapshot,
   );
   const referendumId = normalizeNonEmptyString(
     input.referendumId,
     "referendumId",
   );
-  const durationBlocks = normalizeIntegerAmount(
+  const durationBlocks = normalizeGovernancePositiveInteger(
     input.durationBlocks,
     "durationBlocks",
+    GOVERNANCE_U64_MAX,
   );
+  const amount = normalizeGovernancePositiveInteger(
+    input.amount,
+    "amount",
+    GOVERNANCE_U128_MAX,
+  );
+  if (compareDecimalStrings(amount, capabilities.minBondAmount) < 0) {
+    throw new Error(
+      "Citizen ballot amount is below the Taira governance minimum bond.",
+    );
+  }
+  if (BigInt(durationBlocks) < BigInt(capabilities.convictionStepBlocks)) {
+    throw new Error(
+      "Citizen ballot lock duration is below the Taira conviction minimum.",
+    );
+  }
   const proposalId = canonicalGovernanceProposalId(input.proposalId);
   if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
   const proposal = await fetchGovernanceProposalDetail({
@@ -8195,7 +8621,11 @@ const prepareGovernancePlainBallotAction = async (
     proposalId,
     accountId,
   });
-  assertWritableGovernanceProposalKind(proposal);
+  if (proposal.kind.type !== "ValidationFeePolicy") {
+    throw new Error(
+      "The immutable public electorate is only valid for its validation-fee policy proposal.",
+    );
+  }
   assertPlainGovernanceProposalWrite(proposal);
   if (
     !proposal.referendum ||
@@ -8204,55 +8634,69 @@ const prepareGovernancePlainBallotAction = async (
   ) {
     throw new Error("The reviewed PLAIN referendum is not open.");
   }
+  assertGovernancePlainReferendumBallotBinding(plainReferendum, {
+    chainId: normalizeNonEmptyString(input.chainId, "chainId"),
+    proposalId,
+    referendumId,
+    accountId,
+    hStart: proposal.referendum.hStart,
+    hEnd: proposal.referendum.hEnd,
+    mode: proposal.referendum.mode,
+    amount,
+    durationBlocks,
+    direction: input.direction,
+    hasExistingLock: proposal.locks.some((lock) => lock.owner === accountId),
+  });
   if (!plainBallotLockCoversReferendum(proposal, durationBlocks)) {
     throw new Error(
       "Citizen ballot lock duration must cover the referendum end height.",
     );
   }
+  const draftRoute = validationFeePlainBallotDraftPath(proposalId.slice(2));
+  if (plainReferendum.contract.ballot.draftRoute !== draftRoute) {
+    throw new Error(
+      "The hash-bound validation-fee ballot route differs from the selected proposal.",
+    );
+  }
   const body = {
-    authority: accountId,
-    chain_id: normalizeNonEmptyString(input.chainId, "chainId"),
-    referendum_id: referendumId,
+    version: plainReferendum.contract.ballot.requestVersion,
     owner: accountId,
-    amount: normalizeIntegerAmount(input.amount, "amount"),
-    duration_blocks: durationBlocks,
-    direction: input.direction,
+    direction: input.direction.toUpperCase(),
   };
-  const draft = await governanceRequestJson(
-    input.toriiUrl,
-    "/v1/gov/ballots/plain",
-    { method: "POST", body },
-  );
+  const draft = await governanceRequestJson(input.toriiUrl, draftRoute, {
+    method: "POST",
+    body,
+  });
   if (!draft) throw new Error("Governance ballot endpoint returned no draft.");
+  assertGovernancePlainReferendumBallotDraft(draft, plainReferendum, {
+    owner: accountId,
+    direction: input.direction,
+  });
   return prepareGovernanceDecodedAction({
     context: input,
     operation: "plain-ballot",
     title: "Submit citizen ballot",
     proposalId,
     referendumId,
+    plainReferendumBallot: {
+      contractFingerprint: plainReferendum.contractFingerprint,
+      artifactSha256: plainReferendum.artifactSha256,
+      referendumId,
+      amount,
+      durationBlocks,
+      direction: input.direction,
+      citizenSnapshot,
+    },
     draft,
     expectedVariant: "CastPlainBallot",
     validate(decoded) {
-      assertGovernanceField(
-        decoded,
-        ["referendum_id"],
-        referendumId,
-        "referendum",
-      );
-      assertGovernanceField(decoded, ["owner"], accountId, "ballot owner");
-      assertGovernanceField(decoded, ["amount"], body.amount, "ballot amount");
-      assertGovernanceField(
-        decoded,
-        ["duration_blocks"],
-        durationBlocks,
-        "lock duration",
-      );
-      assertGovernanceField(
-        decoded,
-        ["direction"],
-        String(normalizeBallotDirectionCode(input.direction)),
-        "ballot direction",
-      );
+      assertGovernanceDecodedVariant(decoded, "CastPlainBallot", {
+        referendum_id: referendumId,
+        owner: accountId,
+        amount,
+        duration_blocks: durationBlocks,
+        direction: String(normalizeBallotDirectionCode(input.direction)),
+      });
     },
   });
 };
@@ -8260,10 +8704,11 @@ const prepareGovernancePlainBallotAction = async (
 const prepareGovernanceParliamentBallotAction = async (
   input: GovernanceParliamentBallotPrepareInput,
 ) => {
-  await assertGovernanceWriteCapabilities(input);
+  const capabilities = await assertGovernanceWriteCapabilities(input);
   const accountId = normalizeCompatAccountIdLiteral(
     input.accountId,
     "accountId",
+    capabilities.networkPrefix,
   );
   const proposalId = canonicalGovernanceProposalId(input.proposalId);
   if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
@@ -8308,6 +8753,7 @@ const prepareGovernanceParliamentBallotAction = async (
   if (!draft) {
     throw new Error("Parliament ballot endpoint returned no draft.");
   }
+  assertGovernanceBallotDraftResponse(draft, "CastParliamentBallot");
   return prepareGovernanceDecodedAction({
     context: input,
     operation: "parliament-ballot",
@@ -8316,14 +8762,11 @@ const prepareGovernanceParliamentBallotAction = async (
     draft,
     expectedVariant: "CastParliamentBallot",
     validate(decoded) {
-      assertGovernanceField(decoded, ["proposal_id"], proposalId, "proposal");
-      assertGovernanceField(decoded, ["body"], bodyName, "Parliament body");
-      assertGovernanceField(
-        decoded,
-        ["decision"],
-        input.decision,
-        "Parliament decision",
-      );
+      assertGovernanceDecodedVariant(decoded, "CastParliamentBallot", {
+        proposal_id: proposalId,
+        body: bodyName,
+        decision: input.decision,
+      });
     },
   });
 };
@@ -8332,96 +8775,15 @@ const prepareGovernanceEnactAction = async (
   input: GovernanceEnactPrepareInput,
 ) => {
   await assertGovernanceWriteCapabilities(input);
-  const proposalId = canonicalGovernanceProposalId(input.proposalId);
-  if (!proposalId) throw new Error("proposalId must be 32-byte hex.");
-  const proposal = await fetchGovernanceProposalDetail({
-    toriiUrl: input.toriiUrl,
-    proposalId,
-    accountId: input.accountId,
-  });
-  assertWritableGovernanceProposalKind(proposal);
-  assertPlainGovernanceProposalWrite(proposal);
-  const publicEnactKind = await authorizePublicGovernanceEnact(
-    proposal.kind.type,
+  throw new Error(
+    "Validation-fee finalization and enactment are operator-only typed workflows; the public wallet does not expose a generic enact action.",
   );
-  if (
-    proposal.summary.status !== "Approved" ||
-    proposal.referendum?.status !== "Closed" ||
-    proposal.finalizationEvidence?.approved !== true
-  ) {
-    throw new Error(
-      "The proposal has no approved finalized PLAIN referendum evidence.",
-    );
-  }
-  const rawProposalId = proposalId.slice(2);
-  const draft = await governanceRequestJson(input.toriiUrl, "/v1/gov/enact", {
-    method: "POST",
-    body: { proposal_id: rawProposalId },
-  });
-  if (!draft) throw new Error("Governance enact endpoint returned no draft.");
-  assertGovernanceExactKeys(
-    draft,
-    [
-      "ok",
-      "proposal_id",
-      "proposal_kind",
-      "referendum_window",
-      "tx_instructions",
-    ],
-    "Governance enact draft",
-  );
-  if (
-    draft.ok !== true ||
-    draft.proposal_id !== rawProposalId ||
-    !governanceValuesEqual(draft.proposal_kind, proposal.kind.raw) ||
-    !governanceValuesEqual(draft.referendum_window, {
-      lower: proposal.referendum.hStart,
-      upper: proposal.referendum.hEnd,
-    })
-  ) {
-    throw new Error(
-      "Governance enact draft differs from the exact stored proposal or window.",
-    );
-  }
-  return prepareGovernanceDecodedAction({
-    context: input,
-    operation: "enact",
-    title: "Enact approved proposal",
-    proposalId,
-    referendumId: rawProposalId,
-    publicEnactKind,
-    draft,
-    expectedVariant: "EnactReferendum",
-    validate(decoded) {
-      assertGovernanceField(
-        decoded,
-        ["referendum_id"],
-        rawProposalId,
-        "referendum fingerprint",
-      );
-      assertGovernanceField(
-        decoded,
-        ["preimage_hash"],
-        rawProposalId,
-        "proposal preimage hash",
-      );
-      assertGovernanceField(
-        decoded,
-        ["at_window"],
-        {
-          lower: proposal.referendum?.hStart,
-          upper: proposal.referendum?.hEnd,
-        },
-        "referendum window",
-      );
-    },
-  });
 };
 
 const confirmPreparedGovernanceAction = async (input: {
   reviewId: string;
   accountId: string;
-}): Promise<GovernanceCommittedActionView> => {
+}): Promise<GovernanceFinalizedActionView> => {
   prunePreparedGovernanceActions();
   const reviewId = normalizeNonEmptyString(input.reviewId, "reviewId");
   const prepared = preparedGovernanceActions.get(reviewId);
@@ -8430,22 +8792,104 @@ const confirmPreparedGovernanceAction = async (input: {
       "Governance review expired or is no longer available. Prepare it again.",
     );
   }
-  if (prepared.view.operation === "enact") {
-    if (!prepared.publicEnactKind) {
-      preparedGovernanceActions.delete(reviewId);
-      throw new Error(
-        "Governance enact review is missing public enact authorization.",
-      );
-    }
-    await authorizePublicGovernanceEnact(prepared.publicEnactKind);
+  const governanceCapabilities = await assertGovernanceWriteCapabilities({
+    toriiUrl: prepared.toriiUrl,
+    chainId: prepared.chainId,
+    networkPrefix: prepared.networkPrefix,
+    accountId: prepared.accountId,
+  });
+  const governanceCapabilitiesFingerprint =
+    governanceCapabilitiesContractFingerprintV1(governanceCapabilities);
+  if (
+    governanceCapabilitiesFingerprint !==
+    prepared.governanceCapabilitiesFingerprint
+  ) {
+    preparedGovernanceActions.delete(reviewId);
+    throw new Error(
+      "Governance capabilities changed after review. Prepare the action again.",
+    );
   }
-  const accountId = normalizeCompatAccountIdLiteral(
-    input.accountId,
-    "accountId",
-  );
+  const accountId =
+    prepared.view.operation === "plain-ballot"
+      ? normalizeCanonicalAccountIdLiteral(
+          input.accountId,
+          "accountId",
+          governanceCapabilities.networkPrefix,
+        )
+      : normalizeCompatAccountIdLiteral(
+          input.accountId,
+          "accountId",
+          governanceCapabilities.networkPrefix,
+        );
   if (accountId !== prepared.accountId) {
     preparedGovernanceActions.delete(reviewId);
     throw new Error("Active account changed after governance review.");
+  }
+  if (prepared.view.operation === "plain-ballot") {
+    try {
+      const ballot = prepared.plainReferendumBallot;
+      if (!ballot || !prepared.view.proposalId) {
+        throw new Error(
+          "Governance ballot review is missing its immutable electorate binding.",
+        );
+      }
+      const plainReferendum = await fetchGovernancePlainReferendumContract({
+        chainId: TAIRA_GOVERNANCE_CHAIN_ID,
+        networkPrefix: TAIRA_GOVERNANCE_NETWORK_PREFIX,
+        genesisHash: governanceCapabilities.genesisHash,
+      });
+      if (
+        plainReferendum.contractFingerprint !== ballot.contractFingerprint ||
+        plainReferendum.artifactSha256 !== ballot.artifactSha256
+      ) {
+        throw new Error(
+          "The immutable PLAIN referendum contract changed after review.",
+        );
+      }
+      await assertCurrentBondedGovernanceCitizen(
+        {
+          toriiUrl: prepared.toriiUrl,
+          chainId: prepared.chainId,
+          accountId,
+          networkPrefix: prepared.networkPrefix,
+        },
+        governanceCapabilities,
+        ballot.citizenSnapshot,
+      );
+      const proposal = await fetchGovernanceProposalDetail({
+        toriiUrl: prepared.toriiUrl,
+        proposalId: prepared.view.proposalId,
+        accountId,
+      });
+      if (
+        proposal.kind.type !== "ValidationFeePolicy" ||
+        !proposal.referendum ||
+        proposal.referendum.id !== ballot.referendumId ||
+        !isReferendumPlainVoteOpen(proposal)
+      ) {
+        throw new Error(
+          "The reviewed validation-fee PLAIN referendum is no longer open.",
+        );
+      }
+      assertGovernancePlainReferendumBallotBinding(plainReferendum, {
+        chainId: prepared.chainId,
+        proposalId: prepared.view.proposalId,
+        referendumId: ballot.referendumId,
+        accountId,
+        hStart: proposal.referendum.hStart,
+        hEnd: proposal.referendum.hEnd,
+        mode: proposal.referendum.mode,
+        amount: ballot.amount,
+        durationBlocks: ballot.durationBlocks,
+        direction: ballot.direction,
+        hasExistingLock: proposal.locks.some(
+          (lock) => lock.owner === accountId,
+        ),
+      });
+    } catch (error) {
+      preparedGovernanceActions.delete(reviewId);
+      throw error;
+    }
   }
   const signingMaterial = await resolveSigningMaterial({
     accountId,
@@ -8464,7 +8908,7 @@ const confirmPreparedGovernanceAction = async (input: {
     privateKey: hexToBuffer(signingMaterial.privateKeyHex, "privateKeyHex"),
     privateKeyAlgorithm: signingMaterial.signingAlgorithm,
   });
-  const submission = await submitSignedTransactionAndWaitForCommit(
+  const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
     prepared.toriiUrl,
     signed.signedTransaction,
   );
@@ -8473,7 +8917,7 @@ const confirmPreparedGovernanceAction = async (input: {
     operation: prepared.view.operation,
     proposalId: prepared.view.proposalId,
     referendumId: prepared.view.referendumId,
-    status: "committed",
+    status: "finalized",
   };
 };
 
@@ -8554,9 +8998,8 @@ const buildPrivateKaigiFeeSpendDto = (input: {
 });
 
 const buildFundedPrivateKaigiEntrypoint = async (input: {
-  toriiUrl: string;
   chainId: string;
-  accountId: string;
+  context: PrivateKaigiConfidentialXorFeeContext;
   action: "create" | "join" | "end";
   proofByteLength: number;
   buildEntrypoint: (options: {
@@ -8569,13 +9012,7 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
     actionHash: Buffer;
   };
 }) => {
-  const context = await resolvePrivateKaigiConfidentialXorContext(
-    {
-      toriiUrl: input.toriiUrl,
-      accountId: input.accountId,
-    },
-    { includeFeeMaterials: true },
-  );
+  const context = input.context;
   if (!confidentialModeSupportsShield(context.state.policyMode)) {
     throw new Error(
       `Private Kaigi requires confidential XOR shielding support, but the effective mode is ${context.state.policyMode}.`,
@@ -8609,21 +9046,13 @@ const buildFundedPrivateKaigiEntrypoint = async (input: {
   let feeAmount = "0";
   let finalEntrypoint = provisional;
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const verifyingKeyContext = readInlineVerifyingKeyRecord(
-      context.verifyingKey,
-    );
-    const feeSpendVerifyingKey = {
-      id: context.verifyingKey.id,
-      record: verifyingKeyContext.record,
-      inline_key: verifyingKeyContext.inlineKey,
-    };
     const envelope = buildPrivateKaigiFeeSpend({
       chainId: input.chainId.trim(),
       assetDefinitionId: context.state.resolvedAssetId,
       actionHash: provisional.actionHash,
       anchorRootHex: context.latestRootHex,
       feeAmount,
-      verifyingKey: feeSpendVerifyingKey,
+      verifyingKey: context.verifyingKey.proofVerifyingKey,
     });
     finalEntrypoint = input.buildEntrypoint({
       feeSpend: buildPrivateKaigiFeeSpendDto(envelope),
@@ -8719,6 +9148,74 @@ const readShieldedRecipientDescriptor = (
   };
 };
 
+const assertIrohaConnectWalletContext = async (
+  context: IrohaConnectWalletContext,
+): Promise<IrohaConnectWalletContext> => {
+  const writeConnection = await assertWriteConnectionMatchesEndpoint({
+    toriiUrl: context.toriiUrl,
+    chainId: context.chainId,
+    networkPrefix: context.networkPrefix,
+    feature: "irohaConnectSessions",
+  });
+  return {
+    toriiUrl: normalizeBaseUrl(context.toriiUrl),
+    chainId: writeConnection.chainId,
+    networkPrefix: writeConnection.networkPrefix,
+    accountId: normalizeCompatAccountIdLiteral(
+      context.accountId,
+      "accountId",
+      writeConnection.networkPrefix,
+    ),
+  };
+};
+
+const signExactIrohaConnectMessage = async (
+  context: IrohaConnectWalletContext,
+  message: Uint8Array,
+) => {
+  const verifiedContext = await assertIrohaConnectWalletContext(context);
+  if (message.length === 0) {
+    throw new Error("IrohaConnect signing message is empty.");
+  }
+  const signingMaterial = await resolveSigningMaterial({
+    accountId: verifiedContext.accountId,
+    operationLabel: "IrohaConnect signing",
+  });
+  const privateKey = hexToBuffer(
+    signingMaterial.privateKeyHex,
+    "privateKeyHex",
+  );
+  const algorithmCode = getConnectSigningAlgorithmCode(
+    signingMaterial.signingAlgorithm,
+  );
+  if (algorithmCode !== 0) {
+    throw new Error(
+      "IrohaConnect current v1 wallet signatures require Ed25519.",
+    );
+  }
+  const signature = Buffer.from(
+    sign(Buffer.from(message), privateKey, {
+      algorithm: signingMaterial.signingAlgorithm,
+    }),
+  );
+  return {
+    algorithmCode,
+    algorithmLabel: signingAlgorithmLabel(signingMaterial.signingAlgorithm),
+    signatureHex: toHex(signature),
+    signatureBase64: signature.toString("base64"),
+  };
+};
+
+const irohaConnectBoundary = new IrohaConnectBoundary({
+  assertContext: assertIrohaConnectWalletContext,
+  authorize: async (confirmation) =>
+    (await ipcRenderer.invoke(
+      IROHA_CONNECT_CONFIRMATION_CHANNEL,
+      confirmation,
+    )) === true,
+  sign: signExactIrohaConnectMessage,
+});
+
 const api: IrohaBridge = {
   getRuntimeConfig() {
     return getRuntimeConfigSnapshot();
@@ -8729,6 +9226,9 @@ const api: IrohaBridge = {
   },
   async getChainMetadata(config) {
     return fetchChainMetadata(config.toriiUrl);
+  },
+  async inspectEndpoint(config) {
+    return inspectEndpointIdentity(config);
   },
   async getSigningAlgorithms(config) {
     return resolveSigningAlgorithmOptions(config);
@@ -8831,6 +9331,7 @@ const api: IrohaBridge = {
   async exportConfidentialWalletBackup({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
     mnemonic,
   }) {
@@ -8843,12 +9344,18 @@ const api: IrohaBridge = {
     if (!normalizedChainId) {
       throw new Error("chainId is required.");
     }
+    const endpointScope = await inspectEndpointDerivedScope({
+      toriiUrl,
+      chainId: normalizedChainId,
+      networkPrefix,
+    });
     const receiveKeys =
       await listConfidentialReceiveKeysForAccount(normalizedAccountId);
     const shadowState = readConfidentialWalletShadowState(
-      getConfidentialWalletShadowKey({
+      getConfidentialWalletShadowKeys({
         toriiUrl,
         accountId: normalizedAccountId,
+        endpointScope,
       }),
     );
     const accountTransactions = await listAllAccountTransactions({
@@ -8891,6 +9398,8 @@ const api: IrohaBridge = {
   },
   async importConfidentialWalletBackup({
     toriiUrl,
+    chainId,
+    networkPrefix,
     accountId,
     mnemonic,
     confidentialWallet,
@@ -8915,6 +9424,20 @@ const api: IrohaBridge = {
         "Confidential wallet backup does not match the restored account.",
       );
     }
+    const normalizedChainId = trimString(chainId);
+    if (!normalizedChainId) {
+      throw new Error("chainId is required.");
+    }
+    if (confidentialWallet.chainId !== normalizedChainId) {
+      throw new Error(
+        "Confidential wallet backup does not match the active chain.",
+      );
+    }
+    const endpointScope = await inspectEndpointDerivedScope({
+      toriiUrl,
+      chainId: normalizedChainId,
+      networkPrefix,
+    });
     const decryptedState = decryptConfidentialWalletBackupState(
       confidentialWallet.stateBox,
       mnemonic,
@@ -8925,12 +9448,13 @@ const api: IrohaBridge = {
         accountId: normalizedAccountId,
       });
     }
-    const shadowKey = getConfidentialWalletShadowKey({
+    const shadowKeys = getConfidentialWalletShadowKeys({
       toriiUrl,
       accountId: normalizedAccountId,
+      endpointScope,
     });
-    const existingShadowState = readConfidentialWalletShadowState(shadowKey);
-    writeConfidentialWalletShadowState(shadowKey, {
+    const existingShadowState = readConfidentialWalletShadowState(shadowKeys);
+    writeConfidentialWalletShadowState(shadowKeys, {
       transactions: [
         ...existingShadowState.transactions,
         ...decryptedState.shadowTransactions,
@@ -8938,6 +9462,12 @@ const api: IrohaBridge = {
     });
   },
   async registerAccount(input) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+      feature: "accountRegistration",
+    });
     const domainId = input.domainId.trim();
     if (!domainId) {
       throw new Error("domainId is required.");
@@ -8945,6 +9475,7 @@ const api: IrohaBridge = {
     const authorityAccountId = normalizeCompatAccountIdLiteral(
       input.authorityAccountId,
       "authorityAccountId",
+      writeConnection.networkPrefix,
     );
     const authoritySigningMaterial = await resolveSigningMaterial({
       accountId: authorityAccountId,
@@ -8954,13 +9485,15 @@ const api: IrohaBridge = {
     });
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl: input.toriiUrl,
-      chainId: input.chainId,
+      chainId: writeConnection.chainId,
+      networkPrefix: writeConnection.networkPrefix,
       authority: authorityAccountId,
       instructions: [
         buildRegisterAccountInstruction({
           accountId: normalizeCompatAccountIdLiteral(
             input.accountId,
             "accountId",
+            writeConnection.networkPrefix,
           ),
           metadata: input.metadata ?? {},
         }),
@@ -8972,7 +9505,7 @@ const api: IrohaBridge = {
       ),
       privateKeyAlgorithm: authoritySigningMaterial.signingAlgorithm,
     });
-    const submission = await submitSignedTransactionAndWaitForCommit(
+    const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       input.toriiUrl,
       tx.signedTransaction,
     );
@@ -8983,7 +9516,14 @@ const api: IrohaBridge = {
       toriiUrl: input.toriiUrl,
       chainId: input.chainId,
       networkPrefix: input.networkPrefix,
+      feature:
+        input.shielded || input.unshield
+          ? "confidentialTransfers"
+          : "assetTransfers",
     });
+    const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+      input.assetDefinitionId,
+    );
     const chainId = writeConnection.chainId;
     const networkPrefix = writeConnection.networkPrefix;
     const accountId = normalizeCompatAccountIdLiteral(
@@ -9023,7 +9563,7 @@ const api: IrohaBridge = {
         await fetchConfidentialAssetPolicyForAccount({
           toriiUrl: input.toriiUrl,
           accountId,
-          assetDefinitionId: input.assetDefinitionId,
+          assetDefinitionId,
         });
       const effectiveMode = policy.effective_mode || policy.current_mode;
       const resolvedAssetId = resolvedAssetDefinitionId;
@@ -9049,9 +9589,11 @@ const api: IrohaBridge = {
       const materials = await resolveConfidentialUnshieldMaterials({
         toriiUrl: input.toriiUrl,
         chainId,
+        networkPrefix,
         accountId,
         privateKeyHex,
         assetDefinitionId: resolvedAssetId,
+        endpointScope: writeConnection.endpointScope,
       });
       if (
         BigInt(materials.ledger.spendableQuantity) < BigInt(normalizedAmount)
@@ -9075,6 +9617,8 @@ const api: IrohaBridge = {
         const consolidation = await submitConfidentialSelfConsolidation({
           toriiUrl: input.toriiUrl,
           chainId,
+          networkPrefix,
+          endpointScope: writeConnection.endpointScope,
           accountId,
           privateKeyHex,
           assetDefinitionId: refreshedMaterials.resolvedAssetId,
@@ -9227,6 +9771,7 @@ const api: IrohaBridge = {
       const tx = await quoteAndSignInstructionTransaction({
         toriiUrl: input.toriiUrl,
         chainId,
+        networkPrefix,
         authority: accountId,
         instructions: [
           buildUnshieldInstruction({
@@ -9250,13 +9795,14 @@ const api: IrohaBridge = {
         privateKey,
         privateKeyAlgorithm: signingMaterial.signingAlgorithm,
       });
-      const submission = await submitSignedTransactionAndWaitForCommit(
+      const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
         input.toriiUrl,
         tx.signedTransaction,
       );
       upsertConfidentialWalletShadowTransaction({
         toriiUrl: input.toriiUrl,
         accountId,
+        endpointScope: writeConnection.endpointScope,
         txHash: submission.hash,
         authority: accountId,
         metadata: isPlainRecord(metadata) ? metadata : {},
@@ -9302,7 +9848,7 @@ const api: IrohaBridge = {
         await fetchConfidentialAssetPolicyForAccount({
           toriiUrl: input.toriiUrl,
           accountId,
-          assetDefinitionId: input.assetDefinitionId,
+          assetDefinitionId,
         });
       const effectiveMode = policy.effective_mode || policy.current_mode;
       const resolvedAssetId = resolvedAssetDefinitionId;
@@ -9360,6 +9906,7 @@ const api: IrohaBridge = {
         const tx = await quoteAndSignInstructionTransaction({
           toriiUrl: input.toriiUrl,
           chainId,
+          networkPrefix,
           authority: accountId,
           instructions: [
             buildShieldInstruction({
@@ -9389,17 +9936,19 @@ const api: IrohaBridge = {
           input.toriiUrl,
           tx.signedTransaction,
         );
-        const fee = await waitForTransactionCommit(
+        const finalized = await waitForTransactionFinalizedInBlock(
           input.toriiUrl,
           submission.hash,
         );
-        const committedSubmission = {
+        const finalizedSubmission = {
           ...submission,
-          ...(fee ? { fee } : {}),
+          ...(finalized.fee ? { fee: finalized.fee } : {}),
+          finality: finalized.finality,
         };
         upsertConfidentialWalletShadowTransaction({
           toriiUrl: input.toriiUrl,
           accountId,
+          endpointScope: writeConnection.endpointScope,
           txHash: submission.hash,
           authority: accountId,
           metadata,
@@ -9417,29 +9966,24 @@ const api: IrohaBridge = {
           ],
           createdAtMs: note.created_at_ms,
         });
-        if (
-          resolvedAssetId.trim().toLowerCase() ===
-            PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID ||
-          extractAssetDefinitionId(input.assetDefinitionId)
-            .trim()
-            .toLowerCase() === PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID
-        ) {
-          appendPrivateKaigiShieldCredit({
-            toriiUrl: input.toriiUrl,
-            accountId,
-            amount: normalizedAmount,
-            assetDefinitionId: resolvedAssetId,
-          });
-        }
-        return transactionSubmissionResult(committedSubmission);
+        appendPrivateKaigiShieldCredit({
+          toriiUrl: input.toriiUrl,
+          accountId,
+          amount: normalizedAmount,
+          assetDefinitionId: resolvedAssetId,
+          endpointScope: writeConnection.endpointScope,
+        });
+        return transactionSubmissionResult(finalizedSubmission);
       }
 
       let materials = await resolveConfidentialTransferMaterials({
         toriiUrl: input.toriiUrl,
         chainId,
+        networkPrefix,
         accountId,
         privateKeyHex,
         assetDefinitionId: resolvedAssetId,
+        endpointScope: writeConnection.endpointScope,
       });
       const recipientDescriptor = readShieldedRecipientDescriptor(input);
       if (!recipientDescriptor) {
@@ -9570,9 +10114,11 @@ const api: IrohaBridge = {
           materials = await resolveConfidentialTransferMaterials({
             toriiUrl: input.toriiUrl,
             chainId,
+            networkPrefix,
             accountId,
             privateKeyHex,
             assetDefinitionId: resolvedAssetId,
+            endpointScope: writeConnection.endpointScope,
           });
         } catch (error) {
           if (
@@ -9595,6 +10141,7 @@ const api: IrohaBridge = {
       const tx = await quoteAndSignInstructionTransaction({
         toriiUrl: input.toriiUrl,
         chainId,
+        networkPrefix,
         authority: accountId,
         instructions: [
           buildZkTransferInstruction({
@@ -9635,6 +10182,7 @@ const api: IrohaBridge = {
       upsertConfidentialWalletShadowTransaction({
         toriiUrl: input.toriiUrl,
         accountId,
+        endpointScope: writeConnection.endpointScope,
         txHash: submission.hash,
         authority: submission.relayAuthority || "confidential-relay",
         metadata: shadowMetadata,
@@ -9648,6 +10196,7 @@ const api: IrohaBridge = {
         upsertConfidentialWalletShadowTransaction({
           toriiUrl: input.toriiUrl,
           accountId: destinationAccountId,
+          endpointScope: writeConnection.endpointScope,
           txHash: submission.hash,
           authority: submission.relayAuthority || "confidential-relay",
           metadata: shadowMetadata,
@@ -9661,17 +10210,10 @@ const api: IrohaBridge = {
       return transactionSubmissionResult(submission);
     }
 
-    const client = getClient(input.toriiUrl);
     if (!destinationAccountId) {
       throw new Error("destinationAccountId is required.");
     }
-    const configuredAssetId = String(input.assetDefinitionId ?? "").trim();
-    if (!configuredAssetId) {
-      throw new Error("assetDefinitionId is required.");
-    }
-
-    const configuredAssetDefinitionId =
-      extractAssetDefinitionId(configuredAssetId).trim() || configuredAssetId;
+    const configuredAssetDefinitionId = assetDefinitionId;
     const buildSourceAssetHoldingId = (assetReference: string) => {
       const sourceAssetHoldingLiteral = buildAssetHoldingIdLiteral({
         assetDefinitionId: assetReference,
@@ -9689,120 +10231,19 @@ const api: IrohaBridge = {
         return null;
       }
     };
-    const configuredSourceAssetHoldingId =
-      buildSourceAssetHoldingId(configuredAssetId);
-    const configuredLooksLegacy =
-      configuredAssetDefinitionId.includes("#") &&
-      !configuredAssetDefinitionId.startsWith("norito:");
-    let sourceAssetHoldingId = configuredLooksLegacy
-      ? null
-      : configuredSourceAssetHoldingId;
-
+    const sourceAssetHoldingId = buildSourceAssetHoldingId(
+      configuredAssetDefinitionId,
+    );
     if (!sourceAssetHoldingId) {
-      let selectedAssetId = "";
-      let available: string[] = [];
-      try {
-        const assets = await client.listAccountAssets(accountId, {
-          limit: 200,
-        });
-        const items = (Array.isArray(assets?.items) ? assets.items : [])
-          .map((asset) => {
-            const assetRecord = isPlainRecord(asset) ? asset : {};
-            const legacyAssetId = trimString(assetRecord.asset_id);
-            const assetDefinitionId = trimString(
-              assetRecord.asset ??
-                assetRecord.asset_definition_id ??
-                assetRecord.assetDefinitionId,
-            );
-            const assetAccountId = trimString(
-              assetRecord.account_id ?? assetRecord.accountId,
-            );
-            const assetId =
-              legacyAssetId ||
-              (assetDefinitionId && assetAccountId
-                ? buildAssetHoldingIdLiteral({
-                    assetDefinitionId,
-                    accountId: assetAccountId,
-                  })
-                : assetDefinitionId);
-            const quantity = trimString(assetRecord.quantity);
-            return assetId && quantity ? { asset_id: assetId, quantity } : null;
-          })
-          .filter((asset): asset is { asset_id: string; quantity: string } =>
-            Boolean(asset),
-          );
-        available = items
-          .map((asset) => asset.asset_id.trim())
-          .filter(Boolean)
-          .slice(0, 5);
-        const resolvedDefinitionId = resolveUniqueLiveAssetDefinitionId(
-          items,
-          configuredAssetDefinitionId,
-        );
-        const hasPositiveQuantity = (asset: { quantity: string }) => {
-          const quantity = Number(asset.quantity);
-          return Number.isFinite(quantity) && quantity > 0;
-        };
-        const exactMatch = items.find(
-          (asset) => asset.asset_id.trim() === configuredAssetId,
-        );
-        const resolvedMatch = resolvedDefinitionId
-          ? (items.find(
-              (asset) =>
-                areAssetDefinitionIdsEquivalent(
-                  asset.asset_id,
-                  resolvedDefinitionId,
-                ) && hasPositiveQuantity(asset),
-            ) ??
-            items.find((asset) =>
-              areAssetDefinitionIdsEquivalent(
-                asset.asset_id,
-                resolvedDefinitionId,
-              ),
-            ))
-          : null;
-        const legacyMatch = items.find((asset) =>
-          asset.asset_id.startsWith(`${configuredAssetDefinitionId}##`),
-        );
-        const containsMatches = items.filter((asset) =>
-          asset.asset_id
-            .toLowerCase()
-            .includes(configuredAssetDefinitionId.toLowerCase()),
-        );
-        const positiveBalanceMatches = items.filter(hasPositiveQuantity);
-
-        selectedAssetId = String(
-          exactMatch?.asset_id ??
-            resolvedMatch?.asset_id ??
-            legacyMatch?.asset_id ??
-            (containsMatches.length === 1
-              ? containsMatches[0]?.asset_id
-              : "") ??
-            (positiveBalanceMatches.length === 1
-              ? positiveBalanceMatches[0]?.asset_id
-              : ""),
-        ).trim();
-      } catch {
-        selectedAssetId = "";
-      }
-
-      sourceAssetHoldingId = selectedAssetId
-        ? buildSourceAssetHoldingId(selectedAssetId)
-        : configuredSourceAssetHoldingId;
-
-      if (!sourceAssetHoldingId) {
-        const availableHint = available.length
-          ? ` Available asset IDs: ${available.join(", ")}.`
-          : "";
-        throw new Error(
-          `Unable to resolve the source asset from configured value "${configuredAssetId}". Set Asset Definition ID to the canonical asset literal for this account.${availableHint}`,
-        );
-      }
+      throw new Error(
+        `Unable to build the source holding for canonical asset definition "${configuredAssetDefinitionId}".`,
+      );
     }
 
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl: input.toriiUrl,
       chainId,
+      networkPrefix,
       authority: accountId,
       instructions: [
         buildTransferAssetInstruction({
@@ -9815,51 +10256,35 @@ const api: IrohaBridge = {
       privateKey: hexToBuffer(privateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
-    const submission = await submitSignedTransactionAndWaitForCommit(
+    const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       input.toriiUrl,
       tx.signedTransaction,
     );
     return transactionSubmissionResult(submission);
   },
-  buildUranaiPrivateTradeProof(input) {
-    return buildUranaiPrivateTradeProofEnvelope(input);
+  setIrohaConnectContext(input) {
+    irohaConnectBoundary.setContext(input);
   },
-  async signIrohaConnectMessage({ accountId, signingMessageB64 }) {
-    const authority = normalizeCompatAccountIdLiteral(accountId, "accountId");
-    const signingMaterial = await resolveSigningMaterial({
-      accountId: authority,
-      operationLabel: "IrohaConnect signing",
-    });
-    const normalizedMessage = trimString(signingMessageB64);
-    if (!normalizedMessage) {
-      throw new Error("IrohaConnect signing message is required.");
-    }
-    const message = Buffer.from(normalizedMessage, "base64");
-    if (message.length === 0) {
-      throw new Error("IrohaConnect signing message is empty.");
-    }
-    const privateKey = hexToBuffer(
-      signingMaterial.privateKeyHex,
-      "privateKeyHex",
-    );
-    const algorithmCode = getConnectSigningAlgorithmCode(
-      signingMaterial.signingAlgorithm,
-    );
-    return {
-      publicKeyHex: toHex(
-        publicKeyFromPrivate(privateKey, {
-          algorithm: signingMaterial.signingAlgorithm,
-        }),
-      ),
-      signatureB64: Buffer.from(
-        sign(message, privateKey, {
-          algorithm: signingMaterial.signingAlgorithm,
-        }),
-      ).toString("base64"),
-      signingAlgorithm: signingMaterial.signingAlgorithm,
-      algorithmCode,
-      algorithmLabel: signingAlgorithmLabel(signingMaterial.signingAlgorithm),
-    };
+  resetIrohaConnectBoundary() {
+    irohaConnectBoundary.reset();
+  },
+  prepareIrohaConnectSession(input) {
+    return irohaConnectBoundary.prepareSession(input);
+  },
+  approveIrohaConnectSession(input) {
+    return irohaConnectBoundary.approveSession(input);
+  },
+  processIrohaConnectFrame(input) {
+    return irohaConnectBoundary.processFrame(input);
+  },
+  approveIrohaConnectRequest(input) {
+    return irohaConnectBoundary.approveRequest(input);
+  },
+  rejectIrohaConnectRequest(input) {
+    return irohaConnectBoundary.rejectRequest(input);
+  },
+  closeIrohaConnectSession({ sessionToken }) {
+    irohaConnectBoundary.closeSession(sessionToken);
   },
   async getConfidentialAssetPolicy({ toriiUrl, accountId, assetDefinitionId }) {
     const { policy, resolvedAssetDefinitionId } =
@@ -9884,6 +10309,7 @@ const api: IrohaBridge = {
   async getConfidentialTransferExecutionContext({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
     privateKeyHex,
     assetDefinitionId,
@@ -9897,6 +10323,7 @@ const api: IrohaBridge = {
     const materials = await resolveConfidentialTransferMaterials({
       toriiUrl,
       chainId,
+      networkPrefix,
       accountId,
       privateKeyHex,
       assetDefinitionId: resolvedAssetDefinitionId,
@@ -9915,6 +10342,7 @@ const api: IrohaBridge = {
   getConfidentialAssetBalance({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
     privateKeyHex,
     assetDefinitionId,
@@ -9922,6 +10350,7 @@ const api: IrohaBridge = {
     return resolveConfidentialAssetBalance({
       toriiUrl,
       chainId,
+      networkPrefix,
       accountId,
       privateKeyHex,
       assetDefinitionId,
@@ -9930,6 +10359,7 @@ const api: IrohaBridge = {
   scanConfidentialWallet({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
     privateKeyHex,
     assetDefinitionId,
@@ -9937,6 +10367,7 @@ const api: IrohaBridge = {
     return resolveConfidentialAssetBalance({
       toriiUrl,
       chainId,
+      networkPrefix,
       accountId,
       privateKeyHex,
       assetDefinitionId,
@@ -9945,6 +10376,7 @@ const api: IrohaBridge = {
   getConfidentialWalletState({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
     privateKeyHex,
     assetDefinitionId,
@@ -9952,23 +10384,35 @@ const api: IrohaBridge = {
     return resolveConfidentialAssetBalance({
       toriiUrl,
       chainId,
+      networkPrefix,
       accountId,
       privateKeyHex,
       assetDefinitionId,
     });
   },
-  async getPrivateKaigiConfidentialXorState({ toriiUrl, accountId }) {
+  async getPrivateKaigiConfidentialXorState({
+    toriiUrl,
+    chainId,
+    networkPrefix,
+    accountId,
+    assetDefinitionId,
+  }) {
     return (
       await resolvePrivateKaigiConfidentialXorContext({
         toriiUrl,
+        chainId,
+        networkPrefix,
         accountId,
+        assetDefinitionId,
       })
     ).state;
   },
   async selfShieldPrivateKaigiXor({
     toriiUrl,
     chainId,
+    networkPrefix,
     accountId,
+    assetDefinitionId,
     privateKeyHex,
     amount,
   }) {
@@ -9981,7 +10425,9 @@ const api: IrohaBridge = {
     return api.transferAsset({
       toriiUrl,
       chainId,
-      assetDefinitionId: PRIVATE_KAIGI_XOR_ASSET_DEFINITION_ID,
+      networkPrefix,
+      assetDefinitionId:
+        normalizeFirstReleaseAssetDefinitionId(assetDefinitionId),
       accountId,
       destinationAccountId: accountId,
       quantity: normalizedAmount,
@@ -10031,24 +10477,11 @@ const api: IrohaBridge = {
           privateKey: hexToBuffer(normalizedPrivateKeyHex, "privateKeyHex"),
         }
       : null;
-    return client
-      .listAccountTransactions(normalizedAccountId, {
-        limit,
-        offset,
-        ...(canonicalAuth ? { canonicalAuth } : {}),
-      })
-      .catch((error) => {
-        if (
-          canonicalAuth &&
-          accountTransactionsQuerySupportsCanonicalAuthFallback(error)
-        ) {
-          return client.listAccountTransactions(normalizedAccountId, {
-            limit,
-            offset,
-          });
-        }
-        throw error;
-      });
+    return client.listAccountTransactions(normalizedAccountId, {
+      limit,
+      offset,
+      ...(canonicalAuth ? { canonicalAuth } : {}),
+    });
   },
   listAccountPermissions({ toriiUrl, accountId, limit = 200, offset }) {
     const client = getClient(toriiUrl);
@@ -10063,8 +10496,8 @@ const api: IrohaBridge = {
   getGovernanceCapabilities({ toriiUrl }) {
     return fetchGovernanceCapabilities(toriiUrl);
   },
-  getGovernanceCitizenStatus({ toriiUrl, accountId }) {
-    return fetchGovernanceCitizenStatus(toriiUrl, accountId);
+  getGovernanceCitizenStatus({ toriiUrl, accountId, networkPrefix }) {
+    return fetchGovernanceCitizenStatus(toriiUrl, accountId, networkPrefix);
   },
   getGovernanceCitizenCount(config) {
     return fetchGovernanceCitizenCount(config.toriiUrl);
@@ -10087,7 +10520,14 @@ const api: IrohaBridge = {
   },
   getGovernanceUnlockStats({ toriiUrl }) {
     const client = getClient(toriiUrl);
-    return client.getGovernanceUnlockStatsTyped();
+    return client.getGovernanceUnlockStats().then((payload) => {
+      if (!payload) {
+        throw new Error(
+          "Governance unlock stats endpoint returned no payload.",
+        );
+      }
+      return normalizeGovernanceUnlockStatsPayload(payload);
+    });
   },
   getGovernanceCouncilCurrent(config) {
     return fetchGovernanceCouncilCurrent(config.toriiUrl);
@@ -10098,8 +10538,11 @@ const api: IrohaBridge = {
   getGovernanceProposalDetail(input) {
     return fetchGovernanceProposalDetail(input);
   },
-  getGovernanceCurrentValidationFeePolicy({ toriiUrl }) {
-    return fetchGovernanceValidationFeePolicy(toriiUrl);
+  getGovernanceCurrentValidationFeePolicy(input) {
+    return fetchGovernanceValidationFeePolicy(input);
+  },
+  getGovernancePlainReferendumContract(input) {
+    return fetchGovernancePlainReferendumContract(input);
   },
   prepareGovernanceCitizenRegistration(input) {
     return prepareGovernanceCitizenRegistrationAction(input);
@@ -10137,6 +10580,7 @@ const api: IrohaBridge = {
       explorerResult,
       statusResult,
       sumeragiResult,
+      lifecycleResult,
       supplyResult,
       econometricsResult,
     ] = await Promise.allSettled([
@@ -10146,8 +10590,21 @@ const api: IrohaBridge = {
       withNetworkStatsTimeout("Runtime status telemetry", (signal) =>
         fetchRuntimeStatusSnapshot(client, toriiUrl, signal),
       ),
-      withNetworkStatsTimeout("Lane governance telemetry", (signal) =>
-        client.getSumeragiStatusTyped({ signal }),
+      withNetworkStatsTimeout(
+        "Sumeragi consensus telemetry",
+        async (signal) => {
+          const payload = await fetchJson(
+            buildNexusEndpoint(toriiUrl, "/v1/sumeragi/status"),
+            "Sumeragi status",
+            undefined,
+            signal,
+          );
+          normalizeCurrentSumeragiTelemetry(payload);
+          return payload;
+        },
+      ),
+      withNetworkStatsTimeout("Nexus lifecycle telemetry", (signal) =>
+        fetchNexusLifecycle(toriiUrl, signal),
       ),
       withNetworkStatsTimeout("XOR supply snapshot", (signal) =>
         fetchExplorerAssetDefinitionSnapshot(
@@ -10180,7 +10637,13 @@ const api: IrohaBridge = {
     const sumeragiStatus =
       sumeragiResult.status === "fulfilled" ? sumeragiResult.value : null;
     if (sumeragiResult.status === "rejected") {
-      warnings.push("Lane governance telemetry is unavailable.");
+      warnings.push("Sumeragi consensus telemetry is unavailable.");
+    }
+
+    const nexusLifecycle =
+      lifecycleResult.status === "fulfilled" ? lifecycleResult.value : null;
+    if (lifecycleResult.status === "rejected") {
+      warnings.push("Nexus lifecycle telemetry is unavailable.");
     }
 
     const supply =
@@ -10208,7 +10671,7 @@ const api: IrohaBridge = {
         explorer,
         sumeragiStatus,
       ),
-      governance: extractGovernanceStats(sumeragiStatus),
+      governance: extractGovernanceStats(sumeragiStatus, nexusLifecycle),
       warnings,
       partial: warnings.length > 0,
     };
@@ -10222,12 +10685,7 @@ const api: IrohaBridge = {
     const fetchFallback = async () => {
       const baseUrl = normalizeBaseUrl(toriiUrl);
       const endpoint = `${baseUrl}/v1/explorer/accounts/${encodeURIComponent(normalizedAccountId)}/qr`;
-      const response = await nodeFetch(endpoint, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
+      const response = await fetchGetResponse(endpoint, "Explorer account QR");
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
         throw new Error(
@@ -10236,11 +10694,18 @@ const api: IrohaBridge = {
         );
       }
       const payload = (await response.json()) as Record<string, unknown>;
-      return normalizeExplorerAccountQrPayload(payload);
+      return assertExplorerAccountQrMatchesRequestedAccount(
+        payload,
+        normalizedAccountId,
+      );
     };
 
     try {
-      return await client.getExplorerAccountQr(normalizedAccountId);
+      const payload = await client.getExplorerAccountQr(normalizedAccountId);
+      return assertExplorerAccountQrMatchesRequestedAccount(
+        payload as unknown as Record<string, unknown>,
+        normalizedAccountId,
+      );
     } catch (error) {
       if (!String(error).includes("Digest method not supported")) {
         throw error;
@@ -10269,41 +10734,74 @@ const api: IrohaBridge = {
     });
   },
   async connectVpn(input) {
-    const signingMaterial = await resolveSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
-      operationLabel: "VPN connect",
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+      feature: "vpnSessions",
     });
-    return await ipcRenderer.invoke("vpn:connect", {
-      ...input,
-      ...signingMaterial,
+    const accountId = normalizeCompatAccountIdLiteral(
+      input.accountId,
+      "accountId",
+      writeConnection.networkPrefix,
+    );
+    return await runVpnConnectAfterProfileCheck({
+      loadProfile: () =>
+        ipcRenderer.invoke("vpn:getProfile", {
+          toriiUrl: input.toriiUrl,
+        }),
+      resolveSigningMaterial: () =>
+        resolveSigningMaterial({
+          accountId,
+          privateKeyHex: input.privateKeyHex,
+          signingAlgorithm: input.signingAlgorithm,
+          operationLabel: "VPN connect",
+        }),
+      invokeController: (signingMaterial) =>
+        ipcRenderer.invoke("vpn:connect", {
+          ...input,
+          accountId,
+          ...signingMaterial,
+        }),
     });
   },
   async disconnectVpn(input) {
-    const signingMaterial = await resolveSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
-      operationLabel: "VPN disconnect",
-    });
-    return await ipcRenderer.invoke("vpn:disconnect", {
-      ...input,
-      ...signingMaterial,
+    if (!input) {
+      return await ipcRenderer.invoke("vpn:disconnectLocal");
+    }
+    return await runVpnDisconnectWithLocalFallback({
+      resolveAuthenticatedInput: async () => {
+        const writeConnection = await assertWriteConnectionMatchesEndpoint({
+          toriiUrl: input.toriiUrl,
+          chainId: input.chainId,
+          networkPrefix: input.networkPrefix,
+          feature: "vpnSessions",
+        });
+        const accountId = normalizeCompatAccountIdLiteral(
+          input.accountId,
+          "accountId",
+          writeConnection.networkPrefix,
+        );
+        const signingMaterial = await resolveSigningMaterial({
+          accountId,
+          privateKeyHex: input.privateKeyHex,
+          signingAlgorithm: input.signingAlgorithm,
+          operationLabel: "VPN disconnect",
+        });
+        return {
+          ...input,
+          accountId,
+          ...signingMaterial,
+        };
+      },
+      invokeAuthenticatedController: (authenticatedInput) =>
+        ipcRenderer.invoke("vpn:disconnect", authenticatedInput),
+      invokeLocalController: () => ipcRenderer.invoke("vpn:disconnectLocal"),
     });
   },
-  async repairVpn(input) {
-    if (!input?.accountId) {
-      return await ipcRenderer.invoke("vpn:repair", input);
-    }
-    const signingMaterial = await resolveOptionalSigningMaterial({
-      accountId: input.accountId,
-      privateKeyHex: input.privateKeyHex,
-      signingAlgorithm: input.signingAlgorithm,
-    });
-    return await ipcRenderer.invoke("vpn:repair", {
-      ...input,
-      ...(signingMaterial ?? {}),
+  async repairVpn() {
+    return await runLocalVpnRepair({
+      invokeController: () => ipcRenderer.invoke("vpn:repair"),
     });
   },
   async listVpnReceipts(input) {
@@ -10320,51 +10818,28 @@ const api: IrohaBridge = {
       ...(signingMaterial ?? {}),
     });
   },
-  listOfflineAllowances({
-    toriiUrl,
-    controllerId,
-    limit,
-    offset,
-    filter,
-    certificateExpiresBeforeMs,
-    certificateExpiresAfterMs,
-    policyExpiresBeforeMs,
-    policyExpiresAfterMs,
-    refreshBeforeMs,
-    refreshAfterMs,
-    verdictIdHex,
-    attestationNonceHex,
-    requireVerdict,
-    onlyMissingVerdict,
-    includeExpired,
-  }) {
-    const client = getClient(toriiUrl) as ToriiClientWithOfflineAllowances;
-    return client.listOfflineAllowances({
-      controllerId: normalizeCompatAccountIdLiteral(
-        controllerId,
-        "controllerId",
-      ),
-      limit,
-      offset,
-      filter,
-      certificateExpiresBeforeMs,
-      certificateExpiresAfterMs,
-      policyExpiresBeforeMs,
-      policyExpiresAfterMs,
-      refreshBeforeMs,
-      refreshAfterMs,
-      verdictIdHex,
-      attestationNonceHex,
-      requireVerdict,
-      onlyMissingVerdict,
-      includeExpired,
-    });
+  getOfflineReadiness(input) {
+    return getOfflineReadinessFromTorii(input);
   },
-  async onboardAccount({ toriiUrl, alias, accountId, identity }) {
+  async onboardAccount({
+    toriiUrl,
+    chainId,
+    networkPrefix,
+    alias,
+    accountId,
+    identity,
+  }) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      feature: "accountOnboarding",
+    });
     const baseUrl = normalizeBaseUrl(toriiUrl);
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
+      writeConnection.networkPrefix,
     );
     const response = await nodeFetch(`${baseUrl}/v1/accounts/onboard`, {
       method: "POST",
@@ -10410,19 +10885,52 @@ const api: IrohaBridge = {
         }),
       );
     }
-    return (await response.json()) as AccountOnboardingResponse;
+    const payload = ensureObjectResponse(
+      (await response.json()) as unknown,
+      "Account onboarding",
+    );
+    const responseAccountId = normalizeCanonicalAccountIdLiteral(
+      trimString(payload.account_id),
+      "Account onboarding account_id",
+      writeConnection.networkPrefix,
+    );
+    if (responseAccountId !== normalizedAccountId) {
+      throw new Error(
+        "Account onboarding response does not match the requested account.",
+      );
+    }
+    const txHashHex = trimString(payload.tx_hash_hex);
+    if (!/^[0-9a-f]{64}$/u.test(txHashHex)) {
+      throw new Error(
+        "Account onboarding did not return a canonical transaction hash for finality verification.",
+      );
+    }
+    const finalized = await waitForTransactionFinalizedInBlock(
+      baseUrl,
+      txHashHex,
+    );
+    return {
+      account_id: responseAccountId,
+      tx_hash_hex: txHashHex,
+      status: "FINALIZED",
+      finality: finalized.finality,
+    };
   },
   async requestFaucetFunds(
-    { toriiUrl, accountId, networkPrefix, requestId },
+    { toriiUrl, chainId, accountId, networkPrefix, requestId },
     onStatus,
   ) {
+    const faucetConnection = await assertFaucetChallengeConnectionAvailable({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+    });
     const baseUrl = normalizeBaseUrl(toriiUrl);
     const normalizedAccountId = normalizeCanonicalAccountIdLiteral(
       accountId,
       "accountId",
-      networkPrefix,
+      faucetConnection.networkPrefix,
     );
-    const client = getClient(baseUrl);
     const normalizedRequestId = trimString(requestId);
     const abortController = normalizedRequestId ? new AbortController() : null;
     if (normalizedRequestId && abortController) {
@@ -10434,153 +10942,56 @@ const api: IrohaBridge = {
 
     try {
       const signal = abortController?.signal;
-      for (
-        let attempt = 1;
-        attempt <= FAUCET_CLAIM_MAX_ATTEMPTS;
-        attempt += 1
-      ) {
-        throwIfAborted(signal);
-        await assertFaucetEndpointFinalizing(baseUrl, signal);
-        const result = await requestFaucetFundsWithPuzzle({
-          baseUrl,
-          accountId: normalizedAccountId,
-          networkPrefix,
-          fetchImpl: nodeFetch,
-          signal,
-          onStatus,
+      throwIfAborted(signal);
+      await assertFaucetEndpointFinalizing(baseUrl, signal);
+      const result = await requestFaucetFundsWithPuzzle({
+        baseUrl,
+        accountId: normalizedAccountId,
+        chainId: faucetConnection.chainId,
+        networkPrefix: faucetConnection.networkPrefix,
+        fetchImpl: nodeFetch,
+        signal,
+        onStatus,
+      });
+      throwIfAborted(signal);
+      const txHashHex = trimString(result.tx_hash_hex);
+
+      try {
+        await onStatus?.({
+          phase: "waitingForFinality",
+          attempt: 1,
+          attempts: 1,
+          txHashHex,
         });
-        throwIfAborted(signal);
-        const txHashHex = trimString(result.tx_hash_hex);
-        if (!txHashHex) {
-          return result;
-        }
-
-        try {
-          await onStatus?.({
-            phase: "claimAccepted",
-            attempt,
-            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-            txHashHex,
-          });
-        } catch {
-          // Renderer-side status hooks must not break the faucet request itself.
-        }
-        try {
-          await onStatus?.({
-            phase: "waitingForCommit",
-            attempt,
-            attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-            txHashHex,
-          });
-        } catch {
-          // Renderer-side status hooks must not break the faucet request itself.
-        }
-
-        const {
-          statusKind,
-          statusPayload,
-          timedOut,
-          lastError,
-          fundedAssetVisible,
-          pipelineStatusInvisible,
-        } = await waitForFaucetClaimFinality(
-          client,
-          txHashHex,
-          normalizedAccountId,
-          trimString(result.asset_id),
-          trimString(result.asset_definition_id),
-          signal,
-        );
-        throwIfAborted(signal);
-        if (fundedAssetVisible) {
-          try {
-            await onStatus?.({
-              phase: "claimCommitted",
-              attempt,
-              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-              txHashHex,
-            });
-          } catch {
-            // Renderer-side status hooks must not break the faucet request itself.
-          }
-          const fee = await fetchCommittedTransactionFee(
-            baseUrl,
-            txHashHex,
-            statusPayload,
-          );
-          return {
-            ...result,
-            status: statusKind || "Funded",
-            ...(fee ? { fee } : {}),
-          };
-        }
-        if (statusKind && FAUCET_CLAIM_SUCCESS_STATUSES.has(statusKind)) {
-          try {
-            await onStatus?.({
-              phase: "claimCommitted",
-              attempt,
-              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-              txHashHex,
-            });
-          } catch {
-            // Renderer-side status hooks must not break the faucet request itself.
-          }
-          const fee = await fetchCommittedTransactionFee(
-            baseUrl,
-            txHashHex,
-            statusPayload,
-          );
-          return {
-            ...result,
-            status: statusKind,
-            ...(fee ? { fee } : {}),
-          };
-        }
-        if (
-          (statusKind === "Expired" || pipelineStatusInvisible) &&
-          attempt < FAUCET_CLAIM_MAX_ATTEMPTS
-        ) {
-          if (pipelineStatusInvisible) {
-            await assertFaucetEndpointFinalizing(baseUrl, signal);
-          }
-          throwIfAborted(signal);
-          let retryStatusSnapshot: StatusSnapshot | null = null;
-          try {
-            retryStatusSnapshot = await client.getStatusSnapshot();
-            throwIfAborted(signal);
-          } catch {
-            throwIfAborted(signal);
-            retryStatusSnapshot = null;
-          }
-          const retryDelayMs = readFaucetClaimRetryDelayMs(
-            attempt,
-            retryStatusSnapshot,
-          );
-          try {
-            await onStatus?.({
-              phase: "waitingForClaimRetry",
-              attempt: attempt + 1,
-              attempts: FAUCET_CLAIM_MAX_ATTEMPTS,
-              txHashHex,
-            });
-          } catch {
-            // Renderer-side status hooks must not break the faucet request itself.
-          }
-          await waitForMs(retryDelayMs, signal);
-          continue;
-        }
-        throw buildFaucetClaimFinalityError(
-          txHashHex,
-          statusKind,
-          timedOut,
-          pipelineStatusInvisible,
-          lastError,
-        );
+      } catch {
+        // Renderer-side status hooks must not break the faucet request itself.
       }
 
-      throw new Error(
-        "The network kept expiring faucet claims before they committed. Please retry once the faucet queue clears.",
+      const finalized = await waitForTransactionFinalizedInBlock(
+        baseUrl,
+        txHashHex,
+        {
+          timeoutMs: FAUCET_CLAIM_STATUS_TIMEOUT_MS,
+          signal,
+        },
       );
+      throwIfAborted(signal);
+      try {
+        await onStatus?.({
+          phase: "claimFinalized",
+          attempt: 1,
+          attempts: 1,
+          txHashHex,
+        });
+      } catch {
+        // Renderer-side status hooks must not break the faucet request itself.
+      }
+      return {
+        ...result,
+        status: "FINALIZED",
+        finality: finalized.finality,
+        ...(finalized.fee ? { fee: finalized.fee } : {}),
+      };
     } finally {
       if (
         normalizedRequestId &&
@@ -10606,6 +11017,8 @@ const api: IrohaBridge = {
   async createKaigiMeeting({
     toriiUrl,
     chainId,
+    networkPrefix,
+    assetDefinitionId,
     hostAccountId,
     privateKeyHex,
     callId,
@@ -10620,16 +11033,17 @@ const api: IrohaBridge = {
     privacyMode,
     peerIdentityReveal,
   }) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      feature: "kaigiMeetings",
+    });
     const authority = normalizeCompatAccountIdLiteral(
       hostAccountId,
       "hostAccountId",
+      writeConnection.networkPrefix,
     );
-    const signingMaterial = await resolveSigningMaterial({
-      accountId: authority,
-      privateKeyHex,
-      operationLabel: "Kaigi meeting creation",
-    });
-    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const normalizedScheduledStartMs = normalizeTimestampMs(
       scheduledStartMs,
@@ -10638,6 +11052,10 @@ const api: IrohaBridge = {
     const createdAtMs = Date.now();
     const expiresAtMs = normalizedScheduledStartMs + 24 * 60 * 60 * 1000;
     const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
+    const privateKaigiAssetDefinitionId =
+      resolvedPrivacyMode === "private"
+        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
+        : null;
     const resolvedPeerIdentityReveal =
       normalizeKaigiPeerIdentityReveal(peerIdentityReveal);
     const normalizedHostParticipantId =
@@ -10646,10 +11064,23 @@ const api: IrohaBridge = {
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
     );
-    const resolvedRelayManifest = await resolveKaigiRelayManifest(
+    const resolvedRelayManifest = await discoverKaigiRelayManifest(
       getClient(toriiUrl),
       expiresAtMs,
     );
+    const privateKaigiContext = privateKaigiAssetDefinitionId
+      ? await resolvePrivateKaigiConfidentialXorContext(
+          {
+            toriiUrl,
+            chainId,
+            networkPrefix: writeConnection.networkPrefix,
+            accountId: authority,
+            assetDefinitionId: privateKaigiAssetDefinitionId,
+            endpointScope: writeConnection.endpointScope,
+          },
+          { includeFeeMaterials: true },
+        )
+      : null;
     const encryptedOffer = encryptKaigiPayloadWithSecret(
       {
         schema: KAIGI_CALL_OFFER_SCHEMA,
@@ -10668,6 +11099,12 @@ const api: IrohaBridge = {
       } satisfies KaigiCallOfferPayload,
       inviteSecret,
     );
+    const signingMaterial = await resolveSigningMaterial({
+      accountId: authority,
+      privateKeyHex,
+      operationLabel: "Kaigi meeting creation",
+    });
+    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const hostCreateProof =
       resolvedPrivacyMode === "private"
         ? buildKaigiRosterJoinProof({
@@ -10692,11 +11129,15 @@ const api: IrohaBridge = {
       } satisfies KaigiCallMetadata,
     };
 
-    if (resolvedPrivacyMode === "private" && hostCreateProof) {
+    if (
+      resolvedPrivacyMode === "private" &&
+      hostCreateProof &&
+      privateKaigiAssetDefinitionId &&
+      privateKaigiContext
+    ) {
       const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        toriiUrl,
         chainId,
-        accountId: authority,
+        context: privateKaigiContext,
         action: "create",
         proofByteLength: Buffer.from(hostCreateProof.proofBase64, "base64")
           .length,
@@ -10719,16 +11160,14 @@ const api: IrohaBridge = {
                 policy: "Authenticated",
                 state: null,
               },
-              relay_manifest: resolvedRelayManifest
-                ? {
-                    expiry_ms: resolvedRelayManifest.expiryMs,
-                    hops: resolvedRelayManifest.hops.map((hop) => ({
-                      relay_id: hop.relayId,
-                      hpke_public_key: hop.hpkePublicKey,
-                      weight: hop.weight,
-                    })),
-                  }
-                : null,
+              relay_manifest: {
+                expiry_ms: resolvedRelayManifest.expiryMs,
+                hops: resolvedRelayManifest.hops.map((hop) => ({
+                  relay_id: hop.relayId,
+                  hpke_public_key: hop.hpkePublicKey,
+                  weight: hop.weight,
+                })),
+              },
             },
             artifacts: buildPrivateKaigiArtifactsDto({
               commitmentHex: hostCreateProof.commitmentHex,
@@ -10742,16 +11181,18 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypointAndWaitForCommit(
-        toriiUrl,
-        entrypoint.transactionEntrypoint,
-        entrypoint.hashHex,
-      );
+      const submission =
+        await submitTransactionEntrypointAndWaitForFinalizedBlock(
+          toriiUrl,
+          entrypoint.transactionEntrypoint,
+          entrypoint.hashHex,
+        );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
         accountId: authority,
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
+        endpointScope: writeConnection.endpointScope,
       });
       return transactionSubmissionResult(submission);
     }
@@ -10759,6 +11200,7 @@ const api: IrohaBridge = {
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
       chainId: chainId.trim(),
+      networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
         buildCreateKaigiInstruction({
@@ -10776,7 +11218,7 @@ const api: IrohaBridge = {
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
-    const submission = await submitSignedTransactionAndWaitForCommit(
+    const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
     );
@@ -10792,71 +11234,129 @@ const api: IrohaBridge = {
   async joinKaigiMeeting({
     toriiUrl,
     chainId,
+    networkPrefix,
+    assetDefinitionId,
     participantAccountId,
     privateKeyHex,
     callId,
-    hostAccountId,
-    hostKaigiPublicKeyBase64Url,
+    inviteSecretBase64Url,
     participantId,
     participantName,
-    walletIdentity,
-    roomId,
-    privacyMode,
-    rosterRootHex,
     answerDescription,
   }) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      feature: "kaigiMeetings",
+    });
     const authority = normalizeCompatAccountIdLiteral(
       participantAccountId,
       "participantAccountId",
+      writeConnection.networkPrefix,
     );
+    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
+    const inviteSecret = normalizeBase64UrlString(
+      inviteSecretBase64Url,
+      "inviteSecretBase64Url",
+    );
+    const normalizedParticipantId = normalizeKaigiParticipantId(participantId);
+    const normalizedParticipantName = String(participantName ?? "").trim();
+    if (!normalizedParticipantName) {
+      throw new Error("participantName is required.");
+    }
+    const normalizedAnswerDescription =
+      normalizeKaigiAnswerDescription(answerDescription);
+    const liveMeeting = await fetchKaigiMeetingView({
+      toriiUrl,
+      callId: normalizedCallId,
+      inviteSecretBase64Url: inviteSecret,
+    });
+    if (liveMeeting.callId !== normalizedCallId) {
+      throw new Error(
+        "The live Kaigi meeting does not match the requested call.",
+      );
+    }
+    if (
+      !liveMeeting.live ||
+      liveMeeting.ended ||
+      liveMeeting.expiresAtMs <= Date.now()
+    ) {
+      throw new Error("The live Kaigi meeting is no longer joinable.");
+    }
+    const resolvedPrivacyMode = liveMeeting.privacyMode;
+    const revealWalletIdentity =
+      resolvedPrivacyMode === "transparent" ||
+      liveMeeting.peerIdentityReveal === "RevealAfterJoin";
+    const liveHostAccountId = liveMeeting.hostAccountId
+      ? normalizeCompatAccountIdLiteral(
+          liveMeeting.hostAccountId,
+          "liveMeeting.hostAccountId",
+          writeConnection.networkPrefix,
+        )
+      : null;
+    if (resolvedPrivacyMode === "transparent" && !liveHostAccountId) {
+      throw new Error(
+        "The live transparent Kaigi meeting is missing its host account.",
+      );
+    }
+    const privateKaigiAssetDefinitionId =
+      resolvedPrivacyMode === "private"
+        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
+        : null;
+    const privateKaigiContext = privateKaigiAssetDefinitionId
+      ? await resolvePrivateKaigiConfidentialXorContext(
+          {
+            toriiUrl,
+            chainId,
+            networkPrefix: writeConnection.networkPrefix,
+            accountId: authority,
+            assetDefinitionId: privateKaigiAssetDefinitionId,
+            endpointScope: writeConnection.endpointScope,
+          },
+          { includeFeeMaterials: true },
+        )
+      : null;
     const signingMaterial = await resolveSigningMaterial({
       accountId: authority,
       privateKeyHex,
       operationLabel: "Kaigi meeting join",
     });
     const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
-    const normalizedCallId = normalizeKaigiCallId(callId, "callId");
-    const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(privacyMode);
     const createdAtMs = Date.now();
-    const revealWalletIdentity =
-      resolvedPrivacyMode === "transparent" ||
-      String(walletIdentity ?? "").trim().length > 0;
     const answerPayload: KaigiChainAnswerPayload = {
       schema: KAIGI_CHAIN_ANSWER_SCHEMA,
       callId: normalizedCallId,
       kind: "answer",
       ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
-      participantId: normalizeKaigiParticipantId(participantId),
-      participantName: String(participantName ?? "").trim() || "Participant",
-      ...(String(walletIdentity ?? "").trim()
-        ? { walletIdentity: String(walletIdentity).trim() }
-        : {}),
-      ...(String(roomId ?? "").trim() ? { roomId: String(roomId).trim() } : {}),
+      participantId: normalizedParticipantId,
+      participantName: normalizedParticipantName,
+      ...(revealWalletIdentity ? { walletIdentity: authority } : {}),
+      roomId: normalizedCallId,
       createdAtMs,
-      description: normalizeKaigiAnswerDescription(answerDescription),
+      description: normalizedAnswerDescription,
     };
     const metadata: Record<string, unknown> = {
       kaigi_signal: {
         schema: KAIGI_CHAIN_SIGNAL_SCHEMA,
         callId: answerPayload.callId,
         signalKind: "answer",
-        ...(resolvedPrivacyMode === "transparent" && hostAccountId
-          ? {
-              hostAccountId: normalizeCompatAccountIdLiteral(
-                hostAccountId,
-                "hostAccountId",
-              ),
-            }
+        ...(resolvedPrivacyMode === "transparent" && liveHostAccountId
+          ? { hostAccountId: liveHostAccountId }
           : {}),
         ...(revealWalletIdentity ? { participantAccountId: authority } : {}),
         createdAtMs,
         encryptedSignal: encryptKaigiPayload(
           answerPayload,
-          hostKaigiPublicKeyBase64Url,
+          liveMeeting.hostKaigiPublicKeyBase64Url,
         ),
       } satisfies KaigiChainSignalMetadata,
     };
-    if (resolvedPrivacyMode === "private") {
+    if (
+      resolvedPrivacyMode === "private" &&
+      privateKaigiAssetDefinitionId &&
+      privateKaigiContext
+    ) {
       const joinProof = buildKaigiRosterJoinProof({
         seed: deriveKaigiRosterJoinSeed({
           callId: normalizedCallId,
@@ -10864,14 +11364,13 @@ const api: IrohaBridge = {
           privateKeyHex: resolvedPrivateKeyHex,
         }),
         rosterRootHex: normalizeKaigiRosterRootHex(
-          rosterRootHex,
-          "rosterRootHex",
+          liveMeeting.rosterRootHex,
+          "liveMeeting.rosterRootHex",
         ),
       });
       const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        toriiUrl,
         chainId,
-        accountId: authority,
+        context: privateKaigiContext,
         action: "join",
         proofByteLength: Buffer.from(joinProof.proofBase64, "base64").length,
         buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
@@ -10891,16 +11390,18 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypointAndWaitForCommit(
-        toriiUrl,
-        entrypoint.transactionEntrypoint,
-        entrypoint.hashHex,
-      );
+      const submission =
+        await submitTransactionEntrypointAndWaitForFinalizedBlock(
+          toriiUrl,
+          entrypoint.transactionEntrypoint,
+          entrypoint.hashHex,
+        );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
         accountId: authority,
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
+        endpointScope: writeConnection.endpointScope,
       });
       return transactionSubmissionResult(submission);
     }
@@ -10908,6 +11409,7 @@ const api: IrohaBridge = {
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
       chainId: chainId.trim(),
+      networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
         buildJoinKaigiInstruction({
@@ -10919,7 +11421,7 @@ const api: IrohaBridge = {
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
-    const submission = await submitSignedTransactionAndWaitForCommit(
+    const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
     );
@@ -10933,6 +11435,7 @@ const api: IrohaBridge = {
     kaigiCallWatchers.set(subscriptionId, controller);
 
     void (async () => {
+      let terminalEventSeen = false;
       try {
         for await (const event of client.streamKaigiCallEvents(
           normalizedCallId,
@@ -10947,12 +11450,25 @@ const api: IrohaBridge = {
           if (!normalizedEvent || normalizedEvent.callId !== normalizedCallId) {
             continue;
           }
+          terminalEventSeen = normalizedEvent.kind === "ended";
           await onEvent(normalizedEvent);
         }
       } catch (_error) {
-        // Keep the stream silent so the UI can preserve the manual fallback.
+        // The renderer receives stream_closed below and can reconnect.
       } finally {
-        kaigiCallWatchers.delete(subscriptionId);
+        if (!controller.signal.aborted && !terminalEventSeen) {
+          try {
+            await onEvent({
+              kind: "stream_closed",
+              callId: normalizedCallId,
+            });
+          } catch {
+            // Renderer teardown can race with the final stream notification.
+          }
+        }
+        if (kaigiCallWatchers.get(subscriptionId) === controller) {
+          kaigiCallWatchers.delete(subscriptionId);
+        }
       }
     })();
 
@@ -11054,21 +11570,24 @@ const api: IrohaBridge = {
   async endKaigiMeeting({
     toriiUrl,
     chainId,
+    networkPrefix,
+    assetDefinitionId,
     hostAccountId,
     privateKeyHex,
     callId,
     endedAtMs,
   }) {
+    const writeConnection = await assertWriteConnectionMatchesEndpoint({
+      toriiUrl,
+      chainId,
+      networkPrefix,
+      feature: "kaigiMeetings",
+    });
     const authority = normalizeCompatAccountIdLiteral(
       hostAccountId,
       "hostAccountId",
+      writeConnection.networkPrefix,
     );
-    const signingMaterial = await resolveSigningMaterial({
-      accountId: authority,
-      privateKeyHex,
-      operationLabel: "Kaigi meeting end",
-    });
-    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
     const resolvedEndedAtMs =
       endedAtMs === undefined
@@ -11081,6 +11600,29 @@ const api: IrohaBridge = {
     const resolvedPrivacyMode = normalizeKaigiMeetingPrivacy(
       callPayload.privacy_mode,
     );
+    const privateKaigiAssetDefinitionId =
+      resolvedPrivacyMode === "private"
+        ? normalizeFirstReleaseAssetDefinitionId(assetDefinitionId)
+        : null;
+    const privateKaigiContext = privateKaigiAssetDefinitionId
+      ? await resolvePrivateKaigiConfidentialXorContext(
+          {
+            toriiUrl,
+            chainId,
+            networkPrefix: writeConnection.networkPrefix,
+            accountId: authority,
+            assetDefinitionId: privateKaigiAssetDefinitionId,
+            endpointScope: writeConnection.endpointScope,
+          },
+          { includeFeeMaterials: true },
+        )
+      : null;
+    const signingMaterial = await resolveSigningMaterial({
+      accountId: authority,
+      privateKeyHex,
+      operationLabel: "Kaigi meeting end",
+    });
+    const resolvedPrivateKeyHex = signingMaterial.privateKeyHex;
     const hostEndProof =
       resolvedPrivacyMode === "private"
         ? buildKaigiRosterJoinProof({
@@ -11096,11 +11638,15 @@ const api: IrohaBridge = {
           })
         : null;
 
-    if (resolvedPrivacyMode === "private" && hostEndProof) {
+    if (
+      resolvedPrivacyMode === "private" &&
+      hostEndProof &&
+      privateKaigiAssetDefinitionId &&
+      privateKaigiContext
+    ) {
       const entrypoint = await buildFundedPrivateKaigiEntrypoint({
-        toriiUrl,
         chainId,
-        accountId: authority,
+        context: privateKaigiContext,
         action: "end",
         proofByteLength: Buffer.from(hostEndProof.proofBase64, "base64").length,
         buildEntrypoint: ({ feeSpend, creationTimeMs, nonce }) =>
@@ -11120,16 +11666,18 @@ const api: IrohaBridge = {
             nonce,
           }),
       });
-      const submission = await submitTransactionEntrypointAndWaitForCommit(
-        toriiUrl,
-        entrypoint.transactionEntrypoint,
-        entrypoint.hashHex,
-      );
+      const submission =
+        await submitTransactionEntrypointAndWaitForFinalizedBlock(
+          toriiUrl,
+          entrypoint.transactionEntrypoint,
+          entrypoint.hashHex,
+        );
       appendPrivateKaigiFeeDebit({
         toriiUrl,
         accountId: authority,
         amount: entrypoint.feeAmount,
         assetDefinitionId: entrypoint.resolvedAssetId,
+        endpointScope: writeConnection.endpointScope,
       });
       return transactionSubmissionResult(submission);
     }
@@ -11137,6 +11685,7 @@ const api: IrohaBridge = {
     const tx = await quoteAndSignInstructionTransaction({
       toriiUrl,
       chainId: chainId.trim(),
+      networkPrefix: writeConnection.networkPrefix,
       authority,
       instructions: [
         buildEndKaigiInstruction({
@@ -11148,54 +11697,25 @@ const api: IrohaBridge = {
       privateKey: hexToBuffer(resolvedPrivateKeyHex, "privateKeyHex"),
       privateKeyAlgorithm: signingMaterial.signingAlgorithm,
     });
-    const submission = await submitSignedTransactionAndWaitForCommit(
+    const submission = await submitSignedTransactionAndWaitForFinalizedBlock(
       toriiUrl,
       tx.signedTransaction,
     );
     return transactionSubmissionResult(submission);
   },
-  async createConnectPreview({ toriiUrl, chainId, node, launchProtocol }) {
-    const client = getClient(toriiUrl);
-    const baseUrl = new URL(normalizeBaseUrl(toriiUrl));
-    const nodeHint = node ?? baseUrl.host;
-    const { preview, session, tokens } =
-      await bootstrapPortableConnectPreviewSession(client, {
-        chainId,
-        node: nodeHint,
-      });
-    const normalizedLaunchProtocol = launchProtocol?.trim() || "irohaconnect";
-    const walletCanonicalUri = session?.wallet_uri ?? preview.walletUri ?? null;
-    const appCanonicalUri = session?.app_uri ?? preview.appUri ?? null;
-    return {
-      sidHex: toHex(Buffer.from(preview.sidBytes)),
-      sidBase64Url: preview.sidBase64Url,
-      walletUri: resolvePortableConnectLaunchUri(
-        walletCanonicalUri,
-        preview.walletUri,
-        normalizedLaunchProtocol,
-      ),
-      appUri: resolvePortableConnectLaunchUri(
-        appCanonicalUri,
-        preview.appUri,
-        normalizedLaunchProtocol,
-      ),
-      walletCanonicalUri,
-      appCanonicalUri,
-      launchProtocol: normalizedLaunchProtocol,
-      tokenApp: tokens?.app ?? null,
-      tokenWallet: tokens?.wallet ?? null,
-      appPublicKeyHex: toHex(Buffer.from(preview.appKeyPair.publicKey)),
-      appPrivateKeyHex: toHex(Buffer.from(preview.appKeyPair.privateKey)),
-    };
-  },
   getSumeragiStatus(config) {
-    const client = getClient(config.toriiUrl);
-    return client.getSumeragiStatusTyped();
+    return fetchJson(
+      buildNexusEndpoint(config.toriiUrl, "/v1/sumeragi/status"),
+      "Sumeragi status",
+    );
+  },
+  async getNexusLifecycle(config) {
+    return fetchNexusLifecycle(config.toriiUrl);
   },
   async getNexusPublicLaneValidators({ toriiUrl, laneId }) {
     const endpoint = buildNexusEndpoint(
       toriiUrl,
-      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/validators`,
+      `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/validators`,
     );
     const payload = await fetchJson(endpoint, "Public lane validators");
     return normalizePublicLaneValidatorsPayload(payload);
@@ -11203,7 +11723,7 @@ const api: IrohaBridge = {
   async getNexusPublicLaneStake({ toriiUrl, laneId, validator }) {
     const endpoint = buildNexusEndpoint(
       toriiUrl,
-      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/stake`,
+      `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/stake`,
       {
         validator: validator
           ? normalizeCompatAccountIdLiteral(validator, "validator")
@@ -11222,7 +11742,7 @@ const api: IrohaBridge = {
   }) {
     const endpoint = buildNexusEndpoint(
       toriiUrl,
-      `/v1/nexus/public_lanes/${normalizeLaneId(laneId)}/rewards/pending`,
+      `/v1/nexus/public-lanes/${normalizeLaneId(laneId)}/rewards/pending`,
       {
         account: normalizeCompatAccountIdLiteral(account, "account"),
         asset_id: assetId,
@@ -11237,11 +11757,15 @@ const api: IrohaBridge = {
   },
   async getNexusStakingPolicy(config) {
     const client = getClient(config.toriiUrl);
-    const payload = await client.getConfiguration();
-    const configuration = ensureObjectResponse(payload, "Configuration");
-    return {
-      unbondingDelayMs: readNexusUnbondingDelayMs(configuration),
-    };
+    try {
+      const payload = await client.getConfiguration();
+      const configuration = ensureObjectResponse(payload, "Configuration");
+      return {
+        unbondingDelayMs: readNexusUnbondingDelayMs(configuration),
+      };
+    } catch {
+      return { unbondingDelayMs: null };
+    }
   },
   listSubscriptionPlans(input) {
     return listSubscriptionPlansFromTorii(input);
@@ -11267,10 +11791,7 @@ const api: IrohaBridge = {
   },
   cancelSubscription(input) {
     return postSubscriptionActionToTorii(
-      {
-        ...input,
-        cancelMode: input.cancelMode ?? "period_end",
-      },
+      input,
       "cancel",
       "Cancel subscription",
     );
@@ -11285,11 +11806,17 @@ const api: IrohaBridge = {
       "Charge subscription",
     );
   },
+  reconcileSubscriptionMutation(input) {
+    return reconcileSubscriptionMutationOnTorii(input);
+  },
   getSoraCloudStatus(input) {
     return getSoraCloudStatusFromTorii(input);
   },
   deploySoraCloudHf(input) {
     return deploySoraCloudHfOnTorii(input);
+  },
+  reconcileSoraCloudHfLaunch(input) {
+    return reconcileSoraCloudHfLaunchOnTorii(input);
   },
   getSoraCloudHfStatus(input) {
     return getSoraCloudHfStatusFromTorii(input);
@@ -11315,6 +11842,7 @@ const api: IrohaBridge = {
   bondPublicLaneStake({
     toriiUrl,
     chainId,
+    networkPrefix,
     stakeAccountId,
     validator,
     amount,
@@ -11323,16 +11851,22 @@ const api: IrohaBridge = {
     const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
+      networkPrefix,
     );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
+      networkPrefix,
       authorityAccountId: normalizedStakeAccount,
       privateKeyHex,
       instruction: {
         BondPublicLaneStake: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(
+            validator,
+            "validator",
+            networkPrefix,
+          ),
           amount: normalizeAmount(amount, "amount"),
         },
       },
@@ -11341,6 +11875,7 @@ const api: IrohaBridge = {
   registerPublicLaneValidator({
     toriiUrl,
     chainId,
+    networkPrefix,
     laneId,
     validatorAccountId,
     stakeAccountId,
@@ -11352,14 +11887,17 @@ const api: IrohaBridge = {
     const normalizedValidator = normalizeCompatAccountIdLiteral(
       validatorAccountId,
       "validatorAccountId",
+      networkPrefix,
     );
     const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId || validatorAccountId,
       "stakeAccountId",
+      networkPrefix,
     );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
+      networkPrefix,
       authorityAccountId: normalizedValidator,
       privateKeyHex,
       instruction: {
@@ -11377,6 +11915,7 @@ const api: IrohaBridge = {
   schedulePublicLaneUnbond({
     toriiUrl,
     chainId,
+    networkPrefix,
     stakeAccountId,
     validator,
     amount,
@@ -11387,16 +11926,22 @@ const api: IrohaBridge = {
     const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
+      networkPrefix,
     );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
+      networkPrefix,
       authorityAccountId: normalizedStakeAccount,
       privateKeyHex,
       instruction: {
         SchedulePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(
+            validator,
+            "validator",
+            networkPrefix,
+          ),
           amount: normalizeAmount(amount, "amount"),
           request_id: normalizeRequestId(requestId),
           release_at_ms: normalizeReleaseAtMs(releaseAtMs),
@@ -11407,6 +11952,7 @@ const api: IrohaBridge = {
   finalizePublicLaneUnbond({
     toriiUrl,
     chainId,
+    networkPrefix,
     stakeAccountId,
     validator,
     requestId,
@@ -11415,16 +11961,22 @@ const api: IrohaBridge = {
     const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
+      networkPrefix,
     );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
+      networkPrefix,
       authorityAccountId: normalizedStakeAccount,
       privateKeyHex,
       instruction: {
         FinalizePublicLaneUnbond: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(
+            validator,
+            "validator",
+            networkPrefix,
+          ),
           request_id: normalizeRequestId(requestId),
         },
       },
@@ -11433,6 +11985,7 @@ const api: IrohaBridge = {
   claimPublicLaneRewards({
     toriiUrl,
     chainId,
+    networkPrefix,
     stakeAccountId,
     validator,
     privateKeyHex,
@@ -11440,16 +11993,22 @@ const api: IrohaBridge = {
     const normalizedStakeAccount = normalizeCompatAccountIdLiteral(
       stakeAccountId,
       "stakeAccountId",
+      networkPrefix,
     );
     return submitInstructionTransaction({
       toriiUrl,
       chainId,
+      networkPrefix,
       authorityAccountId: normalizedStakeAccount,
       privateKeyHex,
       instruction: {
         ClaimPublicLaneRewards: {
           stake_account: normalizedStakeAccount,
-          validator: normalizeCompatAccountIdLiteral(validator, "validator"),
+          validator: normalizeCompatAccountIdLiteral(
+            validator,
+            "validator",
+            networkPrefix,
+          ),
         },
       },
     });

@@ -40,7 +40,7 @@ $plainBytes = [Security.Cryptography.ProtectedData]::Unprotect($protectedBytes, 
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
 const normalizeAccountIdKey = (accountId: string): string =>
-  trimString(accountId).toLowerCase();
+  trimString(accountId);
 
 const SORA_I105_PREFIX = "sorau";
 const SORA_I105_FULLWIDTH_PREFIX = "\uff53\uff4f\uff52\uff41u";

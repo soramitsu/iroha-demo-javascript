@@ -4,6 +4,7 @@ export type ChainPreset = {
   id: string;
   label: string;
   description: string;
+  explorerUrl: string;
   connection: ConnectionConfig;
 };
 
@@ -11,11 +12,14 @@ export const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 export const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
 export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const TAIRA_NETWORK_PREFIX = 369;
+export const MINAMOTO_EXPLORER_URL = "https://minamoto-explorer.sora.org";
+export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
 
 export const TAIRA_CHAIN_PRESET: ChainPreset = {
   id: "taira-testnet",
   label: "TAIRA Testnet",
   description: "Public TAIRA testnet profile.",
+  explorerUrl: TAIRA_EXPLORER_URL,
   connection: {
     toriiUrl: "https://taira.sora.org",
     chainId: TAIRA_CHAIN_ID,
@@ -28,6 +32,7 @@ export const MINAMOTO_CHAIN_PRESET: ChainPreset = {
   id: "minamoto-mainnet",
   label: "MINAMOTO Mainnet",
   description: "SORA Nexus mainnet profile.",
+  explorerUrl: MINAMOTO_EXPLORER_URL,
   connection: {
     toriiUrl: "https://minamoto.sora.org",
     chainId: MINAMOTO_CHAIN_ID,
@@ -76,7 +81,3 @@ export const DEFAULT_CHAIN_PRESET: ChainPreset = {
       defaultPreset.connection.networkPrefix,
   },
 };
-
-export const MINAMOTO_EXPLORER_URL = "https://minamoto-explorer.sora.org";
-export const TAIRA_EXPLORER_URL = "https://taira-explorer.sora.org";
-export const DEFAULT_EXPLORER_URL = TAIRA_EXPLORER_URL;

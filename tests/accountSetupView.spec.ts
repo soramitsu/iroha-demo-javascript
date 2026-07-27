@@ -3,15 +3,33 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import AccountSetupView from "@/views/AccountSetupView.vue";
 import { translate } from "@/i18n/messages";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import type { ConnectionConfig } from "@/stores/session";
+import type {
+  EndpointFeatureAvailability,
+  EndpointInspection,
+} from "@/types/endpointInspection";
 import { TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { mnemonicToPrivateKeyHex } from "@/utils/mnemonic";
 import { buildWalletBackupPayload } from "@/utils/walletBackup";
+import { buildIrohaConnectTokenProtocol } from "@/utils/irohaConnect";
 import {
-  buildIrohaConnectTokenProtocol,
-  decodeIrohaConnectFrame,
-} from "@/utils/irohaConnect";
+  IrohaConnectBoundary,
+  type IrohaConnectWalletContext,
+} from "../electron/irohaConnectBoundary";
+import {
+  decodeConnectFrame,
+  decryptConnectEnvelope,
+  deriveConnectDirectionKeys,
+  encodeCiphertextConnectFrame,
+  encodeControlConnectFrame,
+  encodeServerEventConnectFrame,
+  encryptConnectEnvelope,
+  generateWalletConnectKeyPair,
+  hexToBytes,
+  type ConnectPermissions,
+} from "@/utils/soraswapConnectWire";
 
 const EXAMPLE_REAL_I105_ACCOUNT_ID =
   "testuロ1PノウヌmEエWオebHム6ヤルイヰiwuCWErJ7uスoPGアヤnjムKヒTCW2PV";
@@ -24,19 +42,21 @@ const VALID_24_WORD_MNEMONIC =
 const VALID_CONNECT_SID = Buffer.from(new Uint8Array(32).fill(0xce)).toString(
   "base64url",
 );
+const RAW_DOMAIN = "account-setup:sign:v1";
 const copyTextToClipboardMock = vi.fn();
-const createConnectPreviewMock = vi.fn();
 const deriveAccountAddressMock = vi.fn();
 const derivePublicKeyMock = vi.fn();
 const exportConfidentialWalletBackupMock = vi.fn();
 const generateKeyPairMock = vi.fn();
 const getSigningAlgorithmsMock = vi.fn();
 const importConfidentialWalletBackupMock = vi.fn();
+const inspectEndpointMock = vi.fn();
 const isSecureVaultAvailableMock = vi.fn();
+const signIrohaConnectMessageMock = vi.fn();
+let testIrohaConnectBoundary: IrohaConnectBoundary;
 const storeAccountSecretMock = vi.fn();
 const onboardAccountMock = vi.fn();
 const routerPushMock = vi.fn();
-const qrToDataUrlMock = vi.fn();
 type QrDecodeHandler = (payload: string) => void;
 let connectQrDecodeHandler: QrDecodeHandler | null = null;
 const t = (key: string, params?: Record<string, string | number>) =>
@@ -114,15 +134,8 @@ vi.mock("vue-router", () => ({
   }),
 }));
 
-vi.mock("qrcode", () => ({
-  default: {
-    toDataURL: (payload: string) => qrToDataUrlMock(payload),
-  },
-}));
-
 vi.mock("@/services/iroha", () => ({
   copyTextToClipboard: (text: string) => copyTextToClipboardMock(text),
-  createConnectPreview: (input: unknown) => createConnectPreviewMock(input),
   deriveAccountAddress: (input: unknown) => deriveAccountAddressMock(input),
   derivePublicKey: (privateKeyHex: string) =>
     derivePublicKeyMock(privateKeyHex),
@@ -133,7 +146,28 @@ vi.mock("@/services/iroha", () => ({
     getSigningAlgorithmsMock(toriiUrl),
   importConfidentialWalletBackup: (input: unknown) =>
     importConfidentialWalletBackupMock(input),
+  inspectEndpoint: (input: unknown) => inspectEndpointMock(input),
   isSecureVaultAvailable: () => isSecureVaultAvailableMock(),
+  setIrohaConnectContext: (input: IrohaConnectWalletContext) =>
+    testIrohaConnectBoundary.setContext(input),
+  resetIrohaConnectBoundary: () => testIrohaConnectBoundary.reset(),
+  prepareIrohaConnectSession: (
+    input: Parameters<IrohaConnectBoundary["prepareSession"]>[0],
+  ) => testIrohaConnectBoundary.prepareSession(input),
+  approveIrohaConnectSession: (
+    input: Parameters<IrohaConnectBoundary["approveSession"]>[0],
+  ) => testIrohaConnectBoundary.approveSession(input),
+  processIrohaConnectFrame: (
+    input: Parameters<IrohaConnectBoundary["processFrame"]>[0],
+  ) => testIrohaConnectBoundary.processFrame(input),
+  approveIrohaConnectRequest: (
+    input: Parameters<IrohaConnectBoundary["approveRequest"]>[0],
+  ) => testIrohaConnectBoundary.approveRequest(input),
+  rejectIrohaConnectRequest: (
+    input: Parameters<IrohaConnectBoundary["rejectRequest"]>[0],
+  ) => testIrohaConnectBoundary.rejectRequest(input),
+  closeIrohaConnectSession: (input: { sessionToken: string }) =>
+    testIrohaConnectBoundary.closeSession(input.sessionToken),
   storeAccountSecret: (input: unknown) => storeAccountSecretMock(input),
   onboardAccount: (input: unknown) => onboardAccountMock(input),
 }));
@@ -166,7 +200,6 @@ describe("AccountSetupView", () => {
     connectQrDecodeHandler = null;
     FakeWebSocket.instances = [];
     vi.stubGlobal("WebSocket", FakeWebSocket);
-    createConnectPreviewMock.mockReset();
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
     deriveAccountAddressMock.mockReset();
@@ -175,11 +208,59 @@ describe("AccountSetupView", () => {
     generateKeyPairMock.mockReset();
     getSigningAlgorithmsMock.mockReset();
     importConfidentialWalletBackupMock.mockReset();
+    signIrohaConnectMessageMock.mockReset().mockResolvedValue({
+      publicKeyHex: "ab".repeat(32),
+      signatureB64: Buffer.alloc(64, 0x5a).toString("base64"),
+      signingAlgorithm: "ed25519",
+      algorithmCode: 0,
+      algorithmLabel: "Ed25519",
+    });
+    testIrohaConnectBoundary = new IrohaConnectBoundary({
+      assertContext: async (context) => ({ ...context }),
+      authorize: async () => true,
+      sign: async (context, message) => {
+        const result = (await signIrohaConnectMessageMock({
+          ...context,
+          signingMessageB64: Buffer.from(message).toString("base64"),
+        })) as {
+          signatureB64: string;
+          algorithmCode?: number;
+          algorithmLabel?: string;
+        };
+        return {
+          algorithmCode: result.algorithmCode ?? 0,
+          algorithmLabel: result.algorithmLabel || "Ed25519",
+          signatureHex: Buffer.from(result.signatureB64, "base64").toString(
+            "hex",
+          ),
+          signatureBase64: result.signatureB64,
+        };
+      },
+    });
+    inspectEndpointMock
+      .mockReset()
+      .mockImplementation(
+        (input: {
+          toriiUrl: string;
+          chainId: string;
+          networkPrefix: number;
+        }) => ({
+          accessMode: "read-write",
+          features: {
+            irohaConnectSessions: {
+              supported: true,
+            },
+          },
+          diagnostic: {
+            message: "Endpoint identity matches the configured network.",
+          },
+          expected: input,
+        }),
+      );
     isSecureVaultAvailableMock.mockReset();
     storeAccountSecretMock.mockReset();
     onboardAccountMock.mockReset();
     routerPushMock.mockReset();
-    qrToDataUrlMock.mockReset();
     deriveAccountAddressMock.mockImplementation(
       (input: { domain?: string }) => ({
         accountId: `alice@${input.domain || "wonderland"}`,
@@ -236,6 +317,8 @@ describe("AccountSetupView", () => {
 
   const mountView = (options?: {
     connection?: Partial<ConnectionConfig>;
+    connectSupported?: boolean;
+    endpointWriteAllowed?: boolean;
     withSavedAccount?: boolean;
     savedAccount?: {
       displayName?: string;
@@ -275,6 +358,59 @@ describe("AccountSetupView", () => {
         activeAccountId: savedAccount.accountId,
       });
     }
+    const feature = (supported = true): EndpointFeatureAvailability => ({
+      supported,
+      source: "openapi",
+      requiredOperations: [],
+      missingOperations: supported ? [] : ["POST /missing"],
+    });
+    const endpointWriteAllowed = options?.endpointWriteAllowed !== false;
+    useEndpointStore().$patch({
+      state: "ready",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: session.connection.toriiUrl,
+        expected: {
+          chainId: session.connection.chainId,
+          networkPrefix: session.connection.networkPrefix,
+        },
+        observed: endpointWriteAllowed
+          ? {
+              chainId: session.connection.chainId,
+              networkPrefix: session.connection.networkPrefix,
+            }
+          : null,
+        identityStatus: endpointWriteAllowed ? "matched" : "unverified",
+        accessMode: endpointWriteAllowed ? "read-write" : "read-only",
+        checkedAtMs: 1,
+        evidence: [],
+        features: {
+          accountRegistration: feature(),
+          accountOnboarding: feature(),
+          assetTransfers: feature(),
+          faucetClaim: feature(),
+          confidentialTransfers: feature(),
+          kaigiMeetings: feature(),
+          governanceWrites: feature(),
+          stakingWrites: feature(),
+          subscriptionWrites: feature(),
+          soraCloudDeploy: feature(),
+          vpnSessions: feature(),
+          irohaConnectSessions: feature(options?.connectSupported !== false),
+          zkProofJobs: feature(),
+        },
+        diagnostic: endpointWriteAllowed
+          ? {
+              code: "endpoint_identity_matched",
+              message: "Endpoint identity matches the configured network.",
+            }
+          : {
+              code: "endpoint_identity_unverified",
+              message: "Endpoint identity is unverified.",
+            },
+      } satisfies EndpointInspection,
+      error: "",
+    });
     const wrapper = mount(AccountSetupView, {
       attachTo: document.body,
       global: {
@@ -343,6 +479,116 @@ describe("AccountSetupView", () => {
     await flushPromises();
   };
 
+  const approveConnectSession = async (
+    permissions: ConnectPermissions | null = {
+      methods: ["sign_raw"],
+      events: [],
+      resources: [RAW_DOMAIN],
+    },
+  ) => {
+    const appKeyPair = generateWalletConnectKeyPair();
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+    const socket = FakeWebSocket.instances.at(-1);
+    if (!socket) {
+      throw new Error("IrohaConnect test socket was not opened.");
+    }
+    socket.emit("open");
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeControlConnectFrame({
+          sid: VALID_CONNECT_SID,
+          direction: "app_to_wallet",
+          seq: 1,
+          control: {
+            type: "open",
+            appPublicKeyHex: appKeyPair.publicKeyHex,
+            constraints: {
+              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+            },
+            appMeta: null,
+            permissions,
+          },
+        }),
+      }),
+    );
+    await flushPromises();
+    const approvalFrame = decodeConnectFrame(socket.sent[0] as Uint8Array);
+    if (approvalFrame.control?.type !== "approve") {
+      throw new Error("Expected IrohaConnect approval control frame.");
+    }
+    const keys = deriveConnectDirectionKeys(
+      {
+        sid: VALID_CONNECT_SID,
+        sidBytesHex: "",
+        nonceHex: "",
+        privateKeyHex: appKeyPair.privateKeyHex,
+        publicKeyHex: appKeyPair.publicKeyHex,
+        walletUri: "",
+        appUri: "",
+        wsUrl: "",
+        createdAt: 0,
+      },
+      approvalFrame.control.walletPublicKeyHex,
+    );
+    signIrohaConnectMessageMock.mockClear();
+    return { socket, keys };
+  };
+
+  const encodeRawSignRequest = (
+    appKey: Uint8Array,
+    input: {
+      sequence?: number;
+      domainTag?: string;
+      signingMessageB64: string;
+    },
+  ) => {
+    const sequence = input.sequence ?? 2;
+    const bytes = Buffer.from(input.signingMessageB64, "base64");
+    const aead = encryptConnectEnvelope(
+      appKey,
+      VALID_CONNECT_SID,
+      "app_to_wallet",
+      sequence,
+      {
+        type: "sign_request_raw",
+        domainTag: input.domainTag ?? RAW_DOMAIN,
+        bytesHex: bytes.toString("hex"),
+        bytesBase64: input.signingMessageB64,
+        bytesLength: bytes.length,
+      },
+    );
+    return encodeCiphertextConnectFrame({
+      sid: VALID_CONNECT_SID,
+      direction: "app_to_wallet",
+      seq: sequence,
+      aead,
+    });
+  };
+
+  const decodeLatestWalletEnvelope = (
+    socket: FakeWebSocket,
+    walletKey: Uint8Array,
+  ) => {
+    const frame = decodeConnectFrame(socket.sent.at(-1) as Uint8Array);
+    if (!frame.ciphertext) {
+      throw new Error("Expected an encrypted IrohaConnect response.");
+    }
+    return decryptConnectEnvelope(
+      walletKey,
+      VALID_CONNECT_SID,
+      frame.direction,
+      frame.seq,
+      hexToBytes(frame.ciphertext.aeadHex),
+    );
+  };
+
   it("focuses first launch on the onboarding wizard", () => {
     const wrapper = mountView();
 
@@ -364,29 +610,39 @@ describe("AccountSetupView", () => {
     ).toBe("true");
   });
 
-  it("requests the irohaconnect launch URI for pairing QR generation", async () => {
-    createConnectPreviewMock.mockResolvedValueOnce({
-      walletUri: "irohaconnect://connect?sid=preview-1",
-      walletCanonicalUri: "iroha://connect?sid=preview-1",
-      sidBase64Url: "sid-1",
-      tokenWallet: "wallet-token-1",
-    });
-    qrToDataUrlMock.mockResolvedValueOnce("data:image/png;base64,preview-1");
-
+  it("does not advertise an app-role QR without a remote signing session", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
-    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
-    await flushPromises();
-
-    expect(createConnectPreviewMock).toHaveBeenCalledWith({
-      toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
-      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
-      launchProtocol: "irohaconnect",
-    });
-    expect(qrToDataUrlMock).toHaveBeenCalledWith(
-      "irohaconnect://connect?sid=preview-1",
+    expect(
+      wrapper.find('[data-testid="account-connect-generate"]').exists(),
+    ).toBe(false);
+    expect(wrapper.text()).toContain(
+      "Scan a wallet-role QR from an app to connect it to this wallet.",
     );
-    expect(wrapper.text()).toContain("sid-1");
+  });
+
+  it("disables pairing QR generation when endpoint writes are blocked", () => {
+    const wrapper = mountView({
+      withSavedAccount: true,
+      endpointWriteAllowed: false,
+    });
+
+    expect(
+      wrapper.get('[data-testid="account-connect-prerequisite"]').text(),
+    ).toContain("unverified");
+  });
+
+  it("disables pairing QR generation when the operation is not advertised", () => {
+    const wrapper = mountView({
+      withSavedAccount: true,
+      connectSupported: false,
+    });
+
+    expect(
+      wrapper.get('[data-testid="account-connect-prerequisite"]').text(),
+    ).toBe(
+      t("The active endpoint does not advertise IrohaConnect session writes."),
+    );
   });
 
   it("opens the wallet when the active saved wallet is selected", async () => {
@@ -426,94 +682,14 @@ describe("AccountSetupView", () => {
     expect(routerPushMock).toHaveBeenCalledWith("/wallet");
   });
 
-  it("ignores stale pairing preview success after reset", async () => {
-    createConnectPreviewMock.mockResolvedValueOnce({
-      walletUri: "wc:preview-1",
-      sidBase64Url: "sid-1",
-      tokenWallet: "wallet-token-1",
-    });
-    qrToDataUrlMock.mockResolvedValueOnce("data:image/png;base64,preview-1");
-
-    let resolveSecondPreview: (value: unknown) => void = () => {};
-    const secondPreviewDeferred = new Promise((resolve) => {
-      resolveSecondPreview = resolve;
-    });
-    createConnectPreviewMock.mockReturnValueOnce(secondPreviewDeferred);
-    qrToDataUrlMock.mockResolvedValueOnce("data:image/png;base64,preview-2");
-
-    const wrapper = mountView({ withSavedAccount: true });
-
-    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("sid-1");
-
-    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
-    await flushPromises();
-    await getButtonByText(wrapper, "Reset").trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain("sid-1");
-    expect(
-      getButtonByText(wrapper, t("Generate pairing QR")).attributes("disabled"),
-    ).toBeUndefined();
-
-    resolveSecondPreview({
-      walletUri: "wc:preview-2",
-      sidBase64Url: "sid-2",
-      tokenWallet: "wallet-token-2",
-    });
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain("sid-2");
-    expect(wrapper.text()).not.toContain("wallet-token-2");
-  });
-
-  it("ignores stale pairing preview error after reset", async () => {
-    createConnectPreviewMock.mockResolvedValueOnce({
-      walletUri: "wc:preview-1",
-      sidBase64Url: "sid-1",
-      tokenWallet: "wallet-token-1",
-    });
-    qrToDataUrlMock.mockResolvedValueOnce("data:image/png;base64,preview-1");
-
-    let rejectSecondPreview: (reason?: unknown) => void = () => {};
-    const secondPreviewDeferred = new Promise((_, reject) => {
-      rejectSecondPreview = reject;
-    });
-    createConnectPreviewMock.mockReturnValueOnce(secondPreviewDeferred);
-
-    const wrapper = mountView({ withSavedAccount: true });
-
-    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("sid-1");
-
-    await getButtonByText(wrapper, t("Generate pairing QR")).trigger("click");
-    await flushPromises();
-    await getButtonByText(wrapper, "Reset").trigger("click");
-    await flushPromises();
-
-    rejectSecondPreview(new Error("preview down"));
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain("preview down");
-    expect(wrapper.text()).not.toContain("sid-1");
-    expect(
-      getButtonByText(wrapper, t("Generate pairing QR")).attributes("disabled"),
-    ).toBeUndefined();
-  });
-
   it("approves a scanned wallet-role IrohaConnect QR over the relay WebSocket", async () => {
     const wrapper = mountView({ withSavedAccount: true });
-    const relayNode = "https://relay.example";
+    const relayNode = TAIRA_CHAIN_PRESET.connection.toriiUrl;
     const walletToken = "wallet-token-1";
-    const payload = `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=chain-a&node=${encodeURIComponent(
+    const appKeyPair = generateWalletConnectKeyPair();
+    const payload = `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
       relayNode,
-    )}&v=1&role=wallet&token=${encodeURIComponent(walletToken)}`;
+    )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=${encodeURIComponent(walletToken)}&relay=relay-token-1`;
 
     await scanConnectQr(payload);
 
@@ -532,35 +708,481 @@ describe("AccountSetupView", () => {
     expect(FakeWebSocket.instances).toHaveLength(1);
     const socket = FakeWebSocket.instances[0];
     expect(String(socket.url)).toBe(
-      `wss://relay.example/v1/connect/ws?sid=${VALID_CONNECT_SID}&role=wallet`,
+      `wss://taira.sora.org/v1/connect/ws?sid=${VALID_CONNECT_SID}&role=wallet`,
     );
     expect(socket.protocols).toEqual([
       buildIrohaConnectTokenProtocol(walletToken),
     ]);
     expect(socket.binaryType).toBe("arraybuffer");
     expect(wrapper.text()).toContain(VALID_CONNECT_SID);
-    expect(wrapper.text()).toContain("chain-a");
+    expect(wrapper.text()).toContain(TAIRA_CHAIN_PRESET.connection.chainId);
     expect(wrapper.text()).toContain(relayNode);
 
     socket.emit("open");
     await flushPromises();
 
+    expect(socket.sent).toHaveLength(0);
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeControlConnectFrame({
+          sid: VALID_CONNECT_SID,
+          direction: "app_to_wallet",
+          seq: 1,
+          control: {
+            type: "open",
+            appPublicKeyHex: appKeyPair.publicKeyHex,
+            constraints: {
+              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+            },
+            appMeta: null,
+            permissions: {
+              methods: ["sign_raw"],
+              events: [],
+              resources: null,
+            },
+          },
+        }),
+      }),
+    );
+    await flushPromises();
+
     expect(socket.sent).toHaveLength(1);
     expect(socket.sent[0]).toBeInstanceOf(Uint8Array);
-    expect((socket.sent[0] as Uint8Array).length).toBeGreaterThan(400);
-    const approvalFrame = decodeIrohaConnectFrame(socket.sent[0] as Uint8Array);
-    expect(approvalFrame.kind).toBe("other");
-    expect(approvalFrame.direction).toBe("wallet-to-app");
-    expect(approvalFrame.sequence).toBe(1);
-    expect(Array.from(approvalFrame.sid)).toEqual(
-      Array.from(new Uint8Array(32).fill(0xce)),
-    );
-    if (approvalFrame.kind !== "other") {
+    const approvalFrame = decodeConnectFrame(socket.sent[0] as Uint8Array);
+    expect(approvalFrame.kind).toBe("control");
+    expect(approvalFrame.direction).toBe("wallet_to_app");
+    expect(approvalFrame.seq).toBe(1);
+    expect(approvalFrame.sid).toBe(VALID_CONNECT_SID);
+    if (approvalFrame.control?.type !== "approve") {
       throw new Error("Expected IrohaConnect approval control frame.");
     }
-    expect(approvalFrame.frameKind).toBe(0);
+    expect(approvalFrame.control).toMatchObject({
+      accountId: EXAMPLE_REAL_I105_ACCOUNT_ID,
+      permissions: null,
+      proof: null,
+    });
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledTimes(1);
     expect(wrapper.text()).toContain(EXAMPLE_REAL_I105_ACCOUNT_ID);
     expect(wrapper.text()).toContain(t("IrohaConnect approved."));
+  });
+
+  it("rejects duplicate Account Setup Open frames while approval signing is pending", async () => {
+    let resolveSignature!: (value: {
+      publicKeyHex: string;
+      signatureB64: string;
+      signingAlgorithm: string;
+      algorithmCode: number;
+      algorithmLabel: string;
+    }) => void;
+    signIrohaConnectMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSignature = resolve;
+      }),
+    );
+    mountView({ withSavedAccount: true });
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0];
+    socket.emit("open");
+    for (const [index, appKey] of [
+      generateWalletConnectKeyPair(),
+      generateWalletConnectKeyPair(),
+    ].entries()) {
+      socket.emit(
+        "message",
+        new MessageEvent("message", {
+          data: encodeControlConnectFrame({
+            sid: VALID_CONNECT_SID,
+            direction: "app_to_wallet",
+            seq: index + 1,
+            control: {
+              type: "open",
+              appPublicKeyHex: appKey.publicKeyHex,
+              constraints: {
+                chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+              },
+              appMeta: null,
+              permissions: {
+                methods: ["sign_raw"],
+                events: [],
+                resources: [RAW_DOMAIN],
+              },
+            },
+          }),
+        }),
+      );
+      await flushPromises();
+    }
+
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledTimes(1);
+    expect(socket.closeCode).toBe(1000);
+    expect(socket.sent).toHaveLength(0);
+    resolveSignature({
+      publicKeyHex: "ab".repeat(32),
+      signatureB64: Buffer.alloc(64, 0x5a).toString("base64"),
+      signingAlgorithm: "ed25519",
+      algorithmCode: 0,
+      algorithmLabel: "Ed25519",
+    });
+    await flushPromises();
+    expect(socket.sent).toHaveLength(0);
+  });
+
+  it("shows the exact raw-signing domain and signs only after approval", async () => {
+    mountView({ withSavedAccount: true });
+    const { socket, keys } = await approveConnectSession();
+    const signingMessageB64 = Buffer.from("account setup raw request").toString(
+      "base64",
+    );
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeRawSignRequest(keys.appKey, { signingMessageB64 }),
+      }),
+    );
+    await flushPromises();
+
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+    expect(getOpenDialog()?.textContent).toContain(RAW_DOMAIN);
+    getDialogButtonByText(t("Approve request")).click();
+    await flushPromises();
+
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({ signingMessageB64 }),
+    );
+    expect(
+      decodeLatestWalletEnvelope(socket, keys.walletKey).payload.type,
+    ).toBe("sign_result_ok");
+  });
+
+  it.each([
+    {
+      label: "null grants",
+      permissions: null,
+      domainTag: RAW_DOMAIN,
+    },
+    {
+      label: "a non-current method name",
+      permissions: {
+        methods: ["sign"],
+        events: [],
+        resources: [RAW_DOMAIN],
+      },
+      domainTag: RAW_DOMAIN,
+    },
+    {
+      label: "an ungranted raw domain",
+      permissions: {
+        methods: ["sign_raw"],
+        events: [],
+        resources: ["other:domain:v1"],
+      },
+      domainTag: RAW_DOMAIN,
+    },
+  ])(
+    "rejects Account Setup signing for $label before vault access",
+    async ({ permissions, domainTag }) => {
+      mountView({ withSavedAccount: true });
+      const { socket, keys } = await approveConnectSession(permissions);
+      socket.emit(
+        "message",
+        new MessageEvent("message", {
+          data: encodeRawSignRequest(keys.appKey, {
+            domainTag,
+            signingMessageB64:
+              Buffer.from("permission probe").toString("base64"),
+          }),
+        }),
+      );
+      await flushPromises();
+
+      expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+      expect(getOpenDialog()).toBeNull();
+      expect(
+        decodeLatestWalletEnvelope(socket, keys.walletKey).payload,
+      ).toMatchObject({
+        type: "sign_result_err",
+        code: "PERMISSION_DENIED",
+      });
+    },
+  );
+
+  it("keeps relay server-event sequence independent from Account Setup peer sequence", async () => {
+    mountView({ withSavedAccount: true });
+    const { socket, keys } = await approveConnectSession();
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeServerEventConnectFrame({
+          sid: VALID_CONNECT_SID,
+          direction: "app_to_wallet",
+          seq: 1,
+          height: 7,
+          entryHash: "event-hash",
+          proofsJson: "{}",
+        }),
+      }),
+    );
+    await flushPromises();
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeRawSignRequest(keys.appKey, {
+          sequence: 2,
+          signingMessageB64: Buffer.from("after event").toString("base64"),
+        }),
+      }),
+    );
+    await flushPromises();
+
+    expect(socket.closeCode).toBeNull();
+    expect(getOpenDialog()?.textContent).toContain("6166746572206576656e74");
+  });
+
+  it("does not send an Account Setup signature after the socket closes during vault signing", async () => {
+    let resolveSignature!: (value: {
+      publicKeyHex: string;
+      signatureB64: string;
+      signingAlgorithm: string;
+      algorithmCode: number;
+      algorithmLabel: string;
+    }) => void;
+    mountView({ withSavedAccount: true });
+    const { socket, keys } = await approveConnectSession();
+    signIrohaConnectMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSignature = resolve;
+      }),
+    );
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeRawSignRequest(keys.appKey, {
+          signingMessageB64: Buffer.from("stale request").toString("base64"),
+        }),
+      }),
+    );
+    await flushPromises();
+    getDialogButtonByText(t("Approve request")).click();
+    await flushPromises();
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledTimes(1);
+
+    socket.emit("close");
+    resolveSignature({
+      publicKeyHex: "ab".repeat(32),
+      signatureB64: Buffer.alloc(64, 0x5a).toString("base64"),
+      signingAlgorithm: "ed25519",
+      algorithmCode: 0,
+      algorithmLabel: "Ed25519",
+    });
+    await flushPromises();
+
+    expect(socket.sent).toHaveLength(1);
+    expect(getOpenDialog()).toBeNull();
+  });
+
+  it("does not send approval when the wallet changes during vault signing", async () => {
+    let resolveSignature!: (value: {
+      publicKeyHex: string;
+      signatureB64: string;
+      signingAlgorithm: string;
+      algorithmCode: number;
+      algorithmLabel: string;
+    }) => void;
+    signIrohaConnectMessageMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSignature = resolve;
+      }),
+    );
+    mountView({ withSavedAccount: true });
+    const appKeyPair = generateWalletConnectKeyPair();
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0];
+    socket.emit("open");
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeControlConnectFrame({
+          sid: VALID_CONNECT_SID,
+          direction: "app_to_wallet",
+          seq: 1,
+          control: {
+            type: "open",
+            appPublicKeyHex: appKeyPair.publicKeyHex,
+            constraints: {
+              chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+            },
+            appMeta: null,
+            permissions: null,
+          },
+        }),
+      }),
+    );
+    await flushPromises();
+    expect(signIrohaConnectMessageMock).toHaveBeenCalledTimes(1);
+    expect(socket.sent).toHaveLength(0);
+
+    useSessionStore().$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        chainId: "different-chain",
+      },
+    });
+    resolveSignature({
+      publicKeyHex: "ab".repeat(32),
+      signatureB64: Buffer.alloc(64, 0x5a).toString("base64"),
+      signingAlgorithm: "ed25519",
+      algorithmCode: 0,
+      algorithmLabel: "Ed25519",
+    });
+    await flushPromises();
+
+    expect(socket.sent).toHaveLength(0);
+    expect(socket.closeCode).toBe(1000);
+  });
+
+  it.each([
+    {
+      label: "chain",
+      chainId: "different-chain",
+      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    },
+    {
+      label: "endpoint",
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      node: "https://other.example",
+      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+    },
+    {
+      label: "network prefix",
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      node: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      networkPrefix: 753,
+    },
+  ])(
+    "rejects a scanned pairing for a different $label before opening the relay",
+    async ({ chainId, node, networkPrefix }) => {
+      const wrapper = mountView({ withSavedAccount: true });
+
+      await scanConnectQr(
+        `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${chainId}&node=${encodeURIComponent(
+          node,
+        )}&network_prefix=${networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+      );
+      getDialogButtonByText(t("Approve connection")).click();
+      await flushPromises();
+
+      expect(inspectEndpointMock).not.toHaveBeenCalled();
+      expect(FakeWebSocket.instances).toHaveLength(0);
+      expect(wrapper.text()).toContain("different");
+    },
+  );
+
+  it("does not open a scanned relay when fresh endpoint inspection is read-only", async () => {
+    const wrapper = mountView({ withSavedAccount: true });
+    inspectEndpointMock.mockResolvedValueOnce({
+      accessMode: "read-only",
+      features: {
+        irohaConnectSessions: {
+          supported: true,
+        },
+      },
+      diagnostic: {
+        message: "Endpoint identity does not match the active wallet network.",
+      },
+    });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+
+    expect(inspectEndpointMock).toHaveBeenCalledTimes(1);
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("does not match");
+  });
+
+  it("does not open a scanned relay when the wallet context changes during inspection", async () => {
+    let resolveInspection!: (value: unknown) => void;
+    inspectEndpointMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveInspection = resolve;
+      }),
+    );
+    mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+
+    useSessionStore().$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        chainId: "different-chain",
+      },
+    });
+    resolveInspection({
+      accessMode: "read-write",
+      features: {
+        irohaConnectSessions: {
+          supported: true,
+        },
+      },
+      diagnostic: {
+        message: "Endpoint identity matches the configured network.",
+      },
+    });
+    await flushPromises();
+
+    expect(FakeWebSocket.instances).toHaveLength(0);
+    expect(getOpenDialog()).toBeNull();
+  });
+
+  it("does not approve an opened relay after the wallet context changes", async () => {
+    mountView({ withSavedAccount: true });
+
+    await scanConnectQr(
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
+    );
+    getDialogButtonByText(t("Approve connection")).click();
+    await flushPromises();
+    const socket = FakeWebSocket.instances[0];
+
+    useSessionStore().$patch({
+      connection: {
+        ...TAIRA_CHAIN_PRESET.connection,
+        chainId: "different-chain",
+      },
+    });
+    socket.emit("open");
+    await flushPromises();
+
+    expect(socket.sent).toEqual([]);
+    expect(socket.closeCode).toBe(1000);
+    expect(getOpenDialog()).toBeNull();
   });
 
   it("rejects scanned wallet-role IrohaConnect QR approval when the token is missing", async () => {
@@ -569,7 +1191,7 @@ describe("AccountSetupView", () => {
     await scanConnectQr(
       `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&node=${encodeURIComponent(
         "https://relay.example",
-      )}`,
+      )}&v=1&relay=relay-token-1`,
     );
 
     expect(getOpenDialog()).not.toBeNull();
@@ -585,7 +1207,9 @@ describe("AccountSetupView", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
     );
 
     expect(getOpenDialog()).not.toBeNull();
@@ -608,7 +1232,7 @@ describe("AccountSetupView", () => {
     expect(document.activeElement).toBe(scanButton);
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+      `iroha://connect?sid=${VALID_CONNECT_SID}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
     );
 
     const dialog = getOpenDialog();
@@ -628,7 +1252,7 @@ describe("AccountSetupView", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&role=app&token=wallet-token-1`,
+      `iroha://connect?sid=${VALID_CONNECT_SID}&v=1&role=app&token=wallet-token-1&relay=relay-token-1`,
     );
 
     expect(FakeWebSocket.instances).toHaveLength(0);
@@ -643,7 +1267,9 @@ describe("AccountSetupView", () => {
     const wrapper = mountView({ withSavedAccount: true });
 
     await scanConnectQr(
-      `iroha://connect?sid=${VALID_CONNECT_SID}&role=wallet&token=wallet-token-1`,
+      `iroha://connect?sid=${VALID_CONNECT_SID}&chain_id=${TAIRA_CHAIN_PRESET.connection.chainId}&node=${encodeURIComponent(
+        TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      )}&network_prefix=${TAIRA_CHAIN_PRESET.connection.networkPrefix}&v=1&role=wallet&token=wallet-token-1&relay=relay-token-1`,
     );
 
     getDialogButtonByText(t("Approve connection")).click();
@@ -1099,6 +1725,8 @@ describe("AccountSetupView", () => {
     expect(session.activeAccount?.localOnly).toBe(true);
     expect(importConfidentialWalletBackupMock).toHaveBeenCalledWith({
       toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+      chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+      networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
       accountId: "alice@backup-domain",
       mnemonic: VALID_MNEMONIC,
       confidentialWallet: {

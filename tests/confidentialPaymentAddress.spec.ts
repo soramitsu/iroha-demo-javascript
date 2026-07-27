@@ -60,4 +60,35 @@ describe("confidential payment addresses", () => {
       reason: "invalid",
     });
   });
+
+  it("rejects unknown schemas, compatibility aliases, and plaintext fields", () => {
+    expect(
+      parseConfidentialPaymentAddressPayload({
+        ...PAYMENT_ADDRESS,
+        schema: "untrusted-private-address/v99",
+      }),
+    ).toEqual({ ok: false, reason: "invalid" });
+    expect(
+      parseConfidentialPaymentAddressPayload({
+        ...PAYMENT_ADDRESS,
+        accountId: "mallory@example",
+      }),
+    ).toEqual({ ok: false, reason: "invalid" });
+    expect(
+      parseConfidentialPaymentAddressPayload({
+        ...PAYMENT_ADDRESS,
+        amount: "999",
+      }),
+    ).toEqual({ ok: false, reason: "invalid" });
+    expect(
+      parseConfidentialPaymentAddressPayload({
+        schema: "iroha-confidential-payment-address/v3",
+        shieldedReceiveKeyId: PAYMENT_ADDRESS.receiveKeyId,
+        shieldedReceivePublicKeyBase64Url:
+          PAYMENT_ADDRESS.receivePublicKeyBase64Url,
+        ownerTagHex: PAYMENT_ADDRESS.shieldedOwnerTagHex,
+        diversifierHex: PAYMENT_ADDRESS.shieldedDiversifierHex,
+      }),
+    ).toEqual({ ok: false, reason: "invalid" });
+  });
 });

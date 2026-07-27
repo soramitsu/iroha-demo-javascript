@@ -36,6 +36,16 @@
           </dd>
         </div>
         <div>
+          <dt>{{ t("Inclusive PLAIN window") }}</dt>
+          <dd data-testid="governance-public-window">
+            {{
+              proposal.referendum
+                ? `${proposal.referendum.hStart}–${proposal.referendum.hEnd}`
+                : t("Unavailable")
+            }}
+          </dd>
+        </div>
+        <div>
           <dt>{{ t("Created") }}</dt>
           <dd>
             {{
@@ -88,7 +98,7 @@
           <p>
             {{
               t(
-                "This exact payout lifecycle must be enacted before a policy can bind it.",
+                "Public typed Taira projection. This exact payout lifecycle requires genuine finalized PLAIN evidence and native governance enactment before a policy can bind it.",
               )
             }}
           </p>
@@ -97,15 +107,139 @@
 
         <div
           v-else-if="proposal.kind.type === 'ValidationFeePolicy'"
-          class="unknown-payload"
+          class="verified-payload"
+          data-testid="governance-public-policy"
         >
           <p>
             {{
               t(
-                "Validation-fee policy fields stay hidden until the current SDK locally verifies their consensus proof and immutable ledger binding.",
+                "Public typed Taira proposal projection. Finalized Parliament evidence is shown separately and is required before enactment.",
               )
             }}
           </p>
+          <aside
+            class="electorate-contract"
+            data-testid="governance-plain-electorate"
+          >
+            <strong>{{ t("Immutable PLAIN electorate") }}</strong>
+            <p v-if="plainReferendumLoading">
+              {{ t("Checking the immutable eligible-citizen snapshot…") }}
+            </p>
+            <p v-else-if="plainReferendumBindingError" class="error">
+              {{ plainReferendumBindingError }}
+            </p>
+            <dl v-else-if="plainReferendumContract" class="payload-grid">
+              <div>
+                <dt>{{ t("Eligible citizens") }}</dt>
+                <dd>
+                  {{ plainReferendumContract.contract.eligibleCitizenCount }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("Active account") }}</dt>
+                <dd :class="{ positive: plainReferendumAccountEligible }">
+                  {{
+                    plainReferendumAccountEligible
+                      ? t("Eligible in frozen snapshot")
+                      : t("Not eligible in frozen snapshot")
+                  }}
+                </dd>
+              </div>
+              <div class="span-2">
+                <dt>{{ t("Eligible roster SHA-256") }}</dt>
+                <dd class="mono">
+                  {{
+                    plainReferendumContract.contract.eligibleCitizenRosterSha256
+                  }}
+                </dd>
+              </div>
+              <div class="span-2">
+                <dt>{{ t("Published artifact SHA-256") }}</dt>
+                <dd class="mono">
+                  {{ plainReferendumContract.artifactSha256 }}
+                </dd>
+              </div>
+              <div class="span-2">
+                <dt>{{ t("Electorate seal SHA-256") }}</dt>
+                <dd class="mono">
+                  {{
+                    plainReferendumContract.contract.plainElectorate
+                      .electorateSealHash
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("Snapshot finalized height") }}</dt>
+                <dd>
+                  {{ plainReferendumContract.contract.snapshotFinalizedHeight }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("Non-operator registration gate") }}</dt>
+                <dd>
+                  {{
+                    t("After finalized height {height}", {
+                      height:
+                        plainReferendumContract.contract
+                          .postParliamentRegistrationGate.gateHeight,
+                    })
+                  }}
+                </dd>
+              </div>
+              <div>
+                <dt>{{ t("Ballot contract") }}</dt>
+                <dd>{{ t("150 XOR · 3,600 blocks · one ballot") }}</dd>
+              </div>
+              <div class="span-2">
+                <dt>{{ t("Proposal-bound ballot route") }}</dt>
+                <dd class="mono">
+                  {{ plainReferendumContract.contract.ballot.draftRoute }}
+                </dd>
+              </div>
+              <div class="span-2">
+                <dt>{{ t("Verified handoff source") }}</dt>
+                <dd class="mono">
+                  {{ plainReferendumContract.source.descriptorUrl }}
+                </dd>
+              </div>
+            </dl>
+          </aside>
+          <dl class="payload-grid policy-facts">
+            <div>
+              <dt>{{ t("Fee") }}</dt>
+              <dd>
+                {{
+                  proposal.kind.policy.fee === "0.1"
+                    ? "0.10 SBD"
+                    : `${proposal.kind.policy.fee} SBD`
+                }}
+              </dd>
+            </div>
+            <div>
+              <dt>{{ t("Activation delay") }}</dt>
+              <dd>{{ t("120,960 blocks") }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Effective height") }}</dt>
+              <dd>{{ proposal.kind.policy.effective_from_height }}</dd>
+            </div>
+            <div>
+              <dt>{{ t("Payout lifecycle proposal") }}</dt>
+              <dd class="mono">
+                {{
+                  proposal.kind.payoutLifecycleProposalId || t("Unavailable")
+                }}
+              </dd>
+            </div>
+            <div class="span-2">
+              <dt>{{ t("SBD asset ID") }}</dt>
+              <dd class="mono">{{ proposal.kind.policy.ds_asset_id }}</dd>
+            </div>
+          </dl>
+          <details class="technical-projection">
+            <summary>{{ t("Exact public proposal payload") }}</summary>
+            <pre><code>{{ pretty(proposal.kind.raw) }}</code></pre>
+          </details>
         </div>
 
         <pre
@@ -154,7 +288,9 @@
       <section class="parliament-panel">
         <div class="section-heading">
           <h3>{{ t("Seven-body Parliament") }}</h3>
-          <span>{{ t("Members vote; alternates are ineligible") }}</span>
+          <span data-testid="governance-body-count">{{
+            t("{count} exact bodies", { count: bodies.length })
+          }}</span>
         </div>
         <div class="body-grid">
           <article v-for="body in bodies" :key="body" class="body-card">
@@ -223,19 +359,19 @@
 
       <section class="finalization-panel">
         <div class="section-heading">
-          <h3>{{ t("Deterministic finalization") }}</h3>
+          <h3>{{ t("Finalization and enactment") }}</h3>
           <span>
             {{
               proposal.finalizationEvidence
-                ? t("Finalized ledger evidence")
-                : t("Awaiting automatic close")
+                ? t("Genuine finalized PLAIN evidence")
+                : t("No finalized evidence yet")
             }}
           </span>
         </div>
         <p>
           {{
             t(
-              "PLAIN referenda finalize automatically after the inclusive end height. This wallet does not offer a manual finalize action.",
+              "This wallet displays only retained finalized PLAIN evidence. An approved payout lifecycle may be enacted through the native governance endpoint; the wallet never fabricates or manually finalizes evidence.",
             )
           }}
         </p>
@@ -277,12 +413,17 @@ import {
   type GovernanceParliamentBody,
   type GovernanceProposalDetail,
 } from "@/governance/model";
+import type { GovernancePlainReferendumContractResult } from "@/types/iroha";
 import GovernanceTimeline from "./GovernanceTimeline.vue";
 
 const props = defineProps<{
   proposal: GovernanceProposalDetail | null;
   loading: boolean;
   error: string;
+  plainReferendumContract?: GovernancePlainReferendumContractResult | null;
+  plainReferendumLoading?: boolean;
+  plainReferendumBindingError?: string;
+  plainReferendumAccountEligible?: boolean;
 }>();
 
 const { t } = useAppI18n();
@@ -465,6 +606,58 @@ pre {
   color: var(--color-text-muted);
   font-size: 0.74rem;
   line-height: 1.55;
+}
+
+.electorate-contract {
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-soft);
+}
+
+.electorate-contract > strong {
+  font-size: 0.78rem;
+}
+
+.electorate-contract > p {
+  margin: 8px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.electorate-contract > p.error {
+  color: var(--color-danger);
+}
+
+.electorate-contract .payload-grid {
+  margin-top: 12px;
+}
+
+.electorate-contract .positive {
+  color: var(--color-success);
+}
+
+.policy-facts {
+  margin-bottom: 14px;
+}
+
+.execution-evidence {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.technical-projection {
+  border-top: 1px solid var(--color-border);
+}
+
+.technical-projection summary {
+  min-height: 44px;
+  padding: 12px 0;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
 }
 
 .tally-grid {

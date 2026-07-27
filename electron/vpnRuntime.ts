@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { quoteAndSignTransaction, ToriiClient } from "@iroha/iroha-js";
 import { normalizeCryptoAlgorithm } from "@iroha/iroha-js/crypto";
+import { withBoundedHttpGetFetchRetry } from "./httpReadRetry";
 import { nodeFetch } from "./nodeFetch";
 import {
   BundledVpnController,
@@ -20,18 +21,21 @@ import type {
   VpnStatus,
 } from "../src/types/iroha";
 import { normalizeAccountIdLiteralForNetwork } from "../src/utils/accountId";
+import { normalizeEndpointUrl } from "../src/utils/endpoint";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
 import {
   DEFAULT_SIGNING_ALGORITHM,
   signingAlgorithmLabel,
 } from "../src/utils/signingAlgorithms";
+import { waitForFinalizedTransaction } from "./transactionFinality";
 
 type VpnAvailabilityInput = {
   toriiUrl: string;
 };
 
-type VpnConnectInput = VpnAuthContext & {
+type VpnConnectInput = Omit<VpnAuthContext, "chainId" | "networkPrefix"> & {
   chainId: string;
+  networkPrefix: number;
   exitClass: VpnExitClass;
 };
 
@@ -39,8 +43,9 @@ type VpnStatusInput = Partial<VpnAuthContext>;
 
 type ActiveVpnSession = {
   toriiUrl: string;
+  chainId: string;
   accountId: string;
-  networkPrefix?: number;
+  networkPrefix: number;
   privateKeyHex: string;
   signingAlgorithm: string;
   sessionId: string;
@@ -61,10 +66,66 @@ type ActiveVpnSession = {
   pendingRemoteDelete: boolean;
 };
 
+type VpnRuntimeContext = {
+  key: string;
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  networkPrefix: number;
+};
+
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 const MAX_RECEIPTS = 24;
 const VPN_PAYMENT_WAIT_TIMEOUT_MS = 60_000;
 const VPN_PAYMENT_POLL_INTERVAL_MS = 1_000;
+const vpnToriiFetch: typeof fetch = (input, init) =>
+  withBoundedHttpGetFetchRetry(nodeFetch, input, init);
+
+const fetchVpnFinalityJson = async (
+  toriiUrl: string,
+  path: string,
+): Promise<unknown> => {
+  const endpoint = new URL(path, `${normalizeEndpointUrl(toriiUrl)}/`);
+  const response = await vpnToriiFetch(endpoint, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `VPN payment finality read ${path} failed with HTTP ${response.status}.`,
+    );
+  }
+  return response.json();
+};
+
+const waitForVpnPaymentFinalizedBlock = async (
+  client: ToriiClient,
+  toriiUrl: string,
+  hashHex: string,
+) =>
+  waitForFinalizedTransaction({
+    hashHex,
+    timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
+    intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
+    getGlobalStatus: () =>
+      client.getTransactionStatus(hashHex, { scope: "global" }),
+    getExplorerTransaction: () =>
+      fetchVpnFinalityJson(
+        toriiUrl,
+        `/v1/explorer/transactions/${encodeURIComponent(hashHex)}`,
+      ),
+    getExplorerBlock: (blockHeight) =>
+      fetchVpnFinalityJson(
+        toriiUrl,
+        `/v1/explorer/blocks/${encodeURIComponent(String(blockHeight))}`,
+      ),
+    getExplorerMetrics: () =>
+      fetchVpnFinalityJson(toriiUrl, "/v1/explorer/metrics"),
+    wait: (delayMs) =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, delayMs);
+      }),
+  });
 
 const emptyStatus = (overrides?: Partial<VpnStatus>): VpnStatus => ({
   state: "idle",
@@ -171,6 +232,43 @@ const normalizeVpnAccountId = (
     throw new Error(`${label} is required.`);
   }
   return normalized;
+};
+
+const normalizeVpnNetworkPrefix = (value: unknown): number | null => {
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized >= 0 && normalized <= 0x3fff
+    ? normalized
+    : null;
+};
+
+const resolveVpnRuntimeContext = (
+  input?: Partial<
+    Pick<VpnAuthContext, "toriiUrl" | "chainId" | "accountId" | "networkPrefix">
+  > | null,
+): VpnRuntimeContext | null => {
+  const chainId = String(input?.chainId ?? "").trim();
+  const networkPrefix = normalizeVpnNetworkPrefix(input?.networkPrefix);
+  const accountIdRaw = String(input?.accountId ?? "").trim();
+  if (!input?.toriiUrl || !chainId || networkPrefix === null || !accountIdRaw) {
+    return null;
+  }
+  try {
+    const toriiUrl = normalizeEndpointUrl(input.toriiUrl);
+    const accountId = normalizeVpnAccountId(
+      accountIdRaw,
+      "accountId",
+      networkPrefix,
+    );
+    return {
+      key: JSON.stringify([toriiUrl, chainId, networkPrefix, accountId]),
+      toriiUrl,
+      chainId,
+      accountId,
+      networkPrefix,
+    };
+  } catch {
+    return null;
+  }
 };
 
 const VPN_EXIT_CLASSES: readonly VpnExitClass[] = [
@@ -315,26 +413,79 @@ const normalizeProfile = (
   if (!profile) {
     return null;
   }
-  const supportedExitClasses =
-    profile.supportedExitClasses.filter(isVpnExitClass);
-  const defaultExitClass = isVpnExitClass(profile.defaultExitClass)
-    ? profile.defaultExitClass
-    : (supportedExitClasses[0] ?? "standard");
+  const stringArray = (value: unknown, label: string): string[] => {
+    if (
+      !Array.isArray(value) ||
+      value.some(
+        (entry) =>
+          typeof entry !== "string" || !entry.trim() || entry.trim() !== entry,
+      )
+    ) {
+      throw new Error(`VPN profile ${label} must be an array of strings.`);
+    }
+    return [...value];
+  };
+  if (typeof profile.available !== "boolean") {
+    throw new Error("VPN profile available must be a boolean.");
+  }
+  if (
+    !Array.isArray(profile.supportedExitClasses) ||
+    profile.supportedExitClasses.length === 0 ||
+    profile.supportedExitClasses.some((value) => !isVpnExitClass(value)) ||
+    new Set(profile.supportedExitClasses).size !==
+      profile.supportedExitClasses.length
+  ) {
+    throw new Error(
+      "VPN profile supportedExitClasses must contain unique supported service classes.",
+    );
+  }
+  const supportedExitClasses = [...profile.supportedExitClasses];
+  if (
+    !isVpnExitClass(profile.defaultExitClass) ||
+    !supportedExitClasses.includes(profile.defaultExitClass)
+  ) {
+    throw new Error(
+      "VPN profile defaultExitClass must be one of its supported service classes.",
+    );
+  }
+  if (
+    typeof profile.relayEndpoint !== "string" ||
+    !profile.relayEndpoint.trim()
+  ) {
+    throw new Error("VPN profile relayEndpoint is required.");
+  }
+  if (
+    !Number.isSafeInteger(profile.leaseSecs) ||
+    profile.leaseSecs <= 0 ||
+    !Number.isSafeInteger(profile.dnsPushIntervalSecs) ||
+    profile.dnsPushIntervalSecs <= 0 ||
+    !Number.isSafeInteger(profile.mtuBytes) ||
+    profile.mtuBytes <= 0
+  ) {
+    throw new Error(
+      "VPN profile lease, DNS interval, and MTU must be positive integers.",
+    );
+  }
+  if (
+    typeof profile.meterFamily !== "string" ||
+    !profile.meterFamily.trim() ||
+    typeof profile.displayBillingLabel !== "string" ||
+    !profile.displayBillingLabel.trim()
+  ) {
+    throw new Error("VPN profile meter family and billing label are required.");
+  }
   return {
-    available: Boolean(profile.available),
+    available: profile.available,
     relayEndpoint: resolveVpnRelayEndpoint(profile.relayEndpoint, toriiUrl),
-    supportedExitClasses:
-      supportedExitClasses.length > 0
-        ? [...supportedExitClasses]
-        : [defaultExitClass],
-    defaultExitClass,
+    supportedExitClasses,
+    defaultExitClass: profile.defaultExitClass,
     leaseSecs: profile.leaseSecs,
     dnsPushIntervalSecs: profile.dnsPushIntervalSecs,
     meterFamily: profile.meterFamily,
-    routePushes: [...profile.routePushes],
-    excludedRoutes: [...profile.excludedRoutes],
-    dnsServers: [...profile.dnsServers],
-    tunnelAddresses: [...profile.tunnelAddresses],
+    routePushes: stringArray(profile.routePushes, "routePushes"),
+    excludedRoutes: stringArray(profile.excludedRoutes, "excludedRoutes"),
+    dnsServers: stringArray(profile.dnsServers, "dnsServers"),
+    tunnelAddresses: stringArray(profile.tunnelAddresses, "tunnelAddresses"),
     mtuBytes: profile.mtuBytes,
     displayBillingLabel: profile.displayBillingLabel,
   };
@@ -347,9 +498,12 @@ const normalizeProfileExitClass = (
   if (!profile) {
     return requestedExitClass;
   }
-  return profile.supportedExitClasses.includes(requestedExitClass)
-    ? requestedExitClass
-    : profile.defaultExitClass;
+  if (!profile.supportedExitClasses.includes(requestedExitClass)) {
+    throw new Error(
+      `VPN service class "${requestedExitClass}" is not supported by this endpoint.`,
+    );
+  }
+  return requestedExitClass;
 };
 
 const normalizeReceipt = (
@@ -389,7 +543,13 @@ export class VpnRuntime {
 
   private receipts: VpnReceipt[];
 
+  private receiptsContextKey: string | null = null;
+
+  private receiptsGeneration = 0;
+
   private activeSession: ActiveVpnSession | null = null;
+
+  private activeSessionContextVisible = true;
 
   private state: VpnStatus["state"] = "idle";
 
@@ -448,45 +608,9 @@ export class VpnRuntime {
         systemTunnelService: null,
       };
     }
+    let controller: VpnControllerStatus;
     try {
-      const controller = await this.controller.refreshCapability();
-      const profile = await this.fetchProfile(input.toriiUrl);
-      const profileAvailable = Boolean(profile?.available);
-      const actionsEnabled =
-        profileAvailable && controller.installed && !controller.repairRequired;
-      const message = controller.repairRequired
-        ? controller.message
-        : !controller.installed
-          ? controller.message
-          : !profileAvailable
-            ? "VPN control plane is unavailable on this Torii node."
-            : controller.message;
-      return {
-        platformSupported: true,
-        helperManaged: true,
-        helperReady: controller.installed && !controller.repairRequired,
-        serverReachable: profile !== null,
-        profileAvailable,
-        actionsEnabled,
-        status: actionsEnabled
-          ? "ready"
-          : !profileAvailable
-            ? "unavailable"
-            : "error",
-        message,
-        helperVersion: this.helperVersion,
-        platform: this.platform,
-        controllerInstalled: controller.installed,
-        controllerVersion: controller.version,
-        controllerKind: controller.controllerKind,
-        controllerPath: controller.controllerPath,
-        repairRequired: controller.repairRequired,
-        systemTunnelConfigured: controller.installed,
-        systemTunnelActive: controller.active,
-        systemTunnelKind: controller.controllerKind,
-        systemTunnelInterface: controller.interfaceName,
-        systemTunnelService: controller.networkService,
-      };
+      controller = await this.controller.refreshCapability();
     } catch (error) {
       return {
         platformSupported: true,
@@ -513,6 +637,58 @@ export class VpnRuntime {
         systemTunnelService: null,
       };
     }
+
+    let profile: VpnProfile | null = null;
+    let profileError: unknown = null;
+    try {
+      profile = await this.fetchProfile(input.toriiUrl);
+    } catch (error) {
+      profileError = error;
+    }
+    const profileAvailable = Boolean(profile?.available);
+    const actionsEnabled =
+      profileAvailable && controller.installed && !controller.repairRequired;
+    const message = controller.repairRequired
+      ? controller.message
+      : !controller.installed
+        ? controller.message
+        : profileError
+          ? sanitizeErrorMessage(
+              profileError instanceof Error
+                ? profileError.message
+                : String(profileError),
+            )
+          : !profileAvailable
+            ? "VPN control plane is unavailable on this Torii node."
+            : controller.message;
+    return {
+      platformSupported: true,
+      helperManaged: true,
+      helperReady: controller.installed && !controller.repairRequired,
+      serverReachable: profileError === null && profile !== null,
+      profileAvailable,
+      actionsEnabled,
+      status: actionsEnabled
+        ? "ready"
+        : profileError
+          ? "error"
+          : !profileAvailable
+            ? "unavailable"
+            : "error",
+      message,
+      helperVersion: this.helperVersion,
+      platform: this.platform,
+      controllerInstalled: controller.installed,
+      controllerVersion: controller.version,
+      controllerKind: controller.controllerKind,
+      controllerPath: controller.controllerPath,
+      repairRequired: controller.repairRequired,
+      systemTunnelConfigured: controller.installed,
+      systemTunnelActive: controller.active,
+      systemTunnelKind: controller.controllerKind,
+      systemTunnelInterface: controller.interfaceName,
+      systemTunnelService: controller.networkService,
+    };
   }
 
   async getProfile(input: VpnAvailabilityInput): Promise<VpnProfile | null> {
@@ -520,6 +696,10 @@ export class VpnRuntime {
   }
 
   async getStatus(input?: VpnStatusInput): Promise<VpnStatus> {
+    if (!resolveVpnRuntimeContext(input)) {
+      const controller = await this.controller.getStatus();
+      return this.buildLocalControllerStatus(controller);
+    }
     const controller = await this.reconcile(input);
     return this.buildStatus(controller);
   }
@@ -527,6 +707,21 @@ export class VpnRuntime {
   async connect(input: VpnConnectInput): Promise<VpnStatus> {
     if (!this.isPlatformSupported()) {
       throw new Error("Sora VPN currently supports macOS and Linux only.");
+    }
+    const requestedContext = this.activateReceiptsContext(input);
+    if (!requestedContext) {
+      throw new Error(
+        "VPN endpoint, chain, network prefix, and account context are required.",
+      );
+    }
+    if (
+      this.activeSession &&
+      !this.inputMatchesActiveSessionContext(input, this.activeSession)
+    ) {
+      this.markActiveSessionContextMismatch(input);
+      throw new Error(
+        "An active VPN session belongs to a different endpoint, chain, network prefix, or account. Switch back to its owning wallet to disconnect it.",
+      );
     }
     this.state = "connecting";
     this.lastError = null;
@@ -603,13 +798,11 @@ export class VpnRuntime {
         { canonicalAuth },
       );
       const paymentTxHash = paymentTransaction.hash.toString("hex");
-      await client.submitTransactionAndWait(
-        paymentTransaction.signedTransaction,
-        {
-          hashHex: paymentTxHash,
-          timeoutMs: VPN_PAYMENT_WAIT_TIMEOUT_MS,
-          intervalMs: VPN_PAYMENT_POLL_INTERVAL_MS,
-        },
+      await client.submitTransaction(paymentTransaction.signedTransaction);
+      await waitForVpnPaymentFinalizedBlock(
+        client,
+        input.toriiUrl,
+        paymentTxHash,
       );
       session = await client.createVpnSession(
         {
@@ -620,6 +813,11 @@ export class VpnRuntime {
         },
         { canonicalAuth },
       );
+      if (session.exitClass !== exitClass) {
+        throw new Error(
+          `VPN session service class mismatch: requested "${exitClass}", received "${String(session.exitClass)}".`,
+        );
+      }
       const normalizedSession = this.normalizeRemoteSession(session, {
         ...input,
         accountId,
@@ -673,6 +871,12 @@ export class VpnRuntime {
         if (receipt) {
           this.storeReceipt(
             normalizeReceipt(receipt as unknown as VpnReceipt, input.toriiUrl),
+            {
+              ...input,
+              accountId,
+              chainId,
+              networkPrefix: input.networkPrefix,
+            },
           );
         }
       }
@@ -686,11 +890,18 @@ export class VpnRuntime {
 
   async disconnect(input?: Partial<VpnAuthContext>): Promise<VpnStatus> {
     if (!this.activeSession) {
+      this.activateReceiptsContext(input);
       const controller = await this.reconcile(input);
       this.state = controller.active ? "repair-needed" : "idle";
       return this.buildStatus(controller);
     }
 
+    if (!this.inputMatchesActiveSessionContext(input, this.activeSession)) {
+      this.markActiveSessionContextMismatch(input);
+      const controller = await this.controller.getStatus();
+      return this.buildStatus(controller);
+    }
+    this.activeSessionContextVisible = true;
     this.state = "disconnecting";
     this.reconcileState = null;
     const session = this.activeSession;
@@ -707,6 +918,7 @@ export class VpnRuntime {
       this.persistActiveSession();
       this.storeReceipt(
         this.buildLocalFallbackReceipt(session, "remote-delete-pending"),
+        session,
       );
       this.remoteSessionActive = true;
       this.state = "remote-delete-pending";
@@ -725,6 +937,7 @@ export class VpnRuntime {
       if (receipt) {
         this.storeReceipt(
           normalizeReceipt(receipt as unknown as VpnReceipt, auth.toriiUrl),
+          auth,
         );
       }
       await this.syncReceiptsFromServer(auth).catch(() => undefined);
@@ -740,6 +953,7 @@ export class VpnRuntime {
       this.persistActiveSession();
       this.storeReceipt(
         this.buildLocalFallbackReceipt(session, "remote-delete-pending"),
+        session,
       );
       this.remoteSessionActive = true;
       this.state = "remote-delete-pending";
@@ -750,21 +964,139 @@ export class VpnRuntime {
     }
   }
 
-  async repair(input?: VpnStatusInput): Promise<VpnStatus> {
+  async disconnectLocal(): Promise<VpnStatus> {
+    this.state = "disconnecting";
+    this.reconcileState = null;
+    const controller = await this.controller.disconnect();
+    if (controller.repairRequired) {
+      this.state = "repair-needed";
+      this.lastError = controller.message;
+      return this.buildStatus(controller);
+    }
+
+    if (!this.activeSession) {
+      this.remoteSessionActive = false;
+      this.state = "idle";
+      this.lastError = null;
+      return this.buildLocalControllerStatus(controller);
+    }
+
+    this.activeSession.pendingRemoteDelete = true;
+    this.persistActiveSession();
+    if (this.activeSessionContextVisible) {
+      this.storeReceipt(
+        this.buildLocalFallbackReceipt(
+          this.activeSession,
+          "remote-delete-pending",
+        ),
+        this.activeSession,
+      );
+    }
+    this.remoteSessionActive = true;
+    this.state = "remote-delete-pending";
+    this.reconcileState = "remote-active-local-tunnel-down";
+    this.lastError =
+      "Local tunnel was disconnected. Authenticated remote session cleanup is still pending.";
+    return this.buildStatus(controller);
+  }
+
+  async repair(): Promise<VpnStatus> {
     await this.controller.repair();
-    return this.getStatus(input);
+    const controller = await this.controller.getStatus();
+    if (controller.repairRequired) {
+      this.state = "repair-needed";
+      this.reconcileState = "controller-repair-required";
+      this.lastError = controller.message;
+    } else if (!this.activeSession) {
+      this.state = controller.active ? "repair-needed" : "idle";
+      this.reconcileState = controller.active
+        ? "local-tunnel-active-without-session"
+        : null;
+      this.lastError = null;
+    } else if (this.activeSessionContextVisible) {
+      this.state = controller.active
+        ? this.activeSession.pendingRemoteDelete
+          ? "remote-delete-pending"
+          : "connected"
+        : "reconciling";
+      this.reconcileState = controller.active
+        ? this.activeSession.pendingRemoteDelete
+          ? "remote-delete-pending"
+          : null
+        : "local-controller-repaired-awaiting-live-status";
+      this.lastError = null;
+    }
+    return this.buildLocalControllerStatus(controller);
   }
 
   async listReceipts(input?: VpnStatusInput): Promise<VpnReceipt[]> {
-    const auth = this.resolveAuthInput(input, this.activeSession);
+    if (!input) {
+      this.activateReceiptsContext(null);
+      return [];
+    }
+    const receiptContext = this.activateReceiptsContext(input);
+    if (!receiptContext) {
+      return [];
+    }
+    const auth = this.resolveAuthInput(input, null);
     if (auth) {
       await this.syncReceiptsFromServer(auth).catch(() => undefined);
     }
-    return [...this.receipts];
+    return this.receiptsContextKey === receiptContext.key
+      ? [...this.receipts]
+      : [];
   }
 
   async shutdown() {
     this.persistActiveSession();
+  }
+
+  private activateReceiptsContext(
+    input?: Partial<VpnAuthContext> | ActiveVpnSession | null,
+  ): VpnRuntimeContext | null {
+    const context = resolveVpnRuntimeContext(input);
+    if (!context) {
+      if (this.receiptsContextKey !== null || this.receipts.length > 0) {
+        this.receiptsGeneration += 1;
+      }
+      this.receipts = [];
+      this.receiptsContextKey = null;
+      return null;
+    }
+    if (this.receiptsContextKey !== context.key) {
+      this.receiptsGeneration += 1;
+      this.receipts = [];
+      this.receiptsContextKey = context.key;
+    }
+    return context;
+  }
+
+  private inputMatchesActiveSessionContext(
+    input: VpnStatusInput | undefined,
+    session: ActiveVpnSession,
+  ) {
+    const ownerContext = resolveVpnRuntimeContext(session);
+    const requestedContext = resolveVpnRuntimeContext({
+      toriiUrl: input?.toriiUrl ?? session.toriiUrl,
+      chainId: input?.chainId ?? session.chainId,
+      accountId: input?.accountId ?? session.accountId,
+      networkPrefix: input?.networkPrefix ?? session.networkPrefix,
+    });
+    return Boolean(
+      ownerContext &&
+        requestedContext &&
+        ownerContext.key === requestedContext.key,
+    );
+  }
+
+  private markActiveSessionContextMismatch(input?: VpnStatusInput) {
+    this.activateReceiptsContext(input);
+    this.activeSessionContextVisible = false;
+    this.remoteSessionActive = false;
+    this.state = "repair-needed";
+    this.reconcileState = "active-session-context-mismatch";
+    this.lastError =
+      "An active VPN session belongs to a different endpoint, chain, network prefix, or account. Switch back to its owning wallet to manage it.";
   }
 
   private isPlatformSupported() {
@@ -778,7 +1110,7 @@ export class VpnRuntime {
       return cached;
     }
     const client = new ToriiClient(normalized, {
-      fetchImpl: nodeFetch,
+      fetchImpl: vpnToriiFetch,
     });
     this.clients.set(normalized, client);
     return client;
@@ -790,50 +1122,38 @@ export class VpnRuntime {
   }
 
   private loadReceipts(): VpnReceipt[] {
-    try {
-      const raw = readFileSync(this.receiptsPath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      return Array.isArray(parsed)
-        ? parsed.map((item) => normalizeReceipt(item as VpnReceipt))
-        : [];
-    } catch {
-      return [];
-    }
+    // Receipt history is fetched live for the active authenticated endpoint.
+    // Quarantine the former global cross-network cache without migration.
+    rmSync(this.receiptsPath, { force: true });
+    return [];
   }
 
   private loadActiveSession(): ActiveVpnSession | null {
-    try {
-      const raw = readFileSync(this.activeSessionPath, "utf8");
-      const parsed = JSON.parse(raw) as ActiveVpnSession;
-      return {
-        ...parsed,
-        signingAlgorithm: normalizeVpnSigningAlgorithm(parsed.signingAlgorithm),
-        relayEndpoint: resolveVpnRelayEndpoint(
-          parsed.relayEndpoint,
-          parsed.toriiUrl,
-        ),
-      };
-    } catch {
-      return null;
-    }
+    // First-release boundary: the former global file was neither endpoint
+    // scoped nor safe to retain because it included signing material and the
+    // controller helper ticket. Do not migrate or resume it.
+    rmSync(this.activeSessionPath, { force: true });
+    return null;
   }
 
   private persistReceipts() {
-    writeFileSync(this.receiptsPath, JSON.stringify(this.receipts, null, 2));
+    rmSync(this.receiptsPath, { force: true });
   }
 
   private persistActiveSession() {
-    if (!this.activeSession) {
-      rmSync(this.activeSessionPath, { force: true });
-      return;
-    }
-    writeFileSync(
-      this.activeSessionPath,
-      JSON.stringify(this.activeSession, null, 2),
-    );
+    // Keep session secrets and endpoint-derived state in memory only. The
+    // platform controller is reconciled explicitly after restart.
+    rmSync(this.activeSessionPath, { force: true });
   }
 
-  private storeReceipt(receipt: VpnReceipt) {
+  private storeReceipt(
+    receipt: VpnReceipt,
+    contextInput: Partial<VpnAuthContext> | ActiveVpnSession,
+  ) {
+    if (!this.activateReceiptsContext(contextInput)) {
+      return;
+    }
+    this.receiptsGeneration += 1;
     const existingIndex = this.receipts.findIndex(
       (item) => item.sessionId === receipt.sessionId,
     );
@@ -870,16 +1190,22 @@ export class VpnRuntime {
     auth: VpnAuthContext,
     pendingRemoteDelete = false,
   ): ActiveVpnSession {
+    const networkPrefix = normalizeVpnNetworkPrefix(auth.networkPrefix);
+    if (networkPrefix === null) {
+      throw new Error("networkPrefix is required for a VPN session.");
+    }
+    if (!isVpnExitClass(session.exitClass)) {
+      throw new Error("VPN session returned an unsupported service class.");
+    }
     return {
       toriiUrl: auth.toriiUrl,
+      chainId: normalizeChainId(String(auth.chainId ?? "")),
       accountId: auth.accountId,
-      networkPrefix: auth.networkPrefix,
+      networkPrefix,
       privateKeyHex: auth.privateKeyHex,
       signingAlgorithm: normalizeVpnSigningAlgorithm(auth.signingAlgorithm),
       sessionId: session.sessionId,
-      exitClass: isVpnExitClass(session.exitClass)
-        ? session.exitClass
-        : "standard",
+      exitClass: session.exitClass,
       relayEndpoint: resolveVpnRelayEndpoint(
         session.relayEndpoint,
         auth.toriiUrl,
@@ -901,34 +1227,57 @@ export class VpnRuntime {
   }
 
   private async syncReceiptsFromServer(auth: VpnAuthContext) {
+    const context = this.activateReceiptsContext(auth);
+    if (!context) {
+      return [];
+    }
+    const generation = ++this.receiptsGeneration;
     const receipts = await this.getClient(auth.toriiUrl).listVpnReceipts({
       canonicalAuth: buildVpnCanonicalAuth(auth, "VPN receipt sync"),
     });
-    this.receipts = receipts.items
+    const normalizedReceipts = receipts.items
       .map((item) =>
         normalizeReceipt(item as unknown as VpnReceipt, auth.toriiUrl, "torii"),
       )
       .slice(0, MAX_RECEIPTS);
+    if (
+      this.receiptsContextKey !== context.key ||
+      this.receiptsGeneration !== generation
+    ) {
+      return [];
+    }
+    this.receipts = normalizedReceipts;
     this.persistReceipts();
-    return this.receipts;
+    return [...this.receipts];
   }
 
   private resolveAuthInput(
     input?: VpnStatusInput,
     session?: ActiveVpnSession | null,
   ): VpnAuthContext | null {
+    if (session && !this.inputMatchesActiveSessionContext(input, session)) {
+      return null;
+    }
     const toriiUrl = input?.toriiUrl ?? session?.toriiUrl;
+    const chainId = input?.chainId ?? session?.chainId;
     const accountIdRaw = input?.accountId ?? session?.accountId;
     const privateKeyHex = input?.privateKeyHex ?? session?.privateKeyHex;
     const networkPrefix = input?.networkPrefix ?? session?.networkPrefix;
     const signingAlgorithm = normalizeVpnSigningAlgorithm(
       input?.signingAlgorithm ?? session?.signingAlgorithm,
     );
-    if (!toriiUrl || !accountIdRaw || !privateKeyHex) {
+    if (
+      !toriiUrl ||
+      !chainId ||
+      !accountIdRaw ||
+      !privateKeyHex ||
+      normalizeVpnNetworkPrefix(networkPrefix) === null
+    ) {
       return null;
     }
     return {
       toriiUrl,
+      chainId,
       accountId: normalizeVpnAccountId(
         accountIdRaw,
         "accountId",
@@ -936,7 +1285,7 @@ export class VpnRuntime {
       ),
       privateKeyHex,
       signingAlgorithm,
-      networkPrefix,
+      networkPrefix: normalizeVpnNetworkPrefix(networkPrefix) ?? undefined,
     };
   }
 
@@ -949,6 +1298,8 @@ export class VpnRuntime {
     }
 
     if (!this.activeSession) {
+      this.activeSessionContextVisible = true;
+      this.activateReceiptsContext(input);
       this.remoteSessionActive = false;
       if (controller.active && !controller.repairRequired) {
         this.state = "repair-needed";
@@ -960,9 +1311,17 @@ export class VpnRuntime {
       return controller;
     }
 
+    if (!this.inputMatchesActiveSessionContext(input, this.activeSession)) {
+      this.markActiveSessionContextMismatch(input);
+      return controller;
+    }
+    this.activeSessionContextVisible = true;
+    this.activateReceiptsContext(input ?? this.activeSession);
+
     if (this.activeSession.expiresAtMs <= nowMs()) {
       this.storeReceipt(
         this.buildLocalFallbackReceipt(this.activeSession, "expired"),
+        this.activeSession,
       );
       this.activeSession = null;
       this.persistActiveSession();
@@ -1034,7 +1393,7 @@ export class VpnRuntime {
   }
 
   private buildStatus(controller: VpnControllerStatus): VpnStatus {
-    if (!this.activeSession) {
+    if (!this.activeSession || !this.activeSessionContextVisible) {
       return emptyStatus({
         state: controller.repairRequired ? "repair-needed" : this.state,
         helperStatus: controller.active
@@ -1086,6 +1445,34 @@ export class VpnRuntime {
       systemTunnelService: controller.networkService,
       errorMessage: this.lastError,
       lastReceipt: this.receipts[0] ?? null,
+    });
+  }
+
+  private buildLocalControllerStatus(
+    controller: VpnControllerStatus,
+  ): VpnStatus {
+    const repairRequired = controller.repairRequired || controller.active;
+    return emptyStatus({
+      state: repairRequired ? "repair-needed" : "idle",
+      helperStatus: controller.active ? "controller-active" : "controller-idle",
+      controllerInstalled: controller.installed,
+      controllerVersion: controller.version,
+      controllerKind: controller.controllerKind,
+      reconcileState: controller.repairRequired
+        ? "controller-repair-required"
+        : controller.active
+          ? "local-tunnel-active-without-session-context"
+          : null,
+      repairRequired,
+      remoteSessionActive: false,
+      systemTunnelActive: controller.active,
+      systemTunnelKind: controller.controllerKind,
+      systemTunnelInterface: controller.interfaceName,
+      systemTunnelService: controller.networkService,
+      bytesIn: controller.bytesIn,
+      bytesOut: controller.bytesOut,
+      errorMessage: controller.repairRequired ? controller.message : null,
+      lastReceipt: null,
     });
   }
 }

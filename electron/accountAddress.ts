@@ -1,12 +1,10 @@
-import path from "node:path";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import {
   AccountAddress,
   encodeI105AccountAddress,
   normalizeAccountId as normalizeSdkAccountId,
 } from "@iroha/iroha-js";
 import { DEFAULT_SIGNING_ALGORITHM } from "../src/utils/signingAlgorithms";
+import { getInstalledIrohaJsNativeBinding } from "./irohaJsNativeDir";
 
 const SORA_NETWORK_PREFIX = 753;
 const DEFAULT_NETWORK_PREFIX = SORA_NETWORK_PREFIX;
@@ -118,48 +116,23 @@ const hexToBuffer = (value: string, label: string): Buffer => {
   return Buffer.from(trimmed, "hex");
 };
 
-const resolveSdkPackageDirectory = (): string | null => {
-  try {
-    const pkgEntryUrl = (
-      import.meta as ImportMeta & {
-        resolve?: (specifier: string) => string;
-      }
-    ).resolve?.("@iroha/iroha-js");
-    if (!pkgEntryUrl) {
-      return null;
-    }
-    return path.resolve(path.dirname(fileURLToPath(pkgEntryUrl)), "..");
-  } catch {
-    return null;
-  }
-};
-
-const loadNativeAccountAddressCodec = (): NativeAccountAddressCodec | null => {
-  try {
-    const packageDirectory = resolveSdkPackageDirectory();
-    if (!packageDirectory) {
-      return null;
-    }
-    const require = createRequire(import.meta.url);
-    const binding = require(
-      path.join(packageDirectory, "native", "iroha_js_host.node"),
-    ) as Partial<NativeAccountAddressCodec>;
+const resolveInstalledNativeAccountAddressCodec =
+  (): NativeAccountAddressCodec | null => {
+    const binding = getInstalledIrohaJsNativeBinding();
     if (
+      binding === null ||
       typeof binding.accountAddressParseEncoded !== "function" ||
       typeof binding.accountAddressRender !== "function"
     ) {
       return null;
     }
     return {
-      accountAddressParseEncoded: binding.accountAddressParseEncoded,
-      accountAddressRender: binding.accountAddressRender,
+      accountAddressParseEncoded:
+        binding.accountAddressParseEncoded as NativeAccountAddressCodec["accountAddressParseEncoded"],
+      accountAddressRender:
+        binding.accountAddressRender as NativeAccountAddressCodec["accountAddressRender"],
     };
-  } catch {
-    return null;
-  }
-};
-
-const nativeAccountAddressCodec = loadNativeAccountAddressCodec();
+  };
 
 const detectNativeLiteralPrefix = (literal: string): number | null => {
   if (literal.startsWith("sorau") || literal.startsWith("ｓｏｒａu")) {
@@ -196,7 +169,8 @@ const parseNativeAccountLiteral = (
   literal: string,
   networkPrefix: number,
 ): { canonicalBytes: Uint8Array; networkPrefix: number } | null => {
-  if (!nativeAccountAddressCodec) {
+  const nativeAccountAddressCodec = resolveInstalledNativeAccountAddressCodec();
+  if (nativeAccountAddressCodec === null) {
     return null;
   }
   const attempts = uniquePrefixes([
@@ -233,7 +207,8 @@ const renderNativeAccountLiteral = (
   canonicalBytes: Uint8Array,
   networkPrefix: number,
 ) => {
-  if (!nativeAccountAddressCodec) {
+  const nativeAccountAddressCodec = resolveInstalledNativeAccountAddressCodec();
+  if (nativeAccountAddressCodec === null) {
     return null;
   }
   try {

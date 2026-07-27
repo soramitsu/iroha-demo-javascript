@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   desktopCapturer,
+  dialog,
   ipcMain,
   protocol,
   session,
@@ -31,12 +32,34 @@ import {
   loadGovernanceRuntimeConfig,
 } from "./governanceRuntimeConfig";
 import {
-  GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
-  authorizePublicGovernanceEnactRequest,
-} from "./governanceEnactBoundary";
+  GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL,
+  GovernanceValidationFeeFinalityStore,
+  assertGovernanceValidationFeeTrustedSender,
+  fetchGovernanceValidationFeePolicyInMain,
+} from "./governanceValidationFeeFinality";
+import {
+  GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
+  GovernancePlainReferendumFinalityStore,
+  assertGovernancePlainReferendumTrustedSender,
+  fetchGovernancePlainReferendumContract,
+  governancePlainReferendumSourcePath,
+  loadGovernancePlainReferendumSource,
+} from "./governancePlainReferendum";
+import { nodeFetch } from "./nodeFetch";
+import {
+  IROHA_CONNECT_CONFIRMATION_CHANNEL,
+  type IrohaConnectConfirmation,
+} from "./irohaConnectBoundary";
+import {
+  SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL,
+  isSoraCloudHfSettlementConfirmation,
+} from "./soraCloudSettlementBoundary";
+import { installGlobalIrohaJsNativeBinding } from "./irohaJsNativeDir";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+installGlobalIrohaJsNativeBinding(import.meta.url);
 
 const isMac = process.platform === "darwin";
 const WEBRTC_IP_HANDLING_POLICY = "default_public_and_private_interfaces";
@@ -229,6 +252,10 @@ const vpnRuntime = new VpnRuntime({
   helperVersion: `embedded-${app.getVersion()}`,
 });
 const secureVault = new SecureVault(app.getPath("userData"));
+const governanceValidationFeeFinalityStore =
+  new GovernanceValidationFeeFinalityStore(app.getPath("userData"));
+const governancePlainReferendumFinalityStore =
+  new GovernancePlainReferendumFinalityStore(app.getPath("userData"));
 
 let quittingForVpnShutdown = false;
 
@@ -246,7 +273,8 @@ const registerVpnHandlers = () => {
   ipcMain.handle("vpn:disconnect", (_event, input) =>
     vpnRuntime.disconnect(input),
   );
-  ipcMain.handle("vpn:repair", (_event, input) => vpnRuntime.repair(input));
+  ipcMain.handle("vpn:disconnectLocal", () => vpnRuntime.disconnectLocal());
+  ipcMain.handle("vpn:repair", () => vpnRuntime.repair());
   ipcMain.handle("vpn:listReceipts", (_event, input) =>
     vpnRuntime.listReceipts(input),
   );
@@ -287,10 +315,171 @@ const registerGovernanceRuntimeConfigHandler = () => {
   );
 };
 
-const registerGovernanceEnactBoundaryHandler = () => {
+const registerGovernanceValidationFeePolicyHandler = () => {
   ipcMain.handle(
-    GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL,
-    (_event, input) => authorizePublicGovernanceEnactRequest(input),
+    GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL,
+    (event, requestPayload: unknown) => {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      assertGovernanceValidationFeeTrustedSender({
+        ownerMatchesMainWindow: Boolean(owner && owner === mainWindow),
+        ownerDestroyed: !owner || owner.isDestroyed(),
+        senderFrame: event.senderFrame,
+        mainFrame: event.sender.mainFrame,
+        trustedRendererUrl: getTrustedRendererUrl(),
+        requestPayload,
+      });
+      const runtimeConfig = loadGovernanceRuntimeConfig({
+        userDataPath: app.getPath("userData"),
+      });
+      return fetchGovernanceValidationFeePolicyInMain({
+        runtimeConfig,
+        finalityStore: governanceValidationFeeFinalityStore,
+      });
+    },
+  );
+};
+
+const registerGovernancePlainReferendumHandler = () => {
+  ipcMain.handle(
+    GOVERNANCE_PLAIN_REFERENDUM_IPC_CHANNEL,
+    (event, observedIdentity: unknown) => {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      assertGovernancePlainReferendumTrustedSender({
+        ownerMatchesMainWindow: Boolean(owner && owner === mainWindow),
+        ownerDestroyed: !owner || owner.isDestroyed(),
+        senderFrame: event.senderFrame,
+        mainFrame: event.sender.mainFrame,
+        trustedRendererUrl: getTrustedRendererUrl(),
+      });
+      const sourcePath = governancePlainReferendumSourcePath({
+        isPackaged: app.isPackaged,
+        appPath: app.getAppPath(),
+        resourcesPath: process.resourcesPath,
+      });
+      return fetchGovernancePlainReferendumContract({
+        source: loadGovernancePlainReferendumSource(sourcePath),
+        observedIdentity,
+        finalityStore: governancePlainReferendumFinalityStore,
+        fetcher: nodeFetch,
+      });
+    },
+  );
+};
+
+const confirmationText = (value: unknown, maxLength = 512) =>
+  Array.from(String(value ?? ""))
+    .map((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127 ? " " : character;
+    })
+    .join("")
+    .trim()
+    .slice(0, maxLength);
+
+const isIrohaConnectConfirmation = (
+  value: unknown,
+): value is IrohaConnectConfirmation => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const kind = (value as { kind?: unknown }).kind;
+  return (
+    kind === "session" ||
+    kind === "sign_request_raw" ||
+    kind === "sign_request_tx"
+  );
+};
+
+const registerIrohaConnectConfirmationHandler = () => {
+  ipcMain.handle(
+    IROHA_CONNECT_CONFIRMATION_CHANNEL,
+    async (event, input: unknown) => {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      if (
+        !owner ||
+        owner !== mainWindow ||
+        owner.isDestroyed() ||
+        !isIrohaConnectConfirmation(input)
+      ) {
+        return false;
+      }
+      const requestKind =
+        input.kind === "session"
+          ? "Connect this app to your wallet?"
+          : input.kind === "sign_request_tx"
+            ? "Sign this IrohaConnect transaction?"
+            : "Sign this IrohaConnect message?";
+      const detail = [
+        `Account: ${confirmationText(input.accountId)}`,
+        `Session: ${confirmationText(input.sid)}`,
+        `Endpoint: ${confirmationText(input.toriiUrl)}`,
+        `Chain: ${confirmationText(input.chainId)}`,
+      ];
+      if (input.kind === "session") {
+        detail.push(
+          `Methods: ${confirmationText(input.permissions?.methods.join(", ") || "none")}`,
+          `Resources: ${confirmationText(input.permissions?.resources?.join(", ") || (input.permissions?.resources === null ? "unrestricted" : "none"))}`,
+        );
+      } else {
+        detail.push(
+          `Domain: ${confirmationText(input.domainTag || "not applicable")}`,
+          `Bytes: ${Number.isSafeInteger(input.byteLength) ? input.byteLength : 0}`,
+          `Preview: ${confirmationText(input.payloadPreviewHex, 192)}`,
+        );
+      }
+      const result = await dialog.showMessageBox(owner, {
+        type: "warning",
+        title: "IrohaConnect wallet approval",
+        message: requestKind,
+        detail: detail.join("\n"),
+        buttons: ["Reject", "Approve"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      return result.response === 1;
+    },
+  );
+};
+
+const registerSoraCloudSettlementConfirmationHandler = () => {
+  ipcMain.handle(
+    SORACLOUD_SETTLEMENT_CONFIRMATION_CHANNEL,
+    async (event, input: unknown) => {
+      const owner = BrowserWindow.fromWebContents(event.sender);
+      if (
+        !owner ||
+        owner !== mainWindow ||
+        owner.isDestroyed() ||
+        !isSoraCloudHfSettlementConfirmation(input)
+      ) {
+        return false;
+      }
+      const profile = input.resourceProfile;
+      const result = await dialog.showMessageBox(owner, {
+        type: "warning",
+        title: "SoraCloud settlement approval",
+        message: "Approve this SoraCloud lease and its maximum compute charge?",
+        detail: [
+          `Account: ${confirmationText(input.accountId)}`,
+          `Endpoint: ${confirmationText(input.toriiUrl)}`,
+          `Model: ${confirmationText(`${input.repoId}@${input.resolvedRevision}`)}`,
+          `Service: ${confirmationText(input.serviceName)}`,
+          `Storage: ${confirmationText(input.storageClass)} for ${input.leaseTermMs} ms`,
+          `Settlement asset: ${confirmationText(input.leaseAssetDefinitionId)}`,
+          `Storage base fee: ${confirmationText(input.storageBaseFee)}`,
+          `Maximum compute reservation charge: ${confirmationText(input.maxComputeReservationFee)}`,
+          `Profile: ${profile.requiredModelBytes} model bytes, ${profile.diskCacheBytesFloor} disk bytes, ${profile.ramBytesFloor} RAM bytes, ${profile.vramBytesFloor} VRAM bytes`,
+          `Runtime: ${confirmationText(profile.backendFamily)} / ${confirmationText(profile.modelFormat)}`,
+          "The actual compute charge may be lower and can never exceed the reviewed maximum.",
+        ].join("\n"),
+        buttons: ["Reject", "Approve"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      return result.response === 1;
+    },
   );
 };
 
@@ -299,7 +488,10 @@ app.whenReady().then(() => {
   registerVpnHandlers();
   registerVaultHandlers();
   registerGovernanceRuntimeConfigHandler();
-  registerGovernanceEnactBoundaryHandler();
+  registerGovernanceValidationFeePolicyHandler();
+  registerGovernancePlainReferendumHandler();
+  registerIrohaConnectConfirmationHandler();
+  registerSoraCloudSettlementConfirmationHandler();
   registerMediaPermissionHandlers(
     session.defaultSession,
     getTrustedRendererUrl,

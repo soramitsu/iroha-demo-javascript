@@ -55,6 +55,7 @@ describe("Iroha service bridge", () => {
     const transferInput = {
       toriiUrl: "http://localhost:8080",
       chainId: "chain-alpha",
+      networkPrefix: 369,
       accountId: ACCOUNT,
       destinationAccountId: "bob@wonderland",
       assetDefinitionId: "xor#wonderland",
@@ -104,15 +105,20 @@ describe("Iroha service bridge", () => {
 
     await listGovernanceProposals(listInput);
     await getGovernanceProposalDetail(detailInput);
+    const validationFeePolicyInput = {
+      toriiUrl: "http://localhost:8080",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
+      networkPrefix: 369,
+    };
     await expect(
-      getGovernanceCurrentValidationFeePolicy("http://localhost:8080"),
+      getGovernanceCurrentValidationFeePolicy(validationFeePolicyInput),
     ).rejects.toThrow("local proof verifier unavailable");
 
     expect(listGovernanceProposalsMock).toHaveBeenCalledWith(listInput);
     expect(getGovernanceProposalDetailMock).toHaveBeenCalledWith(detailInput);
-    expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-    });
+    expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledWith(
+      validationFeePolicyInput,
+    );
   });
 
   it("forwards every two-phase governance preparation call exactly", async () => {
@@ -142,6 +148,7 @@ describe("Iroha service bridge", () => {
     const context = {
       toriiUrl: "http://localhost:8080",
       chainId: "chain-alpha",
+      networkPrefix: 369,
       accountId: ACCOUNT,
     };
     const proposal = {
@@ -195,7 +202,7 @@ describe("Iroha service bridge", () => {
       operation: "enact",
       proposalId: HASH,
       referendumId: null,
-      status: "committed",
+      status: "finalized",
     });
     (window as any).iroha = {
       confirmGovernanceAction: confirmGovernanceActionMock,

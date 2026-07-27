@@ -65,6 +65,61 @@
   -webkit-app-region: drag;
 }
 
+.endpoint-safety-banner {
+  position: relative;
+  z-index: 19;
+  min-height: 48px;
+  padding: 9px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-warning) 38%, var(--color-border));
+  border-radius: var(--radius-control);
+  color: var(--color-text);
+  background: color-mix(
+    in srgb,
+    var(--color-warning-soft) 88%,
+    var(--shell-glass)
+  );
+  box-shadow: var(--shadow-control);
+}
+
+.endpoint-safety-banner.is-offline {
+  border-color: color-mix(
+    in srgb,
+    var(--color-danger) 38%,
+    var(--color-border)
+  );
+  background: color-mix(
+    in srgb,
+    var(--color-danger-soft) 88%,
+    var(--shell-glass)
+  );
+}
+
+.endpoint-safety-banner > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.endpoint-safety-banner strong,
+.endpoint-safety-banner span {
+  overflow-wrap: anywhere;
+}
+
+.endpoint-safety-banner span {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.endpoint-safety-banner a {
+  color: inherit;
+  font-weight: 700;
+}
+
 .brand-link {
   position: relative;
   z-index: 2;

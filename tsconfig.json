@@ -20,6 +20,9 @@
       "@iroha/iroha-js/connect-browser": [
         "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
       ],
+      "@iroha/iroha-js/canonical-request": [
+        "node_modules/.cache/iroha-sdk-compat/active/canonical-request.d.ts"
+      ],
       "@iroha/iroha-js/crypto": [
         "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
       ],

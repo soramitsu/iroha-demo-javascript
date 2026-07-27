@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { NexusLifecycleView } from "@/types/iroha";
 import {
   calculateRewardApyEstimate,
   chooseDefaultDataspaceId,
@@ -17,38 +18,56 @@ import {
 } from "@/utils/staking";
 
 describe("staking utilities", () => {
-  it("collects dataspaces from lane governance and resolves default lane", () => {
+  it("collects dataspaces from the current Nexus lifecycle catalog", () => {
     const options = collectDataspaceOptions({
-      lane_governance: [
+      version: 1,
+      nexus_enabled: true,
+      lane_count: 3,
+      lanes: [
         {
-          lane_id: 9,
+          id: 9,
+          dataspace_id: "2",
           alias: "Public Lane B",
-          dataspace_id: 2,
-          validator_ids: ["v2", "v3"],
+          description: "",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
         },
         {
-          lane_id: 3,
+          id: 3,
+          dataspace_id: "2",
           alias: "Public Lane A",
-          dataspace_id: 2,
-          validator_ids: ["v1", "v2"],
+          description: "",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
         },
         {
-          lane_id: 1,
-          alias: "",
-          dataspace_id: 1,
-          validator_ids: ["v0"],
+          id: 1,
+          dataspace_id: "1",
+          alias: "Core",
+          description: "",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
         },
       ],
     });
 
-    expect(options.map((option) => option.dataspaceId)).toEqual([1, 2]);
+    expect(options.map((option) => option.dataspaceId)).toEqual(["1", "2"]);
     expect(options[1].lanes.map((lane) => lane.laneId)).toEqual([3, 9]);
-    expect(options[1].totalValidators).toBe(3);
+    expect(options[1].totalValidators).toBe(0);
 
     const defaultDataspace = chooseDefaultDataspaceId(options, null);
-    expect(defaultDataspace).toBe(1);
+    expect(defaultDataspace).toBe("1");
 
-    const lane = resolveLaneForDataspace(options, 2);
+    const lane = resolveLaneForDataspace(options, "2");
     expect(lane?.laneId).toBe(3);
     expect(lane?.alias).toBe("Public Lane A");
   });
@@ -69,53 +88,50 @@ describe("staking utilities", () => {
     expect(pickDefaultValidator(validators, "")).toBe("validator-2");
   });
 
-  it("falls back to dataspace commitments when lane governance is unavailable", () => {
+  it("returns no options when the lifecycle has no lanes", () => {
     const options = collectDataspaceOptions({
-      dataspace_commitments: [
-        {
-          dataspace_id: 6,
-          lane_id: 11,
-        },
-        {
-          dataspace_id: 6,
-          lane_id: 10,
-        },
-      ],
+      version: 1,
+      nexus_enabled: true,
+      lane_count: 0,
+      lanes: [],
     });
 
-    expect(options).toHaveLength(1);
-    expect(options[0].dataspaceId).toBe(6);
-    expect(options[0].lanes.map((lane) => lane.laneId)).toEqual([10, 11]);
-    expect(options[0].lanes[0].alias).toBe("Lane 10");
+    expect(options).toEqual([]);
   });
 
-  it("merges governance and commitments for the same lane without duplicates", () => {
+  it("keeps large dataspace identifiers exact while sorting and selecting", () => {
+    const lane = (
+      id: number,
+      dataspace_id: string,
+    ): NexusLifecycleView["lanes"][number] => ({
+      id,
+      dataspace_id,
+      alias: `Lane ${id}`,
+      description: "",
+      visibility: "public",
+      governance: null,
+      storage: "full_replica",
+      proof_scheme: "merkle_sha256",
+      metadata: {},
+    });
     const options = collectDataspaceOptions({
-      lane_governance: [
-        {
-          dataspace_id: 4,
-          lane_id: 2,
-          alias: "Public lane",
-          validator_ids: ["v1", "v2", "v1"],
-        },
-      ],
-      dataspace_commitments: [
-        {
-          dataspace_id: 4,
-          lane_id: 2,
-        },
-        {
-          dataspace_id: 4,
-          lane_id: 3,
-        },
-      ],
+      version: 1,
+      nexus_enabled: true,
+      lane_count: 3,
+      lanes: [lane(3, "6647857470246403404"), lane(2, "10"), lane(1, "2")],
     });
 
-    expect(options).toHaveLength(1);
-    expect(options[0].lanes.map((lane) => lane.laneId)).toEqual([2, 3]);
-    expect(options[0].lanes[0].alias).toBe("Public lane");
-    expect(options[0].lanes[0].validatorIds).toEqual(["v1", "v2"]);
-    expect(options[0].totalValidators).toBe(2);
+    expect(options.map((option) => option.dataspaceId)).toEqual([
+      "2",
+      "10",
+      "6647857470246403404",
+    ]);
+    expect(chooseDefaultDataspaceId(options, "6647857470246403404")).toBe(
+      "6647857470246403404",
+    );
+    expect(
+      resolveLaneForDataspace(options, "6647857470246403404")?.laneId,
+    ).toBe(3);
   });
 
   it("computes release timestamp and request identifiers", () => {

@@ -1,3 +1,8 @@
+import {
+  TAIRA_GOVERNANCE_XOR_ASSET_ID,
+  type GovernanceValidationFeePlainElectorateRulesV1,
+} from "./governanceCapabilities";
+
 export const VALIDATION_FEE_POLICY_DRAFT_PATH =
   "/v1/validation-fee/proposals/draft";
 export const VALIDATION_FEE_POLICY_DRAFT_WIRE_ID =
@@ -13,6 +18,8 @@ const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 const ACTIVATION_DELAY_BLOCKS = 120_960n;
 const REQUIRED_SBD_FEE = "0.10";
 const NATIVE_QUANTITY_SBD_FEE = "0.1";
+const APP_SBD_ASSET_ID = "sbd#cbsi";
+const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
 const LOWER_HEX_32 = /^[0-9a-f]{64}$/u;
 const POLICY_KEYS = Object.freeze([
   "chain_id",
@@ -46,6 +53,24 @@ const PAYOUT_BINDING_KEYS = Object.freeze([
 
 type PlainRecord = Record<string, unknown>;
 
+export interface ValidationFeePlainElectorateRulesWire
+  extends Record<string, unknown> {
+  voting_asset_id: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  ballot_amount: "150";
+  ballot_duration_blocks: "3600";
+  citizenship_amount: "10000";
+  max_members: "256";
+  conviction_step_blocks: "100";
+  max_conviction: "6";
+  min_turnout: "1";
+  approval_threshold_numerator: "1";
+  approval_threshold_denominator: "2";
+  eligibility_rule: {
+    rule: "proposal_operator_at_or_before_gate_others_after_gate";
+    value: null;
+  };
+}
+
 export interface ValidationFeePolicyDraftRequest
   extends Record<string, unknown> {
   version: 1;
@@ -61,6 +86,7 @@ export interface ValidationFeePolicyDraftRequest
     upper: string;
   };
   mode: "Plain";
+  plain_electorate_rules: ValidationFeePlainElectorateRulesWire;
 }
 
 export interface ValidationFeePolicyInstructionDraft {
@@ -88,6 +114,7 @@ export interface ValidationFeePayoutLifecycleDraftRequest
     upper: string;
   };
   mode: "Plain";
+  plain_electorate_rules: ValidationFeePlainElectorateRulesWire;
 }
 
 const record = (value: unknown, label: string): PlainRecord => {
@@ -111,6 +138,42 @@ const exactKeys = (
       `${label} must contain exactly ${expected.join(", ")}.`,
     );
   }
+};
+
+export const governanceExactJsonValuesEqual = (
+  left: unknown,
+  right: unknown,
+): boolean => {
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) =>
+        governanceExactJsonValuesEqual(entry, right[index]),
+      )
+    );
+  }
+  const leftIsRecord =
+    left !== null && typeof left === "object" && !Array.isArray(left);
+  const rightIsRecord =
+    right !== null && typeof right === "object" && !Array.isArray(right);
+  if (leftIsRecord || rightIsRecord) {
+    if (!leftIsRecord || !rightIsRecord) return false;
+    const leftRecord = left as PlainRecord;
+    const rightRecord = right as PlainRecord;
+    const leftKeys = Object.keys(leftRecord).sort();
+    const rightKeys = Object.keys(rightRecord).sort();
+    return (
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key, index) =>
+          key === rightKeys[index] &&
+          governanceExactJsonValuesEqual(leftRecord[key], rightRecord[key]),
+      )
+    );
+  }
+  return typeof left === typeof right && left === right;
 };
 
 const requiredText = (value: unknown, label: string): string => {
@@ -199,6 +262,73 @@ const exactStringArray = (value: unknown, label: string): string[] => {
   return [...value];
 };
 
+const normalizePlainElectorateRules = (
+  value: unknown,
+): ValidationFeePlainElectorateRulesWire => {
+  const rules = record(value, "validation-fee PLAIN electorate rules");
+  exactKeys(
+    rules,
+    [
+      "approvalThresholdDenominator",
+      "approvalThresholdNumerator",
+      "ballotAmount",
+      "ballotDurationBlocks",
+      "citizenshipAmount",
+      "convictionStepBlocks",
+      "eligibilityRule",
+      "maxConviction",
+      "maxMembers",
+      "minTurnout",
+      "votingAssetId",
+    ],
+    "validation-fee PLAIN electorate rules",
+  );
+  const eligibility = record(
+    rules.eligibilityRule,
+    "validation-fee PLAIN electorate rules.eligibilityRule",
+  );
+  exactKeys(
+    eligibility,
+    ["rule", "value"],
+    "validation-fee PLAIN electorate rules.eligibilityRule",
+  );
+  if (
+    rules.votingAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
+    rules.ballotAmount !== "150" ||
+    rules.ballotDurationBlocks !== "3600" ||
+    rules.citizenshipAmount !== "10000" ||
+    rules.maxMembers !== "256" ||
+    rules.convictionStepBlocks !== "100" ||
+    rules.maxConviction !== "6" ||
+    rules.minTurnout !== "1" ||
+    rules.approvalThresholdNumerator !== "1" ||
+    rules.approvalThresholdDenominator !== "2" ||
+    eligibility.rule !==
+      "proposal_operator_at_or_before_gate_others_after_gate" ||
+    eligibility.value !== null
+  ) {
+    throw new TypeError(
+      "validation-fee PLAIN electorate rules must equal the exact first-release contract.",
+    );
+  }
+  return {
+    voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    ballot_amount: "150",
+    ballot_duration_blocks: "3600",
+    citizenship_amount: "10000",
+    max_members: "256",
+    conviction_step_blocks: "100",
+    max_conviction: "6",
+    min_turnout: "1",
+    approval_threshold_numerator: "1",
+    approval_threshold_denominator: "2",
+    eligibility_rule: {
+      rule: "proposal_operator_at_or_before_gate_others_after_gate",
+      value: null,
+    },
+  };
+};
+
 const normalizePayoutBinding = (
   value: unknown,
   policy: { dsAssetId: string; treasuryAccountId: string },
@@ -256,10 +386,16 @@ const normalizePayoutBinding = (
     binding.pool_vault_account_id,
     "validation-fee payout binding.pool_vault_account_id",
   );
-  const sbdAssetId = requiredText(
+  const appSbdAssetId = requiredText(
     binding.sbd_asset_id,
     "validation-fee payout binding.sbd_asset_id",
   );
+  if (appSbdAssetId !== APP_SBD_ASSET_ID) {
+    throw new TypeError(
+      `validation-fee payout binding.sbd_asset_id must be ${APP_SBD_ASSET_ID}.`,
+    );
+  }
+  const sbdAssetId = NATIVE_SBD_ASSET_DEFINITION_ID;
   const xorAssetId = requiredText(
     binding.xor_asset_id,
     "validation-fee payout binding.xor_asset_id",
@@ -324,10 +460,7 @@ const normalizeStandalonePayoutBinding = (value: unknown): PlainRecord => {
     "validation-fee payout lifecycle.payout_binding",
   );
   return normalizePayoutBinding(binding, {
-    dsAssetId: requiredText(
-      binding.sbd_asset_id,
-      "validation-fee payout lifecycle.payout_binding.sbd_asset_id",
-    ),
+    dsAssetId: NATIVE_SBD_ASSET_DEFINITION_ID,
     treasuryAccountId: requiredText(
       binding.treasury_account_id,
       "validation-fee payout lifecycle.payout_binding.treasury_account_id",
@@ -355,6 +488,48 @@ const normalizeReferendumWindow = (
   }
   return { lower, upper };
 };
+
+export function assertValidationFeeDraftWindowAgainstCapabilities(
+  window: { lower: string; upper: string },
+  capabilities: {
+    currentHeight: number | string;
+    minEnactmentDelay: number | string;
+    windowSpan: number | string;
+  },
+): void {
+  const { lower, upper } = normalizeReferendumWindow(window);
+  const currentHeight = BigInt(
+    safeUnsignedInteger(
+      capabilities.currentHeight,
+      "governance capabilities.current_height",
+    ),
+  );
+  const minEnactmentDelay = BigInt(
+    safeUnsignedInteger(
+      capabilities.minEnactmentDelay,
+      "governance capabilities.min_enactment_delay",
+    ),
+  );
+  const windowSpan = BigInt(
+    safeUnsignedInteger(
+      capabilities.windowSpan,
+      "governance capabilities.window_span",
+      { positive: true },
+    ),
+  );
+  const minimumLower = currentHeight + 1n + minEnactmentDelay;
+  if (minimumLower > MAX_U64 || BigInt(lower) < minimumLower) {
+    throw new TypeError(
+      "validation-fee referendum window.lower is earlier than current_height + 1 + min_enactment_delay.",
+    );
+  }
+  const inclusiveSpan = BigInt(upper) - BigInt(lower) + 1n;
+  if (inclusiveSpan !== windowSpan) {
+    throw new TypeError(
+      "validation-fee referendum window must have the exact inclusive capability window_span.",
+    );
+  }
+}
 
 const normalizePolicy = (value: unknown): PlainRecord => {
   const policy = record(value, "validation-fee policy");
@@ -396,10 +571,16 @@ const normalizePolicy = (value: unknown): PlainRecord => {
       "validation-fee policy previous hash does not match its version.",
     );
   }
-  const dsAssetId = requiredText(
+  const appDsAssetId = requiredText(
     policy.ds_asset_id,
     "validation-fee policy.ds_asset_id",
   );
+  if (appDsAssetId !== APP_SBD_ASSET_ID) {
+    throw new TypeError(
+      `validation-fee policy.ds_asset_id must be ${APP_SBD_ASSET_ID}.`,
+    );
+  }
+  const dsAssetId = NATIVE_SBD_ASSET_DEFINITION_ID;
   const treasuryAccountId = requiredText(
     policy.treasury_account_id,
     "validation-fee policy.treasury_account_id",
@@ -467,6 +648,7 @@ const normalizePolicy = (value: unknown): PlainRecord => {
  */
 export function buildValidationFeePolicyDraftRequest(
   value: unknown,
+  plainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1,
 ): ValidationFeePolicyDraftRequest {
   const input = record(value, "validation-fee proposal input");
   exactKeys(
@@ -476,13 +658,15 @@ export function buildValidationFeePolicyDraftRequest(
   );
   const policy = normalizePolicy(input.policy);
   const { lower, upper } = normalizeReferendumWindow(input.referendum_window);
-  const minimumEffectiveHeight = BigInt(upper) + ACTIVATION_DELAY_BLOCKS;
+  const effectiveHeight = BigInt(policy.effective_from_height as string);
+  const enactmentHeight = effectiveHeight - ACTIVATION_DELAY_BLOCKS;
   if (
-    minimumEffectiveHeight > MAX_U64 ||
-    BigInt(policy.effective_from_height as string) < minimumEffectiveHeight
+    effectiveHeight > MAX_U64 ||
+    effectiveHeight <= ACTIVATION_DELAY_BLOCKS ||
+    enactmentHeight <= BigInt(upper)
   ) {
     throw new TypeError(
-      "validation-fee policy must activate at least 120,960 blocks after the referendum window ends.",
+      "validation-fee policy must encode enactment strictly after its inclusive referendum window and activation exactly 120,960 blocks later.",
     );
   }
   const payoutBinding = policy.treasury_payout_binding !== null;
@@ -514,6 +698,7 @@ export function buildValidationFeePolicyDraftRequest(
     },
     referendum_window: { lower, upper },
     mode: "Plain",
+    plain_electorate_rules: normalizePlainElectorateRules(plainElectorateRules),
   };
 }
 
@@ -523,6 +708,7 @@ export function buildValidationFeePolicyDraftRequest(
  */
 export function buildValidationFeePayoutLifecycleDraftRequest(
   value: unknown,
+  plainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1,
 ): ValidationFeePayoutLifecycleDraftRequest {
   const input = record(value, "validation-fee payout lifecycle input");
   exactKeys(
@@ -540,6 +726,7 @@ export function buildValidationFeePayoutLifecycleDraftRequest(
     },
     referendum_window: normalizeReferendumWindow(input.referendum_window),
     mode: "Plain",
+    plain_electorate_rules: normalizePlainElectorateRules(plainElectorateRules),
   };
 }
 
@@ -559,7 +746,7 @@ const byteArrayHex = (value: unknown): string | null => {
   return null;
 };
 
-const assertExactValue = (
+const assertDecodedValue = (
   actual: unknown,
   expected: unknown,
   label: string,
@@ -588,7 +775,7 @@ const assertExactValue = (
       throw new TypeError(`${label} differs from the reviewed value.`);
     }
     expected.forEach((entry, index) => {
-      assertExactValue(actual[index], entry, `${label}[${index}]`);
+      assertDecodedValue(actual[index], entry, `${label}[${index}]`);
     });
     return;
   }
@@ -601,7 +788,7 @@ const assertExactValue = (
     const expectedRecord = expected as PlainRecord;
     exactKeys(actualRecord, Object.keys(expectedRecord).sort(), label);
     for (const [key, value] of Object.entries(expectedRecord)) {
-      assertExactValue(actualRecord[key], value, `${label}.${key}`);
+      assertDecodedValue(actualRecord[key], value, `${label}.${key}`);
     }
     return;
   }
@@ -609,6 +796,81 @@ const assertExactValue = (
     throw new TypeError(`${label} differs from the reviewed value.`);
   }
 };
+
+const assertExactJsonValue = (
+  actual: unknown,
+  expected: unknown,
+  label: string,
+): void => {
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || actual.length !== expected.length) {
+      throw new TypeError(`${label} differs from the reviewed value.`);
+    }
+    expected.forEach((entry, index) => {
+      assertExactJsonValue(actual[index], entry, `${label}[${index}]`);
+    });
+    return;
+  }
+  if (
+    expected !== null &&
+    typeof expected === "object" &&
+    !Array.isArray(expected)
+  ) {
+    const actualRecord = record(actual, label);
+    const expectedRecord = expected as PlainRecord;
+    exactKeys(actualRecord, Object.keys(expectedRecord).sort(), label);
+    for (const [key, value] of Object.entries(expectedRecord)) {
+      assertExactJsonValue(actualRecord[key], value, `${label}.${key}`);
+    }
+    return;
+  }
+  if (typeof actual !== typeof expected || actual !== expected) {
+    throw new TypeError(`${label} differs from the reviewed value.`);
+  }
+};
+
+const validationFeePolicyResponsePayload = (
+  request: ValidationFeePolicyDraftRequest,
+): PlainRecord => {
+  const policy = request.proposal.payload.policy;
+  const payoutBinding = policy.treasury_payout_binding;
+  return {
+    policy: {
+      ...policy,
+      genesis_hash: (policy.genesis_hash as string).toUpperCase(),
+      previous_policy_hash:
+        policy.previous_policy_hash === null
+          ? null
+          : (policy.previous_policy_hash as string).toUpperCase(),
+      treasury_payout_binding:
+        payoutBinding === null
+          ? null
+          : {
+              ...(payoutBinding as PlainRecord),
+              code_hash: (
+                (payoutBinding as PlainRecord).code_hash as string
+              ).toUpperCase(),
+            },
+    },
+    payout_lifecycle_proposal_id:
+      request.proposal.payload.payout_lifecycle_proposal_id === null
+        ? null
+        : request.proposal.payload.payout_lifecycle_proposal_id.toUpperCase(),
+    plain_electorate_rules: request.plain_electorate_rules,
+  };
+};
+
+const validationFeePayoutLifecycleResponsePayload = (
+  request: ValidationFeePayoutLifecycleDraftRequest,
+): PlainRecord => ({
+  payout_binding: {
+    ...request.proposal.payload.payout_binding,
+    code_hash: (
+      request.proposal.payload.payout_binding.code_hash as string
+    ).toUpperCase(),
+  },
+  plain_electorate_rules: request.plain_electorate_rules,
+});
 
 /**
  * Verify the strict Torii response before any returned instruction can enter
@@ -643,11 +905,11 @@ export function assertValidationFeePolicyDraftResponse(
       "validation-fee proposal draft response.proposal_id differs from the native proposal fingerprint.",
     );
   }
-  assertExactValue(
+  assertExactJsonValue(
     response.proposal_kind,
     {
       kind: "ValidationFeePolicy",
-      payload: request.proposal.payload,
+      payload: validationFeePolicyResponsePayload(request),
     },
     "validation-fee proposal draft response.proposal_kind",
   );
@@ -689,7 +951,7 @@ export function assertValidationFeePolicyDecodedInstruction(
   value: unknown,
   request: ValidationFeePolicyDraftRequest,
 ): void {
-  assertExactValue(
+  assertDecodedValue(
     value,
     {
       ProposeValidationFeePolicy: {
@@ -698,6 +960,7 @@ export function assertValidationFeePolicyDecodedInstruction(
           request.proposal.payload.payout_lifecycle_proposal_id,
         referendum_window: request.referendum_window,
         mode: "Plain",
+        plain_electorate_rules: request.plain_electorate_rules,
       },
     },
     "decoded validation-fee proposal instruction",
@@ -707,6 +970,7 @@ export function assertValidationFeePolicyDecodedInstruction(
 export function assertValidationFeePayoutLifecycleDraftResponse(
   value: unknown,
   request: ValidationFeePayoutLifecycleDraftRequest,
+  expectedProposalId: string,
 ): ValidationFeePayoutLifecycleInstructionDraft {
   const response = record(
     value,
@@ -726,11 +990,20 @@ export function assertValidationFeePayoutLifecycleDraftResponse(
     response.proposal_id,
     "validation-fee payout lifecycle draft response.proposal_id",
   );
-  assertExactValue(
+  const expected = lowerHex32(
+    expectedProposalId,
+    "expected native validation-fee payout-lifecycle proposal id",
+  );
+  if (proposalId !== expected) {
+    throw new TypeError(
+      "validation-fee payout lifecycle draft response.proposal_id differs from the native proposal fingerprint.",
+    );
+  }
+  assertExactJsonValue(
     response.proposal_kind,
     {
       kind: "ValidationFeePayoutLifecycle",
-      payload: request.proposal.payload,
+      payload: validationFeePayoutLifecycleResponsePayload(request),
     },
     "validation-fee payout lifecycle draft response.proposal_kind",
   );
@@ -767,7 +1040,7 @@ export function assertValidationFeePayoutLifecycleDraftResponse(
   return {
     wire_id: VALIDATION_FEE_PAYOUT_LIFECYCLE_DRAFT_WIRE_ID,
     payload_hex: instruction.payload_hex as string,
-    proposalId,
+    proposalId: expected,
   };
 }
 
@@ -775,13 +1048,14 @@ export function assertValidationFeePayoutLifecycleDecodedInstruction(
   value: unknown,
   request: ValidationFeePayoutLifecycleDraftRequest,
 ): void {
-  assertExactValue(
+  assertDecodedValue(
     value,
     {
       ProposeValidationFeePayoutLifecycle: {
         payout_binding: request.proposal.payload.payout_binding,
         referendum_window: request.referendum_window,
         mode: "Plain",
+        plain_electorate_rules: request.plain_electorate_rules,
       },
     },
     "decoded validation-fee payout lifecycle proposal instruction",

@@ -1,11 +1,18 @@
+import { createHash } from "node:crypto";
+
 export const TAIRA_GOVERNANCE_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const TAIRA_GOVERNANCE_NETWORK_PREFIX = 369;
+export const TAIRA_GOVERNANCE_GENESIS_HASH =
+  "884b61c61f56dcddceee7aa3dc1deb89fb8552576d02b01a1b7af9ae7fd5ff7a";
 export const TAIRA_GOVERNANCE_ABI_VERSION = 1;
 export const TAIRA_GOVERNANCE_DATA_MODEL_VERSION = 3;
 export const TAIRA_GOVERNANCE_WINDOW_SPAN = 3_600;
 // This Torii capability is the staging delay before the voting window opens.
 // Validation-fee activation has its own strict 120,960-block delay.
 export const TAIRA_GOVERNANCE_MIN_ENACTMENT_DELAY = 600;
+export const TAIRA_GOVERNANCE_XOR_ASSET_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+export const TAIRA_GOVERNANCE_ESCROW_ACCOUNT =
+  "testuﾛ1NfｷgﾉﾓﾉBｦKﾌﾘﾒoﾇﾂﾛrG81ﾋjWﾎﾕVncwﾌSｱ3pﾘﾋﾉhUS9Q76";
 
 export const GOVERNANCE_BODY_KEYS = [
   "rules_committee",
@@ -38,14 +45,37 @@ export const GOVERNANCE_REQUIRED_PROPOSAL_KINDS = [
 
 export const GOVERNANCE_REQUIRED_ROUTES = [
   "/v1/gov/capabilities",
+  "/v1/gov/citizens",
+  "/v1/gov/citizens/{account_id}",
   "/v1/gov/citizens/draft",
   "/v1/validation-fee/proposals",
   "/v1/validation-fee/proposals/{proposal_id}",
+  "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
   "/v1/validation-fee/proposals/draft",
-  "/v1/gov/ballots/plain",
+  "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
+  "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
+  "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
+  "/v1/validation-fee/proposals/{proposal_id}/payout-lifecycle-enactment/draft",
   "/v1/gov/parliament/ballots",
-  "/v1/gov/enact",
+  "/v1/gov/ballots/plain",
 ] as const;
+
+export interface GovernanceValidationFeePlainElectorateRulesV1 {
+  votingAssetId: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  ballotAmount: "150";
+  ballotDurationBlocks: "3600";
+  citizenshipAmount: "10000";
+  maxMembers: "256";
+  convictionStepBlocks: "100";
+  maxConviction: "6";
+  minTurnout: "1";
+  approvalThresholdNumerator: "1";
+  approvalThresholdDenominator: "2";
+  eligibilityRule: {
+    rule: "proposal_operator_at_or_before_gate_others_after_gate";
+    value: null;
+  };
+}
 
 export interface GovernanceCapabilitiesV1 {
   schema: "iroha.governance.capabilities.v1";
@@ -59,10 +89,15 @@ export interface GovernanceCapabilitiesV1 {
   approvalMode: "PARLIAMENT_SORTITION_JIT";
   plainVotingEnabled: true;
   autoFinalizePlain: true;
+  autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY";
+  validationFeePlainRequiresExplicitFinalization: true;
+  validationFeePlainElectorateRules: GovernanceValidationFeePlainElectorateRulesV1;
   citizenshipAssetId: string;
   citizenshipBondAmount: string;
+  citizenshipEscrowAccount: string;
   votingAssetId: string;
   minBondAmount: string;
+  bondEscrowAccount: string;
   convictionStepBlocks: number;
   maxConviction: number;
   minEnactmentDelay: number;
@@ -78,6 +113,61 @@ export interface GovernanceCapabilitiesV1 {
   supportedRoutes: string[];
 }
 
+const GOVERNANCE_CAPABILITIES_CONTRACT_FINGERPRINT_DOMAIN =
+  "iroha.wallet.governance-capabilities-contract.v1";
+
+/**
+ * Fingerprint the immutable governance contract used for a reviewed write.
+ * currentHeight is intentionally excluded because it is an observation that
+ * may advance between prepare and confirmation without changing the contract.
+ */
+export function governanceCapabilitiesContractFingerprintV1(
+  capabilities: Readonly<GovernanceCapabilitiesV1>,
+): string {
+  const contract = {
+    schema: capabilities.schema,
+    version: capabilities.version,
+    chainId: capabilities.chainId,
+    genesisHash: capabilities.genesisHash,
+    networkPrefix: capabilities.networkPrefix,
+    abiVersion: capabilities.abiVersion,
+    dataModelVersion: capabilities.dataModelVersion,
+    approvalMode: capabilities.approvalMode,
+    plainVotingEnabled: capabilities.plainVotingEnabled,
+    autoFinalizePlain: capabilities.autoFinalizePlain,
+    autoFinalizePlainScope: capabilities.autoFinalizePlainScope,
+    validationFeePlainRequiresExplicitFinalization:
+      capabilities.validationFeePlainRequiresExplicitFinalization,
+    validationFeePlainElectorateRules:
+      capabilities.validationFeePlainElectorateRules,
+    citizenshipAssetId: capabilities.citizenshipAssetId,
+    citizenshipBondAmount: capabilities.citizenshipBondAmount,
+    citizenshipEscrowAccount: capabilities.citizenshipEscrowAccount,
+    votingAssetId: capabilities.votingAssetId,
+    minBondAmount: capabilities.minBondAmount,
+    bondEscrowAccount: capabilities.bondEscrowAccount,
+    convictionStepBlocks: capabilities.convictionStepBlocks,
+    maxConviction: capabilities.maxConviction,
+    minEnactmentDelay: capabilities.minEnactmentDelay,
+    windowSpan: capabilities.windowSpan,
+    minTurnout: capabilities.minTurnout,
+    approvalThresholdNumerator: capabilities.approvalThresholdNumerator,
+    approvalThresholdDenominator: capabilities.approvalThresholdDenominator,
+    parliamentQuorumBps: capabilities.parliamentQuorumBps,
+    targetBodySizes: GOVERNANCE_BODY_KEYS.map((body) => [
+      body,
+      capabilities.targetBodySizes[body],
+    ]),
+    supportedProposalKinds: [...capabilities.supportedProposalKinds].sort(),
+    supportedRoutes: [...capabilities.supportedRoutes].sort(),
+  };
+  return createHash("sha256")
+    .update(GOVERNANCE_CAPABILITIES_CONTRACT_FINGERPRINT_DOMAIN)
+    .update("\0")
+    .update(JSON.stringify(contract))
+    .digest("hex");
+}
+
 type PlainRecord = Record<string, unknown>;
 
 const CAPABILITY_KEYS = Object.freeze(
@@ -87,9 +177,12 @@ const CAPABILITY_KEYS = Object.freeze(
     "approval_threshold_denominator",
     "approval_threshold_numerator",
     "auto_finalize_plain",
+    "auto_finalize_plain_scope",
+    "bond_escrow_account",
     "chain_id",
     "citizenship_asset_id",
     "citizenship_bond_amount",
+    "citizenship_escrow_account",
     "conviction_step_blocks",
     "current_height",
     "data_model_version",
@@ -105,6 +198,8 @@ const CAPABILITY_KEYS = Object.freeze(
     "supported_proposal_kinds",
     "supported_routes",
     "target_body_sizes",
+    "validation_fee_plain_electorate_rules",
+    "validation_fee_plain_requires_explicit_finalization",
     "version",
     "voting_asset_id",
     "window_span",
@@ -149,9 +244,15 @@ const exactDecimal = (
   options: { positive?: boolean } = {},
 ): string => {
   const literal = exactText(value, label);
+  const match = /^(?:0|[1-9]\d*)(?:\.(\d+))?$/u.exec(literal);
+  const fractional = match?.[1] ?? "";
+  const mantissa = match ? BigInt(literal.replace(".", "")) : 0n;
   if (
-    !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(literal) ||
-    (options.positive && /^0(?:\.0+)?$/u.test(literal))
+    !match ||
+    fractional.length > 28 ||
+    fractional.endsWith("0") ||
+    mantissa > (1n << 511n) - 1n ||
+    (options.positive && mantissa === 0n)
   ) {
     throw new TypeError(`${label} must be a canonical decimal string.`);
   }
@@ -191,6 +292,76 @@ const exactStringArray = (value: unknown, label: string): string[] => {
     throw new TypeError(`${label} must be an array of canonical strings.`);
   }
   return [...value];
+};
+
+const validationFeePlainElectorateRules = (
+  value: unknown,
+): GovernanceValidationFeePlainElectorateRulesV1 => {
+  const rules = record(
+    value,
+    "governance capabilities.validation_fee_plain_electorate_rules",
+  );
+  exactKeys(
+    rules,
+    [
+      "approval_threshold_denominator",
+      "approval_threshold_numerator",
+      "ballot_amount",
+      "ballot_duration_blocks",
+      "citizenship_amount",
+      "conviction_step_blocks",
+      "eligibility_rule",
+      "max_conviction",
+      "max_members",
+      "min_turnout",
+      "voting_asset_id",
+    ],
+    "governance capabilities.validation_fee_plain_electorate_rules",
+  );
+  const eligibility = record(
+    rules.eligibility_rule,
+    "governance capabilities.validation_fee_plain_electorate_rules.eligibility_rule",
+  );
+  exactKeys(
+    eligibility,
+    ["rule", "value"],
+    "governance capabilities.validation_fee_plain_electorate_rules.eligibility_rule",
+  );
+  if (
+    rules.voting_asset_id !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
+    rules.ballot_amount !== "150" ||
+    rules.ballot_duration_blocks !== "3600" ||
+    rules.citizenship_amount !== "10000" ||
+    rules.max_members !== "256" ||
+    rules.conviction_step_blocks !== "100" ||
+    rules.max_conviction !== "6" ||
+    rules.min_turnout !== "1" ||
+    rules.approval_threshold_numerator !== "1" ||
+    rules.approval_threshold_denominator !== "2" ||
+    eligibility.rule !==
+      "proposal_operator_at_or_before_gate_others_after_gate" ||
+    eligibility.value !== null
+  ) {
+    throw new TypeError(
+      "governance capabilities validation-fee PLAIN electorate rules differ from Taira.",
+    );
+  }
+  return {
+    votingAssetId: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    ballotAmount: "150",
+    ballotDurationBlocks: "3600",
+    citizenshipAmount: "10000",
+    maxMembers: "256",
+    convictionStepBlocks: "100",
+    maxConviction: "6",
+    minTurnout: "1",
+    approvalThresholdNumerator: "1",
+    approvalThresholdDenominator: "2",
+    eligibilityRule: {
+      rule: "proposal_operator_at_or_before_gate_others_after_gate",
+      value: null,
+    },
+  };
 };
 
 const targetBodySizes = (value: unknown): Record<GovernanceBodyKey, number> => {
@@ -268,12 +439,19 @@ export function parseGovernanceCapabilitiesV1(
   }
   if (
     capabilities.plain_voting_enabled !== true ||
-    capabilities.auto_finalize_plain !== true
+    capabilities.auto_finalize_plain !== true ||
+    capabilities.auto_finalize_plain_scope !==
+      "GENERIC_NON_VALIDATION_FEE_ONLY" ||
+    capabilities.validation_fee_plain_requires_explicit_finalization !== true
   ) {
     throw new TypeError(
-      "governance capabilities must enable deterministic PLAIN referenda.",
+      "governance capabilities must scope automatic PLAIN finalization away from validation-fee proposals.",
     );
   }
+
+  const validationFeeElectorateRules = validationFeePlainElectorateRules(
+    capabilities.validation_fee_plain_electorate_rules,
+  );
 
   const bodySizes = targetBodySizes(capabilities.target_body_sizes);
   for (const body of GOVERNANCE_BODY_KEYS) {
@@ -315,6 +493,18 @@ export function parseGovernanceCapabilitiesV1(
     GOVERNANCE_REQUIRED_ROUTES,
     "governance capabilities.supported_routes",
   );
+  if (
+    supportedRoutes.some(
+      (route) =>
+        !GOVERNANCE_REQUIRED_ROUTES.includes(
+          route as (typeof GOVERNANCE_REQUIRED_ROUTES)[number],
+        ),
+    )
+  ) {
+    throw new TypeError(
+      "governance capabilities advertises an unsupported route.",
+    );
+  }
 
   const parsed: GovernanceCapabilitiesV1 = {
     schema: "iroha.governance.capabilities.v1",
@@ -343,6 +533,9 @@ export function parseGovernanceCapabilitiesV1(
     approvalMode,
     plainVotingEnabled: true,
     autoFinalizePlain: true,
+    autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY",
+    validationFeePlainRequiresExplicitFinalization: true,
+    validationFeePlainElectorateRules: validationFeeElectorateRules,
     citizenshipAssetId: exactText(
       capabilities.citizenship_asset_id,
       "governance capabilities.citizenship_asset_id",
@@ -352,6 +545,10 @@ export function parseGovernanceCapabilitiesV1(
       "governance capabilities.citizenship_bond_amount",
       { positive: true },
     ),
+    citizenshipEscrowAccount: exactText(
+      capabilities.citizenship_escrow_account,
+      "governance capabilities.citizenship_escrow_account",
+    ),
     votingAssetId: exactText(
       capabilities.voting_asset_id,
       "governance capabilities.voting_asset_id",
@@ -360,6 +557,10 @@ export function parseGovernanceCapabilitiesV1(
       capabilities.min_bond_amount,
       "governance capabilities.min_bond_amount",
       { positive: true },
+    ),
+    bondEscrowAccount: exactText(
+      capabilities.bond_escrow_account,
+      "governance capabilities.bond_escrow_account",
     ),
     convictionStepBlocks: safeInteger(
       capabilities.conviction_step_blocks,
@@ -409,13 +610,25 @@ export function parseGovernanceCapabilitiesV1(
 
   if (
     parsed.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
+    parsed.genesisHash !== TAIRA_GOVERNANCE_GENESIS_HASH ||
     parsed.networkPrefix !== TAIRA_GOVERNANCE_NETWORK_PREFIX ||
     parsed.abiVersion !== TAIRA_GOVERNANCE_ABI_VERSION ||
     parsed.dataModelVersion !== TAIRA_GOVERNANCE_DATA_MODEL_VERSION ||
     parsed.windowSpan !== TAIRA_GOVERNANCE_WINDOW_SPAN ||
     parsed.minEnactmentDelay !== TAIRA_GOVERNANCE_MIN_ENACTMENT_DELAY ||
+    parsed.citizenshipAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
+    parsed.citizenshipBondAmount !== "10000" ||
+    parsed.citizenshipEscrowAccount !== TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
+    parsed.votingAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
+    parsed.minBondAmount !== "150" ||
+    parsed.bondEscrowAccount !== TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
+    parsed.convictionStepBlocks !== 100 ||
+    parsed.maxConviction !== 6 ||
+    parsed.minTurnout !== "1" ||
+    parsed.approvalThresholdNumerator !== 1 ||
+    parsed.approvalThresholdDenominator !== 2 ||
     parsed.approvalThresholdNumerator >= parsed.approvalThresholdDenominator ||
-    parsed.parliamentQuorumBps > 10_000
+    parsed.parliamentQuorumBps !== 6_667
   ) {
     throw new TypeError(
       "governance capabilities do not match the reviewed Taira release.",

@@ -28,17 +28,15 @@
       <div class="staking-stat-grid" :aria-label="t('Stake XOR')">
         <div class="staking-stat">
           <span>{{ t("Available to stake") }}</span>
-          <strong>{{ stakeTokenBalance }} {{ stakeTokenSymbol }}</strong>
+          <strong>{{ stakeTokenBalanceLabel }}</strong>
         </div>
         <div class="staking-stat">
           <span>{{ t("Bonded across lane") }}</span>
-          <strong
-            >{{ bondedStakeForAccountLabel }} {{ stakeTokenSymbol }}</strong
-          >
+          <strong>{{ bondedStakeForAccountLabel }}</strong>
         </div>
         <div class="staking-stat">
           <span>{{ t("Pending rewards / fees") }}</span>
-          <strong>{{ pendingRewardTotalLabel }} {{ stakeTokenSymbol }}</strong>
+          <strong>{{ pendingRewardTotalLabel }}</strong>
         </div>
         <div class="staking-stat">
           <span>{{ t("APY estimate") }}</span>
@@ -47,8 +45,31 @@
       </div>
 
       <div class="staking-messages" aria-live="polite">
+        <p
+          v-if="!stakingWritesSupported"
+          class="message error"
+          data-testid="staking-write-prerequisite"
+        >
+          {{ stakingWritePrerequisite }}
+        </p>
         <p v-if="statusMessage" class="helper staking-status-message">
           {{ statusMessage }}
+        </p>
+        <p
+          v-if="assetBalanceError"
+          class="message error"
+          data-testid="staking-assets-error"
+          role="alert"
+        >
+          {{ assetBalanceError }}
+        </p>
+        <p
+          v-if="laneStakeError"
+          class="message error"
+          data-testid="staking-lane-stake-error"
+          role="alert"
+        >
+          {{ laneStakeError }}
         </p>
         <p v-if="errorMessage" class="message error" role="alert">
           {{ errorMessage }}
@@ -69,7 +90,7 @@
         </label>
         <select
           id="staking-group-select"
-          v-model.number="selectedDataspaceId"
+          v-model="selectedDataspaceId"
           :disabled="loadingBootstrap || !dataspaceOptions.length"
           @change="handleDataspaceChange"
         >
@@ -97,18 +118,20 @@
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Active validators") }}</span>
-          <span class="kv-value">{{ activeValidatorCount }}</span>
+          <span class="kv-value">{{ activeValidatorCountLabel }}</span>
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Stake Token Balance") }}</span>
-          <span class="kv-value"
-            >{{ stakeTokenBalance }} {{ stakeTokenSymbol }}</span
-          >
+          <span class="kv-value">{{ stakeTokenBalanceLabel }}</span>
         </div>
         <div class="kv">
           <span class="kv-label">{{ t("Unbond Delay") }}</span>
           <span class="kv-value">
-            {{ policy ? formatDuration(policy.unbondingDelayMs) : t("—") }}
+            {{
+              policy?.unbondingDelayMs != null
+                ? formatDuration(policy.unbondingDelayMs)
+                : t("—")
+            }}
           </span>
         </div>
       </div>
@@ -124,10 +147,18 @@
             </p>
           </div>
           <span class="staking-count" aria-hidden="true">{{
-            validators.length
+            validatorCountLabel
           }}</span>
         </header>
 
+        <p
+          v-if="validatorsError"
+          class="message error"
+          data-testid="staking-validators-error"
+          role="alert"
+        >
+          {{ validatorsError }}
+        </p>
         <div
           v-if="validators.length"
           class="validator-list"
@@ -166,9 +197,13 @@
             </span>
           </button>
         </div>
-        <p v-else class="staking-empty">
+        <p
+          v-else-if="validatorsReadState === 'available'"
+          class="staking-empty"
+        >
           {{ t("No validators found for this lane.") }}
         </p>
+        <p v-else class="staking-empty">{{ t("Unavailable") }}</p>
       </div>
 
       <aside
@@ -215,6 +250,14 @@
             </dd>
           </div>
         </dl>
+        <p
+          v-if="selectedStakeError"
+          class="message error"
+          data-testid="staking-selected-stake-error"
+          role="alert"
+        >
+          {{ selectedStakeError }}
+        </p>
 
         <div
           class="staking-action-tabs"
@@ -297,7 +340,12 @@
             </p>
             <button
               data-ui-primary-action
-              :disabled="!canSubmit || !hasBondableBalance || isActionBusy"
+              :disabled="
+                !stakingWritesSupported ||
+                !canSubmit ||
+                !hasBondableBalance ||
+                isActionBusy
+              "
               @click="handleBond"
             >
               {{ actionBusy === "bond" ? t("Submitting…") : t("Bond XOR") }}
@@ -330,7 +378,7 @@
               {{ t("Max") }}
             </button>
           </div>
-          <p v-if="policy" class="helper">
+          <p v-if="hasUnbondingPolicy" class="helper">
             {{
               t("Release is set from on-chain policy: {datetime}.", {
                 datetime: formatDateTime(releasePreviewMs),
@@ -350,7 +398,11 @@
             <button
               data-ui-primary-action
               :disabled="
-                !canSubmit || !policy || !hasBondedStake || isActionBusy
+                !stakingWritesSupported ||
+                !canSubmit ||
+                !hasUnbondingPolicy ||
+                !hasBondedStake ||
+                isActionBusy
               "
               @click="handleScheduleUnbond"
             >
@@ -369,13 +421,12 @@
                   t("Bonded with selected validator")
                 }}</span>
                 <span class="kv-value">
-                  {{ selectedStakeShare?.bonded || t("0") }}
-                  {{ stakeTokenSymbol }}
+                  {{ selectedBondedStakeLabel }}
                 </span>
               </div>
               <div class="kv">
                 <span class="kv-label">{{ t("Pending Unbonds") }}</span>
-                <span class="kv-value">{{ pendingUnbonds.length }}</span>
+                <span class="kv-value">{{ pendingUnbondCountLabel }}</span>
               </div>
             </div>
             <label v-if="pendingUnbonds.length" class="finalize-select">
@@ -393,13 +444,20 @@
               </select>
             </label>
             <div class="staking-action-footer finalize-footer">
-              <p v-if="!pendingUnbonds.length" class="helper">
+              <p
+                v-if="
+                  selectedStakeReadState === 'available' &&
+                  !pendingUnbonds.length
+                "
+                class="helper"
+              >
                 {{
                   t("No pending unbond requests for the selected validator.")
                 }}
               </p>
               <button
                 :disabled="
+                  !stakingWritesSupported ||
                   !canSubmit ||
                   !pendingUnbonds.length ||
                   !selectedFinalizeRequestId ||
@@ -427,9 +485,7 @@
           <div class="rewards-summary-grid">
             <div class="kv">
               <span class="kv-label">{{ t("Claimable amount") }}</span>
-              <span class="kv-value"
-                >{{ pendingRewardTotalLabel }} {{ stakeTokenSymbol }}</span
-              >
+              <span class="kv-value">{{ pendingRewardTotalLabel }}</span>
             </div>
             <div class="kv">
               <span class="kv-label">{{ t("APY estimate") }}</span>
@@ -437,9 +493,17 @@
             </div>
             <div class="kv">
               <span class="kv-label">{{ t("Observed reward epochs") }}</span>
-              <span class="kv-value">{{ rewardEpochSpan || t("—") }}</span>
+              <span class="kv-value">{{ rewardEpochSpanLabel }}</span>
             </div>
           </div>
+          <p
+            v-if="rewardsError"
+            class="message error"
+            data-testid="staking-rewards-error"
+            role="alert"
+          >
+            {{ rewardsError }}
+          </p>
           <div
             v-if="rewardsForAccount.length"
             class="table-wrap rewards-table-wrap"
@@ -466,9 +530,10 @@
               </tbody>
             </table>
           </div>
-          <p v-else class="helper">
+          <p v-else-if="rewardsReadState === 'available'" class="helper">
             {{ t("No pending rewards for this lane/account.") }}
           </p>
+          <p v-else class="helper">{{ t("Unavailable") }}</p>
           <div class="staking-action-footer">
             <p class="transaction-fee-note">
               <span>{{ t("Fee") }}</span>
@@ -481,7 +546,12 @@
             </p>
             <button
               data-ui-primary-action
-              :disabled="!canSubmit || !hasClaimableRewards || isActionBusy"
+              :disabled="
+                !stakingWritesSupported ||
+                !canSubmit ||
+                !hasClaimableRewards ||
+                isActionBusy
+              "
               @click="handleClaimRewards"
             >
               {{
@@ -547,9 +617,7 @@
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Fees / rewards pending") }}</span>
-            <span class="kv-value"
-              >{{ pendingRewardTotalLabel }} {{ stakeTokenSymbol }}</span
-            >
+            <span class="kv-value">{{ pendingRewardTotalLabel }}</span>
           </div>
         </div>
 
@@ -624,7 +692,9 @@
           </button>
           <button
             type="button"
-            :disabled="!canRegisterValidator || isActionBusy"
+            :disabled="
+              !stakingWritesSupported || !canRegisterValidator || isActionBusy
+            "
             @click="handleRegisterValidator"
           >
             {{
@@ -650,6 +720,7 @@
 import { computed, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { AppButton, RouteHeaderAction } from "@/components/ui";
+import { MINAMOTO_CHAIN_PRESET } from "@/constants/chains";
 import {
   bondPublicLaneStake,
   claimPublicLaneRewards,
@@ -658,11 +729,13 @@ import {
   getNexusPublicLaneRewards,
   getNexusPublicLaneStake,
   getNexusPublicLaneValidators,
+  getNexusLifecycle,
   getNexusStakingPolicy,
   registerPublicLaneValidator,
   getSumeragiStatus,
   schedulePublicLaneUnbond,
 } from "@/services/iroha";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import type {
   NexusStakingPolicy,
@@ -688,15 +761,17 @@ import {
   sumStakeShares,
   type DataspaceOption,
 } from "@/utils/staking";
-import { deriveAssetSymbol, resolveToriiXorAsset } from "@/utils/assetId";
+import { resolveToriiXorAsset } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
   appendTransactionFee,
   formatTransactionFee,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const activeAccount = computed(() => session.activeAccount);
 const { localeStore, t } = useAppI18n();
 
@@ -713,8 +788,10 @@ const statusMessage = ref("");
 const actionMessage = ref("");
 const errorMessage = ref("");
 
+type ReadState = "idle" | "available" | "unavailable";
+
 const dataspaceOptions = ref<DataspaceOption[]>([]);
-const selectedDataspaceId = ref<number | null>(null);
+const selectedDataspaceId = ref<string | null>(null);
 const validators = ref<PublicLaneValidatorRecordView[]>([]);
 const selectedValidator = ref("");
 const stakingActionMode = ref<"bond" | "unbond" | "rewards">("bond");
@@ -733,12 +810,41 @@ const stakeTokenSymbol = ref("XOR");
 const stakeResponse = ref<PublicLaneStakeResponseView | null>(null);
 const laneStakeResponse = ref<PublicLaneStakeResponseView | null>(null);
 const rewardsResponse = ref<PublicLaneRewardsResponseView | null>(null);
+const assetBalanceReadState = ref<ReadState>("idle");
+const validatorsReadState = ref<ReadState>("idle");
+const selectedStakeReadState = ref<ReadState>("idle");
+const laneStakeReadState = ref<ReadState>("idle");
+const rewardsReadState = ref<ReadState>("idle");
+const assetBalanceError = ref("");
+const validatorsError = ref("");
+const selectedStakeError = ref("");
+const laneStakeError = ref("");
+const rewardsError = ref("");
+const bootstrapContextKey = ref("");
+const laneDataContextKey = ref("");
 
 const stakerAccountId = computed(() => activeAccount.value?.accountId ?? "");
 const laneContext = computed(() =>
   resolveLaneForDataspace(dataspaceOptions.value, selectedDataspaceId.value),
 );
 const laneId = computed(() => laneContext.value?.laneId ?? null);
+const activeProfileIsVerifiedMinamoto = computed(() => {
+  const inspection = endpointStore.inspection;
+  const minamoto = MINAMOTO_CHAIN_PRESET.connection;
+  const normalizeEndpoint = (value: string) =>
+    value.trim().replace(/\/+$/, "").toLowerCase();
+  return Boolean(
+    inspection?.identityStatus === "matched" &&
+      normalizeEndpoint(inspection.toriiUrl) ===
+        normalizeEndpoint(session.connection.toriiUrl) &&
+      inspection.observed?.chainId.toLowerCase() ===
+        minamoto.chainId.toLowerCase() &&
+      inspection.observed?.networkPrefix === minamoto.networkPrefix &&
+      session.connection.chainId.toLowerCase() ===
+        minamoto.chainId.toLowerCase() &&
+      session.connection.networkPrefix === minamoto.networkPrefix,
+  );
+});
 
 const selfValidatorRecord = computed(() =>
   validators.value.find((entry) => entry.validator === stakerAccountId.value),
@@ -804,6 +910,13 @@ const pendingUnbonds = computed(
 );
 
 const rewardsForAccount = computed(() => rewardsResponse.value?.items ?? []);
+const exactStakeAssetDefinitionIds = computed(() => [
+  session.connection.assetDefinitionId,
+  ...rewardsForAccount.value.map((reward) => reward.asset),
+  ...(activeProfileIsVerifiedMinamoto.value
+    ? [MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId]
+    : []),
+]);
 const pendingRewardTotal = computed(() =>
   sumRewardAmounts(rewardsForAccount.value),
 );
@@ -811,7 +924,9 @@ const rewardEpochSpan = computed(() =>
   resolveRewardEpochSpan(rewardsForAccount.value),
 );
 const hasClaimableRewards = computed(() =>
-  hasClaimableRewardsInList(rewardsForAccount.value),
+  rewardsReadState.value === "available"
+    ? hasClaimableRewardsInList(rewardsForAccount.value)
+    : false,
 );
 
 const parsedEpochDurationHours = computed(() => {
@@ -834,6 +949,16 @@ const activeValidatorCount = computed(
   () =>
     validators.value.filter((entry) => entry.status.type === "Active").length,
 );
+const activeValidatorCountLabel = computed(() =>
+  validatorsReadState.value === "available"
+    ? String(activeValidatorCount.value)
+    : t("Unavailable"),
+);
+const validatorCountLabel = computed(() =>
+  validatorsReadState.value === "available"
+    ? String(validators.value.length)
+    : t("—"),
+);
 
 const totalLaneStake = computed(() =>
   sumDecimalAmounts(validators.value.map((entry) => entry.total_stake)),
@@ -851,12 +976,44 @@ const hasActiveLaneContext = computed(() =>
 );
 
 const canSubmit = computed(() =>
-  Boolean(hasActiveLaneContext.value && selectedValidator.value),
+  Boolean(
+    hasActiveLaneContext.value &&
+      validatorsReadState.value === "available" &&
+      selectedValidator.value,
+  ),
+);
+
+const stakingWritesSupported = computed(
+  () =>
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features.stakingWrites.supported === true,
+);
+
+const stakingWritePrerequisite = computed(() => {
+  if (endpointStore.state === "checking") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  return t(
+    "This endpoint does not advertise the required staking write operations.",
+  );
+});
+
+const hasUnbondingPolicy = computed(
+  () => policy.value?.unbondingDelayMs != null,
 );
 
 const isActionBusy = computed(() => actionBusy.value !== null);
 
 const hasBondableBalance = computed(() => {
+  if (assetBalanceReadState.value !== "available") {
+    return false;
+  }
   try {
     return compareDecimalStrings(stakeTokenBalance.value, "0") > 0;
   } catch (_error) {
@@ -865,6 +1022,9 @@ const hasBondableBalance = computed(() => {
 });
 
 const hasBondedStake = computed(() => {
+  if (selectedStakeReadState.value !== "available") {
+    return false;
+  }
   try {
     return (
       compareDecimalStrings(selectedStakeShare.value?.bonded ?? "0", "0") > 0
@@ -885,7 +1045,7 @@ const canRegisterValidator = computed(() =>
 );
 
 const releasePreviewMs = computed(() => {
-  if (!policy.value) return Date.now();
+  if (policy.value?.unbondingDelayMs == null) return Date.now();
   return computeUnbondReleaseAtMs(policy.value.unbondingDelayMs);
 });
 
@@ -906,20 +1066,52 @@ const formatPercent = (value: number) =>
     minimumFractionDigits: 0,
   }).format(value);
 
+const stakeTokenBalanceLabel = computed(() =>
+  assetBalanceReadState.value === "available"
+    ? `${stakeTokenBalance.value} ${stakeTokenSymbol.value}`
+    : t("Unavailable"),
+);
+
 const bondedStakeForAccountLabel = computed(() =>
-  formatNumber(bondedStakeForAccount.value),
+  laneStakeReadState.value === "available"
+    ? `${formatNumber(bondedStakeForAccount.value)} ${stakeTokenSymbol.value}`
+    : t("Unavailable"),
 );
 
 const pendingRewardTotalLabel = computed(() =>
-  formatNumber(pendingRewardTotal.value),
+  rewardsReadState.value === "available"
+    ? `${formatNumber(pendingRewardTotal.value)} ${stakeTokenSymbol.value}`
+    : t("Unavailable"),
 );
 
 const rewardApyLabel = computed(() =>
-  rewardApyEstimate.value
-    ? t("{value}%", {
-        value: formatPercent(rewardApyEstimate.value.apyPercent),
-      })
-    : t("—"),
+  rewardsReadState.value !== "available" ||
+  (laneStakeReadState.value !== "available" &&
+    selectedStakeReadState.value !== "available")
+    ? t("Unavailable")
+    : rewardApyEstimate.value
+      ? t("{value}%", {
+          value: formatPercent(rewardApyEstimate.value.apyPercent),
+        })
+      : t("—"),
+);
+
+const rewardEpochSpanLabel = computed(() =>
+  rewardsReadState.value === "available"
+    ? rewardEpochSpan.value || t("—")
+    : t("Unavailable"),
+);
+
+const selectedBondedStakeLabel = computed(() =>
+  selectedStakeReadState.value === "available"
+    ? `${selectedStakeShare.value?.bonded ?? t("0")} ${stakeTokenSymbol.value}`
+    : t("Unavailable"),
+);
+
+const pendingUnbondCountLabel = computed(() =>
+  selectedStakeReadState.value === "available"
+    ? String(pendingUnbonds.value.length)
+    : t("Unavailable"),
 );
 
 const formatDuration = (milliseconds: number) => {
@@ -960,8 +1152,8 @@ const validatorStatusClass = (validator: PublicLaneValidatorRecordView) => {
 };
 
 const validatorNominatorCount = (validator: string) => {
-  if (!laneStakeResponse.value) {
-    return 0;
+  if (laneStakeReadState.value !== "available" || !laneStakeResponse.value) {
+    return t("Unavailable");
   }
   return laneStakeResponse.value.items.filter((entry) => {
     if (entry.validator !== validator) {
@@ -1075,6 +1267,15 @@ const resetLaneState = () => {
   stakeResponse.value = null;
   laneStakeResponse.value = null;
   rewardsResponse.value = null;
+  validatorsReadState.value = "idle";
+  selectedStakeReadState.value = "idle";
+  laneStakeReadState.value = "idle";
+  rewardsReadState.value = "idle";
+  validatorsError.value = "";
+  selectedStakeError.value = "";
+  laneStakeError.value = "";
+  rewardsError.value = "";
+  laneDataContextKey.value = "";
   selectedFinalizeRequestId.value = "";
 };
 
@@ -1084,6 +1285,8 @@ const resetBootstrapState = () => {
   policy.value = null;
   stakeTokenBalance.value = "0";
   stakeTokenSymbol.value = "XOR";
+  assetBalanceReadState.value = "idle";
+  assetBalanceError.value = "";
   suppressValidatorReload.value = false;
   loadingLaneData.value = false;
   resetLaneState();
@@ -1099,13 +1302,24 @@ const loadLaneData = async () => {
     return;
   }
 
+  const currentLaneContextKey = [
+    toriiUrl,
+    session.connection.chainId,
+    session.connection.networkPrefix,
+    accountId,
+    currentLaneId,
+  ].join("|");
+  if (laneDataContextKey.value !== currentLaneContextKey) {
+    resetLaneState();
+    laneDataContextKey.value = currentLaneContextKey;
+  }
+
   const requestGeneration = laneRequestGeneration.value + 1;
   laneRequestGeneration.value = requestGeneration;
   loadingLaneData.value = true;
-  errorMessage.value = "";
 
   try {
-    const [validatorsPayload, rewardsPayload] = await Promise.all([
+    const [validatorsResult, rewardsResult] = await Promise.allSettled([
       getNexusPublicLaneValidators({
         toriiUrl,
         laneId: currentLaneId,
@@ -1125,16 +1339,48 @@ const loadLaneData = async () => {
       return;
     }
 
+    if (validatorsResult.status === "fulfilled") {
+      validators.value = validatorsResult.value.items;
+      validatorsReadState.value = "available";
+      validatorsError.value = "";
+      const selectedOption = dataspaceOptions.value.find(
+        (option) => option.dataspaceId === selectedDataspaceId.value,
+      );
+      if (selectedOption) {
+        selectedOption.totalValidators = validatorsResult.value.items.length;
+      }
+    } else {
+      validatorsReadState.value = "unavailable";
+      validatorsError.value = toUserFacingErrorMessage(
+        validatorsResult.reason,
+        t("Failed to load lane validators."),
+      );
+    }
+
+    if (rewardsResult.status === "fulfilled") {
+      rewardsResponse.value = rewardsResult.value;
+      rewardsReadState.value = "available";
+      rewardsError.value = "";
+    } else {
+      rewardsReadState.value = "unavailable";
+      rewardsError.value = toUserFacingErrorMessage(
+        rewardsResult.reason,
+        t("Failed to load pending rewards."),
+      );
+    }
+
     const nextValidator = pickDefaultValidator(
-      validatorsPayload.items,
+      validators.value,
       selectedValidator.value,
     );
-    const [stakePayload, laneStakePayload] = await Promise.all([
-      getNexusPublicLaneStake({
-        toriiUrl,
-        laneId: currentLaneId,
-        validator: nextValidator || undefined,
-      }),
+    const [stakeResult, laneStakeResult] = await Promise.allSettled([
+      nextValidator
+        ? getNexusPublicLaneStake({
+            toriiUrl,
+            laneId: currentLaneId,
+            validator: nextValidator,
+          })
+        : Promise.resolve(null),
       getNexusPublicLaneStake({
         toriiUrl,
         laneId: currentLaneId,
@@ -1149,12 +1395,36 @@ const loadLaneData = async () => {
       return;
     }
 
-    validators.value = validatorsPayload.items;
     suppressValidatorReload.value = nextValidator !== selectedValidator.value;
     selectedValidator.value = nextValidator;
-    stakeResponse.value = stakePayload;
-    laneStakeResponse.value = laneStakePayload;
-    rewardsResponse.value = rewardsPayload;
+    if (stakeResult.status === "fulfilled") {
+      stakeResponse.value = stakeResult.value;
+      selectedStakeReadState.value =
+        nextValidator || validatorsReadState.value === "available"
+          ? "available"
+          : "unavailable";
+      selectedStakeError.value =
+        selectedStakeReadState.value === "available"
+          ? ""
+          : validatorsError.value;
+    } else {
+      selectedStakeReadState.value = "unavailable";
+      selectedStakeError.value = toUserFacingErrorMessage(
+        stakeResult.reason,
+        t("Failed to load wallet stake."),
+      );
+    }
+    if (laneStakeResult.status === "fulfilled") {
+      laneStakeResponse.value = laneStakeResult.value;
+      laneStakeReadState.value = "available";
+      laneStakeError.value = "";
+    } else {
+      laneStakeReadState.value = "unavailable";
+      laneStakeError.value = toUserFacingErrorMessage(
+        laneStakeResult.reason,
+        t("Failed to load lane stake."),
+      );
+    }
   } catch (error) {
     if (
       requestGeneration !== laneRequestGeneration.value ||
@@ -1164,8 +1434,8 @@ const loadLaneData = async () => {
     ) {
       return;
     }
-    resetLaneState();
-    errorMessage.value = toUserFacingErrorMessage(
+    validatorsReadState.value = "unavailable";
+    validatorsError.value = toUserFacingErrorMessage(
       error,
       t("Failed to load lane validators."),
     );
@@ -1182,6 +1452,7 @@ const refresh = async () => {
   if (!toriiUrl || !accountId) {
     refreshGeneration.value += 1;
     laneRequestGeneration.value += 1;
+    bootstrapContextKey.value = "";
     errorMessage.value = "";
     actionMessage.value = "";
     statusMessage.value = t("Set up network and wallet first.");
@@ -1192,12 +1463,29 @@ const refresh = async () => {
   const requestGeneration = refreshGeneration.value + 1;
   refreshGeneration.value = requestGeneration;
   laneRequestGeneration.value += 1;
+  const currentBootstrapContextKey = [
+    toriiUrl,
+    session.connection.chainId,
+    session.connection.networkPrefix,
+    accountId,
+    session.connection.assetDefinitionId,
+  ].join("|");
+  if (bootstrapContextKey.value !== currentBootstrapContextKey) {
+    resetBootstrapState();
+    bootstrapContextKey.value = currentBootstrapContextKey;
+  }
   loadingBootstrap.value = true;
   errorMessage.value = "";
   actionMessage.value = "";
 
   try {
-    const [status, stakingPolicy, accountAssets] = await Promise.all([
+    const [
+      lifecycleResult,
+      sumeragiResult,
+      stakingPolicyResult,
+      accountAssetsResult,
+    ] = await Promise.allSettled([
+      getNexusLifecycle(toriiUrl),
       getSumeragiStatus(toriiUrl),
       getNexusStakingPolicy(toriiUrl),
       fetchAccountAssets({
@@ -1213,31 +1501,68 @@ const refresh = async () => {
     ) {
       return;
     }
-    const detectedStakeAsset = resolveToriiXorAsset(accountAssets.items);
-    stakeTokenBalance.value = detectedStakeAsset?.quantity ?? "0";
-    stakeTokenSymbol.value = detectedStakeAsset
-      ? deriveAssetSymbol(detectedStakeAsset.asset_id, "ASSET")
-      : "XOR";
 
-    const options = collectDataspaceOptions(status);
+    if (accountAssetsResult.status === "fulfilled") {
+      const detectedStakeAsset = resolveToriiXorAsset(
+        accountAssetsResult.value.items,
+        exactStakeAssetDefinitionIds.value,
+      );
+      if (detectedStakeAsset) {
+        stakeTokenBalance.value = detectedStakeAsset.quantity;
+        stakeTokenSymbol.value = "XOR";
+        assetBalanceReadState.value = "available";
+        assetBalanceError.value = "";
+      } else {
+        assetBalanceReadState.value = "unavailable";
+        assetBalanceError.value = t("Wallet stake balance is unavailable.");
+      }
+    } else {
+      assetBalanceReadState.value = "unavailable";
+      assetBalanceError.value = toUserFacingErrorMessage(
+        accountAssetsResult.reason,
+        t("Wallet stake balance is unavailable."),
+      );
+    }
+
+    policy.value =
+      stakingPolicyResult.status === "fulfilled"
+        ? stakingPolicyResult.value
+        : null;
+
+    if (lifecycleResult.status === "rejected") {
+      throw lifecycleResult.reason;
+    }
+
+    const options = collectDataspaceOptions(lifecycleResult.value);
     dataspaceOptions.value = options;
     selectedDataspaceId.value = chooseDefaultDataspaceId(
       options,
       selectedDataspaceId.value,
     );
-    policy.value = stakingPolicy;
-
     if (!options.length) {
-      statusMessage.value = t(
-        "No dataspace governance found on this Torii endpoint.",
-      );
+      statusMessage.value = t("No public lanes found on this Torii endpoint.");
       resetLaneState();
       return;
     }
 
-    statusMessage.value = t("Loaded {count} dataspace option(s).", {
+    const bootstrapWarnings: string[] = [];
+    if (sumeragiResult.status === "rejected") {
+      bootstrapWarnings.push(t("Consensus telemetry is unavailable."));
+    }
+    if (
+      stakingPolicyResult.status === "rejected" ||
+      stakingPolicyResult.value.unbondingDelayMs == null
+    ) {
+      bootstrapWarnings.push(
+        t("Unbond scheduling is unavailable because policy is not public."),
+      );
+    }
+    if (accountAssetsResult.status === "rejected") {
+      bootstrapWarnings.push(t("Wallet stake balance is unavailable."));
+    }
+    statusMessage.value = `${t("Loaded {count} dataspace option(s).", {
       count: options.length,
-    });
+    })}${bootstrapWarnings.length ? ` ${bootstrapWarnings.join(" ")}` : ""}`;
     await loadLaneData();
   } catch (error) {
     if (
@@ -1248,7 +1573,6 @@ const refresh = async () => {
       return;
     }
     statusMessage.value = "";
-    resetBootstrapState();
     errorMessage.value = toUserFacingErrorMessage(
       error,
       t("Failed to load staking state."),
@@ -1270,6 +1594,11 @@ const runAction = async (
   mode: "bond" | "unbond" | "finalize" | "claim" | "register",
   run: () => Promise<string>,
 ) => {
+  if (!stakingWritesSupported.value) {
+    actionMessage.value = "";
+    errorMessage.value = stakingWritePrerequisite.value;
+    return;
+  }
   actionBusy.value = mode;
   errorMessage.value = "";
   actionMessage.value = "";
@@ -1307,14 +1636,19 @@ const handleBond = () =>
     const result = await bondPublicLaneStake({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       amount,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
+    assertFinalizedSubmissionResult(result);
     bondAmount.value = "";
     return appendTransactionFee(
-      t("Bond submitted: {hash}", { hash: result.hash }),
+      t("Bond finalized in block {block}: {hash}", {
+        block: result.finality.blockHeight,
+        hash: result.hash,
+      }),
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1346,6 +1680,7 @@ const handleRegisterValidator = () =>
     const result = await registerPublicLaneValidator({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       laneId: laneId.value,
       validatorAccountId: activeAccount.value.accountId,
       stakeAccountId: activeAccount.value.accountId,
@@ -1354,10 +1689,14 @@ const handleRegisterValidator = () =>
       metadata,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
+    assertFinalizedSubmissionResult(result);
     operatorSelfStake.value = "";
     selectedValidator.value = activeAccount.value.accountId;
     return appendTransactionFee(
-      t("Validator registration submitted: {hash}", { hash: result.hash }),
+      t("Validator registration finalized in block {block}: {hash}", {
+        block: result.finality.blockHeight,
+        hash: result.hash,
+      }),
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1366,7 +1705,11 @@ const handleRegisterValidator = () =>
 
 const handleScheduleUnbond = () =>
   runAction("unbond", async () => {
-    if (!canSubmit.value || !activeAccount.value || !policy.value) {
+    if (
+      !canSubmit.value ||
+      !activeAccount.value ||
+      policy.value?.unbondingDelayMs == null
+    ) {
       throw new Error(
         t("Connection, account, validator, and staking policy are required."),
       );
@@ -1385,6 +1728,7 @@ const handleScheduleUnbond = () =>
     const result = await schedulePublicLaneUnbond({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       amount,
@@ -1392,13 +1736,18 @@ const handleScheduleUnbond = () =>
       releaseAtMs,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
+    assertFinalizedSubmissionResult(result);
     unbondAmount.value = "";
     return appendTransactionFee(
-      t("Unbond scheduled ({requestId}) for {datetime}. Tx: {hash}", {
-        requestId,
-        datetime: formatDateTime(releaseAtMs),
-        hash: result.hash,
-      }),
+      t(
+        "Unbond schedule finalized in block {block} ({requestId}) for {datetime}: {hash}",
+        {
+          block: result.finality.blockHeight,
+          requestId,
+          datetime: formatDateTime(releaseAtMs),
+          hash: result.hash,
+        },
+      ),
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1417,13 +1766,18 @@ const handleFinalizeUnbond = () =>
     const result = await finalizePublicLaneUnbond({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       requestId: selectedFinalizeRequestId.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
+    assertFinalizedSubmissionResult(result);
     return appendTransactionFee(
-      t("Finalize submitted: {hash}", { hash: result.hash }),
+      t("Unbond finalized in block {block}: {hash}", {
+        block: result.finality.blockHeight,
+        hash: result.hash,
+      }),
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1441,12 +1795,17 @@ const handleClaimRewards = () =>
     const result = await claimPublicLaneRewards({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       stakeAccountId: activeAccount.value.accountId,
       validator: selectedValidator.value,
       privateKeyHex: activeAccount.value.privateKeyHex,
     });
+    assertFinalizedSubmissionResult(result);
     return appendTransactionFee(
-      t("Reward claim submitted: {hash}", { hash: result.hash }),
+      t("Reward claim finalized in block {block}: {hash}", {
+        block: result.finality.blockHeight,
+        hash: result.hash,
+      }),
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1497,7 +1856,9 @@ watch(
     const requestGeneration = laneRequestGeneration.value + 1;
     laneRequestGeneration.value = requestGeneration;
     loadingLaneData.value = true;
-    errorMessage.value = "";
+    stakeResponse.value = null;
+    selectedStakeReadState.value = "idle";
+    selectedStakeError.value = "";
     try {
       const nextStakeResponse = await getNexusPublicLaneStake({
         toriiUrl,
@@ -1514,6 +1875,8 @@ watch(
         return;
       }
       stakeResponse.value = nextStakeResponse;
+      selectedStakeReadState.value = "available";
+      selectedStakeError.value = "";
     } catch (error) {
       if (
         requestGeneration !== laneRequestGeneration.value ||
@@ -1524,10 +1887,10 @@ watch(
       ) {
         return;
       }
-      stakeResponse.value = null;
-      errorMessage.value = toUserFacingErrorMessage(
+      selectedStakeReadState.value = "unavailable";
+      selectedStakeError.value = toUserFacingErrorMessage(
         error,
-        t("Failed to load lane validators."),
+        t("Failed to load wallet stake."),
       );
     } finally {
       if (requestGeneration === laneRequestGeneration.value) {
@@ -1559,6 +1922,8 @@ watch(
   () => [
     session.connection.toriiUrl,
     session.connection.chainId,
+    session.connection.networkPrefix,
+    session.connection.assetDefinitionId,
     activeAccount.value?.accountId,
   ],
   () => {

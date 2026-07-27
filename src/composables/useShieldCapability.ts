@@ -64,7 +64,7 @@ export const useShieldCapability = ({
   onResolvedAssetDefinitionId,
 }: UseShieldCapabilityInput) => {
   const shieldCapabilityReady = ref(false);
-  const shieldSupported = ref(true);
+  const shieldSupported = ref(false);
   const shieldCapabilityMessage = ref("");
   const shieldPolicyMode = ref("");
   const shieldResolvedAssetId = ref("");
@@ -76,7 +76,7 @@ export const useShieldCapability = ({
     shieldPolicyMode.value = "";
     shieldCapabilityMessage.value = "";
     shieldResolvedAssetId.value = "";
-    shieldSupported.value = true;
+    shieldSupported.value = false;
 
     const normalizedToriiUrl = toriiUrl.value.trim();
     const normalizedAccountId = accountId.value.trim();
@@ -175,6 +175,8 @@ export const useShieldCapability = ({
         shieldSupported.value = false;
         shielded.value = false;
         shieldCapabilityMessage.value = unsupportedMessage;
+      } else {
+        shieldSupported.value = true;
       }
     } catch (error) {
       if (revision !== refreshRevision) {
@@ -196,14 +198,15 @@ export const useShieldCapability = ({
         );
         return;
       }
-      shieldSupported.value = true;
+      shieldSupported.value = false;
+      shielded.value = false;
       shieldCapabilityMessage.value = message
         ? translate(
-            "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+            "{operation} is unavailable because its policy could not be verified: {message}.",
             { operation: operationLabel, message },
           )
         : translate(
-            "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.",
+            "{operation} is unavailable because its policy could not be verified.",
             { operation: operationLabel },
           );
     }

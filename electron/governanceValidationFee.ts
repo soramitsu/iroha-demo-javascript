@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export const GOVERNANCE_VALIDATION_FEE_CONFIG_ENV =
   "GOVERNANCE_VALIDATION_FEE_CONFIG_JSON";
 export const CBSI_CORE_API_BASE_URL_ENV = "CBSI_CORE_API_BASE_URL";
@@ -5,6 +7,9 @@ export const CBSI_CORE_API_BASE_URL_ENV = "CBSI_CORE_API_BASE_URL";
 export const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const CBSI_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
 export const VALIDATION_FEE_ACTIVATION_DELAY_BLOCKS = 120_960;
+const VALIDATION_FEE_PLAIN_MIN_TURNOUT = "1";
+const VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_NUMERATOR = "1";
+const VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_DENOMINATOR = "2";
 
 const LEDGER_BINDING_SCHEMA = "cbsi.mobile-validation-fee-ledger-binding.v1";
 const LEDGER_PROJECTION_SCHEMA = "cbsi.validation-fee-ledger-projection.v1";
@@ -212,7 +217,7 @@ type CoreReadResponse = {
   json(): Promise<unknown>;
 };
 
-type CoreFetch = (
+export type GovernanceValidationFeeCoreFetch = (
   input: string,
   init: {
     method: "GET";
@@ -222,20 +227,18 @@ type CoreFetch = (
   },
 ) => Promise<CoreReadResponse>;
 
-type FinalityObservation = {
-  height: number;
+export type GovernanceValidationFeeFinalityObservation = Readonly<{
+  ledgerFinalisedHeight: number;
   contextId: string;
   blockHash: string;
   policyVersion: number;
   policyHash: string;
-  projectionFingerprint: string;
-};
+  projectionHash: string;
+}>;
 
-const lastObservationByTrustScope = new Map<string, FinalityObservation>();
-
-export function clearGovernanceValidationFeeFinalityObservations(): void {
-  lastObservationByTrustScope.clear();
-}
+export type GovernanceValidationFeeFinalityPromoter = (
+  observation: GovernanceValidationFeeFinalityObservation,
+) => Promise<void> | void;
 
 export function readGovernanceValidationFeeConfig(
   serialized = process.env[GOVERNANCE_VALIDATION_FEE_CONFIG_ENV],
@@ -286,20 +289,26 @@ export function readCbsiCoreApiBaseUrl(
   return parsed.toString().replace(/\/+$/u, "");
 }
 
-export async function fetchGovernanceValidationFeePolicy(
-  input: {
-    config?: GovernanceValidationFeeEnabledConfig;
-    coreApiBaseUrl?: string;
-    fetcher?: CoreFetch;
-    signal?: AbortSignal;
-  } = {},
-): Promise<GovernanceValidationFeePolicyView> {
+export async function fetchGovernanceValidationFeePolicy(input: {
+  config?: GovernanceValidationFeeEnabledConfig;
+  coreApiBaseUrl?: string;
+  fetcher?: GovernanceValidationFeeCoreFetch;
+  signal?: AbortSignal;
+  promoteFinality: GovernanceValidationFeeFinalityPromoter;
+}): Promise<GovernanceValidationFeePolicyView> {
   const config = input.config ?? readGovernanceValidationFeeConfig();
   const coreApiBaseUrl = readCbsiCoreApiBaseUrl(input.coreApiBaseUrl);
-  const fetcher = input.fetcher ?? (globalThis.fetch as unknown as CoreFetch);
+  const fetcher =
+    input.fetcher ??
+    (globalThis.fetch as unknown as GovernanceValidationFeeCoreFetch);
   if (typeof fetcher !== "function") {
     throw new Error(
       "Validation-fee Core reads require a fetch implementation.",
+    );
+  }
+  if (typeof input.promoteFinality !== "function") {
+    throw new Error(
+      "Validation-fee Core reads require the main-process durable finality promoter.",
     );
   }
 
@@ -331,12 +340,14 @@ export async function fetchGovernanceValidationFeePolicy(
       "CBSI Core validation-fee status height differs from its active projection.",
     );
   }
-  rejectRollbackOrEquivocation(projection, config, coreApiBaseUrl);
+  await input.promoteFinality(
+    buildGovernanceValidationFeeFinalityObservation(projection),
+  );
   return projectPolicyView(projection);
 }
 
 async function fetchCoreJson(
-  fetcher: CoreFetch,
+  fetcher: GovernanceValidationFeeCoreFetch,
   url: string,
   signal?: AbortSignal,
 ): Promise<unknown> {
@@ -485,11 +496,11 @@ function parseEnabledConfig(
   }
   if (
     BigInt(payoutLifecycle.enactment_window.enacted_at_height) >
-      BigInt(effectiveFromHeight) ||
+      BigInt(validationFeePolicy.enactment_window.enacted_at_height) ||
     BigInt(binding.checkpoint.height) >= BigInt(effectiveFromHeight)
   ) {
     throw new Error(
-      "Validation-fee activation must follow lifecycle enactment and its trusted checkpoint.",
+      "Payout-lifecycle enactment must not follow policy enactment, and the trusted checkpoint must predate activation.",
     );
   }
   const payout = parseConfigPayout(expectedRaw.payout);
@@ -576,10 +587,11 @@ function parseConfigProposal<TKind extends ValidationFeeProposalKind>(
     closes < opens ||
     finalized < opens ||
     finalized > closes ||
-    enacted < finalized ||
-    enacted > closes
+    enacted <= finalized
   ) {
-    throw new Error(`${label} has an invalid finalization/enactment window.`);
+    throw new Error(
+      `${label} must finalize inside its inclusive referendum window and enact strictly later.`,
+    );
   }
   return {
     proposal_kind: expectedKind,
@@ -1051,10 +1063,11 @@ function parseProjectionProposal(
     window.closes_at_height < window.opens_at_height ||
     finalization.finalized_at_height < window.opens_at_height ||
     finalization.finalized_at_height > window.closes_at_height ||
-    window.enacted_at_height < finalization.finalized_at_height ||
-    window.enacted_at_height > window.closes_at_height
+    window.enacted_at_height <= finalization.finalized_at_height
   ) {
-    throw new Error(`${label} finalization/enactment window is invalid.`);
+    throw new Error(
+      `${label} must finalize inside its inclusive referendum window and enact strictly later.`,
+    );
   }
   return {
     proposal_id_hex: proposalId,
@@ -1280,6 +1293,8 @@ function assertProjectionRelationships(projection: ValidationFeeProjection) {
     );
   }
   if (
+    lifecycle.enactment_window.enacted_at_height >
+      policyProposal.enactment_window.enacted_at_height ||
     payout.lifecycle_seal_hex !== lifecycle.lifecycle_seal_hex ||
     payout.contract_subject_account_id !== policy.treasury_account_id ||
     payout.treasury_account_id !== policy.treasury_account_id ||
@@ -1406,44 +1421,19 @@ function expectedProjectionFromRuntime(
   };
 }
 
-function rejectRollbackOrEquivocation(
+function buildGovernanceValidationFeeFinalityObservation(
   projection: ValidationFeeProjection,
-  config: GovernanceValidationFeeEnabledConfig,
-  coreApiBaseUrl: string,
-) {
-  const scope = `${canonicalJson(config)}|${new URL(coreApiBaseUrl).origin}`;
-  const current: FinalityObservation = {
-    height: projection.ledger_finality.ledger_finalised_height,
+): GovernanceValidationFeeFinalityObservation {
+  return Object.freeze({
+    ledgerFinalisedHeight: projection.ledger_finality.ledger_finalised_height,
     contextId: projection.ledger_finality.context_id_hex,
     blockHash: projection.ledger_finality.block_hash_hex,
     policyVersion: projection.policy.policy_version,
     policyHash: projection.policy.policy_hash_hex,
-    projectionFingerprint: canonicalJson(projection),
-  };
-  const previous = lastObservationByTrustScope.get(scope);
-  if (
-    previous &&
-    (current.height < previous.height ||
-      current.policyVersion < previous.policyVersion)
-  ) {
-    throw new Error(
-      "CBSI Core validation-fee finality regressed behind a previously verified state.",
-    );
-  }
-  if (
-    previous &&
-    ((current.height === previous.height &&
-      (current.contextId !== previous.contextId ||
-        current.blockHash !== previous.blockHash ||
-        current.projectionFingerprint !== previous.projectionFingerprint)) ||
-      (current.policyVersion === previous.policyVersion &&
-        current.policyHash !== previous.policyHash))
-  ) {
-    throw new Error(
-      "CBSI Core validation-fee projection equivocated at an already verified height or policy version.",
-    );
-  }
-  lastObservationByTrustScope.set(scope, current);
+    projectionHash: createHash("sha256")
+      .update(canonicalJson(projection), "utf8")
+      .digest("hex"),
+  });
 }
 
 function projectPolicyView(
@@ -1509,40 +1499,30 @@ function assertApprovedTally(
     BigInt(value.abstain),
     `${label} turnout`,
   );
-  const weightedApprove = checkedU128Multiply(
-    BigInt(value.approve),
-    BigInt(value.approval_threshold_denominator),
-    `${label} threshold`,
-  );
-  const weightedTurnout = checkedU128Multiply(
-    turnout,
-    BigInt(value.approval_threshold_numerator),
-    `${label} threshold`,
-  );
+  // The source tallies remain bounded u128 and threshold components remain
+  // bounded u64, but their exact rational-comparison products may need 192 bits.
+  const weightedApprove =
+    BigInt(value.approve) * BigInt(value.approval_threshold_denominator);
+  const weightedTurnout = turnout * BigInt(value.approval_threshold_numerator);
   if (
+    value.min_turnout !== VALIDATION_FEE_PLAIN_MIN_TURNOUT ||
+    value.approval_threshold_numerator !==
+      VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_NUMERATOR ||
+    value.approval_threshold_denominator !==
+      VALIDATION_FEE_PLAIN_APPROVAL_THRESHOLD_DENOMINATOR ||
     BigInt(value.approval_threshold_numerator) >
       BigInt(value.approval_threshold_denominator) ||
     turnout < BigInt(value.min_turnout) ||
     weightedApprove < weightedTurnout
   ) {
-    throw new Error(`${label} is not a deterministic approved result.`);
+    throw new Error(
+      `${label} must use exact first-release PLAIN min_turnout=1 and approval threshold=1/2 and be deterministically approved.`,
+    );
   }
 }
 
 function checkedU128Add(left: bigint, right: bigint, label: string): bigint {
   const result = left + right;
-  if (result > U128_MAX) {
-    throw new Error(`${label} overflows u128.`);
-  }
-  return result;
-}
-
-function checkedU128Multiply(
-  left: bigint,
-  right: bigint,
-  label: string,
-): bigint {
-  const result = left * right;
   if (result > U128_MAX) {
     throw new Error(`${label} overflows u128.`);
   }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  extractChainMetadataFromPayload,
   normalizeChainMetadata,
   normalizeNetworkPrefixValue,
+  parseFirstReleaseChainMetadataPayload,
 } from "@/utils/chainMetadata";
 
 describe("chain metadata utilities", () => {
@@ -27,23 +27,43 @@ describe("chain metadata utilities", () => {
     ).toThrow("Torii endpoint did not expose a valid network prefix.");
   });
 
-  it("extracts chain metadata from nested endpoint payloads", () => {
+  it("parses the exact first-release endpoint payload", () => {
     expect(
-      extractChainMetadataFromPayload({
-        network: {
-          chain_id: "chain-alpha",
-        },
-        items: [
-          {
-            account_id: "testuAlice",
-            network_prefix: 369,
-          },
-        ],
+      parseFirstReleaseChainMetadataPayload({
+        chain_id: "chain-alpha",
+        network_prefix: 369,
       }),
     ).toEqual({
       chainId: "chain-alpha",
       networkPrefix: 369,
     });
+  });
+
+  it("rejects nested values, aliases, string prefixes, and unknown fields", () => {
+    expect(() =>
+      parseFirstReleaseChainMetadataPayload({
+        network: { chain_id: "chain-alpha", network_prefix: 369 },
+      }),
+    ).toThrow(/missing or unknown fields/u);
+    expect(() =>
+      parseFirstReleaseChainMetadataPayload({
+        chainId: "chain-alpha",
+        networkPrefix: 369,
+      }),
+    ).toThrow(/missing or unknown fields/u);
+    expect(() =>
+      parseFirstReleaseChainMetadataPayload({
+        chain_id: "chain-alpha",
+        network_prefix: "369",
+      }),
+    ).toThrow(/network_prefix/u);
+    expect(() =>
+      parseFirstReleaseChainMetadataPayload({
+        chain_id: "chain-alpha",
+        network_prefix: 369,
+        account_id: "testuCoincidental",
+      }),
+    ).toThrow(/missing or unknown fields/u);
   });
 
   it("normalizes only valid network prefix values", () => {

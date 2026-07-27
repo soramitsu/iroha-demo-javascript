@@ -11,13 +11,17 @@ import {
 import {
   CBSI_CORE_API_BASE_URL_ENV,
   CBSI_SBD_ASSET_DEFINITION_ID,
-  clearGovernanceValidationFeeFinalityObservations,
-  fetchGovernanceValidationFeePolicy,
+  fetchGovernanceValidationFeePolicy as fetchGovernanceValidationFeePolicyWithoutDurableGuard,
   GOVERNANCE_VALIDATION_FEE_CONFIG_ENV,
   readCbsiCoreApiBaseUrl,
   readGovernanceValidationFeeConfig,
   TAIRA_CHAIN_ID,
 } from "../electron/governanceValidationFee";
+import {
+  GovernanceValidationFeeFinalityStore,
+  deriveGovernanceValidationFeeImmutableLedgerScope,
+  fetchGovernanceValidationFeePolicyInMain,
+} from "../electron/governanceValidationFeeFinality";
 
 const irohaHash = (byte: string): string => byte.repeat(32);
 const plainHash = (byte: string): string => byte.repeat(32);
@@ -42,10 +46,10 @@ const finalization = (proposalId: string, height: number) => ({
   referendum_id: proposalId,
   finalized_at_height: String(height),
   mode: "PLAIN",
-  approve: "3",
-  reject: "1",
+  approve: "72",
+  reject: "0",
   abstain: "0",
-  min_turnout: "4",
+  min_turnout: "1",
   approval_threshold_numerator: "1",
   approval_threshold_denominator: "2",
   approved: true,
@@ -90,24 +94,24 @@ const enabledConfigJson = () => ({
     feeScale: 2,
     feeMinorUnits: "10",
     chargingMode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-    effectiveFromHeight: "122960",
+    effectiveFromHeight: "123062",
     expiresAfterHeight: null,
     parliament: {
       validationFeePolicy: proposalConfig(
         "ValidationFeePolicyV1",
         policyId,
-        1_100,
-        2_100,
         2_000,
-        1_500,
+        2_100,
+        2_102,
+        2_100,
       ),
       payoutLifecycle: proposalConfig(
         "ValidationFeePayoutLifecycleV1",
         lifecycleId,
-        1_000,
-        1_900,
-        1_800,
-        1_400,
+        80,
+        170,
+        1_970,
+        170,
       ),
       payoutLifecycleSealHash: lifecycleSeal,
     },
@@ -206,7 +210,7 @@ const projection = (
       fee_minor_units: 10,
       treasury_account_id: treasury,
       charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
-      effective_from_height: 122_960,
+      effective_from_height: 123_062,
       expires_after_height: null,
       exemption_classes: ["TREASURY_PAYOUT"],
       treasury_payout_binding: {
@@ -238,7 +242,7 @@ const projection = (
       ),
     },
     ledger_finality: {
-      ledger_finalised_height: overrides.ledgerFinalisedHeight ?? 123_000,
+      ledger_finalised_height: overrides.ledgerFinalisedHeight ?? 126_000,
       block_hash_hex: overrides.blockHash ?? irohaHash("55"),
       ordinary_writes_root_hex: irohaHash("77"),
       context_id_hex: overrides.contextId ?? irohaHash("bb"),
@@ -279,8 +283,18 @@ const coreFetcher = (
     url.endsWith("/policy") ? response(policyValue) : response(statusValue),
   );
 
+const fetchGovernanceValidationFeePolicy = (
+  input: Omit<
+    Parameters<typeof fetchGovernanceValidationFeePolicyWithoutDurableGuard>[0],
+    "promoteFinality"
+  >,
+) =>
+  fetchGovernanceValidationFeePolicyWithoutDurableGuard({
+    ...input,
+    promoteFinality: () => undefined,
+  });
+
 afterEach(() => {
-  clearGovernanceValidationFeeFinalityObservations();
   vi.restoreAllMocks();
 });
 
@@ -299,6 +313,16 @@ describe("governance validation-fee runtime config", () => {
     expect(parsed.expected.parliament.validationFeePolicy).not.toHaveProperty(
       "enactment_block_height",
     );
+
+    const laterPostWindowEnactment = enabledConfigJson();
+    laterPostWindowEnactment.expected.parliament.validationFeePolicy.enactment_window.enacted_at_height =
+      "2103";
+    laterPostWindowEnactment.expected.effectiveFromHeight = "123063";
+    expect(() =>
+      readGovernanceValidationFeeConfig(
+        JSON.stringify(laterPostWindowEnactment),
+      ),
+    ).not.toThrow();
   });
 
   it("rejects disabled, unknown, legacy, and invalid-delay fields", () => {
@@ -321,10 +345,61 @@ describe("governance validation-fee runtime config", () => {
     ).toThrow(/fields must be exactly/);
 
     const invalidDelay = enabledConfigJson();
-    invalidDelay.expected.effectiveFromHeight = "122959";
+    invalidDelay.expected.effectiveFromHeight = "123061";
     expect(() =>
       readGovernanceValidationFeeConfig(JSON.stringify(invalidDelay)),
     ).toThrow(/exactly 120,960 blocks/);
+
+    const excessiveDelay = enabledConfigJson();
+    excessiveDelay.expected.effectiveFromHeight = "123063";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(excessiveDelay)),
+    ).toThrow(/exactly 120,960 blocks/);
+
+    const enactmentAtFinalization = enabledConfigJson();
+    enactmentAtFinalization.expected.parliament.validationFeePolicy.enactment_window.enacted_at_height =
+      "2100";
+    enactmentAtFinalization.expected.effectiveFromHeight = "123060";
+    expect(() =>
+      readGovernanceValidationFeeConfig(
+        JSON.stringify(enactmentAtFinalization),
+      ),
+    ).toThrow(/enact strictly later/);
+
+    for (const finalizedAtHeight of ["1999", "2101"]) {
+      const outsideReferendum = enabledConfigJson();
+      outsideReferendum.expected.parliament.validationFeePolicy.finalization.finalized_at_height =
+        finalizedAtHeight;
+      expect(() =>
+        readGovernanceValidationFeeConfig(JSON.stringify(outsideReferendum)),
+      ).toThrow(/inside its inclusive referendum window/);
+    }
+
+    const lifecycleAfterPolicy = enabledConfigJson();
+    const lifecycle = lifecycleAfterPolicy.expected.parliament.payoutLifecycle;
+    lifecycle.enactment_window.opens_at_height = "3101";
+    lifecycle.enactment_window.closes_at_height = "3102";
+    lifecycle.finalization.finalized_at_height = "3102";
+    lifecycle.enactment_window.enacted_at_height = "4902";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(lifecycleAfterPolicy)),
+    ).toThrow(/Payout-lifecycle enactment must not follow policy enactment/);
+
+    const wrongPlainRules = enabledConfigJson();
+    wrongPlainRules.expected.parliament.validationFeePolicy.finalization.min_turnout =
+      "2";
+    expect(() =>
+      readGovernanceValidationFeeConfig(JSON.stringify(wrongPlainRules)),
+    ).toThrow(/exact first-release PLAIN/);
+
+    const maximumWidthTally = enabledConfigJson();
+    const maximumU128 = ((1n << 128n) - 1n).toString();
+    maximumWidthTally.expected.parliament.validationFeePolicy.finalization.approve =
+      maximumU128;
+    expect(
+      readGovernanceValidationFeeConfig(JSON.stringify(maximumWidthTally))
+        .expected.parliament.validationFeePolicy.finalization.approve,
+    ).toBe(maximumU128);
   });
 
   it("requires an explicit credential-free HTTPS Core URL", () => {
@@ -462,6 +537,27 @@ describe("packaged governance runtime config", () => {
 });
 
 describe("governance validation-fee Core projection", () => {
+  it("accepts an explicit post-window enactment with the exact activation delay", async () => {
+    const configJson = enabledConfigJson();
+    configJson.expected.parliament.validationFeePolicy.enactment_window.enacted_at_height =
+      "2103";
+    configJson.expected.effectiveFromHeight = "123063";
+    const config = readGovernanceValidationFeeConfig(
+      JSON.stringify(configJson),
+    );
+    const current = projection();
+    current.parliament_authorization.policy_proposal.enactment_window.enacted_at_height = 2_103;
+    current.policy.effective_from_height = 123_063;
+
+    await expect(
+      fetchGovernanceValidationFeePolicy({
+        config,
+        coreApiBaseUrl: "https://core.example",
+        fetcher: coreFetcher(current, status(current)),
+      }),
+    ).resolves.toMatchObject({ observedHeight: "126000" });
+  });
+
   it("requires matching raw policy and status projections and exposes Core proof coordinates", async () => {
     const config = readGovernanceValidationFeeConfig(
       JSON.stringify(enabledConfigJson()),
@@ -479,7 +575,7 @@ describe("governance validation-fee Core projection", () => {
       "https://cbsi-core-taira.soramitsu.io/v1/validation-fee/status",
     ]);
     expect(view).toMatchObject({
-      observedHeight: "123000",
+      observedHeight: "126000",
       effective: {
         chain_id: TAIRA_CHAIN_ID,
         policy_version: "1",
@@ -529,7 +625,7 @@ describe("governance validation-fee Core projection", () => {
     resolvePolicy(response(current));
     resolveStatus(response(status(current)));
     await expect(pending).resolves.toMatchObject({
-      observedHeight: "123000",
+      observedHeight: "126000",
     });
   });
 
@@ -563,6 +659,32 @@ describe("governance validation-fee Core projection", () => {
       }),
     ).rejects.toThrow(/fields must be exactly/);
 
+    for (const finalizedAtHeight of [1_999, 2_101]) {
+      const outsideReferendum = projection();
+      outsideReferendum.parliament_authorization.policy_proposal.finalization.finalized_at_height =
+        finalizedAtHeight;
+      await expect(
+        fetchGovernanceValidationFeePolicy({
+          config,
+          coreApiBaseUrl: "https://core.example",
+          fetcher: coreFetcher(outsideReferendum, status(outsideReferendum)),
+        }),
+      ).rejects.toThrow(/inside its inclusive referendum window/);
+    }
+
+    const enactmentAtFinalization = projection();
+    enactmentAtFinalization.parliament_authorization.policy_proposal.enactment_window.enacted_at_height = 2_100;
+    await expect(
+      fetchGovernanceValidationFeePolicy({
+        config,
+        coreApiBaseUrl: "https://core.example",
+        fetcher: coreFetcher(
+          enactmentAtFinalization,
+          status(enactmentAtFinalization),
+        ),
+      }),
+    ).rejects.toThrow(/enact strictly later/);
+
     const mismatched = projection();
     mismatched.policy.treasury_account_id = "sorau-other-treasury";
     mismatched.policy.treasury_payout_binding.treasury_account_id =
@@ -595,39 +717,129 @@ describe("governance validation-fee Core projection", () => {
     ).rejects.toThrow(/read failed \(503\)/);
   });
 
-  it("rejects finalized rollback and same-coordinate equivocation", async () => {
+  it("requires and awaits main-process durable promotion before returning policy", async () => {
     const config = readGovernanceValidationFeeConfig(
       JSON.stringify(enabledConfigJson()),
     );
-    const first = projection({ ledgerFinalisedHeight: 123_010 });
-    await fetchGovernanceValidationFeePolicy({
-      config,
-      coreApiBaseUrl: "https://core.example",
-      fetcher: coreFetcher(first, status(first)),
-    });
-    const rollback = projection({ ledgerFinalisedHeight: 123_009 });
     await expect(
-      fetchGovernanceValidationFeePolicy({
+      fetchGovernanceValidationFeePolicyWithoutDurableGuard({
         config,
         coreApiBaseUrl: "https://core.example",
-        fetcher: coreFetcher(rollback, status(rollback)),
+        fetcher: coreFetcher(),
+        promoteFinality: undefined as never,
       }),
-    ).rejects.toThrow(/regressed behind/);
+    ).rejects.toThrow(/main-process durable finality promoter/);
 
-    clearGovernanceValidationFeeFinalityObservations();
-    const stable = projection();
-    await fetchGovernanceValidationFeePolicy({
+    let releasePromotion!: () => void;
+    const promotionGate = new Promise<void>((resolve) => {
+      releasePromotion = resolve;
+    });
+    const promoteFinality = vi.fn(async () => promotionGate);
+    let returned = false;
+    const pending = fetchGovernanceValidationFeePolicyWithoutDurableGuard({
       config,
       coreApiBaseUrl: "https://core.example",
-      fetcher: coreFetcher(stable, status(stable)),
+      fetcher: coreFetcher(),
+      promoteFinality,
+    }).then((value) => {
+      returned = true;
+      return value;
     });
-    const equivocation = projection({ contextId: irohaHash("bd") });
-    await expect(
-      fetchGovernanceValidationFeePolicy({
-        config,
-        coreApiBaseUrl: "https://core.example",
-        fetcher: coreFetcher(equivocation, status(equivocation)),
-      }),
-    ).rejects.toThrow(/equivocated/);
+    await vi.waitFor(() => expect(promoteFinality).toHaveBeenCalledOnce());
+    expect(returned).toBe(false);
+    expect(promoteFinality).toHaveBeenCalledWith({
+      ledgerFinalisedHeight: 126_000,
+      contextId: irohaHash("bb"),
+      blockHash: irohaHash("55"),
+      policyVersion: 1,
+      policyHash,
+      projectionHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    });
+    releasePromotion();
+    await expect(pending).resolves.toMatchObject({ observedHeight: "126000" });
+  });
+
+  it("preserves one immutable ledger watermark across Core failover", async () => {
+    const userDataPath = mkdtempSync(
+      join(tmpdir(), "sora-wallet-governance-finality-failover-"),
+    );
+    try {
+      const config = readGovernanceValidationFeeConfig(
+        JSON.stringify(enabledConfigJson()),
+      );
+      const store = new GovernanceValidationFeeFinalityStore(userDataPath);
+      const first = projection({ ledgerFinalisedHeight: 126_010 });
+      await fetchGovernanceValidationFeePolicyInMain({
+        runtimeConfig: {
+          validationFee: config,
+          cbsiCoreApiBaseUrl: "https://core-primary.example",
+        },
+        finalityStore: store,
+        fetcher: coreFetcher(first, status(first)),
+      });
+
+      const rollback = projection({ ledgerFinalisedHeight: 126_009 });
+      await expect(
+        fetchGovernanceValidationFeePolicyInMain({
+          runtimeConfig: {
+            validationFee: config,
+            cbsiCoreApiBaseUrl: "https://core-failover.example/tenant-b",
+          },
+          finalityStore: store,
+          fetcher: coreFetcher(rollback, status(rollback)),
+        }),
+      ).rejects.toThrow(/regressed behind a previously verified durable state/);
+    } finally {
+      rmSync(userDataPath, { recursive: true, force: true });
+    }
+  });
+
+  it("derives scope only from immutable ledger identity", () => {
+    const first = readGovernanceValidationFeeConfig(
+      JSON.stringify(enabledConfigJson()),
+    );
+    const refreshed = structuredClone(first);
+    refreshed.ledgerBinding.checkpoint.height = 1_001;
+    refreshed.ledgerBinding.checkpoint.contextId = irohaHash("35");
+    refreshed.expected.parliament.validationFeePolicy.finalization.approve =
+      "73";
+
+    const firstScope = deriveGovernanceValidationFeeImmutableLedgerScope(first);
+    const refreshedScope =
+      deriveGovernanceValidationFeeImmutableLedgerScope(refreshed);
+    expect(refreshedScope).toBe(firstScope);
+
+    const userDataPath = mkdtempSync(
+      join(tmpdir(), "sora-wallet-governance-finality-refresh-"),
+    );
+    try {
+      const store = new GovernanceValidationFeeFinalityStore(userDataPath);
+      store.verifyAndPromote(firstScope, {
+        ledgerFinalisedHeight: 126_010,
+        contextId: irohaHash("bb"),
+        blockHash: irohaHash("55"),
+        policyVersion: 1,
+        policyHash,
+        projectionHash: plainHash("ab"),
+      });
+      expect(() =>
+        store.verifyAndPromote(refreshedScope, {
+          ledgerFinalisedHeight: 126_009,
+          contextId: irohaHash("bd"),
+          blockHash: irohaHash("57"),
+          policyVersion: 1,
+          policyHash,
+          projectionHash: plainHash("ad"),
+        }),
+      ).toThrow(/regressed behind a previously verified durable state/);
+    } finally {
+      rmSync(userDataPath, { recursive: true, force: true });
+    }
+
+    const otherLedger = structuredClone(first);
+    otherLedger.ledgerBinding.genesisHash = irohaHash("13");
+    expect(
+      deriveGovernanceValidationFeeImmutableLedgerScope(otherLedger),
+    ).not.toBe(deriveGovernanceValidationFeeImmutableLedgerScope(first));
   });
 });

@@ -24,7 +24,8 @@ const E2E_PRIVATE_KEY_HEX =
   "1111111111111111111111111111111111111111111111111111111111111111";
 const TAIRA_TORII_URL = "https://taira.sora.org";
 const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
-const XOR_ASSET_ID = `xor#universal#${E2E_ACCOUNT_ID}`;
+const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const XOR_ASSET_ID = `${XOR_ASSET_DEFINITION_ID}#${E2E_ACCOUNT_ID}`;
 
 const routeChecks = [
   ["/wallet", "Wallet"],
@@ -102,7 +103,7 @@ function buildInitScript() {
     connection: {
       toriiUrl: TAIRA_TORII_URL,
       chainId: TAIRA_CHAIN_ID,
-      assetDefinitionId: "xor#universal",
+      assetDefinitionId: XOR_ASSET_DEFINITION_ID,
       networkPrefix: 369,
     },
     authority: {
@@ -133,6 +134,7 @@ function buildInitScript() {
     const privateKeyHex = ${JSON.stringify(E2E_PRIVATE_KEY_HEX)};
     const toriiUrl = ${JSON.stringify(TAIRA_TORII_URL)};
     const chainId = ${JSON.stringify(TAIRA_CHAIN_ID)};
+    const xorAssetDefinitionId = ${JSON.stringify(XOR_ASSET_DEFINITION_ID)};
     const xorAssetId = ${JSON.stringify(XOR_ASSET_ID)};
     const sessionPayload = ${JSON.stringify(sessionPayload)};
     const useSyntheticMedia = ${JSON.stringify(useSyntheticMedia)};
@@ -142,7 +144,28 @@ function buildInitScript() {
       vpnMode: "ready",
     };
     const now = () => Date.now();
-    const txHash = (label) => "0x" + Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
+    const txHash = (label) => Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
+    const finalityFor = (hash) => ({
+      status: "finalized",
+      transactionHash: hash,
+      blockHeight: 98763,
+      blockHash: "f".repeat(64),
+      finalizedBlockHeight: 98763,
+    });
+    const finalizedTransaction = (label) => {
+      const hash = txHash(label);
+      return { hash, finality: finalityFor(hash) };
+    };
+    const finalizedSubscription = (label, subscriptionId) => {
+      const tx_hash_hex = txHash(label);
+      return {
+        ok: true,
+        subscription_id: subscriptionId,
+        tx_hash_hex,
+        finality: finalityFor(tx_hash_hex),
+        state_status: "confirmed",
+      };
+    };
     const svgQr = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" fill="#fff"/><rect x="8" y="8" width="24" height="24" fill="#111"/><rect x="64" y="8" width="24" height="24" fill="#111"/><rect x="8" y="64" width="24" height="24" fill="#111"/><rect x="44" y="44" width="12" height="12" fill="#111"/><rect x="64" y="64" width="8" height="8" fill="#111"/><rect x="76" y="76" width="12" height="12" fill="#111"/></svg>';
     const baseMetrics = {
       peers: 4,
@@ -215,7 +238,7 @@ function buildInitScript() {
     const confidentialPolicy = () => {
       const transparentOnly = fixture.confidentialMode === "transparent-only";
       return ({
-      asset_id: "xor#universal",
+      asset_id: xorAssetDefinitionId,
       block_height: 98765,
       current_mode: transparentOnly ? "TransparentOnly" : "Convertible",
       effective_mode: transparentOnly ? "TransparentOnly" : "Convertible",
@@ -231,7 +254,7 @@ function buildInitScript() {
       });
     };
     const confidentialBalance = () => ({
-      resolvedAssetId: "xor#universal",
+      resolvedAssetId: xorAssetDefinitionId,
       quantity: fixture.walletFunded ? "8" : "0",
       onChainQuantity: fixture.walletFunded ? "8" : "0",
       spendableQuantity: fixture.walletFunded ? "8" : "0",
@@ -240,7 +263,7 @@ function buildInitScript() {
       scanStatus: "complete",
       scanWatermarkBlock: 98760,
       recoveredNoteCount: 2,
-      trackedAssetIds: ["xor#universal"],
+      trackedAssetIds: [xorAssetDefinitionId],
     });
     const governanceProposalId = "0x" + "a".repeat(64);
     const governanceProposalSummary = () => ({
@@ -342,10 +365,10 @@ function buildInitScript() {
     });
     const networkStats = () => ({
       collectedAtMs: now(),
-      xorAssetDefinitionId: "xor#universal",
+      xorAssetDefinitionId,
       explorer: baseMetrics,
       supply: {
-        definitionId: "xor#universal",
+        definitionId: xorAssetDefinitionId,
         computedAtMs: now(),
         holdersTotal: 12,
         totalSupply: "1000000",
@@ -376,7 +399,7 @@ function buildInitScript() {
         },
       },
       econometrics: {
-        definitionId: "xor#universal",
+        definitionId: xorAssetDefinitionId,
         computedAtMs: now(),
         velocityWindows: [
           { key: "24h", startMs: now() - 86400000, endMs: now(), transfers: 12, uniqueSenders: 5, uniqueReceivers: 6, amount: "3200" },
@@ -636,6 +659,73 @@ function buildInitScript() {
     window.RTCPeerConnection = FakePeerConnection;
     window.iroha = {
       ping: async () => ({ status: "ok" }),
+      inspectEndpoint: async (input) => {
+        const subscriptionOperations = [
+          "POST /v1/subscriptions",
+          "POST /v1/subscriptions/{subscription_id}/pause",
+          "POST /v1/subscriptions/{subscription_id}/resume",
+          "POST /v1/subscriptions/{subscription_id}/cancel",
+          "POST /v1/subscriptions/{subscription_id}/keep",
+          "POST /v1/subscriptions/{subscription_id}/charge-now",
+        ];
+        return {
+          schema: "iroha.wallet.endpoint-inspection.v1",
+          toriiUrl: input.toriiUrl,
+          expected: {
+            chainId: input.chainId,
+            networkPrefix: input.networkPrefix,
+          },
+          observed: {
+            chainId: input.chainId,
+            networkPrefix: input.networkPrefix,
+          },
+          identityStatus: "matched",
+          accessMode: "read-write",
+          checkedAtMs: now(),
+          evidence: [
+            {
+              source: "chain-metadata",
+              identity: {
+                chainId: input.chainId,
+                networkPrefix: input.networkPrefix,
+              },
+              observedAtMs: now(),
+            },
+          ],
+          diagnostic: {
+            code: "endpoint_identity_matched",
+            message: "Endpoint identity matches the deterministic fixture.",
+          },
+          features: Object.fromEntries(
+            [
+              "accountRegistration",
+              "accountOnboarding",
+              "assetTransfers",
+              "faucetClaim",
+              "confidentialTransfers",
+              "kaigiMeetings",
+              "governanceWrites",
+              "stakingWrites",
+              "subscriptionWrites",
+              "soraCloudDeploy",
+              "vpnSessions",
+              "irohaConnectSessions",
+              "zkProofJobs",
+            ].map((feature) => [
+              feature,
+              {
+                supported: true,
+                source: "openapi",
+                requiredOperations:
+                  feature === "subscriptionWrites"
+                    ? subscriptionOperations
+                    : [],
+                missingOperations: [],
+              },
+            ]),
+          ),
+        };
+      },
       generateKeyPair: () => ({ publicKeyHex, privateKeyHex }),
       generateKaigiSignalKeyPair: () => ({
         publicKeyBase64Url: "kaigi-e2e-public-key",
@@ -667,7 +757,7 @@ function buildInitScript() {
       }),
       exportConfidentialWalletBackup: async () => ({}),
       importConfidentialWalletBackup: async () => {},
-      registerAccount: async () => ({ hash: txHash("register") }),
+      registerAccount: async () => finalizedTransaction("register"),
       resolveAccountAlias: async ({ alias }) => ({
         alias: "",
         accountId: String(alias || "").trim(),
@@ -675,22 +765,22 @@ function buildInitScript() {
       }),
       transferAsset: async (input) => {
         window.__e2e.calls.push({ method: "transferAsset", input });
-        return { hash: txHash("transfer") };
+        return finalizedTransaction("transfer");
       },
       getConfidentialAssetPolicy: async () => confidentialPolicy(),
       getConfidentialAssetBalance: async () => confidentialBalance(),
       scanConfidentialWallet: async () => confidentialBalance(),
       getConfidentialWalletState: async () => confidentialBalance(),
       getPrivateKaigiConfidentialXorState: async () => ({
-        assetDefinitionId: "xor#universal",
-        resolvedAssetId: "xor#universal",
+        assetDefinitionId: xorAssetDefinitionId,
+        resolvedAssetId: xorAssetDefinitionId,
         policyMode: "hybrid",
         shieldedBalance: "5",
         shieldedBalanceExact: true,
         transparentBalance: "12500",
         canSelfShield: true,
       }),
-      selfShieldPrivateKaigiXor: async () => ({ hash: txHash("kaigi-shield") }),
+      selfShieldPrivateKaigiXor: async () => finalizedTransaction("kaigi-shield"),
       fetchAccountAssets: async () => assets(),
       fetchAccountTransactions: async () => ({
         total: 1,
@@ -727,10 +817,30 @@ function buildInitScript() {
         approvalMode: "PARLIAMENT_SORTITION_JIT",
         plainVotingEnabled: true,
         autoFinalizePlain: true,
-        citizenshipAssetId: "xor#universal",
+        autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY",
+        validationFeePlainRequiresExplicitFinalization: true,
+        validationFeePlainElectorateRules: {
+          votingAssetId: xorAssetDefinitionId,
+          ballotAmount: "150",
+          ballotDurationBlocks: 3600,
+          citizenshipAmount: "10000",
+          maxMembers: 256,
+          convictionStepBlocks: 100,
+          maxConviction: 6,
+          minTurnout: "1",
+          approvalThresholdNumerator: 1,
+          approvalThresholdDenominator: 2,
+          eligibilityRule: {
+            rule: "proposal_operator_at_or_before_gate_others_after_gate",
+            value: null,
+          },
+        },
+        citizenshipAssetId: xorAssetDefinitionId,
         citizenshipBondAmount: "10000",
-        votingAssetId: "xor#universal",
+        citizenshipEscrowAccount: "citizenship-escrow@governance",
+        votingAssetId: xorAssetDefinitionId,
         minBondAmount: "1",
+        bondEscrowAccount: "ballot-escrow@governance",
         convictionStepBlocks: 720,
         maxConviction: 6,
         minEnactmentDelay: 600,
@@ -754,24 +864,29 @@ function buildInitScript() {
         ],
         supportedRoutes: [
           "/v1/gov/capabilities",
+          "/v1/gov/citizens",
+          "/v1/gov/citizens/{account_id}",
           "/v1/gov/citizens/draft",
           "/v1/validation-fee/proposals",
           "/v1/validation-fee/proposals/{proposal_id}",
+          "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
           "/v1/validation-fee/proposals/draft",
-          "/v1/gov/ballots/plain",
-          "/v1/gov/parliament/ballots",
+          "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
+          "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
+          "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
           "/v1/gov/enact",
+          "/v1/gov/parliament/ballots",
+          "/v1/gov/ballots/plain",
         ],
       }),
       getGovernanceCitizenStatus: async () => ({
+        state: "not-citizen",
         accountId,
-        isCitizen: false,
         amount: null,
         bondedHeight: null,
         seatsInEpoch: null,
         lastEpochSeen: null,
         cooldownUntil: null,
-        endpointAvailable: true,
       }),
       prepareGovernanceCitizenRegistration: async () => ({
         reviewId: "governance-citizen-review",
@@ -793,11 +908,11 @@ function buildInitScript() {
         expiresAtMs: now() + 60000,
       }),
       confirmGovernanceAction: async () => ({
-        hash: txHash("governance"),
+        ...finalizedTransaction("governance"),
         operation: "register-citizen",
         proposalId: null,
         referendumId: null,
-        status: "committed",
+        status: "finalized",
       }),
       listGovernanceProposals: async () => ({
         items: [governanceProposalSummary()],
@@ -812,17 +927,44 @@ function buildInitScript() {
       getExplorerMetrics: async () => baseMetrics,
       getNetworkStats: async () => networkStats(),
       getExplorerAccountQr: async () => accountQr(),
-      listSubscriptionPlans: async () => ({ items: [], total: 0 }),
+      listSubscriptionPlans: async () => ({
+        items: [
+          {
+            plan_id: "plan-e2e",
+            plan: {
+              provider: "E2E provider",
+              pricing: {
+                kind: "fixed",
+                detail: {
+                  amount: "5",
+                  asset_definition: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+                },
+              },
+              billing: {
+                cadence: {
+                  kind: "fixed_period",
+                  detail: { period_ms: 2_592_000_000 },
+                },
+              },
+            },
+          },
+        ],
+        total: 1,
+      }),
       listSubscriptions: async () => ({ items: [], total: 0 }),
       getSubscription: async () => ({ subscription_id: "sub-e2e" }),
-      createSubscription: async () => ({ tx_hash_hex: txHash("sub-create") }),
-      pauseSubscription: async () => ({ tx_hash_hex: txHash("sub-pause") }),
-      resumeSubscription: async () => ({ tx_hash_hex: txHash("sub-resume") }),
-      cancelSubscription: async () => ({ tx_hash_hex: txHash("sub-cancel") }),
-      keepSubscription: async () => ({ tx_hash_hex: txHash("sub-keep") }),
-      chargeSubscriptionNow: async () => ({
-        tx_hash_hex: txHash("sub-charge"),
-      }),
+      createSubscription: async (input) =>
+        finalizedSubscription("sub-create", input.subscriptionId),
+      pauseSubscription: async (input) =>
+        finalizedSubscription("sub-pause", input.subscriptionId),
+      resumeSubscription: async (input) =>
+        finalizedSubscription("sub-resume", input.subscriptionId),
+      cancelSubscription: async (input) =>
+        finalizedSubscription("sub-cancel", input.subscriptionId),
+      keepSubscription: async (input) =>
+        finalizedSubscription("sub-keep", input.subscriptionId),
+      chargeSubscriptionNow: async (input) =>
+        finalizedSubscription("sub-charge", input.subscriptionId),
       getSoraCloudStatus: async () => ({
         available: true,
         schemaVersion: 1,
@@ -859,16 +1001,26 @@ function buildInitScript() {
           signedBy: "ed25519:e2e",
           raw: {},
         });
+        const tx_hash_hex = txHash("soracloud");
         return {
           ok: true,
-          action: "join",
+          settlement_status: "confirmed",
+          finality: finalityFor(tx_hash_hex),
+          action: "Join",
           service_name: input.serviceName,
           sequence: 1,
-          tx_hash_hex: txHash("soracloud"),
+          tx_hash_hex,
+          storage_base_fee: "0.00001",
+          actual_storage_charge: "0.00001",
+          max_compute_reservation_fee: "0.0000075",
+          actual_compute_charge: "0",
           raw: {},
         };
       },
-      getSoraCloudHfStatus: async () => ({}),
+      reconcileSoraCloudHfLaunch: async () => {
+        throw new Error("No SoraCloud settlement is pending in the deterministic fixture.");
+      },
+      getSoraCloudHfStatus: async () => ({ found: false, raw: null }),
       getParameters: async () => ({}),
       getVpnAvailability: async () => {
         const unavailable = fixture.vpnMode === "unavailable";
@@ -967,22 +1119,31 @@ function buildInitScript() {
           },
         ],
       }),
-      onboardAccount: async () => ({ account_id: accountId, tx_hash_hex: txHash("onboard"), status: "ok" }),
-      requestFaucetFunds: async (_input, onProgress) => {
-        await onProgress?.({ phase: "requestingPuzzle", attempt: 1, attempts: 1 });
-        await onProgress?.({ phase: "claimCommitted", txHashHex: txHash("faucet") });
+      onboardAccount: async () => {
+        const hash = txHash("onboard");
         return {
           account_id: accountId,
-          asset_definition_id: "xor#universal",
+          tx_hash_hex: hash,
+          status: "FINALIZED",
+          finality: finalityFor(hash),
+        };
+      },
+      requestFaucetFunds: async (_input, onProgress) => {
+        await onProgress?.({ phase: "requestingPuzzle", attempt: 1, attempts: 1 });
+        await onProgress?.({ phase: "claimFinalized", txHashHex: txHash("faucet") });
+        return {
+          account_id: accountId,
+          asset_definition_id: xorAssetDefinitionId,
           asset_id: xorAssetId,
           amount: "1000",
           tx_hash_hex: txHash("faucet"),
-          status: "committed",
+          status: "FINALIZED",
+          finality: finalityFor(txHash("faucet")),
         };
       },
       createKaigiMeeting: async (input) => {
         window.__e2e.calls.push({ method: "createKaigiMeeting", input });
-        return { hash: txHash("kaigi-create") };
+        return finalizedTransaction("kaigi-create");
       },
       getKaigiCall: async ({ callId }) => ({
         callId,
@@ -999,11 +1160,11 @@ function buildInitScript() {
         rosterRootHex: "0".repeat(64),
         offerDescription: { type: "offer", sdp: "v=0\\r\\na=ice-ufrag:e2eoffer\\r\\n" },
       }),
-      joinKaigiMeeting: async () => ({ hash: txHash("kaigi-join") }),
+      joinKaigiMeeting: async () => finalizedTransaction("kaigi-join"),
       watchKaigiCallEvents: async () => "watch-e2e",
       stopWatchingKaigiCallEvents: () => {},
       pollKaigiMeetingSignals: async () => [],
-      endKaigiMeeting: async () => ({ hash: txHash("kaigi-end") }),
+      endKaigiMeeting: async () => finalizedTransaction("kaigi-end"),
       createConnectPreview: async () => ({
         sidHex: "00",
         sidBase64Url: "AA",
@@ -1018,6 +1179,24 @@ function buildInitScript() {
         appPrivateKeyHex: privateKeyHex,
       }),
       getSumeragiStatus: async () => sumeragiStatus(),
+      getNexusLifecycle: async () => ({
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 1,
+        lanes: [
+          {
+            id: 1,
+            dataspace_id: 1,
+            alias: "public",
+            description: "Deterministic public lane",
+            visibility: "public",
+            governance: null,
+            storage: "full_replica",
+            proof_scheme: "merkle_sha256",
+            metadata: {},
+          },
+        ],
+      }),
       getNexusPublicLaneValidators: async () => ({
         lane_id: 1,
         total: 1,
@@ -1054,10 +1233,10 @@ function buildInitScript() {
         ],
       }),
       getNexusStakingPolicy: async () => ({ unbondingDelayMs: 60000 }),
-      bondPublicLaneStake: async () => ({ hash: txHash("bond") }),
-      schedulePublicLaneUnbond: async () => ({ hash: txHash("unbond") }),
-      finalizePublicLaneUnbond: async () => ({ hash: txHash("finalize") }),
-      claimPublicLaneRewards: async () => ({ hash: txHash("claim") }),
+      bondPublicLaneStake: async () => finalizedTransaction("bond"),
+      schedulePublicLaneUnbond: async () => finalizedTransaction("unbond"),
+      finalizePublicLaneUnbond: async () => finalizedTransaction("finalize"),
+      claimPublicLaneRewards: async () => finalizedTransaction("claim"),
     };
   })();`;
 }
@@ -1539,9 +1718,11 @@ async function checkSendFormAndCamera(page) {
   await page.getByTestId("send-review-button").click();
   await page.getByTestId("send-confirm-button").click();
   await page
-    .getByText(/Transaction submitted:|Sent:/)
+    .getByText(
+      /Transaction finalized on-chain:|Private shielded transfer finalized on-chain:/,
+    )
     .waitFor({ state: "visible", timeout: 5000 });
-  console.log("✓ send form submits and camera scanner opens/stops");
+  console.log("✓ send form finalizes and camera scanner opens/stops");
 }
 
 async function checkSoraCloudLaunchFlow(page) {
@@ -1575,8 +1756,8 @@ async function checkSoraCloudLaunchFlow(page) {
   const settlementAsset = page.getByLabel("Settlement asset");
   const initialAsset = await settlementAsset.inputValue();
   assert(
-    initialAsset === "",
-    `SoraCloud should not prefill stale lease asset aliases, got ${initialAsset}`,
+    initialAsset === XOR_ASSET_DEFINITION_ID,
+    `SoraCloud did not prefill the exact funded asset definition: ${initialAsset}`,
   );
   await settlementAsset.fill("61CtjvNd9T3THAR65GsMVHr82Bjc");
   await page.getByLabel("Base fee nanos").fill("10000");
@@ -1592,10 +1773,14 @@ async function checkSoraCloudLaunchFlow(page) {
   );
   await launchButton.click();
 
-  await page.getByText("Launch submitted").waitFor({
-    state: "visible",
-    timeout: 10000,
-  });
+  await page
+    .getByText(
+      /Launch finalized and settlement confirmed|Transaction finalized — settlement indexing/,
+    )
+    .waitFor({
+      state: "visible",
+      timeout: 10000,
+    });
   await page.getByText("all-minilm-l6-v2").first().waitFor({
     state: "visible",
     timeout: 10000,
@@ -1634,7 +1819,13 @@ async function checkSubscriptionModes(page) {
     .locator(".ui-segmented")
     .getByRole("button", { name: "Subscribe to plan", exact: true })
     .click();
-  await page.getByPlaceholder("Manual plan ID").waitFor({ state: "visible" });
+  const planSelect = page.getByLabel("Plan ID");
+  await planSelect.waitFor({ state: "visible" });
+  await planSelect.selectOption("plan-e2e");
+  assert(
+    (await planSelect.inputValue()) === "plan-e2e",
+    "The live plan catalog could not select its plan.",
+  );
   await page
     .getByRole("button", { name: "Create subscription" })
     .waitFor({ state: "visible" });
@@ -1841,9 +2032,9 @@ async function checkStaking(page) {
   await page.getByRole("button", { name: "Max" }).first().click();
   await page.getByRole("button", { name: /Bond XOR|Stake/ }).click();
   await page
-    .getByText(/Bond submitted:|Stake submitted:/)
+    .getByText(/Bond finalized in block|Stake finalized in block/)
     .waitFor({ state: "visible", timeout: 10000 });
-  console.log("✓ staking bootstrap and bond action work");
+  console.log("✓ staking bootstrap and finalized bond action work");
 }
 
 async function checkParliament(page) {

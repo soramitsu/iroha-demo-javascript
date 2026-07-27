@@ -139,7 +139,7 @@ describe("useShieldCapability", () => {
     );
   });
 
-  it("keeps self-shield available and reports errors when policy check fails", async () => {
+  it("fails self-shield closed when policy verification fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(new Error("timeout"));
     const toriiUrl = ref("http://localhost:8080");
     const accountId = ref("testuAlice");
@@ -154,14 +154,14 @@ describe("useShieldCapability", () => {
     });
     await flushReactiveEffects();
 
-    expect(capability.shieldSupported.value).toBe(true);
+    expect(capability.shieldSupported.value).toBe(false);
     expect(capability.shieldPolicyMode.value).toBe("");
     expect(capability.shieldCapabilityReady.value).toBe(true);
     expect(capability.shieldResolvedAssetId.value).toBe("");
     expect(capability.shieldCapabilityMessage.value).toContain(
-      "Self-shield policy check failed: timeout.",
+      "Self-shield is unavailable because its policy could not be verified: timeout.",
     );
-    expect(shielded.value).toBe(true);
+    expect(shielded.value).toBe(false);
   });
 
   it("treats a 404 policy fetch as unavailable for self-shield", async () => {
@@ -297,7 +297,7 @@ describe("useShieldCapability", () => {
     expect(shielded.value).toBe(false);
   });
 
-  it("keeps the operation available and sanitizes transient policy-check failures", async () => {
+  it("fails closed and sanitizes transient policy-check failures", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error(
         "ERR_UNEXPECTED_NETWORK_PREFIX — NRT0`\uFFFD6W\uFFFD5 invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
@@ -306,15 +306,12 @@ describe("useShieldCapability", () => {
     const { capability, shielded } = mountCapability("shieldedTransfer");
     await flushReactiveEffects();
 
-    expect(capability.shieldSupported.value).toBe(true);
+    expect(capability.shieldSupported.value).toBe(false);
     expect(capability.shieldCapabilityMessage.value).toContain(
-      "Shielded send policy check failed: ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX.",
-    );
-    expect(capability.shieldCapabilityMessage.value).toContain(
-      "Submission may still fail if the current asset policy does not allow it.",
+      "Shielded send is unavailable because its policy could not be verified: ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX.",
     );
     expect(capability.shieldCapabilityMessage.value).not.toContain("NRT0`");
-    expect(shielded.value).toBe(true);
+    expect(shielded.value).toBe(false);
   });
 
   it("ignores stale policy responses after a newer refresh succeeds", async () => {

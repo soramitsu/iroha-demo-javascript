@@ -17,7 +17,16 @@ permissions:
   contents: read
 
 env:
+  IROHA_JS_NATIVE_BUILD_PROFILE: "release"
+  IROHA_JS_NATIVE_SOURCE_GIT_REVISION: "1bcb05eb208d8bda1610789d827a7ed97e66e56c"
   NODE_VERSION: "20"
+  REVIEWED_IROHA_REF: "1bcb05eb208d8bda1610789d827a7ed97e66e56c"
+  REVIEWED_IROHA_PARENT: "03b2bff298cabe1c1355d78379acb4a099e6d627"
+  REVIEWED_IROHA_TREE: "801349ba2350640643179c83821c43d8548ba021"
+  REVIEWED_IROHA_JS_TREE: "6ce1556f6b1e1bc62f20dbc63db3e3cca6148bdc"
+  REVIEWED_IROHA_CARGO_LOCK_SHA256: "28ca3f9224b55d89f6307f487462ec9f7b8027ccb0712323b779a568bc9ebfd1"
+  REVIEWED_IROHA_CARGO_LOCK_SIZE: "306362"
+  RUST_TOOLCHAIN: "1.93.1"
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
   IROHA_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.iroha_ref || vars.IROHA_REF }}
   APP_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
@@ -69,6 +78,10 @@ jobs:
             echo "::error::IROHA_REF must be one exact lowercase 40-character commit SHA; got $IROHA_REF."
             exit 1
           fi
+          if [[ "$IROHA_REF" != "$REVIEWED_IROHA_REF" ]]; then
+            echo "::error::IROHA_REF must equal the reviewed signed v4 source $REVIEWED_IROHA_REF; got $IROHA_REF."
+            exit 1
+          fi
 
       - name: Checkout wallet tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -93,6 +106,9 @@ jobs:
         run: |
           wallet_sha="$(git -C iroha-demo-javascript rev-parse HEAD)"
           iroha_sha="$(git -C iroha rev-parse HEAD)"
+          iroha_parent="$(git -C iroha rev-parse HEAD^)"
+          iroha_tree="$(git -C iroha rev-parse 'HEAD^{tree}')"
+          iroha_js_tree="$(git -C iroha rev-parse HEAD:javascript/iroha_js)"
           local_tag_type="$(git -C iroha-demo-javascript cat-file -t "refs/tags/$RELEASE_TAG")"
           local_tag_object_sha="$(git -C iroha-demo-javascript rev-parse "refs/tags/$RELEASE_TAG")"
           local_tag_target_sha="$(git -C iroha-demo-javascript rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
@@ -103,6 +119,12 @@ jobs:
           fi
           if [[ "$iroha_sha" != "$IROHA_REF" ]]; then
             echo "::error::Checked-out Iroha commit $iroha_sha does not match pinned commit $IROHA_REF."
+            exit 1
+          fi
+          if [[ "$iroha_parent" != "$REVIEWED_IROHA_PARENT" \
+            || "$iroha_tree" != "$REVIEWED_IROHA_TREE" \
+            || "$iroha_js_tree" != "$REVIEWED_IROHA_JS_TREE" ]]; then
+            echo "::error::Checked-out Iroha parent/tree identities do not match the reviewed signed v4 closure."
             exit 1
           fi
           if [[ "$local_tag_type" != "tag" ]]; then
@@ -163,10 +185,20 @@ jobs:
             echo "::error::GitHub did not verify a valid cryptographic signature on Iroha commit $iroha_sha."
             exit 1
           fi
+          iroha_parent_json="$(gh api "repos/hyperledger-iroha/iroha/commits/$iroha_parent")"
+          if [[ "$(jq -r '.sha' <<<"$iroha_parent_json")" != "$iroha_parent" \
+            || "$(jq -r '.commit.verification.verified' <<<"$iroha_parent_json")" != "true" \
+            || "$(jq -r '.commit.verification.reason' <<<"$iroha_parent_json")" != "valid" ]]; then
+            echo "::error::GitHub did not verify a valid cryptographic signature on Iroha parent $iroha_parent."
+            exit 1
+          fi
 
           {
             echo "wallet_sha=$wallet_sha"
             echo "iroha_sha=$iroha_sha"
+            echo "iroha_parent=$iroha_parent"
+            echo "iroha_tree=$iroha_tree"
+            echo "iroha_js_tree=$iroha_js_tree"
             echo "tag_object_sha=$tag_object_sha"
           } >> "$GITHUB_OUTPUT"
 
@@ -194,6 +226,12 @@ jobs:
         run: |
           test "$(git -C iroha-demo-javascript rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C iroha rev-parse HEAD)" = "$IROHA_REF"
+          test "$(git -C iroha rev-list --parents -n 1 HEAD)" = "$IROHA_REF $REVIEWED_IROHA_PARENT"
+          test "$(git -C iroha rev-parse 'HEAD^{tree}')" = "$REVIEWED_IROHA_TREE"
+          test "$(git -C iroha rev-parse HEAD:javascript/iroha_js)" = "$REVIEWED_IROHA_JS_TREE"
+          test "$(git -C iroha rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git -C iroha replace -l)"
+          test -z "$(git -C iroha submodule status --recursive)"
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -204,12 +242,119 @@ jobs:
 
       - name: Set up Rust
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Provision authenticated ignored Iroha Cargo lock
+        shell: bash
+        run: |
+          test ! -e iroha/Cargo.lock
+          cp iroha-demo-javascript/resources/release/iroha-v4-Cargo.lock iroha/Cargo.lock
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { lstatSync, readFileSync } = require("node:fs");
+          const path = "iroha/Cargo.lock";
+          const stat = lstatSync(path);
+          const bytes = readFileSync(path);
+          const digest = createHash("sha256").update(bytes).digest("hex");
+          if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Cargo.lock is not a regular file");
+          if (bytes.length !== Number(process.env.REVIEWED_IROHA_CARGO_LOCK_SIZE)) throw new Error("Cargo.lock size mismatch");
+          if (digest !== process.env.REVIEWED_IROHA_CARGO_LOCK_SHA256) throw new Error("Cargo.lock digest mismatch");
+          NODE
+          test "$(git -C iroha ls-files --others --ignored --exclude-standard)" = "Cargo.lock"
+          test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
+
+      - name: Build reviewed Iroha native binding
+        working-directory: iroha/javascript/iroha_js
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/iroha-js-native-target
+        run: npm run build:native
+
+      - name: Verify reviewed native build closure
+        shell: bash
+        run: |
+          expected_ignored=$'Cargo.lock\njavascript/iroha_js/native/iroha_js_host.checksums.json\njavascript/iroha_js/native/iroha_js_host.node'
+          observed_ignored="$(git -C iroha ls-files --others --ignored --exclude-standard | LC_ALL=C sort)"
+          test "$observed_ignored" = "$expected_ignored"
+          test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
+          node --input-type=module <<'NODE'
+          import { lstatSync } from "node:fs";
+          import {
+            resolveNativeBuildRequirement,
+            resolveNativeProvenanceRequirement,
+          } from "./iroha-demo-javascript/scripts/postinstallNativeCheck.mjs";
+          const sdkRoot = "iroha/javascript/iroha_js";
+          for (const filename of ["iroha_js_host.node", "iroha_js_host.checksums.json"]) {
+            const artifact = `${sdkRoot}/native/${filename}`;
+            const stat = lstatSync(artifact);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`${artifact} must be a regular build artifact`);
+            }
+          }
+          const requirement = resolveNativeBuildRequirement(
+            sdkRoot,
+            undefined,
+            undefined,
+            resolveNativeProvenanceRequirement(process.env),
+          );
+          if (requirement.shouldBuild) {
+            throw new Error(`reviewed native build failed verification: ${requirement.reason}`);
+          }
+          NODE
 
       - name: Install dependencies
         working-directory: iroha-demo-javascript
-        run: npm ci
+        run: npm ci --ignore-scripts --install-links --no-audit --no-fund
+
+      - name: Install and verify reviewed native binding
+        shell: bash
+        working-directory: iroha-demo-javascript
+        run: |
+          node --input-type=module <<'NODE'
+          import { constants, copyFileSync, existsSync, lstatSync, readFileSync } from "node:fs";
+          import { join } from "node:path";
+          import {
+            resolveNativeBuildRequirement,
+            resolveNativeProvenanceRequirement,
+          } from "./scripts/postinstallNativeCheck.mjs";
+          const installedSdkPath = join("node_modules", "@iroha", "iroha-js");
+          const installedSdk = lstatSync(installedSdkPath);
+          if (!installedSdk.isDirectory() || installedSdk.isSymbolicLink()) {
+            throw new Error("@iroha/iroha-js must be a physical package installed with --install-links");
+          }
+          const sourceNative = join("..", "iroha", "javascript", "iroha_js", "native");
+          const installedNative = join(installedSdkPath, "native");
+          const installedNativeStat = lstatSync(installedNative);
+          if (!installedNativeStat.isDirectory() || installedNativeStat.isSymbolicLink()) {
+            throw new Error("installed @iroha/iroha-js native path must be a physical directory");
+          }
+          const sourceNode = join(sourceNative, "iroha_js_host.node");
+          const sourceManifest = join(sourceNative, "iroha_js_host.checksums.json");
+          const installedNode = join(installedNative, "iroha_js_host.node");
+          const installedManifest = join(installedNative, "iroha_js_host.checksums.json");
+          for (const artifact of [sourceNode, sourceManifest, installedManifest]) {
+            const stat = lstatSync(artifact);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`${artifact} must be a regular file`);
+            }
+          }
+          if (existsSync(installedNode)) {
+            throw new Error("physical SDK package unexpectedly contains a native binary");
+          }
+          if (!readFileSync(sourceManifest).equals(readFileSync(installedManifest))) {
+            throw new Error("installed native manifest differs from the reviewed sibling manifest");
+          }
+          copyFileSync(sourceNode, installedNode, constants.COPYFILE_EXCL);
+          const requirement = resolveNativeBuildRequirement(
+            installedSdkPath,
+            undefined,
+            undefined,
+            resolveNativeProvenanceRequirement(process.env),
+          );
+          if (requirement.shouldBuild) {
+            throw new Error(`installed native binding failed verification: ${requirement.reason}`);
+          }
+          NODE
 
       - name: Verify
         working-directory: iroha-demo-javascript
@@ -255,6 +400,12 @@ jobs:
         run: |
           test "$(git -C iroha-demo-javascript rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git -C iroha rev-parse HEAD)" = "$IROHA_REF"
+          test "$(git -C iroha rev-list --parents -n 1 HEAD)" = "$IROHA_REF $REVIEWED_IROHA_PARENT"
+          test "$(git -C iroha rev-parse 'HEAD^{tree}')" = "$REVIEWED_IROHA_TREE"
+          test "$(git -C iroha rev-parse HEAD:javascript/iroha_js)" = "$REVIEWED_IROHA_JS_TREE"
+          test "$(git -C iroha rev-parse --is-shallow-repository)" = "false"
+          test -z "$(git -C iroha replace -l)"
+          test -z "$(git -C iroha submodule status --recursive)"
 
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -266,8 +417,65 @@ jobs:
       - name: Set up Rust
         shell: bash
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Provision authenticated ignored Iroha Cargo lock
+        shell: bash
+        run: |
+          test ! -e iroha/Cargo.lock
+          cp iroha-demo-javascript/resources/release/iroha-v4-Cargo.lock iroha/Cargo.lock
+          node <<'NODE'
+          const { createHash } = require("node:crypto");
+          const { lstatSync, readFileSync } = require("node:fs");
+          const path = "iroha/Cargo.lock";
+          const stat = lstatSync(path);
+          const bytes = readFileSync(path);
+          const digest = createHash("sha256").update(bytes).digest("hex");
+          if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Cargo.lock is not a regular file");
+          if (bytes.length !== Number(process.env.REVIEWED_IROHA_CARGO_LOCK_SIZE)) throw new Error("Cargo.lock size mismatch");
+          if (digest !== process.env.REVIEWED_IROHA_CARGO_LOCK_SHA256) throw new Error("Cargo.lock digest mismatch");
+          NODE
+          test "$(git -C iroha ls-files --others --ignored --exclude-standard)" = "Cargo.lock"
+          test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
+
+      - name: Build reviewed Iroha native binding
+        working-directory: iroha/javascript/iroha_js
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/iroha-js-native-target
+        run: npm run build:native
+
+      - name: Verify reviewed native build closure
+        shell: bash
+        run: |
+          expected_ignored=$'Cargo.lock\njavascript/iroha_js/native/iroha_js_host.checksums.json\njavascript/iroha_js/native/iroha_js_host.node'
+          observed_ignored="$(git -C iroha ls-files --others --ignored --exclude-standard | LC_ALL=C sort)"
+          test "$observed_ignored" = "$expected_ignored"
+          test -z "$(git -C iroha status --porcelain=v1 --untracked-files=all)"
+          node --input-type=module <<'NODE'
+          import { lstatSync } from "node:fs";
+          import {
+            resolveNativeBuildRequirement,
+            resolveNativeProvenanceRequirement,
+          } from "./iroha-demo-javascript/scripts/postinstallNativeCheck.mjs";
+          const sdkRoot = "iroha/javascript/iroha_js";
+          for (const filename of ["iroha_js_host.node", "iroha_js_host.checksums.json"]) {
+            const artifact = `${sdkRoot}/native/${filename}`;
+            const stat = lstatSync(artifact);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`${artifact} must be a regular build artifact`);
+            }
+          }
+          const requirement = resolveNativeBuildRequirement(
+            sdkRoot,
+            undefined,
+            undefined,
+            resolveNativeProvenanceRequirement(process.env),
+          );
+          if (requirement.shouldBuild) {
+            throw new Error(`reviewed native build failed verification: ${requirement.reason}`);
+          }
+          NODE
 
       - name: Install macOS packaging tools
         if: matrix.platform == 'mac'
@@ -356,7 +564,57 @@ jobs:
 
       - name: Install dependencies
         working-directory: iroha-demo-javascript
-        run: npm ci
+        run: npm ci --ignore-scripts --install-links --no-audit --no-fund
+
+      - name: Install and verify reviewed native binding
+        shell: bash
+        working-directory: iroha-demo-javascript
+        run: |
+          node --input-type=module <<'NODE'
+          import { constants, copyFileSync, existsSync, lstatSync, readFileSync } from "node:fs";
+          import { join } from "node:path";
+          import {
+            resolveNativeBuildRequirement,
+            resolveNativeProvenanceRequirement,
+          } from "./scripts/postinstallNativeCheck.mjs";
+          const installedSdkPath = join("node_modules", "@iroha", "iroha-js");
+          const installedSdk = lstatSync(installedSdkPath);
+          if (!installedSdk.isDirectory() || installedSdk.isSymbolicLink()) {
+            throw new Error("@iroha/iroha-js must be a physical package installed with --install-links");
+          }
+          const sourceNative = join("..", "iroha", "javascript", "iroha_js", "native");
+          const installedNative = join(installedSdkPath, "native");
+          const installedNativeStat = lstatSync(installedNative);
+          if (!installedNativeStat.isDirectory() || installedNativeStat.isSymbolicLink()) {
+            throw new Error("installed @iroha/iroha-js native path must be a physical directory");
+          }
+          const sourceNode = join(sourceNative, "iroha_js_host.node");
+          const sourceManifest = join(sourceNative, "iroha_js_host.checksums.json");
+          const installedNode = join(installedNative, "iroha_js_host.node");
+          const installedManifest = join(installedNative, "iroha_js_host.checksums.json");
+          for (const artifact of [sourceNode, sourceManifest, installedManifest]) {
+            const stat = lstatSync(artifact);
+            if (!stat.isFile() || stat.isSymbolicLink()) {
+              throw new Error(`${artifact} must be a regular file`);
+            }
+          }
+          if (existsSync(installedNode)) {
+            throw new Error("physical SDK package unexpectedly contains a native binary");
+          }
+          if (!readFileSync(sourceManifest).equals(readFileSync(installedManifest))) {
+            throw new Error("installed native manifest differs from the reviewed sibling manifest");
+          }
+          copyFileSync(sourceNode, installedNode, constants.COPYFILE_EXCL);
+          const requirement = resolveNativeBuildRequirement(
+            installedSdkPath,
+            undefined,
+            undefined,
+            resolveNativeProvenanceRequirement(process.env),
+          );
+          if (requirement.shouldBuild) {
+            throw new Error(`installed native binding failed verification: ${requirement.reason}`);
+          }
+          NODE
 
       - name: Build macOS artifacts
         if: matrix.platform == 'mac'
@@ -474,22 +732,56 @@ jobs:
           jq -n \
             --arg release_tag "$RELEASE_TAG" \
             --arg tag_object_sha "$RELEASE_TAG_OBJECT_SHA" \
+            --arg node_version "$NODE_VERSION" \
+            --arg rust_toolchain "$RUST_TOOLCHAIN" \
+            --arg native_build_profile "$IROHA_JS_NATIVE_BUILD_PROFILE" \
             --arg wallet_repository "$GITHUB_REPOSITORY" \
             --arg wallet_commit_sha "$WALLET_COMMIT_SHA" \
             --arg iroha_repository "hyperledger-iroha/iroha" \
             --arg iroha_commit_sha "$IROHA_COMMIT_SHA" \
+            --arg iroha_parent_commit "$REVIEWED_IROHA_PARENT" \
+            --arg iroha_tree "$REVIEWED_IROHA_TREE" \
+            --arg iroha_js_tree "$REVIEWED_IROHA_JS_TREE" \
+            --arg iroha_cargo_lock_sha256 "$REVIEWED_IROHA_CARGO_LOCK_SHA256" \
+            --argjson iroha_cargo_lock_size "$REVIEWED_IROHA_CARGO_LOCK_SIZE" \
             --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
             '{
-              schema: "sora.wallet.release-source.v1",
+              schema: "sora.wallet.release-source.v2",
               release_tag: $release_tag,
               tag_object_sha: $tag_object_sha,
+              build: {
+                node_version: $node_version,
+                rust_toolchain: $rust_toolchain,
+                native_build_profile: $native_build_profile
+              },
               wallet: {
                 repository: $wallet_repository,
                 commit_sha: $wallet_commit_sha
               },
               iroha: {
                 repository: $iroha_repository,
-                commit_sha: $iroha_commit_sha
+                commit_sha: $iroha_commit_sha,
+                parent_commit: $iroha_parent_commit,
+                tree: $iroha_tree,
+                javascript_tree: $iroha_js_tree,
+                cargo_lock: {
+                  sha256: $iroha_cargo_lock_sha256,
+                  size_bytes: $iroha_cargo_lock_size
+                },
+                native_contract: {
+                  source_git_revision: $iroha_commit_sha,
+                  source_tree_clean: true,
+                  connect_norito_bridge_abi_version: 21,
+                  validation_fee_policy_fingerprint_arity: 3,
+                  validation_fee_payout_lifecycle_fingerprint_arity: 2,
+                  validation_fee_policy_fingerprint_vector: "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6",
+                  validation_fee_payout_lifecycle_fingerprint_vector: "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e",
+                  required_exports: [
+                    "connectNoritoBridgeAbiVersion",
+                    "validationFeePolicyProposalFingerprintV1",
+                    "validationFeePayoutLifecycleProposalFingerprintV1"
+                  ]
+                }
               },
               workflow_ref: $workflow_ref
             }' > artifacts/SOURCE-IDENTITY.json

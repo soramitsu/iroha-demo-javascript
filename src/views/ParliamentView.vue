@@ -11,10 +11,8 @@
         </AppButton>
         <AppButton
           data-testid="new-governance-proposal"
-          :disabled="
-            !governance.canWrite ||
-            governance.supportedComposerKinds.length === 0
-          "
+          :disabled="!governance.proposalGate.allowed"
+          :title="governance.proposalGate.reason || undefined"
           @click="governance.openComposer()"
         >
           {{ t("New proposal") }}
@@ -39,6 +37,7 @@
           </strong>
           <p>
             {{
+              governance.endpointGovernanceWriteError ||
               governance.capabilitiesError ||
               t(
                 "Ledger state is authoritative. Actions are decoded and fee-quoted before vault signing.",
@@ -50,9 +49,15 @@
       <dl>
         <div>
           <dt>{{ t("Capabilities") }}</dt>
-          <dd :class="{ positive: governance.canWrite }">
+          <dd
+            :class="{
+              positive:
+                Boolean(governance.capabilities) &&
+                !governance.capabilitiesError,
+            }"
+          >
             {{
-              governance.canWrite
+              governance.capabilities && !governance.capabilitiesError
                 ? t("Strict contract verified")
                 : t("Unavailable")
             }}
@@ -61,7 +66,50 @@
         <div>
           <dt>{{ t("Citizen") }}</dt>
           <dd :class="{ positive: governance.isCitizen }">
-            {{ governance.isCitizen ? t("Eligible") : t("Not detected") }}
+            {{
+              governance.citizenshipLoading
+                ? t("Checking citizenship…")
+                : governance.citizenState === "citizen"
+                  ? t("Eligible")
+                  : governance.citizenState === "not-citizen"
+                    ? t("Not a citizen yet")
+                    : t("Citizen status unavailable")
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Citizens") }}</dt>
+          <dd :title="governance.governanceCitizenCountError || undefined">
+            {{
+              governance.governanceCitizenCountLoading
+                ? t("Checking…")
+                : governance.governanceCitizenCount?.endpointAvailable &&
+                    governance.governanceCitizenCount.total !== null
+                  ? governance.governanceCitizenCount.total
+                  : t("Unavailable")
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Council members") }}</dt>
+          <dd :title="governance.currentCouncilError || undefined">
+            {{
+              governance.currentCouncilLoading
+                ? t("Checking…")
+                : (governance.currentCouncil?.members.length ??
+                  t("Unavailable"))
+            }}
+          </dd>
+        </div>
+        <div>
+          <dt>{{ t("Expired Locks") }}</dt>
+          <dd :title="governance.unlockStatsError || undefined">
+            {{
+              governance.unlockStatsLoading
+                ? t("Checking…")
+                : (governance.unlockStats?.expired_locks_now ??
+                  t("Unavailable"))
+            }}
           </dd>
         </div>
         <div>
@@ -93,7 +141,7 @@
 
     <main
       class="governance-workspace"
-      :class="{ 'committed-refresh': governance.committedRefresh }"
+      :class="{ 'finalized-refresh': governance.finalizedRefresh }"
     >
       <GovernanceProposalList
         v-model="governance.catalogFilter"
@@ -115,6 +163,14 @@
           governance.busy === 'detail' || governance.busy === 'bootstrap'
         "
         :error="governance.detailError"
+        :plain-referendum-contract="governance.plainReferendumContract"
+        :plain-referendum-loading="governance.plainReferendumContractLoading"
+        :plain-referendum-binding-error="
+          governance.selectedPlainReferendumContractError
+        "
+        :plain-referendum-account-eligible="
+          governance.activeAccountEligibleForPlainReferendum
+        "
       />
 
       <GovernanceInspector />
@@ -142,6 +198,7 @@ const route = useRoute();
 const router = useRouter();
 const { t } = useAppI18n();
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let pollRefreshInFlight = false;
 
 const proposalQuery = computed(() => {
   const value = route.query.proposal;
@@ -179,12 +236,24 @@ onMounted(async () => {
     if (
       document.visibilityState === "visible" &&
       !governance.busy &&
-      !governance.review
+      !governance.review &&
+      !pollRefreshInFlight
     ) {
-      void Promise.all([
-        governance.loadProposals({ preserveSelection: true }),
-        governance.refreshSelectedProposal(),
-      ]);
+      pollRefreshInFlight = true;
+      void governance.loadCitizenState();
+      void Promise.resolve()
+        .then(() =>
+          Promise.all([
+            governance.loadGovernanceCitizenCount(),
+            governance.loadCurrentCouncil(),
+            governance.loadUnlockStats(),
+            governance.loadProposals({ preserveSelection: true }),
+            governance.refreshSelectedProposal(),
+          ]),
+        )
+        .finally(() => {
+          pollRefreshInFlight = false;
+        });
     }
   }, 15_000);
 });
@@ -256,6 +325,7 @@ onBeforeUnmount(() => {
 .governance-context dl {
   margin: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 24px;
 }
@@ -303,11 +373,11 @@ onBeforeUnmount(() => {
     transform var(--duration-route) var(--ease-standard);
 }
 
-.governance-workspace.committed-refresh {
-  animation: committed-state-refresh 720ms var(--ease-standard);
+.governance-workspace.finalized-refresh {
+  animation: finalized-state-refresh 720ms var(--ease-standard);
 }
 
-@keyframes committed-state-refresh {
+@keyframes finalized-state-refresh {
   0% {
     opacity: 0.68;
     transform: translateY(3px);
@@ -384,7 +454,7 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .governance-workspace.committed-refresh {
+  .governance-workspace.finalized-refresh {
     animation: none;
   }
 }

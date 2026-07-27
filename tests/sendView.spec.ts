@@ -3,7 +3,12 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import SendView from "@/views/SendView.vue";
 import { translate } from "@/i18n/messages";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
+import type {
+  EndpointFeatureAvailability,
+  EndpointInspection,
+} from "@/types/endpointInspection";
 import { formatAssetDefinitionLabel } from "@/utils/assetId";
 import { encodeConfidentialPaymentAddress } from "@/utils/confidentialPaymentAddress";
 
@@ -64,6 +69,16 @@ vi.mock("@/composables/useQrScanner", async () => {
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
+const finalizedResult = (hash: string) => ({
+  hash,
+  finality: {
+    status: "finalized" as const,
+    transactionHash: hash,
+    blockHeight: 17,
+    blockHash: "ef".repeat(32),
+    finalizedBlockHeight: 17,
+  },
+});
 
 describe("SendView", () => {
   beforeEach(() => {
@@ -112,7 +127,14 @@ describe("SendView", () => {
     setActivePinia(createPinia());
   });
 
-  const mountView = (assetDefinitionId = "norito:abcdef0123456789") => {
+  const mountView = (
+    assetDefinitionId = "norito:abcdef0123456789",
+    endpointOptions: {
+      writeAllowed?: boolean;
+      assetTransfers?: boolean;
+      confidentialTransfers?: boolean;
+    } = {},
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -135,6 +157,54 @@ describe("SendView", () => {
         },
       ],
       activeAccountId: "alice@default",
+    });
+    const feature = (supported = true): EndpointFeatureAvailability => ({
+      supported,
+      source: "openapi",
+      requiredOperations: [],
+      missingOperations: supported ? [] : ["POST /missing"],
+    });
+    const writeAllowed = endpointOptions.writeAllowed !== false;
+    const endpointStore = useEndpointStore();
+    endpointStore.$patch({
+      state: "ready",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: "http://localhost:8080",
+        expected: { chainId: "chain", networkPrefix: 369 },
+        observed: { chainId: "chain", networkPrefix: 369 },
+        identityStatus: writeAllowed ? "matched" : "unverified",
+        accessMode: writeAllowed ? "read-write" : "read-only",
+        checkedAtMs: 1,
+        evidence: [],
+        features: {
+          accountRegistration: feature(),
+          accountOnboarding: feature(),
+          assetTransfers: feature(endpointOptions.assetTransfers !== false),
+          faucetClaim: feature(),
+          confidentialTransfers: feature(
+            endpointOptions.confidentialTransfers !== false,
+          ),
+          kaigiMeetings: feature(),
+          governanceWrites: feature(),
+          stakingWrites: feature(),
+          subscriptionWrites: feature(),
+          soraCloudDeploy: feature(),
+          vpnSessions: feature(),
+          irohaConnectSessions: feature(),
+          zkProofJobs: feature(),
+        },
+        diagnostic: writeAllowed
+          ? {
+              code: "endpoint_identity_matched",
+              message: "Endpoint identity matches the configured network.",
+            }
+          : {
+              code: "endpoint_identity_unverified",
+              message: "Endpoint identity is unverified.",
+            },
+      } satisfies EndpointInspection,
+      error: "",
     });
     return mount(SendView, {
       global: {
@@ -161,7 +231,7 @@ describe("SendView", () => {
   };
 
   it("forwards shielded send payloads after private mode review", async () => {
-    transferAssetMock.mockResolvedValue({ hash: "0xabc" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xabc"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -173,7 +243,6 @@ describe("SendView", () => {
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
-        amount: "10",
         receiveKeyId: BOB_RECEIVE_KEY_ID,
         receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
@@ -209,12 +278,14 @@ describe("SendView", () => {
       }),
     );
     expect(wrapper.text()).toContain(
-      t("Private shielded transfer committed: {hash}", { hash: "0xabc" }),
+      t("Private shielded transfer finalized on-chain: {hash}", {
+        hash: "0xabc",
+      }),
     );
   });
 
   it("shows transfer-specific success text for transparent sends", async () => {
-    transferAssetMock.mockResolvedValue({ hash: "0x123" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0x123"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -225,7 +296,7 @@ describe("SendView", () => {
     await reviewAndConfirmTransfer(wrapper);
 
     expect(wrapper.text()).toContain(
-      t("Transaction submitted: {hash}", { hash: "0x123" }),
+      t("Transaction finalized on-chain: {hash}", { hash: "0x123" }),
     );
     expect(wrapper.text()).not.toContain(
       t("Anonymous shielded transaction committed:"),
@@ -236,8 +307,49 @@ describe("SendView", () => {
     expect(wrapper.get(".send-status").attributes("role")).toBe("status");
   });
 
+  it("keeps transfer review disabled while endpoint writes are read-only", async () => {
+    const wrapper = mountView("norito:abcdef0123456789", {
+      writeAllowed: false,
+    });
+    await flushPromises();
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("2");
+
+    expect(wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled")).toBe("");
+    expect(wrapper.get('[data-testid="send-write-prerequisite"]').text()).toBe(
+      "Endpoint identity is unverified.",
+    );
+    expect(transferAssetMock).not.toHaveBeenCalled();
+  });
+
+  it("gates each send mode on its advertised write feature", async () => {
+    const wrapper = mountView("norito:abcdef0123456789", {
+      assetTransfers: false,
+      confidentialTransfers: true,
+    });
+    await flushPromises();
+
+    await wrapper
+      .get(DESTINATION_ACCOUNT_SELECTOR)
+      .setValue(BOB_I105_ACCOUNT_ID);
+    await wrapper.get('input[type="number"]').setValue("2");
+
+    expect(wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled")).toBe("");
+    expect(wrapper.get('[data-testid="send-write-prerequisite"]').text()).toBe(
+      "This endpoint does not advertise the required asset transfer operations.",
+    );
+
+    await enablePrivateMode(wrapper);
+    expect(
+      wrapper.find('[data-testid="send-write-prerequisite"]').exists(),
+    ).toBe(false);
+  });
+
   it("requires review before a valid transfer is submitted", async () => {
-    transferAssetMock.mockResolvedValue({ hash: "0xreviewed" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xreviewed"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -303,7 +415,7 @@ describe("SendView", () => {
         ],
         total: 1,
       });
-    transferAssetMock.mockResolvedValue({ hash: "0xrefresh" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xrefresh"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -356,7 +468,7 @@ describe("SendView", () => {
   });
 
   it("trims transparent destination before submit", async () => {
-    transferAssetMock.mockResolvedValue({ hash: "0xdef" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xdef"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -381,7 +493,7 @@ describe("SendView", () => {
       resolved: true,
       source: "on_chain",
     });
-    transferAssetMock.mockResolvedValue({ hash: "0xalias" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xalias"));
     const wrapper = mountView();
     await flushPromises();
 
@@ -439,7 +551,7 @@ describe("SendView", () => {
         };
       },
     );
-    transferAssetMock.mockResolvedValue({ hash: "0xnew-network" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xnew-network"));
     const wrapper = mountView();
     const session = useSessionStore();
     await flushPromises();
@@ -564,6 +676,16 @@ describe("SendView", () => {
   });
 
   it("shows the send asset balance and alias when live assets include one", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValueOnce({
+      asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
     fetchAccountAssetsMock.mockResolvedValueOnce({
       items: [
         {
@@ -590,6 +712,102 @@ describe("SendView", () => {
     );
   });
 
+  it("does not show an unrelated positive holding as the configured send asset", async () => {
+    getConfidentialAssetPolicyMock.mockResolvedValueOnce({
+      asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      block_height: 1,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    });
+    fetchAccountAssetsMock.mockResolvedValueOnce({
+      items: [
+        {
+          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc#alice@default",
+          quantity: "25000",
+          asset_alias: "OTHER",
+        },
+      ],
+      total: 1,
+    });
+
+    const wrapper = mountView("6TEAJqbb8oEPmLncoNiMRbLEK6tw");
+    await flushPromises();
+
+    expect(wrapper.get(".send-balance-value").text()).toBe("0");
+    expect(wrapper.get(".send-balance-asset").text()).toBe(
+      formatAssetDefinitionLabel("6TEAJqbb8oEPmLncoNiMRbLEK6tw"),
+    );
+    expect(wrapper.text()).not.toContain("25000");
+    expect(wrapper.text()).not.toContain("OTHER");
+  });
+
+  it("shows balance unavailable and blocks review when the asset read fails", async () => {
+    fetchAccountAssetsMock.mockRejectedValueOnce(
+      new Error("Account assets request timed out."),
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+
+      expect(wrapper.get(".send-balance-value").text()).toBe(t("Unavailable"));
+      expect(wrapper.get('[data-testid="send-assets-error"]').text()).toBe(
+        "Account assets request timed out.",
+      );
+
+      await wrapper
+        .get(DESTINATION_ACCOUNT_SELECTOR)
+        .setValue(BOB_I105_ACCOUNT_ID);
+      await wrapper.get('input[type="number"]').setValue("2");
+
+      expect(wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled")).toBe("");
+      expect(transferAssetMock).not.toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("fails closed when the post-submit balance refresh fails", async () => {
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: [
+          {
+            asset_id: "norito:abcdef0123456789#alice@default",
+            quantity: "42",
+          },
+        ],
+        total: 1,
+      })
+      .mockRejectedValueOnce(new Error("Balance refresh unavailable."));
+    transferAssetMock.mockResolvedValue(finalizedResult("0xbalance-refresh"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+
+      await wrapper
+        .get(DESTINATION_ACCOUNT_SELECTOR)
+        .setValue(BOB_I105_ACCOUNT_ID);
+      await wrapper.get('input[type="number"]').setValue("2");
+      await reviewAndConfirmTransfer(wrapper);
+
+      expect(transferAssetMock).toHaveBeenCalledTimes(1);
+      expect(wrapper.get(".send-balance-value").text()).toBe(t("Unavailable"));
+      expect(wrapper.get('[data-testid="send-assets-error"]').text()).toBe(
+        "Balance refresh unavailable.",
+      );
+      expect(wrapper.get(SEND_REVIEW_SELECTOR).attributes("disabled")).toBe("");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it("heals a stale configured asset bucket before the first shielded send", async () => {
     getConfidentialAssetPolicyMock.mockResolvedValue({
       asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
@@ -606,7 +824,7 @@ describe("SendView", () => {
       pedersen_params_id: null,
       pending_transition: null,
     });
-    transferAssetMock.mockResolvedValue({ hash: "0xhealed" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xhealed"));
     const wrapper = mountView("5OldBucket1111111111111111111");
     const session = useSessionStore();
     await flushPromises();
@@ -623,7 +841,6 @@ describe("SendView", () => {
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
-        amount: "4",
         receiveKeyId: BOB_RECEIVE_KEY_ID,
         receivePublicKeyBase64Url: BOB_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: BOB_OWNER_TAG_HEX,
@@ -642,16 +859,16 @@ describe("SendView", () => {
     );
   });
 
-  it("applies qr destination payload while shield mode is enabled", async () => {
+  it("loads a private QR without overriding the user-entered amount", async () => {
     const wrapper = mountView();
     await flushPromises();
 
     expect(typeof qrDecodeHandler).toBe("function");
     await enablePrivateMode(wrapper);
+    await wrapper.get('input[type="number"]').setValue("7");
     qrDecodeHandler?.(
       JSON.stringify({
         schema: "iroha-confidential-payment-address/v3",
-        amount: "7",
         receiveKeyId: MALLORY_RECEIVE_KEY_ID,
         receivePublicKeyBase64Url: MALLORY_RECEIVE_PUBLIC_KEY_BASE64_URL,
         shieldedOwnerTagHex: MALLORY_OWNER_TAG_HEX,
@@ -666,7 +883,7 @@ describe("SendView", () => {
     expect((amountInput.element as HTMLInputElement).value).toBe("7");
     expect(wrapper.text()).toContain(t("QR decoded successfully."));
 
-    transferAssetMock.mockResolvedValue({ hash: "0xqrshield" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xqrshield"));
     await reviewAndConfirmTransfer(wrapper);
     expect(transferAssetMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -703,7 +920,7 @@ describe("SendView", () => {
       undefined,
     );
 
-    transferAssetMock.mockResolvedValue({ hash: "0xpasted" });
+    transferAssetMock.mockResolvedValue(finalizedResult("0xpasted"));
     await reviewAndConfirmTransfer(wrapper);
 
     expect(resolveAccountAliasMock).not.toHaveBeenCalledWith(
@@ -819,7 +1036,7 @@ describe("SendView", () => {
     );
   });
 
-  it("keeps shield enabled and shows warning when policy check fails", async () => {
+  it("disables shield mode when policy verification fails", async () => {
     getConfidentialAssetPolicyMock.mockRejectedValue(
       new Error("network timeout"),
     );
@@ -827,10 +1044,10 @@ describe("SendView", () => {
     await flushPromises();
 
     const privateMode = wrapper.get(SEND_MODE_PRIVATE_SELECTOR);
-    expect((privateMode.element as HTMLButtonElement).disabled).toBe(false);
+    expect((privateMode.element as HTMLButtonElement).disabled).toBe(true);
     expect(wrapper.text()).toContain(
       t(
-        "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
+        "{operation} is unavailable because its policy could not be verified: {message}.",
         { operation: "Shielded send", message: "network timeout" },
       ),
     );

@@ -2,9 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   extractGovernanceStats,
   extractRuntimeStatsFromStatusSnapshot,
+  normalizeCurrentSumeragiTelemetry,
   normalizeExplorerAssetDefinitionEconometricsPayload,
   normalizeExplorerAssetDefinitionSnapshotPayload,
 } from "../electron/networkStats";
+
+const currentSumeragiStatus = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  protocol_version: 3,
+  height_context: {},
+  liveness: { queues: [] },
+  ...overrides,
+});
 
 describe("network stats helpers", () => {
   it("normalizes explorer asset definition snapshot payloads", () => {
@@ -153,22 +163,113 @@ describe("network stats helpers", () => {
     });
   });
 
-  it("extracts runtime stats from status snapshot data", () => {
+  it("normalizes the current Sumeragi height, QC, validator, and ingress queue shape", () => {
+    expect(
+      normalizeCurrentSumeragiTelemetry(
+        currentSumeragiStatus({
+          height: 45_451,
+          last_committed_height: 45_450,
+          last_commit_qc: {
+            certificate: {
+              round: {
+                height: 45_450,
+                view: 2,
+              },
+            },
+          },
+          height_context: {
+            validator_count: 4,
+          },
+          liveness: {
+            queues: [
+              {
+                queue: {
+                  queue: "deferred_normal",
+                  details: null,
+                },
+                depth: 9,
+                capacity: 1024,
+              },
+              {
+                queue: {
+                  queue: "ingress",
+                  details: null,
+                },
+                depth: 6,
+                capacity: 1028,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toEqual({
+      height: 45_451,
+      lastCommittedHeight: 45_450,
+      lastCommitQcHeight: 45_450,
+      lastCommitQcView: 2,
+      validatorCount: 4,
+      ingressQueueDepth: 6,
+      ingressQueueCapacity: 1028,
+    });
+  });
+
+  it("extracts runtime stats from the current Sumeragi status", () => {
     const runtime = extractRuntimeStatsFromStatusSnapshot(
       {
         status: {
-          queue_size: 4,
           commit_time_ms: 1800,
-          raw: {
-            sumeragi: {
-              tx_queue_saturated: true,
-              tx_queue_capacity: 64,
-              effective_block_time_ms: 2500,
-              highest_qc_height: 88,
-              locked_qc_height: 87,
+          effective_block_time_ms: 2500,
+        },
+      },
+      null,
+      currentSumeragiStatus({
+        height: 45_451,
+        last_committed_height: 45_450,
+        last_commit_qc: {
+          certificate: {
+            round: {
+              height: 45_450,
+              view: 2,
             },
           },
         },
+        height_context: {
+          validator_count: 4,
+        },
+        liveness: {
+          queues: [
+            {
+              queue: {
+                queue: "ingress",
+                details: null,
+              },
+              depth: 6,
+              capacity: 1028,
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(runtime).toEqual({
+      queueSize: 6,
+      queueCapacity: 1028,
+      commitTimeMs: 1800,
+      effectiveBlockTimeMs: 2500,
+      txQueueSaturated: false,
+      highestQcHeight: 45_450,
+      lockedQcHeight: null,
+      currentBlockHeight: 45_451,
+      finalizedBlockHeight: 45_450,
+      finalizationLag: 1,
+    });
+  });
+
+  it("uses explorer telemetry when current Sumeragi status is unavailable", () => {
+    const runtime = extractRuntimeStatsFromStatusSnapshot(
+      {
+        commit_time_ms: 9999,
+        effective_block_time_ms: 9999,
       },
       {
         peers: 4,
@@ -186,89 +287,154 @@ describe("network stats helpers", () => {
     );
 
     expect(runtime).toEqual({
-      queueSize: 4,
-      queueCapacity: 64,
-      commitTimeMs: 1800,
-      effectiveBlockTimeMs: 2500,
-      txQueueSaturated: true,
-      highestQcHeight: 88,
-      lockedQcHeight: 87,
+      queueSize: null,
+      queueCapacity: null,
+      commitTimeMs: 1300,
+      effectiveBlockTimeMs: 1200,
+      txQueueSaturated: null,
+      highestQcHeight: null,
+      lockedQcHeight: null,
       currentBlockHeight: 99,
       finalizedBlockHeight: 94,
       finalizationLag: 5,
     });
   });
 
-  it("extracts runtime stats from root status with sumeragi enrichment", () => {
-    const runtime = extractRuntimeStatsFromStatusSnapshot(
+  it("uses the current height-context validator count for governance stats", () => {
+    const governance = extractGovernanceStats(
+      currentSumeragiStatus({
+        height_context: {
+          validator_count: 4,
+        },
+      }),
       {
-        blocks: 12732,
-        commit_time_ms: 1741607,
-        queue_size: 0,
-        sumeragi: {
-          tx_queue_capacity: 0,
-          tx_queue_saturated: false,
-          highest_qc_height: 12732,
-          locked_qc_height: 12731,
-          effective_block_time_ms: 3303181,
-        },
-      },
-      null,
-      {
-        tx_queue: {
-          depth: 0,
-          capacity: 20000,
-          saturated: false,
-        },
-        highest_qc: {
-          height: 12732,
-        },
-        locked_qc: {
-          height: 12731,
-        },
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 3,
+        lanes: [
+          {
+            id: 7,
+            dataspace_id: "2",
+            alias: "primary",
+            description: "",
+            visibility: "public",
+            governance: null,
+            storage: "on-ledger",
+            proof_scheme: "none",
+            metadata: {},
+          },
+          {
+            id: 9,
+            dataspace_id: "2",
+            alias: "secondary",
+            description: "",
+            visibility: "public",
+            governance: null,
+            storage: "on-ledger",
+            proof_scheme: "none",
+            metadata: {},
+          },
+          {
+            id: 11,
+            dataspace_id: "5",
+            alias: "private",
+            description: "",
+            visibility: "private",
+            governance: null,
+            storage: "on-ledger",
+            proof_scheme: "none",
+            metadata: {},
+          },
+        ],
       },
     );
-
-    expect(runtime).toEqual({
-      queueSize: 0,
-      queueCapacity: 20000,
-      commitTimeMs: 1741607,
-      effectiveBlockTimeMs: 3303181,
-      txQueueSaturated: false,
-      highestQcHeight: 12732,
-      lockedQcHeight: 12731,
-      currentBlockHeight: 12732,
-      finalizedBlockHeight: 12732,
-      finalizationLag: 0,
-    });
-  });
-
-  it("deduplicates lane, dataspace, and validator counts from governance status", () => {
-    const governance = extractGovernanceStats({
-      lane_governance: [
-        {
-          lane_id: 7,
-          dataspace_id: 2,
-          validator_ids: ["alice", "bob"],
-        },
-        {
-          lane_id: 9,
-          dataspace_id: 2,
-          validator_ids: ["bob", "carol"],
-        },
-      ],
-      dataspace_commitments: [
-        {
-          lane_id: 11,
-          dataspace_id: 5,
-        },
-      ],
-    } as any);
 
     expect(governance).toEqual({
       laneCount: 3,
       dataspaceCount: 2,
-      validatorCount: 3,
+      validatorCount: 4,
     });
+  });
+
+  it("marks independently unavailable governance telemetry as null", () => {
+    expect(
+      extractGovernanceStats(
+        currentSumeragiStatus({
+          height_context: {
+            validator_count: 4,
+          },
+        }),
+        null,
+      ),
+    ).toEqual({
+      laneCount: null,
+      dataspaceCount: null,
+      validatorCount: 4,
+    });
+    expect(extractGovernanceStats(null, null)).toEqual({
+      laneCount: null,
+      dataspaceCount: null,
+      validatorCount: null,
+    });
+  });
+
+  it("rejects malformed or legacy Sumeragi payloads instead of treating them as empty telemetry", () => {
+    expect(() =>
+      normalizeCurrentSumeragiTelemetry(
+        currentSumeragiStatus({
+          height: 1.5,
+          last_committed_height: -1,
+          height_context: {
+            validator_count: "unknown",
+          },
+        }),
+      ),
+    ).toThrow("Sumeragi status height must be a non-negative safe integer.");
+    for (const invalid of [
+      Number.MAX_SAFE_INTEGER + 1,
+      "045451",
+      "45451.0",
+      "4.5451e4",
+      " 45451 ",
+    ]) {
+      expect(() =>
+        normalizeCurrentSumeragiTelemetry(
+          currentSumeragiStatus({
+            height: invalid,
+          }),
+        ),
+      ).toThrow("Sumeragi status height must be a non-negative safe integer.");
+    }
+    expect(
+      normalizeCurrentSumeragiTelemetry(
+        currentSumeragiStatus({
+          height: "45451",
+        }),
+      ).height,
+    ).toBe(45_451);
+    expect(normalizeCurrentSumeragiTelemetry(currentSumeragiStatus())).toEqual({
+      height: null,
+      lastCommittedHeight: null,
+      lastCommitQcHeight: null,
+      lastCommitQcView: null,
+      validatorCount: null,
+      ingressQueueDepth: null,
+      ingressQueueCapacity: null,
+    });
+
+    expect(() =>
+      extractRuntimeStatsFromStatusSnapshot({}, null, {
+        tx_queue: {
+          depth: 4,
+          capacity: 64,
+        },
+        highest_qc: {
+          height: 88,
+        },
+      }),
+    ).toThrow("Sumeragi status protocol_version must equal 3.");
+    expect(() => normalizeCurrentSumeragiTelemetry({})).toThrow(
+      "Sumeragi status protocol_version must equal 3.",
+    );
   });
 });

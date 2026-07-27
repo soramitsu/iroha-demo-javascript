@@ -21,6 +21,9 @@ describe("endpoint utilities", () => {
     expect(() => normalizeEndpointUrl("ftp://example.com")).toThrow(
       "Endpoint must start with http:// or https://.",
     );
+    expect(() =>
+      normalizeEndpointUrl("https://user:secret@example.com"),
+    ).toThrow("Endpoint URL must not include credentials.");
   });
 
   it("resolves invalid persisted values to a normalized fallback", () => {

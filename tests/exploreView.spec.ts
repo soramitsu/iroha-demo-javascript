@@ -1,7 +1,15 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import ExploreView from "@/views/ExploreView.vue";
+import {
+  MINAMOTO_CHAIN_PRESET,
+  MINAMOTO_EXPLORER_URL,
+  TAIRA_CHAIN_PRESET,
+  TAIRA_EXPLORER_URL,
+} from "@/constants/chains";
 import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
 
 const getExplorerMetricsMock = vi.fn();
@@ -15,6 +23,20 @@ vi.mock("@/services/iroha", () => ({
 }));
 
 describe("ExploreView", () => {
+  it("keeps the named Taira smoke check on the Taira explorer by default", () => {
+    const smoke = readFileSync(
+      resolve(process.cwd(), "scripts/e2e/taira-explorer-smoke.mjs"),
+      "utf8",
+    );
+    expect(smoke).toContain(
+      'const DEFAULT_EXPLORER_ROOT = "https://taira-explorer.sora.org"',
+    );
+    expect(smoke).toContain(
+      "process.env.TAIRA_EXPLORER_URL ?? DEFAULT_EXPLORER_ROOT",
+    );
+    expect(smoke).not.toContain("MINAMOTO_EXPLORER_URL");
+  });
+
   beforeEach(() => {
     getExplorerMetricsMock.mockReset();
     getExplorerAccountQrMock.mockReset();
@@ -42,6 +64,12 @@ describe("ExploreView", () => {
       publicKeyHex: string;
       privateKeyHex: string;
     }>;
+    connection?: Partial<{
+      toriiUrl: string;
+      chainId: string;
+      assetDefinitionId: string;
+      networkPrefix: number;
+    }>;
   }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -60,6 +88,7 @@ describe("ExploreView", () => {
         chainId: "chain",
         assetDefinitionId: "xor#wonderland",
         networkPrefix: 369,
+        ...options?.connection,
       },
       accounts: [account],
       activeAccountId: account.accountId,
@@ -70,6 +99,33 @@ describe("ExploreView", () => {
       },
     });
   };
+
+  it("opens only the explorer belonging to the exact active preset", async () => {
+    getExplorerAccountQrMock.mockResolvedValue(null);
+    const taira = mountView({
+      connection: { ...TAIRA_CHAIN_PRESET.connection },
+    });
+    await flushPromises();
+    expect(taira.get("a.explorer-link").attributes("href")).toBe(
+      TAIRA_EXPLORER_URL,
+    );
+    taira.unmount();
+
+    const minamoto = mountView({
+      connection: { ...MINAMOTO_CHAIN_PRESET.connection },
+    });
+    await flushPromises();
+    expect(minamoto.get("a.explorer-link").attributes("href")).toBe(
+      MINAMOTO_EXPLORER_URL,
+    );
+  });
+
+  it("does not offer an external explorer for a custom identity", async () => {
+    getExplorerAccountQrMock.mockResolvedValue(null);
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.find("a.explorer-link").exists()).toBe(false);
+  });
 
   const switchToBob = async () => {
     const session = useSessionStore();
@@ -129,7 +185,7 @@ describe("ExploreView", () => {
     expect(wrapper.text()).not.toContain("testuAliceLiteral");
   });
 
-  it("adopts and persists the chain-reported network prefix from explorer qr", async () => {
+  it("rejects a mismatched QR prefix without retargeting the wallet", async () => {
     getExplorerAccountQrMock.mockResolvedValueOnce({
       canonicalId: "URpZvAliceCompat",
       literal: "testuAliceLiteral",
@@ -169,8 +225,8 @@ describe("ExploreView", () => {
     });
     await flushPromises();
 
-    expect(session.connection.networkPrefix).toBe(369);
-    expect(sessionSnapshot().connection.networkPrefix).toBe(369);
+    expect(session.connection.networkPrefix).toBe(42);
+    expect(sessionSnapshot().connection?.networkPrefix).not.toBe(369);
   });
 
   it("keeps metrics visible when explorer qr is temporarily unavailable", async () => {

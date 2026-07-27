@@ -68,12 +68,12 @@
           </div>
           <div>
             <span>{{ t("Voting mode") }}</span>
-            <strong>{{ t("PLAIN / auto-finalized") }}</strong>
+            <strong>{{ t("PLAIN / finalized evidence") }}</strong>
           </div>
           <p>
             {{
               t(
-                "Citizens must enact this exact payout lifecycle before its 0.10 SBD policy can be proposed.",
+                "Citizens must approve this exact payout lifecycle and retain genuine finalized PLAIN evidence before native governance enactment and the 0.10 SBD policy.",
               )
             }}
           </p>
@@ -305,7 +305,13 @@ const shortHash = (value: string | null | undefined) => {
   return value.length > 20 ? `${value.slice(0, 10)}…${value.slice(-7)}` : value;
 };
 const canPrepare = computed(() => {
-  if (!governance.capabilities || governance.busy === "prepare") return false;
+  if (
+    !governance.capabilities ||
+    !governance.proposalGate.allowed ||
+    governance.busy === "prepare"
+  ) {
+    return false;
+  }
   if (governance.composerKind === "ValidationFeePayoutLifecycle") {
     return governance.validationFeePayoutLifecycleErrors.length === 0;
   }

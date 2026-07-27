@@ -46,13 +46,11 @@ describe("public governance enact boundary", () => {
       }),
     ).toThrow("fields must be exactly proposalKind");
     expect(() =>
-      authorizePublicGovernanceEnactRequest({
-        proposalKind: "Unknown",
-      }),
+      authorizePublicGovernanceEnactRequest({ proposalKind: "Unknown" }),
     ).toThrow("cannot be enacted through the public governance wallet");
   });
 
-  it("registers main IPC and authorizes before both draft fetch and commit signing", () => {
+  it("keeps finalization and enactment out of the public Electron wallet", () => {
     const main = source("electron/main.ts");
     const preload = source("electron/preload.ts");
     const prepare = between(
@@ -69,17 +67,15 @@ describe("public governance enact boundary", () => {
     expect(GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL).toBe(
       "governance:authorizePublicEnact",
     );
-    expect(main).toContain("authorizePublicGovernanceEnactRequest(input)");
-    expect(main).toContain("registerGovernanceEnactBoundaryHandler();");
-    expect(
-      prepare.indexOf("await authorizePublicGovernanceEnact("),
-    ).toBeLessThan(prepare.indexOf('"/v1/gov/enact"'));
-    expect(prepare).toContain("publicEnactKind,");
-    expect(confirm).toContain(
-      "await authorizePublicGovernanceEnact(prepared.publicEnactKind);",
+    expect(main).not.toContain("registerGovernanceEnactBoundaryHandler");
+    expect(main).not.toContain(
+      "GOVERNANCE_PUBLIC_ENACT_AUTHORIZATION_IPC_CHANNEL",
     );
-    expect(
-      confirm.indexOf("await authorizePublicGovernanceEnact("),
-    ).toBeLessThan(confirm.indexOf("signQuotedTransactionPayload({"));
+    expect(prepare).toContain(
+      "Validation-fee finalization and enactment are operator-only typed workflows",
+    );
+    expect(prepare).not.toContain("governanceRequestJson(");
+    expect(preload).not.toContain("/v1/gov/enact");
+    expect(confirm).not.toContain("EnactReferendum");
   });
 });

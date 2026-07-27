@@ -10,7 +10,15 @@
         <div>
           <dt>{{ t("Citizen") }}</dt>
           <dd :class="{ positive: governance.isCitizen }">
-            {{ governance.isCitizen ? t("Eligible") : t("Not detected") }}
+            {{
+              governance.citizenshipLoading
+                ? t("Checking citizenship…")
+                : governance.citizenState === "citizen"
+                  ? t("Eligible")
+                  : governance.citizenState === "not-citizen"
+                    ? t("Not a citizen yet")
+                    : t("Citizen status unavailable")
+            }}
           </dd>
         </div>
         <div>
@@ -27,10 +35,19 @@
         </div>
         <div>
           <dt>{{ t("XOR Balance") }}</dt>
-          <dd>{{ governance.citizenshipBalance }} XOR</dd>
+          <dd>
+            {{
+              governance.citizenshipBalance === null
+                ? t("Unavailable")
+                : `${governance.citizenshipBalance} XOR`
+            }}
+          </dd>
         </div>
       </dl>
-      <div v-if="!governance.isCitizen" class="citizenship-action">
+      <div
+        v-if="governance.citizenState === 'not-citizen'"
+        class="citizenship-action"
+      >
         <AppButton
           data-testid="governance-bond-citizen"
           size="sm"
@@ -79,6 +96,23 @@
             {{ governance.plainVoteGate.reason || t("Plain voting is open.") }}
           </p>
         </div>
+        <div
+          class="citizen-ballot-status"
+          :class="{
+            error: governance.citizenBallotSubmissionState === 'error',
+            positive: governance.citizenVoteProjection.state === 'recorded',
+          }"
+          :data-state="
+            governance.citizenBallotSubmissionState === 'idle'
+              ? governance.citizenVoteProjection.state
+              : governance.citizenBallotSubmissionState
+          "
+          data-testid="governance-citizen-ballot-status"
+          aria-live="polite"
+        >
+          <strong>{{ citizenBallotStatusTitle }}</strong>
+          <p>{{ citizenBallotStatusDetail }}</p>
+        </div>
         <div class="ballot-fields">
           <label>
             {{ t("Decision") }}
@@ -90,7 +124,7 @@
           </label>
           <label>
             {{ t("Amount") }}
-            <input v-model.trim="governance.ballotAmount" inputmode="decimal" />
+            <input v-model.trim="governance.ballotAmount" inputmode="numeric" />
           </label>
           <label class="span-2">
             {{ t("Lock blocks") }}
@@ -168,27 +202,15 @@
 
       <div class="action-block crank">
         <div class="action-copy">
-          <strong>{{ t("Deterministic close and enact") }}</strong>
+          <strong>{{ t("Finalization and enactment") }}</strong>
           <p>
             {{
               t(
-                "PLAIN referenda close automatically after the inclusive end height. The wallet never submits manual finalization.",
+                "Validation-fee finalization and enactment require the proposal-bound operator workflow after the PLAIN window closes. The public wallet does not expose a manual finalize or generic enact action.",
               )
             }}
           </p>
         </div>
-        <AppButton
-          v-if="
-            governance.selectedProposal?.kind.type !== 'ValidationFeePolicy'
-          "
-          size="sm"
-          :variant="primaryAction === 'enact' ? 'primary' : 'secondary'"
-          :disabled="!governance.enactGate.allowed"
-          :loading="governance.busy === 'prepare'"
-          @click="governance.prepareEnact"
-        >
-          {{ t("Review enact") }}
-        </AppButton>
         <p
           v-if="!governance.enactGate.allowed"
           data-testid="governance-enact-gate-reason"
@@ -219,14 +241,101 @@ const shortAccount = computed(() => {
     : value || t("Not connected");
 });
 
-const primaryAction = computed<"citizen" | "parliament" | "enact" | null>(
-  () => {
-    if (governance.plainVoteGate.allowed) return "citizen";
-    if (governance.parliamentBallotGate.allowed) return "parliament";
-    if (governance.enactGate.allowed) return "enact";
-    return null;
-  },
-);
+const primaryAction = computed<"citizen" | "parliament" | null>(() => {
+  if (governance.plainVoteGate.allowed) return "citizen";
+  if (governance.parliamentBallotGate.allowed) return "parliament";
+  return null;
+});
+
+const citizenBallotStatusTitle = computed(() => {
+  switch (governance.citizenBallotSubmissionState) {
+    case "preparing":
+      return t("Preparing ballot review");
+    case "reviewing":
+      return t("Ballot ready for review");
+    case "submitting":
+      return t("Submitting reviewed ballot");
+    case "finalized":
+      if (governance.citizenVoteProjection.state !== "recorded") {
+        return t("Ballot transaction finalized");
+      }
+      break;
+    case "error":
+      return t("Ballot action failed");
+  }
+  switch (governance.citizenVoteProjection.state) {
+    case "recorded":
+      return t("Ballot recorded on ledger");
+    case "open":
+      return t("PLAIN citizen voting is open");
+    case "awaiting-window":
+      return t("Awaiting the inclusive PLAIN window");
+    case "closed":
+      return t("Citizen voting is closed");
+    default:
+      return t("Citizen ballot state unavailable");
+  }
+});
+
+const citizenBallotStatusDetail = computed(() => {
+  if (governance.citizenBallotSubmissionState === "error") {
+    return (
+      governance.citizenBallotError ||
+      t("The citizen ballot could not be prepared.")
+    );
+  }
+  if (governance.citizenBallotSubmissionState === "reviewing") {
+    return t(
+      "Review the exact decoded PLAIN instruction and fee quote before vault signing.",
+    );
+  }
+  if (governance.citizenBallotSubmissionState === "submitting") {
+    return t("Waiting for the reviewed transaction to finalize in a block.");
+  }
+  if (
+    governance.citizenBallotSubmissionState === "finalized" &&
+    governance.citizenVoteProjection.state !== "recorded"
+  ) {
+    return t("Finalized; waiting for the citizen lock projection.");
+  }
+  const referendum = governance.selectedProposal?.referendum;
+  const projection = governance.citizenVoteProjection;
+  if (projection.state === "recorded" && projection.lock) {
+    return t(
+      "{direction} · {amount} XOR · locked through inclusive height {height}",
+      {
+        direction: projection.lock.direction,
+        amount: projection.lock.amount,
+        height: projection.lock.expiryHeight,
+      },
+    );
+  }
+  if (projection.state === "open" && referendum) {
+    return t(
+      "Open through inclusive height {height}; {blocks} committed blocks remain.",
+      {
+        height: referendum.hEnd,
+        blocks: projection.blocksUntilClose ?? "0",
+      },
+    );
+  }
+  if (projection.state === "awaiting-window" && referendum) {
+    return t(
+      "Window {lower}–{upper}; {blocks} committed blocks until opening.",
+      {
+        lower: referendum.hStart,
+        upper: referendum.hEnd,
+        blocks: projection.blocksUntilOpen ?? "0",
+      },
+    );
+  }
+  if (projection.state === "closed" && referendum) {
+    return t("The inclusive voting window closed at height {height}.", {
+      height: referendum.hEnd,
+    });
+  }
+  return governance.detailError || t("Select a live Taira referendum.");
+});
 
 const bodyOutcome = (body: string) =>
   governance.selectedProposal?.parliamentOutcomes.find(
@@ -366,6 +475,35 @@ dd.positive {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+.citizen-ballot-status {
+  padding: 10px 11px;
+  border-inline-start: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent-soft) 34%, transparent);
+}
+
+.citizen-ballot-status strong {
+  font-size: 0.7rem;
+}
+
+.citizen-ballot-status p {
+  margin: 4px 0 0;
+  color: var(--color-text-muted);
+  font-size: 0.63rem;
+  line-height: 1.5;
+}
+
+.citizen-ballot-status.positive {
+  border-inline-start-color: var(--color-success);
+}
+
+.citizen-ballot-status.error {
+  border-inline-start-color: var(--color-danger);
+}
+
+.citizen-ballot-status.error strong {
+  color: var(--color-danger);
 }
 
 label {

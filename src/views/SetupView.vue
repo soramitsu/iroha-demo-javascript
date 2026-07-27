@@ -248,6 +248,7 @@ import {
   formatTransactionFee,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 import {
   DEFAULT_SIGNING_ALGORITHM,
   signingAlgorithmLabel,
@@ -683,6 +684,7 @@ const handleRegister = async () => {
     const result = await registerAccount({
       toriiUrl: connectionForm.toriiUrl,
       chainId: connectionForm.chainId,
+      networkPrefix: connectionForm.networkPrefix,
       accountId: userForm.accountId,
       domainId: userForm.domain,
       metadata,
@@ -690,11 +692,13 @@ const handleRegister = async () => {
       authorityPrivateKeyHex: authorityForm.privateKeyHex.trim() || undefined,
       authoritySigningAlgorithm: authorityForm.signingAlgorithm,
     });
+    assertFinalizedSubmissionResult(result);
     syncConnectionFormToSession();
     session.updateActiveAccount({ ...userForm, privateKeyHex: "" });
     session.persistState();
     registerMessage.value = appendTransactionFee(
-      t("Submitted transaction {hash}", {
+      t("Account registration finalized in block {block}: {hash}", {
+        block: result.finality.blockHeight,
         hash: result.hash,
       }),
       result,

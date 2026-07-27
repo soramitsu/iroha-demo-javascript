@@ -14,10 +14,10 @@ describe("Kaigi deep-link helpers", () => {
     ).toBe(buildKaigiHashRoute({ call: "kaigi:room", secret: "abc123" }));
   });
 
-  it("still maps legacy invite links during migration", () => {
+  it("rejects legacy invite-token links", () => {
     expect(
       parseKaigiDeepLinkToHashRoute("iroha://kaigi/join?invite=legacy-token"),
-    ).toBe(buildKaigiHashRoute({ invite: "legacy-token" }));
+    ).toBeNull();
   });
 
   it("extracts the first matching deep link from argv", () => {

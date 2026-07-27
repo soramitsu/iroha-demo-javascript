@@ -9,11 +9,12 @@ export type ChainMetadataDraft = {
 };
 
 const MAX_NETWORK_PREFIX = 0x3fff;
+const FIRST_RELEASE_CHAIN_METADATA_KEYS = [
+  "chain_id",
+  "network_prefix",
+] as const;
 
 const trimString = (value: unknown): string => String(value ?? "").trim();
-
-const normalizeKey = (key: string): string =>
-  key.replace(/[-_\s]/g, "").toLowerCase();
 
 const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,81 +61,37 @@ export const normalizeChainMetadata = (
   return { chainId, networkPrefix };
 };
 
-const isChainIdKey = (key: string, path: string[]): boolean => {
-  const normalized = normalizeKey(key);
-  if (["chainid", "genesisid", "networkchainid"].includes(normalized)) {
-    return true;
-  }
-  if (normalized !== "id") {
-    return false;
-  }
-  return path.some((segment) => normalizeKey(segment).includes("chain"));
-};
-
-const isNetworkPrefixKey = (key: string, path: string[]): boolean => {
-  const normalized = normalizeKey(key);
-  if (
-    [
-      "networkprefix",
-      "addressprefix",
-      "accountprefix",
-      "accountaddressprefix",
-      "chaindiscriminant",
-      "networkdiscriminant",
-    ].includes(normalized)
-  ) {
-    return true;
-  }
-  if (normalized !== "prefix") {
-    return false;
-  }
-  return path.some((segment) =>
-    ["account", "address", "chain", "i105", "network"].some((marker) =>
-      normalizeKey(segment).includes(marker),
-    ),
-  );
-};
-
-export const extractChainMetadataFromPayload = (
+export const parseFirstReleaseChainMetadataPayload = (
   payload: unknown,
-): ChainMetadataDraft => {
-  const draft: ChainMetadataDraft = {};
-
-  const visit = (value: unknown, path: string[]) => {
-    if (draft.chainId && draft.networkPrefix !== undefined) {
-      return;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        visit(item, path);
-      }
-      return;
-    }
-
-    if (!isPlainRecord(value)) {
-      return;
-    }
-
-    for (const [key, child] of Object.entries(value)) {
-      if (!draft.chainId && isChainIdKey(key, path)) {
-        const chainId = normalizeChainIdValue(child);
-        if (chainId) {
-          draft.chainId = chainId;
-        }
-      }
-
-      if (draft.networkPrefix === undefined && isNetworkPrefixKey(key, path)) {
-        const networkPrefix = normalizeNetworkPrefixValue(child);
-        if (networkPrefix !== null) {
-          draft.networkPrefix = networkPrefix;
-        }
-      }
-
-      visit(child, [...path, key]);
-    }
+): ChainMetadata => {
+  if (!isPlainRecord(payload)) {
+    throw new TypeError("Chain metadata must be an object.");
+  }
+  const actualKeys = Object.keys(payload).sort();
+  const expectedKeys = [...FIRST_RELEASE_CHAIN_METADATA_KEYS].sort();
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new TypeError("Chain metadata contains missing or unknown fields.");
+  }
+  if (
+    typeof payload.chain_id !== "string" ||
+    !payload.chain_id ||
+    payload.chain_id.trim() !== payload.chain_id
+  ) {
+    throw new TypeError("Chain metadata chain_id must be canonical text.");
+  }
+  if (
+    typeof payload.network_prefix !== "number" ||
+    normalizeNetworkPrefixValue(payload.network_prefix) === null
+  ) {
+    throw new TypeError(
+      "Chain metadata network_prefix must be an integer between 0 and 16383.",
+    );
+  }
+  return {
+    chainId: payload.chain_id,
+    networkPrefix: payload.network_prefix,
   };
-
-  visit(payload, []);
-  return draft;
 };

@@ -7,9 +7,7 @@ const normalizeConfidentialMode = (value: string | null | undefined): string =>
 const trimString = (value: unknown): string => String(value ?? "").trim();
 
 const stringSetFrom = (values: Array<string | null | undefined>): Set<string> =>
-  new Set(
-    values.map((value) => trimString(value).toLowerCase()).filter(Boolean),
-  );
+  new Set(values.map((value) => trimString(value)).filter(Boolean));
 
 const normalizeIntegerAmount = (value: unknown): bigint | null => {
   if (typeof value === "number") {
@@ -43,7 +41,7 @@ export type OnChainShieldedBalanceResult = {
 const matchesAssetDefinitionId = (
   value: unknown,
   assetDefinitionIds: Set<string>,
-): boolean => assetDefinitionIds.has(trimString(value).toLowerCase());
+): boolean => assetDefinitionIds.has(trimString(value));
 
 export const deriveOnChainShieldedBalance = (
   transactions: Array<ConfidentialBalanceTransactionLike | null | undefined>,
@@ -62,7 +60,7 @@ export const deriveOnChainShieldedBalance = (
     normalizedAssetDefinitionIds.size === 0 ||
     normalizedAccountIds.size === 0
   ) {
-    return { quantity: "0", exact: true };
+    return { quantity: null, exact: false };
   }
 
   let total = 0n;
@@ -71,7 +69,7 @@ export const deriveOnChainShieldedBalance = (
     if (!transaction || transaction.result_ok === false) {
       continue;
     }
-    const authority = trimString(transaction.authority).toLowerCase();
+    const authority = trimString(transaction.authority);
     const authorityMatches = normalizedAccountIds.has(authority);
     for (const instruction of transaction.instructions ?? []) {
       const zk =
@@ -94,7 +92,7 @@ export const deriveOnChainShieldedBalance = (
         shield &&
         matchesAssetDefinitionId(shield.asset, normalizedAssetDefinitionIds)
       ) {
-        const from = trimString(shield.from).toLowerCase();
+        const from = trimString(shield.from);
         const amount = normalizeIntegerAmount(shield.amount);
         if (
           (authorityMatches || normalizedAccountIds.has(from)) &&
@@ -110,7 +108,7 @@ export const deriveOnChainShieldedBalance = (
         unshield &&
         matchesAssetDefinitionId(unshield.asset, normalizedAssetDefinitionIds)
       ) {
-        const to = trimString(unshield.to).toLowerCase();
+        const to = trimString(unshield.to);
         const amount = normalizeIntegerAmount(
           unshield.public_amount ?? unshield.publicAmount,
         );

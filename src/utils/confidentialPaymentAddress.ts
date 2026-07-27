@@ -7,8 +7,6 @@ export type ConfidentialPaymentAddressPayload = {
   shieldedOwnerTagHex: string;
   shieldedDiversifierHex: string;
   recoveryHint?: "one-time-receive-key";
-  accountId?: string;
-  amount?: string;
 };
 
 export type ConfidentialPaymentAddressParseResult =
@@ -49,41 +47,39 @@ export const parseConfidentialPaymentAddressPayload = (
     return { ok: false, reason: "none" };
   }
 
-  const receiveKeyId = trimString(
-    payload.receiveKeyId ?? payload.shieldedReceiveKeyId,
-  );
-  const receivePublicKeyBase64Url = trimString(
-    payload.receivePublicKeyBase64Url ??
-      payload.shieldedReceivePublicKeyBase64Url,
-  );
-  const shieldedOwnerTagHex = trimString(
-    payload.shieldedOwnerTagHex ?? payload.ownerTagHex,
-  ).toLowerCase();
-  const shieldedDiversifierHex = trimString(
-    payload.shieldedDiversifierHex ?? payload.diversifierHex,
-  ).toLowerCase();
-  const hasConfidentialFields = Boolean(
-    receiveKeyId ||
-      receivePublicKeyBase64Url ||
-      shieldedOwnerTagHex ||
-      shieldedDiversifierHex,
-  );
-
-  if (
-    payload.schema === "iroha-confidential-payment-address/v2" ||
-    ((shieldedOwnerTagHex || shieldedDiversifierHex) &&
-      (!receiveKeyId || !receivePublicKeyBase64Url))
-  ) {
+  if (payload.schema === "iroha-confidential-payment-address/v2") {
     return { ok: false, reason: "legacy" };
   }
 
-  if (
-    payload.schema !== "iroha-confidential-payment-address/v3" &&
-    !hasConfidentialFields
-  ) {
-    return { ok: false, reason: "none" };
+  if (payload.schema !== "iroha-confidential-payment-address/v3") {
+    return {
+      ok: false,
+      reason: "schema" in payload ? "invalid" : "none",
+    };
   }
 
+  const allowedFields = new Set([
+    "schema",
+    "receiveKeyId",
+    "receivePublicKeyBase64Url",
+    "shieldedOwnerTagHex",
+    "shieldedDiversifierHex",
+    "recoveryHint",
+  ]);
+  if (Object.keys(payload).some((field) => !allowedFields.has(field))) {
+    return { ok: false, reason: "invalid" };
+  }
+
+  const receiveKeyId = trimString(payload.receiveKeyId);
+  const receivePublicKeyBase64Url = trimString(
+    payload.receivePublicKeyBase64Url,
+  );
+  const shieldedOwnerTagHex = trimString(
+    payload.shieldedOwnerTagHex,
+  ).toLowerCase();
+  const shieldedDiversifierHex = trimString(
+    payload.shieldedDiversifierHex,
+  ).toLowerCase();
   if (
     !/^[A-Za-z0-9_-]{8,128}$/.test(receiveKeyId) ||
     !/^[A-Za-z0-9_-]+$/.test(receivePublicKeyBase64Url) ||
@@ -92,9 +88,13 @@ export const parseConfidentialPaymentAddressPayload = (
   ) {
     return { ok: false, reason: "invalid" };
   }
+  if (
+    payload.recoveryHint !== undefined &&
+    payload.recoveryHint !== "one-time-receive-key"
+  ) {
+    return { ok: false, reason: "invalid" };
+  }
 
-  const accountId = trimString(payload.accountId);
-  const amount = trimString(payload.amount);
   return {
     ok: true,
     payload: {
@@ -104,8 +104,6 @@ export const parseConfidentialPaymentAddressPayload = (
       shieldedOwnerTagHex,
       shieldedDiversifierHex,
       recoveryHint: "one-time-receive-key",
-      ...(accountId ? { accountId } : {}),
-      ...(amount ? { amount } : {}),
     },
   };
 };

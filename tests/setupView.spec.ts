@@ -16,6 +16,7 @@ const isSecureVaultAvailableMock = vi.fn();
 const pingToriiMock = vi.fn();
 const registerAccountMock = vi.fn();
 const storeAccountSecretMock = vi.fn();
+const REGISTER_TRANSACTION_HASH = "a".repeat(64);
 
 const t = (key: string, params?: Record<string, string | number>) =>
   translate("en-US", key, params);
@@ -67,7 +68,16 @@ describe("SetupView", () => {
     ]);
     isSecureVaultAvailableMock.mockResolvedValue(true);
     pingToriiMock.mockResolvedValue({ status: "ok" });
-    registerAccountMock.mockResolvedValue({ hash: "0xabc" });
+    registerAccountMock.mockResolvedValue({
+      hash: REGISTER_TRANSACTION_HASH,
+      finality: {
+        status: "finalized",
+        transactionHash: REGISTER_TRANSACTION_HASH,
+        blockHeight: 17,
+        blockHash: "b".repeat(64),
+        finalizedBlockHeight: 19,
+      },
+    });
     storeAccountSecretMock.mockResolvedValue(undefined);
 
     setActivePinia(createPinia());

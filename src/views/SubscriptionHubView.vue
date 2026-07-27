@@ -26,19 +26,29 @@
         <div class="grid-2 subscriptions-summary-grid">
           <div class="kv">
             <span class="kv-label">{{ t("Active") }}</span>
-            <span class="kv-value">{{ activeCount }}</span>
+            <span class="kv-value">{{
+              subscriptions.recordsError ? t("Unavailable") : activeCount
+            }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Paused") }}</span>
-            <span class="kv-value">{{ pausedCount }}</span>
+            <span class="kv-value">{{
+              subscriptions.recordsError ? t("Unavailable") : pausedCount
+            }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Past due") }}</span>
-            <span class="kv-value">{{ pastDueCount }}</span>
+            <span class="kv-value">{{
+              subscriptions.recordsError ? t("Unavailable") : pastDueCount
+            }}</span>
           </div>
           <div class="kv">
             <span class="kv-label">{{ t("Plan catalog") }}</span>
-            <span class="kv-value">{{ subscriptions.planTotal }}</span>
+            <span class="kv-value">{{
+              subscriptions.plansError
+                ? t("Unavailable")
+                : subscriptions.planTotal
+            }}</span>
           </div>
         </div>
         <div class="subscriptions-next-panel">
@@ -52,9 +62,6 @@
           </p>
         </div>
       </div>
-      <p v-if="subscriptions.error" class="message warning">
-        {{ subscriptions.error }}
-      </p>
       <p v-if="activeAccount?.localOnly" class="message warning">
         {{
           t(
@@ -65,11 +72,52 @@
     </section>
 
     <InlineAlert
+      v-for="pending in currentPendingReconciliations"
+      :key="pending.transactionHash"
+      tone="warning"
+      :title="t('Transaction finalized; subscription state is still indexing')"
+    >
+      <p class="helper">
+        {{
+          t("{action} finalized in block {height}.", {
+            action: pendingActionLabel(pending),
+            height: pending.finality.blockHeight,
+          })
+        }}
+      </p>
+      <p class="helper mono">
+        {{ pending.subscriptionId }} · {{ pending.transactionHash }}
+      </p>
+      <p class="helper">{{ pending.message }}</p>
+      <AppButton
+        variant="secondary"
+        :disabled="subscriptions.isReconciling(pending)"
+        @click="reconcilePendingTransaction(pending)"
+      >
+        {{
+          subscriptions.isReconciling(pending)
+            ? t("Checking live state…")
+            : t("Refresh and reconcile")
+        }}
+      </AppButton>
+      <p v-if="subscriptions.reconciliationError" class="message error">
+        {{ subscriptions.reconciliationError }}
+      </p>
+    </InlineAlert>
+
+    <InlineAlert
       v-if="subscriptions.loading"
       tone="neutral"
       :title="t('Loading subscriptions…')"
     >
       <p class="helper">{{ t("Reading live plans and wallet records.") }}</p>
+    </InlineAlert>
+    <InlineAlert
+      v-else-if="!anySubscriptionWriteSupported"
+      tone="warning"
+      :title="t('Subscription writes unavailable')"
+    >
+      <p class="helper">{{ subscriptionWriteReason() }}</p>
     </InlineAlert>
 
     <SegmentedControl
@@ -95,13 +143,17 @@
           </p>
         </div>
       </header>
+      <p v-if="subscriptions.plansError" class="message warning">
+        {{ subscriptions.plansError }}
+      </p>
       <form
+        v-if="subscriptions.plans.length && subscriptionCreateSupported"
         class="form-grid subscription-form-grid"
         @submit.prevent="subscribe"
       >
         <label class="subscription-span-2">
           {{ t("Plan ID") }}
-          <select v-if="subscriptions.plans.length" v-model="form.planId">
+          <select v-model="form.planId">
             <option value="">{{ t("Select plan") }}</option>
             <option
               v-for="plan in subscriptions.plans"
@@ -111,11 +163,6 @@
               {{ planLabel(plan) }}
             </option>
           </select>
-          <input
-            v-else
-            v-model.trim="form.planId"
-            :placeholder="t('Manual plan ID')"
-          />
         </label>
         <label class="subscription-span-2">
           {{ t("Subscription NFT ID") }}
@@ -141,7 +188,9 @@
           type="submit"
           class="subscription-submit"
           data-ui-primary-action
-          :disabled="actionBusy === 'create'"
+          :disabled="
+            actionBusy === 'create' || pendingBlocksGeneratedSubscription
+          "
         >
           {{
             actionBusy === "create"
@@ -150,7 +199,23 @@
           }}
         </button>
       </form>
+      <EmptyState
+        v-else-if="!subscriptions.plansError"
+        :title="
+          subscriptions.plans.length
+            ? t('Subscription writes unavailable')
+            : t('No live plans found')
+        "
+        :description="
+          subscriptions.plans.length
+            ? subscriptionWriteReason(SUBSCRIPTION_WRITE_OPERATIONS.create)
+            : t(
+                'This Torii endpoint has no subscription plans to subscribe to.',
+              )
+        "
+      />
       <p v-if="formError" class="message error">{{ formError }}</p>
+      <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
 
       <div class="subscription-plan-list">
         <p class="meta-label">{{ t("Available plans") }}</p>
@@ -180,7 +245,10 @@
             </div>
           </article>
         </div>
-        <p v-else class="helper subscription-empty">
+        <p
+          v-else-if="!subscriptions.plansError"
+          class="helper subscription-empty"
+        >
           {{ t("No live plans found.") }}
         </p>
       </div>
@@ -194,11 +262,18 @@
             {{ t("Owned subscription NFTs for the active wallet.") }}
           </p>
         </div>
-        <span class="pill">{{
-          t("{count} total", { count: subscriptions.total })
-        }}</span>
+        <span class="pill">
+          {{
+            subscriptions.recordsError
+              ? t("Unavailable")
+              : t("{count} total", { count: subscriptions.total })
+          }}
+        </span>
       </header>
-      <div v-if="sortedRecords.length" class="subscription-stack">
+      <p v-if="subscriptions.recordsError" class="message warning">
+        {{ subscriptions.recordsError }}
+      </p>
+      <div v-else-if="sortedRecords.length" class="subscription-stack">
         <article
           v-for="record in sortedRecords"
           :key="record.subscription_id"
@@ -281,21 +356,45 @@
           <div class="subscription-actions">
             <button
               class="secondary"
-              :disabled="!canPauseOrResume(record)"
+              :disabled="
+                !subscriptionOperationSupported(
+                  pauseOperationForRecord(record),
+                ) ||
+                !recordBelongsToCurrentContext(record) ||
+                recordHasPendingReconciliation(record) ||
+                Boolean(actionBusy) ||
+                !canPauseOrResume(record)
+              "
               @click="togglePause(record)"
             >
               {{ pauseLabel(record) }}
             </button>
             <button
               class="secondary"
-              :disabled="!canCancelOrKeep(record)"
+              :disabled="
+                !subscriptionOperationSupported(
+                  cancelOperationForRecord(record),
+                ) ||
+                !recordBelongsToCurrentContext(record) ||
+                recordHasPendingReconciliation(record) ||
+                Boolean(actionBusy) ||
+                !canCancelOrKeep(record)
+              "
               @click="toggleCancel(record)"
             >
               {{ cancelLabel(record) }}
             </button>
             <button
               class="ghost"
-              :disabled="!canChargeNow(record)"
+              :disabled="
+                !subscriptionOperationSupported(
+                  SUBSCRIPTION_WRITE_OPERATIONS.charge,
+                ) ||
+                !recordBelongsToCurrentContext(record) ||
+                recordHasPendingReconciliation(record) ||
+                Boolean(actionBusy) ||
+                !canChargeNow(record)
+              "
               @click="chargeNow(record)"
             >
               {{ t("Charge now") }}
@@ -304,25 +403,29 @@
         </article>
       </div>
       <EmptyState
-        v-else
+        v-else-if="!subscriptions.recordsError"
         :title="t('No subscriptions yet')"
         :description="
           t('This account has no subscriptions on the active network.')
         "
       >
         <template #actions>
-          <AppButton @click="workspaceMode = 'add'">
+          <AppButton
+            v-if="subscriptions.plans.length && subscriptionCreateSupported"
+            @click="workspaceMode = 'add'"
+          >
             {{ t("Subscribe to plan") }}
           </AppButton>
         </template>
       </EmptyState>
+      <p v-if="formError" class="message error">{{ formError }}</p>
       <p v-if="actionMessage" class="message success">{{ actionMessage }}</p>
     </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   AppButton,
@@ -331,16 +434,24 @@ import {
   RouteHeaderAction,
   SegmentedControl,
 } from "@/components/ui";
-import { useSubscriptionStore } from "@/stores/subscriptions";
+import { useEndpointStore } from "@/stores/endpoint";
+import {
+  useSubscriptionStore,
+  type SubscriptionPendingReconciliation,
+} from "@/stores/subscriptions";
 import { useSessionStore } from "@/stores/session";
+import { isEndpointFeatureOperationSupported } from "@/utils/endpointFeatures";
 import type {
+  SubscriptionActionResponseView,
   SubscriptionListItemView,
+  SubscriptionMutationActionView,
   SubscriptionPlanListItemView,
 } from "@/types/iroha";
 import {
   buildSubscriptionNftId,
   formatPlanCadence,
   formatPlanPricing,
+  formatSubscriptionQuantity,
   planFromSubscriptionItem,
   planIdFromPlanItem,
   planPayloadFromPlanItem,
@@ -361,6 +472,8 @@ import {
 
 const subscriptions = useSubscriptionStore();
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
+subscriptions.hydrate();
 const { localeStore, t, n } = useAppI18n();
 
 const form = reactive({
@@ -372,9 +485,56 @@ const formError = ref("");
 const actionBusy = ref("");
 const actionMessage = ref("");
 const workspaceMode = ref<"current" | "add">("current");
+let actionGeneration = 0;
+
+const SUBSCRIPTION_WRITE_OPERATIONS = {
+  create: "POST /v1/subscriptions",
+  pause: "POST /v1/subscriptions/{subscription_id}/pause",
+  resume: "POST /v1/subscriptions/{subscription_id}/resume",
+  cancel: "POST /v1/subscriptions/{subscription_id}/cancel",
+  keep: "POST /v1/subscriptions/{subscription_id}/keep",
+  charge: "POST /v1/subscriptions/{subscription_id}/charge-now",
+} as const;
+
+type SubscriptionWriteOperation =
+  (typeof SUBSCRIPTION_WRITE_OPERATIONS)[keyof typeof SUBSCRIPTION_WRITE_OPERATIONS];
 
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountId = computed(() => activeAccount.value?.accountId ?? "");
+const subscriptionOperationSupported = (
+  operation: SubscriptionWriteOperation,
+) =>
+  endpointStore.writeAllowed &&
+  isEndpointFeatureOperationSupported(
+    endpointStore.inspection,
+    "subscriptionWrites",
+    operation,
+  );
+const subscriptionCreateSupported = computed(() =>
+  subscriptionOperationSupported(SUBSCRIPTION_WRITE_OPERATIONS.create),
+);
+const anySubscriptionWriteSupported = computed(() =>
+  Object.values(SUBSCRIPTION_WRITE_OPERATIONS).some((operation) =>
+    subscriptionOperationSupported(operation),
+  ),
+);
+const subscriptionWriteReason = (operation?: SubscriptionWriteOperation) => {
+  if (endpointStore.state === "checking") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  if (operation) {
+    return t("This endpoint does not advertise {operation}.", { operation });
+  }
+  return t(
+    "This endpoint does not advertise the required subscription write operations.",
+  );
+};
 
 const unitLabel = computed(() => {
   const asset = session.connection.assetDefinitionId || "";
@@ -416,7 +576,7 @@ const generatedSubscriptionId = computed(() =>
 );
 
 const formatDateMs = (timestampMs: number | null) => {
-  if (!timestampMs) return t("—");
+  if (timestampMs === null) return t("—");
   return new Intl.DateTimeFormat(localeStore.current, {
     dateStyle: "medium",
     timeStyle: "short",
@@ -434,6 +594,7 @@ const lastUpdatedLabel = computed(() => {
 });
 
 const nextDueLabel = computed(() => {
+  if (subscriptions.recordsError) return t("Unavailable");
   const next = sortedRecords.value.find(
     (record) => subscriptionStatusFromItem(record) === "active",
   );
@@ -443,6 +604,69 @@ const nextDueLabel = computed(() => {
     date: formatDateMs(recordNextCharge(next)),
   });
 });
+
+const currentSubscriptionContext = () => {
+  const inspection = endpointStore.inspection;
+  return {
+    toriiUrl: session.connection.toriiUrl.trim(),
+    accountId: activeAccountId.value.trim(),
+    chainId: session.connection.chainId.trim(),
+    networkPrefix: session.connection.networkPrefix,
+    observedChainId: inspection?.observed?.chainId?.trim() ?? "",
+    observedNetworkPrefix: inspection?.observed?.networkPrefix ?? null,
+    identityStatus: inspection?.identityStatus ?? "uninspected",
+  };
+};
+
+const currentPendingReconciliations = computed(() => {
+  const context = currentSubscriptionContext();
+  return context.toriiUrl ? subscriptions.pendingForContext(context) : [];
+});
+
+const pendingBlocksGeneratedSubscription = computed(() => {
+  const subscriptionId =
+    form.subscriptionId.trim() || generatedSubscriptionId.value;
+  const context = currentSubscriptionContext();
+  return Boolean(
+    context.toriiUrl &&
+      subscriptionId &&
+      subscriptions.hasPendingForSubscription(context, subscriptionId),
+  );
+});
+
+const recordHasPendingReconciliation = (record: SubscriptionListItemView) => {
+  const context = currentSubscriptionContext();
+  return Boolean(
+    context.toriiUrl &&
+      subscriptions.hasPendingForSubscription(context, record.subscription_id),
+  );
+};
+
+const pendingActionLabel = (pending: SubscriptionPendingReconciliation) => {
+  switch (pending.action) {
+    case "create":
+      return t("Subscription creation");
+    case "pause":
+      return t("Pause");
+    case "resume":
+      return t("Resume");
+    case "cancel":
+      return t("Cancel");
+    case "keep":
+      return t("Keep subscription");
+    case "charge_now":
+      return t("Charge now");
+  }
+};
+
+const refresh = async () => {
+  const context = currentSubscriptionContext();
+  if (!context.toriiUrl) {
+    subscriptions.activateContext(null);
+    return;
+  }
+  await subscriptions.refresh(context);
+};
 
 watch(
   () => subscriptions.plans.map((plan) => plan.plan_id).join("|"),
@@ -454,20 +678,25 @@ watch(
 );
 
 watch(
-  () => [session.connection.toriiUrl, activeAccountId.value],
+  () => JSON.stringify(currentSubscriptionContext()),
   () => {
-    void refresh();
+    actionGeneration += 1;
+    actionBusy.value = "";
+    actionMessage.value = "";
+    formError.value = "";
+    form.planId = "";
+    form.subscriptionId = "";
+    form.firstChargeAt = "";
+    const context = currentSubscriptionContext();
+    if (!context.toriiUrl) {
+      subscriptions.activateContext(null);
+      return;
+    }
+    subscriptions.activateContext(context);
+    void subscriptions.refresh(context);
   },
+  { flush: "sync", immediate: true },
 );
-
-const refresh = async () => {
-  const toriiUrl = session.connection.toriiUrl;
-  if (!toriiUrl) return;
-  await subscriptions.refresh({
-    toriiUrl,
-    accountId: activeAccountId.value || undefined,
-  });
-};
 
 const planLabel = (plan: SubscriptionPlanListItemView) => {
   const planId = planIdFromPlanItem(plan);
@@ -566,6 +795,23 @@ const canCancelOrKeep = (record: SubscriptionListItemView) =>
 const canChargeNow = (record: SubscriptionListItemView) =>
   ["active", "past_due"].includes(subscriptionStatusFromItem(record));
 
+const pauseOperationForRecord = (
+  record: SubscriptionListItemView,
+): SubscriptionWriteOperation =>
+  subscriptionStatusFromItem(record) === "paused"
+    ? SUBSCRIPTION_WRITE_OPERATIONS.resume
+    : SUBSCRIPTION_WRITE_OPERATIONS.pause;
+
+const cancelOperationForRecord = (
+  record: SubscriptionListItemView,
+): SubscriptionWriteOperation =>
+  subscriptionCancelAtPeriodEnd(record)
+    ? SUBSCRIPTION_WRITE_OPERATIONS.keep
+    : SUBSCRIPTION_WRITE_OPERATIONS.cancel;
+
+const recordBelongsToCurrentContext = (record: SubscriptionListItemView) =>
+  subscriptions.ownsRecord(record, currentSubscriptionContext());
+
 const pauseLabel = (record: SubscriptionListItemView) =>
   subscriptionStatusFromItem(record) === "paused" ? t("Resume") : t("Pause");
 
@@ -584,7 +830,9 @@ const invoiceLabel = (record: SubscriptionListItemView) => {
   const unit = assetDefinition
     ? deriveAssetSymbol(assetDefinition, unitLabel.value)
     : unitLabel.value;
-  const amount = n(Number(invoice.amount ?? 0), { maximumFractionDigits: 6 });
+  const amount =
+    formatSubscriptionQuantity(invoice.amount, formatSubscriptionAmount) ||
+    t("—");
   const rawStatus = invoice.status;
   const status =
     typeof rawStatus === "object" && rawStatus
@@ -611,11 +859,79 @@ const resetForm = () => {
   form.firstChargeAt = "";
 };
 
+const captureActionContext = () => currentSubscriptionContext();
+
+const isCurrentAction = (
+  generation: number,
+  context: ReturnType<typeof captureActionContext>,
+) => generation === actionGeneration && subscriptions.isCurrentContext(context);
+
+const assertSuccessfulSubscriptionResult = (
+  result: SubscriptionActionResponseView,
+  expectedSubscriptionId: string,
+  expectedAction: SubscriptionMutationActionView,
+) => {
+  if (result.ok !== true) {
+    throw new Error("Subscription response did not confirm success.");
+  }
+  if (result.subscription_id !== expectedSubscriptionId) {
+    throw new Error(
+      "Subscription response does not match the requested subscription.",
+    );
+  }
+  if (result.action !== expectedAction) {
+    throw new Error(
+      "Subscription response does not match the requested action.",
+    );
+  }
+  if (!/^[0-9a-f]{64}$/u.test(result.tx_hash_hex)) {
+    throw new Error(
+      "Subscription response did not include a valid transaction hash.",
+    );
+  }
+  if (
+    result.finality?.status !== "finalized" ||
+    result.finality.transactionHash !== result.tx_hash_hex ||
+    !Number.isSafeInteger(result.finality.blockHeight) ||
+    result.finality.blockHeight < 1 ||
+    !/^[0-9a-f]{64}$/u.test(result.finality.blockHash) ||
+    !Number.isSafeInteger(result.finality.finalizedBlockHeight) ||
+    result.finality.finalizedBlockHeight < result.finality.blockHeight
+  ) {
+    throw new Error(
+      "Subscription response did not prove the transaction in a finalized block.",
+    );
+  }
+  if (
+    result.state_status !== "confirmed" &&
+    result.state_status !== "advanced" &&
+    result.state_status !== "indexing"
+  ) {
+    throw new Error(
+      "Subscription response did not include authoritative state reconciliation.",
+    );
+  }
+};
+
+const appendSubscriptionReconciliation = (
+  message: string,
+  result: SubscriptionActionResponseView,
+) =>
+  result.state_status === "indexing" && result.reconciliation_message
+    ? `${message} ${result.reconciliation_message}`
+    : message;
+
 const subscribe = async () => {
   formError.value = "";
   actionMessage.value = "";
   const accountId = activeAccountId.value;
   const planId = form.planId.trim();
+  if (!subscriptionCreateSupported.value) {
+    formError.value = subscriptionWriteReason(
+      SUBSCRIPTION_WRITE_OPERATIONS.create,
+    );
+    return;
+  }
   if (!accountId) {
     formError.value = t("Configure account first");
     return;
@@ -624,33 +940,49 @@ const subscribe = async () => {
     formError.value = t("Enter a plan ID.");
     return;
   }
+  const context = captureActionContext();
+  const generation = ++actionGeneration;
   actionBusy.value = "create";
   try {
     const subscriptionId =
-      form.subscriptionId.trim() || buildSubscriptionNftId(accountId, planId);
+      form.subscriptionId.trim() || generatedSubscriptionId.value;
     const result = await subscriptions.create({
-      toriiUrl: session.connection.toriiUrl,
-      accountId,
-      privateKeyHex: activeAccount.value?.privateKeyHex || undefined,
+      ...context,
       subscriptionId,
       planId,
       firstChargeMs: parseFirstChargeMs(),
     });
-    actionMessage.value = appendTransactionFee(
-      t("Subscription submitted: {hash}", {
-        hash: shortenIdentifier(result.tx_hash_hex),
-      }),
+    assertSuccessfulSubscriptionResult(result, subscriptionId, "create");
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
+    actionMessage.value = appendSubscriptionReconciliation(
+      appendTransactionFee(
+        `${t("Subscription finalized: {hash}", {
+          hash: shortenIdentifier(result.tx_hash_hex),
+        })} · ${t("Block {height}", {
+          height: result.finality.blockHeight,
+        })}`,
+        result,
+        t,
+        transactionFeeHintForEndpoint(context.toriiUrl),
+      ),
       result,
-      t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
     );
-    resetForm();
-    await refresh();
+    if (result.state_status !== "indexing") {
+      resetForm();
+    }
+    await subscriptions.refresh(context);
   } catch (error) {
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
     formError.value =
       error instanceof Error ? error.message : t("Action failed.");
   } finally {
-    actionBusy.value = "";
+    if (isCurrentAction(generation, context)) {
+      actionBusy.value = "";
+    }
   }
 };
 
@@ -659,45 +991,122 @@ const runRecordAction = async (
   kind: "pause" | "resume" | "cancel" | "keep" | "charge",
 ) => {
   const accountId = activeAccountId.value;
-  if (!accountId) return;
+  const operation =
+    kind === "pause"
+      ? SUBSCRIPTION_WRITE_OPERATIONS.pause
+      : kind === "resume"
+        ? SUBSCRIPTION_WRITE_OPERATIONS.resume
+        : kind === "cancel"
+          ? SUBSCRIPTION_WRITE_OPERATIONS.cancel
+          : kind === "keep"
+            ? SUBSCRIPTION_WRITE_OPERATIONS.keep
+            : SUBSCRIPTION_WRITE_OPERATIONS.charge;
+  if (!accountId || !subscriptionOperationSupported(operation)) {
+    formError.value = subscriptionWriteReason(operation);
+    return;
+  }
+  const context = captureActionContext();
+  const generation = ++actionGeneration;
   const subscriptionId = record.subscription_id;
   actionBusy.value = `${subscriptionId}:${kind}`;
   actionMessage.value = "";
   formError.value = "";
   try {
     const input = {
-      toriiUrl: session.connection.toriiUrl,
-      accountId,
-      privateKeyHex: activeAccount.value?.privateKeyHex || undefined,
+      ...context,
       subscriptionId,
     };
     const result =
       kind === "pause"
-        ? await subscriptions.pause(input)
+        ? await subscriptions.pause(record, input)
         : kind === "resume"
-          ? await subscriptions.resume(input)
+          ? await subscriptions.resume(record, input)
           : kind === "cancel"
-            ? await subscriptions.cancel({
+            ? await subscriptions.cancel(record, {
                 ...input,
                 cancelMode: "period_end",
               })
             : kind === "keep"
-              ? await subscriptions.keep(input)
-              : await subscriptions.chargeNow(input);
-    actionMessage.value = appendTransactionFee(
-      t("Subscription action submitted: {hash}", {
-        hash: shortenIdentifier(result.tx_hash_hex),
-      }),
+              ? await subscriptions.keep(record, input)
+              : await subscriptions.chargeNow(record, input);
+    assertSuccessfulSubscriptionResult(
       result,
-      t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
+      subscriptionId,
+      kind === "charge" ? "charge_now" : kind,
     );
-    await refresh();
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
+    actionMessage.value = appendSubscriptionReconciliation(
+      appendTransactionFee(
+        `${t("Subscription action finalized: {hash}", {
+          hash: shortenIdentifier(result.tx_hash_hex),
+        })} · ${t("Block {height}", {
+          height: result.finality.blockHeight,
+        })}`,
+        result,
+        t,
+        transactionFeeHintForEndpoint(context.toriiUrl),
+      ),
+      result,
+    );
+    await subscriptions.refresh(context);
   } catch (error) {
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
     formError.value =
       error instanceof Error ? error.message : t("Action failed.");
   } finally {
-    actionBusy.value = "";
+    if (isCurrentAction(generation, context)) {
+      actionBusy.value = "";
+    }
+  }
+};
+
+const reconcilePendingTransaction = async (
+  pending: SubscriptionPendingReconciliation,
+) => {
+  const context = captureActionContext();
+  const generation = ++actionGeneration;
+  actionBusy.value = `reconcile:${pending.transactionHash}`;
+  actionMessage.value = "";
+  formError.value = "";
+  try {
+    const result = await subscriptions.reconcilePending(pending, context);
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
+    const message =
+      result.state_status === "indexing"
+        ? t("Finalized transaction is still indexing: {hash}", {
+            hash: shortenIdentifier(result.tx_hash_hex),
+          })
+        : t("Finalized subscription state reconciled: {hash}", {
+            hash: shortenIdentifier(result.tx_hash_hex),
+          });
+    actionMessage.value = appendSubscriptionReconciliation(
+      appendTransactionFee(
+        `${message} · ${t("Block {height}", {
+          height: result.finality.blockHeight,
+        })}`,
+        result,
+        t,
+        transactionFeeHintForEndpoint(context.toriiUrl),
+      ),
+      result,
+    );
+    await subscriptions.refresh(context);
+  } catch (error) {
+    if (!isCurrentAction(generation, context)) {
+      return;
+    }
+    formError.value =
+      error instanceof Error ? error.message : t("Action failed.");
+  } finally {
+    if (isCurrentAction(generation, context)) {
+      actionBusy.value = "";
+    }
   }
 };
 
@@ -725,11 +1134,6 @@ const shortenIdentifier = (value: string) => {
   }
   return `${value.slice(0, 10)}…${value.slice(-10)}`;
 };
-
-onMounted(() => {
-  subscriptions.hydrate();
-  void refresh();
-});
 </script>
 
 <style scoped>

@@ -10,6 +10,7 @@ import {
   governanceProposalPath,
   governanceReferendumPath,
   governanceTallyPath,
+  validationFeePlainBallotDraftPath,
   validationFeeProposalPath,
 } from "../electron/governanceRoutes";
 
@@ -18,6 +19,9 @@ describe("governance Torii routes", () => {
     expect(VALIDATION_FEE_PROPOSALS_PATH).toBe("/v1/validation-fee/proposals");
     expect(validationFeeProposalPath("ab".repeat(32))).toBe(
       `/v1/validation-fee/proposals/${"ab".repeat(32)}`,
+    );
+    expect(validationFeePlainBallotDraftPath("ab".repeat(32))).toBe(
+      `/v1/validation-fee/proposals/${"ab".repeat(32)}/plain-ballot/draft`,
     );
     expect(VALIDATION_FEE_PROPOSALS_PATH).not.toBe("/v1/gov/proposals");
   });
@@ -62,5 +66,90 @@ describe("governance Torii routes", () => {
     expect(preloadSource).not.toContain(
       'buildNexusEndpoint(toriiUrl, "/configuration")',
     );
+    expect(preloadSource).not.toContain("/v1/gov/enact");
+    expect(preloadSource).toContain("validationFeePlainBallotDraftPath(");
+    expect(preloadSource).not.toContain(
+      'governanceRequestJson(\n    input.toriiUrl,\n    "/v1/gov/ballots/plain"',
+    );
+  });
+
+  it("uses the proposal-bound validation-fee draft with only native request fields", () => {
+    const preloadSource = readFileSync(
+      resolve(process.cwd(), "electron/preload.ts"),
+      "utf8",
+    );
+    const start = preloadSource.indexOf(
+      "const prepareGovernancePlainBallotAction",
+    );
+    const end = preloadSource.indexOf(
+      "const prepareGovernanceParliamentBallotAction",
+      start,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const prepare = preloadSource.slice(start, end);
+    expect(prepare).toContain("validationFeePlainBallotDraftPath(");
+    expect(prepare).toContain(
+      "version: plainReferendum.contract.ballot.requestVersion",
+    );
+    expect(prepare).toContain("owner: accountId");
+    expect(prepare).toContain("direction: input.direction.toUpperCase()");
+    expect(prepare).toContain("assertGovernancePlainReferendumBallotDraft(");
+    expect(prepare).not.toContain("/v1/gov/ballots/plain");
+    expect(prepare).not.toContain("chain_id:");
+    expect(prepare).not.toContain("authority:");
+  });
+
+  it("loads proposal detail only from the current typed detail contract", () => {
+    const preloadSource = readFileSync(
+      resolve(process.cwd(), "electron/preload.ts"),
+      "utf8",
+    );
+    const start = preloadSource.indexOf(
+      "const fetchGovernanceProposalDetail = async",
+    );
+    const end = preloadSource.indexOf(
+      "const fetchGovernanceValidationFeePolicy = async",
+      start,
+    );
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const detailLoader = preloadSource.slice(start, end);
+
+    expect(detailLoader).toContain("validationFeeProposalPath(rawId)");
+    expect(detailLoader).not.toContain("governanceProposalPath(");
+    expect(detailLoader).not.toContain("governanceReferendumPath(");
+    expect(detailLoader).not.toContain("governanceTallyPath(");
+    expect(detailLoader).not.toContain("governanceLocksPath(");
+    expect(detailLoader).not.toContain("GOVERNANCE_UNLOCK_STATS_PATH");
+  });
+
+  it("binds validation-fee proof reads to observed governance identity", () => {
+    const preloadSource = readFileSync(
+      resolve(process.cwd(), "electron/preload.ts"),
+      "utf8",
+    );
+    const start = preloadSource.indexOf(
+      "const fetchGovernanceValidationFeePolicy = async",
+    );
+    const end = preloadSource.indexOf("const normalizeGovernanceWireId", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const policyLoader = preloadSource.slice(start, end);
+
+    expect(policyLoader).toContain(
+      "const capabilities = await fetchGovernanceCapabilities(endpoint)",
+    );
+    expect(policyLoader).toContain("capabilities.chainId !== chainId");
+    expect(policyLoader).toContain(
+      "capabilities.networkPrefix !== networkPrefix",
+    );
+    expect(policyLoader.indexOf("fetchGovernanceCapabilities")).toBeLessThan(
+      policyLoader.indexOf("GOVERNANCE_VALIDATION_FEE_POLICY_IPC_CHANNEL"),
+    );
+    expect(policyLoader).not.toContain("GOVERNANCE_RUNTIME_CONFIG_IPC_CHANNEL");
+    expect(policyLoader).not.toContain("trustScopeHash");
+    expect(policyLoader).not.toContain("https://taira.sora.org");
+    expect(policyLoader).not.toContain(".origin");
   });
 });

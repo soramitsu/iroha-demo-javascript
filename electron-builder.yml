@@ -5,9 +5,15 @@ directories:
   output: release
   buildResources: buildResources
 afterPack: scripts/after-pack.mjs
+afterSign: scripts/after-sign.mjs
+asarUnpack:
+  - dist/native/iroha_js_host.node
 files:
   - dist/**
   - package.json
+extraResources:
+  - from: resources/governance-referendum-source.json
+    to: governance/governance-referendum-source.json
 protocols:
   - name: Iroha
     schemes:
@@ -28,17 +34,18 @@ mac:
     - from: dist-native/vpn/${os}
       to: vpn
       filter:
-        - '**/*'
+        - "**/*"
 win:
+  signExts:
+    - .exe
+    - .node
   target:
     - target: nsis
       arch:
         - x64
-        - arm64
     - target: zip
       arch:
         - x64
-        - arm64
 nsis:
   oneClick: false
   perMachine: false
@@ -54,4 +61,4 @@ linux:
     - from: dist-native/vpn/${os}
       to: vpn
       filter:
-        - '**/*'
+        - "**/*"

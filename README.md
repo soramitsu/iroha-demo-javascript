@@ -49,8 +49,8 @@ supports:
   data model `3`;
 - typed validation-fee list/detail reads with exact-ID deep links;
 - the seven concurrent Parliament bodies, including members-only FMA voting;
-- automatic PLAIN finalization, lifecycle inspection, and enactment only after
-  genuine finalized evidence is present;
+- automatic finalization only for generic non-validation-fee PLAIN proposals,
+  plus validation-fee lifecycle/finalization evidence inspection;
 - reviewed citizenship registration through the Core citizen-draft route;
 - typed payout-lifecycle composition followed by an exact linked
   validation-fee policy;
@@ -65,6 +65,17 @@ Governance transactions never accept private keys from renderer or HTTP
 fields. The Electron bridge reviews the exact Core draft and fee quote, then
 resolves the signer from the OS vault only when the user confirms. There is no
 manual finalize action or legacy signed-policy path.
+
+Validation-fee citizen voting loads the operator-produced
+`sora.parliament.plain-referendum.v2` artifact through the packaged
+`resources/governance-referendum-source.json`. Electron fetches a same-origin
+handoff descriptor and its content-addressed artifact, verifies raw SHA-256,
+byte length, Taira chain/genesis/proposal/window/electorate coordinates, and
+persists a private rollback/equivocation watermark. The renderer cannot supply
+an artifact, URL, checkpoint, or finality override. Validation-fee ballots are
+prepared only through the artifact-bound
+`/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft` route; the
+generic PLAIN route remains limited to non-validation-fee referenda.
 
 ## Validation-fee trust boundary
 
@@ -143,6 +154,13 @@ and `/v1/validation-fee/status`, requires the status wrapper to contain the
 exact same projection, checks every runtime ledger/Parliament/payout
 coordinate, and rejects rollback or same-coordinate equivocation. Any failed
 read clears the renderer state; no stale cached policy is served.
+
+Governance authorization, vote review, finalization, and enactment use only the
+strict typed proposal-detail response and its canonical decimal-string tally,
+lock, and finalization fields. The older `getGovernanceTally` and
+`getGovernanceLocks` bridge helpers expose number-coerced SDK diagnostics; they
+are non-evidence UI diagnostics only and must never authorize a write, prove a
+vote, or satisfy a finalization check.
 
 ## Architecture
 

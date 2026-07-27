@@ -76,6 +76,10 @@ describe("release Sigstore boundary", () => {
     expect(workflow).not.toContain("vars.IROHA_REF || 'main'");
     expect(workflow).not.toContain('default: "main"');
     expect(workflow).toContain('"$IROHA_REF" =~ ^[0-9a-f]{40}$');
+    expect(workflow).toContain(
+      'REVIEWED_IROHA_REF: "1bcb05eb208d8bda1610789d827a7ed97e66e56c"',
+    );
+    expect(workflow).toContain('"$IROHA_REF" != "$REVIEWED_IROHA_REF"');
     expect(workflow).toContain('GITHUB_REF_PROTECTED" != "true"');
     expect(workflow).toContain(
       "Release tag $RELEASE_TAG must be covered by an active GitHub tag-protection ruleset.",
@@ -92,12 +96,15 @@ describe("release Sigstore boundary", () => {
     expect(workflow).toContain(
       'gh api "repos/hyperledger-iroha/iroha/commits/$iroha_sha"',
     );
+    expect(workflow).toContain(
+      'gh api "repos/hyperledger-iroha/iroha/commits/$iroha_parent"',
+    );
     expect(
       workflow.match(/\.verification\.verified/g)?.length,
-    ).toBeGreaterThanOrEqual(3);
+    ).toBeGreaterThanOrEqual(4);
     expect(
       workflow.match(/\.verification\.reason/g)?.length,
-    ).toBeGreaterThanOrEqual(3);
+    ).toBeGreaterThanOrEqual(4);
     expect(workflow).not.toContain("git apply");
     expect(agentNotes).toContain(
       "release workflow must never patch the checked-out sibling Iroha SDK",
@@ -105,7 +112,8 @@ describe("release Sigstore boundary", () => {
   });
 
   it("binds the pinned source identities into signed release metadata", () => {
-    expect(workflow).toContain('"sora.wallet.release-source.v1"');
+    expect(workflow).toContain('"sora.wallet.release-source.v2"');
+    expect(workflow).not.toContain('"sora.wallet.release-source.v1"');
     expect(workflow).toContain("SOURCE-IDENTITY.json");
     expect(workflow).toContain("SOURCE-IDENTITY.json.sigstore.json");
     expect(workflow).toContain(
@@ -117,6 +125,13 @@ describe("release Sigstore boundary", () => {
     expect(workflow).toContain(
       "WALLET_COMMIT_SHA: ${{ needs.preflight.outputs.wallet_sha }}",
     );
+    expect(workflow).toContain("parent_commit: $iroha_parent_commit");
+    expect(workflow).toContain("tree: $iroha_tree");
+    expect(workflow).toContain("javascript_tree: $iroha_js_tree");
+    expect(workflow).toContain("sha256: $iroha_cargo_lock_sha256");
+    expect(workflow).toContain("size_bytes: $iroha_cargo_lock_size");
+    expect(workflow).toContain("source_tree_clean: true");
+    expect(workflow).toContain("resources/release/iroha-v4-Cargo.lock");
     expect(
       workflow.match(/-o -name 'SOURCE-IDENTITY\.json'/g)?.length,
     ).toBeGreaterThanOrEqual(2);
@@ -139,6 +154,9 @@ describe("release Sigstore boundary", () => {
     expect(releaseGuide).toContain(
       'gh variable set IROHA_REF --repo "$release_repo" --body "$iroha_commit"',
     );
+    expect(releaseGuide).toContain("1bcb05eb208d8bda1610789d827a7ed97e66e56c");
+    expect(releaseGuide).toContain("03b2bff298cabe1c1355d78379acb4a099e6d627");
+    expect(releaseGuide).toContain("resources/release/iroha-v4-Cargo.lock");
     expect(releaseGuide).toContain('"include": ["refs/tags/v*"]');
     expect(releaseGuide).toContain('{"type": "update"}');
     expect(releaseGuide).toContain('{"type": "deletion"}');
