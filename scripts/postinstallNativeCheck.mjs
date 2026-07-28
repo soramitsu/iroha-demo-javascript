@@ -9,6 +9,8 @@ const CHECKSUM_FILENAME = "iroha_js_host.checksums.json";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const GIT_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const PE_DOS_HEADER_BYTES = 64;
+const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 3;
+const REQUIRED_NATIVE_BUILD_EXECUTION_POLICY = "trusted-local-cargo-v1";
 const REQUIRED_NATIVE_EXPORTS = [
   "accountAddressParseEncoded",
   "accountAddressRender",
@@ -24,18 +26,22 @@ const REQUIRED_NATIVE_EXPORTS = [
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
   "connectNoritoBridgeAbiVersion",
+  "securePrivateFileAbiVersion",
+  "securePrivateDirectoryEnsure",
+  "securePrivateFileRead",
+  "securePrivateFileWriteAtomic",
 ];
-const REQUIRED_NATIVE_EXPORT_ARITIES = Object.freeze({
-  validationFeePolicyProposalFingerprintV1: 3,
-  validationFeePayoutLifecycleProposalFingerprintV1: 2,
-});
 const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21;
+const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
 const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT =
-  "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6";
+  "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90";
 const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT =
-  "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e";
+  "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b";
 const REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON = JSON.stringify({
   voting_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
+  bond_escrow_account: "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+  slash_receiver_account:
+    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
   ballot_amount: "150",
   ballot_duration_blocks: "3600",
   citizenship_amount: "10000",
@@ -178,10 +184,13 @@ const describeReleaseProvenanceFailure = (
   }
 
   const allowedFields = new Set([
+    "build_execution_policy",
+    "build_provenance_version",
     "cargo_profile",
     "sha256",
     "source_git_revision",
     "source_tree_clean",
+    "source_tree_sha256",
   ]);
   if (platformKey.startsWith("darwin-")) {
     allowedFields.add("mach_o_signing_independent_sha256");
@@ -197,9 +206,12 @@ const describeReleaseProvenanceFailure = (
   }
 
   const requiredProvenanceFields = [
+    "build_execution_policy",
+    "build_provenance_version",
     "cargo_profile",
     "source_git_revision",
     "source_tree_clean",
+    "source_tree_sha256",
   ];
   if (platformKey.startsWith("darwin-")) {
     requiredProvenanceFields.push("mach_o_signing_independent_sha256");
@@ -221,6 +233,22 @@ const describeReleaseProvenanceFailure = (
     )}`;
   }
   if (
+    checksumEntry.build_provenance_version !==
+    REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION
+  ) {
+    return `native build provenance version mismatch for ${platformKey}: expected ${REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION}, observed ${String(
+      checksumEntry.build_provenance_version,
+    )}`;
+  }
+  if (
+    checksumEntry.build_execution_policy !==
+    REQUIRED_NATIVE_BUILD_EXECUTION_POLICY
+  ) {
+    return `native build execution policy mismatch for ${platformKey}: expected ${REQUIRED_NATIVE_BUILD_EXECUTION_POLICY}, observed ${String(
+      checksumEntry.build_execution_policy,
+    )}`;
+  }
+  if (
     typeof checksumEntry.source_git_revision !== "string" ||
     !GIT_REVISION_PATTERN.test(checksumEntry.source_git_revision)
   ) {
@@ -234,6 +262,12 @@ const describeReleaseProvenanceFailure = (
   }
   if (checksumEntry.source_tree_clean !== true) {
     return `native source tree is not clean for ${platformKey}`;
+  }
+  if (
+    typeof checksumEntry.source_tree_sha256 !== "string" ||
+    !SHA256_PATTERN.test(checksumEntry.source_tree_sha256)
+  ) {
+    return `native source tree SHA-256 is malformed for ${platformKey}`;
   }
   if (
     typeof checksumEntry.sha256 !== "string" ||
@@ -319,20 +353,6 @@ const describeNativeFingerprintContractFailure = (nativeModule) => {
 };
 
 const describeNativeCompatibilityFailure = (nativeModule) => {
-  const arityFailures = Object.entries(REQUIRED_NATIVE_EXPORT_ARITIES).flatMap(
-    ([exportName, expectedArity]) => {
-      const observedArity = nativeModule[exportName].length;
-      return observedArity === expectedArity
-        ? []
-        : [
-            `${exportName} expected ${expectedArity}, observed ${observedArity}`,
-          ];
-    },
-  );
-  if (arityFailures.length > 0) {
-    return `native export arity mismatch: ${arityFailures.join("; ")}`;
-  }
-
   let observedBridgeAbiVersion;
   try {
     observedBridgeAbiVersion = nativeModule.connectNoritoBridgeAbiVersion();
@@ -344,6 +364,24 @@ const describeNativeCompatibilityFailure = (nativeModule) => {
   if (observedBridgeAbiVersion !== REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION) {
     return `connect Norito bridge ABI mismatch: expected ${REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION}, observed ${String(
       observedBridgeAbiVersion,
+    )}`;
+  }
+
+  let observedSecurePrivateFileAbiVersion;
+  try {
+    observedSecurePrivateFileAbiVersion =
+      nativeModule.securePrivateFileAbiVersion();
+  } catch (error) {
+    return `securePrivateFileAbiVersion failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+  }
+  if (
+    observedSecurePrivateFileAbiVersion !==
+    REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION
+  ) {
+    return `secure private-file ABI mismatch: expected ${REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION}, observed ${String(
+      observedSecurePrivateFileAbiVersion,
     )}`;
   }
   return describeNativeFingerprintContractFailure(nativeModule);

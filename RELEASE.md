@@ -85,16 +85,37 @@ byte size and SHA-256
 `28ca3f9224b55d89f6307f487462ec9f7b8027ccb0712323b779a568bc9ebfd1`.
 It never patches the signed Iroha source.
 
-Release-native manifests must identify that exact source revision with
-`cargo_profile: "release"` and `source_tree_clean: true`; missing, malformed,
-or unknown provenance fields fail closed. Packaged Electron loading also binds
-the native bytes to that manifest, using the signing-independent identity on
-macOS and Windows so platform signing cannot silently replace the reviewed
-addon. Windows packaging signs both `.exe` and `.node` files and the
+Release-native manifests must use provenance version `3`, execution policy
+`trusted-local-cargo-v1`, identify the one revision and canonical source-tree
+SHA-256 selected by the complete reviewed pin set, and set
+`cargo_profile: "release"` plus
+`source_tree_clean: true`; missing, malformed, or unknown provenance fields fail
+closed. The reviewed addon must export the native governance private-file
+boundary, report exactly `1` from `securePrivateFileAbiVersion()`, and provide
+the directory-ensure, bounded-read, and atomic-write methods covered by that
+versioned contract. JavaScript function arity is not an ABI signal for N-API
+exports. `SOURCE-IDENTITY.json` records this contract as
+`secure_private_file_abi_version: 1` and lists the version probe plus all three
+operations as required exports. Packaged Electron loading also binds the native
+bytes to that manifest, using the signing-independent identity on macOS and
+Windows so platform signing cannot silently replace the reviewed addon. Windows
+packaging signs both `.exe` and `.node` files and the
 post-sign hook requires Windows to report the exact unpacked
 `iroha_js_host.node` signature as `Valid` whenever production signing is
 enabled. Windows artifacts remain x64-only until the release matrix builds and
 seals a genuine `win32-arm64` native addon.
+
+The native compatibility gate also executes the current rules-bound
+validation-fee proposal known-answer tests. The frozen rules fixture includes
+the exact seed-8 bond-escrow and seed-9 slash-receiver I105 account literals;
+its policy fingerprint is
+`85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90`
+and its payout-lifecycle fingerprint is
+`fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b`.
+Runtime custody accounts are never copied from that test fixture: they must
+match the exact `bond_escrow_account` and `slash_receiver_account` carried by
+the live capabilities and retained proposal rules, and both must equal the
+reviewed Taira governance escrow account.
 
 The release tag must be covered by an active GitHub tag-protection ruleset.
 Before any build starts, the workflow requires GitHub to verify valid
@@ -168,6 +189,13 @@ Missing or mismatched inputs intentionally leave validation-fee policy writes
 unavailable.
 
 ## Local sealed Iroha release source
+
+The checked-in Iroha revision, tree, JavaScript tree, and sealed Cargo-lock
+values below predate the secure private-file ABI. They remain only as the last
+fully authenticated baseline and must not be used to publish this release.
+Replace the entire pin set together from one clean signed Iroha commit that
+contains ABI v1, then rebuild every platform artifact from that exact source.
+Do not advance an individual digest or revision in isolation.
 
 These commands are local only; they do not contact Taira or deploy anything.
 Create the install source through Git transport. Never use `git clone --local`,

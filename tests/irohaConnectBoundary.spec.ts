@@ -53,6 +53,7 @@ const fakeSignature = {
 
 const createHarness = (input?: {
   authorize?: IrohaConnectBoundaryDependencies["authorize"];
+  now?: () => number;
 }) => {
   const assertContext = vi.fn(async (context: IrohaConnectWalletContext) => ({
     ...context,
@@ -69,6 +70,7 @@ const createHarness = (input?: {
     assertContext,
     authorize,
     sign,
+    ...(input?.now ? { now: input.now } : {}),
   });
   return { boundary, assertContext, authorize, sign };
 };
@@ -338,7 +340,7 @@ describe("IrohaConnect preload-owned approval boundary", () => {
     expect(sign).not.toHaveBeenCalled();
   });
 
-  it("signs only immutable request bytes and consumes the token before awaiting", async () => {
+  it("keeps the session request slot occupied while authorization is pending", async () => {
     let releaseAuthorization!: (value: boolean) => void;
     const { boundary, authorize, sign } = createHarness();
     const session = await activateSession(boundary);
@@ -373,6 +375,21 @@ describe("IrohaConnect preload-owned approval boundary", () => {
         requestToken: processed.requestToken,
       }),
     ).rejects.toThrow("invalid, stale, or belongs to another session");
+
+    const overlapping = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "09",
+      bytesBase64: bytesToBase64(Uint8Array.of(9)),
+      bytesLength: 1,
+    });
+    expect(overlapping.kind).toBe("response");
+    if (overlapping.kind !== "response") return;
+    expect(decryptResponse(session, overlapping.frameBase64)).toMatchObject({
+      type: "sign_result_err",
+      code: "REQUEST_IN_FLIGHT",
+    });
+
     releaseAuthorization(true);
     const response = await first;
 
@@ -385,6 +402,115 @@ describe("IrohaConnect preload-owned approval boundary", () => {
     expect(decryptResponse(session, response.frameBase64)).toMatchObject({
       type: "sign_result_ok",
     });
+
+    const next = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "0a",
+      bytesBase64: bytesToBase64(Uint8Array.of(10)),
+      bytesLength: 1,
+    });
+    expect(next.kind).toBe("request");
+    if (next.kind === "request") {
+      const rejected = boundary.rejectRequest({
+        sessionToken: session.sessionToken,
+        requestToken: next.requestToken,
+      });
+      expect(decryptResponse(session, rejected.frameBase64)).toMatchObject({
+        type: "sign_result_err",
+        code: "USER_REJECTED",
+      });
+    }
+  });
+
+  it("keeps the slot occupied through signing and emits no stale result after close", async () => {
+    let releaseSigning!: (
+      value: Awaited<ReturnType<IrohaConnectBoundaryDependencies["sign"]>>,
+    ) => void;
+    const { boundary, authorize, sign } = createHarness();
+    const session = await activateSession(boundary);
+    authorize.mockClear();
+    sign.mockClear();
+    sign.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseSigning = resolve;
+        }),
+    );
+    const processed = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "0b",
+      bytesBase64: bytesToBase64(Uint8Array.of(11)),
+      bytesLength: 1,
+    });
+    if (processed.kind !== "request") {
+      throw new Error("Expected an IrohaConnect signing request.");
+    }
+
+    const approval = boundary.approveRequest({
+      sessionToken: session.sessionToken,
+      requestToken: processed.requestToken,
+    });
+    await vi.waitFor(() => expect(sign).toHaveBeenCalledTimes(1));
+
+    const overlapping = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "0c",
+      bytesBase64: bytesToBase64(Uint8Array.of(12)),
+      bytesLength: 1,
+    });
+    expect(overlapping.kind).toBe("response");
+    if (overlapping.kind !== "response") return;
+    expect(decryptResponse(session, overlapping.frameBase64)).toMatchObject({
+      type: "sign_result_err",
+      code: "REQUEST_IN_FLIGHT",
+    });
+
+    boundary.closeSession(session.sessionToken);
+    releaseSigning({ ...fakeSignature });
+    await expect(approval).rejects.toThrow(/closed or stale/u);
+  });
+
+  it("consumes an expired token with an encrypted error and reopens the slot", async () => {
+    let now = 1_000;
+    const { boundary, authorize, sign } = createHarness({ now: () => now });
+    const session = await activateSession(boundary);
+    authorize.mockClear();
+    sign.mockClear();
+    const processed = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "0d",
+      bytesBase64: bytesToBase64(Uint8Array.of(13)),
+      bytesLength: 1,
+    });
+    if (processed.kind !== "request") {
+      throw new Error("Expected an IrohaConnect signing request.");
+    }
+
+    now += 2 * 60_000 + 1;
+    const expired = await boundary.approveRequest({
+      sessionToken: session.sessionToken,
+      requestToken: processed.requestToken,
+    });
+    expect(expired.signed).toBe(false);
+    expect(decryptResponse(session, expired.frameBase64)).toMatchObject({
+      type: "sign_result_err",
+      code: "REQUEST_EXPIRED",
+    });
+    expect(authorize).not.toHaveBeenCalled();
+    expect(sign).not.toHaveBeenCalled();
+
+    const next = sendPayload(boundary, session, {
+      type: "sign_request_raw",
+      domainTag: "example.test",
+      bytesHex: "0e",
+      bytesBase64: bytesToBase64(Uint8Array.of(14)),
+      bytesLength: 1,
+    });
+    expect(next.kind).toBe("request");
   });
 
   it("fails stale wallet context after the prompt and before vault access", async () => {

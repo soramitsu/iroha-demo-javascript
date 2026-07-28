@@ -24,6 +24,8 @@ const CHECKSUM_FILENAME = "iroha_js_host.checksums.json";
 const REVIEWED_IROHA_SOURCE_GIT_REVISION =
   "1bcb05eb208d8bda1610789d827a7ed97e66e56c";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION = 3;
+const REQUIRED_NATIVE_BUILD_EXECUTION_POLICY = "trusted-local-cargo-v1";
 const MAX_CHECKSUM_MANIFEST_BYTES = 1024 * 1024;
 const SNAPSHOT_DIRECTORY_PREFIX = "sora-iroha-js-native-v1-";
 const SNAPSHOT_DIRECTORY_PATTERN =
@@ -451,10 +453,13 @@ const peSigningIndependentSha256 = (
 
 const expectedEntryFields = (platformKey: string): readonly string[] | null => {
   const common = [
+    "build_execution_policy",
+    "build_provenance_version",
     "cargo_profile",
     "sha256",
     "source_git_revision",
     "source_tree_clean",
+    "source_tree_sha256",
   ];
   if (platformKey.startsWith("darwin-")) {
     return [...common, "mach_o_signing_independent_sha256"];
@@ -473,9 +478,13 @@ const hasRequiredEntryIdentity = (
   expectedFields: readonly string[],
 ): boolean =>
   hasExactKeys(entry, expectedFields) &&
+  entry.build_provenance_version === REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION &&
+  entry.build_execution_policy === REQUIRED_NATIVE_BUILD_EXECUTION_POLICY &&
   entry.cargo_profile === "release" &&
   entry.source_git_revision === REVIEWED_IROHA_SOURCE_GIT_REVISION &&
   entry.source_tree_clean === true &&
+  typeof entry.source_tree_sha256 === "string" &&
+  SHA256_PATTERN.test(entry.source_tree_sha256) &&
   typeof entry.sha256 === "string" &&
   SHA256_PATTERN.test(entry.sha256);
 
@@ -539,9 +548,12 @@ const readVerifiedPackagedNativeBytes = (
 
     const canonicalEntry: JsonObject = {
       sha256: entry.sha256,
+      build_provenance_version: REQUIRED_NATIVE_BUILD_PROVENANCE_VERSION,
+      build_execution_policy: REQUIRED_NATIVE_BUILD_EXECUTION_POLICY,
       cargo_profile: "release",
       source_git_revision: REVIEWED_IROHA_SOURCE_GIT_REVISION,
       source_tree_clean: true,
+      source_tree_sha256: entry.source_tree_sha256,
     };
     if (platformKey.startsWith("darwin-")) {
       canonicalEntry.mach_o_signing_independent_sha256 =

@@ -80,6 +80,8 @@ const payoutBinding = () => ({
 
 const plainElectorateRules = (): ValidationFeePlainElectorateRulesPayload => ({
   voting_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+  bond_escrow_account: "sorau-bond-escrow",
+  slash_receiver_account: "sorau-slash-receiver",
   ballot_amount: "150",
   ballot_duration_blocks: "3600",
   citizenship_amount: "10000",
@@ -320,6 +322,19 @@ describe("governance proposal model", () => {
         },
       }),
     ).toThrow(/exact first-release PLAIN electorate contract/u);
+    expect(() =>
+      normalizeGovernanceProposalKind({
+        kind: "ValidationFeePolicy",
+        payload: {
+          policy: nativePolicy(),
+          payout_lifecycle_proposal_id: null,
+          plain_electorate_rules: {
+            ...plainElectorateRules(),
+            bond_escrow_account: "",
+          },
+        },
+      }),
+    ).toThrow(/bond_escrow_account.*canonical non-empty text/u);
     expect(() =>
       normalizeGovernanceProposalKind({
         kind: "ValidationFeePayoutLifecycle",

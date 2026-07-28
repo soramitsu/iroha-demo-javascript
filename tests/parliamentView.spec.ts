@@ -45,6 +45,8 @@ const composerPayoutBinding = () => ({
 });
 const plainElectorateRules = () => ({
   voting_asset_id: XOR_ASSET_ID,
+  bond_escrow_account: ACCOUNT,
+  slash_receiver_account: ACCOUNT,
   ballot_amount: "150",
   ballot_duration_blocks: "3600",
   citizenship_amount: "10000",
@@ -413,6 +415,8 @@ const governanceCapabilities = () => ({
   validationFeePlainRequiresExplicitFinalization: true as const,
   validationFeePlainElectorateRules: {
     votingAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw" as const,
+    bondEscrowAccount: ACCOUNT,
+    slashReceiverAccount: ACCOUNT,
     ballotAmount: "150" as const,
     ballotDurationBlocks: "3600" as const,
     citizenshipAmount: "10000" as const,
@@ -478,6 +482,8 @@ const plainReferendumContract = (options?: {
   referendumId?: string;
   hStart?: string;
   hEnd?: string;
+  bondEscrowAccount?: string;
+  slashReceiverAccount?: string;
 }) => ({
   contract: {
     schema: "sora.parliament.plain-referendum.v2" as const,
@@ -525,7 +531,17 @@ const plainReferendumContract = (options?: {
     networkCheckpointSha256: "14".repeat(32),
     eligibleCitizenSnapshotSha256: "15".repeat(32),
     plainElectorate: {
-      rules: governanceCapabilities().validationFeePlainElectorateRules,
+      rules: {
+        ...governanceCapabilities().validationFeePlainElectorateRules,
+        bondEscrowAccount:
+          options?.bondEscrowAccount ??
+          governanceCapabilities().validationFeePlainElectorateRules
+            .bondEscrowAccount,
+        slashReceiverAccount:
+          options?.slashReceiverAccount ??
+          governanceCapabilities().validationFeePlainElectorateRules
+            .slashReceiverAccount,
+      },
       parliamentApprovalGateHeight: "88",
       sealedAtHeight: "89",
       rosterRoot: "20".repeat(32),
@@ -1890,6 +1906,36 @@ describe("ParliamentView", () => {
     ).toBe(false);
   });
 
+  it.each([
+    ["bond_escrow_account", "different-bond-escrow"],
+    ["slash_receiver_account", "different-slash-receiver"],
+  ] as const)(
+    "fails PLAIN citizen voting closed when proposal custody %s differs from capabilities",
+    async (field, value) => {
+      const kind = validationFeePolicyKind("124651");
+      kind.payload.plain_electorate_rules[field] = value;
+      getGovernanceProposalDetailMock.mockResolvedValue(
+        proposalDetail({
+          status: "Proposed",
+          referendumStatus: "Open",
+          currentHeight: "100",
+          hStart: "90",
+          hEnd: "3689",
+          kind,
+        }),
+      );
+
+      const view = await mountView(`/governance?proposal=${HASH}`);
+      const citizenButton = view
+        .findAll("button")
+        .find((button) => button.text().includes("Review citizen ballot"));
+      expect(citizenButton?.attributes("disabled")).toBeDefined();
+      expect(useParliamentStore().plainVoteGate.reason).toContain(
+        "PLAIN electorate rules differ from the exact endpoint capabilities",
+      );
+    },
+  );
+
   it("fails PLAIN citizen voting closed when the immutable contract is unavailable", async () => {
     getGovernancePlainReferendumContractMock.mockRejectedValue(
       new Error("Immutable Taira electorate contract is missing"),
@@ -1966,6 +2012,39 @@ describe("ParliamentView", () => {
       "selected proposal differs from the immutable PLAIN referendum contract",
     );
   });
+
+  it.each([
+    { bondEscrowAccount: "different-bond-escrow" },
+    { slashReceiverAccount: "different-slash-receiver" },
+  ])(
+    "fails PLAIN citizen voting closed when immutable custody differs: %j",
+    async (custodyOverride) => {
+      getGovernancePlainReferendumContractMock.mockResolvedValue(
+        plainReferendumContract(custodyOverride),
+      );
+      getGovernanceProposalDetailMock.mockResolvedValue(
+        proposalDetail({
+          status: "Proposed",
+          referendumStatus: "Open",
+          currentHeight: "100",
+          hStart: "90",
+          hEnd: "3689",
+          kind: validationFeePolicyKind("124651"),
+        }),
+      );
+
+      const view = await mountView(`/governance?proposal=${HASH}`);
+      const citizenButton = view
+        .findAll("button")
+        .find((button) => button.text().includes("Review citizen ballot"));
+      expect(citizenButton?.attributes("disabled")).toBeDefined();
+      expect(
+        view.get('[data-testid="governance-plain-electorate"]').text(),
+      ).toContain(
+        "selected proposal differs from the immutable PLAIN referendum contract",
+      );
+    },
+  );
 
   it("shows the active citizen lock as the authoritative recorded vote state", async () => {
     const detail = proposalDetail({

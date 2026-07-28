@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -10,11 +17,14 @@ import {
   assertGovernancePlainReferendumTrustedSender,
   fetchGovernancePlainReferendumContract,
   governancePlainReferendumCanonicalSha256,
+  governancePlainReferendumFinalityMarkerPath,
+  governancePlainReferendumFinalityObservationPath,
   governancePlainReferendumFinalityPath,
   loadGovernancePlainReferendumSource,
   parseGovernancePlainReferendumContract,
   parseGovernancePlainReferendumSource,
 } from "../electron/governancePlainReferendum";
+import { secureWriteBoundedFile } from "../electron/secureBoundedJson";
 
 const CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const GENESIS_HASH =
@@ -24,6 +34,8 @@ const VOTER = "testuﾛ1PCtﾅHﾁsﾊｺﾐ7aqﾛｶ3ｷｲﾁfWﾚUMFﾅBﾁF�
 const digest = (label: string) =>
   createHash("sha256").update(label, "utf8").digest("hex");
 const PROPOSAL_ID = digest("validation-fee-policy-proposal");
+const canonicalTemporaryDirectory = (prefix: string): string =>
+  realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
 
 const sourceFixture = () => ({
   schema: "sora.wallet.governance-referendum-source.v1",
@@ -90,6 +102,8 @@ const contractFixture = (options: { checkpoint?: string } = {}) => {
     plain_electorate: {
       rules: {
         voting_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        bond_escrow_account: OPERATOR,
+        slash_receiver_account: VOTER,
         ballot_amount: "150",
         ballot_duration_blocks: "3600",
         citizenship_amount: "10000",
@@ -141,6 +155,21 @@ const descriptorFixture = (
   network_checkpoint_sha256: contract.network_checkpoint_sha256,
 });
 
+const finalityObservation = (
+  proposalLabel: string,
+  snapshotFinalizedHeight: string,
+  snapshotObservationSequence: string,
+) => ({
+  chainId: CHAIN_ID,
+  genesisHash: GENESIS_HASH,
+  proposalId: digest(proposalLabel),
+  artifactSha256: digest(`${proposalLabel}-artifact`),
+  contractFingerprint: digest(`${proposalLabel}-fingerprint`),
+  snapshotFinalizedHeight,
+  snapshotObservationSequence,
+  networkCheckpointSha256: digest(`${proposalLabel}-checkpoint`),
+});
+
 const jsonResponse = (bytes: Buffer) =>
   new Response(bytes.toString("utf8"), {
     status: 200,
@@ -187,6 +216,10 @@ describe("hash-bound PLAIN referendum handoff", () => {
     const wrongRoute = contractFixture();
     wrongRoute.ballot_contract.draft_route = "/v1/gov/ballots/plain";
     candidates.push([wrongRoute, /proposal-bound typed PLAIN terms/u]);
+    const invalidCustody = contractFixture();
+    invalidCustody.plain_electorate.rules.slash_receiver_account =
+      "alice@wonderland";
+    candidates.push([invalidCustody, /native Taira account address/u]);
     const preGateCitizen = contractFixture();
     preGateCitizen.eligible_citizens[1].bonded_height = "625";
     candidates.push([preGateCitizen, /registration gate/u]);
@@ -245,7 +278,7 @@ describe("hash-bound PLAIN referendum handoff", () => {
       }),
     ).toThrow(/content-addressed handoff/u);
 
-    const root = mkdtempSync(join(tmpdir(), "governance-source-"));
+    const root = canonicalTemporaryDirectory("governance-source-");
     const sourcePath = join(root, "source.json");
     const targetPath = join(root, "target.json");
     try {
@@ -265,7 +298,7 @@ describe("hash-bound PLAIN referendum handoff", () => {
   });
 
   it("fetches a raw-SHA/size-bound artifact and binds observed endpoint identity", async () => {
-    const root = mkdtempSync(join(tmpdir(), "governance-handoff-"));
+    const root = canonicalTemporaryDirectory("governance-handoff-");
     try {
       const contract = contractFixture();
       const artifactBytes = Buffer.from(JSON.stringify(contract), "utf8");
@@ -312,8 +345,8 @@ describe("hash-bound PLAIN referendum handoff", () => {
     }
   });
 
-  it("rejects raw artifact hash mismatch and durable rollback/equivocation", async () => {
-    const root = mkdtempSync(join(tmpdir(), "governance-finality-"));
+  it("rotates monotonically while rejecting immutable drift, rollback, replay, and durable history loss", async () => {
+    const root = canonicalTemporaryDirectory("governance-finality-");
     try {
       const contract = contractFixture();
       const artifactBytes = Buffer.from(JSON.stringify(contract), "utf8");
@@ -340,29 +373,60 @@ describe("hash-bound PLAIN referendum handoff", () => {
       ).rejects.toThrow(/bytes differ/u);
 
       const store = new GovernancePlainReferendumFinalityStore(root);
-      const base = {
-        chainId: CHAIN_ID,
-        genesisHash: GENESIS_HASH,
-        proposalId: PROPOSAL_ID,
-        artifactSha256: digest("artifact"),
-        contractFingerprint: digest("fingerprint"),
-        snapshotFinalizedHeight: "700",
-        snapshotObservationSequence: "9",
-        networkCheckpointSha256: digest("checkpoint"),
-      };
+      const base = finalityObservation("proposal-a", "700", "9");
+      const successor = finalityObservation("proposal-b", "701", "10");
       store.verifyAndPromote(base);
+      store.verifyAndPromote(base);
+      store.verifyAndPromote(successor);
+      new GovernancePlainReferendumFinalityStore(root).verifyAndPromote(
+        successor,
+      );
+
       expect(() =>
         store.verifyAndPromote({
-          ...base,
-          snapshotFinalizedHeight: "699",
-        }),
-      ).toThrow(/regressed/u);
-      expect(() =>
-        store.verifyAndPromote({
-          ...base,
+          ...successor,
           artifactSha256: digest("equivocating-artifact"),
         }),
       ).toThrow(/equivocated/u);
+      expect(() => store.verifyAndPromote(base)).toThrow(/superseded/u);
+      expect(() =>
+        store.verifyAndPromote(finalityObservation("proposal-c", "702", "10")),
+      ).toThrow(/regressed/u);
+      expect(() =>
+        store.verifyAndPromote(finalityObservation("proposal-d", "701", "11")),
+      ).toThrow(/regressed/u);
+
+      const baseRecordPath = governancePlainReferendumFinalityObservationPath(
+        root,
+        base.proposalId,
+      );
+      const durableBase = JSON.parse(readFileSync(baseRecordPath, "utf8")) as {
+        schema: string;
+        observation: ReturnType<typeof finalityObservation>;
+      };
+      writeFileSync(
+        baseRecordPath,
+        JSON.stringify({
+          ...durableBase,
+          observation: {
+            ...durableBase.observation,
+            artifactSha256: digest("durable-base-equivocation"),
+          },
+        }),
+        { encoding: "utf8", mode: 0o600 },
+      );
+      expect(() => store.verifyAndPromote(base)).toThrow(/equivocated/u);
+
+      rmSync(
+        governancePlainReferendumFinalityObservationPath(
+          root,
+          successor.proposalId,
+        ),
+      );
+      expect(() => store.verifyAndPromote(successor)).toThrow(
+        /immutable proposal record/u,
+      );
+
       rmSync(governancePlainReferendumFinalityPath(root));
       expect(() => store.verifyAndPromote(base)).toThrow(
         /incomplete|disappeared/u,
@@ -371,6 +435,168 @@ describe("hash-bound PLAIN referendum handoff", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("rejects legacy/foreign state and retains immutable per-proposal records without a terminal history cap", () => {
+    const legacyRoot = canonicalTemporaryDirectory(
+      "governance-finality-legacy-",
+    );
+    const rotationRoot = canonicalTemporaryDirectory(
+      "governance-finality-rotation-",
+    );
+    const identityRoot = canonicalTemporaryDirectory(
+      "governance-finality-identity-",
+    );
+    try {
+      const legacyStatePath = governancePlainReferendumFinalityPath(legacyRoot);
+      const legacyMarkerPath =
+        governancePlainReferendumFinalityMarkerPath(legacyRoot);
+      secureWriteBoundedFile(
+        legacyStatePath,
+        Buffer.from(
+          JSON.stringify({
+            schema: "sora.wallet.governance-referendum-finality.v1",
+            observation: finalityObservation("legacy", "1", "1"),
+          }),
+          "utf8",
+        ),
+        {
+          label: "Legacy governance referendum finality state",
+          maximumBytes: 4 * 1024 * 1024,
+        },
+      );
+      secureWriteBoundedFile(
+        legacyMarkerPath,
+        Buffer.from(
+          JSON.stringify({
+            schema: "sora.wallet.governance-referendum-finality-marker.v1",
+            state_schema: "sora.wallet.governance-referendum-finality.v1",
+          }),
+          "utf8",
+        ),
+        {
+          label: "Legacy governance referendum finality marker",
+          maximumBytes: 1024,
+        },
+      );
+      expect(() =>
+        new GovernancePlainReferendumFinalityStore(legacyRoot).verifyAndPromote(
+          finalityObservation("new", "2", "2"),
+        ),
+      ).toThrow(
+        /Governance referendum finality marker (?:is not canonical|contains missing or unknown fields)/u,
+      );
+
+      const identityStatePath =
+        governancePlainReferendumFinalityPath(identityRoot);
+      const identityObservation = finalityObservation("identity", "1", "1");
+      const writeIdentityState = (
+        observation: ReturnType<typeof finalityObservation>,
+      ) => {
+        const serializedObservation = JSON.stringify({
+          schema: "sora.wallet.governance-referendum-finality-observation.v2",
+          observation,
+        });
+        secureWriteBoundedFile(
+          identityStatePath,
+          Buffer.from(
+            JSON.stringify({
+              schema: "sora.wallet.governance-referendum-finality-head.v2",
+              observation,
+            }),
+            "utf8",
+          ),
+          {
+            label: "Identity governance referendum finality state",
+            maximumBytes: 4 * 1024 * 1024,
+          },
+        );
+        secureWriteBoundedFile(
+          governancePlainReferendumFinalityObservationPath(
+            identityRoot,
+            observation.proposalId,
+          ),
+          Buffer.from(serializedObservation, "utf8"),
+          {
+            label: "Identity governance referendum finality observation",
+            maximumBytes: 64 * 1024,
+          },
+        );
+      };
+      new GovernancePlainReferendumFinalityStore(identityRoot).verifyAndPromote(
+        identityObservation,
+      );
+      writeIdentityState({ ...identityObservation, chainId: "wrong-chain" });
+      expect(() =>
+        new GovernancePlainReferendumFinalityStore(
+          identityRoot,
+        ).verifyAndPromote(finalityObservation("later", "2", "2")),
+      ).toThrow(/head is not exact Taira/u);
+      writeIdentityState({
+        ...identityObservation,
+        genesisHash: digest("wrong-genesis"),
+      });
+      expect(() =>
+        new GovernancePlainReferendumFinalityStore(
+          identityRoot,
+        ).verifyAndPromote(finalityObservation("later", "2", "2")),
+      ).toThrow(/head is not exact Taira/u);
+
+      const rotationStore = new GovernancePlainReferendumFinalityStore(
+        rotationRoot,
+      );
+      const first = finalityObservation("rotation-0", "1", "1");
+      rotationStore.verifyAndPromote(first);
+      for (let index = 1; index <= 128; index += 1) {
+        rotationStore.verifyAndPromote(
+          finalityObservation(
+            `rotation-${index}`,
+            String(index + 1),
+            String(index + 1),
+          ),
+        );
+      }
+      const orphan = finalityObservation("rotation-orphan", "130", "130");
+      secureWriteBoundedFile(
+        governancePlainReferendumFinalityObservationPath(
+          rotationRoot,
+          orphan.proposalId,
+        ),
+        Buffer.from(
+          JSON.stringify({
+            schema: "sora.wallet.governance-referendum-finality-observation.v2",
+            observation: orphan,
+          }),
+          "utf8",
+        ),
+        {
+          label: "Orphan governance referendum finality observation",
+          maximumBytes: 64 * 1024,
+        },
+      );
+      new GovernancePlainReferendumFinalityStore(rotationRoot).verifyAndPromote(
+        orphan,
+      );
+      expect(
+        readFileSync(
+          governancePlainReferendumFinalityObservationPath(
+            rotationRoot,
+            first.proposalId,
+          ),
+          "utf8",
+        ),
+      ).toContain(first.proposalId);
+      expect(
+        readFileSync(
+          governancePlainReferendumFinalityPath(rotationRoot),
+          "utf8",
+        ),
+      ).toContain(orphan.proposalId);
+    } finally {
+      rmSync(legacyRoot, { recursive: true, force: true });
+      rmSync(rotationRoot, { recursive: true, force: true });
+      rmSync(identityRoot, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it("allows only an eligible proposal-bound ballot and exact typed draft", () => {
     const loaded = parseGovernancePlainReferendumContract(contractFixture(), {

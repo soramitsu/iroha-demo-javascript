@@ -1,63 +1,37 @@
-import { createHash, randomBytes } from "node:crypto";
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  fsyncSync,
-  lstatSync,
-  openSync,
-  readSync,
-  realpathSync,
-  renameSync,
-  type Stats,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  getInstalledIrohaJsNativeBinding,
+  installGlobalIrohaJsNativeBinding,
+  REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION,
+} from "./irohaJsNativeDir";
 
-type FileIdentity = Readonly<{
-  dev: number;
-  ino: number;
-  uid: number;
-  gid: number;
-  mode: number;
-  nlink: number;
-  size: number;
-  mtimeMs: number;
-  ctimeMs: number;
+type SecurePrivateFileNativeBinding = Readonly<{
+  securePrivateFileAbiVersion(): number;
+  securePrivateDirectoryEnsure(rootPath: string): void;
+  securePrivateFileRead(
+    rootPath: string,
+    filename: string,
+    maximumBytes: number,
+  ): Buffer | null;
+  securePrivateFileWriteAtomic(
+    rootPath: string,
+    filename: string,
+    bytes: Uint8Array,
+    maximumBytes: number,
+  ): Buffer;
 }>;
 
-const fileIdentity = (stats: Stats): FileIdentity => ({
-  dev: stats.dev,
-  ino: stats.ino,
-  uid: stats.uid,
-  gid: stats.gid,
-  mode: stats.mode,
-  nlink: stats.nlink,
-  size: stats.size,
-  mtimeMs: stats.mtimeMs,
-  ctimeMs: stats.ctimeMs,
-});
+export type SecureBoundedPathOptions = Readonly<{
+  label: string;
+  maximumBytes: number;
+}>;
 
-const directoryIdentity = (stats: Stats) => ({
-  dev: stats.dev,
-  ino: stats.ino,
-  uid: stats.uid,
-  gid: stats.gid,
-  mode: stats.mode,
-});
+export const GOVERNANCE_INTEGRITY_DIRECTORY_NAME = "governance-integrity-v1";
 
-const sameIdentity = (left: object, right: object): boolean =>
-  JSON.stringify(left) === JSON.stringify(right);
-
-const currentUid = (): number => {
-  if (typeof process.getuid !== "function") {
-    throw new Error(
-      "Secure governance artifact loading requires POSIX uid support.",
-    );
-  }
-  return process.getuid();
-};
+export const governanceIntegrityDirectoryPath = (
+  userDataPath: string,
+): string => join(userDataPath, GOVERNANCE_INTEGRITY_DIRECTORY_NAME);
 
 export type SecureBoundedFile = Readonly<{
   path: string;
@@ -65,157 +39,157 @@ export type SecureBoundedFile = Readonly<{
   sha256: string;
 }>;
 
-const isNotFoundError = (error: unknown): boolean =>
+const isSecurePrivateFileNativeBinding = (
+  value: unknown,
+): value is SecurePrivateFileNativeBinding =>
   Boolean(
-    error &&
-      typeof error === "object" &&
-      "code" in error &&
-      (error as NodeJS.ErrnoException).code === "ENOENT",
+    value &&
+      typeof value === "object" &&
+      "securePrivateFileAbiVersion" in value &&
+      typeof value.securePrivateFileAbiVersion === "function" &&
+      "securePrivateDirectoryEnsure" in value &&
+      typeof value.securePrivateDirectoryEnsure === "function" &&
+      "securePrivateFileRead" in value &&
+      typeof value.securePrivateFileRead === "function" &&
+      "securePrivateFileWriteAtomic" in value &&
+      typeof value.securePrivateFileWriteAtomic === "function",
   );
+
+const requireSecurePrivateFileNativeBinding =
+  (): SecurePrivateFileNativeBinding => {
+    const installed =
+      getInstalledIrohaJsNativeBinding() ??
+      installGlobalIrohaJsNativeBinding(import.meta.url);
+    if (!isSecurePrivateFileNativeBinding(installed)) {
+      throw new Error(
+        "The reviewed Iroha native binding is missing secure private-file support.",
+      );
+    }
+    let observedAbiVersion: unknown;
+    try {
+      observedAbiVersion = installed.securePrivateFileAbiVersion();
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `The reviewed Iroha native secure private-file ABI probe failed: ${reason}`,
+      );
+    }
+    if (observedAbiVersion !== REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION) {
+      throw new Error(
+        `The reviewed Iroha native binding requires secure private-file ABI ${REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION}; observed ${String(
+          observedAbiVersion,
+        )}.`,
+      );
+    }
+    return installed;
+  };
 
 const assertSecureBoundedPathOptions = (
   path: string,
-  options: { label: string; maximumBytes: number; expectedMode?: number },
+  options: SecureBoundedPathOptions,
 ): {
   label: string;
-  expectedMode: number;
-  noFollow: number;
-  directory: number;
+  rootPath: string;
+  filename: string;
 } => {
-  const label = options.label;
-  const expectedMode = options.expectedMode ?? 0o600;
+  const label = String(options.label ?? "").trim();
+  const filename = basename(path);
+  const rootPath = dirname(path);
   if (
+    !label ||
     !isAbsolute(path) ||
     resolve(path) !== path ||
-    !basename(path) ||
+    !filename ||
+    filename === "." ||
+    filename === ".." ||
+    rootPath === path ||
     !Number.isSafeInteger(options.maximumBytes) ||
-    options.maximumBytes < 1 ||
-    !Number.isSafeInteger(expectedMode) ||
-    expectedMode < 0 ||
-    expectedMode > 0o777
+    options.maximumBytes < 1
   ) {
-    throw new Error(`${label} path, mode, or byte bound is invalid.`);
+    throw new Error(
+      `${label || "Secure bounded file"} path or byte bound is invalid.`,
+    );
   }
-  const noFollow = constants.O_NOFOLLOW;
-  const directory = constants.O_DIRECTORY;
-  if (typeof noFollow !== "number" || typeof directory !== "number") {
-    throw new Error(`${label} requires POSIX no-follow directory opens.`);
-  }
-  return { label, expectedMode, noFollow, directory };
+  return { label, rootPath, filename };
 };
 
-const assertProtectedOwnedDirectory = (path: string, label: string): Stats => {
-  const stats = lstatSync(path);
-  if (
-    !stats.isDirectory() ||
-    stats.isSymbolicLink() ||
-    stats.uid !== currentUid() ||
-    (stats.mode & 0o022) !== 0
-  ) {
-    throw new Error(`${label} parent must be one protected owned directory.`);
-  }
-  return stats;
+const nativeOperationError = (
+  label: string,
+  operation: string,
+  error: unknown,
+): Error => {
+  const reason = error instanceof Error ? error.message : String(error);
+  const wrapped = new Error(`${label} ${operation} failed: ${reason}`);
+  Object.defineProperty(wrapped, "cause", {
+    configurable: true,
+    enumerable: false,
+    value: error,
+    writable: true,
+  });
+  return wrapped;
 };
 
 /**
- * Read one private artifact through no-follow descriptors, with bounded bytes
- * and path/descriptor/parent identity checks before and after the read.
+ * Read one current-user-private artifact through the provenance-verified native
+ * boundary. The native host owns platform-specific ACL/mode, no-follow,
+ * identity, hard-link, and bounded-read enforcement.
  */
 export const secureReadBoundedFile = (
   path: string,
-  options: { label: string; maximumBytes: number; expectedMode?: number },
+  options: SecureBoundedPathOptions,
 ): SecureBoundedFile => {
-  const { label, expectedMode, noFollow, directory } =
-    assertSecureBoundedPathOptions(path, options);
-  const parent = dirname(path);
-  const parentBefore = assertProtectedOwnedDirectory(parent, label);
-  const resolvedParentBefore = realpathSync.native(parent);
-  const parentFd = openSync(parent, constants.O_RDONLY | directory | noFollow);
-  let fileFd = -1;
+  const { label, rootPath, filename } = assertSecureBoundedPathOptions(
+    path,
+    options,
+  );
+  const native = requireSecurePrivateFileNativeBinding();
+  let bytes: Buffer | null;
   try {
-    const parentOpened = fstatSync(parentFd);
-    if (
-      !sameIdentity(
-        directoryIdentity(parentOpened),
-        directoryIdentity(parentBefore),
-      )
-    ) {
-      throw new Error(`${label} parent changed while it was opened.`);
-    }
-    const before = lstatSync(path);
-    const resolvedPathBefore = realpathSync.native(path);
-    if (
-      !before.isFile() ||
-      before.isSymbolicLink() ||
-      before.uid !== currentUid() ||
-      before.nlink !== 1 ||
-      (before.mode & 0o777) !== expectedMode ||
-      before.size < 1 ||
-      before.size > options.maximumBytes
-    ) {
-      throw new Error(
-        `${label} must be one bounded, single-link, owned mode-${expectedMode.toString(8)} file.`,
-      );
-    }
-    fileFd = openSync(path, constants.O_RDONLY | noFollow);
-    const openedBefore = fstatSync(fileFd);
-    const chunks: Buffer[] = [];
-    let total = 0;
-    let count = 0;
-    do {
-      const remaining = options.maximumBytes + 1 - total;
-      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining));
-      count = readSync(fileFd, buffer, 0, buffer.length, null);
-      if (count > 0) {
-        total += count;
-        if (total > options.maximumBytes) {
-          throw new Error(
-            `${label} exceeds its ${options.maximumBytes}-byte bound.`,
-          );
-        }
-        chunks.push(buffer.subarray(0, count));
-      }
-    } while (count !== 0);
-    const openedAfter = fstatSync(fileFd);
-    const namedAfter = lstatSync(path);
-    const parentAfter = lstatSync(parent);
-    const expectedFile = fileIdentity(before);
-    const expectedParent = directoryIdentity(parentBefore);
-    if (
-      !sameIdentity(fileIdentity(openedBefore), expectedFile) ||
-      !sameIdentity(fileIdentity(openedAfter), expectedFile) ||
-      !sameIdentity(fileIdentity(namedAfter), expectedFile) ||
-      !sameIdentity(directoryIdentity(fstatSync(parentFd)), expectedParent) ||
-      !sameIdentity(directoryIdentity(parentAfter), expectedParent) ||
-      realpathSync.native(parent) !== resolvedParentBefore ||
-      realpathSync.native(path) !== resolvedPathBefore ||
-      total !== before.size
-    ) {
-      throw new Error(`${label} changed identity or bytes while it was read.`);
-    }
-    const bytes = Buffer.concat(chunks, total);
-    return {
-      path,
-      bytes,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    };
-  } finally {
-    if (fileFd >= 0) closeSync(fileFd);
-    closeSync(parentFd);
+    native.securePrivateDirectoryEnsure(rootPath);
+    bytes = native.securePrivateFileRead(
+      rootPath,
+      filename,
+      options.maximumBytes,
+    );
+  } catch (error) {
+    throw nativeOperationError(label, "read", error);
   }
+  if (bytes === null) {
+    const error = new Error(
+      `${label} does not exist.`,
+    ) as NodeJS.ErrnoException;
+    error.code = "ENOENT";
+    throw error;
+  }
+  if (
+    !Buffer.isBuffer(bytes) ||
+    bytes.length < 1 ||
+    bytes.length > options.maximumBytes
+  ) {
+    throw new Error(
+      `${label} native read did not return non-empty bounded bytes.`,
+    );
+  }
+  return {
+    path,
+    bytes: Buffer.from(bytes),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 };
 
 /**
- * Atomically replace one private file in an already-protected owned directory,
- * fsyncing both the temporary file and its directory before read-back.
+ * Atomically replace one current-user-private file through the native boundary,
+ * then require its exact read-back bytes.
  */
 export const secureWriteBoundedFile = (
   path: string,
   bytes: Buffer,
-  options: { label: string; maximumBytes: number; expectedMode?: number },
+  options: SecureBoundedPathOptions,
 ): SecureBoundedFile => {
-  const { label, expectedMode, noFollow, directory } =
-    assertSecureBoundedPathOptions(path, options);
+  const { label, rootPath, filename } = assertSecureBoundedPathOptions(
+    path,
+    options,
+  );
   if (
     !Buffer.isBuffer(bytes) ||
     bytes.length < 1 ||
@@ -223,103 +197,31 @@ export const secureWriteBoundedFile = (
   ) {
     throw new Error(`${label} bytes exceed their non-empty bounded size.`);
   }
-  const parent = dirname(path);
-  const parentBefore = assertProtectedOwnedDirectory(parent, label);
-  const resolvedParentBefore = realpathSync.native(parent);
-  const expectedParent = directoryIdentity(parentBefore);
-  const parentFd = openSync(parent, constants.O_RDONLY | directory | noFollow);
-  const temporaryPath = join(
-    parent,
-    `.${basename(path)}.${process.pid}.${randomBytes(16).toString("hex")}.tmp`,
-  );
-  let temporaryFd = -1;
-  let temporaryExists = false;
+  const native = requireSecurePrivateFileNativeBinding();
+  let readBack: Buffer;
   try {
-    if (!sameIdentity(directoryIdentity(fstatSync(parentFd)), expectedParent)) {
-      throw new Error(`${label} parent changed while it was opened.`);
-    }
-    try {
-      const existing = lstatSync(path);
-      if (
-        !existing.isFile() ||
-        existing.isSymbolicLink() ||
-        existing.uid !== currentUid() ||
-        existing.nlink !== 1 ||
-        (existing.mode & 0o777) !== expectedMode
-      ) {
-        throw new Error(
-          `${label} existing target must be one single-link, owned mode-${expectedMode.toString(8)} file.`,
-        );
-      }
-    } catch (error) {
-      if (!isNotFoundError(error)) throw error;
-    }
-
-    temporaryFd = openSync(
-      temporaryPath,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollow,
-      expectedMode,
+    native.securePrivateDirectoryEnsure(rootPath);
+    readBack = native.securePrivateFileWriteAtomic(
+      rootPath,
+      filename,
+      bytes,
+      options.maximumBytes,
     );
-    temporaryExists = true;
-    let offset = 0;
-    while (offset < bytes.length) {
-      const count = writeSync(
-        temporaryFd,
-        bytes,
-        offset,
-        bytes.length - offset,
-      );
-      if (count < 1) {
-        throw new Error(`${label} atomic write made no progress.`);
-      }
-      offset += count;
-    }
-    fsyncSync(temporaryFd);
-    const written = fstatSync(temporaryFd);
-    if (
-      !written.isFile() ||
-      written.uid !== currentUid() ||
-      written.nlink !== 1 ||
-      (written.mode & 0o777) !== expectedMode ||
-      written.size !== bytes.length
-    ) {
-      throw new Error(
-        `${label} atomic temporary file is not private and exact.`,
-      );
-    }
-    closeSync(temporaryFd);
-    temporaryFd = -1;
-
-    renameSync(temporaryPath, path);
-    temporaryExists = false;
-    fsyncSync(parentFd);
-    const parentAfter = lstatSync(parent);
-    if (
-      !sameIdentity(directoryIdentity(parentAfter), expectedParent) ||
-      !sameIdentity(directoryIdentity(fstatSync(parentFd)), expectedParent) ||
-      realpathSync.native(parent) !== resolvedParentBefore
-    ) {
-      throw new Error(`${label} parent changed while it was replaced.`);
-    }
-    const loaded = secureReadBoundedFile(path, options);
-    if (!loaded.bytes.equals(bytes)) {
-      throw new Error(`${label} atomic write did not read back exactly.`);
-    }
-    return loaded;
-  } finally {
-    if (temporaryFd >= 0) closeSync(temporaryFd);
-    if (temporaryExists) {
-      try {
-        unlinkSync(temporaryPath);
-      } catch (error) {
-        if (!isNotFoundError(error)) {
-          // The primary operation remains fail-closed; cleanup errors must not
-          // replace it or broaden the accepted state.
-        }
-      }
-    }
-    closeSync(parentFd);
+  } catch (error) {
+    throw nativeOperationError(label, "atomic write", error);
   }
+  if (
+    !Buffer.isBuffer(readBack) ||
+    readBack.length !== bytes.length ||
+    !readBack.equals(bytes)
+  ) {
+    throw new Error(`${label} atomic write did not read back exactly.`);
+  }
+  return {
+    path,
+    bytes: Buffer.from(readBack),
+    sha256: createHash("sha256").update(readBack).digest("hex"),
+  };
 };
 
 class StrictJsonScanner {
@@ -459,7 +361,7 @@ export const parseStrictJson = (serialized: string, label: string): unknown => {
 
 export const loadSecureBoundedJson = (
   path: string,
-  options: { label: string; maximumBytes: number; expectedMode?: number },
+  options: SecureBoundedPathOptions,
 ): { value: unknown; sha256: string } => {
   const loaded = secureReadBoundedFile(path, options);
   let serialized: string;

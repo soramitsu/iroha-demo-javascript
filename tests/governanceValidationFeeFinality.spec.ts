@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   mkdtempSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -26,6 +27,11 @@ import {
   type GovernanceValidationFeeImmutableLedgerScope,
 } from "../electron/governanceValidationFeeFinality";
 import type { GovernanceValidationFeeFinalityObservation } from "../electron/governanceValidationFee";
+import {
+  GOVERNANCE_INTEGRITY_DIRECTORY_NAME,
+  governanceIntegrityDirectoryPath,
+  secureWriteBoundedFile,
+} from "../electron/secureBoundedJson";
 
 const immutableScope = (
   value = "12".repeat(32),
@@ -48,8 +54,8 @@ describe("durable governance validation-fee finality", () => {
   const temporaryDirectories: string[] = [];
 
   const temporaryDirectory = (): string => {
-    const path = mkdtempSync(
-      join(tmpdir(), "governance-validation-fee-finality-"),
+    const path = realpathSync.native(
+      mkdtempSync(join(tmpdir(), "governance-validation-fee-finality-")),
     );
     temporaryDirectories.push(path);
     return path;
@@ -71,14 +77,32 @@ describe("durable governance validation-fee finality", () => {
     );
 
     expect(statePath).toBe(
-      join(userDataPath, GOVERNANCE_VALIDATION_FEE_FINALITY_FILENAME),
+      join(
+        userDataPath,
+        GOVERNANCE_INTEGRITY_DIRECTORY_NAME,
+        GOVERNANCE_VALIDATION_FEE_FINALITY_FILENAME,
+      ),
     );
     expect(markerPath).toBe(
-      join(userDataPath, GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_FILENAME),
+      join(
+        userDataPath,
+        GOVERNANCE_INTEGRITY_DIRECTORY_NAME,
+        GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_FILENAME,
+      ),
     );
-    expect(statSync(statePath).mode & 0o777).toBe(0o600);
-    expect(statSync(markerPath).mode & 0o777).toBe(0o600);
-    expect(readdirSync(userDataPath).sort()).toEqual(
+    if (process.platform !== "win32") {
+      expect(statSync(statePath).mode & 0o777).toBe(0o600);
+      expect(statSync(markerPath).mode & 0o777).toBe(0o600);
+      expect(
+        statSync(governanceIntegrityDirectoryPath(userDataPath)).mode & 0o777,
+      ).toBe(0o700);
+    }
+    expect(readdirSync(userDataPath)).toEqual([
+      GOVERNANCE_INTEGRITY_DIRECTORY_NAME,
+    ]);
+    expect(
+      readdirSync(governanceIntegrityDirectoryPath(userDataPath)).sort(),
+    ).toEqual(
       [
         GOVERNANCE_VALIDATION_FEE_FINALITY_FILENAME,
         GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_FILENAME,
@@ -223,14 +247,23 @@ describe("durable governance validation-fee finality", () => {
     const corruptPath = governanceValidationFeeFinalityPath(corruptDirectory);
     const corruptMarker =
       governanceValidationFeeFinalityMarkerPath(corruptDirectory);
-    writeFileSync(corruptPath, "{", { mode: 0o600 });
-    writeFileSync(
+    secureWriteBoundedFile(corruptPath, Buffer.from("{", "utf8"), {
+      label: "Corrupt validation-fee finality state",
+      maximumBytes: 256 * 1024,
+    });
+    secureWriteBoundedFile(
       corruptMarker,
-      JSON.stringify({
-        schema: GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_SCHEMA,
-        state_schema: GOVERNANCE_VALIDATION_FEE_FINALITY_SCHEMA,
-      }),
-      { mode: 0o600 },
+      Buffer.from(
+        JSON.stringify({
+          schema: GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_SCHEMA,
+          state_schema: GOVERNANCE_VALIDATION_FEE_FINALITY_SCHEMA,
+        }),
+        "utf8",
+      ),
+      {
+        label: "Corrupt validation-fee finality marker",
+        maximumBytes: 4 * 1024,
+      },
     );
     expect(() =>
       new GovernanceValidationFeeFinalityStore(
@@ -259,35 +292,51 @@ describe("durable governance validation-fee finality", () => {
       ),
     ).toThrow(/not in its exact canonical encoding/);
 
-    writeFileSync(noncanonicalPath, JSON.stringify(parsed), { mode: 0o600 });
-    chmodSync(noncanonicalPath, 0o644);
-    expect(() =>
-      new GovernanceValidationFeeFinalityStore(
-        noncanonicalDirectory,
-      ).verifyAndPromote(
-        immutableScope(),
-        observation({ ledgerFinalisedHeight: 126_001 }),
-      ),
-    ).toThrow(/mode-600/);
+    if (process.platform !== "win32") {
+      writeFileSync(noncanonicalPath, JSON.stringify(parsed), { mode: 0o600 });
+      chmodSync(noncanonicalPath, 0o644);
+      expect(() =>
+        new GovernanceValidationFeeFinalityStore(
+          noncanonicalDirectory,
+        ).verifyAndPromote(
+          immutableScope(),
+          observation({ ledgerFinalisedHeight: 126_001 }),
+        ),
+      ).toThrow(/private|mode|protection/u);
+    }
 
-    const linkedDirectory = temporaryDirectory();
-    const linkedPath = governanceValidationFeeFinalityPath(linkedDirectory);
-    const targetPath = join(linkedDirectory, "target.json");
-    writeFileSync(targetPath, "{}", { mode: 0o600 });
-    symlinkSync(targetPath, linkedPath);
-    writeFileSync(
-      governanceValidationFeeFinalityMarkerPath(linkedDirectory),
-      JSON.stringify({
-        schema: GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_SCHEMA,
-        state_schema: GOVERNANCE_VALIDATION_FEE_FINALITY_SCHEMA,
-      }),
-      { mode: 0o600 },
-    );
-    expect(() =>
-      new GovernanceValidationFeeFinalityStore(
-        linkedDirectory,
-      ).verifyAndPromote(immutableScope(), observation()),
-    ).toThrow(/single-link|symbolic|mode-600/);
+    if (process.platform !== "win32") {
+      const linkedDirectory = temporaryDirectory();
+      const linkedPath = governanceValidationFeeFinalityPath(linkedDirectory);
+      const targetPath = join(
+        governanceIntegrityDirectoryPath(linkedDirectory),
+        "target.json",
+      );
+      secureWriteBoundedFile(targetPath, Buffer.from("{}", "utf8"), {
+        label: "Linked validation-fee finality target",
+        maximumBytes: 256 * 1024,
+      });
+      symlinkSync(targetPath, linkedPath);
+      secureWriteBoundedFile(
+        governanceValidationFeeFinalityMarkerPath(linkedDirectory),
+        Buffer.from(
+          JSON.stringify({
+            schema: GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_SCHEMA,
+            state_schema: GOVERNANCE_VALIDATION_FEE_FINALITY_SCHEMA,
+          }),
+          "utf8",
+        ),
+        {
+          label: "Linked validation-fee finality marker",
+          maximumBytes: 4 * 1024,
+        },
+      );
+      expect(() =>
+        new GovernanceValidationFeeFinalityStore(
+          linkedDirectory,
+        ).verifyAndPromote(immutableScope(), observation()),
+      ).toThrow(/link|indirect|reparse|symbolic/u);
+    }
   });
 
   it("fails closed at capacity without evicting an existing watermark", () => {

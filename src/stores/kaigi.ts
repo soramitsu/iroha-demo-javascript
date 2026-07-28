@@ -9,9 +9,16 @@ import {
   type EndpointIdentityScope,
   type EndpointIdentityScopeInput,
 } from "@/utils/endpointScope";
+import {
+  requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
+} from "@/utils/kaigiInvite";
 
-export const LEGACY_KAIGI_STORAGE_KEY = "iroha-demo:kaigi";
-export const KAIGI_STORAGE_KEY = "iroha-demo:kaigi:v2";
+export const KAIGI_STORAGE_KEY = "iroha-demo:kaigi:host-sessions:v1";
+const OBSOLETE_KAIGI_STORAGE_KEYS = [
+  "iroha-demo:kaigi",
+  "iroha-demo:kaigi:v2",
+] as const;
 
 export type KaigiHostSessionRecord = {
   endpointScope: EndpointIdentityScope;
@@ -50,9 +57,7 @@ const normalizeHostSession = (
   value: Partial<KaigiHostSessionRecord> & Record<string, unknown>,
 ): KaigiHostSessionRecord | null => {
   const accountId = trimString(value.accountId);
-  const callId = trimString(value.callId);
   const meetingCode = trimString(value.meetingCode);
-  const inviteSecretBase64Url = trimString(value.inviteSecretBase64Url);
   const hostKaigiKeys = asRecord(value.hostKaigiKeys);
   const endpointScopeRecord = asRecord(value.endpointScope);
   const publicKeyBase64Url = trimString(hostKaigiKeys?.publicKeyBase64Url);
@@ -61,20 +66,24 @@ const normalizeHostSession = (
   const scheduledStartMs = Number(value.scheduledStartMs);
   const expiresAtMs = Number(value.expiresAtMs);
   let endpointScope: EndpointIdentityScope;
+  let callId: string;
+  let inviteSecretBase64Url: string;
   try {
     endpointScope = buildEndpointIdentityScope({
       toriiUrl: trimString(endpointScopeRecord?.origin),
       observedChainId: trimString(endpointScopeRecord?.chainId),
       observedNetworkPrefix: Number(endpointScopeRecord?.networkPrefix),
     });
+    callId = requireKaigiCallId(value.callId);
+    inviteSecretBase64Url = requireKaigiInviteSecretBase64Url(
+      value.inviteSecretBase64Url,
+    );
   } catch {
     return null;
   }
   if (
     !accountId ||
-    !callId ||
     !meetingCode ||
-    !inviteSecretBase64Url ||
     !publicKeyBase64Url ||
     !privateKeyBase64Url ||
     !Number.isFinite(createdAtMs) ||
@@ -126,7 +135,9 @@ export const useKaigiStore = defineStore("kaigi", {
       if (this.hydrated) {
         return;
       }
-      localStorage.removeItem(LEGACY_KAIGI_STORAGE_KEY);
+      for (const obsoleteKey of OBSOLETE_KAIGI_STORAGE_KEYS) {
+        localStorage.removeItem(obsoleteKey);
+      }
       const raw = localStorage.getItem(KAIGI_STORAGE_KEY);
       if (raw) {
         try {

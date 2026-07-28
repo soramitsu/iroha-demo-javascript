@@ -187,6 +187,8 @@ export const VALIDATION_FEE_PLAIN_VOTING_ASSET_ID =
 
 export interface ValidationFeePlainElectorateRulesPayload {
   voting_asset_id: typeof VALIDATION_FEE_PLAIN_VOTING_ASSET_ID;
+  bond_escrow_account: string;
+  slash_receiver_account: string;
   ballot_amount: "150";
   ballot_duration_blocks: "3600";
   citizenship_amount: "10000";
@@ -629,12 +631,14 @@ const exactValidationFeePlainElectorateRules = (
       "approval_threshold_numerator",
       "ballot_amount",
       "ballot_duration_blocks",
+      "bond_escrow_account",
       "citizenship_amount",
       "conviction_step_blocks",
       "eligibility_rule",
       "max_conviction",
       "max_members",
       "min_turnout",
+      "slash_receiver_account",
       "voting_asset_id",
     ],
     label,
@@ -665,6 +669,14 @@ const exactValidationFeePlainElectorateRules = (
   }
   return {
     voting_asset_id: VALIDATION_FEE_PLAIN_VOTING_ASSET_ID,
+    bond_escrow_account: exactNonEmptyText(
+      rules.bond_escrow_account,
+      `${label}.bond_escrow_account`,
+    ),
+    slash_receiver_account: exactNonEmptyText(
+      rules.slash_receiver_account,
+      `${label}.slash_receiver_account`,
+    ),
     ballot_amount: "150",
     ballot_duration_blocks: "3600",
     citizenship_amount: "10000",

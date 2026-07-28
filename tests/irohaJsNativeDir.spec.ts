@@ -16,6 +16,16 @@ import { hasRequiredPackagedIrohaJsNativeProvenance } from "../electron/irohaJsN
 const REVIEWED_IROHA_SOURCE_GIT_REVISION =
   "1bcb05eb208d8bda1610789d827a7ed97e66e56c";
 
+const assertCurrentPlainElectorateCustody = (value: unknown): void => {
+  const rules = JSON.parse(String(value)) as Record<string, unknown>;
+  expect(rules.bond_escrow_account).toBe(
+    "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+  );
+  expect(rules.slash_receiver_account).toBe(
+    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
+  );
+};
+
 const compatibleNativeModule = () => ({
   accountAddressParseEncoded() {
     return null;
@@ -45,9 +55,9 @@ const compatibleNativeModule = () => ({
   ) {
     void _policy;
     void _payoutLifecycleProposalId;
-    void _plainElectorateRules;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6",
+      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
       "hex",
     );
   },
@@ -56,14 +66,41 @@ const compatibleNativeModule = () => ({
     _plainElectorateRules: unknown,
   ) {
     void _payoutBinding;
-    void _plainElectorateRules;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e",
+      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
       "hex",
     );
   },
   connectNoritoBridgeAbiVersion() {
     return 21;
+  },
+  securePrivateFileAbiVersion() {
+    return 1;
+  },
+  securePrivateDirectoryEnsure(_rootPath: string) {
+    void _rootPath;
+  },
+  securePrivateFileRead(
+    _rootPath: string,
+    _filename: string,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return null;
+  },
+  securePrivateFileWriteAtomic(
+    _rootPath: string,
+    _filename: string,
+    bytes: Uint8Array,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return Buffer.from(bytes);
   },
 });
 
@@ -73,14 +110,29 @@ const GOVERNANCE_FINGERPRINT_EXPORTS = [
 ] as const;
 
 describe("irohaJsNativeDir", () => {
+  it("resolves the installed package from TypeScript source layout", () => {
+    const resolved = resolveIrohaJsNativeDir(
+      "file:///Users/test/app/electron/secureBoundedJson.ts",
+      (path) =>
+        path ===
+        "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+      () => compatibleNativeModule(),
+    );
+
+    expect(resolved).toBe(
+      "/Users/test/app/node_modules/@iroha/iroha-js/native",
+    );
+  });
+
   it("prefers the installed iroha-js native directory when dist/native is absent", () => {
     const seenPaths: string[] = [];
     const resolved = resolveIrohaJsNativeDir(
       "file:///Users/test/app/dist/preload/preload.mjs",
       (path) => {
         seenPaths.push(path);
-        return path.endsWith(
-          "/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
+        return (
+          path ===
+          "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node"
         );
       },
       () => compatibleNativeModule(),
@@ -89,7 +141,7 @@ describe("irohaJsNativeDir", () => {
     expect(resolved).toBe(
       "/Users/test/app/node_modules/@iroha/iroha-js/native",
     );
-    expect(seenPaths[0]).toBe(
+    expect(seenPaths[1]).toBe(
       "/Users/test/app/node_modules/@iroha/iroha-js/native/iroha_js_host.node",
     );
   });
@@ -164,6 +216,7 @@ describe("irohaJsNativeDir", () => {
       "/Applications/SORA.app/Contents/Resources/app.asar/dist/native",
     );
     expect(checked).toEqual([
+      "/Applications/SORA.app/Contents/Resources/app.asar/dist/node_modules/@iroha/iroha-js/native",
       "/Applications/SORA.app/Contents/Resources/app.asar/node_modules/@iroha/iroha-js/native",
       "/Applications/SORA.app/Contents/Resources/node_modules/@iroha/iroha-js/native",
       "/Applications/SORA.app/Contents/Resources/app.asar/dist/native",
@@ -322,9 +375,12 @@ describe("hasRequiredPackagedIrohaJsNativeProvenance", () => {
   const nativeSha256 = createHash("sha256").update(nativeBytes).digest("hex");
   const exactEntry = {
     sha256: nativeSha256,
+    build_provenance_version: 3,
+    build_execution_policy: "trusted-local-cargo-v1",
     cargo_profile: "release",
     source_git_revision: REVIEWED_IROHA_SOURCE_GIT_REVISION,
     source_tree_clean: true,
+    source_tree_sha256: "c".repeat(64),
   };
   const check = (manifest: unknown, bytes = nativeBytes) =>
     hasRequiredPackagedIrohaJsNativeProvenance(
@@ -347,12 +403,24 @@ describe("hasRequiredPackagedIrohaJsNativeProvenance", () => {
   });
 
   it.each([
+    [
+      "wrong build provenance version",
+      { ...exactEntry, build_provenance_version: 2 },
+    ],
+    [
+      "wrong build execution policy",
+      { ...exactEntry, build_execution_policy: "untrusted-shell-v0" },
+    ],
     ["debug profile", { ...exactEntry, cargo_profile: "debug" }],
     [
       "different source revision",
       { ...exactEntry, source_git_revision: "a".repeat(40) },
     ],
     ["dirty source", { ...exactEntry, source_tree_clean: false }],
+    [
+      "malformed source tree SHA-256",
+      { ...exactEntry, source_tree_sha256: "C".repeat(64) },
+    ],
     ["unknown field", { ...exactEntry, legacy_signature: "allowed" }],
     ["wrong native checksum", { ...exactEntry, sha256: "b".repeat(64) }],
   ])("rejects a packaged manifest with %s", (_label, entry) => {
@@ -450,24 +518,78 @@ describe("hasRequiredIrohaJsNativeExports", () => {
     }
   });
 
-  it("rejects stale validation-fee fingerprint arities", () => {
+  it("rejects binaries missing any secure private-file export", () => {
+    for (const exportName of [
+      "securePrivateFileAbiVersion",
+      "securePrivateDirectoryEnsure",
+      "securePrivateFileRead",
+      "securePrivateFileWriteAtomic",
+    ] as const) {
+      const nativeModule = compatibleNativeModule();
+      Reflect.deleteProperty(nativeModule, exportName);
+      expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+    }
+  });
+
+  it("uses the explicit secure private-file ABI instead of JavaScript arity", () => {
     const nativeModule = compatibleNativeModule();
+    for (const exportName of [
+      "securePrivateDirectoryEnsure",
+      "securePrivateFileRead",
+      "securePrivateFileWriteAtomic",
+    ] as const) {
+      Reflect.set(nativeModule, exportName, () => undefined);
+    }
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(true);
+  });
+
+  it.each([0, 2, "1", null])(
+    "rejects secure private-file ABI version %j",
+    (abiVersion) => {
+      const nativeModule = compatibleNativeModule();
+      Reflect.set(
+        nativeModule,
+        "securePrivateFileAbiVersion",
+        () => abiVersion,
+      );
+      expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+    },
+  );
+
+  it("rejects a secure private-file ABI probe that throws", () => {
+    const nativeModule = compatibleNativeModule();
+    nativeModule.securePrivateFileAbiVersion = () => {
+      throw new Error("probe failed");
+    };
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+  });
+
+  it("accepts opaque N-API fingerprint arities when known-answer vectors pass", () => {
+    const nativeModule = compatibleNativeModule();
+    const policyFingerprint =
+      nativeModule.validationFeePolicyProposalFingerprintV1;
+    const payoutFingerprint =
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1;
     Reflect.set(
       nativeModule,
       "validationFeePolicyProposalFingerprintV1",
-      (_policy: unknown) => {
-        void _policy;
-      },
+      (...args: unknown[]) =>
+        Reflect.apply(policyFingerprint, nativeModule, args),
     );
     Reflect.set(
       nativeModule,
       "validationFeePayoutLifecycleProposalFingerprintV1",
-      (_payoutBinding: unknown) => {
-        void _payoutBinding;
-      },
+      (...args: unknown[]) =>
+        Reflect.apply(payoutFingerprint, nativeModule, args),
     );
 
-    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(false);
+    expect(nativeModule.validationFeePolicyProposalFingerprintV1.length).toBe(
+      0,
+    );
+    expect(
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1.length,
+    ).toBe(0);
+    expect(hasRequiredIrohaJsNativeExports(nativeModule)).toBe(true);
   });
 
   it("rejects a native Connect bridge ABI other than 21", () => {

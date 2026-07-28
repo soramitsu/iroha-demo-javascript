@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { verifyWindowsNativeAuthenticode } from "../scripts/after-sign.mjs";
+import {
+  verifyWindowsNativeAuthenticode,
+  type AfterSignRunProcess,
+} from "../scripts/after-sign.mjs";
 
 const windowsContext = {
   electronPlatformName: "win32",
@@ -70,7 +73,7 @@ describe("Windows native post-sign verification", () => {
 
   it("accepts only a successful PowerShell Authenticode check", () => {
     const inspectPath = vi.fn(() => regularFileStats);
-    const runProcess = vi.fn(() => ({ status: 0 }));
+    const runProcess = vi.fn<AfterSignRunProcess>(() => ({ status: 0 }));
 
     verifyWindowsNativeAuthenticode(windowsContext, {
       environment: {
@@ -92,7 +95,11 @@ describe("Windows native post-sign verification", () => {
     );
     expect(inspectPath).toHaveBeenCalledWith(expectedNativePath);
     expect(runProcess).toHaveBeenCalledOnce();
-    const [command, args, options] = runProcess.mock.calls[0];
+    const firstCall = runProcess.mock.calls[0];
+    if (!firstCall) {
+      throw new Error("Expected the Authenticode process invocation.");
+    }
+    const [command, args, options] = firstCall;
     expect(command).toBe("powershell.exe");
     expect(args).toContain("-NoProfile");
     expect(args.at(-1)).toContain("Get-AuthenticodeSignature");
@@ -134,7 +141,7 @@ describe("electron-builder Windows signing boundary", () => {
     const winConfig = config.slice(winStart, winEnd);
     expect(config).toMatch(/^afterSign: scripts\/after-sign\.mjs$/mu);
     expect(config).toMatch(
-      /^asarUnpack:\n  - dist\/native\/iroha_js_host\.node$/mu,
+      /^asarUnpack:\n {2}- dist\/native\/iroha_js_host\.node$/mu,
     );
     expect(winConfig).toContain("signExts:");
     expect(winConfig).toContain("- .exe");

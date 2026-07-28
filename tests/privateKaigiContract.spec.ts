@@ -5,6 +5,7 @@ import {
   readPrivateKaigiFeeSchedule,
   readPrivateKaigiTransferVerifyingKey,
   requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
 } from "../electron/privateKaigiContract";
 
 const validLifecycle = {
@@ -264,6 +265,17 @@ describe("private Kaigi first-release contract", () => {
   ])("rejects legacy or non-exact call id %s", (callId) => {
     expect(() => requireKaigiCallId(callId, "callId")).toThrow(
       /domain\.dataspace:meeting|surrounding whitespace/u,
+    );
+  });
+
+  it("requires an exact 24-byte invite secret", () => {
+    const secret = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
+    expect(requireKaigiInviteSecretBase64Url(secret)).toBe(secret);
+    expect(() => requireKaigiInviteSecretBase64Url("bXktc2VjcmV0")).toThrow(
+      /exactly 24 bytes/u,
+    );
+    expect(() => requireKaigiInviteSecretBase64Url(`${secret}=`)).toThrow(
+      /exactly 24 bytes/u,
     );
   });
 });

@@ -23,6 +23,7 @@ import {
 import { resolveIrohaJsNativeDir } from "../electron/irohaJsNativeDir";
 
 const SOURCE_GIT_REVISION = "1bcb05eb208d8bda1610789d827a7ed97e66e56c";
+const SOURCE_TREE_SHA256 = "c".repeat(64);
 const NATIVE_FILENAME = "iroha_js_host.node";
 const MANIFEST_FILENAME = "iroha_js_host.checksums.json";
 
@@ -51,9 +52,12 @@ const canonicalManifest = (
         entries: {
           [platformKey]: {
             sha256: nativeSha256,
+            build_provenance_version: 3,
+            build_execution_policy: "trusted-local-cargo-v1",
             cargo_profile: "release",
             source_git_revision: SOURCE_GIT_REVISION,
             source_tree_clean: true,
+            source_tree_sha256: SOURCE_TREE_SHA256,
             ...platformFields,
           },
         },
@@ -303,9 +307,12 @@ describe("packaged Iroha native provenance fixtures", () => {
           entries: {
             "linux-x64": {
               sha256: sha256(nativeBytes),
+              build_provenance_version: 3,
+              build_execution_policy: "trusted-local-cargo-v1",
               cargo_profile: "release",
               source_git_revision: SOURCE_GIT_REVISION,
               source_tree_clean: "true",
+              source_tree_sha256: SOURCE_TREE_SHA256,
             },
           },
         },

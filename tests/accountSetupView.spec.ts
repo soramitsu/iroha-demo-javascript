@@ -861,6 +861,47 @@ describe("AccountSetupView", () => {
     ).toBe("sign_result_ok");
   });
 
+  it("keeps the Account Setup modal active when a second relay request arrives", async () => {
+    mountView({ withSavedAccount: true });
+    const { socket, keys } = await approveConnectSession();
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeRawSignRequest(keys.appKey, {
+          signingMessageB64: Buffer.from("first setup request").toString(
+            "base64",
+          ),
+        }),
+      }),
+    );
+    await flushPromises();
+    const firstDialog = getOpenDialog();
+    expect(firstDialog).not.toBeNull();
+
+    socket.emit(
+      "message",
+      new MessageEvent("message", {
+        data: encodeRawSignRequest(keys.appKey, {
+          sequence: 3,
+          signingMessageB64: Buffer.from("overlapping setup request").toString(
+            "base64",
+          ),
+        }),
+      }),
+    );
+    await flushPromises();
+
+    expect(socket.closeCode).toBeNull();
+    expect(getOpenDialog()).toBe(firstDialog);
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+    expect(
+      decodeLatestWalletEnvelope(socket, keys.walletKey).payload,
+    ).toMatchObject({
+      type: "sign_result_err",
+      code: "REQUEST_IN_FLIGHT",
+    });
+  });
+
   it.each([
     {
       label: "null grants",

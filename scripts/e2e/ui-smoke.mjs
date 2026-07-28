@@ -448,7 +448,10 @@ function buildInitScript() {
     if (persistedLocale) {
       localStorage.setItem("iroha-demo:locale", persistedLocale);
     }
-    localStorage.setItem("iroha-demo:kaigi", JSON.stringify({ hydrated: true, hostSessions: [] }));
+    localStorage.setItem(
+      "iroha-demo:kaigi:host-sessions:v1",
+      JSON.stringify({ hydrated: true, hostSessions: [] }),
+    );
     window.__e2e = {
       clipboard: "",
       shared: [],
@@ -821,6 +824,8 @@ function buildInitScript() {
         validationFeePlainRequiresExplicitFinalization: true,
         validationFeePlainElectorateRules: {
           votingAssetId: xorAssetDefinitionId,
+          bondEscrowAccount: "ballot-escrow@governance",
+          slashReceiverAccount: "slash-receiver@governance",
           ballotAmount: "150",
           ballotDurationBlocks: 3600,
           citizenshipAmount: "10000",
@@ -1996,10 +2001,20 @@ async function checkKaigi(page) {
     .locator(".kaigi-link-field textarea")
     .first()
     .inputValue();
+  const inviteUrl = new URL(invite);
+  const inviteEntries = Array.from(inviteUrl.searchParams.entries());
   assert(
-    invite.includes("call=kaigi.universal%3A") ||
-      invite.includes("call=kaigi.universal:"),
-    `Kaigi invite did not use qualified kaigi.universal call id: ${invite}`,
+    inviteUrl.protocol === "iroha:" &&
+      inviteUrl.hostname === "kaigi" &&
+      inviteUrl.pathname === "/join" &&
+      inviteEntries.length === 2 &&
+      inviteUrl.searchParams.getAll("call").length === 1 &&
+      inviteUrl.searchParams.getAll("secret").length === 1 &&
+      /^kaigi\.universal:kaigi-[a-z0-9-]+$/.test(
+        inviteUrl.searchParams.get("call") || "",
+      ) &&
+      /^[A-Za-z0-9_-]{32}$/.test(inviteUrl.searchParams.get("secret") || ""),
+    `Kaigi invite was not the exact canonical call-and-secret link: ${invite}`,
   );
   await page
     .getByRole("button", { name: "I will keep this window open" })

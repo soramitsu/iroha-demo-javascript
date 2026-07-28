@@ -10,11 +10,12 @@ import {
   stringifyKaigiSignalEnvelope,
 } from "@/utils/kaigi";
 import {
-  buildKaigiCompactInviteHashRoute,
-  buildKaigiCompactInvitePayload,
+  buildKaigiInvite,
+  buildKaigiInviteHashRoute,
 } from "@/utils/kaigiInvite";
 
 const KAIGI_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const KAIGI_INVITE_SECRET = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
 const createKaigiMeetingMock = vi.fn();
 const getKaigiCallMock = vi.fn();
 const joinKaigiMeetingMock = vi.fn();
@@ -250,12 +251,12 @@ const getTeleportedButtonByText = (text: string) => {
   return button;
 };
 
-const buildCompactInviteHash = () => {
-  const compact = buildKaigiCompactInvitePayload(
-    "kaigi:kaigi-testroom",
-    "bXktc2VjcmV0",
+const buildInviteHash = () => {
+  const invite = buildKaigiInvite(
+    "kaigi.universal:kaigi-testroom",
+    KAIGI_INVITE_SECRET,
   );
-  return `#${buildKaigiCompactInviteHashRoute(compact)}`;
+  return `#${buildKaigiInviteHashRoute(invite)}`;
 };
 
 const buildAnswerPacket = (roomId: string) =>
@@ -303,7 +304,7 @@ describe("KaigiView", () => {
     });
     createKaigiMeetingMock.mockResolvedValue(finalizedTransaction("a"));
     getKaigiCallMock.mockResolvedValue({
-      callId: "kaigi:kaigi-testroom",
+      callId: "kaigi.universal:kaigi-testroom",
       meetingCode: "testroom",
       title: "Demo Call",
       hostDisplayName: "Alice",
@@ -919,14 +920,14 @@ describe("KaigiView", () => {
   });
 
   it("loads an invite from the hash route and joins through the live path", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     const wrapper = mountView();
     await flushPromises();
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "kaigi:kaigi-testroom",
-      inviteSecretBase64Url: "bXktc2VjcmV0",
+      callId: "kaigi.universal:kaigi-testroom",
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
     });
     expect(wrapper.text()).toContain("Meeting summary");
     expect(wrapper.text()).toContain("Demo Call");
@@ -942,7 +943,7 @@ describe("KaigiView", () => {
       chainId: "chain",
       assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
       participantAccountId: "alice@wonderland",
-      inviteSecretBase64Url: "bXktc2VjcmV0",
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
       answerDescription: {
         type: "answer",
         sdp: "answer-sdp",
@@ -956,7 +957,7 @@ describe("KaigiView", () => {
   });
 
   it("keeps live-invite joining manual while endpoint identity is read-only", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     const wrapper = mountView({ writeAllowed: false });
     await flushPromises();
 
@@ -982,7 +983,7 @@ describe("KaigiView", () => {
   });
 
   it("falls back to a manual answer when private automatic join fails", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     joinKaigiMeetingMock.mockRejectedValueOnce(
       new Error("join proof rejected"),
     );
@@ -1025,7 +1026,7 @@ describe("KaigiView", () => {
   });
 
   it("prompts for self-shielding and retries private join", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     joinKaigiMeetingMock.mockRejectedValueOnce(
       new Error(
         `Private Kaigi needs 2.1 shielded XOR in ${KAIGI_ASSET_DEFINITION_ID}, but only 0 is available. Self-shield XOR first.`,
@@ -1070,7 +1071,7 @@ describe("KaigiView", () => {
   });
 
   it("falls back to the manual answer path for local-only wallets", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     const wrapper = mountView({ localOnly: true });
     await flushPromises();
 
@@ -1273,9 +1274,9 @@ describe("KaigiView", () => {
               storageSegment: "v2:http%3A%2F%2Flocalhost%3A8080:chain:369",
             },
             accountId: "alice@wonderland",
-            callId: "kaigi:kaigi-testroom",
+            callId: "kaigi.universal:kaigi-testroom",
             meetingCode: "testroom",
-            inviteSecretBase64Url: "bXktc2VjcmV0",
+            inviteSecretBase64Url: KAIGI_INVITE_SECRET,
             hostKaigiKeys: {
               publicKeyBase64Url: "host-public",
               privateKeyBase64Url: "host-private",
@@ -1296,8 +1297,8 @@ describe("KaigiView", () => {
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "kaigi:kaigi-testroom",
-      inviteSecretBase64Url: "bXktc2VjcmV0",
+      callId: "kaigi.universal:kaigi-testroom",
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
     });
     expect(wrapper.text()).toContain("Resumed active meeting link.");
   });

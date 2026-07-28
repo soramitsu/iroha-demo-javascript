@@ -1,3 +1,10 @@
+import {
+  requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
+} from "../src/utils/kaigiInvite";
+
+export { requireKaigiCallId, requireKaigiInviteSecretBase64Url };
+
 export const PRIVATE_KAIGI_TRANSFER_BACKEND = "halo2/ipa";
 export const PRIVATE_KAIGI_TRANSFER_CIRCUIT_ID =
   "halo2/pasta/ipa/confidential-transfer-2x2-merkle16-axiom-poseidon-v3";
@@ -243,31 +250,4 @@ export const readPrivateKaigiTransferVerifyingKey = (
       },
     },
   };
-};
-
-const canonicalDomainLabelPattern = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)$/;
-
-export const requireKaigiCallId = (value: unknown, label: string): string => {
-  const callId = requireExactString(value, label);
-  if (callId.normalize("NFC") !== callId) {
-    throw new Error(`${label} must already use canonical NFC text.`);
-  }
-  if ((callId.match(/:/g) ?? []).length !== 1) {
-    throw new Error(
-      `${label} must be in exact domain.dataspace:meeting format.`,
-    );
-  }
-  const [domainId, callName] = callId.split(":");
-  const domainLabels = domainId.split(".");
-  if (
-    domainLabels.length !== 2 ||
-    domainLabels.some((part) => !canonicalDomainLabelPattern.test(part)) ||
-    !callName ||
-    /[\s@#$:]/u.test(callName)
-  ) {
-    throw new Error(
-      `${label} must be in exact domain.dataspace:meeting format.`,
-    );
-  }
-  return callId;
 };

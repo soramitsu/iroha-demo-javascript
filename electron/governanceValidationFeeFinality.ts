@@ -9,6 +9,7 @@ import {
   type GovernanceValidationFeePolicyView,
 } from "./governanceValidationFee";
 import {
+  governanceIntegrityDirectoryPath,
   loadSecureBoundedJson,
   secureWriteBoundedFile,
 } from "./secureBoundedJson";
@@ -324,12 +325,19 @@ const observationsEqual = (
 
 export const governanceValidationFeeFinalityPath = (
   userDataPath: string,
-): string => join(userDataPath, GOVERNANCE_VALIDATION_FEE_FINALITY_FILENAME);
+): string =>
+  join(
+    governanceIntegrityDirectoryPath(userDataPath),
+    GOVERNANCE_VALIDATION_FEE_FINALITY_FILENAME,
+  );
 
 export const governanceValidationFeeFinalityMarkerPath = (
   userDataPath: string,
 ): string =>
-  join(userDataPath, GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_FILENAME);
+  join(
+    governanceIntegrityDirectoryPath(userDataPath),
+    GOVERNANCE_VALIDATION_FEE_FINALITY_MARKER_FILENAME,
+  );
 
 export const deriveGovernanceValidationFeeImmutableLedgerScope = (
   config: GovernanceValidationFeeEnabledConfig,
@@ -436,7 +444,6 @@ export class GovernanceValidationFeeFinalityStore {
     const marker = loadSecureBoundedJson(this.markerPath, {
       label: FINALITY_MARKER_LABEL,
       maximumBytes: MAX_FINALITY_MARKER_BYTES,
-      expectedMode: 0o600,
     });
     parseMarker(marker.value);
     if (marker.sha256 !== sha256(canonicalMarker())) {
@@ -448,7 +455,6 @@ export class GovernanceValidationFeeFinalityStore {
     const loaded = loadSecureBoundedJson(this.path, {
       label: FINALITY_STATE_LABEL,
       maximumBytes: MAX_FINALITY_STATE_BYTES,
-      expectedMode: 0o600,
     });
     const state = parseState(loaded.value);
     if (Object.keys(state.observations).length === 0) {
@@ -491,7 +497,6 @@ export class GovernanceValidationFeeFinalityStore {
       {
         label: FINALITY_STATE_LABEL,
         maximumBytes: MAX_FINALITY_STATE_BYTES,
-        expectedMode: 0o600,
       },
     );
     if (firstPromotion) {
@@ -501,7 +506,6 @@ export class GovernanceValidationFeeFinalityStore {
         {
           label: FINALITY_MARKER_LABEL,
           maximumBytes: MAX_FINALITY_MARKER_BYTES,
-          expectedMode: 0o600,
         },
       );
     } else if (!pathExists(this.markerPath, FINALITY_MARKER_LABEL)) {

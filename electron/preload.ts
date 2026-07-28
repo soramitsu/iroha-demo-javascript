@@ -191,6 +191,7 @@ import {
   readPrivateKaigiFeeSchedule,
   readPrivateKaigiTransferVerifyingKey,
   requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
   type PrivateKaigiFeeSchedule,
   type PrivateKaigiTransferVerifyingKeyContext,
 } from "./privateKaigiContract";
@@ -4407,7 +4408,7 @@ const fetchKaigiMeetingView = async (
   return resolveKaigiMeetingView(
     payload,
     payload.call_id ?? input.callId,
-    normalizeBase64UrlString(
+    requireKaigiInviteSecretBase64Url(
       input.inviteSecretBase64Url,
       "inviteSecretBase64Url",
     ),
@@ -11060,7 +11061,7 @@ const api: IrohaBridge = {
       normalizeKaigiPeerIdentityReveal(peerIdentityReveal);
     const normalizedHostParticipantId =
       normalizeKaigiParticipantId(hostParticipantId);
-    const inviteSecret = normalizeBase64UrlString(
+    const inviteSecret = requireKaigiInviteSecretBase64Url(
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
     );
@@ -11256,7 +11257,7 @@ const api: IrohaBridge = {
       writeConnection.networkPrefix,
     );
     const normalizedCallId = normalizeKaigiCallId(callId, "callId");
-    const inviteSecret = normalizeBase64UrlString(
+    const inviteSecret = requireKaigiInviteSecretBase64Url(
       inviteSecretBase64Url,
       "inviteSecretBase64Url",
     );

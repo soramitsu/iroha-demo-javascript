@@ -248,7 +248,7 @@
                 <p class="helper">
                   {{
                     t(
-                      "Share the compact link. It contains only the on-chain call ID and invite secret.",
+                      "Share the meeting link. It contains only the on-chain call ID and invite secret.",
                     )
                   }}
                 </p>
@@ -830,15 +830,16 @@ import {
   type ParsedKaigiSignalInput,
 } from "@/utils/kaigi";
 import {
-  buildKaigiCompactInviteDeepLink,
-  buildKaigiCompactInviteHashRoute,
-  buildKaigiCompactInvitePayload,
   buildKaigiCallId,
+  buildKaigiInvite,
+  buildKaigiInviteDeepLink,
+  buildKaigiInviteHashRoute,
   computeKaigiMeetingExpiryMs,
   createKaigiInviteSecretBase64Url,
-  isKaigiInviteExpired,
+  createKaigiMeetingCode,
+  isKaigiMeetingExpired,
   parseKaigiInviteInput,
-  type ParsedKaigiInviteInput,
+  type KaigiInvite,
 } from "@/utils/kaigiInvite";
 import {
   sanitizeErrorMessage,
@@ -915,14 +916,6 @@ const formatDateTimeLocalInput = (value: number) => {
     ].join("-") +
     `T${padDateTimePart(date.getHours())}:${padDateTimePart(date.getMinutes())}`
   );
-};
-
-const createMeetingCode = () => {
-  const randomUuid = globalThis.crypto?.randomUUID?.();
-  if (randomUuid) {
-    return randomUuid.replace(/-/g, "").slice(0, 8).toLowerCase();
-  }
-  return Math.random().toString(36).slice(2, 10).padEnd(8, "0").slice(0, 8);
 };
 
 const session = useSessionStore();
@@ -1120,7 +1113,7 @@ const privateKaigiFundingPromptVisible = computed(() =>
   Boolean(privateKaigiPendingAction.value && privateKaigiFundingState.value),
 );
 const inviteExpired = computed(() =>
-  parsedInvite.value ? isKaigiInviteExpired(parsedInvite.value) : false,
+  parsedInvite.value ? isKaigiMeetingExpired(parsedInvite.value) : false,
 );
 const inviteCanUseAutomaticJoin = computed(
   () => Boolean(parsedInvite.value?.live) && canUseAutomaticKaigi.value,
@@ -1168,9 +1161,9 @@ const parsedInviteExpiryLabel = computed(() =>
 const modeHelperText = computed(() =>
   callMode.value === "start"
     ? t(
-        "Create an on-chain Kaigi meeting, share its compact link, then wait for the participant answer.",
+        "Create an on-chain Kaigi meeting, share its meeting link, then wait for the participant answer.",
       )
-    : t("Open or paste a compact Kaigi invite, then join the live meeting."),
+    : t("Open or paste a Kaigi meeting link, then join the live meeting."),
 );
 const mediaSetupStatusLabel = computed(() => {
   if (mediaBusy.value) {
@@ -2400,7 +2393,7 @@ const setScheduledStartToNow = () => {
 };
 
 const hydrateInvite = (invite: LoadedKaigiInvite, rawInput: string) => {
-  if (isKaigiInviteExpired(invite)) {
+  if (isKaigiMeetingExpired(invite)) {
     throw new Error(t("This meeting invite has expired."));
   }
   if (invite.ended) {
@@ -2432,16 +2425,16 @@ const hydrateInvite = (invite: LoadedKaigiInvite, rawInput: string) => {
 };
 
 const resolveParsedInviteInput = async (
-  parsed: ParsedKaigiInviteInput,
+  invite: KaigiInvite,
 ): Promise<LoadedKaigiInvite> => {
   const meeting = await getKaigiCall({
     toriiUrl: session.connection.toriiUrl,
-    callId: parsed.payload.callId,
-    inviteSecretBase64Url: parsed.payload.inviteSecretBase64Url,
+    callId: invite.callId,
+    inviteSecretBase64Url: invite.inviteSecretBase64Url,
   });
   return {
     ...toLoadedInviteFromMeetingView(meeting),
-    inviteSecretBase64Url: parsed.payload.inviteSecretBase64Url,
+    inviteSecretBase64Url: invite.inviteSecretBase64Url,
   };
 };
 
@@ -2549,7 +2542,7 @@ const restoreLatestHostMeetingSession = async () => {
       callId: sessionRecord.callId,
       inviteSecretBase64Url: sessionRecord.inviteSecretBase64Url,
     });
-    if (meeting.ended || isKaigiInviteExpired(meeting)) {
+    if (meeting.ended || isKaigiMeetingExpired(meeting)) {
       removePersistedHostSession(sessionRecord.callId);
       return;
     }
@@ -2561,14 +2554,14 @@ const restoreLatestHostMeetingSession = async () => {
     hostMeetingCode.value = sessionRecord.meetingCode;
     hostMeetingLive.value = true;
     hostInviteSecretBase64Url.value = sessionRecord.inviteSecretBase64Url;
-    hostInviteDeepLink.value = buildKaigiCompactInviteDeepLink(
-      buildKaigiCompactInvitePayload(
+    hostInviteDeepLink.value = buildKaigiInviteDeepLink(
+      buildKaigiInvite(
         sessionRecord.callId,
         sessionRecord.inviteSecretBase64Url,
       ),
     );
-    hostInviteHashRoute.value = buildKaigiCompactInviteHashRoute(
-      buildKaigiCompactInvitePayload(
+    hostInviteHashRoute.value = buildKaigiInviteHashRoute(
+      buildKaigiInvite(
         sessionRecord.callId,
         sessionRecord.inviteSecretBase64Url,
       ),
@@ -2622,7 +2615,7 @@ const createMeetingLink = async () => {
     const scheduledStartMs = parseScheduledStartMs();
     const createdAtMs = Date.now();
     const expiresAtMs = computeKaigiMeetingExpiryMs(scheduledStartMs);
-    const meetingCode = createMeetingCode();
+    const meetingCode = createKaigiMeetingCode();
     const callId = buildKaigiCallId(DEFAULT_KAIGI_CALL_DOMAIN, meetingCode);
     const inviteSecretBase64Url = createKaigiInviteSecretBase64Url();
     manualRoomId.value = callId;
@@ -2695,12 +2688,9 @@ const createMeetingLink = async () => {
     }
 
     hostMeetingLive.value = true;
-    const compactInvite = buildKaigiCompactInvitePayload(
-      callId,
-      inviteSecretBase64Url,
-    );
-    hostInviteDeepLink.value = buildKaigiCompactInviteDeepLink(compactInvite);
-    hostInviteHashRoute.value = buildKaigiCompactInviteHashRoute(compactInvite);
+    const invite = buildKaigiInvite(callId, inviteSecretBase64Url);
+    hostInviteDeepLink.value = buildKaigiInviteDeepLink(invite);
+    hostInviteHashRoute.value = buildKaigiInviteHashRoute(invite);
     savePersistedHostSession({
       callId,
       meetingCode,
@@ -2932,7 +2922,7 @@ const createManualOfferPacket = async () => {
     parsedInvite.value = null;
     resetSignalState();
     callMode.value = "start";
-    const meetingCode = createMeetingCode();
+    const meetingCode = createKaigiMeetingCode();
     const callId = buildKaigiCallId(DEFAULT_KAIGI_CALL_DOMAIN, meetingCode);
     manualRoomId.value = callId;
     hostMeetingCallId.value = callId;

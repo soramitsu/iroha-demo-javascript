@@ -1069,8 +1069,8 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Create a manual answer packet in Advanced signaling instead.",
   "Create a manual offer packet in Advanced signaling instead.":
     "Create a manual offer packet in Advanced signaling instead.",
-  "Create an on-chain Kaigi meeting, share its compact link, then wait for the participant answer.":
-    "Create an on-chain Kaigi meeting, share its compact link, then wait for the participant answer.",
+  "Create an on-chain Kaigi meeting, share its meeting link, then wait for the participant answer.":
+    "Create an on-chain Kaigi meeting, share its meeting link, then wait for the participant answer.",
   "Create manual offer packet": "Create manual offer packet",
   "Creating manual offer…": "Creating manual offer…",
   "Live wallets create and join Kaigi meetings through on-chain signaling metadata.":
@@ -1079,10 +1079,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Manual offer packet ready in Advanced signaling. No meeting link was created.",
   "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.":
     "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.",
-  "Open or paste a compact Kaigi invite, then join the live meeting.":
-    "Open or paste a compact Kaigi invite, then join the live meeting.",
-  "Share the compact link. It contains only the on-chain call ID and invite secret.":
-    "Share the compact link. It contains only the on-chain call ID and invite secret.",
+  "Open or paste a Kaigi meeting link, then join the live meeting.":
+    "Open or paste a Kaigi meeting link, then join the live meeting.",
+  "Share the meeting link. It contains only the on-chain call ID and invite secret.":
+    "Share the meeting link. It contains only the on-chain call ID and invite secret.",
   "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.":
     "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.",
   "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.":
@@ -2728,8 +2728,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Scheduled start": "Scheduled start",
   "Start now": "Start now",
   "Meeting invite": "Meeting invite",
-  "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.":
-    "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.",
   "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
     "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
   "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":

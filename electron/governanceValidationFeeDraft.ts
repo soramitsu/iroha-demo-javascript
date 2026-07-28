@@ -56,6 +56,8 @@ type PlainRecord = Record<string, unknown>;
 export interface ValidationFeePlainElectorateRulesWire
   extends Record<string, unknown> {
   voting_asset_id: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  bond_escrow_account: string;
+  slash_receiver_account: string;
   ballot_amount: "150";
   ballot_duration_blocks: "3600";
   citizenship_amount: "10000";
@@ -273,12 +275,14 @@ const normalizePlainElectorateRules = (
       "approvalThresholdNumerator",
       "ballotAmount",
       "ballotDurationBlocks",
+      "bondEscrowAccount",
       "citizenshipAmount",
       "convictionStepBlocks",
       "eligibilityRule",
       "maxConviction",
       "maxMembers",
       "minTurnout",
+      "slashReceiverAccount",
       "votingAssetId",
     ],
     "validation-fee PLAIN electorate rules",
@@ -313,6 +317,14 @@ const normalizePlainElectorateRules = (
   }
   return {
     voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    bond_escrow_account: requiredText(
+      rules.bondEscrowAccount,
+      "validation-fee PLAIN electorate rules.bondEscrowAccount",
+    ),
+    slash_receiver_account: requiredText(
+      rules.slashReceiverAccount,
+      "validation-fee PLAIN electorate rules.slashReceiverAccount",
+    ),
     ballot_amount: "150",
     ballot_duration_blocks: "3600",
     citizenship_amount: "10000",

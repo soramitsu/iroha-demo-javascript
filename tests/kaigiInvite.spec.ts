@@ -1,90 +1,113 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
-  KAIGI_COMPACT_INVITE_SCHEMA,
+  KAIGI_INVITE_SECRET_BASE64URL_LENGTH,
   buildKaigiCallId,
-  buildKaigiCompactInviteDeepLink,
-  buildKaigiCompactInviteHashRoute,
-  buildKaigiCompactInvitePayload,
+  buildKaigiInvite,
+  buildKaigiInviteDeepLink,
+  buildKaigiInviteHashRoute,
   computeKaigiMeetingExpiryMs,
+  createKaigiInviteSecretBase64Url,
   deriveKaigiMeetingCode,
-  isKaigiInviteExpired,
+  isKaigiMeetingExpired,
+  parseKaigiInviteDeepLink,
   parseKaigiInviteInput,
+  requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
 } from "@/utils/kaigiInvite";
 
+const INVITE_SECRET = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
+const CALL_ID = "default.universal:kaigi-weekly-sync";
+
 describe("Kaigi invite helpers", () => {
-  it("builds and parses compact links containing only call and secret", () => {
-    const compact = buildKaigiCompactInvitePayload(
-      "default.universal:kaigi-weekly-sync",
-      "bXktc2VjcmV0",
-    );
-    expect(compact.schema).toBe(KAIGI_COMPACT_INVITE_SCHEMA);
-    const deepLink = buildKaigiCompactInviteDeepLink(compact);
-    const hashRoute = buildKaigiCompactInviteHashRoute(compact);
+  it("builds and parses links containing only the canonical call and secret", () => {
+    const invite = buildKaigiInvite(CALL_ID, INVITE_SECRET);
+    const deepLink = buildKaigiInviteDeepLink(invite);
+    const hashRoute = buildKaigiInviteHashRoute(invite);
 
     expect(deepLink).toBe(
-      "iroha://kaigi/join?call=default.universal%3Akaigi-weekly-sync&secret=bXktc2VjcmV0",
+      `iroha://kaigi/join?call=default.universal%3Akaigi-weekly-sync&secret=${INVITE_SECRET}`,
     );
     expect(hashRoute).toBe(
-      "/kaigi?call=default.universal%3Akaigi-weekly-sync&secret=bXktc2VjcmV0",
+      `/kaigi?call=default.universal%3Akaigi-weekly-sync&secret=${INVITE_SECRET}`,
     );
-    expect(deepLink).not.toMatch(/invite|sdp|ice|wallet/i);
-    expect(hashRoute).not.toMatch(/invite|sdp|ice|wallet/i);
-
-    expect(parseKaigiInviteInput(deepLink)).toEqual({
-      kind: "compact",
-      payload: compact,
-    });
-    expect(parseKaigiInviteInput(`#${hashRoute}`)).toEqual({
-      kind: "compact",
-      payload: compact,
-    });
+    expect(deepLink).not.toMatch(/sdp|ice|wallet/i);
+    expect(hashRoute).not.toMatch(/sdp|ice|wallet/i);
+    expect(parseKaigiInviteDeepLink(deepLink)).toEqual(invite);
+    expect(parseKaigiInviteInput(deepLink)).toEqual(invite);
+    expect(parseKaigiInviteInput(`#${hashRoute}`)).toEqual(invite);
+    expect(parseKaigiInviteInput(hashRoute)).toEqual(invite);
+    expect(
+      parseKaigiInviteInput(`https://wallet.example/#${hashRoute}`),
+    ).toEqual(invite);
   });
 
-  it("rejects legacy invite-token links and raw encoded payloads", () => {
-    const legacyPayload = btoa(
-      JSON.stringify({
-        schema: "iroha-demo-kaigi-invite/v1",
-        callId: "default:kaigi-weekly-sync",
-        hostAccountId: "sorauAlice",
-        offerDescription: {
-          type: "offer",
-          sdp: "v=0\r\na=ice-ufrag:test\r\n",
-        },
-      }),
-    );
-
-    expect(() =>
-      parseKaigiInviteInput(
-        `iroha://kaigi/join?invite=${encodeURIComponent(legacyPayload)}`,
-      ),
-    ).toThrow(/on-chain call and invite secret/i);
-    expect(() => parseKaigiInviteInput(legacyPayload)).toThrow(
-      /on-chain call and invite secret/i,
+  it.each([
+    `iroha://kaigi/join?invite=${INVITE_SECRET}`,
+    INVITE_SECRET,
+    `iroha://kaigi/join?call=${encodeURIComponent(CALL_ID)}`,
+    `iroha://kaigi/join?secret=${INVITE_SECRET}`,
+    `iroha://kaigi/join?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}&extra=true`,
+    `iroha://kaigi/join?call=${encodeURIComponent(CALL_ID)}&call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `iroha://kaigi/join?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}&secret=${INVITE_SECRET}`,
+    `iroha://kaigi/other?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `iroha://other/join?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `#/other?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `https://wallet.example/?sdp=forbidden&wallet=forbidden#/kaigi?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    ` iroha://kaigi/join?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+    `javascript:void(0)#/kaigi?call=${encodeURIComponent(CALL_ID)}&secret=${INVITE_SECRET}`,
+  ])("rejects non-canonical invite input %s", (input) => {
+    expect(() => parseKaigiInviteInput(input)).toThrow(
+      /exact call-and-secret meeting link/i,
     );
   });
 
-  it("rejects incomplete compact links", () => {
+  it("requires an already-qualified exact call id", () => {
+    expect(requireKaigiCallId(CALL_ID)).toBe(CALL_ID);
+    expect(buildKaigiCallId("default.universal", "Weekly Sync")).toBe(CALL_ID);
+    expect(deriveKaigiMeetingCode(CALL_ID)).toBe("weekly-sync");
+
+    expect(() => buildKaigiCallId("default", "Weekly Sync")).toThrow(
+      /domain\.dataspace/i,
+    );
     expect(() =>
-      parseKaigiInviteInput(
-        "iroha://kaigi/join?call=default.universal%3Akaigi-weekly-sync",
-      ),
-    ).toThrow(/on-chain call and invite secret/i);
-    expect(() =>
-      parseKaigiInviteInput("iroha://kaigi/join?secret=bXktc2VjcmV0"),
-    ).toThrow(/on-chain call and invite secret/i);
+      buildKaigiInvite("default:kaigi-weekly-sync", INVITE_SECRET),
+    ).toThrow(/domain\.dataspace:meeting/i);
   });
 
-  it("builds first-release call ids and derives meeting codes", () => {
-    const callId = buildKaigiCallId("default", "Weekly Sync");
-    expect(callId).toBe("default.universal:kaigi-weekly-sync");
-    expect(deriveKaigiMeetingCode(callId)).toBe("weekly-sync");
+  it("requires and generates a 24-byte unpadded base64url secret", () => {
+    const randomValues = vi
+      .spyOn(globalThis.crypto, "getRandomValues")
+      .mockImplementation((array) => {
+        const bytes = new Uint8Array(
+          array.buffer,
+          array.byteOffset,
+          array.byteLength,
+        );
+        bytes.forEach((_value, index) => {
+          bytes[index] = index;
+        });
+        return array;
+      });
+
+    const secret = createKaigiInviteSecretBase64Url();
+
+    expect(randomValues).toHaveBeenCalledTimes(1);
+    expect(secret).toHaveLength(KAIGI_INVITE_SECRET_BASE64URL_LENGTH);
+    expect(requireKaigiInviteSecretBase64Url(secret)).toBe(secret);
+    expect(() => requireKaigiInviteSecretBase64Url("bXktc2VjcmV0")).toThrow(
+      /exactly 24 bytes/i,
+    );
+    expect(() =>
+      requireKaigiInviteSecretBase64Url(`${INVITE_SECRET}=`),
+    ).toThrow(/exactly 24 bytes/i);
   });
 
   it("computes 24h expiry and detects expiration", () => {
     const scheduledStartMs = 1_700_000_000_000;
     const expiresAtMs = computeKaigiMeetingExpiryMs(scheduledStartMs);
     expect(expiresAtMs).toBe(1_700_086_400_000);
-    expect(isKaigiInviteExpired({ expiresAtMs }, expiresAtMs + 1)).toBe(true);
-    expect(isKaigiInviteExpired({ expiresAtMs }, expiresAtMs)).toBe(false);
+    expect(isKaigiMeetingExpired({ expiresAtMs }, expiresAtMs + 1)).toBe(true);
+    expect(isKaigiMeetingExpired({ expiresAtMs }, expiresAtMs)).toBe(false);
   });
 });

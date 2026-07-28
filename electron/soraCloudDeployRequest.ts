@@ -45,10 +45,8 @@ export type LoadNativeSoraCloudModule = (
   env: NodeJS.ProcessEnv,
 ) => unknown;
 
-const defaultLoadNativeModule: LoadNativeSoraCloudModule = (
-  moduleUrl,
-  env,
-) => installGlobalIrohaJsNativeBinding(moduleUrl, env);
+const defaultLoadNativeModule: LoadNativeSoraCloudModule = (moduleUrl, env) =>
+  installGlobalIrohaJsNativeBinding(moduleUrl, env);
 
 const isNativeModuleLike = (value: unknown): value is NativeModuleLike =>
   typeof value === "object" && value !== null;

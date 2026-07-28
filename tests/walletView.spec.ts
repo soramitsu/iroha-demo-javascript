@@ -530,7 +530,8 @@ describe("WalletView", () => {
         accessMode: "read-only",
         diagnostic: {
           code: "endpoint_identity_unverified",
-          message: "Endpoint identity is available only from its faucet puzzle.",
+          message:
+            "Endpoint identity is available only from its faucet puzzle.",
         },
       },
     });

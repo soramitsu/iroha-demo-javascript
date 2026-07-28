@@ -24,6 +24,8 @@ const NATIVE_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
 const plainElectorateRules =
   (): GovernanceValidationFeePlainElectorateRulesV1 => ({
     votingAssetId: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    bondEscrowAccount: "bond-escrow@governance",
+    slashReceiverAccount: "slash-receiver@governance",
     ballotAmount: "150" as const,
     ballotDurationBlocks: "3600" as const,
     citizenshipAmount: "10000" as const,
@@ -41,6 +43,8 @@ const plainElectorateRules =
 
 const plainElectorateRulesWire = () => ({
   voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+  bond_escrow_account: "bond-escrow@governance",
+  slash_receiver_account: "slash-receiver@governance",
   ballot_amount: "150",
   ballot_duration_blocks: "3600",
   citizenship_amount: "10000",
@@ -251,6 +255,12 @@ describe("native validation-fee policy draft boundary", () => {
         compatibilityMode: true,
       } as never),
     ).toThrow(/must contain exactly/u);
+    expect(() =>
+      buildValidationFeePolicyDraftRequestWithRules(input(), {
+        ...plainElectorateRules(),
+        slashReceiverAccount: "",
+      }),
+    ).toThrow(/slashReceiverAccount must be canonical non-empty text/u);
     expect(
       buildValidationFeePolicyDraftRequestWithRules(
         input(),

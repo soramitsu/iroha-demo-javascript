@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeCanonicalAccountIdLiteral } from "./accountAddress";
 
 export const TAIRA_GOVERNANCE_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 export const TAIRA_GOVERNANCE_NETWORK_PREFIX = 369;
@@ -62,6 +63,8 @@ export const GOVERNANCE_REQUIRED_ROUTES = [
 
 export interface GovernanceValidationFeePlainElectorateRulesV1 {
   votingAssetId: typeof TAIRA_GOVERNANCE_XOR_ASSET_ID;
+  bondEscrowAccount: string;
+  slashReceiverAccount: string;
   ballotAmount: "150";
   ballotDurationBlocks: "3600";
   citizenshipAmount: "10000";
@@ -238,6 +241,26 @@ const exactText = (value: unknown, label: string): string => {
   return value;
 };
 
+const exactTairaAccount = (value: unknown, label: string): string => {
+  const literal = exactText(value, label);
+  let canonical: string;
+  try {
+    canonical = normalizeCanonicalAccountIdLiteral(
+      literal,
+      label,
+      TAIRA_GOVERNANCE_NETWORK_PREFIX,
+    );
+  } catch (error) {
+    throw new TypeError(
+      `${label} must be an exact Taira account literal: ${String(error)}`,
+    );
+  }
+  if (canonical !== literal) {
+    throw new TypeError(`${label} must use its exact canonical Taira literal.`);
+  }
+  return literal;
+};
+
 const exactDecimal = (
   value: unknown,
   label: string,
@@ -308,12 +331,14 @@ const validationFeePlainElectorateRules = (
       "approval_threshold_numerator",
       "ballot_amount",
       "ballot_duration_blocks",
+      "bond_escrow_account",
       "citizenship_amount",
       "conviction_step_blocks",
       "eligibility_rule",
       "max_conviction",
       "max_members",
       "min_turnout",
+      "slash_receiver_account",
       "voting_asset_id",
     ],
     "governance capabilities.validation_fee_plain_electorate_rules",
@@ -348,6 +373,14 @@ const validationFeePlainElectorateRules = (
   }
   return {
     votingAssetId: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    bondEscrowAccount: exactTairaAccount(
+      rules.bond_escrow_account,
+      "governance capabilities.validation_fee_plain_electorate_rules.bond_escrow_account",
+    ),
+    slashReceiverAccount: exactTairaAccount(
+      rules.slash_receiver_account,
+      "governance capabilities.validation_fee_plain_electorate_rules.slash_receiver_account",
+    ),
     ballotAmount: "150",
     ballotDurationBlocks: "3600",
     citizenshipAmount: "10000",
@@ -558,7 +591,7 @@ export function parseGovernanceCapabilitiesV1(
       "governance capabilities.min_bond_amount",
       { positive: true },
     ),
-    bondEscrowAccount: exactText(
+    bondEscrowAccount: exactTairaAccount(
       capabilities.bond_escrow_account,
       "governance capabilities.bond_escrow_account",
     ),
@@ -622,6 +655,12 @@ export function parseGovernanceCapabilitiesV1(
     parsed.votingAssetId !== TAIRA_GOVERNANCE_XOR_ASSET_ID ||
     parsed.minBondAmount !== "150" ||
     parsed.bondEscrowAccount !== TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
+    parsed.validationFeePlainElectorateRules.bondEscrowAccount !==
+      TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
+    parsed.validationFeePlainElectorateRules.slashReceiverAccount !==
+      TAIRA_GOVERNANCE_ESCROW_ACCOUNT ||
+    parsed.validationFeePlainElectorateRules.bondEscrowAccount !==
+      parsed.bondEscrowAccount ||
     parsed.convictionStepBlocks !== 100 ||
     parsed.maxConviction !== 6 ||
     parsed.minTurnout !== "1" ||

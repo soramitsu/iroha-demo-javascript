@@ -88,7 +88,7 @@ type ActiveSession = {
   nextAppSequence: number;
   nextServerSequence: number;
   nextWalletSequence: number;
-  pendingRequestToken: string | null;
+  requestSlot: ActiveRequestSlot | null;
 };
 
 type PendingRequest = {
@@ -99,6 +99,11 @@ type PendingRequest = {
   domainTag: string | null;
   message: Uint8Array;
   expiresAtMs: number;
+};
+
+type ActiveRequestSlot = {
+  phase: "awaiting_confirmation" | "executing";
+  request: PendingRequest;
 };
 
 export type IrohaConnectProcessedFrame =
@@ -183,7 +188,6 @@ export class IrohaConnectBoundary {
   #pendingSessions = new Map<string, PendingSession>();
   #authorizingSessions = new Map<string, PendingSession>();
   #sessions = new Map<string, ActiveSession>();
-  #pendingRequests = new Map<string, PendingRequest>();
 
   constructor(dependencies: IrohaConnectBoundaryDependencies) {
     this.#dependencies = {
@@ -334,7 +338,7 @@ export class IrohaConnectBoundary {
         nextAppSequence: 2,
         nextServerSequence: 1,
         nextWalletSequence: 2,
-        pendingRequestToken: null,
+        requestSlot: null,
       });
       promoted = true;
       return {
@@ -423,6 +427,19 @@ export class IrohaConnectBoundary {
       }
       return { kind: "ignored" };
     }
+    if (session.requestSlot) {
+      const reason =
+        "Finish the current IrohaConnect approval before sending another request.";
+      return {
+        kind: "response",
+        frameBase64: this.#encryptResult(session, {
+          type: "sign_result_err",
+          code: "REQUEST_IN_FLIGHT",
+          message: reason,
+        }),
+        error: reason,
+      };
+    }
     try {
       assertConnectSigningPermission(session.permissions, {
         type: envelope.payload.type,
@@ -438,19 +455,6 @@ export class IrohaConnectBoundary {
         frameBase64: this.#encryptResult(session, {
           type: "sign_result_err",
           code: "PERMISSION_DENIED",
-          message: reason,
-        }),
-        error: reason,
-      };
-    }
-    if (session.pendingRequestToken) {
-      const reason =
-        "Finish the current IrohaConnect approval before sending another request.";
-      return {
-        kind: "response",
-        frameBase64: this.#encryptResult(session, {
-          type: "sign_result_err",
-          code: "REQUEST_IN_FLIGHT",
           message: reason,
         }),
         error: reason,
@@ -485,8 +489,10 @@ export class IrohaConnectBoundary {
       message: Uint8Array.from(message),
       expiresAtMs: this.#dependencies.now() + REQUEST_APPROVAL_TTL_MS,
     };
-    this.#pendingRequests.set(requestToken, request);
-    session.pendingRequestToken = requestToken;
+    session.requestSlot = {
+      phase: "awaiting_confirmation",
+      request,
+    };
     return {
       kind: "request",
       requestToken,
@@ -501,8 +507,18 @@ export class IrohaConnectBoundary {
     sessionToken: string;
     requestToken: string;
   }): Promise<{ frameBase64: string; signed: boolean }> {
-    const { session, request } = this.#consumeRequest(input);
+    const { session, request, expired } = this.#beginRequestExecution(input);
     try {
+      if (expired) {
+        return {
+          frameBase64: this.#encryptResult(session, {
+            type: "sign_result_err",
+            code: "REQUEST_EXPIRED",
+            message: "IrohaConnect request approval token has expired.",
+          }),
+          signed: false,
+        };
+      }
       const confirmation: IrohaConnectConfirmation = {
         kind: request.requestType,
         sid: session.sid,
@@ -560,24 +576,26 @@ export class IrohaConnectBoundary {
         signed: false,
       };
     } finally {
-      request.message.fill(0);
+      this.#finishRequest(session, request);
     }
   }
 
   rejectRequest(input: { sessionToken: string; requestToken: string }): {
     frameBase64: string;
   } {
-    const { session, request } = this.#consumeRequest(input);
+    const { session, request, expired } = this.#beginRequestExecution(input);
     try {
       return {
         frameBase64: this.#encryptResult(session, {
           type: "sign_result_err",
-          code: "USER_REJECTED",
-          message: "Rejected by user.",
+          code: expired ? "REQUEST_EXPIRED" : "USER_REJECTED",
+          message: expired
+            ? "IrohaConnect request approval token has expired."
+            : "Rejected by user.",
         }),
       };
     } finally {
-      request.message.fill(0);
+      this.#finishRequest(session, request);
     }
   }
 
@@ -588,43 +606,52 @@ export class IrohaConnectBoundary {
       return;
     }
     this.#sessions.delete(normalized);
-    if (session.pendingRequestToken) {
-      this.#pendingRequests.get(session.pendingRequestToken)?.message.fill(0);
-      this.#pendingRequests.delete(session.pendingRequestToken);
+    if (session.requestSlot) {
+      const request = session.requestSlot.request;
+      request.message.fill(0);
+      session.requestSlot = null;
     }
     session.appKey.fill(0);
     session.walletKey.fill(0);
   }
 
-  #consumeRequest(input: { sessionToken: string; requestToken: string }): {
+  #beginRequestExecution(input: {
+    sessionToken: string;
+    requestToken: string;
+  }): {
     session: ActiveSession;
     request: PendingRequest;
+    expired: boolean;
   } {
     const session = this.#requireSession(input.sessionToken);
     const requestToken = normalizeText(input.requestToken, "requestToken");
-    const request = this.#pendingRequests.get(requestToken);
+    const slot = session.requestSlot;
+    const request = slot?.request;
     if (
       !request ||
+      request.requestToken !== requestToken ||
       request.sessionToken !== session.sessionToken ||
       request.contextKey !== session.contextKey ||
-      session.pendingRequestToken !== requestToken
+      slot.phase !== "awaiting_confirmation" ||
+      slot.request !== request
     ) {
       throw new Error(
         "IrohaConnect request approval token is invalid, stale, or belongs to another session.",
       );
     }
-    this.#pendingRequests.delete(requestToken);
-    session.pendingRequestToken = null;
-    try {
-      this.#requireNotExpired(
-        request.expiresAtMs,
-        "IrohaConnect request approval",
-      );
-    } catch (error) {
-      request.message.fill(0);
-      throw error;
+    slot.phase = "executing";
+    return {
+      session,
+      request,
+      expired: this.#dependencies.now() > request.expiresAtMs,
+    };
+  }
+
+  #finishRequest(session: ActiveSession, request: PendingRequest): void {
+    if (session.requestSlot?.request === request) {
+      session.requestSlot = null;
     }
-    return { session, request };
+    request.message.fill(0);
   }
 
   #encryptResult(
@@ -716,7 +743,9 @@ export class IrohaConnectBoundary {
         !this.#pendingSessions.has(token) &&
         !this.#authorizingSessions.has(token) &&
         !this.#sessions.has(token) &&
-        !this.#pendingRequests.has(token)
+        ![...this.#sessions.values()].some(
+          (session) => session.requestSlot?.request.requestToken === token,
+        )
       ) {
         return token;
       }
@@ -736,15 +765,13 @@ export class IrohaConnectBoundary {
       pending.approvalPreimage.fill(0);
     });
     this.#sessions.forEach((session) => {
+      session.requestSlot?.request.message.fill(0);
+      session.requestSlot = null;
       session.appKey.fill(0);
       session.walletKey.fill(0);
-    });
-    this.#pendingRequests.forEach((request) => {
-      request.message.fill(0);
     });
     this.#pendingSessions.clear();
     this.#authorizingSessions.clear();
     this.#sessions.clear();
-    this.#pendingRequests.clear();
   }
 }

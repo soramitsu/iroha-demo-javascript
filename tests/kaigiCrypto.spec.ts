@@ -39,7 +39,7 @@ describe("Kaigi crypto helpers", () => {
   });
 
   it("round-trips payloads encrypted with the invite secret", () => {
-    const secret = "bXktc2VjcmV0";
+    const secret = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
     const payload = {
       kind: "offer",
       description: {
@@ -57,11 +57,14 @@ describe("Kaigi crypto helpers", () => {
   it("rejects invite-secret decryption with the wrong secret", () => {
     const encrypted = encryptKaigiPayloadWithSecret(
       { value: "secret" },
-      "bXktc2VjcmV0",
+      "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u",
     );
 
     expect(() =>
-      decryptKaigiPayloadWithSecret(encrypted, "d3Jvbmctc2VjcmV0"),
+      decryptKaigiPayloadWithSecret(
+        encrypted,
+        "NDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u",
+      ),
     ).toThrow();
   });
 });

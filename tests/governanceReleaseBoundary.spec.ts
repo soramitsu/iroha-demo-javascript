@@ -152,15 +152,31 @@ describe("v2.0.1 governance release boundary", () => {
     expect(releaseWorkflow).not.toContain("rustup toolchain install stable");
     expect(releaseWorkflow).not.toContain("rustup default stable");
     expect(releaseWorkflow).toContain("connect_norito_bridge_abi_version: 21");
-    expect(releaseWorkflow).toContain(
-      "validation_fee_policy_fingerprint_arity: 3",
+    expect(releaseWorkflow).not.toContain(
+      "validation_fee_policy_fingerprint_arity",
     );
-    expect(releaseWorkflow).toContain(
-      "validation_fee_payout_lifecycle_fingerprint_arity: 2",
+    expect(releaseWorkflow).not.toContain(
+      "validation_fee_payout_lifecycle_fingerprint_arity",
     );
+    expect(releaseWorkflow).toContain("secure_private_file_abi_version: 1");
+    expect(releaseWorkflow).not.toContain(
+      "secure_private_directory_ensure_arity",
+    );
+    expect(releaseWorkflow).not.toContain("secure_private_file_read_arity");
+    expect(releaseWorkflow).not.toContain(
+      "secure_private_file_write_atomic_arity",
+    );
+    for (const secureStorageExport of [
+      "securePrivateFileAbiVersion",
+      "securePrivateDirectoryEnsure",
+      "securePrivateFileRead",
+      "securePrivateFileWriteAtomic",
+    ]) {
+      expect(releaseWorkflow).toContain(`"${secureStorageExport}"`);
+    }
     for (const fingerprint of [
-      "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6",
-      "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e",
+      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
+      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
     ]) {
       expect(releaseWorkflow).toContain(fingerprint);
       expect(postinstallNativeCheck).toContain(fingerprint);
@@ -176,16 +192,19 @@ describe("v2.0.1 governance release boundary", () => {
       ]) {
         expect(nativeCheck).toContain(`"${activeRuntimeExport}"`);
       }
+      expect(nativeCheck).not.toContain("REQUIRED_NATIVE_EXPORT_ARITIES");
+      expect(nativeCheck).toContain("validationFeePolicyProposalFingerprintV1");
       expect(nativeCheck).toContain(
-        "validationFeePolicyProposalFingerprintV1: 3",
-      );
-      expect(nativeCheck).toContain(
-        "validationFeePayoutLifecycleProposalFingerprintV1: 2",
+        "validationFeePayoutLifecycleProposalFingerprintV1",
       );
       expect(nativeCheck).toContain(
         "REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21",
       );
       expect(nativeCheck).toContain("connectNoritoBridgeAbiVersion");
+      expect(nativeCheck).toContain(
+        "REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1",
+      );
+      expect(nativeCheck).toContain("securePrivateFileAbiVersion");
     }
     expect(postinstallNativeCheck).toContain(
       "IROHA_JS_NATIVE_SOURCE_GIT_REVISION",
@@ -337,9 +356,15 @@ describe("v2.0.1 governance release boundary", () => {
     );
     expect(contract).toContain("artifact.sha256 !== descriptor.artifactSha256");
     expect(contract).toContain("GovernancePlainReferendumFinalityStore");
-    expect(secureLoader).toContain("lstatSync(path)");
-    expect(secureLoader).toContain("before.isSymbolicLink()");
-    expect(secureLoader).toContain("constants.O_RDONLY | noFollow");
+    expect(contract).toContain(
+      "governanceIntegrityDirectoryPath(userDataPath)",
+    );
+    expect(secureLoader).toContain("getInstalledIrohaJsNativeBinding()");
+    expect(secureLoader).toContain("installed.securePrivateFileAbiVersion()");
+    expect(secureLoader).toContain("native.securePrivateDirectoryEnsure");
+    expect(secureLoader).toContain("native.securePrivateFileRead");
+    expect(secureLoader).toContain("native.securePrivateFileWriteAtomic");
+    expect(secureLoader).not.toContain("process.getuid");
     expect(main).toContain("registerGovernancePlainReferendumHandler();");
     expect(main).toContain("loadGovernancePlainReferendumSource(sourcePath)");
     expect(main).toContain("observedIdentity");

@@ -999,6 +999,8 @@ export interface GovernancePlainReferendumContract {
 
 export interface GovernancePlainElectorateRules {
   votingAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+  bondEscrowAccount: string;
+  slashReceiverAccount: string;
   ballotAmount: "150";
   ballotDurationBlocks: "3600";
   citizenshipAmount: "10000";

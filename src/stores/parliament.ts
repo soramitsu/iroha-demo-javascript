@@ -408,6 +408,10 @@ export const useParliamentStore = defineStore("parliament", () => {
         activeCapabilities.validationFeePlainElectorateRules;
       if (
         proposalRules.voting_asset_id !== capabilityRules.votingAssetId ||
+        proposalRules.bond_escrow_account !==
+          capabilityRules.bondEscrowAccount ||
+        proposalRules.slash_receiver_account !==
+          capabilityRules.slashReceiverAccount ||
         proposalRules.ballot_amount !== capabilityRules.ballotAmount ||
         proposalRules.ballot_duration_blocks !==
           capabilityRules.ballotDurationBlocks ||
@@ -506,6 +510,8 @@ export const useParliamentStore = defineStore("parliament", () => {
       return t("The immutable PLAIN referendum contract is unavailable.");
     }
     const referendum = detail.referendum;
+    const contractRules = contract.plainElectorate.rules;
+    const proposalRules = detail.kind.plainElectorateRules;
     if (
       !referendum ||
       contract.chainId !== chainId.value ||
@@ -513,7 +519,10 @@ export const useParliamentStore = defineStore("parliament", () => {
       contract.referendumId !== referendum.id ||
       contract.hStart !== referendum.hStart ||
       contract.hEnd !== referendum.hEnd ||
-      contract.mode !== referendum.mode
+      contract.mode !== referendum.mode ||
+      contractRules.bondEscrowAccount !== proposalRules.bond_escrow_account ||
+      contractRules.slashReceiverAccount !==
+        proposalRules.slash_receiver_account
     ) {
       return t(
         "The selected proposal differs from the immutable PLAIN referendum contract.",

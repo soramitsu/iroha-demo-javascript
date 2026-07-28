@@ -54,6 +54,7 @@ const sha256 = (value: string): string =>
   createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
 
 const RELEASE_SOURCE_REVISION = "a".repeat(40);
+const RELEASE_SOURCE_TREE_SHA256 = "c".repeat(64);
 const releaseProvenanceRequirement = (): NativeProvenanceRequirement => ({
   cargoProfile: "release",
   sourceGitRevision: RELEASE_SOURCE_REVISION,
@@ -63,9 +64,12 @@ const releaseChecksumEntry = (
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> => ({
   sha256: sha256("native-binary"),
+  build_provenance_version: 3,
+  build_execution_policy: "trusted-local-cargo-v1",
   cargo_profile: "release",
   source_git_revision: RELEASE_SOURCE_REVISION,
   source_tree_clean: true,
+  source_tree_sha256: RELEASE_SOURCE_TREE_SHA256,
   mach_o_signing_independent_sha256: "b".repeat(64),
   ...overrides,
 });
@@ -87,6 +91,16 @@ const writeNativeBundle = (
       2,
     )}\n`,
     "utf8",
+  );
+};
+
+const assertCurrentPlainElectorateCustody = (value: unknown): void => {
+  const rules = JSON.parse(String(value)) as Record<string, unknown>;
+  expect(rules.bond_escrow_account).toBe(
+    "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+  );
+  expect(rules.slash_receiver_account).toBe(
+    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
   );
 };
 
@@ -119,9 +133,9 @@ const compatibleNativeModule = () => ({
   ) {
     void _policy;
     void _payoutLifecycleProposalId;
-    void _plainElectorateRules;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6",
+      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
       "hex",
     );
   },
@@ -130,14 +144,41 @@ const compatibleNativeModule = () => ({
     _plainElectorateRules: unknown,
   ) {
     void _payoutBinding;
-    void _plainElectorateRules;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
     return Buffer.from(
-      "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e",
+      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
       "hex",
     );
   },
   connectNoritoBridgeAbiVersion() {
     return 21;
+  },
+  securePrivateFileAbiVersion() {
+    return 1;
+  },
+  securePrivateDirectoryEnsure(_rootPath: string) {
+    void _rootPath;
+  },
+  securePrivateFileRead(
+    _rootPath: string,
+    _filename: string,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return null;
+  },
+  securePrivateFileWriteAtomic(
+    _rootPath: string,
+    _filename: string,
+    bytes: Uint8Array,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return Buffer.from(bytes);
   },
 });
 
@@ -151,6 +192,10 @@ const ACTIVE_RUNTIME_NATIVE_EXPORTS = [
   "noritoDecodeInstruction",
   "noritoEncodeInstruction",
   "inspectSubscriptionTriggerAction",
+  "securePrivateFileAbiVersion",
+  "securePrivateDirectoryEnsure",
+  "securePrivateFileRead",
+  "securePrivateFileWriteAtomic",
 ] as const;
 
 const tempRoots: string[] = [];
@@ -388,7 +433,7 @@ describe("resolveNativeBuildRequirement", () => {
     }
   });
 
-  it("requests a rebuild when validation-fee fingerprint exports have stale arities", () => {
+  it("accepts opaque N-API fingerprint arities when known-answer vectors pass", () => {
     const tempPackage = makeTempPackage();
     tempRoots.push(tempPackage.root);
 
@@ -406,20 +451,78 @@ describe("resolveNativeBuildRequirement", () => {
     );
 
     const nativeModule = compatibleNativeModule();
+    const policyFingerprint =
+      nativeModule.validationFeePolicyProposalFingerprintV1;
+    const payoutFingerprint =
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1;
     Reflect.set(
       nativeModule,
       "validationFeePolicyProposalFingerprintV1",
-      (_policy: unknown) => {
-        void _policy;
-      },
+      (...args: unknown[]) =>
+        Reflect.apply(policyFingerprint, nativeModule, args),
     );
     Reflect.set(
       nativeModule,
       "validationFeePayoutLifecycleProposalFingerprintV1",
-      (_payoutBinding: unknown) => {
-        void _payoutBinding;
+      (...args: unknown[]) =>
+        Reflect.apply(payoutFingerprint, nativeModule, args),
+    );
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(nativeModule.validationFeePolicyProposalFingerprintV1.length).toBe(
+      0,
+    );
+    expect(
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1.length,
+    ).toBe(0);
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+  });
+
+  it("uses the secure-storage ABI probe instead of JavaScript arities", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    Reflect.set(nativeModule, "securePrivateDirectoryEnsure", () => {});
+    Reflect.set(nativeModule, "securePrivateFileRead", (_rootPath: string) => {
+      void _rootPath;
+    });
+    Reflect.set(
+      nativeModule,
+      "securePrivateFileWriteAtomic",
+      (_rootPath: string, _filename: string) => {
+        void _rootPath;
+        void _filename;
       },
     );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+  });
+
+  it("requests a rebuild when the secure private-file ABI is not exactly 1", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.securePrivateFileAbiVersion = () => 2;
     const result = resolveNativeBuildRequirement(
       tempPackage.root,
       "darwin-arm64",
@@ -428,7 +531,30 @@ describe("resolveNativeBuildRequirement", () => {
 
     expect(result.shouldBuild).toBe(true);
     expect(result.reason).toBe(
-      "native export arity mismatch: validationFeePolicyProposalFingerprintV1 expected 3, observed 1; validationFeePayoutLifecycleProposalFingerprintV1 expected 2, observed 1",
+      "secure private-file ABI mismatch: expected 1, observed 2",
+    );
+  });
+
+  it("requests a rebuild when the secure private-file ABI probe throws", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.securePrivateFileAbiVersion = () => {
+      throw new Error("probe failed");
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "securePrivateFileAbiVersion failed: probe failed",
     );
   });
 
@@ -499,7 +625,7 @@ describe("resolveNativeBuildRequirement", () => {
 
     expect(result.shouldBuild).toBe(true);
     expect(result.reason).toBe(
-      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6, observed 0000000000000000000000000000000000000000000000000000000000000000",
+      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected 85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90, observed 0000000000000000000000000000000000000000000000000000000000000000",
     );
   });
 
@@ -583,9 +709,12 @@ describe("resolveNativeBuildRequirement", () => {
   });
 
   it.each([
+    "build_execution_policy",
+    "build_provenance_version",
     "cargo_profile",
     "source_git_revision",
     "source_tree_clean",
+    "source_tree_sha256",
     "mach_o_signing_independent_sha256",
   ])(
     "requests a release rebuild when provenance field %s is missing",
@@ -611,9 +740,12 @@ describe("resolveNativeBuildRequirement", () => {
   );
 
   it.each([
+    ["build_execution_policy", "untrusted-shell-v0"],
+    ["build_provenance_version", 2],
     ["cargo_profile", 1],
     ["source_git_revision", "A".repeat(40)],
     ["source_tree_clean", "true"],
+    ["source_tree_sha256", "C".repeat(64)],
     ["mach_o_signing_independent_sha256", "B".repeat(64)],
   ])(
     "requests a release rebuild when provenance field %s is malformed",

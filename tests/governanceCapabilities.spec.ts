@@ -10,6 +10,11 @@ import {
   TAIRA_GOVERNANCE_XOR_ASSET_ID,
 } from "../electron/governanceCapabilities";
 
+const ALTERNATE_TAIRA_BOND_ACCOUNT =
+  "testuﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K";
+const ALTERNATE_TAIRA_SLASH_ACCOUNT =
+  "testuﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX";
+
 const capabilities = () => ({
   schema: "iroha.governance.capabilities.v1",
   version: 1,
@@ -27,6 +32,8 @@ const capabilities = () => ({
   validation_fee_plain_requires_explicit_finalization: true,
   validation_fee_plain_electorate_rules: {
     voting_asset_id: TAIRA_GOVERNANCE_XOR_ASSET_ID,
+    bond_escrow_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
+    slash_receiver_account: TAIRA_GOVERNANCE_ESCROW_ACCOUNT,
     ballot_amount: "150",
     ballot_duration_blocks: "3600",
     citizenship_amount: "10000",
@@ -165,11 +172,29 @@ describe("Taira governance capabilities", () => {
       { citizenship_bond_amount: "9999" },
       { min_bond_amount: "149" },
       { conviction_step_blocks: "101" },
-      { bond_escrow_account: "alice@wonderland" },
+      {
+        bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
+        validation_fee_plain_electorate_rules: {
+          ...capabilities().validation_fee_plain_electorate_rules,
+          bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
+        },
+      },
       {
         validation_fee_plain_electorate_rules: {
           ...capabilities().validation_fee_plain_electorate_rules,
           ballot_duration_blocks: "3599",
+        },
+      },
+      {
+        validation_fee_plain_electorate_rules: {
+          ...capabilities().validation_fee_plain_electorate_rules,
+          bond_escrow_account: ALTERNATE_TAIRA_BOND_ACCOUNT,
+        },
+      },
+      {
+        validation_fee_plain_electorate_rules: {
+          ...capabilities().validation_fee_plain_electorate_rules,
+          slash_receiver_account: ALTERNATE_TAIRA_SLASH_ACCOUNT,
         },
       },
     ]) {
@@ -200,6 +225,14 @@ describe("Taira governance capabilities", () => {
       genesisHash:
         "65003c37b640ad0c993c03131052b24029c933ec501c9e68b16dcb91a2ec9dc8",
     };
+    const driftedCustody = {
+      ...reviewed,
+      validationFeePlainElectorateRules: {
+        ...reviewed.validationFeePlainElectorateRules,
+        slashReceiverAccount:
+          "testuﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
+      },
+    };
 
     const fingerprint = governanceCapabilitiesContractFingerprintV1(reviewed);
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/u);
@@ -211,6 +244,9 @@ describe("Taira governance capabilities", () => {
     );
     expect(
       governanceCapabilitiesContractFingerprintV1(driftedContract),
+    ).not.toBe(fingerprint);
+    expect(
+      governanceCapabilitiesContractFingerprintV1(driftedCustody),
     ).not.toBe(fingerprint);
   });
 });

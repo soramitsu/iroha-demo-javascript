@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -142,11 +142,14 @@ const runtimeConfigManifest = () => ({
   cbsiCoreApiBaseUrl: "https://cbsi-core.soramitsu.io",
 });
 
+const canonicalTemporaryDirectory = (prefix: string): string =>
+  realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+
 const withRuntimeConfigDirectory = (
   test: (userDataPath: string) => void,
 ): void => {
-  const userDataPath = mkdtempSync(
-    join(tmpdir(), "sora-wallet-governance-runtime-"),
+  const userDataPath = canonicalTemporaryDirectory(
+    "sora-wallet-governance-runtime-",
   );
   try {
     test(userDataPath);
@@ -760,8 +763,8 @@ describe("governance validation-fee Core projection", () => {
   });
 
   it("preserves one immutable ledger watermark across Core failover", async () => {
-    const userDataPath = mkdtempSync(
-      join(tmpdir(), "sora-wallet-governance-finality-failover-"),
+    const userDataPath = canonicalTemporaryDirectory(
+      "sora-wallet-governance-finality-failover-",
     );
     try {
       const config = readGovernanceValidationFeeConfig(
@@ -809,8 +812,8 @@ describe("governance validation-fee Core projection", () => {
       deriveGovernanceValidationFeeImmutableLedgerScope(refreshed);
     expect(refreshedScope).toBe(firstScope);
 
-    const userDataPath = mkdtempSync(
-      join(tmpdir(), "sora-wallet-governance-finality-refresh-"),
+    const userDataPath = canonicalTemporaryDirectory(
+      "sora-wallet-governance-finality-refresh-",
     );
     try {
       const store = new GovernanceValidationFeeFinalityStore(userDataPath);

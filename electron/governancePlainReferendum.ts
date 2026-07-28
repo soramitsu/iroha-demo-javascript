@@ -8,6 +8,7 @@ import {
   TAIRA_GOVERNANCE_NETWORK_PREFIX,
 } from "./governanceCapabilities";
 import {
+  governanceIntegrityDirectoryPath,
   loadSecureBoundedJson,
   parseStrictJson,
   secureWriteBoundedFile,
@@ -37,13 +38,16 @@ const ELIGIBLE_CITIZEN_SNAPSHOT_SCHEMA =
   "taira.governance-eligible-citizen-snapshot.v1";
 const POST_PARLIAMENT_REGISTRATION_GATE_SCHEMA =
   "taira.governance-post-parliament-registration-gate.v1";
-const FINALITY_SCHEMA = "sora.wallet.governance-referendum-finality.v1";
+const FINALITY_SCHEMA = "sora.wallet.governance-referendum-finality-head.v2";
+const FINALITY_OBSERVATION_SCHEMA =
+  "sora.wallet.governance-referendum-finality-observation.v2";
 const FINALITY_MARKER_SCHEMA =
-  "sora.wallet.governance-referendum-finality-marker.v1";
+  "sora.wallet.governance-referendum-finality-marker.v2";
 const MAX_SOURCE_BYTES = 64 * 1024;
 const MAX_DESCRIPTOR_BYTES = 64 * 1024;
 const MAX_CONTRACT_BYTES = 1024 * 1024;
 const MAX_FINALITY_BYTES = 64 * 1024;
+const MAX_FINALITY_OBSERVATION_BYTES = 64 * 1024;
 const MAX_FINALITY_MARKER_BYTES = 1024;
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_ELIGIBLE_CITIZENS = 256;
@@ -85,6 +89,8 @@ export type GovernancePostParliamentRegistrationGate = {
 
 export type GovernancePlainElectorateRules = {
   votingAssetId: typeof EXACT_VOTING_ASSET_ID;
+  bondEscrowAccount: string;
+  slashReceiverAccount: string;
   ballotAmount: "150";
   ballotDurationBlocks: "3600";
   citizenshipAmount: "10000";
@@ -365,6 +371,8 @@ const parsePlainElectorateRules = (
     value,
     [
       "voting_asset_id",
+      "bond_escrow_account",
+      "slash_receiver_account",
       "ballot_amount",
       "ballot_duration_blocks",
       "citizenship_amount",
@@ -404,6 +412,14 @@ const parsePlainElectorateRules = (
   }
   return {
     votingAssetId: EXACT_VOTING_ASSET_ID,
+    bondEscrowAccount: exactTairaAccount(
+      rules.bond_escrow_account,
+      "Governance plain_electorate.rules.bond_escrow_account",
+    ),
+    slashReceiverAccount: exactTairaAccount(
+      rules.slash_receiver_account,
+      "Governance plain_electorate.rules.slash_receiver_account",
+    ),
     ballotAmount: EXACT_BALLOT_AMOUNT,
     ballotDurationBlocks: EXACT_BALLOT_DURATION,
     citizenshipAmount: EXACT_CITIZEN_BOND,
@@ -1127,7 +1143,7 @@ const readBoundedJsonResponse = async (
   };
 };
 
-type StoredObservation = {
+type StoredObservation = Readonly<{
   chainId: string;
   genesisHash: string;
   proposalId: string;
@@ -1136,7 +1152,12 @@ type StoredObservation = {
   snapshotFinalizedHeight: string;
   snapshotObservationSequence: string;
   networkCheckpointSha256: string;
-};
+}>;
+
+type FinalityHead = Readonly<{
+  schema: typeof FINALITY_SCHEMA;
+  observation: StoredObservation;
+}>;
 
 const parseStoredObservation = (value: unknown): StoredObservation => {
   const raw = exactRecord(
@@ -1182,13 +1203,98 @@ const parseStoredObservation = (value: unknown): StoredObservation => {
   };
 };
 
-const canonicalFinalityState = (observation: StoredObservation): string =>
-  JSON.stringify({ schema: FINALITY_SCHEMA, observation });
+const observationsEqual = (
+  left: StoredObservation,
+  right: StoredObservation,
+): boolean => canonicalJson(left) === canonicalJson(right);
+
+const strictlySucceeds = (
+  previous: StoredObservation,
+  current: StoredObservation,
+): boolean =>
+  BigInt(current.snapshotFinalizedHeight) >
+    BigInt(previous.snapshotFinalizedHeight) &&
+  BigInt(current.snapshotObservationSequence) >
+    BigInt(previous.snapshotObservationSequence);
+
+const assertExactTairaObservation = (
+  observation: StoredObservation,
+  label: string,
+): StoredObservation => {
+  if (
+    observation.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
+    observation.genesisHash !== TAIRA_GOVERNANCE_GENESIS_HASH
+  ) {
+    throw new Error(`${label} is not exact Taira.`);
+  }
+  return observation;
+};
+
+const canonicalFinalityHead = (observation: StoredObservation): string =>
+  JSON.stringify({
+    schema: FINALITY_SCHEMA,
+    observation,
+  });
+const canonicalFinalityObservation = (observation: StoredObservation): string =>
+  JSON.stringify({
+    schema: FINALITY_OBSERVATION_SCHEMA,
+    observation,
+  });
 const canonicalFinalityMarker = (): string =>
   JSON.stringify({
     schema: FINALITY_MARKER_SCHEMA,
-    state_schema: FINALITY_SCHEMA,
+    head_schema: FINALITY_SCHEMA,
+    observation_schema: FINALITY_OBSERVATION_SCHEMA,
   });
+
+const parseFinalityHead = (value: unknown): FinalityHead => {
+  const raw = exactRecord(
+    value,
+    ["schema", "observation"],
+    "Governance referendum finality head",
+  );
+  if (raw.schema !== FINALITY_SCHEMA) {
+    throw new Error("Governance referendum finality head schema differs.");
+  }
+  const observation = Object.freeze(
+    assertExactTairaObservation(
+      parseStoredObservation(raw.observation),
+      "Governance referendum finality head",
+    ),
+  );
+  return Object.freeze({
+    schema: FINALITY_SCHEMA,
+    observation,
+  });
+};
+
+const parseFinalityObservation = (
+  value: unknown,
+  expectedProposalId: string,
+): StoredObservation => {
+  const raw = exactRecord(
+    value,
+    ["schema", "observation"],
+    "Governance referendum finality observation",
+  );
+  if (raw.schema !== FINALITY_OBSERVATION_SCHEMA) {
+    throw new Error(
+      "Governance referendum finality observation schema differs.",
+    );
+  }
+  const observation = Object.freeze(
+    assertExactTairaObservation(
+      parseStoredObservation(raw.observation),
+      "Governance referendum finality observation",
+    ),
+  );
+  if (observation.proposalId !== expectedProposalId) {
+    throw new Error(
+      "Governance referendum finality observation filename differs from its proposal.",
+    );
+  }
+  return observation;
+};
 
 const pathExists = (path: string): boolean => {
   try {
@@ -1209,68 +1315,77 @@ const pathExists = (path: string): boolean => {
 
 export const governancePlainReferendumFinalityPath = (
   userDataPath: string,
-): string => join(userDataPath, GOVERNANCE_PLAIN_REFERENDUM_FINALITY_FILENAME);
+): string =>
+  join(
+    governanceIntegrityDirectoryPath(userDataPath),
+    GOVERNANCE_PLAIN_REFERENDUM_FINALITY_FILENAME,
+  );
 export const governancePlainReferendumFinalityMarkerPath = (
   userDataPath: string,
 ): string =>
-  join(userDataPath, GOVERNANCE_PLAIN_REFERENDUM_FINALITY_MARKER_FILENAME);
+  join(
+    governanceIntegrityDirectoryPath(userDataPath),
+    GOVERNANCE_PLAIN_REFERENDUM_FINALITY_MARKER_FILENAME,
+  );
+export const governancePlainReferendumFinalityObservationPath = (
+  userDataPath: string,
+  proposalId: string,
+): string =>
+  join(
+    governanceIntegrityDirectoryPath(userDataPath),
+    `governance-plain-referendum-${exactHash(
+      proposalId,
+      "Governance referendum finality proposalId",
+    )}.json`,
+  );
 
 export class GovernancePlainReferendumFinalityStore {
+  private readonly userDataPath: string;
   private readonly path: string;
   private readonly markerPath: string;
   private inProcessFloor: StoredObservation | null = null;
   private initialized = false;
 
   constructor(userDataPath: string) {
+    this.userDataPath = userDataPath;
     this.path = governancePlainReferendumFinalityPath(userDataPath);
     this.markerPath = governancePlainReferendumFinalityMarkerPath(userDataPath);
   }
 
   verifyAndPromote(value: StoredObservation): void {
-    const current = parseStoredObservation(value);
-    if (
-      current.chainId !== TAIRA_GOVERNANCE_CHAIN_ID ||
-      current.genesisHash.length !== 64
-    ) {
-      throw new Error("Governance referendum observation is not exact Taira.");
-    }
-    const previous = this.load();
-    if (this.inProcessFloor) {
-      if (!previous) {
+    const current = Object.freeze(
+      assertExactTairaObservation(
+        parseStoredObservation(value),
+        "Governance referendum observation",
+      ),
+    );
+    const head = this.loadHead();
+    this.assertDurableHeadCoversInProcessFloor(head);
+    if (head) this.inProcessFloor = head;
+    const retained = this.loadObservation(current.proposalId);
+    if (retained) {
+      if (!observationsEqual(retained, current)) {
         throw new Error(
-          "Governance referendum durable watermark disappeared after initialization.",
+          "Governance referendum handoff equivocated after its immutable artifact was verified.",
         );
       }
-      this.rejectChange(this.inProcessFloor, previous);
+      if (head?.proposalId === current.proposalId) return;
+      if (head && !strictlySucceeds(head, current)) {
+        throw new Error(
+          "Governance referendum handoff replayed a superseded proposal.",
+        );
+      }
     }
-    if (previous) this.rejectChange(previous, current);
-    if (previous && canonicalJson(previous) === canonicalJson(current)) return;
-    this.persist(current, previous === null);
-    this.inProcessFloor = Object.freeze({ ...current });
-  }
-
-  private rejectChange(
-    previous: StoredObservation,
-    current: StoredObservation,
-  ) {
-    if (
-      BigInt(current.snapshotFinalizedHeight) <
-        BigInt(previous.snapshotFinalizedHeight) ||
-      BigInt(current.snapshotObservationSequence) <
-        BigInt(previous.snapshotObservationSequence)
-    ) {
+    if (head && !strictlySucceeds(head, current)) {
       throw new Error(
         "Governance referendum handoff regressed behind its durable finalized snapshot.",
       );
     }
-    if (canonicalJson(previous) !== canonicalJson(current)) {
-      throw new Error(
-        "Governance referendum handoff equivocated after its immutable artifact was verified.",
-      );
-    }
+    this.persist(current, head === null, retained === null);
+    this.inProcessFloor = current;
   }
 
-  private load(): StoredObservation | null {
+  private loadHead(): StoredObservation | null {
     const hasState = pathExists(this.path);
     const hasMarker = pathExists(this.markerPath);
     if (!hasState && !hasMarker) {
@@ -1289,16 +1404,16 @@ export class GovernancePlainReferendumFinalityStore {
     const marker = loadSecureBoundedJson(this.markerPath, {
       label: "Governance referendum finality marker",
       maximumBytes: MAX_FINALITY_MARKER_BYTES,
-      expectedMode: 0o600,
     });
     const markerRecord = exactRecord(
       marker.value,
-      ["schema", "state_schema"],
+      ["schema", "head_schema", "observation_schema"],
       "Governance referendum finality marker",
     );
     if (
       markerRecord.schema !== FINALITY_MARKER_SCHEMA ||
-      markerRecord.state_schema !== FINALITY_SCHEMA ||
+      markerRecord.head_schema !== FINALITY_SCHEMA ||
+      markerRecord.observation_schema !== FINALITY_OBSERVATION_SCHEMA ||
       marker.sha256 !== sha256(canonicalFinalityMarker())
     ) {
       throw new Error(
@@ -1306,34 +1421,89 @@ export class GovernancePlainReferendumFinalityStore {
       );
     }
     const loaded = loadSecureBoundedJson(this.path, {
-      label: "Governance referendum finality state",
+      label: "Governance referendum finality head",
       maximumBytes: MAX_FINALITY_BYTES,
-      expectedMode: 0o600,
     });
-    const record = exactRecord(
-      loaded.value,
-      ["schema", "observation"],
-      "Governance referendum finality state",
-    );
-    if (record.schema !== FINALITY_SCHEMA) {
-      throw new Error("Governance referendum finality state schema differs.");
+    const head = parseFinalityHead(loaded.value).observation;
+    if (loaded.sha256 !== sha256(canonicalFinalityHead(head))) {
+      throw new Error("Governance referendum finality head is not canonical.");
     }
-    const observation = parseStoredObservation(record.observation);
-    if (loaded.sha256 !== sha256(canonicalFinalityState(observation))) {
-      throw new Error("Governance referendum finality state is not canonical.");
+    const retainedHead = this.loadObservation(head.proposalId);
+    if (!retainedHead || !observationsEqual(retainedHead, head)) {
+      throw new Error(
+        "Governance referendum finality head differs from its immutable proposal record.",
+      );
     }
     this.initialized = true;
+    return head;
+  }
+
+  private loadObservation(proposalId: string): StoredObservation | null {
+    const path = governancePlainReferendumFinalityObservationPath(
+      this.userDataPath,
+      proposalId,
+    );
+    if (!pathExists(path)) return null;
+    const loaded = loadSecureBoundedJson(path, {
+      label: "Governance referendum finality observation",
+      maximumBytes: MAX_FINALITY_OBSERVATION_BYTES,
+    });
+    const observation = parseFinalityObservation(loaded.value, proposalId);
+    if (loaded.sha256 !== sha256(canonicalFinalityObservation(observation))) {
+      throw new Error(
+        "Governance referendum finality observation is not canonical.",
+      );
+    }
     return observation;
   }
 
-  private persist(observation: StoredObservation, first: boolean): void {
+  private assertDurableHeadCoversInProcessFloor(
+    head: StoredObservation | null,
+  ): void {
+    const floor = this.inProcessFloor;
+    if (!floor) return;
+    if (!head) {
+      throw new Error(
+        "Governance referendum durable watermark disappeared after initialization.",
+      );
+    }
+    const durableFloor = this.loadObservation(floor.proposalId);
+    if (!durableFloor || !observationsEqual(floor, durableFloor)) {
+      throw new Error(
+        "Governance referendum durable history discarded or changed an in-process proposal.",
+      );
+    }
+    if (!observationsEqual(floor, head) && !strictlySucceeds(floor, head)) {
+      throw new Error(
+        "Governance referendum durable head regressed behind its in-process floor.",
+      );
+    }
+  }
+
+  private persist(
+    observation: StoredObservation,
+    first: boolean,
+    writeObservation: boolean,
+  ): void {
+    if (writeObservation) {
+      secureWriteBoundedFile(
+        governancePlainReferendumFinalityObservationPath(
+          this.userDataPath,
+          observation.proposalId,
+        ),
+        Buffer.from(canonicalFinalityObservation(observation), "utf8"),
+        {
+          label: "Governance referendum finality observation",
+          maximumBytes: MAX_FINALITY_OBSERVATION_BYTES,
+        },
+      );
+    }
     secureWriteBoundedFile(
       this.path,
-      Buffer.from(canonicalFinalityState(observation), "utf8"),
+      Buffer.from(canonicalFinalityHead(observation), "utf8"),
       {
-        label: "Governance referendum finality state",
+        label: "Governance referendum finality head",
         maximumBytes: MAX_FINALITY_BYTES,
-        expectedMode: 0o600,
       },
     );
     if (first) {
@@ -1343,7 +1513,6 @@ export class GovernancePlainReferendumFinalityStore {
         {
           label: "Governance referendum finality marker",
           maximumBytes: MAX_FINALITY_MARKER_BYTES,
-          expectedMode: 0o600,
         },
       );
       this.initialized = true;

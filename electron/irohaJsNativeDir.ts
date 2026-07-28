@@ -24,18 +24,22 @@ const REQUIRED_NATIVE_EXPORTS = [
   "validationFeePolicyProposalFingerprintV1",
   "validationFeePayoutLifecycleProposalFingerprintV1",
   "connectNoritoBridgeAbiVersion",
+  "securePrivateFileAbiVersion",
+  "securePrivateDirectoryEnsure",
+  "securePrivateFileRead",
+  "securePrivateFileWriteAtomic",
 ] as const;
-const REQUIRED_NATIVE_EXPORT_ARITIES = {
-  validationFeePolicyProposalFingerprintV1: 3,
-  validationFeePayoutLifecycleProposalFingerprintV1: 2,
-} as const;
 const REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION = 21;
+export const REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION = 1;
 const REQUIRED_VALIDATION_FEE_POLICY_FINGERPRINT =
-  "dc8dd81d73e9f562e57b7cb6cacc9d3da84fa6663da7cffd96b7282c4b0f68b6";
+  "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90";
 const REQUIRED_VALIDATION_FEE_PAYOUT_FINGERPRINT =
-  "f6bf20196ea6985c4fbbfdb902a77079e12c78638f760b6611b6916b9ec3e27e";
+  "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b";
 const REQUIRED_VALIDATION_FEE_PLAIN_RULES_JSON = JSON.stringify({
   voting_asset_id: "5dHF5UNffENuEg9mhjYwY1jcZ1K5",
+  bond_escrow_account: "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+  slash_receiver_account:
+    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
   ballot_amount: "150",
   ballot_duration_blocks: "3600",
   citizenship_amount: "10000",
@@ -194,21 +198,19 @@ export const hasRequiredIrohaJsNativeExports = (
   ) {
     return false;
   }
-  for (const [exportName, expectedArity] of Object.entries(
-    REQUIRED_NATIVE_EXPORT_ARITIES,
-  )) {
-    const nativeFunction = typedNativeModule[exportName] as (
-      ...args: unknown[]
-    ) => unknown;
-    if (nativeFunction.length !== expectedArity) {
-      return false;
-    }
-  }
   try {
     const bridgeAbiVersion = (
       typedNativeModule.connectNoritoBridgeAbiVersion as () => unknown
     )();
     if (bridgeAbiVersion !== REQUIRED_CONNECT_NORITO_BRIDGE_ABI_VERSION) {
+      return false;
+    }
+    const securePrivateFileAbiVersion = (
+      typedNativeModule.securePrivateFileAbiVersion as () => unknown
+    )();
+    if (
+      securePrivateFileAbiVersion !== REQUIRED_SECURE_PRIVATE_FILE_ABI_VERSION
+    ) {
       return false;
     }
     const policyFingerprint = (
@@ -254,6 +256,17 @@ const resolveNativeCandidates = (moduleUrl: string): NativeCandidate[] => {
   const baseDir = dirname(fileURLToPath(moduleUrl));
   const packagedRuntime = isPackagedElectronModuleUrl(moduleUrl);
   return [
+    {
+      nativeDir: resolve(
+        baseDir,
+        "..",
+        "node_modules",
+        "@iroha",
+        "iroha-js",
+        "native",
+      ),
+      packaged: packagedRuntime,
+    },
     {
       nativeDir: resolve(
         baseDir,

@@ -12,6 +12,7 @@
     "src/utils/endpoint.ts",
     "src/utils/endpointFeatures.ts",
     "src/utils/endpointScope.ts",
+    "src/utils/kaigiInvite.ts",
     "src/utils/mnemonic.ts",
     "src/utils/secretLike.ts",
     "src/utils/signingAlgorithms.ts",

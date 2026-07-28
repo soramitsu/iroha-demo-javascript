@@ -733,6 +733,42 @@ describe("HeaderIrohaConnectButton", () => {
     ).toBe("sign_result_ok");
   });
 
+  it("keeps the first modal active and answers an overlapping relay request in-band", async () => {
+    mountComponent();
+    const { socket, keys } = await approveConnection();
+    emitBinaryMessage(
+      socket,
+      encodeSignRequestFrame(keys.appKey, {
+        signingMessageB64: Buffer.from("first request").toString("base64"),
+      }),
+    );
+    await flushPromises();
+    const firstDialog = getOpenDialog();
+    expect(firstDialog?.textContent).toContain("first request");
+
+    emitBinaryMessage(
+      socket,
+      encodeSignRequestFrame(keys.appKey, {
+        sequence: 3,
+        signingMessageB64: Buffer.from("overlapping request").toString(
+          "base64",
+        ),
+      }),
+    );
+    await flushPromises();
+
+    expect(socket.closeCode).toBeNull();
+    expect(getOpenDialog()).toBe(firstDialog);
+    expect(getOpenDialog()?.textContent).toContain("first request");
+    expect(signIrohaConnectMessageMock).not.toHaveBeenCalled();
+    expect(
+      decodeLatestWalletEnvelope(socket, keys.walletKey).payload,
+    ).toMatchObject({
+      type: "sign_result_err",
+      code: "REQUEST_IN_FLIGHT",
+    });
+  });
+
   it("signs the exact outer SignRequestRaw bytes without reinterpreting nested contract JSON", async () => {
     mountComponent();
     const { socket, keys } = await approveConnection();
