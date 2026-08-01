@@ -3,26 +3,54 @@
   "include": [
     "electron/**/*.ts",
     "src/**/*.d.ts",
+    "src/governance/enactBoundary.ts",
     "src/utils/accountId.ts",
     "src/utils/assetId.ts",
     "src/utils/chainMetadata.ts",
     "src/utils/confidential.ts",
     "src/utils/errorMessage.ts",
+    "src/utils/endpoint.ts",
+    "src/utils/endpointFeatures.ts",
+    "src/utils/endpointScope.ts",
+    "src/utils/kaigiInvite.ts",
     "src/utils/mnemonic.ts",
     "src/utils/secretLike.ts",
     "src/utils/sccpDataSnapshot.ts",
     "src/utils/sccpProverUrl.ts",
     "src/utils/signingAlgorithms.ts",
     "src/utils/soracloud.ts",
+    "src/utils/soraswapConnectWire.ts",
     "src/utils/transactionFee.ts",
-    "src/utils/walletBackup.ts"
+    "src/utils/walletBackup.ts",
+    "src/types/endpointInspection.ts"
   ],
   "compilerOptions": {
     "composite": true,
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@iroha/iroha-js": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/address": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/connect-browser": [
+        "node_modules/.cache/iroha-sdk-compat/active/connect.browser.d.ts"
+      ],
+      "@iroha/iroha-js/canonical-request": [
+        "node_modules/.cache/iroha-sdk-compat/active/canonical-request.d.ts"
+      ],
+      "@iroha/iroha-js/crypto": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/sccp": [
+        "node_modules/.cache/iroha-sdk-compat/active/index.d.ts"
+      ],
+      "@iroha/iroha-js/transaction-codec": [
+        "node_modules/.cache/iroha-sdk-compat/active/transaction-codec.d.ts"
+      ]
     }
   }
 }

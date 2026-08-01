@@ -2,1399 +2,2145 @@ import { computed, ref, watch } from "vue";
 import { defineStore } from "pinia";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
-  enactGovernanceProposal,
+  GOVERNANCE_PROPOSAL_REVIEW_SAFETY_MARGIN_BLOCKS,
+  GOVERNANCE_KIND_ADAPTERS,
+  GOVERNANCE_PARLIAMENT_BODIES,
+  canonicalGovernanceProposalId,
+  canonicalValidationFeeHash,
+  governanceCitizenVoteProjection,
+  isAccountInParliamentRoster,
+  isReferendumPlainVoteOpen,
+  plainBallotLockCoversReferendum,
+  rebaseGovernanceReferendumWindow,
+  validateValidationFeePolicy,
+  validationFeePolicyEnactmentTargetHeight,
+  validationFeePolicyEnactmentTiming,
+  type GovernanceParliamentDecision,
+  type GovernanceProposalDetail,
+  type GovernanceProposalSummary,
+  type GovernanceWritableProposalKindId,
+  type ValidationFeePolicyPayload,
+} from "@/governance/model";
+import {
+  confirmGovernanceAction,
   fetchAccountAssets,
-  finalizeGovernanceReferendum,
+  getGovernanceCapabilities,
   getGovernanceCitizenCount,
   getGovernanceCitizenStatus,
   getGovernanceCouncilCurrent,
-  getGovernanceLifecycle,
-  getGovernanceLocks,
-  getGovernanceProposal,
-  getGovernanceRegistrationPolicy,
-  getGovernanceReferendum,
-  getGovernanceTally,
+  getGovernanceCurrentValidationFeePolicy,
+  getGovernancePlainReferendumContract,
   getGovernanceUnlockStats,
-  listAccountPermissions,
-  proposeGovernanceDeployContract,
-  registerCitizen,
-  submitGovernancePlainBallot,
+  getGovernanceProposalDetail,
+  listGovernanceProposals,
+  prepareGovernanceCitizenRegistration,
+  prepareGovernanceParliamentBallot,
+  prepareGovernancePlainBallot,
+  prepareGovernanceProposal,
 } from "@/services/iroha";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
-import { getPublicAccountId } from "@/utils/accountId";
 import type {
-  AccountPermissionItem,
-  GovernanceActionGate,
   GovernanceBallotDirection,
+  GovernanceCapabilitiesV1,
   GovernanceCitizenCountResponse,
+  GovernanceCitizenState,
   GovernanceCitizenStatusResponse,
   GovernanceCouncilCurrentResponse,
-  GovernanceDraftResponse,
-  GovernanceLifecycleSnapshot,
-  GovernanceLifecycleStageId,
-  GovernanceLocksResult,
-  GovernanceProposalResult,
-  GovernanceRegistrationPolicyResponse,
-  GovernanceReferendumResult,
-  GovernanceTallyResult,
+  GovernancePreparedAction,
+  GovernancePlainReferendumContractResult,
   GovernanceUnlockStatsResponse,
+  GovernanceValidationFeePolicyView,
 } from "@/types/iroha";
-import { compareDecimalStrings } from "@/utils/staking";
-import {
-  CITIZEN_BOND_XOR,
-  canonicalizeProposalId,
-  extractProposalIdFromReferendum,
-  hasGovernancePermission,
-  isPositiveInteger,
-  isPositiveWholeNumberString,
-  isRegisteredGovernanceCitizen,
-  isValidProposalId,
-  parseParliamentHistory,
-  pushRecentValue,
-  resolveGovernanceBondBalance,
-  resolveGovernanceCitizenCount,
-  sanitizeReferendumId,
-} from "@/utils/parliament";
-import {
-  buildFallbackGovernanceLifecycle,
-  makeGovernanceActionGate,
-  resolveGovernanceRole,
-  roleLabelKey,
-} from "@/utils/parliamentLifecycle";
+import { getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
-import {
-  appendTransactionFee,
-  formatTransactionFee,
-  transactionFeeHintForEndpoint,
-} from "@/utils/transactionFee";
+import { resolveGovernanceBondBalance } from "@/utils/parliament";
+import { compareDecimalStrings } from "@/utils/staking";
+import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 
-type ActionMode = "bond" | "ballot" | "proposal" | "finalize" | "enact";
-type DeployTargetKind = "address" | "alias";
+export type GovernanceCatalogFilter = "open" | "all" | "mine";
+export type GovernanceBusyAction =
+  | "bootstrap"
+  | "list"
+  | "detail"
+  | "bond"
+  | "prepare"
+  | "commit"
+  | null;
+
+export interface GovernanceActionGate {
+  allowed: boolean;
+  reason: string;
+}
+
+export type GovernanceCitizenBallotSubmissionState =
+  | "idle"
+  | "preparing"
+  | "reviewing"
+  | "submitting"
+  | "finalized"
+  | "error";
+
+interface GovernanceCapabilitiesRequestContext {
+  toriiUrl: string;
+  accountId: string;
+  chainId: string;
+  networkPrefix: number;
+}
+
+const emptyHash = "";
+const CBSI_SBD_APP_ASSET_ID = "sbd#cbsi";
+const CBSI_SBD_ASSET_DEFINITION_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+
+const validationFeePolicyForNativeValidation = (
+  policy: ValidationFeePolicyPayload,
+): ValidationFeePolicyPayload => ({
+  ...policy,
+  ds_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
+  treasury_payout_binding:
+    policy.treasury_payout_binding === null
+      ? null
+      : {
+          ...policy.treasury_payout_binding,
+          sbd_asset_id: CBSI_SBD_ASSET_DEFINITION_ID,
+        },
+});
+
+const governanceCapabilitiesContextKey = (
+  context: GovernanceCapabilitiesRequestContext,
+) =>
+  JSON.stringify([
+    context.toriiUrl,
+    context.accountId,
+    context.chainId,
+    context.networkPrefix,
+  ]);
+
+const emptyValidationFeePolicy = (): ValidationFeePolicyPayload => ({
+  schema_version: 1,
+  chain_id: "",
+  genesis_hash: emptyHash,
+  policy_version: "1",
+  previous_policy_hash: null,
+  ds_asset_id: "",
+  ds_scale: 2,
+  fee: "0.10",
+  treasury_account_id: "",
+  charging_mode: {
+    charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+    value: null,
+  },
+  effective_from_height: "",
+  expires_after_height: null,
+  exemption_classes: [],
+  treasury_payout_binding: null,
+});
+
+const stringValue = (
+  record: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+) => {
+  for (const key of keys) {
+    const value = record?.[key];
+    if (
+      typeof value === "string" ||
+      typeof value === "number" ||
+      typeof value === "bigint"
+    ) {
+      return String(value).trim();
+    }
+  }
+  return "";
+};
+
+const integerAfter = (value: string) => {
+  try {
+    return (BigInt(value || "0") + 1n).toString();
+  } catch {
+    return "1";
+  }
+};
+
+const parseJsonRecord = (literal: string, label: string) => {
+  let value: unknown;
+  try {
+    value = JSON.parse(literal);
+  } catch {
+    throw new Error(`${label} must be valid JSON.`);
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} must be a JSON object.`);
+  }
+  return value as Record<string, unknown>;
+};
+
+const optionalWindow = (lower: string, upper: string) => {
+  const normalizedLower = lower.trim();
+  const normalizedUpper = upper.trim();
+  if (!normalizedLower && !normalizedUpper) return undefined;
+  if (!/^\d+$/u.test(normalizedLower) || !/^\d+$/u.test(normalizedUpper)) {
+    throw new Error("Voting window heights must be whole numbers.");
+  }
+  if (BigInt(normalizedUpper) < BigInt(normalizedLower)) {
+    throw new Error("Voting window end must not be before its start.");
+  }
+  const maxU64 = (1n << 64n) - 1n;
+  if (BigInt(normalizedLower) > maxU64 || BigInt(normalizedUpper) > maxU64) {
+    throw new Error("Voting window heights exceed the unsigned 64-bit range.");
+  }
+  return { lower: normalizedLower, upper: normalizedUpper };
+};
 
 export const useParliamentStore = defineStore("parliament", () => {
   const session = useSessionStore();
-  const { localeStore, t } = useAppI18n();
+  const endpointStore = useEndpointStore();
+  const { t } = useAppI18n();
 
   const activeAccount = computed(() => session.activeAccount);
-  const activeAccountDisplayId = computed(() =>
+  const accountId = computed(() =>
     getPublicAccountId(activeAccount.value, session.connection.networkPrefix),
   );
-  const requestAccountId = computed(
-    () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
+  const toriiUrl = computed(() => session.connection.toriiUrl.trim());
+  const chainId = computed(() => session.connection.chainId.trim());
+  const networkPrefix = computed(() => session.connection.networkPrefix);
+  const capabilities = ref<GovernanceCapabilitiesV1 | null>(null);
+  const capabilitiesLoading = ref(false);
+  const capabilitiesError = ref("");
+  const capabilitiesContextKey = ref("");
+  const currentCapabilitiesContext =
+    computed<GovernanceCapabilitiesRequestContext>(() => ({
+      toriiUrl: toriiUrl.value,
+      accountId: accountId.value,
+      chainId: chainId.value,
+      networkPrefix: networkPrefix.value,
+    }));
+  const currentCapabilitiesContextKey = computed(() =>
+    governanceCapabilitiesContextKey(currentCapabilitiesContext.value),
   );
-  const toriiUrl = computed(() => session.connection.toriiUrl);
-  const chainId = computed(() => session.connection.chainId);
-  const assetDefinitionId = computed(
-    () => session.connection.assetDefinitionId,
+  const endpointGovernanceWriteError = computed(() => {
+    if (!endpointStore.writeAllowed) {
+      return (
+        endpointStore.diagnostic ||
+        t("Endpoint identity inspection has not authorized writes.")
+      );
+    }
+    if (
+      endpointStore.inspection?.features.governanceWrites?.supported !== true
+    ) {
+      return t(
+        "The active endpoint does not advertise governance write operations.",
+      );
+    }
+    return "";
+  });
+  const canWrite = computed(
+    () =>
+      Boolean(toriiUrl.value && chainId.value && accountId.value) &&
+      !endpointGovernanceWriteError.value &&
+      capabilitiesContextKey.value === currentCapabilitiesContextKey.value &&
+      capabilities.value?.chainId === chainId.value &&
+      capabilities.value.networkPrefix === session.connection.networkPrefix &&
+      !capabilitiesError.value,
   );
+  const governanceWriteUnavailableReason = computed(() => {
+    if (endpointGovernanceWriteError.value) {
+      return endpointGovernanceWriteError.value;
+    }
+    if (capabilitiesError.value) {
+      return capabilitiesError.value;
+    }
+    if (!toriiUrl.value || !chainId.value || !accountId.value) {
+      return t("Connect the reviewed Taira network and wallet first.");
+    }
+    if (!capabilities.value) {
+      return t("Governance capabilities are unavailable.");
+    }
+    return "";
+  });
 
-  const loadingBootstrap = ref(false);
-  const permissionsLoaded = ref(false);
-  const lookupLoading = ref(false);
-  const actionBusy = ref<ActionMode | null>(null);
-  const selectedStageId = ref<GovernanceLifecycleStageId>("submitted");
-  const activePanel = ref<"summary" | "stage" | "actions">("summary");
-
-  const statusMessage = ref("");
-  const actionMessage = ref("");
-  const errorMessage = ref("");
-
-  const xorBalance = ref("0");
-  const permissions = ref<AccountPermissionItem[]>([]);
-  const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
-  const citizenCountStatus = ref<GovernanceCitizenCountResponse | null>(null);
-  const council = ref<GovernanceCouncilCurrentResponse | null>(null);
+  const catalogFilter = ref<GovernanceCatalogFilter>("open");
+  const proposals = ref<GovernanceProposalSummary[]>([]);
+  const nextCursor = ref<string | null>(null);
+  const selectedProposalId = ref<string | null>(null);
+  const selectedProposal = ref<GovernanceProposalDetail | null>(null);
+  const citizenStatus = ref<GovernanceCitizenStatusResponse | null>(null);
+  const citizenshipLoading = ref(false);
+  const citizenshipBalance = ref<string | null>(null);
+  const citizenshipStatusError = ref("");
+  const citizenshipBalanceError = ref("");
+  const citizenshipLoadError = computed(
+    () => citizenshipStatusError.value || citizenshipBalanceError.value,
+  );
+  const governanceCitizenCount = ref<GovernanceCitizenCountResponse | null>(
+    null,
+  );
+  const governanceCitizenCountLoading = ref(false);
+  const governanceCitizenCountError = ref("");
+  const currentCouncil = ref<GovernanceCouncilCurrentResponse | null>(null);
+  const currentCouncilLoading = ref(false);
+  const currentCouncilError = ref("");
   const unlockStats = ref<GovernanceUnlockStatsResponse | null>(null);
-  const governanceRegistrationPolicy =
-    ref<GovernanceRegistrationPolicyResponse | null>(null);
+  const unlockStatsLoading = ref(false);
+  const unlockStatsError = ref("");
+  const validationFeePolicy = ref<GovernanceValidationFeePolicyView | null>(
+    null,
+  );
+  const plainReferendumContract =
+    ref<GovernancePlainReferendumContractResult | null>(null);
+  const plainReferendumContractLoading = ref(false);
+  const plainReferendumContractError = ref("");
 
-  const referendumId = ref("");
-  const proposalId = ref("");
-  const ballotAmount = ref(CITIZEN_BOND_XOR);
-  const durationBlocks = ref(7_200);
-  const direction = ref<GovernanceBallotDirection>("Aye");
-  const deployTargetKind = ref<DeployTargetKind>("address");
-  const deployTargetValue = ref("");
-  const deployCodeHash = ref("");
-  const deployAbiHash = ref("");
-  const deployAbiVersion = ref("1");
-  const deployVotingMode = ref<"Plain" | "Zk">("Plain");
-  const deployWindowLower = ref("");
-  const deployWindowUpper = ref("");
-  const deployLimitsJson = ref("");
-  const recentReferenda = ref<string[]>([]);
-  const recentProposals = ref<string[]>([]);
+  const busy = ref<GovernanceBusyAction>(null);
+  const refreshing = ref(false);
+  const finalizedRefresh = ref(false);
+  const listError = ref("");
+  const detailError = ref("");
+  const policyError = ref("");
+  const actionError = ref("");
+  const actionMessage = ref("");
 
-  const referendum = ref<GovernanceReferendumResult | null>(null);
-  const proposal = ref<GovernanceProposalResult | null>(null);
-  const tally = ref<GovernanceTallyResult | null>(null);
-  const locks = ref<GovernanceLocksResult | null>(null);
-  const lifecycleFromEndpoint = ref<GovernanceLifecycleSnapshot | null>(null);
-  const lifecycleEndpointUnavailable = ref(false);
-  const deployProposalDraft = ref<GovernanceDraftResponse | null>(null);
-  const finalizeDraft = ref<GovernanceDraftResponse | null>(null);
-  const enactDraft = ref<GovernanceDraftResponse | null>(null);
-  const loadedReferendumInput = ref<string | null>(null);
-  const loadedProposalInput = ref<string | null>(null);
-  const lookupGeneration = ref(0);
-  const refreshGeneration = ref(0);
+  const composerOpen = ref(false);
+  const composerKind = ref<GovernanceWritableProposalKindId>(
+    "ValidationFeePayoutLifecycle",
+  );
+  const validationFeeComposer = ref<ValidationFeePolicyPayload>(
+    emptyValidationFeePolicy(),
+  );
+  const validationFeeExemptions = ref("TREASURY_PAYOUT");
+  const validationFeePayoutBindingJson = ref("");
+  const validationFeePayoutLifecycleProposalId = ref("");
+  const validationFeeLifecycleWindowLower = ref("");
+  const validationFeeLifecycleWindowUpper = ref("");
+  const validationFeeWindowLower = ref("");
+  const validationFeeWindowUpper = ref("");
 
-  const canSubmit = computed(() =>
-    Boolean(toriiUrl.value && chainId.value && requestAccountId.value),
-  );
-  const isActionBusy = computed(() => actionBusy.value !== null);
-  const hasBallotPermissionToken = computed(() =>
-    hasGovernancePermission(permissions.value, "CanSubmitGovernanceBallot"),
-  );
-  const hasCitizenRecord = computed(() =>
-    isRegisteredGovernanceCitizen(citizenshipStatus.value),
-  );
-  const hasBallotPermission = computed(
-    () => hasBallotPermissionToken.value || hasCitizenRecord.value,
-  );
-  const hasParliamentPermission = computed(() =>
-    hasGovernancePermission(permissions.value, "CanManageParliament"),
-  );
-  const hasEnactPermission = computed(() =>
-    hasGovernancePermission(permissions.value, "CanEnactGovernance"),
-  );
-  const hasOperatorRole = computed(
-    () => hasParliamentPermission.value || hasEnactPermission.value,
-  );
-  const lockCount = computed(
-    () => Object.keys(locks.value?.locks ?? {}).length,
-  );
-  const trimmedReferendumId = computed(() => referendumId.value.trim());
-  const proposalLiteral = computed(() => proposalId.value.trim());
-  const canonicalProposalId = computed(() =>
-    proposalLiteral.value
-      ? canonicalizeProposalId(proposalLiteral.value)
+  const ballotDirection = ref<GovernanceBallotDirection>("Aye");
+  const ballotAmount = ref("150");
+  const ballotDurationBlocks = ref("3600");
+  const parliamentDecision = ref<GovernanceParliamentDecision>("approve");
+  const citizenBallotSubmissionState =
+    ref<GovernanceCitizenBallotSubmissionState>("idle");
+  const citizenBallotError = ref("");
+
+  const review = ref<GovernancePreparedAction | null>(null);
+  let capabilitiesGeneration = 0;
+  let listGeneration = 0;
+  let detailGeneration = 0;
+  let citizenGeneration = 0;
+  let citizenBalanceGeneration = 0;
+  let citizenCountGeneration = 0;
+  let councilGeneration = 0;
+  let unlockStatsGeneration = 0;
+  let validationFeePolicyGeneration = 0;
+  let plainReferendumContractGeneration = 0;
+  let bootstrapGeneration = 0;
+  let refreshPulseTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const selectedAdapter = computed(() =>
+    selectedProposal.value
+      ? GOVERNANCE_KIND_ADAPTERS[selectedProposal.value.kind.type]
       : null,
   );
-  const proposalIdFormatError = computed(
-    () => Boolean(proposalLiteral.value) && !canonicalProposalId.value,
-  );
-  const ballotAmountLiteral = computed(() => ballotAmount.value.trim());
-  const hasValidBallotAmount = computed(() =>
-    isPositiveWholeNumberString(ballotAmountLiteral.value),
-  );
-  const hasXorForBallot = computed(() => {
-    if (!hasValidBallotAmount.value) return false;
-    try {
+  const selectedKindSupported = computed(() => {
+    const kind = selectedProposal.value?.kind.type;
+    if (kind === "ValidationFeePayoutLifecycle") {
       return (
-        compareDecimalStrings(xorBalance.value, ballotAmountLiteral.value) >= 0
-      );
-    } catch (_error) {
-      return false;
-    }
-  });
-  const hasValidDurationBlocks = computed(() =>
-    isPositiveInteger(durationBlocks.value),
-  );
-  const deployTargetLiteral = computed(() => deployTargetValue.value.trim());
-  const deployCodeHashLiteral = computed(() => deployCodeHash.value.trim());
-  const deployAbiHashLiteral = computed(() => deployAbiHash.value.trim());
-  const deployAbiVersionLiteral = computed(
-    () => deployAbiVersion.value.trim() || "1",
-  );
-  const deployWindowLowerLiteral = computed(() =>
-    deployWindowLower.value.trim(),
-  );
-  const deployWindowUpperLiteral = computed(() =>
-    deployWindowUpper.value.trim(),
-  );
-  const deployWindowHasLower = computed(() =>
-    Boolean(deployWindowLowerLiteral.value),
-  );
-  const deployWindowHasUpper = computed(() =>
-    Boolean(deployWindowUpperLiteral.value),
-  );
-  const deployWindowError = computed(() => {
-    if (deployWindowHasLower.value !== deployWindowHasUpper.value) {
-      return t("Set both window bounds or leave both empty.");
-    }
-    if (!deployWindowHasLower.value) return "";
-    if (
-      !isPositiveWholeNumberString(deployWindowLowerLiteral.value) ||
-      !isPositiveWholeNumberString(deployWindowUpperLiteral.value)
-    ) {
-      return t("Voting window bounds must be positive whole numbers.");
-    }
-    const lower = Number(deployWindowLowerLiteral.value);
-    const upper = Number(deployWindowUpperLiteral.value);
-    if (!Number.isSafeInteger(lower) || !Number.isSafeInteger(upper)) {
-      return t("Voting window bounds must be positive whole numbers.");
-    }
-    if (lower > upper) {
-      return t(
-        "Voting window lower bound must be less than or equal to the upper bound.",
+        capabilities.value?.supportedProposalKinds.includes(
+          "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+        ) === true
       );
     }
-    return "";
-  });
-  const deployWindowPayload = computed(() => {
-    if (deployWindowError.value || !deployWindowHasLower.value) return null;
-    return {
-      lower: Number(deployWindowLowerLiteral.value),
-      upper: Number(deployWindowUpperLiteral.value),
-    };
-  });
-  const deployLimitsError = computed(() => {
-    const literal = deployLimitsJson.value.trim();
-    if (!literal) return "";
-    try {
-      const parsed = JSON.parse(literal);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return t("Limits JSON must be a JSON object.");
-      }
-    } catch (_error) {
-      return t("Invalid limits JSON.");
+    if (kind === "ValidationFeePolicy") {
+      return (
+        capabilities.value?.supportedProposalKinds.includes(
+          "VALIDATION_FEE_POLICY",
+        ) === true
+      );
     }
-    return "";
+    return false;
   });
-  const deployLimitsPayload = computed(() => {
-    const literal = deployLimitsJson.value.trim();
-    if (!literal || deployLimitsError.value) return null;
-    return JSON.parse(literal) as Record<string, unknown>;
-  });
-  const missingBallotPermission = computed(
-    () => permissionsLoaded.value && !hasBallotPermission.value,
+  const supportedComposerKinds = computed<GovernanceWritableProposalKindId[]>(
+    () => {
+      if (!capabilities.value) return [];
+      return [
+        ...(capabilities.value.supportedProposalKinds.includes(
+          "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+        )
+          ? (["ValidationFeePayoutLifecycle"] as const)
+          : []),
+        ...(capabilities.value.supportedProposalKinds.includes(
+          "VALIDATION_FEE_POLICY",
+        )
+          ? (["ValidationFeePolicy"] as const)
+          : []),
+      ];
+    },
   );
-  const alreadyCitizen = computed(
-    () => permissionsLoaded.value && hasBallotPermission.value,
+  const citizenState = computed<GovernanceCitizenState>(
+    () => citizenStatus.value?.state ?? "unavailable",
   );
-  const missingParliamentPermission = computed(
-    () => permissionsLoaded.value && !hasParliamentPermission.value,
+  const isCitizen = computed(() => citizenState.value === "citizen");
+  const citizenVoteProjection = computed(() =>
+    governanceCitizenVoteProjection(selectedProposal.value, accountId.value),
   );
-  const missingEnactPermission = computed(
-    () => permissionsLoaded.value && !hasEnactPermission.value,
-  );
-  const citizenshipAssetDefinitionId = computed(
-    () =>
-      governanceRegistrationPolicy.value?.citizenshipAssetDefinitionId ?? "",
-  );
-  const citizenshipBondAmount = computed(
-    () =>
-      governanceRegistrationPolicy.value?.citizenshipBondAmount ??
-      CITIZEN_BOND_XOR,
-  );
-  const citizenshipAssetDefinitionMissingMessage = computed(() => {
-    if (
-      !citizenshipAssetDefinitionId.value ||
-      governanceRegistrationPolicy.value?.citizenshipAssetDefinitionExists !==
-        false
-    ) {
+  const selectedPublicProposalError = computed(() => {
+    const detail = selectedProposal.value;
+    const referendum = detail?.referendum;
+    const activeCapabilities = capabilities.value;
+    if (!detail || !referendum || !activeCapabilities) return "";
+    if (referendum.mode !== "Plain") {
       return "";
     }
-    return `Citizenship bonding is blocked because this Torii endpoint is configured to use missing governance citizenship asset definition ${citizenshipAssetDefinitionId.value}. Ask the endpoint operator to register that asset definition or set GOV_CITIZENSHIP_ASSET_ID to the live XOR asset definition.`;
-  });
-  const hasXorForBond = computed(() => {
-    try {
-      return (
-        compareDecimalStrings(xorBalance.value, citizenshipBondAmount.value) >=
-        0
-      );
-    } catch (_error) {
-      return false;
-    }
-  });
-
-  const canBondCitizen = computed(
-    () =>
-      canSubmit.value &&
-      hasXorForBond.value &&
-      !alreadyCitizen.value &&
-      !citizenshipAssetDefinitionMissingMessage.value &&
-      !isActionBusy.value,
-  );
-  const canSubmitBallot = computed(
-    () =>
-      canSubmit.value &&
-      Boolean(trimmedReferendumId.value) &&
-      hasValidBallotAmount.value &&
-      hasXorForBallot.value &&
-      hasValidDurationBlocks.value &&
-      !missingBallotPermission.value &&
-      !isActionBusy.value,
-  );
-  const canPrepareDeployProposal = computed(
-    () =>
-      Boolean(toriiUrl.value) &&
-      Boolean(deployTargetLiteral.value) &&
-      Boolean(deployCodeHashLiteral.value) &&
-      Boolean(deployAbiHashLiteral.value) &&
-      !deployWindowError.value &&
-      !deployLimitsError.value &&
-      !isActionBusy.value,
-  );
-  const canFinalizeDraft = computed(
-    () =>
-      Boolean(toriiUrl.value) &&
-      Boolean(trimmedReferendumId.value) &&
-      Boolean(canonicalProposalId.value) &&
-      !missingParliamentPermission.value &&
-      !isActionBusy.value,
-  );
-  const canEnactDraft = computed(
-    () =>
-      Boolean(toriiUrl.value) &&
-      Boolean(canonicalProposalId.value) &&
-      !missingEnactPermission.value &&
-      !isActionBusy.value,
-  );
-  const canLookupGovernance = computed(
-    () =>
-      Boolean(toriiUrl.value) &&
-      (Boolean(trimmedReferendumId.value) || Boolean(proposalLiteral.value)) &&
-      (Boolean(trimmedReferendumId.value) || !proposalIdFormatError.value) &&
-      !lookupLoading.value,
-  );
-
-  const citizenCount = computed(() =>
-    resolveGovernanceCitizenCount(citizenCountStatus.value),
-  );
-  const citizenCountDisplay = computed(() => {
-    if (citizenCount.value === null) return t("—");
-    return new Intl.NumberFormat(localeStore.current).format(
-      citizenCount.value,
-    );
-  });
-  const citizenshipHeadline = computed(() => {
-    if (loadingBootstrap.value && !permissionsLoaded.value) {
-      return t("Checking citizenship…");
-    }
-    return alreadyCitizen.value
-      ? t("You are a citizen")
-      : t("Not a citizen yet");
-  });
-  const citizenshipPanelDetail = computed(() => {
-    if (!canSubmit.value) {
-      return t("Set up network and wallet first.");
-    }
-    if (alreadyCitizen.value) {
-      const bondedAmount = citizenshipStatus.value?.amount?.trim();
-      return bondedAmount
-        ? t("Bonded {amount} XOR", { amount: bondedAmount })
-        : t(
-            "Citizenship voting permission detected. Bonding is no longer required.",
-          );
-    }
-    return t("Bond {amount} XOR once to enable voting for this wallet.", {
-      amount: citizenshipBondAmount.value,
-    });
-  });
-  const governanceRole = computed(() =>
-    resolveGovernanceRole({
-      accountId: requestAccountId.value,
-      council: council.value,
-      hasCitizenRole: hasBallotPermission.value,
-      hasOperatorRole: hasOperatorRole.value,
-    }),
-  );
-  const governanceRoleLabel = computed(() =>
-    t(roleLabelKey(governanceRole.value)),
-  );
-  const lifecycleSnapshot = computed(() => {
-    if (lifecycleFromEndpoint.value) {
-      return lifecycleFromEndpoint.value;
-    }
-    return buildFallbackGovernanceLifecycle({
-      referendumId: trimmedReferendumId.value || null,
-      proposalId: canonicalProposalId.value,
-      proposalFound: proposal.value?.found === true,
-      referendumFound: referendum.value?.found === true,
-      hasTally: Boolean(tally.value?.tally),
-      hasLocks: lockCount.value > 0,
-      hasCouncil: Boolean(council.value),
-      role: governanceRole.value,
-    });
-  });
-  const lifecycleStages = computed(() => lifecycleSnapshot.value.stages);
-  const activeLifecycleStage = computed(
-    () =>
-      lifecycleStages.value.find(
-        (stage) => stage.id === selectedStageId.value,
-      ) ?? lifecycleStages.value[0],
-  );
-  const selectedStageDetail = computed(() =>
-    activeLifecycleStage.value ? t(activeLifecycleStage.value.detailKey) : "",
-  );
-  const lifecycleCapabilityMessage = computed(() =>
-    lifecycleSnapshot.value.futureStagesUnavailable
-      ? t(
-          "Full adversarial lifecycle data is not available on this endpoint yet.",
-        )
-      : "",
-  );
-  const proposalSummaryTitle = computed(() => {
-    if (proposal.value?.found) return t("Proposal loaded");
-    if (referendum.value?.found) return t("Referendum loaded");
-    if (trimmedReferendumId.value || proposalLiteral.value) {
-      return t("No governance record loaded");
-    }
-    return t("Choose a referendum or proposal");
-  });
-  const proposalSummaryDetail = computed(() => {
-    if (proposal.value?.found || referendum.value?.found) {
-      return t("Review the active stage, then vote or open advanced tools.");
-    }
-    return t(
-      "Load a referendum or proposal to assemble the available lifecycle data.",
-    );
-  });
-  const bondFeeLabel = computed(() =>
-    formatTransactionFee(transactionFeeHintForEndpoint(toriiUrl.value), t),
-  );
-  const ballotFeeLabel = bondFeeLabel;
-
-  const gate = (
-    enabled: boolean,
-    code: GovernanceActionGate["code"],
-    reason: string,
-  ) => makeGovernanceActionGate(enabled, code, reason);
-
-  const bondGate = computed(() => {
-    if (canBondCitizen.value) return gate(true, "ready", "");
-    if (isActionBusy.value)
-      return gate(false, "busy", t("Action in progress."));
-    if (!canSubmit.value) {
-      return gate(
-        false,
-        "wallet-required",
-        t("Set up network and wallet first."),
+    if (
+      BigInt(referendum.hEnd) - BigInt(referendum.hStart) + 1n !==
+      BigInt(activeCapabilities.windowSpan)
+    ) {
+      return t(
+        "The public referendum window differs from the exact Taira 3,600-block contract.",
       );
     }
-    if (alreadyCitizen.value) {
-      return gate(
-        false,
-        "already-citizen",
-        t(
-          "Citizenship voting permission detected. Bonding is no longer required.",
-        ),
-      );
-    }
-    if (citizenshipAssetDefinitionMissingMessage.value) {
-      return gate(
-        false,
-        "missing-backend-capability",
-        citizenshipAssetDefinitionMissingMessage.value,
-      );
-    }
-    if (!hasXorForBond.value) {
-      return gate(
-        false,
-        "insufficient-bond",
-        t("Available XOR balance is below the required citizen bond amount."),
-      );
-    }
-    return gate(false, "endpoint-unavailable", t("Bonding is unavailable."));
-  });
-
-  const ballotGate = computed(() => {
-    if (canSubmitBallot.value) return gate(true, "ready", "");
-    if (isActionBusy.value)
-      return gate(false, "busy", t("Action in progress."));
-    if (!canSubmit.value) {
-      return gate(
-        false,
-        "wallet-required",
-        t("Set up network and wallet first."),
-      );
-    }
-    if (!trimmedReferendumId.value) {
-      return gate(
-        false,
-        "missing-referendum",
-        t("Load or enter a referendum before voting."),
-      );
-    }
-    if (missingBallotPermission.value) {
-      return gate(
-        false,
-        "missing-permission",
-        t(
-          "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
-        ),
-      );
-    }
-    if (!hasValidBallotAmount.value) {
-      return gate(
-        false,
-        "invalid-amount",
-        t("Ballot amount must be a whole number greater than zero."),
-      );
-    }
-    if (!hasXorForBallot.value) {
-      return gate(
-        false,
-        "invalid-amount",
-        t("Ballot amount exceeds the available XOR balance."),
-      );
-    }
-    if (!hasValidDurationBlocks.value) {
-      return gate(
-        false,
-        "invalid-duration",
-        t("Lock duration must be a positive integer number of blocks."),
-      );
-    }
-    return gate(false, "endpoint-unavailable", t("Voting is unavailable."));
-  });
-
-  const stageBallotGate = computed(() =>
-    gate(
-      false,
-      "missing-backend-capability",
-      t("Parliament stage ballots are not available on this endpoint yet."),
-    ),
-  );
-
-  const finalizeGate = computed(() => {
-    if (canFinalizeDraft.value) return gate(true, "ready", "");
-    if (missingParliamentPermission.value) {
-      return gate(
-        false,
-        "missing-permission",
-        t("Finalize requires CanManageParliament permission."),
-      );
-    }
-    if (!trimmedReferendumId.value || !canonicalProposalId.value) {
-      return gate(
-        false,
-        "invalid-proposal",
-        t("referendumId and proposalId are required for finalize."),
-      );
-    }
-    return gate(false, "busy", t("Action in progress."));
-  });
-
-  const enactGate = computed(() => {
-    if (canEnactDraft.value) return gate(true, "ready", "");
-    if (missingEnactPermission.value) {
-      return gate(
-        false,
-        "missing-permission",
-        t("Enact requires CanEnactGovernance permission."),
-      );
-    }
-    if (!canonicalProposalId.value) {
-      return gate(
-        false,
-        "invalid-proposal",
-        t("proposalId is required for enact."),
-      );
-    }
-    return gate(false, "busy", t("Action in progress."));
-  });
-
-  const nextActionLabel = computed(() => {
-    if (!canSubmit.value) return t("Create or restore a wallet");
-    if (!alreadyCitizen.value) return t("Bond citizenship");
-    if (!trimmedReferendumId.value) return t("Load proposal");
-    if (canSubmitBallot.value) return t("Submit ballot");
-    return t("Review voting requirements");
-  });
-  const nextActionReason = computed(() => {
-    if (!alreadyCitizen.value) return bondGate.value.reason;
-    return ballotGate.value.reason || t("Ready for governance actions.");
-  });
-  const historyStorageKey = computed(() =>
-    activeAccount.value?.accountId
-      ? `iroha-demo:parliament-history:${activeAccount.value.accountId}`
-      : null,
-  );
-
-  const resetGovernanceLookup = () => {
-    referendum.value = null;
-    proposal.value = null;
-    tally.value = null;
-    locks.value = null;
-    lifecycleFromEndpoint.value = null;
-    lifecycleEndpointUnavailable.value = false;
-    deployProposalDraft.value = null;
-    finalizeDraft.value = null;
-    enactDraft.value = null;
-    loadedReferendumInput.value = null;
-    loadedProposalInput.value = null;
-    lookupLoading.value = false;
-    lookupGeneration.value += 1;
-  };
-
-  const loadHistory = () => {
-    if (!historyStorageKey.value) {
-      recentReferenda.value = [];
-      recentProposals.value = [];
-      return;
-    }
-    const raw = localStorage.getItem(historyStorageKey.value);
-    if (!raw) {
-      recentReferenda.value = [];
-      recentProposals.value = [];
-      return;
-    }
-    try {
-      const parsed = parseParliamentHistory(JSON.parse(raw));
-      recentReferenda.value = parsed.referenda;
-      recentProposals.value = parsed.proposals;
-    } catch (_error) {
-      recentReferenda.value = [];
-      recentProposals.value = [];
-      localStorage.removeItem(historyStorageKey.value);
-    }
-  };
-
-  const saveHistory = () => {
-    if (!historyStorageKey.value) return;
-    localStorage.setItem(
-      historyStorageKey.value,
-      JSON.stringify({
-        referenda: recentReferenda.value,
-        proposals: recentProposals.value,
-      }),
-    );
-  };
-
-  const rememberHistory = (input: {
-    referendumId?: string | null;
-    proposalId?: string | null;
-  }) => {
-    if (input.referendumId) {
-      recentReferenda.value = pushRecentValue(
-        recentReferenda.value,
-        sanitizeReferendumId(input.referendumId),
-      );
-    }
-    if (input.proposalId) {
-      const normalizedProposalId = canonicalizeProposalId(input.proposalId);
-      if (normalizedProposalId) {
-        recentProposals.value = pushRecentValue(
-          recentProposals.value,
-          normalizedProposalId,
+    if (
+      detail.kind.type === "ValidationFeePayoutLifecycle" ||
+      detail.kind.type === "ValidationFeePolicy"
+    ) {
+      const proposalRules = detail.kind.plainElectorateRules;
+      const capabilityRules =
+        activeCapabilities.validationFeePlainElectorateRules;
+      if (
+        proposalRules.voting_asset_id !== capabilityRules.votingAssetId ||
+        proposalRules.bond_escrow_account !==
+          capabilityRules.bondEscrowAccount ||
+        proposalRules.slash_receiver_account !==
+          capabilityRules.slashReceiverAccount ||
+        proposalRules.ballot_amount !== capabilityRules.ballotAmount ||
+        proposalRules.ballot_duration_blocks !==
+          capabilityRules.ballotDurationBlocks ||
+        proposalRules.citizenship_amount !==
+          capabilityRules.citizenshipAmount ||
+        proposalRules.max_members !== capabilityRules.maxMembers ||
+        proposalRules.conviction_step_blocks !==
+          capabilityRules.convictionStepBlocks ||
+        proposalRules.max_conviction !== capabilityRules.maxConviction ||
+        proposalRules.min_turnout !== capabilityRules.minTurnout ||
+        proposalRules.approval_threshold_numerator !==
+          capabilityRules.approvalThresholdNumerator ||
+        proposalRules.approval_threshold_denominator !==
+          capabilityRules.approvalThresholdDenominator ||
+        proposalRules.eligibility_rule.rule !==
+          capabilityRules.eligibilityRule.rule ||
+        proposalRules.eligibility_rule.value !==
+          capabilityRules.eligibilityRule.value
+      ) {
+        return t(
+          "The public validation-fee PLAIN electorate rules differ from the exact endpoint capabilities.",
         );
       }
     }
-    saveHistory();
-  };
-
-  const clearHistory = () => {
-    recentReferenda.value = [];
-    recentProposals.value = [];
-    if (historyStorageKey.value) {
-      localStorage.removeItem(historyStorageKey.value);
+    if (detail.kind.type === "ValidationFeePayoutLifecycle") {
+      if (
+        detail.kind.payoutBinding.sbd_asset_id !==
+          CBSI_SBD_ASSET_DEFINITION_ID ||
+        detail.kind.payoutBinding.entrypoint !==
+          "autonomous_validation_fee_tick"
+      ) {
+        return t(
+          "The public payout lifecycle differs from the exact reviewed Taira binding.",
+        );
+      }
+      return "";
     }
+    if (detail.kind.type !== "ValidationFeePolicy") return "";
+    const policy = detail.kind.policy;
+    const enactmentTargetHeight = validationFeePolicyEnactmentTargetHeight(
+      policy.effective_from_height,
+    );
+    const referendumStart = BigInt(referendum.hStart);
+    const referendumEnd = BigInt(referendum.hEnd);
+    const finalizationHeight = detail.finalizationEvidence
+      ? BigInt(detail.finalizationEvidence.finalized_at_height)
+      : null;
+    if (
+      policy.chain_id !== activeCapabilities.chainId ||
+      policy.genesis_hash.toLowerCase() !==
+        activeCapabilities.genesisHash.toLowerCase() ||
+      policy.ds_asset_id !== CBSI_SBD_ASSET_DEFINITION_ID ||
+      policy.ds_scale !== 2 ||
+      policy.fee !== "0.1" ||
+      policy.charging_mode.charging_mode !==
+        "PER_QUALIFYING_TRANSFER_INSTRUCTION" ||
+      policy.charging_mode.value !== null ||
+      policy.exemption_classes.length !== 1 ||
+      policy.exemption_classes[0] !== "TREASURY_PAYOUT" ||
+      policy.treasury_payout_binding === null ||
+      detail.kind.payoutLifecycleProposalId === null ||
+      enactmentTargetHeight === null ||
+      BigInt(enactmentTargetHeight) <= referendumEnd ||
+      (finalizationHeight !== null &&
+        (finalizationHeight < referendumStart ||
+          finalizationHeight > referendumEnd ||
+          BigInt(enactmentTargetHeight) <= finalizationHeight))
+    ) {
+      return t(
+        "The public validation-fee payload differs from the exact reviewed Taira policy.",
+      );
+    }
+    return "";
+  });
+  const activeAccountEligibleForPlainReferendum = computed(() => {
+    const contract = plainReferendumContract.value?.contract;
+    return Boolean(
+      contract &&
+        accountId.value &&
+        contract.eligibleCitizens.some(
+          (citizen) => citizen.accountId === accountId.value,
+        ),
+    );
+  });
+  const selectedPlainReferendumContractError = computed(() => {
+    const detail = selectedProposal.value;
+    if (!detail || detail.kind.type !== "ValidationFeePolicy") return "";
+    if (plainReferendumContractLoading.value) {
+      return t("Checking the immutable eligible-citizen snapshot…");
+    }
+    if (plainReferendumContractError.value) {
+      return plainReferendumContractError.value;
+    }
+    const contract = plainReferendumContract.value?.contract;
+    if (!contract) {
+      return t("The immutable PLAIN referendum contract is unavailable.");
+    }
+    const referendum = detail.referendum;
+    const contractRules = contract.plainElectorate.rules;
+    const proposalRules = detail.kind.plainElectorateRules;
+    if (
+      !referendum ||
+      contract.chainId !== chainId.value ||
+      `0x${contract.proposalId}` !== detail.summary.proposalId ||
+      contract.referendumId !== referendum.id ||
+      contract.hStart !== referendum.hStart ||
+      contract.hEnd !== referendum.hEnd ||
+      contract.mode !== referendum.mode ||
+      contractRules.bondEscrowAccount !== proposalRules.bond_escrow_account ||
+      contractRules.slashReceiverAccount !==
+        proposalRules.slash_receiver_account
+    ) {
+      return t(
+        "The selected proposal differs from the immutable PLAIN referendum contract.",
+      );
+    }
+    if (!activeAccountEligibleForPlainReferendum.value) {
+      return t(
+        "The active account is outside the immutable eligible-citizen snapshot.",
+      );
+    }
+    return "";
+  });
+  const proposalGate = computed<GovernanceActionGate>(() => {
+    if (!canWrite.value) {
+      return {
+        allowed: false,
+        reason: governanceWriteUnavailableReason.value,
+      };
+    }
+    if (citizenshipLoading.value) {
+      return { allowed: false, reason: t("Checking citizenship…") };
+    }
+    if (citizenshipStatusError.value) {
+      return { allowed: false, reason: citizenshipStatusError.value };
+    }
+    if (!isCitizen.value) {
+      return {
+        allowed: false,
+        reason: t(
+          "A current bonded Taira citizen is required to create a proposal.",
+        ),
+      };
+    }
+    if (supportedComposerKinds.value.length === 0) {
+      return {
+        allowed: false,
+        reason: t("Taira advertises no writable proposal kinds."),
+      };
+    }
+    return { allowed: true, reason: "" };
+  });
+  const citizenshipBondAmount = computed(
+    () => capabilities.value?.citizenshipBondAmount ?? "",
+  );
+  const citizenshipAssetDefinitionId = computed(
+    () => capabilities.value?.citizenshipAssetId ?? "",
+  );
+  const hasCitizenshipBondBalance = computed(() => {
+    if (citizenshipBalance.value === null) return false;
+    try {
+      return (
+        compareDecimalStrings(
+          citizenshipBalance.value,
+          citizenshipBondAmount.value,
+        ) >= 0
+      );
+    } catch {
+      return false;
+    }
+  });
+  const canBondCitizen = computed(
+    () =>
+      canWrite.value &&
+      Boolean(capabilities.value) &&
+      citizenState.value === "not-citizen" &&
+      hasCitizenshipBondBalance.value &&
+      !citizenshipLoadError.value &&
+      busy.value === null,
+  );
+  const bondGate = computed<GovernanceActionGate>(() => {
+    if (canBondCitizen.value) return { allowed: true, reason: "" };
+    if (!canWrite.value) {
+      return {
+        allowed: false,
+        reason: governanceWriteUnavailableReason.value,
+      };
+    }
+    if (citizenshipLoading.value) {
+      return { allowed: false, reason: t("Checking citizenship…") };
+    }
+    if (isCitizen.value) {
+      return {
+        allowed: false,
+        reason: t(
+          "Citizenship voting permission detected. Bonding is no longer required.",
+        ),
+      };
+    }
+    if (citizenshipLoadError.value) {
+      return { allowed: false, reason: citizenshipLoadError.value };
+    }
+    if (citizenState.value === "unavailable") {
+      return { allowed: false, reason: t("Citizen status unavailable") };
+    }
+    if (!hasCitizenshipBondBalance.value) {
+      return {
+        allowed: false,
+        reason: t(
+          "Available XOR balance is below the required citizen bond amount.",
+        ),
+      };
+    }
+    return { allowed: false, reason: t("Action in progress.") };
+  });
+
+  const plainVoteGate = computed<GovernanceActionGate>(() => {
+    if (!canWrite.value) {
+      return {
+        allowed: false,
+        reason: governanceWriteUnavailableReason.value,
+      };
+    }
+    const detail = selectedProposal.value;
+    if (!detail) {
+      return { allowed: false, reason: t("Select a proposal first.") };
+    }
+    if (detail.kind.type === "Unknown") {
+      return {
+        allowed: false,
+        reason: t("Unknown proposal kinds are inspect-only."),
+      };
+    }
+    if (!selectedKindSupported.value) {
+      return {
+        allowed: false,
+        reason: t(
+          "This proposal kind is not advertised by Taira and remains inspect-only.",
+        ),
+      };
+    }
+    if (detail.kind.type !== "ValidationFeePolicy") {
+      return {
+        allowed: false,
+        reason: t(
+          "This release only enables public PLAIN voting for the frozen-electorate validation-fee policy.",
+        ),
+      };
+    }
+    if (selectedPublicProposalError.value) {
+      return {
+        allowed: false,
+        reason: selectedPublicProposalError.value,
+      };
+    }
+    if (selectedPlainReferendumContractError.value) {
+      return {
+        allowed: false,
+        reason: selectedPlainReferendumContractError.value,
+      };
+    }
+    if (detail.referendum?.mode === "Zk") {
+      return {
+        allowed: false,
+        reason: t(
+          "ZK voting is unavailable in this release. This action fails closed.",
+        ),
+      };
+    }
+    if (!isCitizen.value) {
+      return {
+        allowed: false,
+        reason: t("A current citizen bond is required to vote."),
+      };
+    }
+    if (citizenVoteProjection.value.state === "recorded") {
+      return {
+        allowed: false,
+        reason: t(
+          "This account already has a PLAIN citizen ballot recorded for this referendum.",
+        ),
+      };
+    }
+    if (!isReferendumPlainVoteOpen(detail)) {
+      return {
+        allowed: false,
+        reason: t("The plain citizen voting window is not open."),
+      };
+    }
+    const amount = ballotAmount.value.trim();
+    const durationBlocks = ballotDurationBlocks.value.trim();
+    if (!/^[1-9]\d*$/u.test(amount) || !/^[1-9]\d*$/u.test(durationBlocks)) {
+      return {
+        allowed: false,
+        reason: t(
+          "Enter a positive whole-number ballot amount and lock duration.",
+        ),
+      };
+    }
+    const ballotContract = plainReferendumContract.value?.contract.ballot;
+    if (
+      !ballotContract ||
+      amount !== ballotContract.amount ||
+      durationBlocks !== ballotContract.durationBlocks ||
+      !ballotContract.directions.includes(ballotDirection.value)
+    ) {
+      return {
+        allowed: false,
+        reason: t(
+          "The ballot must use the immutable 150 XOR / 3,600-block PLAIN contract.",
+        ),
+      };
+    }
+    const activeCapabilities = capabilities.value;
+    if (!activeCapabilities) {
+      return {
+        allowed: false,
+        reason: t("Governance capabilities are unavailable."),
+      };
+    }
+    try {
+      if (compareDecimalStrings(amount, activeCapabilities.minBondAmount) < 0) {
+        return {
+          allowed: false,
+          reason: t("Ballot amount is below the network minimum bond."),
+        };
+      }
+    } catch {
+      return {
+        allowed: false,
+        reason: t("Governance capabilities are unavailable."),
+      };
+    }
+    if (
+      BigInt(durationBlocks) < BigInt(activeCapabilities.convictionStepBlocks)
+    ) {
+      return {
+        allowed: false,
+        reason: t(
+          "Ballot lock duration is below the network conviction minimum.",
+        ),
+      };
+    }
+    if (!plainBallotLockCoversReferendum(detail, durationBlocks)) {
+      return {
+        allowed: false,
+        reason: t("Ballot lock duration must cover the referendum end height."),
+      };
+    }
+    return { allowed: true, reason: "" };
+  });
+
+  const parliamentBallotGateForBody = (body: string): GovernanceActionGate => {
+    if (!canWrite.value) {
+      return {
+        allowed: false,
+        reason: governanceWriteUnavailableReason.value,
+      };
+    }
+    const detail = selectedProposal.value;
+    if (!detail || !body) {
+      return {
+        allowed: false,
+        reason: t("Select a proposal and Parliament body first."),
+      };
+    }
+    if (detail.kind.type === "Unknown") {
+      return {
+        allowed: false,
+        reason: t("Unknown proposal kinds are inspect-only."),
+      };
+    }
+    if (!selectedKindSupported.value) {
+      return {
+        allowed: false,
+        reason: t(
+          "This proposal kind is not advertised by Taira and remains inspect-only.",
+        ),
+      };
+    }
+    if (selectedPublicProposalError.value) {
+      return {
+        allowed: false,
+        reason: selectedPublicProposalError.value,
+      };
+    }
+    if (detail.referendum?.mode !== "Plain") {
+      return {
+        allowed: false,
+        reason: t(
+          "ZK voting is unavailable in this release. This action fails closed.",
+        ),
+      };
+    }
+    if (detail.referendum.status !== "Proposed") {
+      return {
+        allowed: false,
+        reason: t(
+          "Parliament body ballots close when the citizen referendum opens.",
+        ),
+      };
+    }
+    if (!isAccountInParliamentRoster(detail, accountId.value, body)) {
+      return {
+        allowed: false,
+        reason: t(
+          "The active account is not a seated member of this Parliament body.",
+        ),
+      };
+    }
+    if (
+      detail.parliamentOutcomes.find((outcome) => outcome.body === body)
+        ?.currentAccountDecision
+    ) {
+      return {
+        allowed: false,
+        reason: t("This account already voted in this Parliament body."),
+      };
+    }
+    return { allowed: true, reason: "" };
   };
 
-  const applyRecentReferendum = async (value: string) => {
-    referendumId.value = value;
-    if (canLookupGovernance.value) await lookupGovernance();
+  const parliamentBodyGates = computed(() =>
+    Object.fromEntries(
+      GOVERNANCE_PARLIAMENT_BODIES.map((body) => [
+        body,
+        parliamentBallotGateForBody(body),
+      ]),
+    ),
+  );
+  const eligibleParliamentBodies = computed(() =>
+    GOVERNANCE_PARLIAMENT_BODIES.filter(
+      (body) => parliamentBodyGates.value[body]?.allowed,
+    ),
+  );
+  const parliamentBallotGate = computed<GovernanceActionGate>(() =>
+    eligibleParliamentBodies.value.length > 0
+      ? { allowed: true, reason: "" }
+      : {
+          allowed: false,
+          reason:
+            GOVERNANCE_PARLIAMENT_BODIES.map(
+              (body) => parliamentBodyGates.value[body]?.reason,
+            ).find(Boolean) ?? t("No Parliament body ballot is available."),
+        },
+  );
+
+  const policyEnactmentTiming = computed(() =>
+    selectedProposal.value
+      ? validationFeePolicyEnactmentTiming(selectedProposal.value)
+      : null,
+  );
+
+  const enactGate = computed<GovernanceActionGate>(() => ({
+    allowed: false,
+    reason: t(
+      "Validation-fee finalization and enactment use the proposal-bound operator workflow; the public wallet only prepares eligible citizen ballots.",
+    ),
+  }));
+
+  const materializeValidationFeePolicy = (): ValidationFeePolicyPayload => ({
+    ...validationFeeComposer.value,
+    exemption_classes: validationFeeExemptions.value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
+    treasury_payout_binding: validationFeePayoutBindingJson.value.trim()
+      ? parseJsonRecord(
+          validationFeePayoutBindingJson.value,
+          "Treasury payout binding",
+        )
+      : null,
+  });
+
+  const referendumWindowError = (lower: string, upper: string) => {
+    const window = optionalWindow(lower, upper);
+    if (!window) return "An explicit referendum window is required.";
+    if (
+      capabilities.value &&
+      BigInt(window.upper) - BigInt(window.lower) + 1n !==
+        BigInt(capabilities.value.windowSpan)
+    ) {
+      return `Referendum window must span exactly ${capabilities.value.windowSpan} blocks.`;
+    }
+    return "";
   };
 
-  const applyRecentProposal = async (value: string) => {
-    proposalId.value = value;
-    if (canLookupGovernance.value) await lookupGovernance();
+  const validationFeePayoutLifecycleErrors = computed(() => {
+    const errors: string[] = [];
+    try {
+      if (!validationFeePayoutBindingJson.value.trim()) {
+        errors.push("The exact treasury payout binding is required.");
+      } else {
+        parseJsonRecord(
+          validationFeePayoutBindingJson.value,
+          "Treasury payout binding",
+        );
+      }
+    } catch (error) {
+      errors.push(
+        error instanceof Error
+          ? error.message
+          : "Treasury payout binding must be valid JSON.",
+      );
+    }
+    try {
+      const windowError = referendumWindowError(
+        validationFeeLifecycleWindowLower.value,
+        validationFeeLifecycleWindowUpper.value,
+      );
+      if (windowError) errors.push(windowError);
+    } catch (error) {
+      errors.push(
+        error instanceof Error ? error.message : "Invalid referendum window.",
+      );
+    }
+    return errors;
+  });
+
+  const validationFeeComposerErrors = computed(() => {
+    let policy: ValidationFeePolicyPayload;
+    try {
+      policy = materializeValidationFeePolicy();
+    } catch (error) {
+      return [
+        error instanceof Error
+          ? error.message
+          : "Treasury payout binding must be valid JSON.",
+      ];
+    }
+    const errors = validateValidationFeePolicy(
+      validationFeePolicyForNativeValidation(policy),
+      {
+        lower: validationFeeWindowLower.value,
+        upper: validationFeeWindowUpper.value,
+      },
+      validationFeePayoutLifecycleProposalId.value,
+    );
+    if (
+      capabilities.value &&
+      (policy.chain_id !== capabilities.value.chainId ||
+        policy.genesis_hash !== capabilities.value.genesisHash)
+    ) {
+      errors.push(
+        "Policy chain and genesis must match the Taira capabilities projection.",
+      );
+    }
+    if (policy.ds_asset_id !== CBSI_SBD_APP_ASSET_ID) {
+      errors.push(
+        `Fee asset must use the CBSI SBD selector ${CBSI_SBD_APP_ASSET_ID}.`,
+      );
+    }
+    if (policy.treasury_payout_binding === null) {
+      errors.push(
+        "The first Taira policy requires its enacted payout binding.",
+      );
+    }
+    try {
+      const windowError = referendumWindowError(
+        validationFeeWindowLower.value,
+        validationFeeWindowUpper.value,
+      );
+      if (windowError) errors.push(windowError);
+    } catch (error) {
+      errors.push(
+        error instanceof Error ? error.message : "Invalid referendum window.",
+      );
+    }
+    return [...new Set(errors)];
+  });
+
+  const commonPrepareContext = () => {
+    if (!canWrite.value) {
+      throw new Error(
+        governanceWriteUnavailableReason.value ||
+          "Governance writes are unavailable.",
+      );
+    }
+    return {
+      toriiUrl: toriiUrl.value,
+      chainId: chainId.value,
+      accountId: accountId.value,
+      networkPrefix: session.connection.networkPrefix,
+    };
   };
 
-  const shortenIdentifier = (value: string) => {
-    if (value.length <= 22) return value;
-    return `${value.slice(0, 10)}...${value.slice(-10)}`;
+  const resetActionFeedback = () => {
+    actionError.value = "";
+    actionMessage.value = "";
   };
 
-  const refresh = async () => {
-    const requestToriiUrl = toriiUrl.value;
-    const accountId = requestAccountId.value;
-    if (!requestToriiUrl || !accountId) {
-      refreshGeneration.value += 1;
-      loadingBootstrap.value = false;
-      errorMessage.value = "";
-      statusMessage.value = t("Set up network and wallet first.");
-      permissionsLoaded.value = false;
-      permissions.value = [];
-      citizenshipStatus.value = null;
-      citizenCountStatus.value = null;
-      council.value = null;
-      unlockStats.value = null;
-      governanceRegistrationPolicy.value = null;
-      xorBalance.value = "0";
-      resetGovernanceLookup();
+  const rebaseComposerWindow = (
+    kind: GovernanceWritableProposalKindId,
+    loaded: GovernanceCapabilitiesV1,
+  ) => {
+    const window = rebaseGovernanceReferendumWindow({
+      currentHeight: loaded.currentHeight,
+      minStagingBlocks: loaded.minEnactmentDelay,
+      windowSpan: loaded.windowSpan,
+    });
+    if (kind === "ValidationFeePayoutLifecycle") {
+      validationFeeLifecycleWindowLower.value = window.lower;
+      validationFeeLifecycleWindowUpper.value = window.upper;
       return;
     }
+    validationFeeWindowLower.value = window.lower;
+    validationFeeWindowUpper.value = window.upper;
+  };
 
-    const requestGeneration = refreshGeneration.value + 1;
-    refreshGeneration.value = requestGeneration;
-    loadingBootstrap.value = true;
-    statusMessage.value = "";
-    errorMessage.value = "";
+  const seedReferendumWindows = (loaded: GovernanceCapabilitiesV1) => {
+    if (
+      !validationFeeLifecycleWindowLower.value &&
+      !validationFeeLifecycleWindowUpper.value
+    ) {
+      rebaseComposerWindow("ValidationFeePayoutLifecycle", loaded);
+    }
+    if (!validationFeeWindowLower.value && !validationFeeWindowUpper.value) {
+      rebaseComposerWindow("ValidationFeePolicy", loaded);
+    }
+  };
 
+  const loadCapabilities =
+    async (): Promise<GovernanceCapabilitiesV1 | null> => {
+      const generation = ++capabilitiesGeneration;
+      const requestContext = currentCapabilitiesContext.value;
+      const requestContextKey =
+        governanceCapabilitiesContextKey(requestContext);
+      const isCurrentRequest = () =>
+        generation === capabilitiesGeneration &&
+        requestContextKey === currentCapabilitiesContextKey.value;
+
+      capabilitiesError.value = "";
+      capabilities.value = null;
+      capabilitiesContextKey.value = "";
+      capabilitiesLoading.value = Boolean(requestContext.toriiUrl);
+      if (!requestContext.toriiUrl) {
+        capabilitiesError.value = t("A Torii endpoint is required.");
+        capabilitiesLoading.value = false;
+        return null;
+      }
+      try {
+        const loaded = await getGovernanceCapabilities(requestContext.toriiUrl);
+        if (!isCurrentRequest()) return null;
+        if (
+          loaded.chainId !== requestContext.chainId ||
+          loaded.networkPrefix !== requestContext.networkPrefix
+        ) {
+          throw new Error(
+            "The endpoint governance capabilities do not match the active wallet connection.",
+          );
+        }
+        capabilities.value = loaded;
+        capabilitiesContextKey.value = requestContextKey;
+        ballotAmount.value = "150";
+        ballotDurationBlocks.value = "3600";
+        validationFeeComposer.value = {
+          ...validationFeeComposer.value,
+          chain_id: loaded.chainId,
+          genesis_hash: loaded.genesisHash,
+          ds_asset_id: CBSI_SBD_APP_ASSET_ID,
+          ds_scale: 2,
+          fee: "0.10",
+        };
+        seedReferendumWindows(loaded);
+        return loaded;
+      } catch (error) {
+        if (isCurrentRequest()) {
+          capabilitiesError.value = toUserFacingErrorMessage(
+            error,
+            t("Taira governance capabilities are unavailable."),
+          );
+        }
+        return null;
+      } finally {
+        if (isCurrentRequest()) {
+          capabilitiesLoading.value = false;
+        }
+      }
+    };
+
+  const loadCitizenState = async () => {
+    const generation = ++citizenGeneration;
+    const requestToriiUrl = toriiUrl.value;
+    const requestAccountId = accountId.value;
+    const requestNetworkPrefix = networkPrefix.value;
+    if (!requestToriiUrl || !requestAccountId) {
+      citizenStatus.value = null;
+      citizenshipLoading.value = false;
+      citizenshipStatusError.value = "";
+      return;
+    }
+    citizenshipLoading.value = true;
+    citizenshipStatusError.value = "";
     try {
-      const [
-        assetsResult,
-        permissionsResult,
-        citizenCountResult,
-        councilResult,
-        unlockStatsResult,
-        policyResult,
-        citizenshipResult,
-      ] = await Promise.allSettled([
-        fetchAccountAssets({
-          toriiUrl: requestToriiUrl,
-          accountId,
-          networkPrefix: session.connection.networkPrefix,
-          limit: 200,
-        }),
-        listAccountPermissions({
-          toriiUrl: requestToriiUrl,
-          accountId,
-          limit: 200,
-        }),
-        getGovernanceCitizenCount(requestToriiUrl),
-        getGovernanceCouncilCurrent(requestToriiUrl),
-        getGovernanceUnlockStats(requestToriiUrl),
-        getGovernanceRegistrationPolicy(requestToriiUrl),
+      const status = await Promise.resolve().then(() =>
         getGovernanceCitizenStatus({
           toriiUrl: requestToriiUrl,
-          accountId,
+          accountId: requestAccountId,
+          networkPrefix: requestNetworkPrefix,
         }),
-      ] as const);
-
-      if (
-        requestGeneration !== refreshGeneration.value ||
-        toriiUrl.value !== requestToriiUrl ||
-        requestAccountId.value !== accountId
-      ) {
-        return;
-      }
-
-      if (assetsResult.status === "rejected") throw assetsResult.reason;
-      if (permissionsResult.status === "rejected") {
-        throw permissionsResult.reason;
-      }
-
-      const nextPolicy =
-        policyResult.status === "fulfilled" ? policyResult.value : null;
-      xorBalance.value = resolveGovernanceBondBalance(
-        assetsResult.value.items,
-        nextPolicy?.citizenshipAssetDefinitionId,
-        [assetDefinitionId.value],
       );
-      permissionsLoaded.value = true;
-      permissions.value = permissionsResult.value.items;
-      citizenshipStatus.value =
-        citizenshipResult.status === "fulfilled"
-          ? citizenshipResult.value
-          : null;
-      citizenCountStatus.value =
-        citizenCountResult.status === "fulfilled"
-          ? citizenCountResult.value
-          : null;
-      council.value =
-        councilResult.status === "fulfilled" ? councilResult.value : null;
-      unlockStats.value =
-        unlockStatsResult.status === "fulfilled"
-          ? unlockStatsResult.value
-          : null;
-      governanceRegistrationPolicy.value = nextPolicy;
-      const loadedStatus = t("Loaded {count} permission token(s).", {
-        count: permissionsResult.value.total,
-      });
-      statusMessage.value = hasCitizenRecord.value
-        ? `${loadedStatus} ${t("Citizenship registered.")}`
-        : loadedStatus;
-      const optionalErrors: string[] = [];
-      for (const result of [
-        citizenCountResult,
-        councilResult,
-        unlockStatsResult,
-        policyResult,
-        citizenshipResult,
-      ]) {
-        if (result.status === "rejected") {
-          optionalErrors.push(
-            toUserFacingErrorMessage(
-              result.reason,
-              t("Failed to load governance state."),
-            ),
+      if (
+        generation === citizenGeneration &&
+        requestToriiUrl === toriiUrl.value &&
+        requestAccountId === accountId.value &&
+        requestNetworkPrefix === networkPrefix.value
+      ) {
+        citizenStatus.value = status;
+      }
+    } catch (error) {
+      if (
+        generation === citizenGeneration &&
+        requestToriiUrl === toriiUrl.value &&
+        requestAccountId === accountId.value &&
+        requestNetworkPrefix === networkPrefix.value
+      ) {
+        citizenStatus.value = null;
+        citizenshipStatusError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load governance state."),
+        );
+      }
+    } finally {
+      if (
+        generation === citizenGeneration &&
+        requestToriiUrl === toriiUrl.value &&
+        requestAccountId === accountId.value &&
+        requestNetworkPrefix === networkPrefix.value
+      ) {
+        citizenshipLoading.value = false;
+      }
+    }
+  };
+
+  const loadGovernanceCitizenCount = async () => {
+    const generation = ++citizenCountGeneration;
+    const requestToriiUrl = toriiUrl.value;
+    governanceCitizenCountError.value = "";
+    if (!requestToriiUrl) {
+      governanceCitizenCount.value = null;
+      governanceCitizenCountLoading.value = false;
+      return;
+    }
+    governanceCitizenCountLoading.value = true;
+    try {
+      const count = await Promise.resolve().then(() =>
+        getGovernanceCitizenCount(requestToriiUrl),
+      );
+      if (
+        generation === citizenCountGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        governanceCitizenCount.value = count;
+      }
+    } catch (error) {
+      if (
+        generation === citizenCountGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        governanceCitizenCount.value = null;
+        governanceCitizenCountError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load governance state."),
+        );
+      }
+    } finally {
+      if (
+        generation === citizenCountGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        governanceCitizenCountLoading.value = false;
+      }
+    }
+  };
+
+  const loadCurrentCouncil = async () => {
+    const generation = ++councilGeneration;
+    const requestToriiUrl = toriiUrl.value;
+    currentCouncilError.value = "";
+    if (!requestToriiUrl) {
+      currentCouncil.value = null;
+      currentCouncilLoading.value = false;
+      return;
+    }
+    currentCouncilLoading.value = true;
+    try {
+      const council = await Promise.resolve().then(() =>
+        getGovernanceCouncilCurrent(requestToriiUrl),
+      );
+      if (
+        generation === councilGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        currentCouncil.value = council;
+      }
+    } catch (error) {
+      if (
+        generation === councilGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        currentCouncil.value = null;
+        currentCouncilError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load governance state."),
+        );
+      }
+    } finally {
+      if (
+        generation === councilGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        currentCouncilLoading.value = false;
+      }
+    }
+  };
+
+  const loadUnlockStats = async () => {
+    const generation = ++unlockStatsGeneration;
+    const requestToriiUrl = toriiUrl.value;
+    unlockStatsError.value = "";
+    if (!requestToriiUrl) {
+      unlockStats.value = null;
+      unlockStatsLoading.value = false;
+      return;
+    }
+    unlockStatsLoading.value = true;
+    try {
+      const stats = await Promise.resolve().then(() =>
+        getGovernanceUnlockStats(requestToriiUrl),
+      );
+      if (
+        generation === unlockStatsGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        unlockStats.value = stats;
+      }
+    } catch (error) {
+      if (
+        generation === unlockStatsGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        unlockStats.value = null;
+        unlockStatsError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load governance state."),
+        );
+      }
+    } finally {
+      if (
+        generation === unlockStatsGeneration &&
+        requestToriiUrl === toriiUrl.value
+      ) {
+        unlockStatsLoading.value = false;
+      }
+    }
+  };
+
+  const loadCitizenshipBalance = async () => {
+    const generation = ++citizenBalanceGeneration;
+    const requestToriiUrl = toriiUrl.value;
+    const requestAccountId = accountId.value;
+    const requestNetworkPrefix = networkPrefix.value;
+    const citizenshipAssetId =
+      capabilities.value?.citizenshipAssetId.trim() ?? "";
+    citizenshipBalanceError.value = "";
+    if (!requestToriiUrl || !requestAccountId || !citizenshipAssetId) {
+      citizenshipBalance.value = null;
+      return;
+    }
+    try {
+      const items: Awaited<ReturnType<typeof fetchAccountAssets>>["items"] = [];
+      let offset = 0;
+      let expectedTotal: number | null = null;
+      while (expectedTotal === null || offset < expectedTotal) {
+        const page = await Promise.resolve().then(() =>
+          fetchAccountAssets({
+            toriiUrl: requestToriiUrl,
+            accountId: requestAccountId,
+            networkPrefix: requestNetworkPrefix,
+            assetDefinitionId: citizenshipAssetId,
+            limit: 200,
+            offset,
+          }),
+        );
+        if (
+          !Number.isSafeInteger(page.total) ||
+          page.total < 0 ||
+          (expectedTotal !== null && page.total !== expectedTotal)
+        ) {
+          throw new Error(
+            "Governance bond balance pagination returned an invalid total.",
+          );
+        }
+        expectedTotal ??= page.total;
+        if (page.items.length === 0 && offset < expectedTotal) {
+          throw new Error(
+            "Governance bond balance pagination ended before its declared total.",
+          );
+        }
+        items.push(...page.items);
+        offset += page.items.length;
+        if (offset > expectedTotal) {
+          throw new Error(
+            "Governance bond balance pagination exceeded its declared total.",
           );
         }
       }
-      if (optionalErrors.length) {
-        errorMessage.value = optionalErrors.join("\n");
+      if (
+        generation === citizenBalanceGeneration &&
+        requestToriiUrl === toriiUrl.value &&
+        requestAccountId === accountId.value &&
+        requestNetworkPrefix === networkPrefix.value &&
+        citizenshipAssetId ===
+          (capabilities.value?.citizenshipAssetId.trim() ?? "")
+      ) {
+        citizenshipBalance.value = resolveGovernanceBondBalance(
+          items,
+          citizenshipAssetId,
+          [],
+        );
       }
     } catch (error) {
-      if (requestGeneration !== refreshGeneration.value) return;
-      permissionsLoaded.value = false;
-      permissions.value = [];
-      citizenshipStatus.value = null;
-      citizenCountStatus.value = null;
-      council.value = null;
-      unlockStats.value = null;
-      governanceRegistrationPolicy.value = null;
-      xorBalance.value = "0";
-      resetGovernanceLookup();
-      errorMessage.value = toUserFacingErrorMessage(
-        error,
-        t("Failed to load governance state."),
-      );
-    } finally {
-      if (requestGeneration === refreshGeneration.value) {
-        loadingBootstrap.value = false;
+      if (
+        generation === citizenBalanceGeneration &&
+        requestToriiUrl === toriiUrl.value &&
+        requestAccountId === accountId.value &&
+        requestNetworkPrefix === networkPrefix.value &&
+        citizenshipAssetId ===
+          (capabilities.value?.citizenshipAssetId.trim() ?? "")
+      ) {
+        citizenshipBalance.value = null;
+        citizenshipBalanceError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load governance state."),
+        );
       }
     }
   };
 
-  const lookupGovernance = async () => {
+  const handleBondCitizen = async () => {
+    resetActionFeedback();
+    if (!bondGate.value.allowed) {
+      actionError.value = bondGate.value.reason;
+      return;
+    }
+    busy.value = "prepare";
+    try {
+      review.value = await prepareGovernanceCitizenRegistration({
+        ...commonPrepareContext(),
+        amount: citizenshipBondAmount.value,
+      });
+    } catch (error) {
+      actionError.value = toUserFacingErrorMessage(error, t("Action failed."));
+    } finally {
+      busy.value = null;
+    }
+  };
+
+  const syncValidationFeeComposer = (
+    current: GovernanceValidationFeePolicyView,
+  ) => {
+    const latest = current.latestEnacted ?? current.effective;
+    const registry = current.registryHead;
+    validationFeeComposer.value = {
+      ...emptyValidationFeePolicy(),
+      chain_id: capabilities.value?.chainId ?? chainId.value,
+      genesis_hash:
+        capabilities.value?.genesisHash ?? stringValue(latest, "genesis_hash"),
+      policy_version: integerAfter(
+        registry?.policyVersion || stringValue(latest, "policy_version") || "0",
+      ),
+      previous_policy_hash:
+        canonicalValidationFeeHash(registry?.policyHash) ||
+        canonicalValidationFeeHash(stringValue(latest, "policy_hash")) ||
+        null,
+      ds_asset_id: CBSI_SBD_APP_ASSET_ID,
+      ds_scale: 2,
+      fee: "0.10",
+      treasury_account_id:
+        validationFeeComposer.value.treasury_account_id ||
+        stringValue(latest, "treasury_account_id"),
+      effective_from_height: validationFeeComposer.value.effective_from_height,
+      expires_after_height: null,
+    };
+  };
+
+  const loadValidationFeePolicy = async () => {
+    const generation = ++validationFeePolicyGeneration;
+    const requestContext = currentCapabilitiesContext.value;
+    const requestContextKey = governanceCapabilitiesContextKey(requestContext);
+    const isCurrentRequest = () =>
+      generation === validationFeePolicyGeneration &&
+      requestContextKey === currentCapabilitiesContextKey.value;
+    validationFeePolicy.value = null;
+    policyError.value = "";
+    if (!requestContext.toriiUrl) {
+      policyError.value = t("A Torii endpoint is required.");
+      return;
+    }
+    try {
+      const current = await getGovernanceCurrentValidationFeePolicy({
+        toriiUrl: requestContext.toriiUrl,
+        chainId: requestContext.chainId,
+        networkPrefix: requestContext.networkPrefix,
+      });
+      if (!isCurrentRequest()) return;
+      validationFeePolicy.value = current;
+      syncValidationFeeComposer(current);
+    } catch (error) {
+      if (!isCurrentRequest()) return;
+      validationFeePolicy.value = null;
+      policyError.value = toUserFacingErrorMessage(
+        error,
+        t("Validation-fee policy state is unavailable."),
+      );
+    }
+  };
+
+  const loadPlainReferendumContract = async (
+    activeCapabilities: GovernanceCapabilitiesV1 | null = capabilities.value,
+  ) => {
+    const generation = ++plainReferendumContractGeneration;
+    const requestContextKey = currentCapabilitiesContextKey.value;
+    const isCurrentRequest = () =>
+      generation === plainReferendumContractGeneration &&
+      requestContextKey === currentCapabilitiesContextKey.value;
+    plainReferendumContract.value = null;
+    plainReferendumContractError.value = "";
+    plainReferendumContractLoading.value = true;
+    try {
+      if (
+        !activeCapabilities ||
+        capabilitiesContextKey.value !== requestContextKey
+      ) {
+        throw new Error(
+          "Verified Taira governance capabilities are required before loading the referendum handoff.",
+        );
+      }
+      const loaded = await getGovernancePlainReferendumContract({
+        chainId: activeCapabilities.chainId,
+        networkPrefix: activeCapabilities.networkPrefix,
+        genesisHash: activeCapabilities.genesisHash,
+      });
+      if (!isCurrentRequest()) return;
+      plainReferendumContract.value = loaded;
+      ballotAmount.value = loaded.contract.ballot.amount;
+      ballotDurationBlocks.value = loaded.contract.ballot.durationBlocks;
+    } catch (error) {
+      if (!isCurrentRequest()) return;
+      plainReferendumContract.value = null;
+      plainReferendumContractError.value = toUserFacingErrorMessage(
+        error,
+        t("The immutable PLAIN referendum contract is unavailable."),
+      );
+    } finally {
+      if (isCurrentRequest()) {
+        plainReferendumContractLoading.value = false;
+      }
+    }
+  };
+
+  const loadProposals = async (
+    options: {
+      append?: boolean;
+      preserveSelection?: boolean;
+      verifiedCapabilities?: GovernanceCapabilitiesV1 | null;
+    } = {},
+  ) => {
     if (!toriiUrl.value) {
-      errorMessage.value = t("Torii connection is required.");
+      proposals.value = [];
+      nextCursor.value = null;
       return;
     }
-    if (!trimmedReferendumId.value && !proposalLiteral.value) {
-      errorMessage.value = t("Provide a referendum id or proposal id first.");
-      return;
+    const generation = ++listGeneration;
+    listError.value = "";
+    busy.value = "list";
+    try {
+      const result = await listGovernanceProposals({
+        toriiUrl: toriiUrl.value,
+        status: catalogFilter.value === "open" ? "Proposed" : null,
+        proposer:
+          catalogFilter.value === "mine" ? accountId.value || null : null,
+        limit: 30,
+        cursor: options.append ? nextCursor.value : null,
+      });
+      if (generation !== listGeneration) return;
+      proposals.value = options.append
+        ? [
+            ...proposals.value,
+            ...result.items.filter(
+              (item) =>
+                !proposals.value.some(
+                  (existing) => existing.proposalId === item.proposalId,
+                ),
+            ),
+          ]
+        : result.items;
+      nextCursor.value = result.nextCursor;
+      if (
+        !options.preserveSelection &&
+        !selectedProposalId.value &&
+        proposals.value[0]
+      ) {
+        await selectProposal(
+          proposals.value[0].proposalId,
+          options.verifiedCapabilities,
+        );
+      }
+    } catch (error) {
+      if (generation !== listGeneration) return;
+      listError.value = toUserFacingErrorMessage(
+        error,
+        t("Live governance proposals could not be loaded."),
+      );
+      if (!options.append) {
+        proposals.value = [];
+        nextCursor.value = null;
+      }
+    } finally {
+      if (generation === listGeneration && busy.value === "list") {
+        busy.value = null;
+      }
     }
-    if (!trimmedReferendumId.value && proposalIdFormatError.value) {
-      errorMessage.value = t(
+  };
+
+  const selectProposal = async (
+    proposalId: string,
+    verifiedCapabilities?: GovernanceCapabilitiesV1 | null,
+  ) => {
+    const normalizedId = canonicalGovernanceProposalId(proposalId);
+    if (!normalizedId) {
+      detailError.value = t(
         "Proposal ID must be 32-byte hex (with or without 0x prefix).",
       );
       return;
     }
-
-    const requestGeneration = lookupGeneration.value + 1;
-    const requestToriiUrl = toriiUrl.value;
-    lookupGeneration.value = requestGeneration;
-    lookupLoading.value = true;
-    statusMessage.value = "";
-    errorMessage.value = "";
-    lifecycleFromEndpoint.value = null;
-    lifecycleEndpointUnavailable.value = false;
-
+    if (!toriiUrl.value) return;
+    const proposalChanged = selectedProposalId.value !== normalizedId;
+    selectedProposalId.value = normalizedId;
+    selectedProposal.value = null;
+    detailError.value = "";
+    if (proposalChanged) {
+      citizenBallotSubmissionState.value = "idle";
+      citizenBallotError.value = "";
+    }
+    const generation = ++detailGeneration;
+    busy.value = "detail";
+    const contractRequest = (async () => {
+      const activeCapabilities =
+        verifiedCapabilities === undefined
+          ? (capabilities.value ?? (await loadCapabilities()))
+          : verifiedCapabilities;
+      await loadPlainReferendumContract(activeCapabilities);
+    })();
     try {
-      const referendumLiteral = trimmedReferendumId.value;
-      const proposalLiteralInput = proposalLiteral.value;
-      const proposalInputWasInvalid = proposalIdFormatError.value;
-      const proposalLiteralNormalized = proposalInputWasInvalid
-        ? null
-        : canonicalProposalId.value;
-      let inferredProposalId: string | null = null;
-      let nextReferendum: GovernanceReferendumResult | null = null;
-      let nextTally: GovernanceTallyResult | null = null;
-      let nextLocks: GovernanceLocksResult | null = null;
-      let nextProposal: GovernanceProposalResult | null = null;
-      let nextProposalField = proposalLiteralInput;
-
-      if (referendumLiteral) {
-        const [referendumPayload, tallyPayload, lockPayload] =
-          await Promise.all([
-            getGovernanceReferendum({
-              toriiUrl: requestToriiUrl,
-              referendumId: referendumLiteral,
-            }),
-            getGovernanceTally({
-              toriiUrl: requestToriiUrl,
-              referendumId: referendumLiteral,
-            }),
-            getGovernanceLocks({
-              toriiUrl: requestToriiUrl,
-              referendumId: referendumLiteral,
-            }),
-          ]);
-        nextReferendum = referendumPayload;
-        nextTally = tallyPayload;
-        nextLocks = lockPayload;
-        inferredProposalId = extractProposalIdFromReferendum(
-          referendumPayload.referendum,
+      const detail = await getGovernanceProposalDetail({
+        toriiUrl: toriiUrl.value,
+        proposalId: normalizedId,
+        accountId: accountId.value || null,
+      });
+      if (
+        generation === detailGeneration &&
+        selectedProposalId.value === normalizedId
+      ) {
+        selectedProposal.value = detail;
+      }
+      await contractRequest;
+    } catch (error) {
+      if (generation === detailGeneration) {
+        detailError.value = toUserFacingErrorMessage(
+          error,
+          t("Proposal detail could not be loaded."),
         );
       }
+    } finally {
+      if (generation === detailGeneration && busy.value === "detail") {
+        busy.value = null;
+      }
+    }
+  };
 
-      const lookupProposalId = proposalLiteralNormalized ?? inferredProposalId;
-      if (lookupProposalId) {
-        nextProposal = await getGovernanceProposal({
-          toriiUrl: requestToriiUrl,
-          proposalId: lookupProposalId,
-        });
-        if (!proposalLiteralNormalized) {
-          nextProposalField = lookupProposalId;
+  const refreshSelectedProposal = async () => {
+    if (selectedProposalId.value) {
+      await selectProposal(selectedProposalId.value);
+    }
+  };
+
+  const bootstrap = async (deepLinkedProposalId?: string | null) => {
+    const generation = ++bootstrapGeneration;
+    const requestContextKey = currentCapabilitiesContextKey.value;
+    const isCurrentRequest = () =>
+      generation === bootstrapGeneration &&
+      requestContextKey === currentCapabilitiesContextKey.value;
+    busy.value = "bootstrap";
+    void loadCitizenState();
+    await Promise.resolve();
+    const capabilitiesRequest = loadCapabilities();
+    const citizenCountRequest = loadGovernanceCitizenCount();
+    const councilRequest = loadCurrentCouncil();
+    const unlockStatsRequest = loadUnlockStats();
+    const validationFeePolicyRequest = loadValidationFeePolicy();
+    const activeCapabilities = await capabilitiesRequest;
+    if (!isCurrentRequest()) return;
+    await Promise.all([
+      citizenCountRequest,
+      councilRequest,
+      unlockStatsRequest,
+      validationFeePolicyRequest,
+      loadPlainReferendumContract(activeCapabilities),
+    ]);
+    if (!isCurrentRequest()) return;
+    await loadCitizenshipBalance();
+    if (!isCurrentRequest()) return;
+    busy.value = null;
+    if (deepLinkedProposalId?.trim()) {
+      selectedProposalId.value = deepLinkedProposalId.trim();
+    }
+    await Promise.all([
+      loadProposals({
+        preserveSelection: true,
+        verifiedCapabilities: activeCapabilities,
+      }),
+      selectedProposalId.value
+        ? selectProposal(selectedProposalId.value, activeCapabilities)
+        : Promise.resolve(),
+    ]);
+    if (!isCurrentRequest()) return;
+    if (!selectedProposalId.value && proposals.value[0]) {
+      await selectProposal(proposals.value[0].proposalId, activeCapabilities);
+    }
+  };
+
+  const refresh = async () => {
+    refreshing.value = true;
+    void loadCitizenState();
+    await Promise.resolve();
+    const capabilitiesRequest = loadCapabilities();
+    const citizenCountRequest = loadGovernanceCitizenCount();
+    const councilRequest = loadCurrentCouncil();
+    const unlockStatsRequest = loadUnlockStats();
+    const validationFeePolicyRequest = loadValidationFeePolicy();
+    const activeCapabilities = await capabilitiesRequest;
+    await Promise.all([
+      citizenCountRequest,
+      councilRequest,
+      unlockStatsRequest,
+      validationFeePolicyRequest,
+      selectedProposalId.value
+        ? Promise.resolve()
+        : loadPlainReferendumContract(activeCapabilities),
+      loadProposals({ preserveSelection: true }),
+      refreshSelectedProposal(),
+    ]);
+    await loadCitizenshipBalance();
+    refreshing.value = false;
+  };
+
+  const openComposer = (
+    kind: GovernanceWritableProposalKindId = "ValidationFeePayoutLifecycle",
+  ) => {
+    if (!proposalGate.value.allowed) {
+      actionError.value = proposalGate.value.reason;
+      return;
+    }
+    if (!supportedComposerKinds.value.includes(kind)) {
+      actionError.value =
+        governanceWriteUnavailableReason.value ||
+        t("This proposal kind is not advertised by Taira.");
+      return;
+    }
+    if (capabilities.value) rebaseComposerWindow(kind, capabilities.value);
+    composerKind.value = kind;
+    composerOpen.value = true;
+    resetActionFeedback();
+  };
+
+  const closeComposer = () => {
+    if (busy.value !== "prepare") composerOpen.value = false;
+  };
+
+  const prepareProposal = async () => {
+    resetActionFeedback();
+    if (!proposalGate.value.allowed) {
+      actionError.value = proposalGate.value.reason;
+      return;
+    }
+    busy.value = "prepare";
+    try {
+      const refreshedCapabilities = await loadCapabilities();
+      if (!refreshedCapabilities) {
+        throw new Error(
+          capabilitiesError.value ||
+            "Taira governance capabilities are unavailable.",
+        );
+      }
+      await loadCitizenState();
+      if (!isCitizen.value) {
+        throw new Error(
+          citizenshipStatusError.value ||
+            "A current bonded Taira citizen is required to create a proposal.",
+        );
+      }
+      rebaseComposerWindow(composerKind.value, refreshedCapabilities);
+      if (!supportedComposerKinds.value.includes(composerKind.value)) {
+        throw new Error(
+          "This proposal kind is not advertised by the Taira capabilities contract.",
+        );
+      }
+      let payload: Record<string, unknown>;
+      switch (composerKind.value) {
+        case "ValidationFeePayoutLifecycle": {
+          if (validationFeePayoutLifecycleErrors.value.length) {
+            throw new Error(validationFeePayoutLifecycleErrors.value[0]);
+          }
+          const referendumWindow = optionalWindow(
+            validationFeeLifecycleWindowLower.value,
+            validationFeeLifecycleWindowUpper.value,
+          );
+          if (!referendumWindow) {
+            throw new Error(
+              "Payout lifecycle proposals require an explicit referendum window.",
+            );
+          }
+          payload = {
+            payout_binding: parseJsonRecord(
+              validationFeePayoutBindingJson.value,
+              "Treasury payout binding",
+            ),
+            referendum_window: referendumWindow,
+          };
+          break;
+        }
+        case "ValidationFeePolicy": {
+          if (!validationFeePolicy.value) {
+            throw new Error(
+              "Validation-fee proposals require locally verified consensus proof state.",
+            );
+          }
+          const policy = materializeValidationFeePolicy();
+          const errors = validateValidationFeePolicy(
+            validationFeePolicyForNativeValidation(policy),
+            {
+              lower: validationFeeWindowLower.value,
+              upper: validationFeeWindowUpper.value,
+            },
+            validationFeePayoutLifecycleProposalId.value,
+          );
+          if (errors.length) throw new Error(errors[0]);
+          const lifecycleProposalId = canonicalValidationFeeHash(
+            validationFeePayoutLifecycleProposalId.value.trim(),
+          );
+          if (!lifecycleProposalId) {
+            throw new Error(
+              "Select the enacted payout lifecycle proposal first.",
+            );
+          }
+          const lifecycle = await getGovernanceProposalDetail({
+            toriiUrl: toriiUrl.value,
+            proposalId: lifecycleProposalId,
+            accountId: accountId.value || null,
+          });
+          if (
+            lifecycle.kind.type !== "ValidationFeePayoutLifecycle" ||
+            lifecycle.summary.status !== "Enacted"
+          ) {
+            throw new Error(
+              "The selected payout lifecycle must be enacted before the policy is proposed.",
+            );
+          }
+          const policyEnactmentTarget =
+            validationFeePolicyEnactmentTargetHeight(
+              policy.effective_from_height,
+            );
+          if (
+            policyEnactmentTarget === null ||
+            lifecycle.enactedAtHeight === null ||
+            BigInt(lifecycle.enactedAtHeight) > BigInt(policyEnactmentTarget)
+          ) {
+            throw new Error(
+              "The selected payout lifecycle must enact no later than the policy enactment target.",
+            );
+          }
+          const referendumWindow = optionalWindow(
+            validationFeeWindowLower.value,
+            validationFeeWindowUpper.value,
+          );
+          if (!referendumWindow) {
+            throw new Error(
+              "Validation-fee proposals require an explicit referendum window.",
+            );
+          }
+          validationFeeComposer.value = policy;
+          payload = {
+            policy,
+            referendum_window: referendumWindow,
+            payout_lifecycle_proposal_id: lifecycleProposalId,
+          };
+          break;
         }
       }
-
-      let endpointLifecycle: GovernanceLifecycleSnapshot | null = null;
-      try {
-        endpointLifecycle = await getGovernanceLifecycle({
-          toriiUrl: requestToriiUrl,
-          referendumId: referendumLiteral || null,
-          proposalId: lookupProposalId,
-        });
-      } catch (_error) {
-        lifecycleEndpointUnavailable.value = true;
-      }
-
-      if (
-        requestGeneration !== lookupGeneration.value ||
-        toriiUrl.value !== requestToriiUrl ||
-        trimmedReferendumId.value !== referendumLiteral ||
-        proposalLiteral.value !== proposalLiteralInput
-      ) {
-        return;
-      }
-
-      const finalReferendumInput = referendumLiteral || null;
-      const finalProposalInput =
-        (canonicalizeProposalId(nextProposalField) ?? nextProposalField) ||
-        null;
-      loadedReferendumInput.value = finalReferendumInput;
-      loadedProposalInput.value = finalProposalInput;
-
-      referendum.value = nextReferendum;
-      tally.value = nextTally;
-      locks.value = nextLocks;
-      proposal.value = nextProposal;
-      lifecycleFromEndpoint.value = endpointLifecycle;
-      if (nextProposalField !== proposalLiteralInput) {
-        proposalId.value = nextProposalField;
-      }
-
-      rememberHistory({
-        referendumId: referendumLiteral || null,
-        proposalId: lookupProposalId,
+      review.value = await prepareGovernanceProposal({
+        ...commonPrepareContext(),
+        kind: composerKind.value,
+        payload,
       });
-      selectedStageId.value =
-        endpointLifecycle?.currentStageId ??
-        lifecycleSnapshot.value.currentStageId;
-      activePanel.value = "stage";
-      statusMessage.value =
-        referendumLiteral && proposalInputWasInvalid
-          ? t("Governance records refreshed. Invalid proposal ID was ignored.")
-          : t("Governance records refreshed.");
     } catch (error) {
-      if (requestGeneration !== lookupGeneration.value) return;
-      referendum.value = null;
-      proposal.value = null;
-      tally.value = null;
-      locks.value = null;
-      lifecycleFromEndpoint.value = null;
-      finalizeDraft.value = null;
-      enactDraft.value = null;
-      loadedReferendumInput.value = null;
-      loadedProposalInput.value = null;
-      errorMessage.value = toUserFacingErrorMessage(
+      actionError.value = toUserFacingErrorMessage(
         error,
-        t("Failed to refresh governance records."),
+        t("The proposal could not be prepared."),
       );
     } finally {
-      if (requestGeneration === lookupGeneration.value) {
-        lookupLoading.value = false;
-      }
+      busy.value = null;
     }
   };
 
-  const runAction = async (mode: ActionMode, run: () => Promise<string>) => {
-    actionBusy.value = mode;
-    errorMessage.value = "";
-    actionMessage.value = "";
+  const prepareCitizenBallot = async () => {
+    if (!plainVoteGate.value.allowed || !selectedProposal.value?.referendum) {
+      actionError.value = plainVoteGate.value.reason;
+      citizenBallotError.value = plainVoteGate.value.reason;
+      citizenBallotSubmissionState.value = "error";
+      return;
+    }
+    resetActionFeedback();
+    citizenBallotError.value = "";
+    citizenBallotSubmissionState.value = "preparing";
+    busy.value = "prepare";
     try {
-      actionMessage.value = await run();
+      review.value = await prepareGovernancePlainBallot({
+        ...commonPrepareContext(),
+        proposalId: selectedProposal.value.summary.proposalId,
+        referendumId: selectedProposal.value.referendum.id,
+        amount: ballotAmount.value.trim(),
+        durationBlocks: ballotDurationBlocks.value.trim(),
+        direction: ballotDirection.value,
+      });
+      citizenBallotSubmissionState.value = "reviewing";
     } catch (error) {
-      errorMessage.value = toUserFacingErrorMessage(error, t("Action failed."));
+      const message = toUserFacingErrorMessage(
+        error,
+        t("The citizen ballot could not be prepared."),
+      );
+      actionError.value = message;
+      citizenBallotError.value = message;
+      citizenBallotSubmissionState.value = "error";
     } finally {
-      actionBusy.value = null;
+      busy.value = null;
     }
   };
 
-  const handleBondCitizen = () =>
-    runAction("bond", async () => {
-      if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
-        throw new Error(
-          t("Connection, chain, and active account are required."),
-        );
-      }
-      if (alreadyCitizen.value) {
-        throw new Error(
-          t(
-            "This account already has governance ballot permission and does not need another citizenship bond.",
-          ),
-        );
-      }
-      if (!hasXorForBond.value) {
-        throw new Error(
-          t("A minimum of {amount} XOR is required to register citizenship.", {
-            amount: citizenshipBondAmount.value,
-          }),
-        );
-      }
-      if (citizenshipAssetDefinitionMissingMessage.value) {
-        throw new Error(citizenshipAssetDefinitionMissingMessage.value);
-      }
-      const result = await registerCitizen({
-        toriiUrl: toriiUrl.value,
-        chainId: chainId.value,
-        accountId: requestAccountId.value,
-        amount: citizenshipBondAmount.value,
-        privateKeyHex: activeAccount.value.privateKeyHex,
+  const prepareStageBallot = async (body: string) => {
+    const gate = parliamentBallotGateForBody(body);
+    if (!gate.allowed || !selectedProposal.value) {
+      actionError.value = gate.reason;
+      return;
+    }
+    resetActionFeedback();
+    busy.value = "prepare";
+    try {
+      review.value = await prepareGovernanceParliamentBallot({
+        ...commonPrepareContext(),
+        proposalId: selectedProposal.value.summary.proposalId,
+        body,
+        decision: parliamentDecision.value,
       });
-      await refresh();
-      return appendTransactionFee(
-        t("Citizenship bond submitted: {hash}", { hash: result.hash }),
-        result,
-        t,
-        transactionFeeHintForEndpoint(toriiUrl.value),
+    } catch (error) {
+      actionError.value = toUserFacingErrorMessage(
+        error,
+        t("The Parliament ballot could not be prepared."),
       );
-    });
+    } finally {
+      busy.value = null;
+    }
+  };
 
-  const handleDeployProposalDraft = () =>
-    runAction("proposal", async () => {
-      if (!toriiUrl.value) throw new Error(t("Torii connection is required."));
-      if (
-        !deployTargetLiteral.value ||
-        !deployCodeHashLiteral.value ||
-        !deployAbiHashLiteral.value
-      ) {
-        throw new Error(
-          t("Enter a contract target, code hash, and ABI hash first."),
-        );
+  const prepareEnact = async () => {
+    resetActionFeedback();
+    actionError.value = enactGate.value.reason;
+  };
+
+  const cancelReview = () => {
+    if (busy.value !== "commit") {
+      if (review.value?.operation === "plain-ballot") {
+        citizenBallotSubmissionState.value = "idle";
       }
-      if (deployWindowError.value) throw new Error(deployWindowError.value);
-      if (deployLimitsError.value) throw new Error(deployLimitsError.value);
-      deployProposalDraft.value = await proposeGovernanceDeployContract({
-        toriiUrl: toriiUrl.value,
-        contractAddress:
-          deployTargetKind.value === "address"
-            ? deployTargetLiteral.value
-            : null,
-        contractAlias:
-          deployTargetKind.value === "alias" ? deployTargetLiteral.value : null,
-        codeHash: deployCodeHashLiteral.value,
-        abiHash: deployAbiHashLiteral.value,
-        abiVersion: deployAbiVersionLiteral.value,
-        mode: deployVotingMode.value,
-        window: deployWindowPayload.value,
-        limits: deployLimitsPayload.value,
+      review.value = null;
+    }
+  };
+
+  const pulseFinalizedState = () => {
+    finalizedRefresh.value = true;
+    if (refreshPulseTimer) clearTimeout(refreshPulseTimer);
+    refreshPulseTimer = setTimeout(() => {
+      finalizedRefresh.value = false;
+    }, 900);
+  };
+
+  const confirmReview = async () => {
+    if (!review.value) return;
+    resetActionFeedback();
+    if (!canWrite.value) {
+      actionError.value = governanceWriteUnavailableReason.value;
+      return;
+    }
+    busy.value = "commit";
+    const prepared = review.value;
+    if (prepared.operation === "plain-ballot") {
+      citizenBallotError.value = "";
+      citizenBallotSubmissionState.value = "submitting";
+    }
+    try {
+      const finalized = await confirmGovernanceAction({
+        reviewId: prepared.reviewId,
+        accountId: accountId.value,
       });
-      if (deployProposalDraft.value.proposal_id) {
-        const normalizedProposalId = canonicalizeProposalId(
-          deployProposalDraft.value.proposal_id,
-        );
-        if (normalizedProposalId) {
-          proposalId.value = normalizedProposalId;
-          rememberHistory({ proposalId: normalizedProposalId });
+      assertFinalizedSubmissionResult(finalized);
+      review.value = null;
+      composerOpen.value = false;
+      actionMessage.value = t("Finalized in block {block}: {hash}", {
+        block: finalized.finality.blockHeight,
+        hash: finalized.hash,
+      });
+      if (prepared.operation === "plain-ballot") {
+        citizenBallotSubmissionState.value = "finalized";
+      }
+      if (finalized.proposalId) {
+        selectedProposalId.value = finalized.proposalId;
+        if (composerKind.value === "ValidationFeePayoutLifecycle") {
+          validationFeePayoutLifecycleProposalId.value =
+            finalized.proposalId.replace(/^0x/u, "");
         }
       }
-      return t("Proposal draft prepared with {count} instruction(s).", {
-        count: deployProposalDraft.value.tx_instructions.length,
-      });
-    });
-
-  const handleBallot = () =>
-    runAction("ballot", async () => {
-      if (!canSubmit.value || !activeAccount.value || !requestAccountId.value) {
-        throw new Error(
-          t("Connection, chain, and active account are required."),
-        );
-      }
-      if (missingBallotPermission.value) {
-        throw new Error(
-          t(
-            "CanSubmitGovernanceBallot permission is missing on the active account.",
-          ),
-        );
-      }
-      const referendumLiteral = trimmedReferendumId.value;
-      if (!referendumLiteral) {
-        throw new Error(
-          t("referendumId is required before submitting a ballot."),
-        );
-      }
-      if (!hasValidBallotAmount.value) {
-        throw new Error(
-          t("Ballot amount must be a whole number greater than zero."),
-        );
-      }
-      if (!hasXorForBallot.value) {
-        throw new Error(t("Ballot amount exceeds the available XOR balance."));
-      }
-      if (!hasValidDurationBlocks.value) {
-        throw new Error(
-          t("Lock duration must be a positive integer number of blocks."),
-        );
-      }
-      const result = await submitGovernancePlainBallot({
-        toriiUrl: toriiUrl.value,
-        chainId: chainId.value,
-        accountId: requestAccountId.value,
-        referendumId: referendumLiteral,
-        amount: ballotAmountLiteral.value,
-        durationBlocks: durationBlocks.value,
-        direction: direction.value,
-        privateKeyHex: activeAccount.value.privateKeyHex,
-      });
-      rememberHistory({ referendumId: referendumLiteral });
-      await lookupGovernance();
-      return appendTransactionFee(
-        t("Ballot submitted: {hash}", { hash: result.hash }),
-        result,
-        t,
-        transactionFeeHintForEndpoint(toriiUrl.value),
+      pulseFinalizedState();
+      await Promise.all([
+        loadCitizenState(),
+        loadGovernanceCitizenCount(),
+        loadCurrentCouncil(),
+        loadUnlockStats(),
+        loadCitizenshipBalance(),
+        loadValidationFeePolicy(),
+        loadProposals({ preserveSelection: true }),
+        selectedProposalId.value
+          ? selectProposal(selectedProposalId.value)
+          : Promise.resolve(),
+      ]);
+    } catch (error) {
+      const message = toUserFacingErrorMessage(
+        error,
+        t("The reviewed action was not finalized."),
       );
-    });
-
-  const handleFinalize = () =>
-    runAction("finalize", async () => {
-      if (!toriiUrl.value) throw new Error(t("Torii connection is required."));
-      if (missingParliamentPermission.value) {
-        throw new Error(
-          t("CanManageParliament permission is required for finalize."),
-        );
+      actionError.value = message;
+      if (prepared.operation === "plain-ballot") {
+        citizenBallotError.value = message;
+        citizenBallotSubmissionState.value = "error";
       }
-      const referendumLiteral = trimmedReferendumId.value;
-      const proposalLiteralInput = proposalId.value.trim();
-      const proposalLiteralNormalized = canonicalProposalId.value;
-      if (!referendumLiteral || !proposalLiteralInput) {
-        throw new Error(
-          t("referendumId and proposalId are required for finalize."),
-        );
-      }
-      if (!proposalLiteralNormalized) {
-        throw new Error(
-          t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
-        );
-      }
-      finalizeDraft.value = await finalizeGovernanceReferendum({
-        toriiUrl: toriiUrl.value,
-        referendumId: referendumLiteral,
-        proposalId: proposalLiteralNormalized,
-      });
-      proposalId.value = proposalLiteralNormalized;
-      rememberHistory({
-        referendumId: referendumLiteral,
-        proposalId: proposalLiteralNormalized,
-      });
-      return t("Finalize draft prepared with {count} instruction(s).", {
-        count: finalizeDraft.value.tx_instructions.length,
-      });
-    });
-
-  const handleEnact = () =>
-    runAction("enact", async () => {
-      if (!toriiUrl.value) throw new Error(t("Torii connection is required."));
-      if (missingEnactPermission.value) {
-        throw new Error(
-          t("CanEnactGovernance permission is required for enact."),
-        );
-      }
-      const proposalLiteralInput = proposalId.value.trim();
-      const proposalLiteralNormalized = canonicalProposalId.value;
-      if (!proposalLiteralInput) {
-        throw new Error(t("proposalId is required for enact."));
-      }
-      if (!proposalLiteralNormalized) {
-        throw new Error(
-          t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
-        );
-      }
-      enactDraft.value = await enactGovernanceProposal({
-        toriiUrl: toriiUrl.value,
-        proposalId: proposalLiteralNormalized,
-      });
-      proposalId.value = proposalLiteralNormalized;
-      rememberHistory({ proposalId: proposalLiteralNormalized });
-      return t("Enact draft prepared with {count} instruction(s).", {
-        count: enactDraft.value.tx_instructions.length,
-      });
-    });
-
-  const summarizeDraft = (draft: GovernanceDraftResponse) => {
-    const accepted =
-      draft.accepted === undefined ? t("n/a") : String(draft.accepted);
-    const reason = draft.reason
-      ? ` ${t("reason: {reason}", { reason: draft.reason })}`
-      : "";
-    return t("accepted={accepted}, instructions={count}.{reason}", {
-      accepted,
-      count: draft.tx_instructions.length,
-      reason,
-    });
+    } finally {
+      busy.value = null;
+    }
   };
 
+  watch(catalogFilter, () => {
+    void loadProposals({ preserveSelection: true });
+  });
+
   watch(
-    () => requestAccountId.value,
-    (nextAccountId, previousAccountId) => {
-      loadHistory();
-      if (
-        previousAccountId !== undefined &&
-        nextAccountId !== previousAccountId
-      ) {
-        resetGovernanceLookup();
-      }
+    currentCapabilitiesContextKey,
+    (nextContextKey, previousContextKey) => {
+      if (nextContextKey === previousContextKey) return;
+      capabilitiesGeneration += 1;
+      capabilities.value = null;
+      capabilitiesContextKey.value = "";
+      capabilitiesLoading.value = false;
+      capabilitiesError.value = "";
     },
-    { immediate: true },
+    { flush: "sync" },
   );
 
   watch(
-    () => [trimmedReferendumId.value, proposalLiteral.value],
-    ([nextReferendumId, nextProposalId]) => {
-      const nextReferendumLiteral = nextReferendumId || null;
-      const nextCanonicalProposalId = nextProposalId
-        ? canonicalizeProposalId(nextProposalId)
-        : null;
-      const nextProposalLiteral =
-        (nextCanonicalProposalId ?? nextProposalId) || null;
+    [toriiUrl, chainId, accountId, networkPrefix],
+    ([nextTorii, nextChain, nextAccount, nextNetworkPrefix], previous) => {
+      if (!previous) return;
+      const [
+        previousTorii,
+        previousChain,
+        previousAccount,
+        previousNetworkPrefix,
+      ] = previous;
       if (
-        loadedReferendumInput.value === null &&
-        loadedProposalInput.value === null
+        nextTorii === previousTorii &&
+        nextChain === previousChain &&
+        nextAccount === previousAccount &&
+        nextNetworkPrefix === previousNetworkPrefix
       ) {
         return;
       }
-      if (
-        nextReferendumLiteral !== loadedReferendumInput.value ||
-        nextProposalLiteral !== loadedProposalInput.value
-      ) {
-        referendum.value = null;
-        proposal.value = null;
-        tally.value = null;
-        locks.value = null;
-        lifecycleFromEndpoint.value = null;
-        finalizeDraft.value = null;
-        enactDraft.value = null;
-        statusMessage.value = "";
-      }
+      citizenGeneration += 1;
+      citizenBalanceGeneration += 1;
+      citizenCountGeneration += 1;
+      councilGeneration += 1;
+      unlockStatsGeneration += 1;
+      validationFeePolicyGeneration += 1;
+      plainReferendumContractGeneration += 1;
+      citizenStatus.value = null;
+      citizenshipLoading.value = false;
+      citizenshipBalance.value = null;
+      citizenshipStatusError.value = "";
+      citizenshipBalanceError.value = "";
+      governanceCitizenCount.value = null;
+      governanceCitizenCountLoading.value = false;
+      governanceCitizenCountError.value = "";
+      currentCouncil.value = null;
+      currentCouncilLoading.value = false;
+      currentCouncilError.value = "";
+      unlockStats.value = null;
+      unlockStatsLoading.value = false;
+      unlockStatsError.value = "";
+      validationFeePolicy.value = null;
+      policyError.value = "";
+      plainReferendumContract.value = null;
+      plainReferendumContractLoading.value = false;
+      plainReferendumContractError.value = "";
+      selectedProposalId.value = null;
+      selectedProposal.value = null;
+      review.value = null;
+      citizenBallotSubmissionState.value = "idle";
+      citizenBallotError.value = "";
+      proposals.value = [];
+      bootstrapGeneration += 1;
+      void bootstrap();
     },
-  );
-
-  watch(
-    proposalId,
-    (next) => {
-      if (!next.trim()) return;
-      if (isValidProposalId(next)) {
-        const normalized = canonicalizeProposalId(next);
-        if (normalized && normalized !== next) {
-          proposalId.value = normalized;
-        }
-      }
-    },
-    { flush: "post" },
-  );
-
-  watch(
-    () => [
-      deployTargetKind.value,
-      deployTargetLiteral.value,
-      deployCodeHashLiteral.value,
-      deployAbiHashLiteral.value,
-      deployAbiVersionLiteral.value,
-      deployVotingMode.value,
-      deployWindowLowerLiteral.value,
-      deployWindowUpperLiteral.value,
-      deployLimitsJson.value.trim(),
-    ],
-    () => {
-      deployProposalDraft.value = null;
-    },
-  );
-
-  watch(
-    () => [toriiUrl.value, chainId.value, requestAccountId.value],
-    () => {
-      refresh();
-    },
-    { immediate: true },
   );
 
   return {
-    activeAccount,
-    activeAccountDisplayId,
-    activeLifecycleStage,
-    activePanel,
-    alreadyCitizen,
-    assetDefinitionId,
-    ballotAmount,
-    ballotFeeLabel,
-    ballotGate,
-    bondFeeLabel,
-    bondGate,
-    canBondCitizen,
-    canEnactDraft,
-    canFinalizeDraft,
-    canLookupGovernance,
-    canPrepareDeployProposal,
-    canSubmitBallot,
-    chainId,
-    citizenCountDisplay,
-    citizenshipAssetDefinitionId,
-    citizenshipAssetDefinitionMissingMessage,
-    citizenshipBondAmount,
-    citizenshipHeadline,
-    citizenshipPanelDetail,
-    clearHistory,
-    council,
-    deployAbiHash,
-    deployAbiVersion,
-    deployCodeHash,
-    deployLimitsError,
-    deployLimitsJson,
-    deployProposalDraft,
-    deployTargetKind,
-    deployTargetValue,
-    deployVotingMode,
-    deployWindowError,
-    deployWindowLower,
-    deployWindowUpper,
-    direction,
-    durationBlocks,
-    enactDraft,
-    enactGate,
-    errorMessage,
-    finalizeDraft,
-    finalizeGate,
-    governanceRole,
-    governanceRoleLabel,
-    handleBallot,
-    handleBondCitizen,
-    handleDeployProposalDraft,
-    handleEnact,
-    handleFinalize,
-    hasBallotPermission,
-    hasCitizenRecord,
-    hasEnactPermission,
-    hasParliamentPermission,
-    hasValidBallotAmount,
-    hasValidDurationBlocks,
-    hasXorForBallot,
-    hasXorForBond,
-    lifecycleCapabilityMessage,
-    lifecycleEndpointUnavailable,
-    lifecycleSnapshot,
-    lifecycleStages,
-    loadingBootstrap,
-    lockCount,
-    locks,
-    lookupGovernance,
-    lookupLoading,
-    missingBallotPermission,
-    missingEnactPermission,
-    missingParliamentPermission,
-    nextActionLabel,
-    nextActionReason,
-    proposal,
-    proposalId,
-    proposalIdFormatError,
-    proposalSummaryDetail,
-    proposalSummaryTitle,
-    recentProposals,
-    recentReferenda,
-    referendum,
-    referendumId,
-    refresh,
-    requestAccountId,
-    selectedStageDetail,
-    selectedStageId,
-    shortenIdentifier,
-    stageBallotGate,
-    statusMessage,
-    actionBusy,
-    actionMessage,
-    summarizeDraft,
-    tally,
+    accountId,
     toriiUrl,
+    chainId,
+    canWrite,
+    capabilities,
+    capabilitiesLoading,
+    capabilitiesError,
+    endpointGovernanceWriteError,
+    governanceWriteUnavailableReason,
+    catalogFilter,
+    proposals,
+    nextCursor,
+    selectedProposalId,
+    selectedProposal,
+    selectedAdapter,
+    citizenStatus,
+    citizenState,
+    citizenshipLoading,
+    isCitizen,
+    proposalGate,
+    citizenshipBalance,
+    citizenshipBondAmount,
+    citizenshipAssetDefinitionId,
+    canBondCitizen,
+    bondGate,
+    governanceCitizenCount,
+    governanceCitizenCountLoading,
+    governanceCitizenCountError,
+    currentCouncil,
+    currentCouncilLoading,
+    currentCouncilError,
     unlockStats,
-    xorBalance,
-    applyRecentProposal,
-    applyRecentReferendum,
+    unlockStatsLoading,
+    unlockStatsError,
+    validationFeePolicy,
+    plainReferendumContract,
+    plainReferendumContractLoading,
+    plainReferendumContractError,
+    activeAccountEligibleForPlainReferendum,
+    selectedPlainReferendumContractError,
+    busy,
+    refreshing,
+    finalizedRefresh,
+    listError,
+    detailError,
+    policyError,
+    actionError,
+    actionMessage,
+    composerOpen,
+    composerKind,
+    supportedComposerKinds,
+    validationFeeComposer,
+    validationFeeComposerErrors,
+    validationFeePayoutLifecycleErrors,
+    validationFeeExemptions,
+    validationFeePayoutBindingJson,
+    validationFeePayoutLifecycleProposalId,
+    validationFeeLifecycleWindowLower,
+    validationFeeLifecycleWindowUpper,
+    validationFeeWindowLower,
+    validationFeeWindowUpper,
+    ballotDirection,
+    ballotAmount,
+    ballotDurationBlocks,
+    citizenVoteProjection,
+    selectedPublicProposalError,
+    citizenBallotSubmissionState,
+    citizenBallotError,
+    parliamentDecision,
+    review,
+    parliamentBodyGates,
+    eligibleParliamentBodies,
+    plainVoteGate,
+    parliamentBallotGate,
+    parliamentBallotGateForBody,
+    enactGate,
+    policyEnactmentTiming,
+    proposalReviewSafetyMarginBlocks:
+      GOVERNANCE_PROPOSAL_REVIEW_SAFETY_MARGIN_BLOCKS.toString(),
+    bootstrap,
+    refresh,
+    loadCitizenState,
+    loadGovernanceCitizenCount,
+    loadCurrentCouncil,
+    loadUnlockStats,
+    loadPlainReferendumContract,
+    loadProposals,
+    selectProposal,
+    refreshSelectedProposal,
+    handleBondCitizen,
+    openComposer,
+    closeComposer,
+    prepareProposal,
+    prepareCitizenBallot,
+    prepareStageBallot,
+    prepareEnact,
+    cancelReview,
+    confirmReview,
   };
 });

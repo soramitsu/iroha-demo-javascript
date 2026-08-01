@@ -23,8 +23,9 @@ const E2E_PUBLIC_KEY_HEX =
 const E2E_PRIVATE_KEY_HEX =
   "1111111111111111111111111111111111111111111111111111111111111111";
 const TAIRA_TORII_URL = "https://taira.sora.org";
-const TAIRA_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
-const XOR_ASSET_ID = `xor#universal#${E2E_ACCOUNT_ID}`;
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const XOR_ASSET_ID = `${XOR_ASSET_DEFINITION_ID}#${E2E_ACCOUNT_ID}`;
 
 const routeChecks = [
   ["/wallet", "Wallet"],
@@ -33,7 +34,6 @@ const routeChecks = [
   ["/receive", "Receive"],
   ["/subscriptions", "Subscriptions"],
   ["/soracloud", "SoraCloud"],
-  ["/sccp", "SCCP Bridge"],
   ["/staking", "Stake XOR"],
   ["/governance", "Governance"],
   ["/explore", "Explore"],
@@ -50,7 +50,6 @@ const mobileRouteChecks = [
   ["/send", "Send"],
   ["/kaigi", "Kaigi"],
   ["/soracloud", "SoraCloud"],
-  ["/sccp", "SCCP Bridge"],
   ["/vpn", "Sora VPN"],
 ];
 
@@ -72,7 +71,7 @@ const responsiveViewportChecks = [
       ["/wallet", "Wallet"],
       ["/receive", "Receive"],
       ["/kaigi", "Kaigi"],
-      ["/sccp", "SCCP Bridge"],
+      ["/governance", "Governance"],
     ],
   },
   {
@@ -104,7 +103,7 @@ function buildInitScript() {
     connection: {
       toriiUrl: TAIRA_TORII_URL,
       chainId: TAIRA_CHAIN_ID,
-      assetDefinitionId: "xor#universal",
+      assetDefinitionId: XOR_ASSET_DEFINITION_ID,
       networkPrefix: 369,
     },
     authority: {
@@ -135,6 +134,7 @@ function buildInitScript() {
     const privateKeyHex = ${JSON.stringify(E2E_PRIVATE_KEY_HEX)};
     const toriiUrl = ${JSON.stringify(TAIRA_TORII_URL)};
     const chainId = ${JSON.stringify(TAIRA_CHAIN_ID)};
+    const xorAssetDefinitionId = ${JSON.stringify(XOR_ASSET_DEFINITION_ID)};
     const xorAssetId = ${JSON.stringify(XOR_ASSET_ID)};
     const sessionPayload = ${JSON.stringify(sessionPayload)};
     const useSyntheticMedia = ${JSON.stringify(useSyntheticMedia)};
@@ -142,10 +142,30 @@ function buildInitScript() {
       walletFunded: true,
       confidentialMode: "convertible",
       vpnMode: "ready",
-      sccpMode: "blocked",
     };
     const now = () => Date.now();
-    const txHash = (label) => "0x" + Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
+    const txHash = (label) => Array.from(label).map((ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join("").padEnd(64, "0").slice(0, 64);
+    const finalityFor = (hash) => ({
+      status: "finalized",
+      transactionHash: hash,
+      blockHeight: 98763,
+      blockHash: "f".repeat(64),
+      finalizedBlockHeight: 98763,
+    });
+    const finalizedTransaction = (label) => {
+      const hash = txHash(label);
+      return { hash, finality: finalityFor(hash) };
+    };
+    const finalizedSubscription = (label, subscriptionId) => {
+      const tx_hash_hex = txHash(label);
+      return {
+        ok: true,
+        subscription_id: subscriptionId,
+        tx_hash_hex,
+        finality: finalityFor(tx_hash_hex),
+        state_status: "confirmed",
+      };
+    };
     const svgQr = '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" fill="#fff"/><rect x="8" y="8" width="24" height="24" fill="#111"/><rect x="64" y="8" width="24" height="24" fill="#111"/><rect x="8" y="64" width="24" height="24" fill="#111"/><rect x="44" y="44" width="12" height="12" fill="#111"/><rect x="64" y="64" width="8" height="8" fill="#111"/><rect x="76" y="76" width="12" height="12" fill="#111"/></svg>';
     const baseMetrics = {
       peers: 4,
@@ -218,7 +238,7 @@ function buildInitScript() {
     const confidentialPolicy = () => {
       const transparentOnly = fixture.confidentialMode === "transparent-only";
       return ({
-      asset_id: "xor#universal",
+      asset_id: xorAssetDefinitionId,
       block_height: 98765,
       current_mode: transparentOnly ? "TransparentOnly" : "Convertible",
       effective_mode: transparentOnly ? "TransparentOnly" : "Convertible",
@@ -234,7 +254,7 @@ function buildInitScript() {
       });
     };
     const confidentialBalance = () => ({
-      resolvedAssetId: "xor#universal",
+      resolvedAssetId: xorAssetDefinitionId,
       quantity: fixture.walletFunded ? "8" : "0",
       onChainQuantity: fixture.walletFunded ? "8" : "0",
       spendableQuantity: fixture.walletFunded ? "8" : "0",
@@ -243,7 +263,67 @@ function buildInitScript() {
       scanStatus: "complete",
       scanWatermarkBlock: 98760,
       recoveredNoteCount: 2,
-      trackedAssetIds: ["xor#universal"],
+      trackedAssetIds: [xorAssetDefinitionId],
+    });
+    const governanceProposalId = "0x" + "a".repeat(64);
+    const governanceProposalSummary = () => ({
+      proposalId: governanceProposalId,
+      referendumId: "referendum-e2e",
+      proposer: accountId,
+      createdHeight: "98700",
+      status: "Proposed",
+      referendumStatus: "Open",
+      votingMode: "Plain",
+      kindType: "ValidationFeePayoutLifecycle",
+      kindLabelKey: "Validation fee payout lifecycle",
+      currentStage: "Agenda",
+    });
+    const governanceProposalDetail = () => ({
+      summary: governanceProposalSummary(),
+      kind: {
+        type: "ValidationFeePayoutLifecycle",
+        raw: {},
+        payoutBinding: {
+          contract_address: "tairac1governancee2epayoutcontract",
+        },
+        lifecycleSeal: null,
+      },
+      referendum: {
+        id: "referendum-e2e",
+        hStart: "98700",
+        hEnd: "99000",
+        status: "Open",
+        mode: "Plain",
+      },
+      tally: { approve: "10", reject: "2", abstain: "1" },
+      locks: [],
+      pipeline: [
+        {
+          stage: "Admit",
+          startedAt: "98700",
+          deadline: null,
+          completedAt: "98700",
+          failure: null,
+        },
+        {
+          stage: "Rules",
+          startedAt: "98701",
+          deadline: null,
+          completedAt: "98701",
+          failure: null,
+        },
+        {
+          stage: "Agenda",
+          startedAt: "98702",
+          deadline: "99000",
+          completedAt: null,
+          failure: null,
+        },
+      ],
+      parliamentRosters: [],
+      parliamentOutcomes: [],
+      currentHeight: "98765",
+      raw: {},
     });
     const sumeragiStatus = () => ({
       lane_governance: [
@@ -285,10 +365,10 @@ function buildInitScript() {
     });
     const networkStats = () => ({
       collectedAtMs: now(),
-      xorAssetDefinitionId: "xor#universal",
+      xorAssetDefinitionId,
       explorer: baseMetrics,
       supply: {
-        definitionId: "xor#universal",
+        definitionId: xorAssetDefinitionId,
         computedAtMs: now(),
         holdersTotal: 12,
         totalSupply: "1000000",
@@ -319,7 +399,7 @@ function buildInitScript() {
         },
       },
       econometrics: {
-        definitionId: "xor#universal",
+        definitionId: xorAssetDefinitionId,
         computedAtMs: now(),
         velocityWindows: [
           { key: "24h", startMs: now() - 86400000, endMs: now(), transfers: 12, uniqueSenders: 5, uniqueReceivers: 6, amount: "3200" },
@@ -368,7 +448,10 @@ function buildInitScript() {
     if (persistedLocale) {
       localStorage.setItem("iroha-demo:locale", persistedLocale);
     }
-    localStorage.setItem("iroha-demo:kaigi", JSON.stringify({ hydrated: true, hostSessions: [] }));
+    localStorage.setItem(
+      "iroha-demo:kaigi:host-sessions:v1",
+      JSON.stringify({ hydrated: true, hostSessions: [] }),
+    );
     window.__e2e = {
       clipboard: "",
       shared: [],
@@ -579,6 +662,73 @@ function buildInitScript() {
     window.RTCPeerConnection = FakePeerConnection;
     window.iroha = {
       ping: async () => ({ status: "ok" }),
+      inspectEndpoint: async (input) => {
+        const subscriptionOperations = [
+          "POST /v1/subscriptions",
+          "POST /v1/subscriptions/{subscription_id}/pause",
+          "POST /v1/subscriptions/{subscription_id}/resume",
+          "POST /v1/subscriptions/{subscription_id}/cancel",
+          "POST /v1/subscriptions/{subscription_id}/keep",
+          "POST /v1/subscriptions/{subscription_id}/charge-now",
+        ];
+        return {
+          schema: "iroha.wallet.endpoint-inspection.v1",
+          toriiUrl: input.toriiUrl,
+          expected: {
+            chainId: input.chainId,
+            networkPrefix: input.networkPrefix,
+          },
+          observed: {
+            chainId: input.chainId,
+            networkPrefix: input.networkPrefix,
+          },
+          identityStatus: "matched",
+          accessMode: "read-write",
+          checkedAtMs: now(),
+          evidence: [
+            {
+              source: "chain-metadata",
+              identity: {
+                chainId: input.chainId,
+                networkPrefix: input.networkPrefix,
+              },
+              observedAtMs: now(),
+            },
+          ],
+          diagnostic: {
+            code: "endpoint_identity_matched",
+            message: "Endpoint identity matches the deterministic fixture.",
+          },
+          features: Object.fromEntries(
+            [
+              "accountRegistration",
+              "accountOnboarding",
+              "assetTransfers",
+              "faucetClaim",
+              "confidentialTransfers",
+              "kaigiMeetings",
+              "governanceWrites",
+              "stakingWrites",
+              "subscriptionWrites",
+              "soraCloudDeploy",
+              "vpnSessions",
+              "irohaConnectSessions",
+              "zkProofJobs",
+            ].map((feature) => [
+              feature,
+              {
+                supported: true,
+                source: "openapi",
+                requiredOperations:
+                  feature === "subscriptionWrites"
+                    ? subscriptionOperations
+                    : [],
+                missingOperations: [],
+              },
+            ]),
+          ),
+        };
+      },
       generateKeyPair: () => ({ publicKeyHex, privateKeyHex }),
       generateKaigiSignalKeyPair: () => ({
         publicKeyBase64Url: "kaigi-e2e-public-key",
@@ -610,7 +760,7 @@ function buildInitScript() {
       }),
       exportConfidentialWalletBackup: async () => ({}),
       importConfidentialWalletBackup: async () => {},
-      registerAccount: async () => ({ hash: txHash("register") }),
+      registerAccount: async () => finalizedTransaction("register"),
       resolveAccountAlias: async ({ alias }) => ({
         alias: "",
         accountId: String(alias || "").trim(),
@@ -618,22 +768,22 @@ function buildInitScript() {
       }),
       transferAsset: async (input) => {
         window.__e2e.calls.push({ method: "transferAsset", input });
-        return { hash: txHash("transfer") };
+        return finalizedTransaction("transfer");
       },
       getConfidentialAssetPolicy: async () => confidentialPolicy(),
       getConfidentialAssetBalance: async () => confidentialBalance(),
       scanConfidentialWallet: async () => confidentialBalance(),
       getConfidentialWalletState: async () => confidentialBalance(),
       getPrivateKaigiConfidentialXorState: async () => ({
-        assetDefinitionId: "xor#universal",
-        resolvedAssetId: "xor#universal",
+        assetDefinitionId: xorAssetDefinitionId,
+        resolvedAssetId: xorAssetDefinitionId,
         policyMode: "hybrid",
         shieldedBalance: "5",
         shieldedBalanceExact: true,
         transparentBalance: "12500",
         canSelfShield: true,
       }),
-      selfShieldPrivateKaigiXor: async () => ({ hash: txHash("kaigi-shield") }),
+      selfShieldPrivateKaigiXor: async () => finalizedTransaction("kaigi-shield"),
       fetchAccountAssets: async () => assets(),
       fetchAccountTransactions: async () => ({
         total: 1,
@@ -658,60 +808,168 @@ function buildInitScript() {
           { name: "CanEnactGovernance", payload: null },
         ],
       }),
+      getGovernanceCapabilities: async () => ({
+        schema: "iroha.governance.capabilities.v1",
+        version: 1,
+        chainId,
+        genesisHash: "1".repeat(63) + "3",
+        currentHeight: 98765,
+        networkPrefix: 369,
+        abiVersion: 1,
+        dataModelVersion: 3,
+        approvalMode: "PARLIAMENT_SORTITION_JIT",
+        plainVotingEnabled: true,
+        autoFinalizePlain: true,
+        autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY",
+        validationFeePlainRequiresExplicitFinalization: true,
+        validationFeePlainElectorateRules: {
+          votingAssetId: xorAssetDefinitionId,
+          bondEscrowAccount: "ballot-escrow@governance",
+          slashReceiverAccount: "slash-receiver@governance",
+          ballotAmount: "150",
+          ballotDurationBlocks: 3600,
+          citizenshipAmount: "10000",
+          maxMembers: 256,
+          convictionStepBlocks: 100,
+          maxConviction: 6,
+          minTurnout: "1",
+          approvalThresholdNumerator: 1,
+          approvalThresholdDenominator: 2,
+          eligibilityRule: {
+            rule: "proposal_operator_at_or_before_gate_others_after_gate",
+            value: null,
+          },
+        },
+        citizenshipAssetId: xorAssetDefinitionId,
+        citizenshipBondAmount: "10000",
+        citizenshipEscrowAccount: "citizenship-escrow@governance",
+        votingAssetId: xorAssetDefinitionId,
+        minBondAmount: "1",
+        bondEscrowAccount: "ballot-escrow@governance",
+        convictionStepBlocks: 720,
+        maxConviction: 6,
+        minEnactmentDelay: 600,
+        windowSpan: 3600,
+        minTurnout: "1000",
+        approvalThresholdNumerator: 1,
+        approvalThresholdDenominator: 2,
+        parliamentQuorumBps: 6700,
+        targetBodySizes: {
+          rules_committee: 7,
+          agenda_council: 9,
+          interest_panel: 11,
+          review_panel: 13,
+          policy_jury: 25,
+          oversight_committee: 7,
+          fma_committee: 5,
+        },
+        supportedProposalKinds: [
+          "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+          "VALIDATION_FEE_POLICY",
+        ],
+        supportedRoutes: [
+          "/v1/gov/capabilities",
+          "/v1/gov/citizens",
+          "/v1/gov/citizens/{account_id}",
+          "/v1/gov/citizens/draft",
+          "/v1/validation-fee/proposals",
+          "/v1/validation-fee/proposals/{proposal_id}",
+          "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
+          "/v1/validation-fee/proposals/draft",
+          "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
+          "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
+          "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
+          "/v1/gov/enact",
+          "/v1/gov/parliament/ballots",
+          "/v1/gov/ballots/plain",
+        ],
+      }),
       getGovernanceCitizenStatus: async () => ({
+        state: "not-citizen",
         accountId,
-        isCitizen: false,
         amount: null,
         bondedHeight: null,
         seatsInEpoch: null,
         lastEpochSeen: null,
         cooldownUntil: null,
-        endpointAvailable: true,
       }),
-      registerCitizen: async () => ({ hash: txHash("citizen") }),
-      getGovernanceProposal: async ({ proposalId }) => ({
-        found: true,
-        proposal: { id: proposalId, title: "E2E proposal", status: "Open" },
+      prepareGovernanceCitizenRegistration: async () => ({
+        reviewId: "governance-citizen-review",
+        operation: "register-citizen",
+        title: "Register bonded citizen",
+        proposalId: null,
+        referendumId: null,
+        decodedInstruction: {
+          RegisterCitizen: {
+            owner: accountId,
+            amount: "10000",
+          },
+        },
+        fee: {
+          payer: "authority",
+          components: [],
+          nextBlockHeight: "98766",
+        },
+        expiresAtMs: now() + 60000,
       }),
-      getGovernanceReferendum: async ({ referendumId }) => ({
-        found: true,
-        referendum: { id: referendumId, proposal_id: "0x" + "a".repeat(64) },
+      confirmGovernanceAction: async () => ({
+        ...finalizedTransaction("governance"),
+        operation: "register-citizen",
+        proposalId: null,
+        referendumId: null,
+        status: "finalized",
       }),
-      getGovernanceTally: async ({ referendumId }) => ({
-        found: true,
-        referendum_id: referendumId,
-        tally: { referendum_id: referendumId, approve: 10, reject: 2, abstain: 1 },
+      listGovernanceProposals: async () => ({
+        items: [governanceProposalSummary()],
+        nextCursor: null,
       }),
-      getGovernanceLocks: async ({ referendumId }) => ({
-        found: true,
-        referendum_id: referendumId,
-        locks: { [accountId]: { owner: accountId, amount: 100, expiry_height: 1000, direction: 1, duration_blocks: 20 } },
-      }),
-      getGovernanceCouncilCurrent: async () => ({
-        epoch: 2,
-        members: [{ account_id: accountId }],
-        alternates: [],
-        candidate_count: 1,
-        verified: 1,
-        derived_by: "e2e",
-      }),
-      submitGovernancePlainBallot: async () => ({ hash: txHash("ballot") }),
-      finalizeGovernanceReferendum: async () => ({ ok: true, proposal_id: "0x" + "a".repeat(64), tx_instructions: [] }),
-      enactGovernanceProposal: async () => ({ ok: true, proposal_id: "0x" + "a".repeat(64), tx_instructions: [] }),
+      getGovernanceProposalDetail: async () => governanceProposalDetail(),
+      getGovernanceCurrentValidationFeePolicy: async () => {
+        throw new Error(
+          "Validation-fee policy state is unavailable in the deterministic UI fixture.",
+        );
+      },
       getExplorerMetrics: async () => baseMetrics,
       getNetworkStats: async () => networkStats(),
       getExplorerAccountQr: async () => accountQr(),
-      listSubscriptionPlans: async () => ({ items: [], total: 0 }),
+      listSubscriptionPlans: async () => ({
+        items: [
+          {
+            plan_id: "plan-e2e",
+            plan: {
+              provider: "E2E provider",
+              pricing: {
+                kind: "fixed",
+                detail: {
+                  amount: "5",
+                  asset_definition: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+                },
+              },
+              billing: {
+                cadence: {
+                  kind: "fixed_period",
+                  detail: { period_ms: 2_592_000_000 },
+                },
+              },
+            },
+          },
+        ],
+        total: 1,
+      }),
       listSubscriptions: async () => ({ items: [], total: 0 }),
       getSubscription: async () => ({ subscription_id: "sub-e2e" }),
-      createSubscription: async () => ({ tx_hash_hex: txHash("sub-create") }),
-      pauseSubscription: async () => ({ tx_hash_hex: txHash("sub-pause") }),
-      resumeSubscription: async () => ({ tx_hash_hex: txHash("sub-resume") }),
-      cancelSubscription: async () => ({ tx_hash_hex: txHash("sub-cancel") }),
-      keepSubscription: async () => ({ tx_hash_hex: txHash("sub-keep") }),
-      chargeSubscriptionNow: async () => ({
-        tx_hash_hex: txHash("sub-charge"),
-      }),
+      createSubscription: async (input) =>
+        finalizedSubscription("sub-create", input.subscriptionId),
+      pauseSubscription: async (input) =>
+        finalizedSubscription("sub-pause", input.subscriptionId),
+      resumeSubscription: async (input) =>
+        finalizedSubscription("sub-resume", input.subscriptionId),
+      cancelSubscription: async (input) =>
+        finalizedSubscription("sub-cancel", input.subscriptionId),
+      keepSubscription: async (input) =>
+        finalizedSubscription("sub-keep", input.subscriptionId),
+      chargeSubscriptionNow: async (input) =>
+        finalizedSubscription("sub-charge", input.subscriptionId),
       getSoraCloudStatus: async () => ({
         available: true,
         schemaVersion: 1,
@@ -748,28 +1006,27 @@ function buildInitScript() {
           signedBy: "ed25519:e2e",
           raw: {},
         });
+        const tx_hash_hex = txHash("soracloud");
         return {
           ok: true,
-          action: "join",
+          settlement_status: "confirmed",
+          finality: finalityFor(tx_hash_hex),
+          action: "Join",
           service_name: input.serviceName,
           sequence: 1,
-          tx_hash_hex: txHash("soracloud"),
+          tx_hash_hex,
+          storage_base_fee: "0.00001",
+          actual_storage_charge: "0.00001",
+          max_compute_reservation_fee: "0.0000075",
+          actual_compute_charge: "0",
           raw: {},
         };
       },
-      getSoraCloudHfStatus: async () => ({}),
+      reconcileSoraCloudHfLaunch: async () => {
+        throw new Error("No SoraCloud settlement is pending in the deterministic fixture.");
+      },
+      getSoraCloudHfStatus: async () => ({ found: false, raw: null }),
       getParameters: async () => ({}),
-      getSccpCapabilities: async () => {
-        throw new Error(
-          fixture.sccpMode === "blocked"
-            ? "TAIRA Torii is unavailable for the deterministic blocked SCCP fixture."
-            : "The deterministic SCCP ready fixture is not configured.",
-        );
-      },
-      getSccpProofManifests: async () => {
-        throw new Error("SCCP manifest unavailable in the blocked fixture.");
-      },
-      listSccpRecentMessages: async () => ({ items: [], total: 0 }),
       getVpnAvailability: async () => {
         const unavailable = fixture.vpnMode === "unavailable";
         const repairRequired = fixture.vpnMode === "repair";
@@ -867,22 +1124,31 @@ function buildInitScript() {
           },
         ],
       }),
-      onboardAccount: async () => ({ account_id: accountId, tx_hash_hex: txHash("onboard"), status: "ok" }),
-      requestFaucetFunds: async (_input, onProgress) => {
-        await onProgress?.({ phase: "requestingPuzzle", attempt: 1, attempts: 1 });
-        await onProgress?.({ phase: "claimCommitted", txHashHex: txHash("faucet") });
+      onboardAccount: async () => {
+        const hash = txHash("onboard");
         return {
           account_id: accountId,
-          asset_definition_id: "xor#universal",
+          tx_hash_hex: hash,
+          status: "FINALIZED",
+          finality: finalityFor(hash),
+        };
+      },
+      requestFaucetFunds: async (_input, onProgress) => {
+        await onProgress?.({ phase: "requestingPuzzle", attempt: 1, attempts: 1 });
+        await onProgress?.({ phase: "claimFinalized", txHashHex: txHash("faucet") });
+        return {
+          account_id: accountId,
+          asset_definition_id: xorAssetDefinitionId,
           asset_id: xorAssetId,
           amount: "1000",
           tx_hash_hex: txHash("faucet"),
-          status: "committed",
+          status: "FINALIZED",
+          finality: finalityFor(txHash("faucet")),
         };
       },
       createKaigiMeeting: async (input) => {
         window.__e2e.calls.push({ method: "createKaigiMeeting", input });
-        return { hash: txHash("kaigi-create") };
+        return finalizedTransaction("kaigi-create");
       },
       getKaigiCall: async ({ callId }) => ({
         callId,
@@ -899,11 +1165,11 @@ function buildInitScript() {
         rosterRootHex: "0".repeat(64),
         offerDescription: { type: "offer", sdp: "v=0\\r\\na=ice-ufrag:e2eoffer\\r\\n" },
       }),
-      joinKaigiMeeting: async () => ({ hash: txHash("kaigi-join") }),
+      joinKaigiMeeting: async () => finalizedTransaction("kaigi-join"),
       watchKaigiCallEvents: async () => "watch-e2e",
       stopWatchingKaigiCallEvents: () => {},
       pollKaigiMeetingSignals: async () => [],
-      endKaigiMeeting: async () => ({ hash: txHash("kaigi-end") }),
+      endKaigiMeeting: async () => finalizedTransaction("kaigi-end"),
       createConnectPreview: async () => ({
         sidHex: "00",
         sidBase64Url: "AA",
@@ -918,6 +1184,24 @@ function buildInitScript() {
         appPrivateKeyHex: privateKeyHex,
       }),
       getSumeragiStatus: async () => sumeragiStatus(),
+      getNexusLifecycle: async () => ({
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 1,
+        lanes: [
+          {
+            id: 1,
+            dataspace_id: 1,
+            alias: "public",
+            description: "Deterministic public lane",
+            visibility: "public",
+            governance: null,
+            storage: "full_replica",
+            proof_scheme: "merkle_sha256",
+            metadata: {},
+          },
+        ],
+      }),
       getNexusPublicLaneValidators: async () => ({
         lane_id: 1,
         total: 1,
@@ -954,10 +1238,10 @@ function buildInitScript() {
         ],
       }),
       getNexusStakingPolicy: async () => ({ unbondingDelayMs: 60000 }),
-      bondPublicLaneStake: async () => ({ hash: txHash("bond") }),
-      schedulePublicLaneUnbond: async () => ({ hash: txHash("unbond") }),
-      finalizePublicLaneUnbond: async () => ({ hash: txHash("finalize") }),
-      claimPublicLaneRewards: async () => ({ hash: txHash("claim") }),
+      bondPublicLaneStake: async () => finalizedTransaction("bond"),
+      schedulePublicLaneUnbond: async () => finalizedTransaction("unbond"),
+      finalizePublicLaneUnbond: async () => finalizedTransaction("finalize"),
+      claimPublicLaneRewards: async () => finalizedTransaction("claim"),
     };
   })();`;
 }
@@ -1081,7 +1365,9 @@ async function navigate(page, route, title) {
     { timeout: 5000 },
   );
   assert(
-    (await page.evaluate(() => window.location.hash)) === `#${nextRoute}`,
+    (await page.evaluate(
+      () => window.location.hash.replace(/^#/, "").split("?")[0],
+    )) === nextRoute,
     `${route} did not resolve to its canonical URL ${nextRoute}.`,
   );
   assert(
@@ -1255,7 +1541,6 @@ async function assertPrimaryActionVisibility(page, route) {
     "/governance":
       "[data-ui-primary-action], .parliament-proposal-workspace .card-header button",
     "/vpn": "[data-ui-primary-action]",
-    "/sccp": "[data-ui-primary-action]",
   };
   const selector = selectors[canonicalRoute(route)];
   if (!selector) return;
@@ -1438,9 +1723,11 @@ async function checkSendFormAndCamera(page) {
   await page.getByTestId("send-review-button").click();
   await page.getByTestId("send-confirm-button").click();
   await page
-    .getByText(/Transaction submitted:|Sent:/)
+    .getByText(
+      /Transaction finalized on-chain:|Private shielded transfer finalized on-chain:/,
+    )
     .waitFor({ state: "visible", timeout: 5000 });
-  console.log("✓ send form submits and camera scanner opens/stops");
+  console.log("✓ send form finalizes and camera scanner opens/stops");
 }
 
 async function checkSoraCloudLaunchFlow(page) {
@@ -1474,8 +1761,8 @@ async function checkSoraCloudLaunchFlow(page) {
   const settlementAsset = page.getByLabel("Settlement asset");
   const initialAsset = await settlementAsset.inputValue();
   assert(
-    initialAsset === "",
-    `SoraCloud should not prefill stale lease asset aliases, got ${initialAsset}`,
+    initialAsset === XOR_ASSET_DEFINITION_ID,
+    `SoraCloud did not prefill the exact funded asset definition: ${initialAsset}`,
   );
   await settlementAsset.fill("61CtjvNd9T3THAR65GsMVHr82Bjc");
   await page.getByLabel("Base fee nanos").fill("10000");
@@ -1491,10 +1778,14 @@ async function checkSoraCloudLaunchFlow(page) {
   );
   await launchButton.click();
 
-  await page.getByText("Launch submitted").waitFor({
-    state: "visible",
-    timeout: 10000,
-  });
+  await page
+    .getByText(
+      /Launch finalized and settlement confirmed|Transaction finalized — settlement indexing/,
+    )
+    .waitFor({
+      state: "visible",
+      timeout: 10000,
+    });
   await page.getByText("all-minilm-l6-v2").first().waitFor({
     state: "visible",
     timeout: 10000,
@@ -1533,7 +1824,13 @@ async function checkSubscriptionModes(page) {
     .locator(".ui-segmented")
     .getByRole("button", { name: "Subscribe to plan", exact: true })
     .click();
-  await page.getByPlaceholder("Manual plan ID").waitFor({ state: "visible" });
+  const planSelect = page.getByLabel("Plan ID");
+  await planSelect.waitFor({ state: "visible" });
+  await planSelect.selectOption("plan-e2e");
+  assert(
+    (await planSelect.inputValue()) === "plan-e2e",
+    "The live plan catalog could not select its plan.",
+  );
   await page
     .getByRole("button", { name: "Create subscription" })
     .waitFor({ state: "visible" });
@@ -1704,10 +2001,20 @@ async function checkKaigi(page) {
     .locator(".kaigi-link-field textarea")
     .first()
     .inputValue();
+  const inviteUrl = new URL(invite);
+  const inviteEntries = Array.from(inviteUrl.searchParams.entries());
   assert(
-    invite.includes("call=kaigi.universal%3A") ||
-      invite.includes("call=kaigi.universal:"),
-    `Kaigi invite did not use qualified kaigi.universal call id: ${invite}`,
+    inviteUrl.protocol === "iroha:" &&
+      inviteUrl.hostname === "kaigi" &&
+      inviteUrl.pathname === "/join" &&
+      inviteEntries.length === 2 &&
+      inviteUrl.searchParams.getAll("call").length === 1 &&
+      inviteUrl.searchParams.getAll("secret").length === 1 &&
+      /^kaigi\.universal:kaigi-[a-z0-9-]+$/.test(
+        inviteUrl.searchParams.get("call") || "",
+      ) &&
+      /^[A-Za-z0-9_-]{32}$/.test(inviteUrl.searchParams.get("secret") || ""),
+    `Kaigi invite was not the exact canonical call-and-secret link: ${invite}`,
   );
   await page
     .getByRole("button", { name: "I will keep this window open" })
@@ -1740,21 +2047,36 @@ async function checkStaking(page) {
   await page.getByRole("button", { name: "Max" }).first().click();
   await page.getByRole("button", { name: /Bond XOR|Stake/ }).click();
   await page
-    .getByText(/Bond submitted:|Stake submitted:/)
+    .getByText(/Bond finalized in block|Stake finalized in block/)
     .waitFor({ state: "visible", timeout: 10000 });
-  console.log("✓ staking bootstrap and bond action work");
+  console.log("✓ staking bootstrap and finalized bond action work");
 }
 
 async function checkParliament(page) {
   await navigate(page, "/governance", "Governance");
-  await page.getByTestId("referendum-id-input").fill("referendum-e2e");
-  await page.getByTestId("proposal-id-input").fill("0x" + "a".repeat(64));
-  await page.getByRole("button", { name: "Load" }).click();
-  await page
-    .getByText(/Referendum found: yes\.?/)
-    .waitFor({ state: "visible", timeout: 10000 });
-  await page.getByText(/Proposal found: yes\.?/).waitFor({ state: "visible" });
-  console.log("✓ parliament lookup works");
+  const bondButton = page.getByTestId("governance-bond-citizen");
+  await bondButton.waitFor({ state: "visible", timeout: 10000 });
+  await page.waitForFunction(
+    () => {
+      const button = document.querySelector(
+        '[data-testid="governance-bond-citizen"]',
+      );
+      return button instanceof HTMLButtonElement && !button.disabled;
+    },
+    undefined,
+    { timeout: 10000 },
+  );
+  assert(
+    await bondButton.isEnabled(),
+    "Non-citizen with sufficient XOR balance and a live bond policy cannot bond XOR.",
+  );
+  assert(
+    /Bond.*XOR/i.test((await bondButton.textContent()) || ""),
+    "Governance citizenship action is not labeled as an XOR bond.",
+  );
+  console.log(
+    "✓ governance queue renders and non-citizen XOR bonding is available",
+  );
 }
 
 async function checkVpn(page) {
@@ -2465,26 +2787,12 @@ async function checkAdversarialFixtureStates(page) {
   await navigate(page, "/vpn", "Sora VPN");
   await page.getByText("VPN unavailable").first().waitFor({ state: "visible" });
 
-  await setFixture(page, { sccpMode: "blocked" });
-  await navigate(page, "/sccp", "SCCP Bridge");
-  await page.locator(".sccp-readiness-alert").waitFor({
-    state: "visible",
-    timeout: 10000,
-  });
-  assert(
-    await page.locator("[data-ui-primary-action]").first().isDisabled(),
-    "Blocked SCCP fixture exposed an enabled primary action.",
-  );
-
   await setFixture(page, {
     walletFunded: true,
     confidentialMode: "convertible",
     vpnMode: "ready",
-    sccpMode: "blocked",
   });
-  console.log(
-    "✓ unfunded, private-send, VPN, and blocked SCCP fixtures render",
-  );
+  console.log("✓ unfunded, private-send, and VPN fixtures render");
 }
 
 function attachPageDiagnostics(page) {

@@ -33,6 +33,7 @@ import {
   EGYPTIAN_TRANSLATIONS,
   OLD_AKKADIAN_TRANSLATIONS,
 } from "@/i18n/ancientTranslations";
+import { GOVERNANCE_ENGLISH_FALLBACK_TRANSLATIONS } from "@/i18n/governanceTranslations";
 import { QUIET_SAKURA_TRANSLATIONS } from "@/i18n/quietSakuraTranslations";
 
 export const SUPPORTED_LOCALES = [
@@ -1044,6 +1045,82 @@ const ZH_TW_TRANSLATIONS: TranslationTable = {
   ...ZH_TW_MANUAL_TRANSLATIONS,
 };
 const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
+  ...GOVERNANCE_ENGLISH_FALLBACK_TRANSLATIONS,
+  "Storage base fee": "Storage base fee",
+  "Actual storage charge": "Actual storage charge",
+  "Maximum compute reservation charge": "Maximum compute reservation charge",
+  "Actual compute reservation charge": "Actual compute reservation charge",
+  "Pending indexing": "Pending indexing",
+  "Transaction finalized; subscription state is still indexing":
+    "Transaction finalized; subscription state is still indexing",
+  "{action} finalized in block {height}.":
+    "{action} finalized in block {height}.",
+  "Checking live state…": "Checking live state…",
+  "Refresh and reconcile": "Refresh and reconcile",
+  "Subscription creation": "Subscription creation",
+  "Subscription finalized: {hash}": "Subscription finalized: {hash}",
+  "Subscription action finalized: {hash}":
+    "Subscription action finalized: {hash}",
+  "Finalized transaction is still indexing: {hash}":
+    "Finalized transaction is still indexing: {hash}",
+  "Finalized subscription state reconciled: {hash}":
+    "Finalized subscription state reconciled: {hash}",
+  "Create a manual answer packet in Advanced signaling instead.":
+    "Create a manual answer packet in Advanced signaling instead.",
+  "Create a manual offer packet in Advanced signaling instead.":
+    "Create a manual offer packet in Advanced signaling instead.",
+  "Create an on-chain Kaigi meeting, share its meeting link, then wait for the participant answer.":
+    "Create an on-chain Kaigi meeting, share its meeting link, then wait for the participant answer.",
+  "Create manual offer packet": "Create manual offer packet",
+  "Creating manual offer…": "Creating manual offer…",
+  "Live wallets create and join Kaigi meetings through on-chain signaling metadata.":
+    "Live wallets create and join Kaigi meetings through on-chain signaling metadata.",
+  "Manual offer packet ready in Advanced signaling. No meeting link was created.":
+    "Manual offer packet ready in Advanced signaling. No meeting link was created.",
+  "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.":
+    "On-chain Kaigi signaling is blocked until the endpoint identity is verified. Advanced manual signaling remains available.",
+  "Open or paste a Kaigi meeting link, then join the live meeting.":
+    "Open or paste a Kaigi meeting link, then join the live meeting.",
+  "Share the meeting link. It contains only the on-chain call ID and invite secret.":
+    "Share the meeting link. It contains only the on-chain call ID and invite secret.",
+  "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.":
+    "The on-chain meeting was not created, so there is no invite link to share. The prepared raw offer is available only in Advanced signaling.",
+  "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.":
+    "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.",
+  "This meeting has ended.": "This meeting has ended.",
+  "This meeting is not active.": "This meeting is not active.",
+  "This wallet is local only. On-chain meeting links require a live wallet; use Advanced signaling for manual raw packets.":
+    "This wallet is local only. On-chain meeting links require a live wallet; use Advanced signaling for manual raw packets.",
+  "Unable to create a manual Kaigi offer.":
+    "Unable to create a manual Kaigi offer.",
+  "Wait for endpoint capability inspection to finish. Advanced manual signaling remains available.":
+    "Wait for endpoint capability inspection to finish. Advanced manual signaling remains available.",
+  "Approve request": "Approve request",
+  "Approve signing request?": "Approve signing request?",
+  "IrohaConnect request": "IrohaConnect request",
+  "Payload bytes": "Payload bytes",
+  "Raw message signature": "Raw message signature",
+  "Relay token": "Relay token",
+  "Request type": "Request type",
+  "Review the exact request before allowing the connected app to use this wallet.":
+    "Review the exact request before allowing the connected app to use this wallet.",
+  "Scan a wallet-role QR from an app to connect it to this wallet. Every signing request still requires your approval.":
+    "Scan a wallet-role QR from an app to connect it to this wallet. Every signing request still requires your approval.",
+  "Transaction signature": "Transaction signature",
+  "This endpoint does not advertise the required staking write operations.":
+    "This endpoint does not advertise the required staking write operations.",
+  "Account registration finalized in block {block}: {hash}":
+    "Account registration finalized in block {block}: {hash}",
+  "Wait for endpoint capability inspection to finish. Local offline payment workflows remain available.":
+    "Wait for endpoint capability inspection to finish. Local offline payment workflows remain available.",
+  "Wait for the online move to finish before changing the offline balance.":
+    "Wait for the online move to finish before changing the offline balance.",
+  "This offline balance is locked because an online move finalized but local reconciliation failed.":
+    "This offline balance is locked because an online move finalized but local reconciliation failed.",
+  "The online move finalized, but the offline balance is locked because local reconciliation failed.":
+    "The online move finalized, but the offline balance is locked because local reconciliation failed.",
+  "This endpoint does not advertise the required confidential transfer operations. Local offline payment workflows remain available.":
+    "This endpoint does not advertise the required confidential transfer operations. Local offline payment workflows remain available.",
   "Connect a Solana wallet to continue.":
     "Connect a Solana wallet to continue.",
   "Connect Solana wallet": "Connect Solana wallet",
@@ -1148,10 +1225,22 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Commission must be a whole number from 0 to 10000.",
   "Validator registration submitted: {hash}":
     "Validator registration submitted: {hash}",
+  "Bond finalized in block {block}: {hash}":
+    "Bond finalized in block {block}: {hash}",
+  "Validator registration finalized in block {block}: {hash}":
+    "Validator registration finalized in block {block}: {hash}",
+  "Unbond schedule finalized in block {block} ({requestId}) for {datetime}: {hash}":
+    "Unbond schedule finalized in block {block} ({requestId}) for {datetime}: {hash}",
+  "Unbond finalized in block {block}: {hash}":
+    "Unbond finalized in block {block}: {hash}",
+  "Reward claim finalized in block {block}: {hash}":
+    "Reward claim finalized in block {block}: {hash}",
   "Register and vote": "Register and vote",
   "SCCP Bridge": "SCCP Bridge",
   "TAIRA and TRON XOR bridge": "TAIRA and TRON XOR bridge",
   "TAIRA, TRON, and BSC XOR bridge": "TAIRA, TRON, and BSC XOR bridge",
+  "TAIRA, TRON, BSC, TON, and Solana XOR bridge":
+    "TAIRA, TRON, BSC, TON, and Solana XOR bridge",
   "Bridge XOR with TRON": "Bridge XOR with TRON",
   "Bridge XOR between TAIRA and {network}.":
     "Bridge XOR between TAIRA and {network}.",
@@ -1495,6 +1584,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Network fee: charged on-chain (amount unavailable).",
   "Private Kaigi funding transaction submitted.":
     "Private Kaigi funding transaction submitted.",
+  "Private Kaigi funding finalized in block {block}: {hash}":
+    "Private Kaigi funding finalized in block {block}: {hash}",
+  "Meeting creation finalized in block {block}: {hash}":
+    "Meeting creation finalized in block {block}: {hash}",
+  "Meeting join finalized in block {block}: {hash}":
+    "Meeting join finalized in block {block}: {hash}",
+  "Meeting end finalized in block {block}: {hash}":
+    "Meeting end finalized in block {block}: {hash}",
   "Open explorer": "Open explorer",
   "Live supply, holder concentration, and consensus telemetry for the active public lane.":
     "Live supply, holder concentration, and consensus telemetry for the active public lane.",
@@ -1553,9 +1650,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Waiting for the network to expose the funded asset in account balances.",
   "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.":
     "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
+  "The network dropped the previous queued faucet claim before finality. Retrying automatically with backoff.":
+    "The network dropped the previous queued faucet claim before finality. Retrying automatically with backoff.",
+  "Faucet transaction finalized. Updating wallet…":
+    "Faucet transaction finalized. Updating wallet…",
+  "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.":
+    "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.",
+  "Transaction finalized — settlement indexing":
+    "Transaction finalized — settlement indexing",
   "Your faucet request is in flight. This can take a few seconds.":
     "Your faucet request is in flight. This can take a few seconds.",
-  "XOR requested: {hash}": "XOR requested: {hash}",
+  "XOR requested: {hash}": "XOR finalized on-chain: {hash}",
   "Launch live SoraCloud services": "Launch live SoraCloud services",
   "Launch and monitor live services": "Launch and monitor live services",
   "Live services": "Live services",
@@ -1690,9 +1795,9 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Last invoice: {amount} {unit} ({status})",
   "First charge time is invalid.": "First charge time is invalid.",
   "Enter a plan ID.": "Enter a plan ID.",
-  "Subscription submitted: {hash}": "Subscription submitted: {hash}",
+  "Subscription submitted: {hash}": "Subscription finalized on-chain: {hash}",
   "Subscription action submitted: {hash}":
-    "Subscription action submitted: {hash}",
+    "Subscription action finalized on-chain: {hash}",
   "Price unavailable": "Price unavailable",
   "{unit} {amount} per {usage}": "{unit} {amount} per {usage}",
   "{count} day period": "{count} day period",
@@ -1868,8 +1973,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Unshield amount must be a whole number greater than zero.":
     "Unshield amount must be a whole number greater than zero.",
   "Unshield policy mode: {mode}.": "Unshield policy mode: {mode}.",
-  "Unshield submitted and offline balance updated.":
-    "Unshield submitted and offline balance updated.",
+  "Unshield finalized in block {height} and offline balance updated.":
+    "Unshield finalized in block {height} and offline balance updated.",
+  "Offline moves are self-only unshield operations and never publish a memo.":
+    "Offline moves are self-only unshield operations and never publish a memo.",
   "{operation} is unavailable for the current asset definition.":
     "{operation} is unavailable for the current asset definition.",
   "{operation} is unavailable: effective policy mode is {mode}.":
@@ -1884,6 +1991,10 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "{operation} policy check failed: {message}. Submission may still fail if the current asset policy does not allow it.",
   "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.":
     "{operation} policy check failed. Submission may still fail if the current asset policy does not allow it.",
+  "{operation} is unavailable because its policy could not be verified: {message}.":
+    "{operation} is unavailable because its policy could not be verified: {message}.",
+  "{operation} is unavailable because its policy could not be verified.":
+    "{operation} is unavailable because its policy could not be verified.",
   "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.":
     "Shielding is optional. Leave it off to avoid shield transactions, but you will not get privacy for this transfer.",
   "QR encodes account, amount, asset definition, and a fresh shielded payment address.":
@@ -1907,9 +2018,14 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Legacy private Receive QR codes are no longer supported. Ask the recipient to refresh their Receive QR.",
   "Create private balance": "Create private balance",
   "Send privately": "Send privately",
-  "Private balance created: {hash}": "Private balance created: {hash}",
+  "Private balance created: {hash}":
+    "Private balance finalized on-chain: {hash}",
   "Private shielded transfer committed: {hash}":
-    "Private shielded transfer committed: {hash}",
+    "Private shielded transfer finalized on-chain: {hash}",
+  "Private shielded transfer finalized on-chain: {hash}":
+    "Private shielded transfer finalized on-chain: {hash}",
+  "Transaction finalized on-chain: {hash}":
+    "Transaction finalized on-chain: {hash}",
   "Secure OS-backed key storage is unavailable on this device.":
     "Secure OS-backed key storage is unavailable on this device.",
   "Enter an identity private key first.":
@@ -1943,9 +2059,11 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Some confidential activity could not be decrypted from on-chain note envelopes; balance may be incomplete.",
   "Enter a whole-number shield amount.": "Enter a whole-number shield amount.",
   "Shield transaction committed: {hash}":
-    "Shield transaction committed: {hash}",
+    "Shield transaction finalized on-chain: {hash}",
+  "Shield transaction finalized on-chain: {hash}":
+    "Shield transaction finalized on-chain: {hash}",
   "Anonymous shielded transaction committed: {hash}":
-    "Anonymous shielded send committed: {hash}",
+    "Anonymous shielded send finalized on-chain: {hash}",
   "Create on-chain account": "Authority-only registration",
   "Requires authority credentials to create the account on-chain.":
     "Advanced tool. Requires authority credentials. Regular wallets are created from Create Wallet.",
@@ -1960,6 +2078,113 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Custom endpoint": "Custom endpoint",
   "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.":
     "Chain ID and account prefix are loaded from Torii when you check and save the endpoint.",
+  "The chain ID and account prefix are the expected wallet target. Endpoint checks never retarget them.":
+    "The chain ID and account prefix are the expected wallet target. Endpoint checks never retarget them.",
+  "Checking endpoint identity…": "Checking endpoint identity…",
+  "Confirming the endpoint matches the configured network.":
+    "Confirming the endpoint matches the configured network.",
+  "Endpoint offline": "Endpoint offline",
+  "Writes authorized": "Writes authorized",
+  "Writes blocked": "Writes blocked",
+  "Endpoint identity could not be verified. Reads remain available.":
+    "Endpoint identity could not be verified. Reads remain available.",
+  "Endpoint identity inspection has not authorized writes.":
+    "Endpoint identity inspection has not authorized writes.",
+  "Wait for endpoint capability inspection to finish.":
+    "Wait for endpoint capability inspection to finish.",
+  "Writes are blocked until the endpoint identity is verified.":
+    "Writes are blocked until the endpoint identity is verified.",
+  "Wait for endpoint capability inspection to finish before moving funds to the private balance.":
+    "Wait for endpoint capability inspection to finish before moving funds to the private balance.",
+  "Private balance writes are blocked until the endpoint identity is verified.":
+    "Private balance writes are blocked until the endpoint identity is verified.",
+  "This endpoint does not advertise the required VPN session operations.":
+    "This endpoint does not advertise the required VPN session operations.",
+  "Failed to load local VPN controller state.":
+    "Failed to load local VPN controller state.",
+  "Failed to load VPN network state.": "Failed to load VPN network state.",
+  "Local controller available": "Local controller available",
+  "The local VPN controller is ready. Set up a network and wallet to connect.":
+    "The local VPN controller is ready. Set up a network and wallet to connect.",
+  "The local VPN controller requires repair.":
+    "The local VPN controller requires repair.",
+  "This endpoint does not advertise the required asset transfer operations.":
+    "This endpoint does not advertise the required asset transfer operations.",
+  "This endpoint does not advertise the required confidential transfer operations.":
+    "This endpoint does not advertise the required confidential transfer operations.",
+  "Allowance sync unavailable": "Allowance sync unavailable",
+  "Automatic Kaigi signaling is blocked until the endpoint identity is verified. Manual signaling remains available.":
+    "Automatic Kaigi signaling is blocked until the endpoint identity is verified. Manual signaling remains available.",
+  "Checking offline network readiness…": "Checking offline network readiness…",
+  "Consensus telemetry is unavailable.": "Consensus telemetry is unavailable.",
+  "Failed to load lane stake.": "Failed to load lane stake.",
+  "Failed to load offline network readiness.":
+    "Failed to load offline network readiness.",
+  "Failed to load pending rewards.": "Failed to load pending rewards.",
+  "Failed to load wallet stake.": "Failed to load wallet stake.",
+  "Network readiness": "Network readiness",
+  "Network transfers are blocked until the endpoint identity is verified. Local offline payment workflows remain available.":
+    "Network transfers are blocked until the endpoint identity is verified. Local offline payment workflows remain available.",
+  "No live plans found": "No live plans found",
+  "No public lanes found on this Torii endpoint.":
+    "No public lanes found on this Torii endpoint.",
+  "Offline network operations are ready.":
+    "Offline network operations are ready.",
+  "Offline network operations are unavailable ({count} blocker(s)).":
+    "Offline network operations are unavailable ({count} blocker(s)).",
+  "Offline network readiness is unknown.":
+    "Offline network readiness is unknown.",
+  "Offline proofs are ready, but this release does not expose allowance enumeration.":
+    "Offline proofs are ready, but this release does not expose allowance enumeration.",
+  "Subscription writes unavailable": "Subscription writes unavailable",
+  "This endpoint does not advertise POST /v1/soracloud/hf/deploy.":
+    "This endpoint does not advertise POST /v1/soracloud/hf/deploy.",
+  "This endpoint does not advertise {operation}.":
+    "This endpoint does not advertise {operation}.",
+  "HF source status": "HF source status",
+  Found: "Found",
+  "Not found": "Not found",
+  "This endpoint does not advertise the Kaigi meeting write operations. Manual signaling remains available.":
+    "This endpoint does not advertise the Kaigi meeting write operations. Manual signaling remains available.",
+  "This endpoint does not advertise the required subscription write operations.":
+    "This endpoint does not advertise the required subscription write operations.",
+  "This Torii endpoint has no subscription plans to subscribe to.":
+    "This Torii endpoint has no subscription plans to subscribe to.",
+  "This Torii release does not expose offline allowance enumeration.":
+    "This Torii release does not expose offline allowance enumeration.",
+  "Unbond scheduling is unavailable because policy is not public.":
+    "Unbond scheduling is unavailable because policy is not public.",
+  "Wait for endpoint capability inspection to finish. Manual signaling remains available.":
+    "Wait for endpoint capability inspection to finish. Manual signaling remains available.",
+  "Wallet stake balance is unavailable.":
+    "Wallet stake balance is unavailable.",
+  "The active endpoint does not advertise governance write operations.":
+    "The active endpoint does not advertise governance write operations.",
+  "The active endpoint does not advertise IrohaConnect session writes.":
+    "The active endpoint does not advertise IrohaConnect session writes.",
+  "Open settings": "Open settings",
+  "Read only": "Read only",
+  "Read and write": "Read and write",
+  "Access mode": "Access mode",
+  "Observed chain": "Observed chain",
+  "Observed network prefix": "Observed network prefix",
+  "Last checked": "Last checked",
+  "Not observed": "Not observed",
+  "Endpoint write features": "Endpoint write features",
+  Supported: "Supported",
+  "Account registration": "Account registration",
+  "Account onboarding": "Account onboarding",
+  "Asset transfers": "Asset transfers",
+  "Faucet claims": "Faucet claims",
+  "Confidential transfers": "Confidential transfers",
+  "Kaigi meetings": "Kaigi meetings",
+  "Governance writes": "Governance writes",
+  "Staking writes": "Staking writes",
+  "Subscription writes": "Subscription writes",
+  "SoraCloud deployment": "SoraCloud deployment",
+  "VPN sessions": "VPN sessions",
+  "IrohaConnect sessions": "IrohaConnect sessions",
+  "ZK proof jobs": "ZK proof jobs",
   "Check endpoint": "Check endpoint",
   "Check & Save": "Check & Save",
   "Checking…": "Checking…",
@@ -1970,11 +2195,17 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Endpoint checked and saved.": "Endpoint checked and saved.",
   "Endpoint checked and chain settings saved.":
     "Endpoint checked and chain settings saved.",
+  "Endpoint identity verified and saved.":
+    "Endpoint identity verified and saved.",
+  "Endpoint saved in read-only mode: {message}":
+    "Endpoint saved in read-only mode: {message}",
   "Default endpoint restored.": "Default endpoint restored.",
   "Endpoint responded successfully.": "Endpoint responded successfully.",
   "No response from endpoint.": "No response from endpoint.",
   "Unable to load chain metadata from Torii.":
     "Unable to load chain metadata from Torii.",
+  "Unable to inspect endpoint identity.":
+    "Unable to inspect endpoint identity.",
   "Enter a Torii endpoint URL.": "Enter a Torii endpoint URL.",
   "Enter a valid Torii endpoint URL.": "Enter a valid Torii endpoint URL.",
   "Endpoint must start with http:// or https://.":
@@ -2192,7 +2423,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Waiting for faucet transaction finality…":
     "Waiting for faucet transaction finality…",
   "Faucet transaction committed. Updating wallet…":
-    "Faucet transaction committed. Updating wallet…",
+    "Faucet transaction finalized. Updating wallet…",
   "Refreshing wallet balance…": "Refreshing wallet balance…",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "Your TAIRA faucet request is in flight. This can take a few seconds.",
@@ -2202,7 +2433,7 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
     "Waiting for TAIRA to expose the funded asset in account balances.",
   "Testnet XOR requested: {hash}": "Testnet XOR requested: {hash}",
   "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.":
-    "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+    "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.",
   "Failed to request faucet funds.": "Failed to request faucet funds.",
   "This wallet is saved locally. If the account is not live on-chain yet, balances and transfers can stay empty until it is funded or registered.":
     "This wallet is local only. Balances stay empty until it is live on-chain.",
@@ -2500,8 +2731,6 @@ const SHARED_ENGLISH_FALLBACK_TRANSLATIONS: TranslationTable = {
   "Scheduled start": "Scheduled start",
   "Start now": "Start now",
   "Meeting invite": "Meeting invite",
-  "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.":
-    "Paste an iroha:// invite link, a #/kaigi invite route, a compact call link, or the raw invite token.",
   "Live wallets can create and join Kaigi meetings through on-chain signaling metadata. Local-only wallets fall back to manual packets.":
     "Live wallets can create and join through on-chain signaling. Local-only wallets fall back to manual packets.",
   "This wallet is local only, so Kaigi keeps the invite-link flow but falls back to a manual answer packet.":
@@ -2910,7 +3139,7 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Claim accepted. Waiting for finality...",
   "Waiting for faucet transaction finality…": "Waiting for finality...",
   "Faucet transaction committed. Updating wallet…":
-    "Claim committed. Updating wallet...",
+    "Claim finalized. Updating wallet...",
   "Refreshing wallet balance…": "Refreshing wallet...",
   "Your TAIRA faucet request is in flight. This can take a few seconds.":
     "This can take a few seconds.",
@@ -2918,9 +3147,9 @@ const EN_TRANSLATIONS: TranslationTable = {
     "The last queued faucet claim expired. Retrying automatically.",
   "Waiting for TAIRA to expose the funded asset in account balances.":
     "Waiting for balances to index.",
-  "Testnet XOR requested: {hash}": "XOR claimed: {hash}",
+  "Testnet XOR requested: {hash}": "XOR finalized on-chain: {hash}",
   "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.":
-    "Claim accepted. Balances are still indexing. Refresh in a few seconds.",
+    "Claim finalized. Balances are still indexing. Refresh in a few seconds.",
   "Failed to request faucet funds.": "Faucet request failed.",
   "Wallet data is unavailable until this account exists on-chain.":
     "No on-chain wallet data yet.",
@@ -2962,10 +3191,12 @@ const EN_TRANSLATIONS: TranslationTable = {
     "Enter a whole-number shield amount.",
   "Shield transaction submitted: {hash}": "Shielded send: {hash}",
   "Shield transaction committed: {hash}":
-    "Shield transaction committed: {hash}",
+    "Shield transaction finalized on-chain: {hash}",
   "Anonymous shielded transaction committed: {hash}":
-    "Anonymous shielded send committed: {hash}",
-  "Transaction submitted: {hash}": "Sent: {hash}",
+    "Anonymous shielded send finalized on-chain: {hash}",
+  "Transaction submitted: {hash}": "Transaction finalized on-chain: {hash}",
+  "Transaction finalized on-chain: {hash}":
+    "Transaction finalized on-chain: {hash}",
   "Citizenship Bond": "Citizenship",
   "Bond {amount} XOR to register as a citizen, then use plain ballots to vote in governance referenda.":
     "Bond {amount} XOR to vote.",
@@ -3277,6 +3508,16 @@ const EN_TRANSLATIONS: TranslationTable = {
   "TON verifier contract": "TON verifier contract",
   "TON source bridge": "TON source bridge",
   "TON source transaction": "TON source transaction",
+  "Storage base fee": "Storage base fee",
+  "Actual storage charge": "Actual storage charge",
+  "Maximum compute reservation charge": "Maximum compute reservation charge",
+  "Actual compute reservation charge": "Actual compute reservation charge",
+  "Launch confirmed": "Launch finalized and settlement confirmed",
+  "Transaction committed — settlement indexing":
+    "Transaction finalized — settlement indexing",
+  "Transaction finalized — settlement indexing":
+    "Transaction finalized — settlement indexing",
+  "Pending indexing": "Pending indexing",
 };
 
 const HISTORICAL_KEY_SOURCE_TABLES: TranslationTable[] = [
@@ -3384,6 +3625,7 @@ const TABLES = Object.fromEntries(
   SUPPORTED_LOCALES.map((locale) => [
     locale,
     {
+      ...(locale === "en-US" ? {} : SHARED_ENGLISH_FALLBACK_TRANSLATIONS),
       ...BASE_TABLES[locale],
       ...(locale === "en-US" ? {} : QUIET_SAKURA_TRANSLATIONS[locale]),
     },

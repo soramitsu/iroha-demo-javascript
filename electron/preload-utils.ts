@@ -4,6 +4,7 @@ import {
   isPositiveWholeAmount,
 } from "../src/utils/confidential";
 import { sanitizeErrorMessage } from "../src/utils/errorMessage";
+import { normalizeFirstReleaseAssetDefinitionId } from "./assetDefinitionId";
 
 export { confidentialModeSupportsShield, isPositiveWholeAmount };
 
@@ -75,6 +76,63 @@ export interface PublicLaneRewardsResponseView {
   items: PublicLanePendingRewardView[];
 }
 
+export interface NexusLifecycleLaneView {
+  id: number;
+  dataspace_id: string;
+  alias: string;
+  description: string;
+  visibility: string;
+  governance: string | null;
+  storage: string;
+  proof_scheme: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface NexusLifecycleView {
+  version: number;
+  nexus_enabled: boolean;
+  lane_count: number;
+  lanes: NexusLifecycleLaneView[];
+}
+
+export interface OfflineReadinessBlockerView {
+  code: string;
+  message: string;
+}
+
+export interface OfflineReadinessView {
+  required_bridge_abi_version: 21;
+  cash_handoff_capability: "cash_handoff_v1";
+  max_hops: number;
+  asset_definition_id: string;
+  asset_scale: number | null;
+  evaluated_block_height: number;
+  evaluated_block_hash: string;
+  active_transfer_verifier: Record<string, unknown> | null;
+  active_topup_shield_verifier: Record<string, unknown> | null;
+  active_unshield_verifier: Record<string, unknown> | null;
+  active_recursive_step_eq_verifier: Record<string, unknown> | null;
+  active_recursive_step_ep_verifier: Record<string, unknown> | null;
+  artifact_set: Record<string, unknown> | null;
+  proof_backend_available: boolean;
+  recursive_lineage_supported: boolean;
+  ready: boolean;
+  blockers: OfflineReadinessBlockerView[];
+}
+
+export interface AssetDefinitionConfidentialPolicyView {
+  [key: string]: unknown;
+  mode: string;
+  allow_shield: boolean | null;
+  allow_unshield: boolean | null;
+  vk_transfer: string | null;
+  vk_unshield: string | null;
+  vk_shield: string | null;
+  vk_set_hash: string | null;
+  poseidon_params_id: number | null;
+  pedersen_params_id: number | null;
+}
+
 export interface ConfidentialPolicyTransitionView {
   transition_id: string;
   previous_mode: string;
@@ -123,12 +181,19 @@ export interface GovernanceCouncilCurrentResponseView {
   alternates: GovernanceCouncilMemberView[];
   candidate_count: number;
   verified: number;
-  derived_by: string;
+  derived_by: "Vrf" | "Fallback";
 }
 
 export interface GovernanceCitizenCountResponseView {
   total: number | null;
   endpointAvailable: boolean;
+}
+
+export interface GovernanceUnlockStatsResponseView {
+  height_current: number;
+  expired_locks_now: number;
+  referenda_with_expired: number;
+  last_sweep_height: number;
 }
 
 const toRecord = (value: unknown, label: string): Record<string, unknown> => {
@@ -138,15 +203,60 @@ const toRecord = (value: unknown, label: string): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 
+const assertExactObjectKeys = (
+  record: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string,
+): void => {
+  const actual = Object.keys(record).sort();
+  const expected = [...expectedKeys].sort();
+  if (
+    actual.length !== expected.length ||
+    actual.some((key, index) => key !== expected[index])
+  ) {
+    throw new Error(`${label} must contain exactly ${expected.join(", ")}.`);
+  }
+};
+
+const toExactJsonNonNegativeInteger = (value: unknown, label: string) => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative JSON integer.`);
+  }
+  return value;
+};
+
 const toPositiveInteger = (value: unknown, label: string) => {
-  const numberValue =
-    typeof value === "string" && value.trim().length
-      ? Number(value)
-      : Number(value);
-  if (!Number.isFinite(numberValue) || numberValue < 0) {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value))
+  ) {
     throw new Error(`${label} must be a non-negative integer.`);
   }
-  return Math.floor(numberValue);
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(numberValue) || numberValue < 0) {
+    throw new Error(`${label} must be a non-negative integer.`);
+  }
+  return numberValue;
+};
+
+const toCanonicalNonNegativeDecimalString = (
+  value: unknown,
+  label: string,
+): string => {
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(
+        `${label} must be a canonical non-negative decimal integer.`,
+      );
+    }
+    return String(value);
+  }
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value)) {
+    throw new Error(
+      `${label} must be a canonical non-negative decimal integer.`,
+    );
+  }
+  return value;
 };
 
 const toNullableInteger = (value: unknown) => {
@@ -404,6 +514,19 @@ export const normalizeExplorerAccountQrPayload = (
   };
 };
 
+export const assertExplorerAccountQrMatchesRequestedAccount = (
+  payload: Record<string, unknown>,
+  expectedAccountId: string,
+): ExplorerAccountQrResponse => {
+  const normalized = normalizeExplorerAccountQrPayload(payload);
+  if (normalized.literal !== expectedAccountId) {
+    throw new Error(
+      "Explorer QR response account did not match the requested account.",
+    );
+  }
+  return normalized;
+};
+
 export const normalizeAccountAssetListPayload = (
   payload: unknown,
 ): AccountAssetListResponseView => {
@@ -414,40 +537,74 @@ export const normalizeAccountAssetListPayload = (
         value,
         `account asset list response.items[${index}]`,
       );
-      const legacyAssetId = String(
-        entry.asset_id ?? entry.assetId ?? "",
-      ).trim();
-      const assetDefinitionId = String(
-        entry.asset ??
-          entry.asset_definition_id ??
-          entry.assetDefinitionId ??
-          "",
-      ).trim();
-      const accountId = String(
-        entry.account_id ?? entry.accountId ?? "",
-      ).trim();
-      const assetId =
-        legacyAssetId ||
-        (assetDefinitionId && accountId
-          ? `${assetDefinitionId}#${accountId}`
-          : "");
-      if (!assetId) {
+      const itemLabel = `account asset list response.items[${index}]`;
+      const unsupportedField = [
+        "assetId",
+        "assetDefinitionId",
+        "asset_definition_id",
+        "accountId",
+        "assetAlias",
+        "assetName",
+      ].find((field) => Object.prototype.hasOwnProperty.call(entry, field));
+      if (unsupportedField) {
         throw new Error(
-          `account asset list response.items[${index}].asset_id must be a string`,
+          `${itemLabel}.${unsupportedField} is outside the first-release account asset contract.`,
         );
       }
-      const assetAlias = String(entry.asset_alias ?? entry.assetAlias ?? "")
-        .trim()
-        .replace(/^@/, "");
-      const assetName = String(
-        entry.asset_name ?? entry.assetName ?? "",
-      ).trim();
+
+      const readRequiredString = (field: string) => {
+        const fieldValue = entry[field];
+        if (typeof fieldValue !== "string" || !fieldValue.trim()) {
+          throw new Error(`${itemLabel}.${field} must be a non-empty string.`);
+        }
+        return fieldValue.trim();
+      };
+      const readOptionalString = (field: string) => {
+        const fieldValue = entry[field];
+        if (fieldValue === null || fieldValue === undefined) {
+          return "";
+        }
+        if (typeof fieldValue !== "string") {
+          throw new Error(`${itemLabel}.${field} must be a string or null.`);
+        }
+        return fieldValue.trim();
+      };
+
+      const hasLegacyAssetId = Object.prototype.hasOwnProperty.call(
+        entry,
+        "asset_id",
+      );
+      const hasSplitAsset = Object.prototype.hasOwnProperty.call(
+        entry,
+        "asset",
+      );
+      const hasSplitAccountId = Object.prototype.hasOwnProperty.call(
+        entry,
+        "account_id",
+      );
+      if (
+        (hasLegacyAssetId && (hasSplitAsset || hasSplitAccountId)) ||
+        (!hasLegacyAssetId && (!hasSplitAsset || !hasSplitAccountId))
+      ) {
+        throw new Error(
+          `${itemLabel} must use exactly one first-release shape: { asset_id, quantity } or { asset, account_id, quantity }.`,
+        );
+      }
+
+      const assetDefinitionId = hasLegacyAssetId
+        ? ""
+        : readRequiredString("asset");
+      const accountId = hasLegacyAssetId
+        ? ""
+        : readRequiredString("account_id");
+      const assetId = hasLegacyAssetId
+        ? readRequiredString("asset_id")
+        : `${assetDefinitionId}#${accountId}`;
+      const assetAlias = readOptionalString("asset_alias").replace(/^@/, "");
+      const assetName = readOptionalString("asset_name");
       return {
         asset_id: assetId,
-        quantity: toStringValue(
-          entry.quantity,
-          `account asset list response.items[${index}].quantity`,
-        ),
+        quantity: readRequiredString("quantity"),
         ...(assetAlias ? { asset_alias: assetAlias } : {}),
         ...(assetName ? { asset_name: assetName } : {}),
         ...(assetDefinitionId
@@ -458,10 +615,7 @@ export const normalizeAccountAssetListPayload = (
   );
   return {
     items,
-    total: toPositiveInteger(
-      record.total ?? items.length,
-      "account asset list response.total",
-    ),
+    total: toPositiveInteger(record.total, "account asset list response.total"),
   };
 };
 
@@ -469,17 +623,17 @@ const normalizeGovernanceCouncilMember = (
   value: unknown,
   label: string,
 ): GovernanceCouncilMemberView => {
-  if (typeof value === "string") {
-    return {
-      account_id: toStringValue(value, label),
-    };
-  }
   const record = toRecord(value, label);
+  assertExactObjectKeys(record, ["account_id"], label);
+  if (
+    typeof record.account_id !== "string" ||
+    record.account_id.length === 0 ||
+    record.account_id.trim() !== record.account_id
+  ) {
+    throw new Error(`${label}.account_id must be canonical non-empty text.`);
+  }
   return {
-    account_id: toStringValue(
-      record.account_id ?? record.accountId ?? record.id,
-      `${label}.account_id`,
-    ),
+    account_id: record.account_id,
   };
 };
 
@@ -495,31 +649,71 @@ export const normalizeGovernanceCouncilCurrentPayload = (
   payload: unknown,
 ): GovernanceCouncilCurrentResponseView => {
   const record = toRecord(payload, "governance council current response");
+  assertExactObjectKeys(
+    record,
+    [
+      "alternates",
+      "candidate_count",
+      "derived_by",
+      "epoch",
+      "members",
+      "verified",
+    ],
+    "governance council current response",
+  );
+  if (record.derived_by !== "Vrf" && record.derived_by !== "Fallback") {
+    throw new Error(
+      "governance council current response.derived_by must be Vrf or Fallback.",
+    );
+  }
+  const members = normalizeGovernanceCouncilMembers(
+    record.members,
+    "governance council current response.members",
+  );
+  const alternates = normalizeGovernanceCouncilMembers(
+    record.alternates,
+    "governance council current response.alternates",
+  );
+  const candidateCount = toExactJsonNonNegativeInteger(
+    record.candidate_count,
+    "governance council current response.candidate_count",
+  );
+  const verified = toExactJsonNonNegativeInteger(
+    record.verified,
+    "governance council current response.verified",
+  );
+  const accounts = [
+    ...members.map(({ account_id }) => account_id),
+    ...alternates.map(({ account_id }) => account_id),
+  ];
+  if (new Set(accounts).size !== accounts.length) {
+    throw new Error(
+      "governance council members and alternates must be unique and disjoint.",
+    );
+  }
+  if (accounts.length > candidateCount || verified > candidateCount) {
+    throw new Error(
+      "governance council seats and verified proofs must not exceed candidate_count.",
+    );
+  }
+  if (
+    (record.derived_by === "Vrf" && verified === 0) ||
+    (record.derived_by === "Fallback" && verified !== 0)
+  ) {
+    throw new Error(
+      "governance council derived_by must agree with the verified proof count.",
+    );
+  }
   return {
-    epoch: toPositiveInteger(
+    epoch: toExactJsonNonNegativeInteger(
       record.epoch,
       "governance council current response.epoch",
     ),
-    members: normalizeGovernanceCouncilMembers(
-      record.members,
-      "governance council current response.members",
-    ),
-    alternates: normalizeGovernanceCouncilMembers(
-      record.alternates ?? [],
-      "governance council current response.alternates",
-    ),
-    candidate_count: toPositiveInteger(
-      record.candidate_count ?? 0,
-      "governance council current response.candidate_count",
-    ),
-    verified: toPositiveInteger(
-      record.verified ?? 0,
-      "governance council current response.verified",
-    ),
-    derived_by: toStringValue(
-      record.derived_by ?? "Vrf",
-      "governance council current response.derived_by",
-    ),
+    members,
+    alternates,
+    candidate_count: candidateCount,
+    verified,
+    derived_by: record.derived_by,
   };
 };
 
@@ -527,42 +721,116 @@ export const normalizeGovernanceCitizenCountPayload = (
   payload: unknown,
   endpointAvailable = true,
 ): GovernanceCitizenCountResponseView => {
-  const record = endpointAvailable
-    ? toRecord(payload, "governance citizen count response")
-    : {};
-  const total =
-    record.total === null || record.total === undefined
-      ? null
-      : toPositiveInteger(
-          record.total,
-          "governance citizen count response.total",
-        );
+  if (!endpointAvailable) {
+    if (payload !== null) {
+      throw new Error(
+        "unavailable governance citizen count must not carry a payload.",
+      );
+    }
+    return {
+      total: null,
+      endpointAvailable: false,
+    };
+  }
+  const record = toRecord(payload, "governance citizen count response");
+  assertExactObjectKeys(record, ["total"], "governance citizen count response");
+  if (
+    typeof record.total !== "string" ||
+    !/^(?:0|[1-9]\d*)$/u.test(record.total)
+  ) {
+    throw new Error(
+      "governance citizen count response.total must be a canonical decimal string.",
+    );
+  }
+  const total = Number(record.total);
+  if (!Number.isSafeInteger(total)) {
+    throw new Error(
+      "governance citizen count response.total exceeds the safe integer range.",
+    );
+  }
   return {
     total,
-    endpointAvailable,
+    endpointAvailable: true,
+  };
+};
+
+export const normalizeGovernanceUnlockStatsPayload = (
+  payload: unknown,
+): GovernanceUnlockStatsResponseView => {
+  const record = toRecord(payload, "governance unlock stats response");
+  assertExactObjectKeys(
+    record,
+    [
+      "expired_locks_now",
+      "height_current",
+      "last_sweep_height",
+      "referenda_with_expired",
+    ],
+    "governance unlock stats response",
+  );
+  return {
+    height_current: toExactJsonNonNegativeInteger(
+      record.height_current,
+      "governance unlock stats response.height_current",
+    ),
+    expired_locks_now: toExactJsonNonNegativeInteger(
+      record.expired_locks_now,
+      "governance unlock stats response.expired_locks_now",
+    ),
+    referenda_with_expired: toExactJsonNonNegativeInteger(
+      record.referenda_with_expired,
+      "governance unlock stats response.referenda_with_expired",
+    ),
+    last_sweep_height: toExactJsonNonNegativeInteger(
+      record.last_sweep_height,
+      "governance unlock stats response.last_sweep_height",
+    ),
   };
 };
 
 export const normalizePublicLaneValidatorsPayload = (
   payload: Record<string, unknown>,
 ): PublicLaneValidatorsResponseView => {
-  const laneId = toPositiveInteger(
-    payload.lane_id ?? payload.laneId,
-    "validators.lane_id",
-  );
-  const total = toPositiveInteger(payload.total ?? 0, "validators.total");
-  const rawItems = toArray(payload.items ?? [], "validators.items");
+  if ("laneId" in payload) {
+    throw new Error("validators.laneId is not part of the current contract.");
+  }
+  const laneId = toPositiveInteger(payload.lane_id, "validators.lane_id");
+  const total = toPositiveInteger(payload.total, "validators.total");
+  const rawItems = toArray(payload.items, "validators.items");
 
   const items: PublicLaneValidatorRecordView[] = rawItems.map(
     (raw, index): PublicLaneValidatorRecordView => {
       const item = toRecord(raw, `validators.items[${index}]`);
+      if (
+        [
+          "laneId",
+          "peerId",
+          "stakeAccount",
+          "totalStake",
+          "selfStake",
+          "activationEpoch",
+          "activationHeight",
+          "lastRewardEpoch",
+        ].some((key) => key in item)
+      ) {
+        throw new Error(
+          `validators.items[${index}] contains fields outside the current contract.`,
+        );
+      }
       const statusRecord = toRecord(
         item.status ?? {},
         `validators.items[${index}].status`,
       );
+      if (
+        ["activatesAtEpoch", "releasesAtMs"].some((key) => key in statusRecord)
+      ) {
+        throw new Error(
+          `validators.items[${index}].status contains fields outside the current contract.`,
+        );
+      }
       return {
         lane_id: toPositiveInteger(
-          item.lane_id ?? item.laneId ?? laneId,
+          item.lane_id ?? laneId,
           `validators.items[${index}].lane_id`,
         ),
         validator: toStringValue(
@@ -570,19 +838,19 @@ export const normalizePublicLaneValidatorsPayload = (
           `validators.items[${index}].validator`,
         ),
         peer_id: toStringValue(
-          item.peer_id ?? item.peerId ?? "",
+          item.peer_id ?? "",
           `validators.items[${index}].peer_id`,
         ),
         stake_account: toStringValue(
-          item.stake_account ?? item.stakeAccount,
+          item.stake_account,
           `validators.items[${index}].stake_account`,
         ),
         total_stake: toStringValue(
-          item.total_stake ?? item.totalStake,
+          item.total_stake,
           `validators.items[${index}].total_stake`,
         ),
         self_stake: toStringValue(
-          item.self_stake ?? item.selfStake,
+          item.self_stake,
           `validators.items[${index}].self_stake`,
         ),
         status: {
@@ -591,30 +859,22 @@ export const normalizePublicLaneValidatorsPayload = (
             `validators.items[${index}].status.type`,
           ),
           activates_at_epoch: toNullableInteger(
-            statusRecord.activates_at_epoch ?? statusRecord.activatesAtEpoch,
+            statusRecord.activates_at_epoch,
           ),
           reason:
             statusRecord.reason === null || statusRecord.reason === undefined
               ? null
               : String(statusRecord.reason),
-          releases_at_ms: toNullableInteger(
-            statusRecord.releases_at_ms ?? statusRecord.releasesAtMs,
-          ),
+          releases_at_ms: toNullableInteger(statusRecord.releases_at_ms),
           slash_id:
             statusRecord.slash_id === null ||
             statusRecord.slash_id === undefined
               ? null
               : String(statusRecord.slash_id),
         },
-        activation_epoch: toNullableInteger(
-          item.activation_epoch ?? item.activationEpoch,
-        ),
-        activation_height: toNullableInteger(
-          item.activation_height ?? item.activationHeight,
-        ),
-        last_reward_epoch: toNullableInteger(
-          item.last_reward_epoch ?? item.lastRewardEpoch,
-        ),
+        activation_epoch: toNullableInteger(item.activation_epoch),
+        activation_height: toNullableInteger(item.activation_height),
+        last_reward_epoch: toNullableInteger(item.last_reward_epoch),
         metadata: toMetadataRecord(item.metadata),
       };
     },
@@ -630,17 +890,22 @@ export const normalizePublicLaneValidatorsPayload = (
 export const normalizePublicLaneStakePayload = (
   payload: Record<string, unknown>,
 ): PublicLaneStakeResponseView => {
-  const laneId = toPositiveInteger(
-    payload.lane_id ?? payload.laneId,
-    "stake.lane_id",
-  );
-  const total = toPositiveInteger(payload.total ?? 0, "stake.total");
-  const rawItems = toArray(payload.items ?? [], "stake.items");
+  if ("laneId" in payload) {
+    throw new Error("stake.laneId is not part of the current contract.");
+  }
+  const laneId = toPositiveInteger(payload.lane_id, "stake.lane_id");
+  const total = toPositiveInteger(payload.total, "stake.total");
+  const rawItems = toArray(payload.items, "stake.items");
 
   const items: PublicLaneStakeShareView[] = rawItems.map((raw, index) => {
     const item = toRecord(raw, `stake.items[${index}]`);
+    if ("laneId" in item || "pendingUnbonds" in item) {
+      throw new Error(
+        `stake.items[${index}] contains fields outside the current contract.`,
+      );
+    }
     const rawUnbonds = toArray(
-      item.pending_unbonds ?? item.pendingUnbonds ?? [],
+      item.pending_unbonds ?? [],
       `stake.items[${index}].pending_unbonds`,
     );
     const pending_unbonds: PublicLaneUnbondingView[] = rawUnbonds.map(
@@ -649,9 +914,14 @@ export const normalizePublicLaneStakePayload = (
           unbondRaw,
           `stake.items[${index}].pending_unbonds[${unbondIndex}]`,
         );
+        if ("requestId" in unbond || "releaseAtMs" in unbond) {
+          throw new Error(
+            `stake.items[${index}].pending_unbonds[${unbondIndex}] contains fields outside the current contract.`,
+          );
+        }
         return {
           request_id: toStringValue(
-            unbond.request_id ?? unbond.requestId,
+            unbond.request_id,
             `stake.items[${index}].pending_unbonds[${unbondIndex}].request_id`,
           ),
           amount: toStringValue(
@@ -659,7 +929,7 @@ export const normalizePublicLaneStakePayload = (
             `stake.items[${index}].pending_unbonds[${unbondIndex}].amount`,
           ),
           release_at_ms: toPositiveInteger(
-            unbond.release_at_ms ?? unbond.releaseAtMs,
+            unbond.release_at_ms,
             `stake.items[${index}].pending_unbonds[${unbondIndex}].release_at_ms`,
           ),
         };
@@ -668,7 +938,7 @@ export const normalizePublicLaneStakePayload = (
 
     return {
       lane_id: toPositiveInteger(
-        item.lane_id ?? item.laneId ?? laneId,
+        item.lane_id ?? laneId,
         `stake.items[${index}].lane_id`,
       ),
       validator: toStringValue(
@@ -692,28 +962,37 @@ export const normalizePublicLaneStakePayload = (
 export const normalizePublicLaneRewardsPayload = (
   payload: Record<string, unknown>,
 ): PublicLaneRewardsResponseView => {
-  const laneId = toPositiveInteger(
-    payload.lane_id ?? payload.laneId,
-    "rewards.lane_id",
-  );
-  const total = toPositiveInteger(payload.total ?? 0, "rewards.total");
-  const rawItems = toArray(payload.items ?? [], "rewards.items");
+  if ("laneId" in payload) {
+    throw new Error("rewards.laneId is not part of the current contract.");
+  }
+  const laneId = toPositiveInteger(payload.lane_id, "rewards.lane_id");
+  const total = toPositiveInteger(payload.total, "rewards.total");
+  const rawItems = toArray(payload.items, "rewards.items");
 
   const items: PublicLanePendingRewardView[] = rawItems.map((raw, index) => {
     const item = toRecord(raw, `rewards.items[${index}]`);
+    if (
+      ["laneId", "lastClaimedEpoch", "pendingThroughEpoch"].some(
+        (key) => key in item,
+      )
+    ) {
+      throw new Error(
+        `rewards.items[${index}] contains fields outside the current contract.`,
+      );
+    }
     return {
       lane_id: toPositiveInteger(
-        item.lane_id ?? item.laneId ?? laneId,
+        item.lane_id ?? laneId,
         `rewards.items[${index}].lane_id`,
       ),
       account: toStringValue(item.account, `rewards.items[${index}].account`),
       asset: toStringValue(item.asset, `rewards.items[${index}].asset`),
       last_claimed_epoch: toPositiveInteger(
-        item.last_claimed_epoch ?? item.lastClaimedEpoch,
+        item.last_claimed_epoch,
         `rewards.items[${index}].last_claimed_epoch`,
       ),
       pending_through_epoch: toPositiveInteger(
-        item.pending_through_epoch ?? item.pendingThroughEpoch,
+        item.pending_through_epoch,
         `rewards.items[${index}].pending_through_epoch`,
       ),
       amount: toStringValue(item.amount, `rewards.items[${index}].amount`),
@@ -727,61 +1006,403 @@ export const normalizePublicLaneRewardsPayload = (
   };
 };
 
+export const normalizeNexusLifecyclePayload = (
+  payload: Record<string, unknown>,
+): NexusLifecycleView => {
+  const rawLanes = toArray(payload.lanes, "nexus lifecycle.lanes");
+  const lanes = rawLanes.map((rawLane, index): NexusLifecycleLaneView => {
+    const lane = toRecord(rawLane, `nexus lifecycle.lanes[${index}]`);
+    return {
+      id: toPositiveInteger(lane.id, `nexus lifecycle.lanes[${index}].id`),
+      dataspace_id: toCanonicalNonNegativeDecimalString(
+        lane.dataspace_id,
+        `nexus lifecycle.lanes[${index}].dataspace_id`,
+      ),
+      alias: toStringValue(lane.alias, `nexus lifecycle.lanes[${index}].alias`),
+      description: String(lane.description ?? "").trim(),
+      visibility: toStringValue(
+        lane.visibility,
+        `nexus lifecycle.lanes[${index}].visibility`,
+      ),
+      governance:
+        lane.governance === null || lane.governance === undefined
+          ? null
+          : String(lane.governance).trim() || null,
+      storage: toStringValue(
+        lane.storage,
+        `nexus lifecycle.lanes[${index}].storage`,
+      ),
+      proof_scheme: toStringValue(
+        lane.proof_scheme,
+        `nexus lifecycle.lanes[${index}].proof_scheme`,
+      ),
+      metadata: toMetadataRecord(lane.metadata),
+    };
+  });
+  const laneCount = toPositiveInteger(
+    payload.lane_count,
+    "nexus lifecycle.lane_count",
+  );
+  if (laneCount !== lanes.length) {
+    throw new Error(
+      "nexus lifecycle.lane_count must match nexus lifecycle.lanes.",
+    );
+  }
+  if (typeof payload.nexus_enabled !== "boolean") {
+    throw new Error("nexus lifecycle.nexus_enabled must be a boolean.");
+  }
+  return {
+    version: toPositiveInteger(payload.version, "nexus lifecycle.version"),
+    nexus_enabled: payload.nexus_enabled,
+    lane_count: laneCount,
+    lanes,
+  };
+};
+
+type JsonParseSourceContext = {
+  source?: string;
+};
+
+type JsonParseWithSource = (
+  text: string,
+  reviver: (
+    this: unknown,
+    key: string,
+    value: unknown,
+    context?: JsonParseSourceContext,
+  ) => unknown,
+) => unknown;
+
+export const parseNexusLifecycleJson = (text: string): NexusLifecycleView => {
+  const payload = (JSON.parse as JsonParseWithSource)(
+    text,
+    (key, value, context) => {
+      if (key !== "dataspace_id" || typeof value !== "number") {
+        return value;
+      }
+      // JSON.parse has already rounded an unsafe integer by the time the
+      // reviver receives `value`. Modern Electron/Node supplies the original
+      // numeric token as context.source, so retain that exact decimal lexeme.
+      // On an older runtime, leaving `value` intact makes normalization reject
+      // unsafe numbers instead of silently selecting the wrong dataspace.
+      return context?.source ?? value;
+    },
+  );
+  return normalizeNexusLifecyclePayload(toRecord(payload, "nexus lifecycle"));
+};
+
+export const normalizeOfflineReadinessPayload = (
+  payload: Record<string, unknown>,
+  expectedAssetDefinitionId?: string,
+): OfflineReadinessView => {
+  assertExactObjectKeys(
+    payload,
+    [
+      "required_bridge_abi_version",
+      "cash_handoff_capability",
+      "max_hops",
+      "asset_definition_id",
+      "asset_scale",
+      "evaluated_block_height",
+      "evaluated_block_hash",
+      "active_transfer_verifier",
+      "active_topup_shield_verifier",
+      "active_unshield_verifier",
+      "active_recursive_step_eq_verifier",
+      "active_recursive_step_ep_verifier",
+      "artifact_set",
+      "proof_backend_available",
+      "recursive_lineage_supported",
+      "ready",
+      "blockers",
+    ],
+    "offline readiness",
+  );
+  if (payload.required_bridge_abi_version !== 21) {
+    throw new Error(
+      "offline readiness.required_bridge_abi_version must be exactly 21.",
+    );
+  }
+  if (payload.cash_handoff_capability !== "cash_handoff_v1") {
+    throw new Error(
+      'offline readiness.cash_handoff_capability must be exactly "cash_handoff_v1".',
+    );
+  }
+  if (payload.max_hops !== 8) {
+    throw new Error("offline readiness.max_hops must be exactly 8.");
+  }
+  if (typeof payload.asset_definition_id !== "string") {
+    throw new Error("offline readiness.asset_definition_id must be a string.");
+  }
+  const assetDefinitionId = normalizeFirstReleaseAssetDefinitionId(
+    payload.asset_definition_id,
+    "offline readiness.asset_definition_id",
+  );
+  if (assetDefinitionId !== payload.asset_definition_id) {
+    throw new Error(
+      "offline readiness.asset_definition_id must be an exact first-release asset definition literal.",
+    );
+  }
+  const assetScale =
+    payload.asset_scale === null
+      ? null
+      : toExactJsonNonNegativeInteger(
+          payload.asset_scale,
+          "offline readiness.asset_scale",
+        );
+  if (assetScale !== null && assetScale > 0xffff_ffff) {
+    throw new Error("offline readiness.asset_scale must be a uint32 or null.");
+  }
+  const evaluatedBlockHeight = toExactJsonNonNegativeInteger(
+    payload.evaluated_block_height,
+    "offline readiness.evaluated_block_height",
+  );
+  if (
+    typeof payload.evaluated_block_hash !== "string" ||
+    !/^[0-9a-f]{64}$/u.test(payload.evaluated_block_hash)
+  ) {
+    throw new Error(
+      "offline readiness.evaluated_block_hash must be a lowercase 32-byte hash.",
+    );
+  }
+  const nullableRecord = (
+    value: unknown,
+    label: string,
+  ): Record<string, unknown> | null => {
+    if (value === null) return null;
+    return toRecord(value, label);
+  };
+  const rawBlockers = toArray(payload.blockers, "offline readiness.blockers");
+  const blockers = rawBlockers.map(
+    (rawBlocker, index): OfflineReadinessBlockerView => {
+      const blocker = toRecord(
+        rawBlocker,
+        `offline readiness.blockers[${index}]`,
+      );
+      assertExactObjectKeys(
+        blocker,
+        ["code", "message"],
+        `offline readiness.blockers[${index}]`,
+      );
+      if (
+        typeof blocker.code !== "string" ||
+        !/^[a-z0-9][a-z0-9_]{0,63}$/u.test(blocker.code)
+      ) {
+        throw new Error(
+          `offline readiness.blockers[${index}].code is malformed.`,
+        );
+      }
+      if (
+        typeof blocker.message !== "string" ||
+        !blocker.message.trim() ||
+        blocker.message !== blocker.message.trim()
+      ) {
+        throw new Error(
+          `offline readiness.blockers[${index}].message must be a non-empty trimmed string.`,
+        );
+      }
+      return {
+        code: blocker.code,
+        message: blocker.message,
+      };
+    },
+  );
+  if (
+    typeof payload.proof_backend_available !== "boolean" ||
+    typeof payload.recursive_lineage_supported !== "boolean" ||
+    typeof payload.ready !== "boolean"
+  ) {
+    throw new Error(
+      "offline readiness capability fields must be boolean values.",
+    );
+  }
+  const normalized: OfflineReadinessView = {
+    required_bridge_abi_version: payload.required_bridge_abi_version,
+    cash_handoff_capability: payload.cash_handoff_capability,
+    max_hops: 8,
+    asset_definition_id: assetDefinitionId,
+    asset_scale: assetScale,
+    evaluated_block_height: evaluatedBlockHeight,
+    evaluated_block_hash: payload.evaluated_block_hash,
+    active_transfer_verifier: nullableRecord(
+      payload.active_transfer_verifier,
+      "offline readiness.active_transfer_verifier",
+    ),
+    active_topup_shield_verifier: nullableRecord(
+      payload.active_topup_shield_verifier,
+      "offline readiness.active_topup_shield_verifier",
+    ),
+    active_unshield_verifier: nullableRecord(
+      payload.active_unshield_verifier,
+      "offline readiness.active_unshield_verifier",
+    ),
+    active_recursive_step_eq_verifier: nullableRecord(
+      payload.active_recursive_step_eq_verifier,
+      "offline readiness.active_recursive_step_eq_verifier",
+    ),
+    active_recursive_step_ep_verifier: nullableRecord(
+      payload.active_recursive_step_ep_verifier,
+      "offline readiness.active_recursive_step_ep_verifier",
+    ),
+    artifact_set: nullableRecord(
+      payload.artifact_set,
+      "offline readiness.artifact_set",
+    ),
+    proof_backend_available: payload.proof_backend_available,
+    recursive_lineage_supported: payload.recursive_lineage_supported,
+    ready: payload.ready,
+    blockers,
+  };
+  if (
+    expectedAssetDefinitionId !== undefined &&
+    normalized.asset_definition_id !== expectedAssetDefinitionId
+  ) {
+    throw new Error(
+      "offline readiness.asset_definition_id must match the requested asset definition.",
+    );
+  }
+  if (normalized.ready !== (normalized.blockers.length === 0)) {
+    throw new Error(
+      "offline readiness.ready must be true exactly when blockers is empty.",
+    );
+  }
+  if (
+    normalized.ready &&
+    (normalized.asset_scale === null || normalized.asset_scale > 28)
+  ) {
+    throw new Error(
+      "A ready offline response must include a supported asset scale.",
+    );
+  }
+  return normalized;
+};
+
+export const normalizeAssetDefinitionConfidentialPolicy = (
+  assetDefinition: Record<string, unknown>,
+): AssetDefinitionConfidentialPolicyView | null => {
+  if (
+    assetDefinition.confidential_policy === null ||
+    assetDefinition.confidential_policy === undefined
+  ) {
+    return null;
+  }
+  const policy = toRecord(
+    assetDefinition.confidential_policy,
+    "asset definition.confidential_policy",
+  );
+  const nullableBoolean = (value: unknown, label: string): boolean | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== "boolean") {
+      throw new Error(`${label} must be a boolean or null.`);
+    }
+    return value;
+  };
+  const nullableString = (value: unknown): string | null => {
+    if (value === null || value === undefined) return null;
+    return String(value).trim() || null;
+  };
+  return {
+    mode: toStringValue(
+      policy.mode,
+      "asset definition.confidential_policy.mode",
+    ),
+    allow_shield: nullableBoolean(
+      policy.allow_shield,
+      "asset definition.confidential_policy.allow_shield",
+    ),
+    allow_unshield: nullableBoolean(
+      policy.allow_unshield,
+      "asset definition.confidential_policy.allow_unshield",
+    ),
+    vk_transfer: nullableString(policy.vk_transfer),
+    vk_unshield: nullableString(policy.vk_unshield),
+    vk_shield: nullableString(policy.vk_shield),
+    vk_set_hash: nullableString(policy.vk_set_hash),
+    poseidon_params_id: toNullableInteger(policy.poseidon_params_id),
+    pedersen_params_id: toNullableInteger(policy.pedersen_params_id),
+  };
+};
+
 export const normalizeConfidentialAssetPolicyPayload = (
   payload: Record<string, unknown>,
 ): ConfidentialAssetPolicyView => {
-  const asset_id = toStringValue(
-    payload.asset_id ?? payload.assetId,
-    "confidential.asset_id",
-  );
+  const legacyFields = [
+    "assetId",
+    "blockHeight",
+    "currentMode",
+    "effectiveMode",
+    "allowShield",
+    "allowUnshield",
+    "vkTransfer",
+    "vkUnshield",
+    "vkShield",
+    "vkSetHash",
+    "poseidonParamsId",
+    "pedersenParamsId",
+    "pendingTransition",
+  ];
+  if (legacyFields.some((field) => field in payload)) {
+    throw new Error(
+      "Confidential asset policy contains fields outside the first-release contract.",
+    );
+  }
+  const asset_id = toStringValue(payload.asset_id, "confidential.asset_id");
   const block_height = toPositiveInteger(
-    payload.block_height ?? payload.blockHeight ?? 0,
+    payload.block_height,
     "confidential.block_height",
   );
   const current_mode = toStringValue(
-    payload.current_mode ?? payload.currentMode,
+    payload.current_mode,
     "confidential.current_mode",
   );
   const effective_mode = toStringValue(
-    payload.effective_mode ?? payload.effectiveMode ?? current_mode,
+    payload.effective_mode,
     "confidential.effective_mode",
   );
 
-  const pendingTransitionRaw =
-    payload.pending_transition ?? payload.pendingTransition;
+  const pendingTransitionRaw = payload.pending_transition;
   let pending_transition: ConfidentialPolicyTransitionView | null = null;
   if (pendingTransitionRaw !== null && pendingTransitionRaw !== undefined) {
     const pending = toRecord(
       pendingTransitionRaw,
       "confidential.pending_transition",
     );
+    const legacyPendingFields = [
+      "transitionId",
+      "previousMode",
+      "newMode",
+      "effectiveHeight",
+      "conversionWindow",
+      "windowOpenHeight",
+    ];
+    if (legacyPendingFields.some((field) => field in pending)) {
+      throw new Error(
+        "Confidential pending transition contains fields outside the first-release contract.",
+      );
+    }
     pending_transition = {
       transition_id: toStringValue(
-        pending.transition_id ?? pending.transitionId,
+        pending.transition_id,
         "confidential.pending_transition.transition_id",
       ),
       previous_mode: toStringValue(
-        pending.previous_mode ?? pending.previousMode,
+        pending.previous_mode,
         "confidential.pending_transition.previous_mode",
       ),
       new_mode: toStringValue(
-        pending.new_mode ?? pending.newMode,
+        pending.new_mode,
         "confidential.pending_transition.new_mode",
       ),
       effective_height: toPositiveInteger(
-        pending.effective_height ?? pending.effectiveHeight,
+        pending.effective_height,
         "confidential.pending_transition.effective_height",
       ),
-      conversion_window: toNullableInteger(
-        pending.conversion_window ?? pending.conversionWindow,
-      ),
-      window_open_height: toNullableInteger(
-        pending.window_open_height ?? pending.windowOpenHeight,
-      ),
+      conversion_window: toNullableInteger(pending.conversion_window),
+      window_open_height: toNullableInteger(pending.window_open_height),
     };
   }
 
-  const vkSetHashRaw = payload.vk_set_hash ?? payload.vkSetHash;
+  const vkSetHashRaw = payload.vk_set_hash;
   const vk_set_hash =
     vkSetHashRaw === undefined ||
     vkSetHashRaw === null ||
@@ -789,19 +1410,17 @@ export const normalizeConfidentialAssetPolicyPayload = (
       ? null
       : String(vkSetHashRaw);
 
-  const readNullableBoolean = (value: unknown): boolean | null => {
-    if (value === undefined || value === null || value === "") {
+  const readNullableBoolean = (
+    value: unknown,
+    label: string,
+  ): boolean | null => {
+    if (value === undefined || value === null) {
       return null;
     }
     if (typeof value === "boolean") {
       return value;
     }
-    if (typeof value === "string") {
-      const normalized = value.trim().toLowerCase();
-      if (normalized === "true") return true;
-      if (normalized === "false") return false;
-    }
-    return Boolean(value);
+    throw new Error(`${label} must be a boolean or null.`);
   };
 
   const readNullableString = (value: unknown) => {
@@ -815,21 +1434,19 @@ export const normalizeConfidentialAssetPolicyPayload = (
     current_mode,
     effective_mode,
     allow_shield: readNullableBoolean(
-      payload.allow_shield ?? payload.allowShield,
+      payload.allow_shield,
+      "confidential.allow_shield",
     ),
     allow_unshield: readNullableBoolean(
-      payload.allow_unshield ?? payload.allowUnshield,
+      payload.allow_unshield,
+      "confidential.allow_unshield",
     ),
-    vk_transfer: readNullableString(payload.vk_transfer ?? payload.vkTransfer),
-    vk_unshield: readNullableString(payload.vk_unshield ?? payload.vkUnshield),
-    vk_shield: readNullableString(payload.vk_shield ?? payload.vkShield),
+    vk_transfer: readNullableString(payload.vk_transfer),
+    vk_unshield: readNullableString(payload.vk_unshield),
+    vk_shield: readNullableString(payload.vk_shield),
     vk_set_hash,
-    poseidon_params_id: toNullableInteger(
-      payload.poseidon_params_id ?? payload.poseidonParamsId,
-    ),
-    pedersen_params_id: toNullableInteger(
-      payload.pedersen_params_id ?? payload.pedersenParamsId,
-    ),
+    poseidon_params_id: toNullableInteger(payload.poseidon_params_id),
+    pedersen_params_id: toNullableInteger(payload.pedersen_params_id),
     pending_transition,
   };
 };
@@ -840,12 +1457,8 @@ export const readNexusUnbondingDelayMs = (
   const root = toRecord(payload, "configuration");
   const nexus = toRecord(root.nexus ?? {}, "configuration.nexus");
   const staking = toRecord(nexus.staking ?? {}, "configuration.nexus.staking");
-  const raw =
-    staking.unbonding_delay_ms ??
-    staking.unbondingDelayMs ??
-    staking.unbonding_delay;
   return toPositiveInteger(
-    raw,
+    staking.unbonding_delay_ms,
     "configuration.nexus.staking.unbonding_delay_ms",
   );
 };

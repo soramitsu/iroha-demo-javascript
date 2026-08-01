@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import KaigiView from "@/views/KaigiView.vue";
+import { useEndpointStore } from "@/stores/endpoint";
 import { KAIGI_STORAGE_KEY } from "@/stores/kaigi";
 import { useSessionStore } from "@/stores/session";
 import {
@@ -9,14 +10,12 @@ import {
   stringifyKaigiSignalEnvelope,
 } from "@/utils/kaigi";
 import {
-  buildKaigiCompactInviteHashRoute,
-  buildKaigiCompactInvitePayload,
+  buildKaigiInvite,
   buildKaigiInviteHashRoute,
-  encodeKaigiInvitePayload,
-  KAIGI_INVITE_SCHEMA,
-  type KaigiInvitePayload,
 } from "@/utils/kaigiInvite";
 
+const KAIGI_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const KAIGI_INVITE_SECRET = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1u";
 const createKaigiMeetingMock = vi.fn();
 const getKaigiCallMock = vi.fn();
 const joinKaigiMeetingMock = vi.fn();
@@ -27,6 +26,19 @@ const generateKaigiSignalKeyPairMock = vi.fn();
 const endKaigiMeetingMock = vi.fn();
 const getPrivateKaigiConfidentialXorStateMock = vi.fn();
 const selfShieldPrivateKaigiXorMock = vi.fn();
+const finalizedTransaction = (hashCharacter: string) => {
+  const hash = hashCharacter.repeat(64);
+  return {
+    hash,
+    finality: {
+      status: "finalized" as const,
+      transactionHash: hash,
+      blockHeight: 17,
+      blockHash: "f".repeat(64),
+      finalizedBlockHeight: 19,
+    },
+  };
+};
 const getUserMediaMock = vi.fn();
 const enumerateDevicesMock = vi.fn();
 const writeTextMock = vi.fn();
@@ -239,36 +251,12 @@ const getTeleportedButtonByText = (text: string) => {
   return button;
 };
 
-const buildInviteHash = (options?: { live?: boolean }) => {
-  const nowMs = Date.now();
-  const invite: KaigiInvitePayload = {
-    schema: KAIGI_INVITE_SCHEMA,
-    callId: "kaigi:kaigi-testroom",
-    meetingCode: "testroom",
-    title: "Demo Call",
-    hostAccountId: "alice@wonderland",
-    hostDisplayName: "Alice",
-    hostParticipantId: "alice",
-    hostKaigiPublicKeyBase64Url: "host-public",
-    scheduledStartMs: nowMs + 60_000,
-    expiresAtMs: nowMs + 24 * 60 * 60 * 1000,
-    createdAtMs: nowMs,
-    live: options?.live ?? true,
-    offerDescription: {
-      type: "offer",
-      sdp: "offer-sdp",
-    },
-  };
-  const token = encodeKaigiInvitePayload(invite);
-  return `#${buildKaigiInviteHashRoute(token)}`;
-};
-
-const buildCompactInviteHash = () => {
-  const compact = buildKaigiCompactInvitePayload(
-    "kaigi:kaigi-testroom",
-    "bXktc2VjcmV0",
+const buildInviteHash = () => {
+  const invite = buildKaigiInvite(
+    "kaigi.universal:kaigi-testroom",
+    KAIGI_INVITE_SECRET,
   );
-  return `#${buildKaigiCompactInviteHashRoute(compact)}`;
+  return `#${buildKaigiInviteHashRoute(invite)}`;
 };
 
 const buildAnswerPacket = (roomId: string) =>
@@ -308,14 +296,15 @@ describe("KaigiView", () => {
     FakePeerConnection.instances = [];
     FakePeerConnection.emitStreamlessTrackEvents = false;
     window.location.hash = "";
+    localStorage.clear();
 
     generateKaigiSignalKeyPairMock.mockReturnValue({
       publicKeyBase64Url: "host-public",
       privateKeyBase64Url: "host-private",
     });
-    createKaigiMeetingMock.mockResolvedValue({ hash: "create-hash" });
+    createKaigiMeetingMock.mockResolvedValue(finalizedTransaction("a"));
     getKaigiCallMock.mockResolvedValue({
-      callId: "kaigi:kaigi-testroom",
+      callId: "kaigi.universal:kaigi-testroom",
       meetingCode: "testroom",
       title: "Demo Call",
       hostDisplayName: "Alice",
@@ -334,20 +323,20 @@ describe("KaigiView", () => {
         sdp: "offer-sdp",
       },
     });
-    joinKaigiMeetingMock.mockResolvedValue({ hash: "join-hash" });
+    joinKaigiMeetingMock.mockResolvedValue(finalizedTransaction("b"));
     pollKaigiMeetingSignalsMock.mockResolvedValue([]);
     watchKaigiCallEventsMock.mockResolvedValue("watch-1");
-    endKaigiMeetingMock.mockResolvedValue({ hash: "end-hash" });
+    endKaigiMeetingMock.mockResolvedValue(finalizedTransaction("c"));
     getPrivateKaigiConfidentialXorStateMock.mockResolvedValue({
-      assetDefinitionId: "xor#universal",
-      resolvedAssetId: "xor#universal",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
+      resolvedAssetId: KAIGI_ASSET_DEFINITION_ID,
       policyMode: "Convertible",
       shieldedBalance: "0",
       shieldedBalanceExact: true,
       transparentBalance: "9",
       canSelfShield: true,
     });
-    selfShieldPrivateKaigiXorMock.mockResolvedValue({ hash: "shield-hash" });
+    selfShieldPrivateKaigiXorMock.mockResolvedValue(finalizedTransaction("d"));
 
     vi.stubGlobal("MediaStream", FakeMediaStream);
     vi.stubGlobal("RTCPeerConnection", FakePeerConnection);
@@ -404,6 +393,7 @@ describe("KaigiView", () => {
 
   afterEach(() => {
     activeWrapper?.unmount();
+    vi.useRealTimers();
     activeWrapper = null;
     document.body.innerHTML = "";
     window.location.hash = "";
@@ -438,7 +428,11 @@ describe("KaigiView", () => {
     }
   });
 
-  const mountView = (options?: { localOnly?: boolean }) => {
+  const mountView = (options?: {
+    localOnly?: boolean;
+    kaigiSupported?: boolean;
+    writeAllowed?: boolean;
+  }) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
@@ -446,7 +440,7 @@ describe("KaigiView", () => {
       connection: {
         toriiUrl: "http://localhost:8080",
         chainId: "chain",
-        assetDefinitionId: "norito:abcdef0123456789",
+        assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
         networkPrefix: 369,
       },
       accounts: [
@@ -462,6 +456,54 @@ describe("KaigiView", () => {
       ],
       activeAccountId: "alice@wonderland",
     });
+    useEndpointStore().$patch({
+      state: "ready",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: "http://localhost:8080",
+        expected: { chainId: "chain", networkPrefix: 369 },
+        observed: { chainId: "chain", networkPrefix: 369 },
+        identityStatus:
+          options?.writeAllowed === false ? "unverified" : "matched",
+        accessMode:
+          options?.writeAllowed === false ? "read-only" : "read-write",
+        checkedAtMs: 1,
+        evidence:
+          options?.writeAllowed === false
+            ? []
+            : [
+                {
+                  source: "chain-metadata",
+                  identity: { chainId: "chain", networkPrefix: 369 },
+                  observedAtMs: 1,
+                },
+              ],
+        diagnostic: {
+          code:
+            options?.writeAllowed === false
+              ? "endpoint_identity_unverified"
+              : "endpoint_identity_matched",
+          message:
+            options?.writeAllowed === false
+              ? "Endpoint identity is not verified."
+              : "Endpoint identity matched.",
+        },
+        features: {
+          kaigiMeetings: {
+            supported: options?.kaigiSupported ?? true,
+            source: "openapi",
+            requiredOperations: [
+              "POST /v1/pipeline/transactions",
+              "POST /v1/pipeline/transaction-entrypoints",
+            ],
+            missingOperations:
+              options?.kaigiSupported === false
+                ? ["POST /v1/pipeline/transaction-entrypoints"]
+                : [],
+          },
+        },
+      },
+    } as any);
     activeWrapper = mount(KaigiView, {
       attachTo: document.body,
       global: {
@@ -508,6 +550,7 @@ describe("KaigiView", () => {
     expect(createKaigiMeetingMock.mock.calls[0]?.[0]).toMatchObject({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
       hostAccountId: "alice@wonderland",
       privateKeyHex: "cd".repeat(32),
       hostDisplayName: "Alice",
@@ -533,6 +576,41 @@ describe("KaigiView", () => {
         /^iroha:\/\/kaigi\/join\?call=.*&secret=[A-Za-z0-9_-]+$/,
       ),
     );
+  });
+
+  it("routes unsupported meeting creation to explicit Advanced prerequisites without a share link", async () => {
+    const wrapper = mountView({ kaigiSupported: false });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "This endpoint does not advertise the Kaigi meeting write operations. Use Advanced signaling for manual raw packets.",
+    );
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+
+    expect(createKaigiMeetingMock).not.toHaveBeenCalled();
+    expect(selfShieldPrivateKaigiXorMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Create a manual offer packet in Advanced signaling instead.",
+    );
+    expect(wrapper.find(".kaigi-link-box").exists()).toBe(false);
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
+
+    await getButtonByText(wrapper, "Create manual offer packet").trigger(
+      "click",
+    );
+    await flushPromises();
+
+    expect(createKaigiMeetingMock).not.toHaveBeenCalled();
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).toContain("offer-sdp");
   });
 
   it("lets users choose camera and microphone devices before opening media", async () => {
@@ -764,7 +842,7 @@ describe("KaigiView", () => {
     expect(document.activeElement).toBe(createButton.element);
   });
 
-  it("falls back to a transparent manual invite when private live registration fails", async () => {
+  it("never creates a share link when live registration fails", async () => {
     createKaigiMeetingMock.mockRejectedValueOnce(
       new Error("proof helper unavailable"),
     );
@@ -774,18 +852,25 @@ describe("KaigiView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(
-      "Meeting link ready. Private automatic signaling is unavailable, so this meeting will use a transparent manual answer fallback.",
+      "The on-chain meeting was not created, so there is no invite link to share.",
     );
-    expect(wrapper.text()).toContain(
-      "Automatic private meeting registration failed: proof helper unavailable. Share the manual invite instead. This fallback does not preserve private on-chain signaling.",
-    );
-    expect(wrapper.text()).toContain("Manual fallback");
+    expect(wrapper.text()).toContain("proof helper unavailable");
+    expect(wrapper.find(".kaigi-link-box").exists()).toBe(false);
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).toContain("offer-sdp");
   });
 
   it("prompts for self-shielding and retries private meeting creation", async () => {
     createKaigiMeetingMock.mockRejectedValueOnce(
       new Error(
-        "Private Kaigi needs 2 shielded XOR in xor#universal, but only 0 is available. Self-shield XOR first.",
+        `Private Kaigi needs 2 shielded XOR in ${KAIGI_ASSET_DEFINITION_ID}, but only 0 is available. Self-shield XOR first.`,
       ),
     );
     const wrapper = mountView();
@@ -795,7 +880,10 @@ describe("KaigiView", () => {
 
     expect(getPrivateKaigiConfidentialXorStateMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      networkPrefix: 369,
       accountId: "alice@wonderland",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
     });
     expect(wrapper.text()).toContain(
       "Private Kaigi needs shielded XOR before it can submit this action.",
@@ -811,7 +899,9 @@ describe("KaigiView", () => {
     expect(selfShieldPrivateKaigiXorMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      networkPrefix: 369,
       accountId: "alice@wonderland",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
       privateKeyHex: "cd".repeat(32),
       amount: "2",
     });
@@ -819,26 +909,25 @@ describe("KaigiView", () => {
     expect(wrapper.text()).toContain("Meeting link ready");
   });
 
-  it("still loads legacy invite tokens for manual fallback", async () => {
-    window.location.hash = buildInviteHash({ live: false });
+  it("rejects legacy invite tokens instead of loading embedded session data", async () => {
+    window.location.hash = "#/kaigi?invite=legacy-sdp-bearing-token";
     const wrapper = mountView();
     await flushPromises();
 
     expect(getKaigiCallMock).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain("Meeting summary");
-    expect(wrapper.text()).toContain("Manual fallback");
-    expect(wrapper.text()).toContain("Host wallet");
+    expect(wrapper.text()).not.toContain("Meeting summary");
+    expect(wrapper.text()).not.toContain("legacy-sdp-bearing-token");
   });
 
   it("loads an invite from the hash route and joins through the live path", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     const wrapper = mountView();
     await flushPromises();
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "kaigi:kaigi-testroom",
-      inviteSecretBase64Url: "bXktc2VjcmV0",
+      callId: "kaigi.universal:kaigi-testroom",
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
     });
     expect(wrapper.text()).toContain("Meeting summary");
     expect(wrapper.text()).toContain("Demo Call");
@@ -852,12 +941,9 @@ describe("KaigiView", () => {
     expect(joinKaigiMeetingMock.mock.calls[0]?.[0]).toMatchObject({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
       participantAccountId: "alice@wonderland",
-      hostKaigiPublicKeyBase64Url: "host-public",
-      roomId: "kaigi:kaigi-testroom",
-      privacyMode: "private",
-      rosterRootHex: "00".repeat(32),
-      walletIdentity: undefined,
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
       answerDescription: {
         type: "answer",
         sdp: "answer-sdp",
@@ -870,8 +956,34 @@ describe("KaigiView", () => {
     expect(wrapper.find(".kaigi-signal-card").exists()).toBe(false);
   });
 
+  it("keeps live-invite joining manual while endpoint identity is read-only", async () => {
+    window.location.hash = buildInviteHash();
+    const wrapper = mountView({ writeAllowed: false });
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Endpoint identity is not verified.");
+    expect(wrapper.text()).toContain("Manual fallback");
+
+    await getButtonByText(wrapper, "Join meeting").trigger("click");
+    await flushPromises();
+
+    expect(joinKaigiMeetingMock).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain(
+      "Create a manual answer packet in Advanced signaling instead.",
+    );
+    expect(
+      (wrapper.get(".kaigi-advanced").element as HTMLDetailsElement).open,
+    ).toBe(true);
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+  });
+
   it("falls back to a manual answer when private automatic join fails", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     joinKaigiMeetingMock.mockRejectedValueOnce(
       new Error("join proof rejected"),
     );
@@ -914,10 +1026,10 @@ describe("KaigiView", () => {
   });
 
   it("prompts for self-shielding and retries private join", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     joinKaigiMeetingMock.mockRejectedValueOnce(
       new Error(
-        "Private Kaigi needs 2.1 shielded XOR in xor#universal, but only 0 is available. Self-shield XOR first.",
+        `Private Kaigi needs 2.1 shielded XOR in ${KAIGI_ASSET_DEFINITION_ID}, but only 0 is available. Self-shield XOR first.`,
       ),
     );
     const wrapper = mountView();
@@ -928,7 +1040,10 @@ describe("KaigiView", () => {
 
     expect(getPrivateKaigiConfidentialXorStateMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
+      chainId: "chain",
+      networkPrefix: 369,
       accountId: "alice@wonderland",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
     });
     expect(wrapper.text()).toContain(
       "Private Kaigi needs shielded XOR before it can submit this action.",
@@ -943,7 +1058,9 @@ describe("KaigiView", () => {
     expect(selfShieldPrivateKaigiXorMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      networkPrefix: 369,
       accountId: "alice@wonderland",
+      assetDefinitionId: KAIGI_ASSET_DEFINITION_ID,
       privateKeyHex: "cd".repeat(32),
       amount: "3",
     });
@@ -954,7 +1071,7 @@ describe("KaigiView", () => {
   });
 
   it("falls back to the manual answer path for local-only wallets", async () => {
-    window.location.hash = buildCompactInviteHash();
+    window.location.hash = buildInviteHash();
     const wrapper = mountView({ localOnly: true });
     await flushPromises();
 
@@ -965,7 +1082,7 @@ describe("KaigiView", () => {
 
     expect(joinKaigiMeetingMock).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain(
-      "Answer packet ready. Send it to the host manually.",
+      "Create a manual answer packet in Advanced signaling instead.",
     );
     expect(wrapper.find(".kaigi-stage").exists()).toBe(false);
     expect(wrapper.find(".kaigi-overview-card").exists()).toBe(true);
@@ -977,7 +1094,17 @@ describe("KaigiView", () => {
         wrapper.get('textarea[name="kaigiOutgoingPacket"]')
           .element as HTMLTextAreaElement
       ).value,
-    ).not.toBe("");
+    ).toBe("");
+    await getButtonByText(wrapper, "Create manual answer packet").trigger(
+      "click",
+    );
+    await flushPromises();
+    expect(
+      (
+        wrapper.get('textarea[name="kaigiOutgoingPacket"]')
+          .element as HTMLTextAreaElement
+      ).value,
+    ).toContain("answer-sdp");
     expect(
       getButtonByText(wrapper, "Copy packet").attributes("disabled"),
     ).toBeUndefined();
@@ -1006,11 +1133,7 @@ describe("KaigiView", () => {
     await flushPromises();
 
     expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(1);
-    expect(watchKaigiCallEventsMock).toHaveBeenCalledTimes(1);
-    expect(watchKaigiCallEventsMock.mock.calls[0]?.[0]).toMatchObject({
-      toriiUrl: "http://localhost:8080",
-      callId: expect.any(String),
-    });
+    expect(watchKaigiCallEventsMock).not.toHaveBeenCalled();
     expect(FakePeerConnection.instances[0]?.remoteDescription).toEqual({
       type: "answer",
       sdp: "remote-answer-sdp",
@@ -1046,12 +1169,12 @@ describe("KaigiView", () => {
     );
     watchKaigiCallEventsMock.mockImplementation(
       async (
-        _input: unknown,
+        input: { callId: string },
         onEvent: (event: { kind: string; callId: string }) => Promise<void>,
       ) => {
         await onEvent({
           kind: "roster_updated",
-          callId: "kaigi:kaigi-testroom",
+          callId: input.callId,
         });
         return "watch-2";
       },
@@ -1072,6 +1195,70 @@ describe("KaigiView", () => {
     );
   });
 
+  it("polls periodically while the host context is active and stops after a wallet context change", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+    expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await flushPromises();
+    expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(2);
+
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          i105AccountId: "sorauBob",
+          publicKeyHex: "ef".repeat(32),
+          privateKeyHex: "12".repeat(32),
+          localOnly: false,
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    await flushPromises();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await flushPromises();
+    expect(pollKaigiMeetingSignalsMock).toHaveBeenCalledTimes(2);
+    expect(stopWatchingKaigiCallEventsMock).toHaveBeenCalledWith("watch-1");
+  });
+
+  it("reconnects a closed Kaigi event stream with bounded backoff", async () => {
+    vi.useFakeTimers();
+    const wrapper = mountView();
+
+    await getButtonByText(wrapper, "Create meeting link").trigger("click");
+    await flushPromises();
+    expect(watchKaigiCallEventsMock).toHaveBeenCalledTimes(1);
+
+    const firstWatchInput = watchKaigiCallEventsMock.mock.calls[0]?.[0] as {
+      callId: string;
+    };
+    const firstWatchCallback = watchKaigiCallEventsMock.mock
+      .calls[0]?.[1] as (event: {
+      kind: "stream_closed";
+      callId: string;
+    }) => Promise<void>;
+    await firstWatchCallback({
+      kind: "stream_closed",
+      callId: firstWatchInput.callId,
+    });
+
+    await vi.advanceTimersByTimeAsync(999);
+    expect(watchKaigiCallEventsMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await flushPromises();
+    expect(watchKaigiCallEventsMock).toHaveBeenCalledTimes(2);
+  });
+
   it("restores the latest live host meeting from persisted state", async () => {
     const nowMs = Date.now();
     localStorage.setItem(
@@ -1080,10 +1267,16 @@ describe("KaigiView", () => {
         hydrated: true,
         hostSessions: [
           {
+            endpointScope: {
+              origin: "http://localhost:8080",
+              chainId: "chain",
+              networkPrefix: 369,
+              storageSegment: "v2:http%3A%2F%2Flocalhost%3A8080:chain:369",
+            },
             accountId: "alice@wonderland",
-            callId: "kaigi:kaigi-testroom",
+            callId: "kaigi.universal:kaigi-testroom",
             meetingCode: "testroom",
-            inviteSecretBase64Url: "bXktc2VjcmV0",
+            inviteSecretBase64Url: KAIGI_INVITE_SECRET,
             hostKaigiKeys: {
               publicKeyBase64Url: "host-public",
               privateKeyBase64Url: "host-private",
@@ -1104,8 +1297,8 @@ describe("KaigiView", () => {
 
     expect(getKaigiCallMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      callId: "kaigi:kaigi-testroom",
-      inviteSecretBase64Url: "bXktc2VjcmV0",
+      callId: "kaigi.universal:kaigi-testroom",
+      inviteSecretBase64Url: KAIGI_INVITE_SECRET,
     });
     expect(wrapper.text()).toContain("Resumed active meeting link.");
   });

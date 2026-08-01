@@ -3,14 +3,25 @@ import { AccountAddress } from "@iroha/iroha-js";
 
 import {
   type FaucetRequestProgress,
+  decodeAccountFaucetResponse,
   isDecimalLessThan,
   requestFaucetFundsWithPuzzle,
   shouldRetryFaucetPuzzle,
 } from "../electron/faucetApi";
 import type { FaucetPowPuzzle } from "../electron/faucetPow";
 
+const TAIRA_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const MINAMOTO_CHAIN_ID = "00000000-0000-0000-0000-000000000000";
+const TAIRA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const OTHER_ASSET_DEFINITION_ID = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+const FAUCET_TX_HASH = "ab".repeat(32);
+const RETRY_TX_HASH = "cd".repeat(32);
+const JSON_RETRY_TX_HASH = "ef".repeat(32);
+
 const basePuzzle: FaucetPowPuzzle = {
   algorithm: "scrypt-leading-zero-bits-v1",
+  chain_id: TAIRA_CHAIN_ID,
+  chain_discriminant: 369,
   difficulty_bits: 4,
   anchor_height: 42,
   anchor_block_hash_hex:
@@ -31,6 +42,18 @@ const testnetAccountId = AccountAddress.fromAccount({
 const soraAccountId = AccountAddress.fromAccount({
   publicKey: Buffer.from(SAMPLE_PUBLIC_KEY_HEX, "hex"),
 }).toI105();
+
+const accountFaucetResponse = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  account_id: testnetAccountId,
+  asset_definition_id: TAIRA_XOR_ASSET_DEFINITION_ID,
+  asset_id: `${TAIRA_XOR_ASSET_DEFINITION_ID}#${testnetAccountId}`,
+  amount: "25000",
+  tx_hash_hex: FAUCET_TX_HASH,
+  status: "QUEUED",
+  ...overrides,
+});
 
 describe("faucetApi", () => {
   it("canonicalizes the account literal onto the active network before solving and posting the faucet proof", async () => {
@@ -59,22 +82,12 @@ describe("faucetApi", () => {
         }),
       )
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            account_id: testnetAccountId,
-            asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${testnetAccountId}`,
-            amount: "25000",
-            tx_hash_hex: "0xabc",
-            status: "QUEUED",
-          }),
-          {
-            status: 202,
-            headers: {
-              "content-type": "application/json",
-            },
+        new Response(JSON.stringify(accountFaucetResponse()), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
           },
-        ),
+        }),
       );
     const sleep = vi.fn().mockResolvedValue(undefined);
     const solvePuzzle = vi.fn().mockResolvedValue({
@@ -86,6 +99,7 @@ describe("faucetApi", () => {
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
       accountId: soraAccountId,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
       sleep,
@@ -116,7 +130,83 @@ describe("faucetApi", () => {
         }),
       }),
     );
-    expect(result.tx_hash_hex).toBe("0xabc");
+    expect(result.tx_hash_hex).toBe(FAUCET_TX_HASH);
+  });
+
+  it("decodes only the exact first-release faucet success contract", () => {
+    const decode = (value: unknown, baseUrl = "https://taira.sora.org") =>
+      decodeAccountFaucetResponse(value, {
+        requestedAccountId: testnetAccountId,
+        networkPrefix: 369,
+        baseUrl,
+      });
+
+    expect(decode(accountFaucetResponse())).toEqual(accountFaucetResponse());
+
+    const missingStatus = accountFaucetResponse();
+    delete missingStatus.status;
+    expect(() => decode(missingStatus)).toThrow(
+      "exactly the six first-release snake_case fields",
+    );
+    expect(() =>
+      decode({ ...accountFaucetResponse(), fee: "not part of the DTO" }),
+    ).toThrow("exactly the six first-release snake_case fields");
+    expect(() =>
+      decode(
+        accountFaucetResponse({
+          account_id: soraAccountId,
+          asset_id: `${TAIRA_XOR_ASSET_DEFINITION_ID}#${soraAccountId}`,
+        }),
+      ),
+    ).toThrow("does not exactly match the requested canonical account");
+    expect(() =>
+      decode(
+        accountFaucetResponse({
+          asset_definition_id: "xor#sora",
+          asset_id: `xor#sora#${testnetAccountId}`,
+        }),
+      ),
+    ).toThrow("must be a canonical Base58 asset definition ID");
+    expect(() =>
+      decode(
+        accountFaucetResponse({
+          asset_definition_id: "1".repeat(28),
+          asset_id: `${"1".repeat(28)}#${testnetAccountId}`,
+        }),
+      ),
+    ).toThrow("must be a canonical Base58 asset definition ID");
+    expect(() =>
+      decode(
+        accountFaucetResponse({
+          asset_id: `${TAIRA_XOR_ASSET_DEFINITION_ID}#${soraAccountId}`,
+        }),
+      ),
+    ).toThrow("does not exactly bind");
+
+    for (const amount of ["0", "025000", "25000.0"]) {
+      expect(() =>
+        decode(accountFaucetResponse({ amount }), "https://faucet.example"),
+      ).toThrow("positive canonical Quantity string");
+    }
+    for (const txHashHex of ["0xabc", "AB".repeat(32), "a".repeat(63)]) {
+      expect(() =>
+        decode(accountFaucetResponse({ tx_hash_hex: txHashHex })),
+      ).toThrow("exactly 64 lowercase hexadecimal characters");
+    }
+    expect(() => decode(accountFaucetResponse({ status: "Queued" }))).toThrow(
+      "status must be exactly QUEUED",
+    );
+    expect(() => decode(accountFaucetResponse({ amount: "24999" }))).toThrow(
+      "must be exactly 25000 XOR",
+    );
+    expect(() =>
+      decode(
+        accountFaucetResponse({
+          asset_definition_id: OTHER_ASSET_DEFINITION_ID,
+          asset_id: `${OTHER_ASSET_DEFINITION_ID}#${testnetAccountId}`,
+        }),
+      ),
+    ).toThrow("did not fund the canonical XOR asset definition");
   });
 
   it("rejects TAIRA faucet puzzle metadata that advertises the wrong network", async () => {
@@ -142,6 +232,7 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         solvePuzzle,
@@ -173,17 +264,106 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         solvePuzzle,
       }),
     ).rejects.toThrow(
-      "Faucet endpoint chain id mismatch: expected fc56984b-2be7-431d-840e-21514d1883f0, got 809574f5-fee7-5e69-bfcf-52451e42d50f.",
+      `Faucet endpoint chain id mismatch: expected ${TAIRA_CHAIN_ID}, got 809574f5-fee7-5e69-bfcf-52451e42d50f.`,
     );
     expect(solvePuzzle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks Minamoto faucet use even if the endpoint exposes a puzzle", async () => {
+  it("rejects a custom endpoint puzzle whose chain id differs from the verified write connection", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ...basePuzzle,
+          chain_id: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      ),
+    );
+    const solvePuzzle = vi.fn();
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://custom-torii.example",
+        accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: 369,
+        fetchImpl,
+        solvePuzzle,
+      }),
+    ).rejects.toThrow(
+      `Faucet endpoint chain id mismatch: expected ${TAIRA_CHAIN_ID}, got 809574f5-fee7-5e69-bfcf-52451e42d50f.`,
+    );
+    expect(solvePuzzle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when a puzzle omits the exact first-release identity fields", async () => {
+    const puzzle = { ...basePuzzle };
+    delete puzzle.chain_id;
+    delete puzzle.chain_discriminant;
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          ...puzzle,
+          chainId: TAIRA_CHAIN_ID,
+          networkPrefix: 369,
+        }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+          },
+        },
+      ),
+    );
+    const solvePuzzle = vi.fn();
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://custom-torii.example",
+        accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: 369,
+        fetchImpl,
+        solvePuzzle,
+      }),
+    ).rejects.toThrow(
+      "Faucet puzzle is missing a valid chain_discriminant network prefix.",
+    );
+    expect(solvePuzzle).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an invalid verified network identity before any request", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://custom-torii.example",
+        accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: Number.NaN,
+        fetchImpl,
+      }),
+    ).rejects.toThrow(
+      "networkPrefix must be an integer between 0 and 16383 before requesting faucet funds.",
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("blocks Minamoto by verified identity before using a faucet route", async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
@@ -207,15 +387,31 @@ describe("faucetApi", () => {
 
     await expect(
       requestFaucetFundsWithPuzzle({
-        baseUrl: "https://minamoto.sora.org",
+        baseUrl: "https://custom-mainnet.example",
         accountId: soraAccountId,
+        chainId: MINAMOTO_CHAIN_ID,
         networkPrefix: 753,
         fetchImpl,
         solvePuzzle,
       }),
     ).rejects.toThrow("Minamoto mainnet must not expose a faucet.");
     expect(solvePuzzle).not.toHaveBeenCalled();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("blocks the public Minamoto endpoint even when the requested identity claims TAIRA", async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+
+    await expect(
+      requestFaucetFundsWithPuzzle({
+        baseUrl: "https://minamoto.sora.org",
+        accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: 369,
+        fetchImpl,
+      }),
+    ).rejects.toThrow("Minamoto mainnet must not expose a faucet.");
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("reports faucet progress while retrying, solving, and submitting", async () => {
@@ -245,14 +441,9 @@ describe("faucetApi", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            account_id: testnetAccountId,
-            asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${testnetAccountId}`,
-            amount: "25000",
-            tx_hash_hex: "0xdef",
-            status: "QUEUED",
-          }),
+          JSON.stringify(
+            accountFaucetResponse({ tx_hash_hex: "bc".repeat(32) }),
+          ),
           {
             status: 202,
             headers: {
@@ -267,6 +458,7 @@ describe("faucetApi", () => {
     await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
       sleep: vi.fn().mockResolvedValue(undefined),
@@ -304,6 +496,7 @@ describe("faucetApi", () => {
     const requestPromise = requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
       signal: controller.signal,
@@ -349,6 +542,7 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://faucet.example",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         puzzleRetryAttempts: 1,
@@ -396,6 +590,7 @@ describe("faucetApi", () => {
                 quantity: "8427.65210",
               },
             ],
+            total: 1,
           }),
           {
             status: 200,
@@ -410,6 +605,7 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         puzzleRetryAttempts: 3,
@@ -467,14 +663,7 @@ describe("faucetApi", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            account_id: testnetAccountId,
-            asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${testnetAccountId}`,
-            amount: "25000",
-            tx_hash_hex: "0xretry",
-            status: "QUEUED",
-          }),
+          JSON.stringify(accountFaucetResponse({ tx_hash_hex: RETRY_TX_HASH })),
           {
             status: 202,
             headers: {
@@ -502,6 +691,7 @@ describe("faucetApi", () => {
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://faucet.example",
       accountId: testnetAccountId,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
       sleep,
@@ -511,7 +701,7 @@ describe("faucetApi", () => {
       onStatus,
     });
 
-    expect(result.tx_hash_hex).toBe("0xretry");
+    expect(result.tx_hash_hex).toBe(RETRY_TX_HASH);
     expect(fetchImpl).toHaveBeenCalledTimes(4);
     expect(solvePuzzle).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(250);
@@ -562,14 +752,9 @@ describe("faucetApi", () => {
       )
       .mockResolvedValueOnce(
         new Response(
-          JSON.stringify({
-            account_id: testnetAccountId,
-            asset_definition_id: "xor#sora",
-            asset_id: `xor#sora#${testnetAccountId}`,
-            amount: "25000",
-            tx_hash_hex: "0xjson-retry",
-            status: "QUEUED",
-          }),
+          JSON.stringify(
+            accountFaucetResponse({ tx_hash_hex: JSON_RETRY_TX_HASH }),
+          ),
           {
             status: 202,
             headers: {
@@ -582,6 +767,7 @@ describe("faucetApi", () => {
     const result = await requestFaucetFundsWithPuzzle({
       baseUrl: "https://taira.sora.org",
       accountId: testnetAccountId,
+      chainId: TAIRA_CHAIN_ID,
       networkPrefix: 369,
       fetchImpl,
       sleep: vi.fn().mockResolvedValue(undefined),
@@ -593,7 +779,7 @@ describe("faucetApi", () => {
       puzzleRetryAttempts: 2,
     });
 
-    expect(result.tx_hash_hex).toBe("0xjson-retry");
+    expect(result.tx_hash_hex).toBe(JSON_RETRY_TX_HASH);
     expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
@@ -618,6 +804,7 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
         sleep,
@@ -656,12 +843,14 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://minamoto.sora.org",
         accountId: soraAccountId,
+        chainId: MINAMOTO_CHAIN_ID,
         networkPrefix: 753,
         fetchImpl,
       }),
     ).rejects.toThrow(
-      "Faucet puzzle failed (403): Minamoto mainnet must not expose a faucet. Switch Settings to the TAIRA testnet preset to request starter XOR.",
+      "Minamoto mainnet must not expose a faucet. Switch Settings to the TAIRA testnet preset to request starter XOR.",
     );
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it("prefers nested faucet puzzle details over generic wrapper messages", async () => {
@@ -687,6 +876,7 @@ describe("faucetApi", () => {
       requestFaucetFundsWithPuzzle({
         baseUrl: "https://taira.sora.org",
         accountId: testnetAccountId,
+        chainId: TAIRA_CHAIN_ID,
         networkPrefix: 369,
         fetchImpl,
       }),

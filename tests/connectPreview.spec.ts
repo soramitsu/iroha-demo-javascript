@@ -15,7 +15,7 @@ describe("connectPreview", () => {
     };
     const nonce = Buffer.alloc(16, 0x33);
     const options = {
-      chainId: "809574f5-fee7-5e69-bfcf-52451e42d50f",
+      chainId: "fc56984b-2be7-431d-840e-21514d1883f0",
       node: "taira.sora.org",
       nonce,
       appKeyPair,

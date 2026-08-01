@@ -162,4 +162,49 @@ describe("confidential mode helpers", () => {
       exact: true,
     });
   });
+
+  it("keeps case-sensitive asset and account identities distinct", () => {
+    const assetDefinitionId = "61CtjvNd9T3THAR65GsMVHr82Bjc";
+    const accountId = "testuAccountIdentityABC";
+    const result = deriveOnChainShieldedBalance(
+      [
+        {
+          result_ok: true,
+          authority: accountId.toLowerCase(),
+          instructions: [
+            {
+              zk: {
+                Shield: {
+                  asset: assetDefinitionId.toLowerCase(),
+                  from: accountId.toLowerCase(),
+                  amount: "9",
+                },
+              },
+            },
+          ],
+        },
+      ],
+      {
+        assetDefinitionId,
+        accountIds: [accountId],
+      },
+    );
+
+    expect(result).toEqual({
+      quantity: "0",
+      exact: true,
+    });
+  });
+
+  it("marks a balance unavailable without an exact asset and account scope", () => {
+    expect(
+      deriveOnChainShieldedBalance([], {
+        assetDefinitionId: "",
+        accountIds: [],
+      }),
+    ).toEqual({
+      quantity: null,
+      exact: false,
+    });
+  });
 });

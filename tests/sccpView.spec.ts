@@ -21,7 +21,9 @@ import {
   type SolanaDestinationProverInputV1,
 } from "@/utils/sccpSolanaDestination";
 import SccpView from "@/views/SccpView.vue";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
+import type { EndpointInspection } from "@/types/endpointInspection";
 import {
   TAIRA_CHAIN_ID,
   TAIRA_EXPLORER_URL,
@@ -944,11 +946,14 @@ vi.mock("@/services/iroha", () => ({
     broadcastSolanaTransactionMock(input),
 }));
 
-const mountView = (connection: {
-  toriiUrl: string;
-  chainId: string;
-  networkPrefix: number;
-}) => {
+const mountView = (
+  connection: {
+    toriiUrl: string;
+    chainId: string;
+    networkPrefix: number;
+  },
+  options: { writeAuthorized?: boolean; zkProofJobsSupported?: boolean } = {},
+) => {
   const pinia = createPinia();
   setActivePinia(pinia);
   const session = useSessionStore();
@@ -971,6 +976,54 @@ const mountView = (connection: {
     ],
     activeAccountId: TAIRA_ACCOUNT_ID,
   });
+  const writeAuthorized = options.writeAuthorized ?? true;
+  const zkProofJobsSupported = options.zkProofJobsSupported ?? true;
+  const feature = (supported = true) => ({
+    supported,
+    source: "openapi" as const,
+    requiredOperations: [],
+    missingOperations: supported ? [] : ["POST /v1/zk/ivm/prove"],
+  });
+  const endpointStore = useEndpointStore();
+  endpointStore.adoptInspection({
+    schema: "iroha.wallet.endpoint-inspection.v1",
+    toriiUrl: connection.toriiUrl,
+    expected: {
+      chainId: connection.chainId,
+      networkPrefix: connection.networkPrefix,
+    },
+    observed: {
+      chainId: connection.chainId,
+      networkPrefix: connection.networkPrefix,
+    },
+    identityStatus: writeAuthorized ? "matched" : "mismatched",
+    accessMode: writeAuthorized ? "read-write" : "read-only",
+    checkedAtMs: Date.now(),
+    evidence: [],
+    features: {
+      accountRegistration: feature(),
+      accountOnboarding: feature(),
+      assetTransfers: feature(),
+      faucetClaim: feature(),
+      confidentialTransfers: feature(),
+      kaigiMeetings: feature(),
+      governanceWrites: feature(),
+      stakingWrites: feature(),
+      subscriptionWrites: feature(),
+      soraCloudDeploy: feature(),
+      vpnSessions: feature(),
+      irohaConnectSessions: feature(),
+      zkProofJobs: feature(zkProofJobsSupported),
+    },
+    diagnostic: {
+      code: writeAuthorized
+        ? "endpoint_identity_matched"
+        : "endpoint_identity_mismatch",
+      message: writeAuthorized
+        ? "Endpoint identity matches the configured network."
+        : "Endpoint identity does not match the configured network.",
+    },
+  } satisfies EndpointInspection);
 
   return mount(SccpView, {
     global: {
@@ -2458,6 +2511,56 @@ describe("SccpView", () => {
     vi.useRealTimers();
   });
 
+  it("blocks SCCP proof work when endpoint inspection has not authorized writes", async () => {
+    const workerCtor = vi.fn();
+    vi.stubGlobal("Worker", workerCtor);
+    const wrapper = mountView(
+      {
+        toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      { writeAuthorized: false },
+    );
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("Writes blocked");
+    expect(wrapper.text()).toContain(
+      "Endpoint identity does not match the configured network.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(startZkIvmProveJobMock).not.toHaveBeenCalled();
+    expect(submitZkIvmProvedTransactionMock).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks SCCP proof work when required ZK operations are not advertised", async () => {
+    const workerCtor = vi.fn();
+    vi.stubGlobal("Worker", workerCtor);
+    const wrapper = mountView(
+      {
+        toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
+      },
+      { zkProofJobsSupported: false },
+    );
+
+    await flushPromises();
+    await wrapper.find("form").trigger("submit");
+    await flushPromises();
+
+    expect(wrapper.text()).toContain(
+      "This endpoint does not advertise the required ZK proof and transaction operations for SCCP writes.",
+    );
+    expect(workerCtor).not.toHaveBeenCalled();
+    expect(startZkIvmProveJobMock).not.toHaveBeenCalled();
+    expect(submitSccpBridgeMessageMock).not.toHaveBeenCalled();
+  });
+
   it("shows the Minamoto disabled state without probing SCCP endpoints", async () => {
     const wrapper = mountView({
       toriiUrl: "https://minamoto.sora.org",
@@ -3479,6 +3582,8 @@ describe("SccpView", () => {
     expect(startZkIvmProveJobMock, wrapper.text()).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
         authority: TAIRA_ACCOUNT_ID,
         metadata: expect.objectContaining({
           contract_entrypoint: "burn_and_record",
@@ -3495,8 +3600,9 @@ describe("SccpView", () => {
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
         accountId: TAIRA_ACCOUNT_ID,
-        waitForCommit: false,
+        gasLimit: 50_000_000,
         metadata: expect.objectContaining({
           gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
           contract_payload: expect.objectContaining({
@@ -4338,6 +4444,8 @@ describe("SccpView", () => {
 
     expect(getZkIvmProveJobMock).toHaveBeenCalledWith({
       toriiUrl: "https://taira.sora.org",
+      chainId: TAIRA_CHAIN_ID,
+      networkPrefix: TAIRA_NETWORK_PREFIX,
       jobId: "11".repeat(16),
     });
     expect(wrapper.text()).toContain("SCCP bridge context changed");
@@ -5426,6 +5534,8 @@ describe("SccpView", () => {
     expect(startZkIvmProveJobMock).toHaveBeenCalledWith(
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
+        chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
         authority: TAIRA_ACCOUNT_ID,
       }),
     );
@@ -5440,8 +5550,9 @@ describe("SccpView", () => {
       expect.objectContaining({
         toriiUrl: "https://taira.sora.org",
         chainId: TAIRA_CHAIN_ID,
+        networkPrefix: TAIRA_NETWORK_PREFIX,
         accountId: TAIRA_ACCOUNT_ID,
-        waitForCommit: false,
+        gasLimit: 123456,
       }),
     );
     expect(getSccpMessageProofJobMock).toHaveBeenCalledWith(

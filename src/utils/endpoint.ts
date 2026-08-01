@@ -16,6 +16,9 @@ export const normalizeEndpointUrl = (value: string): string => {
   if (!SUPPORTED_ENDPOINT_PROTOCOLS.has(parsed.protocol)) {
     throw new Error("Endpoint must start with http:// or https://.");
   }
+  if (parsed.username || parsed.password) {
+    throw new Error("Endpoint URL must not include credentials.");
+  }
 
   parsed.hash = "";
   parsed.search = "";

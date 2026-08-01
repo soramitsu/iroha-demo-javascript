@@ -1,8 +1,8 @@
-import type { ToriiSumeragiStatus } from "@iroha/iroha-js";
 import type {
   ExplorerAssetDefinitionEconometricsResponse,
   ExplorerAssetDefinitionSnapshotResponse,
   ExplorerMetricsResponse,
+  NexusLifecycleView,
   NetworkGovernanceStats,
   NetworkRuntimeStats,
 } from "../src/types/iroha";
@@ -26,32 +26,20 @@ const toNonNegativeNumber = (value: unknown): number | null => {
   return parsed;
 };
 
+const toNonNegativeInteger = (value: unknown): number | null => {
+  if (
+    typeof value !== "number" &&
+    (typeof value !== "string" || !/^(?:0|[1-9]\d*)$/u.test(value))
+  ) {
+    return null;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+};
+
 const toStringOrNull = (value: unknown): string | null => {
   const normalized = String(value ?? "").trim();
   return normalized ? normalized : null;
-};
-
-const toBooleanOrNull = (value: unknown): boolean | null =>
-  typeof value === "boolean" ? value : null;
-
-const firstNonNull = <T>(...values: Array<T | null | undefined>): T | null => {
-  for (const value of values) {
-    if (value !== null && value !== undefined) {
-      return value;
-    }
-  }
-  return null;
-};
-
-const firstPositiveNumber = (
-  ...values: Array<number | null | undefined>
-): number | null => {
-  for (const value of values) {
-    if (value !== null && value !== undefined && value > 0) {
-      return value;
-    }
-  }
-  return firstNonNull(...values);
 };
 
 const requireString = (value: unknown, label: string): string => {
@@ -222,6 +210,148 @@ export const normalizeExplorerAssetDefinitionEconometricsPayload = (
   };
 };
 
+export interface CurrentSumeragiTelemetry {
+  height: number | null;
+  lastCommittedHeight: number | null;
+  lastCommitQcHeight: number | null;
+  lastCommitQcView: number | null;
+  validatorCount: number | null;
+  ingressQueueDepth: number | null;
+  ingressQueueCapacity: number | null;
+}
+
+const emptyCurrentSumeragiTelemetry = (): CurrentSumeragiTelemetry => ({
+  height: null,
+  lastCommittedHeight: null,
+  lastCommitQcHeight: null,
+  lastCommitQcView: null,
+  validatorCount: null,
+  ingressQueueDepth: null,
+  ingressQueueCapacity: null,
+});
+
+const readOptionalCurrentInteger = (
+  record: Record<string, unknown>,
+  field: string,
+  label: string,
+): number | null => {
+  const value = record[field];
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const normalized = toNonNegativeInteger(value);
+  if (normalized === null) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+  return normalized;
+};
+
+export const normalizeCurrentSumeragiTelemetry = (
+  payload: unknown,
+): CurrentSumeragiTelemetry => {
+  if (payload === null || payload === undefined) {
+    return emptyCurrentSumeragiTelemetry();
+  }
+  const status = requireRecord(payload, "Sumeragi status");
+  if (status.protocol_version !== 3) {
+    throw new Error("Sumeragi status protocol_version must equal 3.");
+  }
+  const heightContext = requireRecord(
+    status.height_context,
+    "Sumeragi status height_context",
+  );
+  const liveness = requireRecord(status.liveness, "Sumeragi status liveness");
+  const queues = requireArray(
+    liveness.queues,
+    "Sumeragi status liveness.queues",
+  );
+  let ingressQueue: Record<string, unknown> | null = null;
+  queues.forEach((value, index) => {
+    const queue = requireRecord(
+      value,
+      `Sumeragi status liveness.queues[${index}]`,
+    );
+    const queueKind = requireRecord(
+      queue.queue,
+      `Sumeragi status liveness.queues[${index}].queue`,
+    );
+    const kind = requireString(
+      queueKind.queue,
+      `Sumeragi status liveness.queues[${index}].queue.queue`,
+    );
+    if (kind === "ingress") {
+      if (ingressQueue) {
+        throw new Error(
+          "Sumeragi status liveness.queues must contain at most one ingress queue.",
+        );
+      }
+      ingressQueue = queue;
+    }
+  });
+
+  let round: Record<string, unknown> | null = null;
+  if (status.last_commit_qc !== undefined && status.last_commit_qc !== null) {
+    const lastCommitQc = requireRecord(
+      status.last_commit_qc,
+      "Sumeragi status last_commit_qc",
+    );
+    const certificate = requireRecord(
+      lastCommitQc.certificate,
+      "Sumeragi status last_commit_qc.certificate",
+    );
+    round = requireRecord(
+      certificate.round,
+      "Sumeragi status last_commit_qc.certificate.round",
+    );
+  }
+
+  return {
+    height: readOptionalCurrentInteger(
+      status,
+      "height",
+      "Sumeragi status height",
+    ),
+    lastCommittedHeight: readOptionalCurrentInteger(
+      status,
+      "last_committed_height",
+      "Sumeragi status last_committed_height",
+    ),
+    lastCommitQcHeight: round
+      ? readOptionalCurrentInteger(
+          round,
+          "height",
+          "Sumeragi status last_commit_qc.certificate.round.height",
+        )
+      : null,
+    lastCommitQcView: round
+      ? readOptionalCurrentInteger(
+          round,
+          "view",
+          "Sumeragi status last_commit_qc.certificate.round.view",
+        )
+      : null,
+    validatorCount: readOptionalCurrentInteger(
+      heightContext,
+      "validator_count",
+      "Sumeragi status height_context.validator_count",
+    ),
+    ingressQueueDepth: ingressQueue
+      ? readOptionalCurrentInteger(
+          ingressQueue,
+          "depth",
+          "Sumeragi status ingress queue depth",
+        )
+      : null,
+    ingressQueueCapacity: ingressQueue
+      ? readOptionalCurrentInteger(
+          ingressQueue,
+          "capacity",
+          "Sumeragi status ingress queue capacity",
+        )
+      : null,
+  };
+};
+
 export const extractRuntimeStatsFromStatusSnapshot = (
   snapshot: unknown,
   explorerMetrics: ExplorerMetricsResponse | null,
@@ -232,83 +362,31 @@ export const extractRuntimeStatsFromStatusSnapshot = (
     toRecord(snapshotRecord?.status) ??
     snapshotRecord ??
     ({} as Record<string, unknown>);
-  const rawRecord = toRecord(statusRecord.raw);
-  const rawSumeragiRecord =
-    toRecord(rawRecord?.sumeragi) ??
-    toRecord(statusRecord.sumeragi) ??
-    ({} as Record<string, unknown>);
-  const sumeragiRecord = toRecord(sumeragiStatus) ?? {};
-  const statusTxQueueRecord = toRecord(rawSumeragiRecord.tx_queue) ?? {};
-  const sumeragiTxQueueRecord = toRecord(sumeragiRecord.tx_queue) ?? {};
-  const statusHighestQcRecord = toRecord(rawSumeragiRecord.highest_qc) ?? {};
-  const sumeragiHighestQcRecord = toRecord(sumeragiRecord.highest_qc) ?? {};
-  const statusLockedQcRecord = toRecord(rawSumeragiRecord.locked_qc) ?? {};
-  const sumeragiLockedQcRecord = toRecord(sumeragiRecord.locked_qc) ?? {};
-  const statusCommitQcRecord = toRecord(rawSumeragiRecord.commit_qc) ?? {};
-  const sumeragiCommitQcRecord = toRecord(sumeragiRecord.commit_qc) ?? {};
-
+  const sumeragi = normalizeCurrentSumeragiTelemetry(sumeragiStatus);
   const currentBlockHeight =
-    explorerMetrics?.blockHeight ??
-    firstNonNull(
-      toNonNegativeNumber(statusRecord.block_height),
-      toNonNegativeNumber(statusRecord.blocks),
-      toNonNegativeNumber(rawSumeragiRecord.block_height),
-      toNonNegativeNumber(rawSumeragiRecord.blocks),
-      toNonNegativeNumber(statusHighestQcRecord.height),
-      toNonNegativeNumber(sumeragiHighestQcRecord.height),
-      toNonNegativeNumber(statusCommitQcRecord.height),
-      toNonNegativeNumber(sumeragiCommitQcRecord.height),
-    );
+    sumeragi.height ?? explorerMetrics?.blockHeight ?? null;
   const finalizedBlockHeight =
+    sumeragi.lastCommittedHeight ??
     explorerMetrics?.finalizedBlockHeight ??
-    firstNonNull(
-      toNonNegativeNumber(statusRecord.finalized_block_height),
-      toNonNegativeNumber(statusRecord.finalized_blocks),
-      toNonNegativeNumber(rawSumeragiRecord.finalized_block_height),
-      toNonNegativeNumber(rawSumeragiRecord.highest_qc_height),
-      toNonNegativeNumber(statusHighestQcRecord.height),
-      toNonNegativeNumber(sumeragiHighestQcRecord.height),
-      toNonNegativeNumber(statusCommitQcRecord.height),
-      toNonNegativeNumber(sumeragiCommitQcRecord.height),
-    );
+    null;
+  const queueCapacity = sumeragi.ingressQueueCapacity;
+  const queueSize = sumeragi.ingressQueueDepth;
 
   return {
-    queueSize: firstNonNull(
-      toNonNegativeNumber(statusRecord.queue_size),
-      toNonNegativeNumber(rawSumeragiRecord.tx_queue_depth),
-      toNonNegativeNumber(statusTxQueueRecord.depth),
-      toNonNegativeNumber(sumeragiTxQueueRecord.depth),
-    ),
-    queueCapacity: firstPositiveNumber(
-      toNonNegativeNumber(rawSumeragiRecord.tx_queue_capacity),
-      toNonNegativeNumber(statusRecord.tx_queue_capacity),
-      toNonNegativeNumber(statusTxQueueRecord.capacity),
-      toNonNegativeNumber(sumeragiTxQueueRecord.capacity),
-    ),
+    queueSize,
+    queueCapacity,
     commitTimeMs:
-      toNonNegativeNumber(statusRecord.commit_time_ms) ??
-      toNonNegativeNumber(rawSumeragiRecord.commit_time_ms) ??
-      toNonNegativeNumber(rawSumeragiRecord.effective_commit_time_ms) ??
-      toNonNegativeNumber(sumeragiRecord.effective_commit_time_ms),
+      explorerMetrics?.averageCommitTimeMs ??
+      toNonNegativeNumber(statusRecord.commit_time_ms),
     effectiveBlockTimeMs:
-      toNonNegativeNumber(rawSumeragiRecord.effective_block_time_ms) ??
-      toNonNegativeNumber(statusRecord.effective_block_time_ms) ??
-      toNonNegativeNumber(sumeragiRecord.effective_block_time_ms),
+      explorerMetrics?.averageBlockTimeMs ??
+      toNonNegativeNumber(statusRecord.effective_block_time_ms),
     txQueueSaturated:
-      toBooleanOrNull(rawSumeragiRecord.tx_queue_saturated) ??
-      toBooleanOrNull(statusRecord.tx_queue_saturated) ??
-      toBooleanOrNull(statusTxQueueRecord.saturated) ??
-      toBooleanOrNull(sumeragiTxQueueRecord.saturated),
-    highestQcHeight:
-      toNonNegativeNumber(rawSumeragiRecord.highest_qc_height) ??
-      toNonNegativeNumber(rawSumeragiRecord.highestQcHeight) ??
-      toNonNegativeNumber(statusHighestQcRecord.height) ??
-      toNonNegativeNumber(sumeragiHighestQcRecord.height),
-    lockedQcHeight:
-      toNonNegativeNumber(rawSumeragiRecord.locked_qc_height) ??
-      toNonNegativeNumber(rawSumeragiRecord.lockedQcHeight) ??
-      toNonNegativeNumber(statusLockedQcRecord.height) ??
-      toNonNegativeNumber(sumeragiLockedQcRecord.height),
+      queueSize !== null && queueCapacity !== null && queueCapacity > 0
+        ? queueSize >= queueCapacity
+        : null,
+    highestQcHeight: sumeragi.lastCommitQcHeight,
+    lockedQcHeight: null,
     currentBlockHeight,
     finalizedBlockHeight,
     finalizationLag:
@@ -319,58 +397,20 @@ export const extractRuntimeStatsFromStatusSnapshot = (
 };
 
 export const extractGovernanceStats = (
-  status: ToriiSumeragiStatus | null | undefined,
+  status: unknown,
+  lifecycle: NexusLifecycleView | null = null,
 ): NetworkGovernanceStats => {
-  const laneIds = new Set<number>();
-  const dataspaceIds = new Set<number>();
-  const validatorIds = new Set<string>();
-  const statusRecord = toRecord(status);
-
-  const laneGovernance = Array.isArray(statusRecord?.lane_governance)
-    ? statusRecord.lane_governance
-    : [];
-  for (const item of laneGovernance) {
-    const itemRecord = item as unknown as Record<string, unknown>;
-    const laneId = toNonNegativeNumber(itemRecord.lane_id);
-    if (laneId !== null) {
-      laneIds.add(laneId);
-    }
-    const dataspaceId = toNonNegativeNumber(itemRecord.dataspace_id);
-    if (dataspaceId !== null) {
-      dataspaceIds.add(dataspaceId);
-    }
-    const validatorList = itemRecord.validator_ids;
-    if (!Array.isArray(validatorList)) {
-      continue;
-    }
-    for (const validatorId of validatorList) {
-      const normalized = toStringOrNull(validatorId);
-      if (normalized) {
-        validatorIds.add(normalized);
-      }
-    }
-  }
-
-  const dataspaceCommitments = Array.isArray(
-    statusRecord?.dataspace_commitments,
-  )
-    ? statusRecord.dataspace_commitments
-    : [];
-  for (const item of dataspaceCommitments) {
-    const itemRecord = item as unknown as Record<string, unknown>;
-    const laneId = toNonNegativeNumber(itemRecord.lane_id);
-    if (laneId !== null) {
-      laneIds.add(laneId);
-    }
-    const dataspaceId = toNonNegativeNumber(itemRecord.dataspace_id);
-    if (dataspaceId !== null) {
-      dataspaceIds.add(dataspaceId);
-    }
-  }
+  const telemetry = normalizeCurrentSumeragiTelemetry(status);
+  const laneIds = lifecycle
+    ? new Set(lifecycle.lanes.map((lane) => lane.id))
+    : null;
+  const dataspaceIds = lifecycle
+    ? new Set(lifecycle.lanes.map((lane) => lane.dataspace_id))
+    : null;
 
   return {
-    laneCount: laneIds.size,
-    dataspaceCount: dataspaceIds.size,
-    validatorCount: validatorIds.size,
+    laneCount: laneIds?.size ?? null,
+    dataspaceCount: dataspaceIds?.size ?? null,
+    validatorCount: telemetry.validatorCount,
   };
 };

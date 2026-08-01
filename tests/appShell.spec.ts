@@ -6,8 +6,10 @@ import App from "@/App.vue";
 import { SESSION_STORAGE_KEY, useSessionStore } from "@/stores/session";
 import { useLocaleStore } from "@/stores/locale";
 import { useThemeStore } from "@/stores/theme";
+import { useEndpointStore } from "@/stores/endpoint";
 import { MINAMOTO_CHAIN_PRESET, TAIRA_CHAIN_PRESET } from "@/constants/chains";
 import { translate } from "@/i18n/messages";
+import type { EndpointInspection } from "@/types/endpointInspection";
 
 const route = reactive<{
   path: string;
@@ -127,6 +129,54 @@ describe("App shell", () => {
     expect(
       wrapper.find('[data-testid="header-irohaconnect-button"]').exists(),
     ).toBe(false);
+  });
+
+  it("keeps a persistent read-only banner visible for a mismatched endpoint", async () => {
+    const wrapper = mountApp();
+    const endpointStore = useEndpointStore();
+    endpointStore.$patch({
+      state: "ready",
+      error: "",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: TAIRA_CHAIN_PRESET.connection.toriiUrl,
+        expected: {
+          chainId: TAIRA_CHAIN_PRESET.connection.chainId,
+          networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        },
+        observed: {
+          chainId: "archived-chain",
+          networkPrefix: TAIRA_CHAIN_PRESET.connection.networkPrefix,
+        },
+        identityStatus: "mismatched",
+        accessMode: "read-only",
+        checkedAtMs: 1,
+        evidence: [],
+        features: {} as EndpointInspection["features"],
+        diagnostic: {
+          code: "endpoint_identity_mismatch",
+          message: "Archived deployment mismatch. Writes are blocked.",
+        },
+      },
+    });
+    await nextTick();
+
+    const banner = wrapper.get('[data-testid="endpoint-safety-banner"]');
+    expect(banner.text()).toContain(t("Writes blocked"));
+    expect(banner.text()).toContain("Archived deployment mismatch");
+    expect(wrapper.get(".brand-network").text()).toContain(t("Read only"));
+  });
+
+  it("refreshes derived endpoint state after an account switch", async () => {
+    mountApp({ withAccount: true });
+    const session = useSessionStore();
+    const endpointStore = useEndpointStore();
+    const previousGeneration = endpointStore.generation;
+
+    session.activeAccountId = "another@wonderland";
+    await nextTick();
+
+    expect(endpointStore.generation).toBeGreaterThan(previousGeneration);
   });
 
   it("uses the exact grouped navigation order without steps or descriptions", () => {

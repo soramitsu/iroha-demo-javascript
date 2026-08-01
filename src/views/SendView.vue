@@ -63,6 +63,14 @@
           <span class="send-balance-label">{{ t("Available balance") }}</span>
           <strong class="send-balance-value">{{ activeAssetBalance }}</strong>
           <span class="send-balance-asset">{{ activeAssetLabel }}</span>
+          <p
+            v-if="sendAssetsError"
+            class="send-balance-error"
+            data-testid="send-assets-error"
+            role="alert"
+          >
+            {{ sendAssetsError }}
+          </p>
         </div>
         <details class="technical-details compact send-source-details">
           <summary>{{ t("Payment details") }}</summary>
@@ -161,6 +169,14 @@
                 t,
               )
             }}</strong>
+          </p>
+          <p
+            v-if="!networkWriteSupported"
+            class="helper send-note"
+            data-testid="send-write-prerequisite"
+            role="status"
+          >
+            {{ networkWritePrerequisite }}
           </p>
           <div class="actions send-primary-actions">
             <button
@@ -267,6 +283,7 @@ import {
   resolveAccountAlias,
   transferAsset,
 } from "@/services/iroha";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldCapability } from "@/composables/useShieldCapability";
@@ -284,6 +301,7 @@ import {
   formatTransactionFee,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 import {
   CONFIDENTIAL_PAYMENT_ADDRESS_PREFIX,
   parseConfidentialPaymentAddressText,
@@ -293,6 +311,7 @@ import type { AccountAssetsResponse } from "@/types/iroha";
 import SendIcon from "@/assets/send.svg";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const activeAccount = computed(() => session.activeAccount);
 const { t } = useAppI18n();
 const activeAccountDisplayId = computed(() =>
@@ -302,7 +321,8 @@ const requestAccountId = computed(
   () => activeAccountDisplayId.value || activeAccount.value?.accountId || "",
 );
 const sendAssets = ref<AccountAssetsResponse["items"]>([]);
-const sendAssetsLoading = ref(false);
+const sendAssetsState = ref<"idle" | "loading" | "ready" | "error">("idle");
+const sendAssetsError = ref("");
 let sendAssetsRequestSequence = 0;
 const form = reactive({
   destination: "",
@@ -381,19 +401,12 @@ const applyShieldedPaymentAddress = (
   source: "qr" | "address-input",
   rawAddressText = "",
 ) => {
-  const parsedAccountId = payload.accountId?.trim() ?? "";
-  if (source === "qr") {
-    form.destination = parsedAccountId;
-  }
-  if (payload.amount) {
-    form.quantity = String(payload.amount);
-  }
   form.shielded = true;
   form.shieldedReceiveKeyId = payload.receiveKeyId;
   form.shieldedReceivePublicKeyBase64Url = payload.receivePublicKeyBase64Url;
   form.shieldedOwnerTagHex = payload.shieldedOwnerTagHex;
   form.shieldedDiversifierHex = payload.shieldedDiversifierHex;
-  form.shieldedAddressAccountId = parsedAccountId;
+  form.shieldedAddressAccountId = "";
   shieldedRecipientSource.value = source;
   shieldedPaymentAddressText.value =
     source === "address-input" ? rawAddressText.trim() : "";
@@ -552,9 +565,16 @@ const activeAssetCanonicalLabel = computed(() =>
 const activeAssetLabel = computed(
   () => activeAssetAlias.value || activeAssetCanonicalLabel.value,
 );
-const activeAssetBalance = computed(() =>
-  sendAssetsLoading.value ? t("—") : (activeAsset.value?.quantity ?? "0"),
-);
+const activeAssetBalance = computed(() => {
+  if (sendAssetsState.value === "error") {
+    return t("Unavailable");
+  }
+  if (sendAssetsState.value !== "ready") {
+    return t("—");
+  }
+  return activeAsset.value?.quantity ?? "0";
+});
+const sendAssetsReady = computed(() => sendAssetsState.value === "ready");
 const isTransparentAmountValid = computed(() => Number(form.quantity) > 0);
 const isShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedQuantity.value),
@@ -597,6 +617,31 @@ const hasV3ShieldedPaymentAddress = computed(
 const hasShieldedPaymentAddress = computed(
   () => hasV3ShieldedPaymentAddress.value,
 );
+const networkWriteSupported = computed(() => {
+  const feature = form.shielded ? "confidentialTransfers" : "assetTransfers";
+  return (
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features[feature].supported === true
+  );
+});
+const networkWritePrerequisite = computed(() => {
+  if (endpointStore.state === "checking") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  return form.shielded
+    ? t(
+        "This endpoint does not advertise the required confidential transfer operations.",
+      )
+    : t(
+        "This endpoint does not advertise the required asset transfer operations.",
+      );
+});
 
 const cancelDestinationResolution = () => {
   if (destinationResolveTimer) {
@@ -769,10 +814,12 @@ const refreshSendAssets = async () => {
   sendAssetsRequestSequence = requestSequence;
   if (!toriiUrl || !accountId) {
     sendAssets.value = [];
-    sendAssetsLoading.value = false;
+    sendAssetsState.value = "idle";
+    sendAssetsError.value = "";
     return;
   }
-  sendAssetsLoading.value = true;
+  sendAssetsState.value = "loading";
+  sendAssetsError.value = "";
   try {
     const result = await fetchAccountAssets({
       toriiUrl,
@@ -787,16 +834,18 @@ const refreshSendAssets = async () => {
       return;
     }
     sendAssets.value = result.items;
+    sendAssetsState.value = "ready";
   } catch (error) {
-    if (requestSequence !== sendAssetsRequestSequence) {
+    if (
+      requestSequence !== sendAssetsRequestSequence ||
+      session.connection.toriiUrl !== toriiUrl ||
+      requestAccountId.value !== accountId
+    ) {
       return;
     }
     console.warn("Failed to load send asset balance", error);
-    sendAssets.value = [];
-  } finally {
-    if (requestSequence === sendAssetsRequestSequence) {
-      sendAssetsLoading.value = false;
-    }
+    sendAssetsState.value = "error";
+    sendAssetsError.value = toUserFacingErrorMessage(error, t("Unavailable"));
   }
 };
 
@@ -816,7 +865,9 @@ onBeforeUnmount(() => {
 
 const isValid = computed(() =>
   Boolean(
-    session.hasAccount &&
+    networkWriteSupported.value &&
+      sendAssetsReady.value &&
+      session.hasAccount &&
       activeAccount.value &&
       session.connection.assetDefinitionId &&
       (form.shielded
@@ -829,6 +880,16 @@ const isValid = computed(() =>
 );
 
 const openReview = async () => {
+  if (!networkWriteSupported.value) {
+    statusMessage.value = networkWritePrerequisite.value;
+    statusTone.value = "error";
+    return;
+  }
+  if (!sendAssetsReady.value) {
+    statusMessage.value = sendAssetsError.value || t("Unavailable");
+    statusTone.value = "error";
+    return;
+  }
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
     statusMessage.value = t("Configure Torii + account first.");
     statusTone.value = "error";
@@ -858,6 +919,16 @@ const openReview = async () => {
 
 const handleSend = async () => {
   if (!reviewing.value) {
+    return;
+  }
+  if (!networkWriteSupported.value) {
+    statusMessage.value = networkWritePrerequisite.value;
+    statusTone.value = "error";
+    return;
+  }
+  if (!sendAssetsReady.value) {
+    statusMessage.value = sendAssetsError.value || t("Unavailable");
+    statusTone.value = "error";
     return;
   }
   if (!isValid.value || !session.connection.toriiUrl || !activeAccount.value) {
@@ -937,6 +1008,7 @@ const handleSend = async () => {
             }
           : undefined,
     });
+    assertFinalizedSubmissionResult(result);
     if (submitMode === "shield") {
       session.updateActiveAccount({ localOnly: false });
     }
@@ -946,12 +1018,14 @@ const handleSend = async () => {
           ? t("Private balance created: {hash}", {
               hash: result.hash,
             })
-          : t("Private shielded transfer committed: {hash}", {
+          : t("Private shielded transfer finalized on-chain: {hash}", {
               hash: result.hash,
             })
-        : t("Transaction submitted: {hash}", { hash: result.hash });
+        : t("Transaction finalized on-chain: {hash}", { hash: result.hash });
     statusMessage.value = appendTransactionFee(
-      successMessage,
+      `${successMessage} · ${t("Block {height}", {
+        height: result.finality.blockHeight,
+      })}`,
       result,
       t,
       transactionFeeHintForEndpoint(session.connection.toriiUrl),
@@ -1088,6 +1162,14 @@ const closeScanner = () => {
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
   unicode-bidi: plaintext;
+}
+
+.send-balance-error {
+  margin: 6px 0 0;
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .send-kpi-sub {

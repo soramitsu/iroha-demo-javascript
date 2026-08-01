@@ -4,7 +4,10 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveNativeBuildRequirement } from "./postinstallNativeCheck.mjs";
+import {
+  resolveNativeBuildRequirement,
+  resolveNativeProvenanceRequirement,
+} from "./postinstallNativeCheck.mjs";
 
 const projectRoot = process.cwd();
 const sdkEntry = fileURLToPath(import.meta.resolve("@iroha/iroha-js"));
@@ -22,10 +25,25 @@ const npmBuildNativeArgs = npmExecPath
   : process.platform === "win32"
     ? ["/d", "/s", "/c", "npm run build:native"]
     : ["run", "build:native"];
+const nativeProvenanceRequirement = resolveNativeProvenanceRequirement(
+  process.env,
+);
+const inspectNativeBinding = () =>
+  resolveNativeBuildRequirement(
+    sdkRoot,
+    undefined,
+    undefined,
+    nativeProvenanceRequirement,
+  );
 
-const requirement = resolveNativeBuildRequirement(sdkRoot);
+const requirement = inspectNativeBinding();
 
 if (requirement.shouldBuild) {
+  if (nativeProvenanceRequirement !== null) {
+    throw new Error(
+      `Refusing to rebuild a release native binding from the installed package (${requirement.reason}). Build the reviewed sibling source and stage its verified native pair first.`,
+    );
+  }
   console.log(
     `Building @iroha/iroha-js native bindings before copy (${requirement.reason})...`,
   );
@@ -34,18 +52,18 @@ if (requirement.shouldBuild) {
     stdio: "inherit",
     env: process.env,
   });
-  if (result.status !== 0) {
+  const refreshedRequirement = inspectNativeBinding();
+  if (refreshedRequirement.shouldBuild) {
     if (result.error) {
       console.error(
         `Unable to launch ${npmCommand} for @iroha/iroha-js native build: ${result.error.message}`,
       );
     }
-    const refreshedRequirement = resolveNativeBuildRequirement(sdkRoot);
-    if (refreshedRequirement.shouldBuild) {
-      throw new Error(
-        `Failed to build @iroha/iroha-js native bindings before copy (status ${result.status ?? "unknown"}).`,
-      );
-    }
+    throw new Error(
+      `Failed to build a verified @iroha/iroha-js native binding before copy (status ${result.status ?? "unknown"}; ${refreshedRequirement.reason}).`,
+    );
+  }
+  if (result.status !== 0) {
     console.warn(
       `@iroha/iroha-js native build exited with status ${result.status ?? "unknown"}, but the native bundle is current now; continuing with copy.`,
     );

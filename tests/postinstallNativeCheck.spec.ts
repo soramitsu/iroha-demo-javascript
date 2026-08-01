@@ -15,19 +15,32 @@ type NativeBuildRequirement = {
   missingExports?: string[];
 };
 
+type NativeProvenanceRequirement = Readonly<{
+  cargoProfile: "release";
+  sourceGitRevision: string;
+  sourceTreeClean: true;
+}>;
+
 type ResolveNativeBuildRequirement = (
   irohaPackagePath: string,
   platformKey?: string,
   loadNativeModule?: (nativeModulePath: string) => unknown,
+  provenanceRequirement?: NativeProvenanceRequirement | null,
 ) => NativeBuildRequirement;
+
+type ResolveNativeProvenanceRequirement = (
+  environment?: Record<string, string | undefined>,
+) => NativeProvenanceRequirement | null;
 
 const postinstallNativeCheckModuleUrl = pathToFileURL(
   resolve(process.cwd(), "scripts", "postinstallNativeCheck.mjs"),
 ).href;
 const {
   resolveNativeBuildRequirement,
+  resolveNativeProvenanceRequirement,
 }: {
   resolveNativeBuildRequirement: ResolveNativeBuildRequirement;
+  resolveNativeProvenanceRequirement: ResolveNativeProvenanceRequirement;
 } = await import(postinstallNativeCheckModuleUrl);
 
 const makeTempPackage = () => {
@@ -40,12 +53,150 @@ const makeTempPackage = () => {
 const sha256 = (value: string): string =>
   createHash("sha256").update(Buffer.from(value, "utf8")).digest("hex");
 
+const RELEASE_SOURCE_REVISION = "a".repeat(40);
+const RELEASE_SOURCE_TREE_SHA256 = "c".repeat(64);
+const releaseProvenanceRequirement = (): NativeProvenanceRequirement => ({
+  cargoProfile: "release",
+  sourceGitRevision: RELEASE_SOURCE_REVISION,
+  sourceTreeClean: true,
+});
+const releaseChecksumEntry = (
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  sha256: sha256("native-binary"),
+  build_provenance_version: 3,
+  build_execution_policy: "trusted-local-cargo-v1",
+  cargo_profile: "release",
+  source_git_revision: RELEASE_SOURCE_REVISION,
+  source_tree_clean: true,
+  source_tree_sha256: RELEASE_SOURCE_TREE_SHA256,
+  mach_o_signing_independent_sha256: "b".repeat(64),
+  ...overrides,
+});
+
+const writeNativeBundle = (
+  nativeDir: string,
+  checksumEntry: Record<string, unknown>,
+) => {
+  writeFileSync(join(nativeDir, "iroha_js_host.node"), "native-binary", "utf8");
+  writeFileSync(
+    join(nativeDir, "iroha_js_host.checksums.json"),
+    `${JSON.stringify(
+      {
+        entries: {
+          "darwin-arm64": checksumEntry,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+};
+
+const assertCurrentPlainElectorateCustody = (value: unknown): void => {
+  const rules = JSON.parse(String(value)) as Record<string, unknown>;
+  expect(rules.bond_escrow_account).toBe(
+    "sorauﾛ1NrﾑﾛﾔﾎRﾓMNｹEﾔﾙﾗdｶrﾎuﾑﾚcﾔKfﾆyﾓｸjVﾌTﾙﾖｾﾋｷGK5P4K",
+  );
+  expect(rules.slash_receiver_account).toBe(
+    "sorauﾛ1QEnRヰ7Dﾑzmg1ﾊｻ4ﾈAcckｻsafiｳヱufｴｻｻPﾆｴﾖﾁﾉDR1Y5PX",
+  );
+};
+
 const compatibleNativeModule = () => ({
+  accountAddressParseEncoded() {
+    return null;
+  },
+  accountAddressRender() {
+    return null;
+  },
   deriveConfidentialReceiveAddressV2() {},
   buildConfidentialTransferProofV2() {},
   buildConfidentialUnshieldProofV2() {},
   buildConfidentialUnshieldProofV3() {},
+  buildIvmProvedTransactionPayload() {},
+  signQuotedIvmProvedTransactionPayload() {},
+  noritoDecodeInstruction() {
+    return JSON.stringify({});
+  },
+  noritoEncodeInstruction() {
+    return Buffer.from([0]);
+  },
+  inspectSubscriptionTriggerAction() {
+    return JSON.stringify({});
+  },
+  validationFeePolicyProposalFingerprintV1(
+    _policy: unknown,
+    _payoutLifecycleProposalId: unknown,
+    _plainElectorateRules: unknown,
+  ) {
+    void _policy;
+    void _payoutLifecycleProposalId;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
+    return Buffer.from(
+      "85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90",
+      "hex",
+    );
+  },
+  validationFeePayoutLifecycleProposalFingerprintV1(
+    _payoutBinding: unknown,
+    _plainElectorateRules: unknown,
+  ) {
+    void _payoutBinding;
+    assertCurrentPlainElectorateCustody(_plainElectorateRules);
+    return Buffer.from(
+      "fa1e71c8bec0601d590038626c2a8d3a4b2350f5dd23f76b0a2dfdbbf9e5a84b",
+      "hex",
+    );
+  },
+  connectNoritoBridgeAbiVersion() {
+    return 21;
+  },
+  securePrivateFileAbiVersion() {
+    return 1;
+  },
+  securePrivateDirectoryEnsure(_rootPath: string) {
+    void _rootPath;
+  },
+  securePrivateFileRead(
+    _rootPath: string,
+    _filename: string,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return null;
+  },
+  securePrivateFileWriteAtomic(
+    _rootPath: string,
+    _filename: string,
+    bytes: Uint8Array,
+    _maximumBytes: number,
+  ) {
+    void _rootPath;
+    void _filename;
+    void _maximumBytes;
+    return Buffer.from(bytes);
+  },
 });
+
+const GOVERNANCE_FINGERPRINT_EXPORTS = [
+  "validationFeePolicyProposalFingerprintV1",
+  "validationFeePayoutLifecycleProposalFingerprintV1",
+] as const;
+const ACTIVE_RUNTIME_NATIVE_EXPORTS = [
+  "accountAddressParseEncoded",
+  "accountAddressRender",
+  "noritoDecodeInstruction",
+  "noritoEncodeInstruction",
+  "inspectSubscriptionTriggerAction",
+  "securePrivateFileAbiVersion",
+  "securePrivateDirectoryEnsure",
+  "securePrivateFileRead",
+  "securePrivateFileWriteAtomic",
+] as const;
 
 const tempRoots: string[] = [];
 
@@ -56,6 +207,42 @@ afterEach(() => {
       rmSync(target, { recursive: true, force: true });
     }
   }
+});
+
+describe("resolveNativeProvenanceRequirement", () => {
+  it("derives the exact release provenance requirement from the environment", () => {
+    expect(
+      resolveNativeProvenanceRequirement({
+        IROHA_JS_NATIVE_BUILD_PROFILE: "release",
+        IROHA_JS_NATIVE_SOURCE_GIT_REVISION: RELEASE_SOURCE_REVISION,
+      }),
+    ).toEqual(releaseProvenanceRequirement());
+  });
+
+  it.each([undefined, "debug", "deploy", "release "])(
+    "keeps non-release profile %s on the development compatibility path",
+    (buildProfile) => {
+      expect(
+        resolveNativeProvenanceRequirement({
+          IROHA_JS_NATIVE_BUILD_PROFILE: buildProfile,
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.each([undefined, "", "a".repeat(39), "A".repeat(40), "g".repeat(40)])(
+    "rejects missing or malformed release source revision %s",
+    (sourceGitRevision) => {
+      expect(() =>
+        resolveNativeProvenanceRequirement({
+          IROHA_JS_NATIVE_BUILD_PROFILE: "release",
+          IROHA_JS_NATIVE_SOURCE_GIT_REVISION: sourceGitRevision,
+        }),
+      ).toThrow(
+        "IROHA_JS_NATIVE_SOURCE_GIT_REVISION must be an explicit 40-character lowercase Git SHA",
+      );
+    },
+  );
 });
 
 describe("resolveNativeBuildRequirement", () => {
@@ -189,6 +376,480 @@ describe("resolveNativeBuildRequirement", () => {
     expect(result.reason).toContain("missing native exports");
     expect(result.missingExports).toContain(
       "deriveConfidentialReceiveAddressV2",
+    );
+  });
+
+  it("requests a rebuild when either validation-fee fingerprint export is missing", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        "darwin-arm64": { sha256: sha256("native-binary") },
+      }),
+      "utf8",
+    );
+
+    for (const exportName of GOVERNANCE_FINGERPRINT_EXPORTS) {
+      const nativeModule = compatibleNativeModule();
+      Reflect.deleteProperty(nativeModule, exportName);
+      const result = resolveNativeBuildRequirement(
+        tempPackage.root,
+        "darwin-arm64",
+        () => nativeModule,
+      );
+
+      expect(result.shouldBuild).toBe(true);
+      expect(result.reason).toBe(`missing native exports: ${exportName}`);
+      expect(result.missingExports).toEqual([exportName]);
+    }
+  });
+
+  it("requests a rebuild when an active runtime native export is missing", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    for (const exportName of ACTIVE_RUNTIME_NATIVE_EXPORTS) {
+      const nativeModule = compatibleNativeModule();
+      Reflect.deleteProperty(nativeModule, exportName);
+      const result = resolveNativeBuildRequirement(
+        tempPackage.root,
+        "darwin-arm64",
+        () => nativeModule,
+      );
+
+      expect(result.shouldBuild).toBe(true);
+      expect(result.reason).toBe(`missing native exports: ${exportName}`);
+      expect(result.missingExports).toEqual([exportName]);
+    }
+  });
+
+  it("accepts opaque N-API fingerprint arities when known-answer vectors pass", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        "darwin-arm64": { sha256: sha256("native-binary") },
+      }),
+      "utf8",
+    );
+
+    const nativeModule = compatibleNativeModule();
+    const policyFingerprint =
+      nativeModule.validationFeePolicyProposalFingerprintV1;
+    const payoutFingerprint =
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1;
+    Reflect.set(
+      nativeModule,
+      "validationFeePolicyProposalFingerprintV1",
+      (...args: unknown[]) =>
+        Reflect.apply(policyFingerprint, nativeModule, args),
+    );
+    Reflect.set(
+      nativeModule,
+      "validationFeePayoutLifecycleProposalFingerprintV1",
+      (...args: unknown[]) =>
+        Reflect.apply(payoutFingerprint, nativeModule, args),
+    );
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(nativeModule.validationFeePolicyProposalFingerprintV1.length).toBe(
+      0,
+    );
+    expect(
+      nativeModule.validationFeePayoutLifecycleProposalFingerprintV1.length,
+    ).toBe(0);
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+  });
+
+  it("uses the secure-storage ABI probe instead of JavaScript arities", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    Reflect.set(nativeModule, "securePrivateDirectoryEnsure", () => {});
+    Reflect.set(nativeModule, "securePrivateFileRead", (_rootPath: string) => {
+      void _rootPath;
+    });
+    Reflect.set(
+      nativeModule,
+      "securePrivateFileWriteAtomic",
+      (_rootPath: string, _filename: string) => {
+        void _rootPath;
+        void _filename;
+      },
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+  });
+
+  it("requests a rebuild when the secure private-file ABI is not exactly 1", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.securePrivateFileAbiVersion = () => 2;
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "secure private-file ABI mismatch: expected 1, observed 2",
+    );
+  });
+
+  it("requests a rebuild when the secure private-file ABI probe throws", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, {
+      sha256: sha256("native-binary"),
+    });
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.securePrivateFileAbiVersion = () => {
+      throw new Error("probe failed");
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "securePrivateFileAbiVersion failed: probe failed",
+    );
+  });
+
+  it("requests a rebuild when the native Connect bridge ABI is not exactly 21", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        "darwin-arm64": { sha256: sha256("native-binary") },
+      }),
+      "utf8",
+    );
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.connectNoritoBridgeAbiVersion = () => 20;
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "connect Norito bridge ABI mismatch: expected 21, observed 20",
+    );
+  });
+
+  it("requests a rebuild when native fingerprint semantics do not match the canonical Rust vectors", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        "darwin-arm64": { sha256: sha256("native-binary") },
+      }),
+      "utf8",
+    );
+
+    const nativeModule = compatibleNativeModule();
+    nativeModule.validationFeePolicyProposalFingerprintV1 = function (
+      _policy: unknown,
+      _payoutLifecycleProposalId: unknown,
+      _plainElectorateRules: unknown,
+    ) {
+      void _policy;
+      void _payoutLifecycleProposalId;
+      void _plainElectorateRules;
+      return Buffer.alloc(32);
+    };
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      () => nativeModule,
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native fingerprint contract mismatch for validationFeePolicyProposalFingerprintV1: expected 85ecc42a75d3e0da96349b75f0c1ccd1ffb6dff2334486b67edb39f7a86f6a90, observed 0000000000000000000000000000000000000000000000000000000000000000",
+    );
+  });
+
+  it("accepts an exact clean release artifact from the required source revision", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+
+    expect(result.shouldBuild).toBe(false);
+    expect(result.reason).toBe("native binding is current");
+  });
+
+  it("requests a release rebuild for a debug-profile artifact", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(
+      tempPackage.nativeDir,
+      releaseChecksumEntry({ cargo_profile: "debug" }),
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native Cargo profile mismatch for darwin-arm64: expected release, observed debug",
+    );
+  });
+
+  it("requests a release rebuild for an artifact from the wrong source revision", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(
+      tempPackage.nativeDir,
+      releaseChecksumEntry({ source_git_revision: "b".repeat(40) }),
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      `native source Git revision mismatch for darwin-arm64: expected ${RELEASE_SOURCE_REVISION}, observed ${"b".repeat(40)}`,
+    );
+  });
+
+  it("requests a release rebuild for a dirty-source artifact", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(
+      tempPackage.nativeDir,
+      releaseChecksumEntry({ source_tree_clean: false }),
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "native source tree is not clean for darwin-arm64",
+    );
+  });
+
+  it.each([
+    "build_execution_policy",
+    "build_provenance_version",
+    "cargo_profile",
+    "source_git_revision",
+    "source_tree_clean",
+    "source_tree_sha256",
+    "mach_o_signing_independent_sha256",
+  ])(
+    "requests a release rebuild when provenance field %s is missing",
+    (missingField) => {
+      const tempPackage = makeTempPackage();
+      tempRoots.push(tempPackage.root);
+      const checksumEntry = releaseChecksumEntry();
+      Reflect.deleteProperty(checksumEntry, missingField);
+      writeNativeBundle(tempPackage.nativeDir, checksumEntry);
+
+      const result = resolveNativeBuildRequirement(
+        tempPackage.root,
+        "darwin-arm64",
+        compatibleNativeModule,
+        releaseProvenanceRequirement(),
+      );
+
+      expect(result.shouldBuild).toBe(true);
+      expect(result.reason).toBe(
+        `missing release native provenance fields for darwin-arm64: ${missingField}`,
+      );
+    },
+  );
+
+  it.each([
+    ["build_execution_policy", "untrusted-shell-v0"],
+    ["build_provenance_version", 2],
+    ["cargo_profile", 1],
+    ["source_git_revision", "A".repeat(40)],
+    ["source_tree_clean", "true"],
+    ["source_tree_sha256", "C".repeat(64)],
+    ["mach_o_signing_independent_sha256", "B".repeat(64)],
+  ])(
+    "requests a release rebuild when provenance field %s is malformed",
+    (field, malformedValue) => {
+      const tempPackage = makeTempPackage();
+      tempRoots.push(tempPackage.root);
+      writeNativeBundle(
+        tempPackage.nativeDir,
+        releaseChecksumEntry({ [field]: malformedValue }),
+      );
+
+      const result = resolveNativeBuildRequirement(
+        tempPackage.root,
+        "darwin-arm64",
+        compatibleNativeModule,
+        releaseProvenanceRequirement(),
+      );
+
+      expect(result.shouldBuild).toBe(true);
+    },
+  );
+
+  it("requests a release rebuild when the selected entry has an unknown provenance field", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(
+      tempPackage.nativeDir,
+      releaseChecksumEntry({ source_branch: "main" }),
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "unknown checksum manifest fields for darwin-arm64: source_branch",
+    );
+  });
+
+  it("rejects release manifests with extra top-level or platform entries", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.node"),
+      "native-binary",
+      "utf8",
+    );
+    const variants = [
+      {
+        entries: { "darwin-arm64": releaseChecksumEntry() },
+        legacy: true,
+      },
+      {
+        entries: {
+          "darwin-arm64": releaseChecksumEntry(),
+          "linux-x64": releaseChecksumEntry(),
+        },
+      },
+    ];
+
+    for (const manifest of variants) {
+      writeFileSync(
+        join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+        JSON.stringify(manifest),
+        "utf8",
+      );
+      const result = resolveNativeBuildRequirement(
+        tempPackage.root,
+        "darwin-arm64",
+        compatibleNativeModule,
+        releaseProvenanceRequirement(),
+      );
+      expect(result.shouldBuild).toBe(true);
+      expect(result.reason).toBe(
+        "release checksum manifest must contain only entries.darwin-arm64",
+      );
+    }
+  });
+
+  it("rejects a non-canonical release manifest encoding", () => {
+    const tempPackage = makeTempPackage();
+    tempRoots.push(tempPackage.root);
+    writeNativeBundle(tempPackage.nativeDir, releaseChecksumEntry());
+    writeFileSync(
+      join(tempPackage.nativeDir, "iroha_js_host.checksums.json"),
+      JSON.stringify({
+        entries: { "darwin-arm64": releaseChecksumEntry() },
+      }),
+      "utf8",
+    );
+
+    const result = resolveNativeBuildRequirement(
+      tempPackage.root,
+      "darwin-arm64",
+      compatibleNativeModule,
+      releaseProvenanceRequirement(),
+    );
+    expect(result.shouldBuild).toBe(true);
+    expect(result.reason).toBe(
+      "release checksum manifest encoding is not canonical",
     );
   });
 });

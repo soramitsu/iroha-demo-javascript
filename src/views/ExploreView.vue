@@ -54,8 +54,9 @@
         </div>
         <div class="explorer-actions" :aria-label="t('Explorer QR')">
           <a
+            v-if="explorerUrl"
             class="secondary explorer-link"
-            :href="DEFAULT_EXPLORER_URL"
+            :href="explorerUrl"
             target="_blank"
             rel="noopener noreferrer"
           >
@@ -123,7 +124,7 @@ import {
 } from "@/components/ui";
 import { getExplorerAccountQr, getExplorerMetrics } from "@/services/iroha";
 import { useSessionStore } from "@/stores/session";
-import { DEFAULT_EXPLORER_URL } from "@/constants/chains";
+import { CHAIN_PRESETS } from "@/constants/chains";
 import { getPublicAccountId } from "@/utils/accountId";
 import type {
   ExplorerAccountQrResponse,
@@ -132,6 +133,15 @@ import type {
 
 const session = useSessionStore();
 const activeAccount = computed(() => session.activeAccount);
+const explorerUrl = computed(
+  () =>
+    CHAIN_PRESETS.find(
+      (preset) =>
+        preset.connection.toriiUrl === session.connection.toriiUrl &&
+        preset.connection.chainId === session.connection.chainId &&
+        preset.connection.networkPrefix === session.connection.networkPrefix,
+    )?.explorerUrl ?? "",
+);
 const requestAccountId = computed(
   () =>
     getPublicAccountId(activeAccount.value, session.connection.networkPrefix) ||
@@ -248,11 +258,10 @@ const refresh = async () => {
       accountQr.value = null;
       return;
     }
-    const adoptedChainPrefix = session.syncChainNetworkPrefix(
-      qrPayload.networkPrefix,
-    );
-    if (adoptedChainPrefix) {
-      session.persistState();
+    if (qrPayload.networkPrefix !== session.connection.networkPrefix) {
+      accountQr.value = null;
+      qrError.value = true;
+      return;
     }
     accountQr.value = qrPayload;
   } finally {

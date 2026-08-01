@@ -4,9 +4,11 @@ import { createPinia, setActivePinia } from "pinia";
 import { defineComponent } from "vue";
 import StakingView from "@/views/StakingView.vue";
 import { translate } from "@/i18n/messages";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 
 const getSumeragiStatusMock = vi.fn();
+const getNexusLifecycleMock = vi.fn();
 const getNexusStakingPolicyMock = vi.fn();
 const fetchAccountAssetsMock = vi.fn();
 const getNexusPublicLaneValidatorsMock = vi.fn();
@@ -17,9 +19,23 @@ const registerPublicLaneValidatorMock = vi.fn();
 const schedulePublicLaneUnbondMock = vi.fn();
 const finalizePublicLaneUnbondMock = vi.fn();
 const claimPublicLaneRewardsMock = vi.fn();
+const finalizedTransaction = (hashCharacter: string) => {
+  const hash = hashCharacter.repeat(64);
+  return {
+    hash,
+    finality: {
+      status: "finalized" as const,
+      transactionHash: hash,
+      blockHeight: 17,
+      blockHash: "f".repeat(64),
+      finalizedBlockHeight: 19,
+    },
+  };
+};
 
 vi.mock("@/services/iroha", () => ({
   getSumeragiStatus: (toriiUrl: string) => getSumeragiStatusMock(toriiUrl),
+  getNexusLifecycle: (toriiUrl: string) => getNexusLifecycleMock(toriiUrl),
   getNexusStakingPolicy: (toriiUrl: string) =>
     getNexusStakingPolicyMock(toriiUrl),
   fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
@@ -60,6 +76,7 @@ describe("StakingView", () => {
   beforeEach(() => {
     document.body.replaceChildren();
     getSumeragiStatusMock.mockReset();
+    getNexusLifecycleMock.mockReset();
     getNexusStakingPolicyMock.mockReset();
     fetchAccountAssetsMock.mockReset();
     getNexusPublicLaneValidatorsMock.mockReset();
@@ -72,15 +89,37 @@ describe("StakingView", () => {
     claimPublicLaneRewardsMock.mockReset();
 
     getSumeragiStatusMock.mockResolvedValue({
-      lane_governance: [
+      protocol_version: 3,
+      height_context: {
+        epoch: 12,
+        validator_count: 4,
+      },
+      last_commit_qc: {
+        certificate: {
+          round: {
+            height: 44_928,
+            view: 0,
+          },
+        },
+      },
+    });
+    getNexusLifecycleMock.mockResolvedValue({
+      version: 1,
+      nexus_enabled: true,
+      lane_count: 1,
+      lanes: [
         {
-          dataspace_id: 1,
-          lane_id: 7,
+          dataspace_id: "1",
+          id: 7,
           alias: "Primary",
-          validator_ids: ["validator@wonderland"],
+          description: "Primary lane",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
         },
       ],
-      dataspace_commitments: [],
     });
     getNexusStakingPolicyMock.mockResolvedValue({ unbondingDelayMs: 60_000 });
     fetchAccountAssetsMock.mockResolvedValue({
@@ -138,16 +177,26 @@ describe("StakingView", () => {
     document.body.replaceChildren();
   });
 
-  const mountView = (accountId = "alice@wonderland") => {
+  const mountView = (
+    accountId = "alice@wonderland",
+    endpointOptions?: {
+      stakingWrites?: boolean;
+      writeAllowed?: boolean;
+      assetDefinitionId?: string;
+      chainId?: string;
+      networkPrefix?: number;
+    },
+  ) => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const session = useSessionStore();
     session.$patch({
       connection: {
         toriiUrl: "http://localhost:8080",
-        chainId: "chain",
-        assetDefinitionId: "xor#wonderland",
-        networkPrefix: 369,
+        chainId: endpointOptions?.chainId ?? "chain",
+        assetDefinitionId:
+          endpointOptions?.assetDefinitionId ?? "xor#wonderland",
+        networkPrefix: endpointOptions?.networkPrefix ?? 369,
       },
       accounts: [
         {
@@ -160,6 +209,47 @@ describe("StakingView", () => {
       ],
       activeAccountId: accountId,
     });
+    const writeAllowed = endpointOptions?.writeAllowed !== false;
+    const stakingWrites = endpointOptions?.stakingWrites !== false;
+    useEndpointStore().$patch({
+      state: "ready",
+      inspection: {
+        schema: "iroha.wallet.endpoint-inspection.v1",
+        toriiUrl: "http://localhost:8080",
+        expected: {
+          chainId: endpointOptions?.chainId ?? "chain",
+          networkPrefix: endpointOptions?.networkPrefix ?? 369,
+        },
+        observed: writeAllowed
+          ? {
+              chainId: endpointOptions?.chainId ?? "chain",
+              networkPrefix: endpointOptions?.networkPrefix ?? 369,
+            }
+          : null,
+        identityStatus: writeAllowed ? "matched" : "unverified",
+        accessMode: writeAllowed ? "read-write" : "read-only",
+        checkedAtMs: 1,
+        evidence: [],
+        diagnostic: {
+          code: writeAllowed
+            ? "endpoint_identity_matched"
+            : "endpoint_identity_unverified",
+          message: writeAllowed
+            ? "Endpoint identity matched."
+            : "Endpoint identity is not verified.",
+        },
+        features: {
+          stakingWrites: {
+            supported: stakingWrites,
+            source: "openapi",
+            requiredOperations: ["POST /v1/pipeline/transactions"],
+            missingOperations: stakingWrites
+              ? []
+              : ["POST /v1/pipeline/transactions"],
+          },
+        },
+      },
+    } as any);
     const wrapper = mount(StakingViewHarness, {
       attachTo: document.body,
       global: {
@@ -214,6 +304,19 @@ describe("StakingView", () => {
       throw new Error(`${t("Unbond Delay")} row not found`);
     }
     return row;
+  };
+
+  const getStatForLabel = (
+    wrapper: ReturnType<typeof mount>,
+    labelText: string,
+  ) => {
+    const stat = wrapper
+      .findAll(".staking-stat")
+      .find((node) => node.text().includes(labelText));
+    if (!stat) {
+      throw new Error(`${labelText} stat not found`);
+    }
+    return stat;
   };
 
   const getInputForLabel = (
@@ -402,12 +505,12 @@ describe("StakingView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain(t("Set up network and wallet first."));
-    expect(getStakeBalanceRow(wrapper).text()).toContain("0 XOR");
+    expect(getStakeBalanceRow(wrapper).text()).toContain(t("Unavailable"));
     expect(getUnbondDelayRow(wrapper).text()).toContain("—");
     expect(wrapper.findAll("select")[0]?.attributes("disabled")).toBeDefined();
   });
 
-  it("clears stale staking bootstrap state when refresh fails", async () => {
+  it("keeps public lane data when the wallet balance request fails", async () => {
     const wrapper = mountView();
     await flushPromises();
 
@@ -426,10 +529,249 @@ describe("StakingView", () => {
     await flushPromises();
     await flushPromises();
 
-    expect(wrapper.text()).toContain("assets down");
-    expect(getStakeBalanceRow(wrapper).text()).toContain("0 XOR");
+    expect(wrapper.text()).toContain(t("Wallet stake balance is unavailable."));
+    expect(getStakeBalanceRow(wrapper).text()).toContain(t("Unavailable"));
+    expect(getStakeBalanceRow(wrapper).text()).not.toContain("0 XOR");
+    expect(wrapper.get('[data-testid="staking-assets-error"]').text()).toBe(
+      "assets down",
+    );
+    expect(getUnbondDelayRow(wrapper).text()).toContain("1 min");
+    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(
+      wrapper.findAll("select")[0]?.attributes("disabled"),
+    ).toBeUndefined();
+  });
+
+  it("does not guess a stake asset when the active profile has no exact asset evidence", async () => {
+    const wrapper = mountView("alice@wonderland", {
+      assetDefinitionId: "",
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(getStakeBalanceRow(wrapper).text()).toContain(t("Unavailable"));
+    expect(getStakeBalanceRow(wrapper).text()).not.toContain("10 XOR");
+    expect(wrapper.get('[data-testid="staking-assets-error"]').text()).toBe(
+      t("Wallet stake balance is unavailable."),
+    );
+  });
+
+  it("uses the fixed Minamoto asset only for exact verified Minamoto metadata", async () => {
+    fetchAccountAssetsMock.mockResolvedValue({
+      items: [
+        {
+          asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw##alice@wonderland",
+          quantity: "25",
+        },
+      ],
+      total: 1,
+    });
+    const wrapper = mountView("alice@wonderland", {
+      assetDefinitionId: "",
+      chainId: "00000000-0000-0000-0000-000000000000",
+      networkPrefix: 753,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(getStakeBalanceRow(wrapper).text()).toContain("25 XOR");
+    expect(wrapper.find('[data-testid="staking-assets-error"]').exists()).toBe(
+      false,
+    );
+  });
+
+  it("renders lifecycle validators when Sumeragi and configuration are unavailable", async () => {
+    getSumeragiStatusMock.mockRejectedValue(
+      new TypeError("proposal_round must be an object"),
+    );
+    getNexusStakingPolicyMock.mockRejectedValue(
+      new Error("401 operator_signature_missing"),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain(t("Consensus telemetry is unavailable."));
+    expect(wrapper.text()).toContain(
+      t("Unbond scheduling is unavailable because policy is not public."),
+    );
     expect(getUnbondDelayRow(wrapper).text()).toContain("—");
-    expect(wrapper.findAll("select")[0]?.attributes("disabled")).toBeDefined();
+
+    const unbondTab = wrapper.get("#staking-tab-unbond");
+    await unbondTab.trigger("click");
+    const unbondButton = wrapper
+      .get("#staking-panel-unbond")
+      .find("[data-ui-primary-action]");
+    expect(unbondButton.attributes("disabled")).toBeDefined();
+  });
+
+  it("keeps validators visible when lane rewards are unavailable", async () => {
+    getNexusPublicLaneRewardsMock.mockRejectedValue(
+      new Error("503 route_unavailable"),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.text()).toContain("503 route_unavailable");
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(true);
+    expect(wrapper.get('[data-testid="staking-rewards-error"]').text()).toBe(
+      "503 route_unavailable",
+    );
+    expect(wrapper.get(".staking-rewards-card").text()).toContain(
+      t("Unavailable"),
+    );
+    expect(wrapper.get(".staking-rewards-card").text()).not.toContain(
+      t("No pending rewards for this lane/account."),
+    );
+  });
+
+  it("does not render a failed validator read as an empty live lane", async () => {
+    getNexusPublicLaneValidatorsMock.mockRejectedValue(
+      new Error("validator route down"),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="staking-validators-error"]').text()).toBe(
+      "validator route down",
+    );
+    expect(wrapper.text()).not.toContain(
+      t("No validators found for this lane."),
+    );
+    expect(wrapper.find('[role="listbox"]').exists()).toBe(false);
+  });
+
+  it("preserves same-context validators and their error when another lane read succeeds", async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+    expect(wrapper.text()).toContain("validator@wonderland");
+
+    getNexusPublicLaneValidatorsMock.mockRejectedValueOnce(
+      new Error("validator refresh down"),
+    );
+    const refreshButton = wrapper
+      .findAll("button")
+      .find((node) => node.text() === t("Refresh"));
+    if (!refreshButton) {
+      throw new Error("Refresh button not found");
+    }
+    await refreshButton.trigger("click");
+    await flushPromises();
+    await flushPromises();
+
+    expect(getNexusPublicLaneRewardsMock).toHaveBeenCalledTimes(2);
+    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(wrapper.get('[data-testid="staking-validators-error"]').text()).toBe(
+      "validator refresh down",
+    );
+  });
+
+  it("marks lane stake unavailable instead of showing a false zero", async () => {
+    getNexusPublicLaneStakeMock.mockImplementation(
+      (input: { validator?: string }) =>
+        input.validator
+          ? Promise.resolve({
+              lane_id: 7,
+              total: 0,
+              items: [],
+            })
+          : Promise.reject(new Error("lane stake down")),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    expect(wrapper.get('[data-testid="staking-lane-stake-error"]').text()).toBe(
+      "lane stake down",
+    );
+    const bondedStat = getStatForLabel(wrapper, t("Bonded across lane"));
+    expect(bondedStat.text()).toContain(t("Unavailable"));
+    expect(bondedStat.text()).not.toContain("0 XOR");
+  });
+
+  it("marks selected-validator stake unavailable instead of showing an empty position", async () => {
+    getNexusPublicLaneStakeMock.mockImplementation(
+      (input: { validator?: string }) =>
+        input.validator
+          ? Promise.reject(new Error("wallet stake down"))
+          : Promise.resolve({
+              lane_id: 7,
+              total: 0,
+              items: [],
+            }),
+    );
+
+    const wrapper = mountView();
+    await flushPromises();
+    await flushPromises();
+
+    expect(
+      wrapper.get('[data-testid="staking-selected-stake-error"]').text(),
+    ).toBe("wallet stake down");
+    expect(wrapper.get("#staking-panel-unbond").text()).toContain(
+      t("Unavailable"),
+    );
+    expect(wrapper.get("#staking-panel-unbond").text()).not.toContain(
+      t("No pending unbond requests for the selected validator."),
+    );
+  });
+
+  it("keeps staking reads available but blocks writes missing from endpoint capabilities", async () => {
+    const wrapper = mountView("alice@wonderland", {
+      stakingWrites: false,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(getNexusPublicLaneValidatorsMock).toHaveBeenCalled();
+    expect(getNexusPublicLaneStakeMock).toHaveBeenCalled();
+    expect(wrapper.text()).toContain("validator@wonderland");
+    expect(
+      wrapper.get('[data-testid="staking-write-prerequisite"]').text(),
+    ).toBe(
+      t(
+        "This endpoint does not advertise the required staking write operations.",
+      ),
+    );
+
+    const bondButton = wrapper
+      .get("#staking-panel-bond")
+      .get("[data-ui-primary-action]");
+    expect(bondButton.attributes("disabled")).toBeDefined();
+
+    (bondButton.element as HTMLButtonElement).disabled = false;
+    await bondButton.trigger("click");
+    await flushPromises();
+    expect(bondPublicLaneStakeMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks staking mutations when endpoint identity is read-only", async () => {
+    const wrapper = mountView("alice@wonderland", {
+      writeAllowed: false,
+    });
+    await flushPromises();
+    await flushPromises();
+
+    expect(getNexusPublicLaneValidatorsMock).toHaveBeenCalled();
+    expect(
+      wrapper.get('[data-testid="staking-write-prerequisite"]').text(),
+    ).toBe("Endpoint identity is not verified.");
+    expect(
+      wrapper
+        .get("#staking-panel-bond")
+        .get("[data-ui-primary-action]")
+        .attributes("disabled"),
+    ).toBeDefined();
+    expect(bondPublicLaneStakeMock).not.toHaveBeenCalled();
   });
 
   it("does not treat a separate stake account as this wallet's validator authority", async () => {
@@ -450,7 +792,9 @@ describe("StakingView", () => {
   });
 
   it("submits validator registration from the operator panel", async () => {
-    registerPublicLaneValidatorMock.mockResolvedValue({ hash: "0xvalidator" });
+    registerPublicLaneValidatorMock.mockResolvedValue(
+      finalizedTransaction("a"),
+    );
 
     const wrapper = mountView();
     await flushPromises();
@@ -481,6 +825,7 @@ describe("StakingView", () => {
     expect(registerPublicLaneValidatorMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
       chainId: "chain",
+      networkPrefix: 369,
       laneId: 7,
       validatorAccountId: "alice@wonderland",
       stakeAccountId: "alice@wonderland",
@@ -492,7 +837,8 @@ describe("StakingView", () => {
       },
       privateKeyHex: "cd".repeat(32),
     });
-    expect(wrapper.text()).toContain("0xvalidator");
+    expect(wrapper.text()).toContain("a".repeat(64));
+    expect(wrapper.text()).toContain("finalized in block 17");
   });
 
   it("uses an accessible validator master-detail workspace and action tabs", async () => {

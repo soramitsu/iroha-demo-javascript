@@ -25,6 +25,17 @@
         </div>
       </dl>
     </section>
+    <p
+      v-if="offlineBalanceReconciliationRequired"
+      class="offline-message"
+      role="alert"
+    >
+      {{
+        t(
+          "This offline balance is locked because an online move finalized but local reconciliation failed.",
+        )
+      }}
+    </p>
 
     <SegmentedControl
       class="offline-mode-control"
@@ -93,11 +104,10 @@
           <AppButton
             v-else
             data-testid="offline-primary-action"
-            :loading="syncingAllowances"
-            :disabled="syncingAllowances || !canSync"
-            @click="syncAllowances"
+            :loading="readinessLoading"
+            disabled
           >
-            {{ t("Sync offline allowance") }}
+            {{ t("Allowance sync unavailable") }}
           </AppButton>
           <AppButton
             variant="ghost"
@@ -108,11 +118,11 @@
           </AppButton>
         </div>
         <p
-          v-if="hardwareMessage || syncMessage"
+          v-if="hardwareMessage || syncMessage || readinessMessage"
           class="offline-message"
           role="status"
         >
-          {{ hardwareMessage || syncMessage }}
+          {{ hardwareMessage || syncMessage || readinessMessage }}
         </p>
       </section>
 
@@ -213,7 +223,9 @@
           <AppButton
             data-testid="offline-primary-action"
             :loading="sendingPayment"
-            :disabled="!invoiceInput || sendingPayment"
+            :disabled="
+              !invoiceInput || sendingPayment || offlineBalanceMutationLocked
+            "
             @click="createPayment"
           >
             {{ t("Create payment") }}
@@ -272,7 +284,9 @@
           <AppButton
             data-testid="offline-primary-action"
             :loading="acceptingPayment"
-            :disabled="!paymentInput || acceptingPayment"
+            :disabled="
+              !paymentInput || acceptingPayment || offlineBalanceMutationLocked
+            "
             @click="acceptPayment"
           >
             {{ t("Accept payment") }}
@@ -312,22 +326,10 @@
           <label>
             {{ t("Destination Account") }}
             <input
-              v-model="onlineForm.receiver"
+              :value="activeAccountDisplayId"
               data-testid="offline-online-destination-input"
-              :disabled="onlineDestinationLocked"
+              disabled
             />
-          </label>
-          <label v-if="!onlineForm.shielded">
-            {{ t("Memo (optional)") }}
-            <input v-model="onlineForm.memo" />
-          </label>
-          <label class="shield-option">
-            <input
-              v-model="onlineForm.shielded"
-              type="checkbox"
-              :disabled="!onlineShieldSupported"
-            />
-            <span>{{ t("Private exit") }}</span>
           </label>
         </div>
         <p class="transaction-fee-note">
@@ -346,49 +348,39 @@
             :disabled="movingOnline || !canSubmitOnlineMove"
             @click="moveToOnline"
           >
-            {{
-              onlineForm.shielded
-                ? t("Unshield to wallet")
-                : t("Send to online wallet")
-            }}
+            {{ t("Unshield to wallet") }}
           </AppButton>
         </div>
+        <p
+          v-if="!confidentialTransfersSupported"
+          class="offline-message"
+          data-testid="offline-write-prerequisite"
+          role="status"
+        >
+          {{ confidentialTransferPrerequisite }}
+        </p>
         <p v-if="onlineShieldCapabilityMessage" class="offline-message">
           {{ onlineShieldCapabilityMessage }}
         </p>
         <p
-          v-else-if="
-            onlineForm.shielded &&
-            onlineShieldSupported &&
-            onlineShieldPolicyMode
-          "
+          v-if="offlineReadiness && !offlineReadiness.ready"
+          class="offline-message"
+          role="status"
+        >
+          {{ offlineReadinessSummary }}
+        </p>
+        <p
+          v-else-if="onlineShieldSupported && onlineShieldPolicyMode"
           class="offline-message"
         >
           {{
             t("Unshield policy mode: {mode}.", { mode: onlineShieldPolicyMode })
           }}
         </p>
-        <p
-          v-if="onlineForm.shielded && onlineShieldSupported"
-          class="offline-message"
-        >
+        <p v-if="onlineShieldSupported" class="offline-message">
           {{
             t(
-              "Private exits do not publish memos. Leave memo blank when unshielding.",
-            )
-          }}
-        </p>
-        <p
-          v-else-if="
-            !onlineForm.shielded &&
-            onlineShieldSupported &&
-            onlineShieldPolicyMode
-          "
-          class="offline-message"
-        >
-          {{
-            t(
-              "Private exit is optional. Leave it off to avoid unshielding, but the transfer will stay transparent.",
+              "Offline moves are self-only unshield operations and never publish a memo.",
             )
           }}
         </p>
@@ -423,7 +415,19 @@
             <dt>{{ t("Policy refresh") }}</dt>
             <dd>{{ formatDate(offline.wallet.nextRefreshMs) || t("—") }}</dd>
           </div>
+          <div>
+            <dt>{{ t("Network readiness") }}</dt>
+            <dd>{{ offlineReadinessSummary }}</dd>
+          </div>
         </dl>
+        <ul
+          v-if="offlineReadiness?.blockers.length"
+          class="helper offline-readiness-blockers"
+        >
+          <li v-for="blocker in offlineReadiness.blockers" :key="blocker.code">
+            {{ blocker.message }}
+          </li>
+        </ul>
         <p class="section-label offline-limits-label">
           {{ t("Offline limits") }}
         </p>
@@ -545,7 +549,6 @@ import {
   reactive,
   ref,
   toRef,
-  toRaw,
   watch,
 } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
@@ -557,10 +560,15 @@ import {
   StatusBadge,
   TechnicalDisclosure,
 } from "@/components/ui";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
-import { useOfflineStore } from "@/stores/offline";
-import { fetchOfflineAllowances } from "@/services/offline";
+import { buildOfflineStorageKey, useOfflineStore } from "@/stores/offline";
 import {
+  fetchOfflineReadiness,
+  type OfflineReadinessSnapshot,
+} from "@/services/offline";
+import {
+  applyWithdrawToOnline,
   createInvoice,
   createPaymentPayload,
   encodeInvoice,
@@ -570,7 +578,6 @@ import {
 import { transferAsset } from "@/services/iroha";
 import { useQrScanner } from "@/composables/useQrScanner";
 import { useShieldCapability } from "@/composables/useShieldCapability";
-import { useShieldedDestinationLock } from "@/composables/useShieldedDestinationLock";
 import { isPositiveWholeAmount } from "@/utils/confidential";
 import type { OfflineAllowanceItem } from "@/types/iroha";
 import { getPublicAccountId } from "@/utils/accountId";
@@ -583,12 +590,18 @@ import {
 } from "@/utils/assetId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
+  buildTrustedEndpointIdentityScope,
+  type EndpointIdentityScope,
+} from "@/utils/endpointScope";
+import {
   appendTransactionFee,
   formatTransactionFee,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import { assertFinalizedSubmissionResult } from "@/utils/transactionFinality";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const offline = useOfflineStore();
 const activeAccount = computed(() => session.activeAccount);
 const activeAccountDisplayId = computed(() =>
@@ -597,6 +610,45 @@ const activeAccountDisplayId = computed(() =>
 const activeOfflineAssetId = computed(() =>
   session.connection.assetDefinitionId.trim(),
 );
+const activeOfflineEndpointIdentity = computed<EndpointIdentityScope | null>(
+  () => {
+    const inspection = endpointStore.inspection;
+    if (
+      endpointStore.state !== "ready" ||
+      !inspection ||
+      !activeAccountDisplayId.value ||
+      !activeOfflineAssetId.value
+    ) {
+      return null;
+    }
+    try {
+      return buildTrustedEndpointIdentityScope(inspection);
+    } catch {
+      return null;
+    }
+  },
+);
+const activeOfflinePersistenceScope = computed(() => {
+  const endpointIdentity = activeOfflineEndpointIdentity.value;
+  const accountId = activeAccountDisplayId.value.trim();
+  const assetDefinitionId = activeOfflineAssetId.value;
+  if (!endpointIdentity || !accountId || !assetDefinitionId) {
+    return null;
+  }
+  return {
+    endpointIdentity,
+    accountId,
+    assetDefinitionId,
+  };
+});
+const activeOfflinePersistenceKey = computed(() => {
+  const scope = activeOfflinePersistenceScope.value;
+  return scope ? buildOfflineStorageKey(scope) : "";
+});
+const offlineStorePersistenceKey = computed(() => {
+  const scope = offline.persistenceScope;
+  return scope ? buildOfflineStorageKey(scope) : "";
+});
 const { localeStore, t } = useAppI18n();
 type OfflineMode = "setup" | "request" | "pay" | "accept" | "online";
 type OfflineScannerKind = "invoice" | "payment";
@@ -619,13 +671,6 @@ const activeOfflineAssetLabel = computed(() =>
         activeOfflineAssetId.value,
       )
     : t("Asset not set"),
-);
-const canSync = computed(() =>
-  Boolean(
-    session.connection.toriiUrl &&
-      activeAccount.value &&
-      activeOfflineAssetId.value,
-  ),
 );
 const canGenerateInvoice = computed(() =>
   Boolean(
@@ -662,6 +707,57 @@ const paymentQr = ref("");
 const paymentMessage = ref("");
 const paymentInput = ref("");
 const allowances = ref<OfflineAllowanceItem[]>([]);
+const offlineReadiness = ref<OfflineReadinessSnapshot | null>(null);
+const offlineReadinessContext = ref("");
+const readinessMessage = ref("");
+const readinessLoading = ref(false);
+let readinessRequestGeneration = 0;
+const currentOfflineReadinessContext = computed(() =>
+  JSON.stringify({
+    toriiUrl: session.connection.toriiUrl,
+    chainId: session.connection.chainId,
+    networkPrefix: session.connection.networkPrefix,
+    accountId: activeAccountDisplayId.value ?? "",
+    assetDefinitionId: activeOfflineAssetId.value,
+  }),
+);
+const currentOfflineMoveContext = computed(() =>
+  JSON.stringify({
+    readinessContext: currentOfflineReadinessContext.value,
+    loadedReadinessContext: offlineReadinessContext.value,
+    activePersistenceKey: activeOfflinePersistenceKey.value,
+    storePersistenceKey: offlineStorePersistenceKey.value,
+    accountRecordId: activeAccount.value?.accountId ?? "",
+  }),
+);
+let onlineMoveGeneration = 0;
+const hasCurrentOfflineReadiness = computed(
+  () =>
+    Boolean(offlineReadinessContext.value) &&
+    offlineReadinessContext.value === currentOfflineReadinessContext.value,
+);
+const offlineReadinessSummary = computed(() => {
+  if (readinessLoading.value) {
+    return t("Checking offline network readiness…");
+  }
+  if (!offlineReadiness.value || !hasCurrentOfflineReadiness.value) {
+    return readinessMessage.value || t("Offline network readiness is unknown.");
+  }
+  if (!offlineReadiness.value.ready) {
+    return t(
+      "Offline network operations are unavailable ({count} blocker(s)).",
+      {
+        count: offlineReadiness.value.blockers.length,
+      },
+    );
+  }
+  if (!offlineReadiness.value.allowanceSupported) {
+    return t(
+      "Offline proofs are ready, but this release does not expose allowance enumeration.",
+    );
+  }
+  return t("Offline network operations are ready.");
+});
 
 const acceptMessage = ref("");
 const moveMessage = ref("");
@@ -669,14 +765,19 @@ const syncMessage = ref("");
 
 const sendingPayment = ref(false);
 const acceptingPayment = ref(false);
-const syncingAllowances = ref(false);
 const movingOnline = ref(false);
+const offlineBalanceMutationLocked = computed(
+  () =>
+    movingOnline.value ||
+    offline.isPersistenceScopeLocked(activeOfflinePersistenceScope.value),
+);
+const offlineBalanceReconciliationRequired = computed(() =>
+  offline.isPersistenceScopeQuarantined(activeOfflinePersistenceScope.value),
+);
 
 const onlineForm = reactive({
   amount: "",
-  receiver: "",
-  memo: "",
-  shielded: false,
+  shielded: true,
 });
 const persistResolvedOnlineShieldAssetDefinitionId = (
   resolvedAssetDefinitionId: string,
@@ -821,17 +922,11 @@ const invoicePayloadPreview = computed(() =>
 const paymentPayloadPreview = computed(() =>
   formatPayloadPreview(paymentPayload.value),
 );
-const { destinationLocked: onlineDestinationLocked } =
-  useShieldedDestinationLock({
-    shielded: toRef(onlineForm, "shielded"),
-    destination: toRef(onlineForm, "receiver"),
-    accountId: activeAccountDisplayId,
-  });
 const normalizedMoveAmount = computed(
   () => onlineForm.amount.trim() || offline.wallet.balance,
 );
 const normalizedMoveReceiver = computed(
-  () => onlineForm.receiver.trim() || activeAccountDisplayId.value || "",
+  () => activeAccountDisplayId.value || "",
 );
 const resolvedOnlineShieldAssetDefinitionId = computed(
   () =>
@@ -839,32 +934,111 @@ const resolvedOnlineShieldAssetDefinitionId = computed(
     extractAssetDefinitionId(session.connection.assetDefinitionId).trim() ||
     session.connection.assetDefinitionId.trim(),
 );
-const isOnlineTransparentAmountValid = computed(
-  () => Number(normalizedMoveAmount.value) > 0,
-);
 const isOnlineShieldAmountValid = computed(() =>
   isPositiveWholeAmount(normalizedMoveAmount.value),
 );
-const isOnlineReceiverValid = computed(() => {
-  if (!onlineForm.shielded) {
-    return Boolean(normalizedMoveReceiver.value);
-  }
-  return Boolean(
+const isOnlineReceiverValid = computed(() =>
+  Boolean(
     activeAccount.value &&
       normalizedMoveReceiver.value === activeAccountDisplayId.value,
+  ),
+);
+const confidentialTransfersSupported = computed(
+  () =>
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features.confidentialTransfers.supported === true,
+);
+const confidentialTransferPrerequisite = computed(() => {
+  if (endpointStore.state === "checking") {
+    return t(
+      "Wait for endpoint capability inspection to finish. Local offline payment workflows remain available.",
+    );
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t(
+        "Network transfers are blocked until the endpoint identity is verified. Local offline payment workflows remain available.",
+      )
+    );
+  }
+  return t(
+    "This endpoint does not advertise the required confidential transfer operations. Local offline payment workflows remain available.",
   );
 });
 const canSubmitOnlineMove = computed(() =>
   Boolean(
-    session.connection.toriiUrl &&
+    !offlineBalanceMutationLocked.value &&
+      confidentialTransfersSupported.value &&
+      session.connection.toriiUrl &&
       session.connection.assetDefinitionId &&
       activeAccount.value &&
-      (onlineForm.shielded
-        ? isOnlineShieldAmountValid.value
-        : isOnlineTransparentAmountValid.value) &&
+      activeOfflinePersistenceKey.value &&
+      activeOfflinePersistenceKey.value === offlineStorePersistenceKey.value &&
+      hasCurrentOfflineReadiness.value &&
+      offlineReadiness.value?.ready &&
+      onlineShieldSupported.value &&
+      isOnlineShieldAmountValid.value &&
       isOnlineReceiverValid.value,
   ),
 );
+
+const refreshOfflineReadiness = async () => {
+  const requestGeneration = ++readinessRequestGeneration;
+  const toriiUrl = session.connection.toriiUrl;
+  const assetDefinitionId = activeOfflineAssetId.value;
+  const requestContext = currentOfflineReadinessContext.value;
+  offlineReadiness.value = null;
+  offlineReadinessContext.value = "";
+  allowances.value = [];
+  readinessMessage.value = "";
+  syncMessage.value = "";
+  if (!toriiUrl || !assetDefinitionId) {
+    readinessLoading.value = false;
+    return;
+  }
+  readinessLoading.value = true;
+  try {
+    const result = await fetchOfflineReadiness({
+      toriiUrl,
+      assetDefinitionId,
+    });
+    if (
+      requestGeneration !== readinessRequestGeneration ||
+      requestContext !== currentOfflineReadinessContext.value
+    ) {
+      return;
+    }
+    offlineReadiness.value = result;
+    offlineReadinessContext.value = requestContext;
+    allowances.value = result.allowances;
+    if (!result.allowanceSupported) {
+      syncMessage.value = t(
+        "This Torii release does not expose offline allowance enumeration.",
+      );
+    }
+  } catch (error) {
+    if (
+      requestGeneration !== readinessRequestGeneration ||
+      requestContext !== currentOfflineReadinessContext.value
+    ) {
+      return;
+    }
+    offlineReadiness.value = null;
+    offlineReadinessContext.value = "";
+    readinessMessage.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load offline network readiness."),
+    );
+  } finally {
+    if (
+      requestGeneration === readinessRequestGeneration &&
+      requestContext === currentOfflineReadinessContext.value
+    ) {
+      readinessLoading.value = false;
+    }
+  }
+};
 
 const formatDate = (value?: number | null) => {
   if (!value || value <= 0) return "";
@@ -1002,43 +1176,6 @@ const registerHardware = async () => {
   }
 };
 
-const syncAllowances = async () => {
-  if (
-    !session.connection.toriiUrl ||
-    !activeAccount.value ||
-    !activeOfflineAssetId.value
-  ) {
-    syncMessage.value = t("Configure Torii and account first.");
-    return;
-  }
-  syncingAllowances.value = true;
-  syncMessage.value = "";
-  try {
-    const snapshot = await fetchOfflineAllowances({
-      toriiUrl: session.connection.toriiUrl,
-      controllerId: activeAccount.value.accountId,
-      assetDefinitionId: activeOfflineAssetId.value,
-    });
-    offline.updateAllowanceSnapshot({
-      total: snapshot.total,
-      syncedAtMs: snapshot.syncedAtMs,
-      nextPolicyExpiryMs: snapshot.nextPolicyExpiryMs,
-      nextRefreshMs: snapshot.nextRefreshMs,
-    });
-    allowances.value = snapshot.allowances;
-    syncMessage.value = t("Offline balance updated: {total}", {
-      total: snapshot.total,
-    });
-  } catch (error) {
-    syncMessage.value = toUserFacingErrorMessage(
-      error,
-      t("Failed to sync allowances."),
-    );
-  } finally {
-    syncingAllowances.value = false;
-  }
-};
-
 const generateInvoice = async () => {
   invoiceMessage.value = "";
   invoicePayload.value = "";
@@ -1080,6 +1217,12 @@ const createPayment = async () => {
   paymentMessage.value = "";
   paymentPayload.value = "";
   paymentQr.value = "";
+  if (offlineBalanceMutationLocked.value) {
+    paymentMessage.value = t(
+      "Wait for the online move to finish before changing the offline balance.",
+    );
+    return;
+  }
   if (!activeAccount.value || !activeOfflineAssetId.value) {
     paymentMessage.value = t("Configure an account first.");
     return;
@@ -1128,6 +1271,12 @@ const createPayment = async () => {
 
 const acceptPayment = async () => {
   acceptMessage.value = "";
+  if (offlineBalanceMutationLocked.value) {
+    acceptMessage.value = t(
+      "Wait for the online move to finish before changing the offline balance.",
+    );
+    return;
+  }
   if (!activeAccount.value || !activeOfflineAssetId.value) {
     acceptMessage.value = t("Configure an account first.");
     return;
@@ -1161,11 +1310,29 @@ const acceptPayment = async () => {
 
 const moveToOnline = async () => {
   moveMessage.value = "";
+  if (!confidentialTransfersSupported.value) {
+    moveMessage.value = confidentialTransferPrerequisite.value;
+    return;
+  }
   if (!session.connection.toriiUrl || !activeAccount.value) {
     moveMessage.value = t("Configure Torii and account first.");
     return;
   }
-  if (onlineForm.shielded && !onlineShieldSupported.value) {
+  if (!hasCurrentOfflineReadiness.value || !offlineReadiness.value?.ready) {
+    moveMessage.value = offlineReadinessSummary.value;
+    return;
+  }
+  const requestPersistenceKey = activeOfflinePersistenceKey.value;
+  const requestPersistenceScope = activeOfflinePersistenceScope.value;
+  if (
+    !requestPersistenceScope ||
+    !requestPersistenceKey ||
+    requestPersistenceKey !== offlineStorePersistenceKey.value
+  ) {
+    moveMessage.value = t("Offline network readiness is unknown.");
+    return;
+  }
+  if (!onlineShieldSupported.value) {
     moveMessage.value =
       onlineShieldCapabilityMessage.value || t("Private exit is unavailable.");
     return;
@@ -1173,83 +1340,176 @@ const moveToOnline = async () => {
   const amount = normalizedMoveAmount.value;
   const receiver = normalizedMoveReceiver.value;
   if (!amount || Number(amount) <= 0) {
-    moveMessage.value = onlineForm.shielded
-      ? t("Unshield amount must be a whole number greater than zero.")
-      : t("Enter an amount to move online.");
-    return;
-  }
-  if (onlineForm.shielded && receiver !== activeAccountDisplayId.value) {
-    moveMessage.value = t(
-      "Private exit requires destination to be your active account.",
-    );
-    return;
-  }
-  if (onlineForm.shielded && !isPositiveWholeAmount(amount)) {
     moveMessage.value = t(
       "Unshield amount must be a whole number greater than zero.",
     );
     return;
   }
-  const snapshot = structuredClone(toRaw(offline.wallet));
+  if (receiver !== activeAccountDisplayId.value) {
+    moveMessage.value = t(
+      "Private exit requires destination to be your active account.",
+    );
+    return;
+  }
+  if (!isPositiveWholeAmount(amount)) {
+    moveMessage.value = t(
+      "Unshield amount must be a whole number greater than zero.",
+    );
+    return;
+  }
+
+  const requestGeneration = ++onlineMoveGeneration;
+  const requestContext = currentOfflineMoveContext.value;
+  const requestWallet = JSON.parse(
+    JSON.stringify(offline.wallet),
+  ) as typeof offline.wallet;
+  const requestHardware = JSON.parse(
+    JSON.stringify(offline.hardware),
+  ) as typeof offline.hardware;
+  const requestToriiUrl = session.connection.toriiUrl;
+  const requestChainId = session.connection.chainId;
+  const requestNetworkPrefix = session.connection.networkPrefix;
+  const requestAssetDefinitionId = resolvedOnlineShieldAssetDefinitionId.value;
+  const requestAccountId = activeAccount.value.accountId;
+  const requestPrivateKeyHex = activeAccount.value.privateKeyHex;
+  const isCurrentRequest = () =>
+    requestGeneration === onlineMoveGeneration &&
+    requestContext === currentOfflineMoveContext.value &&
+    requestPersistenceKey === activeOfflinePersistenceKey.value &&
+    requestPersistenceKey === offlineStorePersistenceKey.value;
+
+  if (!offline.lockPersistenceScope(requestPersistenceScope)) {
+    moveMessage.value = offline.isPersistenceScopeQuarantined(
+      requestPersistenceScope,
+    )
+      ? t(
+          "This offline balance is locked because an online move finalized but local reconciliation failed.",
+        )
+      : t(
+          "Wait for the online move to finish before changing the offline balance.",
+        );
+    return;
+  }
   movingOnline.value = true;
+  let remoteMoveFinalized = false;
+  let localMoveCommitted = false;
   try {
-    offline.withdrawToOnline({
-      accountId: activeAccount.value.accountId,
+    const freshReadiness = await fetchOfflineReadiness({
+      toriiUrl: requestToriiUrl,
+      assetDefinitionId: requestAssetDefinitionId,
+    });
+    if (!isCurrentRequest()) {
+      return;
+    }
+    offlineReadiness.value = freshReadiness;
+    offlineReadinessContext.value = currentOfflineReadinessContext.value;
+    allowances.value = freshReadiness.allowances;
+    if (!freshReadiness.ready) {
+      moveMessage.value = offlineReadinessSummary.value;
+      return;
+    }
+
+    const preparedWithdrawal = applyWithdrawToOnline(requestWallet, {
+      accountId: requestAccountId,
       receiver,
       amount,
-      memo: onlineForm.memo,
+      memo: "",
     });
     const result = await transferAsset({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
-      assetDefinitionId: resolvedOnlineShieldAssetDefinitionId.value,
-      accountId: activeAccount.value.accountId,
+      toriiUrl: requestToriiUrl,
+      chainId: requestChainId,
+      networkPrefix: requestNetworkPrefix,
+      assetDefinitionId: requestAssetDefinitionId,
+      accountId: requestAccountId,
       destinationAccountId: receiver,
       quantity: amount,
-      privateKeyHex: activeAccount.value.privateKeyHex,
-      metadata:
-        !onlineForm.shielded && onlineForm.memo
-          ? { memo: onlineForm.memo }
-          : undefined,
-      ...(onlineForm.shielded ? { unshield: true } : {}),
+      privateKeyHex: requestPrivateKeyHex,
+      unshield: true,
     });
-    if (onlineForm.shielded) {
-      session.updateActiveAccount({ localOnly: false });
+    assertFinalizedSubmissionResult(result);
+    remoteMoveFinalized = true;
+    localMoveCommitted = offline.commitWalletForScope({
+      scope: requestPersistenceScope,
+      expectedWallet: requestWallet,
+      wallet: preparedWithdrawal.state,
+      fallbackHardware: requestHardware,
+    });
+    if (!localMoveCommitted) {
+      if (isCurrentRequest()) {
+        moveMessage.value = t(
+          "The online move finalized, but the offline balance is locked because local reconciliation failed.",
+        );
+      }
+      return;
     }
+    if (!isCurrentRequest()) {
+      return;
+    }
+    session.updateActiveAccount({ localOnly: false });
     moveMessage.value = appendTransactionFee(
-      onlineForm.shielded
-        ? t("Unshield submitted and offline balance updated.")
-        : t("Transfer submitted and offline balance updated."),
+      t("Unshield finalized in block {height} and offline balance updated.", {
+        height: result.finality.blockHeight,
+      }),
       result,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
+      transactionFeeHintForEndpoint(requestToriiUrl),
     );
   } catch (error) {
-    offline.$patch({ wallet: snapshot });
-    offline.persist();
-    moveMessage.value = toUserFacingErrorMessage(
-      error,
-      t("Failed to move funds online."),
-    );
+    if (remoteMoveFinalized && !localMoveCommitted) {
+      offline.quarantinePersistenceScope(requestPersistenceScope);
+    }
+    if (isCurrentRequest()) {
+      moveMessage.value =
+        remoteMoveFinalized && !localMoveCommitted
+          ? t(
+              "The online move finalized, but the offline balance is locked because local reconciliation failed.",
+            )
+          : toUserFacingErrorMessage(error, t("Failed to move funds online."));
+    }
   } finally {
-    movingOnline.value = false;
+    if (!remoteMoveFinalized || localMoveCommitted) {
+      offline.unlockPersistenceScope(requestPersistenceScope);
+    }
+    if (isCurrentRequest()) {
+      movingOnline.value = false;
+    }
   }
 };
 
+watch(currentOfflineReadinessContext, () => {
+  void refreshOfflineReadiness();
+});
+
 watch(
-  () => session.activeAccount,
+  currentOfflineMoveContext,
+  (nextContext, previousContext) => {
+    if (nextContext === previousContext) return;
+    onlineMoveGeneration += 1;
+    movingOnline.value = false;
+    moveMessage.value = "";
+  },
+  { flush: "sync" },
+);
+
+watch(
   () => {
-    if (activeAccount.value) {
-      onlineForm.receiver = activeAccountDisplayId.value;
+    const scope = activeOfflinePersistenceScope.value;
+    return scope
+      ? `${scope.endpointIdentity.storageSegment}:${scope.accountId}:${scope.assetDefinitionId}`
+      : "";
+  },
+  () => {
+    offline.activatePersistenceScope(activeOfflinePersistenceScope.value);
+    if (Number(offline.wallet.balance) > 0 && activeMode.value === "setup") {
+      activeMode.value = "request";
     }
   },
+  { immediate: true },
 );
 
 onMounted(() => {
   checkHardware();
-  if (activeAccount.value) {
-    onlineForm.receiver = activeAccountDisplayId.value;
-  }
+  void refreshOfflineReadiness();
 });
 </script>
 

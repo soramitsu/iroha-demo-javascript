@@ -737,7 +737,7 @@ describe("Quiet Sakura style architecture", () => {
     };
 
     for (const surface of [
-      { fileName: "ParliamentView.vue", selector: ".parliament-advanced-card" },
+      { fileName: "ParliamentView.vue", selector: ".governance-context" },
       { fileName: "KaigiView.vue", selector: ".kaigi-signal-card" },
       { fileName: "StakingView.vue", selector: ".staking-advanced" },
     ]) {

@@ -1,24 +1,56 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertExplorerAccountQrMatchesRequestedAccount,
   confidentialModeSupportsShield,
   extractApiErrorDetail,
   formatOnboardingError,
   isPositiveWholeAmount,
   normalizeAccountAssetListPayload,
+  normalizeAssetDefinitionConfidentialPolicy,
   normalizeBaseUrl,
   normalizeConfidentialAssetPolicyPayload,
   normalizeExplorerAccountQrPayload,
   normalizeGovernanceCitizenCountPayload,
   normalizeGovernanceCouncilCurrentPayload,
+  normalizeGovernanceUnlockStatsPayload,
+  normalizeNexusLifecyclePayload,
+  normalizeOfflineReadinessPayload,
   normalizePublicLaneRewardsPayload,
   normalizePublicLaneStakePayload,
   normalizePublicLaneValidatorsPayload,
+  parseNexusLifecycleJson,
   readApiErrorDetail,
   readNexusUnbondingDelayMs,
   sanitizeFetchHeaders,
   sanitizeFetchInit,
   stripConfidentialFeeSponsor,
 } from "../electron/preload-utils";
+
+const offlineReadinessPayload = (overrides: Record<string, unknown> = {}) => ({
+  required_bridge_abi_version: 21,
+  cash_handoff_capability: "cash_handoff_v1",
+  max_hops: 8,
+  asset_definition_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+  asset_scale: null,
+  evaluated_block_height: 44_916,
+  evaluated_block_hash: "2f".repeat(32),
+  active_transfer_verifier: null,
+  active_topup_shield_verifier: null,
+  active_unshield_verifier: null,
+  active_recursive_step_eq_verifier: null,
+  active_recursive_step_ep_verifier: null,
+  artifact_set: null,
+  proof_backend_available: false,
+  recursive_lineage_supported: false,
+  ready: false,
+  blockers: [
+    {
+      code: "proof_backend_unavailable",
+      message: "The proof backend is unavailable.",
+    },
+  ],
+  ...overrides,
+});
 
 describe("preload utils", () => {
   it("normalizes Torii base URLs", () => {
@@ -317,6 +349,25 @@ describe("preload utils", () => {
     ).toThrow("Explorer QR response was missing required fields.");
   });
 
+  it("rejects explorer QR payloads for another account", () => {
+    expect(() =>
+      assertExplorerAccountQrMatchesRequestedAccount(
+        {
+          canonical_id: "testuOtherCanonical",
+          literal: "testuOtherAccount",
+          network_prefix: 369,
+          error_correction: "M",
+          modules: 33,
+          qr_version: 4,
+          svg: "<svg/>",
+        },
+        "testuRequestedAccount",
+      ),
+    ).toThrow(
+      "Explorer QR response account did not match the requested account.",
+    );
+  });
+
   it("normalizes account asset list payloads from legacy and split-field responses", () => {
     expect(
       normalizeAccountAssetListPayload({
@@ -363,7 +414,7 @@ describe("preload utils", () => {
       total: 1,
     });
 
-    expect(
+    expect(() =>
       normalizeAccountAssetListPayload({
         items: [
           {
@@ -374,16 +425,7 @@ describe("preload utils", () => {
         ],
         total: 1,
       }),
-    ).toEqual({
-      items: [
-        {
-          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc#testuAlice",
-          quantity: "25000",
-          asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-        },
-      ],
-      total: 1,
-    });
+    ).toThrow("outside the first-release account asset contract");
   });
 
   it("preserves account asset aliases for renderer labels", () => {
@@ -397,6 +439,7 @@ describe("preload utils", () => {
             quantity: "42",
           },
         ],
+        total: 1,
       }),
     ).toEqual({
       items: [
@@ -411,15 +454,55 @@ describe("preload utils", () => {
     });
   });
 
-  it("normalizes current governance council payloads without forcing Vrf derivation", () => {
+  it("rejects ambiguous and camelCase account asset response shapes", () => {
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            assetId: "xor#sora#alice",
+            quantity: "1",
+          },
+        ],
+        total: 1,
+      }),
+    ).toThrow("outside the first-release account asset contract");
+
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            asset_id: "xor#sora#alice",
+            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            account_id: "sorauAlice",
+            quantity: "1",
+          },
+        ],
+        total: 1,
+      }),
+    ).toThrow("must use exactly one first-release shape");
+
+    expect(() =>
+      normalizeAccountAssetListPayload({
+        items: [
+          {
+            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+            quantity: "1",
+          },
+        ],
+        total: 1,
+      }),
+    ).toThrow("must use exactly one first-release shape");
+  });
+
+  it("normalizes the exact current governance council payload", () => {
     expect(
       normalizeGovernanceCouncilCurrentPayload({
-        epoch: "77",
-        members: [{ account_id: "testuAlice" }, "testuBob"],
-        alternates: [{ accountId: "testuCarol" }],
-        candidate_count: "3",
+        epoch: 77,
+        members: [{ account_id: "testuAlice" }, { account_id: "testuBob" }],
+        alternates: [{ account_id: "testuCarol" }],
+        candidate_count: 3,
         verified: 2,
-        derived_by: "Fallback",
+        derived_by: "Vrf",
       }),
     ).toEqual({
       epoch: 77,
@@ -427,7 +510,7 @@ describe("preload utils", () => {
       alternates: [{ account_id: "testuCarol" }],
       candidate_count: 3,
       verified: 2,
-      derived_by: "Fallback",
+      derived_by: "Vrf",
     });
   });
 
@@ -444,32 +527,144 @@ describe("preload utils", () => {
       total: null,
       endpointAvailable: false,
     });
+    expect(() => normalizeGovernanceCitizenCountPayload({ total: 12 })).toThrow(
+      /canonical decimal string/,
+    );
+    expect(() =>
+      normalizeGovernanceCitizenCountPayload({ total: "12", count: "12" }),
+    ).toThrow(/contain exactly total/);
   });
 
-  it("defaults missing governance council derivation to Vrf but rejects empty values", () => {
-    expect(
-      normalizeGovernanceCouncilCurrentPayload({
-        epoch: 1,
-        members: [],
-      }),
-    ).toEqual({
+  it("rejects council aliases, omitted defaults, string counts, and extra fields", () => {
+    const exact = {
       epoch: 1,
-      members: [],
-      alternates: [],
+      members: [] as Array<{ account_id: string }>,
+      alternates: [] as Array<{ account_id: string }>,
       candidate_count: 0,
       verified: 0,
-      derived_by: "Vrf",
-    });
-
+      derived_by: "Fallback",
+    };
     expect(() =>
       normalizeGovernanceCouncilCurrentPayload({
         epoch: 1,
         members: [],
-        derived_by: "",
       }),
-    ).toThrow(
-      "governance council current response.derived_by must be a non-empty string",
-    );
+    ).toThrow(/contain exactly/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        epoch: "1",
+      }),
+    ).toThrow(/non-negative JSON integer/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        members: [{ accountId: "testuAlice" }],
+      }),
+    ).toThrow(/contain exactly account_id/);
+    for (const account_id of [123, " testuAlice", "testuAlice ", ""]) {
+      expect(() =>
+        normalizeGovernanceCouncilCurrentPayload({
+          ...exact,
+          members: [{ account_id }],
+        }),
+      ).toThrow(/account_id must be canonical non-empty text/);
+    }
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        derived_by: "VRF",
+      }),
+    ).toThrow(/must be Vrf or Fallback/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        source: "cached",
+      }),
+    ).toThrow(/contain exactly/);
+  });
+
+  it("rejects contradictory council identities, counts, and derivation evidence", () => {
+    const exact = {
+      epoch: 7,
+      members: [{ account_id: "testuAlice" }],
+      alternates: [{ account_id: "testuBob" }],
+      candidate_count: 2,
+      verified: 0,
+      derived_by: "Fallback",
+    };
+    for (const overrides of [
+      { members: [{ account_id: "testuAlice" }, { account_id: "testuAlice" }] },
+      { alternates: [{ account_id: "testuAlice" }] },
+    ]) {
+      expect(() =>
+        normalizeGovernanceCouncilCurrentPayload({ ...exact, ...overrides }),
+      ).toThrow(/unique and disjoint/);
+    }
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        candidate_count: 1,
+      }),
+    ).toThrow(/must not exceed candidate_count/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        verified: 3,
+      }),
+    ).toThrow(/must not exceed candidate_count/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        derived_by: "Vrf",
+      }),
+    ).toThrow(/must agree with the verified proof count/);
+    expect(() =>
+      normalizeGovernanceCouncilCurrentPayload({
+        ...exact,
+        verified: 1,
+      }),
+    ).toThrow(/must agree with the verified proof count/);
+  });
+
+  it("normalizes only the exact governance unlock stats payload", () => {
+    expect(
+      normalizeGovernanceUnlockStatsPayload({
+        height_current: 51179,
+        expired_locks_now: 2,
+        referenda_with_expired: 1,
+        last_sweep_height: 51100,
+      }),
+    ).toEqual({
+      height_current: 51179,
+      expired_locks_now: 2,
+      referenda_with_expired: 1,
+      last_sweep_height: 51100,
+    });
+    expect(() =>
+      normalizeGovernanceUnlockStatsPayload({
+        height_current: "51179",
+        expired_locks_now: 2,
+        referenda_with_expired: 1,
+        last_sweep_height: 51100,
+      }),
+    ).toThrow(/non-negative JSON integer/);
+    expect(() =>
+      normalizeGovernanceUnlockStatsPayload({
+        height_current: 51179,
+        expired_locks_now: 2,
+        referenda_with_expired: 1,
+      }),
+    ).toThrow(/contain exactly/);
+    expect(() =>
+      normalizeGovernanceUnlockStatsPayload({
+        height_current: 51179,
+        expired_locks_now: 2,
+        referenda_with_expired: 1,
+        last_sweep_height: 51100,
+        lastSweepHeight: 51100,
+      }),
+    ).toThrow(/contain exactly/);
   });
 
   it("normalizes public lane validators payloads", () => {
@@ -510,20 +705,20 @@ describe("preload utils", () => {
 
   it("normalizes public lane stake and rewards payloads", () => {
     const stake = normalizePublicLaneStakePayload({
-      laneId: 4,
+      lane_id: 4,
       total: 1,
       items: [
         {
-          laneId: 4,
+          lane_id: 4,
           validator: "validator@wonderland",
           staker: "alice@wonderland",
           bonded: "42",
           metadata: {},
-          pendingUnbonds: [
+          pending_unbonds: [
             {
-              requestId: "abc123",
+              request_id: "abc123",
               amount: "10",
-              releaseAtMs: 170000,
+              release_at_ms: 170000,
             },
           ],
         },
@@ -550,13 +745,389 @@ describe("preload utils", () => {
     expect(rewards.items[0].pending_through_epoch).toBe(5);
   });
 
+  it("rejects camelCase public lane compatibility payloads", () => {
+    expect(() =>
+      normalizePublicLaneValidatorsPayload({
+        laneId: 7,
+        total: 0,
+        items: [],
+      }),
+    ).toThrow("validators.laneId is not part of the current contract");
+
+    expect(() =>
+      normalizePublicLaneStakePayload({
+        lane_id: 4,
+        total: 1,
+        items: [
+          {
+            lane_id: 4,
+            validator: "validator@wonderland",
+            staker: "alice@wonderland",
+            bonded: "42",
+            metadata: {},
+            pendingUnbonds: [],
+          },
+        ],
+      }),
+    ).toThrow("contains fields outside the current contract");
+
+    expect(() =>
+      normalizePublicLaneRewardsPayload({
+        lane_id: 4,
+        total: 1,
+        items: [
+          {
+            lane_id: 4,
+            account: "alice@wonderland",
+            asset: "xor#wonderland",
+            lastClaimedEpoch: 2,
+            pending_through_epoch: 5,
+            amount: "7.5",
+          },
+        ],
+      }),
+    ).toThrow("contains fields outside the current contract");
+  });
+
+  it("requires complete first-release public lane collection envelopes", () => {
+    expect(() =>
+      normalizePublicLaneValidatorsPayload({
+        lane_id: 7,
+        items: [],
+      }),
+    ).toThrow("validators.total must be a non-negative integer");
+    expect(() =>
+      normalizePublicLaneValidatorsPayload({
+        lane_id: 7,
+        total: 0,
+      }),
+    ).toThrow("validators.items must be an array");
+
+    expect(() =>
+      normalizePublicLaneStakePayload({
+        lane_id: 4,
+        items: [],
+      }),
+    ).toThrow("stake.total must be a non-negative integer");
+    expect(() =>
+      normalizePublicLaneStakePayload({
+        lane_id: 4,
+        total: 0,
+      }),
+    ).toThrow("stake.items must be an array");
+
+    expect(() =>
+      normalizePublicLaneRewardsPayload({
+        lane_id: 4,
+        items: [],
+      }),
+    ).toThrow("rewards.total must be a non-negative integer");
+    expect(() =>
+      normalizePublicLaneRewardsPayload({
+        lane_id: 4,
+        total: 0,
+      }),
+    ).toThrow("rewards.items must be an array");
+  });
+
+  it("normalizes the current Nexus lifecycle lane catalog", () => {
+    const lifecycle = normalizeNexusLifecyclePayload({
+      version: 1,
+      nexus_enabled: true,
+      lane_count: 2,
+      lanes: [
+        {
+          id: 0,
+          dataspace_id: 0,
+          alias: "core",
+          description: "Primary execution lane",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: { "scheduler.teu_capacity": "50000000" },
+        },
+        {
+          id: 1,
+          dataspace_id: 1,
+          alias: "governance",
+          description: "Governance traffic",
+          visibility: "public",
+          governance: "parliament",
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
+        },
+      ],
+    });
+
+    expect(lifecycle.lanes.map((lane) => lane.alias)).toEqual([
+      "core",
+      "governance",
+    ]);
+    expect(lifecycle.lanes[1].dataspace_id).toBe("1");
+    expect(() =>
+      normalizeNexusLifecyclePayload({
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 2,
+        lanes: [],
+      }),
+    ).toThrow("lane_count must match");
+  });
+
+  it("accepts only canonical non-negative safe integers in Nexus lifecycle", () => {
+    const lifecycle = (laneId: unknown) => ({
+      version: "1",
+      nexus_enabled: true,
+      lane_count: "1",
+      lanes: [
+        {
+          id: laneId,
+          dataspace_id: "0",
+          alias: "core",
+          description: "",
+          visibility: "public",
+          governance: null,
+          storage: "full_replica",
+          proof_scheme: "merkle_sha256",
+          metadata: {},
+        },
+      ],
+    });
+
+    expect(normalizeNexusLifecyclePayload(lifecycle("0")).lanes[0].id).toBe(0);
+    for (const invalid of [
+      1.5,
+      -1,
+      Number.MAX_SAFE_INTEGER + 1,
+      "01",
+      "1.0",
+      "1e3",
+      " 1 ",
+      true,
+    ]) {
+      expect(() => normalizeNexusLifecyclePayload(lifecycle(invalid))).toThrow(
+        "nexus lifecycle.lanes[0].id must be a non-negative integer.",
+      );
+    }
+  });
+
+  it("preserves exact Nexus lifecycle dataspace integer lexemes", () => {
+    const lifecycle = parseNexusLifecycleJson(
+      JSON.stringify({
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 1,
+        lanes: [
+          {
+            id: 0,
+            dataspace_id: "6647857470246403404",
+            alias: "taira",
+            description: "",
+            visibility: "public",
+            governance: null,
+            storage: "full_replica",
+            proof_scheme: "merkle_sha256",
+            metadata: {},
+          },
+        ],
+      }).replace('"6647857470246403404"', "6647857470246403404"),
+    );
+
+    expect(lifecycle.lanes[0].dataspace_id).toBe("6647857470246403404");
+    expect(() =>
+      normalizeNexusLifecyclePayload({
+        version: 1,
+        nexus_enabled: true,
+        lane_count: 1,
+        lanes: [
+          {
+            id: 0,
+            dataspace_id: Number("6647857470246403404"),
+            alias: "taira",
+            description: "",
+            visibility: "public",
+            governance: null,
+            storage: "full_replica",
+            proof_scheme: "merkle_sha256",
+            metadata: {},
+          },
+        ],
+      }),
+    ).toThrow("must be a canonical non-negative decimal integer");
+  });
+
+  it("normalizes current offline readiness blockers", () => {
+    const readiness = normalizeOfflineReadinessPayload(
+      offlineReadinessPayload(),
+    );
+
+    expect(readiness.ready).toBe(false);
+    expect(readiness.asset_scale).toBeNull();
+    expect(readiness.blockers[0].code).toBe("proof_backend_unavailable");
+    expect(readiness.active_transfer_verifier).toBeNull();
+    expect(readiness.cash_handoff_capability).toBe("cash_handoff_v1");
+  });
+
+  it("requires the exact ABI 21 cash-handoff readiness shape", () => {
+    const missingArtifactSet = offlineReadinessPayload();
+    Reflect.deleteProperty(missingArtifactSet, "artifact_set");
+    expect(() => normalizeOfflineReadinessPayload(missingArtifactSet)).toThrow(
+      "offline readiness must contain exactly",
+    );
+    const missingCashHandoffCapability = offlineReadinessPayload();
+    Reflect.deleteProperty(
+      missingCashHandoffCapability,
+      "cash_handoff_capability",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(missingCashHandoffCapability),
+    ).toThrow("offline readiness must contain exactly");
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ compatibility_hint: "legacy" }),
+      ),
+    ).toThrow("offline readiness must contain exactly");
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ required_bridge_abi_version: 20 }),
+      ),
+    ).toThrow(
+      "offline readiness.required_bridge_abi_version must be exactly 21.",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({
+          cash_handoff_capability: "cash_handoff_v0",
+        }),
+      ),
+    ).toThrow(
+      'offline readiness.cash_handoff_capability must be exactly "cash_handoff_v1".',
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ max_hops: 7 }),
+      ),
+    ).toThrow("offline readiness.max_hops must be exactly 8.");
+  });
+
+  it("rejects coerced integers and malformed readiness evidence", () => {
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ evaluated_block_height: "44916" }),
+      ),
+    ).toThrow(
+      "offline readiness.evaluated_block_height must be a non-negative JSON integer.",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ asset_scale: "0" }),
+      ),
+    ).toThrow(
+      "offline readiness.asset_scale must be a non-negative JSON integer.",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ evaluated_block_hash: "2F".repeat(32) }),
+      ),
+    ).toThrow(
+      "offline readiness.evaluated_block_hash must be a lowercase 32-byte hash.",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({ active_transfer_verifier: [] }),
+      ),
+    ).toThrow("offline readiness.active_transfer_verifier must be an object.");
+  });
+
+  it("cross-checks blocker shape and the ready invariant", () => {
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({
+          blockers: [
+            {
+              code: "Not-Canonical",
+              message: "The proof backend is unavailable.",
+            },
+          ],
+        }),
+      ),
+    ).toThrow("offline readiness.blockers[0].code is malformed.");
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({
+          ready: false,
+          blockers: [],
+        }),
+      ),
+    ).toThrow(
+      "offline readiness.ready must be true exactly when blockers is empty.",
+    );
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({
+          asset_scale: null,
+          ready: true,
+          blockers: [],
+        }),
+      ),
+    ).toThrow("A ready offline response must include a supported asset scale.");
+  });
+
+  it("rejects offline readiness for a different requested asset", () => {
+    expect(() =>
+      normalizeOfflineReadinessPayload(
+        offlineReadinessPayload({
+          asset_definition_id: "61CtjvNd9T3THAR65GsMVHr82Bjc",
+        }),
+        "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+      ),
+    ).toThrow(
+      "offline readiness.asset_definition_id must match the requested asset definition.",
+    );
+  });
+
+  it("reads only the current top-level confidential policy", () => {
+    expect(
+      normalizeAssetDefinitionConfidentialPolicy({
+        confidential_policy: {
+          mode: "Convertible",
+          vk_set_hash: null,
+          poseidon_params_id: null,
+          pedersen_params_id: null,
+        },
+        metadata: {
+          "zk.policy": {
+            mode: "TransparentOnly",
+          },
+        },
+      }),
+    ).toEqual({
+      mode: "Convertible",
+      allow_shield: null,
+      allow_unshield: null,
+      vk_transfer: null,
+      vk_unshield: null,
+      vk_shield: null,
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+    });
+    expect(
+      normalizeAssetDefinitionConfidentialPolicy({
+        metadata: { "zk.policy": { mode: "Convertible" } },
+      }),
+    ).toBeNull();
+  });
+
   it("normalizes confidential asset policy payloads", () => {
     const normalized = normalizeConfidentialAssetPolicyPayload({
       asset_id: "norito:abcdef0123456789",
       block_height: 41,
       current_mode: "TransparentOnly",
       effective_mode: "Convertible",
-      allow_shield: "true",
+      allow_shield: true,
       allow_unshield: false,
       vk_transfer: "halo2/ipa::vk_transfer",
       vk_unshield: "halo2/ipa::vk_unshield",
@@ -583,6 +1154,37 @@ describe("preload utils", () => {
     expect(normalized.vk_shield).toBe("halo2/ipa::vk_shield");
     expect(normalized.pending_transition?.effective_height).toBe(55);
     expect(normalized.pending_transition?.conversion_window).toBe(10);
+  });
+
+  it("rejects legacy or truthy confidential policy compatibility fields", () => {
+    const exact = {
+      asset_id: "norito:abcdef0123456789",
+      block_height: 41,
+      current_mode: "Convertible",
+      effective_mode: "Convertible",
+      allow_shield: true,
+      allow_unshield: true,
+      vk_transfer: "halo2/ipa::vk_transfer",
+      vk_unshield: "halo2/ipa::vk_unshield",
+      vk_shield: "halo2/ipa::vk_shield",
+      vk_set_hash: null,
+      poseidon_params_id: null,
+      pedersen_params_id: null,
+      pending_transition: null,
+    };
+
+    expect(() =>
+      normalizeConfidentialAssetPolicyPayload({
+        ...exact,
+        allow_shield: "true",
+      }),
+    ).toThrow("confidential.allow_shield must be a boolean or null");
+    expect(() =>
+      normalizeConfidentialAssetPolicyPayload({
+        ...exact,
+        effectiveMode: "Convertible",
+      }),
+    ).toThrow("fields outside the first-release contract");
   });
 
   it("detects which confidential modes support shielding", () => {

@@ -1,51 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchOfflineAllowances } from "@/services/offline";
+import { fetchOfflineReadiness } from "@/services/offline";
 
-const listOfflineAllowancesMock = vi.fn();
+const getOfflineReadinessMock = vi.fn();
 
 vi.mock("@/services/iroha", () => ({
-  listOfflineAllowances: (input: unknown) => listOfflineAllowancesMock(input),
+  getOfflineReadiness: (input: unknown) => getOfflineReadinessMock(input),
 }));
 
-describe("offline allowance service", () => {
+describe("offline readiness service", () => {
   beforeEach(() => {
-    listOfflineAllowancesMock.mockReset();
+    getOfflineReadinessMock.mockReset();
   });
 
-  it("filters synced allowances to the active asset definition", async () => {
-    listOfflineAllowancesMock.mockResolvedValue({
-      items: [
+  it("returns current readiness with unsupported empty allowances", async () => {
+    getOfflineReadinessMock.mockResolvedValue({
+      required_bridge_abi_version: 21,
+      cash_handoff_capability: "cash_handoff_v1",
+      max_hops: 8,
+      asset_definition_id: "xor#wonderland",
+      asset_scale: null,
+      evaluated_block_height: 44_916,
+      evaluated_block_hash: "2f9d4abe",
+      proof_backend_available: false,
+      recursive_lineage_supported: false,
+      ready: false,
+      blockers: [
         {
-          asset_id: "xor#wonderland",
-          remaining_amount: "2.5",
-          policy_expires_at_ms: 200,
-          refresh_at_ms: 400,
-        },
-        {
-          asset_id: "val#wonderland",
-          remaining_amount: "99",
-          policy_expires_at_ms: 100,
-          refresh_at_ms: 150,
+          code: "proof_backend_unavailable",
+          message: "The proof backend is unavailable.",
         },
       ],
-      total: 2,
     });
-
-    const result = await fetchOfflineAllowances({
-      toriiUrl: "http://localhost:8080",
-      controllerId: "alice@wonderland",
+    const result = await fetchOfflineReadiness({
+      toriiUrl: "https://taira.sora.org",
       assetDefinitionId: "xor#wonderland",
     });
 
-    expect(listOfflineAllowancesMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      controllerId: "alice@wonderland",
-      limit: 200,
+    expect(getOfflineReadinessMock).toHaveBeenCalledWith({
+      toriiUrl: "https://taira.sora.org",
+      assetDefinitionId: "xor#wonderland",
     });
-    expect(result.total).toBe("2.5");
-    expect(result.allowances).toHaveLength(1);
-    expect(result.allowances[0]?.asset_id).toBe("xor#wonderland");
-    expect(result.nextPolicyExpiryMs).toBe(200);
-    expect(result.nextRefreshMs).toBe(400);
+    expect(result.ready).toBe(false);
+    expect(result.allowanceSupported).toBe(false);
+    expect(result.allowances).toEqual([]);
+    expect(result.blockers[0].code).toBe("proof_backend_unavailable");
   });
 });

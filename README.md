@@ -1,149 +1,45 @@
-# Iroha Demo (Electron + Vue 3)
+# Iroha Desktop Wallet
 
-A refreshed version of the original 2016 point-system demo. The app now runs as a desktop client with Electron, Vue 3, Pinia, and Vite, and talks directly to Torii using the in-repo `@iroha/iroha-js` SDK.
+An Electron and Vue 3 wallet for a live Iroha network. The renderer uses a
+typed preload bridge; network access, Norito encoding, fee quotation, vault
+access, signing, and transaction submission stay in Electron.
 
-## Features
+## Requirements
 
-- 🔑 Modern onboarding workflow to configure Torii, generate/restore keys, and compute canonical account IDs (I105 literals).
-- 🌐 Settings-driven Torii endpoint profile with automatic chain ID/network-prefix loading and a Minamoto explorer quick-link (`https://minamoto-explorer.sora.org`).
-- 💸 Direct asset transfers signed locally via `@iroha/iroha-js` and submitted to Torii without an intermediate backend.
-- 📊 Wallet dashboard with live balances + decoded transaction directions.
-- 🏦 NPOS staking tab for dataspace-first validator nomination, XOR bonding, unbond scheduling/finalization, and reward claiming.
-- 🏛️ Parliament tab with a fixed `10,000 XOR` citizenship bond flow, governance referendum/proposal lookup, and plain ballot submission helpers.
-- 📱 Receive tab with account-ID display + QR payloads, and Send tab with an optional camera scanner powered by ZXing.
-- 🛡️ Send tab and Offline "Move funds to online wallet" both support a shield toggle; current wallet flow performs self-shielding (public -> shielded) with policy preflight checks.
-- 🔁 SCCP bridge workspace for TAIRA-only SCCP routes: live TRON/BSC/TON surfaces plus a fail-closed Solana testnet route preflight for `taira_sol_xor`.
-- 📡 Explorer tab surfacing `/v1/explorer` metrics and share-ready QR payloads.
-- 🌍 Locale selector with 31 supported UI locales (`en-US`, `ar-SA`, `az-AZ`, `ca-ES`, `cs-CZ`, `de-DE`, `es-ES`, `fa-IR`, `fi-FI`, `fr-FR`, `he-IL`, `hi-IN`, `hu-HU`, `id-ID`, `it-IT`, `ja-JP`, `ko-KR`, `ms-MY`, `nb-NO`, `nl-NL`, `pl-PL`, `pt-PT`, `ru-RU`, `sr-RS`, `sl-SI`, `tr-TR`, `uk-UA`, `ur-PK`, `vi-VN`, `zh-CN`, `zh-TW`) with automatic RTL layout for Arabic/Hebrew/Persian/Urdu.
+- Node.js 20 or newer
+- The current Iroha checkout at `../iroha`
+- Rust and the native build prerequisites required by `@iroha/iroha-js`
 
-## Prerequisites
+The SDK dependency is intentionally local:
 
-- Node.js 20+
-- Minamoto Torii endpoint access (`https://minamoto.sora.org`)
-- TAIRA Torii endpoint access (`https://taira.sora.org`) for faucet-backed live E2E and the SCCP bridge route
-- A Reown/WalletConnect project ID when testing TRON wallet connection (`VITE_WALLETCONNECT_PROJECT_ID`)
-- Solana testnet RPC access (`https://api.testnet.solana.com`) when preflighting the gated `taira_sol_xor` route
-- Rust toolchain for compiling the `iroha_js_host` native module
+```text
+@iroha/iroha-js -> ../iroha/javascript/iroha_js
+```
 
-## Install & Run
+There is no cached full-SDK, historical-revision signer, or compatibility
+fallback. Build the current sibling SDK when its native bindings are missing or
+stale.
+
+## Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-`@iroha/iroha-js` is sourced from the sibling local checkout at `../iroha/javascript/iroha_js`.
-
-The postinstall hook auto-builds the `@iroha/iroha-js` native binding when it is missing or its checksum manifest is stale. `npm run build` also refreshes the copied native bundle before staging `dist/native`. If you update the SDK manually, re-run:
-
-```bash
-(cd node_modules/@iroha/iroha-js && npm run build:native)
-```
-
-### Production build
-
-```bash
-npm run build
-```
-
-Artifacts land in `dist/` (main, preload, renderer bundles) and can be packaged with your preferred Electron builder.
-
-### Tests
-
-Run the Vitest suite (jsdom) after installing dependencies:
-
-```bash
-npm test
-```
-
-Use `npm run test:watch` while developing renderer logic or stores.
-Use `npm run test:coverage` when you need a V8 coverage report; it runs Vitest's thread pool to avoid forked-process V8 coverage temp-file races.
-
-### Type checking
-
-`npm run typecheck` now validates both renderer and Electron preload/main code paths:
+Useful verification commands:
 
 ```bash
 npm run typecheck
+npm test
+npm run lint
+npm run build
 ```
 
-Equivalent sub-commands:
+`npm run verify` runs lint, both renderer and Electron typechecks, and the test
+suite.
 
-```bash
-npm run typecheck:renderer
-npm run typecheck:electron
-```
-
-### Full verification
-
-For local development checks without E2E:
-
-```bash
-npm run verify
-```
-
-For verification plus live E2E (read-only + onboarding pass; the faucet-backed harness still targets TAIRA by default):
-
-```bash
-npm run verify:live
-```
-
-### Live Electron E2E
-
-Run the live Torii Electron E2E harness (defaults to TAIRA because it depends on testnet faucet bootstrapping):
-
-```bash
-npm run e2e:live
-```
-
-Optional env vars:
-
-- `E2E_TORII_URL` (default: `https://taira.sora.org`)
-- `E2E_CHAIN_ID` (default: `fc56984b-2be7-431d-840e-21514d1883f0`)
-- `E2E_ASSET_DEFINITION_ID` (optional; when omitted, live E2E derives the funded asset bucket from the faucet response or funded wallet holdings)
-- `E2E_NETWORK_PREFIX` (default: `369`)
-- `E2E_EXPECTED_FAUCET_QUANTITY` (default: `25000`; fresh TAIRA faucet bootstraps fail if the observed funded balance differs)
-- `E2E_REUSE_FUNDED_CACHE=1` (optional; reuses `output/e2e/live-funded-wallet.json` instead of forcing a fresh faucet bootstrap)
-- `E2E_FUNDED_PRIVATE_KEY_HEX` (optional; bypasses the faucet path and uses an already funded TAIRA wallet for live shield / shielded-send checks)
-- `E2E_FUNDED_DOMAIN` (default: `default`; used with `E2E_FUNDED_PRIVATE_KEY_HEX` when deriving the local wallet profile)
-- `E2E_ONBOARDING_ALIAS` (default: `e2e-onboarding-shared@universal`)
-- `E2E_ONBOARDING_PRIVATE_KEY_HEX` (default: deterministic built-in key; used for stable onboarding account reuse)
-- `E2E_ONBOARDING_OFFLINE_BALANCE` (default: `100`; seeded offline balance for onboarding shield submission checks)
-
-Deprecated `E2E_STATEFUL_*` onboarding env vars are no longer supported and now fail fast.
-Rename legacy vars as follows:
-
-- `E2E_STATEFUL_ALIAS` -> `E2E_ONBOARDING_ALIAS`
-- `E2E_STATEFUL_PRIVATE_KEY_HEX` -> `E2E_ONBOARDING_PRIVATE_KEY_HEX`
-- `E2E_STATEFUL_OFFLINE_BALANCE` -> `E2E_ONBOARDING_OFFLINE_BALANCE`
-
-Example migration command:
-
-```bash
-E2E_ONBOARDING_ALIAS="e2e-onboarding-shared@universal" \
-E2E_ONBOARDING_PRIVATE_KEY_HEX="<64-char-hex>" \
-E2E_ONBOARDING_OFFLINE_BALANCE="100" \
-E2E_FUNDED_PRIVATE_KEY_HEX="<64-char-funded-wallet-key>" \
-npm run e2e:live
-```
-
-The desktop app defaults to Minamoto mainnet, but this live E2E harness remains TAIRA-faucet-oriented. Use `E2E_FUNDED_PRIVATE_KEY_HEX` and explicit endpoint settings before adapting it to non-faucet mainnet validation.
-
-The preflight checks `GET /v1/health` first, then falls back to `GET /health`.
-
-Live E2E always validates read-only navigation first (Account onboarding inputs, Explore metrics + explorer QR rendering, and route-smoke navigation across Setup/Wallet/Staking/Parliament/Subscriptions/Send/Receive/Offline/Explore), then runs onboarding plus confidential self-shield / shielded-recipient-transfer checks.
-
-The onboarding pass reuses a deterministic account to avoid writing a new TAIRA account record on every run.
-
-This onboarding pass requires UAID onboarding enabled on the target Torii.
-If onboarding is disabled, the harness fails with an explicit `HTTP 403`.
-If the deterministic account already exists, `HTTP 409` is treated as expected and the flow continues.
-
-The onboarding pass submits shield actions from both Send and Offline views, then asserts that post-submit status messages are produced (success or backend rejection) to verify bridge submission paths.
-
-If a test fails, screenshots are written under `output/playwright/`.
-
-### SCCP bridge setup
+## SCCP bridge setup
 
 The `/sccp` page is intentionally TAIRA-only. It remains disabled unless the active connection uses the public Sumeragi-v2 TAIRA chain ID `fc56984b-2be7-431d-840e-21514d1883f0` and network prefix `369`, even when another endpoint advertises SCCP metadata.
 
@@ -199,7 +95,7 @@ npm run e2e:sccp:smoke-readiness -- --check-tron-contracts true --tron-endpoint 
 
 This still does not sign, submit, or broadcast. It combines route preflight with the renderer prerequisites required for a real tiny `TAIRA -> TRON` transfer and a real tiny `TRON -> TAIRA` transfer: WalletConnect project ID plus browser-safe destination/source prover modules.
 
-### Solana testnet SCCP: exact first release
+## Solana testnet SCCP: exact first release
 
 Solana testnet remains fail-closed until the public TAIRA typed registry exposes
 the exact bidirectional `taira_sol_xor` revision. The first release has exactly
@@ -237,7 +133,7 @@ Do not replace this with a raw Cargo/Agave invocation that may create a signer
 file. The local SBF runtime checks are useful test evidence, but they are not
 cluster deployment evidence.
 
-#### Fresh immutable deployment
+### Fresh immutable deployment
 
 The production operator is one continuous, signer-file-free ceremony. First
 capture and independently hash a bounded canonical Solana-testnet context:
@@ -309,7 +205,7 @@ residual bytes 13 through 45 are evidence, not an additional zero requirement.
 No mint, verifier material, or route-state account may predate this immutable
 finalization.
 
-#### Exact post-immutability initialization
+### Exact post-immutability initialization
 
 Independently review and byte-pin the exact initializer input and fresh-deploy
 report, then run:
@@ -334,7 +230,7 @@ access, derives every hash/PDA from the preselected mint and governed
 destination material, zeroizes signer buffers, and writes canonical ordered
 evidence only after finalized transaction and account readback.
 
-#### Typed route and Parliament governance
+### Typed route and Parliament governance
 
 Prepare and independently byte-pin the small TAIRA-local policy/settlement
 artifact. Its schema is `iroha-sccp-solana-route-policy-settlement/v1`; it
@@ -448,7 +344,7 @@ separately. Production truth is the fresh public typed-registry readback of the
 exact `bidirectional` revision, plus committed/finalized readback of both
 different proposal transactions.
 
-#### Public readiness and real transfer media
+### Public readiness and real transfer media
 
 Run the read-only public route preflight against an explicit canonical TAIRA
 validator root:
@@ -729,53 +625,149 @@ requested transfer video and can never satisfy production completion. Local
 runtime checks, refresh reports, and synthetic solid-color or silent media are
 diagnostics only.
 
-## Usage notes
+## Governance workspace
 
-1. **Account setup** — first-run wizard for creating or restoring a local SORA wallet. Generate a recovery phrase, derive the canonical `accountId`, save it in the secure vault, and optionally pair with IrohaConnect; on-chain onboarding/registration is no longer required for local wallet creation.
-2. **Settings tab** — choose the Torii endpoint used by wallet, staking, governance, VPN, SCCP, and explorer requests. Checking an endpoint loads its chain ID and network prefix before saving. The default is Minamoto mainnet at `https://minamoto.sora.org` with chain ID `00000000-0000-0000-0000-000000000000`, network prefix `753`, XOR asset definition `6TEAJqbb8oEPmLncoNiMRbLEK6tw`, and explorer `https://minamoto-explorer.sora.org`; TAIRA testnet remains available as a selectable preset at `https://taira.sora.org`.
-3. **Setup tab** — chain ID and network prefix are read-only and mirror the active Settings connection; use this tab for advanced asset, authority, and registration helpers. Saving the authority key enables the built-in “Register account” helper, which submits a Norito transaction via Torii.
-4. **Wallet tab** — refresh balances and recent transactions, claim starter faucet funds, and manage transparent/self-shielded wallet state.
-5. **Staking tab** — choose a dataspace, auto-resolve its public lane, nominate validators, review stake-token balance, and stake XOR with on-chain unbond delay handling (`Max` shortcuts for bond/unbond included).
-6. **Parliament tab** — bond a fixed `10,000 XOR` amount via `RegisterCitizen`, inspect referendum/proposal/tally/locks payloads, submit plain ballots, and prepare finalize/enact draft calls for governance operations. Recent referendum/proposal chips are persisted per account and trigger lookup when clicked. If referendum ID is set, lookup continues even when proposal ID input is invalid (proposal lookup is skipped). Ballot submit requires a positive whole-number amount that does not exceed the current XOR balance.
-7. **Send tab** — create transparent transfers, self-shield funds, or send shielded funds to another account when a recipient `v3` Receive QR is scanned. Shielded sends require whole-number base-unit amounts and wallet-recognizable confidential notes.
-8. **Receive tab** — share privacy-first `iroha-confidential-payment-address/v3` QRs. The default QR omits plaintext account, asset, and amount while carrying the one-time receive key needed for note recovery.
-9. **Explorer tab** — displays `/v1/explorer` metrics and the Torii-generated explorer QR payload for the active account.
-10. **SCCP tab** — bridge XOR on TAIRA-only SCCP routes. TRON/BSC/TON use the existing live flows. Solana testnet (`taira_sol_xor`) is visible with readiness/preflight, wallet connection, TAIRA -> Solana finalize preparation, and Solana -> TAIRA burn/source-proof wiring. It remains action-gated until the public typed-registry revision is bidirectional and separately reviewed Solana source/destination proof modules are live.
-11. **Offline tab** — "Move funds to online wallet" remains same-account only and keeps the stricter self-only shield constraints even though Send supports recipient shielded transfers.
+The `/governance` route is a live, ledger-backed Parliament workspace. It
+supports:
 
-## Folder structure
+- fail-closed `/v1/gov/capabilities` validation for the exact Taira chain
+  `fc56984b-2be7-431d-840e-21514d1883f0`, network prefix `369`, ABI `1`, and
+  data model `3`;
+- typed validation-fee list/detail reads with exact-ID deep links;
+- the seven concurrent Parliament bodies, including members-only FMA voting;
+- automatic finalization only for generic non-validation-fee PLAIN proposals,
+  plus validation-fee lifecycle/finalization evidence inspection;
+- reviewed citizenship registration through the Core citizen-draft route;
+- typed payout-lifecycle composition followed by an exact linked
+  validation-fee policy;
+- quote, review, vault-backed signing, and commit in separate prepare/confirm
+  phases.
 
+ZK voting is disabled unless the current SDK exposes the complete supported
+flow. The application does not silently downgrade a requested ZK ballot to a
+Plain ballot.
+
+Governance transactions never accept private keys from renderer or HTTP
+fields. The Electron bridge reviews the exact Core draft and fee quote, then
+resolves the signer from the OS vault only when the user confirms. There is no
+manual finalize action or legacy signed-policy path.
+
+Validation-fee citizen voting loads the operator-produced
+`sora.parliament.plain-referendum.v2` artifact through the packaged
+`resources/governance-referendum-source.json`. Electron fetches a same-origin
+handoff descriptor and its content-addressed artifact, verifies raw SHA-256,
+byte length, Taira chain/genesis/proposal/window/electorate coordinates, and
+persists a private rollback/equivocation watermark. The renderer cannot supply
+an artifact, URL, checkpoint, or finality override. Validation-fee ballots are
+prepared only through the artifact-bound
+`/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft` route; the
+generic PLAIN route remains limited to non-validation-fee referenda.
+
+## Validation-fee trust boundary
+
+Validation-fee policy state is fail-closed. The wallet does not trust a server
+boolean, one endpoint in isolation, or a value copied from proposal state.
+Policy fields remain unavailable unless the Electron host receives the exact
+generated enabled config:
+
+```json
+{
+  "enabled": true,
+  "ledgerBinding": {
+    "schema": "cbsi.mobile-validation-fee-ledger-binding.v1",
+    "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
+    "genesisHash": "...",
+    "policyChainGenesisHash": "...",
+    "checkpoint": {
+      "height": 1,
+      "contextId": "..."
+    }
+  },
+  "expected": {
+    "...": "generated release evidence only"
+  }
+}
 ```
-├─ electron/          # Main + preload processes
-├─ src/
-│  ├─ components/
-│  ├─ services/      # Bridge wrappers around window.iroha
-│  ├─ stores/        # Pinia session store with persistence
-│  ├─ views/         # Route-aligned pages (Setup, Wallet, etc.)
-│  └─ styles/
-├─ scripts/postinstall.mjs  # Builds iroha_js_host when needed
-├─ scripts/e2e/electron-live.mjs  # Live Torii Electron E2E harness
-├─ electron.vite.config.ts  # electron-vite configuration
-└─ package.json
+
+For normal packaged launches, install that exact generated object in the
+versioned runtime manifest at:
+
+```text
+<Electron app.getPath("userData")>/governance-runtime.json
 ```
 
-## Torii connectivity
+The manifest shape is exact:
 
-All network calls go straight to Torii using the `ToriiClient` inside `@iroha/iroha-js`. The preload script keeps a small client cache and exposes safe IPC-free helpers via `window.iroha`:
+```json
+{
+  "schema": "sora.wallet.governance-runtime.v1",
+  "validationFee": {
+    "enabled": true,
+    "ledgerBinding": {
+      "schema": "cbsi.mobile-validation-fee-ledger-binding.v1",
+      "chainId": "fc56984b-2be7-431d-840e-21514d1883f0",
+      "genesisHash": "...",
+      "policyChainGenesisHash": "...",
+      "checkpoint": {
+        "height": 1,
+        "contextId": "..."
+      }
+    },
+    "expected": {
+      "...": "generated release evidence only"
+    }
+  },
+  "cbsiCoreApiBaseUrl": "https://cbsi-core.soramitsu.io"
+}
+```
 
-- `ping` → `/v1/health`
-- `registerAccount` → `buildRegisterAccountAndTransferTransaction` + `/v1/pipeline/transactions`
-- `transferAsset` → `buildTransferAssetTransaction` (transparent) or `buildShieldTransaction` (when shield mode is enabled with supported policy mode)
-- `fetchAccountAssets`, `fetchAccountTransactions`, `getExplorerMetrics`, `getExplorerAccountQr`
-- `listAccountPermissions`, `registerCitizen`, `getGovernanceProposal`, `getGovernanceReferendum`, `getGovernanceTally`, `getGovernanceLocks`, `getGovernanceCouncilCurrent`
-- `submitGovernancePlainBallot`, `finalizeGovernanceReferendum`, `enactGovernanceProposal`
-- `getSumeragiStatus`, `getNexusPublicLaneValidators`, `getNexusPublicLaneStake`, `getNexusPublicLaneRewards`, `getNexusStakingPolicy`
-- `bondPublicLaneStake`, `schedulePublicLaneUnbond`, `finalizePublicLaneUnbond`, `claimPublicLaneRewards`
-- `getSccpCapabilities`, `getSccpProofManifests`, `getSccpMessageProofJob`, `submitSccpBridgeMessage`, `deriveZkIvmPayload`, `startZkIvmProveJob`
-- `getTronTransaction`, `getTronTransactionReceipt`, `getTronTransactionEvents`, `getTronFinalityData`, `triggerTronSmartContract`, `broadcastTronTransaction`
+Provision the file with an atomic replacement before launching the packaged
+app from Finder, the Start menu, or a desktop entry. Electron's `userData`
+directory is normally under `~/Library/Application Support` on macOS,
+`%APPDATA%` on Windows, and `~/.config` on Linux. The privileged main process
+reads the file again for every validation-fee policy refresh, so deleting,
+truncating, or replacing it with invalid data immediately fails closed instead
+of serving stale policy state.
 
-A failing Torii call never crashes the renderer; errors bubble up as toast/status messages so users can retry after fixing connectivity or credentials.
+For managed or diagnostic launches, `GOVERNANCE_VALIDATION_FEE_CONFIG_JSON`
+and `CBSI_CORE_API_BASE_URL` remain an all-or-nothing environment override. If
+either variable is present, both are required and the file is not used; an
+empty, partial, or malformed override fails closed. Unknown fields are rejected
+at every manifest, config, and projection level.
 
-## Security disclaimer
+The host concurrently reads Core's raw `/v1/validation-fee/policy` projection
+and `/v1/validation-fee/status`, requires the status wrapper to contain the
+exact same projection, checks every runtime ledger/Parliament/payout
+coordinate, and rejects rollback or same-coordinate equivocation. Any failed
+read clears the renderer state; no stale cached policy is served.
 
-Wallet secrets and confidential receive keys are resolved from the Electron secure vault (`safeStorage`, with the Windows DPAPI fallback on native Windows/WSL2). Pinia/localStorage persistence is limited to non-secret UI/session metadata such as selected account, locale, theme, and WalletConnect session metadata. SCCP TRON signing must stay WalletConnect-based; do not add TRON private-key import or generated end-user TRON wallets.
+Governance authorization, vote review, finalization, and enactment use only the
+strict typed proposal-detail response and its canonical decimal-string tally,
+lock, and finalization fields. The older `getGovernanceTally` and
+`getGovernanceLocks` bridge helpers expose number-coerced SDK diagnostics; they
+are non-evidence UI diagnostics only and must never authorize a write, prove a
+vote, or satisfy a finalization check.
+
+## Architecture
+
+- `src/` contains the Vue renderer, Pinia stores, routes, and typed governance
+  model.
+- `electron/preload.ts` exposes the narrow renderer bridge and owns network,
+  encoding, fee, signing, and commit operations.
+- `electron/main.ts` owns Electron lifecycle and privileged IPC.
+- `scripts/iroha-sdk-compat.mjs` validates and resolves the current sibling SDK.
+- `tests/` contains unit and component coverage.
+
+The renderer must not receive private key material. Secrets are resolved only
+after review and only inside the privileged process.
+
+## Packaging
+
+```bash
+npm run dist:mac
+npm run dist:win
+npm run dist:linux
+```
+
+See [RELEASE.md](RELEASE.md) for signing variables and the tag-based release
+workflow.

@@ -33,7 +33,7 @@ describe("transaction fee formatting", () => {
         {
           tx_fee: {
             amount: "2",
-            asset: "xor#universal",
+            asset: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
             source: "estimated",
           },
         },
@@ -43,9 +43,9 @@ describe("transaction fee formatting", () => {
   });
 
   it("surfaces on-chain fees when the amount is unavailable", () => {
-    expect(formatTransactionFee({ gas_asset_id: "xor#universal" }, t)).toBe(
-      "Network fee: charged on-chain (XOR).",
-    );
+    expect(
+      formatTransactionFee({ gas_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw" }, t),
+    ).toBe("Network fee: charged on-chain (XOR).");
     expect(formatTransactionFee({}, t)).toBe(
       "Network fee: charged on-chain (amount unavailable).",
     );
@@ -66,23 +66,20 @@ describe("transaction fee formatting", () => {
     expect(
       appendTransactionFee(
         "Transaction submitted: 0xabc",
-        { fee_amount: "3", fee_asset_id: "xor#universal" },
+        {
+          fee_amount: "3",
+          fee_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
+        },
         t,
       ),
     ).toBe("Transaction submitted: 0xabc Network fee: 3 XOR.");
   });
 
-  it("uses endpoint fee hints when submission results only include a hash", () => {
-    expect(transactionFeeHintForEndpoint("https://taira.sora.org")).toEqual({
-      fee_amount: "0.01",
-      fee_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-      source: "estimated",
-    });
-    expect(transactionFeeHintForEndpoint("https://minamoto.sora.org")).toEqual({
-      fee_amount: "0.01",
-      fee_asset_id: "6TEAJqbb8oEPmLncoNiMRbLEK6tw",
-      source: "estimated",
-    });
+  it("does not invent fee hints from endpoint URLs", () => {
+    expect(transactionFeeHintForEndpoint("https://taira.sora.org")).toBeNull();
+    expect(
+      transactionFeeHintForEndpoint("https://minamoto.sora.org"),
+    ).toBeNull();
     expect(
       appendTransactionFee(
         "Transaction submitted: 0xabc",
@@ -90,7 +87,9 @@ describe("transaction fee formatting", () => {
         t,
         transactionFeeHintForEndpoint("https://taira.sora.org"),
       ),
-    ).toBe("Transaction submitted: 0xabc Network fee: 0.01 XOR (estimated).");
+    ).toBe(
+      "Transaction submitted: 0xabc Network fee: charged on-chain (amount unavailable).",
+    );
   });
 
   it("reads fee fields from common endpoint shapes", () => {

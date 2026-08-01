@@ -24,7 +24,17 @@
         </div>
         <div class="vpn-primary-actions">
           <button
-            v-if="status.repairRequired || availability?.repairRequired"
+            v-if="potentiallyLiveTunnel"
+            type="button"
+            class="secondary"
+            data-ui-primary-action
+            :disabled="actionPending"
+            @click="handleDisconnect"
+          >
+            {{ actionPending ? t("Disconnecting…") : t("Disconnect VPN") }}
+          </button>
+          <button
+            v-else-if="status.repairRequired || availability?.repairRequired"
             type="button"
             data-ui-primary-action
             :disabled="loading || actionPending"
@@ -33,20 +43,10 @@
             {{ actionPending ? t("Repairing…") : t("Repair VPN") }}
           </button>
           <button
-            v-else-if="status.state === 'connected'"
-            type="button"
-            class="secondary"
-            data-ui-primary-action
-            :disabled="actionPending || !canOperate"
-            @click="handleDisconnect"
-          >
-            {{ actionPending ? t("Disconnecting…") : t("Disconnect VPN") }}
-          </button>
-          <button
             v-else
             type="button"
             data-ui-primary-action
-            :disabled="actionDisabled"
+            :disabled="connectActionDisabled"
             @click="handleConnect"
           >
             {{ actionPending ? t("Connecting…") : t("Connect VPN") }}
@@ -127,10 +127,26 @@
             )
           }}</strong>
         </p>
+        <p
+          v-if="!vpnSessionWritesAvailable"
+          class="helper"
+          data-testid="vpn-write-prerequisite"
+          role="status"
+        >
+          {{ vpnWritePrerequisite }}
+        </p>
         <p v-if="actionError" class="vpn-error" role="alert">
           {{ actionError }}
         </p>
-        <p v-else-if="loadError" class="vpn-error" role="alert">
+        <p
+          v-if="statusReadError"
+          class="vpn-error"
+          data-testid="vpn-status-error"
+          role="alert"
+        >
+          {{ statusReadError }}
+        </p>
+        <p v-if="loadError" class="vpn-error" role="alert">
           {{ loadError }}
         </p>
       </div>
@@ -256,6 +272,14 @@
 
       <details class="vpn-diagnostic-section">
         <summary>{{ t("Recent VPN receipts") }}</summary>
+        <p
+          v-if="receiptsError"
+          class="vpn-error"
+          data-testid="vpn-receipts-error"
+          role="alert"
+        >
+          {{ receiptsError }}
+        </p>
         <div v-if="receipts.length" class="table-wrap">
           <table class="table">
             <thead>
@@ -281,9 +305,12 @@
             </tbody>
           </table>
         </div>
-        <div v-else class="wallet-empty">
+        <div v-else-if="receiptsReadState === 'available'" class="wallet-empty">
           <p class="wallet-empty-title">{{ t("No VPN receipts yet.") }}</p>
           <p class="helper">{{ t("Connect VPN") }}</p>
+        </div>
+        <div v-else class="wallet-empty">
+          <p class="wallet-empty-title">{{ t("Unavailable") }}</p>
         </div>
       </details>
     </section>
@@ -303,6 +330,7 @@ import {
   listVpnReceipts,
   repairVpn,
 } from "@/services/iroha";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import { useVpnStore } from "@/stores/vpn";
 import type {
@@ -321,6 +349,7 @@ import {
 } from "@/utils/transactionFee";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const vpnStore = useVpnStore();
 const { localeStore, t } = useAppI18n();
 
@@ -370,11 +399,17 @@ const availability = ref<VpnAvailability | null>(vpnStore.helperHealth);
 const profile = ref<VpnProfile | null>(vpnStore.lastProfile);
 const status = ref<VpnStatus>(emptyStatus());
 const receipts = ref<VpnReceipt[]>(vpnStore.receipts);
+const receiptsReadState = ref<"idle" | "available" | "unavailable">(
+  vpnStore.receipts.length ? "available" : "idle",
+);
 const loading = ref(false);
 const actionPending = ref(false);
 const loadError = ref("");
+const statusReadError = ref("");
+const receiptsError = ref("");
 const actionError = ref("");
 const requestGeneration = ref(0);
+const activeViewContextKey = ref("");
 let refreshTimer: number | null = null;
 
 const selectedExitClass = computed({
@@ -402,6 +437,7 @@ const authContext = computed<Partial<VpnAuthContext> | undefined>(() => {
   }
   return {
     toriiUrl: toriiUrl.value,
+    chainId: session.connection.chainId,
     accountId: requestAccountId.value,
     networkPrefix: session.connection.networkPrefix,
   };
@@ -414,9 +450,54 @@ const actionDisabled = computed(
     !availability.value?.actionsEnabled ||
     !profile.value?.available,
 );
+const vpnSessionWritesAvailable = computed(
+  () =>
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features.vpnSessions.supported === true,
+);
+const vpnWritePrerequisite = computed(() => {
+  if (endpointStore.state === "checking") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  return t(
+    "This endpoint does not advertise the required VPN session operations.",
+  );
+});
+const connectActionDisabled = computed(
+  () => actionDisabled.value || !vpnSessionWritesAvailable.value,
+);
+const potentiallyLiveTunnel = computed(
+  () =>
+    status.value.systemTunnelActive ||
+    availability.value?.systemTunnelActive === true ||
+    [
+      "connecting",
+      "connected",
+      "disconnecting",
+      "reconciling",
+      "remote-delete-pending",
+    ].includes(status.value.state),
+);
 
 const availabilityMessage = computed(() => {
   if (!canOperate.value) {
+    if (status.value.errorMessage) {
+      return t(status.value.errorMessage);
+    }
+    if (status.value.repairRequired) {
+      return t("The local VPN controller requires repair.");
+    }
+    if (status.value.controllerInstalled) {
+      return t(
+        "The local VPN controller is ready. Set up a network and wallet to connect.",
+      );
+    }
     return t("Set up network and wallet first.");
   }
   return t(availability.value?.message || "VPN helper is ready.");
@@ -425,16 +506,24 @@ const availabilityMessage = computed(() => {
 const helperLabel = computed(() =>
   availability.value
     ? `${availability.value.helperVersion} · ${availability.value.platform}`
-    : t("Checking VPN helper…"),
+    : status.value.controllerInstalled
+      ? t("Local controller available")
+      : t("Checking VPN helper…"),
 );
 
 const controllerLabel = computed(() => {
-  if (!availability.value?.controllerInstalled) {
+  const installed =
+    availability.value?.controllerInstalled ?? status.value.controllerInstalled;
+  if (!installed) {
     return t("Controller missing");
   }
   const bits = [
-    availability.value.controllerKind || t("Unknown"),
-    availability.value.controllerVersion || t("Version pending"),
+    availability.value?.controllerKind ||
+      status.value.controllerKind ||
+      t("Unknown"),
+    availability.value?.controllerVersion ||
+      status.value.controllerVersion ||
+      t("Version pending"),
   ];
   return bits.join(" · ");
 });
@@ -498,7 +587,10 @@ const systemTunnelServiceLabel = computed(() => {
 });
 
 const systemTunnelStatusLabel = computed(() => {
-  if (status.value.systemTunnelActive) {
+  if (
+    status.value.systemTunnelActive ||
+    availability.value?.systemTunnelActive === true
+  ) {
     return t("System tunnel active");
   }
   if (status.value.repairRequired || availability.value?.repairRequired) {
@@ -571,71 +663,157 @@ const exitClassLabel = (value: VpnExitClass) => {
   }
 };
 
+const preserveLocalStatus = (): VpnStatus => {
+  const previous = status.value;
+  const localTunnelActive =
+    previous.systemTunnelActive ||
+    availability.value?.systemTunnelActive === true;
+  return {
+    ...emptyStatus(),
+    state: localTunnelActive
+      ? previous.state === "idle" || previous.state === "error"
+        ? "reconciling"
+        : previous.state
+      : "idle",
+    helperStatus: previous.helperStatus,
+    controllerInstalled:
+      previous.controllerInstalled ||
+      availability.value?.controllerInstalled === true,
+    controllerVersion:
+      previous.controllerVersion ??
+      availability.value?.controllerVersion ??
+      null,
+    controllerKind:
+      previous.controllerKind ?? availability.value?.controllerKind ?? null,
+    reconcileState: previous.reconcileState,
+    repairRequired:
+      previous.repairRequired || availability.value?.repairRequired === true,
+    systemTunnelActive: localTunnelActive,
+    systemTunnelKind:
+      previous.systemTunnelKind ?? availability.value?.systemTunnelKind ?? null,
+    systemTunnelInterface:
+      previous.systemTunnelInterface ??
+      availability.value?.systemTunnelInterface ??
+      null,
+    systemTunnelService:
+      previous.systemTunnelService ??
+      availability.value?.systemTunnelService ??
+      null,
+    errorMessage: previous.errorMessage,
+  };
+};
+
 const syncStatusOnly = async () => {
+  const generation = requestGeneration.value;
   try {
-    status.value = await getVpnStatus(authContext.value);
+    const nextStatus = await getVpnStatus(authContext.value);
+    if (generation === requestGeneration.value) {
+      status.value = nextStatus;
+      statusReadError.value = "";
+    }
   } catch (error) {
-    status.value = {
-      ...emptyStatus(),
-      state: "error",
-      errorMessage: toUserFacingErrorMessage(error),
-      helperStatus: "error",
-      controllerInstalled: availability.value?.controllerInstalled ?? false,
-      controllerVersion: availability.value?.controllerVersion ?? null,
-      controllerKind: availability.value?.controllerKind ?? null,
-      repairRequired: availability.value?.repairRequired ?? false,
-      systemTunnelActive: false,
-      systemTunnelKind: availability.value?.systemTunnelKind ?? null,
-      systemTunnelInterface: availability.value?.systemTunnelInterface ?? null,
-      systemTunnelService: availability.value?.systemTunnelService ?? null,
-      lastReceipt: receipts.value[0] ?? null,
-    };
+    if (generation !== requestGeneration.value) {
+      return;
+    }
+    statusReadError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load local VPN controller state."),
+    );
   }
 };
 
 const refreshAll = async () => {
-  if (!toriiUrl.value) {
-    availability.value = null;
-    profile.value = null;
-    status.value = emptyStatus();
-    receipts.value = vpnStore.receipts;
-    return;
-  }
   loading.value = true;
   loadError.value = "";
   const generation = ++requestGeneration.value;
+  const endpoint = toriiUrl.value;
+  const context = authContext.value;
+  const networkPromise = endpoint
+    ? Promise.allSettled([
+        getVpnAvailability({ toriiUrl: endpoint }),
+        getVpnProfile({ toriiUrl: endpoint }),
+        context
+          ? listVpnReceipts(context)
+          : Promise.resolve([] as VpnReceipt[]),
+      ])
+    : null;
   try {
-    const [nextAvailability, nextProfile, nextStatus, nextReceipts] =
-      await Promise.all([
-        getVpnAvailability({ toriiUrl: toriiUrl.value }),
-        getVpnProfile({ toriiUrl: toriiUrl.value }),
-        getVpnStatus(authContext.value),
-        listVpnReceipts(authContext.value),
-      ]);
+    try {
+      const nextStatus = await getVpnStatus(context);
+      if (generation === requestGeneration.value) {
+        status.value = nextStatus;
+        statusReadError.value = "";
+      }
+    } catch (error) {
+      if (generation === requestGeneration.value) {
+        statusReadError.value = toUserFacingErrorMessage(
+          error,
+          t("Failed to load local VPN controller state."),
+        );
+      }
+    }
     if (generation !== requestGeneration.value) {
       return;
     }
-    availability.value = nextAvailability;
-    profile.value = nextProfile;
-    status.value = nextStatus;
-    receipts.value = nextReceipts;
-    vpnStore.setHelperHealth(nextAvailability);
-    vpnStore.setLastProfile(nextProfile);
-    vpnStore.setReceipts(nextReceipts);
-    if (
-      nextProfile &&
-      !nextProfile.supportedExitClasses.includes(selectedExitClass.value)
-    ) {
-      selectedExitClass.value = nextProfile.defaultExitClass;
+
+    if (!networkPromise) {
+      availability.value = null;
+      profile.value = null;
+      receipts.value = [];
+      receiptsReadState.value = "idle";
+      receiptsError.value = "";
+      vpnStore.setHelperHealth(null);
+      vpnStore.setLastProfile(null);
+      vpnStore.setReceipts([]);
+      return;
     }
-  } catch (error) {
+
+    const networkResult = await networkPromise;
     if (generation !== requestGeneration.value) {
       return;
     }
-    loadError.value = toUserFacingErrorMessage(
-      error,
-      t("Failed to load VPN state."),
-    );
+
+    const [availabilityResult, profileResult, receiptsResult] = networkResult;
+    const networkErrors: unknown[] = [];
+    if (availabilityResult.status === "fulfilled") {
+      availability.value = availabilityResult.value;
+      vpnStore.setHelperHealth(availabilityResult.value);
+    } else {
+      networkErrors.push(availabilityResult.reason);
+    }
+    if (profileResult.status === "fulfilled") {
+      profile.value = profileResult.value;
+      vpnStore.setLastProfile(profileResult.value);
+      if (
+        profileResult.value &&
+        !profileResult.value.supportedExitClasses.includes(
+          selectedExitClass.value,
+        )
+      ) {
+        selectedExitClass.value = profileResult.value.defaultExitClass;
+      }
+    } else {
+      networkErrors.push(profileResult.reason);
+    }
+    if (receiptsResult.status === "fulfilled") {
+      receipts.value = receiptsResult.value;
+      receiptsReadState.value = "available";
+      receiptsError.value = "";
+      vpnStore.setReceipts(receiptsResult.value);
+    } else {
+      receiptsReadState.value = "unavailable";
+      receiptsError.value = toUserFacingErrorMessage(
+        receiptsResult.reason,
+        t("Failed to load VPN network state."),
+      );
+      networkErrors.push(receiptsResult.reason);
+    }
+    if (networkErrors.length > 0) {
+      loadError.value = toUserFacingErrorMessage(
+        networkErrors[0],
+        t("Failed to load VPN network state."),
+      );
+    }
   } finally {
     if (generation === requestGeneration.value) {
       loading.value = false;
@@ -643,8 +821,43 @@ const refreshAll = async () => {
   }
 };
 
+const refreshReceiptsOnly = async () => {
+  const context = authContext.value;
+  if (!context) {
+    receipts.value = [];
+    receiptsReadState.value = "idle";
+    receiptsError.value = "";
+    vpnStore.setReceipts([]);
+    return;
+  }
+  const generation = requestGeneration.value;
+  try {
+    const nextReceipts = await listVpnReceipts(context);
+    if (generation !== requestGeneration.value) {
+      return;
+    }
+    receipts.value = nextReceipts;
+    receiptsReadState.value = "available";
+    receiptsError.value = "";
+    vpnStore.setReceipts(nextReceipts);
+  } catch (error) {
+    if (generation !== requestGeneration.value) {
+      return;
+    }
+    receiptsReadState.value = "unavailable";
+    receiptsError.value = toUserFacingErrorMessage(
+      error,
+      t("Failed to load VPN network state."),
+    );
+  }
+};
+
 const handleConnect = async () => {
-  if (!canOperate.value || !activeAccount.value) {
+  if (!vpnSessionWritesAvailable.value) {
+    actionError.value = vpnWritePrerequisite.value;
+    return;
+  }
+  if (actionDisabled.value || !activeAccount.value) {
     return;
   }
   actionPending.value = true;
@@ -658,8 +871,7 @@ const handleConnect = async () => {
       privateKeyHex: activeAccount.value.privateKeyHex,
       exitClass: selectedExitClass.value,
     });
-    receipts.value = await listVpnReceipts(authContext.value);
-    vpnStore.setReceipts(receipts.value);
+    await refreshReceiptsOnly();
   } catch (error) {
     actionError.value = toUserFacingErrorMessage(
       error,
@@ -672,20 +884,20 @@ const handleConnect = async () => {
 };
 
 const handleDisconnect = async () => {
-  if (!canOperate.value || !activeAccount.value) {
-    return;
-  }
   actionPending.value = true;
   actionError.value = "";
   try {
-    status.value = await disconnectVpn({
-      toriiUrl: toriiUrl.value,
-      accountId: requestAccountId.value,
-      networkPrefix: session.connection.networkPrefix,
-      privateKeyHex: activeAccount.value.privateKeyHex,
-    });
-    receipts.value = await listVpnReceipts(authContext.value);
-    vpnStore.setReceipts(receipts.value);
+    status.value =
+      canOperate.value && activeAccount.value
+        ? await disconnectVpn({
+            toriiUrl: toriiUrl.value,
+            chainId: session.connection.chainId,
+            accountId: requestAccountId.value,
+            networkPrefix: session.connection.networkPrefix,
+            privateKeyHex: activeAccount.value.privateKeyHex,
+          })
+        : await disconnectVpn();
+    await refreshReceiptsOnly();
   } catch (error) {
     actionError.value = toUserFacingErrorMessage(
       error,
@@ -701,7 +913,7 @@ const handleRepair = async () => {
   actionPending.value = true;
   actionError.value = "";
   try {
-    status.value = await repairVpn(authContext.value ?? {});
+    status.value = await repairVpn();
   } catch (error) {
     actionError.value = toUserFacingErrorMessage(
       error,
@@ -719,8 +931,28 @@ const handleExitClassChange = (event: Event) => {
 };
 
 watch(
-  () => `${toriiUrl.value}::${requestAccountId.value}`,
-  () => {
+  () =>
+    JSON.stringify([
+      toriiUrl.value,
+      session.connection.chainId,
+      session.connection.networkPrefix,
+      requestAccountId.value,
+    ]),
+  (nextContextKey) => {
+    if (activeViewContextKey.value !== nextContextKey) {
+      status.value = preserveLocalStatus();
+      availability.value = null;
+      profile.value = null;
+      receipts.value = [];
+      receiptsReadState.value = "idle";
+      receiptsError.value = "";
+      statusReadError.value = "";
+      loadError.value = "";
+      vpnStore.setHelperHealth(null);
+      vpnStore.setLastProfile(null);
+      vpnStore.setReceipts([]);
+      activeViewContextKey.value = nextContextKey;
+    }
     void refreshAll();
   },
   { immediate: true },

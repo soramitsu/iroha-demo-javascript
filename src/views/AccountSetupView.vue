@@ -526,35 +526,16 @@
 
     <TechnicalDisclosure
       class="account-connect account-pairing-disclosure"
-      :summary="t('Phone pairing')"
+      :summary="t('IrohaConnect connection')"
     >
       <div class="account-connect-content">
         <p class="helper">
           {{
             t(
-              "Already using IrohaConnect on your phone? Generate a pairing session to approve desktop access without exporting keys. Signing stays on the phone; this app watches balances.",
+              "Scan a wallet-role QR from an app to connect it to this wallet. Every signing request still requires your approval.",
             )
           }}
         </p>
-        <div v-if="connectPreview" class="connect-preview">
-          <img
-            v-if="connectQr"
-            :src="connectQr"
-            :alt="t('IrohaConnect pairing QR')"
-            class="connect-qr"
-          />
-          <details class="technical-details compact">
-            <summary>{{ t("Pairing details") }}</summary>
-            <div class="kv monospace">
-              <span class="kv-label">{{ t("Session ID") }}</span>
-              <span class="kv-value">{{ connectPreview.sidBase64Url }}</span>
-            </div>
-            <div v-if="connectPreview.tokenWallet" class="kv monospace">
-              <span class="kv-label">{{ t("Wallet Token") }}</span>
-              <span class="kv-value">{{ connectPreview.tokenWallet }}</span>
-            </div>
-          </details>
-        </div>
         <div class="connect-reader">
           <div class="actions connect-reader-actions">
             <button
@@ -632,19 +613,13 @@
             {{ connectScanError || connectScanner.message }}
           </p>
         </div>
-        <div class="actions">
-          <button :disabled="connectLoading" @click="startConnectPairing">
-            {{ connectLoading ? t("Preparing…") : t("Generate pairing QR") }}
-          </button>
-          <button
-            class="secondary"
-            :disabled="!connectPreview"
-            @click="resetConnect"
-          >
-            {{ t("Reset") }}
-          </button>
-        </div>
-        <p v-if="connectError" class="helper error">{{ connectError }}</p>
+        <p
+          v-if="!connectPairingAvailable"
+          class="helper warning"
+          data-testid="account-connect-prerequisite"
+        >
+          {{ connectPairingPrerequisite }}
+        </p>
       </div>
     </TechnicalDisclosure>
 
@@ -694,6 +669,61 @@
         </button>
       </template>
     </AppDialog>
+
+    <AppDialog
+      :open="Boolean(pendingConnectRequest)"
+      :eyebrow="t('IrohaConnect request')"
+      :title="t('Approve signing request?')"
+      :description="
+        t(
+          'Review the exact request before allowing the connected app to use this wallet.',
+        )
+      "
+      :busy="connectRequestLoading"
+      :show-close="false"
+      initial-focus-selector="[data-testid='account-connect-request-reject']"
+      @close="rejectPendingConnectRequest"
+    >
+      <div v-if="pendingConnectRequest" class="connect-modal-grid">
+        <div class="kv">
+          <span class="kv-label">{{ t("Request type") }}</span>
+          <span class="kv-value">{{ pendingConnectRequest.label }}</span>
+        </div>
+        <div class="kv">
+          <span class="kv-label">{{ t("Payload bytes") }}</span>
+          <span class="kv-value">{{ pendingConnectRequest.byteLength }}</span>
+        </div>
+        <div v-if="pendingConnectRequest.domainTag" class="kv monospace">
+          <span class="kv-label">{{ t("Domain") }}</span>
+          <span class="kv-value">{{ pendingConnectRequest.domainTag }}</span>
+        </div>
+        <div class="kv monospace">
+          <span class="kv-label">{{ t("Signing payload preview") }}</span>
+          <span class="kv-value">{{ pendingConnectRequest.preview }}</span>
+        </div>
+      </div>
+      <p v-if="connectRequestError" class="helper error">
+        {{ connectRequestError }}
+      </p>
+      <template #actions>
+        <button
+          type="button"
+          class="secondary"
+          data-testid="account-connect-request-reject"
+          :disabled="connectRequestLoading"
+          @click="rejectPendingConnectRequest"
+        >
+          {{ t("Reject") }}
+        </button>
+        <button
+          type="button"
+          :disabled="connectRequestLoading"
+          @click="approvePendingConnectRequest"
+        >
+          {{ connectRequestLoading ? t("Approving…") : t("Approve request") }}
+        </button>
+      </template>
+    </AppDialog>
   </div>
   <input
     ref="backupFileInput"
@@ -706,25 +736,41 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  reactive,
+  ref,
+  shallowRef,
+  watch,
+} from "vue";
 import { useRouter } from "vue-router";
-import QRCode from "qrcode";
 import AppDialog from "@/components/ui/AppDialog.vue";
 import SegmentedControl from "@/components/ui/SegmentedControl.vue";
 import StatusBadge from "@/components/ui/StatusBadge.vue";
 import TechnicalDisclosure from "@/components/ui/TechnicalDisclosure.vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import { useQrScanner } from "@/composables/useQrScanner";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import {
-  createConnectPreview,
+  approveIrohaConnectRequest,
+  approveIrohaConnectSession,
+  closeIrohaConnectSession,
   copyTextToClipboard,
   deriveAccountAddress,
   exportConfidentialWalletBackup,
   generateKeyPair,
   getSigningAlgorithms,
   importConfidentialWalletBackup,
+  inspectEndpoint,
   isSecureVaultAvailable,
+  prepareIrohaConnectSession,
+  processIrohaConnectFrame,
+  rejectIrohaConnectRequest,
+  resetIrohaConnectBoundary,
+  setIrohaConnectContext,
   storeAccountSecret,
 } from "@/services/iroha";
 import {
@@ -745,17 +791,24 @@ import { CHAIN_PRESETS, DEFAULT_CHAIN_PRESET } from "@/constants/chains";
 import { getAccountDisplayLabel, getPublicAccountId } from "@/utils/accountId";
 import { toUserFacingErrorMessage } from "@/utils/errorMessage";
 import {
+  assertIrohaConnectEndpointCanPair,
   buildIrohaConnectTokenProtocol,
   buildIrohaConnectWebSocketUrl,
-  encodeIrohaConnectApproveFrame,
   parseIrohaConnectUri,
   type ParsedIrohaConnectUri,
+  validateIrohaConnectNetworkClaim,
 } from "@/utils/irohaConnect";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  decodeConnectFrame,
+  type ConnectPermissions,
+} from "@/utils/soraswapConnectWire";
 
 const session = useSessionStore();
+const endpointStore = useEndpointStore();
 const router = useRouter();
 const { t } = useAppI18n();
-const CONNECT_LAUNCH_PROTOCOL = "irohaconnect";
 const DEFAULT_DOMAIN_LABEL = "default";
 const getAccountLabel = (account: (typeof session.accounts)[number]) =>
   getAccountDisplayLabel(
@@ -767,6 +820,7 @@ const getAccountLabel = (account: (typeof session.accounts)[number]) =>
 const connectionForm = reactive({
   toriiUrl: session.connection.toriiUrl,
   chainId: session.connection.chainId,
+  networkPrefix: session.connection.networkPrefix,
 });
 const signingAlgorithmOptions = ref([
   {
@@ -852,6 +906,7 @@ watch(
     };
     connectionForm.toriiUrl = nextConnection.toriiUrl;
     connectionForm.chainId = nextConnection.chainId;
+    connectionForm.networkPrefix = nextConnection.networkPrefix;
   },
   { deep: true, immediate: true },
 );
@@ -1262,6 +1317,8 @@ const persistGeneratedIdentity = async (localOnly: boolean) => {
   if (pendingConfidentialWalletBackup.value && recoveryMnemonic.value) {
     await importConfidentialWalletBackup({
       toriiUrl: connectionForm.toriiUrl,
+      chainId: connectionForm.chainId,
+      networkPrefix: connectionForm.networkPrefix,
       accountId,
       mnemonic: recoveryMnemonic.value,
       confidentialWallet: pendingConfidentialWalletBackup.value,
@@ -1345,6 +1402,7 @@ const downloadBackup = async (target: "manual" | "icloud" | "google") => {
     confidentialWallet = await exportConfidentialWalletBackup({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       accountId: generatedAccountId.value,
       mnemonic: recoveryMnemonic.value,
     }).catch((error) => {
@@ -1399,13 +1457,7 @@ const copyRecoveryPhrase = async () => {
   }
 };
 
-const connectPreview = ref<Awaited<
-  ReturnType<typeof createConnectPreview>
-> | null>(null);
-const connectQr = ref("");
-const connectLoading = ref(false);
-const connectError = ref("");
-const connectGeneration = ref(0);
+const connectApprovalGeneration = ref(0);
 const scannedConnectSession = ref<ParsedIrohaConnectUri | null>(null);
 const pendingConnectSession = ref<ParsedIrohaConnectUri | null>(null);
 const connectScanError = ref("");
@@ -1413,6 +1465,52 @@ const scannedConnectCopied = ref(false);
 const connectApprovalLoading = ref(false);
 const connectApprovalStatus = ref("");
 let scannedConnectSocket: WebSocket | null = null;
+let scannedConnectExpectedAppSequence = 1;
+let scannedConnectExpectedServerSequence = 1;
+let scannedConnectApproved = false;
+let scannedConnectOpenApprovalInFlight = false;
+let scannedConnectBoundaryInitialized = false;
+let scannedConnectBoundarySessionToken = "";
+let scannedConnectApprovedAccountId = "";
+let scannedConnectNetworkContext: {
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+} | null = null;
+let scannedConnectContextKey = "";
+const pendingConnectRequest = shallowRef<{
+  socket: WebSocket;
+  parsed: ParsedIrohaConnectUri;
+  requestToken: string;
+  requestType: "sign_request_raw" | "sign_request_tx";
+  domainTag: string | null;
+  byteLength: number;
+  preview: string;
+  label: string;
+} | null>(null);
+const connectRequestLoading = ref(false);
+const connectRequestError = ref("");
+
+const connectPairingAvailable = computed(
+  () =>
+    endpointStore.state === "ready" &&
+    endpointStore.writeAllowed &&
+    endpointStore.inspection?.features.irohaConnectSessions.supported === true,
+);
+const connectPairingPrerequisite = computed(() => {
+  if (endpointStore.state !== "ready") {
+    return t("Wait for endpoint capability inspection to finish.");
+  }
+  if (!endpointStore.writeAllowed) {
+    return (
+      endpointStore.diagnostic ||
+      t("Writes are blocked until the endpoint identity is verified.")
+    );
+  }
+  return t(
+    "The active endpoint does not advertise IrohaConnect session writes.",
+  );
+});
 
 interface IrohaConnectDetail {
   label: string;
@@ -1426,6 +1524,14 @@ const activeConnectAccountId = computed(
       session.activeAccount,
       session.connection.networkPrefix,
     ) || "",
+);
+const connectContextKey = computed(() =>
+  JSON.stringify([
+    session.connection.toriiUrl,
+    session.connection.chainId,
+    session.connection.networkPrefix,
+    session.activeAccountId,
+  ]),
 );
 
 const displayOptional = (value: unknown) => {
@@ -1461,17 +1567,64 @@ const pendingConnectionDetails = computed<IrohaConnectDetail[]>(() => {
       label: t("Wallet token"),
       value: parsed.token ? t("Present") : t("Missing"),
     },
+    {
+      label: t("Relay token"),
+      value: parsed.relayToken ? t("Present") : t("Missing"),
+    },
   ];
 });
 
-const closeScannedConnectSocket = () => {
-  if (
-    scannedConnectSocket &&
-    scannedConnectSocket.readyState !== WebSocket.CLOSED
-  ) {
-    scannedConnectSocket.close(1000, "approval complete");
+const clearScannedConnectState = () => {
+  if (scannedConnectBoundarySessionToken) {
+    closeIrohaConnectSession({
+      sessionToken: scannedConnectBoundarySessionToken,
+    });
+  }
+  if (scannedConnectBoundaryInitialized) {
+    resetIrohaConnectBoundary();
   }
   scannedConnectSocket = null;
+  scannedConnectExpectedAppSequence = 1;
+  scannedConnectExpectedServerSequence = 1;
+  scannedConnectApproved = false;
+  scannedConnectOpenApprovalInFlight = false;
+  scannedConnectBoundaryInitialized = false;
+  scannedConnectBoundarySessionToken = "";
+  scannedConnectApprovedAccountId = "";
+  scannedConnectNetworkContext = null;
+  scannedConnectContextKey = "";
+  pendingConnectRequest.value = null;
+  connectRequestLoading.value = false;
+  connectRequestError.value = "";
+};
+
+const closeScannedConnectSocket = (reason = "approval complete") => {
+  const socket = scannedConnectSocket;
+  clearScannedConnectState();
+  if (socket && socket.readyState !== WebSocket.CLOSED) {
+    socket.close(1000, reason);
+  }
+};
+
+const closeSpecificConnectSocket = (
+  socket: WebSocket,
+  reason = "approval complete",
+) => {
+  if (scannedConnectSocket === socket) {
+    clearScannedConnectState();
+  }
+  if (socket.readyState !== WebSocket.CLOSED) {
+    socket.close(1000, reason);
+  }
+};
+
+const handleScannedSocketTermination = (socket: WebSocket, reason: string) => {
+  if (socket !== scannedConnectSocket) {
+    return;
+  }
+  clearScannedConnectState();
+  connectApprovalStatus.value = "";
+  connectScanError.value = reason;
 };
 
 const waitForConnectSocketOpen = (socket: WebSocket) =>
@@ -1495,46 +1648,317 @@ const waitForConnectSocketOpen = (socket: WebSocket) =>
       },
       { once: true },
     );
+    socket.addEventListener(
+      "close",
+      () => {
+        window.clearTimeout(timeout);
+        reject(new Error("IrohaConnect relay connection closed."));
+      },
+      { once: true },
+    );
   });
 
+const connectEventBytes = async (data: MessageEvent["data"]) => {
+  if (data instanceof Uint8Array) {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  if (data instanceof Blob) {
+    return new Uint8Array(await data.arrayBuffer());
+  }
+  throw new Error("IrohaConnect relay returned a non-binary frame.");
+};
+
+const requireCurrentScannedConnection = (socket: WebSocket) => {
+  if (
+    socket !== scannedConnectSocket ||
+    socket.readyState !== WebSocket.OPEN ||
+    !scannedConnectContextKey ||
+    scannedConnectContextKey !== connectContextKey.value ||
+    !scannedConnectNetworkContext
+  ) {
+    throw new Error(
+      "The active wallet changed while IrohaConnect approval was pending.",
+    );
+  }
+  return scannedConnectNetworkContext;
+};
+
+const approveOpenConnectFrame = async (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  appPublicKeyHex: string,
+  requestedChainId: string,
+  permissions: ConnectPermissions | null,
+) => {
+  const network = requireCurrentScannedConnection(socket);
+  if (!parsed.relayToken) {
+    throw new Error("IrohaConnect relay token is missing.");
+  }
+  if (
+    scannedConnectOpenApprovalInFlight ||
+    scannedConnectApproved ||
+    scannedConnectBoundarySessionToken
+  ) {
+    throw new Error("IrohaConnect relay sent a duplicate Open frame.");
+  }
+  scannedConnectOpenApprovalInFlight = true;
+  validateIrohaConnectNetworkClaim({ chainId: requestedChainId }, network, {
+    label: "The IrohaConnect relay request",
+    requireChainId: true,
+  });
+  const accountId = scannedConnectApprovedAccountId;
+  if (!accountId) {
+    throw new Error("Choose an active wallet before approving IrohaConnect.");
+  }
+  const prepared = await prepareIrohaConnectSession({
+    context: {
+      toriiUrl: network.toriiUrl,
+      chainId: network.chainId,
+      networkPrefix: network.networkPrefix,
+      accountId,
+    },
+    sid: parsed.sid,
+    appPublicKeyHex,
+    relayToken: parsed.relayToken,
+    requestedChainId,
+    permissions,
+  });
+  requireCurrentScannedConnection(socket);
+  const approved = await approveIrohaConnectSession(prepared);
+  requireCurrentScannedConnection(socket);
+  scannedConnectBoundarySessionToken = approved.sessionToken;
+  socket.send(base64ToBytes(approved.frameBase64));
+  scannedConnectApproved = true;
+  connectApprovalStatus.value = accountId;
+  connectScanner.message.value = t("IrohaConnect approved.");
+};
+
+const queueConnectSigningRequest = (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  request: Extract<
+    ReturnType<typeof processIrohaConnectFrame>,
+    { kind: "request" }
+  >,
+) => {
+  requireCurrentScannedConnection(socket);
+  if (pendingConnectRequest.value) {
+    throw new Error(
+      "IrohaConnect returned a second pending request from the preload boundary.",
+    );
+  }
+  pendingConnectRequest.value = {
+    socket,
+    parsed,
+    requestToken: request.requestToken,
+    requestType: request.requestType,
+    domainTag: request.domainTag,
+    byteLength: request.byteLength,
+    preview: request.payloadPreviewHex,
+    label:
+      request.requestType === "sign_request_raw"
+        ? t("Raw message signature")
+        : t("Transaction signature"),
+  };
+  connectRequestError.value = "";
+};
+
+const handleProcessedConnectFrame = (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  processed: ReturnType<typeof processIrohaConnectFrame>,
+) => {
+  requireCurrentScannedConnection(socket);
+  if (processed.kind === "response") {
+    socket.send(base64ToBytes(processed.frameBase64));
+    if (processed.error) {
+      connectApprovalStatus.value = processed.error;
+    }
+    return;
+  }
+  if (processed.kind === "request") {
+    queueConnectSigningRequest(socket, parsed, processed);
+    return;
+  }
+  if (processed.kind === "closed") {
+    closeSpecificConnectSocket(socket, processed.reason);
+  }
+};
+
+const handleScannedConnectMessage = async (
+  socket: WebSocket,
+  parsed: ParsedIrohaConnectUri,
+  event: MessageEvent,
+) => {
+  try {
+    requireCurrentScannedConnection(socket);
+    const bytes = await connectEventBytes(event.data);
+    requireCurrentScannedConnection(socket);
+    const frame = decodeConnectFrame(bytes);
+    if (frame.sid !== parsed.sid || frame.direction !== "app_to_wallet") {
+      throw new Error(
+        "IrohaConnect relay sent a frame with invalid session or direction.",
+      );
+    }
+    if (frame.control?.type === "server_event") {
+      if (frame.seq !== scannedConnectExpectedServerSequence) {
+        throw new Error(
+          `IrohaConnect relay sent server event sequence ${frame.seq}; expected ${scannedConnectExpectedServerSequence}.`,
+        );
+      }
+      scannedConnectExpectedServerSequence += 1;
+      return;
+    }
+    if (scannedConnectApproved) {
+      if (!scannedConnectBoundarySessionToken) {
+        throw new Error("IrohaConnect preload session is unavailable.");
+      }
+      handleProcessedConnectFrame(
+        socket,
+        parsed,
+        processIrohaConnectFrame({
+          sessionToken: scannedConnectBoundarySessionToken,
+          frameBase64: bytesToBase64(bytes),
+        }),
+      );
+      return;
+    }
+    if (frame.seq !== scannedConnectExpectedAppSequence) {
+      throw new Error(
+        `IrohaConnect app sent sequence ${frame.seq}; expected ${scannedConnectExpectedAppSequence}.`,
+      );
+    }
+    scannedConnectExpectedAppSequence += 1;
+
+    if (frame.kind !== "control" || frame.control?.type !== "open") {
+      throw new Error("IrohaConnect first app frame must be Open sequence 1.");
+    }
+    await approveOpenConnectFrame(
+      socket,
+      parsed,
+      frame.control.appPublicKeyHex,
+      frame.control.constraints.chainId,
+      frame.control.permissions,
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    connectScanError.value = reason;
+    closeSpecificConnectSocket(socket, reason);
+  }
+};
+
 const approveScannedConnectSession = async (parsed: ParsedIrohaConnectUri) => {
+  const approvalGeneration = connectApprovalGeneration.value + 1;
+  connectApprovalGeneration.value = approvalGeneration;
+  const approvalContextKey = connectContextKey.value;
+  const isCurrentApproval = () =>
+    approvalGeneration === connectApprovalGeneration.value &&
+    approvalContextKey === connectContextKey.value;
   connectApprovalLoading.value = true;
   connectApprovalStatus.value = "";
   connectScanError.value = "";
   closeScannedConnectSocket();
+  let approvalSocket: WebSocket | null = null;
 
   try {
     if (!parsed.token) {
       throw new Error("IrohaConnect wallet token is missing.");
     }
+    if (!parsed.relayToken) {
+      throw new Error("IrohaConnect relay token is missing.");
+    }
     const activeAccount = session.activeAccount;
-    const accountId = activeConnectAccountId.value;
-    if (!activeAccount || !accountId) {
+    if (!activeAccount) {
       throw new Error("Choose an active wallet before approving IrohaConnect.");
     }
+    const network = validateIrohaConnectNetworkClaim(
+      parsed,
+      session.connection,
+      {
+        requireChainId: true,
+        requireNode: true,
+      },
+    );
+    const accountId =
+      getPublicAccountId(activeAccount, network.networkPrefix) || "";
+    if (!accountId) {
+      throw new Error("Choose an active wallet before approving IrohaConnect.");
+    }
+    const inspection = await inspectEndpoint(network);
+    if (!isCurrentApproval()) {
+      return;
+    }
+    assertIrohaConnectEndpointCanPair(inspection);
+    const validatedSession: ParsedIrohaConnectUri = {
+      ...parsed,
+      chainId: network.chainId,
+      node: network.toriiUrl,
+      networkPrefix: network.networkPrefix,
+    };
+    setIrohaConnectContext({
+      toriiUrl: network.toriiUrl,
+      chainId: network.chainId,
+      networkPrefix: network.networkPrefix,
+      accountId,
+    });
+    scannedConnectBoundaryInitialized = true;
 
     const socket = new WebSocket(
-      buildIrohaConnectWebSocketUrl(parsed, session.connection.toriiUrl),
+      buildIrohaConnectWebSocketUrl(validatedSession, network.toriiUrl),
       [buildIrohaConnectTokenProtocol(parsed.token)],
     );
+    approvalSocket = socket;
     socket.binaryType = "arraybuffer";
     scannedConnectSocket = socket;
+    scannedConnectNetworkContext = network;
+    scannedConnectContextKey = approvalContextKey;
+    scannedConnectApprovedAccountId = accountId;
+    socket.addEventListener("message", (event) => {
+      void handleScannedConnectMessage(socket, validatedSession, event);
+    });
+    socket.addEventListener("error", () => {
+      handleScannedSocketTermination(
+        socket,
+        "IrohaConnect relay connection failed.",
+      );
+    });
+    socket.addEventListener("close", () => {
+      handleScannedSocketTermination(
+        socket,
+        "IrohaConnect relay connection closed.",
+      );
+    });
     await waitForConnectSocketOpen(socket);
-    socket.send(
-      encodeIrohaConnectApproveFrame({
-        sid: parsed.sid,
-        accountId,
-      }),
-    );
-    connectApprovalStatus.value = accountId;
-    connectScanner.message.value = t("IrohaConnect approved.");
-    window.setTimeout(closeScannedConnectSocket, 250);
+    if (
+      !isCurrentApproval() ||
+      socket !== scannedConnectSocket ||
+      socket.readyState !== WebSocket.OPEN
+    ) {
+      closeSpecificConnectSocket(socket, "wallet context changed");
+      return;
+    }
+    connectApprovalStatus.value = t("Waiting for wallet request...");
+    connectScanner.message.value = t("Waiting for wallet request...");
   } catch (error) {
+    if (approvalSocket) {
+      closeSpecificConnectSocket(approvalSocket);
+    }
+    if (!isCurrentApproval()) {
+      return;
+    }
     connectApprovalStatus.value = "";
     connectScanError.value =
       error instanceof Error ? error.message : String(error);
   } finally {
-    connectApprovalLoading.value = false;
+    if (isCurrentApproval()) {
+      connectApprovalLoading.value = false;
+    }
   }
 };
 
@@ -1555,6 +1979,71 @@ const rejectPendingConnection = () => {
   connectScanner.message.value = t("IrohaConnect connection rejected.");
 };
 
+const approvePendingConnectRequest = async () => {
+  const pending = pendingConnectRequest.value;
+  if (!pending || connectRequestLoading.value) {
+    return;
+  }
+  connectRequestLoading.value = true;
+  connectRequestError.value = "";
+  try {
+    requireCurrentScannedConnection(pending.socket);
+    const sessionToken = scannedConnectBoundarySessionToken;
+    if (!sessionToken) {
+      throw new Error("IrohaConnect preload session is unavailable.");
+    }
+    const result = await approveIrohaConnectRequest({
+      sessionToken,
+      requestToken: pending.requestToken,
+    });
+    requireCurrentScannedConnection(pending.socket);
+    if (sessionToken !== scannedConnectBoundarySessionToken) {
+      throw new Error("IrohaConnect preload session changed while approving.");
+    }
+    pending.socket.send(base64ToBytes(result.frameBase64));
+    pendingConnectRequest.value = null;
+    connectApprovalStatus.value = result.signed
+      ? scannedConnectApprovedAccountId
+      : t("Rejected");
+  } catch (error) {
+    if (
+      pending.socket === scannedConnectSocket &&
+      pendingConnectRequest.value === pending
+    ) {
+      connectRequestError.value =
+        error instanceof Error ? error.message : String(error);
+    }
+  } finally {
+    if (pending.socket === scannedConnectSocket) {
+      connectRequestLoading.value = false;
+    }
+  }
+};
+
+const rejectPendingConnectRequest = () => {
+  const pending = pendingConnectRequest.value;
+  if (!pending || connectRequestLoading.value) {
+    return;
+  }
+  try {
+    requireCurrentScannedConnection(pending.socket);
+    if (!scannedConnectBoundarySessionToken) {
+      throw new Error("IrohaConnect preload session is unavailable.");
+    }
+    const result = rejectIrohaConnectRequest({
+      sessionToken: scannedConnectBoundarySessionToken,
+      requestToken: pending.requestToken,
+    });
+    pending.socket.send(base64ToBytes(result.frameBase64));
+    pendingConnectRequest.value = null;
+    connectRequestError.value = "";
+    connectApprovalStatus.value = t("Rejected");
+  } catch (error) {
+    connectRequestError.value =
+      error instanceof Error ? error.message : String(error);
+  }
+};
+
 const connectScanner = useQrScanner(
   (payload) => {
     connectScanError.value = "";
@@ -1565,6 +2054,8 @@ const connectScanner = useQrScanner(
       if (parsed.role !== "wallet") {
         throw new Error("Scan the wallet-role IrohaConnect QR from the app.");
       }
+      connectApprovalGeneration.value += 1;
+      closeScannedConnectSocket("new pairing scanned");
       scannedConnectSession.value = parsed;
       connectScanner.stop();
       pendingConnectSession.value = parsed;
@@ -1584,6 +2075,10 @@ const connectScanner = useQrScanner(
 const toggleConnectScanner = async () => {
   connectScanError.value = "";
   scannedConnectCopied.value = false;
+  if (connectScanner.scanning.value) {
+    connectScanner.stop();
+    return;
+  }
   await nextTick();
   connectScanner.message.value = "";
   connectScanner.start();
@@ -1605,53 +2100,29 @@ const copyScannedConnectUri = async () => {
   }
 };
 
-const startConnectPairing = async () => {
-  connectError.value = "";
-  if (!connectionForm.toriiUrl || !connectionForm.chainId) {
-    connectError.value = t(
-      "Network connection is unavailable. Reload and try again.",
-    );
-    return;
-  }
-  const currentGeneration = connectGeneration.value + 1;
-  connectGeneration.value = currentGeneration;
-  connectLoading.value = true;
-  try {
-    const preview = await createConnectPreview({
-      toriiUrl: connectionForm.toriiUrl,
-      chainId: connectionForm.chainId,
-      launchProtocol: CONNECT_LAUNCH_PROTOCOL,
-    });
-    const nextConnectQr = preview.walletUri
-      ? await QRCode.toDataURL(preview.walletUri)
-      : "";
-    if (currentGeneration !== connectGeneration.value) {
-      return;
-    }
-    connectPreview.value = preview;
-    connectQr.value = nextConnectQr;
-  } catch (err) {
-    if (currentGeneration !== connectGeneration.value) {
-      return;
-    }
-    connectError.value = err instanceof Error ? err.message : String(err);
-    connectPreview.value = null;
-    connectQr.value = "";
-  } finally {
-    if (currentGeneration === connectGeneration.value) {
-      connectLoading.value = false;
-    }
-  }
+const resetConnect = () => {
+  connectApprovalGeneration.value += 1;
+  scannedConnectSession.value = null;
+  pendingConnectSession.value = null;
+  connectScanError.value = "";
+  scannedConnectCopied.value = false;
+  connectApprovalLoading.value = false;
+  connectApprovalStatus.value = "";
+  closeScannedConnectSocket();
+  connectScanner.stop();
+  connectScanner.message.value = "";
 };
 
-const resetConnect = () => {
-  connectGeneration.value += 1;
-  connectLoading.value = false;
-  connectPreview.value = null;
-  connectQr.value = "";
-  connectError.value = "";
-  pendingConnectSession.value = null;
-};
+watch(connectContextKey, resetConnect, { flush: "sync" });
+watch(
+  connectPairingAvailable,
+  (available) => {
+    if (!available) {
+      resetConnect();
+    }
+  },
+  { flush: "sync" },
+);
 
 onBeforeUnmount(() => {
   closeScannedConnectSocket();

@@ -1,4 +1,8 @@
-import { deriveAssetSymbol, formatAssetDefinitionLabel } from "@/utils/assetId";
+import {
+  areAssetDefinitionIdsEquivalent,
+  deriveAssetSymbol,
+  formatAssetDefinitionLabel,
+} from "@/utils/assetId";
 
 const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 
@@ -41,20 +45,11 @@ const trim = (value: unknown) => String(value ?? "").trim();
 export const transactionFeeHintForEndpoint = (
   toriiUrl: unknown,
 ): TransactionFeeLike | null => {
-  const literal = trim(toriiUrl);
-  if (!literal) {
-    return null;
-  }
-  try {
-    new URL(literal);
-  } catch {
-    return null;
-  }
-  return {
-    fee_amount: "0.01",
-    fee_asset_id: SORA_XOR_ASSET_DEFINITION_ID,
-    source: "estimated",
-  };
+  void toriiUrl;
+  // An endpoint URL is not evidence of its live fee schedule. Callers may use
+  // this helper as a fallback slot, but the amount must come from the Torii
+  // transaction/finality response rather than a wallet-side estimate.
+  return null;
 };
 
 const readNestedFee = (
@@ -193,7 +188,7 @@ const formatFeeAsset = (fee: TransactionFeeLike): string => {
   if (!assetId) {
     return "asset";
   }
-  if (assetId.toLowerCase() === SORA_XOR_ASSET_DEFINITION_ID.toLowerCase()) {
+  if (areAssetDefinitionIdsEquivalent(assetId, SORA_XOR_ASSET_DEFINITION_ID)) {
     return "XOR";
   }
   const symbol = deriveAssetSymbol(assetId, "");

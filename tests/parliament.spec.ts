@@ -17,7 +17,7 @@ import {
 } from "@/utils/parliament";
 
 describe("parliament utilities", () => {
-  it("prefers Torii-resolved XOR asset IDs, then XOR balances, and falls back safely", () => {
+  it("prefers Torii-resolved XOR asset IDs, then exact XOR aliases, without guessing", () => {
     expect(
       resolveXorBalance(
         [
@@ -45,7 +45,7 @@ describe("parliament utilities", () => {
           quantity: "42",
         },
       ]),
-    ).toBe("42");
+    ).toBe("0");
 
     expect(
       resolveXorBalance([
@@ -54,7 +54,7 @@ describe("parliament utilities", () => {
           quantity: "21",
         },
       ]),
-    ).toBe("21");
+    ).toBe("0");
 
     expect(
       resolveXorBalance([
@@ -63,7 +63,7 @@ describe("parliament utilities", () => {
           quantity: "7",
         },
       ]),
-    ).toBe("7");
+    ).toBe("0");
 
     expect(resolveXorBalance([])).toBe("0");
   });
@@ -135,11 +135,20 @@ describe("parliament utilities", () => {
   it("resolves citizen state and count from governance payloads", () => {
     expect(
       isRegisteredGovernanceCitizen({
-        isCitizen: true,
+        state: "citizen",
       }),
     ).toBe(true);
-    expect(isRegisteredGovernanceCitizen(null, true)).toBe(true);
-    expect(isRegisteredGovernanceCitizen(null, false)).toBe(false);
+    expect(
+      isRegisteredGovernanceCitizen({
+        state: "not-citizen",
+      }),
+    ).toBe(false);
+    expect(
+      isRegisteredGovernanceCitizen({
+        state: "unavailable",
+      }),
+    ).toBe(false);
+    expect(isRegisteredGovernanceCitizen(null)).toBe(false);
 
     expect(resolveGovernanceCitizenCount({ total: 12 })).toBe(12);
     expect(resolveGovernanceCitizenCount({ total: 12.9 })).toBe(12);

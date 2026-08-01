@@ -1,1618 +1,2431 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
-import { defineComponent } from "vue";
+import { createMemoryHistory, createRouter, type Router } from "vue-router";
 import ParliamentView from "@/views/ParliamentView.vue";
-import { translate } from "@/i18n/messages";
+import {
+  GOVERNANCE_PARLIAMENT_BODIES,
+  normalizeGovernanceProposalDetail,
+  normalizeGovernanceProposalList,
+} from "@/governance/model";
+import { useEndpointStore } from "@/stores/endpoint";
+import { useParliamentStore } from "@/stores/parliament";
 import { useSessionStore } from "@/stores/session";
-import { CITIZEN_BOND_XOR } from "@/utils/parliament";
+import type { EndpointInspection } from "@/types/endpointInspection";
 
-const fetchAccountAssetsMock = vi.fn();
-const listAccountPermissionsMock = vi.fn();
-const getGovernanceCitizenStatusMock = vi.fn();
-const getGovernanceCitizenCountMock = vi.fn();
-const getGovernanceCouncilCurrentMock = vi.fn();
-const getGovernanceReferendumMock = vi.fn();
-const getGovernanceTallyMock = vi.fn();
-const getGovernanceLocksMock = vi.fn();
-const getGovernanceUnlockStatsMock = vi.fn();
-const getGovernanceProposalMock = vi.fn();
-const getGovernanceRegistrationPolicyMock = vi.fn();
-const getGovernanceLifecycleMock = vi.fn();
-const registerCitizenMock = vi.fn();
-const proposeGovernanceDeployContractMock = vi.fn();
-const submitGovernancePlainBallotMock = vi.fn();
-const finalizeGovernanceReferendumMock = vi.fn();
-const enactGovernanceProposalMock = vi.fn();
-
-vi.mock("@/services/iroha", () => ({
-  fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
-  listAccountPermissions: (input: unknown) => listAccountPermissionsMock(input),
-  getGovernanceCitizenStatus: (input: unknown) =>
-    getGovernanceCitizenStatusMock(input),
-  getGovernanceCitizenCount: (toriiUrl: string) =>
-    getGovernanceCitizenCountMock(toriiUrl),
-  getGovernanceCouncilCurrent: (toriiUrl: string) =>
-    getGovernanceCouncilCurrentMock(toriiUrl),
-  getGovernanceReferendum: (input: unknown) =>
-    getGovernanceReferendumMock(input),
-  getGovernanceTally: (input: unknown) => getGovernanceTallyMock(input),
-  getGovernanceLocks: (input: unknown) => getGovernanceLocksMock(input),
-  getGovernanceUnlockStats: (toriiUrl: string) =>
-    getGovernanceUnlockStatsMock(toriiUrl),
-  getGovernanceProposal: (input: unknown) => getGovernanceProposalMock(input),
-  getGovernanceRegistrationPolicy: (toriiUrl: string) =>
-    getGovernanceRegistrationPolicyMock(toriiUrl),
-  getGovernanceLifecycle: (input: unknown) => getGovernanceLifecycleMock(input),
-  registerCitizen: (input: unknown) => registerCitizenMock(input),
-  proposeGovernanceDeployContract: (input: unknown) =>
-    proposeGovernanceDeployContractMock(input),
-  submitGovernancePlainBallot: (input: unknown) =>
-    submitGovernancePlainBallotMock(input),
-  finalizeGovernanceReferendum: (input: unknown) =>
-    finalizeGovernanceReferendumMock(input),
-  enactGovernanceProposal: (input: unknown) =>
-    enactGovernanceProposalMock(input),
-}));
-
-const t = (key: string, params?: Record<string, string | number>) =>
-  translate("en-US", key, params);
-const REFERENDUM_INPUT_SELECTOR = 'input[data-testid="referendum-id-input"]';
-const PROPOSAL_INPUT_SELECTOR = 'input[data-testid="proposal-id-input"]';
-const BALLOT_AMOUNT_INPUT_SELECTOR = 'input[data-testid="ballot-amount-input"]';
-const PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR =
-  'input[data-testid="proposal-contract-target-input"]';
-const PROPOSAL_CODE_HASH_INPUT_SELECTOR =
-  'input[data-testid="proposal-code-hash-input"]';
-const PROPOSAL_ABI_HASH_INPUT_SELECTOR =
-  'input[data-testid="proposal-abi-hash-input"]';
-
-const ParliamentViewHarness = defineComponent({
-  components: { ParliamentView },
-  template: `
-    <div data-testid="parliament-view-harness">
-      <header aria-label="Route header">
-        <div id="route-header-actions"></div>
-      </header>
-      <main><ParliamentView /></main>
-    </div>
-  `,
+const HASH = `0x${"ab".repeat(32)}`;
+const OTHER_HASH = `0x${"cd".repeat(32)}`;
+const ACCOUNT = "alice@wonderland";
+const CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
+const NETWORK_PREFIX = 369;
+const GENESIS_HASH =
+  "884b61c61f56dcddceee7aa3dc1deb89fb8552576d02b01a1b7af9ae7fd5ff7a";
+const XOR_ASSET_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
+const APP_SBD_ASSET_ID = "sbd#cbsi";
+const SBD_ASSET_ID = "7ZepsJTHCVLKsrFFNZGSRGZgvBhv";
+const payoutBinding = () => ({
+  contract_address: "contract:validation-fee",
+  code_hash: "44".repeat(32),
+  entrypoint: "autonomous_validation_fee_tick",
+  treasury_account_id: ACCOUNT,
+  sbd_asset_id: SBD_ASSET_ID,
+  xor_asset_id: XOR_ASSET_ID,
+  pool_vault_account_id: "pool@wonderland",
+  batch_sbd: "10",
+  min_xor_out: "4",
+  max_xor_out: "100",
+  recipients: [1, 2, 3, 4].map((index) => ({
+    account_id: `validator-${index}@wonderland`,
+    share: "0.25",
+  })),
+});
+const composerPayoutBinding = () => ({
+  ...payoutBinding(),
+  sbd_asset_id: APP_SBD_ASSET_ID,
+});
+const plainElectorateRules = () => ({
+  voting_asset_id: XOR_ASSET_ID,
+  bond_escrow_account: ACCOUNT,
+  slash_receiver_account: ACCOUNT,
+  ballot_amount: "150",
+  ballot_duration_blocks: "3600",
+  citizenship_amount: "10000",
+  max_members: "256",
+  conviction_step_blocks: "100",
+  max_conviction: "6",
+  min_turnout: "1",
+  approval_threshold_numerator: "1",
+  approval_threshold_denominator: "2",
+  eligibility_rule: {
+    rule: "proposal_operator_at_or_before_gate_others_after_gate",
+    value: null,
+  },
 });
 
-const mountedWrappers: Array<{ unmount: () => void }> = [];
+const validationFeePolicyKind = (effectiveFromHeight: string) => ({
+  kind: "ValidationFeePolicy",
+  payload: {
+    policy: {
+      schema_version: 1,
+      chain_id: CHAIN_ID,
+      genesis_hash: GENESIS_HASH.toUpperCase(),
+      policy_version: "1",
+      previous_policy_hash: null,
+      ds_asset_id: SBD_ASSET_ID,
+      ds_scale: 2,
+      fee: "0.1",
+      treasury_account_id: ACCOUNT,
+      charging_mode: {
+        charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+        value: null,
+      },
+      effective_from_height: effectiveFromHeight,
+      expires_after_height: null,
+      exemption_classes: ["TREASURY_PAYOUT"],
+      treasury_payout_binding: payoutBinding(),
+    },
+    payout_lifecycle_proposal_id: OTHER_HASH.slice(2).toUpperCase(),
+    plain_electorate_rules: plainElectorateRules(),
+  },
+});
+
+const listGovernanceProposalsMock = vi.fn();
+const getGovernanceProposalDetailMock = vi.fn();
+const getGovernanceCapabilitiesMock = vi.fn();
+const getGovernanceCitizenCountMock = vi.fn();
+const getGovernanceCitizenStatusMock = vi.fn();
+const getGovernanceCouncilCurrentMock = vi.fn();
+const getGovernanceUnlockStatsMock = vi.fn();
+const fetchAccountAssetsMock = vi.fn();
+const prepareGovernanceCitizenRegistrationMock = vi.fn();
+const getGovernanceCurrentValidationFeePolicyMock = vi.fn();
+const getGovernancePlainReferendumContractMock = vi.fn();
+const prepareGovernanceProposalMock = vi.fn();
+const prepareGovernancePlainBallotMock = vi.fn();
+const prepareGovernanceParliamentBallotMock = vi.fn();
+const prepareGovernanceEnactMock = vi.fn();
+const confirmGovernanceActionMock = vi.fn();
+
+vi.mock("@/services/iroha", () => ({
+  listGovernanceProposals: (input: unknown) =>
+    listGovernanceProposalsMock(input),
+  getGovernanceProposalDetail: (input: unknown) =>
+    getGovernanceProposalDetailMock(input),
+  getGovernanceCapabilities: (toriiUrl: string) =>
+    getGovernanceCapabilitiesMock(toriiUrl),
+  getGovernanceCitizenCount: (toriiUrl: string) =>
+    getGovernanceCitizenCountMock(toriiUrl),
+  getGovernanceCitizenStatus: (input: unknown) =>
+    getGovernanceCitizenStatusMock(input),
+  getGovernanceCouncilCurrent: (toriiUrl: string) =>
+    getGovernanceCouncilCurrentMock(toriiUrl),
+  getGovernanceUnlockStats: (toriiUrl: string) =>
+    getGovernanceUnlockStatsMock(toriiUrl),
+  fetchAccountAssets: (input: unknown) => fetchAccountAssetsMock(input),
+  prepareGovernanceCitizenRegistration: (input: unknown) =>
+    prepareGovernanceCitizenRegistrationMock(input),
+  getGovernanceCurrentValidationFeePolicy: (input: unknown) =>
+    getGovernanceCurrentValidationFeePolicyMock(input),
+  getGovernancePlainReferendumContract: (input: unknown) =>
+    getGovernancePlainReferendumContractMock(input),
+  prepareGovernanceProposal: (input: unknown) =>
+    prepareGovernanceProposalMock(input),
+  prepareGovernancePlainBallot: (input: unknown) =>
+    prepareGovernancePlainBallotMock(input),
+  prepareGovernanceParliamentBallot: (input: unknown) =>
+    prepareGovernanceParliamentBallotMock(input),
+  prepareGovernanceEnact: (input: unknown) => prepareGovernanceEnactMock(input),
+  confirmGovernanceAction: (input: unknown) =>
+    confirmGovernanceActionMock(input),
+}));
+
+const proposalPipeline = () => ({
+  stages: [
+    {
+      stage: "Admit",
+      started_at: "90",
+      deadline: null,
+      completed_at: "90",
+      failure: null,
+    },
+    {
+      stage: "Rules",
+      started_at: "91",
+      deadline: null,
+      completed_at: "91",
+      failure: null,
+    },
+    ...["Agenda", "Study", "Review", "Jury", "Enact"].map((stage, index) => ({
+      stage,
+      started_at: String(92 + index),
+      deadline: null,
+      completed_at: null,
+      failure: null,
+    })),
+  ],
+});
+
+const proposalRosters = () =>
+  Object.fromEntries(
+    GOVERNANCE_PARLIAMENT_BODIES.map((body, index) => [
+      body,
+      {
+        body,
+        epoch: 1,
+        members: body === "agenda-council" ? [ACCOUNT] : [`member-${index}`],
+        alternates: [],
+        verified: 7,
+        candidate_count: 14,
+        derived_by: "Vrf",
+      },
+    ]),
+  );
+
+const proposalSnapshot = () => ({
+  selection_epoch: "1",
+  beacon: "31".repeat(32),
+  roster_root: "32".repeat(32),
+  bodies: {
+    selection_epoch: 1,
+    rosters: proposalRosters(),
+  },
+});
+
+const proposalStatus = (status: "Proposed" | "Approved" | "Enacted") => ({
+  status: status.toUpperCase(),
+  value: null,
+});
+
+const proposalRecord = (input: {
+  proposalId: string;
+  proposer?: string;
+  mode?: "Plain" | "Zk";
+  status?: "Proposed" | "Approved" | "Enacted";
+  referendumStatus?: "Proposed" | "Open" | "Closed";
+  finalizationEvidence?: Record<string, unknown> | null;
+  kind?: Record<string, unknown>;
+  hStart?: string;
+  hEnd?: string;
+}) => {
+  const rawProposalId = input.proposalId.replace(/^0x/u, "");
+  const mode = input.mode ?? "Plain";
+  const referendumStatus = input.referendumStatus ?? "Open";
+  const referendumEnd = input.hEnd ?? "3689";
+  const proposalKind =
+    input.kind ??
+    ({
+      kind: "ValidationFeePayoutLifecycle",
+      payload: {
+        payout_binding: payoutBinding(),
+        plain_electorate_rules: plainElectorateRules(),
+      },
+    } as Record<string, unknown>);
+  const evidenceRequested =
+    input.finalizationEvidence !== undefined ||
+    input.status === "Approved" ||
+    input.status === "Enacted";
+  const approved =
+    input.finalizationEvidence?.approved === true ||
+    (input.finalizationEvidence === undefined &&
+      (input.status === "Approved" || input.status === "Enacted"));
+  const finalizationEvidence = evidenceRequested
+    ? input.finalizationEvidence === null
+      ? null
+      : {
+          proposal_id: rawProposalId.toUpperCase(),
+          referendum_id: rawProposalId.toUpperCase(),
+          finalized_at_height: referendumEnd,
+          mode,
+          approve: approved ? "7" : "2",
+          reject: approved ? "2" : "7",
+          abstain: "1",
+          min_turnout: "1",
+          approval_threshold_numerator: "1",
+          approval_threshold_denominator: "2",
+          approved,
+        }
+    : null;
+  return {
+    proposal_id: rawProposalId,
+    proposer: input.proposer ?? ACCOUNT,
+    proposal_kind: proposalKind,
+    created_height: "90",
+    status: proposalStatus(input.status ?? "Proposed"),
+    pipeline: proposalPipeline(),
+    referendum: {
+      window: {
+        lower: input.hStart ?? "90",
+        upper: referendumEnd,
+      },
+      mode,
+      opened: referendumStatus !== "Proposed",
+      closed: referendumStatus === "Closed",
+    },
+    parliament_snapshot: proposalSnapshot(),
+    finalization_evidence: finalizationEvidence,
+    enacted_at_height:
+      input.status === "Enacted"
+        ? (
+            BigInt(referendumEnd) +
+            (proposalKind.kind === "ValidationFeePolicy" ? 47n : 13n)
+          ).toString()
+        : null,
+  };
+};
+
+const proposalList = () =>
+  normalizeGovernanceProposalList({
+    version: 1,
+    proposals: [
+      proposalRecord({ proposalId: HASH }),
+      proposalRecord({
+        proposalId: OTHER_HASH,
+        proposer: "bob@wonderland",
+      }),
+    ],
+  });
+
+const proposalDetail = (options?: {
+  proposalId?: string;
+  mode?: "Plain" | "Zk";
+  status?: "Proposed" | "Approved" | "Enacted";
+  referendumStatus?: "Proposed" | "Open" | "Closed";
+  finalizationEvidence?: Record<string, unknown> | null;
+  kind?: Record<string, unknown>;
+  currentHeight?: string;
+  hStart?: string;
+  hEnd?: string;
+}) => {
+  const proposalId = options?.proposalId ?? HASH;
+  const mode = options?.mode ?? "Plain";
+  const record = proposalRecord({
+    proposalId,
+    mode,
+    status: options?.status,
+    referendumStatus: options?.referendumStatus,
+    finalizationEvidence: options?.finalizationEvidence,
+    kind: options?.kind,
+    hStart: options?.hStart,
+    hEnd: options?.hEnd,
+  });
+  const tallyEvidence = record.finalization_evidence;
+  const approve =
+    tallyEvidence && typeof tallyEvidence.approve === "string"
+      ? tallyEvidence.approve
+      : "7";
+  const reject =
+    tallyEvidence && typeof tallyEvidence.reject === "string"
+      ? tallyEvidence.reject
+      : "2";
+  const approved =
+    tallyEvidence && typeof tallyEvidence.approved === "boolean"
+      ? tallyEvidence.approved
+      : null;
+  const rosters = proposalRosters();
+  return normalizeGovernanceProposalDetail(
+    {
+      version: 1,
+      proposal: record,
+      current_height: options?.currentHeight ?? "100",
+      tally: {
+        approve,
+        reject,
+        abstain: "1",
+        turnout: "10",
+        min_turnout: "1",
+        approval_threshold_numerator: "1",
+        approval_threshold_denominator: "2",
+        approved,
+      },
+      locks: { locks: {} },
+      body_progress: GOVERNANCE_PARLIAMENT_BODIES.map((body) => {
+        const roster = rosters[body];
+        return {
+          body,
+          members: roster.members,
+          alternates: roster.alternates,
+          approve: "0",
+          reject: "0",
+          abstain: "0",
+          required: "1",
+          approval_quorum_met: false,
+          rejection_quorum_met: false,
+          current_account_decision: null,
+        };
+      }),
+    },
+    proposalId,
+  );
+};
+
+const preparedReview = () => ({
+  reviewId: "review-1",
+  operation: "plain-ballot" as const,
+  title: "Submit citizen ballot",
+  proposalId: HASH,
+  referendumId: HASH.slice(2),
+  decodedInstruction: {
+    CastPlainBallot: {
+      referendum_id: HASH.slice(2),
+      owner: ACCOUNT,
+      amount: "150",
+    },
+  },
+  fee: {
+    payer: "authority" as const,
+    components: [
+      {
+        kind: "nexus",
+        assetDefinitionId: "xor#wonderland",
+        maxAmount: "0.01",
+      },
+    ],
+    nextBlockHeight: "101",
+  },
+  expiresAtMs: Date.now() + 60_000,
+});
+
+const preparedCitizenReview = () => ({
+  ...preparedReview(),
+  operation: "register-citizen" as const,
+  title: "Register bonded citizen",
+  proposalId: null,
+  referendumId: null,
+  decodedInstruction: {
+    RegisterCitizen: {
+      owner: ACCOUNT,
+      amount: "10000",
+    },
+  },
+});
+
+const governanceCapabilities = () => ({
+  schema: "iroha.governance.capabilities.v1" as const,
+  version: 1 as const,
+  chainId: CHAIN_ID,
+  genesisHash: GENESIS_HASH,
+  currentHeight: 100,
+  networkPrefix: NETWORK_PREFIX,
+  abiVersion: 1,
+  dataModelVersion: 3,
+  approvalMode: "PARLIAMENT_SORTITION_JIT" as const,
+  plainVotingEnabled: true as const,
+  autoFinalizePlain: true as const,
+  autoFinalizePlainScope: "GENERIC_NON_VALIDATION_FEE_ONLY" as const,
+  validationFeePlainRequiresExplicitFinalization: true as const,
+  validationFeePlainElectorateRules: {
+    votingAssetId: "6TEAJqbb8oEPmLncoNiMRbLEK6tw" as const,
+    bondEscrowAccount: ACCOUNT,
+    slashReceiverAccount: ACCOUNT,
+    ballotAmount: "150" as const,
+    ballotDurationBlocks: "3600" as const,
+    citizenshipAmount: "10000" as const,
+    maxMembers: "256" as const,
+    convictionStepBlocks: "100" as const,
+    maxConviction: "6" as const,
+    minTurnout: "1" as const,
+    approvalThresholdNumerator: "1" as const,
+    approvalThresholdDenominator: "2" as const,
+    eligibilityRule: {
+      rule: "proposal_operator_at_or_before_gate_others_after_gate" as const,
+      value: null,
+    },
+  },
+  citizenshipAssetId: XOR_ASSET_ID,
+  citizenshipBondAmount: "10000",
+  citizenshipEscrowAccount: ACCOUNT,
+  votingAssetId: XOR_ASSET_ID,
+  minBondAmount: "150",
+  bondEscrowAccount: ACCOUNT,
+  convictionStepBlocks: 100,
+  maxConviction: 6,
+  minEnactmentDelay: 600,
+  windowSpan: 3_600,
+  minTurnout: "1",
+  approvalThresholdNumerator: 1,
+  approvalThresholdDenominator: 2,
+  parliamentQuorumBps: 6_667,
+  targetBodySizes: {
+    rules_committee: 7,
+    agenda_council: 9,
+    interest_panel: 11,
+    review_panel: 13,
+    policy_jury: 25,
+    oversight_committee: 7,
+    fma_committee: 5,
+  },
+  supportedProposalKinds: [
+    "VALIDATION_FEE_PAYOUT_LIFECYCLE",
+    "VALIDATION_FEE_POLICY",
+  ] as const,
+  supportedRoutes: [
+    "/v1/gov/capabilities",
+    "/v1/gov/citizens",
+    "/v1/gov/citizens/{account_id}",
+    "/v1/gov/citizens/draft",
+    "/v1/validation-fee/proposals",
+    "/v1/validation-fee/proposals/{proposal_id}",
+    "/v1/validation-fee/proposals/{proposal_id}/enactment-proof",
+    "/v1/validation-fee/proposals/draft",
+    "/v1/validation-fee/proposals/{proposal_id}/plain-electorate/draft",
+    "/v1/validation-fee/proposals/{proposal_id}/plain-ballot/draft",
+    "/v1/validation-fee/proposals/{proposal_id}/finalization/draft",
+    "/v1/validation-fee/proposals/{proposal_id}/payout-lifecycle-enactment/draft",
+    "/v1/gov/parliament/ballots",
+    "/v1/gov/ballots/plain",
+  ],
+});
+
+const plainReferendumContract = (options?: {
+  accountId?: string;
+  proposalId?: string;
+  referendumId?: string;
+  hStart?: string;
+  hEnd?: string;
+  bondEscrowAccount?: string;
+  slashReceiverAccount?: string;
+}) => ({
+  contract: {
+    schema: "sora.parliament.plain-referendum.v2" as const,
+    chainId: CHAIN_ID,
+    genesisHash: GENESIS_HASH,
+    inputsSha256: "12".repeat(32),
+    proposalId: (options?.proposalId ?? HASH).replace(/^0x/u, ""),
+    referendumId:
+      options?.referendumId ??
+      (options?.proposalId ?? HASH).replace(/^0x/u, ""),
+    hStart: options?.hStart ?? "90",
+    hEnd: options?.hEnd ?? "3689",
+    mode: "Plain" as const,
+    postParliamentRegistrationGate: {
+      schema: "taira.governance-post-parliament-registration-gate.v1" as const,
+      chainId: CHAIN_ID,
+      genesisHash: GENESIS_HASH,
+      inputsSha256: "12".repeat(32),
+      proposalId: (options?.proposalId ?? HASH).replace(/^0x/u, ""),
+      referendumId:
+        options?.referendumId ??
+        (options?.proposalId ?? HASH).replace(/^0x/u, ""),
+      hStart: options?.hStart ?? "90",
+      hEnd: options?.hEnd ?? "3689",
+      mode: "Plain" as const,
+      operatorAccountId: ACCOUNT,
+      eligibleCitizenRosterSha256: "13".repeat(32),
+      gateHeight: "88",
+      gateObservationSequence: "6",
+      networkCheckpointSha256: "17".repeat(32),
+      parliamentSnapshotSha256: "18".repeat(32),
+      approvedBodyProgressSha256: "19".repeat(32),
+    },
+    eligibleCitizenRosterSha256: "13".repeat(32),
+    eligibleCitizenCount: "1",
+    eligibleCitizens: [
+      {
+        accountId: options?.accountId ?? ACCOUNT,
+        amount: "10000" as const,
+        bondedHeight: "1",
+      },
+    ],
+    snapshotFinalizedHeight: "89",
+    snapshotObservationSequence: "7",
+    networkCheckpointSha256: "14".repeat(32),
+    eligibleCitizenSnapshotSha256: "15".repeat(32),
+    plainElectorate: {
+      rules: {
+        ...governanceCapabilities().validationFeePlainElectorateRules,
+        bondEscrowAccount:
+          options?.bondEscrowAccount ??
+          governanceCapabilities().validationFeePlainElectorateRules
+            .bondEscrowAccount,
+        slashReceiverAccount:
+          options?.slashReceiverAccount ??
+          governanceCapabilities().validationFeePlainElectorateRules
+            .slashReceiverAccount,
+      },
+      parliamentApprovalGateHeight: "88",
+      sealedAtHeight: "89",
+      rosterRoot: "20".repeat(32),
+      electorateSealHash: "21".repeat(32),
+      members: [
+        {
+          accountId: options?.accountId ?? ACCOUNT,
+          amount: "10000" as const,
+          bondedHeight: "1",
+        },
+      ],
+    },
+    ballot: {
+      draftRoute: `/v1/validation-fee/proposals/${(options?.proposalId ?? HASH).replace(/^0x/u, "")}/plain-ballot/draft`,
+      requestVersion: 1 as const,
+      amount: "150" as const,
+      durationBlocks: "3600" as const,
+      directions: ["Aye", "Nay", "Abstain"] as ["Aye", "Nay", "Abstain"],
+      termsDerivedByCore: true as const,
+      oneEffectiveBallotPerAccount: true as const,
+    },
+  },
+  contractFingerprint: "16".repeat(32),
+  artifactSha256: "22".repeat(32),
+  source: {
+    descriptorUrl:
+      "https://cbsi-core.soramitsu.io/governance/plain-referendum/current.json",
+    artifactUrl:
+      "https://cbsi-core.soramitsu.io/governance/plain-referendum/artifacts/22.json",
+  },
+});
+
+const validationFeePolicyView = () => {
+  const effective = {
+    schema_version: 1,
+    chain_id: CHAIN_ID,
+    genesis_hash: GENESIS_HASH,
+    policy_version: "1",
+    previous_policy_hash: null,
+    policy_hash: "22".repeat(32),
+    ds_asset_id: SBD_ASSET_ID,
+    ds_scale: 2,
+    fee: "0.10",
+    treasury_account_id: ACCOUNT,
+    charging_mode: {
+      charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+      value: null,
+    },
+    effective_from_height: "100",
+    expires_after_height: null,
+    exemption_classes: ["TREASURY_PAYOUT"],
+    treasury_payout_binding: payoutBinding(),
+    parliament_authorization: {},
+    payout_lifecycle: null,
+  };
+  return {
+    observedHeight: "200",
+    effective,
+    latestEnacted: effective,
+    scheduled: [],
+    registryHead: {
+      policyVersion: "1",
+      policyHash: "22".repeat(32),
+    },
+    verifiedProof: {
+      schema: "cbsi.validation-fee-ledger-projection.v1" as const,
+      authorizationModel: "SORA_PARLIAMENT_V1" as const,
+      registrySnapshotHash: "33".repeat(32),
+      finalizedBlockHash: "44".repeat(32),
+      finalizedContextId: "55".repeat(32),
+      trustedCheckpointHeight: "100",
+      trustedCheckpointContextId: "66".repeat(32),
+    },
+  };
+};
+
+let wrapper: VueWrapper | null = null;
+let router: Router;
+
+const mountView = async (path = "/governance") => {
+  document.body.innerHTML = '<div id="route-header-actions"></div>';
+  const pinia = createPinia();
+  setActivePinia(pinia);
+  const session = useSessionStore();
+  session.$patch({
+    connection: {
+      toriiUrl: "http://localhost:8080",
+      chainId: CHAIN_ID,
+      assetDefinitionId: "xor#wonderland",
+      networkPrefix: NETWORK_PREFIX,
+    },
+    accounts: [
+      {
+        displayName: "Alice",
+        domain: "wonderland",
+        accountId: ACCOUNT,
+        publicKeyHex: "ed0120public",
+        signingAlgorithm: "ed25519",
+        hasStoredSecret: true,
+        localOnly: false,
+      },
+    ],
+    activeAccountId: ACCOUNT,
+  });
+  useEndpointStore().$patch({
+    state: "ready",
+    error: "",
+    inspection: {
+      schema: "iroha.wallet.endpoint-inspection.v1",
+      toriiUrl: session.connection.toriiUrl,
+      expected: {
+        chainId: session.connection.chainId,
+        networkPrefix: session.connection.networkPrefix,
+      },
+      observed: {
+        chainId: session.connection.chainId,
+        networkPrefix: session.connection.networkPrefix,
+      },
+      identityStatus: "matched",
+      accessMode: "read-write",
+      checkedAtMs: 1,
+      evidence: [],
+      features: {
+        governanceWrites: {
+          supported: true,
+          source: "openapi",
+          requiredOperations: ["/v1/gov/citizens/draft"],
+          missingOperations: [],
+        },
+      } as unknown as EndpointInspection["features"],
+      diagnostic: {
+        code: "endpoint_identity_matched",
+        message: "Endpoint identity matches the configured network.",
+      },
+    },
+  });
+  router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ path: "/governance", component: ParliamentView }],
+  });
+  await router.push(path);
+  await router.isReady();
+  wrapper = mount(ParliamentView, {
+    attachTo: document.body,
+    global: { plugins: [pinia, router] },
+  });
+  await flushPromises();
+  return wrapper;
+};
 
 describe("ParliamentView", () => {
   beforeEach(() => {
-    document.body.replaceChildren();
     localStorage.clear();
-    fetchAccountAssetsMock.mockReset();
-    listAccountPermissionsMock.mockReset();
-    getGovernanceCitizenStatusMock.mockReset();
-    getGovernanceCitizenCountMock.mockReset();
-    getGovernanceCouncilCurrentMock.mockReset();
-    getGovernanceReferendumMock.mockReset();
-    getGovernanceTallyMock.mockReset();
-    getGovernanceLocksMock.mockReset();
-    getGovernanceUnlockStatsMock.mockReset();
-    getGovernanceProposalMock.mockReset();
-    getGovernanceRegistrationPolicyMock.mockReset();
-    getGovernanceLifecycleMock.mockReset();
-    registerCitizenMock.mockReset();
-    proposeGovernanceDeployContractMock.mockReset();
-    submitGovernancePlainBallotMock.mockReset();
-    finalizeGovernanceReferendumMock.mockReset();
-    enactGovernanceProposalMock.mockReset();
-
+    vi.resetAllMocks();
+    getGovernanceCapabilitiesMock.mockResolvedValue(governanceCapabilities());
+    listGovernanceProposalsMock.mockResolvedValue(proposalList());
+    getGovernanceProposalDetailMock.mockImplementation(({ proposalId }) =>
+      Promise.resolve(
+        proposalDetail({
+          proposalId,
+        }),
+      ),
+    );
+    getGovernanceCitizenStatusMock.mockResolvedValue({
+      state: "citizen",
+      accountId: ACCOUNT,
+      amount: "10000",
+      bondedHeight: "1",
+      seatsInEpoch: "0",
+      lastEpochSeen: "1",
+      cooldownUntil: null,
+    });
+    getGovernanceCitizenCountMock.mockResolvedValue({
+      total: 21,
+      endpointAvailable: true,
+    });
+    getGovernanceCouncilCurrentMock.mockResolvedValue({
+      epoch: 7,
+      members: [{ account_id: ACCOUNT }],
+      alternates: [],
+      candidate_count: 8,
+      verified: 1,
+      derived_by: "Vrf",
+    });
+    getGovernanceUnlockStatsMock.mockResolvedValue({
+      height_current: 100,
+      expired_locks_now: 2,
+      referenda_with_expired: 1,
+      last_sweep_height: 99,
+    });
     fetchAccountAssetsMock.mockResolvedValue({
-      items: [
-        {
-          asset_id: "xor#wonderland##alice@wonderland",
-          quantity: "15000",
-        },
-      ],
+      items: [{ asset_id: XOR_ASSET_ID, quantity: "12500" }],
       total: 1,
     });
-    listAccountPermissionsMock.mockResolvedValue({
-      items: [],
-      total: 0,
+    prepareGovernanceCitizenRegistrationMock.mockResolvedValue(
+      preparedCitizenReview(),
+    );
+    getGovernanceCurrentValidationFeePolicyMock.mockRejectedValue(
+      new Error(
+        "Validation-fee policy state is unavailable: local consensus-proof verifier missing.",
+      ),
+    );
+    getGovernancePlainReferendumContractMock.mockResolvedValue(
+      plainReferendumContract(),
+    );
+    prepareGovernancePlainBallotMock.mockResolvedValue(preparedReview());
+    confirmGovernanceActionMock.mockResolvedValue({
+      hash: "ef".repeat(32),
+      finality: {
+        status: "finalized",
+        transactionHash: "ef".repeat(32),
+        blockHeight: 17,
+        blockHash: "ab".repeat(32),
+        finalizedBlockHeight: 19,
+      },
+      operation: "plain-ballot",
+      proposalId: HASH,
+      referendumId: HASH.slice(2),
+      status: "finalized",
     });
-    getGovernanceCitizenStatusMock.mockResolvedValue({
-      accountId: "alice@wonderland",
-      isCitizen: false,
+  });
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = null;
+    document.body.replaceChildren();
+    vi.useRealTimers();
+  });
+
+  it("loads the live queue and follows a proposal deep link", async () => {
+    const view = await mountView(`/governance?proposal=${HASH}`);
+
+    expect(listGovernanceProposalsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        toriiUrl: "http://localhost:8080",
+        status: "Proposed",
+      }),
+    );
+    expect(getGovernanceProposalDetailMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      proposalId: HASH,
+      accountId: ACCOUNT,
+    });
+    expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: CHAIN_ID,
+      networkPrefix: NETWORK_PREFIX,
+    });
+    expect(view.get(".proposal-detail").text()).toContain(
+      "Validation fee payout lifecycle",
+    );
+    expect(view.get(".proposal-detail").text()).toContain(HASH);
+    expect(view.get(".governance-context").text()).toContain("Policy proof");
+    expect(view.get(".governance-context").text()).toContain("Unavailable");
+    expect(view.get(".governance-context").text()).toContain(
+      "Strict contract verified",
+    );
+    const contextMetrics = Object.fromEntries(
+      view
+        .get(".governance-context")
+        .findAll("dl > div")
+        .map((row) => [row.get("dt").text(), row.get("dd").text()]),
+    );
+    expect(contextMetrics.Citizens).toBe("21");
+    expect(contextMetrics["Council members"]).toBe("1");
+    expect(contextMetrics["Expired Locks"]).toBe("2");
+    expect(router.currentRoute.value.query.proposal).toBe(HASH);
+  });
+
+  it("keeps exact-ID lookup usable when the typed catalog is unavailable", async () => {
+    listGovernanceProposalsMock.mockRejectedValueOnce(
+      new Error(
+        "This Torii endpoint does not expose the typed validation-fee proposal catalog. Load a proposal with its exact 32-byte ID instead.",
+      ),
+    );
+    const view = await mountView();
+
+    expect(view.get(".catalog-message.error").text()).toContain(
+      "exact 32-byte ID",
+    );
+    await view.get(".proposal-lookup input").setValue(HASH.slice(2));
+    await view.get(".proposal-lookup").trigger("submit");
+    await flushPromises();
+
+    expect(getGovernanceProposalDetailMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      proposalId: HASH,
+      accountId: ACCOUNT,
+    });
+    expect(view.get(".proposal-detail").text()).toContain(HASH);
+  });
+
+  it("reviews the exact capability bond before vault signing", async () => {
+    getGovernanceCitizenStatusMock
+      .mockResolvedValueOnce({
+        state: "not-citizen",
+        accountId: ACCOUNT,
+        amount: null,
+        bondedHeight: null,
+        seatsInEpoch: null,
+        lastEpochSeen: null,
+        cooldownUntil: null,
+      })
+      .mockResolvedValue({
+        state: "citizen",
+        accountId: ACCOUNT,
+        amount: "10000",
+        bondedHeight: "101",
+        seatsInEpoch: null,
+        lastEpochSeen: null,
+        cooldownUntil: null,
+      });
+    const view = await mountView();
+    const bondButton = view.get('[data-testid="governance-bond-citizen"]');
+
+    expect(bondButton.text()).toContain("Bond 10000 XOR");
+    expect(bondButton.attributes("disabled")).toBeUndefined();
+
+    await bondButton.trigger("click");
+    await flushPromises();
+
+    expect(prepareGovernanceCitizenRegistrationMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: CHAIN_ID,
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      amount: "10000",
+    });
+    expect(document.body.textContent).toContain("RegisterCitizen");
+    expect(document.body.textContent).toContain("Sign and commit");
+  });
+
+  it("keeps citizenship bonding disabled below the exact policy balance", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "not-citizen",
+      accountId: ACCOUNT,
       amount: null,
       bondedHeight: null,
       seatsInEpoch: null,
       lastEpochSeen: null,
       cooldownUntil: null,
-      endpointAvailable: true,
     });
-    getGovernanceCouncilCurrentMock.mockResolvedValue({
-      epoch: 1,
-      members: [],
-      alternates: [],
-      candidate_count: 0,
-      verified: 0,
-      derived_by: "Fallback",
-    });
-    getGovernanceCitizenCountMock.mockResolvedValue({
-      total: 0,
-      endpointAvailable: true,
-    });
-    getGovernanceReferendumMock.mockResolvedValue({
-      found: false,
-      referendum: null,
-    });
-    getGovernanceTallyMock.mockResolvedValue({
-      found: false,
-      referendum_id: "ref-1",
-      tally: null,
-    });
-    getGovernanceLocksMock.mockResolvedValue({
-      found: false,
-      referendum_id: "ref-1",
-      locks: {},
-    });
-    getGovernanceUnlockStatsMock.mockResolvedValue({
-      height_current: 100,
-      expired_locks_now: 0,
-      referenda_with_expired: 0,
-      last_sweep_height: 96,
-    });
-    getGovernanceProposalMock.mockResolvedValue({
-      found: false,
-      proposal: null,
-    });
-    getGovernanceRegistrationPolicyMock.mockResolvedValue({
-      citizenshipAssetDefinitionId: null,
-      citizenshipBondAmount: null,
-      citizenshipAssetDefinitionExists: null,
-      configurationLoaded: false,
-      configurationError: null,
-      assetDefinitionError: null,
-    });
-    getGovernanceLifecycleMock.mockRejectedValue(
-      new Error("Governance lifecycle endpoint is unavailable."),
-    );
-    registerCitizenMock.mockResolvedValue({ hash: "0xabc" });
-    proposeGovernanceDeployContractMock.mockResolvedValue({
-      ok: true,
-      proposal_id: null,
-      tx_instructions: [],
-    });
-    submitGovernancePlainBallotMock.mockResolvedValue({ hash: "0xballot" });
-    finalizeGovernanceReferendumMock.mockResolvedValue({
-      ok: true,
-      proposal_id: null,
-      tx_instructions: [],
-    });
-    enactGovernanceProposalMock.mockResolvedValue({
-      ok: true,
-      proposal_id: null,
-      tx_instructions: [],
-    });
-
-    setActivePinia(createPinia());
-  });
-
-  afterEach(() => {
-    for (const wrapper of mountedWrappers.splice(0)) {
-      wrapper.unmount();
-    }
-    document.body.replaceChildren();
-  });
-
-  const mountView = (options?: {
-    account?: Partial<{
-      displayName: string;
-      domain: string;
-      accountId: string;
-      i105AccountId: string;
-      i105DefaultAccountId: string;
-      publicKeyHex: string;
-      privateKeyHex: string;
-    }>;
-    connection?: Partial<{
-      toriiUrl: string;
-      chainId: string;
-      assetDefinitionId: string;
-      networkPrefix: number;
-    }>;
-  }) => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const session = useSessionStore();
-    const account = {
-      displayName: "Alice",
-      domain: "wonderland",
-      accountId: "alice@wonderland",
-      publicKeyHex: "ab".repeat(32),
-      privateKeyHex: "cd".repeat(32),
-      ...options?.account,
-    };
-    session.$patch({
-      connection: {
-        toriiUrl: "http://localhost:8080",
-        chainId: "chain",
-        assetDefinitionId: "xor#wonderland",
-        networkPrefix: 369,
-        ...options?.connection,
-      },
-      accounts: [account],
-      activeAccountId: account.accountId,
-    });
-    const wrapper = mount(ParliamentViewHarness, {
-      attachTo: document.body,
-      global: {
-        plugins: [pinia],
-      },
-    });
-    mountedWrappers.push(wrapper);
-    return wrapper;
-  };
-
-  const findButtonByText = (
-    wrapper: ReturnType<typeof mount>,
-    text: string,
-  ) => {
-    const match = wrapper
-      .findAll("button")
-      .find((node) => node.text() === text);
-    if (!match) {
-      throw new Error(`Button not found: ${text}`);
-    }
-    return match;
-  };
-
-  it("renders one refresh action in the route header without an inline title", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    const headerActions = wrapper.get("#route-header-actions");
-    const refreshButtons = wrapper
-      .findAll("button")
-      .filter((button) => button.text() === t("Refresh"));
-
-    expect(refreshButtons).toHaveLength(1);
-    expect(headerActions.get("button").text()).toBe(t("Refresh"));
-    expect(
-      wrapper.find(".parliament-shell > .ui-route-header-action").exists(),
-    ).toBe(false);
-    expect(wrapper.find(".parliament-shell h1").exists()).toBe(false);
-
-    await headerActions.get("button").trigger("click");
-    await flushPromises();
-    expect(fetchAccountAssetsMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("submits the fixed 10,000 XOR citizenship bond", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await findButtonByText(wrapper, `Bond ${CITIZEN_BOND_XOR} XOR`).trigger(
-      "click",
-    );
-    await flushPromises();
-
-    expect(registerCitizenMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      amount: CITIZEN_BOND_XOR,
-      privateKeyHex: "cd".repeat(32),
-    });
-    expect(wrapper.text()).toContain(
-      t("Citizenship bond submitted: {hash}", { hash: "0xabc" }),
-    );
-  });
-
-  it("uses the TAIRA i105 literal for governance refresh and bond submit when stored ids are stale", async () => {
-    const wrapper = mountView({
-      account: {
-        accountId: "sorauLegacyVisibleAccount1234567890",
-        i105AccountId: "",
-        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
-      },
-    });
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("testuLegacyVisibleAccount1234567890");
-    expect(fetchAccountAssetsMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      networkPrefix: 369,
-      limit: 200,
-    });
-    expect(listAccountPermissionsMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      limit: 200,
-    });
-
-    await findButtonByText(wrapper, `Bond ${CITIZEN_BOND_XOR} XOR`).trigger(
-      "click",
-    );
-    await flushPromises();
-
-    expect(registerCitizenMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      amount: CITIZEN_BOND_XOR,
-      privateKeyHex: "cd".repeat(32),
-    });
-  });
-
-  it("disables the bond action when XOR balance is below threshold", async () => {
     fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#wonderland##alice@wonderland",
-          quantity: "9999",
-        },
-      ],
+      items: [{ asset_id: XOR_ASSET_ID, quantity: "9999" }],
       total: 1,
     });
-    const wrapper = mountView();
-    await flushPromises();
 
-    const bondButton = findButtonByText(
-      wrapper,
-      `Bond ${CITIZEN_BOND_XOR} XOR`,
-    );
+    const view = await mountView();
+    const bondButton = view.get('[data-testid="governance-bond-citizen"]');
     expect(bondButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t("Available XOR balance is below the required citizen bond amount."),
+    expect(view.get(".identity").text()).toContain(
+      "Not enough XOR for the bond.",
     );
+    expect(prepareGovernanceCitizenRegistrationMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the voting balance when the optional council refresh fails", async () => {
-    getGovernanceCouncilCurrentMock.mockRejectedValueOnce(
-      new Error("governance council current response.derived_by must be Vrf"),
-    );
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const xorBalanceRow = wrapper
-      .findAll(".kv")
-      .find((node) => node.text().includes(t("XOR Balance")));
-    expect(xorBalanceRow?.text()).toContain("15000 XOR");
-    expect(
-      findButtonByText(wrapper, `Bond ${CITIZEN_BOND_XOR} XOR`).attributes(
-        "disabled",
-      ),
-    ).toBeUndefined();
-    expect(wrapper.text()).toContain(
-      "governance council current response.derived_by must be Vrf",
-    );
-  });
-
-  it("uses the configured opaque XOR asset before stale zero XOR aliases", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#universal##alice@wonderland",
-          quantity: "0",
-        },
-        {
-          asset_id: "61CtjvNd9T3THAR65GsMVHr82Bjc#alice@wonderland",
-          quantity: "25000",
-        },
-      ],
-      total: 2,
-    });
-
-    const wrapper = mountView({
-      connection: {
-        assetDefinitionId: "61CtjvNd9T3THAR65GsMVHr82Bjc",
-      },
-    });
-    await flushPromises();
-
-    const xorBalanceRow = wrapper
-      .findAll(".kv")
-      .find((node) => node.text().includes(t("XOR Balance")));
-    expect(xorBalanceRow?.text()).toContain("25000 XOR");
-    expect(wrapper.text()).not.toContain(
-      t("Available XOR balance is below the required citizen bond amount."),
-    );
-  });
-
-  it("uses the governance citizenship asset when policy is available", async () => {
-    getGovernanceRegistrationPolicyMock.mockResolvedValueOnce({
-      citizenshipAssetDefinitionId: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
-      citizenshipBondAmount: "12000",
-      citizenshipAssetDefinitionExists: true,
-      configurationLoaded: true,
-      configurationError: null,
-      assetDefinitionError: null,
-    });
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#universal##alice@wonderland",
-          quantity: "25000",
-        },
-        {
-          asset_id: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB#alice@wonderland",
-          quantity: "12000",
-        },
-      ],
-      total: 2,
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("5PgFjEiWr1iqE2a7Wp1R2gB4eVEB");
-    expect(
-      findButtonByText(wrapper, "Bond 12000 XOR").attributes("disabled"),
-    ).toBeUndefined();
-
-    await findButtonByText(wrapper, "Bond 12000 XOR").trigger("click");
-    await flushPromises();
-
-    expect(registerCitizenMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "alice@wonderland",
-      amount: "12000",
-      privateKeyHex: "cd".repeat(32),
-    });
-  });
-
-  it("blocks citizenship bond when the configured citizenship asset definition is missing", async () => {
-    getGovernanceRegistrationPolicyMock.mockResolvedValueOnce({
-      citizenshipAssetDefinitionId: "5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
-      citizenshipBondAmount: "10000",
-      citizenshipAssetDefinitionExists: false,
-      configurationLoaded: true,
-      configurationError: null,
-      assetDefinitionError:
-        "Governance citizenship asset definition request failed with status 404 (ERR)",
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const bondButton = findButtonByText(
-      wrapper,
-      `Bond ${CITIZEN_BOND_XOR} XOR`,
-    );
-    expect(bondButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      "configured to use missing governance citizenship asset definition 5PgFjEiWr1iqE2a7Wp1R2gB4eVEB",
-    );
-    expect(registerCitizenMock).not.toHaveBeenCalled();
-  });
-
-  it("disables citizenship bond when account already has ballot permission", async () => {
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
-      total: 1,
-    });
-    const wrapper = mountView();
-    await flushPromises();
-
-    const bondButton = findButtonByText(
-      wrapper,
-      `Bond ${CITIZEN_BOND_XOR} XOR`,
-    );
-    expect(bondButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t(
-        "Citizenship voting permission detected. Bonding is no longer required.",
-      ),
-    );
-  });
-
-  it("disables citizenship bond when account already has a citizen record", async () => {
+  it("shows an unavailable bond balance when the live asset read fails", async () => {
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
-      accountId: "alice@wonderland",
-      isCitizen: true,
-      amount: "10000",
-      bondedHeight: 12731,
-      seatsInEpoch: 0,
-      lastEpochSeen: 0,
-      cooldownUntil: 0,
-      endpointAvailable: true,
+      state: "not-citizen",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
     });
-    getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
-      epoch: 1,
-      members: [],
-      alternates: [],
-      candidate_count: 7,
-      verified: 7,
-      derived_by: "Fallback",
-    });
-    getGovernanceCitizenCountMock.mockResolvedValueOnce({
-      total: 7,
-      endpointAvailable: true,
-    });
-    const wrapper = mountView();
-    await flushPromises();
+    fetchAccountAssetsMock.mockRejectedValueOnce(
+      new Error("bond balance unavailable"),
+    );
 
-    const bondButton = findButtonByText(
-      wrapper,
-      `Bond ${CITIZEN_BOND_XOR} XOR`,
-    );
-    const citizenPanel = wrapper.get(".parliament-citizenship-panel");
-    expect(bondButton.attributes("disabled")).toBeDefined();
-    expect(citizenPanel.classes()).toContain(
-      "parliament-citizenship-panel-positive",
-    );
-    expect(citizenPanel.text()).toContain(t("You are a citizen"));
-    expect(citizenPanel.text()).toContain(
-      t("Bonded {amount} XOR", { amount: "10000" }),
-    );
-    expect(citizenPanel.text()).toContain(t("Citizens"));
-    expect(citizenPanel.text()).toContain("7");
-    expect(wrapper.text()).toContain(t("Citizenship registered."));
-    expect(registerCitizenMock).not.toHaveBeenCalled();
+    const view = await mountView();
+    const identity = view.get(".identity");
+    const balanceRow = identity
+      .findAll("dl > div")
+      .find((row) => row.get("dt").text() === "XOR Balance");
+
+    expect(balanceRow?.get("dd").text()).toBe("Unavailable");
+    expect(identity.text()).toContain("bond balance unavailable");
+    expect(
+      view
+        .get('[data-testid="governance-bond-citizen"]')
+        .attributes("disabled"),
+    ).toBeDefined();
   });
 
-  it("shows the exact citizen count without a lower-bound suffix", async () => {
+  it("loads every asset page before deciding the exact bond balance", async () => {
     getGovernanceCitizenStatusMock.mockResolvedValueOnce({
-      accountId: "alice@wonderland",
-      isCitizen: true,
-      amount: "10000",
-      bondedHeight: 12731,
-      seatsInEpoch: 0,
-      lastEpochSeen: 0,
-      cooldownUntil: 0,
-      endpointAvailable: true,
+      state: "not-citizen",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
     });
-    getGovernanceCitizenCountMock.mockResolvedValueOnce({
-      total: 1,
-      endpointAvailable: true,
+    fetchAccountAssetsMock
+      .mockResolvedValueOnce({
+        items: Array.from({ length: 200 }, (_, index) => ({
+          asset_id: `unrelated-${index}`,
+          quantity: "1",
+        })),
+        total: 201,
+      })
+      .mockResolvedValueOnce({
+        items: [{ asset_id: XOR_ASSET_ID, quantity: "12500" }],
+        total: 201,
+      });
+
+    const view = await mountView();
+
+    expect(fetchAccountAssetsMock).toHaveBeenNthCalledWith(2, {
+      toriiUrl: "http://localhost:8080",
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      assetDefinitionId: XOR_ASSET_ID,
+      limit: 200,
+      offset: 200,
     });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const citizenPanel = wrapper.get(".parliament-citizenship-panel");
-    const citizenCount = citizenPanel.get(".parliament-citizen-count");
-    expect(citizenPanel.text()).toContain(t("You are a citizen"));
-    expect(citizenCount.text()).toContain("1");
-    expect(citizenCount.text()).not.toContain("1+");
-    expect(citizenCount.text()).not.toMatch(/\b0\b/);
+    expect(
+      view
+        .get('[data-testid="governance-bond-citizen"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
-  it("shows governance unlock statistics from the citizen page refresh", async () => {
-    getGovernanceUnlockStatsMock.mockResolvedValueOnce({
-      height_current: 1234,
-      expired_locks_now: 2,
-      referenda_with_expired: 1,
-      last_sweep_height: 1200,
+  it("requires a current bonded citizen before opening the proposal composer", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "not-citizen",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
     });
 
-    const wrapper = mountView();
-    await flushPromises();
+    await mountView();
+    const governance = useParliamentStore();
+    const proposalButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="new-governance-proposal"]',
+    );
 
+    expect(proposalButton?.disabled).toBe(true);
+    expect(proposalButton?.title).toContain("current bonded Taira citizen");
+    governance.openComposer();
+    expect(governance.composerOpen).toBe(false);
+    expect(governance.actionError).toContain("current bonded Taira citizen");
+  });
+
+  it("refreshes bonded citizenship before preparing a proposal", async () => {
+    await mountView();
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "not-citizen",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+    });
+    const governance = useParliamentStore();
+
+    await governance.prepareProposal();
+
+    expect(prepareGovernanceProposalMock).not.toHaveBeenCalled();
+    expect(governance.actionError).toContain("current bonded Taira citizen");
+  });
+
+  it("fails closed when strict governance capabilities are unavailable", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "not-citizen",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+    });
+    getGovernanceCapabilitiesMock.mockRejectedValueOnce(
+      new Error("governance capabilities contain unknown fields"),
+    );
+
+    const view = await mountView();
+    const bondButton = view.get('[data-testid="governance-bond-citizen"]');
+    expect(bondButton.attributes("disabled")).toBeDefined();
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+    });
+    expect(fetchAccountAssetsMock).not.toHaveBeenCalled();
+    expect(view.get(".identity").text()).toContain("Not a citizen yet");
+    expect(view.get(".identity").text()).toContain(
+      "governance capabilities contain unknown fields",
+    );
+    expect(
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="new-governance-proposal"]',
+      )?.disabled,
+    ).toBe(true);
+    expect(prepareGovernanceCitizenRegistrationMock).not.toHaveBeenCalled();
+  });
+
+  it("starts the citizenship read before capabilities finish loading", async () => {
+    let resolveCapabilities: (value: unknown) => void = () => {};
+    getGovernanceCapabilitiesMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCapabilities = resolve;
+      }),
+    );
+
+    const view = await mountView();
+
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+    });
+    expect(getGovernanceCitizenCountMock).toHaveBeenCalledWith(
+      "http://localhost:8080",
+    );
+    expect(getGovernanceCouncilCurrentMock).toHaveBeenCalledWith(
+      "http://localhost:8080",
+    );
     expect(getGovernanceUnlockStatsMock).toHaveBeenCalledWith(
       "http://localhost:8080",
     );
-    expect(wrapper.text()).toContain(t("Current Height"));
-    expect(wrapper.text()).toContain("1234");
-    expect(wrapper.text()).toContain(t("Expired Locks"));
-    expect(wrapper.text()).toContain("2");
-  });
+    const governance = useParliamentStore();
+    expect(governance.governanceCitizenCount?.total).toBe(21);
+    expect(governance.currentCouncil?.members).toEqual([
+      { account_id: ACCOUNT },
+    ]);
+    expect(governance.unlockStats?.expired_locks_now).toBe(2);
+    expect(view.get(".identity").text()).toContain("Eligible");
+    expect(fetchAccountAssetsMock).not.toHaveBeenCalled();
 
-  it("hides low-balance bond warning when account is already a citizen", async () => {
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#wonderland##alice@wonderland",
-          quantity: "1",
-        },
-      ],
-      total: 1,
-    });
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
-      total: 1,
-    });
-    const wrapper = mountView();
+    resolveCapabilities(governanceCapabilities());
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t(
-        "Citizenship voting permission detected. Bonding is no longer required.",
-      ),
-    );
-    expect(wrapper.text()).not.toContain(
-      t("Available XOR balance is below the required citizen bond amount."),
-    );
-  });
-
-  it("infers proposal id from referendum lookup and stores history", async () => {
-    const inferredProposalId = `0x${"1".repeat(64)}`;
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-        proposal_id: inferredProposalId,
-      },
-    });
-    getGovernanceProposalMock.mockResolvedValueOnce({
-      found: true,
-      proposal: {
-        id: inferredProposalId,
-      },
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const referendumInput = wrapper.get(REFERENDUM_INPUT_SELECTOR);
-    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
-    await referendumInput.setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceReferendumMock).toHaveBeenCalledWith({
+    expect(fetchAccountAssetsMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      referendumId: "ref-1",
-    });
-    expect(getGovernanceProposalMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      proposalId: inferredProposalId,
-    });
-    expect((proposalInput.element as HTMLInputElement).value).toBe(
-      inferredProposalId,
-    );
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
-    );
-
-    const rawHistory = localStorage.getItem(
-      "iroha-demo:parliament-history:alice@wonderland",
-    );
-    expect(rawHistory).not.toBeNull();
-    expect(JSON.parse(rawHistory ?? "{}")).toEqual({
-      referenda: ["ref-1"],
-      proposals: [inferredProposalId],
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      assetDefinitionId: XOR_ASSET_ID,
+      limit: 200,
+      offset: 0,
     });
   });
 
-  it("replaces invalid proposal input with inferred proposal and keeps records visible", async () => {
-    const inferredProposalId = `0x${"3".repeat(64)}`;
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-        proposal_id: inferredProposalId,
-      },
-    });
-    getGovernanceProposalMock.mockResolvedValueOnce({
-      found: true,
-      proposal: {
-        id: inferredProposalId,
-      },
-    });
-    const wrapper = mountView();
-    await flushPromises();
+  it.each([
+    {
+      label: "citizen count",
+      reject: () =>
+        getGovernanceCitizenCountMock.mockRejectedValueOnce(
+          new Error("citizen count unavailable"),
+        ),
+      error: (governance: ReturnType<typeof useParliamentStore>) =>
+        governance.governanceCitizenCountError,
+    },
+    {
+      label: "current council",
+      reject: () =>
+        getGovernanceCouncilCurrentMock.mockRejectedValueOnce(
+          new Error("current council unavailable"),
+        ),
+      error: (governance: ReturnType<typeof useParliamentStore>) =>
+        governance.currentCouncilError,
+    },
+    {
+      label: "unlock stats",
+      reject: () =>
+        getGovernanceUnlockStatsMock.mockRejectedValueOnce(
+          new Error("unlock stats unavailable"),
+        ),
+      error: (governance: ReturnType<typeof useParliamentStore>) =>
+        governance.unlockStatsError,
+    },
+  ])(
+    "keeps $label read failures isolated from capabilities and writes",
+    async ({ reject, error }) => {
+      reject();
+      await mountView();
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
+      const governance = useParliamentStore();
+      expect(error(governance)).toContain("unavailable");
+      expect(governance.canWrite).toBe(true);
+      expect(getGovernanceCitizenCountMock).toHaveBeenCalled();
+      expect(getGovernanceCouncilCurrentMock).toHaveBeenCalled();
+      expect(getGovernanceUnlockStatsMock).toHaveBeenCalled();
+    },
+  );
 
-    expect(
-      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
-    ).toBe(inferredProposalId);
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain(
-      t("Governance records refreshed. Invalid proposal ID was ignored."),
-    );
-  });
-
-  it("runs referendum lookup when a recent referendum chip is clicked", async () => {
-    localStorage.setItem(
-      "iroha-demo:parliament-history:alice@wonderland",
-      JSON.stringify({
-        referenda: ["ref-chip"],
-        proposals: [],
+  it("ignores stale citizen-count, council, and unlock-stat responses independently", async () => {
+    await mountView();
+    const governance = useParliamentStore();
+    let resolveStaleCitizenCount: (value: unknown) => void = () => {};
+    let resolveStaleCouncil: (value: unknown) => void = () => {};
+    let resolveStaleUnlockStats: (value: unknown) => void = () => {};
+    getGovernanceCitizenCountMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStaleCitizenCount = resolve;
       }),
     );
-    const wrapper = mountView();
-    await flushPromises();
-
-    const chip = wrapper.get('button[title="ref-chip"]');
-    await chip.trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceReferendumMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      referendumId: "ref-chip",
-    });
-  });
-
-  it("runs proposal lookup when a recent proposal chip is clicked", async () => {
-    const proposalId = `0x${"d".repeat(64)}`;
-    localStorage.setItem(
-      "iroha-demo:parliament-history:alice@wonderland",
-      JSON.stringify({
-        referenda: [],
-        proposals: [proposalId],
+    getGovernanceCouncilCurrentMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStaleCouncil = resolve;
       }),
     );
-    const wrapper = mountView();
-    await flushPromises();
-
-    const chip = wrapper.get(`button[title="${proposalId}"]`);
-    await chip.trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceProposalMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      proposalId,
-    });
-  });
-
-  it("blocks lookup when proposal id is not 32-byte hex", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
-    const loadButton = findButtonByText(wrapper, "Load");
-    expect(loadButton.attributes("disabled")).toBeDefined();
-
-    expect(getGovernanceProposalMock).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain(
-      t("Proposal ID must be 32-byte hex (with or without 0x prefix)."),
+    getGovernanceUnlockStatsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStaleUnlockStats = resolve;
+      }),
     );
-  });
-
-  it("enables governance lookup when proposal id is corrected", async () => {
-    const wrapper = mountView();
+    const staleReads = Promise.all([
+      governance.loadGovernanceCitizenCount(),
+      governance.loadCurrentCouncil(),
+      governance.loadUnlockStats(),
+    ]);
     await flushPromises();
+    expect(governance.governanceCitizenCountLoading).toBe(true);
+    expect(governance.currentCouncilLoading).toBe(true);
+    expect(governance.unlockStatsLoading).toBe(true);
 
-    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
-    const loadButton = findButtonByText(wrapper, "Load");
-    expect(loadButton.attributes("disabled")).toBeDefined();
-
-    await proposalInput.setValue("proposal-1");
-    expect(loadButton.attributes("disabled")).toBeDefined();
-
-    await proposalInput.setValue(`0x${"a".repeat(64)}`);
-    expect(loadButton.attributes("disabled")).toBeUndefined();
-  });
-
-  it("renders fallback lifecycle stages and keeps advanced tools secondary", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-
-    const stageButtons = wrapper.findAll(".parliament-stepper button");
-    expect(stageButtons.map((button) => button.text())).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(t("Submitted")),
-        expect.stringContaining(t("Briefs")),
-        expect.stringContaining(t("Challenge")),
-        expect.stringContaining(t("Canary")),
-        expect.stringContaining(t("Review")),
-      ]),
-    );
-    expect(
-      stageButtons
-        .find((button) => button.text().includes(t("Briefs")))
-        ?.classes(),
-    ).toContain("status-unavailable");
-    expect(wrapper.find(".parliament-mobile-tabs").exists()).toBe(true);
-    expect(wrapper.find(".parliament-advanced-card").exists()).toBe(true);
-    expect(
-      findButtonByText(wrapper, "Stage ballot").attributes("disabled"),
-    ).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t("Parliament stage ballots are not available on this endpoint yet."),
-    );
-  });
-
-  it("uses a Torii lifecycle snapshot when available", async () => {
-    const proposalId = `0x${"b".repeat(64)}`;
-    getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
-      epoch: 4,
-      members: [{ account_id: "alice@wonderland" }],
-      alternates: [],
-      candidate_count: 1,
-      verified: 1,
-      derived_by: "Vrf",
-    });
-    getGovernanceLifecycleMock.mockResolvedValueOnce({
-      source: "torii",
+    getGovernanceCitizenCountMock.mockResolvedValueOnce({
+      total: 34,
       endpointAvailable: true,
-      referendumId: "ref-1",
-      proposalId,
-      currentStageId: "challenge",
-      role: "seated_member",
-      stages: [
-        {
-          id: "submitted",
-          labelKey: "Submitted",
-          status: "complete",
-          detailKey:
-            "Proposal identity and referendum envelope are loaded from Torii.",
-        },
-        {
-          id: "briefs",
-          labelKey: "Briefs",
-          status: "complete",
-          detailKey:
-            "Expert and red-team brief endpoints are not available on this Torii endpoint yet.",
-        },
-        {
-          id: "comment",
-          labelKey: "Comment",
-          status: "complete",
-          detailKey:
-            "Public comment endpoints are not available on this Torii endpoint yet.",
-        },
-        {
-          id: "sortition",
-          labelKey: "Sortition",
-          status: "complete",
-          detailKey:
-            "Council data shows the active Parliament roster when Torii exposes it.",
-        },
-        {
-          id: "vote",
-          labelKey: "Vote",
-          status: "complete",
-          detailKey:
-            "Citizens can submit a ballot when eligibility and referendum data are ready.",
-        },
-        {
-          id: "tally",
-          labelKey: "Tally",
-          status: "complete",
-          detailKey:
-            "Vote totals and lock records come from the live referendum endpoints.",
-        },
-        {
-          id: "challenge",
-          labelKey: "Challenge",
-          status: "active",
-          detailKey:
-            "Challenge-window endpoints are not available on this Torii endpoint yet.",
-        },
-        {
-          id: "canary",
-          labelKey: "Canary",
-          status: "pending",
-          detailKey:
-            "Canary rollout endpoints are not available on this Torii endpoint yet.",
-        },
-        {
-          id: "enact",
-          labelKey: "Enact",
-          status: "pending",
-          detailKey:
-            "Privileged enactment tools stay in Advanced governance tools.",
-        },
-        {
-          id: "review",
-          labelKey: "Review",
-          status: "unavailable",
-          detailKey:
-            "Retrospective review and clawback endpoints are not available on this Torii endpoint yet.",
-        },
-      ],
-      briefStatus: {
-        required: true,
-        submitted: 2,
-        redTeamRequired: true,
-        redTeamSubmitted: 1,
-        endpointAvailable: true,
-      },
-      challengeStatus: {
-        open: true,
-        bondRequired: "500",
-        activeChallenges: 1,
-        endpointAvailable: true,
-      },
-      rolloutStatus: {
-        phase: "canary",
-        endpointAvailable: true,
-        detail: "Canary guard active",
-      },
-      futureStagesUnavailable: false,
     });
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(proposalId);
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceLifecycleMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      proposalId,
-      referendumId: "ref-1",
-    });
-    expect(wrapper.text()).toContain(t("Lifecycle endpoint"));
-    expect(wrapper.text()).not.toContain(t("Fallback lifecycle"));
-    expect(wrapper.text()).toContain(t("Challenge window"));
-    expect(wrapper.text()).toContain("500 XOR");
-    expect(wrapper.text()).toContain(t("Seated member"));
-  });
-
-  it("shows seated and operator governance roles from live account state", async () => {
     getGovernanceCouncilCurrentMock.mockResolvedValueOnce({
-      epoch: 4,
-      members: [{ account_id: "alice@wonderland" }],
+      epoch: 8,
+      members: [{ account_id: "fresh-council@sora" }],
+      alternates: [],
+      candidate_count: 9,
+      verified: 1,
+      derived_by: "Vrf",
+    });
+    getGovernanceUnlockStatsMock.mockResolvedValueOnce({
+      height_current: 200,
+      expired_locks_now: 5,
+      referenda_with_expired: 2,
+      last_sweep_height: 199,
+    });
+    await Promise.all([
+      governance.loadGovernanceCitizenCount(),
+      governance.loadCurrentCouncil(),
+      governance.loadUnlockStats(),
+    ]);
+
+    resolveStaleCitizenCount({
+      total: 1,
+      endpointAvailable: true,
+    });
+    resolveStaleCouncil({
+      epoch: 1,
+      members: [{ account_id: "stale-council@sora" }],
       alternates: [],
       candidate_count: 1,
       verified: 1,
       derived_by: "Vrf",
     });
-    const seatedWrapper = mountView();
-    await flushPromises();
-    expect(seatedWrapper.text()).toContain(t("Seated member"));
-
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanManageParliament", payload: null }],
-      total: 1,
+    resolveStaleUnlockStats({
+      height_current: 10,
+      expired_locks_now: 1,
+      referenda_with_expired: 1,
+      last_sweep_height: 9,
     });
-    const operatorWrapper = mountView();
-    await flushPromises();
-    expect(operatorWrapper.text()).toContain(t("Operator"));
+    await staleReads;
+
+    expect(governance.governanceCitizenCount?.total).toBe(34);
+    expect(governance.currentCouncil?.epoch).toBe(8);
+    expect(governance.unlockStats?.expired_locks_now).toBe(5);
+    expect(governance.governanceCitizenCountLoading).toBe(false);
+    expect(governance.currentCouncilLoading).toBe(false);
+    expect(governance.unlockStatsLoading).toBe(false);
   });
 
-  it("allows referendum lookup when proposal id is invalid and ignores proposal fetch", async () => {
-    const wrapper = mountView();
-    await flushPromises();
+  it("does not retain a validation-fee proof from a previous endpoint context", async () => {
+    let resolveStalePolicy: (value: unknown) => void = () => {};
+    const freshPolicy = {
+      ...validationFeePolicyView(),
+      observedHeight: "300",
+    };
+    getGovernanceCurrentValidationFeePolicyMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveStalePolicy = resolve;
+        }),
+      )
+      .mockResolvedValueOnce(freshPolicy);
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue("proposal-1");
-    const loadButton = findButtonByText(wrapper, "Load");
-    expect(loadButton.attributes("disabled")).toBeUndefined();
-
-    await loadButton.trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceReferendumMock).toHaveBeenCalledWith({
-      toriiUrl: "http://localhost:8080",
-      referendumId: "ref-1",
+    await mountView();
+    const governance = useParliamentStore();
+    const session = useSessionStore();
+    session.$patch({
+      connection: {
+        ...session.connection,
+        toriiUrl: "http://localhost:9090",
+      },
     });
-    expect(getGovernanceProposalMock).not.toHaveBeenCalled();
-    expect(wrapper.text()).toContain(
-      t("Governance records refreshed. Invalid proposal ID was ignored."),
-    );
+    await vi.waitFor(() => {
+      expect(getGovernanceCurrentValidationFeePolicyMock).toHaveBeenCalledTimes(
+        2,
+      );
+    });
+    await flushPromises();
+
+    expect(governance.validationFeePolicy?.observedHeight).toBe("300");
+    expect(
+      getGovernanceCurrentValidationFeePolicyMock,
+    ).toHaveBeenLastCalledWith({
+      toriiUrl: "http://localhost:9090",
+      chainId: CHAIN_ID,
+      networkPrefix: NETWORK_PREFIX,
+    });
+
+    resolveStalePolicy({
+      ...validationFeePolicyView(),
+      observedHeight: "101",
+    });
+    await flushPromises();
+
+    expect(governance.validationFeePolicy?.observedHeight).toBe("300");
   });
 
-  it("clears displayed governance payloads when lookup ids are edited", async () => {
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
+  it("keeps stale capability success and completion out of a switched endpoint/account context", async () => {
+    let resolveStaleCapabilities: (value: unknown) => void = () => {};
+    let resolveCurrentCapabilities: (value: unknown) => void = () => {};
+    getGovernanceCapabilitiesMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveStaleCapabilities = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveCurrentCapabilities = resolve;
+        }),
+      );
+
+    await mountView();
+    const governance = useParliamentStore();
+    expect(governance.capabilitiesLoading).toBe(true);
+    expect(governance.capabilities).toBeNull();
+
+    const session = useSessionStore();
+    const switchedToriiUrl = "http://localhost:9090";
+    session.$patch({
+      connection: {
+        ...session.connection,
+        toriiUrl: switchedToriiUrl,
+      },
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ed0120bob",
+          signingAlgorithm: "ed25519",
+          hasStoredSecret: true,
+          localOnly: false,
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    expect(governance.capabilities).toBeNull();
+    expect(governance.capabilitiesLoading).toBe(false);
+    expect(governance.canWrite).toBe(false);
+
+    const endpoint = useEndpointStore();
+    if (!endpoint.inspection) throw new Error("endpoint inspection missing");
+    endpoint.$patch({
+      inspection: {
+        ...endpoint.inspection,
+        toriiUrl: switchedToriiUrl,
       },
     });
-    const wrapper = mountView();
     await flushPromises();
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
+    expect(getGovernanceCapabilitiesMock).toHaveBeenLastCalledWith(
+      switchedToriiUrl,
     );
+    expect(governance.capabilities).toBeNull();
+    expect(governance.capabilitiesLoading).toBe(true);
+    expect(governance.canWrite).toBe(false);
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
+    resolveStaleCapabilities({
+      ...governanceCapabilities(),
+      minBondAmount: "999",
+    });
     await flushPromises();
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
+
+    expect(governance.capabilities).toBeNull();
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.capabilitiesLoading).toBe(true);
+    expect(governance.ballotAmount).toBe("150");
+    expect(governance.canWrite).toBe(false);
+
+    resolveCurrentCapabilities({
+      ...governanceCapabilities(),
+      minBondAmount: "250",
+    });
+    await flushPromises();
+
+    expect(governance.capabilities?.minBondAmount).toBe("250");
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.capabilitiesLoading).toBe(false);
+    expect(governance.ballotAmount).toBe("150");
+    expect(governance.canWrite).toBe(true);
   });
 
-  it("clears governance refresh status when lookup ids are edited", async () => {
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
+  it("does not let a stale capability failure erase a newer valid context", async () => {
+    let rejectStaleCapabilities: (reason?: unknown) => void = () => {};
+    getGovernanceCapabilitiesMock
+      .mockReturnValueOnce(
+        new Promise((_resolve, reject) => {
+          rejectStaleCapabilities = reject;
+        }),
+      )
+      .mockResolvedValueOnce({
+        ...governanceCapabilities(),
+        minBondAmount: "300",
+      });
+
+    await mountView();
+    const governance = useParliamentStore();
+    const session = useSessionStore();
+    const switchedToriiUrl = "http://localhost:9091";
+    session.$patch({
+      connection: {
+        ...session.connection,
+        toriiUrl: switchedToriiUrl,
       },
     });
-    const wrapper = mountView();
+    const endpoint = useEndpointStore();
+    if (!endpoint.inspection) throw new Error("endpoint inspection missing");
+    endpoint.$patch({
+      inspection: {
+        ...endpoint.inspection,
+        toriiUrl: switchedToriiUrl,
+      },
+    });
     await flushPromises();
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain(t("Governance records refreshed."));
+    expect(governance.capabilities?.minBondAmount).toBe("300");
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.capabilitiesLoading).toBe(false);
+    expect(governance.canWrite).toBe(true);
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
+    rejectStaleCapabilities(new Error("stale endpoint failed"));
     await flushPromises();
-    expect(wrapper.text()).not.toContain(t("Governance records refreshed."));
+
+    expect(governance.capabilities?.minBondAmount).toBe("300");
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.capabilitiesLoading).toBe(false);
+    expect(governance.canWrite).toBe(true);
   });
 
-  it("clears stale lookup payloads when reloading the same ids fails", async () => {
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-      },
-    });
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-
-    getGovernanceReferendumMock.mockRejectedValueOnce(new Error("lookup down"));
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("lookup down");
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-  });
-
-  it("clears stale lookup state and balance when refresh fails", async () => {
-    const inferredProposalId = `0x${"9".repeat(64)}`;
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-        proposal_id: inferredProposalId,
-      },
-    });
-    getGovernanceProposalMock.mockResolvedValueOnce({
-      found: true,
-      proposal: {
-        id: inferredProposalId,
-      },
-    });
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
-    );
-
-    fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
-    await findButtonByText(wrapper, "Refresh").trigger("click");
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("assets down");
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).not.toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain(
-      t("Available XOR balance is below the required citizen bond amount."),
-    );
-  });
-
-  it("ignores in-flight lookup payload after refresh failure reset", async () => {
-    let resolveReferendum: (value: unknown) => void = () => {};
-    const referendumDeferred = new Promise((resolve) => {
-      resolveReferendum = resolve;
-    });
-    getGovernanceReferendumMock.mockReturnValueOnce(referendumDeferred);
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
-    await findButtonByText(wrapper, "Refresh").trigger("click");
-    await flushPromises();
-
-    const loadButtonAfterReset = findButtonByText(wrapper, "Load");
-    expect(loadButtonAfterReset.attributes("disabled")).toBeUndefined();
-
-    resolveReferendum({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
+  it("surfaces endpoint identity denial separately from capabilities", async () => {
+    const view = await mountView();
+    const endpoint = useEndpointStore();
+    const inspection = endpoint.inspection;
+    if (!inspection) throw new Error("endpoint inspection missing");
+    endpoint.$patch({
+      inspection: {
+        ...inspection,
+        accessMode: "read-only",
+        identityStatus: "conflicting",
+        diagnostic: {
+          code: "endpoint_identity_conflict",
+          message:
+            "Conflicting endpoint identity evidence. Writes are blocked.",
+        },
       },
     });
     await flushPromises();
-    await flushPromises();
 
-    expect(wrapper.text()).toContain("assets down");
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
+    const governance = useParliamentStore();
+    expect(governance.capabilities).not.toBeNull();
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.canWrite).toBe(false);
+    expect(governance.bondGate.reason).toContain(
+      "Conflicting endpoint identity evidence",
     );
-
-    getGovernanceReferendumMock.mockResolvedValueOnce({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-      },
-    });
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-
-    expect(getGovernanceReferendumMock).toHaveBeenCalledTimes(2);
-    expect(wrapper.text()).toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
+    expect(governance.plainVoteGate.reason).toContain(
+      "Conflicting endpoint identity evidence",
     );
-  });
-
-  it("ignores stale lookup responses when ids change during request", async () => {
-    let resolveReferendum: (value: unknown) => void = () => {};
-    const referendumDeferred = new Promise((resolve) => {
-      resolveReferendum = resolve;
-    });
-    getGovernanceReferendumMock.mockReturnValueOnce(referendumDeferred);
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-2");
-
-    resolveReferendum({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-      },
-    });
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
+    expect(governance.parliamentBallotGate.reason).toContain(
+      "Conflicting endpoint identity evidence",
     );
-  });
-
-  it("keeps proposal lookup results visible after proposal id auto-normalizes", async () => {
-    const uppercaseProposalId = `0x${"A".repeat(64)}`;
-    getGovernanceProposalMock.mockResolvedValueOnce({
-      found: true,
-      proposal: {
-        id: uppercaseProposalId,
-      },
-    });
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(uppercaseProposalId);
-    await findButtonByText(wrapper, "Load").trigger("click");
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
+    expect(governance.enactGate.reason).toContain(
+      "proposal-bound operator workflow",
+    );
+    governance.openComposer();
+    expect(governance.composerOpen).toBe(false);
+    expect(governance.actionError).toContain(
+      "Conflicting endpoint identity evidence",
+    );
+    await governance.prepareCitizenBallot();
+    expect(prepareGovernancePlainBallotMock).not.toHaveBeenCalled();
+    expect(governance.actionError).toContain(
+      "Conflicting endpoint identity evidence",
+    );
+    governance.review = preparedReview();
+    await governance.confirmReview();
+    expect(confirmGovernanceActionMock).not.toHaveBeenCalled();
+    expect(governance.review).not.toBeNull();
+    expect(governance.actionError).toContain(
+      "Conflicting endpoint identity evidence",
+    );
+    expect(view.get(".governance-context").text()).toContain(
+      "Conflicting endpoint identity evidence",
+    );
+    expect(view.get(".governance-context").text()).toContain(
+      "Strict contract verified",
     );
     expect(
-      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
-    ).toBe(`0x${"a".repeat(64)}`);
+      document.querySelector<HTMLButtonElement>(
+        '[data-testid="new-governance-proposal"]',
+      )?.disabled,
+    ).toBe(true);
   });
 
-  it("prepares a deploy-contract governance proposal draft", async () => {
-    const proposalId = `0x${"b".repeat(64)}`;
-    const codeHash = `0x${"1".repeat(64)}`;
-    const abiHash = `0x${"2".repeat(64)}`;
-    proposeGovernanceDeployContractMock.mockResolvedValueOnce({
-      ok: true,
-      proposal_id: proposalId,
-      tx_instructions: [{ wire_id: "deploy-contract" }],
+  it("surfaces a missing governance-write feature separately from capabilities", async () => {
+    const view = await mountView();
+    const endpoint = useEndpointStore();
+    const inspection = endpoint.inspection;
+    if (!inspection) throw new Error("endpoint inspection missing");
+    endpoint.$patch({
+      inspection: {
+        ...inspection,
+        features: {
+          ...inspection.features,
+          governanceWrites: {
+            ...inspection.features.governanceWrites,
+            supported: false,
+            missingOperations: ["/v1/gov/citizens/draft"],
+          },
+        },
+      },
     });
-    const wrapper = mountView();
     await flushPromises();
 
-    await wrapper
-      .get(PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR)
-      .setValue("tairac1contract");
-    await wrapper.get(PROPOSAL_CODE_HASH_INPUT_SELECTOR).setValue(codeHash);
-    await wrapper.get(PROPOSAL_ABI_HASH_INPUT_SELECTOR).setValue(abiHash);
-    await findButtonByText(wrapper, "Prepare draft").trigger("click");
+    const governance = useParliamentStore();
+    expect(governance.capabilities).not.toBeNull();
+    expect(governance.capabilitiesError).toBe("");
+    expect(governance.canWrite).toBe(false);
+    expect(governance.governanceWriteUnavailableReason).toContain(
+      "does not advertise governance write operations",
+    );
+    expect(governance.plainVoteGate.allowed).toBe(false);
+    expect(governance.plainVoteGate.reason).toContain(
+      "does not advertise governance write operations",
+    );
+    expect(governance.parliamentBallotGate.reason).toContain(
+      "does not advertise governance write operations",
+    );
+    expect(governance.enactGate.reason).toContain(
+      "proposal-bound operator workflow",
+    );
+    expect(view.get(".governance-context").text()).toContain(
+      "does not advertise governance write operations",
+    );
+    expect(view.get(".governance-context").text()).toContain(
+      "Strict contract verified",
+    );
+  });
+
+  it("starts citizenship first without gating independent governance reads", async () => {
+    let resolveCitizenship: (value: unknown) => void = () => {};
+    getGovernanceCitizenStatusMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveCitizenship = resolve;
+      }),
+    );
+
+    await mountView();
+
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledTimes(1);
+    expect(getGovernanceCapabilitiesMock).toHaveBeenCalled();
+    expect(getGovernanceCitizenCountMock).toHaveBeenCalled();
+    expect(getGovernanceCouncilCurrentMock).toHaveBeenCalled();
+    expect(getGovernanceUnlockStatsMock).toHaveBeenCalled();
+    const citizenCallOrder =
+      getGovernanceCitizenStatusMock.mock.invocationCallOrder[0] ?? 0;
+    expect(citizenCallOrder).toBeLessThan(
+      getGovernanceCapabilitiesMock.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(citizenCallOrder).toBeLessThan(
+      getGovernanceCitizenCountMock.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(citizenCallOrder).toBeLessThan(
+      getGovernanceCouncilCurrentMock.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(citizenCallOrder).toBeLessThan(
+      getGovernanceUnlockStatsMock.mock.invocationCallOrder[0] ?? 0,
+    );
+
+    resolveCitizenship({
+      state: "citizen",
+      accountId: ACCOUNT,
+      amount: "10000",
+      bondedHeight: "18457",
+      seatsInEpoch: "0",
+      lastEpochSeen: "0",
+      cooldownUntil: null,
+    });
     await flushPromises();
 
-    expect(proposeGovernanceDeployContractMock).toHaveBeenCalledWith({
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows unavailable citizenship without exposing the bond action", async () => {
+    getGovernanceCitizenStatusMock.mockResolvedValueOnce({
+      state: "unavailable",
+      accountId: ACCOUNT,
+      amount: null,
+      bondedHeight: null,
+      seatsInEpoch: null,
+      lastEpochSeen: null,
+      cooldownUntil: null,
+    });
+
+    const view = await mountView();
+
+    expect(view.get(".identity").text()).toContain(
+      "Citizen status unavailable",
+    );
+    expect(view.find('[data-testid="governance-bond-citizen"]').exists()).toBe(
+      false,
+    );
+  });
+
+  it("recovers a failed citizenship read on the visible-page poll", async () => {
+    vi.useFakeTimers();
+    getGovernanceCitizenStatusMock
+      .mockRejectedValueOnce(new Error("preauth_temporarily_banned"))
+      .mockResolvedValueOnce({
+        state: "citizen",
+        accountId: ACCOUNT,
+        amount: "10000",
+        bondedHeight: "18457",
+        seatsInEpoch: "0",
+        lastEpochSeen: "0",
+        cooldownUntil: null,
+      });
+
+    const view = await mountView();
+    expect(view.get(".identity").text()).toContain(
+      "Citizen status unavailable",
+    );
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await flushPromises();
+
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledTimes(2);
+    expect(view.get(".identity").text()).toContain("Eligible");
+  });
+
+  it("keeps independent poll reads moving when citizenship is still pending", async () => {
+    vi.useFakeTimers();
+    getGovernanceCitizenStatusMock
+      .mockResolvedValueOnce({
+        state: "not-citizen",
+        accountId: ACCOUNT,
+        amount: null,
+        bondedHeight: null,
+        seatsInEpoch: null,
+        lastEpochSeen: null,
+        cooldownUntil: null,
+      })
+      .mockReturnValueOnce(new Promise(() => {}));
+
+    await mountView();
+    const citizenCountCalls = getGovernanceCitizenCountMock.mock.calls.length;
+    const councilCalls = getGovernanceCouncilCurrentMock.mock.calls.length;
+    const unlockCalls = getGovernanceUnlockStatsMock.mock.calls.length;
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    await flushPromises();
+
+    expect(getGovernanceCitizenStatusMock).toHaveBeenCalledTimes(2);
+    expect(getGovernanceCitizenCountMock).toHaveBeenCalledTimes(
+      citizenCountCalls + 1,
+    );
+    expect(getGovernanceCouncilCurrentMock).toHaveBeenCalledTimes(
+      councilCalls + 1,
+    );
+    expect(getGovernanceUnlockStatsMock).toHaveBeenCalledTimes(unlockCalls + 1);
+  });
+
+  it("ignores stale citizenship responses after the active account changes", async () => {
+    let resolveAliceCitizenship: (value: unknown) => void = () => {};
+    getGovernanceCitizenStatusMock
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveAliceCitizenship = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({
+        state: "not-citizen",
+        accountId: "bob@wonderland",
+        amount: null,
+        bondedHeight: null,
+        seatsInEpoch: null,
+        lastEpochSeen: null,
+        cooldownUntil: null,
+      });
+
+    const view = await mountView();
+    expect(view.get(".identity").text()).toContain("Checking citizenship");
+
+    const session = useSessionStore();
+    session.$patch({
+      accounts: [
+        ...session.accounts,
+        {
+          displayName: "Bob",
+          domain: "wonderland",
+          accountId: "bob@wonderland",
+          publicKeyHex: "ed0120bob",
+          signingAlgorithm: "ed25519",
+          hasStoredSecret: true,
+          localOnly: false,
+        },
+      ],
+      activeAccountId: "bob@wonderland",
+    });
+    await flushPromises();
+    expect(useParliamentStore().citizenState).toBe("not-citizen");
+
+    resolveAliceCitizenship({
+      state: "citizen",
+      accountId: ACCOUNT,
+      amount: "10000",
+      bondedHeight: "1",
+      seatsInEpoch: "0",
+      lastEpochSeen: "1",
+      cooldownUntil: null,
+    });
+    await flushPromises();
+
+    expect(useParliamentStore().citizenState).toBe("not-citizen");
+    expect(view.get(".identity").text()).toContain("Not a citizen yet");
+  });
+
+  it("hides the bond action after citizenship is detected", async () => {
+    const view = await mountView();
+    expect(view.find('[data-testid="governance-bond-citizen"]').exists()).toBe(
+      false,
+    );
+    expect(view.get(".identity").text()).toContain("Eligible");
+  });
+
+  it("rejects unsupported proposal kinds at the typed first-release catalog", async () => {
+    listGovernanceProposalsMock.mockRejectedValueOnce(
+      new TypeError(
+        "Governance proposal list.proposals[0].proposal_kind must be an exact typed validation-fee proposal.",
+      ),
+    );
+    const view = await mountView();
+
+    expect(view.get(".catalog-message.error").text()).toContain(
+      "exact typed validation-fee proposal",
+    );
+    expect(view.find(".unknown-payload").exists()).toBe(false);
+  });
+
+  it("rejects ZK proposal details without a first-release fallback", async () => {
+    getGovernanceProposalDetailMock.mockRejectedValueOnce(
+      new TypeError(
+        "Governance proposal referendum.mode must be Plain in the first-release contract.",
+      ),
+    );
+    const view = await mountView(`/governance?proposal=${OTHER_HASH}`);
+
+    expect(view.get(".detail-empty .error").text()).toContain(
+      "must be Plain in the first-release contract",
+    );
+    expect(useParliamentStore().selectedProposal).toBeNull();
+  });
+
+  it("offers seven independent body ballots and lets a seated FMA member review once", async () => {
+    const detail = proposalDetail({ referendumStatus: "Proposed" });
+    detail.parliamentRosters = GOVERNANCE_PARLIAMENT_BODIES.map(
+      (body, index) => ({
+        body,
+        members:
+          body === "fma-committee" ? [ACCOUNT] : [`member-${index}@sora`],
+        alternates: [],
+      }),
+    );
+    detail.parliamentOutcomes = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      approvals: "0",
+      rejections: "0",
+      abstentions: "0",
+      required: "1",
+      currentAccountDecision: null,
+    }));
+    getGovernanceProposalDetailMock.mockResolvedValueOnce(detail);
+    prepareGovernanceParliamentBallotMock.mockResolvedValueOnce(
+      preparedReview(),
+    );
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const bodyRows = view.findAll(".body-ballot");
+    expect(bodyRows).toHaveLength(7);
+    const fmaRow = bodyRows.find((row) => row.text().includes("fma-committee"));
+    if (!fmaRow) throw new Error("FMA body row not found");
+    expect(fmaRow.text()).toContain("Seated member");
+    expect(fmaRow.get("button").attributes("disabled")).toBeUndefined();
+
+    await fmaRow.get("button").trigger("click");
+    await flushPromises();
+
+    expect(prepareGovernanceParliamentBallotMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      contractAddress: "tairac1contract",
-      contractAlias: null,
-      codeHash,
-      abiHash,
-      abiVersion: "1",
-      mode: "Plain",
-      window: null,
-      limits: null,
+      chainId: CHAIN_ID,
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      proposalId: HASH,
+      body: "fma-committee",
+      decision: "approve",
     });
-    expect(wrapper.text()).toContain(
-      t("Proposal draft prepared with {count} instruction(s).", { count: 1 }),
+  });
+
+  it("keeps alternates and members who already voted ineligible", async () => {
+    const detail = proposalDetail({ referendumStatus: "Proposed" });
+    detail.parliamentRosters = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      members: ["other@sora"],
+      alternates: body === "fma-committee" ? [ACCOUNT] : [],
+    }));
+    detail.parliamentOutcomes = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      approvals: "1",
+      rejections: "0",
+      abstentions: "0",
+      required: "1",
+      currentAccountDecision:
+        body === "rules-committee" ? ("approve" as const) : null,
+    }));
+    detail.parliamentRosters[0].members = [ACCOUNT];
+    getGovernanceProposalDetailMock.mockResolvedValueOnce(detail);
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const bodyRows = view.findAll(".body-ballot");
+    const fmaRow = bodyRows.find((row) => row.text().includes("fma-committee"));
+    const rulesRow = bodyRows.find((row) =>
+      row.text().includes("rules-committee"),
+    );
+    if (!fmaRow || !rulesRow) throw new Error("body row not found");
+    expect(fmaRow.text()).toContain("Not seated");
+    expect(fmaRow.get("button").attributes("disabled")).toBeDefined();
+    expect(rulesRow.text()).toContain("Voted: approve");
+    expect(rulesRow.get("button").attributes("disabled")).toBeDefined();
+  });
+
+  it("never exposes manual finalization or generic lifecycle enactment", async () => {
+    const approvedLifecycle = proposalDetail({
+      status: "Approved",
+      referendumStatus: "Closed",
+      finalizationEvidence: { approved: true },
+      currentHeight: "4000",
+    });
+    getGovernanceProposalDetailMock.mockResolvedValue(approvedLifecycle);
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    expect(
+      view.findAll("button").some((button) => /finalize/iu.test(button.text())),
+    ).toBe(false);
+
+    expect(
+      view
+        .findAll("button")
+        .some((button) => button.text().includes("Review enact")),
+    ).toBe(false);
+    expect(
+      view.get('[data-testid="governance-enact-gate-reason"]').text(),
+    ).toContain("proposal-bound operator workflow");
+    expect(prepareGovernanceEnactMock).not.toHaveBeenCalled();
+  });
+
+  it("hides and refuses policy enactment even at the exact target height", async () => {
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Approved",
+        referendumStatus: "Closed",
+        finalizationEvidence: { approved: true, finalized_height: 250 },
+        currentHeight: "3690",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const enactButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review enact"));
+    expect(enactButton).toBeUndefined();
+    expect(
+      view.get('[data-testid="governance-enact-gate-reason"]').text(),
+    ).toContain("proposal-bound operator workflow");
+    const governance = useParliamentStore();
+    expect(governance.enactGate.allowed).toBe(false);
+    await governance.prepareEnact();
+    expect(governance.actionError).toContain(
+      "proposal-bound operator workflow",
+    );
+    expect(prepareGovernanceEnactMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps PLAIN citizen voting available for validation-fee policy", async () => {
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeUndefined();
+    expect(
+      view.get('[data-testid="governance-public-window"]').text(),
+    ).toContain("90–3689");
+    expect(
+      view.get('[data-testid="governance-public-policy"]').text(),
+    ).toContain("0.10 SBD");
+    expect(view.get('[data-testid="governance-body-count"]').text()).toContain(
+      "7 exact bodies",
     );
     expect(
-      (wrapper.get(PROPOSAL_INPUT_SELECTOR).element as HTMLInputElement).value,
-    ).toBe(proposalId);
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("Eligible citizens1");
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("Eligible in frozen snapshot");
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("150 XOR · 3,600 blocks · one ballot");
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("After finalized height 88");
+    expect(
+      view
+        .get('[data-testid="governance-citizen-ballot-status"]')
+        .attributes("data-state"),
+    ).toBe("open");
+    expect(
+      view.get('[data-testid="governance-citizen-ballot-status"]').text(),
+    ).toContain("Open through inclusive height 3689");
+    expect(
+      view
+        .findAll("button")
+        .some((button) => button.text().includes("Review enact")),
+    ).toBe(false);
   });
 
-  it("blocks deploy-contract proposal drafts when limits JSON is invalid", async () => {
-    const wrapper = mountView();
-    await flushPromises();
+  it.each([
+    ["bond_escrow_account", "different-bond-escrow"],
+    ["slash_receiver_account", "different-slash-receiver"],
+  ] as const)(
+    "fails PLAIN citizen voting closed when proposal custody %s differs from capabilities",
+    async (field, value) => {
+      const kind = validationFeePolicyKind("124651");
+      kind.payload.plain_electorate_rules[field] = value;
+      getGovernanceProposalDetailMock.mockResolvedValue(
+        proposalDetail({
+          status: "Proposed",
+          referendumStatus: "Open",
+          currentHeight: "100",
+          hStart: "90",
+          hEnd: "3689",
+          kind,
+        }),
+      );
 
-    await wrapper
-      .get(PROPOSAL_CONTRACT_TARGET_INPUT_SELECTOR)
-      .setValue("tairac1contract");
-    await wrapper
-      .get(PROPOSAL_CODE_HASH_INPUT_SELECTOR)
-      .setValue(`0x${"1".repeat(64)}`);
-    await wrapper
-      .get(PROPOSAL_ABI_HASH_INPUT_SELECTOR)
-      .setValue(`0x${"2".repeat(64)}`);
-    await wrapper.get("textarea").setValue("{bad");
+      const view = await mountView(`/governance?proposal=${HASH}`);
+      const citizenButton = view
+        .findAll("button")
+        .find((button) => button.text().includes("Review citizen ballot"));
+      expect(citizenButton?.attributes("disabled")).toBeDefined();
+      expect(useParliamentStore().plainVoteGate.reason).toContain(
+        "PLAIN electorate rules differ from the exact endpoint capabilities",
+      );
+    },
+  );
 
-    const proposalButton = findButtonByText(wrapper, "Prepare draft");
-    expect(proposalButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(t("Invalid limits JSON."));
-    expect(proposeGovernanceDeployContractMock).not.toHaveBeenCalled();
-  });
-
-  it("keeps in-flight proposal lookup results after proposal id auto-normalizes", async () => {
-    let resolveProposal: (value: unknown) => void = () => {};
-    const proposalDeferred = new Promise((resolve) => {
-      resolveProposal = resolve;
-    });
-    getGovernanceProposalMock.mockReturnValueOnce(proposalDeferred);
-
-    const uppercaseProposalId = `0x${"B".repeat(64)}`;
-    const wrapper = mountView();
-    await flushPromises();
-
-    const proposalInput = wrapper.get(PROPOSAL_INPUT_SELECTOR);
-    await proposalInput.setValue(uppercaseProposalId);
-    await findButtonByText(wrapper, "Load").trigger("click");
-
-    await flushPromises();
-    expect((proposalInput.element as HTMLInputElement).value).toBe(
-      `0x${"b".repeat(64)}`,
+  it("fails PLAIN citizen voting closed when the immutable contract is unavailable", async () => {
+    getGovernancePlainReferendumContractMock.mockRejectedValue(
+      new Error("Immutable Taira electorate contract is missing"),
+    );
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
     );
 
-    resolveProposal({
-      found: true,
-      proposal: {
-        id: uppercaseProposalId,
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeDefined();
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("Immutable Taira electorate contract is missing");
+  });
+
+  it("fails PLAIN citizen voting closed for an account outside the frozen electorate", async () => {
+    getGovernancePlainReferendumContractMock.mockResolvedValue(
+      plainReferendumContract({ accountId: "bob@wonderland" }),
+    );
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeDefined();
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain("outside the immutable eligible-citizen snapshot");
+  });
+
+  it("fails PLAIN citizen voting closed when live referendum coordinates differ", async () => {
+    getGovernancePlainReferendumContractMock.mockResolvedValue(
+      plainReferendumContract({ hEnd: "3690" }),
+    );
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeDefined();
+    expect(
+      view.get('[data-testid="governance-plain-electorate"]').text(),
+    ).toContain(
+      "selected proposal differs from the immutable PLAIN referendum contract",
+    );
+  });
+
+  it.each([
+    { bondEscrowAccount: "different-bond-escrow" },
+    { slashReceiverAccount: "different-slash-receiver" },
+  ])(
+    "fails PLAIN citizen voting closed when immutable custody differs: %j",
+    async (custodyOverride) => {
+      getGovernancePlainReferendumContractMock.mockResolvedValue(
+        plainReferendumContract(custodyOverride),
+      );
+      getGovernanceProposalDetailMock.mockResolvedValue(
+        proposalDetail({
+          status: "Proposed",
+          referendumStatus: "Open",
+          currentHeight: "100",
+          hStart: "90",
+          hEnd: "3689",
+          kind: validationFeePolicyKind("124651"),
+        }),
+      );
+
+      const view = await mountView(`/governance?proposal=${HASH}`);
+      const citizenButton = view
+        .findAll("button")
+        .find((button) => button.text().includes("Review citizen ballot"));
+      expect(citizenButton?.attributes("disabled")).toBeDefined();
+      expect(
+        view.get('[data-testid="governance-plain-electorate"]').text(),
+      ).toContain(
+        "selected proposal differs from the immutable PLAIN referendum contract",
+      );
+    },
+  );
+
+  it("shows the active citizen lock as the authoritative recorded vote state", async () => {
+    const detail = proposalDetail({
+      status: "Proposed",
+      referendumStatus: "Open",
+      currentHeight: "100",
+      hStart: "90",
+      hEnd: "3689",
+      kind: validationFeePolicyKind("124651"),
+    });
+    detail.locks = [
+      {
+        owner: ACCOUNT,
+        amount: "150",
+        expiryHeight: "3700",
+        direction: "Aye",
+        durationBlocks: "3600",
       },
-    });
-    await flushPromises();
+    ];
+    getGovernanceProposalDetailMock.mockResolvedValue(detail);
+
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const status = view.get('[data-testid="governance-citizen-ballot-status"]');
+    expect(status.attributes("data-state")).toBe("recorded");
+    expect(status.text()).toContain("Ballot recorded on ledger");
+    expect(status.text()).toContain(
+      "Aye · 150 XOR · locked through inclusive height 3700",
+    );
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    expect(citizenButton?.attributes("disabled")).toBeDefined();
+  });
+
+  it("keeps a citizen ballot preparation failure visible in the ballot status", async () => {
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+    prepareGovernancePlainBallotMock.mockRejectedValueOnce(
+      new Error("Taira rejected the reviewed PLAIN ballot draft"),
+    );
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    if (!citizenButton) throw new Error("citizen review button not found");
+
+    await citizenButton.trigger("click");
     await flushPromises();
 
-    expect(wrapper.text()).toContain(
-      t("Proposal found: {value}.", { value: t("yes") }),
+    const status = view.get('[data-testid="governance-citizen-ballot-status"]');
+    expect(status.attributes("data-state")).toBe("error");
+    expect(status.text()).toContain("Ballot action failed");
+    expect(status.text()).toContain(
+      "Taira rejected the reviewed PLAIN ballot draft",
     );
   });
 
-  it("ignores in-flight lookup payload after active account switch", async () => {
-    let resolveReferendum: (value: unknown) => void = () => {};
-    const referendumDeferred = new Promise((resolve) => {
-      resolveReferendum = resolve;
+  it("keeps all seven Parliament body ballots available for policy voting", async () => {
+    const detail = proposalDetail({
+      status: "Proposed",
+      referendumStatus: "Proposed",
+      kind: validationFeePolicyKind("124651"),
     });
-    getGovernanceReferendumMock.mockReturnValueOnce(referendumDeferred);
+    detail.parliamentRosters = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      members: [ACCOUNT],
+      alternates: [],
+    }));
+    detail.parliamentOutcomes = GOVERNANCE_PARLIAMENT_BODIES.map((body) => ({
+      body,
+      approvals: "0",
+      rejections: "0",
+      abstentions: "0",
+      required: "1",
+      currentAccountDecision: null,
+    }));
+    getGovernanceProposalDetailMock.mockResolvedValue(detail);
 
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Load").trigger("click");
-
-    const session = useSessionStore();
-    session.$patch({
-      accounts: [
-        ...(session.accounts ?? []),
-        {
-          displayName: "Bob",
-          domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
-        },
-      ],
-      activeAccountId: "bob@wonderland",
-    });
-    await flushPromises();
-
-    resolveReferendum({
-      found: true,
-      referendum: {
-        referendum_id: "ref-1",
-      },
-    });
-    await flushPromises();
-    await flushPromises();
-
-    expect(wrapper.text()).not.toContain(
-      t("Referendum found: {value}.", { value: t("yes") }),
-    );
-    expect(wrapper.text()).toContain("bob@wonderland");
-  });
-
-  it("ignores stale refresh payload after active account switch", async () => {
-    let resolveAssets: (value: unknown) => void = () => {};
-    const assetsDeferred = new Promise((resolve) => {
-      resolveAssets = resolve;
-    });
-    fetchAccountAssetsMock.mockReturnValueOnce(assetsDeferred);
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#wonderland##bob@wonderland",
-          quantity: "15000",
-        },
-      ],
-      total: 1,
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const session = useSessionStore();
-    session.$patch({
-      accounts: [
-        ...(session.accounts ?? []),
-        {
-          displayName: "Bob",
-          domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
-        },
-      ],
-      activeAccountId: "bob@wonderland",
-    });
-    await flushPromises();
-
-    resolveAssets({
-      items: [
-        {
-          asset_id: "xor#wonderland##alice@wonderland",
-          quantity: "1",
-        },
-      ],
-      total: 1,
-    });
-    await flushPromises();
-    await flushPromises();
-
-    const xorBalanceRow = wrapper
-      .findAll(".kv")
-      .find((node) => node.text().includes(t("XOR Balance")));
-    expect(xorBalanceRow?.text()).toContain("15000 XOR");
-    expect(wrapper.text()).toContain("bob@wonderland");
-    expect(wrapper.text()).not.toContain(
-      t("Available XOR balance is below the required citizen bond amount."),
-    );
-  });
-
-  it("ignores stale refresh error after active account switch", async () => {
-    let rejectAssets: (reason: unknown) => void = () => {};
-    const assetsDeferred = new Promise((_, reject) => {
-      rejectAssets = reject;
-    });
-    fetchAccountAssetsMock.mockReturnValueOnce(assetsDeferred);
-    fetchAccountAssetsMock.mockResolvedValueOnce({
-      items: [
-        {
-          asset_id: "xor#wonderland##bob@wonderland",
-          quantity: "15000",
-        },
-      ],
-      total: 1,
-    });
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    const session = useSessionStore();
-    session.$patch({
-      accounts: [
-        ...(session.accounts ?? []),
-        {
-          displayName: "Bob",
-          domain: "wonderland",
-          accountId: "bob@wonderland",
-          publicKeyHex: "ef".repeat(32),
-          privateKeyHex: "12".repeat(32),
-        },
-      ],
-      activeAccountId: "bob@wonderland",
-    });
-    await flushPromises();
-
-    rejectAssets(new Error("assets down"));
-    await flushPromises();
-    await flushPromises();
-
-    const xorBalanceRow = wrapper
-      .findAll(".kv")
-      .find((node) => node.text().includes(t("XOR Balance")));
-    expect(xorBalanceRow?.text()).toContain("15000 XOR");
-    expect(wrapper.text()).toContain("bob@wonderland");
-    expect(wrapper.text()).not.toContain("assets down");
-  });
-
-  it("clears stale refresh error when account context is missing", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-    fetchAccountAssetsMock.mockRejectedValueOnce(new Error("assets down"));
-    await findButtonByText(wrapper, "Refresh").trigger("click");
-    await flushPromises();
-    expect(wrapper.text()).toContain("assets down");
-
-    const session = useSessionStore();
-    session.$patch({
-      activeAccountId: null,
-    });
-    await flushPromises();
-
-    expect(wrapper.text()).toContain(t("Set up network and wallet first."));
-    expect(wrapper.text()).not.toContain("assets down");
-  });
-
-  it("sanitizes unreadable governance refresh errors", async () => {
-    fetchAccountAssetsMock.mockRejectedValueOnce(
-      new Error(
-        "ERR_UNEXPECTED_NETWORK_PREFIX — NRT0`\uFFFD6W\uFFFD5 invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const bodyButtons = view.findAll(".body-ballot button");
+    expect(bodyButtons).toHaveLength(7);
+    expect(
+      bodyButtons.every(
+        (button) => button.attributes("disabled") === undefined,
       ),
-    );
-
-    const wrapper = mountView();
-    await flushPromises();
-
-    expect(wrapper.text()).toContain(
-      "ERR_UNEXPECTED_NETWORK_PREFIX — invalid account_id `sorauExample` : ERR_UNEXPECTED_NETWORK_PREFIX",
-    );
-    expect(wrapper.text()).not.toContain("NRT0`");
+    ).toBe(true);
   });
 
-  it("disables ballot submission without governance ballot permission", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    const ballotButton = findButtonByText(wrapper, "Submit ballot");
-    expect(ballotButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t(
-        "Ballot permission is missing on this account. Submit the citizenship bond and refresh before voting.",
-      ),
+  it("reviews the decoded instruction and ABI21 quote before commit", async () => {
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
     );
-  });
+    const view = await mountView(`/governance?proposal=${HASH}`);
+    const citizenButton = view
+      .findAll("button")
+      .find((button) => button.text().includes("Review citizen ballot"));
+    if (!citizenButton) throw new Error("citizen review button not found");
 
-  it("uses the TAIRA i105 literal for ballot submission when stored ids are stale", async () => {
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
-      total: 1,
-    });
-    const wrapper = mountView({
-      account: {
-        accountId: "sorauLegacyVisibleAccount1234567890",
-        i105AccountId: "",
-        i105DefaultAccountId: "sorauLegacyVisibleAccount1234567890",
-      },
-    });
+    await citizenButton.trigger("click");
     await flushPromises();
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await findButtonByText(wrapper, "Submit ballot").trigger("click");
-    await flushPromises();
-
-    expect(submitGovernancePlainBallotMock).toHaveBeenCalledWith({
+    expect(prepareGovernancePlainBallotMock).toHaveBeenCalledWith({
       toriiUrl: "http://localhost:8080",
-      chainId: "chain",
-      accountId: "testuLegacyVisibleAccount1234567890",
-      referendumId: "ref-1",
-      amount: CITIZEN_BOND_XOR,
-      durationBlocks: 7200,
+      chainId: CHAIN_ID,
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      proposalId: HASH,
+      referendumId: HASH.slice(2),
+      amount: "150",
+      durationBlocks: "3600",
       direction: "Aye",
-      privateKeyHex: "cd".repeat(32),
     });
-    expect(wrapper.text()).toContain(
-      t("Ballot submitted: {hash}", { hash: "0xballot" }),
-    );
-  });
+    expect(document.body.textContent).toContain("Decoded instruction");
+    expect(document.body.textContent).toContain("0.01 xor#wonderland");
 
-  it("disables finalize/enact draft actions when governance permissions are missing", async () => {
-    const wrapper = mountView();
+    const commitButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Sign and commit"),
+    );
+    if (!commitButton) throw new Error("commit button not found");
+    commitButton.click();
     await flushPromises();
 
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await wrapper.get(PROPOSAL_INPUT_SELECTOR).setValue(`0x${"a".repeat(64)}`);
-
-    const finalizeButton = findButtonByText(wrapper, "Finalize draft");
-    const enactButton = findButtonByText(wrapper, "Enact draft");
-    expect(finalizeButton.attributes("disabled")).toBeDefined();
-    expect(enactButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t("Finalize requires CanManageParliament permission."),
-    );
-    expect(wrapper.text()).toContain(
-      t("Enact requires CanEnactGovernance permission."),
-    );
-  });
-
-  it("disables ballot submission for non-integer amount and invalid duration", async () => {
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
-      total: 1,
+    expect(confirmGovernanceActionMock).toHaveBeenCalledWith({
+      reviewId: "review-1",
+      accountId: ACCOUNT,
     });
-    const wrapper = mountView();
-    await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    const ballotButton = findButtonByText(wrapper, "Submit ballot");
-
-    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("10.5");
-    expect(ballotButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t("Ballot amount must be a whole number greater than zero."),
-    );
-
-    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("10");
-    await wrapper.get('input[type="number"][min="1"]').setValue("0");
-    expect(ballotButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      t("Lock duration must be a positive integer number of blocks."),
-    );
   });
 
-  it("disables ballot submission when amount exceeds XOR balance", async () => {
-    listAccountPermissionsMock.mockResolvedValueOnce({
-      items: [{ name: "CanSubmitGovernanceBallot", payload: null }],
-      total: 1,
+  it("enforces whole voting units and the advertised conviction lock", async () => {
+    getGovernanceProposalDetailMock.mockResolvedValue(
+      proposalDetail({
+        status: "Proposed",
+        referendumStatus: "Open",
+        currentHeight: "100",
+        hStart: "90",
+        hEnd: "3689",
+        kind: validationFeePolicyKind("124651"),
+      }),
+    );
+    await mountView(`/governance?proposal=${HASH}`);
+    const governance = useParliamentStore();
+
+    governance.ballotAmount = "150.5";
+    expect(governance.plainVoteGate.allowed).toBe(false);
+    expect(governance.plainVoteGate.reason).toContain(
+      "positive whole-number ballot amount",
+    );
+
+    governance.ballotAmount = "150";
+    governance.ballotDurationBlocks = "3599";
+    expect(governance.plainVoteGate.allowed).toBe(false);
+    expect(governance.plainVoteGate.reason).toContain(
+      "immutable 150 XOR / 3,600-block PLAIN contract",
+    );
+
+    governance.ballotAmount = "149";
+    governance.ballotDurationBlocks = "3600";
+    expect(governance.plainVoteGate.allowed).toBe(false);
+    expect(governance.plainVoteGate.reason).toContain(
+      "immutable 150 XOR / 3,600-block PLAIN contract",
+    );
+
+    governance.ballotAmount = "150";
+    governance.ballotDurationBlocks = "3600";
+    expect(governance.plainVoteGate.allowed).toBe(true);
+  });
+
+  it("blocks validation-fee composition without locally verified proof state", async () => {
+    await mountView();
+    const newProposalButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="new-governance-proposal"]',
+    );
+    if (!newProposalButton) throw new Error("new proposal button not found");
+    newProposalButton.click();
+    await flushPromises();
+    const policyKind = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".kind-selector button"),
+    ).find((button) => button.textContent?.includes("Validation fee policy"));
+    if (!policyKind) throw new Error("validation-fee kind not found");
+    policyKind.click();
+    await flushPromises();
+
+    expect(document.body.textContent).toContain(
+      "local consensus-proof verifier missing",
+    );
+    const reviewButton = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.includes("Decode and quote"));
+    expect(reviewButton).toBeDefined();
+    reviewButton?.click();
+    await flushPromises();
+    expect(prepareGovernanceProposalMock).not.toHaveBeenCalled();
+  });
+
+  it("prepares the exact payout lifecycle as step one", async () => {
+    getGovernanceCapabilitiesMock
+      .mockResolvedValueOnce(governanceCapabilities())
+      .mockResolvedValue({
+        ...governanceCapabilities(),
+        currentHeight: 250,
+      });
+    prepareGovernanceProposalMock.mockResolvedValueOnce(preparedReview());
+    await mountView();
+
+    const governance = useParliamentStore();
+    governance.composerKind = "ValidationFeePayoutLifecycle";
+    governance.validationFeePayoutBindingJson = JSON.stringify(
+      composerPayoutBinding(),
+    );
+    await governance.prepareProposal();
+
+    expect(prepareGovernanceProposalMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: CHAIN_ID,
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      kind: "ValidationFeePayoutLifecycle",
+      payload: {
+        payout_binding: composerPayoutBinding(),
+        referendum_window: { lower: "1150", upper: "4749" },
+      },
     });
-    const wrapper = mountView();
+    expect(getGovernanceCapabilitiesMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("seeds the exact window without inventing an effective height", async () => {
+    getGovernanceCurrentValidationFeePolicyMock.mockResolvedValueOnce(
+      validationFeePolicyView(),
+    );
+
+    await mountView();
+
+    const governance = useParliamentStore();
+    expect(governance.validationFeeWindowLower).toBe("1000");
+    expect(governance.validationFeeWindowUpper).toBe("4599");
+    expect(governance.validationFeeComposer.effective_from_height).toBe("");
+    governance.validationFeeComposer.effective_from_height = "130000";
+    governance.validationFeeWindowUpper = "4700";
     await flushPromises();
-
-    await wrapper.get(REFERENDUM_INPUT_SELECTOR).setValue("ref-1");
-    await wrapper.get(BALLOT_AMOUNT_INPUT_SELECTOR).setValue("20000");
-    const ballotButton = findButtonByText(wrapper, "Submit ballot");
-
-    expect(ballotButton.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain(
-      "Ballot amount exceeds the available XOR balance.",
+    expect(governance.validationFeeComposer.effective_from_height).toBe(
+      "130000",
+    );
+    expect(document.body.textContent).toContain(
+      "300-block submission safety margin above the 600-block minimum",
     );
   });
 
-  it("groups proposal reading and voting with keyboard-operable tabs", async () => {
-    const wrapper = mountView();
-    await flushPromises();
-
-    expect(wrapper.findAll(".parliament-decision-workspace")).toHaveLength(1);
-    const tablist = wrapper.get('.parliament-mobile-tabs[role="tablist"]');
-    const summaryTab = wrapper.get("#parliament-tab-summary");
-    const stageTab = wrapper.get("#parliament-tab-stage");
-    expect(summaryTab.attributes("aria-selected")).toBe("true");
-    expect(summaryTab.attributes("aria-controls")).toBe(
-      "parliament-panel-summary",
+  it("preserves the explicit effective height while rebasing the window", async () => {
+    getGovernanceCapabilitiesMock
+      .mockResolvedValueOnce(governanceCapabilities())
+      .mockResolvedValue({
+        ...governanceCapabilities(),
+        currentHeight: 250,
+      });
+    getGovernanceCurrentValidationFeePolicyMock.mockResolvedValueOnce(
+      validationFeePolicyView(),
     );
+    prepareGovernanceProposalMock.mockResolvedValueOnce(preparedReview());
+    await mountView();
 
-    await tablist.trigger("keydown", { key: "ArrowRight" });
-    expect(stageTab.attributes("aria-selected")).toBe("true");
-    expect(stageTab.attributes("tabindex")).toBe("0");
-    expect(
-      wrapper
-        .get('[data-testid="parliament-advanced-drawer"]')
-        .attributes("open"),
-    ).toBeUndefined();
+    const governance = useParliamentStore();
+    governance.composerKind = "ValidationFeePolicy";
+    governance.validationFeeWindowLower = "5000";
+    governance.validationFeeWindowUpper = "8599";
+    governance.validationFeeComposer.effective_from_height = "129561";
+    governance.validationFeePayoutBindingJson = JSON.stringify(
+      composerPayoutBinding(),
+    );
+    governance.validationFeePayoutLifecycleProposalId = OTHER_HASH.slice(2);
+    getGovernanceProposalDetailMock.mockResolvedValueOnce(
+      proposalDetail({
+        proposalId: OTHER_HASH,
+        status: "Enacted",
+        referendumStatus: "Closed",
+        currentHeight: "6000",
+      }),
+    );
+    await governance.prepareProposal();
+
+    expect(prepareGovernanceProposalMock).toHaveBeenCalledWith({
+      toriiUrl: "http://localhost:8080",
+      chainId: CHAIN_ID,
+      accountId: ACCOUNT,
+      networkPrefix: NETWORK_PREFIX,
+      kind: "ValidationFeePolicy",
+      payload: {
+        policy: {
+          schema_version: 1,
+          chain_id: CHAIN_ID,
+          genesis_hash: GENESIS_HASH,
+          policy_version: "2",
+          previous_policy_hash: "22".repeat(32),
+          ds_asset_id: APP_SBD_ASSET_ID,
+          ds_scale: 2,
+          fee: "0.10",
+          treasury_account_id: ACCOUNT,
+          charging_mode: {
+            charging_mode: "PER_QUALIFYING_TRANSFER_INSTRUCTION",
+            value: null,
+          },
+          effective_from_height: "129561",
+          expires_after_height: null,
+          exemption_classes: ["TREASURY_PAYOUT"],
+          treasury_payout_binding: composerPayoutBinding(),
+        },
+        referendum_window: { lower: "1150", upper: "4749" },
+        payout_lifecycle_proposal_id: OTHER_HASH.slice(2),
+      },
+    });
+    expect(getGovernanceCapabilitiesMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires the enacted lifecycle height to be at or below the explicit policy target", async () => {
+    getGovernanceCurrentValidationFeePolicyMock.mockResolvedValueOnce(
+      validationFeePolicyView(),
+    );
+    prepareGovernanceProposalMock.mockResolvedValue(preparedReview());
+    await mountView();
+
+    const governance = useParliamentStore();
+    governance.composerKind = "ValidationFeePolicy";
+    governance.validationFeeComposer.effective_from_height = "129561";
+    governance.validationFeePayoutBindingJson = JSON.stringify(
+      composerPayoutBinding(),
+    );
+    governance.validationFeePayoutLifecycleProposalId = OTHER_HASH.slice(2);
+    getGovernanceProposalDetailMock
+      .mockResolvedValueOnce(
+        proposalDetail({
+          proposalId: OTHER_HASH,
+          status: "Enacted",
+          referendumStatus: "Closed",
+          currentHeight: "9000",
+          hEnd: "8000",
+        }),
+      )
+      .mockResolvedValueOnce(
+        proposalDetail({
+          proposalId: OTHER_HASH,
+          status: "Enacted",
+          referendumStatus: "Closed",
+          currentHeight: "9000",
+          hEnd: "8588",
+        }),
+      )
+      .mockResolvedValueOnce(
+        proposalDetail({
+          proposalId: OTHER_HASH,
+          status: "Enacted",
+          referendumStatus: "Closed",
+          currentHeight: "9000",
+          hEnd: "8589",
+        }),
+      );
+
+    await governance.prepareProposal();
+    expect(prepareGovernanceProposalMock).toHaveBeenCalledTimes(1);
+    governance.cancelReview();
+    await governance.prepareProposal();
+    expect(prepareGovernanceProposalMock).toHaveBeenCalledTimes(2);
+    governance.cancelReview();
+    await governance.prepareProposal();
+
+    expect(prepareGovernanceProposalMock).toHaveBeenCalledTimes(2);
+    expect(governance.actionError).toContain(
+      "must enact no later than the policy enactment target",
+    );
   });
 });

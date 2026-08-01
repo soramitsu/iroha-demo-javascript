@@ -152,7 +152,7 @@ const appRoutes = [
     component: ParliamentView,
     meta: appRouteMeta({
       titleKey: "Governance",
-      subtitleKey: "Citizenship, referenda, ballots, and council status",
+      subtitleKey: "Live proposals, lifecycle, and citizen decisions",
       navLabelKey: "Governance",
       navGroup: "grow",
       navOrder: 20,
@@ -180,7 +180,7 @@ const appRoutes = [
     component: SccpView,
     meta: appRouteMeta({
       titleKey: "SCCP Bridge",
-      subtitleKey: "TAIRA, TRON, and BSC XOR bridge",
+      subtitleKey: "TAIRA, TRON, BSC, TON, and Solana XOR bridge",
       navLabelKey: "SCCP Bridge",
       navGroup: "services",
       navOrder: 70,

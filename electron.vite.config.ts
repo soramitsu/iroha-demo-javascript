@@ -1,24 +1,48 @@
 import { resolve } from "node:path";
 import { defineConfig } from "electron-vite";
 import vue from "@vitejs/plugin-vue";
+import {
+  buildIrohaSdkAliases,
+  resolveCompatibleIrohaSdkRoot,
+} from "./scripts/iroha-sdk-compat.mjs";
 
 const projectRoot = process.cwd();
 const resolveFromRoot = (...segments: string[]) =>
   resolve(projectRoot, ...segments);
-const sharedAliases = {
-  "@": resolveFromRoot("src"),
-  // electron-vite resolves preload with browser conditions by default;
-  // force the native-capable SDK crypto entry for proof/key helpers.
-  "@iroha/iroha-js/crypto": resolve(
-    projectRoot,
-    "../iroha/javascript/iroha_js/dist/crypto.js",
-  ),
-};
+const irohaSdkRoot = resolveCompatibleIrohaSdkRoot({ projectRoot });
+const sharedAliases = [
+  {
+    find: /^@\//u,
+    replacement: `${resolveFromRoot("src")}/`,
+  },
+  {
+    find: /^@noble\/ciphers\/chacha$/u,
+    replacement: resolveFromRoot("node_modules/@noble/ciphers/chacha.js"),
+  },
+  {
+    find: /^@noble\/hashes\/webcrypto\.js$/u,
+    replacement: resolveFromRoot(
+      "node_modules/@scure/bip39/node_modules/@noble/hashes/webcrypto.js",
+    ),
+  },
+  // This also forces the native-capable crypto entry in preload, whose
+  // default resolution otherwise uses browser conditions.
+  ...buildIrohaSdkAliases(irohaSdkRoot),
+];
+const rendererAliases = [
+  ...sharedAliases,
+  {
+    find: /^buffer$/u,
+    replacement: resolveFromRoot("node_modules/buffer/index.js"),
+  },
+];
+const sharedDedupe = ["@noble/curves", "@noble/hashes"];
 
 export default defineConfig({
   main: {
     resolve: {
       alias: sharedAliases,
+      dedupe: sharedDedupe,
     },
     build: {
       outDir: "dist/main",
@@ -37,6 +61,7 @@ export default defineConfig({
   preload: {
     resolve: {
       alias: sharedAliases,
+      dedupe: sharedDedupe,
     },
     build: {
       outDir: "dist/preload",
@@ -55,7 +80,8 @@ export default defineConfig({
       },
     },
     resolve: {
-      alias: sharedAliases,
+      alias: rendererAliases,
+      dedupe: sharedDedupe,
     },
     plugins: [vue()],
     server: {

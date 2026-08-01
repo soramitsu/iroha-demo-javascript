@@ -2,16 +2,17 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createPinia, setActivePinia } from "pinia";
 import { useVpnStore, VPN_STORAGE_KEY } from "@/stores/vpn";
 
-const snapshot = () =>
-  JSON.parse(localStorage.getItem(VPN_STORAGE_KEY) ?? "{}");
-
 describe("vpn store", () => {
   beforeEach(() => {
     localStorage.clear();
     setActivePinia(createPinia());
   });
 
-  it("hydrates defaults and persists non-sensitive state", () => {
+  it("hydrates clean defaults and removes the legacy global cache", () => {
+    localStorage.setItem(
+      VPN_STORAGE_KEY,
+      JSON.stringify({ selectedExitClass: "high-security" }),
+    );
     const store = useVpnStore();
     store.hydrate();
 
@@ -19,10 +20,10 @@ describe("vpn store", () => {
     expect(store.lastProfile).toBeNull();
     expect(store.receipts).toEqual([]);
     expect(store.helperHealth).toBeNull();
-    expect(snapshot().selectedExitClass).toBe("standard");
+    expect(localStorage.getItem(VPN_STORAGE_KEY)).toBeNull();
   });
 
-  it("stores selected exit class, profile, receipts, and helper health", () => {
+  it("keeps selected exit class, profile, receipts, and health in memory only", () => {
     const store = useVpnStore();
     store.hydrate();
     store.setSelectedExitClass("high-security");
@@ -80,16 +81,16 @@ describe("vpn store", () => {
       systemTunnelService: "Wi-Fi",
     });
 
-    const persisted = snapshot();
-    expect(persisted.selectedExitClass).toBe("high-security");
-    expect(persisted.lastProfile.relayEndpoint).toBe(
+    expect(store.selectedExitClass).toBe("high-security");
+    expect(store.lastProfile?.relayEndpoint).toBe(
       "/dns/torii.exit.example/udp/9443/quic",
     );
-    expect(persisted.receipts[0].sessionId).toBe("sess_1");
-    expect(persisted.helperHealth.helperReady).toBe(true);
+    expect(store.receipts[0]?.sessionId).toBe("sess_1");
+    expect(store.helperHealth?.helperReady).toBe(true);
+    expect(localStorage.getItem(VPN_STORAGE_KEY)).toBeNull();
   });
 
-  it("hydrates existing snapshots and normalizes unsupported exit classes", () => {
+  it("does not migrate legacy renderer snapshots", () => {
     localStorage.setItem(
       VPN_STORAGE_KEY,
       JSON.stringify({
@@ -102,6 +103,7 @@ describe("vpn store", () => {
     store.hydrate();
 
     expect(store.selectedExitClass).toBe("standard");
-    expect(store.receipts).toEqual([{ sessionId: "sess_2" }]);
+    expect(store.receipts).toEqual([]);
+    expect(localStorage.getItem(VPN_STORAGE_KEY)).toBeNull();
   });
 });

@@ -4,10 +4,24 @@ import type {
   KaigiPeerIdentityReveal,
   KaigiSignalKeyPair,
 } from "@/types/iroha";
+import {
+  buildEndpointIdentityScope,
+  type EndpointIdentityScope,
+  type EndpointIdentityScopeInput,
+} from "@/utils/endpointScope";
+import {
+  requireKaigiCallId,
+  requireKaigiInviteSecretBase64Url,
+} from "@/utils/kaigiInvite";
 
-export const KAIGI_STORAGE_KEY = "iroha-demo:kaigi";
+export const KAIGI_STORAGE_KEY = "iroha-demo:kaigi:host-sessions:v1";
+const OBSOLETE_KAIGI_STORAGE_KEYS = [
+  "iroha-demo:kaigi",
+  "iroha-demo:kaigi:v2",
+] as const;
 
 export type KaigiHostSessionRecord = {
+  endpointScope: EndpointIdentityScope;
   accountId: string;
   callId: string;
   meetingCode: string;
@@ -43,20 +57,33 @@ const normalizeHostSession = (
   value: Partial<KaigiHostSessionRecord> & Record<string, unknown>,
 ): KaigiHostSessionRecord | null => {
   const accountId = trimString(value.accountId);
-  const callId = trimString(value.callId);
   const meetingCode = trimString(value.meetingCode);
-  const inviteSecretBase64Url = trimString(value.inviteSecretBase64Url);
   const hostKaigiKeys = asRecord(value.hostKaigiKeys);
+  const endpointScopeRecord = asRecord(value.endpointScope);
   const publicKeyBase64Url = trimString(hostKaigiKeys?.publicKeyBase64Url);
   const privateKeyBase64Url = trimString(hostKaigiKeys?.privateKeyBase64Url);
   const createdAtMs = Number(value.createdAtMs);
   const scheduledStartMs = Number(value.scheduledStartMs);
   const expiresAtMs = Number(value.expiresAtMs);
+  let endpointScope: EndpointIdentityScope;
+  let callId: string;
+  let inviteSecretBase64Url: string;
+  try {
+    endpointScope = buildEndpointIdentityScope({
+      toriiUrl: trimString(endpointScopeRecord?.origin),
+      observedChainId: trimString(endpointScopeRecord?.chainId),
+      observedNetworkPrefix: Number(endpointScopeRecord?.networkPrefix),
+    });
+    callId = requireKaigiCallId(value.callId);
+    inviteSecretBase64Url = requireKaigiInviteSecretBase64Url(
+      value.inviteSecretBase64Url,
+    );
+  } catch {
+    return null;
+  }
   if (
     !accountId ||
-    !callId ||
     !meetingCode ||
-    !inviteSecretBase64Url ||
     !publicKeyBase64Url ||
     !privateKeyBase64Url ||
     !Number.isFinite(createdAtMs) ||
@@ -66,6 +93,7 @@ const normalizeHostSession = (
     return null;
   }
   return {
+    endpointScope,
     accountId,
     callId,
     meetingCode,
@@ -106,6 +134,9 @@ export const useKaigiStore = defineStore("kaigi", {
     hydrate() {
       if (this.hydrated) {
         return;
+      }
+      for (const obsoleteKey of OBSOLETE_KAIGI_STORAGE_KEYS) {
+        localStorage.removeItem(obsoleteKey);
       }
       const raw = localStorage.getItem(KAIGI_STORAGE_KEY);
       if (raw) {
@@ -148,6 +179,8 @@ export const useKaigiStore = defineStore("kaigi", {
       const next = this.hostSessions.filter(
         (entry) =>
           !(
+            entry.endpointScope.storageSegment ===
+              normalized.endpointScope.storageSegment &&
             entry.accountId === normalized.accountId &&
             entry.callId === normalized.callId
           ),
@@ -156,9 +189,19 @@ export const useKaigiStore = defineStore("kaigi", {
       this.hostSessions = next;
       this.persist();
     },
-    removeHostSession(accountId: string, callId: string) {
+    removeHostSession(
+      endpointIdentity: EndpointIdentityScopeInput,
+      accountId: string,
+      callId: string,
+    ) {
+      const scope = buildEndpointIdentityScope(endpointIdentity);
       this.hostSessions = this.hostSessions.filter(
-        (entry) => !(entry.accountId === accountId && entry.callId === callId),
+        (entry) =>
+          !(
+            entry.endpointScope.storageSegment === scope.storageSegment &&
+            entry.accountId === accountId &&
+            entry.callId === callId
+          ),
       );
       this.persist();
     },
@@ -172,9 +215,20 @@ export const useKaigiStore = defineStore("kaigi", {
   getters: {
     findLatestActiveHostSession:
       (state) =>
-      (accountId: string, nowMs = Date.now()): KaigiHostSessionRecord | null =>
-        state.hostSessions.find(
-          (entry) => entry.accountId === accountId && entry.expiresAtMs > nowMs,
-        ) ?? null,
+      (
+        endpointIdentity: EndpointIdentityScopeInput,
+        accountId: string,
+        nowMs = Date.now(),
+      ): KaigiHostSessionRecord | null => {
+        const scope = buildEndpointIdentityScope(endpointIdentity);
+        return (
+          state.hostSessions.find(
+            (entry) =>
+              entry.endpointScope.storageSegment === scope.storageSegment &&
+              entry.accountId === accountId &&
+              entry.expiresAtMs > nowMs,
+          ) ?? null
+        );
+      },
   },
 });

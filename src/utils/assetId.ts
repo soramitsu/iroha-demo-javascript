@@ -6,7 +6,7 @@ export type ParsedAssetReference = {
 };
 
 const NORITO_PREFIX = "norito:";
-const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/i;
+const NORITO_HEX_BODY_PATTERN = /^[0-9a-f]+$/;
 const ACCOUNT_REFERENCE_PATTERN =
   /^(?:[^#@]+@[^#]+|testu.+|sorau.+|ｓｏｒａu.+|n\d{1,4}u.+)$/u;
 const OPAQUE_PREVIEW_HEAD = 8;
@@ -18,6 +18,7 @@ const ASSET_DEFINITION_ADDRESS_LEN = 21;
 const BARE_ASSET_DEFINITION_LEN = 16;
 const BASE58_ALPHABET =
   "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const SORA_XOR_ASSET_DEFINITION_ID = "6TEAJqbb8oEPmLncoNiMRbLEK6tw";
 
 export const splitAssetReference = (
   value: string | null | undefined,
@@ -192,10 +193,7 @@ const normalizeComparableAssetDefinitionId = (
   if (!definitionId) {
     return "";
   }
-  return (
-    decodeNoritoAssetDefinitionId(definitionId)?.trim().toLowerCase() ||
-    definitionId.toLowerCase()
-  );
+  return decodeNoritoAssetDefinitionId(definitionId)?.trim() || definitionId;
 };
 
 export const areAssetDefinitionIdsEquivalent = (
@@ -207,13 +205,15 @@ export const areAssetDefinitionIdsEquivalent = (
   if (!normalizedLeft || !normalizedRight) {
     return false;
   }
-  if (normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()) {
+  if (normalizedLeft === normalizedRight) {
     return true;
   }
-  return (
-    normalizeComparableAssetDefinitionId(normalizedLeft) ===
-    normalizeComparableAssetDefinitionId(normalizedRight)
-  );
+  const decodedLeft = decodeNoritoAssetDefinitionId(normalizedLeft)?.trim();
+  const decodedRight = decodeNoritoAssetDefinitionId(normalizedRight)?.trim();
+  if (!decodedLeft && !decodedRight) {
+    return false;
+  }
+  return (decodedLeft || normalizedLeft) === (decodedRight || normalizedRight);
 };
 
 const shortenOpaqueAssetLiteral = (value: string) => {
@@ -233,10 +233,7 @@ const shortenOpaqueAssetLiteral = (value: string) => {
 };
 
 export const isNoritoAssetDefinitionId = (value: string | null | undefined) =>
-  extractAssetDefinitionId(value)
-    .trim()
-    .toLowerCase()
-    .startsWith(NORITO_PREFIX);
+  extractAssetDefinitionId(value).trim().startsWith(NORITO_PREFIX);
 
 const SYMBOL_PATTERN = /^[a-z0-9._-]{1,16}$/i;
 
@@ -249,11 +246,10 @@ export const deriveAssetSymbol = (
     return fallback;
   }
 
-  const normalized = definitionId.toLowerCase();
-  if (normalized.includes("xor")) {
+  if (definitionId === SORA_XOR_ASSET_DEFINITION_ID) {
     return "XOR";
   }
-  if (normalized.startsWith("norito:")) {
+  if (definitionId.startsWith(NORITO_PREFIX)) {
     return fallback;
   }
 
@@ -314,78 +310,11 @@ export const resolveToriiXorAsset = <
   assets: TAsset[],
   preferredAssetDefinitionIds: Array<string | null | undefined> = [],
 ) => {
-  const normalizedPreferredDefinitionIds = new Set(
-    preferredAssetDefinitionIds
-      .map((value) => extractAssetDefinitionId(value).trim().toLowerCase())
-      .filter(Boolean),
-  );
-  const rankedAssets = assets
-    .map((asset, index) => {
-      const assetId = String(asset.asset_id ?? "").trim();
-      const definitionId = extractAssetDefinitionId(assetId)
-        .trim()
-        .toLowerCase();
-      if (!assetId || !definitionId) {
-        return null;
-      }
-
-      const quantity = Number(String(asset.quantity ?? "").trim());
-      const quantityScore =
-        Number.isFinite(quantity) && quantity > 0
-          ? Math.min(quantity, 1_000_000)
-          : 0;
-      const isPreferred = normalizedPreferredDefinitionIds.has(definitionId);
-      const isExplicitXor = definitionId.startsWith("xor#");
-      const isXorLike = !isExplicitXor && definitionId.includes("xor");
-
-      let score = quantityScore;
-      if (isPreferred) {
-        score += 1_000_000;
-      } else if (isExplicitXor) {
-        score += 100_000;
-      } else if (isXorLike) {
-        score += 50_000;
-      }
-
-      return {
-        asset,
-        index,
-        score,
-        isPositive: quantityScore > 0,
-        isXorCandidate: isPreferred || isExplicitXor || isXorLike,
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-
-  const liveXorAsset = rankedAssets
-    .filter((entry) => entry.isXorCandidate)
-    .sort(
-      (left, right) =>
-        right.score - left.score ||
-        Number(right.isPositive) - Number(left.isPositive) ||
-        left.index - right.index,
-    )[0];
-  if (liveXorAsset) {
-    return liveXorAsset.asset;
-  }
-
-  const positiveAsset = rankedAssets
-    .filter((entry) => entry.isPositive)
-    .sort(
-      (left, right) => right.score - left.score || left.index - right.index,
-    )[0];
-  return positiveAsset?.asset ?? rankedAssets[0]?.asset ?? null;
-};
-
-export const resolveUniqueLiveAssetDefinitionId = (
-  assets: Array<{ asset_id: string; quantity: string }>,
-  requestedAssetDefinitionId: string | null | undefined,
-): string => {
-  const requestedDefinitionId = extractAssetDefinitionId(
-    requestedAssetDefinitionId,
-  ).trim();
+  const preferredDefinitionIds = preferredAssetDefinitionIds
+    .map((value) => extractAssetDefinitionId(value).trim())
+    .filter(Boolean);
   const candidates = assets
-    .map((asset, index) => {
+    .map((asset) => {
       const assetId = String(asset.asset_id ?? "").trim();
       const definitionId = extractAssetDefinitionId(assetId).trim();
       if (!assetId || !definitionId) {
@@ -394,61 +323,29 @@ export const resolveUniqueLiveAssetDefinitionId = (
 
       const quantity = Number(String(asset.quantity ?? "").trim());
       return {
+        asset,
         definitionId,
-        comparableDefinitionId:
-          normalizeComparableAssetDefinitionId(definitionId),
         isPositive: Number.isFinite(quantity) && quantity > 0,
-        index,
       };
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
 
-  if (!candidates.length) {
-    return "";
-  }
-
-  if (requestedDefinitionId) {
-    const matchingCandidates = candidates.filter((candidate) =>
+  for (const preferredDefinitionId of preferredDefinitionIds) {
+    const preferredCandidates = candidates.filter((candidate) =>
       areAssetDefinitionIdsEquivalent(
         candidate.definitionId,
-        requestedDefinitionId,
+        preferredDefinitionId,
       ),
     );
-    if (matchingCandidates.length > 0) {
-      return (
-        matchingCandidates.find((candidate) => candidate.isPositive)
-          ?.definitionId ||
-        matchingCandidates.sort((left, right) => left.index - right.index)[0]
-          ?.definitionId ||
-        ""
-      );
+    const preferredCandidate =
+      preferredCandidates.find((candidate) => candidate.isPositive) ??
+      preferredCandidates[0];
+    if (preferredCandidate) {
+      return preferredCandidate.asset;
     }
   }
 
-  const uniquePositiveCandidates = new Map<
-    string,
-    { definitionId: string; index: number }
-  >();
-  for (const candidate of candidates) {
-    if (!candidate.isPositive) {
-      continue;
-    }
-    if (!uniquePositiveCandidates.has(candidate.comparableDefinitionId)) {
-      uniquePositiveCandidates.set(candidate.comparableDefinitionId, {
-        definitionId: candidate.definitionId,
-        index: candidate.index,
-      });
-    }
-  }
-
-  if (uniquePositiveCandidates.size !== 1) {
-    return "";
-  }
-
-  const resolvedCandidate = Array.from(uniquePositiveCandidates.values()).sort(
-    (left, right) => left.index - right.index,
-  )[0];
-  return resolvedCandidate?.definitionId || "";
+  return null;
 };
 
 export const shouldReplaceConfiguredAssetDefinitionId = (input: {

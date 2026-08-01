@@ -77,6 +77,22 @@
       </div>
     </header>
 
+    <div
+      v-if="endpointBannerVisible"
+      class="endpoint-safety-banner"
+      :class="`is-${endpointStatus.accessMode || 'checking'}`"
+      :role="endpointStatus.degraded ? 'alert' : 'status'"
+      aria-live="polite"
+      data-testid="endpoint-safety-banner"
+    >
+      <AppIcon name="network" />
+      <div>
+        <strong>{{ endpointBannerTitle }}</strong>
+        <span>{{ endpointBannerMessage }}</span>
+      </div>
+      <RouterLink to="/settings">{{ t("Open settings") }}</RouterLink>
+    </div>
+
     <div class="app-shell">
       <aside
         id="app-navigation"
@@ -151,6 +167,7 @@ import {
 } from "vue";
 import { useRoute } from "vue-router";
 import { useSessionStore } from "./stores/session";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useAppI18n } from "@/composables/useAppI18n";
 import IrohaLogo from "@/assets/iroha_logo.svg";
 import SakuraScene from "@/components/SakuraScene.vue";
@@ -169,6 +186,7 @@ const CUSTOM_NETWORK_PROFILE_ID = "__custom_network_profile__";
 
 const route = useRoute();
 const session = useSessionStore();
+const endpointStatus = useEndpointStore();
 const { t } = useAppI18n();
 const networkProfileOptions = CHAIN_PRESETS;
 const utilityMenu = ref<HTMLDetailsElement | null>(null);
@@ -190,11 +208,37 @@ const activeNetworkProfileId = computed(
   () => activeNetworkPreset.value?.id ?? CUSTOM_NETWORK_PROFILE_ID,
 );
 const activeNetworkLabel = computed(() => {
+  const suffix =
+    endpointStatus.accessMode === "read-only"
+      ? ` · ${t("Read only")}`
+      : endpointStatus.accessMode === "offline"
+        ? ` · ${t("Offline")}`
+        : "";
   if (activeNetworkPreset.value) {
-    return activeNetworkPreset.value.label;
+    return `${activeNetworkPreset.value.label}${suffix}`;
   }
-  return session.connection.toriiUrl ? t("Custom endpoint") : t("Offline");
+  return session.connection.toriiUrl
+    ? `${t("Custom endpoint")}${suffix}`
+    : t("Offline");
 });
+const endpointBannerVisible = computed(
+  () => endpointStatus.state === "checking" || endpointStatus.degraded,
+);
+const endpointBannerTitle = computed(() => {
+  if (endpointStatus.state === "checking") {
+    return t("Checking endpoint identity…");
+  }
+  if (endpointStatus.accessMode === "offline") {
+    return t("Endpoint offline");
+  }
+  return t("Writes blocked");
+});
+const endpointBannerMessage = computed(() =>
+  endpointStatus.state === "checking"
+    ? t("Confirming the endpoint matches the configured network.")
+    : endpointStatus.diagnostic ||
+      t("Endpoint identity could not be verified. Reads remain available."),
+);
 const activeAccountLabel = computed(() =>
   getAccountDisplayLabel(
     session.activeAccount,
@@ -267,6 +311,20 @@ const selectNetworkProfile = (profileId: string) => {
 const handleNetworkProfileChange = (event: Event) => {
   selectNetworkProfile((event.target as HTMLSelectElement).value);
 };
+
+watch(
+  () =>
+    [
+      session.connection.toriiUrl,
+      session.connection.chainId,
+      session.connection.networkPrefix,
+      session.activeAccountId,
+    ] as const,
+  ([toriiUrl, chainId, networkPrefix]) => {
+    void endpointStatus.inspect({ toriiUrl, chainId, networkPrefix });
+  },
+  { immediate: true },
+);
 
 onMounted(() => {
   mobileViewportQuery = window.matchMedia("(max-width: 760px)");

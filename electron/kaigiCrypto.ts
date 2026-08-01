@@ -9,6 +9,7 @@ import {
   randomBytes,
   type KeyObject,
 } from "node:crypto";
+import { requireKaigiInviteSecretBase64Url } from "../src/utils/kaigiInvite";
 
 export const KAIGI_SEALED_BOX_SCHEMA = "iroha-demo-kaigi-sealed-box/v1";
 export const KAIGI_SECRET_BOX_SCHEMA = "iroha-demo-kaigi-secret-box/v1";
@@ -101,7 +102,7 @@ const deriveSecretAesKey = (secretBase64Url: string, salt: Buffer): Buffer =>
     hkdfSync(
       "sha256",
       Buffer.from(
-        requireBase64Url(secretBase64Url, "inviteSecretBase64Url"),
+        requireKaigiInviteSecretBase64Url(secretBase64Url),
         "base64url",
       ),
       salt,

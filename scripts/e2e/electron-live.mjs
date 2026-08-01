@@ -18,6 +18,10 @@ import {
   parseNetworkPrefix,
   resolveOptionalAliasRegistrationOutcome,
 } from "./electron-live-utils.mjs";
+import {
+  assertFinalizedMutationReceipt,
+  waitForToriiTransactionFinality,
+} from "../live-transaction-finality.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDir, "..", "..");
@@ -26,7 +30,7 @@ const screenshotDir = join(projectRoot, "output", "playwright");
 const e2eStateDir = join(projectRoot, "output", "e2e");
 const fundedWalletCachePath = join(e2eStateDir, "live-funded-wallet.json");
 const tairaToriiUrl = "https://taira.sora.org";
-const tairaChainId = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const tairaChainId = "fc56984b-2be7-431d-840e-21514d1883f0";
 const tairaToriiHosts = new Set(["taira.sora.org", "www.taira.sora.org"]);
 
 const toriiUrl = readEnv("E2E_TORII_URL", tairaToriiUrl);
@@ -39,6 +43,16 @@ const defaultDerivationLabel = "default";
 const expectedFaucetQuantity = readEnv("E2E_EXPECTED_FAUCET_QUANTITY", "25000");
 const reuseFundedWalletCache = ["1", "true", "yes"].includes(
   String(process.env.E2E_REUSE_FUNDED_CACHE ?? "")
+    .trim()
+    .toLowerCase(),
+);
+const registerCitizenDuringNavigation = ["1", "true", "yes"].includes(
+  String(process.env.E2E_REGISTER_CITIZEN ?? "")
+    .trim()
+    .toLowerCase(),
+);
+const governanceOnly = ["1", "true", "yes"].includes(
+  String(process.env.E2E_GOVERNANCE_ONLY ?? "")
     .trim()
     .toLowerCase(),
 );
@@ -83,6 +97,12 @@ async function main() {
       privateKeyHex: fundedFlow.privateKeyHex,
       assetDefinitionId: readOnlyAssetId,
     });
+    if (governanceOnly) {
+      console.log(
+        "Live Electron governance E2E passed (funded wallet + citizenship bond).",
+      );
+      return;
+    }
     const onboardingOutcome = await runOnboardingFlow(page, onboardingAssetId);
 
     console.log(
@@ -478,6 +498,34 @@ async function runFaucetFlow(page) {
           prefix: networkPrefix,
         },
       );
+      if (String(faucetReceipt?.status ?? "").trim() !== "FINALIZED") {
+        throw new Error(
+          `Faucet bridge did not report finalized success: ${JSON.stringify(
+            faucetReceipt,
+          ).slice(0, 1200)}`,
+        );
+      }
+      const faucetBridgeFinality = assertFinalizedMutationReceipt(
+        faucetReceipt,
+        {
+          label: "Faucet claim",
+          hashFields: ["tx_hash_hex"],
+        },
+      );
+      const faucetObservedFinality = await waitForToriiTransactionFinality({
+        toriiUrl,
+        hashHex: faucetBridgeFinality.hashHex,
+      });
+      if (
+        faucetObservedFinality.finality.blockHeight !==
+          faucetBridgeFinality.finality.blockHeight ||
+        faucetObservedFinality.finality.blockHash !==
+          faucetBridgeFinality.finality.blockHash
+      ) {
+        throw new Error(
+          "Faucet bridge proof does not match the independently observed finalized block.",
+        );
+      }
 
       const fundedBalance = await page.evaluate(
         async ({ torii, accountId }) => {
@@ -522,7 +570,7 @@ async function runFaucetFlow(page) {
 
       if (!fundedBalance?.assetId || !fundedBalance?.quantity) {
         throw new Error(
-          `Faucet flow queued a request but did not observe a funded balance within 60s. State: ${JSON.stringify(
+          `Faucet transaction finalized, but the wallet did not observe a funded balance within 60s. State: ${JSON.stringify(
             {
               faucetReceipt,
               fundedBalance,
@@ -560,9 +608,7 @@ async function runFaucetFlow(page) {
       }
 
       console.log(
-        txHash
-          ? `Faucet probe queued ${txHash} and observed ${fundedBalance.quantity} units on ${assetId}.`
-          : `Faucet probe observed ${fundedBalance.quantity} units on ${assetId}; bridge result did not expose a transaction hash before sampling.`,
+        `Faucet transaction ${txHash} finalized in block ${faucetObservedFinality.finality.blockHeight}; observed ${fundedBalance.quantity} units on ${assetId}.`,
       );
 
       return {
@@ -829,6 +875,11 @@ async function runReadOnlyFlow(page, fundedAccount) {
     .getByRole("heading", { name: "Wallet", exact: true, level: 1 })
     .waitFor({ state: "visible", timeout: 45_000 });
 
+  if (governanceOnly) {
+    await runNavigationSmokeFlow(page, fundedAccount);
+    return;
+  }
+
   const confidentialTransferProbe = await page.evaluate(
     async ({
       torii,
@@ -843,6 +894,29 @@ async function runReadOnlyFlow(page, fundedAccount) {
         new Promise((resolve) => {
           window.setTimeout(resolve, delayMs);
         });
+      const assertFinalizedSubmission = (submission, label) => {
+        const hash = String(submission?.hash ?? "").trim();
+        const finality = submission?.finality;
+        if (!/^[0-9a-f]{64}$/u.test(hash)) {
+          throw new Error(
+            `${label} did not return a canonical transaction hash.`,
+          );
+        }
+        if (
+          finality?.status !== "finalized" ||
+          finality.transactionHash !== hash ||
+          !Number.isSafeInteger(finality.blockHeight) ||
+          finality.blockHeight < 1 ||
+          !/^[0-9a-f]{64}$/u.test(String(finality.blockHash ?? "")) ||
+          !Number.isSafeInteger(finality.finalizedBlockHeight) ||
+          finality.finalizedBlockHeight < finality.blockHeight
+        ) {
+          throw new Error(
+            `${label} was not proven in an exact finalized block.`,
+          );
+        }
+        return finality;
+      };
       const readSpendableQuantity = (balance) => {
         const raw =
           balance?.spendableQuantity ??
@@ -981,6 +1055,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
             initialAliceBalance,
           };
         }
+        assertFinalizedSubmission(selfShield, "Self-shield transaction");
         selfShieldHash = selfShield.hash;
         aliceAfterSelfShield = await waitForConfidentialBalance({
           accountId: aliceAccountId,
@@ -1037,6 +1112,10 @@ async function runReadOnlyFlow(page, fundedAccount) {
           aliceAfterSelfShield,
         };
       }
+      assertFinalizedSubmission(
+        recipientTransfer,
+        "Recipient shielded transaction",
+      );
 
       const expectedAliceAfterRecipient =
         initialAliceSpendable + selfShieldQuantity - 1n;
@@ -1131,6 +1210,7 @@ async function runReadOnlyFlow(page, fundedAccount) {
           bobRecoveredAfterRecipient,
         };
       }
+      assertFinalizedSubmission(unshield, "Unshield transaction");
       const expectedAliceAfterUnshield = expectedAliceAfterRecipient - 1n;
       const aliceAfterUnshield = await waitForConfidentialBalance({
         accountId: aliceAccountId,
@@ -1206,6 +1286,30 @@ async function runReadOnlyFlow(page, fundedAccount) {
     );
   }
 
+  const confidentialFinalityChecks = [
+    {
+      label: "self-shield",
+      hashHex: confidentialTransferProbe.selfShieldHash,
+    },
+    {
+      label: "recipient shielded send",
+      hashHex: confidentialTransferProbe.recipientTransferHash,
+    },
+    {
+      label: "unshield",
+      hashHex: confidentialTransferProbe.unshieldHash,
+    },
+  ].filter(({ hashHex }) => String(hashHex ?? "").trim());
+  const independentlyObservedConfidentialFinality = await Promise.all(
+    confidentialFinalityChecks.map(async ({ label, hashHex }) => ({
+      label,
+      evidence: await waitForToriiTransactionFinality({
+        toriiUrl,
+        hashHex: String(hashHex),
+      }),
+    })),
+  );
+
   console.log(
     `Confidential transfer probe completed self-shield ${String(
       confidentialTransferProbe.selfShieldHash ?? "skipped",
@@ -1213,7 +1317,11 @@ async function runReadOnlyFlow(page, fundedAccount) {
       confidentialTransferProbe.recipientTransferHash
     } to ${confidentialTransferProbe.bobAccountId}, recipient recovery scan ${
       confidentialTransferProbe.observedBobRecoveredAfterRecipient
-    }, and unshield ${confidentialTransferProbe.unshieldHash}.`,
+    }, and unshield ${
+      confidentialTransferProbe.unshieldHash
+    }. Independently proven blocks: ${independentlyObservedConfidentialFinality
+      .map(({ label, evidence }) => `${label}=${evidence.finality.blockHeight}`)
+      .join(", ")}.`,
   );
 
   await page.evaluate(() => {
@@ -1363,10 +1471,12 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
         privateKeyHex,
       });
 
-      let onboarding = { status: "ok", detail: "" };
+      let onboarding = { status: "ok", detail: "", response: null };
       try {
-        await window.iroha.onboardAccount({
+        const response = await window.iroha.onboardAccount({
           toriiUrl: torii,
+          chainId: chain,
+          networkPrefix: prefix,
           alias,
           accountId: summary.accountId,
           identity: {
@@ -1374,10 +1484,16 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
             managed_by: "e2e-harness",
           },
         });
+        onboarding = {
+          status: "ok",
+          detail: "",
+          response,
+        };
       } catch (error) {
         onboarding = {
           status: "error",
           detail: String(error ?? ""),
+          response: null,
         };
       }
 
@@ -1465,8 +1581,15 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
       "Optional alias registration probe: deterministic account already exists (HTTP 409), reusing existing account profile.",
     );
   } else {
+    const onboardingTxHash = String(
+      onboardingBootstrap?.onboarding?.response?.tx_hash_hex ?? "",
+    ).trim();
+    const onboardingFinality = await waitForToriiTransactionFinality({
+      toriiUrl,
+      hashHex: onboardingTxHash,
+    });
     console.log(
-      "Optional alias registration probe: deterministic account registration succeeded.",
+      `Optional alias registration probe: deterministic account registration finalized in block ${onboardingFinality.finality.blockHeight} (${onboardingFinality.hashHex}).`,
     );
   }
 
@@ -1486,7 +1609,7 @@ async function runOnboardingFlow(page, resolvedAssetDefinitionId) {
 }
 
 async function runNavigationSmokeFlow(page, fundedAccount) {
-  const checks = [
+  const routeChecks = [
     {
       hash: "#/setup",
       headingOptions: ["Advanced settings", "Advanced", "Session Setup"],
@@ -1503,9 +1626,9 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       sectionText: "Stake / Unstake",
     },
     {
-      hash: "#/parliament",
+      hash: "#/governance",
       headingOptions: ["Governance", "SORA Parliament"],
-      sectionText: "Voting eligibility",
+      sectionText: "Eligibility",
     },
     {
       hash: "#/subscriptions",
@@ -1538,6 +1661,9 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       sectionText: "Network health",
     },
   ];
+  const checks = governanceOnly
+    ? routeChecks.filter((check) => check.hash === "#/governance")
+    : routeChecks;
 
   for (const check of checks) {
     await page.evaluate((hash) => {
@@ -1600,15 +1726,139 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
     }
 
-    if (check.hash === "#/parliament") {
-      await page
-        .getByRole("button", { name: "Bond 10000 XOR", exact: true })
-        .waitFor({
+    if (check.hash === "#/governance") {
+      const citizenshipAccountId =
+        fundedAccount.i105AccountId || fundedAccount.accountId;
+      const citizenshipStatus = await page.evaluate(
+        ({ torii, accountId }) =>
+          window.iroha.getGovernanceCitizenStatus({
+            toriiUrl: torii,
+            accountId,
+          }),
+        {
+          torii: toriiUrl,
+          accountId: citizenshipAccountId,
+        },
+      );
+      if (!citizenshipStatus?.isCitizen) {
+        const bondButton = page.getByRole("button", {
+          name: "Bond 10000 XOR",
+          exact: true,
+        });
+        await bondButton.waitFor({
           state: "visible",
           timeout: 45_000,
         });
+        if (registerCitizenDuringNavigation) {
+          await page
+            .waitForFunction(
+              () => {
+                const button = document.querySelector(
+                  '[data-testid="governance-bond-citizen"]',
+                );
+                return button instanceof HTMLButtonElement && !button.disabled;
+              },
+              undefined,
+              { timeout: 60_000 },
+            )
+            .catch(() => null);
+          if (await bondButton.isDisabled()) {
+            const reason =
+              (await page
+                .locator(".citizenship-action .gate-reason")
+                .textContent()
+                .catch(() => null)) ?? "unknown eligibility failure";
+            throw new Error(
+              `Live citizenship bond is disabled for a funded wallet: ${reason.trim()}`,
+            );
+          }
+          await bondButton.click();
+          const confirmBondButton = page.getByRole("button", {
+            name: "Sign and commit",
+            exact: true,
+          });
+          await confirmBondButton.waitFor({
+            state: "visible",
+            timeout: 45_000,
+          });
+          await confirmBondButton.click();
+          const citizenshipOutcome = await Promise.race([
+            page
+              .locator(".governance-shell > .message.success")
+              .waitFor({ state: "visible", timeout: 120_000 })
+              .then(async () => ({
+                kind: "finalized",
+                message:
+                  (await page
+                    .locator(".governance-shell > .message.success")
+                    .textContent()) ?? "",
+              })),
+            page
+              .locator(".governance-shell .message.error")
+              .last()
+              .waitFor({ state: "visible", timeout: 120_000 })
+              .then(async () => ({
+                kind: "rejected",
+                message:
+                  (await page
+                    .locator(".governance-shell .message.error")
+                    .last()
+                    .textContent()) ?? "unknown citizenship error",
+              })),
+          ]);
+          if (citizenshipOutcome.kind === "rejected") {
+            throw new Error(
+              `Live citizenship bond failed: ${citizenshipOutcome.message.trim()}`,
+            );
+          }
+          const finalizedMessage = citizenshipOutcome.message.trim();
+          const finalizedMatch = finalizedMessage.match(
+            /^Finalized in block ([1-9]\d*): ([0-9a-f]{64})$/u,
+          );
+          if (!finalizedMatch) {
+            throw new Error(
+              `Live citizenship bond did not expose an exact finalized-block receipt: ${finalizedMessage}`,
+            );
+          }
+          const displayedBlockHeight = Number(finalizedMatch[1]);
+          const citizenshipFinality = await waitForToriiTransactionFinality({
+            toriiUrl,
+            hashHex: finalizedMatch[2],
+          });
+          if (
+            citizenshipFinality.finality.blockHeight !== displayedBlockHeight
+          ) {
+            throw new Error(
+              "Live citizenship finalized-block receipt disagrees with independent Torii evidence.",
+            );
+          }
+          await page
+            .getByText("Eligible", { exact: true })
+            .first()
+            .waitFor({ state: "visible", timeout: 120_000 });
+          const finalizedCitizenshipStatus = await page.evaluate(
+            ({ torii, accountId }) =>
+              window.iroha.getGovernanceCitizenStatus({
+                toriiUrl: torii,
+                accountId,
+              }),
+            {
+              torii: toriiUrl,
+              accountId: citizenshipAccountId,
+            },
+          );
+          if (!finalizedCitizenshipStatus?.isCitizen) {
+            throw new Error(
+              "The governance UI reported citizenship, but the live Torii citizenship read did not confirm it.",
+            );
+          }
+          console.log(
+            `Live citizenship bond finalized in block ${citizenshipFinality.finality.blockHeight} for ${citizenshipAccountId}.`,
+          );
+        }
+      }
       await page
-        .getByRole("button", { name: "Submit ballot", exact: true })
+        .getByRole("button", { name: "Review citizen ballot", exact: true })
         .waitFor({
           state: "visible",
           timeout: 45_000,
@@ -1900,6 +2150,10 @@ async function runNavigationSmokeFlow(page, fundedAccount) {
       }
       await moveActionButton.waitFor({ state: "visible", timeout: 30_000 });
     }
+  }
+
+  if (governanceOnly) {
+    return;
   }
 
   // Ensure receive page still renders a QR payload in the hydrated account flow.

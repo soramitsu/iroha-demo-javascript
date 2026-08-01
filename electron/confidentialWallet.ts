@@ -15,6 +15,7 @@ import {
   encryptKaigiPayload,
   type KaigiSealedBox,
 } from "./kaigiCrypto";
+import { extractAssetDefinitionId } from "../src/utils/assetId";
 
 export const CONFIDENTIAL_WALLET_METADATA_KEY =
   "iroha_demo_confidential_wallet";
@@ -324,7 +325,7 @@ const readWalletMetadataRecord = (
 };
 
 const normalizeAssetDefinitionId = (value: string): string =>
-  value.trim().toLowerCase();
+  extractAssetDefinitionId(value).trim();
 
 const parseShieldInstruction = (
   instruction: ConfidentialInstructionLike | null | undefined,

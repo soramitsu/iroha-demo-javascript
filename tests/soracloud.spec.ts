@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildSoraCloudHfStatusQuery,
   deriveSoraCloudModelName,
   deriveSoraCloudPublicUrls,
   deriveSoraCloudServiceName,
+  missingSoraCloudHfStatus,
+  normalizeSoraCloudHfStatusPayload,
   normalizeSoraCloudStatusPayload,
   sortSoraCloudDeployments,
   soraCloudStatusTone,
@@ -84,6 +87,7 @@ describe("SoraCloud utilities", () => {
     const status = normalizeSoraCloudStatusPayload({
       schema_version: 1,
       control_plane: {
+        schema_version: 1,
         service_count: 1,
         audit_event_count: 2,
         services: [
@@ -91,15 +95,21 @@ describe("SoraCloud utilities", () => {
             service_name: "demo-hf",
             current_version: "hf-generated-v1",
             revision_count: 1,
+            config_generation: 0,
+            secret_generation: 0,
+            config_entry_count: 0,
+            secret_entry_count: 0,
             service_lease_status: { status: "Active" },
             public_discovery_url: "https://demo.mon.taira.sora.org/",
             latest_revision: {
               sequence: 7,
+              service_version: "hf-generated-v1",
               route_host: "demo",
               signed_by: "ed25519:abc",
             },
           },
         ],
+        recent_audit_events: [],
       },
     });
 
@@ -122,6 +132,7 @@ describe("SoraCloud utilities", () => {
     const status = normalizeSoraCloudStatusPayload({
       schema_version: 1,
       control_plane: {
+        schema_version: 1,
         service_count: 1,
         audit_event_count: 18,
         services: [
@@ -129,6 +140,10 @@ describe("SoraCloud utilities", () => {
             service_name: "hayahi_live",
             current_version: "0.1.6",
             revision_count: 7,
+            config_generation: 0,
+            secret_generation: 0,
+            config_entry_count: 0,
+            secret_entry_count: 0,
             service_lease_status: { status: "Active", value: null },
             active_rollout: {
               rollout_handle: "hayahi_live:rollout:17",
@@ -142,9 +157,12 @@ describe("SoraCloud utilities", () => {
               route_path_prefix: "/api/v1",
               base_url: "https://taira.sora.org/api/v1/",
               sequence: 17,
+              service_version: "0.1.6",
+              signed_by: "ed25519:abc",
             },
           },
         ],
+        recent_audit_events: [],
       },
     });
 
@@ -168,13 +186,113 @@ describe("SoraCloud utilities", () => {
       404,
     );
     const empty = normalizeSoraCloudStatusPayload({
-      control_plane: { services: [], service_count: 0 },
+      schema_version: 1,
+      control_plane: {
+        schema_version: 1,
+        services: [],
+        service_count: 0,
+        audit_event_count: 0,
+        recent_audit_events: [],
+      },
     });
 
     expect(unavailable.available).toBe(false);
     expect(unavailable.statusCode).toBe(404);
     expect(empty.available).toBe(true);
     expect(empty.services).toEqual([]);
+  });
+
+  it("rejects malformed-200 status payloads instead of inventing an empty service list", () => {
+    expect(() => normalizeSoraCloudStatusPayload({})).toThrow("schema_version");
+    expect(() =>
+      normalizeSoraCloudStatusPayload({
+        schemaVersion: 1,
+        controlPlane: {
+          schemaVersion: 1,
+          serviceCount: 0,
+          auditEventCount: 0,
+          services: [],
+          recentAuditEvents: [],
+        },
+      }),
+    ).toThrow("non-canonical fields");
+    expect(() =>
+      normalizeSoraCloudStatusPayload({
+        schema_version: 1,
+        control_plane: {
+          schema_version: 1,
+          service_count: 1,
+          audit_event_count: 0,
+          services: [],
+          recent_audit_events: [],
+        },
+      }),
+    ).toThrow("does not match");
+  });
+
+  it("rejects malformed service items instead of filtering or fabricating names", () => {
+    expect(() =>
+      normalizeSoraCloudStatusPayload({
+        schema_version: 1,
+        control_plane: {
+          schema_version: 1,
+          service_count: 1,
+          audit_event_count: 0,
+          services: [{ serviceName: "legacy-service" }],
+          recent_audit_events: [],
+        },
+      }),
+    ).toThrow("non-canonical fields");
+    expect(() =>
+      normalizeSoraCloudStatusPayload({
+        schema_version: 1,
+        control_plane: {
+          schema_version: 1,
+          service_count: 1,
+          audit_event_count: 0,
+          services: [null],
+          recent_audit_events: [],
+        },
+      }),
+    ).toThrow("must be an object");
+  });
+
+  it("builds the complete current HF status query", () => {
+    expect(
+      buildSoraCloudHfStatusQuery({
+        repoId: " OpenAI/Demo ",
+        revision: " main ",
+        storageClass: "warm",
+        leaseTermMs: 86_400_000,
+        accountId: " testuAlice ",
+      }),
+    ).toEqual({
+      repo_id: "OpenAI/Demo",
+      revision: "main",
+      storage_class: "warm",
+      lease_term_ms: 86_400_000,
+      account_id: "testuAlice",
+    });
+    expect(() =>
+      buildSoraCloudHfStatusQuery({
+        repoId: "",
+        storageClass: "warm",
+        leaseTermMs: 86_400_000,
+      }),
+    ).toThrow("Hugging Face repo is required");
+  });
+
+  it("keeps HF source 404 distinct from API unavailability", () => {
+    expect(missingSoraCloudHfStatus("The source was not found.", 404)).toEqual({
+      found: false,
+      statusCode: 404,
+      message: "The source was not found.",
+      raw: null,
+    });
+    expect(normalizeSoraCloudHfStatusPayload({ state: "deploying" })).toEqual({
+      found: true,
+      raw: { state: "deploying" },
+    });
   });
 
   it("derives safe model and service names from a Hugging Face repo", () => {

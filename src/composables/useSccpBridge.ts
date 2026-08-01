@@ -1,4 +1,5 @@
 import { computed, ref, unref, type MaybeRef } from "vue";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import {
   fetchAccountAssets,
@@ -26,6 +27,7 @@ import type {
   SccpProofManifestSetResponse,
   SccpSoraOutboundMaterialResponse,
 } from "@/types/iroha";
+import { normalizeEndpointUrl } from "@/utils/endpoint";
 
 const exactSolanaRouteAllowsOutboundMaterial = (
   manifestSet: unknown,
@@ -86,6 +88,7 @@ export const useSccpBridge = (
   route: MaybeRef<SccpRouteConfig> = SCCP_XOR_ROUTE,
 ) => {
   const session = useSessionStore();
+  const endpointStore = useEndpointStore();
   const capabilities = ref<SccpCapabilitiesResponse | null>(null);
   const manifestSet = ref<SccpProofManifestSetResponse | null>(null);
   const soraOutboundMaterial = ref<SccpSoraOutboundMaterialResponse | null>(
@@ -107,6 +110,53 @@ export const useSccpBridge = (
       session.connection.chainId,
       session.connection.networkPrefix,
     ].join("\n");
+
+  const endpointInspectionMatchesConnection = computed(() => {
+    const inspection = endpointStore.inspection;
+    if (!inspection) {
+      return false;
+    }
+    let inspectedEndpoint: string;
+    let configuredEndpoint: string;
+    try {
+      inspectedEndpoint = normalizeEndpointUrl(inspection.toriiUrl);
+      configuredEndpoint = normalizeEndpointUrl(session.connection.toriiUrl);
+    } catch {
+      return false;
+    }
+    const configuredChainId = session.connection.chainId.trim().toLowerCase();
+    const expectedChainId = inspection.expected.chainId.trim().toLowerCase();
+    const observedChainId = inspection.observed?.chainId.trim().toLowerCase();
+    return (
+      inspectedEndpoint === configuredEndpoint &&
+      configuredChainId !== "" &&
+      expectedChainId === configuredChainId &&
+      observedChainId === configuredChainId &&
+      inspection.expected.networkPrefix === session.connection.networkPrefix &&
+      inspection.observed?.networkPrefix === session.connection.networkPrefix
+    );
+  });
+
+  const writeBlockReason = computed(() => {
+    if (endpointStore.state === "idle" || endpointStore.state === "checking") {
+      return "Wait for endpoint identity and capability inspection to finish before starting an SCCP transfer.";
+    }
+    if (!endpointInspectionMatchesConnection.value) {
+      return "The endpoint inspection does not match the active SCCP network connection.";
+    }
+    if (!endpointStore.writeAllowed) {
+      return (
+        endpointStore.diagnostic ||
+        "SCCP writes are blocked until the endpoint identity is verified."
+      );
+    }
+    if (endpointStore.inspection?.features.zkProofJobs.supported !== true) {
+      return "This endpoint does not advertise the required ZK proof and transaction operations for SCCP writes.";
+    }
+    return "";
+  });
+
+  const writeAuthorized = computed(() => writeBlockReason.value === "");
 
   const resetState = () => {
     routeRefreshSerial += 1;
@@ -350,6 +400,8 @@ export const useSccpBridge = (
     loading,
     balanceLoading,
     error,
+    writeAuthorized,
+    writeBlockReason,
     readiness,
     snapshot,
     resetState,

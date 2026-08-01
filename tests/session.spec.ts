@@ -161,7 +161,7 @@ describe("session store", () => {
     expect(snapshot().authority.signingAlgorithm).toBe("ed25519");
   });
 
-  it("migrates saved Minamoto sessions onto the deployed chain id", () => {
+  it("does not rewrite persisted preset identity metadata", () => {
     localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -179,15 +179,11 @@ describe("session store", () => {
     expect(store.connection.toriiUrl).toBe(
       MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
     );
-    expect(store.connection.chainId).toBe(
-      MINAMOTO_CHAIN_PRESET.connection.chainId,
-    );
+    expect(store.connection.chainId).toBe("sora nexus main net");
     expect(store.connection.networkPrefix).toBe(
       MINAMOTO_CHAIN_PRESET.connection.networkPrefix,
     );
-    expect(store.connection.assetDefinitionId).toBe(
-      MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId,
-    );
+    expect(store.connection.assetDefinitionId).toBe("xor#universal");
   });
 
   it("preserves saved TAIRA faucet asset buckets on hydrate", () => {
@@ -275,6 +271,7 @@ describe("session store", () => {
       connection: {
         toriiUrl: "https://legacy-torii",
         chainId: "legacy",
+        networkPrefix: 369,
       },
       user: {
         displayName: "Legacy",
@@ -305,11 +302,11 @@ describe("session store", () => {
 
   it("upgrades legacy account ids from stored canonical literals", () => {
     const canonical = "testu1234567890abcdef1234567890";
-    const migratedCanonical = "sorau1234567890abcdef1234567890";
     const payload = {
       connection: {
         toriiUrl: "https://legacy-torii",
         chainId: "legacy",
+        networkPrefix: 369,
       },
       accounts: [
         {
@@ -336,9 +333,9 @@ describe("session store", () => {
     store.hydrate();
 
     expect(store.accounts).toHaveLength(1);
-    expect(store.accounts[0]?.accountId).toBe(migratedCanonical);
-    expect(store.activeAccountId).toBe(migratedCanonical);
-    expect(store.authority.accountId).toBe(migratedCanonical);
+    expect(store.accounts[0]?.accountId).toBe(canonical);
+    expect(store.activeAccountId).toBe(canonical);
+    expect(store.authority.accountId).toBe(canonical);
   });
 
   it("derives canonical account ids from stored key material when bridge is available", () => {
@@ -713,7 +710,7 @@ describe("session store", () => {
     expect(store.connection.networkPrefix).toBe(42);
   });
 
-  it("falls back to the default endpoint when a saved endpoint is invalid", () => {
+  it("preserves an invalid saved endpoint so it fails closed", () => {
     localStorage.setItem(
       SESSION_STORAGE_KEY,
       JSON.stringify({
@@ -728,14 +725,8 @@ describe("session store", () => {
     const store = useSessionStore();
     store.hydrate();
 
-    expect(store.connection.toriiUrl).toBe(
-      DEFAULT_CHAIN_PRESET.connection.toriiUrl,
-    );
-    expect(store.connection.chainId).toBe(
-      DEFAULT_CHAIN_PRESET.connection.chainId,
-    );
-    expect(store.connection.networkPrefix).toBe(
-      DEFAULT_CHAIN_PRESET.connection.networkPrefix,
-    );
+    expect(store.connection.toriiUrl).toBe("ftp://not-supported");
+    expect(store.connection.chainId).toBe("custom-chain");
+    expect(store.connection.networkPrefix).toBe(99);
   });
 });

@@ -276,58 +276,50 @@ const resolvePresetConnectionForEndpoint = (
 
 const normalizeConnection = (
   partial?: Partial<ConnectionConfig>,
-  options?: { preferPresetMetadata?: boolean },
 ): ConnectionConfig => {
-  let toriiUrl = DEFAULT_CHAIN_PRESET.connection.toriiUrl;
-  let endpointValid = true;
+  if (!partial) {
+    return { ...DEFAULT_CHAIN_PRESET.connection };
+  }
+  const rawToriiUrl = trimString(partial.toriiUrl);
+  if (!rawToriiUrl) {
+    throw new Error("Saved connection is missing its Torii endpoint.");
+  }
+  let toriiUrl = rawToriiUrl;
+  let endpointValid = false;
   try {
-    toriiUrl = normalizeEndpointUrl(
-      String(partial?.toriiUrl ?? DEFAULT_CHAIN_PRESET.connection.toriiUrl),
-    );
+    toriiUrl = normalizeEndpointUrl(rawToriiUrl);
+    endpointValid = true;
   } catch (_error) {
-    endpointValid = false;
+    // Preserve the configured literal so a malformed profile fails closed
+    // instead of silently targeting the default endpoint.
   }
   const endpointPresetConnection = endpointValid
     ? resolvePresetConnectionForEndpoint(toriiUrl)
     : null;
-  const fallbackConnection =
-    endpointPresetConnection ?? DEFAULT_CHAIN_PRESET.connection;
   const normalizedChainId = normalizeChainIdValue(partial?.chainId);
   const normalizedNetworkPrefix = normalizeNetworkPrefixValue(
     partial?.networkPrefix,
   );
-  const preferredChainId = options?.preferPresetMetadata
-    ? (endpointPresetConnection?.chainId ?? normalizedChainId)
-    : (normalizedChainId ?? endpointPresetConnection?.chainId);
-  const preferredNetworkPrefix = options?.preferPresetMetadata
-    ? (endpointPresetConnection?.networkPrefix ?? normalizedNetworkPrefix)
-    : (normalizedNetworkPrefix ?? endpointPresetConnection?.networkPrefix);
-  const chainId = endpointValid
-    ? (preferredChainId ?? fallbackConnection.chainId)
-    : fallbackConnection.chainId;
-  const networkPrefix = endpointValid
-    ? (preferredNetworkPrefix ?? fallbackConnection.networkPrefix)
-    : fallbackConnection.networkPrefix;
-  const presetAssetDefinitionId = trimString(
-    endpointPresetConnection?.assetDefinitionId,
+  const chainId = normalizedChainId ?? endpointPresetConnection?.chainId;
+  const networkPrefix =
+    normalizedNetworkPrefix ?? endpointPresetConnection?.networkPrefix;
+  if (!chainId || networkPrefix === undefined) {
+    throw new Error(
+      "Saved connection is missing its chain ID or network prefix.",
+    );
+  }
+  const hasExplicitAssetDefinitionId = Object.prototype.hasOwnProperty.call(
+    partial,
+    "assetDefinitionId",
   );
-  const partialAssetDefinitionId = trimString(partial?.assetDefinitionId);
-  const preferredAssetDefinitionId =
-    endpointValid && options?.preferPresetMetadata
-      ? presetAssetDefinitionId || partialAssetDefinitionId
-      : partialAssetDefinitionId || presetAssetDefinitionId;
-  const assetDefinitionId = String(
-    endpointValid
-      ? preferredAssetDefinitionId || fallbackConnection.assetDefinitionId
-      : fallbackConnection.assetDefinitionId,
-  ).trim();
+  const assetDefinitionId = hasExplicitAssetDefinitionId
+    ? trimString(partial.assetDefinitionId)
+    : trimString(endpointPresetConnection?.assetDefinitionId);
   return {
-    ...fallbackConnection,
     toriiUrl,
     chainId,
     networkPrefix,
-    assetDefinitionId:
-      assetDefinitionId || fallbackConnection.assetDefinitionId,
+    assetDefinitionId,
   };
 };
 
@@ -445,9 +437,7 @@ export const useSessionStore = defineStore("session", {
       if (raw) {
         try {
           const parsed = JSON.parse(raw);
-          const normalizedConnection = normalizeConnection(parsed.connection, {
-            preferPresetMetadata: true,
-          });
+          const normalizedConnection = normalizeConnection(parsed.connection);
           const normalizedAccounts = normalizeAccounts(parsed, {
             networkPrefix: normalizedConnection.networkPrefix,
           });

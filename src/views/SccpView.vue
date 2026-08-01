@@ -154,6 +154,13 @@
         <span class="pill" :class="{ positive: isTairaRoute }">
           {{ isTairaRoute ? t("TAIRA enabled") : t("TAIRA only") }}
         </span>
+        <span class="pill" :class="{ positive: bridge.writeAuthorized.value }">
+          {{
+            bridge.writeAuthorized.value
+              ? t("Writes authorized")
+              : t("Writes blocked")
+          }}
+        </span>
       </div>
 
       <div
@@ -829,20 +836,24 @@ const routeTone = computed(() => ({
   warning: !routeReadyForAction.value && isTairaRoute.value,
 }));
 const routeMessages = computed(() => {
+  let messages: string[];
   if (!isTairaRoute.value) {
-    return ["SCCP bridging is enabled only on TAIRA testnet."];
-  }
-  if (
+    messages = ["SCCP bridging is enabled only on TAIRA testnet."];
+  } else if (
     isTonRoute.value &&
     direction.value === "taira-to-ton" &&
     routeReadyForAction.value &&
     bridge.readiness.value.reasons.length > 0
   ) {
-    return [
+    messages = [
       "TON destination leg is ready for TAIRA -> TON. The TON -> TAIRA tab will stay unavailable until the source proof lane is live.",
     ];
+  } else {
+    messages = routeBlockingMessages.value;
   }
-  return routeBlockingMessages.value;
+  return bridge.writeBlockReason.value
+    ? [...messages, bridge.writeBlockReason.value]
+    : messages;
 });
 const xorBalanceLabel = computed(() => {
   const balance = bridge.balances.value.find((item) =>
@@ -1271,6 +1282,7 @@ const destinationValid = computed(() =>
 );
 const submitDisabled = computed(
   () =>
+    !bridge.writeAuthorized.value ||
     !routeReadyForAction.value ||
     Boolean(tonReturnBlocker.value) ||
     !activeProjectConfigured.value ||
@@ -1293,6 +1305,7 @@ const proofFetchDisabled = computed(
     direction.value === "taira-to-solana"
       ? !messageId.value
       : !tronTxId.value) ||
+    !bridge.writeAuthorized.value ||
     !routeReadyForAction.value ||
     Boolean(tonReturnBlocker.value) ||
     !activeProjectConfigured.value ||
@@ -1339,6 +1352,9 @@ const walletConnectInvalidMessage = computed(() =>
 const actionHint = computed(() => {
   if (!isTairaRoute.value) {
     return t("Switch to the TAIRA testnet profile to use this bridge.");
+  }
+  if (!bridge.writeAuthorized.value) {
+    return t(bridge.writeBlockReason.value);
   }
   if (activeProjectConfigurationError.value) {
     return t(walletConnectInvalidMessage.value);
@@ -2713,6 +2729,12 @@ const assertSccpOperationContextCurrent = (
   ) {
     throw new Error(SCCP_CONTEXT_CHANGED_ERROR);
   }
+  if (!bridge.writeAuthorized.value) {
+    throw new Error(
+      bridge.writeBlockReason.value ||
+        "SCCP writes are blocked until the endpoint identity is verified.",
+    );
+  }
 };
 
 const loadTairaMessageProofJob = async (
@@ -3067,6 +3089,8 @@ const waitForZkIvmProof = async (
     try {
       job = await getZkIvmProveJob({
         toriiUrl: context.toriiUrl,
+        chainId: context.chainId,
+        networkPrefix: context.networkPrefix,
         jobId,
       });
     } catch (error) {
@@ -3472,6 +3496,14 @@ const markPhase = (index: number, state: ProofPhaseState, detail: string) => {
 };
 
 const validateForm = () => {
+  if (!bridge.writeAuthorized.value) {
+    throw new Error(
+      t(
+        bridge.writeBlockReason.value ||
+          "SCCP writes are blocked until the endpoint identity is verified.",
+      ),
+    );
+  }
   if (!routeReadyForAction.value) {
     throw new Error(
       routeMessages.value[0] ||
@@ -4933,8 +4965,10 @@ const prepareBridge = async () => {
       };
       markPhase(1, "active", "Queueing TAIRA burn-record proof request");
       const proveJob = await queueZkIvmProveJob(tairaSourceContext, {
-        toriiUrl: operationContext.toriiUrl,
         ...request.zkIvmRequest.request,
+        toriiUrl: operationContext.toriiUrl,
+        chainId: operationContext.chainId,
+        networkPrefix: operationContext.networkPrefix,
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
       markPhase(1, "complete", "TAIRA burn-record proof request queued");
@@ -4968,14 +5002,15 @@ const prepareBridge = async () => {
       const submission = await submitZkIvmProvedTransaction({
         toriiUrl: operationContext.toriiUrl,
         chainId: operationContext.chainId,
+        networkPrefix: operationContext.networkPrefix,
         accountId: operationContext.accountId,
         proved: proof.proved,
         attachment: proof.attachment,
+        gasLimit: request.material.gasLimit,
         metadata: {
           ...request.zkIvmRequest.request.metadata,
           gas_asset_id: request.material.settlementAssetDefinitionId,
         },
-        waitForCommit: false,
       });
       assertSccpOperationContextCurrent(tairaSourceContext);
       const tairaTxHash = String(

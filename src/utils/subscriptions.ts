@@ -29,6 +29,8 @@ const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 const defaultFormatNumber: FormatNumberFn = (value) => formatter.format(value);
+const CANONICAL_QUANTITY_PATTERN =
+  /^(?:0|[1-9][0-9]*)(?:\.(?:[0-9]{0,27}[1-9]))?$/u;
 
 const defaultLocalize: LocalizeFn = (key, params) => {
   if (!params) {
@@ -43,13 +45,22 @@ const defaultLocalize: LocalizeFn = (key, params) => {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
+const canonicalString = (value: unknown): string =>
+  typeof value === "string" && value.length > 0 && value.trim() === value
+    ? value
+    : "";
+
 export const normalizeSubscriptionStatus = (
   value: unknown,
 ): SubscriptionStatus => {
-  const raw = isRecord(value) ? value.status : value;
-  const status = String(raw ?? "")
-    .trim()
-    .toLowerCase();
+  if (
+    !isRecord(value) ||
+    Object.keys(value).length !== 2 ||
+    value.value !== null
+  ) {
+    return "unknown";
+  }
+  const status = value.status;
   switch (status) {
     case "active":
     case "paused":
@@ -72,45 +83,37 @@ export const subscriptionStatusFromItem = (
 
 export const subscriptionIdFromItem = (item: unknown): string => {
   const record = isRecord(item) ? item : {};
-  return String(
-    record.subscription_id ?? record.subscriptionId ?? record.id ?? "",
-  ).trim();
+  return canonicalString(record.subscription_id);
 };
 
 export const subscriptionPlanIdFromItem = (item: unknown): string => {
   const record = isRecord(item) ? item : {};
   const subscription = isRecord(record.subscription) ? record.subscription : {};
-  return String(subscription.plan_id ?? subscription.planId ?? "").trim();
+  return canonicalString(subscription.plan_id);
 };
 
 export const subscriptionProviderFromItem = (item: unknown): string => {
   const record = isRecord(item) ? item : {};
   const subscription = isRecord(record.subscription) ? record.subscription : {};
-  return String(subscription.provider ?? "").trim();
+  return canonicalString(subscription.provider);
 };
 
 export const subscriptionNextChargeMs = (item: unknown): number | null => {
   const record = isRecord(item) ? item : {};
   const subscription = isRecord(record.subscription) ? record.subscription : {};
-  return normalizeTimestampMs(
-    subscription.next_charge_ms ?? subscription.nextChargeMs,
-  );
+  return normalizeTimestampMs(subscription.next_charge_ms);
 };
 
 export const subscriptionPeriodEndMs = (item: unknown): number | null => {
   const record = isRecord(item) ? item : {};
   const subscription = isRecord(record.subscription) ? record.subscription : {};
-  return normalizeTimestampMs(
-    subscription.current_period_end_ms ?? subscription.currentPeriodEndMs,
-  );
+  return normalizeTimestampMs(subscription.current_period_end_ms);
 };
 
 export const subscriptionCancelAtPeriodEnd = (item: unknown): boolean => {
   const record = isRecord(item) ? item : {};
   const subscription = isRecord(record.subscription) ? record.subscription : {};
-  return Boolean(
-    subscription.cancel_at_period_end ?? subscription.cancelAtPeriodEnd,
-  );
+  return subscription.cancel_at_period_end === true;
 };
 
 export const subscriptionLatestInvoice = (
@@ -125,7 +128,7 @@ export const planFromSubscriptionItem = (
 
 export const planIdFromPlanItem = (item: unknown): string => {
   const record = isRecord(item) ? item : {};
-  return String(record.plan_id ?? record.planId ?? record.id ?? "").trim();
+  return canonicalString(record.plan_id);
 };
 
 export const planPayloadFromPlanItem = (
@@ -137,9 +140,7 @@ export const pricingKindFromPlan = (
   plan: Record<string, unknown> | null | undefined,
 ): SubscriptionPricingKind => {
   const pricing = isRecord(plan?.pricing) ? plan.pricing : {};
-  const kind = String(pricing.kind ?? "")
-    .trim()
-    .toLowerCase();
+  const kind = pricing.kind;
   if (kind === "fixed" || kind === "usage") {
     return kind;
   }
@@ -150,7 +151,7 @@ export const planChargeAssetDefinition = (
   plan: Record<string, unknown> | null | undefined,
 ): string => {
   const detail = pricingDetail(plan);
-  return String(detail.asset_definition ?? detail.assetDefinition ?? "").trim();
+  return canonicalString(detail.asset_definition);
 };
 
 export const formatAmount = (
@@ -159,7 +160,7 @@ export const formatAmount = (
   localize: LocalizeFn = defaultLocalize,
   formatNumber: FormatNumberFn = defaultFormatNumber,
 ): string => {
-  const displayAmount = formatNumericValue(amount, formatNumber);
+  const displayAmount = formatSubscriptionQuantity(amount, formatNumber);
   if (!displayAmount) {
     return localize(SUBSCRIPTION_I18N_KEYS.unitDash, { unit });
   }
@@ -178,17 +179,17 @@ export const formatPlanPricing = (
   const detail = pricingDetail(plan);
   const assetDefinitionId = planChargeAssetDefinition(plan);
   const unit = assetDefinitionId
-    ? deriveAssetSymbol(assetDefinitionId, fallbackUnit)
+    ? deriveAssetSymbol(assetDefinitionId, assetDefinitionId)
     : fallbackUnit;
   switch (pricingKindFromPlan(plan)) {
     case "fixed":
       return formatAmount(detail.amount, unit, localize, formatNumber);
     case "usage": {
-      const unitPrice = formatNumericValue(
-        detail.unit_price ?? detail.unitPrice,
+      const unitPrice = formatSubscriptionQuantity(
+        detail.unit_price,
         formatNumber,
       );
-      const unitKey = String(detail.unit_key ?? detail.unitKey ?? "").trim();
+      const unitKey = canonicalString(detail.unit_key);
       if (!unitPrice) {
         return localize(SUBSCRIPTION_I18N_KEYS.usageBased);
       }
@@ -209,9 +210,7 @@ export const formatPlanCadence = (
 ): string => {
   const billing = isRecord(plan?.billing) ? plan.billing : {};
   const cadence = isRecord(billing.cadence) ? billing.cadence : {};
-  const kind = String(cadence.kind ?? "")
-    .trim()
-    .toLowerCase();
+  const kind = cadence.kind;
   if (kind === "monthly_calendar") {
     return localize("Monthly");
   }
@@ -219,11 +218,11 @@ export const formatPlanCadence = (
     return localize("Unknown");
   }
   const detail = isRecord(cadence.detail) ? cadence.detail : {};
-  const periodMs = Number(detail.period_ms ?? detail.periodMs);
-  if (!Number.isFinite(periodMs) || periodMs <= 0) {
+  const periodMs = detail.period_ms;
+  if (!Number.isSafeInteger(periodMs) || (periodMs as number) <= 0) {
     return localize("Unknown");
   }
-  const days = Math.round(periodMs / 86_400_000);
+  const days = Math.round((periodMs as number) / 86_400_000);
   if (days >= 27 && days <= 31) {
     return localize("Monthly");
   }
@@ -263,22 +262,25 @@ const pricingDetail = (
 };
 
 const normalizeTimestampMs = (value: unknown): number | null => {
-  const timestamp = Number(value);
-  return Number.isFinite(timestamp) && timestamp > 0
-    ? Math.trunc(timestamp)
+  return Number.isSafeInteger(value) && (value as number) >= 0
+    ? (value as number)
     : null;
 };
 
-const formatNumericValue = (
+export const formatSubscriptionQuantity = (
   value: unknown,
-  formatNumber: FormatNumberFn,
+  formatNumber: FormatNumberFn = defaultFormatNumber,
 ): string => {
-  if (value === null || value === undefined || value === "") {
+  if (typeof value !== "string" || !CANONICAL_QUANTITY_PATTERN.test(value)) {
     return "";
   }
-  const raw = String(value).trim();
+  const raw = value;
   const parsed = Number(raw);
-  if (Number.isFinite(parsed) && Math.abs(parsed) <= Number.MAX_SAFE_INTEGER) {
+  if (
+    Number.isFinite(parsed) &&
+    Math.abs(parsed) <= Number.MAX_SAFE_INTEGER &&
+    String(parsed) === raw
+  ) {
     return formatNumber(parsed);
   }
   return raw;

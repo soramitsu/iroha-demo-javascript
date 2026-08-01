@@ -10,6 +10,7 @@ import {
 } from "@iroha/iroha-js";
 import { deriveAccountAddressView } from "../electron/accountAddress.ts";
 import { solveFaucetPowPuzzle } from "../electron/faucetPow.ts";
+import { waitForToriiTransactionFinality } from "./live-transaction-finality.mjs";
 import { generatedSoraswapRegistry } from "../../soraswap_web/src/generated/soraswapRegistry.ts";
 import {
   createConnectPreview,
@@ -41,7 +42,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_TORII_URL = "https://taira.sora.org";
-const DEFAULT_CHAIN_ID = "809574f5-fee7-5e69-bfcf-52451e42d50f";
+const DEFAULT_CHAIN_ID = "fc56984b-2be7-431d-840e-21514d1883f0";
 const DEFAULT_GAS_LIMIT = 5000;
 const DEFAULT_SLIPPAGE_BPS = 50n;
 const DEFAULT_DERIVATION_LABEL = "default";
@@ -150,6 +151,24 @@ const postJson = (url, body) =>
     },
     body: JSON.stringify(body),
   });
+
+const postJsonOnce = async (url, body) => {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const message = await readResponseMessage(response);
+    throw new Error(
+      `${response.status} ${response.statusText}: ${message || "request failed"}`,
+    );
+  }
+  return response.json();
+};
 
 const deleteJson = async (url) => {
   let response;
@@ -973,45 +992,7 @@ const quoteActiveBin = async (toriiUrl, authority, input) => {
 };
 
 const prepareContractCall = (toriiUrl, request) =>
-  postJson(new URL("/v1/contracts/call", `${toriiUrl}/`), request);
-
-const waitForPipelineStatus = async (toriiUrl, hashHex) => {
-  for (let attempt = 1; attempt <= 12; attempt += 1) {
-    try {
-      const response = await fetch(
-        new URL(
-          `/v1/pipeline/transactions/status?hash=${encodeURIComponent(hashHex)}&scope=auto`,
-          `${toriiUrl}/`,
-        ),
-        {
-          headers: {
-            Accept: "application/json",
-          },
-        },
-      );
-      if (response.ok) {
-        const payload = await response.json();
-        const kind = trim(payload?.content?.status?.kind);
-        if (kind) {
-          if (
-            kind === "Applied" ||
-            kind === "Committed" ||
-            kind === "Rejected" ||
-            kind === "Expired"
-          ) {
-            return payload;
-          }
-        }
-      }
-    } catch (error) {
-      void error;
-    }
-    if (attempt < 12) {
-      await sleep(Math.min(250 * 2 ** (attempt - 1), 2000));
-    }
-  }
-  return null;
-};
+  postJsonOnce(new URL("/v1/contracts/call", `${toriiUrl}/`), request);
 
 const walletFileDir = path.dirname(STATE_PATH);
 
@@ -1140,7 +1121,7 @@ const requestFaucetFunds = async (toriiUrl, accountId) => {
     Number(puzzleResponse.difficulty_bits) > 0
       ? await solveFaucetPowPuzzle(accountId, puzzleResponse)
       : null;
-  return await postJson(new URL("/v1/accounts/faucet", `${toriiUrl}/`), {
+  return await postJsonOnce(new URL("/v1/accounts/faucet", `${toriiUrl}/`), {
     account_id: accountId,
     ...(powPayload
       ? {
@@ -1663,28 +1644,21 @@ const prepareAndSubmitViaConnect = async ({
   }
 
   console.log(`Submitted tx: ${submitResponse.tx_hash_hex}`);
-  const pipeline = await waitForPipelineStatus(
+  const finalized = await waitForToriiTransactionFinality({
     toriiUrl,
-    submitResponse.tx_hash_hex,
+    hashHex: submitResponse.tx_hash_hex,
+  });
+  console.log(
+    `Finalized tx ${finalized.hashHex} in block ${finalized.finality.blockHeight} (${finalized.finality.blockHash}); finalized height ${finalized.finality.finalizedBlockHeight}.`,
   );
-  const finalKind = trim(pipeline?.content?.status?.kind || "");
-  console.log(`Pipeline status: ${finalKind || "pending"}`);
 
   return {
     draft,
     connect,
     submitResponse,
-    pipeline,
-    finalKind,
+    finality: finalized.finality,
+    pipeline: finalized.statusPayload,
   };
-};
-
-const assertExpectedPipelineStatus = (label, finalKind) => {
-  if (finalKind && finalKind !== "Applied" && finalKind !== "Committed") {
-    throw new Error(
-      `${label} reached unexpected terminal pipeline status: ${finalKind}`,
-    );
-  }
 };
 
 const submitConnectedStep = async ({
@@ -1695,22 +1669,19 @@ const submitConnectedStep = async ({
   draftRequest,
 }) => {
   const startedAt = new Date().toISOString();
-  const submit = await retryAsync(name, () =>
-    prepareAndSubmitViaConnect({
-      toriiUrl,
-      chainId,
-      wallet,
-      draftRequest,
-      domainTag: "IROHA_TORII_CONTRACT_CALL",
-    }),
-  );
-  assertExpectedPipelineStatus(name, submit.finalKind);
+  const submit = await prepareAndSubmitViaConnect({
+    toriiUrl,
+    chainId,
+    wallet,
+    draftRequest,
+    domainTag: "IROHA_TORII_CONTRACT_CALL",
+  });
   return {
     name,
     startedAt,
     finishedAt: new Date().toISOString(),
     txHashHex: submit.submitResponse.tx_hash_hex,
-    pipelineKind: submit.finalKind || null,
+    finality: submit.finality,
     request: draftRequest,
     connect: {
       sid: submit.connect.preview.sid,
@@ -3934,20 +3905,29 @@ const main = async () => {
     console.log(
       "Wallet has no visible on-chain assets yet. Requesting faucet funds.",
     );
+    let faucetFinalized = false;
     try {
       const faucet = await requestFaucetFunds(toriiUrl, wallet.accountId);
+      const faucetHash = trim(faucet.tx_hash_hex);
+      const finalized = await waitForToriiTransactionFinality({
+        toriiUrl,
+        hashHex: faucetHash,
+      });
+      faucetFinalized = true;
       console.log(
-        `Faucet accepted: ${trim(faucet.amount)} units on ${trim(faucet.asset_id || faucet.asset_definition_id)} (tx ${trim(faucet.tx_hash_hex)})`,
+        `Faucet transaction ${finalized.hashHex} finalized in block ${finalized.finality.blockHeight}: ${trim(faucet.amount)} units on ${trim(faucet.asset_id || faucet.asset_definition_id)}.`,
       );
     } catch (error) {
       console.log(
-        `Faucet request returned: ${error instanceof Error ? error.message : String(error)}`,
+        `Faucet request was not proven in a finalized block: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    for (let attempt = 1; attempt <= 30; attempt += 1) {
-      assets = await fetchAccountAssets(toriiUrl, wallet.accountId);
-      if (hasVisibleBalance(assets)) break;
-      await sleep(2000);
+    if (faucetFinalized) {
+      for (let attempt = 1; attempt <= 30; attempt += 1) {
+        assets = await fetchAccountAssets(toriiUrl, wallet.accountId);
+        if (hasVisibleBalance(assets)) break;
+        await sleep(2000);
+      }
     }
   }
 
@@ -4016,7 +3996,6 @@ const main = async () => {
       draftRequest: operation.draftRequest,
       domainTag: "IROHA_TORII_CONTRACT_CALL",
     });
-    assertExpectedPipelineStatus(operation.mode, submit.finalKind);
 
     artifact = {
       ranAt: new Date().toISOString(),
@@ -4033,6 +4012,7 @@ const main = async () => {
         walletUri: submit.connect.preview.walletUri,
       },
       txHashHex: submit.submitResponse.tx_hash_hex,
+      finality: submit.finality,
       pipelineStatus: submit.pipeline,
     };
   }

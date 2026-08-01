@@ -24,20 +24,6 @@ const defaultState = (): VpnStoreState => ({
   helperHealth: null,
 });
 
-const normalizeExitClass = (value: unknown): VpnExitClass => {
-  switch (value) {
-    case "low-latency":
-    case "high-security":
-    case "standard":
-      return value;
-    default:
-      return "standard";
-  }
-};
-
-const normalizeReceipts = (value: unknown): VpnReceipt[] =>
-  Array.isArray(value) ? (value as VpnReceipt[]) : [];
-
 export const useVpnStore = defineStore("vpn", {
   state: defaultState,
   actions: {
@@ -45,30 +31,14 @@ export const useVpnStore = defineStore("vpn", {
       if (this.hydrated) {
         return;
       }
-      const raw = localStorage.getItem(VPN_STORAGE_KEY);
-      if (raw) {
-        try {
-          const parsed = JSON.parse(raw) as Partial<VpnStoreState>;
-          this.selectedExitClass = normalizeExitClass(parsed.selectedExitClass);
-          this.lastProfile = parsed.lastProfile ?? null;
-          this.receipts = normalizeReceipts(parsed.receipts);
-          this.helperHealth = parsed.helperHealth ?? null;
-        } catch (error) {
-          console.warn("Failed to parse VPN store", error);
-        }
-      }
-      this.hydrated = true;
-      this.persist();
+      localStorage.removeItem(VPN_STORAGE_KEY);
+      this.$patch({
+        ...defaultState(),
+        hydrated: true,
+      });
     },
     persist() {
-      const payload = JSON.stringify({
-        hydrated: true,
-        selectedExitClass: this.selectedExitClass,
-        lastProfile: this.lastProfile,
-        receipts: this.receipts,
-        helperHealth: this.helperHealth,
-      });
-      localStorage.setItem(VPN_STORAGE_KEY, payload);
+      localStorage.removeItem(VPN_STORAGE_KEY);
     },
     setSelectedExitClass(exitClass: VpnExitClass) {
       this.selectedExitClass = exitClass;

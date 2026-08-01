@@ -9,18 +9,20 @@ import type {
   AccountTransactionsResponse,
   ChainMetadataResponse,
   ConfidentialAssetPolicyView,
-  ConnectPreview,
   ExplorerAccountQrResponse,
   ExplorerMetricsResponse,
   FaucetRequestProgress,
   GovernanceCitizenCountResponse,
   GovernanceCitizenStatusResponse,
+  GovernanceCapabilitiesV1,
   GovernanceCouncilCurrentResponse,
-  GovernanceDraftResponse,
+  GovernancePreparedAction,
+  GovernanceProposalDetailInput,
+  GovernanceProposalListInput,
   GovernanceLifecycleSnapshot,
+  GovernancePlainReferendumContractResult,
   GovernanceLocksResult,
   GovernanceProposalResult,
-  GovernanceRegistrationPolicyResponse,
   GovernanceReferendumResult,
   GovernanceTallyResult,
   GovernanceUnlockStatsResponse,
@@ -29,10 +31,11 @@ import type {
   KaigiMeetingView,
   KaigiMeetingSignalRecord,
   KaigiSignalKeyPair,
+  NexusLifecycleView,
   NexusStakingPolicy,
   NexusSumeragiStatus,
   NetworkStatsResponse,
-  OfflineAllowanceResponse,
+  OfflineReadinessView,
   PublicLaneRewardsResponseView,
   PublicLaneStakeResponseView,
   PublicLaneValidatorsResponseView,
@@ -40,8 +43,8 @@ import type {
   SubscriptionListResponseView,
   SubscriptionPlanListResponseView,
   SubscriptionListItemView,
-  SubscriptionStatusView,
   SoraCloudHfDeployResponseView,
+  SoraCloudHfStatusResponseView,
   SoraCloudStatusResponseView,
   SccpCapabilitiesResponse,
   SccpProofManifestSetResponse,
@@ -55,6 +58,10 @@ import type {
   VpnReceipt,
   VpnStatus,
 } from "@/types/iroha";
+import type {
+  EndpointInspection,
+  EndpointNetworkContext,
+} from "@/types/endpointInspection";
 
 const bridge = (): IrohaBridge => {
   if (!window.iroha) {
@@ -71,6 +78,10 @@ export const pingTorii = (toriiUrl: string): Promise<ToriiHealth> =>
 export const getChainMetadata = (
   toriiUrl: string,
 ): Promise<ChainMetadataResponse> => bridge().getChainMetadata({ toriiUrl });
+
+export const inspectEndpoint = (
+  input: EndpointNetworkContext,
+): Promise<EndpointInspection> => bridge().inspectEndpoint(input);
 
 export const getSigningAlgorithms = (
   toriiUrl?: string,
@@ -144,13 +155,36 @@ export const transferAsset = (
   input: Parameters<IrohaBridge["transferAsset"]>[0],
 ) => bridge().transferAsset(input);
 
-export const buildUranaiPrivateTradeProof = (
-  input: Parameters<IrohaBridge["buildUranaiPrivateTradeProof"]>[0],
-) => bridge().buildUranaiPrivateTradeProof(input);
+export const setIrohaConnectContext = (
+  input: Parameters<IrohaBridge["setIrohaConnectContext"]>[0],
+) => bridge().setIrohaConnectContext(input);
 
-export const signIrohaConnectMessage = (
-  input: Parameters<IrohaBridge["signIrohaConnectMessage"]>[0],
-) => bridge().signIrohaConnectMessage(input);
+export const resetIrohaConnectBoundary = () =>
+  bridge().resetIrohaConnectBoundary();
+
+export const prepareIrohaConnectSession = (
+  input: Parameters<IrohaBridge["prepareIrohaConnectSession"]>[0],
+) => bridge().prepareIrohaConnectSession(input);
+
+export const approveIrohaConnectSession = (
+  input: Parameters<IrohaBridge["approveIrohaConnectSession"]>[0],
+) => bridge().approveIrohaConnectSession(input);
+
+export const processIrohaConnectFrame = (
+  input: Parameters<IrohaBridge["processIrohaConnectFrame"]>[0],
+) => bridge().processIrohaConnectFrame(input);
+
+export const approveIrohaConnectRequest = (
+  input: Parameters<IrohaBridge["approveIrohaConnectRequest"]>[0],
+) => bridge().approveIrohaConnectRequest(input);
+
+export const rejectIrohaConnectRequest = (
+  input: Parameters<IrohaBridge["rejectIrohaConnectRequest"]>[0],
+) => bridge().rejectIrohaConnectRequest(input);
+
+export const closeIrohaConnectSession = (
+  input: Parameters<IrohaBridge["closeIrohaConnectSession"]>[0],
+) => bridge().closeIrohaConnectSession(input);
 
 export const getConfidentialAssetPolicy = (
   input: Parameters<IrohaBridge["getConfidentialAssetPolicy"]>[0],
@@ -189,18 +223,15 @@ export const listAccountPermissions = (
 ): Promise<AccountPermissionsResponse> =>
   bridge().listAccountPermissions(input);
 
-export const registerCitizen = (
-  input: Parameters<IrohaBridge["registerCitizen"]>[0],
-) => bridge().registerCitizen(input);
-
-export const getGovernanceRegistrationPolicy = (
+export const getGovernanceCapabilities = (
   toriiUrl: string,
-): Promise<GovernanceRegistrationPolicyResponse> =>
-  bridge().getGovernanceRegistrationPolicy({ toriiUrl });
+): Promise<GovernanceCapabilitiesV1> =>
+  bridge().getGovernanceCapabilities({ toriiUrl });
 
 export const getGovernanceCitizenStatus = (input: {
   toriiUrl: string;
   accountId: string;
+  networkPrefix: number;
 }): Promise<GovernanceCitizenStatusResponse> =>
   bridge().getGovernanceCitizenStatus(input);
 
@@ -236,6 +267,50 @@ export const getGovernanceCouncilCurrent = (
 ): Promise<GovernanceCouncilCurrentResponse> =>
   bridge().getGovernanceCouncilCurrent({ toriiUrl });
 
+export const listGovernanceProposals = (input: GovernanceProposalListInput) =>
+  bridge().listGovernanceProposals(input);
+
+export const getGovernanceProposalDetail = (
+  input: GovernanceProposalDetailInput,
+) => bridge().getGovernanceProposalDetail(input);
+
+export const getGovernanceCurrentValidationFeePolicy = (
+  input: Parameters<IrohaBridge["getGovernanceCurrentValidationFeePolicy"]>[0],
+) => bridge().getGovernanceCurrentValidationFeePolicy(input);
+
+export const getGovernancePlainReferendumContract = (
+  input: Parameters<IrohaBridge["getGovernancePlainReferendumContract"]>[0],
+): Promise<GovernancePlainReferendumContractResult> =>
+  bridge().getGovernancePlainReferendumContract(input);
+
+export const prepareGovernanceCitizenRegistration = (
+  input: Parameters<IrohaBridge["prepareGovernanceCitizenRegistration"]>[0],
+): Promise<GovernancePreparedAction> =>
+  bridge().prepareGovernanceCitizenRegistration(input);
+
+export const prepareGovernanceProposal = (
+  input: Parameters<IrohaBridge["prepareGovernanceProposal"]>[0],
+): Promise<GovernancePreparedAction> =>
+  bridge().prepareGovernanceProposal(input);
+
+export const prepareGovernancePlainBallot = (
+  input: Parameters<IrohaBridge["prepareGovernancePlainBallot"]>[0],
+): Promise<GovernancePreparedAction> =>
+  bridge().prepareGovernancePlainBallot(input);
+
+export const prepareGovernanceParliamentBallot = (
+  input: Parameters<IrohaBridge["prepareGovernanceParliamentBallot"]>[0],
+): Promise<GovernancePreparedAction> =>
+  bridge().prepareGovernanceParliamentBallot(input);
+
+export const prepareGovernanceEnact = (
+  input: Parameters<IrohaBridge["prepareGovernanceEnact"]>[0],
+): Promise<GovernancePreparedAction> => bridge().prepareGovernanceEnact(input);
+
+export const confirmGovernanceAction = (
+  input: Parameters<IrohaBridge["confirmGovernanceAction"]>[0],
+) => bridge().confirmGovernanceAction(input);
+
 export const getGovernanceLifecycle = (input: {
   toriiUrl: string;
   proposalId?: string | null;
@@ -249,29 +324,6 @@ export const getGovernanceLifecycle = (input: {
   }
   return lifecycleLoader(input);
 };
-
-export const proposeGovernanceDeployContract = (
-  input: Parameters<IrohaBridge["proposeGovernanceDeployContract"]>[0],
-): Promise<GovernanceDraftResponse> =>
-  bridge().proposeGovernanceDeployContract(input);
-
-export const proposeGovernanceSccpRouteManifest = (
-  input: Parameters<IrohaBridge["proposeGovernanceSccpRouteManifest"]>[0],
-): Promise<GovernanceDraftResponse> =>
-  bridge().proposeGovernanceSccpRouteManifest(input);
-
-export const submitGovernancePlainBallot = (
-  input: Parameters<IrohaBridge["submitGovernancePlainBallot"]>[0],
-) => bridge().submitGovernancePlainBallot(input);
-
-export const finalizeGovernanceReferendum = (
-  input: Parameters<IrohaBridge["finalizeGovernanceReferendum"]>[0],
-): Promise<GovernanceDraftResponse> =>
-  bridge().finalizeGovernanceReferendum(input);
-
-export const enactGovernanceProposal = (
-  input: Parameters<IrohaBridge["enactGovernanceProposal"]>[0],
-): Promise<GovernanceDraftResponse> => bridge().enactGovernanceProposal(input);
 
 export const getExplorerMetrics = (
   toriiUrl: string,
@@ -304,23 +356,23 @@ export const connectVpn = (
 ): Promise<VpnStatus> => bridge().connectVpn(input);
 
 export const disconnectVpn = (
-  input: Parameters<IrohaBridge["disconnectVpn"]>[0],
+  input?: Parameters<IrohaBridge["disconnectVpn"]>[0],
 ): Promise<VpnStatus> => bridge().disconnectVpn(input);
 
-export const repairVpn = (
-  input: Parameters<IrohaBridge["repairVpn"]>[0],
-): Promise<VpnStatus> => bridge().repairVpn(input);
+export const repairVpn = (): Promise<VpnStatus> => bridge().repairVpn();
 
 export const listVpnReceipts = (
   input?: Partial<VpnAuthContext>,
 ): Promise<VpnReceipt[]> => bridge().listVpnReceipts(input);
 
-export const listOfflineAllowances = (
-  input: Parameters<IrohaBridge["listOfflineAllowances"]>[0],
-): Promise<OfflineAllowanceResponse> => bridge().listOfflineAllowances(input);
+export const getOfflineReadiness = (
+  input: Parameters<IrohaBridge["getOfflineReadiness"]>[0],
+): Promise<OfflineReadinessView> => bridge().getOfflineReadiness(input);
 
 export const onboardAccount = (input: {
   toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
   alias: string;
   accountId: string;
   identity?: Record<string, unknown>;
@@ -329,8 +381,9 @@ export const onboardAccount = (input: {
 export const requestFaucetFunds = (
   input: {
     toriiUrl: string;
+    chainId: string;
     accountId: string;
-    networkPrefix?: number;
+    networkPrefix: number;
     requestId?: string;
   },
   onProgress?: (progress: FaucetRequestProgress) => void | Promise<void>,
@@ -370,16 +423,13 @@ export const endKaigiMeeting = (
   input: Parameters<IrohaBridge["endKaigiMeeting"]>[0],
 ) => bridge().endKaigiMeeting(input);
 
-export const createConnectPreview = (input: {
-  toriiUrl: string;
-  chainId: string;
-  node?: string | null;
-  launchProtocol?: string | null;
-}): Promise<ConnectPreview> => bridge().createConnectPreview(input);
-
 export const getSumeragiStatus = (
   toriiUrl: string,
 ): Promise<NexusSumeragiStatus> => bridge().getSumeragiStatus({ toriiUrl });
+
+export const getNexusLifecycle = (
+  toriiUrl: string,
+): Promise<NexusLifecycleView> => bridge().getNexusLifecycle({ toriiUrl });
 
 export const getNexusPublicLaneValidators = (
   input: Parameters<IrohaBridge["getNexusPublicLaneValidators"]>[0],
@@ -441,6 +491,11 @@ export const chargeSubscriptionNow = (
 ): Promise<SubscriptionActionResponseView> =>
   bridge().chargeSubscriptionNow(input);
 
+export const reconcileSubscriptionMutation = (
+  input: Parameters<IrohaBridge["reconcileSubscriptionMutation"]>[0],
+): Promise<SubscriptionActionResponseView> =>
+  bridge().reconcileSubscriptionMutation(input);
+
 export const getSoraCloudStatus = (
   input: Parameters<IrohaBridge["getSoraCloudStatus"]>[0],
 ): Promise<SoraCloudStatusResponseView> => bridge().getSoraCloudStatus(input);
@@ -449,9 +504,15 @@ export const deploySoraCloudHf = (
   input: Parameters<IrohaBridge["deploySoraCloudHf"]>[0],
 ): Promise<SoraCloudHfDeployResponseView> => bridge().deploySoraCloudHf(input);
 
+export const reconcileSoraCloudHfLaunch = (
+  input: Parameters<IrohaBridge["reconcileSoraCloudHfLaunch"]>[0],
+): Promise<SoraCloudHfDeployResponseView> =>
+  bridge().reconcileSoraCloudHfLaunch(input);
+
 export const getSoraCloudHfStatus = (
   input: Parameters<IrohaBridge["getSoraCloudHfStatus"]>[0],
-): Promise<Record<string, unknown>> => bridge().getSoraCloudHfStatus(input);
+): Promise<SoraCloudHfStatusResponseView> =>
+  bridge().getSoraCloudHfStatus(input);
 
 export const getParameters = (
   input: Parameters<IrohaBridge["getParameters"]>[0],
@@ -650,8 +711,6 @@ export const buildSolanaTransaction = (
 export const broadcastSolanaTransaction = (
   input: Parameters<IrohaBridge["broadcastSolanaTransaction"]>[0],
 ): Promise<string> => bridge().broadcastSolanaTransaction(input);
-
-export type { SubscriptionStatusView };
 
 export const bondPublicLaneStake = (
   input: Parameters<IrohaBridge["bondPublicLaneStake"]>[0],

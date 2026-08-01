@@ -72,7 +72,6 @@
         </InlineAlert>
 
         <InlineAlert
-          v-else
           class="wallet-citizenship-panel"
           :class="{
             'wallet-citizenship-panel-positive': walletIsCitizen,
@@ -86,7 +85,11 @@
           <template #action>
             <div class="wallet-context-actions">
               <AppButton
-                v-if="!faucetDisabled"
+                v-if="
+                  !faucetDisabled &&
+                  !showFundingPriority &&
+                  !faucetUnavailableOnActiveNetwork
+                "
                 class="wallet-faucet-button"
                 variant="secondary"
                 :disabled="faucetLoading || !canUseFaucetAction"
@@ -150,6 +153,13 @@
             )
           }}</strong>
         </p>
+        <p
+          v-if="shieldEndpointPrerequisiteMessage"
+          class="helper wallet-shield-note"
+          data-testid="wallet-shield-endpoint-prerequisite"
+        >
+          {{ shieldEndpointPrerequisiteMessage }}
+        </p>
         <div class="wallet-shield-recovery-row">
           <p class="helper wallet-shield-note">
             {{ shieldedXorRecoveryMessage }}
@@ -199,6 +209,27 @@
       <p v-if="walletError" class="wallet-faucet-message wallet-faucet-error">
         {{ walletError }}
       </p>
+      <div
+        v-if="assetsState === 'loading'"
+        class="wallet-empty"
+        data-testid="wallet-assets-loading"
+        role="status"
+      >
+        <p class="wallet-empty-title">{{ t("Refreshing…") }}</p>
+      </div>
+      <div
+        v-else-if="assetsState === 'ready' && !assets.length"
+        class="wallet-empty"
+        data-testid="wallet-assets-empty"
+      >
+        <p class="wallet-empty-title">
+          {{ t("No assets found for this account.") }}
+        </p>
+        <p class="helper">
+          {{ t("Share QR or Account ID") }} ·
+          {{ t("Transfer assets via Torii") }}
+        </p>
+      </div>
       <TechnicalDisclosure
         v-if="assets.length || visibleAccountId"
         class="wallet-details-section"
@@ -217,7 +248,12 @@
             })
           }}
         </p>
-        <p v-if="!shieldedXorBalanceExact" class="helper wallet-shield-note">
+        <p
+          v-if="
+            confidentialBalanceState === 'ready' && !shieldedXorBalanceExact
+          "
+          class="helper wallet-shield-note"
+        >
           {{
             t(
               "Showing spendable shielded balance from this wallet. Older or foreign confidential outputs may still be missing.",
@@ -253,15 +289,6 @@
           <span class="wallet-account-id-value">{{ visibleAccountId }}</span>
         </p>
       </TechnicalDisclosure>
-      <div v-else class="wallet-empty">
-        <p class="wallet-empty-title">
-          {{ t("No assets found for this account.") }}
-        </p>
-        <p class="helper">
-          {{ t("Share QR or Account ID") }} ·
-          {{ t("Transfer assets via Torii") }}
-        </p>
-      </div>
       <ProgressDialog
         :open="faucetLoading"
         :title="faucetStatusMessage"
@@ -312,7 +339,29 @@
           </tbody>
         </table>
       </div>
-      <div v-else class="wallet-empty wallet-ledger-empty">
+      <div
+        v-if="transactionsState === 'loading'"
+        class="wallet-empty wallet-ledger-empty"
+        data-testid="wallet-transactions-loading"
+        role="status"
+      >
+        <p class="wallet-empty-title">{{ t("Refreshing…") }}</p>
+        <p class="helper">{{ t("Latest Transactions") }}</p>
+      </div>
+      <div
+        v-else-if="transactionsState === 'error'"
+        class="wallet-empty wallet-ledger-empty wallet-ledger-error"
+        data-testid="wallet-transactions-error"
+        role="alert"
+      >
+        <p class="wallet-empty-title">{{ t("Unavailable") }}</p>
+        <p class="helper">{{ transactionsError }}</p>
+      </div>
+      <div
+        v-else-if="transactionsState === 'ready' && !transactions.length"
+        class="wallet-empty wallet-ledger-empty"
+        data-testid="wallet-transactions-empty"
+      >
         <p class="wallet-empty-title">{{ t("No transfers recorded yet.") }}</p>
         <p class="helper">{{ t("Latest Transactions") }}</p>
       </div>
@@ -321,7 +370,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, toRef, watch } from "vue";
+import { computed, nextTick, reactive, ref, toRef, watch } from "vue";
 import { useAppI18n } from "@/composables/useAppI18n";
 import {
   AppButton,
@@ -342,6 +391,7 @@ import {
   transferAsset,
 } from "@/services/iroha";
 import { useShieldCapability } from "@/composables/useShieldCapability";
+import { useEndpointStore } from "@/stores/endpoint";
 import { useSessionStore } from "@/stores/session";
 import type {
   AccountAssetsResponse,
@@ -371,13 +421,18 @@ import {
   formatTransactionFeeInline,
   transactionFeeHintForEndpoint,
 } from "@/utils/transactionFee";
+import {
+  assertFinalizedSubmissionResult,
+  assertFinalizedTransactionResult,
+} from "@/utils/transactionFinality";
 import { normalizeEndpointUrl } from "@/utils/endpoint";
+import { canAttemptFaucetIdentityChallenge } from "@/utils/endpointFeatures";
 import { isRegisteredGovernanceCitizen } from "@/utils/parliament";
 
-const SHIELDED_XOR_ASSET_DEFINITION_ID = "xor#universal";
 const WALLET_TRANSACTION_DISPLAY_LIMIT = 25;
 
 const session = useSessionStore();
+const endpointStatus = useEndpointStore();
 const activeAccount = computed(() => session.activeAccount);
 const { localeStore, t } = useAppI18n();
 const visibleAccountId = computed(() =>
@@ -439,33 +494,49 @@ type TransactionView = AccountTx & {
 };
 
 type WalletFaucetPhase = FaucetRequestProgress["phase"] | "refreshingWallet";
+type LiveReadState = "unknown" | "loading" | "ready" | "error";
+
+type WalletMutationContext = {
+  generation: number;
+  toriiUrl: string;
+  chainId: string;
+  networkPrefix: number;
+  accountId: string;
+  storedAccountId: string;
+};
 
 const FAUCET_REFRESH_MAX_ATTEMPTS = 4;
 const FAUCET_REFRESH_DELAY_MS = 1_500;
 
 const assets = ref<AccountAssetsResponse["items"]>([]);
 const transactionsRaw = ref<AccountTx[]>([]);
+const assetsState = ref<LiveReadState>("unknown");
+const transactionsState = ref<LiveReadState>("unknown");
+const confidentialBalanceState = ref<LiveReadState>("unknown");
+const transactionsError = ref("");
+const confidentialBalanceError = ref("");
 const citizenshipStatus = ref<GovernanceCitizenStatusResponse | null>(null);
 const citizenshipStatusLoaded = ref(false);
 const governanceStatusError = ref("");
-const emptyConfidentialBalance = (
+const unknownConfidentialBalance = (
   resolvedAssetId = configuredShieldAssetDefinitionId.value,
 ): ConfidentialAssetBalanceView => ({
   resolvedAssetId,
-  quantity: "0",
-  onChainQuantity: "0",
+  quantity: null,
+  onChainQuantity: null,
   spendableQuantity: "0",
-  exact: true,
+  exact: false,
   scanSource: "account-transactions",
-  scanStatus: "complete",
+  scanStatus: "incomplete",
   scanWatermarkBlock: null,
   recoveredNoteCount: 0,
   trackedAssetIds: resolvedAssetId ? [resolvedAssetId] : [],
 });
 const shieldedXorBalanceState = ref<ConfidentialAssetBalanceView>(
-  emptyConfidentialBalance(),
+  unknownConfidentialBalance(),
 );
-const loading = ref(false);
+const hasConfidentialBalanceSnapshot = ref(false);
+const loading = computed(() => assetsState.value === "loading");
 const faucetLoading = ref(false);
 const faucetMessage = ref("");
 const faucetError = ref("");
@@ -474,46 +545,63 @@ const faucetCancelRequested = ref(false);
 const faucetRequestId = ref("");
 const walletError = ref("");
 const requestGeneration = ref(0);
+const walletMutationGeneration = ref(0);
 const faucetStatusPhase = ref<WalletFaucetPhase>("requestingPuzzle");
 let activeFaucetAbortController: AbortController | null = null;
 let faucetRequestSequence = 0;
+let shieldRequestSequence = 0;
 
-const readEndpointHost = (value: string) => {
-  try {
-    return new URL(normalizeEndpointUrl(value)).hostname.toLowerCase();
-  } catch {
-    return "";
+const captureWalletMutationContext = (): WalletMutationContext | null => {
+  const account = activeAccount.value;
+  const accountId = requestAccountId.value;
+  const { toriiUrl, chainId, networkPrefix } = session.connection;
+  if (!account || !toriiUrl || !chainId || !accountId) {
+    return null;
   }
+  return {
+    generation: walletMutationGeneration.value,
+    toriiUrl,
+    chainId,
+    networkPrefix,
+    accountId,
+    storedAccountId: account.accountId,
+  };
 };
 
-const MINAMOTO_TORII_HOST = readEndpointHost(
-  MINAMOTO_CHAIN_PRESET.connection.toriiUrl,
+const walletMutationContextStillCurrent = (context: WalletMutationContext) =>
+  context.generation === walletMutationGeneration.value &&
+  session.connection.toriiUrl === context.toriiUrl &&
+  session.connection.chainId === context.chainId &&
+  session.connection.networkPrefix === context.networkPrefix &&
+  requestAccountId.value === context.accountId &&
+  activeAccount.value?.accountId === context.storedAccountId;
+
+const activeConnectionMatchesPreset = (preset: typeof TAIRA_CHAIN_PRESET) =>
+  (() => {
+    try {
+      return (
+        normalizeEndpointUrl(session.connection.toriiUrl) ===
+          normalizeEndpointUrl(preset.connection.toriiUrl) &&
+        session.connection.chainId.trim().toLowerCase() ===
+          preset.connection.chainId.trim().toLowerCase() &&
+        session.connection.networkPrefix === preset.connection.networkPrefix
+      );
+    } catch {
+      return false;
+    }
+  })();
+const activeNetworkIsKnownTaira = computed(() =>
+  activeConnectionMatchesPreset(TAIRA_CHAIN_PRESET),
 );
-const TAIRA_TORII_HOST = readEndpointHost(
-  TAIRA_CHAIN_PRESET.connection.toriiUrl,
+const activeNetworkIsKnownMinamoto = computed(() =>
+  activeConnectionMatchesPreset(MINAMOTO_CHAIN_PRESET),
 );
-const activeToriiHost = computed(() =>
-  readEndpointHost(session.connection.toriiUrl),
-);
-const activeNetworkIsKnownTaira = computed(
-  () => activeToriiHost.value === TAIRA_TORII_HOST,
-);
-const activeNetworkIsKnownMinamoto = computed(() => {
-  const chainId = session.connection.chainId.trim().toLowerCase();
-  return (
-    activeToriiHost.value === MINAMOTO_TORII_HOST ||
-    (chainId === MINAMOTO_CHAIN_PRESET.connection.chainId.toLowerCase() &&
-      session.connection.networkPrefix ===
-        MINAMOTO_CHAIN_PRESET.connection.networkPrefix)
-  );
-});
 const activeNetworkXorAssetDefinitionIds = computed(() => [
   shieldedXorResolvedAssetId.value,
   configuredShieldAssetDefinitionId.value,
   ...(activeNetworkIsKnownMinamoto.value
     ? [MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId]
     : []),
-  SHIELDED_XOR_ASSET_DEFINITION_ID,
 ]);
 const fastBalanceAssetDefinitionId = computed(() => {
   const candidate = activeNetworkIsKnownMinamoto.value
@@ -609,6 +697,13 @@ function updateConfiguredAssetDefinitionIdFromLiveEvidence(
 const resetWalletState = () => {
   assets.value = [];
   transactionsRaw.value = [];
+  assetsState.value = "unknown";
+  transactionsState.value = "unknown";
+  confidentialBalanceState.value = "unknown";
+  transactionsError.value = "";
+  confidentialBalanceError.value = "";
+  shieldedXorBalanceState.value = unknownConfidentialBalance();
+  hasConfidentialBalanceSnapshot.value = false;
   citizenshipStatus.value = null;
   citizenshipStatusLoaded.value = false;
   governanceStatusError.value = "";
@@ -629,12 +724,10 @@ const faucetStatusMessage = computed(() => {
       return t("Submitting faucet claim…");
     case "waitingForClaimRetry":
       return t("Retrying faucet claim after queue expiry…");
-    case "claimAccepted":
-      return t("Faucet claim accepted. Waiting for finality…");
-    case "waitingForCommit":
+    case "waitingForFinality":
       return t("Waiting for faucet transaction finality…");
-    case "claimCommitted":
-      return t("Faucet transaction committed. Updating wallet…");
+    case "claimFinalized":
+      return t("Faucet transaction finalized. Updating wallet…");
     case "refreshingWallet":
       return t("Refreshing wallet balance…");
     default:
@@ -650,7 +743,7 @@ const faucetStatusDetail = computed(() => {
   }
   if (faucetStatusPhase.value === "waitingForClaimRetry") {
     return t(
-      "The network dropped the previous queued faucet claim before commit. Retrying automatically with backoff.",
+      "The network dropped the previous queued faucet claim before finality. Retrying automatically with backoff.",
     );
   }
   return t("Your faucet request is in flight. This can take a few seconds.");
@@ -725,15 +818,18 @@ const walletRefreshStillCurrent = (
   currentGeneration: number,
   toriiUrl: string,
   accountId: string,
+  networkPrefix: number,
 ) =>
   currentGeneration === requestGeneration.value &&
   session.connection.toriiUrl === toriiUrl &&
-  requestAccountId.value === accountId;
+  requestAccountId.value === accountId &&
+  session.connection.networkPrefix === networkPrefix;
 
 const refreshCitizenshipStatus = async (input: {
   currentGeneration: number;
   toriiUrl: string;
   accountId: string;
+  networkPrefix: number;
   request: Promise<GovernanceCitizenStatusResponse>;
 }) => {
   try {
@@ -743,6 +839,7 @@ const refreshCitizenshipStatus = async (input: {
         input.currentGeneration,
         input.toriiUrl,
         input.accountId,
+        input.networkPrefix,
       )
     ) {
       return;
@@ -756,6 +853,7 @@ const refreshCitizenshipStatus = async (input: {
         input.currentGeneration,
         input.toriiUrl,
         input.accountId,
+        input.networkPrefix,
       )
     ) {
       return;
@@ -765,6 +863,99 @@ const refreshCitizenshipStatus = async (input: {
     governanceStatusError.value = toUserFacingErrorMessage(
       error,
       t("Citizen status unavailable"),
+    );
+  }
+};
+
+const refreshWalletTransactions = async (input: {
+  currentGeneration: number;
+  toriiUrl: string;
+  accountId: string;
+  networkPrefix: number;
+  privateKeyHex?: string;
+}) => {
+  try {
+    const txItems = await fetchWalletTransactionPreview(input);
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+        input.networkPrefix,
+      )
+    ) {
+      return;
+    }
+    transactionsRaw.value = txItems;
+    transactionsState.value = "ready";
+    transactionsError.value = "";
+  } catch (error) {
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+        input.networkPrefix,
+      )
+    ) {
+      return;
+    }
+    console.warn("Failed to refresh wallet transactions", error);
+    transactionsState.value = "error";
+    transactionsError.value = toUserFacingErrorMessage(error, t("Unavailable"));
+  }
+};
+
+const refreshWalletConfidentialBalance = async (input: {
+  currentGeneration: number;
+  toriiUrl: string;
+  chainId: string;
+  accountId: string;
+  networkPrefix: number;
+  privateKeyHex?: string;
+  assetDefinitionId: string;
+}) => {
+  confidentialBalanceState.value = "loading";
+  confidentialBalanceError.value = "";
+  try {
+    const confidentialBalance = await getConfidentialAssetBalance({
+      toriiUrl: input.toriiUrl,
+      chainId: input.chainId,
+      networkPrefix: input.networkPrefix,
+      accountId: input.accountId,
+      privateKeyHex: input.privateKeyHex,
+      assetDefinitionId: input.assetDefinitionId,
+    });
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+        input.networkPrefix,
+      )
+    ) {
+      return;
+    }
+    shieldedXorBalanceState.value = confidentialBalance;
+    hasConfidentialBalanceSnapshot.value = true;
+    confidentialBalanceState.value = "ready";
+    confidentialBalanceError.value = "";
+  } catch (error) {
+    if (
+      !walletRefreshStillCurrent(
+        input.currentGeneration,
+        input.toriiUrl,
+        input.accountId,
+        input.networkPrefix,
+      )
+    ) {
+      return;
+    }
+    console.warn("Failed to refresh confidential balance", error);
+    confidentialBalanceState.value = "error";
+    confidentialBalanceError.value = toUserFacingErrorMessage(
+      error,
+      t("Unavailable"),
     );
   }
 };
@@ -779,14 +970,18 @@ const refresh = async () => {
   const assetDefinitionId = fastBalanceAssetDefinitionId.value;
   if (!session.hasAccount || !toriiUrl || !accountId) {
     requestGeneration.value += 1;
-    loading.value = false;
     resetWalletState();
-    shieldedXorBalanceState.value = emptyConfidentialBalance();
     return;
   }
   const currentGeneration = requestGeneration.value + 1;
   requestGeneration.value = currentGeneration;
-  loading.value = true;
+  assetsState.value = "loading";
+  transactionsState.value = "loading";
+  confidentialBalanceState.value = hasConfidentialBalanceSnapshot.value
+    ? "loading"
+    : "unknown";
+  transactionsError.value = "";
+  confidentialBalanceError.value = "";
   walletError.value = "";
   citizenshipStatus.value = null;
   citizenshipStatusLoaded.value = false;
@@ -795,13 +990,22 @@ const refresh = async () => {
     getGovernanceCitizenStatus({
       toriiUrl,
       accountId,
+      networkPrefix,
     }),
   );
   void refreshCitizenshipStatus({
     currentGeneration,
     toriiUrl,
     accountId,
+    networkPrefix,
     request: citizenshipRequest,
+  });
+  void refreshWalletTransactions({
+    currentGeneration,
+    toriiUrl,
+    accountId,
+    networkPrefix,
+    privateKeyHex,
   });
   try {
     const assetsResponse = await fetchWalletAssets({
@@ -810,7 +1014,14 @@ const refresh = async () => {
       networkPrefix,
       assetDefinitionId,
     });
-    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
+    if (
+      !walletRefreshStillCurrent(
+        currentGeneration,
+        toriiUrl,
+        accountId,
+        networkPrefix,
+      )
+    ) {
       return;
     }
     const assetItems = assetsResponse.items;
@@ -828,80 +1039,62 @@ const refresh = async () => {
       confidentialAssetDefinitionId,
       assetItems.map((asset) => asset.asset_id),
     );
-    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
+    if (
+      !walletRefreshStillCurrent(
+        currentGeneration,
+        toriiUrl,
+        accountId,
+        networkPrefix,
+      )
+    ) {
       return;
     }
     assets.value = assetItems;
-    transactionsRaw.value = [];
-    shieldedXorBalanceState.value = emptyConfidentialBalance(
-      confidentialAssetDefinitionId || configuredShieldAssetDefinitionId.value,
-    );
+    assetsState.value = "ready";
+    walletError.value = "";
     if (activeAccount.value?.localOnly) {
       session.updateActiveAccount({ localOnly: false });
     }
-    void (async () => {
-      let txItems: AccountTx[] = [];
-      try {
-        txItems = await fetchWalletTransactionPreview({
-          toriiUrl,
-          accountId,
-          networkPrefix,
-          privateKeyHex,
-        });
-      } catch (error) {
-        console.warn("Failed to refresh wallet transactions", error);
-      }
-      if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
-        return;
-      }
-      transactionsRaw.value = txItems;
-      const shouldFetchConfidentialBalance = Boolean(
-        confidentialAssetDefinitionId &&
-          (!accountWasLocalOnly || assetItems.length || txItems.length),
-      );
-      if (!shouldFetchConfidentialBalance) {
-        shieldedXorBalanceState.value = emptyConfidentialBalance(
-          confidentialAssetDefinitionId ||
-            configuredShieldAssetDefinitionId.value,
-        );
-        return;
-      }
-      try {
-        const confidentialBalance = await getConfidentialAssetBalance({
-          toriiUrl,
-          chainId,
-          accountId,
-          privateKeyHex,
-          assetDefinitionId: confidentialAssetDefinitionId,
-        });
-        if (
-          !walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)
-        ) {
-          return;
-        }
-        shieldedXorBalanceState.value = confidentialBalance;
-      } catch (error) {
-        console.warn("Failed to refresh confidential balance", error);
-      }
-    })();
+    const shouldFetchConfidentialBalance = Boolean(
+      confidentialAssetDefinitionId &&
+        (!accountWasLocalOnly || assetItems.length > 0),
+    );
+    if (shouldFetchConfidentialBalance) {
+      void refreshWalletConfidentialBalance({
+        currentGeneration,
+        toriiUrl,
+        chainId,
+        accountId,
+        networkPrefix,
+        privateKeyHex,
+        assetDefinitionId: confidentialAssetDefinitionId,
+      });
+    }
   } catch (error) {
-    if (!walletRefreshStillCurrent(currentGeneration, toriiUrl, accountId)) {
+    if (
+      !walletRefreshStillCurrent(
+        currentGeneration,
+        toriiUrl,
+        accountId,
+        networkPrefix,
+      )
+    ) {
       return;
     }
-    assets.value = [];
-    transactionsRaw.value = [];
-    shieldedXorBalanceState.value = emptyConfidentialBalance();
     if (accountWasLocalOnly && isLikelyMissingLiveAccountError(error)) {
+      assets.value = [];
+      assetsState.value = "ready";
       walletError.value = "";
       return;
     }
+    assetsState.value = "error";
     walletError.value = toUserFacingErrorMessage(
       error,
       t("Wallet data is unavailable until this account exists on-chain."),
     );
-  } finally {
-    if (currentGeneration === requestGeneration.value) {
-      loading.value = false;
+    if (hasConfidentialBalanceSnapshot.value) {
+      confidentialBalanceState.value = "error";
+      confidentialBalanceError.value = walletError.value;
     }
   }
 };
@@ -941,17 +1134,31 @@ const refreshAfterFaucetClaim = async (
     assetId: string;
     assetDefinitionId: string;
   },
+  context: WalletMutationContext,
+  requestId: string,
   signal?: AbortSignal,
 ) => {
-  const normalizedAssetId = input.assetId.trim().toLowerCase();
-  const normalizedAssetDefinitionId =
+  const requestStillCurrent = () =>
+    faucetRequestId.value === requestId &&
+    walletMutationContextStillCurrent(context);
+  if (!requestStillCurrent()) {
+    return false;
+  }
+  const requestedAssetId = input.assetId.trim();
+  const requestedAssetDefinitionId =
     extractAssetDefinitionId(input.assetDefinitionId).trim() ||
     extractAssetDefinitionId(input.assetId).trim();
   faucetStatusPhase.value = "refreshingWallet";
   for (let attempt = 1; attempt <= FAUCET_REFRESH_MAX_ATTEMPTS; attempt += 1) {
     throwIfFaucetCanceled(signal);
+    if (!requestStillCurrent()) {
+      return false;
+    }
     await refresh();
     throwIfFaucetCanceled(signal);
+    if (!requestStillCurrent()) {
+      return false;
+    }
     if (
       assets.value.some((asset) => {
         const assetId = asset.asset_id.trim();
@@ -959,11 +1166,11 @@ const refreshAfterFaucetClaim = async (
           extractAssetDefinitionId(asset.asset_definition_id).trim() ||
           extractAssetDefinitionId(assetId).trim();
         return Boolean(
-          (normalizedAssetId && assetId.toLowerCase() === normalizedAssetId) ||
-            (normalizedAssetDefinitionId &&
+          (requestedAssetId && assetId === requestedAssetId) ||
+            (requestedAssetDefinitionId &&
               areAssetDefinitionIdsEquivalent(
                 assetDefinitionId,
-                normalizedAssetDefinitionId,
+                requestedAssetDefinitionId,
               )),
         );
       })
@@ -972,6 +1179,9 @@ const refreshAfterFaucetClaim = async (
     }
     if (attempt < FAUCET_REFRESH_MAX_ATTEMPTS) {
       await waitFor(FAUCET_REFRESH_DELAY_MS, signal);
+      if (!requestStillCurrent()) {
+        return false;
+      }
     }
   }
   return false;
@@ -992,14 +1202,16 @@ const cancelStarterFundsRequest = async () => {
       // The local abort still stops UI-side waiting when bridge cancel fails.
     }
   }
+  if (faucetRequestId.value !== requestId) {
+    return;
+  }
   faucetError.value = "";
   faucetMessage.value = t("Faucet request canceled.");
 };
 
 const requestStarterFunds = async () => {
-  const toriiUrl = session.connection.toriiUrl;
-  const accountId = requestAccountId.value;
-  if (!toriiUrl || !accountId || !canRequestFaucet.value) {
+  const context = captureWalletMutationContext();
+  if (!context || !canRequestFaucet.value) {
     return;
   }
   const shouldConfigureAsset = !session.connection.assetDefinitionId.trim();
@@ -1017,16 +1229,29 @@ const requestStarterFunds = async () => {
   try {
     const result = await requestFaucetFunds(
       {
-        toriiUrl,
-        accountId,
-        networkPrefix: session.connection.networkPrefix,
+        toriiUrl: context.toriiUrl,
+        chainId: context.chainId,
+        accountId: context.accountId,
+        networkPrefix: context.networkPrefix,
         requestId,
       },
       (progress) => {
-        faucetStatusPhase.value = progress.phase;
+        if (
+          faucetRequestId.value === requestId &&
+          walletMutationContextStillCurrent(context)
+        ) {
+          faucetStatusPhase.value = progress.phase;
+        }
       },
     );
     throwIfFaucetCanceled(abortController.signal);
+    if (
+      faucetRequestId.value !== requestId ||
+      !walletMutationContextStillCurrent(context)
+    ) {
+      return;
+    }
+    assertFinalizedTransactionResult(result, "tx_hash_hex");
     const fundedAssetDefinitionId =
       result.asset_definition_id.trim() ||
       extractAssetDefinitionId(result.asset_id).trim() ||
@@ -1045,29 +1270,45 @@ const requestStarterFunds = async () => {
       );
     }
     session.updateActiveAccount({ localOnly: false });
-    faucetStatusPhase.value = "claimCommitted";
+    faucetStatusPhase.value = "claimFinalized";
     faucetMessage.value = appendTransactionFee(
-      t("XOR requested: {hash}", {
+      `${t("XOR requested: {hash}", {
         hash: result.tx_hash_hex,
-      }),
+      })} · ${t("Block {height}", {
+        height: result.finality.blockHeight,
+      })}`,
       result,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
+      transactionFeeHintForEndpoint(context.toriiUrl),
     );
     const balanceVisible = await refreshAfterFaucetClaim(
       {
         assetId: result.asset_id,
         assetDefinitionId: result.asset_definition_id,
       },
+      context,
+      requestId,
       abortController.signal,
     );
+    if (
+      faucetRequestId.value !== requestId ||
+      !walletMutationContextStillCurrent(context)
+    ) {
+      return;
+    }
     if (!balanceVisible) {
       faucetError.value = "";
       faucetMessage.value = t(
-        "Faucet accepted, but wallet balances are still indexing. Refresh again in a few seconds.",
+        "Faucet transaction finalized, but wallet balances are still indexing. Refresh again in a few seconds.",
       );
     }
   } catch (error) {
+    if (
+      faucetRequestId.value !== requestId ||
+      !walletMutationContextStillCurrent(context)
+    ) {
+      return;
+    }
     if (faucetCancelRequested.value || isFaucetCanceledError(error)) {
       faucetError.value = "";
       faucetMessage.value = t("Faucet request canceled.");
@@ -1078,15 +1319,20 @@ const requestStarterFunds = async () => {
       t("Failed to request faucet funds."),
     );
   } finally {
-    if (faucetRequestId.value === requestId) {
+    const ownsCurrentRequest =
+      faucetRequestId.value === requestId &&
+      walletMutationContextStillCurrent(context);
+    if (ownsCurrentRequest) {
       faucetRequestId.value = "";
     }
     if (activeFaucetAbortController === abortController) {
       activeFaucetAbortController = null;
     }
-    faucetCancelRequested.value = false;
-    faucetCanceling.value = false;
-    faucetLoading.value = false;
+    if (ownsCurrentRequest) {
+      faucetCancelRequested.value = false;
+      faucetCanceling.value = false;
+      faucetLoading.value = false;
+    }
   }
 };
 
@@ -1096,6 +1342,7 @@ const requestStarterFundsFromAvailableFaucet = async () => {
   }
   if (faucetUnavailableOnActiveNetwork.value) {
     session.useChainProfile(TAIRA_CHAIN_PRESET.connection);
+    await nextTick();
   }
   await requestStarterFunds();
 };
@@ -1113,8 +1360,7 @@ const primaryAssetFallback = computed(
     configuredShieldAssetDefinitionId.value ||
     (activeNetworkIsKnownMinamoto.value
       ? MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId
-      : "") ||
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
+      : ""),
 );
 
 const primaryAssetLabel = computed(() => {
@@ -1123,9 +1369,15 @@ const primaryAssetLabel = computed(() => {
     t("—"),
   );
 });
-const primaryAssetQuantity = computed(
-  () => primaryAsset.value?.quantity ?? "0",
-);
+const primaryAssetQuantity = computed(() => {
+  if (primaryAsset.value) {
+    return primaryAsset.value.quantity;
+  }
+  if (assetsState.value === "loading" || assetsState.value === "unknown") {
+    return t("—");
+  }
+  return assetsState.value === "error" ? t("Unavailable") : "0";
+});
 const faucetDisabled = import.meta.env.VITE_DISABLE_FAUCET === "true";
 const faucetUnavailableOnActiveNetwork = computed(() => {
   if (activeNetworkIsKnownTaira.value) {
@@ -1147,7 +1399,9 @@ const canUseFaucetAction = computed(() =>
     !faucetDisabled &&
       session.hasAccount &&
       requestAccountId.value &&
-      (canRequestFaucet.value || faucetUnavailableOnActiveNetwork.value),
+      ((canRequestFaucet.value &&
+        canAttemptFaucetIdentityChallenge(endpointStatus.inspection)) ||
+        faucetUnavailableOnActiveNetwork.value),
   ),
 );
 const walletIsCitizen = computed(() =>
@@ -1157,7 +1411,7 @@ const walletCitizenshipHeadline = computed(() => {
   if (!session.hasAccount || !session.connection.toriiUrl) {
     return t("Set up network and wallet first.");
   }
-  if (loading.value && !citizenshipStatusLoaded.value) {
+  if (!citizenshipStatusLoaded.value) {
     return t("Checking citizenship…");
   }
   if (walletIsCitizen.value) {
@@ -1165,7 +1419,7 @@ const walletCitizenshipHeadline = computed(() => {
   }
   if (
     governanceStatusError.value ||
-    citizenshipStatus.value?.endpointAvailable === false
+    citizenshipStatus.value?.state === "unavailable"
   ) {
     return t("Citizen status unavailable");
   }
@@ -1183,21 +1437,47 @@ const walletCitizenshipDetail = computed(() => {
           "Citizenship voting permission detected. Bonding is no longer required.",
         );
   }
-  if (governanceStatusError.value) {
-    return governanceStatusError.value;
+  if (!citizenshipStatusLoaded.value) {
+    return t("Checking citizenship…");
+  }
+  if (
+    governanceStatusError.value ||
+    citizenshipStatus.value?.state === "unavailable"
+  ) {
+    return governanceStatusError.value || t("Citizen status unavailable");
+  }
+  if (!endpointStatus.writeAllowed) {
+    return (
+      endpointStatus.diagnostic ||
+      t("Endpoint identity could not be verified. Reads remain available.")
+    );
   }
   return t("Bond citizenship and vote in governance referenda");
 });
 const showFundingPriority = computed(() =>
-  Boolean(activeAccount.value?.localOnly || !assets.value.length),
+  Boolean(
+    activeAccount.value?.localOnly ||
+      (assetsState.value === "ready" &&
+        (!primaryAsset.value || Number(primaryAsset.value.quantity) <= 0)),
+  ),
 );
-const canSendAssets = computed(() =>
-  assets.value.some((asset) => Number(asset.quantity) > 0),
+const canSendAssets = computed(
+  () =>
+    assetsState.value === "ready" &&
+    Boolean(primaryAsset.value && Number(primaryAsset.value.quantity) > 0),
+);
+const hasRecoveredConfidentialBalance = computed(
+  () =>
+    confidentialBalanceState.value === "ready" &&
+    (Number(shieldedXorBalanceState.value.quantity ?? "0") > 0 ||
+      shieldedXorBalanceState.value.recoveredNoteCount > 0),
 );
 const showShieldSection = computed(() =>
   Boolean(
-    assets.value.length ||
-      transactionsRaw.value.length ||
+    (assetsState.value === "ready" && primaryAsset.value) ||
+      confidentialBalanceState.value === "loading" ||
+      hasRecoveredConfidentialBalance.value ||
+      confidentialBalanceState.value === "error" ||
       shieldMessage.value ||
       shieldError.value,
   ),
@@ -1210,11 +1490,10 @@ const shieldedXorTrackedAssetIds = computed(() => {
   ]
     .map((value) => String(value ?? "").trim())
     .filter((value) => {
-      const normalized = value.toLowerCase();
-      if (!normalized || seen.has(normalized)) {
+      if (!value || seen.has(value)) {
         return false;
       }
-      seen.add(normalized);
+      seen.add(value);
       return true;
     });
 });
@@ -1223,42 +1502,78 @@ const shieldedXorAssetId = computed(
     shieldedXorBalanceState.value.resolvedAssetId ||
     shieldedXorResolvedAssetId.value ||
     configuredShieldAssetDefinitionId.value ||
-    SHIELDED_XOR_ASSET_DEFINITION_ID,
+    (activeNetworkIsKnownMinamoto.value
+      ? MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId
+      : ""),
 );
 const shieldedXorAssetLabel = computed(() =>
   formatAssetDefinitionLabel(
     shieldedXorAssetId.value,
-    configuredShieldAssetDefinitionId.value || SHIELDED_XOR_ASSET_DEFINITION_ID,
+    configuredShieldAssetDefinitionId.value ||
+      (activeNetworkIsKnownMinamoto.value
+        ? MINAMOTO_CHAIN_PRESET.connection.assetDefinitionId
+        : t("—")),
   ),
 );
 const transparentXorAsset = computed(() => {
-  const targets = shieldedXorTrackedAssetIds.value.map((value) =>
-    value.toLowerCase(),
-  );
-  if (!targets.length) {
+  if (assetsState.value === "unknown") {
     return null;
   }
-  return (
-    assets.value.find((asset) => {
-      const assetId = asset.asset_id.toLowerCase();
-      return targets.some(
-        (target) =>
-          assetId === target ||
-          assetId.startsWith(`${target}##`) ||
-          assetId.includes(target),
-      );
-    }) ?? null
+  return resolveToriiXorAsset(assets.value, shieldedXorTrackedAssetIds.value);
+});
+const transparentXorBalance = computed(() => {
+  if (transparentXorAsset.value) {
+    return transparentXorAsset.value.quantity;
+  }
+  if (assetsState.value === "loading" || assetsState.value === "unknown") {
+    return t("—");
+  }
+  return assetsState.value === "error" ? t("Unavailable") : "0";
+});
+const shieldedXorBalanceExact = computed(
+  () =>
+    confidentialBalanceState.value === "ready" &&
+    shieldedXorBalanceState.value.exact,
+);
+const shieldedXorBalanceDisplay = computed(() => {
+  if (hasConfidentialBalanceSnapshot.value) {
+    return shieldedXorBalanceState.value.quantity ?? t("—");
+  }
+  if (
+    confidentialBalanceState.value === "loading" ||
+    confidentialBalanceState.value === "unknown"
+  ) {
+    return t("—");
+  }
+  return t("Unavailable");
+});
+const confidentialTransfersAvailable = computed(
+  () =>
+    endpointStatus.writeAllowed &&
+    endpointStatus.inspection?.features.confidentialTransfers.supported ===
+      true,
+);
+const shieldEndpointPrerequisiteMessage = computed(() => {
+  if (confidentialTransfersAvailable.value) {
+    return "";
+  }
+  if (endpointStatus.state === "checking") {
+    return t(
+      "Wait for endpoint capability inspection to finish before moving funds to the private balance.",
+    );
+  }
+  if (!endpointStatus.writeAllowed) {
+    return (
+      endpointStatus.diagnostic ||
+      t(
+        "Private balance writes are blocked until the endpoint identity is verified.",
+      )
+    );
+  }
+  return t(
+    "This endpoint does not advertise the required confidential transfer operations.",
   );
 });
-const transparentXorBalance = computed(
-  () => transparentXorAsset.value?.quantity ?? "0",
-);
-const shieldedXorBalanceExact = computed(
-  () => shieldedXorBalanceState.value.exact,
-);
-const shieldedXorBalanceDisplay = computed(
-  () => shieldedXorBalanceState.value.quantity ?? t("—"),
-);
 const canScanShieldedXor = computed(() =>
   Boolean(
     session.hasAccount &&
@@ -1267,6 +1582,15 @@ const canScanShieldedXor = computed(() =>
   ),
 );
 const shieldedXorRecoveryMessage = computed(() => {
+  if (confidentialBalanceState.value === "error") {
+    return confidentialBalanceError.value || t("Unavailable");
+  }
+  if (confidentialBalanceState.value === "loading") {
+    return t("Refreshing…");
+  }
+  if (confidentialBalanceState.value !== "ready") {
+    return t("—");
+  }
   const state = shieldedXorBalanceState.value;
   const source =
     state.scanSource === "global-note-index"
@@ -1301,6 +1625,9 @@ const canCreateShieldedXor = computed(() =>
     session.hasAccount &&
       session.connection.toriiUrl &&
       activeAccount.value &&
+      assetsState.value === "ready" &&
+      primaryAsset.value &&
+      confidentialTransfersAvailable.value &&
       shieldedXorCapabilityReady.value &&
       shieldedXorSupported.value &&
       isPositiveWholeAmount(shieldForm.quantity),
@@ -1313,6 +1640,8 @@ const rescanShieldedXor = async () => {
   }
   shieldScanLoading.value = true;
   shieldError.value = "";
+  confidentialBalanceState.value = "loading";
+  confidentialBalanceError.value = "";
   try {
     const shieldAssetDefinitionId =
       extractAssetDefinitionId(shieldedXorAssetId.value).trim() ||
@@ -1320,17 +1649,23 @@ const rescanShieldedXor = async () => {
     shieldedXorBalanceState.value = await scanConfidentialWallet({
       toriiUrl: session.connection.toriiUrl,
       chainId: session.connection.chainId,
+      networkPrefix: session.connection.networkPrefix,
       accountId: requestAccountId.value || activeAccount.value.accountId,
       privateKeyHex: activeAccount.value.privateKeyHex,
       assetDefinitionId: shieldAssetDefinitionId,
       force: true,
     });
+    hasConfidentialBalanceSnapshot.value = true;
+    confidentialBalanceState.value = "ready";
+    confidentialBalanceError.value = "";
     shieldMessage.value = t("Shielded note scan complete.");
   } catch (error) {
     shieldError.value = toUserFacingErrorMessage(
       error,
       t("Shielded note scan failed."),
     );
+    confidentialBalanceState.value = "error";
+    confidentialBalanceError.value = shieldError.value;
   } finally {
     shieldScanLoading.value = false;
   }
@@ -1352,8 +1687,15 @@ const transactions = computed<TransactionView[]>(() =>
 );
 
 const createShieldedXor = async () => {
-  if (!session.connection.toriiUrl || !activeAccount.value) {
+  const context = captureWalletMutationContext();
+  const account = activeAccount.value;
+  if (!context || !account) {
     shieldError.value = t("Configure Torii + account first.");
+    shieldMessage.value = "";
+    return;
+  }
+  if (!confidentialTransfersAvailable.value) {
+    shieldError.value = shieldEndpointPrerequisiteMessage.value;
     shieldMessage.value = "";
     return;
   }
@@ -1369,6 +1711,7 @@ const createShieldedXor = async () => {
     shieldMessage.value = "";
     return;
   }
+  const operationSequence = ++shieldRequestSequence;
   shieldLoading.value = true;
   shieldMessage.value = "";
   shieldError.value = "";
@@ -1377,45 +1720,84 @@ const createShieldedXor = async () => {
       extractAssetDefinitionId(shieldedXorAssetId.value).trim() ||
       shieldedXorAssetId.value;
     const result = await transferAsset({
-      toriiUrl: session.connection.toriiUrl,
-      chainId: session.connection.chainId,
+      toriiUrl: context.toriiUrl,
+      chainId: context.chainId,
+      networkPrefix: context.networkPrefix,
       assetDefinitionId: shieldAssetDefinitionId,
-      accountId: activeAccount.value.accountId,
-      destinationAccountId:
-        visibleAccountId.value || activeAccount.value.accountId,
+      accountId: account.accountId,
+      destinationAccountId: context.accountId,
       quantity: amount,
-      privateKeyHex: activeAccount.value.privateKeyHex,
+      privateKeyHex: account.privateKeyHex,
       shielded: true,
     });
+    assertFinalizedSubmissionResult(result);
+    if (
+      operationSequence !== shieldRequestSequence ||
+      !walletMutationContextStillCurrent(context)
+    ) {
+      return;
+    }
     session.updateActiveAccount({ localOnly: false });
     shieldForm.quantity = "0";
     shieldMessage.value = appendTransactionFee(
-      t("Shield transaction committed: {hash}", {
+      `${t("Shield transaction finalized on-chain: {hash}", {
         hash: result.hash,
-      }),
+      })} · ${t("Block {height}", {
+        height: result.finality.blockHeight,
+      })}`,
       result,
       t,
-      transactionFeeHintForEndpoint(session.connection.toriiUrl),
+      transactionFeeHintForEndpoint(context.toriiUrl),
     );
     await refresh();
   } catch (error) {
+    if (
+      operationSequence !== shieldRequestSequence ||
+      !walletMutationContextStillCurrent(context)
+    ) {
+      return;
+    }
     shieldError.value = toUserFacingErrorMessage(
       error,
       t("Shield mode is unavailable."),
     );
   } finally {
-    shieldLoading.value = false;
+    if (
+      operationSequence === shieldRequestSequence &&
+      walletMutationContextStillCurrent(context)
+    ) {
+      shieldLoading.value = false;
+    }
   }
 };
 
 watch(
-  [() => session.connection.toriiUrl, () => activeAccount.value?.accountId],
+  () =>
+    JSON.stringify([
+      session.connection.toriiUrl,
+      session.connection.chainId,
+      session.connection.networkPrefix,
+      requestAccountId.value,
+      activeAccount.value?.accountId ?? "",
+    ]),
   () => {
+    walletMutationGeneration.value += 1;
+    shieldRequestSequence += 1;
+    resetWalletState();
+    activeFaucetAbortController?.abort(createFaucetCancelError());
+    activeFaucetAbortController = null;
+    faucetRequestId.value = "";
+    faucetCancelRequested.value = false;
+    faucetCanceling.value = false;
+    faucetLoading.value = false;
+    faucetMessage.value = "";
+    faucetError.value = "";
+    shieldLoading.value = false;
     shieldMessage.value = "";
     shieldError.value = "";
-    refresh();
+    void refresh();
   },
-  { immediate: true },
+  { immediate: true, flush: "sync" },
 );
 </script>
 
@@ -1545,6 +1927,8 @@ watch(
 }
 
 .wallet-next-step {
+  display: grid;
+  gap: var(--space-3);
   margin-top: var(--space-5);
 }
 

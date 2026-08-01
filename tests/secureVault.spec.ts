@@ -71,7 +71,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          testulegacyaccount1234567890: encryptFixture(privateKeyHex),
+          testuLegacyAccount1234567890: encryptFixture(privateKeyHex),
         },
         receiveKeys: {},
       }),
@@ -106,7 +106,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          n42ucustomaccount1234567890: encryptFixture(privateKeyHex),
+          n42uCustomAccount1234567890: encryptFixture(privateKeyHex),
         },
         receiveKeys: {},
       }),
@@ -134,10 +134,40 @@ describe("SecureVault", () => {
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
     expect(persisted.accountSecrets).toHaveProperty(
-      "i105:sharedaccount1234567890",
+      "i105:SharedAccount1234567890",
     );
     expect(persisted.accountSecrets).not.toHaveProperty(
-      "sorausharedaccount1234567890",
+      "sorauSharedAccount1234567890",
+    );
+  });
+
+  it("keeps case-sensitive I105 payloads in separate vault entries", async () => {
+    const vault = new SecureVault(tempDir);
+    const upperSecret = "ab".repeat(32);
+    const lowerSecret = "cd".repeat(32);
+
+    await vault.storeAccountSecret({
+      accountId: "testuCaseSensitivePayloadABC",
+      privateKeyHex: upperSecret,
+    });
+    await vault.storeAccountSecret({
+      accountId: "testucasesensitivepayloadabc",
+      privateKeyHex: lowerSecret,
+    });
+
+    await expect(
+      vault.getAccountSecret("sorauCaseSensitivePayloadABC"),
+    ).resolves.toBe(upperSecret);
+    await expect(
+      vault.getAccountSecret("soraucasesensitivepayloadabc"),
+    ).resolves.toBe(lowerSecret);
+
+    const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
+    expect(Object.keys(persisted.accountSecrets)).toEqual(
+      expect.arrayContaining([
+        "i105:CaseSensitivePayloadABC",
+        "i105:casesensitivepayloadabc",
+      ]),
     );
   });
 
@@ -206,7 +236,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          "i105:badalgoaccount1234567890": encryptFixture(
+          "i105:BadAlgoAccount1234567890": encryptFixture(
             JSON.stringify({
               schema: "iroha-demo-account-secret/v2",
               privateKeyHex: "16".repeat(32),
@@ -241,7 +271,7 @@ describe("SecureVault", () => {
     });
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
-    const encrypted = persisted.accountSecrets["i105:windowsaccount1234567890"];
+    const encrypted = persisted.accountSecrets["i105:WindowsAccount1234567890"];
     expect(encrypted).toBe(
       `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
     );
@@ -272,7 +302,7 @@ describe("SecureVault", () => {
     });
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
-    expect(persisted.accountSecrets["i105:wslaccount1234567890"]).toBe(
+    expect(persisted.accountSecrets["i105:WslAccount1234567890"]).toBe(
       `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
     );
     expect(safeStorageMock.encryptString).not.toHaveBeenCalled();
@@ -309,13 +339,14 @@ describe("SecureVault", () => {
     ).toBe(`win-dpapi:${protectFixture("private_key")}`);
     await expect(vault.getReceiveKey("receive_key_123")).resolves.toEqual({
       ...record,
-      accountId: record.accountId.toLowerCase(),
+      accountId: record.accountId,
     });
     await expect(
       vault.listReceiveKeysForAccount("sorauReceiveAccount1234567890"),
-    ).resolves.toEqual([
-      { ...record, accountId: record.accountId.toLowerCase() },
-    ]);
+    ).resolves.toEqual([{ ...record, accountId: record.accountId }]);
+    await expect(
+      vault.listReceiveKeysForAccount(record.accountId.toLowerCase()),
+    ).resolves.toEqual([]);
   });
 
   it("does not report availability on non-Windows when safeStorage is unavailable", async () => {
@@ -351,7 +382,7 @@ describe("SecureVault", () => {
     });
 
     const persisted = JSON.parse(await readFile(vaultFile(tempDir), "utf8"));
-    expect(persisted.accountSecrets["i105:probeaccount1234567890"]).toBe(
+    expect(persisted.accountSecrets["i105:ProbeAccount1234567890"]).toBe(
       `win-dpapi:${protectAccountSecretFixture(privateKeyHex)}`,
     );
   });
@@ -452,7 +483,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          "i105:foreignaccount1234567890": `win-dpapi:${protectFixture(
+          "i105:ForeignAccount1234567890": `win-dpapi:${protectFixture(
             "aa".repeat(32),
           )}`,
         },
@@ -476,7 +507,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          "i105:legacyaccount1234567890": encryptFixture(privateKeyHex),
+          "i105:LegacyAccount1234567890": encryptFixture(privateKeyHex),
         },
         receiveKeys: {},
       }),
@@ -505,7 +536,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          "i105:deniedaccount1234567890": "win-dpapi:unreadable",
+          "i105:DeniedAccount1234567890": "win-dpapi:unreadable",
         },
         receiveKeys: {},
       }),
@@ -531,7 +562,7 @@ describe("SecureVault", () => {
       JSON.stringify({
         version: 1,
         accountSecrets: {
-          "i105:invalidpayload1234567890": "win-dpapi:invalid",
+          "i105:InvalidPayload1234567890": "win-dpapi:invalid",
         },
         receiveKeys: {},
       }),

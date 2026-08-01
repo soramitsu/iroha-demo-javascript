@@ -1,19 +1,19 @@
 import type {
-  NexusSumeragiStatus,
+  NexusLifecycleView,
   PublicLanePendingRewardView,
   PublicLaneStakeShareView,
   PublicLaneValidatorRecordView,
 } from "@/types/iroha";
 
 export type DataspaceLaneOption = {
-  dataspaceId: number;
+  dataspaceId: string;
   laneId: number;
   alias: string;
   validatorIds: string[];
 };
 
 export type DataspaceOption = {
-  dataspaceId: number;
+  dataspaceId: string;
   label: string;
   lanes: DataspaceLaneOption[];
   totalValidators: number;
@@ -29,85 +29,27 @@ const toNonNegativeInteger = (value: unknown): number | null => {
   return numeric;
 };
 
-const uniqueStrings = (value: unknown): string[] => {
-  if (!Array.isArray(value)) return [];
-  return [
-    ...new Set(
-      value.map((entry) => String(entry ?? "").trim()).filter(Boolean),
-    ),
-  ];
-};
-
 export const collectDataspaceOptions = (
-  status: NexusSumeragiStatus | null | undefined,
+  lifecycle: NexusLifecycleView | null | undefined,
 ): DataspaceOption[] => {
-  const governance = Array.isArray(status?.lane_governance)
-    ? status.lane_governance
-    : [];
-  const commitments = Array.isArray(status?.dataspace_commitments)
-    ? status.dataspace_commitments
-    : [];
-  const lanesByDataspace = new Map<number, Map<number, DataspaceLaneOption>>();
+  const lanesByDataspace = new Map<string, Map<number, DataspaceLaneOption>>();
 
-  const upsertLane = (input: {
-    dataspaceId: number;
-    laneId: number;
-    alias?: string;
-    validatorIds?: string[];
-  }) => {
-    const byLane = lanesByDataspace.get(input.dataspaceId) ?? new Map();
-    const current =
-      byLane.get(input.laneId) ??
-      ({
-        dataspaceId: input.dataspaceId,
-        laneId: input.laneId,
-        alias: `Lane ${input.laneId}`,
-        validatorIds: [],
-      } satisfies DataspaceLaneOption);
-
-    const nextAlias = input.alias?.trim() || current.alias;
-    const nextValidatorIds = [
-      ...new Set([
-        ...(current.validatorIds ?? []),
-        ...(input.validatorIds ?? []),
-      ]),
-    ];
-    byLane.set(input.laneId, {
-      ...current,
-      alias: nextAlias,
-      validatorIds: nextValidatorIds,
+  for (const lane of lifecycle?.lanes ?? []) {
+    const byLane = lanesByDataspace.get(lane.dataspace_id) ?? new Map();
+    byLane.set(lane.id, {
+      dataspaceId: lane.dataspace_id,
+      laneId: lane.id,
+      alias: lane.alias,
+      validatorIds: [],
     });
-    lanesByDataspace.set(input.dataspaceId, byLane);
-  };
-
-  for (const lane of governance) {
-    const dataspaceId = toNonNegativeInteger(lane?.dataspace_id);
-    const laneId = toNonNegativeInteger(lane?.lane_id);
-    if (dataspaceId === null || laneId === null) {
-      continue;
-    }
-    upsertLane({
-      dataspaceId,
-      laneId,
-      alias: String(lane.alias ?? "").trim() || `Lane ${laneId}`,
-      validatorIds: uniqueStrings(lane.validator_ids),
-    });
-  }
-
-  for (const commitment of commitments) {
-    const dataspaceId = toNonNegativeInteger(commitment?.dataspace_id);
-    const laneId = toNonNegativeInteger(commitment?.lane_id);
-    if (dataspaceId === null || laneId === null) {
-      continue;
-    }
-    upsertLane({
-      dataspaceId,
-      laneId,
-    });
+    lanesByDataspace.set(lane.dataspace_id, byLane);
   }
 
   return [...lanesByDataspace.entries()]
-    .sort(([left], [right]) => left - right)
+    .sort(([left], [right]) => {
+      const lengthOrder = left.length - right.length;
+      return lengthOrder || left.localeCompare(right);
+    })
     .map(([dataspaceId, lanesById]): DataspaceOption => {
       const orderedLanes = [...lanesById.values()].sort(
         (left, right) => left.laneId - right.laneId,
@@ -126,8 +68,8 @@ export const collectDataspaceOptions = (
 
 export const chooseDefaultDataspaceId = (
   options: DataspaceOption[],
-  preferredDataspaceId: number | null,
-): number | null => {
+  preferredDataspaceId: string | null,
+): string | null => {
   if (
     preferredDataspaceId !== null &&
     options.some((option) => option.dataspaceId === preferredDataspaceId)
@@ -139,7 +81,7 @@ export const chooseDefaultDataspaceId = (
 
 export const resolveLaneForDataspace = (
   options: DataspaceOption[],
-  dataspaceId: number | null,
+  dataspaceId: string | null,
 ): DataspaceLaneOption | null => {
   if (dataspaceId === null) return null;
   const dataspace = options.find(

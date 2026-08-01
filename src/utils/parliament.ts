@@ -63,9 +63,8 @@ export const hasGovernancePermission = (
 ) => listGovernancePermissions(permissions).includes(expected);
 
 export const isRegisteredGovernanceCitizen = (
-  status: Pick<GovernanceCitizenStatusResponse, "isCitizen"> | null | undefined,
-  hasBallotPermission = false,
-) => Boolean(hasBallotPermission || status?.isCitizen === true);
+  status: Pick<GovernanceCitizenStatusResponse, "state"> | null | undefined,
+) => status?.state === "citizen";
 
 export const resolveGovernanceCitizenCount = (
   council: Pick<GovernanceCitizenCountResponse, "total"> | null | undefined,
